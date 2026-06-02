@@ -1,3 +1,8 @@
+import platform
+if platform.system() == "Windows":
+    import torch
+    print(torch.__version__)
+
 import asyncio
 import argparse
 import logging
