@@ -252,7 +252,7 @@ def loadUI(UIHandler, env):
     from UI.ContentTab import ContentTab
     from UI.Templates import ToolCheckButton
     import pyqtgraph as pg
-
+    return 
     class ClusterErrorPlot(BasicPlotWidget):
         def __init__(self, handler, title="N/A", name="N/A", **kwargs):
             super().__init__(
