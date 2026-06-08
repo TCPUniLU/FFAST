@@ -19,6 +19,7 @@ class UIHandler(EventClass):
     env = None
     tabs = []
     loupes = 0
+    loupe_list = []
     loupeModules = []
     activeLoupe = None  # Currently active Loupe for menu actions
     workdir = None  # Working directory for file dialogs
@@ -29,6 +30,7 @@ class UIHandler(EventClass):
         self.workdir = workdir if workdir else os.getcwd()
         self.eventSubscribe("QUIT_READY", self.setQuitReady)
         self.eventSubscribe('CLUSTER_FOR_VARIABLE', self.showCLusterVariable)
+        self.eventSubscribe('LoupeClosing', self.onLoupeClosed)
 
     def quitEvent(self):
         self.eventPush("QUIT_EVENT")
@@ -70,12 +72,18 @@ class UIHandler(EventClass):
             func(self, loupe)
 
         loupe.forceUpdate()
+        self.loupe_list.append(self.loupes)
         self.loupes += 1
-
         loupe.show()
         loupe.setFocus()
 
         self.eventPush("LOUPES_UPDATE")
+
+    def onLoupeClosed(self, id):
+        #print(f"loupe {id} is closed")
+        self.loupe_list.remove(id)
+        if id == self.activeLoupe:
+            self.activeLoupe = self.loupe_list[0] if len(self.loupe_list) != 0 else None
 
     def registerLoupeModule(self, func):
         self.loupeModules.append(func)
@@ -122,6 +130,17 @@ class UIHandler(EventClass):
         self.window = window
         self.app = app
         self.mainWindow = window
+        self.mainWindow.mainContent.currentChanged.connect(self.onContentTabChanged)
+
+    def onContentTabChanged(self, index):
+        #tab_widget = self.mainWindow.mainContent.widget(index)
+        tab_name = self.mainWindow.mainContent.tabText(index)
+
+        # print(f"Selected tab: {tab_name}")
+        if tab_name == "Subsystem Errors" and self.activeLoupe is None:  # create new loupe only if there is none.
+            self.newLoupe()
+            self.activeLoupe = self.loupes-1
+            #print(f'active loupe: {self.activeLoupe}')
 
     def initialisePlotConfigs(self):
         pyqtgraph.setConfigOptions(

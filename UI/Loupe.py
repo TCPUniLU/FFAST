@@ -545,6 +545,7 @@ class Loupe(Widget, EventChildClass):
 
         self.resize(1100, 800)
         self.setWindowTitle(f"3D View {N}")
+        self.id = N
 
         # SIDEBAR HERE
         self.sideBarContainer = Widget(layout="vertical", parent=self)
@@ -786,3 +787,9 @@ class Loupe(Widget, EventChildClass):
 
     def onCameraChange(self):
         self.canvas.onCameraChange()
+
+    def closeEvent(self, event) -> None:
+        #print(f'loupe is closing {self.id}')
+        self.eventPush("LoupeClosing", id=self.id)
+
+        event.accept()
