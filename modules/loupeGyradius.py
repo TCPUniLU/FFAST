@@ -133,7 +133,26 @@ def loadUI(UIHandler, env):
             self.slider.setToolTip("Number of points in sliding average")
             self.addOption(self.slider)
             self.slider.setCallbackFunc(self.updateSmoothing)
-            self.hasShownGyradiusMessage = False
+            self.loadButton.clicked.connect(self.loadButtonPushed)
+
+        def loadButtonPushed(self):
+            deps = self.dataWatcher.getMissingDependencies()
+            flag = False
+            for dep in deps:
+                _, _, dataset = self.env.cacheKeyToComponents(dep)
+                if dataset is not None and hasattr(dataset, 'isVariable') and (not dataset.isVariable):
+                    flag = True
+
+            if flag:
+                msg = QMessageBox(self.handler.window)
+                msg.setWindowTitle("Warning")
+                msg.setText("Warning: Gyration radius feature is not meaningful for periodic systems.")
+                msg.setIcon(QMessageBox.Information)
+                msg.setStandardButtons(QMessageBox.Ok)
+
+                msg.exec()
+
+            # self.dataWatcher.loadContent()
 
         def updateSmoothing(self, value):
             self.smoothing = value
@@ -142,19 +161,6 @@ def loadUI(UIHandler, env):
         def addPlots(self):
             smoothing = self.smoothing
             for data in self.getWatchedData():
-                #TODO: update this method for non ase datasets!!!!
-
-                ds = data.get("dataset")
-                if ds is not None and (hasattr(ds, 'isVariable')) and ds.isVariable and not self.hasShownGyradiusMessage:
-                    msg = QMessageBox(self.handler.window)
-                    msg.setWindowTitle("Warning")
-                    msg.setText("Warning: Gyration radius feature is not meaningful for periodic systems.")
-                    msg.setIcon(QMessageBox.Information)
-                    msg.setStandardButtons(QMessageBox.Ok)
-
-                    msg.exec()
-                    self.hasShownGyradiusMessage = True
-
                 err = data["dataEntry"].get("gyradius")
                 err = np.convolve(
                     err, np.ones(smoothing) / smoothing, mode="valid"
@@ -204,7 +210,24 @@ def loadUI(UIHandler, env):
             self.slider.setToolTip("Number of points in sliding average")
             self.addOption(self.slider)
             self.slider.setCallbackFunc(self.updateSmoothing)
-            self.hasShownGyradiusMessage = False
+            self.loadButton.clicked.connect(self.loadButtonPushed)
+
+        def loadButtonPushed(self):
+            deps = self.dataWatcher.getMissingDependencies()
+            flag = False
+            for dep in deps:
+                _, _, dataset = self.env.cacheKeyToComponents(dep)
+                if dataset is not None and hasattr(dataset, 'isVariable') and (not dataset.isVariable):
+                    flag = True
+
+            if flag:
+                msg = QMessageBox(self.handler.window)
+                msg.setWindowTitle("Warning")
+                msg.setText("Warning: Gyration radius feature is not meaningful for periodic systems.")
+                msg.setIcon(QMessageBox.Information)
+                msg.setStandardButtons(QMessageBox.Ok)
+
+                msg.exec()
 
         def updateSmoothing(self, value):
             self.smoothing = value
@@ -212,20 +235,6 @@ def loadUI(UIHandler, env):
 
         def addPlots(self):
             for data in self.getWatchedData():
-                # TODO: update this method for non ase datasets!!!!
-
-                ds = data.get("dataset")
-                if ds is not None and (
-                hasattr(ds, 'isVariable')) and ds.isVariable and not self.hasShownGyradiusMessage:
-                    msg = QMessageBox(self.handler.window)
-                    msg.setWindowTitle("Warning")
-                    msg.setText("Warning: Gyration radius feature is not meaningful for periodic systems.")
-                    msg.setIcon(QMessageBox.Information)
-                    msg.setStandardButtons(QMessageBox.Ok)
-
-                    msg.exec()
-                    self.hasShownGyradiusMessage = True
-
                 de = data["dataEntry"]
 
                 self._addPlot(
@@ -286,7 +295,24 @@ def loadUI(UIHandler, env):
             self.slider.setToolTip("Number of points in sliding average")
             self.addOption(self.slider)
             self.slider.setCallbackFunc(self.updateSmoothing)
-            self.hasShownGyradiusMessage = False
+            self.loadButton.clicked.connect(self.loadButtonPushed)
+
+        def loadButtonPushed(self):
+            deps = self.dataWatcher.getMissingDependencies()
+            flag = False
+            for dep in deps:
+                _, _, dataset = self.env.cacheKeyToComponents(dep)
+                if dataset is not None and hasattr(dataset, 'isVariable') and (not dataset.isVariable):
+                    flag = True
+
+            if flag:
+                msg = QMessageBox(self.handler.window)
+                msg.setWindowTitle("Warning")
+                msg.setText("Warning: Gyration radius feature is not meaningful for periodic systems.")
+                msg.setIcon(QMessageBox.Information)
+                msg.setStandardButtons(QMessageBox.Ok)
+
+                msg.exec()
 
         def updateSmoothing(self, value):
             self.smoothing = value
@@ -295,20 +321,6 @@ def loadUI(UIHandler, env):
         def addPlots(self):
             smoothing = self.smoothing
             for data in self.getWatchedData():
-                # TODO: update this method for non ase datasets!!!!
-
-                ds = data.get("dataset")
-                if ds is not None and (
-                hasattr(ds, 'isVariable')) and ds.isVariable and not self.hasShownGyradiusMessage:
-                    msg = QMessageBox(self.handler.window)
-                    msg.setWindowTitle("Warning")
-                    msg.setText("Warning: Gyration radius feature is not meaningful for periodic systems.")
-                    msg.setIcon(QMessageBox.Information)
-                    msg.setStandardButtons(QMessageBox.Ok)
-
-                    msg.exec()
-                    self.hasShownGyradiusMessage = True
-
                 de = data["dataEntry"]
 
                 label = "Gyradius __NAME__"
@@ -366,24 +378,27 @@ def loadUI(UIHandler, env):
                 "Distribution of gyration radii across the dataset.\n"
                 "Indicates how structurally diverse the dataset is in terms of molecular size."
             )
-            self.hasShownGyradiusMessage = False
+            self.loadButton.clicked.connect(self.loadButtonPushed)
+
+        def loadButtonPushed(self):
+            deps = self.dataWatcher.getMissingDependencies()
+            flag = False
+            for dep in deps:
+                _, _, dataset = self.env.cacheKeyToComponents(dep)
+                if dataset is not None and hasattr(dataset, 'isVariable') and (not dataset.isVariable):
+                    flag = True
+
+            if flag:
+                msg = QMessageBox(self.handler.window)
+                msg.setWindowTitle("Warning")
+                msg.setText("Warning: Gyration radius feature is not meaningful for periodic systems.")
+                msg.setIcon(QMessageBox.Information)
+                msg.setStandardButtons(QMessageBox.Ok)
+
+                msg.exec()
 
         def addPlots(self):
             for data in self.getWatchedData():
-                # TODO: update this method for non ase datasets!!!!
-
-                ds = data.get("dataset")
-                if ds is not None and (
-                hasattr(ds, 'isVariable')) and ds.isVariable and not self.hasShownGyradiusMessage:
-                    msg = QMessageBox(self.handler.window)
-                    msg.setWindowTitle("Warning")
-                    msg.setText("Warning: Gyration radius feature is not meaningful for periodic systems.")
-                    msg.setIcon(QMessageBox.Information)
-                    msg.setStandardButtons(QMessageBox.Ok)
-
-                    msg.exec()
-                    self.hasShownGyradiusMessage = True
-
                 de = data["dataEntry"]
                 x, y = de.get("distX"), de.get("distY")
                 self.plot(x, y, autoColor=data, autoLabel=data)
