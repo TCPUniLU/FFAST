@@ -218,6 +218,7 @@ def loadUI(UIHandler, env):
             if len(elements) > 0:
                 label = AtomLabel(0, parent=self.atomsList)  # All
                 self.atomsList.addWidget(label)
+                label.setChecked(True)  # by default All is selected!
 
             for i in sorted(elements):
                 label = AtomLabel(i, parent=self.atomsList)
