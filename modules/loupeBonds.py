@@ -224,7 +224,7 @@ def addSettings(UIHandler, loupe):
     settings.addParameters(
         **{
             "bondType": ["Fixed", "updateGeometry"],
-            "bondWidth": [100, "updateBondWidth", "visualRefresh"],
+            "bondWidth": [25, "updateBondWidth", "visualRefresh"],
             "bondColor": [getConfig("loupeBondsColor"), "updateBondColor", "visualRefresh"],
             "fixedBondIndices": [None, "clearBondProperty", "updateGeometry"],
         }
