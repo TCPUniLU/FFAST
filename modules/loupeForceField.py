@@ -50,7 +50,7 @@ def _batch_rotation_z_to(U):
     return R
 
 
-def _build_arrow_mesh(starts, ends):
+def _build_arrow_mesh(starts, ends, arrow_colors=None):
     """Batched cylinder+cone mesh.
     Returns (vertices (V,3), faces (F,3), unit_dirs (N,3)) or (None, None, None).
     """
@@ -134,7 +134,25 @@ def _build_arrow_mesh(starts, ends):
         (cap_faces[None]   + bc_off).reshape(-1, 3),  # N*n   — cone base cap
     ])
 
-    return all_verts, all_faces
+    vertex_colors = None
+    if arrow_colors is not None:
+        verts_per_arrow = (2 * n) + (n + 1) + (n + 1) + (n + 1)  # shaft + shaft cap + cone + cone cap
+        rgb = np.ones((N, 3), dtype=float)
+
+        rgb[:, :arrow_colors.shape[1]] = arrow_colors
+        shaft_colors = np.repeat(rgb, 2 * n, axis=0)  # matches sv.reshape(-1, 3)
+        shaft_cap_colors = np.repeat(rgb, n + 1, axis=0)  # matches bsv.reshape(-1, 3)
+        cone_colors = np.repeat(rgb, n + 1, axis=0)  # matches cv.reshape(-1, 3)
+        cone_cap_colors = np.repeat(rgb, n + 1, axis=0)  # matches bcv.reshape(-1, 3)
+
+        vertex_colors = np.vstack([
+            shaft_colors,
+            shaft_cap_colors,
+            cone_colors,
+            cone_cap_colors,
+        ])
+
+    return all_verts, all_faces, vertex_colors
 
 
 class ForceVectorSelect(AtomSelectionBase):
@@ -183,6 +201,7 @@ class ForceVectorsElement(VisualElement):
         if hasattr(self.mesh, "shading_filter"):
             self.mesh.shading_filter.ambient_light = (0.7, 0.7, 0.7, 1.0)
         super().__init__(*args, **kwargs, singleElement=None)
+        self._arrow_colors = None
 
     def show(self):
         self.hidden = False
@@ -243,6 +262,7 @@ class ForceVectorsElement(VisualElement):
         settings = self.canvas.settings
         show = settings.get("showForceVectors")
         status_label = getattr(self.canvas.loupe, "_forceVectorsStatusLabel", None)
+        only_forces = self.canvas.settings.get("forceVectorsOnly")
 
         if not show:
             self.hide()
@@ -253,6 +273,15 @@ class ForceVectorsElement(VisualElement):
         self.show()
 
         F, err = self._get_forces()
+
+        atoms_element = self.canvas.elements.get("AtomsElement")
+        arrow_colors = None
+        if atoms_element is not None:
+            arrow_colors = np.ones_like(atoms_element.elementColors)
+            if only_forces:
+                arrow_colors = atoms_element.getColors(False, None)
+                if arrow_colors is not None:
+                    arrow_colors = np.asarray(arrow_colors)
 
         if err == "no_prediction":
             self._starts = None
@@ -299,9 +328,12 @@ class ForceVectorsElement(VisualElement):
             idx = np.array(atom_indices)
             R = R[idx]
             normF = normF[idx]
+            if arrow_colors is not None:
+                arrow_colors = arrow_colors[idx]
 
         self._starts = R
         self._ends = R + normF
+        self._arrow_colors = arrow_colors
         self.queueVisualRefresh()
 
     def _draw(self, picking=False, **_):
@@ -316,13 +348,13 @@ class ForceVectorsElement(VisualElement):
             return
 
         self.show()
-        verts, faces = _build_arrow_mesh(self._starts, self._ends)
+        verts, faces, vertex_colors = _build_arrow_mesh(self._starts, self._ends, self._arrow_colors)
 
         if verts is None:
             self.hide()
             return
 
-        self.mesh.set_data(vertices=verts, faces=faces)
+        self.mesh.set_data(vertices=verts, faces=faces, vertex_colors=vertex_colors)
 
 
 def loadLoupe(UIHandler, loupe):
@@ -347,6 +379,7 @@ def loadLoupe(UIHandler, loupe):
     settings.addParameters(
         **{
             "showForceVectors": [False, "updateGeometry"],
+            "forceVectorsOnly": [False, "updateGeometry"],
             "forceVectorsModelKey": [None, "updateGeometry"],
             "forceVectorsLength": [10, "updateGeometry"],
             "forceVectorsAvgWindow": [0, "updateGeometry"],
@@ -371,6 +404,16 @@ def loadLoupe(UIHandler, loupe):
         "Enable",
         settingsKey="showForceVectors",
         toolTip="Overlay force vectors on each atom as 3D arrows.",
+    )
+
+    pane.addSetting(
+        "CheckBox",
+        "Forces only",
+        settingsKey="forceVectorsOnly",
+        toolTip=(
+            "Hide atoms and show only force arrows. "
+            "Arrows inherit the color of the atoms they originate from."
+        ),
     )
 
     # SOURCE SELECTOR

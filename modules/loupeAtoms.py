@@ -22,7 +22,7 @@ class AtomsElement(VisualElement):
             light_ambient=1,
             antialias=0,
         )
-        super().__init__(*args, **kwargs, singleElement=self.scatter)
+        super().__init__(*args, **kwargs, singleElement=None)  # NOTE: changed it to enable atoms disappearance!
         self.edge_width = 0.02
         # self.colors = (1,1,1)
 
@@ -44,6 +44,12 @@ class AtomsElement(VisualElement):
     def onNewGeometry(self):
         R = self.canvas.getCurrentR()
         dataset = self.canvas.dataset
+
+        atoms_only_forces = self.canvas.settings.get("forceVectorsOnly")
+        if atoms_only_forces:
+            self.scatter.visible = False
+        else:
+            self.scatter.visible = True
 
         # For variable datasets, recompute colors and sizes per-geometry
         if hasattr(dataset, 'isVariable') and dataset.isVariable:
