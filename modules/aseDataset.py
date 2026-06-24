@@ -15,7 +15,7 @@ class aseDatasetLoader(DatasetLoader):
     saveFormats = ["db", "xyz", "extxyz", "traj", "vasp", "dftb"]
 
     def __init__(self, path, atomsList=None, selected_energy_key=None, selected_force_key=None, *args, **kwargs):
-        super().__init__(path)
+        super().__init__(path, *args, **kwargs)
 
         # Read file only if atomsList not provided (avoid double-read)
         if atomsList is None:
@@ -216,7 +216,7 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
     saveFormats = ["db", "xyz", "extxyz", "traj", "vasp", "dftb"]
 
     def __init__(self, path, atomsList=None, selected_energy_key=None, selected_force_key=None, *args, **kwargs):
-        super().__init__(path)
+        super().__init__(path, *args, **kwargs)
 
         # Read file only if atomsList not provided (avoid double-read)
         if atomsList is None:
@@ -415,7 +415,7 @@ def loadData(env):
             return True
 
         def __call__(self, path: str, selected_energy_key=None, selected_force_key=None,
-                     prediction_keys=None, show_dialog=True, slice_num=0):
+                     prediction_keys=None, show_dialog=True, slice_num=0, file_size=0):
             """Load ASE dataset with optional key selection.
 
             Args:
@@ -439,6 +439,7 @@ def loadData(env):
                 atomsList = ase.io.read(path, index=':')
             else:
                 atomsList = ase.io.read(path, index=slice(0, None, slice_num))
+                file_size /= float(slice_num)
 
             # atom_counts = [len(atoms) for atoms in atomsList] --> inefficient for large datasets because it
             # literally creates a copy of the entire dataset on RAM, just to check whether the dataset is variable or
@@ -476,7 +477,8 @@ def loadData(env):
                     path,
                     atomsList=atomsList,
                     selected_energy_key=selected_energy_key,
-                    selected_force_key=selected_force_key
+                    selected_force_key=selected_force_key,
+                    file_size=file_size
                 )
             else:
                 # Variable dataset
@@ -486,7 +488,8 @@ def loadData(env):
                     path,
                     atomsList=atomsList,
                     selected_energy_key=selected_energy_key,
-                    selected_force_key=selected_force_key
+                    selected_force_key=selected_force_key,
+                    file_size=file_size
                 )
 
             return loader, prediction_keys or []

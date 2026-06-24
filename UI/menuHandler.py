@@ -161,7 +161,7 @@ class MenuHandler(EventClass):
         file_size = os.path.getsize(path) / 1_000_000_000
         slice_num = -1  # load entirely on RAM by default
         if file_size >= 3:
-            slice_num = self.large_dataset_handle(path, logger)
+            slice_num, file_size = self.large_dataset_handle(path, logger)
 
         if slice_num == -2:
             logger.info("load cancelled.")
@@ -169,7 +169,7 @@ class MenuHandler(EventClass):
         if slice_num > 0:
             logger.info(f"loading dataset with slice: {slice_num}")
         env.taskLoadDataset(path, typ, selected_energy_key=selected_energy_key, selected_force_key=selected_force_key,
-                            prediction_keys=prediction_keys, slice_num=slice_num)
+                            prediction_keys=prediction_keys, slice_num=slice_num, file_size=file_size)
 
     def large_dataset_handle(self, path, logger):
         from PySide6.QtWidgets import QDialog
@@ -187,6 +187,7 @@ class MenuHandler(EventClass):
         logger.info(f"Total size of the dataset on RAM would be approximately {file_size/1_000_000_000:.2f} GBs.")
 
         dialog = BigDatasetWarningDialog(file_size, length, self.handler.window)
+        file_size /= 1_000_000_000
         result = dialog.exec()
         if result == QDialog.Accepted:
             slice_num = dialog.get_slice_number()
@@ -194,22 +195,22 @@ class MenuHandler(EventClass):
                 try:
                     slice_num = int(slice_num)
                     if slice_num >= 0:
-                        return slice_num
+                        return slice_num, file_size
                     else:
                         logger.info("Invalid slice number entered, load abort.")
-                        return -2
+                        return -2, file_size
                 except (ValueError, TypeError):
                     logger.info("Invalid slice number entered, load abort.")
-                    return -2
+                    return -2, file_size
             elif dialog.user_clicked_load_no_cache:
                 logger.info("User decided to load the whole dataset without caching.")
-                return -1
+                return -1, file_size
             else:
                 logger.info("User decided to load the whole dataset with caching.")
-                return 0
+                return 0, file_size
         else:
             logger.info("User cancelled the load operation.")
-            return -2
+            return -2, file_size
 
 
 
@@ -239,7 +240,7 @@ class MenuHandler(EventClass):
 
             # Create temporary loader with just first frame to access key detection
             # We'll load the full dataset later in the background thread
-            temp_loader = aseDatasetLoader(path, atomsList=[first_atoms])
+            temp_loader = aseDatasetLoader(path, atomsList=[first_atoms], file_size=0)
 
             # Check if multiple keys exist
             energy_keys = temp_loader.EneregyKeys()

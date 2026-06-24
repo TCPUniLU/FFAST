@@ -117,7 +117,7 @@ class sGDMLDatasetLoader(DatasetLoader):
     datasetFileExtension = "*.npz"
 
     def __init__(self, path, *args, **kwargs):
-        super().__init__(path)
+        super().__init__(path, *args, **kwargs)
         self.data = np.load(path, allow_pickle=True)
         self.chem = self.zToChemicalFormula(self.data["z"])
 

@@ -420,7 +420,7 @@ class Environment(EventClass):
             return ds
 
     def taskLoadDataset(self, path, datasetType, selected_energy_key=None,
-                        selected_force_key=None, prediction_keys=None, slice_num=0):
+                        selected_force_key=None, prediction_keys=None, slice_num=0, file_size=0):
         """Load dataset and optionally load predictions from same file.
         Args:
             path: Path to dataset file
@@ -429,6 +429,7 @@ class Environment(EventClass):
             selected_force_key: Pre-selected force key for reference (ASE only)
             prediction_keys: List of (energy_key, force_key, model_name) tuples
             :param slice_num: slicing number for sampled load of datasets.
+            :param file_size: size of the dataset on disk in GB.
         """
         self.newTask(
             self.loadDataset,
@@ -437,7 +438,8 @@ class Environment(EventClass):
                 'selected_energy_key': selected_energy_key,
                 'selected_force_key': selected_force_key,
                 'prediction_keys': prediction_keys,
-                'slice_num': slice_num
+                'slice_num': slice_num,
+                'file_size': file_size
             },
             visual=True,
             name="Loading dataset",
@@ -445,7 +447,7 @@ class Environment(EventClass):
         )
 
     def loadDataset(self, path, datasetType, taskID=None, selected_energy_key=None,
-                    selected_force_key=None, prediction_keys=None, slice_num=0):
+                    selected_force_key=None, prediction_keys=None, slice_num=0, file_size=0):
         """Load dataset and create ghost models for prediction keys."""
         # logger.info(f"self.datasetTypes:\n{self.datasetTypes}\narg datasetType:\n{datasetType}")
         if not os.path.exists(path):
@@ -467,13 +469,14 @@ class Environment(EventClass):
                     selected_force_key=selected_force_key,
                     prediction_keys=prediction_keys,
                     show_dialog=False,  # Dialog already shown on main thread
-                    slice_num=slice_num
+                    slice_num=slice_num,
+                    file_size=file_size
                 )
             except Exception as e:
                 logger.error(f"Failed to load dataset {path} in method 'loadDataset'")
                 return None
         else:
-            result = self.datasetTypes[datasetType](path)
+            result = self.datasetTypes[datasetType](path, file_size=file_size)
 
         # Handle SmartASELoader return value (tuple) or regular loader (dataset object)
         if isinstance(result, tuple):

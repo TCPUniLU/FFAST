@@ -50,7 +50,7 @@ class DatasetLoader(EventClass):
     frozen = False
     isVariable = False  # Flag for uniform (False) vs variable-sized (True) datasets
 
-    def __init__(self, path):
+    def __init__(self, path, file_size=0, *args, **kwargs):
         self.path = path
 
         global GLOBAL_DATASETS_COUNTER
@@ -60,6 +60,8 @@ class DatasetLoader(EventClass):
         self.color = hexToRGB(colors[GLOBAL_DATASETS_COUNTER % nColors])
 
         GLOBAL_DATASETS_COUNTER += 1
+        self.sizeGb = file_size
+
 
     loadeeType = "dataset"
 
@@ -237,7 +239,7 @@ class VariableDatasetLoader(EventClass):
     loaded = False
     active = True
 
-    def __init__(self, path):
+    def __init__(self, path, file_size=0, *args, **kwargs):
         self.path = path
 
         global GLOBAL_DATASETS_COUNTER
@@ -255,6 +257,7 @@ class VariableDatasetLoader(EventClass):
         self.z_flat = None          # (total_atoms,)
         self.molecule_offsets = None  # (N+1,)
         self.N = None               # Number of molecules
+        self.sizeGb = file_size
 
     def isUniform(self):
         """Check if this dataset has uniform molecular structures."""
