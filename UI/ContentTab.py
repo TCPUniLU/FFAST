@@ -191,3 +191,5 @@ class DatasetModelSelector(Widget, EventChildClass):
 
         for func in self.updateCallbacks:
             func(modelKeys, datasetKeys)
+
+        self.eventPush("DatasetModelPairSelected")

@@ -203,6 +203,10 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self.applyLegend()
         self.applyStyle()
 
+        # PRECOMPUTE PLOTS
+
+        self.eventSubscribe("DatasetModelPairSelected", self.autoCompute)
+
     def applyToolbar(self, title="N/A"):
         layout = self.toolbar.layout
         layout.setContentsMargins(20, 0, 0, 0)
@@ -659,6 +663,9 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
 
         self.visualRefresh()  # includes legend
 
+    def autoCompute(self):
+        self.dataWatcher.loadContent()
+
     def addOption(self, widget):
         self.optionsToolbar.layout.insertWidget(0, widget)
 
@@ -729,6 +736,9 @@ class Table(Widget, EventChildClass, DataDependentObject):
             "OBJECT_NAME_CHANGED", self.onModelDatasetNameChanged
         )
 
+        # PRECOMPUTE
+        self.eventSubscribe("DatasetModelPairSelected", self.autoCompute)
+
     def applyToolbar(self, title="N/A"):
         layout = self.toolbar.layout
         layout.setContentsMargins(20, 0, 0, 0)
@@ -775,6 +785,9 @@ class Table(Widget, EventChildClass, DataDependentObject):
 
     def onModelDatasetNameChanged(self, key):
         pass
+
+    def autoCompute(self):
+        self.dataWatcher.loadContent()
 
     def setValue(self, *args):
         self.table.setValue(*args)
