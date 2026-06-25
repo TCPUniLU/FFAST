@@ -101,8 +101,9 @@ def loadUI(UIHandler, env):
     from UI.Templates import Slider
     from PySide6.QtWidgets import QMessageBox
 
-    ct = ContentTab(UIHandler)
-    UIHandler.addContentTab(ct, "Gyration")
+    tab_name = "Gyration"
+    ct = ContentTab(UIHandler, tab_name)
+    UIHandler.addContentTab(ct, tab_name)
 
     class GyradiusPlot(BasicPlotWidget):
         smoothing = 1
@@ -416,18 +417,18 @@ def loadUI(UIHandler, env):
 
             return idxs
 
-    plt = GyradiusPlot(UIHandler, parent=ct)
+    plt = GyradiusPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 0, 0)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
-    plt = GyradiusEnergyPlot(UIHandler, parent=ct)
+    plt = GyradiusEnergyPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 0, 1)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
-    plt = GyradiusDistPlot(UIHandler, parent=ct)
+    plt = GyradiusDistPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 1, 0)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
-    plt = GyradiusEnergyErrorPlot(UIHandler, parent=ct)
+    plt = GyradiusEnergyErrorPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 1, 1)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)

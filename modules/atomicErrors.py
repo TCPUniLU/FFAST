@@ -149,10 +149,11 @@ def loadUI(UIHandler, env):
     from UI.Templates import FlexibleListSelector
     from config.atoms import atomColors, zIntToZStr
 
+    tab_name = "Atomic Errors"
     ct = ContentTab(
-        UIHandler, hasDataSelector=False
+        UIHandler, tabName=tab_name, hasDataSelector=False
     )  # adding a new one manually
-    UIHandler.addContentTab(ct, "Atomic Errors")
+    UIHandler.addContentTab(ct, tab_name)
 
     class AtomLabel(ListCheckButton):
         def __init__(self, atomIndex, *args, **kwargs):
@@ -166,8 +167,8 @@ def loadUI(UIHandler, env):
 
         lastSelectedDatasets = set()
 
-        def __init__(self, UIHandler, parent=None):
-            super().__init__(UIHandler, parent=parent)
+        def __init__(self, UIHandler, parent=None, tabName=None):
+            super().__init__(UIHandler, parent=parent, tabName=tabName)
             self.atomsList = FlexibleListSelector(
                 parent=self, label="Selected elements", elementSize=50
             )
@@ -224,7 +225,7 @@ def loadUI(UIHandler, env):
                 label = AtomLabel(i, parent=self.atomsList)
                 self.atomsList.addWidget(label)
 
-    dataselector = AtomicDatasetModelSelector(UIHandler, parent=ct)
+    dataselector = AtomicDatasetModelSelector(UIHandler, parent=ct, tabName = tab_name)
     ct.setDataSelector(dataselector)
 
     class ForcesErrorDistPlot(BasicPlotWidget):
@@ -233,7 +234,7 @@ def loadUI(UIHandler, env):
                 handler,
                 title="Forces MAE distribution",
                 isSubbable=False,
-                name="Force Error Distribution",
+                name="Force Error Distribution Atomic",
                 **kwargs,
             )
             self.setDataDependencies(
@@ -285,7 +286,7 @@ def loadUI(UIHandler, env):
                         else:
                             self.plot(x, y, autoColor=data, autoLabel=data)
 
-    plt = ForcesErrorDistPlot(UIHandler, parent=ct)
+    plt = ForcesErrorDistPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 0, 0)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
@@ -296,6 +297,12 @@ def loadUI(UIHandler, env):
             )
             ct.addDataSelectionCallback(self.setModelDatasetDependencies)
             self.setDataDependencies("atomicForcesError", "forcesErrorMetrics")
+            self.eventSubscribe("PlotLoadPushed", self.plotLoadPushed)
+            self.dependantPlot = "Force Error Distribution Atomic"
+
+        def plotLoadPushed(self, name):
+            if name == self.dependantPlot:
+                self.dataWatcher.loadContent()
 
         def getPairs(self):
             datasets = self.getDatasetDependencies()

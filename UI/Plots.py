@@ -109,6 +109,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         handler,
         name="N/A",
         title="N/A",
+        tabName="N/A",
         hasLegend=True,
         isSubbable=True,
         color="@BGColor3",
@@ -118,6 +119,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self.env = handler.env
         self.name = name
         self.isSubbable = isSubbable
+        self.tabName = tabName
 
         super().__init__(
             layout="vertical",
@@ -128,6 +130,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         EventChildClass.__init__(self)
         DataDependentObject.__init__(self)
 
+        self.dataWatcher.setPlotName(name)
         self.plotItems = []
         self.labelsList = []
         self.hasLegend = hasLegend
@@ -663,8 +666,16 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
 
         self.visualRefresh()  # includes legend
 
-    def autoCompute(self):
-        self.dataWatcher.loadContent()
+    def autoCompute(self, tabName):
+        if self.tabName != tabName:  # We do not want to answer to the events pushed by other tabs.
+            return
+
+        print(f'"pair selected" event received from tab {tabName} by tab {self.tabName}: {self.name}')
+        if self.name == "Energy Error Distribution" or self.name == "Force Error Distribution":
+            # basic energy and force errors are auto computed in any circumstances.
+            self.dataWatcher.loadContent(plot_called=False)
+        else:
+            self.dataWatcher.loadContent(plot_called=True)
 
     def addOption(self, widget):
         self.optionsToolbar.layout.insertWidget(0, widget)
@@ -736,9 +747,6 @@ class Table(Widget, EventChildClass, DataDependentObject):
             "OBJECT_NAME_CHANGED", self.onModelDatasetNameChanged
         )
 
-        # PRECOMPUTE
-        self.eventSubscribe("DatasetModelPairSelected", self.autoCompute)
-
     def applyToolbar(self, title="N/A"):
         layout = self.toolbar.layout
         layout.setContentsMargins(20, 0, 0, 0)
@@ -785,9 +793,6 @@ class Table(Widget, EventChildClass, DataDependentObject):
 
     def onModelDatasetNameChanged(self, key):
         pass
-
-    def autoCompute(self):
-        self.dataWatcher.loadContent()
 
     def setValue(self, *args):
         self.table.setValue(*args)

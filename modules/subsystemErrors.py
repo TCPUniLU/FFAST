@@ -98,10 +98,11 @@ def loadUI(UIHandler, env):
     from UI.Plots import BasicPlotWidget, Table
     from UI.Templates import HorizontalContainerScrollArea
 
+    tab_name = "Subsystem Errors"
     ct = ContentTab(
-        UIHandler, hasDataSelector=True
+        UIHandler, tabName=tab_name, hasDataSelector=True
     )  # adding a new one manually
-    UIHandler.addContentTab(ct, "Subsystem Errors")
+    UIHandler.addContentTab(ct, tab_name)
 
     class ForcesErrorSubsysDistPlot(BasicPlotWidget):
         def __init__(self, handler, **kwargs):
@@ -129,7 +130,7 @@ def loadUI(UIHandler, env):
                 x, y = de.get("distX"), de.get("distY")
                 self.plot(x, y, autoColor=data, autoLabel=data)
 
-    plt = ForcesErrorSubsysDistPlot(UIHandler, parent=ct)
+    plt = ForcesErrorSubsysDistPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 0, 0)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
@@ -161,6 +162,12 @@ def loadUI(UIHandler, env):
         def __init__(self):
             super().__init__(title="Forces MAE")
             self.setDataDependencies("forcesErrorSubsysMetrics")
+            self.eventSubscribe("PlotLoadPushed", self.plotLoadPushed)
+            self.dependantPlot = "Subsystem Force Error Distribution"
+
+        def plotLoadPushed(self, name):
+            if name == self.dependantPlot:
+                self.dataWatcher.loadContent()
 
         def getValue(self, i, j):
             env = self.handler.env

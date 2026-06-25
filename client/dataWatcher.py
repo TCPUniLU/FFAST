@@ -36,14 +36,19 @@ class DataWatcher(EventChildClass):
         self.currentlyMissingKeys = []
         self.refreshWidgets = []
         self.callbacks = []
+        self.plotName = None
 
     allDatasets = False
     allModels = False
     parentName = None
+
     # updateKey = 0
 
     # def getUpdateKey(self):
     #     return self.updateKey
+
+    def setPlotName(self, name):
+        self.plotName = name
 
     def setDataDependencies(self, *args):
         self.dataTypeDependencies = []
@@ -98,7 +103,7 @@ class DataWatcher(EventChildClass):
 
     def isDependentOn(self, key):
         return (key in self.getModelDependencies()) or (
-            key in self.getDatasetDependencies()
+                key in self.getDatasetDependencies()
         )
 
     def setModelDatasetDependencies(self, modelKeys, datasetKeys):
@@ -145,18 +150,18 @@ class DataWatcher(EventChildClass):
         env = self.env
 
         if len(self.dataTypeDependencies) < 1 or (
-            self.dataTypeDependencies[0] is None
+                self.dataTypeDependencies[0] is None
         ):
             self.refresh()
             return
 
         datasetDependencies = (
-            self.allDatasets
-            and env.getAllDatasetKeys()
-            or self.datasetDependencies
+                self.allDatasets
+                and env.getAllDatasetKeys()
+                or self.datasetDependencies
         )
         modelDependencies = (
-            self.allModels and env.getAllModelKeys() or self.modelDependencies
+                self.allModels and env.getAllModelKeys() or self.modelDependencies
         )
 
         for dataTypeKey in self.dataTypeDependencies:
@@ -183,9 +188,9 @@ class DataWatcher(EventChildClass):
                     if (dataset is None) and dataType.datasetDependent:
                         continue
                     if (
-                        dataset.isSubDataset
-                        and dataset.isAtomFiltered
-                        and (dataType.atomFilterable or dataType.atomConstant)
+                            dataset.isSubDataset
+                            and dataset.isAtomFiltered
+                            and (dataType.atomFilterable or dataType.atomConstant)
                     ):
                         key = dataType.getCacheKey(
                             model=model, dataset=dataset.parent
@@ -218,7 +223,7 @@ class DataWatcher(EventChildClass):
 
     def onDataUpdated(self, cacheKey):
         if (cacheKey not in self.dependencyList) and (
-            cacheKey not in self.refreshList
+                cacheKey not in self.refreshList
         ):
             return
 
@@ -276,11 +281,26 @@ class DataWatcher(EventChildClass):
         # everytime the other dataWatcher gets updated, updates this one to the same values
         pass
 
-    def loadContent(self):
+    def loadContent(self, plot_called=False):
         env = self.env
         deps = self.getMissingDependencies()
-        for dep in deps:
-            env.generationQueue.add(dep)
+        if not plot_called:
+            for dep in deps:
+                env.generationQueue.add(dep)
+            if self.plotName is not None and len(deps) > 0:
+                self.eventPush("PlotLoadPushed", self.plotName)
+                print(f'"PlotLoadPushed" event pushed from {self.plotName}')
+        else:  # plot_called = True -> This method is called by a plot to automatically compute plots' data.
+            # If the dataset is more than 3 GB, according to requirements, it should not be automatically computed.
+            flag = False  # A flag to indicate whether the plot for any dataset/prediction pair is added to the queue
+            for dep in deps:
+                dt, md, dataset = env.cacheKeyToComponents(dep)
+                if dataset.sizeGb < 3:
+                    env.generationQueue.add(dep)
+                    flag = True
+            if self.plotName is not None and len(deps) > 0 and flag:
+                self.eventPush("PlotLoadPushed", self.plotName)
+                print(f'"PlotLoadPushed" event pushed from {self.plotName}')
 
     def addCallback(self, func):
         self.callbacks.append(func)

@@ -324,7 +324,7 @@ def loadData(env):
     env.registerDataType(ForcesErrorMetrics)
 
 
-def loadUIRMSE(UIHandler, ct, culIdx):
+def loadUIRMSE(UIHandler, ct, tab_name, culIdx):
     from UI.Plots import BasicPlotWidget
     from UI.Templates import Slider
     class ForcesErrorRMSEDistPlot(BasicPlotWidget):
@@ -425,11 +425,11 @@ def loadUIRMSE(UIHandler, ct, culIdx):
                 min(N, int(x1 + self.smoothing)),
             )
 
-    plt = ForcesErrorRMSEDistPlot(UIHandler, parent=ct)
+    plt = ForcesErrorRMSEDistPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, culIdx, 0)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
-    plt = ForcesErrorRMSETimelinePlot(UIHandler, parent=ct)
+    plt = ForcesErrorRMSETimelinePlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, culIdx, 1)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
@@ -440,8 +440,9 @@ def loadUI(UIHandler, env):
     from UI.Templates import Slider, HorizontalContainerScrollArea
     from PySide6.QtWidgets import QCheckBox
 
-    ct = ContentTab(UIHandler)
-    UIHandler.addContentTab(ct, "Basic Errors")
+    tab_name = "Basic Errors"
+    ct = ContentTab(UIHandler, tab_name)
+    UIHandler.addContentTab(ct, tab_name)
 
     # Energy shift checkbox (global toggle)
     shiftCheckBox = QCheckBox("Subtract mean energy offset", parent=ct)
@@ -716,23 +717,23 @@ def loadUI(UIHandler, env):
                 min(N, int(x1 + self.smoothing)),
             )
 
-    plt = EnergyErrorDistPlot(UIHandler, parent=ct)
+    plt = EnergyErrorDistPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 0, 0)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
-    plt = ForcesErrorDistPlot(UIHandler, parent=ct)
+    plt = ForcesErrorDistPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 0, 1)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
-    plt = EnergyErrorPlot(UIHandler, parent=ct)
+    plt = EnergyErrorPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 1, 0)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
-    plt = ForcesErrorPlot(UIHandler, parent=ct)
+    plt = ForcesErrorPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 1, 1)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
-    loadUIRMSE(UIHandler, ct, 2)
+    loadUIRMSE(UIHandler, ct, tab_name, 2)
 
     # TABLES
     scrollContainer = HorizontalContainerScrollArea(parent=ct)
@@ -765,6 +766,12 @@ def loadUI(UIHandler, env):
             self.eventSubscribe(
                 "ENERGY_SHIFT_CHANGED", self.onEnergyShiftChanged
             )
+            self.eventSubscribe("PlotLoadPushed", self.plotLoadPushed)
+            self.dependantPlot = "Energy Error Distribution"
+
+        def plotLoadPushed(self, name):
+            if name == self.dependantPlot:
+                self.dataWatcher.loadContent()
 
         def onEnergyShiftChanged(self):
             shifted = self.handler.energyShiftEnabled
@@ -824,6 +831,12 @@ def loadUI(UIHandler, env):
         def __init__(self):
             super().__init__(title="Forces MAE")
             self.setDataDependencies("forcesErrorMetrics")
+            self.eventSubscribe("PlotLoadPushed", self.plotLoadPushed)
+            self.dependantPlot = "Force Error Distribution"
+
+        def plotLoadPushed(self, name):
+            if name == self.dependantPlot:
+                self.dataWatcher.loadContent()
 
         def getValue(self, i, j):
             env = self.handler.env
@@ -962,7 +975,7 @@ def loadUI(UIHandler, env):
             else:
                 return idxs[args]
 
-    plt = EnergyScatterPlot(UIHandler, parent=ct)
+    plt = EnergyScatterPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 4, 0)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)
 
@@ -1079,6 +1092,6 @@ def loadUI(UIHandler, env):
 
             return idxs
 
-    plt = ForcesScatterPlot(UIHandler, parent=ct)
+    plt = ForcesScatterPlot(UIHandler, tabName=tab_name, parent=ct)
     ct.addWidget(plt, 4, 1)
     ct.addDataSelectionCallback(plt.setModelDatasetDependencies)

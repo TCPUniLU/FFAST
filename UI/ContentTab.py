@@ -42,6 +42,7 @@ class ContentTab(ExpandingScrollArea):
     def __init__(
         self,
         handler,
+        tabName,
         hasDataSelector=True,
         hasModels=True,
         hasDatasets=True,
@@ -49,6 +50,7 @@ class ContentTab(ExpandingScrollArea):
         **kwargs
     ):
         self.handler = handler
+        self.tabName = tabName
         super().__init__(**kwargs)
         # self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
@@ -81,7 +83,7 @@ class ContentTab(ExpandingScrollArea):
         self.topLayout.addWidget(self.dataSelector)
 
     def addDataSelector(self, **kwargs):
-        ds = DatasetModelSelector(self.handler, parent=self, **kwargs)
+        ds = DatasetModelSelector(self.handler, tabName=self.tabName, parent=self, **kwargs)
         self.setDataSelector(ds)
 
 
@@ -89,9 +91,10 @@ class DatasetModelSelector(Widget, EventChildClass):
 
     quiet = False
 
-    def __init__(self, handler, hasModels=True, hasDatasets=True, **kwargs):
+    def __init__(self, handler, tabName=None, hasModels=True, hasDatasets=True, **kwargs):
         self.handler = handler
         self.env = handler.env
+        self.tabName = tabName
         super().__init__(layout="vertical", **kwargs)
         EventChildClass.__init__(self)
         self.updateCallbacks = []
@@ -101,6 +104,12 @@ class DatasetModelSelector(Widget, EventChildClass):
 
         self.hasModels = hasModels
         self.hasDatasets = hasDatasets
+
+
+        # Check, if the previously selected pairs are identical in the current update function call, then don't push
+        # "DatasetModelPairSelected" event.
+        self.previousModelKeys = set()
+        self.previousDatasetKeys = set()
 
         if hasModels:
             # CREATE LISTS AND ADD THEM TO THE LAYOUTS
@@ -192,4 +201,9 @@ class DatasetModelSelector(Widget, EventChildClass):
         for func in self.updateCallbacks:
             func(modelKeys, datasetKeys)
 
-        self.eventPush("DatasetModelPairSelected")
+        if not(set(modelKeys) == self.previousModelKeys and set(datasetKeys) == self.previousDatasetKeys) \
+                and self.tabName is not None:
+            self.eventPush("DatasetModelPairSelected", self.tabName)
+            self.previousModelKeys = set(modelKeys)
+            self.previousDatasetKeys = set(datasetKeys)
+            print(f'"dataset model pair selection" event by tab {self.tabName}')
