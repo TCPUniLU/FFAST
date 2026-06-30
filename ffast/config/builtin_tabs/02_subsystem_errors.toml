@@ -1,0 +1,34 @@
+# Subsystem Errors — net-force error distribution + MAE/RMSE tables.
+# Fully declarative (standard kinds only); the legacy modules/subsystemErrors.py
+# was retired once this reached parity.
+[[tabs]]
+name = "Subsystem Errors"
+has_data_selector = true
+
+[[tabs.panels]]
+kind = "density"
+row = 0
+col = 0
+colspan = 2
+title = "Forces MAE distribution"
+x_label = ["Forces MAE", "forceUnit"]
+tooltip = "Difference (MAE) between predicted and ab-initio net force on the system."
+  [tabs.panels.metrics.value]
+  metric = "ffast.force_net_mae_per_structure"
+  transform = "mirror_kde"
+
+[[tabs.panels]]
+kind = "table"
+row = 1
+col = 0
+title = "Forces MAE"
+  [tabs.panels.metrics.value]
+  metric = "ffast.force_net_mae"
+
+[[tabs.panels]]
+kind = "table"
+row = 1
+col = 1
+title = "Forces RMSE"
+  [tabs.panels.metrics.value]
+  metric = "ffast.force_net_rmse"

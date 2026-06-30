@@ -1,0 +1,140 @@
+# Basic Errors — energy/force MAE+RMSE distributions, timelines, scalar tables
+# (in a horizontal scroll strip) and true-vs-predicted scatter. A tab-level
+# energy-shift toggle drives the shared `shifted` compute-param across every
+# energy Panel. Fully declarative (ADR 0021); the legacy modules/basicErrors.py
+# was retired once this reached parity. Uses the `scroll_group` layout hint and
+# the `energy_shift` tab control.
+[[tabs]]
+name = "Basic Errors"
+has_data_selector = true
+controls = ["energy_shift"]
+
+# --- row 0: MAE distributions --------------------------------------------- #
+[[tabs.panels]]
+kind = "density"
+row = 0
+col = 0
+title = "Energy MAE distribution"
+x_label = ["Energy MAE", "energyUnit"]
+hidden_params = ["shifted"]
+  [tabs.panels.metrics.value]
+  metric = "ffast.energy_difference_density"
+
+[[tabs.panels]]
+kind = "density"
+row = 0
+col = 1
+title = "Forces MAE distribution"
+x_label = ["Forces MAE", "forceUnit"]
+  [tabs.panels.metrics.value]
+  metric = "ffast.force_mae_per_structure_density"
+
+# --- row 1: MAE timelines -------------------------------------------------- #
+[[tabs.panels]]
+kind = "timeline"
+row = 1
+col = 0
+title = "Energy MAE timeline"
+y_label = ["Energy MAE", "energyUnit"]
+hidden_params = ["shifted"]
+  [tabs.panels.metrics.y]
+  metric = "ffast.energy_error_smoothed"
+
+[[tabs.panels]]
+kind = "timeline"
+row = 1
+col = 1
+title = "Forces MAE timeline"
+y_label = ["Forces MAE", "forceUnit"]
+  [tabs.panels.metrics.y]
+  metric = "ffast.force_mae_per_structure_smoothed"
+
+# --- row 2: Forces RMSE distribution + timeline ---------------------------- #
+[[tabs.panels]]
+kind = "density"
+row = 2
+col = 0
+title = "Forces RMSE distribution"
+x_label = ["Forces RMSE", "forceUnit"]
+  [tabs.panels.metrics.value]
+  metric = "ffast.force_rmse_density"
+
+[[tabs.panels]]
+kind = "timeline"
+row = 2
+col = 1
+title = "Forces RMSE timeline"
+y_label = ["Forces RMSE", "forceUnit"]
+  [tabs.panels.metrics.y]
+  metric = "ffast.force_rmse_smoothed"
+
+# --- row 3: scalar tables in a horizontal scroll strip --------------------- #
+[[tabs.panels]]
+kind = "table"
+row = 3
+col = 0
+colspan = 2
+scroll_group = "tables"
+title = "Energy MAE"
+hidden_params = ["shifted"]
+  [tabs.panels.metrics.value]
+  metric = "ffast.energy_mae_p"
+
+[[tabs.panels]]
+kind = "table"
+row = 3
+col = 0
+colspan = 2
+scroll_group = "tables"
+title = "Energy RMSE"
+hidden_params = ["shifted"]
+  [tabs.panels.metrics.value]
+  metric = "ffast.energy_rmse_p"
+
+[[tabs.panels]]
+kind = "table"
+row = 3
+col = 0
+colspan = 2
+scroll_group = "tables"
+title = "Forces MAE"
+  [tabs.panels.metrics.value]
+  metric = "ffast.force_component_mae"
+
+[[tabs.panels]]
+kind = "table"
+row = 3
+col = 0
+colspan = 2
+scroll_group = "tables"
+title = "Forces RMSE"
+  [tabs.panels.metrics.value]
+  metric = "ffast.force_component_rmse"
+
+# --- row 4: true-vs-predicted scatter -------------------------------------- #
+[[tabs.panels]]
+kind = "scatter"
+row = 4
+col = 0
+title = "Energy Scatter"
+diagonal = true
+x_label = ["True Energy", "energyUnit"]
+y_label = ["Predicted Energy", "energyUnit"]
+hidden_params = ["shifted"]
+  [tabs.panels.metrics.x]
+  metric = "ffast.energy_reference"
+  [tabs.panels.metrics.y]
+  metric = "ffast.energy_prediction_shifted"
+
+[[tabs.panels]]
+kind = "scatter"
+row = 4
+col = 1
+title = "Forces Scatter"
+diagonal = true
+x_label = ["True Forces", "forcesUnit"]
+y_label = ["Predicted Forces", "forcesUnit"]
+  [tabs.panels.metrics.x]
+  metric = "ffast.force_reference"
+  [tabs.panels.metrics.y]
+  metric = "ffast.force_prediction"

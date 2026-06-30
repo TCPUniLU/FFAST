@@ -1,0 +1,65 @@
+# Gyration — smoothed gyradius timeline, distribution, and two normalised
+# overlays (gyradius vs energy / forces MAE). Uses the overlay_timeline kind +
+# a shared smoothing control. The legacy "Gyration" tab (modules/loupeGyradius.py)
+# was retired once this reached parity.
+[[tabs]]
+name = "Gyration"
+has_data_selector = true
+
+[[tabs.panels]]
+kind = "timeline"
+row = 0
+col = 0
+title = "Total gyration radius"
+y_label = "Gyration radius"
+tooltip = "Gyration radius of each structure in the dataset."
+  [tabs.panels.metrics.y]
+  metric = "ffast.gyradius"
+  transform = "smooth"
+
+[[tabs.panels]]
+kind = "density"
+row = 1
+col = 0
+title = "Gyradius distribution"
+x_label = "Gyradius"
+tooltip = "Gyration radius distribution."
+  [tabs.panels.metrics.value]
+  metric = "ffast.gyradius"
+  transform = "value_kde"
+
+[[tabs.panels]]
+kind = "overlay_timeline"
+row = 0
+col = 1
+title = "Gyradius & Energy Timeline"
+y_label = "Gyradius/Energy (Normalised)"
+tooltip = "Gyration radius and energy of each structure (each normalised)."
+hidden_params = ["window"]
+controls = ["smoothing"]
+  [tabs.panels.options]
+  series_labels = ["Gyradius __NAME__", "Energy __NAME__"]
+  [[tabs.panels.metrics.series]]
+  metric = "ffast.gyradius"
+  transform = "smooth"
+  [[tabs.panels.metrics.series]]
+  metric = "ffast.energy_reference"
+  transform = "smooth"
+
+[[tabs.panels]]
+kind = "overlay_timeline"
+row = 1
+col = 1
+title = "Gyradius & Forces MAE Timeline"
+y_label = "Gyradius/Forces MAE (Normalised)"
+tooltip = "Gyration radius and predicted force MAE of each structure (each normalised)."
+hidden_params = ["window"]
+controls = ["smoothing"]
+  [tabs.panels.options]
+  series_labels = ["Gyradius __NAME__", "Forces MAE __NAME__"]
+  [[tabs.panels.metrics.series]]
+  metric = "ffast.gyradius"
+  transform = "smooth"
+  [[tabs.panels.metrics.series]]
+  metric = "ffast.force_mae_per_structure"
+  transform = "smooth"

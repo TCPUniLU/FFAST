@@ -1,0 +1,37 @@
+# Atomic Errors — per-element force error distribution + per-element MAE/RMSE
+# table, driven by the element-picker selector. Now fully declarative (Phase 5h):
+# the per-element distribution is a server-side metric of shape
+# (N_elements, curve_xy, grid) drawn by the GENERIC grouped_density kind, and the
+# table binds per-element metrics via the generic grouped_table kind — the
+# selector is the colour/legend channel (Vega-Lite grouping). No bespoke kinds or
+# inline reduction; the element picker is the only custom piece. The legacy
+# modules/atomicErrors.py was retired once this reached parity.
+[[tabs]]
+name = "Atomic Errors"
+selector = "atomic"
+
+[[tabs.panels]]
+kind = "grouped_density"
+row = 0
+col = 0
+title = "Forces MAE distribution"
+x_label = ["Forces MAE", "forceUnit"]
+tooltip = "Per-structure force MAE distribution per selected element."
+  [tabs.panels.metrics.value]
+  metric = "ffast.force_mae_per_structure_per_element_kde"
+  [tabs.panels.metrics.aggregate]
+  metric = "ffast.force_mae_per_structure_density"
+
+[[tabs.panels]]
+kind = "grouped_table"
+row = 1
+col = 0
+title = "Atomic Errors"
+  [tabs.panels.metrics.mae]
+  metric = "ffast.force_mae_per_element"
+  [tabs.panels.metrics.rmse]
+  metric = "ffast.force_rmse_per_element"
+  [tabs.panels.metrics.mae_all]
+  metric = "ffast.force_component_mae"
+  [tabs.panels.metrics.rmse_all]
+  metric = "ffast.force_component_rmse"
