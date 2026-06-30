@@ -1,120 +1,69 @@
 import os
-import sys
-from events import EventClass
 from PySide6.QtWidgets import QFileDialog
 from UI.Templates import customFileDialog, BigDatasetWarningDialog, RemoteStrideDialog
-from collections.abc import Mapping, Container
+from UI.menuShared import MenuHandlerBase
+from UI.menuLogic import (
+    resolve_key_options,
+    stride_to_slice_num,
+    parse_host_port,
+    latest_session_record,
+)
+from utils import deep_getsizeof
 from client.dataType import AtomsList
 
 
-def deep_getsizeof(obj, seen=None):
+class MainMenuHandler(MenuHandlerBase):
+    """Main-window menu: session, dataset/model/prediction load, cluster, remote.
+
+    Reaches into ``self.handler.env``. The heavy remote-load flows are async
+    orchestration that bridges Qt dialogs and the RPC session; the pure
+    decisions they make live in ``UI.menuLogic``.
     """
-    Function to calculate the size of an object on memory in bites.
-    :param obj: Desired object
-    :param seen: Flag to avoid double counting of objects.
-    :return: Size of the object in bytes.
-    """
-    if seen is None:
-        seen = set()
-
-    obj_id = id(obj)
-    if obj_id in seen:
-        return 0
-    seen.add(obj_id)
-
-    size = sys.getsizeof(obj)
-
-    if isinstance(obj, Mapping):
-        size += sum(deep_getsizeof(k, seen) + deep_getsizeof(v, seen) for k, v in obj.items())
-    elif isinstance(obj, (list, tuple, set, frozenset)):
-        size += sum(deep_getsizeof(i, seen) for i in obj)
-    elif hasattr(obj, "__dict__"):
-        size += deep_getsizeof(obj.__dict__, seen)
-    elif hasattr(obj, "__slots__"):
-        for slot in obj.__slots__:
-            if hasattr(obj, slot):
-                size += deep_getsizeof(getattr(obj, slot), seen)
-
-    return size
-
-
-class MenuHandler(EventClass):
-    def __init__(self, window, mode="main"):
-        self.handler = window.handler
-        self.window = window
-        self.mode = mode  # either "main" for the main window or "loupe" for loupes.
-        self.connectActions()
 
     def connectActions(self):
         handler, window = (self.handler, self.window)
         mb = window.menuBar()
-        if self.mode == 'main':
-            # FILE
-            File = mb.addMenu("&File")
-            File.addAction("Save", self.onSave, "Ctrl+s")
-            File.addAction("Load", self.onLoad, "Ctrl+l")
 
-            File.addAction("Load Dataset", self.onDatasetLoad, "Ctrl+d")
-            File.addAction("Load Model", self.onModelLoad, "Ctrl+m")
+        # FILE
+        File = mb.addMenu("&File")
+        File.addAction("Save", self.onSave, "Ctrl+s")
+        File.addAction("Load", self.onLoad, "Ctrl+l")
 
-            File.addAction("Load Zero Model", self.onZeroModelLoad, "Ctrl+0")
-            File.addAction("Load Prediction", self.onPrepredictedModelLoad, "Ctrl+p")
+        File.addAction("Load Dataset", self.onDatasetLoad, "Ctrl+d")
+        File.addAction("Load Model", self.onModelLoad, "Ctrl+m")
 
-            File.addSeparator()
-            File.addAction(
-                "Connect to Cluster…",
-                self.onConnectToCluster,
-                "Ctrl+Shift+C",
-            )
-            File.addAction(
-                "Connect to Local Server…",
-                self.onConnectLocalServer,
-                "Ctrl+Shift+L",
-            )
-            File.addAction(
-                "Load Remote Dataset…",
-                self.onRemoteDatasetLoad,
-                "Ctrl+Shift+D",
-            )
-            File.addAction(
-                "Load Remote Prediction…",
-                self.onRemotePredictionLoad,
-                "Ctrl+Shift+P",
-            )
+        File.addAction("Load Zero Model", self.onZeroModelLoad, "Ctrl+0")
+        File.addAction("Load Prediction", self.onPrepredictedModelLoad, "Ctrl+p")
 
-            # File.addAction("Preferences", self.onPreferences)
-            # File.addAction("Exit", self.onExit)
+        File.addAction("Load Config…", self.onConfigLoad)
 
-        # LOUPE
-        Loupe = mb.addMenu("&3D &View")
-        Loupe.addAction("New", self.newLoupe, "Ctrl+n")
-        Loupe.addSeparator()
-        if self.mode == "loupe":
-            # Bond Width submenu
-            bondMenu = Loupe.addMenu("Bond Width")
-            bondMenu.addAction("Thin (10)", lambda: self.setBondWidth(10))
-            bondMenu.addAction("Normal (25)", lambda: self.setBondWidth(25))
-            bondMenu.addAction("Thick (50)", lambda: self.setBondWidth(50))
-            bondMenu.addAction("Extra Thick (100)", lambda: self.setBondWidth(100))
-            # TODO: add custom bond width dialog
-            # bondMenu.addSeparator()
-            # bondMenu.addAction("Custom...", self.showBondWidthDialog)
+        File.addSeparator()
+        File.addAction(
+            "Connect to Cluster…",
+            self.onConnectToCluster,
+            "Ctrl+Shift+C",
+        )
+        File.addAction(
+            "Connect to Local Server…",
+            self.onConnectLocalServer,
+            "Ctrl+Shift+L",
+        )
+        File.addAction(
+            "Load Remote Dataset…",
+            self.onRemoteDatasetLoad,
+            "Ctrl+Shift+D",
+        )
+        File.addAction(
+            "Load Remote Prediction…",
+            self.onRemotePredictionLoad,
+            "Ctrl+Shift+P",
+        )
 
-            # Atom Size submenu
-            atomMenu = Loupe.addMenu("Atom Size")
-            atomMenu.addAction("50%", lambda: self.setAtomSize(0.5))
-            atomMenu.addAction("75%", lambda: self.setAtomSize(0.75))
-            atomMenu.addAction("100%", lambda: self.setAtomSize(1.0))
-            atomMenu.addAction("150%", lambda: self.setAtomSize(1.5))
-            atomMenu.addAction("200%", lambda: self.setAtomSize(2.0))
-            # TODO: add custom atom size dialog
-            # atomMenu.addSeparator()
-            # atomMenu.addAction("Custom...", self.showAtomSizeDialog)
+        # File.addAction("Preferences", self.onPreferences)
+        # File.addAction("Exit", self.onExit)
 
-            # Colors submenu
-            colorMenu = Loupe.addMenu("Colors")
-            colorMenu.addAction("Bond Color...", self.showBondColorPicker)
-            colorMenu.addAction("Background Color...", self.showBackgroundColorPicker)
+        # LOUPE (shared "&3D View → New")
+        self._addLoupeMenu(mb)
 
     def onSave(self):
         workdir = self.handler.workdir
@@ -122,13 +71,9 @@ class MenuHandler(EventClass):
         if path is None or path.strip() == "":
             return
 
-        self.handler.env.newTask(
-            self.handler.env.save,
-            args=(path,),
-            visual=True,
-            name=f"Saving at {os.path.basename(path)}",
-            threaded=True,
-        )
+        # Stage 5: save SERVER-SIDE (the server holds the real datasets +
+        # prediction cache; the thin client does not).
+        self.handler.env.requestSessionSave(path)
 
     def onLoad(self):
         workdir = self.handler.workdir
@@ -136,13 +81,18 @@ class MenuHandler(EventClass):
         if path is None or path.strip() == "":
             return
 
-        self.handler.env.newTask(
-            self.handler.env.load,
-            args=(path,),
-            visual=True,
-            name=f"Loading {os.path.basename(path)}",
-            threaded=True,
+        # Stage 5: load SERVER-SIDE; the server restores its Environment and
+        # announces datasets/models back to the client.
+        self.handler.env.requestSessionLoad(path)
+
+    def onConfigLoad(self):
+        workdir = self.handler.workdir
+        path, _ = QFileDialog.getOpenFileName(
+            self.handler.window, "Load Config", workdir, "TOML files (*.toml)"
         )
+        if not path:
+            return
+        self.handler.env.loadConfig(path)
 
     def onPreferences(self):
         pass
@@ -190,8 +140,8 @@ class MenuHandler(EventClass):
             return
         if slice_num > 0:
             logger.info(f"loading dataset with slice: {slice_num}")
-        env.taskLoadDataset(path, typ, selected_energy_key=selected_energy_key, selected_force_key=selected_force_key,
-                            prediction_keys=prediction_keys, slice_num=slice_num)
+        env.requestDatasetLoad(path, typ, selected_energy_key=selected_energy_key, selected_force_key=selected_force_key,
+                               prediction_keys=prediction_keys, slice_num=slice_num)
 
     def large_dataset_handle(self, path, logger):
         from PySide6.QtWidgets import QDialog
@@ -233,8 +183,6 @@ class MenuHandler(EventClass):
             logger.info("User cancelled the load operation.")
             return -2
 
-
-
     def _showASEKeySelectionDialog(self, path, for_predictions=False):
         """Show ASE key selection dialog on main thread.
 
@@ -249,7 +197,7 @@ class MenuHandler(EventClass):
             tuple: (selected_energy_key, selected_force_key, prediction_keys) or (None, None, None) if cancelled
         """
         import ase.io
-        from modules.aseDataset import aseDatasetLoader
+        from modules.loaders.aseDataset import aseDatasetLoader
         from UI.KeySelectionDialog import KeySelectionDialog
         import logging
 
@@ -285,16 +233,13 @@ class MenuHandler(EventClass):
             logger.info(f"Detected {len(energy_keys)} energy key(s) and {len(force_keys)} force key(s) from first frame")
             logger.info(f"Calculator available: energy={has_calculator_energy}, forces={has_calculator_forces}")
 
-            # Count total options for each
-            energy_options = len(energy_keys) + (1 if has_calculator_energy else 0)
-            force_options = len(force_keys) + (1 if has_calculator_forces else 0)
+            need_dialog, default_energy, default_force = resolve_key_options(
+                energy_keys, force_keys, has_calculator_energy, has_calculator_forces
+            )
 
-            # Skip dialog only if there's exactly one option for each
-            if energy_options <= 1 and force_options <= 1:
-                # Use the single available option for each
-                selected_energy = energy_keys[0] if energy_keys else (None if has_calculator_energy else None)
-                selected_force = force_keys[0] if force_keys else (None if has_calculator_forces else None)
-                return (selected_energy, selected_force, [])
+            # Skip dialog when there is only one option for each.
+            if not need_dialog:
+                return (default_energy, default_force, [])
 
             # Show dialog
             dialog = KeySelectionDialog(
@@ -319,7 +264,7 @@ class MenuHandler(EventClass):
             logger.error(f"The ase dataset loader could not recognize the specified dataset:"
                          f"'{path}'.\nIf you are choosing a file with .npz extension, please try again "
                          f"and choose *.npz in the file type filter dropdown")
-            return None, None, None  # was Nona, Nona, []. (coding bug)
+            return None, None, None
 
     def onModelLoad(self):
         env = self.handler.env
@@ -329,7 +274,19 @@ class MenuHandler(EventClass):
         path, typ = customFileDialog(
             self.handler.window, fileTypes=fileTypes, extensions=extensions, directory=workdir
         )
+        if path is None:
+            return
 
+        # Stage 2 server-side model loading (env.requestModelLoad → server runs
+        # predictions on demand) is implemented end-to-end but DEPRIORITIZED.
+        # In-process load is kept as default as a PRECAUTION — the suspected
+        # regression vs the server path was never actually measured. Flip to
+        # env.requestModelLoad(path, typ) to make live real-model inference
+        # server-owned (infra is in place: server metas real models + generates
+        # on demand; client _fetchPredictionArraysSync wires generateMetric).
+        # NOTE: this call is unconditional, so in REMOTE mode a real model loads
+        # into the local client, not the cluster — remote live inference from the
+        # UI is not reachable until this flips (remote uses prediction files).
         env.taskLoadModel(path, typ)
 
     def onPrepredictedModelLoad(self):
@@ -338,8 +295,8 @@ class MenuHandler(EventClass):
 
         env = self.handler.env
         workdir = self.handler.workdir
-        names = [x.getName() for x in env.getAllDatasets(excludeSubs=True)]
-        keys = [x.fingerprint for x in env.getAllDatasets(excludeSubs=True)]
+        names = [x.getName() for x in env.datasets.all(excludeSubs=True)]
+        keys = [x.fingerprint for x in env.datasets.all(excludeSubs=True)]
         extensions = ["*"] * len(names)
         extensions += ["*.npz"] * len(names)
         names += names
@@ -366,118 +323,15 @@ class MenuHandler(EventClass):
 
             selected_energy_key, selected_force_key, _ = result  # Ignore prediction_keys for this use case
 
-        env.taskLoadPrepredictedDataset(
+        env.requestPredictionLoad(
             path, keys[idx],
             selected_energy_key=selected_energy_key,
             selected_force_key=selected_force_key
         )
 
-    def newLoupe(self):
-        self.handler.newLoupe()
-
     def onZeroModelLoad(self):
         env = self.handler.env
         env.taskLoadZeroModel()
-
-    def setBondWidth(self, width):
-        """Set bond width for the current Loupe."""
-        loupe = self.window
-        if not loupe:
-            return
-        loupe.settings.setParameter("bondWidth", width, refresh=True)
-
-    def setAtomSize(self, scale):
-        """Set atom size scale for the current Loupe."""
-        loupe = self.window
-        if loupe and hasattr(loupe, 'settings'):
-            loupe.settings.setParameter("atomSizeScale", scale, refresh=True)
-
-    def showBondWidthDialog(self):
-        """Show custom bond width input dialog (current loupe)."""
-        loupe = self.window
-        if not loupe:
-            return
-
-        from PySide6.QtWidgets import QInputDialog
-        current = loupe.settings.get("bondWidth", 200)
-        value, ok = QInputDialog.getInt(
-            self.window,
-            "Bond Width",
-            "Enter bond width (pixels):",
-            value=current,
-            min=10,
-            max=1000,
-            step=10
-        )
-        if ok:
-            self.setBondWidth(value)
-
-    def showAtomSizeDialog(self):
-        """Show custom atom size input dialog. (current loupe)"""
-        loupe = self.window
-        if not loupe:
-            return
-
-        from PySide6.QtWidgets import QInputDialog
-        current = loupe.settings.get("atomSizeScale", 1.0)
-        value, ok = QInputDialog.getDouble(
-            self.window,
-            "Atom Size",
-            "Enter atom size scale:",
-            value=current,
-            min=0.1,
-            max=10.0,
-            decimals=2
-        )
-        if ok:
-            self.setAtomSize(value)
-
-    def showBondColorPicker(self):
-        """Show bond color picker dialog. (current loupe)"""
-        loupe = self.window
-        if not loupe:
-            return
-
-        from PySide6.QtWidgets import QColorDialog
-        from PySide6.QtGui import QColor
-        from config.userConfig import getConfig
-
-        current_hex = loupe.settings.get("bondColor", getConfig("loupeBondsColor", "#404040"))
-        current_color = QColor(current_hex)
-
-        color = QColorDialog.getColor(
-            current_color,
-            self.window,
-            "Select Bond Color"
-        )
-
-        if color.isValid():
-            hex_color = color.name()
-            loupe.settings.setParameter("bondColor", hex_color, refresh=True)
-
-    def showBackgroundColorPicker(self):
-        """Show background color picker dialog. (current loupe)"""
-        loupe = self.window
-        if not loupe:
-            return
-
-        from PySide6.QtWidgets import QColorDialog
-        from PySide6.QtGui import QColor
-        from config.userConfig import getConfig
-
-        current_hex = getConfig("loupeBGColor", "#000000")
-        current_color = QColor(current_hex)
-
-        color = QColorDialog.getColor(
-            current_color,
-            self.window,
-            "Select Background Color"
-        )
-
-        if color.isValid():
-            # Update canvas background directly
-            loupe.canvas.canvas.bgcolor = color.getRgbF()[:3]
-            loupe.canvas.canvas.update()
 
     def onConnectToCluster(self):
         """Open the cluster connection dialog and start the connect flow."""
@@ -514,12 +368,8 @@ class MenuHandler(EventClass):
         reconnect_job_id = None
         try:
             from cluster.session import load_session_records
-            records = [
-                r for r in load_session_records()
-                if r.get("profile_name") == profile.name
-            ]
-            if records:
-                latest = records[-1]
+            latest = latest_session_record(load_session_records(), profile.name)
+            if latest:
                 msg = QMessageBox(self.handler.window)
                 msg.setWindowTitle("Reconnect to cluster?")
                 msg.setText(
@@ -542,7 +392,7 @@ class MenuHandler(EventClass):
             logger.warning("Reconnect check failed: %s", exc)
 
         env.tm.newTask(
-            env.connectToCluster,
+            env.remote.connectToCluster,
             args=(profile,),
             kwargs={"reconnect_job_id": reconnect_job_id},
             visual=True,
@@ -575,13 +425,7 @@ class MenuHandler(EventClass):
         if not ok or not addr_str.strip():
             return
         try:
-            if ":" in addr_str:
-                host, port_s = addr_str.rsplit(":", 1)
-                host = host.strip()
-                port = int(port_s.strip())
-            else:
-                host = "127.0.0.1"
-                port = int(addr_str.strip())
+            host, port = parse_host_port(addr_str)
         except ValueError:
             QMessageBox.warning(
                 self.handler.window, "Invalid address",
@@ -590,7 +434,7 @@ class MenuHandler(EventClass):
             return
 
         env.tm.newTask(
-            env.connectDirect,
+            env.remote.connectDirect,
             args=(host, port),
             visual=True,
             name=f"Local server {host}:{port}",
@@ -606,7 +450,6 @@ class MenuHandler(EventClass):
            KeySelectionDialog so energy/force keys can be picked.
         4. Sends LOAD_DATASET RPC with selected keys.
         """
-        import asyncio
         import logging
         from PySide6.QtWidgets import QInputDialog, QMessageBox
 
@@ -707,7 +550,7 @@ class MenuHandler(EventClass):
                     logger.info("Remote dataset loading cancelled by user")
                     return
                 # slice_num=0 means "load all" (efficient path); N>1 = every Nth
-                slice_num = 0 if stride == 1 else stride
+                slice_num = stride_to_slice_num(stride)
                 logger.info(
                     "Requesting remote load: path=%s type=%s stride=%d",
                     path, typ, stride,
@@ -743,14 +586,12 @@ class MenuHandler(EventClass):
 
                 # Mirrors local _showASEKeySelectionDialog logic:
                 # skip dialog when there is only one option for each.
-                energy_options = len(energy_keys) + (1 if has_calc_energy else 0)
-                force_options = len(force_keys) + (1 if has_calc_forces else 0)
-
-                selected_energy_key = energy_keys[0] if energy_keys else None
-                selected_force_key = force_keys[0] if force_keys else None
+                need_dialog, selected_energy_key, selected_force_key = resolve_key_options(
+                    energy_keys, force_keys, has_calc_energy, has_calc_forces
+                )
                 prediction_keys = []
 
-                if energy_options > 1 or force_options > 1:
+                if need_dialog:
                     loop = _asyncio.get_event_loop()
                     dialog_future = loop.create_future()
 
@@ -867,7 +708,7 @@ class MenuHandler(EventClass):
                 if stride is None:
                     logger.info("Remote dataset loading cancelled by user")
                     return
-                slice_num = 0 if stride == 1 else stride
+                slice_num = stride_to_slice_num(stride)
                 logger.info(
                     "Requesting remote load: path=%s type=%s stride=%d",
                     path, typ, stride,
@@ -914,7 +755,7 @@ class MenuHandler(EventClass):
         from cluster.remote_dataset import CachedRemoteDataset
 
         remote_datasets = [
-            ds for ds in env.getAllDatasets(excludeSubs=True)
+            ds for ds in env.datasets.all(excludeSubs=True)
             if isinstance(ds, CachedRemoteDataset)
         ]
         if not remote_datasets:
@@ -991,13 +832,11 @@ class MenuHandler(EventClass):
             has_calc_energy = bool(probe.get("has_calculator_energy"))
             has_calc_forces = bool(probe.get("has_calculator_forces"))
 
-            energy_options = len(energy_keys) + (1 if has_calc_energy else 0)
-            force_options = len(force_keys) + (1 if has_calc_forces else 0)
+            need_dialog, selected_energy_key, selected_force_key = resolve_key_options(
+                energy_keys, force_keys, has_calc_energy, has_calc_forces
+            )
 
-            selected_energy_key = energy_keys[0] if energy_keys else None
-            selected_force_key = force_keys[0] if force_keys else None
-
-            if energy_options > 1 or force_options > 1:
+            if need_dialog:
                 import asyncio as _asyncio
                 from PySide6.QtCore import QTimer
 
