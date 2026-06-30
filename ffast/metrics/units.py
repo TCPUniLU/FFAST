@@ -1,0 +1,7 @@
+energy        = "energy"
+force         = "force"
+acceleration  = "acceleration"
+pressure      = "pressure"
+length        = "length"
+angle         = "angle"
+dimensionless = "dimensionless"
