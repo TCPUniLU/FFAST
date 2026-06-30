@@ -62,11 +62,11 @@ class SubDataEntity(DataEntity):
 
         # Handle variable datasets (list of arrays)
         if isinstance(data, list):
-            # For lists, use list comprehension to select indices
             return [data[i] for i in self.indices]
-        else:
-            # For numpy arrays, use array indexing
-            return data[self.indices]
+        # Scalars (0-d arrays, plain Python numbers) are not sub-indexable
+        if not hasattr(data, 'ndim') or data.ndim == 0:
+            return data
+        return data[self.indices]
 
 
 class AtomFilteredEntity(DataEntity):
@@ -99,13 +99,21 @@ class DataType(EventClass):
     atomFilterable = False  # if True, results are per-atom (e.g. forces)
     atomConstant = False  # if True, results are independent of atom filter (e.g. energy, kind of)
 
-    def __init__(self, env):
+    def __init__(self, service):
         super().__init__()
-        self.env = env
+        # The DataService that owns this DataType (ADR 0020). DataTypes only ever
+        # reach data-coordination methods (hasData / getCacheKey / setData /
+        # cacheKeyToComponents), all of which live on the service — so they hold
+        # it directly instead of reaching back through the full Environment.
+        self.service = service
 
     def getCacheKey(self, model=None, dataset=None):
-        keys = [self.key]
+        # Construction routes through the CacheKey value type (CONTEXT.md "Cache
+        # Key"); a model/dataset-independent slot stays None -> serializes to the
+        # "nil" sentinel, preserving the legacy 3-part string exactly.
+        from ffast.cache import CacheKey
 
+        model_fp = None
         if self.modelDependent:
             if model is None:
                 logger.error(
@@ -113,13 +121,9 @@ class DataType(EventClass):
                     + f"{self}, key {self.key}, but no model was given"
                 )
                 return None
-            if isinstance(model, str):
-                keys.append(model)
-            else:
-                keys.append(model.fingerprint)
-        else:
-            keys.append("nil")
+            model_fp = model if isinstance(model, str) else model.fingerprint
 
+        dataset_fp = None
         if self.datasetDependent:
             if dataset is None:
                 logger.exception(
@@ -127,17 +131,9 @@ class DataType(EventClass):
                     + f"{self}, key {self.key}, but no dataset was given"
                 )
                 return None
+            dataset_fp = dataset if isinstance(dataset, str) else dataset.fingerprint
 
-            if isinstance(dataset, str):
-                keys.append(dataset)
-            else:
-                keys.append(dataset.fingerprint)
-        else:
-            keys.append("nil")
-
-        key = "__".join(keys)
-
-        return key
+        return CacheKey(self.key, model_fp, dataset_fp).format()
 
     def generateData(self, dataset=None, model=None, taskID=None):
         if self.datasetDependent and (dataset is None):
@@ -180,20 +176,20 @@ class DataType(EventClass):
         if self.dependencies is None:
             return [], True
 
-        env = self.env
+        service = self.service
         deps = []
         for dep in self.dependencies:
-            if env.hasData(dep, dataset=dataset, model=model):
+            if service.hasData(dep, dataset=dataset, model=model):
                 continue
 
-            key = env.getCacheKey(dep, dataset=dataset, model=model)
+            key = service.getCacheKey(dep, dataset=dataset, model=model)
             deps.append(key)
 
         # IF ATOM-FILTERED, PARENT DATA CAN BE DEPENDENCY
         if dataset.isSubDataset and dataset.isAtomFiltered:
             if self.atomFilterable or self.atomConstant:
-                if not env.hasData(dep, dataset=dataset.parent, model=model):
-                    key = env.getCacheKey(
+                if not service.hasData(dep, dataset=dataset.parent, model=model):
+                    key = service.getCacheKey(
                         dep, dataset=dataset.parent, model=model
                     )
                     deps.append(key)
@@ -204,10 +200,10 @@ class DataType(EventClass):
         if self.dependencies is None:
             return [], True
 
-        env = self.env
+        service = self.service
         generatableComps = []
 
-        initialKey = env.getCacheKey(self.key, model=model, dataset=dataset)
+        initialKey = service.getCacheKey(self.key, model=model, dataset=dataset)
         if initialKey is None:
             logger.warning(f"getCacheKey returned None for dataType={self.key}, model={model}, dataset={dataset}")
             return []
@@ -229,7 +225,7 @@ class DataType(EventClass):
                     logger.warning(f"Skipping None compKey in getGeneratableComponent")
                     continue
 
-                dt, m, d = env.cacheKeyToComponents(
+                dt, m, d = service.cacheKeyToComponents(
                     compKey, dataTypeObject=True
                 )
 
@@ -265,18 +261,18 @@ class EnergyPredictionData(DataType):
         super().__init__(*args)
 
     def data(self, dataset=None, model=None, taskID=None):
-        env = self.env
+        service = self.service
 
         if model.singlePredict:
             (e, f) = model.predict(dataset, taskID=taskID)
             fData = self.newDataEntity(forces=f)
-            env.setData(fData, "forces", model=model, dataset=dataset)
+            service.setData(fData, "forces", model=model, dataset=dataset)
 
         else:
             e = model.predictE(dataset, taskID=taskID)
 
         eData = self.newDataEntity(energy=e)
-        env.setData(eData, "energy", model=model, dataset=dataset)
+        service.setData(eData, "energy", model=model, dataset=dataset)
 
         return True
 
@@ -292,18 +288,18 @@ class ForcesPredictionData(DataType):
         super().__init__(*args)
 
     def data(self, dataset=None, model=None, taskID=None):
-        env = self.env
+        service = self.service
 
         if model.singlePredict:
             (e, f) = model.predict(dataset, taskID=taskID)
             eData = self.newDataEntity(energy=e)
-            env.setData(eData, "energy", model=model, dataset=dataset)
+            service.setData(eData, "energy", model=model, dataset=dataset)
 
         else:
             f = model.predictF(dataset, taskID=taskID)
 
         fData = self.newDataEntity(forces=f)
-        env.setData(fData, "forces", model=model, dataset=dataset)
+        service.setData(fData, "forces", model=model, dataset=dataset)
 
         return True
 

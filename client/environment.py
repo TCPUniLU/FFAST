@@ -13,6 +13,13 @@ from tasks import TaskManager
 from client.dataType import DataEntity, AtomsList
 from utils import md5FromArraysAndStrings
 from client.dataType import SubDataEntity
+from client.data_cache import DataCache
+from client.model_registry import ModelRegistry
+from client.dataset_registry import DatasetRegistry
+from client.data_service import DataService
+from client.remote_session import RemoteSessionManager
+from client.session_persistence import SessionPersistence
+from client.object_catalog import ObjectCatalog
 import logging
 import os, glob
 import numpy as np
@@ -20,7 +27,7 @@ import asyncio
 from utils import loadModules, mixColors
 import json
 import threading, time
-from modules.aseDataset import aseDatasetLoader
+from modules.loaders.aseDataset import aseDatasetLoader
 
 logger = logging.getLogger("FFAST")
 
@@ -41,20 +48,39 @@ class Environment(EventClass):
             self.quitReady = False
 
         # Note: might have multiple environments at some point
-        self.datasets = {}
-        self.dataset_slice_numbers = {}
-        self.models = {}
-        self.cache = {}
-        self.dataTypes = {}
+        self.cache = DataCache()
+        self.models = ModelRegistry(self.cache, self)
+        self.datasets = DatasetRegistry(self.cache, self)
         self.modelTypes = {}
         self.datasetTypes = {}
-        self.info = {}
+        # Single owner of per-object session metadata (path/name/type). Was a
+        # raw ``self.info['objects']`` dict mutated across 6 files; now behind
+        # ObjectCatalog's register/prune/get/snapshot/load interface.
+        self.objects = ObjectCatalog()
         self.tm = TaskManager()
 
-        self.initialiseDataTypes()
+        # Remote/local server session manager (ADR 0020): owns the connection
+        # lifecycle, server→client metadata handlers, and array/metric fetch
+        # channels.  Created before DataService so the RemoteSource can wrap it.
+        self.remote = RemoteSessionManager(self)
 
-        self.generationQueue = set()
-        self.queuedTasks = set()
+        # Data coordinator (ADR 0020): owns the datatype registry, cache-key
+        # resolution, the data-generation queue, and the in-process metric spine.
+        # The RemoteSource degrades to in-process when no session exists, so the
+        # same wiring works on the client, the server, and headless.
+        from client.prediction_source import RemoteSource
+        self.data = DataService(
+            cache=self.cache,
+            models=self.models,
+            datasets=self.datasets,
+            tm=self.tm,
+            events=self,
+            source=RemoteSource(self.remote),
+            headless=headless,
+        )
+
+        # Session save/load + dataset export (ADR 0020).
+        self.persistence = SessionPersistence(self)
 
         # self.eventSubscribe("DATA_UPDATED", self.handleGenerationQueue)
         # self.eventSubscribe("GENERATION_QUEUE_CHANGED", self.handleGenerationQueue)
@@ -62,57 +88,22 @@ class Environment(EventClass):
         self.eventSubscribe("TASK_FAILED", self.onTaskFailed)
         self.eventSubscribe("TASK_DONE", self.onTaskDone)
         self.eventSubscribe(
-            "SUBDATASET_INDICES_CHANGED", self.deleteCacheByDataset
+            "SUBDATASET_INDICES_CHANGED", self.data.deleteCacheByDataset
         )
         self.eventSubscribe(
-            "QUIT_EVENT", self._disconnectRemoteSession, asynchronous=True
+            "QUIT_EVENT", self.remote._disconnectRemoteSession, asynchronous=True
         )
+        # Server→client metadata: handlers live on the RemoteSessionManager and
+        # build proxy datasets / ghost models when the server announces them.
+        self.eventSubscribe("REMOTE_DATASET_META", self.remote._onRemoteDatasetMeta)
+        self.eventSubscribe("REMOTE_MODEL_META", self.remote._onRemoteModelMeta)
+        self.eventSubscribe("METRIC_CATALOG", self.remote._onMetricCatalog)
 
-        # Active remote cluster session (set by connectToCluster)
-        self.remoteSession = None
-        # Set to True by _disconnectRemoteSession so connectToCluster's
-        # CancelledError handler knows not to scancel or delete the record.
-        self._session_quitting = False
-
-        # Subscribe to remote dataset metadata so we can create local proxies
-        self.eventSubscribe("REMOTE_DATASET_META", self._onRemoteDatasetMeta)
-        # Subscribe to remote ghost-model metadata (fired after predictions load)
-        self.eventSubscribe("REMOTE_MODEL_META", self._onRemoteModelMeta)
-
-        self.maxDatasetSize = 0  # To handle the smoothing maximum value in plots
-
-    #############
-    ## DATA TYPES
-    #############
-
-    def initialiseDataTypes(self):
-        """Register the built-in prediction data types that other modules depend on."""
-        from client.dataType import EnergyPredictionData, ForcesPredictionData
-
-        self.registerDataType(EnergyPredictionData)
-        self.registerDataType(ForcesPredictionData)
-
-    def hasDataType(self, dataTypeKey):
-        """Provide a cheap existence check before code asks for a data type."""
-        return dataTypeKey in self.dataTypes
-
-    def getDataType(self, dataTypeKey):
-        """Resolve the live data-type instance used for generation and dependency checks."""
-        return self.dataTypes.get(dataTypeKey, None)
-
-    def registerDataType(self, dataType):
-        """
-        Adds a new data type to the known data types of the environment.
-
-        Args:
-            dataType (class): DataType class (not object!).
-        """
-
-        self.dataTypes[dataType.key] = dataType(self)
-
-    def getRegisteredDataType(self, dataTypeKey):
-        """Keep the older accessor name for callers that still use it."""
-        return self.dataTypes.get(dataTypeKey, None)
+    # Datatypes, the cache/generation/metric coordinator (self.data), the
+    # registries (self.models / self.datasets), the session manager (self.remote)
+    # and persistence (self.persistence) are composed in __init__ (ADR 0020).
+    # Callers reach them directly, e.g. env.models.get(fp), env.data.getData(...),
+    # env.remote.remoteSession.
 
     #############
     ## MODELS
@@ -122,62 +113,11 @@ class Environment(EventClass):
         """Register a model loader class discovered during module loading."""
         self.modelTypes[modelType.modelName] = modelType
 
-    def setNewModel(self, model):
-        """Mark a model as available in the session and notify listeners."""
-        self.models[model.fingerprint] = model
-        model.loaded = True
-        self.eventPush("MODEL_LOADED", model.fingerprint)
-
-    def getModel(self, key):
-        """Fetch a loaded model by fingerprint."""
-        return self.models.get(key, None)
 
     def getModelFromPath(self, path):
         """Resolve a loaded model through its source path."""
-        return self.getModel(self.getKeyFromPath(path))
+        return self.models.get(self.getKeyFromPath(path))
 
-    def deleteModel(self, key):
-        """Remove a model and invalidate every cached artifact produced by it."""
-        model = self.getModel(key)
-        if model is None:
-            return
-
-        # Clean up all cached data for this model before deleting it
-        # Cache keys are in format: "dataTypeKey__modelFingerprint__datasetFingerprint"
-        cache_keys_to_delete = []
-        for cache_key in self.cache.keys():
-            parts = cache_key.split("__")
-            if len(parts) == 3 and parts[1] == key:
-                cache_keys_to_delete.append(cache_key)
-
-        # Delete all cached data for this model
-        for cache_key in cache_keys_to_delete:
-            del self.cache[cache_key]
-            logger.info(f"Deleted cached data: {cache_key}")
-
-        model.onDelete()
-        del self.models[key]
-        logger.info(f"Model {key} deleted")
-        self.eventPush("MODEL_DELETED", key)
-
-    def modelExists(self, key):
-        """Support quick guard checks before model-specific work."""
-        return key in self.models.keys()
-
-    def datasetExists(self, key):
-        """Support quick guard checks before dataset-specific work."""
-        return key in self.datasets.keys()
-
-    def getAllModelKeys(self):
-        """Expose model fingerprints to UI and persistence code."""
-        return list(self.models.keys())
-
-    def getAllModels(self, excludeGhosts=False):
-        """Return live models, optionally hiding ghost placeholders from callers."""
-        if excludeGhosts:
-            return [m for m in self.models.values() if not m.isGhost]
-        else:
-            return list(self.models.values())
 
     def taskLoadModel(self, path, modelType):
         """Queue model loading so disk I/O and setup do not block the main loop."""
@@ -187,6 +127,24 @@ class Environment(EventClass):
             visual=True,
             name="Loading model",
             threaded=True,
+        )
+
+    def requestModelLoad(self, path, modelType):
+        """Dispatch a model load through the server, or in-process as fallback.
+
+        Stage 2 of server-owned loading: when a session exists the model loads
+        *server-side* (it runs predictions there) and the client receives a
+        ghost proxy via REMOTE_MODEL_META; the server generates predictions on
+        demand.  No-server fallback loads the model in-process.
+        """
+        session = self.remote.remoteSession
+        if session is None or self.remote._event_loop is None:
+            self.taskLoadModel(path, modelType)
+            return
+        import asyncio as _asyncio
+        _asyncio.run_coroutine_threadsafe(
+            session.push_event("LOAD_MODEL", path, modelType),
+            self.remote._event_loop,
         )
 
     def loadModel(self, path, modelType, taskID=None):
@@ -207,7 +165,7 @@ class Environment(EventClass):
             return
         model.initialise()
 
-        self.setNewModel(model)
+        self.models.add(model)
         logging.info(f"Model `{path}` successfully loaded")
 
     def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None, selected_force_key=None):
@@ -224,6 +182,35 @@ class Environment(EventClass):
             threaded=True,
         )
 
+    def requestPredictionLoad(self, path, datasetKey, selected_energy_key=None,
+                              selected_force_key=None):
+        """Dispatch a prediction-file load through the server, or in-process (Stage 3).
+
+        When a session exists the prediction file is loaded *server-side* against
+        the server's dataset; the server materializes a ghost model and announces
+        it via REMOTE_MODEL_META, and its prediction arrays stay server-side
+        (consumed by the server-owned metric channel — Stage 4a). Only when no
+        server is reachable does the client fall back to the in-process
+        :meth:`loadPrepredictedDataset`.
+        """
+        session = self.remote.remoteSession
+        if session is None or self.remote._event_loop is None:
+            self.taskLoadPrepredictedDataset(
+                path, datasetKey,
+                selected_energy_key=selected_energy_key,
+                selected_force_key=selected_force_key,
+            )
+            return
+        import asyncio as _asyncio
+        _asyncio.run_coroutine_threadsafe(
+            session.push_event(
+                "LOAD_PREDICTION", path, datasetKey,
+                selected_energy_key=selected_energy_key,
+                selected_force_key=selected_force_key,
+            ),
+            self.remote._event_loop,
+        )
+
     def loadPrepredictedDataset(self, path, datasetKey, taskID=None, selected_energy_key=None, selected_force_key=None):
         """Attach precomputed energies and forces to a dataset as a ghost model."""
         if "npz" in path:
@@ -232,7 +219,7 @@ class Environment(EventClass):
         else:
             # Use smart loader to detect uniform vs variable datasets
             import ase.io
-            from modules.aseDataset import aseDatasetLoader, VariableASEDatasetLoader
+            from modules.loaders.aseDataset import aseDatasetLoader, VariableASEDatasetLoader
             def check_homogeneity(atoms_list):
                 for i in range(20):
                     temp_atoms_list = []
@@ -244,7 +231,7 @@ class Environment(EventClass):
                 return True
 
             # Read once to detect type
-            slice_num = self.dataset_slice_numbers.get(datasetKey)
+            slice_num = self.datasets.slice_numbers.get(datasetKey)
             if slice_num is not None and slice_num > 0:
                 logger.info(f"Loading dataset with slice number of: {slice_num}")
                 atomsList = ase.io.read(path, index=slice(0, None, slice_num))
@@ -300,7 +287,7 @@ class Environment(EventClass):
                 )
                 F = None
 
-        dataset = self.getDataset(datasetKey)
+        dataset = self.datasets.get(datasetKey)
 
         if E is not None:
             eDataset = dataset.getEnergies()
@@ -323,29 +310,73 @@ class Environment(EventClass):
         )
 
         if E is not None:
-            energyDataType = self.getDataType("energy")
+            energyDataType = self.data.getDataType("energy")
             energyDataEntity = energyDataType.newDataEntity(energy=E.flatten())
-            self.setData(
+            self.data.setData(
                 energyDataEntity, "energy", model=modelKey, dataset=dataset
             )
 
         if F is not None:
-            forcesDataType = self.getDataType("forces")
+            forcesDataType = self.data.getDataType("forces")
             forcesDataEntity = forcesDataType.newDataEntity(forces=F)
-            self.setData(
+            self.data.setData(
                 forcesDataEntity, "forces", model=modelKey, dataset=dataset
             )
 
-        # update info with the path etc
-        self.info.update(
-            {
-                "objects": {
-                    modelKey: {"path": path, "name": os.path.basename(path)}
-                }
-            }
-        )
+        # Prediction Dataset Fields (ADR 0023): eagerly extract the declared set
+        # of prediction.{info,atoms}.<key> from the prediction's loader (its ASE
+        # source is discarded below). Only ASE files carry extra keys; npz holds
+        # only E/F, so 'aseObject' is absent there and this is skipped.
+        if "npz" not in path:
+            self._extractPredictionFields(aseObject, modelKey, dataset)
+
+        # Register this ghost model's info so it survives session save/restore.
+        self.objects.register(modelKey, {
+            "path": path,
+            "name": os.path.basename(path),
+            "type": "ghost_model",
+        })
 
         self.lookForGhosts()
+
+        # NOTE: in-process prediction load is now the no-server FALLBACK only
+        # (routing goes through requestPredictionLoad → server-side
+        # LOAD_PREDICTION when a session exists). No mirror here: reaching this
+        # method means no server was available, so there is nothing to mirror to.
+
+    def _extractPredictionFields(self, aseObject, modelKey, dataset):
+        """Eagerly extract the declared prediction Dataset Fields (ADR 0023).
+
+        The prediction's ASE loader is discarded once E/F are pulled, so any
+        prediction.{info,atoms}.<key> a registered metric declares must be read
+        now and stashed in ``DataService.predictionFields`` keyed by
+        ``(modelKey, dataset_fp)`` (modelKey == the GhostModel fingerprint, so
+        the resolver finds it from the model object). Strict per-field: an
+        unavailable key just stays absent (resolves to None later).
+        """
+        try:
+            from ffast.metrics.fields import declared_field_keys
+            wanted = declared_field_keys("prediction")
+        except Exception:
+            logger.exception("Prediction fields: failed to read declared keys")
+            return
+        if not wanted["info"] and not wanted["atoms"]:
+            return
+        store = {"info": {}, "atoms": {}}
+        for key in wanted["info"]:
+            v = aseObject.getFrameField(key)
+            if v is not None:
+                store["info"][key] = v
+        for key in wanted["atoms"]:
+            v = aseObject.getAtomField(key)
+            if v is not None:
+                store["atoms"][key] = v
+        if store["info"] or store["atoms"]:
+            self.data.predictionFields[(modelKey, dataset.fingerprint)] = store
+            logger.info(
+                "Prediction fields: extracted %d frame + %d atom field(s) for %s",
+                len(store["info"]), len(store["atoms"]), os.path.basename(dataset.getName()),
+            )
 
     #############
     ## DATASETS
@@ -355,83 +386,11 @@ class Environment(EventClass):
         """Register a dataset loader class discovered during module loading."""
         self.datasetTypes[datasetType.datasetName] = datasetType
 
-    def updateMaxSize(self, on_deletion, dataset):
-        if on_deletion:
-            maximum = 0
-            for ds in self.datasets.values():
-                n = ds.getN()
-                if n is not None and n > maximum:
-                    maximum = n
-            self.maxDatasetSize = maximum
-            logger.info(f"Maximum dataset size updated to : {maximum}")
-        else:
-            n = dataset.getN()
-            if n is not None and n > self.maxDatasetSize:
-                self.maxDatasetSize = n
-                logger.info(f"Maximum dataset size updated to : {n}")
-
-    def getMaxSize(self):
-        return self.maxDatasetSize
-
-    def setNewDataset(self, dataset, slice_num=-2):
-        self.datasets[dataset.fingerprint] = dataset
-        dataset.loaded = True
-        if slice_num != -2:  # to avoid adding slices for sub-datasets.
-            self.updateMaxSize(False, dataset)
-            self.dataset_slice_numbers[dataset.fingerprint] = slice_num
-        self.eventPush("DATASET_LOADED", dataset.fingerprint)
-
-    def getDataset(self, key):
-        """Fetch a loaded dataset by fingerprint."""
-        return self.datasets.get(key, None)
 
     def getDatasetFromPath(self, path):
         """Resolve a loaded dataset through its source path."""
-        return self.getDataset(self.getKeyFromPath(path))
+        return self.datasets.get(self.getKeyFromPath(path))
 
-    def deleteDataset(self, key):
-        """Remove a dataset and invalidate every cached artifact derived from it."""
-        dataset = self.getDataset(key)
-        if dataset is None:
-            return
-
-        # Clean up all cached data for this dataset before deleting it
-        # Cache keys are in format: "dataTypeKey__modelFingerprint__datasetFingerprint"
-        cache_keys_to_delete = []
-        for cache_key in self.cache.keys():
-            parts = cache_key.split("__")
-            if len(parts) == 3 and parts[2] == key:
-                cache_keys_to_delete.append(cache_key)
-
-        # Delete all cached data for this dataset
-        for cache_key in cache_keys_to_delete:
-            del self.cache[cache_key]
-            logger.info(f"Deleted cached data: {cache_key}")
-
-        if self.dataset_slice_numbers.get(key) is not None:  # We need to delete its slice number as well
-            del self.dataset_slice_numbers[key]
-
-        dataset.onDelete()
-        del self.datasets[key]
-        logger.info(f"Dataset {key} deleted")
-        self.updateMaxSize(on_deletion=True, dataset=None)
-        self.eventPush("DATASET_DELETED", key)
-
-    def getAllDatasetKeys(self):
-        """Expose active dataset fingerprints to UI and persistence code."""
-        ds = self.getAllDatasets()
-        return [x.fingerprint for x in ds]
-        # return list(self.datasets.keys())
-
-    def getAllDatasets(self, subOnly=False, excludeSubs=False):
-        """Return active datasets with optional filtering for subdataset views."""
-        ds = [x for x in self.datasets.values() if x.active]
-        if subOnly:
-            return [x for x in ds if x.isSubDataset]
-        elif excludeSubs:
-            return [x for x in ds if not x.isSubDataset]
-        else:
-            return ds
 
     def taskLoadDataset(self, path, datasetType, selected_energy_key=None,
                        selected_force_key=None, prediction_keys=None, slice_num=0):
@@ -457,6 +416,47 @@ class Environment(EventClass):
             visual=True,
             name="Loading dataset",
             threaded=True,
+        )
+
+    def requestDatasetLoad(self, path, datasetType, selected_energy_key=None,
+                           selected_force_key=None, prediction_keys=None,
+                           slice_num=0):
+        """Dispatch a dataset load through the server, or in-process as fallback.
+
+        Stage 1 of the server-owned-loading migration.  When a session exists
+        (managed local server or remote cluster) the file is loaded *server-side*
+        and the client receives a ``CachedRemoteDataset`` proxy via
+        ``REMOTE_DATASET_META`` (then eager-populated for a local server — see
+        :meth:`_onRemoteDatasetMeta`).  Only when no server is reachable does the
+        client fall back to the legacy in-process :meth:`loadDataset`.
+
+        Shared entry point: the local File→Load Dataset menu routes here; the
+        remote menu (``onRemoteDatasetLoad``) hits the same server-side
+        ``LOAD_DATASET`` handler after its own cluster-path/key probing.
+        """
+        session = self.remote.remoteSession
+        if session is None or self.remote._event_loop is None:
+            self.taskLoadDataset(
+                path, datasetType,
+                selected_energy_key=selected_energy_key,
+                selected_force_key=selected_force_key,
+                prediction_keys=prediction_keys,
+                slice_num=slice_num,
+            )
+            return
+
+        import asyncio as _asyncio
+        # msgpack can't carry tuples; send prediction_keys as plain lists.
+        pk = [list(k) for k in prediction_keys] if prediction_keys else None
+        _asyncio.run_coroutine_threadsafe(
+            session.push_event(
+                "LOAD_DATASET", path, datasetType,
+                selected_energy_key=selected_energy_key,
+                selected_force_key=selected_force_key,
+                prediction_keys=pk,
+                slice_num=slice_num,
+            ),
+            self.remote._event_loop,
         )
 
     def loadDataset(self, path, datasetType, taskID=None, selected_energy_key=None,
@@ -513,8 +513,13 @@ class Environment(EventClass):
             return
 
         dataset.initialise()
-        self.setNewDataset(dataset, slice_num)
+        self.datasets.add(dataset, slice_num)
         logging.info(f"Dataset `{path}` successfully loaded")
+
+        # NOTE: in-process load is now the no-server FALLBACK only (routing goes
+        # through requestDatasetLoad → server-side LOAD_DATASET when a session
+        # exists).  No mirror-to-local-server here: if we reached this method a
+        # server was unavailable, so there is nothing to mirror to.
 
         # Load predictions as ghost models if specified
         if prediction_keys:
@@ -533,7 +538,7 @@ class Environment(EventClass):
             prediction_keys: List of (energy_key, force_key, model_name) tuples
             atomsList: Optional pre-loaded atoms list to avoid re-reading file
         """
-        from modules.aseDataset import aseDatasetLoader, VariableASEDatasetLoader
+        from modules.loaders.aseDataset import aseDatasetLoader, VariableASEDatasetLoader
         import ase.io
         from utils import md5FromArraysAndStrings
 
@@ -589,7 +594,7 @@ class Environment(EventClass):
                 ghost_fp = md5FromArraysAndStrings(E, F, model_name)
 
                 # Cache predictions
-                energy_dt = self.getDataType("energy")
+                energy_dt = self.data.getDataType("energy")
                 if isinstance(E, list):
                     # Variable dataset - E is list of scalars, need to convert to array
                     import numpy as np
@@ -597,20 +602,20 @@ class Environment(EventClass):
                     energy_de = energy_dt.newDataEntity(energy=E_array.flatten())
                 else:
                     energy_de = energy_dt.newDataEntity(energy=E.flatten())
-                self.setData(energy_de, "energy", model=ghost_fp, dataset=dataset)
+                self.data.setData(energy_de, "energy", model=ghost_fp, dataset=dataset)
 
-                forces_dt = self.getDataType("forces")
+                forces_dt = self.data.getDataType("forces")
                 forces_de = forces_dt.newDataEntity(forces=F)
-                self.setData(forces_de, "forces", model=ghost_fp, dataset=dataset)
+                self.data.setData(forces_de, "forces", model=ghost_fp, dataset=dataset)
 
                 # Register ghost model info
-                self.info.setdefault('objects', {})[ghost_fp] = {
+                self.objects.register(ghost_fp, {
                     'path': path,
                     'name': model_name,
                     'type': 'ghost_model',
                     'energy_key': energy_key,
                     'force_key': force_key
-                }
+                })
 
                 logger.info(f"Loaded predictions for '{model_name}' from keys {energy_key}/{force_key}")
 
@@ -625,13 +630,13 @@ class Environment(EventClass):
 
         # check if already exists
         fp = SubDataset.getFingerprint(SubDataset, parent, model, subName)
-        sub = self.getDataset(fp)
+        sub = self.datasets.get(fp)
 
         # if doesnt exist yet
         if sub is None:  # and (idx is not None):
             sub = SubDataset(parent, model, idx, subName)
             sub.initialise()
-            self.setNewDataset(sub)
+            self.datasets.add(sub)
         # elif sub is None:
         #     pass
         # elif idx is None:
@@ -642,7 +647,7 @@ class Environment(EventClass):
 
     def freezeSubDataset(self, fingerprint):
         """Persist the current subdataset selection as its own frozen dataset object."""
-        dataset = self.getDataset(fingerprint)
+        dataset = self.datasets.get(fingerprint)
         if (dataset is None) or (not dataset.isSubDataset):
             return
 
@@ -653,28 +658,28 @@ class Environment(EventClass):
             indices=dataset.indices,
             subName=dataset.subName,
         )
-        if self.getDataset(fp) is not None:
+        if self.datasets.get(fp) is not None:
             return
 
         sub = FrozenSubDataset(
             dataset.parent, dataset.modelDep, dataset.indices, dataset.subName
         )
         sub.initialise()
-        self.setNewDataset(sub)
+        self.datasets.add(sub)
 
     def createAtomFilteredDataset(self, dataset, idxs):
         """Build a per-atom filtered dataset view for atom-level analyses."""
         fp = AtomFilteredDataset.getFingerprint(
             AtomFilteredDataset, dataset, idxs
         )
-        sub = self.getDataset(fp)
+        sub = self.datasets.get(fp)
 
         if sub is not None:
             return
 
         sub = AtomFilteredDataset(dataset, idxs)
         sub.initialise()
-        self.setNewDataset(sub)
+        self.datasets.add(sub)
 
     #############
     ## OBJECTS (MODELS & DATASETS)
@@ -682,9 +687,9 @@ class Environment(EventClass):
 
     def getModelOrDataset(self, key):
         """Resolve an object key without the caller needing to know its type."""
-        model = self.getModel(key)
+        model = self.models.get(key)
         if model is None:
-            return self.getDataset(key)
+            return self.datasets.get(key)
         else:
             return model
 
@@ -695,11 +700,11 @@ class Environment(EventClass):
     def getKeyFromPath(self, path):
         """Map a known filesystem path back to the loaded object fingerprint."""
         # check dataset
-        for dataset in self.getAllDatasets(excludeSubs=True):
+        for dataset in self.datasets.all(excludeSubs=True):
             if dataset.path == path:
                 return dataset.fingerprint
 
-        for model in self.getAllModels():
+        for model in self.models.all():
             if model.path == path:
                 return model.fingerprint
 
@@ -707,10 +712,20 @@ class Environment(EventClass):
 
     def deleteObject(self, key):
         """Route generic delete requests to the appropriate registry."""
-        if self.datasetExists(key):
-            self.deleteDataset(key)
-        elif self.modelExists(key):
-            self.deleteModel(key)
+        if self.datasets.exists(key):
+            self.datasets.delete(key)
+        elif self.models.exists(key):
+            self.models.delete(key)
+        else:
+            return
+
+        session = self.remote.remoteSession
+        if session is not None and self.remote._event_loop is not None:
+            import asyncio as _asyncio
+            _asyncio.run_coroutine_threadsafe(
+                session.push_event("DELETE_OBJECT", key),
+                self.remote._event_loop,
+            )
 
     #############
     ## TASKS
@@ -727,9 +742,11 @@ class Environment(EventClass):
     def onTaskCancel(self, taskID):
         """Keep parent generation requests consistent when a child task is cancelled."""
         task = self.tm.getTask(taskID)
+        if task is None:
+            return
 
         if task["componentParent"] is not None:
-            queue = self.generationQueue
+            queue = self.data.generationQueue
             cacheKey = task["componentParent"]
 
             if cacheKey in queue:
@@ -745,633 +762,49 @@ class Environment(EventClass):
 
     def onTaskDone(self, taskID):
         """Clear queue bookkeeping once a scheduled task has finished."""
-        if taskID in self.queuedTasks:
-            self.queuedTasks.remove(taskID)
+        if taskID in self.data.queuedTasks:
+            self.data.queuedTasks.remove(taskID)
 
         # if the task was also in the generation queue, that means it crashed
         #  gotta remove it then
-        if taskID in self.generationQueue:
-            self.generationQueue.discard(taskID)
-
-    #############
-    ## DATA
-    #############
-
-    def getData(self, dataTypeKey, model=None, dataset=None):
-        """Serve cached data, including derived subdataset and atom-filtered views."""
-        dataType = self.getRegisteredDataType(dataTypeKey)
-
-        if dataType is None:
-            logger.error(
-                f"Tried to get data for dataTypeKey {dataTypeKey}, "
-                + "but no such key was registered"
-            )
-            return None
-
-        cacheKey = dataType.getCacheKey(model=model, dataset=dataset)
-
-        if type(model) == str:
-            obj = self.getObject(model)
-            if obj is None:
-                logger.error(
-                    f"In env.getData, tried to get model for key {model} but no model found"
-                )
-            model = obj
-
-        if type(dataset) == str:
-            obj = self.getObject(dataset)
-            if obj is None:
-                logger.error(
-                    f"In env.getData, tried to get dataset for key {dataset} but no dataset found"
-                )
-            dataset = obj
-
-        ## SUBDATSETS
-        if (
-                (dataset is not None)
-                and (dataset.isSubDataset)
-                and not self.hasCacheKey(cacheKey, subChecks=False)
-        ):
-            ## ATOM FILTERED
-            if dataset.isAtomFiltered:
-                if dataType.atomFilterable:
-                    data = self.getData(
-                        dataTypeKey, model=model, dataset=dataset.parent
-                    )
-                    if data is not None:
-                        return data.getAtomFilteredEntity(
-                            indices=dataset.indices
-                        )
-
-                if dataType.atomConstant:
-                    return self.getData(
-                        dataTypeKey, model=model, dataset=dataset.parent
-                    )
-
-            elif dataType.iterable:
-                data = self.getData(
-                    dataTypeKey, model=model, dataset=dataset.parent
-                )
-                if data is not None:
-                    return data.getSubEntity(indices=dataset.indices)
-
-        return self.cache.get(cacheKey, None)
-
-    def setData(self, dataEntity, dataTypeKey, model=None, dataset=None):
-        """Store generated data in the cache and notify subscribers that it changed."""
-        dataType = self.getRegisteredDataType(dataTypeKey)
-
-        if dataType is None:
-            logger.error(
-                f"Tried to set data for dataTypeKey {dataTypeKey}, "
-                + "but no such key was registered"
-            )
-            return None
-
-        cacheKey = dataType.getCacheKey(model=model, dataset=dataset)
-
-        self.cache[cacheKey] = dataEntity
-        logger.info(f"Data for key {cacheKey} set, {self.cache[cacheKey]}")
-        self.eventPush("DATA_UPDATED", cacheKey)
-
-    def getCacheKey(self, dataTypeKey, model=None, dataset=None):
-        """Build the canonical cache key for one datatype/model/dataset triple."""
-        dataType = self.getRegisteredDataType(dataTypeKey)
-        if dataType is None:
-            return None
-
-        cacheKey = dataType.getCacheKey(model=model, dataset=dataset)
-
-        return cacheKey
-
-    def hasCacheKey(self, key, subChecks=True):
-        """Check whether a cache key is available, optionally honoring subdataset fallbacks."""
-        if key is None:
-            logger.error("Called env.hasCacheKey(key) but key was None!")
-            return False
-        if subChecks:
-            (dataTypeKey, model, dataset) = self.cacheKeyToComponents(key)
-            return self.hasData(dataTypeKey, model=model, dataset=dataset)
-        else:
-            return key in self.cache
-
-    def hasData(self, dataTypeKey, model=None, dataset=None):
-        """Answer whether data exists, including inherited subdataset cases."""
-        cacheKey = self.getCacheKey(dataTypeKey, model=model, dataset=dataset)
-        hasKey = self.hasCacheKey(cacheKey, subChecks=False)
-
-        if hasKey:
-            return True
-
-        if (dataset is not None) and (dataset.isSubDataset):
-            dataType = self.getDataType(dataTypeKey)
-
-            if dataset.isAtomFiltered:
-                if dataType.atomFilterable or dataType.atomConstant:
-                    return self.hasData(
-                        dataTypeKey, model=model, dataset=dataset.parent
-                    )
-
-            elif dataType.iterable:
-                return self.hasData(
-                    dataTypeKey, model=model, dataset=dataset.parent
-                )
-
-        return False
-
-    #############
-    ## DATA GENERATION
-    #############
-
-    def taskGenerateDataByKey(self, key, **kwargs):
-        """Schedule data generation when the caller already has a full cache key."""
-        (dataTypeKey, model, dataset) = self.cacheKeyToComponents(key)
-        self.taskGenerateData(
-            dataTypeKey, model=model, dataset=dataset, **kwargs
-        )
-
-    def taskGenerateData(
-            self,
-            dataTypeKey,
-            model=None,
-            dataset=None,
-            threaded=True,
-            visual=False,
-            isComponent=False,
-            componentParent=None,
-    ):
-        """Deduplicate and queue one data-generation request."""
-        # for models that predict energies and forces at the same time (e.g. sGDML)
-        # convert force tasks to energy tasks to avoid duplicates
-        if (
-                (model is not None)
-                and (model.singlePredict)
-                and (dataTypeKey == "forces")
-        ):
-            dataTypeKey = "energy"
-
-        dataKey = self.getCacheKey(dataTypeKey, model=model, dataset=dataset)
-
-        if self.hasCacheKey(dataKey):
-            return
-
-        if dataKey in self.queuedTasks:
-            # even if the job is not running, it's possible it was generated already
-            # in that case, don't
-            return
-
-        self.queuedTasks.add(dataKey)
-
-        func = (threaded and self.generateData) or self.generateDataAsync
-        self.newTask(
-            func,
-            args=(dataTypeKey,),
-            kwargs={
-                "model": model,
-                "dataset": dataset,
-                "isComponent": isComponent,
-            },
-            threaded=threaded,
-            visual=visual,
-            name=f"Generating {dataTypeKey}",
-            taskKey=f"{dataKey}",
-            componentParent=componentParent,
-        )
-
-    async def generateDataAsync(self, *args, **kwargs):
-        """Provide an awaitable adapter for synchronous generation code."""
-        self.generateData(*args, **kwargs)
-
-    def canGenerateData(self, dataTypeKey, model=None, dataset=None):
-        """Ask the data type whether all dependencies are already satisfied."""
-        dataType = self.getDataType(dataTypeKey)
-        (deps, canGenerate) = dataType.checkDependencies(
-            model=model, dataset=dataset
-        )
-
-        return canGenerate
-
-    def generateData(
-            self,
-            dataTypeKey,
-            model=None,
-            dataset=None,
-            isComponent=False,
-            taskID=None,
-    ):
-        """Attempt one generation step and defer unresolved work to the dependency queue."""
-        dataType = self.getDataType(dataTypeKey)
-
-        if dataType is None:
-            logger.error(
-                f"Tried to generate data for dataTypeKey {dataTypeKey}, "
-                + "but no such key was registered"
-            )
-            return None
-
-        cacheKey = dataType.getCacheKey(model=model, dataset=dataset)
-
-        sModel, sDataset = "None", "None"
-        if model is not None:
-            sModel = model.getDisplayName()
-        if dataset is not None:
-            sDataset = dataset.getDisplayName()
-        logger.info(
-            f"Generating data for key {cacheKey}, model = {sModel}, dataset = {sDataset}"
-        )
-
-        generated = dataType.generateData(
-            model=model, dataset=dataset, taskID=taskID
-        )
-
-        if (taskID is not None) and (not self.tm.isTaskRunning(taskID)):
-            # check if the task was cancelled, in which case it's normal it
-            # failed to generate, thus skip the generation queue
-            # in principle this should be unnecessary since cancelling means
-            # this function is no longer directly awaited, but better safe
-            # than sorry
-            return
-
-        if (not generated) and (not isComponent):
-            self.generationQueue.add(cacheKey)
-            logger.info(f"Added {cacheKey} to generation queue")
-            self.eventPush("GENERATION_QUEUE_CHANGED")
-
-    def keyIsHaunted(self, dataTypeKey, model=None, dataset=None):
-        """Detect requests that can be satisfied from ghost-model cache instead of a real model."""
-        if (model is not None) and (not model.isGhost):
-            return False
-
-        compKeys = self.getLowestComponents(
-            dataTypeKey, model=model, dataset=dataset
-        )
-
-        for key in compKeys:
-            (dataTypeKey, _, _) = self.cacheKeyToComponents(key)
-            if (dataTypeKey == "energy") or (dataTypeKey == "forces"):
-                return True
-
-        return False
-
-    def addToGenerationQueue(self, key, dataset=None, model=None):
-        """Record a high-level request for later dependency-driven generation."""
-        dataType = self.getDataType(key)
-        cacheKey = dataType.getCacheKey(model=model, dataset=dataset)
-        self.generationQueue.add(cacheKey)
-        if self.headless:
-            print(f"Added {cacheKey} to generation queue", flush=True)
-
-    async def handleGenerationQueue(self, *args):
-        """Expand queued requests into the lowest runnable dependency tasks."""
-        queue = self.generationQueue
-
-        if len(queue) == 0:
-            return
-
-        logger.info(f"Handling generation queue {self.generationQueue}")
-
-        # copying because we discard in loop
-        keysToGenerate = {}
-        for cacheKey in queue.copy():
-            (dataTypeKey, model, dataset) = self.cacheKeyToComponents(cacheKey)
-
-            if ("cluster" in cacheKey) and hasattr(dataset, 'isVariable') and dataset.isVariable:
-                logger.info("The cluster errors feature is not supported for variable datasets")
-                queue.discard(cacheKey)
-                self.eventPush('CLUSTER_FOR_VARIABLE')
-                continue
-
-            if self.hasCacheKey(cacheKey):
-                queue.discard(cacheKey)
-                continue
-
-            if self.canGenerateData(dataTypeKey, model=model, dataset=dataset):
-                keysToGenerate[
-                    cacheKey
-                ] = None  # value is the parent key, if available
-                queue.discard(cacheKey)
-
-            elif self.keyIsHaunted(dataTypeKey, model=model, dataset=dataset):
-                keysToGenerate[cacheKey] = None
-                queue.discard(cacheKey)
-
-            else:
-                compKeys = self.getLowestComponents(
-                    dataTypeKey, model=model, dataset=dataset
-                )
-
-                for key in compKeys:
-                    if key not in keysToGenerate:
-                        keysToGenerate[
-                            key
-                        ] = cacheKey  # indicates the parent key
-
-        for key, parentKey in keysToGenerate.items():
-            (dataTypeKey, model, dataset) = self.cacheKeyToComponents(key)
-
-            self.taskGenerateData(
-                dataTypeKey,
-                model=model,
-                dataset=dataset,
-                visual=True,
-                threaded=True,
-                isComponent=parentKey is not None,
-                componentParent=parentKey,
-            )
-
-    def getLowestComponents(self, dataTypeKey, model=None, dataset=None):
-        """Ask the data type for the deepest currently generatable dependency set."""
-        dataType = self.getDataType(dataTypeKey)
-        compKeys = dataType.getGeneratableComponent(
-            model=model, dataset=dataset
-        )
-
-        return compKeys
-        # return [
-        #     self.getCacheKey(key, model=model, dataset=dataset)
-        #     for key in compKeys
-        # ]
-
-    def deleteCacheByDataset(self, datasetKey):
-        """Invalidate cached outputs when a dataset's membership changes."""
-        toDelete = []
-        for key in self.cache.keys():
-            if datasetKey in key:
-                toDelete.append(key)
-
-        for key in toDelete:
-            del self.cache[key]
-            self.eventPush("DATA_UPDATED", key)
-
-    def getCacheByKey(self, key, subChecks=True):
-        """Resolve a cache key directly, with optional subdataset-aware lookup."""
-        if subChecks:
-            (dataTypeKey, model, dataset) = self.cacheKeyToComponents(key)
-            return self.getData(dataTypeKey, model=model, dataset=dataset)
-        else:
-            return self.cache.get(key, None)
-
-    def cacheKeyToComponents(self, key, dataTypeObject=False):
-        """Decode a cache key back into datatype, model, and dataset references."""
-        spl = key.split("__")
-        dataTypeKey = spl[0]
-        if dataTypeObject:
-            dataType = self.getDataType(dataTypeKey)
-        else:
-            dataType = dataTypeKey
-
-        if spl[1] == "nil":
-            model = None
-        else:
-            model = self.getModel(spl[1])
-
-        if spl[2] == "nil":
-            dataset = None
-        else:
-            dataset = self.getDataset(spl[2])
-
-        return (dataType, model, dataset)
+        if taskID in self.data.generationQueue:
+            self.data.generationQueue.discard(taskID)
 
     #############
     ## SAVE/LOAD
     #############
 
-    def save(self, path, taskID=None):
-        """Persist the session cache and object metadata so it can be restored later."""
-        if not os.path.exists(path):
-            os.mkdir(path)
-
-        ## SAVE CACHE
-        cacheDir = os.path.join(path, "cache")
-        if not os.path.exists(cacheDir):
-            os.mkdir(cacheDir)
-
-        for key, entity in self.cache.items():
-            if isinstance(entity, SubDataEntity):
-                continue
-
-            # Convert any inhomogeneous lists (e.g. variable-sized
-            # dataset forces) to object arrays so numpy can save them.
-            saveData = {}
-            for k, v in entity.data.items():
-                if isinstance(v, list):
-                    saveData[k] = np.array(v, dtype=object)
-                else:
-                    saveData[k] = v
-            np.savez_compressed(
-                os.path.join(cacheDir, key),
-                entityDataTypeKey=entity.dataType.key,
-                cacheKey=key,
-                **saveData,
-            )
-
-        ## GENERATE INFO
-        info = {"objects": {}}
-        for o in self.getAllDatasets(excludeSubs=True):
-            obj_info = {
-                "name": o.getName(),
-                "path": o.path,
-                "type": "dataset",
-            }
-
-            # Store ASE key selections if present
-            if hasattr(o, 'selected_energy_key') and o.selected_energy_key:
-                obj_info["ase_energy_key"] = o.selected_energy_key
-            if hasattr(o, 'selected_force_key') and o.selected_force_key:
-                obj_info["ase_force_key"] = o.selected_force_key
-
-            info["objects"][o.fingerprint] = obj_info
-
-        for o in self.getAllModels():
-            info["objects"][o.fingerprint] = {
-                "name": o.getName(),
-                "path": o.path,
-                "type": "model",
-            }
-
-        # Merge any additional info (including ghost models)
-        if hasattr(self, 'info') and 'objects' in self.info:
-            for fp, obj_info in self.info['objects'].items():
-                if fp not in info['objects']:
-                    info['objects'][fp] = obj_info
-
-        # dataset/model names and paths
-
-        ## SAVE INFO
-        infoFile = os.path.join(path, "info.json")
-        with open(infoFile, "w") as f:
-            json.dump(info, f, indent=4)
-
-    def taskLoad(self, path):
-        """Queue restoration of a previously saved session."""
-        self.newTask(
-            self.load,
-            args=(path,),
-            visual=True,
-            name="Loading save",
-            threaded=True,
-        )
-
-    def load(self, path, taskID=None):
-        """Rebuild datasets, ghost models, and cached entities from a saved session."""
-        # LOAD INFO (names etc)
-        infoFile = os.path.join(path, "info.json")
-        info = None
-        if os.path.exists(infoFile):
-            with open(infoFile, "r") as f:
-                info = json.load(f)
-            self.loadInfo(info)
-
-        ## LOAD DATASETS AND MODELS FROM INFO
-        if info is not None and "objects" in info:
-            for fingerprint, obj_info in info["objects"].items():
-                obj_path = obj_info.get("path")
-                obj_name = obj_info.get("name", "Unknown")
-                obj_type = obj_info.get("type")
-
-                # Models are recreated as ghosts from cached data below
-                if obj_type == "model":
-                    continue
-
-                if obj_path is None or not os.path.exists(obj_path):
-                    logger.warning(f"Skipping {obj_name}: path not found at {obj_path}")
-                    continue
-
-                # Load as dataset
-                if obj_type == "dataset":
-                    # Extract ASE-specific keys
-                    ase_energy_key = obj_info.get("ase_energy_key")
-                    ase_force_key = obj_info.get("ase_force_key")
-
-                    # Find prediction keys associated with this dataset
-                    prediction_keys = []
-                    for ghost_fp, ghost_info in info.get('objects', {}).items():
-                        if (ghost_info.get('type') == 'ghost_model' and
-                                ghost_info.get('path') == obj_path):
-                            prediction_keys.append((
-                                ghost_info['energy_key'],
-                                ghost_info['force_key'],
-                                ghost_info['name']
-                            ))
-
-                    for loader_name, loader_class in self.datasetTypes.items():
-                        try:
-                            # Special handling for ASE loader with key selection
-                            if loader_name == "ase (auto)" and (ase_energy_key or ase_force_key):
-                                # Pass keys and disable dialog
-                                result = loader_class(
-                                    obj_path,
-                                    selected_energy_key=ase_energy_key,
-                                    selected_force_key=ase_force_key,
-                                    prediction_keys=prediction_keys,
-                                    show_dialog=False  # Don't show dialog when loading session
-                                )
-
-                                if isinstance(result, tuple):
-                                    dataset, _ = result
-                                else:
-                                    dataset = result
-                            else:
-                                dataset = loader_class(obj_path)
-
-                            if dataset is not None:
-                                dataset.initialise()
-                                self.setNewDataset(dataset)
-                                logger.info(f"Loaded dataset {obj_name} from {obj_path}")
-
-                                # Load predictions if this is an ASE dataset
-                                if prediction_keys and loader_name == "ase (auto)":
-                                    atomsList = dataset.atomsList if hasattr(dataset, 'atomsList') else None
-                                    self._loadPredictionsFromKeys(dataset, obj_path, prediction_keys,
-                                                                  atomsList=atomsList)
-
-                                break
-                        except Exception as e:
-                            logger.debug(f"Failed to load with {loader_name}: {e}")
-                            continue
-                else:
-                    # Legacy info.json without type field: guess by extension
-                    ext = os.path.splitext(obj_path)[1].lower()
-                    dataset_extensions = ['.xyz', '.extxyz', '.db', '.traj', '.npz']
-                    if ext in dataset_extensions:
-                        for loader_name, loader_class in self.datasetTypes.items():
-                            try:
-                                dataset = loader_class(obj_path)
-                                if dataset is not None:
-                                    dataset.initialise()
-                                    self.setNewDataset(dataset)
-                                    logger.info(f"Loaded dataset {obj_name} from {obj_path}")
-                                    break
-                            except Exception as e:
-                                continue
-
-        ## LOAD CACHE
-        cacheDir = os.path.join(path, "cache")
-        for npzPath in glob.glob(os.path.join(cacheDir, "*.npz")):
-            d = dict(np.load(npzPath, allow_pickle=True))
-            dataTypeKey = str(d.pop("entityDataTypeKey"))
-            cacheKey = str(d.pop("cacheKey"))
-
-            # Convert numpy object arrays back to Python lists.
-            # Variable-sized data (e.g. forces for molecules with
-            # different atom counts) is saved as np.array(list,
-            # dtype=object). The rest of the code expects these
-            # as Python lists.
-            for k, v in d.items():
-                if isinstance(v, np.ndarray) and v.dtype == object:
-                    d[k] = list(v)
-
-            dataType = self.getDataType(dataTypeKey)
-
-            if dataType is None:
-                raise ValueError(
-                    f"Tried to load data of type `{dataTypeKey}`, but no such type registered."
-                )
-
-            de = dataType.newDataEntity(**d)
-            self.cache[cacheKey] = de
-            self.eventPush("DATA_UPDATED", cacheKey)
-
-        self.lookForGhosts()
-
-    def loadInfo(self, info):
-        """Merge persisted metadata into the current session state."""
-        self.info.update(info)
-
-    def saveDataset(self, dataset, datasetType, form, path, taskID=None):
-        """Export a dataset through its loader-specific serializer."""
-        self.eventPush(
-            "TASK_PROGRESS",
-            taskID,
-            message=f"Saving {dataset.getDisplayName()} as {datasetType} dataset at z`{path}`",
-            quiet=True,
-            percent=False,
-        )
-
-        datasetClass = self.datasetTypes.get(datasetType, None)
-        if datasetClass is None:
-            logger.error(
-                f"Tried saving dataset {dataset.getDisplayName()} as {datasetType} dataset, but type is not recognised"
+    def requestSessionSave(self, path):
+        """Save the session SERVER-SIDE so the server's datasets + prediction
+        cache (the real data) are persisted (Stage 5). Falls back to an
+        in-process save when no server is connected.
+        """
+        session = self.remote.remoteSession
+        if session is None or self.remote._event_loop is None:
+            self.newTask(
+                self.persistence.save, args=(path,), visual=True,
+                name="Saving session", threaded=True,
             )
             return
-
-        if not hasattr(datasetClass, "saveDataset"):
-            logger.error(
-                f"Tried saving dataset {dataset.getDisplayName()} as {datasetType} dataset, but no saveDataset method defined"
-            )
-            return
-
-        datasetClass.saveDataset(dataset, path, format=form, taskID=taskID)
-
-    def taskSaveDataset(self, dataset, datasetType, form, path):
-        """Queue dataset export so serialization does not block other work."""
-        self.newTask(
-            self.saveDataset,
-            args=(dataset, datasetType, form, path),
-            visual=True,
-            name="Saving dataset",
-            threaded=True,
+        import asyncio as _asyncio
+        _asyncio.run_coroutine_threadsafe(
+            session.push_event("SAVE_SESSION", path), self.remote._event_loop
         )
+
+    def requestSessionLoad(self, path):
+        """Load the session SERVER-SIDE; the server restores its Environment
+        (datasets + prediction cache) and announces them to the client via
+        REMOTE_DATASET_META / REMOTE_MODEL_META. Falls back to in-process load.
+        """
+        session = self.remote.remoteSession
+        if session is None or self.remote._event_loop is None:
+            self.persistence.taskLoad(path)
+            return
+        import asyncio as _asyncio
+        _asyncio.run_coroutine_threadsafe(
+            session.push_event("LOAD_SESSION", path), self.remote._event_loop
+        )
+
 
     #############
     ## MISC
@@ -1389,18 +822,31 @@ class Environment(EventClass):
             return mixColors(model.color, dataset.color)
 
     def lookForGhosts(self):
-        """Recreate ghost model placeholders for cached prediction-only data."""
+        """Recreate ghost model placeholders for cached prediction-only data.
 
-        for cacheKey in self.cache.keys():
-            (dataKey, modelKey, datasetKey) = cacheKey.split("__")
+        The zero baseline is intentionally NOT loaded here. Recovering ghost
+        predictions must not pull in a model the user never requested — the zero
+        model loads only on explicit request (File ▸ Load Zero Model / Ctrl+0).
+        """
+        from ffast.cache import CacheKey
+        for cacheKey in list(self.cache.keys()):
+            # Only raw prediction-data keys (forces/energy) carry ghost models.
+            # The dtype discriminator is sound regardless of segment count, so
+            # metric-result keys (identity = a metric id, not energy/forces) are
+            # skipped — they derive from a prediction key recovered here.
+            ck = CacheKey.try_parse(cacheKey)
+            if ck is None or ck.dtype not in ("forces", "energy"):
+                continue
+            modelKey, datasetKey = ck.model_fp, ck.dataset_fp
             if (
-                    (dataKey == "forces" or dataKey == "energy")
+                    modelKey is not None
+                    and datasetKey is not None
                     and (modelKey not in self.models)
-                    and self.datasetExists(datasetKey)
+                    and self.datasets.exists(datasetKey)
             ):
                 model = GhostModelLoader(self, modelKey)
                 model.initialise()
-                self.setNewModel(model)
+                self.models.add(model)
 
     def taskLoadZeroModel(self):
         """Queue loading of the built-in zero baseline model."""
@@ -1415,11 +861,11 @@ class Environment(EventClass):
     def loadZeroModel(self, taskID=None):
         """Ensure the singleton zero baseline model exists in the session."""
         fp = ZeroModelLoader.fingerprint
-        if self.modelExists(fp):
+        if self.models.exists(fp):
             return
         model = ZeroModelLoader(self)
         model.initialise()
-        self.setNewModel(model)
+        self.models.add(model)
 
     def startInteract(self, **kwargs):
         """Drop into a REPL seeded with useful locals for manual debugging."""
@@ -1427,603 +873,7 @@ class Environment(EventClass):
 
         code.interact(local=kwargs)
 
-    async def _disconnectRemoteSession(self):
-        """Disconnect any active remote session on QUIT_EVENT."""
-        session = self.remoteSession
-        if session is not None:
-            # Set flag BEFORE disconnecting so that when TaskManager
-            # subsequently cancels the connectToCluster task the CancelledError
-            # handler knows this is a quit, not a user-initiated disconnect.
-            # Without this the handler would scancel the job and delete the
-            # session record, preventing reconnect on next launch.
-            self._session_quitting = True
-            logger.info("Cleaning up remote session on quit…")
-            await session.disconnect()
-            self.remoteSession = None
-
-    async def connectToCluster(
-        self, profile, reconnect_job_id=None, taskID=None
-    ):
-        """Connect to (or reconnect to) a remote cluster session.
-
-        Owns the full session lifecycle: SLURM job dispatch, SSH tunnel,
-        WebSocket, listener startup, and clean teardown.  The UI layer
-        (menuHandler) is responsible only for the dialog and profile
-        selection; all session state lives here.
-        """
-        from cluster.backend import ClusterError
-
-        _job_id = reconnect_job_id
-
-        def _on_job_submitted(job_id: str):
-            nonlocal _job_id
-            _job_id = job_id
-
-        def _progress(msg: str):
-            prefix = f"[Job {_job_id}] " if _job_id else ""
-            self.eventPush(
-                "TASK_PROGRESS",
-                taskID,
-                message=f"{prefix}{msg}",
-            )
-
-        async def _scancel(job_id: str):
-            """Best-effort SLURM job cancellation (new jobs only)."""
-            from cluster.slurm import RemoteSlurmBackend
-            try:
-                backend = RemoteSlurmBackend(
-                    host=profile.host,
-                    username=profile.username,
-                    identity_file=profile.identity_file,
-                )
-                await backend.cancel_job(job_id)
-                logger.info("scancel %s succeeded", job_id)
-            except Exception as exc:
-                logger.warning("scancel %s failed: %s", job_id, exc)
-
-        try:
-            if reconnect_job_id is not None:
-                from cluster.session import reconnect_to_cluster
-                session = await reconnect_to_cluster(
-                    profile,
-                    reconnect_job_id,
-                    progress_cb=_progress,
-                )
-            else:
-                from cluster.session import connect_to_cluster
-                session = await connect_to_cluster(
-                    profile,
-                    progress_cb=_progress,
-                    on_job_submitted=_on_job_submitted,
-                )
-
-            self.remoteSession = session
-            # Forward server→client events into the local event system.
-            # For reconnect sessions the server replays REMOTE_DATASET_META
-            # and REMOTE_MODEL_META automatically on connection, so the
-            # listener will receive and forward them as normal.
-            self.remoteSession._listener = (
-                await session.start_listener(self)
-            )
-            logger.info(
-                "Remote session ready: job=%s local_port=%d",
-                session.job_id,
-                session.local_port,
-            )
-
-            self.eventPush(
-                "TASK_PROGRESS",
-                taskID,
-                title=f"Cluster: {profile.host} [{session.job_id}]",
-                message="Connected — ✕ to disconnect",
-            )
-
-            # Keep task alive so the sidebar item stays as a
-            # disconnect handle.
-            #
-            # Use a Future (not `await session._listener`) so that
-            # CancelledError always lands here regardless of whether
-            # the listener has already exited.  Awaiting a completed
-            # Task returns immediately without raising CancelledError,
-            # which caused scancel to be skipped in a race condition.
-            _alive = asyncio.get_event_loop().create_future()
-
-            def _on_listener_done(t):
-                if not _alive.done():
-                    _alive.set_result("listener_exited")
-
-            session._listener.add_done_callback(_on_listener_done)
-
-            try:
-                await _alive
-                # Natural exit — listener died (server dropped).
-                # Keep session record: user can still reconnect if the
-                # job is still alive (e.g. transient tunnel failure).
-                logger.warning(
-                    "Cluster listener exited unexpectedly (job %s)",
-                    session.job_id,
-                )
-                self.eventPush(
-                    "TASK_PROGRESS",
-                    taskID,
-                    message="Connection lost (server dropped)",
-                    error=True,
-                )
-                self.remoteSession = None
-            except asyncio.CancelledError:
-                if self._session_quitting:
-                    # App is quitting — _disconnectRemoteSession already
-                    # closed the tunnel.  Job is still alive on the cluster;
-                    # keep the session record so the user can reconnect on the
-                    # next launch.  Do NOT scancel.
-                    raise
-                # ✕ clicked — disconnect cleanly.
-                logger.info(
-                    "Disconnecting from cluster (user request, job %s)",
-                    session.job_id,
-                )
-                session._listener.cancel()
-                await session.disconnect()
-                self.remoteSession = None
-                if reconnect_job_id is None:
-                    # New job submitted by us — cancel it on the cluster.
-                    asyncio.create_task(_scancel(session.job_id))
-                # Delete local record: user explicitly disconnected.
-                from cluster.session import delete_session_record
-                delete_session_record(session.job_id)
-                raise
-
-        except asyncio.CancelledError:
-            # Cancelled before connection was established.
-            if _job_id is not None and reconnect_job_id is None and not self._session_quitting:
-                logger.info(
-                    "Task cancelled — sending scancel for job %s",
-                    _job_id,
-                )
-                asyncio.create_task(_scancel(_job_id))
-            raise
-        except ClusterError as exc:
-            logger.error("Cluster connection failed: %s", exc)
-            # Job is definitively dead — purge the stale record so the
-            # reconnect dialog doesn't re-appear on the next connect attempt.
-            if reconnect_job_id is not None:
-                from cluster.session import delete_session_record
-                delete_session_record(reconnect_job_id)
-            self.eventPush(
-                "TASK_PROGRESS",
-                taskID,
-                message=f"Connection failed: {exc}",
-                error=True,
-            )
-        except OSError as exc:
-            logger.error("SSH/WebSocket error: %s", exc)
-            # If we submitted a new job but the tunnel/WebSocket failed,
-            # cancel it on the cluster so it doesn't run to its time limit.
-            # For reconnect jobs we leave the job alone (tunnel failure is
-            # transient; the job is still running and the record is kept).
-            if reconnect_job_id is None and _job_id is not None:
-                asyncio.create_task(_scancel(_job_id))
-            self.eventPush(
-                "TASK_PROGRESS",
-                taskID,
-                message=f"Connection failed: {exc}",
-                error=True,
-            )
-
-    async def connectDirect(self, host, port, taskID=None):
-        """Connect directly to a local ffast-server (no SLURM/SSH).
-
-        Used for local testing without a cluster.  menuHandler is
-        responsible for the input dialog; this method owns the session
-        lifecycle.
-        """
-        from cluster.session import connect_direct
-
-        self.eventPush(
-            "TASK_PROGRESS",
-            taskID,
-            message=f"Connecting to {host}:{port}…",
-        )
-        try:
-            session = await connect_direct(host, port)
-            self.remoteSession = session
-            self.remoteSession._listener = (
-                await session.start_listener(self)
-            )
-            logger.info("Local server connected: %s:%d", host, port)
-            self.eventPush(
-                "TASK_PROGRESS",
-                taskID,
-                title=f"Local server {host}:{port}",
-                message="Connected — ✕ to disconnect",
-            )
-
-            _alive = asyncio.get_event_loop().create_future()
-
-            def _on_done(_t):
-                if not _alive.done():
-                    _alive.set_result("done")
-
-            session._listener.add_done_callback(_on_done)
-
-            try:
-                await _alive
-                self.eventPush(
-                    "TASK_PROGRESS",
-                    taskID,
-                    message="Connection lost (server stopped)",
-                    error=True,
-                )
-                self.remoteSession = None
-            except asyncio.CancelledError:
-                session._listener.cancel()
-                await session.disconnect()
-                self.remoteSession = None
-                raise
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error("Local server connect failed: %s", exc)
-            self.eventPush(
-                "TASK_PROGRESS",
-                taskID,
-                message=f"Failed: {exc}",
-                error=True,
-            )
-
-    # ── remote array transfer ─────────────────────────────────────────────────
-
-    def _onRemoteDatasetMeta(
-        self,
-        fingerprint,
-        name=None,
-        n=None,
-        has_forces=True,
-        is_sub=False,
-    ):
-        """Create a local CachedRemoteDataset proxy when the server loads a dataset.
-
-        The proxy has no arrays yet (``is_remote_proxy=True``) but appears in
-        the Loupe dataset ComboBox so the user can select it.  Actual array
-        transfer is triggered by :meth:`taskFetchRemoteDataset`.
-        """
-        from cluster.remote_dataset import CachedRemoteDataset
-
-        if self.getDataset(fingerprint) is not None:
-            logger.debug("REMOTE_DATASET_META: proxy already exists for %r", fingerprint)
-            return
-
-        n_val = int(n) if n is not None else 0
-        label = name if name else fingerprint[:12]
-        proxy = CachedRemoteDataset(fingerprint, label, n_val)
-        # slice_num=-2 skips the maxDatasetSize update (proxy has no arrays)
-        self.setNewDataset(proxy, slice_num=-2)
-        logger.info(
-            "Remote proxy created: %r (n=%d, has_forces=%s)",
-            label, n_val, has_forces,
-        )
-
-    def _onRemoteModelMeta(
-        self,
-        fingerprint,
-        name=None,
-        dataset_fingerprints=None,
-    ):
-        """Create a local GhostModelLoader when the server registers a ghost model.
-
-        Called when ``REMOTE_MODEL_META`` arrives.  The server sends this event
-        from the ``MODEL_LOADED`` handler, which fires *after*
-        ``_loadPredictionsFromKeys`` and ``lookForGhosts()`` have run — so
-        prediction arrays are already in ``env.cache`` on the server side.
-
-        After creating the ghost model, auto-triggers ``taskFetchRemoteDataset``
-        for every associated dataset that still has no arrays on the client
-        (``is_remote_proxy=True``).  This pulls the arrays *including* the
-        prediction data so plots work immediately.
-        """
-        from modelLoaders.ghost import GhostModelLoader
-
-        if self.getModel(fingerprint) is not None:
-            logger.debug(
-                "REMOTE_MODEL_META: ghost model already exists for %r", fingerprint
-            )
-            return
-
-        model_name = name if name else fingerprint[:8]
-        # Register info so GhostModelLoader.initialise() finds the display name.
-        self.info.setdefault("objects", {})[fingerprint] = {
-            "path": "remote",
-            "name": model_name,
-            "type": "ghost_model",
-        }
-        model = GhostModelLoader(self, fingerprint)
-        model.initialise()
-        self.setNewModel(model)
-        logger.info(
-            "Remote ghost model created: %r (%s)", fingerprint[:8], model_name
-        )
-
-        # Auto-fetch arrays for associated datasets.
-        # Branch on proxy state:
-        #   proxy (no geometry yet)  → full fetch (geometry + predictions)
-        #   populated                → prediction-only channel (no re-transfer)
-        for ds_fp in (dataset_fingerprints or []):
-            dataset = self.getDataset(ds_fp)
-            if dataset is None:
-                continue
-            if getattr(dataset, "is_remote_proxy", True):
-                logger.info(
-                    "Auto-fetching arrays for dataset %r "
-                    "(has new ghost model %r)",
-                    ds_fp[:8], fingerprint[:8],
-                )
-                self.taskFetchRemoteDataset(ds_fp)
-            else:
-                logger.info(
-                    "Fetching prediction arrays only for dataset %r "
-                    "model %r (dataset already populated)",
-                    ds_fp[:8], fingerprint[:8],
-                )
-                self.taskFetchPredictionArrays(ds_fp, fingerprint)
-
-    async def _fetchRemoteDatasetTask(self, fingerprint, taskID=None):
-        """Async task: transfer arrays from server and populate local proxy.
-
-        Progress is reported through TASK_PROGRESS so the Tasks panel shows a
-        progress bar during the transfer.
-        """
-        session = self.remoteSession
-        if session is None:
-            logger.error("taskFetchRemoteDataset: no remote session active")
-            return
-
-        self.eventPush(
-            "TASK_PROGRESS",
-            taskID,
-            message="Requesting arrays from remote server…",
-        )
-        try:
-            arrays = await session.request_subdataset_arrays(fingerprint)
-        except asyncio.TimeoutError:
-            self.eventPush(
-                "TASK_PROGRESS",
-                taskID,
-                message="Timed out waiting for server response",
-                error=True,
-            )
-            logger.error("Array transfer timed out for %r", fingerprint)
-            return
-        except Exception as exc:
-            self.eventPush(
-                "TASK_PROGRESS",
-                taskID,
-                message=f"Transfer error: {exc}",
-                error=True,
-            )
-            logger.error("Array transfer failed for %r: %s", fingerprint, exc)
-            return
-
-        self.eventPush(
-            "TASK_PROGRESS",
-            taskID,
-            message="Populating local cache…",
-        )
-
-        # Unpack payload — request_subdataset_arrays now returns a dict with
-        # two top-level keys: "arrays" (coord/element arrays + pred__ entries)
-        # and "model_names" (fp → display name).
-        payload = arrays  # named "arrays" for historical reasons; it's the payload
-        raw_arrays = payload.get("arrays", payload)   # back-compat if plain dict
-        model_names = payload.get("model_names") or {}
-
-        # Separate prediction entries from geometry/element arrays.
-        pred_data: dict = {}   # model_fp → {dtype: np.ndarray}
-        main_arrays: dict = {}
-        for key, val in raw_arrays.items():
-            if key.startswith("pred__"):
-                parts = key.split("__", 2)
-                if len(parts) == 3:
-                    _, dt_key, model_fp = parts
-                    pred_data.setdefault(model_fp, {})[dt_key] = val
-            else:
-                main_arrays[key] = val
-
-        dataset = self.getDataset(fingerprint)
-        if dataset is None:
-            # No proxy was created yet — build one now
-            from cluster.remote_dataset import CachedRemoteDataset
-
-            n_val = len(main_arrays.get("R") or [])
-            dataset = CachedRemoteDataset(fingerprint, fingerprint[:12], n_val)
-            self.setNewDataset(dataset, slice_num=-2)
-
-        dataset.populate(main_arrays)
-
-        # ── Recreate prediction DataEntities from transferred arrays ─────────
-        if pred_data:
-            self.eventPush(
-                "TASK_PROGRESS", taskID,
-                message="Importing prediction data…",
-            )
-
-        offsets = main_arrays.get("offsets")   # present for variable datasets
-        for model_fp, preds in pred_data.items():
-            try:
-                E = preds.get("energy")
-                F = preds.get("forces")
-
-                if E is not None:
-                    energy_dt = self.getDataType("energy")
-                    energy_de = energy_dt.newDataEntity(
-                        energy=np.asarray(E).flatten()
-                    )
-                    self.setData(energy_de, "energy",
-                                 model=model_fp, dataset=dataset)
-
-                if F is not None:
-                    forces_dt = self.getDataType("forces")
-                    F_arr = np.asarray(F)
-                    if offsets is not None:
-                        # Variable dataset — F was flattened on the server;
-                        # reconstruct as list of per-molecule arrays.
-                        F_val = [
-                            F_arr[offsets[i]:offsets[i + 1]]
-                            for i in range(len(offsets) - 1)
-                        ]
-                    else:
-                        F_val = F_arr  # uniform (N, natoms, 3)
-                    forces_de = forces_dt.newDataEntity(forces=F_val)
-                    self.setData(forces_de, "forces",
-                                 model=model_fp, dataset=dataset)
-
-                # Store model info so GhostModelLoader.initialise() finds it.
-                model_name = model_names.get(model_fp, model_fp[:8])
-                self.info.setdefault("objects", {})[model_fp] = {
-                    "path": "remote",
-                    "name": model_name,
-                    "type": "ghost_model",
-                }
-                logger.info(
-                    "Imported predictions for %r (model %s)",
-                    model_name, model_fp[:8],
-                )
-            except Exception as exc:
-                logger.error(
-                    "Failed to import predictions for model %r: %s",
-                    model_fp[:8], exc,
-                )
-
-        # Create GhostModelLoader objects for any newly-imported prediction data
-        if pred_data:
-            self.lookForGhosts()
-
-        # Notify Loupe (and any other subscriber) that arrays are ready
-        self.eventPush("REMOTE_ARRAY_FETCH_DONE", fingerprint)
-        self.eventPush("DATASET_UPDATED", fingerprint)
-        logger.info("Array transfer complete for %r", fingerprint)
-
-    def taskFetchRemoteDataset(self, fingerprint: str) -> None:
-        """Schedule an async task to transfer arrays for *fingerprint* from the server.
-
-        Idempotent: if arrays are already cached in the session,
-        :meth:`RemoteSession.request_subdataset_arrays` returns instantly.
-        """
-        self.newTask(
-            self._fetchRemoteDatasetTask,
-            args=(fingerprint,),
-            visual=True,
-            name="Fetching remote arrays",
-        )
-
-    async def _fetchPredictionArraysTask(
-        self, ds_fp: str, model_fp: str, taskID=None
-    ):
-        """Async task: fetch prediction arrays only via the Prediction-Only Channel.
-
-        Sends ``REQUEST_PREDICTION_ARRAYS`` and populates the local cache with
-        the returned energy/forces data.  Geometry arrays are not re-transferred.
-        """
-        session = self.remoteSession
-        if session is None:
-            logger.error("_fetchPredictionArraysTask: no remote session")
-            return
-
-        self.eventPush(
-            "TASK_PROGRESS", taskID,
-            message="Requesting prediction arrays from remote server…",
-        )
-        try:
-            arrays = await session.request_prediction_arrays(
-                ds_fp, model_fp
-            )
-        except asyncio.TimeoutError:
-            self.eventPush(
-                "TASK_PROGRESS", taskID,
-                message="Timed out waiting for prediction arrays",
-                error=True,
-            )
-            logger.error(
-                "Prediction array transfer timed out: model=%r dataset=%r",
-                model_fp[:8], ds_fp[:8],
-            )
-            return
-        except Exception as exc:
-            self.eventPush(
-                "TASK_PROGRESS", taskID,
-                message=f"Prediction transfer error: {exc}",
-                error=True,
-            )
-            logger.error(
-                "Prediction array transfer failed model=%r dataset=%r: %s",
-                model_fp[:8], ds_fp[:8], exc,
-            )
-            return
-
-        self.eventPush(
-            "TASK_PROGRESS", taskID,
-            message="Importing prediction data…",
-        )
-
-        dataset = self.getDataset(ds_fp)
-        if dataset is None:
-            logger.error(
-                "_fetchPredictionArraysTask: dataset %r not found", ds_fp
-            )
-            return
-
-        offsets = None
-        if getattr(dataset, "isVariable", False):
-            offsets = getattr(dataset, "_offsets", None)
-
-        E_key = f"pred__energy__{model_fp}"
-        F_key = f"pred__forces__{model_fp}"
-
-        E = arrays.get(E_key)
-        F = arrays.get(F_key)
-
-        if E is not None:
-            energy_dt = self.getDataType("energy")
-            energy_de = energy_dt.newDataEntity(
-                energy=np.asarray(E).flatten()
-            )
-            self.setData(energy_de, "energy", model=model_fp, dataset=dataset)
-
-        if F is not None:
-            forces_dt = self.getDataType("forces")
-            F_arr = np.asarray(F)
-            if offsets is not None:
-                # Variable dataset — F was flattened on the server;
-                # reconstruct as list of per-molecule arrays.
-                F_val = [
-                    F_arr[offsets[i]:offsets[i + 1]]
-                    for i in range(len(offsets) - 1)
-                ]
-            else:
-                F_val = F_arr  # uniform: (N, natoms, 3)
-            forces_de = forces_dt.newDataEntity(forces=F_val)
-            self.setData(
-                forces_de, "forces", model=model_fp, dataset=dataset
-            )
-
-        self.lookForGhosts()
-        self.eventPush("REMOTE_ARRAY_FETCH_DONE", ds_fp)
-        logger.info(
-            "Prediction arrays imported: model=%r dataset=%r E=%s F=%s",
-            model_fp[:8], ds_fp[:8],
-            E is not None, F is not None,
-        )
-
-    def taskFetchPredictionArrays(
-        self, ds_fp: str, model_fp: str
-    ) -> None:
-        """Schedule a prediction-only array fetch (no geometry re-transfer)."""
-        self.newTask(
-            self._fetchPredictionArraysTask,
-            args=(ds_fp, model_fp),
-            visual=True,
-            name="Fetching remote predictions",
-        )
+    # ── remote session (facade; owned by self.remote — ADR 0020) ────────
 
 
 class HeadlessEnvironment(Environment, threading.Thread):
@@ -2043,10 +893,17 @@ class HeadlessEnvironment(Environment, threading.Thread):
         """Drive events, generation, and task execution until shutdown is requested."""
         taskManager = self.tm
         while not self.quitReady:
-            await self.eventHandle()
-            await self.handleGenerationQueue()
-            await taskManager.eventHandle()
-            await taskManager.handleTaskQueue()
+            # One iteration's error (a bad queue key, a task failure) must never
+            # tear down the loop — on the server this loop IS the process, so an
+            # unhandled exception here kills the server and drops every client
+            # ("no close frame"). Log and keep serving.
+            try:
+                await self.eventHandle()
+                await self.data.handleGenerationQueue()
+                await taskManager.eventHandle()
+                await taskManager.handleTaskQueue()
+            except Exception:
+                logger.exception("headlessEventLoop: iteration error (continuing)")
             await asyncio.sleep(0.1)
 
         await self.eventHandle()
@@ -2062,7 +919,7 @@ class HeadlessEnvironment(Environment, threading.Thread):
         while (
                 (tm.taskQueue.qsize() > 0)
                 or (len(tm.runningTasks) > 0)
-                or (len(self.generationQueue) > 0)
+                or (len(self.data.generationQueue) > 0)
         ) and not self.quitReady:
             if verbose:
                 print("-" * 20)
@@ -2084,10 +941,10 @@ class HeadlessEnvironment(Environment, threading.Thread):
                         )
                     print()
 
-                lGenQueue = len(self.generationQueue)
+                lGenQueue = len(self.data.generationQueue)
                 if lGenQueue > 0:
                     print(f"{lGenQueue} tasks in generation queue:")
-                    for i in self.generationQueue:
+                    for i in self.data.generationQueue:
                         print(i)
 
                 print(flush=True)
