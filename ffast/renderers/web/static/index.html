@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FFAST Web Viewer</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      background: #1a1a1e;
+      color: #d0d0d8;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── top bar ─────────────────────────────────────────────────────── */
+    #topbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      background: #25252c;
+      border-bottom: 1px solid #3a3a44;
+      flex-shrink: 0;
+    }
+    #topbar h1 { font-size: 13px; font-weight: 600; color: #7eb8f7; margin-right: 6px; }
+    .connection-field {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    #topbar label { color: #888; font-size: 11px; }
+    #topbar input {
+      background: #1a1a1e; border: 1px solid #44445a; border-radius: 4px;
+      color: #d0d0d8; padding: 3px 6px; font-size: 12px; width: 160px;
+    }
+    #topbar input:focus { outline: none; border-color: #5588cc; }
+    button {
+      padding: 4px 10px; border: 1px solid #44445a; border-radius: 4px;
+      background: #2e2e38; color: #d0d0d8; cursor: pointer; font-size: 12px;
+    }
+    button:hover { background: #3a3a4a; }
+    button:disabled { opacity: 0.4; cursor: default; }
+    #status {
+      margin-left: auto; font-size: 11px; color: #666;
+    }
+    #status.connected { color: #5ca85c; }
+    #status.error { color: #c05050; }
+
+    @media (max-width: 720px) {
+      #topbar {
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+      }
+      #topbar h1 {
+        flex: 0 0 auto;
+      }
+      .connection-field {
+        flex: 1 1 170px;
+      }
+      .server-field {
+        flex-basis: 250px;
+      }
+      .token-field {
+        flex-basis: 150px;
+      }
+      #topbar input {
+        width: auto;
+        min-width: 0;
+        flex: 1 1 auto;
+      }
+      #token-input {
+        width: auto !important;
+      }
+      #connect-btn,
+      #disconnect-btn {
+        flex: 1 1 110px;
+      }
+      #connect-btn:disabled,
+      #disconnect-btn:disabled {
+        display: none;
+      }
+      #status {
+        flex: 1 0 100%;
+        margin-left: 0;
+        min-height: 14px;
+      }
+    }
+
+    /* ── main layout ─────────────────────────────────────────────────── */
+    #main { display: flex; flex: 1; overflow: hidden; }
+
+    @media (max-width: 720px) {
+      #main {
+        flex-direction: column;
+      }
+    }
+
+    /* ── sidebar ─────────────────────────────────────────────────────── */
+    #sidebar {
+      width: 200px;
+      flex-shrink: 0;
+      background: #20202a;
+      border-right: 1px solid #3a3a44;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 8px;
+      gap: 10px;
+    }
+    @media (max-width: 720px) {
+      #sidebar {
+        width: 100%;
+        max-height: 320px;
+        border-right: 0;
+        border-bottom: 1px solid #3a3a44;
+      }
+    }
+    .section-title {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #556;
+      padding-bottom: 4px;
+      border-bottom: 1px solid #2e2e3a;
+    }
+    select {
+      width: 100%; background: #1a1a1e; border: 1px solid #44445a;
+      border-radius: 4px; color: #d0d0d8; padding: 3px 4px; font-size: 12px;
+    }
+    select:focus { outline: none; border-color: #5588cc; }
+
+    #frame-section { display: flex; flex-direction: column; gap: 4px; }
+    #frame-slider { width: 100%; accent-color: #5588cc; }
+    #frame-label { font-size: 11px; color: #888; text-align: center; }
+
+    /* ── 3D viewport ─────────────────────────────────────────────────── */
+    #viewport {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+    }
+    #canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    @media (max-width: 720px) {
+      #viewport {
+        min-height: 300px;
+      }
+    }
+    #overlay {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      text-align: center;
+      color: #444;
+      pointer-events: none;
+    }
+    #overlay.hidden { display: none; }
+    #overlay .big { font-size: 18px; font-weight: 300; margin-bottom: 6px; }
+    #overlay .small { font-size: 11px; }
+
+    /* ── file browser modal ──────────────────────────────────────────── */
+    #fb-modal {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,0.55);
+      display: flex; align-items: center; justify-content: center;
+    }
+    #fb-modal.hidden { display: none; }
+    #fb-panel {
+      width: 640px; max-width: 92vw; height: 70vh; max-height: 600px;
+      background: #20202a; border: 1px solid #3a3a44; border-radius: 8px;
+      display: flex; flex-direction: column; overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+    }
+    #fb-header {
+      display: flex; align-items: center; gap: 6px;
+      padding: 8px 10px; border-bottom: 1px solid #3a3a44; flex-shrink: 0;
+    }
+    #fb-header .title { font-size: 12px; font-weight: 600; color: #7eb8f7; margin-right: 4px; }
+    #fb-path {
+      flex: 1; font-family: ui-monospace, monospace; font-size: 11px;
+      color: #99a; background: #1a1a1e; border: 1px solid #33333e;
+      border-radius: 4px; padding: 3px 6px; overflow-x: auto; white-space: nowrap;
+    }
+    #fb-list {
+      flex: 1; overflow-y: auto; padding: 4px;
+    }
+    .fb-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;
+      user-select: none;
+    }
+    .fb-row:hover { background: #2a2a36; }
+    .fb-row.selected { background: #2e4a6e; }
+    .fb-row .icon { width: 16px; text-align: center; flex-shrink: 0; }
+    .fb-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fb-row .size { color: #667; font-size: 10px; flex-shrink: 0; }
+    .fb-row.dir .name { color: #cfd2dc; }
+    .fb-row.file .name { color: #aab; }
+    #fb-error { color: #c05050; font-size: 11px; padding: 8px 12px; }
+    #fb-footer {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; border-top: 1px solid #3a3a44; flex-shrink: 0;
+    }
+    #fb-footer label { font-size: 11px; color: #888; }
+    #fb-footer .spacer { flex: 1; }
+    #fb-type { width: 130px; }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.min.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+
+  <div id="topbar">
+    <h1>FFAST</h1>
+    <div class="connection-field server-field">
+      <label for="ws-url">Server</label>
+      <input id="ws-url" type="text" value="ws://localhost:8765" placeholder="ws://host:port">
+    </div>
+    <div class="connection-field token-field">
+      <label for="token-input">Token</label>
+      <input id="token-input" type="text" placeholder="(optional)" style="width:120px">
+    </div>
+    <button id="connect-btn">Connect</button>
+    <button id="disconnect-btn" disabled>Disconnect</button>
+    <span id="status">Disconnected</span>
+  </div>
+
+  <div id="main">
+    <div id="sidebar">
+      <div>
+        <div class="section-title">Dataset</div>
+        <select id="dataset-select" size="1">
+          <option value="">— none loaded —</option>
+        </select>
+        <button id="load-remote-btn" style="width:100%;margin-top:4px" disabled>Load Remote…</button>
+      </div>
+
+      <div>
+        <div class="section-title">Prediction</div>
+        <select id="model-select" size="1">
+          <option value="">— none —</option>
+        </select>
+        <button id="load-prediction-btn" style="width:100%;margin-top:4px" disabled>Load Prediction…</button>
+        <button id="open-view-btn" style="width:100%;margin-top:4px" disabled>Open View</button>
+      </div>
+
+      <div id="frame-section">
+        <div class="section-title">Frame</div>
+        <input id="frame-slider" type="range" min="0" max="0" value="0" step="1" disabled>
+        <div id="frame-label">0 / 0</div>
+      </div>
+
+      <div>
+        <div class="section-title">View</div>
+        <button id="reset-camera-btn" style="width:100%" disabled>Reset Camera</button>
+      </div>
+    </div>
+
+    <div id="viewport">
+      <canvas id="canvas"></canvas>
+      <div id="overlay">
+        <div class="big">No scene loaded</div>
+        <div class="small">Connect to ffast-server and open a view</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── remote filesystem browser ─────────────────────────────────────── -->
+  <div id="fb-modal" class="hidden">
+    <div id="fb-panel">
+      <div id="fb-header">
+        <span class="title" id="fb-title">Load Remote Dataset</span>
+        <button id="fb-up" title="Parent directory">↑</button>
+        <button id="fb-home" title="Home">⌂</button>
+        <input id="fb-path" type="text" readonly value="">
+      </div>
+      <div id="fb-error" style="display:none"></div>
+      <div id="fb-list"></div>
+      <div id="fb-footer">
+        <span id="fb-dataset-fields">
+          <label for="fb-type">Type</label>
+          <select id="fb-type">
+            <option value="ase (auto)">ase (auto)</option>
+            <option value="sGDML">sGDML</option>
+          </select>
+        </span>
+        <span id="fb-prediction-fields" style="display:none; align-items:center; gap:6px;">
+          <label for="fb-target-ds">For dataset</label>
+          <select id="fb-target-ds" style="width:130px"></select>
+          <label for="fb-energy-key">Energy</label>
+          <select id="fb-energy-key" style="width:90px"></select>
+          <label for="fb-force-key">Force</label>
+          <select id="fb-force-key" style="width:90px"></select>
+        </span>
+        <span class="spacer"></span>
+        <button id="fb-cancel">Cancel</button>
+        <button id="fb-load" disabled>Load</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="ffast-viewer.js"></script>
+</body>
+</html>
