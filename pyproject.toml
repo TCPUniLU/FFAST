@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ffast"
-version = "0.2.0"
-requires-python = ">=3.9,<3.12"
+version = "2.0.0"
+requires-python = "==3.11.*"
 dependencies = [
     "ase>=3.26.0",
     "numpy<2.0.0",
     "pyopengl>=3.1.10",
     "pyqtgraph>=0.13.7",
-    "pyside6==6.4.2",
+    "pyside6>=6.8,<6.9",
     "qasync>=0.28.0",
     "scikit-learn>=1.6.1",
     "scipy>=1.13.1",
@@ -19,18 +19,28 @@ dependencies = [
     "vispy>=0.16.1",
     "msgpack>=1.0.0",
     "websockets>=12.0",
+    "pydantic>=2.0",
+    "tomli-w>=1.0",
+    "jaxtyping>=0.2.34",
 ]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-asyncio>=0.23"]
+zstd = ["zstandard>=0.21"]
 
 [project.scripts]
 ffast = "main:cli"
 ffast-server = "server:cli"
+ffast-cli = "ffast.cli.main:main"
 
 [tool.setuptools]
-py-modules = ["events", "headless", "headless_lattice", "main", "server", "tasks", "utils"]
+py-modules = ["events", "main", "server", "tasks", "utils"]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = [
+    "ffast",
+    "ffast.*",
     "UI",
     "UI.*",
     "client",
@@ -50,6 +60,7 @@ namespaces = true
 
 [tool.setuptools.package-data]
 config = ["default.json"]
+"ffast.config" = ["*.toml", "builtin_tabs/*.toml"]
 
 [tool.black]
 line-length = 79
@@ -58,3 +69,11 @@ skip-magic-trailing-comma = 1
 [tool.isort]
 profile = "black"
 line-length = 79
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: end-to-end tests that spawn a real ffast-server subprocess (deselect with '-m \"not integration\"')",
+]
