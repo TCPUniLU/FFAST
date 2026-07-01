@@ -57,14 +57,22 @@ A Python GUI application for analyzing and visualizing Machine Learning Force Fi
 ### Prerequisites
 
 - **Python 3.11** (`pyproject.toml` pins `requires-python = "==3.11.*"`)
-- **PySide6 6.8.x** (pinned `>=6.8,<6.9`)
+- **PySide6 6.8.x** (pinned `>=6.8,<6.9`) — desktop GUI only, via the `gui` extra
 - **Supported OS**: Linux, macOS, Windows
+
+FFAST ships as a headless core plus an optional desktop GUI. The base install
+gives you the `ffast-server` and `ffast-cli` tools with no Qt/GUI dependencies;
+the `gui` extra adds the PySide6/Vispy desktop app. (See [ADR 0026](docs/adr/0026-headless-core-migration-direction.md).)
 
 ### Using uv (Recommended)
 
 ```bash
-# Create a virtual environment and install all dependencies
 uv venv --python 3.11
+
+# Desktop app (GUI + headless tools)
+uv sync --extra gui
+
+# Headless only (server + CLI, e.g. on a compute node)
 uv sync
 ```
 
@@ -75,7 +83,10 @@ uv sync
 python3.11 -m venv .venv
 source .venv/bin/activate  # On Windows: .venv\Scripts\activate
 
-# Install FFAST and all core dependencies
+# Desktop app (GUI + headless tools)
+pip install -e ".[gui]"
+
+# Headless only (server + CLI, e.g. on a compute node)
 pip install -e .
 ```
 
@@ -94,10 +105,15 @@ pip install spookynet    # SpookyNet
 ### Verify Installation
 
 ```bash
-python main.py
+# Desktop app (installed console script; `python main.py` from the repo root also works)
+ffast
+
+# Headless install
+ffast-cli metrics list
 ```
 
-If the GUI opens successfully, installation is complete.
+If the GUI opens (desktop) or the CLI lists metrics (headless), installation is
+complete.
 
 ---
 

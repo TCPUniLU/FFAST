@@ -52,12 +52,13 @@ would break `import ffast` + entry points). Direction is *into* `ffast/`.
   - `UI/panels.py` presentation, Qt widgets, picking, camera → NOT on the
     closure → stay in the Desktop Client.
 
-- **Step A (near-term, unblocked today): make GUI dependencies optional.**
-  Move `pyside6`/`pyqtgraph`/`vispy`/`qasync`/`pyopengl` out of `dependencies`
-  into `[project.optional-dependencies].gui`. Then `pip install ffast` yields a
+- **Step A (DONE 2026-07-01): make GUI dependencies optional.**
+  Moved `pyside6`/`pyqtgraph`/`vispy`/`qasync`/`pyopengl` out of `dependencies`
+  into `[project.optional-dependencies].gui`. Now `pip install ffast` yields a
   headless server + `ffast-cli`; `pip install ffast[gui]` adds the desktop app.
-  This works now because the closure is already Qt-clean; installed-but-unimported
-  `UI/` files are harmless dead weight.
+  This works because the closure is already Qt-clean; installed-but-unimported
+  `UI/` files are harmless dead weight. The closure guard is enforced by
+  `tests/ffast/test_headless_closure.py`.
 
 - **Step B (later): a true two-distribution split.** Migrate the Qt-free
   server-closure flat modules (`cluster/rpc`, the `HeadlessEnvironment` slice of
@@ -70,9 +71,10 @@ would break `import ffast` + entry points). Direction is *into* `ffast/`.
 ## Consequences
 
 - `pip install ffast` → headless server/CLI; `pip install ffast[gui]` → desktop.
-- The import-closure set is a **testable guard**: a CI check that importing
-  `server`/`ffast.cli` pulls in no GUI module keeps Qt from creeping into the
-  core. (The measurement in Context is exactly this check.)
+- The import-closure set is a **testable guard**, now live as
+  `tests/ffast/test_headless_closure.py`: it imports `server` + `ffast.cli.main`
+  in a fresh subprocess and asserts no GUI module entered `sys.modules`, keeping
+  Qt from creeping into the core.
 - The incremental *science* migration (moving compute/reduction math out of
   `modules/` into `ffast/`) is tracked separately from this ADR, which governs
   only the *packaging* boundary and the server-closure criterion. The two are

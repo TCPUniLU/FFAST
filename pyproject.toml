@@ -6,17 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "ffast"
 version = "2.0.0"
 requires-python = "==3.11.*"
+# Headless core: ffast-server + ffast-cli. No Qt/GUI (see ADR 0026).
 dependencies = [
     "ase>=3.26.0",
     "numpy<2.0.0",
-    "pyopengl>=3.1.10",
-    "pyqtgraph>=0.13.7",
-    "pyside6>=6.8,<6.9",
-    "qasync>=0.28.0",
     "scikit-learn>=1.6.1",
     "scipy>=1.13.1",
     "torch>=2.8.0",
-    "vispy>=0.16.1",
     "msgpack>=1.0.0",
     "websockets>=12.0",
     "pydantic>=2.0",
@@ -25,6 +21,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Desktop client: `pip install ffast[gui]` adds the Qt/Vispy renderer.
+gui = [
+    "pyopengl>=3.1.10",
+    "pyqtgraph>=0.13.7",
+    "pyside6>=6.8,<6.9",
+    "qasync>=0.28.0",
+    "vispy>=0.16.1",
+]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.23"]
 zstd = ["zstandard>=0.21"]
 

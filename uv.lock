@@ -99,15 +99,10 @@ dependencies = [
     { name = "msgpack" },
     { name = "numpy" },
     { name = "pydantic" },
-    { name = "pyopengl" },
-    { name = "pyqtgraph" },
-    { name = "pyside6" },
-    { name = "qasync" },
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "tomli-w" },
     { name = "torch" },
-    { name = "vispy" },
     { name = "websockets" },
 ]
 
@@ -115,6 +110,13 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
+]
+gui = [
+    { name = "pyopengl" },
+    { name = "pyqtgraph" },
+    { name = "pyside6" },
+    { name = "qasync" },
+    { name = "vispy" },
 ]
 zstd = [
     { name = "zstandard" },
@@ -127,21 +129,21 @@ requires-dist = [
     { name = "msgpack", specifier = ">=1.0.0" },
     { name = "numpy", specifier = "<2.0.0" },
     { name = "pydantic", specifier = ">=2.0" },
-    { name = "pyopengl", specifier = ">=3.1.10" },
-    { name = "pyqtgraph", specifier = ">=0.13.7" },
-    { name = "pyside6", specifier = ">=6.8,<6.9" },
+    { name = "pyopengl", marker = "extra == 'gui'", specifier = ">=3.1.10" },
+    { name = "pyqtgraph", marker = "extra == 'gui'", specifier = ">=0.13.7" },
+    { name = "pyside6", marker = "extra == 'gui'", specifier = ">=6.8,<6.9" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "qasync", specifier = ">=0.28.0" },
+    { name = "qasync", marker = "extra == 'gui'", specifier = ">=0.28.0" },
     { name = "scikit-learn", specifier = ">=1.6.1" },
     { name = "scipy", specifier = ">=1.13.1" },
     { name = "tomli-w", specifier = ">=1.0" },
     { name = "torch", specifier = ">=2.8.0" },
-    { name = "vispy", specifier = ">=0.16.1" },
+    { name = "vispy", marker = "extra == 'gui'", specifier = ">=0.16.1" },
     { name = "websockets", specifier = ">=12.0" },
     { name = "zstandard", marker = "extra == 'zstd'", specifier = ">=0.21" },
 ]
-provides-extras = ["dev", "zstd"]
+provides-extras = ["gui", "dev", "zstd"]
 
 [[package]]
 name = "filelock"
