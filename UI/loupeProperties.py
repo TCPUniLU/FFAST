@@ -1,3 +1,24 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Callable
+
+
+@dataclass
+class ClientFeature:
+    """Loupe-panel feature pairing an optional server stage with client Qt widgets."""
+    stage_id: str | None = None
+    widget_factory: Callable | None = None
+    tool_class: type | None = None  # subclass of AtomSelectionBase
+
+
+@dataclass
+class DatasetFeature:
+    """Main-panel feature pairing server metric IDs with a client Qt widget factory."""
+    metric_ids: list[str] = field(default_factory=list)
+    widget_factory: Callable | None = None
+
+
 class CanvasProperty:
 
     canvas = None

@@ -1,3 +1,4 @@
+import logging
 import os
 
 import pyqtgraph
@@ -9,6 +10,8 @@ from events import EventClass
 from UI.Loupe import Loupe
 from UI.MainWindow import MainWindow
 
+logger = logging.getLogger("FFAST")
+
 
 class UIHandler(EventClass):
     """
@@ -19,7 +22,8 @@ class UIHandler(EventClass):
     env = None
     tabs = []
     loupes = 0
-    loupeModules = []
+    client_features = []
+    dataset_features = []
     activeLoupe = None  # Currently active Loupe for menu actions
     workdir = None  # Working directory for file dialogs
     energyShiftEnabled = False  # Global toggle for energy shift
@@ -28,7 +32,8 @@ class UIHandler(EventClass):
         super().__init__(*args, **kwargs)
         self.workdir = workdir if workdir else os.getcwd()
         self.eventSubscribe("QUIT_READY", self.setQuitReady)
-        self.eventSubscribe('CLUSTER_FOR_VARIABLE', self.showCLusterVariable)
+        self.eventSubscribe("CLUSTER_FOR_VARIABLE", self.showCLusterVariable)
+        self.eventSubscribe("REMOTE_CONNECTED", self._onRemoteConnected)
 
     def quitEvent(self):
         self.eventPush("QUIT_EVENT")
@@ -42,6 +47,11 @@ class UIHandler(EventClass):
 
     def setQuitReady(self):
         self.quitReady = True
+
+    def _onRemoteConnected(self):
+        """Local (or cluster) server connected — enable the New Loupe action."""
+        if hasattr(self, "window") and hasattr(self.window, "menuHandler"):
+            self.window.menuHandler.setNewLoupeEnabled(True)
 
     def showCLusterVariable(self):
         msg = QMessageBox(self.window)
@@ -66,8 +76,9 @@ class UIHandler(EventClass):
     def newLoupe(self):
         loupe = Loupe(self, self.loupes)
 
-        for func in self.loupeModules:
-            func(self, loupe)
+        for feature in self.client_features:
+            if feature.widget_factory is not None:
+                feature.widget_factory(self, loupe)
 
         loupe.forceUpdate()
         self.loupes += 1
@@ -77,8 +88,11 @@ class UIHandler(EventClass):
 
         self.eventPush("LOUPES_UPDATE")
 
-    def registerLoupeModule(self, func):
-        self.loupeModules.append(func)
+    def registerClientFeatures(self, features):
+        self.client_features.extend(features)
+
+    def registerDatasetFeatures(self, features):
+        self.dataset_features.extend(features)
 
     def setEnvironment(self, env):
         self.env = env
@@ -124,6 +138,15 @@ class UIHandler(EventClass):
         self.mainWindow = window
 
     def initialisePlotConfigs(self):
+        # Try OpenGL by default, but verify it's safe first: Apple's
+        # OpenGL-over-Metal shim segfaults in glDrawArrays when ScatterPlotItem
+        # blits its point atlas (drawPixmapFragments). A segfault can't be caught
+        # in-process, so glProbe runs a throwaway child that paints a GL scatter;
+        # if it survives we use GL, otherwise we fall back to software. Cached.
+        from UI.glProbe import opengl_is_safe
+
+        use_gl = opengl_is_safe()
+        logger.info("pyqtgraph rendering: %s", "OpenGL" if use_gl else "software")
         pyqtgraph.setConfigOptions(
             antialias=True,
             leftButtonPan=False,
@@ -131,8 +154,8 @@ class UIHandler(EventClass):
             foreground=self.config["envs"].get("TextColor1"),
             # background=self.config["envs"].get("BGColor2"),
             background=None,
-            useOpenGL=True,
-            enableExperimental=True,
+            useOpenGL=use_gl,
+            enableExperimental=use_gl,
             exitCleanup=True,
         )
 

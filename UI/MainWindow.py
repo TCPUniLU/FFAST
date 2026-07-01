@@ -4,7 +4,7 @@ from UI.Templates import Widget
 from config.uiConfig import configStyleSheet
 from UI.SideBar import SideBar
 from UI.MainContent import MainContentTabWidget
-from UI.menuHandler import MenuHandler
+from UI.mainMenu import MainMenuHandler
 
 # from qframelesswindow import FramelessWindow
 
@@ -70,7 +70,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # mb = self.menuBar()
         # file = mb.addMenu("&File")
         # file.addAction("hello", self.exit)
-        self.menuHandler = MenuHandler(self)
+        self.menuHandler = MainMenuHandler(self)
 
     def exit(self):
         self.close()

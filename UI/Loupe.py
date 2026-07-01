@@ -1,531 +1,16 @@
 from events import EventChildClass
-from UI.Templates import (
-    Widget,
-    ContentBar,
-    ObjectComboBox,
-    SettingsPane,
-    Widget,
-    Slider,
-    ToolButton,
-)
-from UI.menuHandler import MenuHandler
-from PySide6 import QtCore, QtGui, QtWidgets
+from UI.Templates import Widget, ObjectComboBox, SettingsPane
+from UI.loupeMenu import LoupeMenuHandler
+from UI.loupeCanvas import SideBar, InteractiveCanvas
+from PySide6 import QtCore, QtWidgets
 import logging
-from vispy import scene
-import numpy as np
-from vispy.geometry.generation import create_sphere
 import asyncio
-from config.userConfig import Settings, getConfig
-from vispy.scene.cameras.turntable import TurntableCamera
-from vispy.visuals.transforms import STTransform
-from vispy.util import keys
-from UI.loupeProperties import VisualElement
+from config.userConfig import Settings
+import uuid
+from ffast.renderers.vispy.local_scene import available_prediction_refs
+from ffast.visualization.scene import SceneSnapshot, ScenePatch
 
 logger = logging.getLogger("FFAST")
-
-
-class RectangleSelection(VisualElement):
-    def __init__(self, *args, parent=None, **kwargs):
-        self.rectangle = scene.visuals.Rectangle(
-            center=[0, 0],
-            color=(0.5, 0.5, 1, 0.3),
-            height=1,
-            width=1,
-            parent=parent,
-            border_width=2,
-            border_color=(0.5, 0.5, 1, 0.8),
-        )
-        self.rectangle.pos = np.array([[0, 0], [1, 0], [1, 1], [0, 1]])
-        super().__init__(*args, **kwargs, singleElement=self.rectangle)
-
-    def setPosition(self, arr):
-        self.rectangle.pos = arr
-
-
-class SideBar(ContentBar):
-    def __init__(self, handler, **kwargs):
-        super().__init__(handler, **kwargs)
-        self.handler = handler
-        self.setupContent()
-
-    def setupContent(self):
-        pass
-
-
-class SceneCanvas(scene.SceneCanvas):
-
-    mouseoverActive = False
-    mouseClickActive = False
-    rectangleSelectActive = False
-    widget = None
-    pickingColors = None
-    isCtrlDragging = False
-    draggingStart = [0, 0]
-
-    def __init__(self, widget, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.widget = widget
-
-    def getPickingRender(self, pos0=None, pos1=None):
-        for element in self.widget.elements.values():
-            element.draw(picking=True, pickingColors=self.pickingColors)
-
-        tr = self.transforms.get_transform("canvas", "framebuffer")
-
-        if (pos0 is not None) and (pos1 is not None):
-            p0 = tr.map(pos0)[:2]
-            p1 = tr.map(pos1)[:2]
-            img = self.render(
-                crop=(
-                    min(p0[0], p1[0]),
-                    min(p0[1], p1[1]),
-                    np.abs(p1[0] - p0[0]),
-                    np.abs(p1[1] - p0[1]),
-                )
-            )
-        elif (pos0 is not None) and (pos1 is None):
-            p = tr.map(pos0)[:2]
-            img = self.render(crop=(p[0], p[1], 1, 1))
-        else:
-            img = self.render()
-        return img
-
-    def getAtomIndexAtPosition(self, pos, refresh=True):
-        img = self.getPickingRender(pos)
-        # single pixel right in the middle
-        color = img[0, 0]
-        idx = self.colorToIndex(color)
-
-        if (idx is not None) and (idx >= self.widget.nAtoms):
-            idx = None
-
-        if refresh:
-            self.widget.visualRefresh(force=True)
-        return idx
-
-    def getAtomIndicesInRectangle(self, pos0, pos1, refresh=False):
-        # NOTE: This uses pixel-based picking, so it only selects VISIBLE atoms.
-        # Atoms hidden behind other atoms will not be selected.
-        # This is standard behavior for most 3D visualization tools.
-
-        img = self.getPickingRender(pos0, pos1)
-        colors = img.reshape(-1, 4)
-        colors = colors[colors[:, 2] == 255, :3]
-        uniqueColors = np.unique(colors, axis=0)
-
-        indices = []
-        for color in uniqueColors:
-            idx = self.colorToIndex(color)
-            if idx is not None and idx < self.widget.nAtoms:
-                indices.append(idx)
-
-        if refresh:
-            self.widget.visualRefresh(force=True)
-
-        return indices
-
-    def on_mouse_press(self, event):
-        if not self.mouseClickActive:
-            return
-        # https://vispy.org/api/vispy.scene.events.html
-
-        # left click only
-        if event.button != 1:
-            return
-
-        if self.widget.loupe.selectedDatasetKey is None:
-            return
-
-        if keys.CONTROL in event.modifiers and self.rectangleSelectActive:
-            self.isCtrlDragging = True
-            self.draggingStart = event.pos
-        else:
-            point = self.getAtomIndexAtPosition(event.pos, refresh=False)
-            self.widget.addSelectedAtom(point, refresh=True)
-
-    def on_mouse_release(self, event):
-
-        wasCtrlDragging = self.isCtrlDragging
-        self.isCtrlDragging = False
-
-        if not self.mouseClickActive:
-            return
-        # https://vispy.org/api/vispy.scene.events.html
-
-        # left click only
-        if event.button != 1:
-            return
-
-        if self.widget.loupe.selectedDatasetKey is None:
-            return
-
-        if wasCtrlDragging and self.rectangleSelectActive:
-            pos0, pos1 = self.draggingStart, event.pos
-            self.draggingStart = np.array([0, 0])
-
-            d = np.sqrt(np.sum(pos1 - pos0) ** 2)
-            if d > 1e-8:
-                indices = self.getAtomIndicesInRectangle(
-                    pos0, pos1, refresh=False
-                )
-                self.widget.hideSelectionRectangle()
-                self.widget.addSelectedAtoms(indices, refresh=True)
-
-    def on_mouse_move(self, event):
-
-        if self.mouseClickActive and not event.is_dragging:
-            # not refreshing because we know we will refresh after setting the hovered point
-            point = self.getAtomIndexAtPosition(event.pos, refresh=False)
-            self.widget.setHoveredPoint(point, refresh=True)
-
-        if self.rectangleSelectActive and self.isCtrlDragging:
-            self.widget.setSelectionRectanglePos(self.draggingStart, event.pos)
-
-    def on_resize(self, *args):
-        scene.SceneCanvas.on_resize(self, *args)
-        # self.plotWidget.onResize()
-
-    def refreshPickingColors(self, N):
-        ids = np.arange(N)
-        colors = np.ones((N, 4)) * 255
-        colors[:, 0] = ids % 256
-        colors[:, 1] = ids // 256
-
-        self.pickingColors = colors / 255
-
-    def colorToIndex(self, color):
-        if color[2] != 255:
-            return None
-        idx = color[0] + color[1] * 256
-        return idx
-
-
-class Camera(TurntableCamera):
-
-    parentCanvas = None
-
-    def __init__(self, parentCanvas):
-        self.parentCanvas = parentCanvas
-        super().__init__()
-
-    def view_changed(self):
-        self.parentCanvas.onCameraChange()
-        return TurntableCamera.view_changed(self)
-
-
-class InteractiveCanvas(Widget):
-    activeAtomSelectTool = None
-    hoveredPoint = None
-    nAtoms = -1
-    hasBeenInited = False
-    _currentR = None
-    currentTransformations = []
-    dataset = None
-
-    def __init__(self, loupe, **kwargs):
-        super().__init__(layout="vertical", **kwargs)
-
-        self.canvas = SceneCanvas(
-            self, bgcolor=getConfig("loupeBGColor"), create_native=False
-        )
-
-        self.elements = {}
-        self.props = {}
-
-        self.canvas.create_native()
-        self.view = self.canvas.central_widget.add_view()
-        self.view.camera = Camera(self)
-        self.camera = self.view.camera
-
-        self.grid = self.newGrid()
-
-        self.scene = self.view.scene
-        self.loupe = loupe
-        self.canvas.native.setParent(loupe)
-        self.layout.addWidget(self.canvas.native)
-        self.addAtomSelectToolbar()
-        self.setActiveAtomSelectTool(None)
-
-        self.createSelectionRectangle()
-
-        self.freeze()
-
-    ## VISUAL ELEMENTS & PROPERTIES
-
-    def newGrid(self):
-        return self.canvas.central_widget.add_grid(margin=4)
-
-    def addVisualElement(self, Element, name, viewParent=False):
-        if viewParent:
-            el = Element(parent=self.view)
-        else:
-            el = Element(parent=self.scene)
-        el.canvas = self
-        self.elements[name] = el
-
-        return el
-
-    def visualRefresh(self, force=False):
-        for element in self.elements.values():
-            if (
-                force or element.visualRefreshQueued
-            ):  # and (not element.hidden):
-                element.draw(picking=False, pickingColors=None)
-                element.visualRefreshQueued = False
-
-    def addProperty(self, Prop):
-        prop = Prop()
-        prop.canvas = self
-        self.props[prop.key] = prop
-
-    def addAtomSelectToolbar(self):
-        self.atomSelectBar = Widget(
-            color="@BGColor1", layout="horizontal", parent=self
-        )
-        self.atomSelectBar.setFixedHeight(40)
-        self.layout.insertWidget(0, self.atomSelectBar)
-
-        self.atomSelectBar.setContentsMargins(8, 0, 8, 0)
-
-        self.atomSelectBar.label1 = QtWidgets.QLabel("/", parent=self.atomSelectBar)
-        self.atomSelectBar.label2 = QtWidgets.QLabel("/", parent=self.atomSelectBar)
-        self.atomSelectBar.cancelButton = ToolButton(
-            lambda x: self.setActiveAtomSelectTool(), "close", parent=self.atomSelectBar
-        )
-
-        self.atomSelectBar.layout.addWidget(self.atomSelectBar.label1)
-        self.atomSelectBar.layout.addWidget(self.atomSelectBar.label2)
-        self.atomSelectBar.layout.addWidget(self.atomSelectBar.cancelButton)
-
-    ## INIT
-
-    def setDataset(self, dataset):
-        self.hasBeenInited = False
-        self.dataset = dataset
-
-        # Get atom count for current index (important for variable datasets)
-        if hasattr(dataset, 'isVariable') and dataset.isVariable:
-            # Use current index if it exists, otherwise default to 0 (first geometry)
-            index = self.index if hasattr(self, 'index') else 0
-            self.nAtoms = dataset.getNAtoms(index)
-        else:
-            self.nAtoms = dataset.getNAtoms()
-
-        # Auto-set bond type based on dataset composition
-        # Variable datasets (different molecule sizes) → Dynamic bonds
-        # Uniform datasets (same molecule size) → Fixed bonds
-        if hasattr(dataset, 'isVariable') and dataset.isVariable:
-            self.loupe.settings.setParameter("bondType", "Dynamic", refresh=False)
-        else:
-            self.loupe.settings.setParameter("bondType", "Fixed", refresh=False)
-
-        for prop in self.props.values():
-            prop.onDatasetInit()
-
-        for element in self.elements.values():
-            if not element.disabled:
-                element.onDatasetInit()
-
-        self.hasBeenInited = True
-        self.visualRefresh()
-        # self.onNewGeometry()
-
-        # Refresh picking colors (use nAtoms which is index-specific for variable datasets)
-        self.canvas.refreshPickingColors(self.nAtoms)
-
-    def size(self):
-        return self.canvas.size
-
-    ## GEOMETRY
-
-    def getR(self, index=None):
-        return self.dataset.getCoordinates(indices=index)
-        # return R - np.mean(R, axis=0)
-
-    def applyTransformation(self, R, vOrM):
-        # is vector
-        if vOrM.ndim == 1:
-            return R + vOrM
-        elif vOrM.ndim == 2:
-            return R @ vOrM
-        else:
-            return R
-
-    def setCurrentR(self):
-        R = self.getCurrentR()
-
-        for vOrM in self.currentTransformations:
-            R = self.applyTransformation(R, vOrM)
-
-        self._currentR = R
-
-    def getCurrentR(self):
-        if self._currentR is None:
-            return self.getR(self.index)
-        else:
-            return self._currentR
-
-    def setIndex(self, index):
-        if self.dataset is None:
-            return
-        index = min(index, self.dataset.getN() - 1)
-
-        # Check if atom count changed (for variable datasets)
-        if hasattr(self.dataset, 'isVariable') and self.dataset.isVariable:
-            new_nAtoms = self.dataset.getNAtoms(index)
-
-            # Check if this is not the first call and atom count changed
-            if hasattr(self, 'index'):
-                old_nAtoms = self.dataset.getNAtoms(self.index)
-                if old_nAtoms != new_nAtoms:
-                    # Atom count changed - refresh picking colors
-                    self.canvas.refreshPickingColors(new_nAtoms)
-                    # Update parent widget's nAtoms
-                    if hasattr(self.loupe, 'nAtoms'):
-                        self.loupe.nAtoms = new_nAtoms
-
-            self.index = index
-        else:
-            self.index = index
-
-        self.onNewGeometry()
-
-    def resetCurrentR(self):
-        self._currentR = None
-        self.currentTransformations = []
-
-    def onNewGeometry(self):
-        if not self.hasBeenInited:
-            return
-
-        self.resetCurrentR()
-
-        postProps = []
-        for prop in self.props.values():
-            if prop.changesR:
-                prop.onNewGeometry()
-            else:
-                postProps.append(prop)
-
-        self.setCurrentR()
-
-        for prop in postProps:
-            prop.onNewGeometry()
-
-        for element in self.elements.values():
-            if not element.disabled:
-                element.onNewGeometry()
-
-        if self.activeAtomSelectTool is not None:
-            self.activeAtomSelectTool.updateInfo()
-        self.visualRefresh()
-
-    ## CAMERA
-    def onCameraChange(self):
-        for prop in self.props.values():
-            prop.onCameraChange()
-
-        for element in self.elements.values():
-            element.onCameraChange()
-
-        self.visualRefresh()
-
-    ## PICKING
-    def setHoveredPoint(self, index, refresh=True):
-        if self.activeAtomSelectTool is not None:
-            self.activeAtomSelectTool.hoverAtom(index)
-        if refresh:
-            self.visualRefresh(force=True)
-
-    def addSelectedAtom(self, index, refresh=True):
-        if self.activeAtomSelectTool is not None:
-            self.activeAtomSelectTool.selectAtom(index)
-        if refresh:
-            self.visualRefresh(force=True)
-
-    def addSelectedAtoms(self, indices, refresh=True):
-        if self.activeAtomSelectTool is not None:
-            self.activeAtomSelectTool.selectAtoms(indices)
-        if refresh:
-            self.visualRefresh(force=True)
-
-    def isActiveAtomSelectTool(self, tool):
-        if tool is None:
-            return self.activeAtomSelectTool is None
-        return isinstance(self.activeAtomSelectTool, tool)
-
-    def setActiveAtomSelectTool(self, tool=None):
-        if (tool is not None) and self.isActiveAtomSelectTool(tool):
-            self.setActiveAtomSelectTool(None)
-            return
-
-        if tool is None:
-            self.activeAtomSelectTool = None
-            self.canvas.mouseoverActive = False
-            self.canvas.mouseClickActive = False
-            self.canvas.rectangleSelectActive = False
-            self.atomSelectBar.hide()
-        else:
-            self.activeAtomSelectTool = tool(self)
-            self.canvas.mouseoverActive = True
-            self.canvas.mouseClickActive = True
-            self.canvas.rectangleSelectActive = (
-                self.activeAtomSelectTool.rectangleSelect
-            )
-            self.atomSelectBar.show()
-
-        self.onNewGeometry()
-
-    def getSelectedAtoms(self):
-        if self.activeAtomSelectTool is None:
-            return None
-        return self.activeAtomSelectTool.selectedPoints
-
-    def getHoveredAtom(self):
-        if self.activeAtomSelectTool is None:
-            return None
-        return self.activeAtomSelectTool.hoveredPoint
-
-    def keyPressEvent(self, event):
-        self.parent().keyPressEvent(event)
-
-    ## SELECTION RECTANGLE
-    def setSelectionRectanglePos(self, oldPos, newPos):
-        if self.selectionRectangle.hidden:
-            self.selectionRectangle.show()
-
-        self.selectionRectangle.setPosition(
-            np.array(
-                [
-                    [oldPos[0], oldPos[1]],
-                    [newPos[0], oldPos[1]],
-                    [newPos[0], newPos[1]],
-                    [oldPos[0], newPos[1]],
-                ]
-            )
-        )
-
-    def createSelectionRectangle(self):
-        self.selectionRectangle = self.addVisualElement(
-            RectangleSelection, "SelectionRectangle", viewParent=True
-        )
-
-    def hideSelectionRectangle(self):
-        self.selectionRectangle.hide()
-
-    ## MISC
-    def resizeEvent(self, event):
-        self.onResize()
-        return super(InteractiveCanvas, self).resizeEvent(event)
-
-    def onResize(self):
-        for prop in self.props.values():
-            prop.onCanvasResize()
-
-        for element in self.elements.values():
-            element.onCanvasResize()
-
-        self.visualRefresh()
 
 
 class Loupe(Widget, EventChildClass):
@@ -539,6 +24,24 @@ class Loupe(Widget, EventChildClass):
         self.env = handler.env
         super().__init__(layout="horizontal")
         EventChildClass.__init__(self)
+
+        # Server-owned render path (ADR 0014): stable per-window view id used to
+        # match incoming SCENE_SNAPSHOT / SCENE_PATCH to this Loupe window, plus
+        # the latest snapshot cached for re-apply when toggling into adapter mode.
+        self.viewId = str(uuid.uuid4())
+        self._lastSnapshot = None
+        # Latest server scene version, tracked for version-gated commands
+        # (TOGGLE_FEATURE / SET_PARAMETER). Frame patches don't bump it.
+        self._sceneVersion = 0
+        # Working set of picked scientific atom ids (ADR 0015), accumulated
+        # client-side and committed in full via SET_SELECTION.
+        self._pickedSet = []
+        # Debounce handle for SET_FRAME commands — cancels stale intermediate
+        # frames when the slider is dragged faster than the server can respond.
+        self._frameUpdateHandle = None
+        # Event signalled when each SCENE_PATCH arrives; video loop waits on
+        # this to sync frame advancement to server response rate.
+        self._patchReceivedEvent = asyncio.Event()
 
         # SETTINGS
         self.initialiseSettings()
@@ -572,16 +75,21 @@ class Loupe(Widget, EventChildClass):
         self.canvas.settings = self.settings
         self.contentLayout.addWidget(self.canvas)
 
-        # VIDEO PANE
-        self.initialiseVideoPane()
-
         # EVENTS
         self.eventSubscribe("SUBDATASET_INDICES_CHANGED", self.onSubChanged)
         self.eventSubscribe("REMOTE_ARRAY_FETCH_DONE", self.onRemoteArrayFetchDone)
+        self.eventSubscribe("MODEL_LOADED", self.updatePredictionComboBox)
+        self.eventSubscribe("MODEL_DELETED", self.updatePredictionComboBox)
+        self.eventSubscribe("DATA_UPDATED", self.updatePredictionComboBox)
+        self.eventSubscribe("DATASET_UPDATED", self.updatePredictionComboBox)
+        # Server-owned render path (ADR 0014): consume renderer-neutral scenes.
+        self.eventSubscribe("SCENE_SNAPSHOT", self.onSceneSnapshot)
+        self.eventSubscribe("SCENE_PATCH", self.onScenePatch)
+        self.eventSubscribe("METRICS_UPDATED", self.onMetricsUpdated)
 
         #MENU BAR
         self.mBar = QtWidgets.QMenuBar(self)
-        self.menuHandler = MenuHandler(self, mode="loupe")
+        self.menuHandler = LoupeMenuHandler(self)
         self.layout.setMenuBar(self.mBar)
 
     # Adding menu bar getter for MenuHandler to be able to properly initialize the menu
@@ -597,63 +105,18 @@ class Loupe(Widget, EventChildClass):
         self.settings.addAction("pause", self.onPause)
         self.settings.addAction("datasetSelected", self.onDatasetSelected)
         self.settings.addAction("visualRefresh", self.visualRefresh)
-
-        self.settings.addParameters(
-            **{"videoFPS": [30], "videoSkipFrames": [0]}
-        )
-
-    def initialiseVideoPane(self):
-        pane = Widget(parent=self, layout="vertical")
-
-        # PLAYBACK
-        playbackWindow = Widget(parent=pane, layout="vertical")
-        self.indexSlider = Slider(parent=playbackWindow)
-        self.indexSlider.setCallbackFunc(self.setIndex)
-        playbackWindow.layout.addWidget(self.indexSlider)
-
-        arrowBar = Widget(parent=pane, layout="horizontal")
-        self.indexLeftArrow = ToolButton(
-            self.onPrevious, "leftArrow", parent=arrowBar
-        )
-        self.indexLeftArrow.setToolTip("Previous frame")
-        self.playButton = ToolButton(self.toggleVideo, "start", parent=arrowBar)
-        self.playButton.setToolTip("Toggle animation")
-        self.indexRightArrow = ToolButton(self.onNext, "rightArrow", parent=arrowBar)
-        self.indexRightArrow.setToolTip("Next frame")
-
-        arrowBar.layout.addStretch()
-        arrowBar.layout.addWidget(self.indexLeftArrow)
-        arrowBar.layout.addWidget(self.playButton)
-        arrowBar.layout.addWidget(self.indexRightArrow)
-        arrowBar.layout.addStretch()
-
-        playbackWindow.layout.addWidget(arrowBar)
-        pane.layout.addWidget(playbackWindow)
-
-        # SETTINGS
-
-        settingsPane = SettingsPane(self.handler, self.settings, parent=pane)
-        settingsPane.addSetting(
-            "LineEdit",
-            "FPS",
-            settingsKey="videoFPS",
-            isInt=True,
-            nMin=1,
-            nMax=5000,
-        )
-
-        settingsPane.addSetting(
-            "LineEdit",
-            "Skip frames",
-            settingsKey="videoSkipFrames",
-            isInt=True,
-            nMin=0,
-            nMax=99999,
-        )
-
-        pane.layout.addWidget(settingsPane)
-
-        self.addSidebarPane("INDEX / VIDEO", pane)
+        self.settings.addAction("toggleKabschAlign", self.onToggleKabschAlign)
+        self.settings.addAction("toggleSceneLabels", self.onToggleSceneLabels)
+        self.settings.addAction("applySceneFilter", self.onApplySceneFilter)
+        self.settings.addAction("applySceneSelection", self.onApplySceneSelection)
+        self.settings.addAction("applyScenePrediction", self.onApplyScenePrediction)
+        self.settings.addAction("applyColorSource", self.onApplyColorSource)
+        self.settings.addAction("applyColormap", self.onApplyColormap)
+        self.settings.addAction("applyAtomAlign", self.onApplyAtomAlign)
+        self.settings.addAction("applyForceVectors", self.onApplyForceVectors)
+        self.settings.addAction("applyUnitCell", self.onApplyUnitCell)
+        self.settings.addAction("applyBondStyle", self.onApplyBondStyle)
+        self.settings.addAction("applyBonds", self.onApplyBonds)
 
     # DATASET
     def forceUpdate(self):
@@ -662,12 +125,80 @@ class Loupe(Widget, EventChildClass):
             return
         self.updateCurrentIndex()
 
+    # PREDICTION OVERLAY (ADR 0016): metric coloring + force arrows need a
+    # prediction. The selector lists models with cached force predictions for
+    # the currently selected dataset and sends its fingerprint as prediction_ref.
+    def updatePredictionComboBox(self, *args):
+        combo = getattr(self, "predictionComboBox", None)
+        if combo is None:
+            return
+
+        refs = [""] + available_prediction_refs(self.env, self.selectedDatasetKey)
+        current = self.settings.get("scenePredictionRef", "") or ""
+        if current not in refs:
+            current = ""
+
+        labels = [self._predictionLabel(ref) for ref in refs]
+        self._predictionComboUpdating = True
+        self._predictionComboRefs = refs
+        combo.clear()
+        combo.addItems(labels)
+        combo.setCurrentIndex(refs.index(current))
+        self._predictionComboUpdating = False
+
+        if self.settings.get("scenePredictionRef", "") != current:
+            self.settings.setParameter("scenePredictionRef", current, refresh=True)
+
+    def _predictionLabel(self, ref):
+        if not ref:
+            return "No prediction"
+        try:
+            model = self.env.models.get(ref)
+            if model is not None:
+                return model.getDisplayName()
+        except Exception:
+            pass
+        return ref[:8]
+
+    def onPredictionComboChanged(self, index):
+        if getattr(self, "_predictionComboUpdating", False):
+            return
+        refs = getattr(self, "_predictionComboRefs", [""])
+        ref = refs[index] if 0 <= index < len(refs) else ""
+        self.settings.setParameter("scenePredictionRef", ref)
+
+    def _currentPredictionRef(self):
+        return self.settings.get("scenePredictionRef", "") or None
+
+    def _openOrRefreshView(self):
+        """(Re)open the server view for the current dataset + loaded prediction."""
+        key = self.selectedDatasetKey
+        if key is None:
+            return
+        self.env.remote.openRemoteView(
+            self.viewId, key, prediction_ref=self._currentPredictionRef()
+        )
+
+    def _onPredictionChanged(self):
+        """Force-error watcher fired (prediction loaded/changed): resync the view."""
+        self._openOrRefreshView()
+
+    def onApplyScenePrediction(self):
+        self.updatePredictionComboBox()
+        self._openOrRefreshView()
+
     def onDatasetSelected(self, key, force=False):
         # we force when sub indices change, becasue thats not reflected in the key
         if (not force) and (key == self.selectedDatasetKey):
             return
+        self._ensureAdapterHooks()
         self.settings.saveForDataset(self.selectedDatasetKey)
         self.selectedDatasetKey = key
+        self.updatePredictionComboBox()
+
+        if key is not None:
+            self._pickedSet = []  # picked indices are per-structure (ADR 0015)
+            self._openOrRefreshView()
 
         dataset = self.getSelectedDataset()
 
@@ -677,7 +208,7 @@ class Loupe(Widget, EventChildClass):
                 "Loupe: remote proxy selected (%r) — triggering array fetch",
                 key,
             )
-            self.env.taskFetchRemoteDataset(dataset.fingerprint)
+            self.env.remote.taskFetchRemoteDataset(dataset.fingerprint)
             # Don't call setDataset yet; onRemoteArrayFetchDone will resume
             return
 
@@ -686,12 +217,13 @@ class Loupe(Widget, EventChildClass):
         self.index = 0
         self.indexSlider.setMinMax(0, dataset.getN() - 1)
         self.settings.restoreForDataset(key)
+        self.updatePredictionComboBox()
         self.updateCurrentIndex()
 
     def getSelectedDataset(self):
         if self.selectedDatasetKey is None:
             return None
-        return self.env.getDataset(self.selectedDatasetKey)
+        return self.env.datasets.get(self.selectedDatasetKey)
 
     def onSubChanged(self, key):
         if self.selectedDatasetKey != key:
@@ -705,10 +237,321 @@ class Loupe(Widget, EventChildClass):
             logger.info("Loupe: remote arrays ready for %r — refreshing", fingerprint)
             self.onDatasetSelected(fingerprint, force=True)
 
+    # SERVER-OWNED RENDER PATH (ADR 0014)
+    def onSceneSnapshot(self, scene=None, **kwargs):
+        """Apply a full RenderScene from the server via the scene adapter."""
+        if scene is None:
+            return
+        try:
+            snapshot = SceneSnapshot.model_validate({"scene": scene})
+        except Exception as exc:
+            logger.warning("Loupe: malformed SCENE_SNAPSHOT: %s", exc)
+            return
+        if snapshot.scene.view_id != self.viewId:
+            return  # snapshot belongs to another Loupe window
+        self._lastSnapshot = snapshot
+        self._sceneVersion = snapshot.scene.version
+        logger.info(
+            "Loupe: SCENE_SNAPSHOT v%d → adapter", snapshot.scene.version
+        )
+        self.canvas.sceneAdapter.apply_snapshot(snapshot)
+        # Fit camera to atoms on every snapshot (new dataset open / view refresh).
+        # set_range() updates center + scale_factor but not azimuth/elevation,
+        # so the user's rotation is preserved on refresh, reset on dataset switch.
+        if snapshot.scene.atoms:
+            self.canvas.view.camera.set_range()
+        self.canvas.updateColorbar(self.canvas.sceneAdapter._color_by)
+        self.canvas.canvas.update()
+
+    def onScenePatch(self, **kwargs):
+        """Apply a delta RenderScene update from the server."""
+        try:
+            patch = ScenePatch.model_validate(kwargs)
+        except Exception as exc:
+            logger.warning("Loupe: malformed SCENE_PATCH: %s", exc)
+            return
+        if patch.view_id != self.viewId:
+            return
+        self._sceneVersion = patch.to_version
+        logger.info(
+            "Loupe: SCENE_PATCH v%d→v%d changed=%s → adapter",
+            patch.from_version, patch.to_version, sorted(patch.changed),
+        )
+        self.canvas.sceneAdapter.apply_patch(patch)
+        # Track molecule centroid so atoms stay centred as the molecule drifts.
+        # Only shift camera.center (preserves zoom/rotation); skip if no atoms
+        # changed (e.g. selection-only patch).
+        if "atoms" in set(patch.changed):
+            self._trackMoleculeCentroid()
+        self.canvas.updateColorbar(self.canvas.sceneAdapter._color_by)
+        self.canvas.canvas.update()
+        # Signal video loop that a patch arrived (used by runOnNext sync).
+        self._patchReceivedEvent.set()
+
+    def onMetricsUpdated(self, metric_ids=None, **kwargs):
+        """Server loaded new user metrics — refresh the Coloring combo."""
+        from modules.loupe.loupeAtoms import addMetricControls
+        addMetricControls(self.handler, self)
+
+    def _ensureAdapterHooks(self):
+        """Wire bond style + prediction settings to the adapter (once, lazily).
+
+        These live on settings/watchers created by other modules after Loupe
+        __init__, so we hook them the first time the adapter is enabled:
+          - bond width/color settings → keep the adapter look live;
+          - the force-error data watcher → resync prediction_ref when a
+            prediction is loaded/changed, so metric coloring updates.
+        """
+        if getattr(self, "_adapterHooked", False):
+            return
+        for key in ("bondWidth", "bondColor"):
+            if key in self.settings:
+                self.settings.addParameterActions(key, self._onBondStyleChanged)
+        dw = getattr(self, "forceErrorDataWatcher", None)
+        if dw is not None:
+            dw.addCallback(self._onPredictionChanged)
+        self._adapterHooked = True
+
+    def _onBondStyleChanged(self):
+        self.canvas._pushAdapterStyle()
+        self.canvas.canvas.update()
+
+    def _sendViewCommand(self, **fields):
+        """Send a version-gated scientific view command and optimistically advance
+        the expected view version.
+
+        ``sendViewCommand`` is fire-and-forget and the server applies commands in
+        order, bumping the view version by one per accepted scientific command. A
+        single UI action often emits several commands (force vectors sends a
+        feature toggle plus its parameters); stamping them all with the same
+        version makes the server accept the first and reject the rest as
+        STALE_VERSION. Advancing here keeps the batch in step. The next
+        SCENE_PATCH re-syncs ``_sceneVersion`` to the server's authoritative value
+        (see ``onScenePatch``). Frame/camera commands are last-write-wins and do
+        not use this path.
+        """
+        self.env.remote.sendViewCommand(
+            view_id=self.viewId, view_version=self._sceneVersion, **fields
+        )
+        self._sceneVersion += 1
+
+    def _sendToggleFeature(self, feature, enabled):
+        """ADR 0014: send a version-gated TOGGLE_FEATURE for a server pipeline stage."""
+        self._sendViewCommand(
+            type="TOGGLE_FEATURE", feature=feature, enabled=bool(enabled),
+        )
+
+    def _sendSetParameter(self, stage_id, parameter, value):
+        """ADR 0014: send a SET_PARAMETER command for a server pipeline stage."""
+        self._sendViewCommand(
+            type="SET_PARAMETER", stage_id=stage_id, parameter=parameter, value=value,
+        )
+
+    def onApplyAtomAlign(self):
+        """ADR 0014: server-side 3-atom frame alignment (ffast.atom_align)."""
+        enabled = bool(self.settings.get("alignAtoms"))
+        raw = self.settings.get("alignAtomsIndices") or ""
+        indices = self._parseIndexList(raw) if isinstance(raw, str) else list(raw or [])
+        ref_frame = int(self.settings.get("alignAtomsConfIndex") or 0)
+        self._sendToggleFeature("atom_align", enabled)
+        if enabled and len(indices) == 3:
+            self._sendSetParameter("ffast.atom_align", "atom_indices", indices)
+            self._sendSetParameter("ffast.atom_align", "reference_frame", ref_frame)
+
+    def onApplyForceVectors(self):
+        enabled = bool(self.settings.get("showForceVectors"))
+        self._sendToggleFeature("forces", enabled)
+        if enabled:
+            self._sendSetParameter("ffast.force_arrows", "prediction_ref", self.settings.get("forceVectorsModelKey"))
+            self._sendSetParameter("ffast.force_arrows", "length_factor", int(self.settings.get("forceVectorsLength") or 10))
+            self._sendSetParameter("ffast.force_arrows", "normalised", bool(self.settings.get("forceVectorsNormalised")))
+            self._sendSetParameter("ffast.force_arrows", "filter_enabled", bool(self.settings.get("forceVectorsFilterEnabled")))
+            self._sendSetParameter("ffast.force_arrows", "atom_indices", list(self.settings.get("forceVectorsAtomIndices") or []))
+
+    def onApplyUnitCell(self):
+        # opt-out: add "no_unit_cell" when hiding, remove it when showing
+        self._sendToggleFeature("no_unit_cell", not bool(self.settings.get("showUnitCell")))
+
+    def onApplyBondStyle(self):
+        self.canvas._pushAdapterStyle()
+
+    def onApplyBonds(self):
+        """Drive server-side bond topology (ffast.bonds, loupeBonds module).
+
+        'Dynamic' → distance-based bonds recomputed per frame by the server.
+        'Fixed'   → the explicit bond pairs the user selected. An empty Fixed
+        set falls back to dynamic bonds server-side, so toggling to Fixed before
+        choosing bonds never leaves the view bondless.
+        """
+        bond_type = self.settings.get("bondType") or "Dynamic"
+        self._sendSetParameter("ffast.bonds", "bond_type", bond_type)
+        pairs = []
+        if bond_type == "Fixed":
+            raw = self.settings.get("fixedBondIndices")
+            if raw is not None:
+                try:
+                    pairs = [[int(a), int(b)] for a, b in raw]
+                except (TypeError, ValueError):
+                    pairs = []
+        self._sendSetParameter("ffast.bonds", "fixed_indices", pairs)
+
+    def onToggleKabschAlign(self):
+        """Gate item 2: server-side Kabsch alignment to frame 0.
+
+        The ``heavy_only`` stage parameter is sent alongside the toggle so the
+        "Kabsch: heavy atoms only" checkbox actually reaches ``ffast.kabsch_alignment``
+        (re-fired by ``alignKabschHeavyOnly`` changing, see loupeViewSettings).
+        """
+        enabled = self.settings.get("alignKabsch")
+        self._sendToggleFeature("kabsch_align", enabled)
+        if enabled:
+            self._sendSetParameter(
+                "ffast.kabsch_alignment", "heavy_only",
+                bool(self.settings.get("alignKabschHeavyOnly")),
+            )
+
+    def onToggleSceneLabels(self):
+        """Gate item 1: server-side atom index labels (ffast.atom_labels)."""
+        self._sendToggleFeature("labels", self.settings.get("showSceneLabels"))
+
+    @staticmethod
+    def _parseIndexList(text):
+        out = []
+        for tok in str(text or "").replace(",", " ").split():
+            try:
+                out.append(int(tok))
+            except ValueError:
+                pass
+        return out
+
+    @staticmethod
+    def _parseFilterTokens(text):
+        """Tokenize a filter spec, keeping element symbols ('C', '-H') as
+        strings and indices as ints. The server resolves them (ADR 0014)."""
+        out = []
+        for tok in str(text or "").replace(",", " ").split():
+            try:
+                out.append(int(tok))
+            except ValueError:
+                out.append(tok)
+        return out
+
+    def onApplySceneFilter(self):
+        """Drive the server-side atom filter (ffast.atom_filter).
+
+        The keep-mask is computed server-side; the client sends the raw spec
+        (indices and/or element tokens). Empty = show all atoms.
+        """
+        self._sendViewCommand(
+            type="SET_PARAMETER",
+            stage_id="ffast.atom_filter",
+            parameter="indices",
+            value=self._parseFilterTokens(self.settings.get("sceneFilterIndices")),
+        )
+
+    def onApplySceneSelection(self):
+        """Highlight atoms via a server-owned Scientific Selection.
+
+        Sends SET_SELECTION; the server stores the selection and build_scene
+        emits a SelectionOverlay the adapter renders. Empty list clears it.
+        """
+        indices = self._parseIndexList(self.settings.get("sceneSelectIndices"))
+        self._pickedSet = list(indices)
+        self._commitPicked()
+
+    def _setColorParam(self, parameter, value):
+        self._sendViewCommand(
+            type="SET_PARAMETER",
+            stage_id="ffast.atom_color",
+            parameter=parameter,
+            value=value,
+        )
+
+    def onApplyColorSource(self):
+        source = self.settings.get("atomColorSource")
+        logger.info(
+            "Loupe[%s]: applyColorSource → source=%r (colorType=%r)",
+            self.viewId, source, self.settings.get("atomColorType"),
+        )
+        self._setColorParam("source", source)
+
+    def onApplyColormap(self):
+        colormap = self.settings.get("atomColorMap")
+        logger.info("Loupe[%s]: applyColormap → colormap=%r", self.viewId, colormap)
+        self._setColorParam("colormap", colormap)
+
+    # PICKING (ADR 0015): client accumulates a working set, commits the full set.
+    def onAdapterPick(self, displayed_index):
+        """Toggle a clicked atom in the working selection and commit it."""
+        if displayed_index is None:
+            return
+        atom_id = self.canvas.sceneAdapter.displayed_to_atom_id(displayed_index)
+        if atom_id in self._pickedSet:
+            self._pickedSet.remove(atom_id)
+        else:
+            self._pickedSet.append(atom_id)
+        self._commitPicked()
+
+    def onAdapterPickRect(self, displayed_indices):
+        """Add a rectangle of atoms to the working selection and commit it."""
+        for k in displayed_indices:
+            atom_id = self.canvas.sceneAdapter.displayed_to_atom_id(k)
+            if atom_id not in self._pickedSet:
+                self._pickedSet.append(atom_id)
+        self._commitPicked()
+
+    def _commitPicked(self):
+        """Commit the working set as the server-owned 'picked' selection."""
+        self._sendViewCommand(
+            type="SET_SELECTION",
+            name="picked",
+            scope="current_structure",
+            indices=list(self._pickedSet),
+        )
+
     # INDEX
     def updateCurrentIndex(self):
         self.indexSlider.setValue(self.index, quiet=True)
         self.canvas.setIndex(self.index)
+        self._sendRemoteFrame()
+
+    def _sendRemoteFrame(self):
+        """Drive the server view's frame. SET_FRAME is version-agnostic.
+
+        Debounced at 12 ms: rapid slider drags cancel the previous scheduled
+        request and only send the latest frame index. Arrow-button single
+        clicks feel instant (<12 ms overhead); scrubbing at 100+ ticks/s is
+        throttled to ≤80 fps, preventing intermediate-frame patch flooding.
+        """
+        if self._frameUpdateHandle is not None:
+            self._frameUpdateHandle.cancel()
+        self._frameUpdateHandle = asyncio.get_event_loop().call_later(
+            0.012, self._sendRemoteFrameNow,
+        )
+
+    def _sendRemoteFrameNow(self):
+        self._frameUpdateHandle = None
+        self.env.remote.sendViewCommand(
+            type="SET_FRAME",
+            view_id=self.viewId,
+            view_version=0,
+            frame_index=self.index,
+        )
+
+    def _trackMoleculeCentroid(self):
+        """Shift camera center to geometric centroid of current atoms.
+
+        Respects the 'originCenterOfMass' setting (same toggle as the legacy
+        CameraInfo property). Only fires when the adapter owns the render path.
+        """
+        if not self.canvas.settings.get("originCenterOfMass"):
+            return
+        import numpy as np
+        pos = self.canvas.sceneAdapter._atom_positions
+        if pos is None or len(pos) == 0:
+            return
+        centroid = np.mean(pos, axis=0)
+        self.canvas.camera.center = tuple(float(c) for c in centroid)
 
     def setIndex(self, index):
         self.index = index
@@ -744,11 +587,24 @@ class Loupe(Widget, EventChildClass):
         self.videoTask = self.env.tm.simpleTask(self.runOnNext)
 
     async def runOnNext(self):
+        loop = asyncio.get_event_loop()
         while not self.videoPaused:
             if self.selectedDatasetKey is None:
                 return
+            frame_start = loop.time()
             self.onNext(skip=self.settings.get("videoSkipFrames"))
-            await asyncio.sleep(1 / self.settings.get("videoFPS"))
+            # Wait for the server's SCENE_PATCH before advancing; prevents
+            # patch stacking when the server responds slower than target FPS.
+            self._patchReceivedEvent.clear()
+            try:
+                await asyncio.wait_for(self._patchReceivedEvent.wait(), timeout=0.5)
+            except asyncio.TimeoutError:
+                pass
+            # Sleep any remaining time to maintain the user's target FPS.
+            elapsed = loop.time() - frame_start
+            remaining = (1.0 / max(1, self.settings.get("videoFPS"))) - elapsed
+            if remaining > 0:
+                await asyncio.sleep(remaining)
 
     def onPrevious(self):
         index = max(0, self.index - 1)
@@ -804,3 +660,7 @@ class Loupe(Widget, EventChildClass):
 
     def onCameraChange(self):
         self.canvas.onCameraChange()
+
+    def closeEvent(self, event):
+        self.env.remote.closeRemoteView(self.viewId)
+        return super().closeEvent(event)

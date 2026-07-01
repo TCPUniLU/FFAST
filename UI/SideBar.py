@@ -178,9 +178,9 @@ class DatasetModelItem(ObjectListItem, EventChildClass):
         self.infoButton.setText(label)
 
     def getObject(self):
-        dataset = self.handler.env.getDataset(self.id)
+        dataset = self.handler.env.datasets.get(self.id)
         if dataset is None:
-            return self.handler.env.getModel(self.id)
+            return self.handler.env.models.get(self.id)
         else:
             return dataset
 
@@ -188,14 +188,14 @@ class DatasetModelItem(ObjectListItem, EventChildClass):
         if key is not None:
             if key != self.id:
                 # if subdataset, could care about name changes of parents
-                dataset = self.handler.env.getDataset(self.id)
+                dataset = self.handler.env.datasets.get(self.id)
                 if dataset is None:
                     return
                 obj = self.handler.env.getObject(key)
                 if not dataset.isDependentOn(obj):
                     return
 
-        dataset = self.handler.env.getDataset(self.id)
+        dataset = self.handler.env.datasets.get(self.id)
         if dataset is not None:
             self.setName(dataset.getDisplayName())
             self.setInfoLabel(dataset.datasetName)
@@ -204,7 +204,7 @@ class DatasetModelItem(ObjectListItem, EventChildClass):
             self.infoWidget.setInfo(*info)
 
         else:
-            model = self.handler.env.getModel(self.id)
+            model = self.handler.env.models.get(self.id)
             if model is None:
                 return
             self.setName(model.getDisplayName())
@@ -249,7 +249,7 @@ class DatasetModelItem(ObjectListItem, EventChildClass):
         if path is None:
             return
         typ, form = formats[formatName]
-        env.taskSaveDataset(dataset, typ, form, path)
+        env.persistence.taskSaveDataset(dataset, typ, form, path)
 
     def onNameEdited(self):
         self.titleLabel.setDisabled(True)

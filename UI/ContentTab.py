@@ -133,7 +133,7 @@ class DatasetModelSelector(Widget, EventChildClass):
         modelKeys, _ = self.getSelectedKeys()
 
         self.modelsList.removeWidgets(clear=True)
-        keys = self.env.getAllModelKeys()
+        keys = self.env.models.all_keys()
 
         for key in keys:
             w = DatasetModelLabel(self.handler, key, parent=self.modelsList)
@@ -154,7 +154,7 @@ class DatasetModelSelector(Widget, EventChildClass):
         _, datasetKeys = self.getSelectedKeys()
 
         self.datasetsList.removeWidgets(clear=True)
-        keys = self.env.getAllDatasetKeys()
+        keys = self.env.datasets.all_keys()
 
         for key in keys:
             w = DatasetModelLabel(self.handler, key, parent=self.datasetsList)
@@ -184,6 +184,23 @@ class DatasetModelSelector(Widget, EventChildClass):
 
         return modelKeys, datasetKeys
 
+    _LARGE_DATASET_BYTES = 3_000_000_000
+
+    def _isLargeSelection(self, datasetKeys):
+        import os
+        for key in datasetKeys:
+            dataset = self.env.datasets.get(key)
+            if dataset is None:
+                continue
+            path = getattr(dataset, "path", None)
+            if path and os.path.isfile(path):
+                try:
+                    if os.path.getsize(path) >= self._LARGE_DATASET_BYTES:
+                        return True
+                except OSError:
+                    pass
+        return False
+
     def update(self):
         if self.quiet:
             return
@@ -191,3 +208,7 @@ class DatasetModelSelector(Widget, EventChildClass):
 
         for func in self.updateCallbacks:
             func(modelKeys, datasetKeys)
+
+        if modelKeys and datasetKeys:
+            all_plots = not self._isLargeSelection(datasetKeys)
+            self.eventPush("AUTO_COMPUTE_TRIGGERED", all_plots)

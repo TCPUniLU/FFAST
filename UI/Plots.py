@@ -24,6 +24,9 @@ class DataDependentObject:
     def setDataDependencies(self, *args):
         self.dataWatcher.setDataDependencies(*args)
 
+    def setMetricDependencies(self, metric_deps: dict):
+        self.dataWatcher.setMetricDependencies(metric_deps)
+
     def setDatasetDependencies(self, *args):
         self.dataWatcher.setDatasetDependencies(*args)
 
@@ -76,6 +79,7 @@ class DataloaderButton(PushButton, EventChildClass):
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
         self.eventSubscribe("WIDGET_REFRESH", self.onWidgetRefresh)
+        self.eventSubscribe("AUTO_COMPUTE_TRIGGERED", self.onAutoCompute)
         self.clicked.connect(self.dataWatcher.loadContent)
 
         self.onWidgetRefresh(self)
@@ -85,6 +89,17 @@ class DataloaderButton(PushButton, EventChildClass):
             return
 
         self.refresh()
+
+    def onAutoCompute(self, all_plots):
+        """Fire loadContent automatically when selection changes.
+
+        all_plots=True  → small dataset, compute everything.
+        all_plots=False → large dataset, only priority watchers.
+        """
+        if not self.isEnabled():
+            return
+        if all_plots or self.dataWatcher.autocomputePriority:
+            self.dataWatcher.loadContent()
 
     def refresh(self):
         missing = self.dataWatcher.currentlyMissingKeys
@@ -102,7 +117,6 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         border-radius:10px;
     }
     """
-    frozenAutoRange = False  # prevents auto range when refreshing plots
 
     def __init__(
         self,
@@ -132,6 +146,30 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self.labelsList = []
         self.hasLegend = hasLegend
         self.colorCount = 0
+        self.symbolCount = 0
+
+        # Incremental refresh (ADR 0022): persistent Series keyed by
+        # (dataset_fp, model_fp, kind, sub-index). A refresh reconciles against
+        # these — skip unchanged, setData changed, create new, drop unvisited —
+        # instead of clear()+rebuild, so a streamed metric result no longer
+        # tears down and rebuilds every Series on the GUI thread. plotItems /
+        # labelsList are rebuilt in draw order each refresh for the legend.
+        self._series = {}
+        self._visitOrder = []
+        self._visitedKeys = set()
+        self._keyCounter = {}
+        self._changedThisRefresh = False
+
+        # Trailing-debounce timer that coalesces a burst of refresh requests
+        # into a single rebuild (see visualRefresh). 200ms comfortably spans the
+        # ~100ms inter-arrival gap of streamed metric results, so a whole batch
+        # collapses to one rebuild per plot.
+        self._pendingForce = False
+        self._pendingNoAutoRange = True
+        self._refreshTimer = QtCore.QTimer(self)
+        self._refreshTimer.setSingleShot(True)
+        self._refreshTimer.setInterval(200)
+        self._refreshTimer.timeout.connect(self._performVisualRefresh)
 
         self.colorString = color
         self.layout.setContentsMargins(13, 13, 13, 13)
@@ -301,14 +339,14 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         # modelKeys = self.dataWatcher.getModelDependencies()
 
         # for datasetKey in datasetKeys:
-        #     dataset = env.getDataset(datasetKey)
+        #     dataset = env.datasets.get(datasetKey)
 
         #     # dont do subdatasets of subdatasets
         #     if dataset.isSubDataset and not dataset.isAtomFiltered:
         #         continue
 
         #     for modelKey in modelKeys:
-        #         model = env.getModel(modelKey)
+        #         model = env.models.get(modelKey)
         for de in self.getWatchedData():
             dataset, model = de["dataset"], de["model"]
             idx = self.getDatasetSubIndices(dataset, model)
@@ -329,7 +367,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         fps = self.getValidSubDatasets(asFingerprint=True)
         ds = []
         for fp in fps:
-            sub = self.env.getDataset(fp)
+            sub = self.env.datasets.get(fp)
             if sub is not None:
                 ds.append(sub)
 
@@ -355,6 +393,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self.refresh()
 
     def onQuit(self):
+        self._refreshTimer.stop()
         self.plotWidget.close()
 
     def getWatchedData(self):
@@ -364,8 +403,15 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self.visualRefresh()
 
     def _addPlots(self, **kwargs):
-        self.labelsList.clear()
+        # Reset per-refresh reconcile state. plot() repopulates _visitOrder /
+        # _visitedKeys / _changedThisRefresh; plotItems/labelsList are rebuilt
+        # from _visitOrder afterwards (in _performVisualRefresh).
         self.colorCount = 0
+        self.symbolCount = 0
+        self._visitOrder = []
+        self._visitedKeys = set()
+        self._keyCounter = {}
+        self._changedThisRefresh = False
         self.addPlots()
 
     def addPlots(self, **kwargs):
@@ -373,6 +419,24 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         return NotImplementedError
 
     def visualRefresh(self, force=False, noAutoRange=False):
+        # Coalesce refresh requests. Server-side metric results arrive one at a
+        # time (~10/sec), each in its own event-loop tick, so the per-tick
+        # eventStamp gate cannot dedupe them: with N models every plot would
+        # rebuild N times per batch, and toggling the energy shift fires a fresh
+        # batch of recomputes — a rebuild storm that saturates the GUI thread
+        # (felt as scroll lag). Instead, restart a short single-shot timer on
+        # each request and rebuild ONCE after results stop arriving. Flags are
+        # merged so the coalesced rebuild is at least as eager as any request:
+        # force if any asked to force; autoRange unless every request opted out.
+        self._pendingForce = self._pendingForce or force
+        self._pendingNoAutoRange = self._pendingNoAutoRange and noAutoRange
+        self._refreshTimer.start()
+
+    def _performVisualRefresh(self):
+        force = self._pendingForce
+        noAutoRange = self._pendingNoAutoRange
+        self._pendingForce = False
+        self._pendingNoAutoRange = True
         # when many refresh events happen in a single loop, no need to
         # refresh every time since information won't change
         if (not force) and self.eventStamp <= self.lastUpdatedStamp:
@@ -380,13 +444,24 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
 
         self.lastUpdatedStamp = self.eventStamp
 
-        self.clear()
-
-        self.frozenAutoRange = noAutoRange
+        # Reconcile rather than clear()+rebuild. _addPlots() calls plot() per
+        # Series, which skips/updates/creates against self._series in place.
         self._addPlots()
+        # Drop Series not redrawn this refresh (a model/dataset was removed).
+        for key in [k for k in self._series if k not in self._visitedKeys]:
+            self.plotWidget.removeItem(self._series[key]["item"])
+            del self._series[key]
+            self._changedThisRefresh = True
+        # Rebuild ordered item/label lists in draw order (the legend reads
+        # plotItems[i] and labelsList[i] in parallel).
+        self.plotItems = [self._series[k]["item"] for k in self._visitOrder]
+        self.labelsList = [self._series[k]["label"] for k in self._visitOrder]
+        # autoRange only when something actually changed: an unchanged plot must
+        # not re-fit (and yank a manually-zoomed view) on a streamed update.
+        if self._changedThisRefresh and (not noAutoRange) and (not self.isSubbing()):
+            self.plotItem.autoRange()
         if self.hasLegend:
             self.updateLegend()
-        self.frozenAutoRange = False
 
     def getLabelFromData(self, data):
         s = ""
@@ -428,11 +503,47 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
             self.legend.addItem(item, label)
 
     def clear(self):
-        for item in self.plotItems:
-            self.plotWidget.removeItem(item)
-            del item
-
+        for rec in self._series.values():
+            self.plotWidget.removeItem(rec["item"])
+        self._series = {}
+        self._visitOrder = []
+        self._visitedKeys = set()
         self.plotItems = []
+
+    def _seriesKey(self, scatter, autoColor):
+        """Stable identity for a drawn Series across refreshes (ADR 0022).
+
+        Content-based: (dataset_fp, model_fp, kind) plus a sub-index that
+        disambiguates multiple same-pair draws within one refresh. Keyless
+        draws (the y=x overlay) get a "__static__" base. Same draw order each
+        refresh → same key → the item is matched and updated in place.
+        """
+        kind = "scatter" if scatter else "line"
+        if isinstance(autoColor, dict):
+            ds = autoColor.get("dataset")
+            m = autoColor.get("model")
+            base = (
+                getattr(ds, "fingerprint", None),
+                getattr(m, "fingerprint", None),
+                kind,
+            )
+        else:
+            base = ("__static__", kind)
+        n = self._keyCounter.get(base, 0)
+        self._keyCounter[base] = n + 1
+        return base + (n,)
+
+    def _dataSignature(self, x, y):
+        """Hash of the drawn arrays — authoritative change signal.
+
+        Keyed off the *drawn* (x, y), not upstream Metric Result checksums, so
+        it stays correct for plots that transform client-side (e.g. the energy
+        shift subtracts a value and the shift-enabled toggle lives in no
+        checksum). A shape mismatch short-circuits before hashing.
+        """
+        xa = np.asarray(x)
+        ya = np.asarray(y)
+        return (xa.shape, ya.shape, hash(xa.tobytes()), hash(ya.tobytes()))
 
     def plot(
         self,
@@ -443,14 +554,19 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         autoColor=None,
         autoLabel=None,
         label=None,
+        ignoreBounds=False,
         **kwargs,
     ):
         self.plotItem.disableAutoRange()
-        self.labelsList.append((label, autoLabel))
+        kind = "scatter" if scatter else "line"
+        key = self._seriesKey(scatter, autoColor)
+        self._visitedKeys.add(key)
+        self._visitOrder.append(key)
 
+        # Resolve style up front so it folds into the signature: a recolour /
+        # re-symbol with unchanged data still updates the item in place.
         if "pen" in kwargs:
-            pen = kwargs["pen"]
-            del kwargs["pen"]
+            pen = kwargs.pop("pen")
         else:
             if autoColor is not None:
                 color = self.env.getColorMix(
@@ -459,21 +575,78 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
             elif color is None:
                 color = getConfig("modelColors")[self.colorCount]
                 self.colorCount += 1
-
             width = float(getConfig("plotPenWidth"))
             pen = pyqtgraph.mkPen(color, width=width)
 
-        # plotItem = self.plotWidget.plot(x, y, pen=pyqtgraph.mkPen(color, width=2.5))
+        brush = None
+        symbol = None
         if scatter:
-            brush = pyqtgraph.mkBrush(color)
-            plotItem = pyqtgraph.ScatterPlotItem(x, y, brush=brush)
-        else:
-            plotItem = pyqtgraph.PlotDataItem(x, y, pen=pen, **kwargs)
+            # Each scatter Series gets a distinct symbol so stacked clouds stay
+            # distinguishable. Opaque fill (alpha=255) is much faster than alpha
+            # blending in software render. antialias=False overrides the global
+            # AA (per-point cost dominates with OpenGL off). DeviceCoordinateCache
+            # blits the cloud on pan/zoom instead of repainting every point.
+            _SYMBOLS = ['o', 's', 't', 'd']
+            symbol = kwargs.pop('symbol', _SYMBOLS[self.symbolCount % len(_SYMBOLS)])
+            self.symbolCount += 1
+            c = pyqtgraph.mkColor(color)
+            c.setAlpha(255)
+            brush = pyqtgraph.mkBrush(c)
 
-        self.plotItem.addItem(plotItem)
-        self.plotItems.append(plotItem)
-        if (not self.isSubbing()) and not (self.frozenAutoRange):
-            self.plotItem.autoRange()
+        sig = self._dataSignature(x, y) + (repr(color), symbol, bool(ignoreBounds))
+
+        prev = self._series.get(key)
+        if prev is not None and prev["kind"] == kind:
+            item = prev["item"]
+            if prev["sig"] != sig:
+                # Same Series, changed data/style → update in place (no teardown).
+                item.setData(x, y)
+                if scatter:
+                    item.setBrush(brush)
+                    item.setSymbol(symbol)
+                else:
+                    item.setPen(pen)
+                self._changedThisRefresh = True
+            # else: identical → leave the existing item untouched.
+        else:
+            if prev is not None:  # kind flipped at this key → replace the item
+                self.plotWidget.removeItem(prev["item"])
+            if scatter:
+                item = pyqtgraph.ScatterPlotItem(
+                    x, y, brush=brush, pen=None, size=5, symbol=symbol,
+                    antialias=False,
+                )
+                item.setCacheMode(
+                    QtWidgets.QGraphicsItem.CacheMode.DeviceCoordinateCache
+                )
+            else:
+                # Keep antialiasing for smooth lines, but cache the rendered
+                # curve as a device pixmap: AA polylines are expensive to
+                # re-rasterise in software render (OpenGL off on Apple), and a
+                # QScrollArea scroll fully repaints each moved plot — so without
+                # a cache every scroll step re-strokes every AA line (the
+                # timeline-scroll freeze). The cache blits instead; it
+                # re-rasterises only when the data or zoom actually changes.
+                # PlotDataItem itself doesn't paint — its child `curve` does —
+                # so the cache mode goes there. setdefault lets a caller override.
+                kwargs.setdefault("antialias", True)
+                item = pyqtgraph.PlotDataItem(x, y, pen=pen, **kwargs)
+                if item.curve is not None:
+                    item.curve.setCacheMode(
+                        QtWidgets.QGraphicsItem.CacheMode.DeviceCoordinateCache
+                    )
+            # ignoreBounds keeps an item out of autoRange (e.g. the y=x guide,
+            # whose endpoints would otherwise stretch the axes and squash the
+            # scatter clouds into a sliver).
+            self.plotItem.addItem(item, ignoreBounds=ignoreBounds)
+            self._changedThisRefresh = True
+
+        self._series[key] = {
+            "item": item,
+            "sig": sig,
+            "kind": kind,
+            "label": (label, autoLabel),
+        }
 
     def stepPlot(self, x, y, width=1, **kwargs):
         xLeft, xRight = (x - width / 2, x + width / 2)
