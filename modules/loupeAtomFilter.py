@@ -71,6 +71,7 @@ def addSetting(UIHandler, loupe):
 
 def addSettingsPane(UIHandler, loupe):
     from UI.Templates import SettingsPane, PushButton, Label
+    from PySide6.QtWidgets import QMessageBox
 
     pane = SettingsPane(UIHandler, loupe.settings, parent=loupe)
     loupe.addSidebarPane("ATOM FILTER", pane)
@@ -147,6 +148,25 @@ def addSettingsPane(UIHandler, loupe):
             return
 
         if (idxs is None) or len(idxs) == 0:
+            return
+
+        if hasattr(dataset, "isVariable") and dataset.isVariable:
+            msg = QMessageBox(UIHandler.window)
+            msg.setWindowTitle("Warning")
+            msg.setText("Warning: Atom filtering is not applicable to variable datasets")
+            msg.setIcon(QMessageBox.Information)
+            msg.setStandardButtons(QMessageBox.Ok)
+
+            msg.exec()
+            return
+        elif not hasattr(dataset, "isVariable"):
+            msg = QMessageBox(UIHandler.window)
+            msg.setWindowTitle("Error")
+            msg.setText("Error: It is unknown whether the selected dataset is variable or fixed.\nAtom filtering is not applicable to variable datasets. Hence, aborting the requested action.")
+            msg.setIcon(QMessageBox.Information)
+            msg.setStandardButtons(QMessageBox.Ok)
+
+            msg.exec()
             return
 
         UIHandler.env.createAtomFilteredDataset(dataset, idxs)
