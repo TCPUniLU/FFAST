@@ -1,6 +1,6 @@
 from functools import partial
 
-from UI.loupeProperties import ClientFeature
+from UI.clientFeatures import ClientFeature
 
 DEPENDENCIES = []
 

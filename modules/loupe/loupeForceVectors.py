@@ -1,4 +1,5 @@
-from UI.loupeProperties import AtomSelectionBase, ClientFeature
+from UI.loupe.visual import AtomSelectionBase
+from UI.clientFeatures import ClientFeature
 from ffast.metrics.models import BoolParameter, IntParameter
 
 SCHEMA_PARAMS = {

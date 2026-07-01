@@ -1,4 +1,4 @@
-from UI.loupeProperties import ClientFeature
+from UI.clientFeatures import ClientFeature
 from client.dataWatcher import DataWatcher
 
 DEPENDENCIES = ["loupeAtoms"]

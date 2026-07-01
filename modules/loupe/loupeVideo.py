@@ -1,4 +1,4 @@
-from UI.loupeProperties import ClientFeature
+from UI.clientFeatures import ClientFeature
 from ffast.metrics.models import IntParameter
 
 SCHEMA_PARAMS = {

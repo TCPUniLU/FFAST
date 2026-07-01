@@ -1,5 +1,6 @@
 import logging
-from UI.loupeProperties import AtomSelectionBase, ClientFeature
+from UI.loupe.visual import AtomSelectionBase
+from UI.clientFeatures import ClientFeature
 
 logger = logging.getLogger("FFAST")
 

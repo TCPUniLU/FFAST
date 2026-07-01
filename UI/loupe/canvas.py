@@ -1,5 +1,5 @@
 from UI.Templates import Widget, ContentBar, SettingsPane, ToolButton
-from UI.loupeProperties import VisualElement
+from UI.loupe.visual import VisualElement
 from config.userConfig import getConfig
 from vispy import scene
 from vispy.scene.cameras.turntable import TurntableCamera

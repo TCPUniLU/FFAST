@@ -1,4 +1,5 @@
-from UI.loupeProperties import AtomSelectionBase, ClientFeature
+from UI.loupe.visual import AtomSelectionBase
+from UI.clientFeatures import ClientFeature
 import numpy as np
 from client.mathUtils import getVV0Angle, getDihedral
 

@@ -68,6 +68,6 @@ def loadUI(UIHandler, env):
     build_analysis_tabs(UIHandler, env)
 
 
-from UI.loupeProperties import DatasetFeature  # noqa: E402
+from UI.clientFeatures import DatasetFeature  # noqa: E402
 
 DATASET_FEATURES = [DatasetFeature(metric_ids=[], widget_factory=loadUI)]

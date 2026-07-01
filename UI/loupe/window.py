@@ -1,7 +1,7 @@
 from events import EventChildClass
 from UI.Templates import Widget, ObjectComboBox, SettingsPane
-from UI.loupeMenu import LoupeMenuHandler
-from UI.loupeCanvas import SideBar, InteractiveCanvas
+from UI.loupe.menu import LoupeMenuHandler
+from UI.loupe.canvas import SideBar, InteractiveCanvas
 from PySide6 import QtCore, QtWidgets
 import logging
 import asyncio

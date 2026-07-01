@@ -17,7 +17,7 @@ the local shim path (`_refreshLocalSceneAdapter`, all `serverConnection is None`
 guards) is deleted.
 
 **Why not keep the embedded local path alongside the server path?**  
-Every View Command dispatcher in `Loupe.py` carried a dual-path guard:
+Every View Command dispatcher in `UI/loupe/window.py` carried a dual-path guard:
 `if serverConnection is None: _refreshLocalSceneAdapter(); return`. As sidebar pane modules
 are extracted into `loadLoupe` hooks, each new module would inherit the same guard.
 The shim would leak into every extension point, making Loupe un-extensible.
@@ -29,5 +29,5 @@ Existing task progress UI reports the connection status without a separate modal
 
 **Implementation order:**
 1. `UIHandler.launch()` starts `LocalServerManager`, kicks off `env.connectDirect` as a task, disables Loupe creation until `REMOTE_CONNECTED` fires.
-2. Delete `_refreshLocalSceneAdapter` and all `serverConnection is None` guards in `Loupe.py`.
+2. Delete `_refreshLocalSceneAdapter` and all `serverConnection is None` guards in `UI/loupe/window.py`.
 3. Extract `initialiseBondsPane`, `initialiseForceVectorsPane`, `initialiseUnitCellPane`, `initialiseViewSettingsPane` into `loadLoupe` module files.

@@ -1,6 +1,7 @@
 import numpy as np
 from config.userConfig import getConfig
-from UI.loupeProperties import VisualElement, CanvasProperty, ClientFeature
+from UI.loupe.visual import VisualElement, CanvasProperty
+from UI.clientFeatures import ClientFeature
 
 DEPENDENCIES = ["loupeCamera"]
 

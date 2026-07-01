@@ -7,7 +7,7 @@ from PySide6.QtCore import QDir
 from PySide6.QtWidgets import QMessageBox
 
 from events import EventClass
-from UI.Loupe import Loupe
+from UI.loupe.window import Loupe
 from UI.MainWindow import MainWindow
 
 logger = logging.getLogger("FFAST")

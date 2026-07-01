@@ -40,7 +40,7 @@ class _FakeSettings(dict):
 def _make_loupe(settings):
     """A Loupe instance with only the attributes the senders touch — no __init__,
     so no QApplication/widget tree is required."""
-    from UI.Loupe import Loupe
+    from UI.loupe.window import Loupe
     obj = Loupe.__new__(Loupe)
     obj.env = _RecordingEnv()
     obj.viewId = "v1"
@@ -59,7 +59,7 @@ def _replay(sent):
 
 
 def test_force_vectors_batch_uses_successive_versions_and_filter_lands():
-    from UI.Loupe import Loupe
+    from UI.loupe.window import Loupe
     loupe = _make_loupe(_FakeSettings(
         showForceVectors=True, forceVectorsModelKey=None,
         forceVectorsLength=10, forceVectorsNormalised=True,
@@ -81,7 +81,7 @@ def test_force_vectors_batch_uses_successive_versions_and_filter_lands():
 
 
 def test_atom_align_batch_parameters_land():
-    from UI.Loupe import Loupe
+    from UI.loupe.window import Loupe
     loupe = _make_loupe(_FakeSettings(
         alignAtoms=True, alignAtomsIndices="0 1 2", alignAtomsConfIndex=0,
     ))
@@ -99,7 +99,7 @@ def test_atom_align_batch_parameters_land():
 
 
 def test_fixed_bonds_batch_parameters_land():
-    from UI.Loupe import Loupe
+    from UI.loupe.window import Loupe
     loupe = _make_loupe(_FakeSettings(
         bondType="Fixed", fixedBondIndices=[(0, 1), (1, 2)],
     ))

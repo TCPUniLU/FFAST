@@ -1,5 +1,5 @@
 from UI.Templates import Widget, SettingsPane
-from UI.loupeProperties import ClientFeature
+from UI.clientFeatures import ClientFeature
 from ffast.metrics.models import BoolParameter, IntParameter, StringParameter
 
 SCHEMA_PARAMS = {

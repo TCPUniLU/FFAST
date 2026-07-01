@@ -1,5 +1,6 @@
 import logging
-from UI.loupeProperties import AtomSelectionBase, CanvasProperty, ClientFeature
+from UI.loupe.visual import AtomSelectionBase, CanvasProperty
+from UI.clientFeatures import ClientFeature
 from functools import partial
 import numpy as np
 

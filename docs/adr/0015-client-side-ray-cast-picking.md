@@ -63,7 +63,7 @@ reordering.
 
 - `AtomScene` gains `atom_ids`; `scene_builder` populates it. The client maps a
   picked displayed-index → `atom_ids[k]` before emitting `SET_SELECTION`.
-- The legacy color-buffer picking in `UI/Loupe.py`
+- The legacy color-buffer picking in `UI/loupe/window.py`
   (`getPickingRender` / `refreshPickingColors` / `colorToIndex`) is part of the
   dying render path. The Renderer Client gains a ray-cast picker plus a
   client-only transient-highlight visual (separate from server selection

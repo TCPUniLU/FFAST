@@ -92,7 +92,7 @@ stage ID; their `ClientFeature` entries carry only a `widget_factory`.
 
 - `utils.py:loadModules` loses `hasattr(mod, "loadLoupe")` /
   `hasattr(mod, "loadUI")` branches and gains feature-list collection.
-- `UI/Loupe.py:registerLoupeModule` and the `VisualElement` draw loop are
+- `UI/loupe/window.py:registerLoupeModule` and the `VisualElement` draw loop are
   removed after all modules migrate (see [ADR 0014](0014-vispy-scene-adapter-replaces-loupe-render-path.md)
   deletion gate — already satisfied by existing stage code).
 - Module migration is incremental: old hook and new descriptor coexist per

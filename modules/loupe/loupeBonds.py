@@ -1,6 +1,7 @@
 from config.userConfig import getConfig
 from utils import cleanBondIdxsArray
-from UI.loupeProperties import AtomSelectionBase, ClientFeature
+from UI.loupe.visual import AtomSelectionBase
+from UI.clientFeatures import ClientFeature
 
 DEPENDENCIES = ["loupeCamera"]
 

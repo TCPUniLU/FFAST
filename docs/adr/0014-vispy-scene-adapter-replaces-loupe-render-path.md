@@ -11,7 +11,7 @@ UI state and drew Vispy objects directly. The scientific/geometry logic those
 modules owned has already moved into `ffast/visualization/stages/builtin/` and
 the modules now delegate to it (strangler-fig migration).
 
-The **Renderer Client** (`UI/Loupe.py`) is *not* deleted. It is slimmed to pure
+The **Renderer Client** (`UI/loupe/window.py`) is *not* deleted. It is slimmed to pure
 rendering and interaction: the Vispy canvas, color-based picking, camera,
 rubber-band selection, playback controls, and image export survive and become
 the host for `VispySceneAdapter`. Only the per-feature drawing loop
@@ -112,8 +112,9 @@ deletion:
 
 The Render Path retirement completed without deleting the loupe modules: each had
 its drawing code stripped and was rewritten as a `ClientFeature` descriptor (the Qt
-control UI for a server-side stage). `loupeProperties.py` is **kept** as the home of
-`ClientFeature` / `DatasetFeature` / `AtomSelectionBase` / `CanvasProperty` /
-`VisualElement` — the last still backs the rubber-band selection rectangle, so the
-file is not deletable (porting the rubber band to a plain Vispy visual is optional
-future work, not a blocker). See also ADR 0017 (client-feature descriptor replaces load hooks).
+control UI for a server-side stage). The base classes are **kept**: the plugin
+feature descriptors `ClientFeature` / `DatasetFeature` live in `UI/clientFeatures.py`,
+and the Loupe canvas bases `AtomSelectionBase` / `CanvasProperty` / `VisualElement`
+in `UI/loupe/visual.py` — the last still backs the rubber-band selection rectangle,
+so that file is not deletable (porting the rubber band to a plain Vispy visual is
+optional future work, not a blocker). See also ADR 0017 (client-feature descriptor replaces load hooks).

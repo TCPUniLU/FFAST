@@ -45,7 +45,7 @@ A loaded MLFF model (sGDML, MACE, Nequip, SchNet, SpookyNet). Identified by fing
 A (Dataset, Model) pair used for error analysis. Either generated at runtime by a real Model, or loaded from a pre-computed file via "Load Prediction" (which creates a GhostModel placeholder). The atomic unit of comparison in all error plots. In remote mode, a Prediction can be loaded from a cluster-side file via "Load Remote Prediction"; the server creates the GhostModel and transfers prediction arrays to the client via the Prediction-Only Array Channel.
 
 ### Loupe
-The 3D molecular viewer. Uses Vispy for GPU-accelerated rendering with color-based atom picking. Runs locally (requires local GPU/OpenGL context). In remote mode, Loupe only operates on transferred subsets, not the full remote dataset. Loupe is the Qt/Vispy **Renderer Client**.
+The 3D molecular viewer. Uses Vispy for GPU-accelerated rendering with color-based atom picking. Runs locally (requires local GPU/OpenGL context). In remote mode, Loupe only operates on transferred subsets, not the full remote dataset. Loupe is the Qt/Vispy **Renderer Client**. As code it spans layers by design: the Qt shell (`UI/loupe/`), pluggable features (`modules/loupe/`), the renderer-neutral scene/pipeline core shared with the web renderer (`ffast/visualization/`, part of the **Headless Core**), and the Vispy adapter (`ffast/renderers/vispy/`).
 
 ### Renderer Client
 The local process that draws a Render Scene and owns pointer interaction, camera, picking, export, playback controls, and window layout. It holds no scientific state: it consumes Scene Snapshots and Scene Patches and emits View Commands. Loupe (Qt/Vispy) and the future web viewer are Renderer Clients.

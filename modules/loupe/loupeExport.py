@@ -358,5 +358,5 @@ def loadLoupe(UIHandler, loupe):
     addSettingsPane(UIHandler, loupe)
 
 
-from UI.loupeProperties import ClientFeature
+from UI.clientFeatures import ClientFeature
 CLIENT_FEATURES = [ClientFeature(widget_factory=loadLoupe)]
