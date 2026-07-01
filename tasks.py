@@ -26,6 +26,7 @@ class TaskManager(EventClass):
 
         self.runningTasks = {}
         self.taskQueue = queue.SimpleQueue()
+        self._loop = asyncio.get_event_loop()
 
         self.eventSubscribe("TASK_DONE", self.onTaskDone)
         self.eventSubscribe("QUIT_EVENT", self.quit, asynchronous=True)

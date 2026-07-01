@@ -4,10 +4,6 @@ import logging
 logger = logging.getLogger("FFAST")
 subs = defaultdict(list)
 
-# WANTED TO MAKE THEM ONLY ABLE TO HAPPEN ONCE PER CYCLE
-# FOR NOW IM STAGGERING INSIDE THE WIDGET REFRESH THINGY
-# REFRESH_EVENTS = ["WIDGET_REFRESH", "WIDGET_VISUAL_REFRESH"]
-
 
 def doNothing(*args):
     pass
@@ -24,7 +20,7 @@ class EventClass:
     eventStamp = 0
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__()
         self.eventQueue = []
         self.eventChildren = []
         self.subscribedTo = set()
@@ -59,10 +55,6 @@ class EventClass:
                 (event, func, asynchronous, quiet, args, kwargs)
             )
 
-    eventBusy = None
-    eventFree = None
-    busy = False
-
     async def eventHandle(self):
         """
         Goes through the event queue, which includes every event pushed since
@@ -76,10 +68,6 @@ class EventClass:
 
         if (self.isEventChild) and (len(self.eventQueue) < 1):
             return
-
-        self.busy = True
-        if self.eventBusy is not None:
-            self.eventPush(self.eventBusy)
 
         for event, func, asynchronous, quiet, args, kwargs in self.eventQueue:
             if not quiet:
@@ -95,10 +83,6 @@ class EventClass:
                 logger.exception(
                     f"Exception while {self} tried to handle event {event}.\nfunc:{func}\nargs:{args}\nkwargs:{kwargs}"
                 )
-
-        self.busy = False
-        if self.eventFree is not None:
-            self.eventPush(self.eventFree)
 
         self.eventQueue.clear()
 
@@ -116,12 +100,20 @@ class EventChildClass(EventClass):
     EventClass for Qt Widgets, which cannot have an independent event handling loop. Instead, this class hooks onto the UI Handler and use its event handling methods instead.
 
     Note that after initialising the object, the parent needs to call addEventChild.
+
+    LIFETIME INVARIANT: subscriptions in `subs` hold the subscriber STRONGLY, so
+    a churning EventChildClass that is dropped without calling deleteEvents leaks
+    (and its dead handlers keep firing). Every such widget MUST be removed via the
+    list machinery's removeObject -> prepareDeletion -> deleteEvents path
+    (UI/Templates/lists.py, UI/Templates/base.py). Do not drop event children with
+    a bare .clear()/reassignment. This discipline is why subs is kept strong
+    rather than weakref'd.
     """
 
     isEventChild = True
 
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__()
 
         if hasattr(self, "handler"):
             self.handler.addEventChild(self)

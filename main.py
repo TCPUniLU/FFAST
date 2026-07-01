@@ -31,6 +31,8 @@ from client.environment import Environment
 from events import EventClass
 from utils import loadModules, setupLogger
 
+logger = logging.getLogger("FFAST")
+
 
 class NathHorthath(EventClass):
     """
@@ -78,7 +80,7 @@ class NathHorthath(EventClass):
             dataset = env.datasets[next(iter(env.datasets))]
             model = env.models[next(iter(env.models))]
 
-            env.taskGenerateData(
+            env.data.taskGenerateData(
                 "energyError", model=model, dataset=dataset, visual=True
             )
             break
@@ -93,11 +95,15 @@ async def eventLoop(UI, env):
     nh = NathHorthath(env)
     taskManager = env.tm
 
+    loop = asyncio.get_event_loop()
+    env.remote._event_loop = loop
+    env.tm.newTask(env.remote.startLocalServer, visual=True, name="Local server")
+
     while not UI.quitReady:
         await UI.eventHandle()
         await env.eventHandle()
         await nh.eventHandle()
-        await env.handleGenerationQueue()
+        await env.data.handleGenerationQueue()
         await taskManager.eventHandle()
         await taskManager.handleTaskQueue()
         await asyncio.sleep(0.1)
@@ -106,6 +112,11 @@ async def eventLoop(UI, env):
     await env.eventHandle()
     await taskManager.eventHandle()
     await taskManager.quit()
+
+    if env.remote._localServerListener is not None:
+        env.remote._localServerListener.cancel()
+    if env.remote.localServerHandle is not None and env.remote.localServerManager is not None:
+        env.remote.localServerManager.stop(env.remote.localServerHandle)
 
 
 def main(workdir=None):
@@ -202,6 +213,3 @@ if __name__ == "__main__":
         logger.exception(e)
         sys.exit()
 
-
-if __name__ == "__main__":
-    cli()
