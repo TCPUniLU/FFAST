@@ -350,8 +350,26 @@ class ClusterConnectDialog(QDialog):
     # ------------------------------------------------------------------ result
 
     def get_profile(self) -> ClusterProfile:
-        """Return profile built from current field values (unsaved unless user saved)."""
+        """Return profile built from current field values (unsaved unless user saved).
+
+        The form has no widgets for the auto-provision fields (``provision`` /
+        ``modules`` / ``venv_path``) or ``snapshot_interval_minutes``, so carry
+        those through from the saved profile — otherwise editing/selecting a
+        profile in the dialog would silently reset them to their defaults.
+        """
+        from dataclasses import replace
+
         name = self._combo.currentText()
         if name == _NEW_LABEL:
             name = ""
-        return self._read_fields(name)
+        p = self._read_fields(name)
+        saved = self._config.get(name) if name else None
+        if saved is not None:
+            p = replace(
+                p,
+                provision=saved.provision,
+                modules=saved.modules,
+                venv_path=saved.venv_path,
+                snapshot_interval_minutes=saved.snapshot_interval_minutes,
+            )
+        return p
