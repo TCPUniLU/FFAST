@@ -65,11 +65,16 @@ root `events.py` ↔ `ffast/protocol/events.py` and `cluster/session.py` ↔
   `UI/` files are harmless dead weight. The closure guard is enforced by
   `tests/ffast/test_headless_closure.py`.
 
-- **Step B (in progress): a true two-distribution split.** Migrate the Qt-free
-  server-closure flat modules *into* `ffast/`, so `ffast` is a self-contained
-  headless distribution and a separate `ffast-desktop` depends on it. This is the
-  opportunistic migration direction, with a precise target: **everything on the
-  server import closure.**
+- **Step B (opportunistic, not on the critical path): a true two-distribution
+  split.** Migrate the Qt-free server-closure flat modules *into* `ffast/`, so
+  `ffast` is a self-contained headless distribution and a separate
+  `ffast-desktop` depends on it. Target: **everything on the server import
+  closure.** *Reprioritized 2026-07-01:* the end goal (cluster server
+  auto-bootstrap, ADR 0028) does **not** require this migration — Step A already
+  yields a Qt-wheel-free installable server, and the dominant install weight is
+  `torch` (~2 GB), which dwarfs the inert `UI/` Python files a slim distribution
+  would exclude. So Step B is boundary cleanliness (mess-item #5), pursued
+  opportunistically, not a prerequisite for deployment.
   - Slices DONE 2026-07-01: `cluster/rpc` → `ffast/protocol/rpc` (msgpack
     transport codec), `config/atoms.py` → `ffast/chemistry/` (element reference
     tables), and `client/inputResolver.py` → `ffast/metrics/input_resolver.py`

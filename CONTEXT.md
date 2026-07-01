@@ -261,6 +261,10 @@ _Avoid_: plot tab, page
 One drawn trace within a **Panel** — the **Metric Presentation** of the Panel's Metric(s) for a single (**Model**, **Dataset**) pair. A Panel draws one Series per pair its **Analysis Tab** selector covers; the legend labels Series, **Subbing** turns a Series' viewport range into a **SubDataset**, and a Series carries the stable identity `(dataset, model)` used to match it across redraws.
 _Avoid_: trace, curve, line, plot item
 
+### Panel Display Override
+A user's client-local cosmetic customization of one **Panel** — x/y axis label text and font size, and legend text, font size, and position (including a per-**Series** entry-text override keyed by that Series' `(dataset, model)` identity). Scoped to a Panel by content-based identity (**Analysis Tab** name, **Panel Kind**, bound **Metric IDs**), so it survives Panel rebuilds and TOML reordering, and never touches computation identity. Persisted to a local, app-managed file, distinct from **Visualization Configuration**: a Visualization Configuration is a curated, mergeable, shareable partial override a person authors; a Panel Display Override is silently rewritten by the app whenever the user edits a label or drags a legend, and is never hand-authored. Also distinct from a **Presentation Parameter**: a Presentation Parameter is a Metric-declared, schema-validated display setting (e.g. colormap, units) that generates a control through the normal Parameter Schema pipeline, while a Panel Display Override is pure Panel-local UI chrome with no Metric or schema involved.
+_Avoid_: plot style, panel preferences, panel settings
+
 ### Transform Metric
 A **Metric** whose **Metric Input** is another Metric, applying a reduction or transform (KDE, smoothing, downsampling, per-structure reduction) through the **Metric Graph** and emitting a derived **Metric Result**. Its transform settings are **Compute Parameters**, so changing one recomputes the derived Metric rather than mutating a Panel client-side. This is why **Panels never reduce**: every axis is a Metric Result array.
 
@@ -433,6 +437,7 @@ A task identifier namespaced `remote_<n>` for work running on `ffast-server`. Ke
 - A reduction (KDE, smoothing, downsampling, per-structure reduction) is a **Transform Metric** compiled from a Panel's `{metric, transform, params}` into a deterministically named concrete **Metric** with a static **Metric Graph** edge to its source
 - A subbing **Panel** binds both its drawn (reduced) Metric and the indexed source Metric the **Transform Metric** declares as input; the indexed source drives `sub_indices`, while downsampling stays visual-only
 - 2D **Panels** are computed and laid out client-side; the server stays unaware of **Panel Kinds** and layout, exposing only **Metric Results** — in contrast to the server-owned **Visualization State** that drives the 3D scene
+- A **Panel Display Override** is optional per Panel, matched by content-based identity rather than grid position, and is pure cosmetic UI state — it never changes a Panel's bound **Metric IDs**, parameters, or the **Metric Results** it draws
 
 ---
 
