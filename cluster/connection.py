@@ -97,8 +97,10 @@ def load_session_records() -> list:
 _DEFAULT_REMOTE_PORT = 8765
 _POLL_INTERVAL = 5        # seconds between squeue polls
 _POLL_TIMEOUT = 600       # seconds to wait for RUNNING state
-_TUNNEL_RETRIES = 100      # WebSocket connect attempts after tunnel spawn
-_TUNNEL_RETRY_DELAY = 3   # seconds between WebSocket connect retries
+_TUNNEL_RETRIES = 100      # WebSocket attempts (×delay below) — the window must
+                          # cover one-time in-job provisioning (pip install)
+                          # before the server starts listening (ADR 0028)
+_TUNNEL_RETRY_DELAY = 3   # seconds between WebSocket connect retries → ~300s window
 
 
 def _find_free_port() -> int:
