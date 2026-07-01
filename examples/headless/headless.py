@@ -20,29 +20,42 @@ env.waitForTasks(verbose=True)
 dataset = env.getDatasetFromPath("examples/data/dataset.xyz")
 
 # Load pre-computed predictions (ASE file with energies and forces)
-# The second argument is the dataset fingerprint to match against
 env.loadPrepredictedDataset("examples/data/prediction.xyz", dataset.fingerprint)
 
 # Get the model created from the predictions (ghost model)
-model = env.getAllModels()[0]
+model = env.models.all()[0]
 
-# Queue error computations
-env.addToGenerationQueue("energyError", model=model, dataset=dataset)
-env.addToGenerationQueue("forcesError", model=model, dataset=dataset)
-env.addToGenerationQueue("energyErrorMetrics", model=model, dataset=dataset)
-env.addToGenerationQueue("forcesErrorMetrics", model=model, dataset=dataset)
-env.addToGenerationQueue("energyErrorDist", model=model, dataset=dataset)
-env.addToGenerationQueue("forcesErrorDist", model=model, dataset=dataset)
+# Queue metric computations
+metrics = [
+    ("ffast.energy_mae",        {}),
+    ("ffast.energy_rmse",       {}),
+    ("ffast.energy_mae_shifted",  {}),
+    ("ffast.energy_rmse_shifted", {}),
+    ("ffast.force_mae_global",  {}),
+    ("ffast.force_rmse_global", {}),
+    ("ffast.energy_difference", {}),
+    ("ffast.force_mae",         {"norm": "l1"}),
+]
+for metric_id, params in metrics:
+    key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
+    env.data.taskGenerateMetric(metric_id, params, model, dataset, key)
 env.waitForTasks(verbose=True)
 
-# Retrieve computed metrics
-eMetrics = env.getData("energyErrorMetrics", model=model, dataset=dataset)
-fMetrics = env.getData("forcesErrorMetrics", model=model, dataset=dataset)
+# Retrieve computed metrics from cache
+def get_metric(metric_id, params={}):
+    key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
+    result = env.data.getCacheByKey(key, subChecks=False)
+    return float(result.values) if result is not None else None
 
-print(f"Energy MAE: {eMetrics.get('mae'):.4f}")
-print(f"Energy RMSE: {eMetrics.get('rmse'):.4f}")
-print(f"Force MAE: {fMetrics.get('mae'):.4f}")
-print(f"Force RMSE: {fMetrics.get('rmse'):.4f}")
+e_mae   = get_metric("ffast.energy_mae")
+e_rmse  = get_metric("ffast.energy_rmse")
+f_mae   = get_metric("ffast.force_mae_global")
+f_rmse  = get_metric("ffast.force_rmse_global")
+
+print(f"Energy MAE:  {e_mae:.4f}")
+print(f"Energy RMSE: {e_rmse:.4f}")
+print(f"Force MAE:   {f_mae:.4f}")
+print(f"Force RMSE:  {f_rmse:.4f}")
 
 # Save session for later use in the GUI
 # Creates a directory at the given path containing:
@@ -50,7 +63,7 @@ print(f"Force RMSE: {fMetrics.get('rmse'):.4f}")
 #   cache/*.npz    - all computed data (errors, distributions, metrics)
 # Load it in the GUI via File > Load (Ctrl+l).
 savePath = os.path.join(PROJECT_ROOT, "results")
-env.save(savePath)
+env.persistence.save(savePath)
 print(f"\nSession saved to: {savePath}")
 
 # Clean up
