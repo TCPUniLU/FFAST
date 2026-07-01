@@ -1,6 +1,6 @@
 """Where predictions and metrics are computed (ADR 0020).
 
-``DataService`` does not branch on ``if self.remoteSession`` to decide whether to
+``DataService`` does not branch on ``if self.serverConnection`` to decide whether to
 compute a metric/prediction locally or ask a server.  Instead it holds an
 injected ``PredictionSource``:
 
@@ -43,9 +43,9 @@ class RemoteSource(PredictionSource):
     """Delegates metric/prediction sourcing to a connected server session.
 
     ``remote`` is any object exposing the live-session surface
-    (``remoteSession``, ``_event_loop``, ``_fetchMetricResultSync``,
+    (``serverConnection``, ``_event_loop``, ``_fetchMetricResultSync``,
     ``_fetchPredictionArraysSync``) — the Environment today, the
-    RemoteSessionManager after Step 4b.
+    ConnectionManager after Step 4b.
     """
 
     def __init__(self, remote):
@@ -54,7 +54,7 @@ class RemoteSource(PredictionSource):
     @property
     def available(self):
         return (
-            self._remote.remoteSession is not None
+            self._remote.serverConnection is not None
             and self._remote._event_loop is not None
         )
 

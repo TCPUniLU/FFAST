@@ -1,11 +1,11 @@
 """Remote/local server session management for the Environment (ADR 0020).
 
-``RemoteSessionManager`` owns everything about talking to an ``ffast-server``:
+``ConnectionManager`` owns everything about talking to an ``ffast-server``:
 the connection lifecycle (cluster via SLURM/SSH, direct, and the managed local
 server), the server→client metadata handlers that materialise proxy datasets and
 ghost models, and the synchronous/async array+metric fetch channels.
 
-It owns the session *state* (``remoteSession``, ``_event_loop``, the managed
+It owns the session *state* (``serverConnection``, ``_event_loop``, the managed
 local-server handles, ``metricCatalog``).  Everything domain-level it needs —
 creating datasets/models, pushing events, reading the cache, queuing tasks — it
 reaches through the owning ``Environment`` via the same-named delegators below,
@@ -26,20 +26,20 @@ import numpy as np
 logger = logging.getLogger("FFAST")
 
 
-class RemoteSessionManager:
+class ConnectionManager:
     """Owns the ffast-server session lifecycle and transport (ADR 0020)."""
 
     def __init__(self, env):
         self._env = env
 
         # Active remote cluster session (set by connectToCluster).
-        self.remoteSession = None
-        # Set to True by _disconnectRemoteSession so connectToCluster's
+        self.serverConnection = None
+        # Set to True by _disconnectServerConnection so connectToCluster's
         # CancelledError handler knows not to scancel or delete the record.
-        self._session_quitting = False
+        self._connection_quitting = False
 
         # Managed local server (set by main.py via startLocalServer).
-        self.localServerSession = None
+        self.localServerConnection = None
         self.localServerHandle = None
         self.localServerManager = None
         self._localServerListener = None
@@ -96,28 +96,28 @@ class RemoteSessionManager:
         May be called from task worker threads; uses run_coroutine_threadsafe
         so the coroutine runs on the main async event loop.
         """
-        if self.localServerSession is None or self._event_loop is None:
+        if self.localServerConnection is None or self._event_loop is None:
             return
         import asyncio as _asyncio
         _asyncio.run_coroutine_threadsafe(
-            self.localServerSession.push_event(event, *args, **kwargs),
+            self.localServerConnection.push_event(event, *args, **kwargs),
             self._event_loop,
         )
 
     # ── connection lifecycle ──────────────────────────────────────────────
-    async def _disconnectRemoteSession(self):
+    async def _disconnectServerConnection(self):
         """Disconnect any active remote session on QUIT_EVENT."""
-        session = self.remoteSession
+        session = self.serverConnection
         if session is not None:
             # Set flag BEFORE disconnecting so that when TaskManager
             # subsequently cancels the connectToCluster task the CancelledError
             # handler knows this is a quit, not a user-initiated disconnect.
             # Without this the handler would scancel the job and delete the
             # session record, preventing reconnect on next launch.
-            self._session_quitting = True
+            self._connection_quitting = True
             logger.info("Cleaning up remote session on quit…")
             await session.disconnect()
-            self.remoteSession = None
+            self.serverConnection = None
 
     async def connectToCluster(
         self, profile, reconnect_job_id=None, taskID=None
@@ -161,26 +161,26 @@ class RemoteSessionManager:
 
         try:
             if reconnect_job_id is not None:
-                from cluster.session import reconnect_to_cluster
+                from cluster.connection import reconnect_to_cluster
                 session = await reconnect_to_cluster(
                     profile,
                     reconnect_job_id,
                     progress_cb=_progress,
                 )
             else:
-                from cluster.session import connect_to_cluster
+                from cluster.connection import connect_to_cluster
                 session = await connect_to_cluster(
                     profile,
                     progress_cb=_progress,
                     on_job_submitted=_on_job_submitted,
                 )
 
-            self.remoteSession = session
+            self.serverConnection = session
             # Forward server→client events into the local event system.
             # For reconnect sessions the server replays REMOTE_DATASET_META
             # and REMOTE_MODEL_META automatically on connection, so the
             # listener will receive and forward them as normal.
-            self.remoteSession._listener = (
+            self.serverConnection._listener = (
                 await session.start_listener(self._env)
             )
             logger.info(
@@ -228,10 +228,10 @@ class RemoteSessionManager:
                     message="Connection lost (server dropped)",
                     error=True,
                 )
-                self.remoteSession = None
+                self.serverConnection = None
             except asyncio.CancelledError:
-                if self._session_quitting:
-                    # App is quitting — _disconnectRemoteSession already
+                if self._connection_quitting:
+                    # App is quitting — _disconnectServerConnection already
                     # closed the tunnel.  Job is still alive on the cluster;
                     # keep the session record so the user can reconnect on the
                     # next launch.  Do NOT scancel.
@@ -243,18 +243,18 @@ class RemoteSessionManager:
                 )
                 session._listener.cancel()
                 await session.disconnect()
-                self.remoteSession = None
+                self.serverConnection = None
                 if reconnect_job_id is None:
                     # New job submitted by us — cancel it on the cluster.
                     asyncio.create_task(_scancel(session.job_id))
                 # Delete local record: user explicitly disconnected.
-                from cluster.session import delete_session_record
+                from cluster.connection import delete_session_record
                 delete_session_record(session.job_id)
                 raise
 
         except asyncio.CancelledError:
             # Cancelled before connection was established.
-            if _job_id is not None and reconnect_job_id is None and not self._session_quitting:
+            if _job_id is not None and reconnect_job_id is None and not self._connection_quitting:
                 logger.info(
                     "Task cancelled — sending scancel for job %s",
                     _job_id,
@@ -266,7 +266,7 @@ class RemoteSessionManager:
             # Job is definitively dead — purge the stale record so the
             # reconnect dialog doesn't re-appear on the next connect attempt.
             if reconnect_job_id is not None:
-                from cluster.session import delete_session_record
+                from cluster.connection import delete_session_record
                 delete_session_record(reconnect_job_id)
             self.eventPush(
                 "TASK_PROGRESS",
@@ -296,7 +296,7 @@ class RemoteSessionManager:
         responsible for the input dialog; this method owns the session
         lifecycle.
         """
-        from cluster.session import connect_direct
+        from cluster.connection import connect_direct
 
         self.eventPush(
             "TASK_PROGRESS",
@@ -305,8 +305,8 @@ class RemoteSessionManager:
         )
         try:
             session = await connect_direct(host, port)
-            self.remoteSession = session
-            self.remoteSession._listener = (
+            self.serverConnection = session
+            self.serverConnection._listener = (
                 await session.start_listener(self._env)
             )
             logger.info("Local server connected: %s:%d", host, port)
@@ -334,11 +334,11 @@ class RemoteSessionManager:
                     message="Connection lost (server stopped)",
                     error=True,
                 )
-                self.remoteSession = None
+                self.serverConnection = None
             except asyncio.CancelledError:
                 session._listener.cancel()
                 await session.disconnect()
-                self.remoteSession = None
+                self.serverConnection = None
                 raise
 
         except asyncio.CancelledError:
@@ -356,7 +356,7 @@ class RemoteSessionManager:
         """Auto-start a managed local ffast-server subprocess and connect to it.
 
         Called at app launch via tm.newTask so the connection is visible in the
-        task progress UI (ADR 0017-desktop).  On success sets remoteSession and
+        task progress UI (ADR 0017-desktop).  On success sets serverConnection and
         fires REMOTE_CONNECTED; on failure the task ends with an error message
         and the app continues without a local server.
         """
@@ -365,7 +365,7 @@ class RemoteSessionManager:
         import os
         from ffast.session.local import LocalServerManager
         from ffast.session.token import SessionToken
-        from cluster.session import connect_direct
+        from cluster.connection import connect_direct
 
         self.eventPush("TASK_PROGRESS", taskID, message="Starting local server…")
 
@@ -397,8 +397,8 @@ class RemoteSessionManager:
             except Exception:
                 continue
 
-            self.localServerSession = session
-            self.remoteSession = session   # ADR 0017-desktop: local IS remote
+            self.localServerConnection = session
+            self.serverConnection = session   # ADR 0017-desktop: local IS remote
             session.is_local = True        # same-machine ⇒ eager-populate proxies
             self.localServerHandle = handle
             self.localServerManager = manager
@@ -587,7 +587,7 @@ class RemoteSessionManager:
         Progress is reported through TASK_PROGRESS so the Tasks panel shows a
         progress bar during the transfer.
         """
-        session = self.remoteSession
+        session = self.serverConnection
         if session is None:
             logger.error("taskFetchRemoteDataset: no remote session active")
             return
@@ -724,7 +724,7 @@ class RemoteSessionManager:
         Server-owned render path (ADR 0014). Fire-and-forget: the server
         replies with a ``SCENE_SNAPSHOT`` that arrives asynchronously through
         the listener and is consumed by the Loupe scene adapter. No-op only
-        before a session exists. On desktop ``remoteSession`` is always set once
+        before a session exists. On desktop ``serverConnection`` is always set once
         the managed local server connects at launch (ADR 0017-desktop), so the
         no-op branch fires only during the brief startup window — there is no
         separate embedded/in-process render transport.
@@ -734,7 +734,7 @@ class RemoteSessionManager:
         Always sent so the key's presence lets the server set it to a value or
         clear it (null); ``None`` means no prediction overlay.
         """
-        session = self.remoteSession
+        session = self.serverConnection
         if session is None:
             return
 
@@ -757,7 +757,7 @@ class RemoteSessionManager:
         Fire-and-forget; prevents server-side view accumulation when a Loupe
         window closes. No-op when not connected to a remote server.
         """
-        session = self.remoteSession
+        session = self.serverConnection
         if session is None:
             return
 
@@ -778,7 +778,7 @@ class RemoteSessionManager:
         via the listener and is applied by the Loupe scene adapter. No-op when
         not connected to a remote server.
         """
-        session = self.remoteSession
+        session = self.serverConnection
         if session is None:
             return
 
@@ -794,7 +794,7 @@ class RemoteSessionManager:
         """Schedule an async task to transfer arrays for *fingerprint* from the server.
 
         Idempotent: if arrays are already cached in the session,
-        :meth:`RemoteSession.request_subdataset_arrays` returns instantly.
+        :meth:`ServerConnection.request_subdataset_arrays` returns instantly.
         """
         self.newTask(
             self._fetchRemoteDatasetTask,
@@ -811,7 +811,7 @@ class RemoteSessionManager:
         Sends ``REQUEST_PREDICTION_ARRAYS`` and populates the local cache with
         the returned energy/forces data.  Geometry arrays are not re-transferred.
         """
-        session = self.remoteSession
+        session = self.serverConnection
         if session is None:
             logger.error("_fetchPredictionArraysTask: no remote session")
             return
@@ -909,7 +909,7 @@ class RemoteSessionManager:
         metric computes in the same task — no defer/retry needed.  Safe to block
         here: we are off the event loop, which stays free to receive the reply.
         """
-        session = self.remoteSession
+        session = self.serverConnection
         if session is None or self._event_loop is None:
             return False
         import asyncio as _asyncio
@@ -935,7 +935,7 @@ class RemoteSessionManager:
         first time a consumer reads R/F/E.  Pulls the geometry arrays from the
         server and populates the proxy.  Off the event loop, so blocking is safe.
         """
-        session = self.remoteSession
+        session = self.serverConnection
         if session is None or self._event_loop is None:
             return False
         import asyncio as _asyncio
@@ -970,7 +970,7 @@ class RemoteSessionManager:
         to in-process computation.  Safe to block here — off the event loop,
         which stays free to receive the reply.
         """
-        session = self.remoteSession
+        session = self.serverConnection
         if session is None or self._event_loop is None:
             return False
         import asyncio as _asyncio

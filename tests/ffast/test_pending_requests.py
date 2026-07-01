@@ -8,7 +8,7 @@ pure data and so testable here with no socket at all.
 """
 import asyncio
 
-import cluster.session as cs
+import cluster.connection as cs
 
 
 def _run(coro_fn):

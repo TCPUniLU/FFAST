@@ -7,7 +7,7 @@ remaining control/announcement messages as they are progressively migrated off
 hand-rolled untyped dicts (see docs/legacy-thinning-plan.md, Slice 3).
 """
 
-from ffast.protocol.events import BROADCAST_EVENTS
+from ffast.protocol.notifications import BROADCAST_EVENTS
 from ffast.protocol.messages import (
     DatasetKeysResponse,
     DatasetLengthResponse,

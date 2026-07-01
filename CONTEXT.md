@@ -228,7 +228,12 @@ The server-side registry of physical dimensions, canonical units, and validated 
 A named reusable set of Metric Presentation settings. A metric use may reference a preset and override selected fields through normal Configuration Merge rules.
 
 ### Session
-A saved/loaded snapshot of an Environment: all datasets, models, cache, and metadata serialized to disk (`info.json` + `cache/*.npz`). Auto-snapshots server-side enable reconnect recovery.
+A saved/loaded snapshot of an Environment: all datasets, models, cache, and metadata serialized to disk (`info.json` + `cache/*.npz`). Auto-snapshots server-side enable reconnect recovery. This is the canonical bare "Session"; the live runtime that produces it is a **Server Session**, the client's transport to it is a **Server Connection**, and the coordinates to reconnect to it are a **Session Record**.
+_Avoid_: session (for the connection or the runtime — those are Server Connection / Server Session)
+
+### Session Record
+The reconnect coordinates for a running server, persisted client-side in `~/.ffast/sessions.json` (job id, ports, profile, last snapshot) so the reconnect UI can re-attach to a **Server Session** whose **Server Connection** was dropped. Not server state and not a **Session** snapshot — just enough to rebuild a connection. Managed by the record helpers in `cluster/connection.py`.
+_Avoid_: session file (that is the snapshot), session state
 
 ### Cache Key
 The structured identity of one entry in the Environment's fingerprint-keyed cache: a leading **identity token** (a DataType key, or a **Metric ID** — which may itself contain `__`, e.g. a **Transform Metric** like `ffast.force_mae__kde__p<hash>`), plus a **Model** fingerprint and a **Dataset** fingerprint, each either a real fingerprint or the sentinel `nil` when the quantity is model- or dataset-independent. The canonical form is a structured value (`ffast/cache/keys.py`), hashable and used directly as the in-memory cache dict key; it serializes to the flat string `identity__model__dataset` only at the disk (`cache/*.npz`, `info.json`) and RPC boundaries. Deserialization is **right-anchored** — the last two `__`-segments are model then dataset (fingerprints never contain `__`), everything before is the opaque identity — and validates each fingerprint slot (`nil` or fingerprint-shaped) so a malformed key fails fast instead of mis-decoding. A Metric's **Compute Parameters** are folded into the identity token, never a separate field.
@@ -267,14 +272,14 @@ A **Metric** whose **Metric Input** is another Metric, applying a reduction or t
 The server-side process running on a cluster compute node. Wraps the Environment in headless mode, exposes it via WebSocket. Started by the client via SSH after SLURM allocates a node. Lives until job walltime regardless of client connection state.
 
 ### Server Session
-The live, server-scoped object on a running `ffast-server` that represents the single controlling session. It owns the open **Visualization Views** and the server→client outbound queue, dispatches the controlling client's **Control messages** to the **Environment** through a built-once event→handler table, and **replays** current state — dataset/model metadata, the **Metric Catalog**, and open **Visualization View** snapshots — to a client on connect or reconnect. It holds a reference to the Environment rather than owning it; its persisted form is a **Session** snapshot. One exists per server process: many client connections may attach, but only the **CONTROLLING** **Client Role** drives it while the rest stay read-only. Distinct from a **RemoteSession** (the *client's* handle to a server) and a **Local Server Session** (a desktop launch mode).
-_Avoid_: dispatcher, router, event handler, ServerKernel, connection object, bare "Session" (that is the snapshot)
+The live, server-scoped object on a running `ffast-server` that represents the single controlling session. It owns the open **Visualization Views** and the server→client outbound queue, dispatches the controlling client's **Control messages** to the **Environment** through a built-once event→handler table, and **replays** current state — dataset/model metadata, the **Metric Catalog**, and open **Visualization View** snapshots — to a client on connect or reconnect. It holds a reference to the Environment rather than owning it; its persisted form is a **Session** snapshot. One exists per server process: many client connections may attach, but only the **CONTROLLING** **Client Role** drives it while the rest stay read-only. Distinct from a **Server Connection** (the *client's* transport handle to a server) and a **Local Server Session** (a desktop launch mode).
+_Avoid_: dispatcher, router, event handler, ServerKernel, connection object, bare "Session" (that is the snapshot), RemoteSession (renamed to Server Connection)
 
 ### ffast-client (remote mode)
 The local Qt GUI connecting to a remote `ffast-server` via WebSocket over SSH port-forward. Runs UIHandler locally; delegates all compute to the remote Environment.
 
 ### Local Server Session
-A desktop session in which the renderer client automatically starts and connects to a managed local `ffast-server` process through the same protocol used for remote servers. Desktop always uses a Local Server Session — `env.remoteSession` is always set after launch. The "New 3D View" button is disabled until the connection is established. There is no separate embedded (in-process) rendering path.
+A desktop session in which the renderer client automatically starts and connects to a managed local `ffast-server` process through the same protocol used for remote servers. Desktop always uses a Local Server Session — `env.remote`'s **Server Connection** (`localServerConnection`) is always set after launch. The "New 3D View" button is disabled until the connection is established. There is no separate embedded (in-process) rendering path.
 
 ### Client Recovery Window
 The configurable period during which a server remains alive after an unexpected client disconnect so views, unsaved Edit Logs, and in-progress work can be restored; normal client shutdown snapshots and stops a managed local server.
@@ -303,8 +308,13 @@ Scheduler-agnostic resource request: `cores` (int), `memory_mb` (int, megabytes)
 ### JobStatus
 Enum returned by `ClusterBackend.poll_status`: `PENDING`, `RUNNING`, `FAILED`, `COMPLETED`. Terminal state resolved via `sacct` when the job is no longer in `squeue`.
 
-### RemoteSession
-A connection to a running `ffast-server`: SSH tunnel, WebSocket connection, associated SLURM job ID, and last known auto-snapshot. Distinct from a local Session.
+### Server Connection
+The client's live transport handle to a running `ffast-server`: SSH tunnel, WebSocket connection, associated SLURM job ID, request/reply correlator, and array-transfer cache (`ServerConnection` in `cluster/connection.py`). It carries *transport*, not scientific state — the opposite end of the wire from a **Server Session**, which owns the runtime state. Distinct from a **Session** (the on-disk snapshot) and a **Session Record** (reconnect coordinates).
+_Avoid_: RemoteSession (former name), remote session, session (bare — that is the snapshot)
+
+### Connection Manager
+The client-side owner of the **Server Connection** lifecycle (`ConnectionManager` in `client/connection_manager.py`, reached as `env.remote`). It establishes/tears down the connection (remote cluster or managed local server), holds the active `serverConnection`/`localServerConnection`, and mirrors the server-owned **Metric Catalog**. Renamed from `RemoteSessionManager`.
+_Avoid_: RemoteSessionManager (former name), session manager
 
 ### RPC Channel
 WebSocket connection (over SSH port-forward) between `ffast-client` and `ffast-server`. Uses `msgpack` for serialization. Carries two message classes:

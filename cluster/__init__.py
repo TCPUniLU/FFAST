@@ -1,6 +1,6 @@
 from .backend import ClusterBackend, ClusterError, JobSpec, JobStatus
 from .config import ClusterConfig, ClusterProfile
-from .session import RemoteSession, connect_to_cluster
+from .connection import ServerConnection, connect_to_cluster
 from .slurm import RemoteSlurmBackend, SlurmBackend
 
 __all__ = [
@@ -10,7 +10,7 @@ __all__ = [
     "ClusterProfile",
     "JobSpec",
     "JobStatus",
-    "RemoteSession",
+    "ServerConnection",
     "RemoteSlurmBackend",
     "SlurmBackend",
     "connect_to_cluster",

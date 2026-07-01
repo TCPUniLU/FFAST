@@ -28,9 +28,13 @@ Two facts frame the decision:
    installs `UI/` regardless.
 
 Flattening `ffast/` out to the repo root was considered and rejected (name
-collisions: root `events.py` ↔ `ffast/protocol/events.py`, root `config/` ↔
-`ffast/config/`, `cluster/session.py` ↔ `ffast/session/`, 4× `models.py`; and it
-would break `import ffast` + entry points). Direction is *into* `ffast/`.
+collisions: root `config/` ↔ `ffast/config/`, and 4× `models.py` that only the
+package path disambiguates; and it would break `import ffast` + entry points).
+Direction is *into* `ffast/`. (Two further collisions this ADR originally cited —
+root `events.py` ↔ `ffast/protocol/events.py` and `cluster/session.py` ↔
+`ffast/session/` — were since removed by the homonym-disambiguation rename:
+`ffast/protocol/events.py` → `notifications.py` and `cluster/session.py` →
+`connection.py`.)
 
 ## Decision
 

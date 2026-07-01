@@ -27,6 +27,6 @@ Option B — a dedicated `REQUEST_PREDICTION_ARRAYS` / `PREDICTION_ARRAYS` RPC p
 ## Consequences
 
 - Two new RPC events added: `REQUEST_PREDICTION_ARRAYS` (client→server) and `PREDICTION_ARRAYS` (server→client)
-- `RemoteSession` gains a `_pending_prediction_requests` dict (same shape as `_pending_array_requests`) and a `request_prediction_arrays(dataset_fp, model_fp)` coroutine
+- `ServerConnection` gains a `_pending_prediction_requests` dict (same shape as `_pending_array_requests`) and a `request_prediction_arrays(dataset_fp, model_fp)` coroutine
 - `_onRemoteModelMeta` branches: proxy dataset → existing `taskFetchRemoteDataset`; populated dataset → new `taskFetchPredictionArrays(ds_fp, model_fp)`
 - Geometry arrays and prediction arrays are now fetched via separate channels; a future optimisation could pipeline them but the current design keeps them cleanly separate

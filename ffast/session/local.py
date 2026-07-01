@@ -17,7 +17,7 @@ logger = logging.getLogger("FFAST")
 class LocalServerProcess:
     """Handle to a managed local ffast-server subprocess.
 
-    Distinct from RemoteSession — this owns the process lifetime.
+    Distinct from ServerConnection — this owns the process lifetime.
     The app layer creates both and manages them independently:
 
         token = SessionToken.generate()

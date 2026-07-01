@@ -32,7 +32,7 @@ load so the user can choose a sensible stride, but the file lives on the cluster
 - **Client-side Session Records.** On establishing a cluster session, write a
   **Session Record** to `~/.ffast/sessions.json` holding only job coordinates —
   `job_id`, `profile_name`, `node`, `remote_port`, `token`, `timestamp`
-  (`save_session_record` in `cluster/session.py`). This is distinct from the
+  (`save_session_record` in `cluster/connection.py`). This is distinct from the
   server-side **Auto-Snapshot** (ADR 0013): the record holds reconnect
   coordinates, not scientific state. The reconnect UI reads it via
   `load_session_records`.

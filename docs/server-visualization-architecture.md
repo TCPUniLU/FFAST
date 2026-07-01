@@ -224,6 +224,18 @@ UI/ client/ cluster/ modules/   Desktop Client — Qt app, orchestration, plugin
 The msgpack codec stays in `cluster/rpc` (transport, on the server import closure);
 typed message *schemas* live in `ffast/protocol/`.
 
+Each `ffast/` subpackage keeps its Pydantic schemas in a local `models.py`
+(`ffast.config.models`, `ffast.metrics.models`, `ffast.visualization.models`,
+`ffast.visualization.stages.models`) — the import path disambiguates them, so the
+repeated filename is a convention, not a name clash. Two connection-vs-session
+distinctions are worth stating once: the client's transport handle is a
+`ServerConnection` (`cluster/connection.py`) owned by a `ConnectionManager`
+(`client/connection_manager.py`, i.e. `env.remote`), while the server's live
+runtime is a `ServerSession` (`ffast/session/`) — opposite ends of the wire, so
+neither carries the bare word "session". The in-process pub/sub bus is
+`events.py` (`EventClass`); the cross-wire notification catalogue is
+`ffast/protocol/notifications.py` (`BROADCAST_EVENTS`).
+
 ## Related Decisions
 
 - [ADR 0001](adr/0001-remote-rpc-protocol.md): WebSocket + msgpack transport

@@ -1,5 +1,5 @@
 """
-RemoteSession and connect_to_cluster() — end-to-end remote connection flow.
+ServerConnection and connect_to_cluster() — end-to-end remote connection flow.
 
 Flow
 ----
@@ -10,11 +10,11 @@ Flow
 5. Spawn ssh -N -L local_port:node:remote_port user@host  (key auth only)
 6. Retry websockets.connect() until tunnel is ready
 7. Verify with ping/pong
-8. Return RemoteSession
+8. Return ServerConnection
 
 Cleanup
 -------
-RemoteSession.disconnect() closes the WebSocket and kills the SSH process.
+ServerConnection.disconnect() closes the WebSocket and kills the SSH process.
 The SLURM job keeps running until its time limit (server lifetime policy).
 """
 
@@ -226,7 +226,7 @@ _REPLY_CHANNELS = {
 
 
 @dataclass
-class RemoteSession:
+class ServerConnection:
     """Holds all resources for one live remote connection."""
 
     job_id: str
@@ -618,7 +618,7 @@ async def connect_direct(
     port: int = 8765,
     token: str = "",
     renderer: str = "vispy",
-) -> "RemoteSession":
+) -> "ServerConnection":
     """Connect directly to a running ffast-server without SLURM or SSH.
 
     Use this for local testing or when LocalServerManager started the server:
@@ -627,7 +627,7 @@ async def connect_direct(
         handle = LocalServerManager().start(port, token)
         session = await connect_direct(port=handle.port, token=token.plaintext)
 
-    Returns a RemoteSession with job_id="local" and ssh_proc=None.
+    Returns a ServerConnection with job_id="local" and ssh_proc=None.
     """
     import websockets
 
@@ -647,7 +647,7 @@ async def connect_direct(
     await _do_hello(websocket, token, renderer)
 
     logger.info("connect_direct: connected to %s", url)
-    return RemoteSession(
+    return ServerConnection(
         job_id="local",
         ssh_proc=None,
         websocket=websocket,
@@ -678,7 +678,7 @@ async def _establish_connection(
     remote_port: int,
     progress_cb: Optional[Callable[[str], None]],
     token: str = "",
-) -> RemoteSession:
+) -> ServerConnection:
     """Spawn SSH tunnel, connect WebSocket, verify with ping/pong.
 
     Shared implementation used by both connect_to_cluster and
@@ -700,7 +700,7 @@ async def _establish_connection(
 
     Returns
     -------
-    RemoteSession
+    ServerConnection
 
     Raises
     ------
@@ -802,13 +802,13 @@ async def _establish_connection(
 
     _progress("Connected!")
     logger.info(
-        "RemoteSession established: job=%s node=%s local_port=%d",
+        "ServerConnection established: job=%s node=%s local_port=%d",
         job_id, node, local_port,
     )
 
     save_session_record(job_id, profile.name, node, remote_port, token=token)
 
-    return RemoteSession(
+    return ServerConnection(
         job_id=job_id,
         ssh_proc=ssh_proc,
         websocket=websocket,
@@ -826,7 +826,7 @@ async def connect_to_cluster(
     poll_timeout: float = _POLL_TIMEOUT,
     progress_cb: Optional[Callable[[str], None]] = None,
     on_job_submitted: Optional[Callable[[str], None]] = None,
-) -> RemoteSession:
+) -> ServerConnection:
     """Full connect flow: SLURM submit → poll → SSH tunnel → WebSocket.
 
     Parameters
@@ -848,7 +848,7 @@ async def connect_to_cluster(
 
     Returns
     -------
-    RemoteSession
+    ServerConnection
 
     Raises
     ------
@@ -920,7 +920,7 @@ async def connect_to_cluster(
     node = await backend.get_node_address(job_id)
     _progress(f"Job running on node: {node}")
 
-    # ── 4–6. SSH tunnel → WebSocket → ping/pong → HELLO → RemoteSession ──
+    # ── 4–6. SSH tunnel → WebSocket → ping/pong → HELLO → ServerConnection ──
     return await _establish_connection(
         profile, job_id, node, remote_port, progress_cb, token=session_token.plaintext
     )
@@ -932,7 +932,7 @@ async def reconnect_to_cluster(
     remote_port: int = _DEFAULT_REMOTE_PORT,
     progress_cb: Optional[Callable[[str], None]] = None,
     token: str = "",
-) -> RemoteSession:
+) -> ServerConnection:
     """Reconnect to a RUNNING cluster job without submitting a new SLURM job.
 
     Use when the client disconnected (network blip, laptop sleep, etc.) but
@@ -952,7 +952,7 @@ async def reconnect_to_cluster(
 
     Returns
     -------
-    RemoteSession
+    ServerConnection
 
     Raises
     ------
@@ -982,7 +982,7 @@ async def reconnect_to_cluster(
     node = await backend.get_node_address(job_id)
     _progress(f"Job {job_id} running on node: {node}")
 
-    # ── 3–5. SSH tunnel → WebSocket → ping/pong → HELLO → RemoteSession ──
+    # ── 3–5. SSH tunnel → WebSocket → ping/pong → HELLO → ServerConnection ──
     return await _establish_connection(
         profile, job_id, node, remote_port, progress_cb, token=token
     )

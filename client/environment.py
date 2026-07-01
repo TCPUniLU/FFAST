@@ -17,7 +17,7 @@ from client.data_cache import DataCache
 from client.model_registry import ModelRegistry
 from client.dataset_registry import DatasetRegistry
 from client.data_service import DataService
-from client.remote_session import RemoteSessionManager
+from client.connection_manager import ConnectionManager
 from client.session_persistence import SessionPersistence
 from client.object_catalog import ObjectCatalog
 import logging
@@ -62,7 +62,7 @@ class Environment(EventClass):
         # Remote/local server session manager (ADR 0020): owns the connection
         # lifecycle, server→client metadata handlers, and array/metric fetch
         # channels.  Created before DataService so the RemoteSource can wrap it.
-        self.remote = RemoteSessionManager(self)
+        self.remote = ConnectionManager(self)
 
         # Data coordinator (ADR 0020): owns the datatype registry, cache-key
         # resolution, the data-generation queue, and the in-process metric spine.
@@ -91,9 +91,9 @@ class Environment(EventClass):
             "SUBDATASET_INDICES_CHANGED", self.data.deleteCacheByDataset
         )
         self.eventSubscribe(
-            "QUIT_EVENT", self.remote._disconnectRemoteSession, asynchronous=True
+            "QUIT_EVENT", self.remote._disconnectServerConnection, asynchronous=True
         )
-        # Server→client metadata: handlers live on the RemoteSessionManager and
+        # Server→client metadata: handlers live on the ConnectionManager and
         # build proxy datasets / ghost models when the server announces them.
         self.eventSubscribe("REMOTE_DATASET_META", self.remote._onRemoteDatasetMeta)
         self.eventSubscribe("REMOTE_MODEL_META", self.remote._onRemoteModelMeta)
@@ -103,7 +103,7 @@ class Environment(EventClass):
     # registries (self.models / self.datasets), the session manager (self.remote)
     # and persistence (self.persistence) are composed in __init__ (ADR 0020).
     # Callers reach them directly, e.g. env.models.get(fp), env.data.getData(...),
-    # env.remote.remoteSession.
+    # env.remote.serverConnection.
 
     #############
     ## MODELS
@@ -137,7 +137,7 @@ class Environment(EventClass):
         ghost proxy via REMOTE_MODEL_META; the server generates predictions on
         demand.  No-server fallback loads the model in-process.
         """
-        session = self.remote.remoteSession
+        session = self.remote.serverConnection
         if session is None or self.remote._event_loop is None:
             self.taskLoadModel(path, modelType)
             return
@@ -193,7 +193,7 @@ class Environment(EventClass):
         server is reachable does the client fall back to the in-process
         :meth:`loadPrepredictedDataset`.
         """
-        session = self.remote.remoteSession
+        session = self.remote.serverConnection
         if session is None or self.remote._event_loop is None:
             self.taskLoadPrepredictedDataset(
                 path, datasetKey,
@@ -434,7 +434,7 @@ class Environment(EventClass):
         remote menu (``onRemoteDatasetLoad``) hits the same server-side
         ``LOAD_DATASET`` handler after its own cluster-path/key probing.
         """
-        session = self.remote.remoteSession
+        session = self.remote.serverConnection
         if session is None or self.remote._event_loop is None:
             self.taskLoadDataset(
                 path, datasetType,
@@ -719,7 +719,7 @@ class Environment(EventClass):
         else:
             return
 
-        session = self.remote.remoteSession
+        session = self.remote.serverConnection
         if session is not None and self.remote._event_loop is not None:
             import asyncio as _asyncio
             _asyncio.run_coroutine_threadsafe(
@@ -779,7 +779,7 @@ class Environment(EventClass):
         cache (the real data) are persisted (Stage 5). Falls back to an
         in-process save when no server is connected.
         """
-        session = self.remote.remoteSession
+        session = self.remote.serverConnection
         if session is None or self.remote._event_loop is None:
             self.newTask(
                 self.persistence.save, args=(path,), visual=True,
@@ -796,7 +796,7 @@ class Environment(EventClass):
         (datasets + prediction cache) and announces them to the client via
         REMOTE_DATASET_META / REMOTE_MODEL_META. Falls back to in-process load.
         """
-        session = self.remote.remoteSession
+        session = self.remote.serverConnection
         if session is None or self.remote._event_loop is None:
             self.persistence.taskLoad(path)
             return

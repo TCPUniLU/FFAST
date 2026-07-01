@@ -4,9 +4,9 @@ The `Environment` god object (~2200 lines) is split into single-responsibility
 collaborators wired by composition, not inheritance: `DataCache` (pure
 key→entity store), `ModelRegistry`, `DatasetRegistry`, `DataService` (the
 coordinator owning cache-key resolution, the generation queue, and metrics),
-`RemoteSessionManager` (pure transport), and `SessionPersistence`. Crucially,
+`ConnectionManager` (pure transport), and `SessionPersistence`. Crucially,
 *where predictions/metrics are computed* is an injected `PredictionSource`
-(`InProcessSource` vs `RemoteSource`) rather than an `if self.remoteSession`
+(`InProcessSource` vs `RemoteSource`) rather than an `if self.serverConnection`
 branch — so the same code runs as either a server (computes in-process) or a
 connected client (delegates to the server). This is the seam that makes the
 planned "edit the system on the client, compute energy/forces on the server"
@@ -38,7 +38,7 @@ accepted
 
 `Environment` (2199 lines) is now a thin coordinator (~890 lines) that composes:
 `DataCache`, `ModelRegistry`, `DatasetRegistry`, `DataService` (datatypes +
-cache-key resolution + generation queue + in-process metrics), `RemoteSessionManager`,
+cache-key resolution + generation queue + in-process metrics), `ConnectionManager`,
 `SessionPersistence`, and an injected `PredictionSource` (`RemoteSource`/`InProcessSource`).
 The Break sweep migrated ~160 call sites to the honest API (`env.models.get`,
 `env.data.getData`, `env.remote.connectDirect`, `env.persistence.save`, …) and the

@@ -367,7 +367,7 @@ class MainMenuHandler(MenuHandlerBase):
         # running.  Offer to reconnect (skips SLURM submit + polling).
         reconnect_job_id = None
         try:
-            from cluster.session import load_session_records
+            from cluster.connection import load_session_records
             latest = latest_session_record(load_session_records(), profile.name)
             if latest:
                 msg = QMessageBox(self.handler.window)
@@ -455,7 +455,7 @@ class MainMenuHandler(MenuHandlerBase):
 
         logger = logging.getLogger("FFAST")
         env = self.handler.env
-        session = getattr(env, "remoteSession", None)
+        session = getattr(env, "serverConnection", None)
 
         if session is None:
             QMessageBox.warning(
@@ -740,7 +740,7 @@ class MainMenuHandler(MenuHandlerBase):
 
         logger = logging.getLogger("FFAST")
         env = self.handler.env
-        session = getattr(env, "remoteSession", None)
+        session = getattr(env, "serverConnection", None)
 
         if session is None:
             QMessageBox.warning(

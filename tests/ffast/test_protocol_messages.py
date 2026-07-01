@@ -144,7 +144,7 @@ def test_broadcast_catalogue_matches_server_to_client():
     # The broadcast events are catalogued (not typed); this drift test keeps the
     # catalogue's event-name set in lockstep with the real SERVER_TO_CLIENT set,
     # so adding/removing a broadcast event without updating the catalogue fails.
-    from ffast.protocol.events import BROADCAST_EVENTS
+    from ffast.protocol.notifications import BROADCAST_EVENTS
     from cluster.rpc import SERVER_TO_CLIENT
 
     assert set(BROADCAST_EVENTS) == set(SERVER_TO_CLIENT)

@@ -149,7 +149,7 @@ class MetricResultMessage(BaseModel):
     Single producer ([`cluster.rpc.pack_metric_result`], called by
     ``server._send_metric_result``); single consumer
     (``cluster.rpc.unpack_metric_result``, called by the listener in
-    ``cluster.session``). The metadata fields mirror
+    ``cluster.connection``). The metadata fields mirror
     ``ffast.metrics.models.MetricResult`` so the client can rebuild an
     equivalent result.
 

@@ -99,7 +99,7 @@ async def fake_connect(
     and skips actual SSH / WebSocket by monkey-patching at import time."""
 
     import cluster.slurm as slurm_mod
-    import cluster.session as session_mod
+    import cluster.connection as session_mod
 
     # Patch RemoteSlurmBackend constructor to return our fake
     with mock.patch.object(
@@ -133,7 +133,7 @@ async def fake_connect(
 
                     # websockets.connect is awaited: make it an async callable.
                     # Accept **kwargs so the stub tolerates connect options the
-                    # real cluster.session passes (e.g. max_size, ping_interval).
+                    # real cluster.connection passes (e.g. max_size, ping_interval).
                     async def _ws_connect(url, *args, **kwargs):
                         return fake_ws
 

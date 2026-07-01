@@ -19,7 +19,7 @@ import asyncio
 import types
 
 from client.data_service import DataService
-import cluster.session as cs
+import cluster.connection as cs
 
 
 class _DS(DataService):
@@ -92,7 +92,7 @@ def test_request_prediction_arrays_coalesces_concurrent_calls():
             fake.pushed.append(a)
 
         fake.push_event = push_event
-        req = cs.RemoteSession.request_prediction_arrays.__get__(fake)
+        req = cs.ServerConnection.request_prediction_arrays.__get__(fake)
 
         t1 = asyncio.create_task(req("DS", "M", timeout=5))
         t2 = asyncio.create_task(req("DS", "M", timeout=5))

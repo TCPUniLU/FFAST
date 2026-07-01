@@ -30,7 +30,7 @@ SERVER_TO_CLIENT = frozenset(
     }
 )
 
-# Events the client listener (RemoteSession.start_listener) may safely
+# Events the client listener (ServerConnection.start_listener) may safely
 # re-inject into the local env via eventPush().
 #
 # This is NOT a pure subset of SERVER_TO_CLIENT: REMOTE_DATASET_META and
