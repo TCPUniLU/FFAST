@@ -455,7 +455,7 @@ class MainMenuHandler(MenuHandlerBase):
 
         logger = logging.getLogger("FFAST")
         env = self.handler.env
-        session = getattr(env, "serverConnection", None)
+        session = env.remote.serverConnection
 
         if session is None:
             QMessageBox.warning(
@@ -740,7 +740,7 @@ class MainMenuHandler(MenuHandlerBase):
 
         logger = logging.getLogger("FFAST")
         env = self.handler.env
-        session = getattr(env, "serverConnection", None)
+        session = env.remote.serverConnection
 
         if session is None:
             QMessageBox.warning(
