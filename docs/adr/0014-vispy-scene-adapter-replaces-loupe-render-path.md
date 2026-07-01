@@ -107,3 +107,13 @@ deletion:
   dead code, and is covered by `tests/ffast/renderers/vispy/test_vispy_adapter.py`.
 - Until the client is wired in (Milestone 5), both paths coexist; the old loupe
   modules remain the live drawing path.
+
+## Note (as-built, 2026-07-01)
+
+The Render Path retirement completed without deleting the loupe modules: each had
+its drawing code stripped and was rewritten as a `ClientFeature` descriptor (the Qt
+control UI for a server-side stage). `loupeProperties.py` is **kept** as the home of
+`ClientFeature` / `DatasetFeature` / `AtomSelectionBase` / `CanvasProperty` /
+`VisualElement` — the last still backs the rubber-band selection rectangle, so the
+file is not deletable (porting the rubber band to a plain Vispy visual is optional
+future work, not a blocker). See also ADR 0017 (client-feature descriptor replaces load hooks).

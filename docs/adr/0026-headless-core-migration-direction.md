@@ -44,11 +44,11 @@ would break `import ffast` + entry points). Direction is *into* `ffast/`.
   `ffast-cli` entry points — which is, empirically, a Qt-free set. This is
   sharper than "is it science?" or "is it Qt-free?":
   - `cluster/rpc` (the msgpack **transport codec**) IS on the closure → it is
-    core, even though it is transport. (This corrects the earlier draft's
-    reasoning and reconciles with `legacy-thinning-plan.md`: that plan's
-    "presentation stays out" is right — KDE/plot styling in `UI/panels.py` is
-    *not* on the closure — but its "transport stays in the client" does not hold
-    once the server must install without the client.)
+    core, even though it is transport. This corrects a tempting split where
+    presentation and transport both "stay in the client": presentation
+    (KDE/plot styling in `UI/panels.py`) is *not* on the closure and does stay
+    out, but transport does not stay in the client once the server must install
+    without it.
   - `UI/panels.py` presentation, Qt widgets, picking, camera → NOT on the
     closure → stay in the Desktop Client.
 
@@ -73,9 +73,9 @@ would break `import ffast` + entry points). Direction is *into* `ffast/`.
 - The import-closure set is a **testable guard**: a CI check that importing
   `server`/`ffast.cli` pulls in no GUI module keeps Qt from creeping into the
   core. (The measurement in Context is exactly this check.)
-- `legacy-thinning-plan.md` remains the living checklist for the *science*
-  migration slices (compute/reduction math out of `modules/`); this ADR governs
-  the *packaging* boundary and the server-closure criterion. The two are
+- The incremental *science* migration (moving compute/reduction math out of
+  `modules/` into `ffast/`) is tracked separately from this ADR, which governs
+  only the *packaging* boundary and the server-closure criterion. The two are
   complementary, not competing.
 - Reversing (shipping Qt in the core again) is easy; committing to the split
   hardens the boundary — hence recording it.

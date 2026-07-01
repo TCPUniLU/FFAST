@@ -52,5 +52,5 @@ exactly VegaFusion's server/client division for interactive Vega visualizations.
   to its worker subprocess. So the compiler must register **module-level** callables, never lambdas
   or local closures: transform bodies are module-level `_tb_*` functions and `_make_fn` returns a
   module-level `_TransformFn` instance (`ffast/metrics/transforms.py`). A closure here silently
-  breaks *all* metric coloring with `Can't pickle local object` (fixed 2026-06-24). See
-  `docs/milestone4-buffer-worker-infrastructure.md` (Contract).
+  breaks *all* metric coloring with `Can't pickle local object` (fixed 2026-06-24). See the
+  **Metric Worker Pool** pickling requirement in CONTEXT.md.
