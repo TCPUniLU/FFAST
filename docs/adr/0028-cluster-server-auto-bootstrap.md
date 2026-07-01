@@ -72,17 +72,24 @@ Auto-bootstrap the server, staged so each piece lands independently.
 ## Stages
 
 0. **(done, ADR 0026 Step A)** Qt-wheel-free installable `ffast-server`.
-1. **Wheel build + hash primitive** — local, unit-testable: build the `ffast`
-   wheel and compute its sha256; a pure function deciding provision-vs-skip from
-   (local hash, node marker). No SSH.
-2. **Provision on node** — push the wheel over SSH, `module load` → `venv
-   --system-site-packages` → `pip install --no-deps ffast.whl` + light deps,
-   write the marker. Idempotent via Stage 1's decision.
-3. **Wire into `connect_to_cluster`** — when `profile.provision`, run Stages 1–2
-   before `sbatch` and derive the launch command from `venv_path`; keep
-   `ffast_server_cmd` as the manual fallback. Add the `ClusterProfile` fields.
-4. **UX** — progress reporting during bootstrap (reuse task-progress UI),
-   re-provision on hash mismatch, structured error surfacing.
+1. **(done)** Wheel build + hash primitive — `cluster/bootstrap.py`:
+   `build_server_wheel` (uv/build/pip frontend detection), `wheel_sha256`, the
+   pure `needs_provision` decision, and `light_dependencies` derived from
+   pyproject. Unit-tested.
+2. **(done)** Provision on node — `provision_node` reads the node marker over
+   SSH, and on a hash mismatch pushes the wheel (`scp`) and runs a generated
+   `provision_script` (`module load` → `venv --system-site-packages` → `pip
+   install --no-deps ffast.whl` + light deps → write marker). Script generators
+   are pure/unit-tested; the SSH transport is integration (unverified without a
+   real cluster).
+3. **(done)** Wired into `connect_to_cluster` — when `profile.provision`, run
+   `provision_node` before `sbatch` and launch from `server_launch_cmd`; the
+   manual `ffast_server_cmd` remains the fallback. `ClusterProfile` gained
+   `provision` / `modules` / `venv_path`.
+4. **(covered)** UX — `provision_node` threads the existing `progress_cb`
+   (feeding the task-progress system) at each step, re-provisions only on hash
+   mismatch, and raises structured errors carrying remote stderr. Deeper Qt
+   progress UI can layer on later.
 
 ## Consequences
 

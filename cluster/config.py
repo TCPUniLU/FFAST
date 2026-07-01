@@ -42,6 +42,11 @@ class ClusterProfile:
     time_limit: str = "01:00:00"
     # Auto-snapshot interval in minutes (0 = disabled)
     snapshot_interval_minutes: int = 5
+    # Auto-bootstrap (ADR 0028): when true, connect builds+pushes the ffast wheel
+    # and provisions a venv on the node instead of using ffast_server_cmd.
+    provision: bool = False
+    modules: list[str] = field(default_factory=list)  # `module load` names
+    venv_path: str = "~/.ffast/venv"
 
     def to_job_spec(self, command: str) -> JobSpec:
         return JobSpec(

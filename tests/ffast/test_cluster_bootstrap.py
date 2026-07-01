@@ -8,7 +8,9 @@ from cluster.bootstrap import (
     _dist_name,
     light_dependencies,
     needs_provision,
+    provision_script,
     read_dependencies,
+    server_launch_cmd,
     wheel_sha256,
 )
 
@@ -56,3 +58,41 @@ def test_needs_provision():
     assert needs_provision("abc", "abc") is False         # up to date
     assert needs_provision("abc", "abc\n") is False        # trailing newline
     assert needs_provision("abc", "def") is True           # code changed
+
+
+def test_server_launch_cmd():
+    assert server_launch_cmd("~/.ffast/venv", ["Python/3.11", "PyTorch"]) == (
+        "module load Python/3.11 && module load PyTorch"
+        " && source ~/.ffast/venv/bin/activate && ffast-server"
+    )
+    # No modules -> just activate + run.
+    assert server_launch_cmd("~/.ffast/venv", []) == (
+        "source ~/.ffast/venv/bin/activate && ffast-server"
+    )
+
+
+def test_provision_script():
+    s = provision_script(
+        venv_path="~/.ffast/venv",
+        remote_wheel="~/.ffast/ffast-2.0.0-py3-none-any.whl",
+        light_deps=["msgpack", "websockets"],
+        modules=["Python/3.11"],
+        marker_path="~/.ffast/installed.sha256",
+        wheel_sha="deadbeef",
+    )
+    assert s.startswith("set -e\n")
+    assert "module load Python/3.11" in s
+    assert "python -m venv --system-site-packages ~/.ffast/venv" in s
+    assert "[ -d ~/.ffast/venv ]" in s                       # created only if missing
+    assert "--no-deps --force-reinstall ~/.ffast/ffast-2.0.0-py3-none-any.whl" in s
+    assert "python -m pip install msgpack websockets" in s
+    # Marker written last, after a successful install.
+    assert s.rstrip().endswith("printf '%s' deadbeef > ~/.ffast/installed.sha256")
+
+
+def test_provision_script_no_light_deps():
+    s = provision_script("~/v", "~/w.whl", [], [], "~/m", "sha")
+    assert "pip install --no-deps --force-reinstall" in s
+    assert "pip install msgpack" not in s
+    lines = [ln for ln in s.splitlines() if ln.startswith("python -m pip install")]
+    assert len(lines) == 1  # only the wheel install, no light-deps line

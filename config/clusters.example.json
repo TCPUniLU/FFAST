@@ -18,6 +18,24 @@
       "memory_mb": 8192,
       "time_limit": "00:30:00",
       "snapshot_interval_minutes": 5
+    },
+    {
+      "name": "Example HPC (auto-provision)",
+      "host": "login.example-hpc.org",
+      "username": "<your-username>",
+      "identity_file": "~/.ssh/<your-ssh-key>",
+      "provision": true,
+      "modules": ["Python/3.11", "PyTorch"],
+      "venv_path": "~/.ffast/venv",
+      "partition": "gpu",
+      "account": "<your-account>",
+      "qos": "<your-qos>",
+      "job_name": "ffast",
+      "cpus_per_task": 16,
+      "gpus_per_task": 1,
+      "memory_mb": 8192,
+      "time_limit": "00:30:00",
+      "snapshot_interval_minutes": 5
     }
   ]
 }

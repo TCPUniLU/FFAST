@@ -868,9 +868,17 @@ async def connect_to_cluster(
 
     from ffast.session.token import SessionToken
 
-    server_cmd = (
-        getattr(profile, "ffast_server_cmd", "ffast-server") or "ffast-server"
-    )
+    # Auto-bootstrap (ADR 0028): build+push the ffast wheel and provision a venv
+    # on the login node, then launch the server from it. Falls back to the
+    # manual ffast_server_cmd when provisioning is off.
+    if getattr(profile, "provision", False):
+        from cluster.bootstrap import provision_node
+
+        server_cmd = await provision_node(profile, progress_cb=progress_cb)
+    else:
+        server_cmd = (
+            getattr(profile, "ffast_server_cmd", "ffast-server") or "ffast-server"
+        )
     snap_interval = getattr(profile, "snapshot_interval_minutes", 5)
 
     # Generate token before job submission so the hash can be embedded in the
