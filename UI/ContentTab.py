@@ -206,4 +206,4 @@ class DatasetModelSelector(Widget, EventChildClass):
             self.eventPush("DatasetModelPairSelected", self.tabName)
             self.previousModelKeys = set(modelKeys)
             self.previousDatasetKeys = set(datasetKeys)
-            print(f'"dataset model pair selection" event by tab {self.tabName}')
+            # print(f'"dataset model pair selection" event by tab {self.tabName}')

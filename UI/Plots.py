@@ -115,6 +115,17 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         color="@BGColor3",
         **kwargs,
     ):
+        """
+
+        :param handler:
+        :param name: VERY IMPORTANT, THIS STRING SHOULD BE GLOBALLY UNIQUE. EACH PLOT SHOULD HAVE ITS OWN UNIQUE NAME.
+        :param title:
+        :param tabName:
+        :param hasLegend:
+        :param isSubbable:
+        :param color:
+        :param kwargs:
+        """
         self.handler = handler
         self.env = handler.env
         self.name = name
@@ -670,7 +681,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         if self.tabName != tabName:  # We do not want to answer to the events pushed by other tabs.
             return
 
-        print(f'"pair selected" event received from tab {tabName} by tab {self.tabName}: {self.name}')
+        # print(f'"pair selected" event received from tab {tabName} by tab {self.tabName}: {self.name}')
         if self.name == "Energy Error Distribution" or self.name == "Force Error Distribution":
             # basic energy and force errors are auto computed in any circumstances.
             self.dataWatcher.loadContent(plot_called=False)
