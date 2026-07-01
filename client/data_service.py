@@ -220,7 +220,7 @@ class DataService:
     def inputResolver(self):
         """Lazily-built resolver mapping metric input refs to dataset arrays."""
         if self._inputResolver is None:
-            from client.inputResolver import InputResolver
+            from ffast.metrics.input_resolver import InputResolver
             self._inputResolver = InputResolver(self)
         return self._inputResolver
 

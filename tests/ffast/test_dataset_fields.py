@@ -207,7 +207,7 @@ class _FakeEnv:
 
 
 def test_resolver_reference_fields():
-    from client.inputResolver import InputResolver
+    from ffast.metrics.input_resolver import InputResolver
     r = InputResolver(_FakeEnv())
     ds, m = _FakeDS(), _FakeModel()
     assert r.resolve("reference.atoms.charges", model=m, dataset=ds).shape == (2, 2)
@@ -216,7 +216,7 @@ def test_resolver_reference_fields():
 
 
 def test_resolver_prediction_field():
-    from client.inputResolver import InputResolver
+    from ffast.metrics.input_resolver import InputResolver
     env = _FakeEnv({("m1", "ds1"): {"atoms": {"q": np.array([[1.0, 2.0], [3.0, 4.0]])}, "info": {}}})
     r = InputResolver(env)
     ds, m = _FakeDS(), _FakeModel()
@@ -226,7 +226,7 @@ def test_resolver_prediction_field():
 
 
 def test_resolver_prediction_field_walks_to_parent():
-    from client.inputResolver import InputResolver
+    from ffast.metrics.input_resolver import InputResolver
     env = _FakeEnv({("m1", "ds1"): {"atoms": {"q": np.array([[5.0], [6.0]])}, "info": {}}})
 
     class _Sub:
@@ -240,7 +240,7 @@ def test_resolver_prediction_field_walks_to_parent():
 
 
 def test_metric_needs_prediction_counts_prediction_fields():
-    from client.inputResolver import metric_needs_prediction
+    from ffast.metrics.input_resolver import metric_needs_prediction
     r = MetricRegistry()
     compile_field_metric("lab.pf", "prediction.atoms.q", registry=r)
     compile_field_metric("lab.rf", "reference.atoms.q", registry=r)

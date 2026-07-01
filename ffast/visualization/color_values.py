@@ -12,7 +12,7 @@ is one of:
 - ``metric:<metric_id>`` → run the metric over the current frame's inputs
 
 Resolution is frame-scoped: refs map to the *currently displayed* frame
-(``idx``) — distinct from ``client/inputResolver``, which resolves whole-dataset
+(``idx``) — distinct from ``ffast/metrics/input_resolver``, which resolves whole-dataset
 arrays for 2D panels. Any failure (missing prediction, metric error, shape
 mismatch) returns ``None`` so coloring degrades to element colors (ADR 0016).
 """

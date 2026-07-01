@@ -59,7 +59,7 @@ class DataWatcher(EventChildClass):
         entry per dataset with model=None, so they work without any model loaded.
         """
         from ffast.metrics.registry import default_registry
-        from client.inputResolver import metric_needs_prediction
+        from ffast.metrics.input_resolver import metric_needs_prediction
         self.metricDependencies = {}
         requires_model = False
         for metric_id, params in metric_deps.items():

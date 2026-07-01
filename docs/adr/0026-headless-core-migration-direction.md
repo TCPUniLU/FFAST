@@ -70,12 +70,23 @@ root `events.py` ↔ `ffast/protocol/events.py` and `cluster/session.py` ↔
   headless distribution and a separate `ffast-desktop` depends on it. This is the
   opportunistic migration direction, with a precise target: **everything on the
   server import closure.**
-  - First slices DONE 2026-07-01: `cluster/rpc` → `ffast/protocol/rpc` (the
-    msgpack transport codec) and `config/atoms.py` → `ffast/chemistry/` (pure
-    element reference tables the scene builder needs).
+  - Slices DONE 2026-07-01: `cluster/rpc` → `ffast/protocol/rpc` (msgpack
+    transport codec), `config/atoms.py` → `ffast/chemistry/` (element reference
+    tables), and `client/inputResolver.py` → `ffast/metrics/input_resolver.py`
+    (metric-input resolution — Qt-free, duck-types the env).
   - Remaining: the `HeadlessEnvironment` slice of `client/environment.py` (the
-    keystone), `utils.loadModules`, `modules/loaders`, small `client/` helpers
-    (`inputResolver`, `dataType.AtomsList`), and the `tasks` / `events` spine.
+    keystone), `modules/loaders`, `dataType.AtomsList`, and the `tasks` /
+    `events` spine.
+  - Deferred on purpose (not a mechanical move):
+    - `utils.loadModules` discovers plugins by globbing `modules/**/*.py`
+      relative to its own file at the repo root. `modules/` is a *Desktop
+      Client* dir a headless `pip install ffast` would not ship, so relocating
+      the function into the core would bake in a wrong assumption. The real fix
+      is a plugin-discovery redesign (entry points / a configured plugin path),
+      tracked separately.
+    - `dataType.AtomsList` is extractable (Qt-free `UserList`) but its only core
+      user is a dormant server-side dataset-load path; it waits for a proper
+      `ffast/` dataset-IO home rather than a one-class package.
 
 ## Consequences
 

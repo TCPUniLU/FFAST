@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from client.inputResolver import InputResolver, metric_needs_prediction
+from ffast.metrics.input_resolver import InputResolver, metric_needs_prediction
 from ffast.metrics.builtin import energy_metrics, force_metrics  # noqa: F401 register
 from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.models import MetricResult

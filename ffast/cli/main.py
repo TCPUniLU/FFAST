@@ -264,7 +264,7 @@ def cmd_metrics_run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # metric_needs_prediction only reads the registry — cheap, no env required.
-    from client.inputResolver import metric_needs_prediction
+    from ffast.metrics.input_resolver import metric_needs_prediction
 
     if metric_needs_prediction(args.metric_id) and not args.prediction:
         print(
