@@ -59,7 +59,11 @@ def _write_session_records(records: list) -> None:
 
 
 def save_session_record(
-    job_id: str, profile_name: str, node: str, remote_port: int
+    job_id: str,
+    profile_name: str,
+    node: str,
+    remote_port: int,
+    token: str = "",
 ) -> None:
     """Upsert a session record for the given job."""
     records = _load_session_records()
@@ -70,6 +74,7 @@ def save_session_record(
             "profile_name": profile_name,
             "node": node,
             "remote_port": remote_port,
+            "token": token,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         }
     )
@@ -103,6 +108,121 @@ def _find_free_port() -> int:
         return s.getsockname()[1]
 
 
+# ── request/reply correlation ──────────────────────────────────────────────────
+
+
+class PendingRequests:
+    """Correlates async request/reply traffic over a single WebSocket.
+
+    Every in-flight request registers a Future under a ``(channel, key)`` pair;
+    the listener resolves it when the matching reply arrives.  This replaces the
+    five hand-rolled ``_pending_*`` dicts (each duplicating create-future / store
+    / await-with-timeout / pop), and — crucially — the correlation logic is pure
+    data, so it is unit-testable without a live socket.
+
+    ``channel`` namespaces the key space: two channels may legitimately use the
+    same key (the key and length probes are both keyed by file path).
+    """
+
+    def __init__(self):
+        self._pending: dict = {}
+
+    def _inflight(self, channel, key):
+        """Return a not-yet-done future for ``(channel, key)``, else ``None``."""
+        fut = self._pending.get((channel, key))
+        return fut if (fut is not None and not fut.done()) else None
+
+    def resolve(self, channel, key, payload) -> bool:
+        """Complete and remove the future for ``(channel, key)``.
+
+        Returns ``True`` if a pending future was found and resolved, ``False``
+        if there was no awaiter (an unexpected / duplicate reply).
+        """
+        fut = self._pending.pop((channel, key), None)
+        if fut is not None and not fut.done():
+            fut.set_result(payload)
+            return True
+        return False
+
+    async def request(self, channel, key, send, *, timeout, coalesce=False):
+        """Send a request and await its correlated reply.
+
+        Parameters
+        ----------
+        channel, key
+            Identify the reply this awaiter expects.  ``channel`` is the reply
+            event name; ``key`` is whatever the reply carries to correlate by.
+        send : callable() -> awaitable
+            Pushes the request on the wire.  Called only for a fresh request,
+            never on a coalesced join.
+        timeout : float
+            Seconds to wait for the reply.
+        coalesce : bool
+            When ``True``, an identical request already in flight is joined
+            instead of re-sent — every awaiter is served by the one reply.
+            Shielded so one awaiter timing out cannot cancel the shared future.
+        """
+        if coalesce:
+            existing = self._inflight(channel, key)
+            if existing is not None:
+                return await asyncio.wait_for(
+                    asyncio.shield(existing), timeout=timeout
+                )
+
+        loop = asyncio.get_event_loop()
+        fut = loop.create_future()
+        self._pending[(channel, key)] = fut
+        await send()
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout)
+        finally:
+            # On reply, resolve() already popped us. On timeout the listener
+            # never did (it only pops on a reply), so drop the dead future here
+            # — otherwise a later identical request coalesces onto it forever.
+            if self._pending.get((channel, key)) is fut:
+                self._pending.pop((channel, key), None)
+
+
+# ── reply-channel extractors ────────────────────────────────────────────────────
+# Each maps a reply (args, kwargs) → (correlation key, payload). The listener is
+# a thin router: look the event up here, extract, hand to PendingRequests.resolve.
+
+
+def _reply_probe(args, kwargs):
+    # DATASET_KEYS_RESPONSE / DATASET_LENGTH_RESPONSE: keyed by file path.
+    return args[0], kwargs
+
+
+def _reply_prediction(args, kwargs):
+    from cluster.rpc import unpack_arrays
+
+    return (args[0], args[1]), unpack_arrays(kwargs)
+
+
+def _reply_metric(args, kwargs):
+    from cluster.rpc import unpack_metric_result
+
+    return args[0], unpack_metric_result(kwargs)
+
+
+def _reply_arrays(args, kwargs):
+    from cluster.rpc import unpack_arrays
+
+    # model_names is a plain str→str dict packed alongside the arrays.
+    return args[0], {
+        "arrays": unpack_arrays(kwargs),
+        "model_names": kwargs.get("model_names") or {},
+    }
+
+
+# reply event → (min args required, extractor)
+_REPLY_CHANNELS = {
+    "DATASET_KEYS_RESPONSE": (1, _reply_probe),
+    "DATASET_LENGTH_RESPONSE": (1, _reply_probe),
+    "PREDICTION_ARRAYS": (2, _reply_prediction),
+    "METRIC_RESULT": (1, _reply_metric),
+    "SUBDATASET_ARRAYS": (1, _reply_arrays),
+}
 
 
 @dataclass
@@ -115,25 +235,18 @@ class RemoteSession:
     profile: object            # cluster.config.ClusterProfile
     local_port: int
     remote_port: int
+    token_plaintext: str = ""  # plaintext sent in HELLO; "" = no token / READ_ONLY
 
     # ── array transfer cache ─────────────────────────────────────────────────
     # fingerprint → {R, F, z, n} dicts of numpy arrays
     _array_cache: dict = None
-    # fingerprint → asyncio.Future waiting for SUBDATASET_ARRAYS response
-    _pending_array_requests: dict = None
-    # path → asyncio.Future waiting for DATASET_KEYS_RESPONSE
-    _pending_key_probes: dict = None
-    # path → asyncio.Future waiting for DATASET_LENGTH_RESPONSE
-    _pending_length_probes: dict = None
-    # (dataset_fp, model_fp) → asyncio.Future waiting for PREDICTION_ARRAYS
-    _pending_prediction_requests: dict = None
+    # All in-flight request/reply correlation (arrays, probes, predictions,
+    # metrics) lives in one channel-namespaced correlator. See PendingRequests.
+    _pending: PendingRequests = None
 
     def __post_init__(self):
         self._array_cache = {}
-        self._pending_array_requests = {}
-        self._pending_key_probes = {}
-        self._pending_length_probes = {}
-        self._pending_prediction_requests = {}
+        self._pending = PendingRequests()
 
     async def ping(self) -> bool:
         """Send ping, return True if pong received within 5 s."""
@@ -192,95 +305,26 @@ class RemoteSession:
                             "Listener received: %s args=%r", event, args
                         )
 
-                        # ── key probe response ────────────────────────────
-                        if event == "DATASET_KEYS_RESPONSE" and args:
-                            path = args[0]
-                            fut = self._pending_key_probes.pop(path, None)
-                            if fut is not None and not fut.done():
-                                fut.set_result(kwargs)
-                                logger.info(
-                                    "Listener: resolved key probe for %r",
-                                    path,
-                                )
+                        # ── correlated request/reply ──────────────────────
+                        # All five reply channels route through one correlator.
+                        # The listener is a thin router: extract the key, resolve
+                        # the awaiting future. Replies never forward to env.
+                        channel = _REPLY_CHANNELS.get(event)
+                        if channel is not None:
+                            min_args, extract = channel
+                            if len(args) >= min_args:
+                                key, payload = extract(args, kwargs)
+                                if not self._pending.resolve(
+                                    event, key, payload
+                                ):
+                                    logger.warning(
+                                        "Listener: %s for unknown key %r",
+                                        event, key,
+                                    )
                             else:
                                 logger.warning(
-                                    "Listener: DATASET_KEYS_RESPONSE for"
-                                    " unknown path %r", path
-                                )
-                            await asyncio.sleep(0)
-                            continue  # do NOT forward to env
-
-                        # ── dataset length response ───────────────────────
-                        if event == "DATASET_LENGTH_RESPONSE" and args:
-                            path = args[0]
-                            fut = self._pending_length_probes.pop(path, None)
-                            if fut is not None and not fut.done():
-                                fut.set_result(kwargs)
-                                logger.info(
-                                    "Listener: resolved length probe for %r",
-                                    path,
-                                )
-                            else:
-                                logger.warning(
-                                    "Listener: DATASET_LENGTH_RESPONSE for"
-                                    " unknown path %r", path,
-                                )
-                            await asyncio.sleep(0)
-                            continue  # do NOT forward to env
-
-                        # ── prediction-only array response ───────────────
-                        if event == "PREDICTION_ARRAYS" and len(args) >= 2:
-                            dataset_fp, model_fp = args[0], args[1]
-                            from cluster.rpc import unpack_arrays
-                            arrays = unpack_arrays(kwargs)
-                            key = (dataset_fp, model_fp)
-                            fut = self._pending_prediction_requests.pop(
-                                key, None
-                            )
-                            if fut is not None and not fut.done():
-                                fut.set_result(arrays)
-                                logger.info(
-                                    "Listener: resolved prediction future"
-                                    " dataset=%r model=%r",
-                                    dataset_fp[:8], model_fp[:8],
-                                )
-                            else:
-                                logger.warning(
-                                    "Listener: PREDICTION_ARRAYS for unknown"
-                                    " (dataset=%r, model=%r)",
-                                    dataset_fp[:8], model_fp[:8],
-                                )
-                            await asyncio.sleep(0)
-                            continue  # do NOT forward to env
-
-                        # ── array transfer response ───────────────────────
-                        if event == "SUBDATASET_ARRAYS" and args:
-                            fingerprint = args[0]
-                            from cluster.rpc import unpack_arrays
-                            arrays = unpack_arrays(kwargs)
-                            # model_names is a plain str→str dict packed
-                            # alongside the arrays (not encoded as ndarrays)
-                            model_names = kwargs.get("model_names") or {}
-                            fut = self._pending_array_requests.pop(
-                                fingerprint, None
-                            )
-                            if fut is not None and not fut.done():
-                                fut.set_result(
-                                    {
-                                        "arrays": arrays,
-                                        "model_names": model_names,
-                                    }
-                                )
-                                logger.info(
-                                    "Listener: resolved array future for %r"
-                                    " (models: %s)",
-                                    fingerprint,
-                                    list(model_names.keys()),
-                                )
-                            else:
-                                logger.warning(
-                                    "Listener: SUBDATASET_ARRAYS for unknown"
-                                    " fingerprint %r", fingerprint
+                                    "Listener: malformed %s (args=%r)",
+                                    event, args,
                                 )
                             await asyncio.sleep(0)
                             continue  # do NOT forward to env
@@ -384,21 +428,14 @@ class RemoteSession:
             logger.info("Array cache hit for %r", fingerprint)
             return self._array_cache[fingerprint]
 
-        # Create a Future that the listener will resolve
-        loop = asyncio.get_event_loop()
-        fut = loop.create_future()
-        self._pending_array_requests[fingerprint] = fut
-
         logger.info("Requesting arrays for %r from server…", fingerprint)
-        await self.push_event("REQUEST_SUBDATASET_ARRAYS", fingerprint)
-
-        arrays = await asyncio.wait_for(fut, timeout=timeout)
-        self._array_cache[fingerprint] = arrays
-        logger.info(
-            "Arrays cached for %r (R shape %s)",
-            fingerprint,
-            arrays.get("R", None) and arrays["R"].shape,
+        arrays = await self._pending.request(
+            "SUBDATASET_ARRAYS", fingerprint,
+            lambda: self.push_event("REQUEST_SUBDATASET_ARRAYS", fingerprint),
+            timeout=timeout,
         )
+        self._array_cache[fingerprint] = arrays
+        logger.info("Arrays cached for %r", fingerprint)
         return arrays
 
     async def request_prediction_arrays(
@@ -425,19 +462,41 @@ class RemoteSession:
             Arrays keyed as ``pred__energy__<model_fp>`` and/or
             ``pred__forces__<model_fp>``.
         """
-        loop = asyncio.get_event_loop()
-        fut = loop.create_future()
-        key = (dataset_fp, model_fp)
-        self._pending_prediction_requests[key] = fut
-
+        # Coalesce concurrent identical requests. Every panel metric fetches the
+        # same (dataset, model) predictions at once; without coalescing each call
+        # would overwrite the single pending future, orphaning the others (they
+        # hang until timeout) and the duplicate replies log "for unknown".
         logger.info(
             "Requesting prediction arrays: dataset=%r model=%r",
             dataset_fp[:8], model_fp[:8],
         )
-        await self.push_event(
-            "REQUEST_PREDICTION_ARRAYS", dataset_fp, model_fp
+        return await self._pending.request(
+            "PREDICTION_ARRAYS", (dataset_fp, model_fp),
+            lambda: self.push_event(
+                "REQUEST_PREDICTION_ARRAYS", dataset_fp, model_fp
+            ),
+            timeout=timeout, coalesce=True,
         )
-        return await asyncio.wait_for(fut, timeout=timeout)
+
+    async def request_metric(
+        self, metric_id, params, model_fp, dataset_fp, key, timeout: float = 120.0
+    ):
+        """Ask the server to compute a metric and return its MetricResult (4a).
+
+        Server-owned metric computation: the server resolves inputs from its
+        full arrays (+ ghost/remote predictions), runs the metric, and replies
+        with ``METRIC_RESULT``.  Returns the reconstructed ``MetricResult`` or
+        ``None`` when the server couldn't compute it (e.g. a real client-only
+        model), in which case the caller falls back to in-process computation.
+        """
+        return await self._pending.request(
+            "METRIC_RESULT", key,
+            lambda: self.push_event(
+                "REQUEST_METRIC", metric_id, key,
+                params=params or {}, model_fp=model_fp, dataset_fp=dataset_fp,
+            ),
+            timeout=timeout,
+        )
 
     async def probe_dataset_length(
         self, path: str, timeout: float = 60.0
@@ -452,14 +511,12 @@ class RemoteSession:
             n     : int | None  — total frame count, or None on error
             error : str | None  — set if server-side probe failed
         """
-        loop = asyncio.get_event_loop()
-        fut = loop.create_future()
-        self._pending_length_probes[path] = fut
-
         logger.info("Probing dataset length for %r", path)
-        await self.push_event("PROBE_DATASET_LENGTH", path)
-
-        return await asyncio.wait_for(fut, timeout=timeout)
+        return await self._pending.request(
+            "DATASET_LENGTH_RESPONSE", path,
+            lambda: self.push_event("PROBE_DATASET_LENGTH", path),
+            timeout=timeout,
+        )
 
     async def probe_dataset_keys(
         self, path: str, typ: str, timeout: float = 30.0
@@ -487,20 +544,28 @@ class RemoteSession:
             has_calculator_forces : bool
             error : str | None  — set if server-side probe failed
         """
-        loop = asyncio.get_event_loop()
-        fut = loop.create_future()
-        self._pending_key_probes[path] = fut
-
         logger.info("Probing dataset keys for %r (type=%s)", path, typ)
-        await self.push_event("PROBE_DATASET_KEYS", path, typ)
-
-        return await asyncio.wait_for(fut, timeout=timeout)
+        return await self._pending.request(
+            "DATASET_KEYS_RESPONSE", path,
+            lambda: self.push_event("PROBE_DATASET_KEYS", path, typ),
+            timeout=timeout,
+        )
 
     async def disconnect(self) -> None:
         """
         Close WebSocket and kill SSH tunnel.
         SLURM job continues running until its time limit.
+
+        This is the *intentional* shutdown path, so it first sends
+        ``GRACEFUL_DISCONNECT`` — the server marks the disconnect as clean and
+        skips the recovery-window hold it applies to unexpected drops (an
+        unexpected drop never reaches here; the socket just dies). Best-effort:
+        a send failure on an already-dead socket must not block the close.
         """
+        try:
+            await self.push_event("GRACEFUL_DISCONNECT")
+        except Exception:
+            pass
         try:
             await self.websocket.close()
         except Exception:
@@ -517,12 +582,50 @@ class RemoteSession:
         )
 
 
-async def connect_direct(host: str = "localhost", port: int = 8765) -> "RemoteSession":
+async def _do_hello(websocket, token: str = "", renderer: str = "vispy") -> None:
+    """Send HELLO and await HELLO_ACK after ping/pong completes.
+
+    Called by both connect_direct and _establish_connection once the WebSocket
+    is open and ping/pong has already been exchanged.
+    """
+    from cluster.rpc import pack, unpack
+    from ffast.visualization.protocol import ClientCapabilities, PROTOCOL_VERSION
+
+    caps = ClientCapabilities(
+        protocol_version=PROTOCOL_VERSION,
+        renderer=renderer,
+        session_token=token if token else None,
+    )
+    hello = pack("HELLO", [], caps.model_dump())
+    await websocket.send(hello)
+
+    try:
+        ack_msg = await asyncio.wait_for(websocket.recv(), timeout=10)
+        if isinstance(ack_msg, bytes):
+            ack_event, _, ack_kwargs = unpack(ack_msg)
+            if ack_event == "HELLO_ACK":
+                logger.info("HELLO_ACK received: role=%s", ack_kwargs.get("role"))
+            else:
+                logger.warning("Expected HELLO_ACK, got %r", ack_event)
+        else:
+            logger.warning("Expected binary HELLO_ACK, got text: %r", ack_msg)
+    except asyncio.TimeoutError:
+        logger.warning("HELLO_ACK not received within 10s — continuing as READ_ONLY")
+
+
+async def connect_direct(
+    host: str = "localhost",
+    port: int = 8765,
+    token: str = "",
+    renderer: str = "vispy",
+) -> "RemoteSession":
     """Connect directly to a running ffast-server without SLURM or SSH.
 
-    Use this for local testing:
-    1. ``python server.py --port 8765`` in one terminal.
-    2. In the app: File → Connect to Local Server…
+    Use this for local testing or when LocalServerManager started the server:
+
+        token = SessionToken.generate()
+        handle = LocalServerManager().start(port, token)
+        session = await connect_direct(port=handle.port, token=token.plaintext)
 
     Returns a RemoteSession with job_id="local" and ssh_proc=None.
     """
@@ -533,12 +636,15 @@ async def connect_direct(host: str = "localhost", port: int = 8765) -> "RemoteSe
 
     websocket = await websockets.connect(url, max_size=None)
 
-    # verify with ping/pong
+    # ping/pong
     await websocket.send("ping")
     reply = await asyncio.wait_for(websocket.recv(), timeout=10)
     if reply != "pong":
         await websocket.close()
         raise OSError(f"Unexpected ping reply: {reply!r}")
+
+    # HELLO/HELLO_ACK
+    await _do_hello(websocket, token, renderer)
 
     logger.info("connect_direct: connected to %s", url)
     return RemoteSession(
@@ -548,6 +654,7 @@ async def connect_direct(host: str = "localhost", port: int = 8765) -> "RemoteSe
         profile=None,
         local_port=port,
         remote_port=port,
+        token_plaintext=token,
     )
 
 
@@ -570,6 +677,7 @@ async def _establish_connection(
     node: str,
     remote_port: int,
     progress_cb: Optional[Callable[[str], None]],
+    token: str = "",
 ) -> RemoteSession:
     """Spawn SSH tunnel, connect WebSocket, verify with ping/pong.
 
@@ -689,13 +797,16 @@ async def _establish_connection(
         await websocket.close()
         raise OSError(f"Unexpected ping reply: {reply!r}")
 
+    # ── HELLO/HELLO_ACK ───────────────────────────────────────────────────
+    await _do_hello(websocket, token)
+
     _progress("Connected!")
     logger.info(
         "RemoteSession established: job=%s node=%s local_port=%d",
         job_id, node, local_port,
     )
 
-    save_session_record(job_id, profile.name, node, remote_port)
+    save_session_record(job_id, profile.name, node, remote_port, token=token)
 
     return RemoteSession(
         job_id=job_id,
@@ -704,6 +815,7 @@ async def _establish_connection(
         profile=profile,
         local_port=local_port,
         remote_port=remote_port,
+        token_plaintext=token,
     )
 
 
@@ -754,12 +866,20 @@ async def connect_to_cluster(
 
     backend = _build_backend(profile)
 
+    from ffast.session.token import SessionToken
+
     server_cmd = (
         getattr(profile, "ffast_server_cmd", "ffast-server") or "ffast-server"
     )
     snap_interval = getattr(profile, "snapshot_interval_minutes", 5)
+
+    # Generate token before job submission so the hash can be embedded in the
+    # server command and the plaintext can be sent in HELLO after connecting.
+    session_token = SessionToken.generate()
     command = (
-        f"{server_cmd} --port {remote_port} --snapshot-interval {snap_interval}"
+        f"{server_cmd} --port {remote_port}"
+        f" --snapshot-interval {snap_interval}"
+        f" --token-hash {session_token.hash}"
     )
 
     # ── 1. submit SLURM job ───────────────────────────────────────────────
@@ -800,9 +920,9 @@ async def connect_to_cluster(
     node = await backend.get_node_address(job_id)
     _progress(f"Job running on node: {node}")
 
-    # ── 4–6. SSH tunnel → WebSocket → ping/pong → RemoteSession ──────────
+    # ── 4–6. SSH tunnel → WebSocket → ping/pong → HELLO → RemoteSession ──
     return await _establish_connection(
-        profile, job_id, node, remote_port, progress_cb
+        profile, job_id, node, remote_port, progress_cb, token=session_token.plaintext
     )
 
 
@@ -811,6 +931,7 @@ async def reconnect_to_cluster(
     job_id: str,
     remote_port: int = _DEFAULT_REMOTE_PORT,
     progress_cb: Optional[Callable[[str], None]] = None,
+    token: str = "",
 ) -> RemoteSession:
     """Reconnect to a RUNNING cluster job without submitting a new SLURM job.
 
@@ -861,7 +982,7 @@ async def reconnect_to_cluster(
     node = await backend.get_node_address(job_id)
     _progress(f"Job {job_id} running on node: {node}")
 
-    # ── 3–5. SSH tunnel → WebSocket → ping/pong → RemoteSession ──────────
+    # ── 3–5. SSH tunnel → WebSocket → ping/pong → HELLO → RemoteSession ──
     return await _establish_connection(
-        profile, job_id, node, remote_port, progress_cb
+        profile, job_id, node, remote_port, progress_cb, token=token
     )

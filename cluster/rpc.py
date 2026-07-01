@@ -53,8 +53,24 @@ CLIENT_ENV_SAFE = frozenset(
         # and env._onRemoteModelMeta to create local proxy objects.
         "REMOTE_DATASET_META",
         "REMOTE_MODEL_META",
+        # Server-owned render path (ADR 0014): renderer-neutral scene data.
+        # Forwarded verbatim to the Loupe scene adapter via eventPush; the
+        # local env holds no matching objects, so the Loupe handlers consume
+        # them directly rather than mutating env state.
+        "SCENE_SNAPSHOT",
+        "SCENE_PATCH",
+        # Fired by server after LOAD_CONFIG loads new user metrics.
+        "METRICS_UPDATED",
     }
 )
+
+
+def _msgpack_default(obj):
+    """Encode types msgpack can't handle natively.
+    set -> sorted list (ScenePatch.changed, and any future set field)."""
+    if isinstance(obj, (set, frozenset)):
+        return sorted(obj)
+    raise TypeError(f"Cannot msgpack-serialize {type(obj).__name__}")
 
 
 def pack(event: str, args: tuple, kwargs: dict) -> bytes:
@@ -62,6 +78,7 @@ def pack(event: str, args: tuple, kwargs: dict) -> bytes:
     return msgpack.packb(
         {"event": event, "args": list(args), "kwargs": kwargs},
         use_bin_type=True,
+        default=_msgpack_default,
     )
 
 
@@ -160,4 +177,70 @@ def pack_prediction_arrays(
         "PREDICTION_ARRAYS",
         (dataset_fp, model_fp),
         {"arrays": encoded},
+    )
+
+
+# ── server-computed metric results (Stage 4a) ───────────────────────────────────
+
+def pack_metric_result(key: str, metric_id: str, ok: bool, result=None) -> bytes:
+    """Serialize a METRIC_RESULT response (server-owned metric computation).
+
+    ``result`` is a ``MetricResult`` (or ``None`` when ``ok`` is False — e.g. the
+    server can't source a real client-only model).  Its ``values`` array is
+    numpy-encoded; the small identity metadata travels as plain primitives so the
+    client can reconstruct an equivalent ``MetricResult``.
+
+    Typed at the pack site against ``MetricResultMessage`` (the sole producer).
+    ``model_dump(exclude_none=True)`` reproduces the pre-typing wire shape:
+    ``{"ok": False}`` when not ok, the full metadata + encoded array when ok.
+    """
+    from ffast.protocol.messages import MetricResultMessage
+
+    if ok and result is not None:
+        msg = MetricResultMessage(
+            ok=True,
+            metric_id=result.metric_id,
+            shape=result.shape,
+            dtype=result.dtype,
+            unit=result.unit,
+            compute_parameters=result.compute_parameters,
+            implementation_hash=result.implementation_hash,
+            checksum=result.checksum,
+            values=_encode_array(np.asarray(result.values)),
+        )
+    else:
+        msg = MetricResultMessage(ok=bool(ok))
+    return pack(
+        "METRIC_RESULT", (key, metric_id), msg.model_dump(exclude_none=True)
+    )
+
+
+def unpack_metric_result(kwargs: dict):
+    """Reconstruct a ``MetricResult`` from a METRIC_RESULT payload, or ``None``.
+
+    Validates the incoming payload against ``MetricResultMessage`` (loud error on
+    producer drift) before rebuilding the ``MetricResult``.
+    """
+    from ffast.protocol.messages import MetricResultMessage
+
+    msg = MetricResultMessage.model_validate(kwargs)
+    if not msg.ok:
+        return None
+    from ffast.metrics.models import MetricResult
+
+    v = msg.values
+    values = (
+        _decode_array(v)
+        if isinstance(v, dict) and v.get("__ndarray__")
+        else v
+    )
+    return MetricResult(
+        metric_id=msg.metric_id,
+        shape=msg.shape,
+        dtype=msg.dtype,
+        unit=msg.unit,
+        compute_parameters=msg.compute_parameters,
+        implementation_hash=msg.implementation_hash,
+        checksum=msg.checksum,
+        values=values,
     )

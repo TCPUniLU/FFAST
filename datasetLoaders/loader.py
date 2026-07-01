@@ -77,6 +77,19 @@ class DatasetLoader(EventClass):
     def getElementsName(self):
         return [zIntToZStr[x] for x in self.getElements()]
 
+    # ── Dataset Fields (ADR 0023) ───────────────────────────────────────────
+    # Default: a loader carries no extra fields. ASE loaders override these to
+    # read atoms.info / atoms.arrays keys lazily.
+    def getFrameField(self, key, indices=None):
+        return None
+
+    def getAtomField(self, key, indices=None):
+        return None
+
+    def availableFieldKeys(self):
+        """(frame_keys, atom_keys) exposable as Dataset Fields."""
+        return [], []
+
     def zToChemicalFormula(self, z):
         """
         Converts a list of atomic numbers to a chemical formula (using organic
@@ -213,7 +226,7 @@ class DatasetLoader(EventClass):
 
         Returns
         -------
-        dict with keys: name, n, has_forces, is_sub
+        dict with keys: name, n, has_forces, is_sub, variable, elements, offsets
         """
         has_forces = False
         try:
@@ -221,18 +234,30 @@ class DatasetLoader(EventClass):
             has_forces = True
         except Exception:
             pass
+        # Stage 4c: carry cheap per-atom elements so the client proxy serves
+        # element labels / atom-filter without fetching the big R/F arrays.
+        elements = None
+        try:
+            elements = np.asarray(self.getElements()).reshape(-1).astype(int).tolist()
+        except Exception:
+            pass
         return {
             "name": self.getName(),
             "n": self.getN(),
             "has_forces": has_forces,
             "is_sub": bool(self.isSubDataset),
+            "variable": False,
+            "elements": elements,
+            "offsets": None,
+            "path": self.path,
+            "source_type": getattr(type(self), "datasetName", None),
         }
 
     def to_transfer_arrays(self) -> dict:
         """Serialize geometry arrays for SubDataset transfer over the RPC channel.
 
         Returns a dict ready to be passed to ``cluster.rpc.pack_arrays``.
-        Handles uniform datasets (R shape N×natoms×3).
+        Handles uniform datasets (R shape Nxnatomsx3).
 
         Keys always present: ``n``, ``variable``, ``R``, ``E``.
         Optional keys (None when unavailable): ``F``, ``z``.
@@ -325,7 +350,7 @@ class VariableDatasetLoader(EventClass):
 
         Returns
         -------
-        dict with keys: name, n, has_forces, is_sub
+        dict with keys: name, n, has_forces, is_sub, variable, elements, offsets
         """
         has_forces = False
         try:
@@ -333,11 +358,28 @@ class VariableDatasetLoader(EventClass):
             has_forces = True
         except Exception:
             pass
+        # Stage 4c: carry cheap flat elements + molecule offsets so the client
+        # proxy serves labels / atom-filter / scatter sub-indexing without
+        # fetching the big R_flat/F_flat arrays.
+        elements = offsets = None
+        try:
+            elements = np.asarray(self.z_flat).reshape(-1).astype(int).tolist()
+        except Exception:
+            pass
+        try:
+            offsets = np.asarray(self.molecule_offsets).astype(int).tolist()
+        except Exception:
+            pass
         return {
             "name": self.getName(),
             "n": self.getN(),
             "has_forces": has_forces,
             "is_sub": bool(self.isSubDataset),
+            "variable": True,
+            "elements": elements,
+            "offsets": offsets,
+            "path": self.path,
+            "source_type": getattr(type(self), "datasetName", None),
         }
 
     def to_transfer_arrays(self) -> dict:
@@ -466,6 +508,16 @@ class VariableDatasetLoader(EventClass):
     def getElementsName(self):
         """Get element names for all atoms."""
         return [zIntToZStr[x] for x in self.z_flat]
+
+    # ── Dataset Fields (ADR 0023) — default no fields; ASE subclass overrides ──
+    def getFrameField(self, key, indices=None):
+        return None
+
+    def getAtomField(self, key, indices=None):
+        return None
+
+    def availableFieldKeys(self):
+        return [], []
 
     def zToChemicalFormula(self, z):
         """Convert atomic numbers to chemical formula."""
@@ -696,6 +748,21 @@ class SubDataset(DatasetLoader):
             idx = idx[indices]
         return self.parent.getForces(indices=idx)
 
+    def getFrameField(self, key, indices=None):
+        idx = self.indices
+        if indices is not None:
+            idx = idx[indices]
+        return self.parent.getFrameField(key, indices=idx)
+
+    def getAtomField(self, key, indices=None):
+        idx = self.indices
+        if indices is not None:
+            idx = idx[indices]
+        return self.parent.getAtomField(key, indices=idx)
+
+    def availableFieldKeys(self):
+        return self.parent.availableFieldKeys()
+
     def getPDist(self, indices=None):
         idx = self.indices
         if indices is not None:
@@ -730,7 +797,12 @@ class SubDataset(DatasetLoader):
                 return f"Variable ({atom_counts.min()}-{atom_counts.max()} atoms)"
             else:
                 return f"{atom_counts} atoms"
-        return self.parent.chem
+        # Delegate polymorphically: `chem` is only set on AtomFilteredDataset, but
+        # every parent type (remote proxy, uniform, variable, sub-of-sub) implements
+        # getChemicalFormula. Reading `self.parent.chem` directly crashed for remote
+        # and nested-sub parents (AttributeError), which aborted the sub's SideBar
+        # item construction so it never hid on subbing toggle-off.
+        return self.parent.getChemicalFormula()
 
     def getElements(self, index=None):
         """
@@ -840,7 +912,12 @@ class AtomFilteredDataset(DatasetLoader):
         self.z = parentDataset.getElements()[indices]
         self.chem = self.zToChemicalFormula(self.z)
 
-        self.bondSizes = parentDataset.bondSizes[self.indices][:, self.indices]
+        # bondSizes is None for variable datasets (computed dynamically); only
+        # slice it when the parent actually precomputed a matrix.
+        if parentDataset.bondSizes is None:
+            self.bondSizes = None
+        else:
+            self.bondSizes = parentDataset.bondSizes[self.indices][:, self.indices]
 
     def updatePath(self):
         self.path = f"{self.parent.getName()},atomFilter"
@@ -888,6 +965,22 @@ class AtomFilteredDataset(DatasetLoader):
             return f[:, self.indices]
         else:
             return f[self.indices]
+
+    def getFrameField(self, key, indices=None):
+        # Frame fields are per-frame, unaffected by atom filtering.
+        return self.parent.getFrameField(key, indices=indices)
+
+    def getAtomField(self, key, indices=None):
+        a = self.parent.getAtomField(key, indices=indices)
+        if a is None:
+            return None
+        a = np.asarray(a)
+        if a.ndim == 2:          # uniform (N, nAtoms) → filter atom axis
+            return a[:, self.indices]
+        return a[self.indices]   # flat per-atom
+
+    def availableFieldKeys(self):
+        return self.parent.availableFieldKeys()
 
     def getPDist(self, indices=None):
         R = self.getCoordinates(indices=indices)

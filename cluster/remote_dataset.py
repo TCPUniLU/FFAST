@@ -8,7 +8,7 @@ Lifecycle
    (``is_remote_proxy=True``, no arrays yet).  The proxy appears in the Loupe
    dataset ComboBox so the user can select it.
 
-2. User selects the proxy in Loupe → env.taskFetchRemoteDataset(fingerprint)
+2. User selects the proxy in Loupe → env.remote.taskFetchRemoteDataset(fingerprint)
    is triggered automatically.
 
 3. Task calls session.request_subdataset_arrays(fingerprint), receives the
@@ -82,6 +82,7 @@ class CachedRemoteDataset(DatasetLoader):
         self._offsets = None    # (N+1,) int — molecule start indices
 
         self._E = None          # (N,) float64 — energies (uniform + variable)
+        self._arrays_loaded = False  # 4c: True once big R/F/E arrays are fetched
 
         self.loaded = True  # so setName fires OBJECT_NAME_CHANGED correctly
         self.setName(name)
@@ -96,12 +97,70 @@ class CachedRemoteDataset(DatasetLoader):
         """True while arrays have not yet been fetched from the server."""
         return self._R is None and self._R_flat is None
 
+    @property
+    def molecule_offsets(self):
+        """Public alias for the variable-dataset offsets (matches the real
+        dataset interface used by metric consumers and
+        InputResolver._offsets). ``None`` until a variable dataset is populated.
+        """
+        return self._offsets
+
+    def apply_metadata(self, elements=None, offsets=None, is_variable=False) -> None:
+        """Set cheap per-atom metadata (elements, offsets) from REMOTE_DATASET_META.
+
+        Stage 4c: lets the proxy serve element labels, atom-filter, and scatter
+        sub-indexing on the main thread without fetching the big R/F arrays. The
+        big arrays are pulled lazily on first access (see :meth:`_ensure_arrays`).
+        """
+        if is_variable:
+            self.isVariable = True
+            if offsets is not None:
+                self._offsets = np.asarray(offsets, dtype=np.int64)
+            if elements is not None:
+                self._z_flat = np.asarray(elements, dtype=np.int32)
+        else:
+            if elements is not None:
+                self._z = np.asarray(elements, dtype=np.int32)
+                self._natoms = len(self._z)
+                from config.atoms import covalentBonds
+                from config.userConfig import getConfig
+                self.bondSizes = covalentBonds[self._z][:, self._z] * getConfig(
+                    "loupeBondsLenience"
+                )
+
+    def _ensure_arrays(self) -> None:
+        """Lazily fetch the big geometry arrays (R/F/E) from the server on first
+        access (Stage 4c).  Safe to block only off the Qt main thread (qasync runs
+        the asyncio loop there) — main-thread access without arrays is logged and
+        skipped rather than deadlocking; such consumers should read the scene or
+        the cheap metadata instead.
+        """
+        if self._arrays_loaded:
+            return
+        if self._R is not None or self._R_flat is not None:
+            self._arrays_loaded = True
+            return
+        import threading
+        if threading.current_thread() is threading.main_thread():
+            logger.warning(
+                "CachedRemoteDataset %r: array access on the main thread before "
+                "load — skipping blocking fetch to avoid deadlock.",
+                self.fingerprint,
+            )
+            return
+        env = getattr(self, "env", None)
+        remote = getattr(env, "remote", None)
+        if remote is None or not hasattr(remote, "_fetchDatasetArraysSync"):
+            return
+        remote._fetchDatasetArraysSync(self.fingerprint)
+
     def populate(self, arrays: dict) -> None:
         """Fill in the transferred arrays and update derived state.
 
         Called by env.taskFetchRemoteDataset once the transfer completes.
         """
         self._apply_arrays(arrays)
+        self._arrays_loaded = True
         logger.info(
             "CachedRemoteDataset %r populated: n=%d variable=%s",
             self.fingerprint, self._n, self.isVariable,
@@ -196,6 +255,7 @@ class CachedRemoteDataset(DatasetLoader):
         return self._natoms
 
     def getCoordinates(self, indices=None):
+        self._ensure_arrays()
         if self.isVariable:
             if self._R_flat is None:
                 # proxy: return zeros for first molecule
@@ -222,6 +282,7 @@ class CachedRemoteDataset(DatasetLoader):
         return self._R[indices]
 
     def getForces(self, indices=None):
+        self._ensure_arrays()
         if self.isVariable:
             if self._F_flat is None:
                 return None
@@ -242,6 +303,7 @@ class CachedRemoteDataset(DatasetLoader):
         return self._F[indices]
 
     def getEnergies(self, indices=None):
+        self._ensure_arrays()
         if self._E is None:
             return None
         if indices is None:
