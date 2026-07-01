@@ -1,0 +1,55 @@
+# FFAST project config — Dataset Fields demo (ADR 0023).
+#
+# Exposes two arbitrary extxyz `atoms.info` keys carried by
+# examples/data/dataset.xyz as plottable Metrics with NO Python, then plots
+# them in a project Analysis Tab. Discover a file's usable keys with:
+#     ffast-cli dataset keys examples/data/dataset.xyz
+
+# ── Dataset Field metrics: key-in-the-ref → passthrough Metric ───────────────
+[[metrics.fields]]
+id    = "demo.total_charge"
+ref   = "reference.info.total_charge"   # info.<key> → per-frame scalar (Frame Field)
+label = "Total charge"
+unit  = "dimensionless"
+
+[[metrics.fields]]
+id    = "demo.ref_energy_field"
+ref   = "reference.info.REF_energy"     # a second arbitrary key, same mechanism
+label = "Reference energy (field)"
+unit  = "energy"
+
+# ── A project Analysis Tab that draws those field metrics ────────────────────
+[[visualization.tabs]]
+name = "Dataset Fields (demo)"
+has_data_selector = true
+
+[[visualization.tabs.panels]]
+kind = "timeline"
+row = 0
+col = 0
+title = "Total charge per frame"
+y_label = "Total charge"
+tooltip = "atoms.info['total_charge'] surfaced as a metric (ADR 0023)."
+  [visualization.tabs.panels.metrics.y]
+  metric = "demo.total_charge"
+
+[[visualization.tabs.panels]]
+kind = "timeline"
+row = 0
+col = 1
+title = "Reference energy (from key)"
+y_label = "Reference energy"
+tooltip = "atoms.info['REF_energy'] via the generic Dataset Field path."
+  [visualization.tabs.panels.metrics.y]
+  metric = "demo.ref_energy_field"
+
+[[visualization.tabs.panels]]
+kind = "density"
+row = 1
+col = 1
+title = "Reference-energy distribution"
+x_label = "Reference energy"
+tooltip = "value_kde transform over the field metric."
+  [visualization.tabs.panels.metrics.value]
+  metric = "demo.ref_energy_field"
+  transform = "value_kde"

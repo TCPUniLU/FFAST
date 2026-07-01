@@ -163,6 +163,7 @@ cython_debug/
 .idea/
 test2.py
 config/user.json
+config/clusters.json
 CLAUDE.md
 .DS_Store
 /results
