@@ -96,7 +96,7 @@ async def _auto_snapshot_loop(
 
 async def _do_hello_handshake(websocket, addr, registry, token_hash: str):
     """Ping/pong then HELLO/HELLO_ACK. Returns the assigned ClientRole."""
-    from cluster.rpc import pack, unpack
+    from ffast.protocol.rpc import pack, unpack
     from ffast.session.token import ClientRole, SessionToken
     from ffast.visualization.protocol import ClientCapabilities, negotiate
 
@@ -191,7 +191,7 @@ async def _handler(
     session.replay()
 
     # ── receive / send loops ──────────────────────────────────────────────
-    from cluster.rpc import unpack
+    from ffast.protocol.rpc import unpack
     graceful = False
 
     async def receive_loop():
@@ -386,7 +386,7 @@ async def _main(
 ):
     """Bootstrap env, wire RPC subscriptions, run server + event loop."""
     from client.environment import HeadlessEnvironment
-    from cluster.rpc import SERVER_TO_CLIENT, pack
+    from ffast.protocol.rpc import SERVER_TO_CLIENT, pack
     from utils import loadModules
 
     env = HeadlessEnvironment()

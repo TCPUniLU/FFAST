@@ -11,7 +11,7 @@ multi-field payload that can drift — so they are *catalogued*, not modelled.
 Kept honest two ways:
 
 * **The event-name set is enforced** — ``test_protocol_messages`` asserts the
-  keys below equal ``cluster.rpc.SERVER_TO_CLIENT``, so adding or removing a
+  keys below equal ``ffast.protocol.rpc.SERVER_TO_CLIENT``, so adding or removing a
   broadcast event without updating this catalogue fails the test suite.
 * **The field lists are descriptive only** — the generic loop forwards the
   positional ``args`` / ``kwargs`` verbatim and ``TASK_PROGRESS`` alone has ~30

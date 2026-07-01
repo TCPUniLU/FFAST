@@ -8,8 +8,8 @@ from events import EventClass
 from scipy.spatial.distance import pdist
 from config.userConfig import getConfig
 from utils import hexToRGB
-from config.atoms import zIntToZStr, zStrToZInt
-from config.atoms import covalentBonds
+from ffast.chemistry import zIntToZStr, zStrToZInt
+from ffast.chemistry import covalentBonds
 from scipy.spatial import distance_matrix
 from utils import cleanBondIdxsArray
 
@@ -256,7 +256,7 @@ class DatasetLoader(EventClass):
     def to_transfer_arrays(self) -> dict:
         """Serialize geometry arrays for SubDataset transfer over the RPC channel.
 
-        Returns a dict ready to be passed to ``cluster.rpc.pack_arrays``.
+        Returns a dict ready to be passed to ``ffast.protocol.rpc.pack_arrays``.
         Handles uniform datasets (R shape Nxnatomsx3).
 
         Keys always present: ``n``, ``variable``, ``R``, ``E``.
@@ -385,7 +385,7 @@ class VariableDatasetLoader(EventClass):
     def to_transfer_arrays(self) -> dict:
         """Serialize geometry arrays for SubDataset transfer over the RPC channel.
 
-        Returns a dict ready to be passed to ``cluster.rpc.pack_arrays``.
+        Returns a dict ready to be passed to ``ffast.protocol.rpc.pack_arrays``.
         Uses the flat array format (R_flat, offsets, F_flat, z_flat).
 
         Keys always present: ``n``, ``variable``, ``R_flat``, ``offsets``.

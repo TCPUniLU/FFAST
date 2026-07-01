@@ -15,7 +15,7 @@ import pytest
 import websockets
 from playwright.async_api import async_playwright, expect
 
-from cluster.rpc import pack, unpack
+from ffast.protocol.rpc import pack, unpack
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]

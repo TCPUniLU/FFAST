@@ -30,7 +30,7 @@ class _FakeDataset:
         R = self.getCoordinates(idx)
         from scipy.spatial import distance_matrix as dm
         d = dm(R, R)
-        from config.atoms import covalentBonds  # type: ignore
+        from ffast.chemistry import covalentBonds  # type: ignore
         z = self._z
         sizes = covalentBonds[z][:, z] * 1.2
         return d < sizes
@@ -442,7 +442,7 @@ class TestGroundTruthForceVectors:
     def _run_command(self, env, view, command_kwargs):
         import asyncio
         from ffast.session.server_session import ServerSession
-        from cluster.rpc import unpack
+        from ffast.protocol.rpc import unpack
         session = ServerSession(env, _CollectingOutbound())
         session.views = {view.state.view_id: view}
         asyncio.run(session.dispatch("VIEW_COMMAND", [], command_kwargs))

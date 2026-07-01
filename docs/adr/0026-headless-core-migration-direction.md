@@ -47,12 +47,13 @@ root `events.py` ↔ `ffast/protocol/events.py` and `cluster/session.py` ↔
   in the installable headless core iff it is reachable from the `ffast-server` /
   `ffast-cli` entry points — which is, empirically, a Qt-free set. This is
   sharper than "is it science?" or "is it Qt-free?":
-  - `cluster/rpc` (the msgpack **transport codec**) IS on the closure → it is
-    core, even though it is transport. This corrects a tempting split where
-    presentation and transport both "stay in the client": presentation
-    (KDE/plot styling in `UI/panels.py`) is *not* on the closure and does stay
-    out, but transport does not stay in the client once the server must install
-    without it.
+  - the msgpack **transport codec** IS on the closure → it is core, even though
+    it is transport. This corrects a tempting split where presentation and
+    transport both "stay in the client": presentation (KDE/plot styling in
+    `UI/panels.py`) is *not* on the closure and does stay out, but transport
+    does not stay in the client once the server must install without it. (This
+    is why the codec was migrated `cluster/rpc` → `ffast/protocol/rpc` in Step
+    B below.)
   - `UI/panels.py` presentation, Qt widgets, picking, camera → NOT on the
     closure → stay in the Desktop Client.
 
@@ -64,13 +65,17 @@ root `events.py` ↔ `ffast/protocol/events.py` and `cluster/session.py` ↔
   `UI/` files are harmless dead weight. The closure guard is enforced by
   `tests/ffast/test_headless_closure.py`.
 
-- **Step B (later): a true two-distribution split.** Migrate the Qt-free
-  server-closure flat modules (`cluster/rpc`, the `HeadlessEnvironment` slice of
-  `client/environment.py`, `modules/loaders`, `utils.loadModules`, `tasks`,
-  `events`) *into* `ffast/`, so `ffast` is a self-contained headless
-  distribution and a separate `ffast-desktop` depends on it. This is the
+- **Step B (in progress): a true two-distribution split.** Migrate the Qt-free
+  server-closure flat modules *into* `ffast/`, so `ffast` is a self-contained
+  headless distribution and a separate `ffast-desktop` depends on it. This is the
   opportunistic migration direction, with a precise target: **everything on the
   server import closure.**
+  - First slices DONE 2026-07-01: `cluster/rpc` → `ffast/protocol/rpc` (the
+    msgpack transport codec) and `config/atoms.py` → `ffast/chemistry/` (pure
+    element reference tables the scene builder needs).
+  - Remaining: the `HeadlessEnvironment` slice of `client/environment.py` (the
+    keystone), `utils.loadModules`, `modules/loaders`, small `client/` helpers
+    (`inputResolver`, `dataType.AtomsList`), and the `tasks` / `events` spine.
 
 ## Consequences
 

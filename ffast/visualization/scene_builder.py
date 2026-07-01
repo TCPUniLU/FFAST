@@ -480,7 +480,7 @@ def _resolve_filter_indices(raw, z) -> list:
         nonlocal names
         if names is None:
             try:
-                from config.atoms import zIntToZStr  # type: ignore[import]
+                from ffast.chemistry import zIntToZStr  # type: ignore[import]
                 names = [zIntToZStr.get(int(zi), str(int(zi))) for zi in z]
             except Exception:
                 names = [str(int(zi)) for zi in z]

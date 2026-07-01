@@ -145,7 +145,7 @@ def test_broadcast_catalogue_matches_server_to_client():
     # catalogue's event-name set in lockstep with the real SERVER_TO_CLIENT set,
     # so adding/removing a broadcast event without updating the catalogue fails.
     from ffast.protocol.notifications import BROADCAST_EVENTS
-    from cluster.rpc import SERVER_TO_CLIENT
+    from ffast.protocol.rpc import SERVER_TO_CLIENT
 
     assert set(BROADCAST_EVENTS) == set(SERVER_TO_CLIENT)
 
@@ -165,7 +165,7 @@ def test_probe_responses_reject_extra_keys():
 
 
 # ── MetricResultMessage (METRIC_RESULT, hybrid metadata + numpy array) ───────
-# Exercises the real pack/unpack helpers in cluster.rpc, not just the model, so
+# Exercises the real pack/unpack helpers in ffast.protocol.rpc, not just the model, so
 # the wire shape (incl. the encoded-array field) is asserted bit-for-bit.
 def _sample_metric_result():
     import numpy as np
@@ -181,7 +181,7 @@ def _sample_metric_result():
 
 def test_metric_result_ok_wire_shape_and_roundtrip():
     import numpy as np
-    from cluster.rpc import pack_metric_result, unpack, unpack_metric_result
+    from ffast.protocol.rpc import pack_metric_result, unpack, unpack_metric_result
 
     r = _sample_metric_result()
     event, args, kw = unpack(pack_metric_result("k1", r.metric_id, True, r))
@@ -209,7 +209,7 @@ def test_metric_result_ok_wire_shape_and_roundtrip():
 
 
 def test_metric_result_not_ok_wire_shape():
-    from cluster.rpc import pack_metric_result, unpack, unpack_metric_result
+    from ffast.protocol.rpc import pack_metric_result, unpack, unpack_metric_result
 
     event, args, kw = unpack(pack_metric_result("k2", "ffast.x", False, None))
     assert event == "METRIC_RESULT"

@@ -48,7 +48,7 @@ def atom_labels(
     P = np.asarray(positions, dtype=float)
     n = len(P)
     if mode == "element" and elements is not None:
-        from config.atoms import zIntToZStr  # type: ignore[import]
+        from ffast.chemistry import zIntToZStr  # type: ignore[import]
         z = np.asarray(elements).ravel()
         texts = [zIntToZStr.get(int(zi), str(int(zi))) for zi in z[:n]]
     else:

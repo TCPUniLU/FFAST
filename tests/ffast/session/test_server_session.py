@@ -12,7 +12,7 @@ with no env, queue, or event loop at all.
 """
 import asyncio
 
-from cluster.rpc import unpack
+from ffast.protocol.rpc import unpack
 from ffast.session.server_session import ServerSession
 
 

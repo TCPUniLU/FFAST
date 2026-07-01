@@ -224,7 +224,7 @@ class ServerSession:
 
     def _replay_state(self) -> None:
         """Enqueue REMOTE_DATASET_META + REMOTE_MODEL_META for all objects."""
-        from cluster.rpc import pack
+        from ffast.protocol.rpc import pack
         from ffast.protocol import DatasetMeta, ModelMeta
 
         # ── datasets ──────────────────────────────────────────────────────────
@@ -285,7 +285,7 @@ class ServerSession:
         Ensures the built-in metrics are registered first. (External Trusted
         Metric Modules appear here too once the server loads them from config.)
         """
-        from cluster.rpc import pack
+        from ffast.protocol.rpc import pack
         try:
             import ffast.metrics.builtin  # noqa: F401 — register built-in metrics
             from ffast.metrics.catalog import build_metric_catalog
@@ -300,7 +300,7 @@ class ServerSession:
 
     def _replay_views(self) -> None:
         """Send a SCENE_SNAPSHOT for each open view on reconnect."""
-        from cluster.rpc import pack
+        from ffast.protocol.rpc import pack
 
         for view in self.views.values():
             try:
@@ -337,7 +337,7 @@ class ServerSession:
         Supports both uniform datasets (R shape: Nxnatomsx3) and variable
         datasets (molecules of different sizes, stored as flat arrays + offsets).
         """
-        from cluster.rpc import pack_arrays
+        from ffast.protocol.rpc import pack_arrays
 
         dataset = self.env.datasets.get(fingerprint)
         if dataset is None:
@@ -421,7 +421,7 @@ class ServerSession:
         Uses the same key-detection logic as the local
         _showASEKeySelectionDialog so the client displays an identical dialog.
         """
-        from cluster.rpc import pack
+        from ffast.protocol.rpc import pack
 
         energy_keys: list = []
         force_keys: list = []
@@ -474,7 +474,7 @@ class ServerSession:
 
     async def _on_probe_dataset_length(self, path, **kwargs) -> None:
         """Count frames in a dataset file and push DATASET_LENGTH_RESPONSE."""
-        from cluster.rpc import pack
+        from ffast.protocol.rpc import pack
 
         n: int | None = None
         error: str | None = None
@@ -504,7 +504,7 @@ class ServerSession:
         case-insensitive. ``parent`` is None at the filesystem root.
         """
         import os
-        from cluster.rpc import pack
+        from ffast.protocol.rpc import pack
 
         home = os.path.expanduser("~")
         abspath = os.path.abspath(os.path.expanduser(path)) if path else home
@@ -567,7 +567,7 @@ class ServerSession:
         listener resolves its pending Future without treating it as a geometry
         transfer.
         """
-        from cluster.rpc import pack_prediction_arrays
+        from ffast.protocol.rpc import pack_prediction_arrays
         from ffast.cache import CacheKey, PredictionArrayKey
 
         # Stage 2: generate predictions on demand for real (non-ghost)
@@ -630,7 +630,7 @@ class ServerSession:
     async def _on_open_view(self, **kwargs) -> None:
         """Create or reopen a VisualizationView and send its SCENE_SNAPSHOT."""
         import uuid
-        from cluster.rpc import pack
+        from ffast.protocol.rpc import pack
         from ffast.visualization.view import VisualizationView
 
         view_id = kwargs.get("view_id") or str(uuid.uuid4())
@@ -669,7 +669,7 @@ class ServerSession:
     async def _on_view_command(self, **kwargs) -> None:
         """Apply a ViewCommand and send COMMAND_RESULT plus an optional SCENE_PATCH."""
         from pydantic import TypeAdapter, ValidationError
-        from cluster.rpc import pack
+        from ffast.protocol.rpc import pack
         from ffast.visualization.commands import ViewCommand
         from ffast.visualization.scene_builder import build_scene, fill_patch_from_scene
 
@@ -740,7 +740,7 @@ class ServerSession:
         back to in-process compute) when the metric needs a model the server
         doesn't have (a real client-only model).
         """
-        from cluster.rpc import pack_metric_result
+        from ffast.protocol.rpc import pack_metric_result
 
         params = kwargs.get("params") or {}
         model_fp = kwargs.get("model_fp")

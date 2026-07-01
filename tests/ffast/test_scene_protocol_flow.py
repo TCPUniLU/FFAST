@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 import websockets
 
-from cluster.rpc import pack, unpack
+from ffast.protocol.rpc import pack, unpack
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]

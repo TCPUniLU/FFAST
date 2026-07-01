@@ -12,7 +12,7 @@ The agreed target architecture and phased migration plan are documented in
 ## Glossary
 
 ### Headless Core
-The `ffast/` package — engine, server, protocol, renderer-agnostic visualization, and CLI. Imports no Qt/PySide6 and runs on a SLURM compute node with no display; it is the importable, distributable surface (`import ffast.*`, entry points `ffast` / `ffast-server` / `ffast-cli`). Its goal is a `pip install`-able server with no Qt/client baggage. The agreed migration direction is *into* the Headless Core, never out; the membership criterion is the **server import closure** — a module belongs in the core iff the `ffast-server` / `ffast-cli` entry points reach it (an empirically Qt-free set, so `cluster/rpc` transport is core but `UI/panels` presentation is not) (ADR 0026). Distinct from the **Desktop Client**.
+The `ffast/` package — engine, server, protocol, renderer-agnostic visualization, and CLI. Imports no Qt/PySide6 and runs on a SLURM compute node with no display; it is the importable, distributable surface (`import ffast.*`, entry points `ffast` / `ffast-server` / `ffast-cli`). Its goal is a `pip install`-able server with no Qt/client baggage. The agreed migration direction is *into* the Headless Core, never out; the membership criterion is the **server import closure** — a module belongs in the core iff the `ffast-server` / `ffast-cli` entry points reach it (an empirically Qt-free set, so the msgpack transport codec `ffast/protocol/rpc` is core but `UI/panels` presentation is not) (ADR 0026). Distinct from the **Desktop Client**.
 _Avoid_: library, backend, src (it is the package, not a generic source root).
 
 ### Desktop Client

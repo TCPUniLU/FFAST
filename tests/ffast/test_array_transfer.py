@@ -69,7 +69,7 @@ async def ffast_server():
 
 
 async def test_subdataset_array_transfer(ffast_server):
-    from cluster.rpc import pack, unpack, unpack_arrays
+    from ffast.protocol.rpc import pack, unpack, unpack_arrays
 
     url = f"ws://localhost:{ffast_server}"
     ws = await websockets.connect(url)

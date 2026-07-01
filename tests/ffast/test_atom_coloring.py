@@ -113,7 +113,7 @@ class TestMetricCatalog:
         """The server's state replay packs a METRIC_CATALOG message (and
         registers built-ins first)."""
         from ffast.session.server_session import ServerSession
-        from cluster.rpc import unpack
+        from ffast.protocol.rpc import unpack
 
         class _Out:
             def __init__(self):

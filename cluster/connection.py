@@ -194,19 +194,19 @@ def _reply_probe(args, kwargs):
 
 
 def _reply_prediction(args, kwargs):
-    from cluster.rpc import unpack_arrays
+    from ffast.protocol.rpc import unpack_arrays
 
     return (args[0], args[1]), unpack_arrays(kwargs)
 
 
 def _reply_metric(args, kwargs):
-    from cluster.rpc import unpack_metric_result
+    from ffast.protocol.rpc import unpack_metric_result
 
     return args[0], unpack_metric_result(kwargs)
 
 
 def _reply_arrays(args, kwargs):
-    from cluster.rpc import unpack_arrays
+    from ffast.protocol.rpc import unpack_arrays
 
     # model_names is a plain str→str dict packed alongside the arrays.
     return args[0], {
@@ -275,7 +275,7 @@ class ServerConnection:
                 slice_num=0,
             )
         """
-        from cluster.rpc import pack
+        from ffast.protocol.rpc import pack
 
         data = pack(event, args, kwargs)
         await self.websocket.send(data)
@@ -292,7 +292,7 @@ class ServerConnection:
         Note: do not call ``ping()`` while the listener is running; both
         compete for the same websocket receive stream.
         """
-        from cluster.rpc import CLIENT_ENV_SAFE, unpack
+        from ffast.protocol.rpc import CLIENT_ENV_SAFE, unpack
 
         async def _listen():
             try:
@@ -588,7 +588,7 @@ async def _do_hello(websocket, token: str = "", renderer: str = "vispy") -> None
     Called by both connect_direct and _establish_connection once the WebSocket
     is open and ping/pong has already been exchanged.
     """
-    from cluster.rpc import pack, unpack
+    from ffast.protocol.rpc import pack, unpack
     from ffast.visualization.protocol import ClientCapabilities, PROTOCOL_VERSION
 
     caps = ClientCapabilities(

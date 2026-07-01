@@ -141,14 +141,14 @@ class MetricResultMessage(BaseModel):
     METRIC_RESULT is a *hybrid* message: structured metadata plus one numpy
     array. Per the **RPC Channel** boundary in CONTEXT.md it is typed on its
     metadata envelope while the ``values`` array rides inside it encoded by
-    ``cluster.rpc._encode_array`` (the same binary form used by the untyped
+    ``ffast.protocol.rpc._encode_array`` (the same binary form used by the untyped
     ``SUBDATASET_ARRAYS`` / ``PREDICTION_ARRAYS`` Array messages). So ``values``
     is an opaque ``{__ndarray__, dtype, shape, data}`` dict here, not a typed
     field.
 
-    Single producer ([`cluster.rpc.pack_metric_result`], called by
+    Single producer ([`ffast.protocol.rpc.pack_metric_result`], called by
     ``server._send_metric_result``); single consumer
-    (``cluster.rpc.unpack_metric_result``, called by the listener in
+    (``ffast.protocol.rpc.unpack_metric_result``, called by the listener in
     ``cluster.connection``). The metadata fields mirror
     ``ffast.metrics.models.MetricResult`` so the client can rebuild an
     equivalent result.

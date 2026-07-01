@@ -38,7 +38,7 @@ def local_server():
 async def test_scene_patch_has_atoms(local_server):
     port, token_plaintext = local_server
     from cluster.connection import connect_direct
-    from cluster.rpc import unpack
+    from ffast.protocol.rpc import unpack
 
     # Connect with retry
     session = None

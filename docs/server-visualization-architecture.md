@@ -214,15 +214,17 @@ The realized ownership (see also ADR 0026 for the headless-core boundary):
 ffast/                 headless core — no Qt (import ffast.*)
   metrics/             registry, shapes, units, graph, executor, cache, builtin/
   visualization/       view state + scene models, stage pipeline, buffers
-  protocol/            Pydantic message/event schemas
+  protocol/            Pydantic message/event schemas + rpc (msgpack codec)
   config/              TOML/Pydantic models, discovery/merge/validation
+  chemistry/           element reference tables (colors, radii, symbol maps)
   renderers/vispy/     Qt/Vispy adapter        renderers/web/  browser adapter
   session/ cli/ cache/
 UI/ client/ cluster/ modules/   Desktop Client — Qt app, orchestration, plugins
 ```
 
-The msgpack codec stays in `cluster/rpc` (transport, on the server import closure);
-typed message *schemas* live in `ffast/protocol/`.
+The msgpack transport codec lives in `ffast/protocol/rpc` alongside the typed
+message *schemas* (moved from `cluster/rpc` in ADR 0026 Step B, since it is on
+the server import closure).
 
 Each `ffast/` subpackage keeps its Pydantic schemas in a local `models.py`
 (`ffast.config.models`, `ffast.metrics.models`, `ffast.visualization.models`,

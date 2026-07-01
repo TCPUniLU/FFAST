@@ -82,7 +82,7 @@ def _build_atomic_selector(UIHandler, parent=None):
     bound Panels re-fetch and redraw."""
     from UI.ContentTab import DatasetModelSelector, ListCheckButton
     from UI.Templates import FlexibleListSelector
-    from config.atoms import atomColors, zIntToZStr
+    from ffast.chemistry import atomColors, zIntToZStr
 
     class AtomLabel(ListCheckButton):
         def __init__(self, atomIndex, *args, **kwargs):

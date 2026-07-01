@@ -122,7 +122,7 @@ class CachedRemoteDataset(DatasetLoader):
             if elements is not None:
                 self._z = np.asarray(elements, dtype=np.int32)
                 self._natoms = len(self._z)
-                from config.atoms import covalentBonds
+                from ffast.chemistry import covalentBonds
                 from config.userConfig import getConfig
                 self.bondSizes = covalentBonds[self._z][:, self._z] * getConfig(
                     "loupeBondsLenience"
@@ -167,7 +167,7 @@ class CachedRemoteDataset(DatasetLoader):
         )
         # Recompute bond sizes for uniform datasets where z is known
         if not self.isVariable and self._z is not None:
-            from config.atoms import covalentBonds
+            from ffast.chemistry import covalentBonds
             from config.userConfig import getConfig
             z = self._z
             self.bondSizes = covalentBonds[z][:, z] * getConfig(
@@ -340,7 +340,7 @@ class CachedRemoteDataset(DatasetLoader):
         return self.zToChemicalFormula(self._z)
 
     def getElementsName(self):
-        from config.atoms import zIntToZStr
+        from ffast.chemistry import zIntToZStr
         z = self._z_flat if self.isVariable else self._z
         if z is None:
             return []
@@ -383,7 +383,7 @@ class CachedRemoteDataset(DatasetLoader):
             # VariableDatasetLoader) because molecule sizes differ
             if self._R_flat is None or self._offsets is None:
                 return np.zeros((1, 1), dtype=bool)
-            from config.atoms import covalentBonds
+            from ffast.chemistry import covalentBonds
             from config.userConfig import getConfig
             r = self.getCoordinates(index)
             z = self.getElements(index)
