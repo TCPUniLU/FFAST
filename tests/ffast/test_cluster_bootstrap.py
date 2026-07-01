@@ -8,7 +8,7 @@ from cluster.bootstrap import (
     _dist_name,
     light_dependencies,
     needs_provision,
-    provision_script,
+    provision_launch_cmd,
     read_dependencies,
     server_launch_cmd,
     wheel_sha256,
@@ -71,8 +71,8 @@ def test_server_launch_cmd():
     )
 
 
-def test_provision_script():
-    s = provision_script(
+def test_provision_launch_cmd():
+    s = provision_launch_cmd(
         venv_path="~/.ffast/venv",
         remote_wheel="~/.ffast/ffast-2.0.0-py3-none-any.whl",
         light_deps=["msgpack", "websockets"],
@@ -80,19 +80,20 @@ def test_provision_script():
         marker_path="~/.ffast/installed.sha256",
         wheel_sha="deadbeef",
     )
-    assert s.startswith("set -e\n")
-    assert "module load Python/3.11" in s
-    assert "python -m venv --system-site-packages ~/.ffast/venv" in s
-    assert "[ -d ~/.ffast/venv ]" in s                       # created only if missing
+    # One &&-chained command run AS the SLURM job (venv+install on the node).
+    assert s.startswith("module load Python/3.11 && ")
+    assert "([ -d ~/.ffast/venv ] || python -m venv --system-site-packages ~/.ffast/venv)" in s
+    assert "source ~/.ffast/venv/bin/activate" in s
     assert "--no-deps --force-reinstall ~/.ffast/ffast-2.0.0-py3-none-any.whl" in s
     assert "python -m pip install msgpack websockets" in s
-    # Marker written last, after a successful install.
-    assert s.rstrip().endswith("printf '%s' deadbeef > ~/.ffast/installed.sha256")
+    # Marker written just before launch; command ends with bare ffast-server so
+    # connect_to_cluster's --port/--token flags attach to it.
+    assert "printf '%s' deadbeef > ~/.ffast/installed.sha256 && ffast-server" in s
+    assert s.endswith("&& ffast-server")
 
 
-def test_provision_script_no_light_deps():
-    s = provision_script("~/v", "~/w.whl", [], [], "~/m", "sha")
-    assert "pip install --no-deps --force-reinstall" in s
-    assert "pip install msgpack" not in s
-    lines = [ln for ln in s.splitlines() if ln.startswith("python -m pip install")]
-    assert len(lines) == 1  # only the wheel install, no light-deps line
+def test_provision_launch_cmd_no_light_deps():
+    s = provision_launch_cmd("~/v", "~/w.whl", [], [], "~/m", "sha")
+    installs = [p for p in s.split(" && ") if p.startswith("python -m pip install")]
+    assert len(installs) == 1  # only the wheel install, no light-deps step
+    assert "--no-deps --force-reinstall" in installs[0]

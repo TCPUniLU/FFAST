@@ -59,10 +59,19 @@ Auto-bootstrap the server, staged so each piece lands independently.
   catches active development (code changes without a version bump) that a version
   string comparison would miss, and makes reconnects fast when nothing changed.
 
-- **Idempotent layout on the node.** A stable `~/.ffast/` holds the venv
-  (`~/.ffast/venv`), the pushed wheel, and the marker. Provisioning runs on the
-  **login node** (which can pip-install) before `sbatch`; the SLURM job body just
-  activates `~/.ffast/venv` and runs `ffast-server`.
+- **Provisioning runs inside the SLURM job, not on the login node.** Login nodes
+  commonly cap CPU/memory or forbid `pip`, and the work belongs under an
+  allocation. So the login node does only light, policy-safe steps over SSH —
+  read the marker, and on a hash mismatch `mkdir` + `scp` the wheel into
+  `~/.ffast/`. The venv creation + `pip install` are folded into the **job
+  command** itself (`module load … && venv --system-site-packages && pip install
+  --no-deps ffast.whl + light deps && write marker && ffast-server`), so they run
+  on the allocated compute node. When the marker already matches, the job command
+  is just `module load … && activate && ffast-server` (no install).
+
+- **Idempotent layout on the node.** A stable `~/.ffast/` (shared filesystem,
+  visible from login and compute nodes) holds the venv (`~/.ffast/venv`), the
+  staged wheel, and the marker.
 
 - **Profile — additive, backward compatible.** `ClusterProfile` gains an opt-in
   `provision` flag plus `modules` (the `module load` list) and `venv_path`.
@@ -76,16 +85,19 @@ Auto-bootstrap the server, staged so each piece lands independently.
    `build_server_wheel` (uv/build/pip frontend detection), `wheel_sha256`, the
    pure `needs_provision` decision, and `light_dependencies` derived from
    pyproject. Unit-tested.
-2. **(done)** Provision on node — `provision_node` reads the node marker over
-   SSH, and on a hash mismatch pushes the wheel (`scp`) and runs a generated
-   `provision_script` (`module load` → `venv --system-site-packages` → `pip
-   install --no-deps ffast.whl` + light deps → write marker). Script generators
-   are pure/unit-tested; the SSH transport is integration (unverified without a
+2. **(done)** Stage + in-job provision — `provision_node` reads the node marker
+   over SSH and, on a hash mismatch, `scp`s the wheel into `~/.ffast/` (login node
+   does only file staging). It returns the **job command**: `provision_launch_cmd`
+   (`module load` → `venv --system-site-packages` → `pip install --no-deps
+   ffast.whl` + light deps → write marker → `ffast-server`) on a mismatch, or
+   `server_launch_cmd` (activate + run) when current. Both command generators are
+   pure/unit-tested; the SSH/scp transport is integration (unverified without a
    real cluster).
 3. **(done)** Wired into `connect_to_cluster` — when `profile.provision`, run
-   `provision_node` before `sbatch` and launch from `server_launch_cmd`; the
-   manual `ffast_server_cmd` remains the fallback. `ClusterProfile` gained
-   `provision` / `modules` / `venv_path`.
+   `provision_node` (stage only) and submit its returned command as the SLURM job,
+   so venv+install happen on the allocated node; the manual `ffast_server_cmd`
+   remains the fallback. `ClusterProfile` gained `provision` / `modules` /
+   `venv_path`.
 4. **(covered)** UX — `provision_node` threads the existing `progress_cb`
    (feeding the task-progress system) at each step, re-provisions only on hash
    mismatch, and raises structured errors carrying remote stderr. Deeper Qt
@@ -100,6 +112,12 @@ Auto-bootstrap the server, staged so each piece lands independently.
 - Wheel-only delivery means `ffast`'s own light deps must be installable on the
   node (small, pure-Python) — tracked as an explicit light-deps set so
   `--no-deps` + explicit install stays honest as dependencies change.
+- **In-job install trades login-node limits for compute-node network.** Because
+  the `pip install` now runs in the job, the light deps are fetched from an index
+  on the *compute* node. If compute nodes are fully air-gapped, that step fails;
+  the mitigation (follow-up) is to also stage platform-matched light-dep wheels
+  and install with `--no-index --find-links`. First-cluster validation will show
+  which regime applies.
 - The `client/` → `ffast/` migration (ADR 0026 Step B) is decoupled: it improves
   boundary cleanliness but is not required for auto-bootstrap.
 

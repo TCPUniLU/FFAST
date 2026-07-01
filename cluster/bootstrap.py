@@ -115,13 +115,19 @@ def build_server_wheel(project_root: Path, out_dir: Path) -> Path:
     return wheels[-1]
 
 
-# ── Stage 2: node-side scripts (pure) ────────────────────────────────────────
+# ── Stage 2: the SLURM-job command (pure) ────────────────────────────────────
+#
+# The venv build + install run *inside the SLURM job* (on the allocated compute
+# node), not on the login node — login nodes commonly cap CPU/memory or forbid
+# `pip`, and the work belongs under the allocation. The login node only stages
+# the wheel (a file copy). So both commands below are the *job* command; connect
+# appends `--port`/`--token-hash`, which attach to the trailing `ffast-server`.
 
 def server_launch_cmd(venv_path: str, modules: list[str]) -> str:
-    """The shell command the SLURM job runs to start the provisioned server.
+    """Job command for an already-provisioned node: modules → activate → run.
 
-    Loads the cluster modules, activates the provisioned venv, then execs
-    ``ffast-server``; ``connect_to_cluster`` appends ``--port`` etc. (ADR 0028).
+    Used when the on-node marker already matches the local wheel, so no install
+    is needed — the SLURM job just activates the existing venv (ADR 0028).
     """
     parts = [f"module load {m}" for m in modules]
     parts.append(f"source {venv_path}/bin/activate")
@@ -129,7 +135,7 @@ def server_launch_cmd(venv_path: str, modules: list[str]) -> str:
     return " && ".join(parts)
 
 
-def provision_script(
+def provision_launch_cmd(
     venv_path: str,
     remote_wheel: str,
     light_deps: list[str],
@@ -137,25 +143,26 @@ def provision_script(
     marker_path: str,
     wheel_sha: str,
 ) -> str:
-    """Bash run on the login node to (re)provision the server venv (ADR 0028).
+    """Job command that provisions the venv *then* launches the server (ADR 0028).
 
-    Loads the cluster modules for the heavy scientific stack, creates a
-    ``--system-site-packages`` venv over them (once), installs the pushed
-    ``ffast`` wheel with ``--no-deps`` plus the light pure-Python deps, and
-    writes the wheel's sha256 to the marker. Idempotent: safe to re-run.
+    Run as the SLURM job on the allocated node: load modules, create a
+    ``--system-site-packages`` venv (once), install the staged ``ffast`` wheel
+    (``--no-deps``) plus the light pure-Python deps, write the sha256 marker, and
+    exec ``ffast-server``. ``&&``-chained so any failure aborts before launch;
+    the marker is written last so a failed install never marks the node current.
+    Ends with ``ffast-server`` so connect's ``--port`` etc. attach to it.
     """
-    lines = ["set -e", f"mkdir -p {NODE_DIR}"]
-    lines += [f"module load {m}" for m in modules]
-    lines.append(
-        f"[ -d {venv_path} ] || python -m venv --system-site-packages {venv_path}"
+    parts = [f"module load {m}" for m in modules]
+    parts.append(
+        f"([ -d {venv_path} ] || python -m venv --system-site-packages {venv_path})"
     )
-    lines.append(f"source {venv_path}/bin/activate")
-    lines.append(f"python -m pip install --no-deps --force-reinstall {remote_wheel}")
+    parts.append(f"source {venv_path}/bin/activate")
+    parts.append(f"python -m pip install --no-deps --force-reinstall {remote_wheel}")
     if light_deps:
-        lines.append("python -m pip install " + " ".join(light_deps))
-    # Marker written last, so a failed install never marks the node current.
-    lines.append(f"printf '%s' {wheel_sha} > {marker_path}")
-    return "\n".join(lines) + "\n"
+        parts.append("python -m pip install " + " ".join(light_deps))
+    parts.append(f"printf '%s' {wheel_sha} > {marker_path}")
+    parts.append("ffast-server")
+    return " && ".join(parts)
 
 
 # ── Stage 2: SSH transport (integration; mirrors cluster/connection.py) ───────
@@ -205,12 +212,13 @@ async def provision_node(
     project_root: Optional[Path] = None,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> str:
-    """Ensure the login node has a current ffast server venv; return its launch cmd.
+    """Stage the ffast wheel on the login node; return the SLURM job command.
 
-    Builds the wheel locally, compares its sha256 to the on-node marker, and only
-    re-pushes + reinstalls on a mismatch (ADR 0028). Returns the shell command the
-    SLURM job should run to start the provisioned server. Integration-level (needs
-    a reachable login node); not unit-tested.
+    The login node only does light, policy-safe work — read the marker, and on a
+    hash mismatch ``mkdir`` + ``scp`` the freshly built wheel. The heavy work
+    (venv creation + ``pip install``) is deferred into the returned *job* command
+    so it runs under the SLURM allocation, not on the login node (ADR 0028).
+    Integration-level (needs a reachable login node); not unit-tested.
     """
     def _progress(msg: str) -> None:
         logger.info(msg)
@@ -230,21 +238,19 @@ async def provision_node(
         node_marker = marker_out if marker_rc == 0 else None
 
         if not needs_provision(sha, node_marker):
-            _progress(f"Server up to date on {profile.host} (sha {sha[:12]}), skipping provision")
+            _progress(
+                f"Server up to date on {profile.host} (sha {sha[:12]}); "
+                f"job will launch the existing venv"
+            )
             return server_launch_cmd(venv, modules)
 
-        _progress(f"Provisioning server on {profile.host}…")
+        _progress(f"Staging ffast wheel to {profile.host}…")
         remote_wheel = f"{NODE_DIR}/{wheel.name}"
         _, mk_err, mk_rc = await _ssh_run(profile, "mkdir", "-p", NODE_DIR)
         if mk_rc != 0:
             raise RuntimeError(f"could not create {NODE_DIR} on {profile.host}: {mk_err}")
         await _scp_push(profile, wheel, remote_wheel)
+        _progress("Wheel staged; venv build + install will run inside the SLURM job")
 
-        light = light_dependencies(read_dependencies(root / "pyproject.toml"))
-        script = provision_script(venv, remote_wheel, light, modules, NODE_MARKER, sha)
-        _, err, rc = await _ssh_run(profile, "bash", "-s", stdin=script)
-        if rc != 0:
-            raise RuntimeError(f"provisioning failed on {profile.host} (exit {rc}):\n{err}")
-        _progress(f"Server provisioned on {profile.host} (sha {sha[:12]})")
-
-    return server_launch_cmd(venv, modules)
+    light = light_dependencies(read_dependencies(root / "pyproject.toml"))
+    return provision_launch_cmd(venv, remote_wheel, light, modules, NODE_MARKER, sha)
