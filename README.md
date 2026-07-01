@@ -3,13 +3,15 @@
 A Python GUI application for analyzing and visualizing Machine Learning Force Field (MLFF) models. FFAST provides interactive tools for comparing predictions from different models against ground truth data, with rich visualization capabilities including error analysis plots and a 3D molecular viewer.
 
 **Key Features:**
-- Comprehensive error analysis tools (basic, atomic, total force, subsystem, cluster, scatter, gyration)
-- Interactive 3D molecular visualization ("Loupe" viewer) with geometry measurement
+- Config-driven error analysis tabs (Basic, Atomic, Subsystem, Gyration) built from declarative TOML — add your own metrics, plots, and whole tabs without touching Python
+- Interactive 3D molecular visualization ("3D View" / Loupe) with geometry measurement, animated trajectory playback, and Kabsch alignment
+- Remote execution on an HPC cluster: the GUI runs locally while all heavy compute runs on a SLURM compute node, reached over an SSH-tunnelled WebSocket
+- Headless command-line tools (`ffast-cli`) to validate configs, list/inspect/run metrics, and discover dataset fields
+- Dataset Fields: surface arbitrary extxyz `info`/`arrays` keys as plottable metrics with no code
 - Full support for variable-sized molecular datasets
 - Energy shift correction (subtract mean energy offset) across all energy error plots
-- Scriptable headless mode for running predictions on remote machines without a GUI
 - Dynamic sub-dataset creation from plot zoom/selection
-- Automatic caching of expensive computations via MD5 fingerprinting
+- Automatic caching of expensive computations via content fingerprinting
 
 **Please cite:** Fonseca G, Poltavsky I, Tkatchenko A. *J Chem Theory Comput.* 2023;19(23):8706-8717. [DOI: 10.1021/acs.jctc.3c00985](https://doi.org/10.1021/acs.jctc.3c00985)
 
@@ -37,6 +39,9 @@ A Python GUI application for analyzing and visualizing Machine Learning Force Fi
   - [Using the Loupe 3D Viewer](#using-the-loupe-3d-viewer)
   - [Error Analysis Workflows](#error-analysis-workflows)
   - [Headless Batch Processing](#headless-batch-processing)
+- [Remote Cluster Execution](#remote-cluster-execution)
+- [Command-line Tools (ffast-cli)](#command-line-tools-ffast-cli)
+- [Custom Metrics & Tabs (ffast.toml)](#custom-metrics--tabs-ffasttoml)
 - [Example Workflow](#example-workflow)
 - [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
@@ -51,7 +56,8 @@ A Python GUI application for analyzing and visualizing Machine Learning Force Fi
 
 ### Prerequisites
 
-- **Python 3.9-3.11** (Python 3.12+ is not compatible with PySide6 6.4.2 and will cause a segmentation fault)
+- **Python 3.11** (`pyproject.toml` pins `requires-python = "==3.11.*"`)
+- **PySide6 6.8.x** (pinned `>=6.8,<6.9`)
 - **Supported OS**: Linux, macOS, Windows
 
 ### Using uv (Recommended)
@@ -133,12 +139,12 @@ The dataset appears in the left sidebar.
 ### 4. Explore Error Analysis
 
 Once a model and dataset are loaded:
-- Click the **Basic Errors** tab to see energy and force MAE/RMSE timelines, distributions, and metric tables
-- Explore other tabs: Atomic Errors, Scatter Errors, Total Force Errors, Subsystem Errors, Cluster Error, Gyration
+- Click the **Basic Errors** tab to see energy and force MAE/RMSE timelines, distributions, true-vs-predicted scatter, and metric tables
+- Explore the other tabs: **Atomic Errors**, **Subsystem Errors**, **Gyration**
 
 ### 5. Open the 3D Viewer
 
-- Menu: Loupe > New (or `Ctrl+n`)
+- Menu: 3D View > New (or `Ctrl+n`)
 - Select your dataset from the dropdown
 - Use the slider to navigate through configurations
 - Left-drag to rotate, right-drag to pan, scroll to zoom
@@ -154,7 +160,7 @@ Once a model and dataset are loaded:
 <!-- - **Ghost models**: When loading a saved session, models are reconstructed from cached predictions if the original model file is unavailable -->
 <!-- - **Model comparison**: Load multiple models and compare side-by-side with automatic color coding -->
 - **Zero model**: Load a reference model that predicts zero for all outputs (File > Load Zero Model, or `Ctrl+0`)
-   - Used for quick check of suspicious energy/force ranges in the dastaset.
+   - Used for quick check of suspicious energy/force ranges in the dataset.
 
 ### Dataset Support
 
@@ -168,45 +174,47 @@ Once a model and dataset are loaded:
 Interactive 3D visualization with:
 - **Atom rendering**: Customizable colors (by element, force error, mean force error, or displacement) and adjustable sizes
 - **Bond visualization**: Dynamic bond detection with adjustable distance cutoff, or fixed bonds
-- **Force vectors**: Display force arrows with adjustable length, normalization, and temporal averaging
+- **Force vectors**: Display force arrows with adjustable length and normalization, with an option to draw them only on a selected atom subset
 - **Unit cells**: Visualize periodic boundary conditions
 - **Geometry measurement**: Measure distances (2 atoms), angles (3 atoms), and dihedral angles (4 atoms) interactively
+- **Trajectory playback**: Animate the trajectory with play/step controls, configurable FPS, and frame skipping (INDEX / VIDEO panel)
+- **View settings**: Kabsch alignment of every frame onto frame 0 (optionally heavy-atoms-only), 3-atom reference-frame alignment, atom index labels, index/element filter and highlight, and adjustable pick radius
 - **Atom alignment**: Align structures using a 3-atom reference frame
-- **Atom indices**: Overlay atom index labels in the 3D view
 - **XYZ axes**: Display orientation axes in the viewport corner
 - **Camera controls**: Manual positioning, field of view adjustment, center-of-mass tracking, save/load camera positions
-- **Atom filtering**: Select specific atoms to focus analysis on a subset alows you to isolate and analyze specific regions of a molecule, such as an active site or functional group
+- **Atom filtering**: Select specific atoms to focus analysis on a subset, letting you isolate and analyze specific regions of a molecule, such as an active site or functional group
 - **Selection**: Click atoms to select, or rectangle-select with Ctrl+drag
 - **Export**: Save screenshots as PNG (with optional transparent background)
-- **Animation**: Navigate trajectory with the frame slider
 
-**Loupe menu controls** (apply to all open Loupe windows):
+**3D View menu controls** (apply to all open viewer windows):
 - Bond Width: Thin, Normal, Thick, Extra Thick
 - Atom Size: 50%, 75%, 100%, 150%, 200%
 - Bond Color and Background Color pickers
 
 ### Error Analysis Tools
 
-Multiple tabs for comprehensive error analysis:
+The analysis tabs are built declaratively from TOML (see [Custom Metrics & Tabs](#custom-metrics--tabs-ffasttoml)). Four tabs ship built-in:
 
-- **Basic Errors**: MAE/RMSE timelines and KDE distributions for both energies and forces, plus MAE and RMSE summary tables. Includes a "Subtract mean energy offset" checkbox that removes the constant energy bias from all energy error plots and tables.
-- **Atomic Errors**: Per-atom and per-element force error heatmaps and distributions to identify problematic atoms
-- **Scatter Errors**: Predicted vs. actual correlation plots for both energies and forces, with interactive point selection for sub-dataset creation
-- **Total Force Errors**: System-level total force magnitude error distributions and MAE/RMSE tables
-- **Subsystem Errors**: Error analysis on molecular subsystems with aggregated per-geometry force errors
-- **Cluster Error**: Dataset clustering (agglomerative or K-Means) and per-cluster error bar charts. Note: not yet supported for variable-sized datasets.
-- **Gyration**: Radius of gyration analysis (weighted by atomic number) with timeline and distribution plots
+- **Basic Errors**: Energy and force MAE/RMSE timelines and KDE distributions, true-vs-predicted scatter plots for energies and forces, plus MAE and RMSE summary tables. Includes a "Subtract mean energy offset" toggle that removes the constant energy bias from all energy error plots and tables.
+- **Atomic Errors**: Per-element force error distributions and tables (grouped by element, with an element picker) to identify problematic species.
+- **Subsystem Errors**: Net (total) per-structure force error distribution and MAE/RMSE tables.
+- **Gyration**: Radius of gyration (weighted by atomic number) timeline and distribution, plus overlay timelines against energy and force error. Shares a smoothing control across its panels.
+
+You can add further tabs, panels, and metrics yourself without writing code — see [Custom Metrics & Tabs](#custom-metrics--tabs-ffasttoml).
 
 ### Advanced Features
 
+- **Remote cluster execution**: Connect to an HPC cluster (SLURM) and run all compute on a compute node while the GUI stays local — see [Remote Cluster Execution](#remote-cluster-execution)
+- **Custom metrics & tabs**: Declare new metrics, Dataset Fields, plots, and whole analysis tabs in a project `ffast.toml` with no Python — see [Custom Metrics & Tabs](#custom-metrics--tabs-ffasttoml)
+- **Command-line tools**: `ffast-cli` validates configs, lists/inspects/tests/runs metrics, and discovers dataset fields headlessly — see [Command-line Tools](#command-line-tools-ffast-cli)
 - **Sub-datasets**: Create filtered datasets from plot zoom/selection
   - Click the "Sub" button on any compatible plot
   - Sub-dataset updates dynamically as you zoom/pan
-  - Can be opened in a separate Loupe window for 3D inspection
-- **Energy shift correction**: A global checkbox in the Basic Errors tab subtracts the mean energy offset (mean of predicted minus true energies) from all energy error calculations, affecting distributions, timelines, scatter plots, cluster errors, and MAE/RMSE tables across all tabs
-- **Atom filtering**: Focus analysis on specific atoms via the Loupe atom filter panel
+  - Can be opened in a separate 3D View window for inspection
+- **Energy shift correction**: A toggle in the Basic Errors tab subtracts the mean energy offset (mean of predicted minus true energies) from all energy error calculations, affecting distributions, timelines, scatter plots, and MAE/RMSE tables
+- **Atom filtering**: Focus analysis on specific atoms via the 3D View atom filter panel
 - **Headless mode**: Batch processing without the GUI for large-scale computations on remote machines
-- **Data caching**: Automatic caching of expensive computations, keyed by MD5 fingerprints of models and datasets
+- **Data caching**: Automatic caching of expensive computations, keyed by content fingerprints of models and datasets
 - **Save/Load sessions**: Save the entire working state (datasets, models, all cached computations) to a directory for later restoration
 
 ### Keyboard Shortcuts
@@ -216,10 +224,14 @@ Multiple tabs for comprehensive error analysis:
 | `Ctrl+d` | Load dataset |
 | `Ctrl+m` | Load model |
 | `Ctrl+p` | Load prediction |
+| `Ctrl+0` | Load zero model |
 | `Ctrl+l` | Load saved session |
 | `Ctrl+s` | Save session |
-| `Ctrl+n` | New Loupe window |
-| `Ctrl+0` | Load zero model |
+| `Ctrl+n` | New 3D View window |
+| `Ctrl+Shift+C` | Connect to cluster |
+| `Ctrl+Shift+L` | Connect to local server |
+| `Ctrl+Shift+D` | Load remote dataset |
+| `Ctrl+Shift+P` | Load remote prediction |
 
 ---
 
@@ -276,7 +288,7 @@ After loading, view dataset details in the left sidebar:
 4. Select the corresponding dataset from the dropdown
 5. The prediction appears as a model in the sidebar
 
-#### For ASe-compatible predictions:
+#### For ASE-compatible predictions:
 1. Create an ASE-readable file (e.g., `.xyz`, `.db`) with:
    - Energies in `.info['energy']` or via `.get_potential_energy()`
    - Forces in `.arrays['forces']` or via `.get_forces()`
@@ -293,9 +305,9 @@ Models are identified by MD5 fingerprints based on their parameters. This enable
 
 ### Using the Loupe 3D Viewer
 
-#### Opening Loupe
+#### Opening the 3D Viewer
 
-Menu: Loupe > New (or `Ctrl+n`). A window opens with a dataset selection dropdown.
+Menu: 3D View > New (or `Ctrl+n`). A window opens with a dataset selection dropdown. (The "New" item is enabled once the local server connection is established.)
 
 #### Basic Controls
 
@@ -329,7 +341,7 @@ Menu: Loupe > New (or `Ctrl+n`). A window opens with a dataset selection dropdow
 - Enable/Disable force arrow display
 - Length: Scale arrow length
 - Normalized: Set all arrows to equal length per frame
-- Avg. window: Smooth forces over N frames
+- Filter to selection: Draw arrows only on a chosen atom subset
 
 **UNIT CELL:**
 - Show/Hide periodic cell boundary edges (available when lattice data is present)
@@ -340,21 +352,30 @@ Menu: Loupe > New (or `Ctrl+n`). A window opens with a dataset selection dropdow
 - Center of mass tracking (auto-center on molecular COM)
 - Save/Load camera positions
 
-**INFO / MEASUREMENT:**
+**Info / Measurement** (tools within the ATOMS pane):
 - Select 1 atom: View position, element, and index
 - Select 2 atoms: Measure distance
 - Select 3 atoms: Measure bond angle
 - Select 4 atoms: Measure dihedral angle
 
-**ALIGNMENT:**
+**Alignment** (tools within the ATOMS pane):
 - Select 3 reference atoms to align the molecular structure
 - Provides translation and rotation alignment
 
-**INDICES:**
-- Toggle atom index label overlays in the 3D view
-- Adjustable font size
+**INDEX / VIDEO:**
+- Play / step through the trajectory
+- FPS: Playback speed
+- Skip frames: Advance more than one frame per tick
 
-**AXES:**
+**VIEW SETTINGS:**
+- Kabsch align: Rigidly align every frame onto frame 0 (minimizes RMSD); optionally heavy-atoms-only
+- 3-atom frame align: Align frames using three reference atom indices
+- Atom index labels: Overlay atom index labels in the 3D view
+- Filter indices: Keep only listed atoms/elements (e.g. `0 1 2`, `C`, or `-H` to exclude)
+- Highlight indices: Show a selection overlay on listed atoms
+- Pick radius: Pointer-picking tolerance in pixels
+
+**Axes** (toggle within the CAMERA pane):
 - Toggle XYZ orientation axes display in the viewport corner
 
 **ATOM FILTER:**
@@ -402,19 +423,10 @@ Sub-datasets update dynamically as you zoom.
 
 #### Correlation Analysis
 
-1. Click the **Scatter Errors** tab
-2. View predicted vs. actual scatter plots for energies and forces
+1. Click the **Basic Errors** tab
+2. View the predicted vs. actual scatter panels for energies and forces
 3. Points close to the diagonal indicate good predictions; outliers indicate problematic configurations
 4. Click or box-select points to create a sub-dataset from outliers
-
-#### Cluster Analysis
-
-1. Click the **Cluster Error** tab
-2. The dataset is automatically clustered using configured schemes (agglomerative with Coulomb distance, K-Means with energy)
-3. View per-cluster error bar charts
-4. Click on bars to select clusters for further analysis
-
-Note: Cluster analysis is not currently supported for variable-sized datasets.
 
 ### Headless Batch Processing
 
@@ -444,38 +456,43 @@ env.waitForTasks(verbose=True)
 # Get the loaded dataset and its fingerprint
 dataset = env.getDatasetFromPath("examples/data/dataset.xyz")
 
-# Load pre-computed predictions (ASE file with energies and forces)
-# The second argument is the dataset fingerprint to match against
+# Load pre-computed predictions (ASE file with energies and forces).
+# The second argument is the dataset fingerprint to match against.
 env.loadPrepredictedDataset("examples/data/prediction.xyz", dataset.fingerprint)
 
 # Get the model created from the predictions (ghost model)
-model = env.getAllModels()[0]
+model = env.models.all()[0]
 
-# Queue error computations
-env.addToGenerationQueue("energyError", model=model, dataset=dataset)
-env.addToGenerationQueue("forcesError", model=model, dataset=dataset)
-env.addToGenerationQueue("energyErrorMetrics", model=model, dataset=dataset)
-env.addToGenerationQueue("forcesErrorMetrics", model=model, dataset=dataset)
-env.addToGenerationQueue("energyErrorDist", model=model, dataset=dataset)
-env.addToGenerationQueue("forcesErrorDist", model=model, dataset=dataset)
+# Queue metric computations by Metric ID (see `ffast-cli metrics list`)
+metrics = [
+    ("ffast.energy_mae", {}),
+    ("ffast.energy_rmse", {}),
+    ("ffast.force_mae_global", {}),
+    ("ffast.force_rmse_global", {}),
+]
+for metric_id, params in metrics:
+    key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
+    env.data.taskGenerateMetric(metric_id, params, model, dataset, key)
 env.waitForTasks(verbose=True)
 
-# Retrieve computed metrics
-eMetrics = env.getData("energyErrorMetrics", model=model, dataset=dataset)
-fMetrics = env.getData("forcesErrorMetrics", model=model, dataset=dataset)
+# Retrieve computed metrics from the cache
+def get_metric(metric_id, params={}):
+    key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
+    result = env.data.getCacheByKey(key, subChecks=False)
+    return float(result.values) if result is not None else None
 
-print(f"Energy MAE: {eMetrics.get('mae'):.4f}")
-print(f"Energy RMSE: {eMetrics.get('rmse'):.4f}")
-print(f"Force MAE: {fMetrics.get('mae'):.4f}")
-print(f"Force RMSE: {fMetrics.get('rmse'):.4f}")
+print(f"Energy MAE:  {get_metric('ffast.energy_mae'):.4f}")
+print(f"Energy RMSE: {get_metric('ffast.energy_rmse'):.4f}")
+print(f"Force MAE:   {get_metric('ffast.force_mae_global'):.4f}")
+print(f"Force RMSE:  {get_metric('ffast.force_rmse_global'):.4f}")
 
 # Save session for later use in the GUI
 # Creates a directory at the given path containing:
 #   info.json      - dataset/model metadata
-#   cache/*.npz    - all computed data (errors, distributions, metrics)
+#   cache/*.npz    - all computed data (metrics, distributions, errors)
 # Load it in the GUI via File > Load (Ctrl+l).
 savePath = os.path.join(PROJECT_ROOT, "results")
-env.save(savePath)
+env.persistence.save(savePath)
 print(f"\nSession saved to: {savePath}")
 
 # Clean up
@@ -487,6 +504,8 @@ Run:
 python examples/headless/headless.py
 ```
 
+> **Tip:** For one-off metric computation you don't need to write a script — use the [`ffast-cli metrics run`](#command-line-tools-ffast-cli) command instead.
+
 #### Loading Pre-computed Results in the GUI
 
 1. Launch the GUI: `python main.py`
@@ -495,6 +514,218 @@ python examples/headless/headless.py
 4. Datasets, models, and all cached computations are restored automatically
 
 Note: Original dataset files must still be accessible at their saved paths. If model files are unavailable, ghost models are created from the cached predictions.
+
+---
+
+## Remote Cluster Execution
+
+FFAST can run all heavy computation on an HPC cluster while the GUI stays on your laptop. A lightweight server process (`ffast-server`) runs on a SLURM compute node, and the local GUI connects to it over a WebSocket tunnelled through SSH. Large datasets never leave the cluster — only the subsets you select (sub-datasets) are transferred to the local 3D viewer.
+
+> Desktop mode already runs a *managed local* `ffast-server` automatically; remote mode points the very same protocol at a cluster node instead.
+
+### 1. Define a Cluster Profile
+
+Add a profile to `config/clusters.json`:
+
+```json
+{
+  "profiles": [
+    {
+      "name": "MyCluster GPU",
+      "host": "login.cluster.edu",
+      "username": "myuser",
+      "identity_file": "~/.ssh/id_ed25519",
+      "ffast_server_cmd": "module load Python/3.11 && source ~/env/ffast_env/bin/activate && ffast-server",
+      "partition": "gpu",
+      "account": "my_account",
+      "qos": "normal",
+      "job_name": "ffast",
+      "cores": 1,
+      "cpus_per_task": 16,
+      "ntasks_per_node": 1,
+      "gpus_per_task": 1,
+      "gpu_count": 0,
+      "memory_mb": 8192,
+      "time_limit": "00:30:00",
+      "snapshot_interval_minutes": 5
+    }
+  ]
+}
+```
+
+| Group | Fields |
+|-------|--------|
+| SSH | `name`, `host`, `username`, `identity_file` (key auth only), `ffast_server_cmd` (must end by launching `ffast-server` on the node) |
+| Scheduler | `partition`, `account`, `qos`, `job_name` |
+| Resources | `cores`, `cpus_per_task`, `ntasks_per_node`, `gpus_per_task`, `gpu_count`, `memory_mb`, `time_limit` (`HH:MM:SS`) |
+| Recovery | `snapshot_interval_minutes` (server auto-snapshots state; `0` disables) |
+
+Profiles can also be created, edited, and saved from the connection dialog.
+
+### 2. Connect
+
+- Menu: File > Connect to Cluster… (or `Ctrl+Shift+C`)
+- Choose a profile and confirm. FFAST submits a SLURM job, waits for it to start, opens an SSH tunnel to the node, and connects.
+- If a job for that profile is already running, you are offered to **reconnect** to it instead of submitting a new one.
+
+(For testing, File > Connect to Local Server… / `Ctrl+Shift+L` connects directly to a running `ffast-server` at a given `host:port`.)
+
+### 3. Load Remote Data
+
+- **Load Remote Dataset…** (`Ctrl+Shift+D`): enter a path on the cluster filesystem. For ASE files the server probes the first frame and lets you pick the energy/force keys; a stride dialog lets you subsample very large trajectories.
+- **Load Remote Prediction…** (`Ctrl+Shift+P`): attach a cluster-side prediction file (`.npz` or ASE) to a loaded remote dataset. Only the prediction arrays are transferred to the client.
+
+Open a sub-dataset in the 3D View to inspect specific configurations locally.
+
+> **Note:** Live model inference driven from the remote UI is not yet wired — remote workflows compute predictions ahead of time and attach them with *Load Remote Prediction*.
+
+---
+
+## Command-line Tools (ffast-cli)
+
+`ffast-cli` is a headless companion CLI (installed as a console script with `pip install -e .`, or run as `python -m ffast.cli`). It drives the metric/config machinery without launching the GUI.
+
+```bash
+# Validate a project config
+ffast-cli config validate ffast.toml
+
+# Metrics
+ffast-cli metrics list [--config ffast.toml]          # list registered metric IDs
+ffast-cli metrics inspect <metric_id> [--config ...]  # show inputs, params, shape, unit
+ffast-cli metrics test [<metric_id>] [--config ...]   # run a metric's self-tests (all if omitted)
+ffast-cli metrics validate [--config ...]             # freeze the metric graph; report ref/shape/cycle errors
+
+# Compute a metric against real data
+ffast-cli metrics run <metric_id> --dataset path/to/data.xyz \
+    [--dataset-type "ase (auto)"] \
+    [--prediction pred.xyz] [--pred-energy-key energy] [--pred-force-key forces] \
+    [--param KEY=VALUE ...] [--config ffast.toml] [--json] [--verbose]
+
+# Visualization (3D scene) stages
+ffast-cli stages list
+ffast-cli stages inspect <stage_id>
+ffast-cli stages test [<stage_id>]
+
+# Discover which extxyz keys a file exposes as Dataset Fields
+ffast-cli dataset keys path/to/data.xyz
+```
+
+`metrics list`, `inspect`, `run`, and `validate` all honor a project config (auto-discovered or via `--config`), so any custom metrics and Dataset Fields you declare are available to them too.
+
+---
+
+## Custom Metrics & Tabs (ffast.toml)
+
+FFAST's metrics, plots, and analysis tabs are configured declaratively. A project `ffast.toml` overlays the built-in defaults: an empty file keeps the full default experience, and named entries add or tune features. The config is auto-discovered as the nearest `ffast.toml` found by searching upward from the dataset/session directory, or loaded explicitly via **File > Load Config…** (or `--config` on the CLI). Unknown keys are rejected rather than ignored.
+
+You can do three things with **no Python**:
+
+### 1. Dataset Fields — surface extxyz keys as metrics
+
+Any per-frame (`atoms.info`) or per-atom (`atoms.arrays`) numeric key in your file can be exposed as a plottable metric:
+
+```toml
+[[metrics.fields]]
+id    = "demo.total_charge"
+ref   = "reference.info.total_charge"   # info.<key> → per-frame scalar
+label = "Total charge"
+unit  = "dimensionless"
+```
+
+`ref` is `{reference,prediction}.{info,atoms}.<key>`; `info` keys become per-frame scalars and `atoms` keys become per-atom values. Discover a file's usable keys with `ffast-cli dataset keys <file>`. (A demo `ffast.toml` lives at the repo root.)
+
+### 2. Analysis Tabs & Panels — new plots and tabs
+
+Declare a grid of panels that bind metrics to axes. Built-in panel kinds include `timeline`, `density`, `scatter`, `table`, `overlay_timeline`, `grouped_density`, and `grouped_table`:
+
+```toml
+[[visualization.tabs]]
+name = "Dataset Fields (demo)"
+has_data_selector = true
+
+[[visualization.tabs.panels]]
+kind = "timeline"
+row = 0
+col = 0
+title = "Total charge per frame"
+  [visualization.tabs.panels.metrics.y]
+  metric = "demo.total_charge"
+
+[[visualization.tabs.panels]]
+kind = "density"
+row = 1
+col = 0
+title = "Reference-energy distribution"
+  [visualization.tabs.panels.metrics.value]
+  metric = "demo.ref_energy_field"
+  transform = "value_kde"          # reductions (KDE, smoothing, …) are transforms
+```
+
+The four built-in tabs (Basic Errors, Atomic Errors, Subsystem Errors, Gyration) are themselves defined this way in `ffast/config/builtin_tabs/`.
+
+### 3. Custom metric modules — new calculations
+
+For genuinely new computations, write a small Python module and point the config at it. A metric is a pure function wrapped with the `@metric` decorator from `ffast.metrics`. Its **id, inputs, output shape, compute parameters, and label are inferred from the function signature, type annotations, and docstring** — you only declare what can't be inferred (`unit`, `tests`):
+
+```python
+# my_metrics.py
+import numpy as np
+from jaxtyping import Float
+from ffast.metrics import metric, units, inputs as I
+from ffast.metrics.signature import Ref
+
+METRIC_NAMESPACE = "my_lab"     # metric id = "<namespace>.<function name>"
+
+@metric(
+    unit=units.force,
+    tests=[                                     # runnable via `ffast-cli metrics test`
+        {
+            "inputs": {"forces": [[[0.0, 0.0, 1.0], [0.0, 3.0, 0.0]]]},
+            "parameters": {},
+            "expected": [3.0],
+            "atol": 1e-10,
+        }
+    ],
+)
+def max_force_per_frame(
+    forces: Ref[I.reference_forces],            # input ref → resolved by the server
+) -> Float[np.ndarray, "N_frames"]:             # return shape: one value per frame
+    """Max force component (per frame)"""        # docstring line 1 → metric label
+    # forces has shape (N_frames, N_atoms, 3); return one scalar per frame.
+    # The function receives ONLY its declared inputs/parameters — never the
+    # Environment, Dataset, or Model objects.
+    return np.max(np.abs(forces), axis=(1, 2))
+```
+
+Key points:
+
+- **Id** is `METRIC_NAMESPACE + "." + function name` (must contain a dot). **Label/description** come from the docstring (first line / remainder). Pass `id=`/`namespace=`/`label=`/`description=` to override.
+- **Inputs** are the parameters *before* `*`, each annotated with `Ref["<ref>"]`; the server resolves the ref before your function runs. Available constants (`from ffast.metrics import inputs as I`): `reference.{energies, forces, stress, positions, elements, masses}`, `prediction.{energies, forces, stress}`, and `selection.indices`. A `Ref` to any **Dataset Field** (`"reference.atoms.charges"`) or **another metric's ID** (`"ffast.energy_difference"`) builds a [Metric Graph](docs/adr/0011-pure-metrics-with-configuration-driven-presentation.md) edge that the server resolves in order.
+- **Shape** comes from the return annotation: a jaxtyping array `Float[np.ndarray, "<dims>"]` whose axis names are `dims` names (`N_frames`, `N_atoms`, `N_elements`, `xyz`, `curve_xy`, …), or `-> float` for a scalar. **Unit** is the one thing you still pass explicitly (`units.energy`, `units.force`, `units.dimensionless`, …).
+- **Optional inputs** that may be absent are positional params with a default — e.g. `offsets=None` resolves to `None` when missing.
+- **Tunable compute parameters** are keyword-only args *after* `*`; their type/default come from the signature (`Literal["l1","l2"]` → choice, `bool`/`int`/`float`), with `Annotated[float, P(min=…, max=…, label=…)]` for extra metadata.
+- Metrics must be **deterministic and picklable** — they execute in an isolated worker pool, so keep them at module level (no closures/lambdas) with no global mutation.
+- `tests=[...]` run headlessly with `ffast-cli metrics test my_lab.max_force_per_frame` and validate values, shape, dtype, and unit without any project data.
+
+> Inference is optional: anything you pass to `@metric(...)` overrides what would be inferred, so the fully-explicit form (`@metric(id=..., inputs={...}, shape=(dims.N_frames,), parameters={...})`) still works unchanged.
+
+Then register the module in your `ffast.toml`:
+
+```toml
+[[metrics.modules]]
+path = "my_metrics.py"        # relative to this config file (or use import_path = "pkg.mod")
+```
+
+Validate everything before launching the GUI:
+
+```bash
+ffast-cli config validate ffast.toml      # config structure
+ffast-cli metrics validate                # freezes the metric graph; checks refs/shapes/cycles
+ffast-cli metrics test my_lab.max_force_per_frame
+ffast-cli metrics run  my_lab.max_force_per_frame --dataset examples/data/dataset.xyz
+```
+
+Once it validates, the new metric ID can be bound to any panel (see [Analysis Tabs & Panels](#2-analysis-tabs--panels--new-plots-and-tabs) above) or used for 3D-view atom coloring.
 
 ---
 
@@ -562,9 +793,9 @@ Click the **Atomic Errors** tab to see per-element force error distributions. Lo
 3. Click the **Sub** toggle button in the plot toolbar
 4. A new "Sub: dha" dataset appears in the sidebar, containing only the configurations visible in the zoomed view
 
-#### 7. Visualize in Loupe
+#### 7. Visualize in the 3D Viewer
 
-1. Menu: Loupe > New (`Ctrl+n`)
+1. Menu: 3D View > New (`Ctrl+n`)
 2. Select "Sub: dha" from the dropdown
 3. Enable force vectors in the FORCE VECTORS panel
 4. Drag the frame slider to browse configurations with high errors
@@ -572,9 +803,9 @@ Click the **Atomic Errors** tab to see per-element force error distributions. Lo
 
 #### 8. Compare Model Performance
 
-In the **Scatter Errors** tab, compare predicted vs. actual scatter plots for both models. Check how tightly the points cluster around the diagonal.
+In the **Basic Errors** tab, compare the predicted vs. actual scatter panels for both models. Check how tightly the points cluster around the diagonal.
 
-Explore all other tabs (Cluster Error, Gyration, Total Force Errors, Subsystem Errors) for additional insights.
+Explore the other tabs (Atomic Errors, Subsystem Errors, Gyration) for additional insights.
 
 ---
 
@@ -590,20 +821,13 @@ python main.py [--workdir PATH]
 
 Debug logging is automatically saved to `debug.log` in the FFAST directory.
 
-### Alternative Entry Point
-
-If you encounter Qt plugin path issues, try:
-```bash
-python run_ffast.py
-```
-
-This wrapper script explicitly sets `QT_PLUGIN_PATH` before launching the application.
-
 ### Configuration Files
 
-- `config/default.json`: Default settings (plot parameters, clustering schemes, Loupe defaults, colors)
+- `config/default.json`: Default app settings (plot parameters, 3D viewer defaults, colors)
 - `config/userConfig.py`: User configuration overrides
 - `config/atoms.py`: Atomic element data (colors, covalent radii, element names)
+- `config/clusters.json`: Saved cluster connection profiles for [remote execution](#remote-cluster-execution)
+- `ffast.toml` (project config): Custom metrics, Dataset Fields, and analysis tabs — see [Custom Metrics & Tabs](#custom-metrics--tabs-ffasttoml)
 
 ### Key Configuration Options (default.json)
 
@@ -620,7 +844,6 @@ This wrapper script explicitly sets `QT_PLUGIN_PATH` before launching the applic
 | `loupeBGColor` | "#000000" | Loupe background color |
 | `loupeBondsColor` | "#404040" | Default bond color |
 | `loupeForceErrorPercentile` | 0.995 | Percentile for force error color scaling |
-| `clusterScheme` | (see file) | Clustering methods and parameters |
 
 ---
 
@@ -629,12 +852,12 @@ This wrapper script explicitly sets `QT_PLUGIN_PATH` before launching the applic
 ### Installation Issues
 
 **Segmentation fault on startup:**
-- Ensure you are using Python 3.9-3.11. Python 3.12+ causes a segmentation fault with PySide6 6.4.2.
+- Ensure you are using Python 3.11 (`requires-python = "==3.11.*"`).
 - Recreate the virtual environment: `rm -rf .venv && uv venv --python 3.11 && uv sync`
 - Test PySide6: `python -c "from PySide6.QtWidgets import QApplication"`
 
 **ImportError: No module named 'PySide6':**
-- Install with: `pip install pyside6==6.4.2`
+- Install with: `pip install "pyside6>=6.8,<6.9"`
 
 **OpenGL errors on startup:**
 - Update graphics drivers
@@ -654,18 +877,13 @@ Solutions:
    pip install -e .
    ```
 
-2. **Use the alternative entry point** which explicitly sets Qt plugin paths:
-   ```bash
-   python run_ffast.py
-   ```
-
-3. **Recreate the environment:**
+2. **Recreate the environment:**
    ```bash
    rm -rf .venv && uv venv --python 3.11 && uv sync
    ```
 
 **UI elements not rendering correctly:**
-- Ensure PySide6 version is exactly 6.4.2: `pip install pyside6==6.4.2`
+- Ensure PySide6 is 6.8.x: `pip install "pyside6>=6.8,<6.9"`
 
 ### Model Loading Issues
 
@@ -730,22 +948,31 @@ If you want to contribute to the development of FFAST, here are some guidelines:
 
 #### Code Structure
 
-- `main.py`: Entry point and main event loop
-- `UI/`: User interface components (MainWindow, SideBar, Plots, Loupe, Templates)
-- `modules/`: Auto-discovered pluggable modules (error analysis, model loaders, Loupe features)
-- `client/`: Core logic (Environment, DataType/DataEntity, TaskManager)
-- `loaders/`: Dataset and model loader base classes
-- `config/`: Configuration files
+- `main.py`: GUI entry point and main event loop
+- `server.py`: `ffast-server` — the WebSocket server that runs the Environment headlessly on a (local or cluster) node
+- `ffast/`: Core engine package
+  - `metrics/`: Metric registry, built-in metrics, and transforms
+  - `config/`: TOML config schema and the built-in analysis tab definitions (`builtin_tabs/`)
+  - `visualization/`: Scene, pipeline, and stages that drive the 3D view
+  - `cli/`: The `ffast-cli` command-line tool
+  - `protocol/`, `renderers/`, `session/`: Wire protocol, renderer backends, session persistence
+- `client/`: The Environment and its services (cache, models, datasets, data, remote, persistence) plus the TaskManager
+- `cluster/`: SLURM backend, remote session, SSH tunnelling, and the remote dataset proxy
+- `UI/`: Qt UI components (MainWindow, SideBar, Plots, 3D View/Loupe, panels, controls, dialogs)
+- `modules/`: Auto-discovered pluggable modules (3D viewer features; config-driven analysis tabs via `configTabs.py`)
+- `datasetLoaders/`, `modelLoaders/`: Dataset and model loader base classes
+- `config/`: JSON config files (`default.json`, `clusters.json`)
 
-#### Adding a New Module
+#### Adding Analysis or Features
 
-1. Create `modules/my_module.py`
-2. Define `DEPENDENCIES = ["other_module"]` if needed
-3. Implement one or more hooks:
-   - `loadData(env)`: Register data types
-   - `loadUI(UIHandler, env)`: Add UI components (plots, panels, tabs)
-   - `loadLoupe(loupeViewer, env, dataset)`: Add 3D viewer features
-4. The module is automatically discovered and loaded in dependency order
+- **New metrics, plots, or whole tabs** — prefer the declarative route: add them to a project `ffast.toml`, no Python required. See [Custom Metrics & Tabs](#custom-metrics--tabs-ffasttoml).
+- **New 3D viewer features or loaders** — add a `modules/my_module.py`:
+  1. Define `DEPENDENCIES = ["other_module"]` if needed.
+  2. Implement one or more hooks:
+     - `loadData(env)`: Register data types / metrics
+     - `loadUI(UIHandler, env)`: Add UI components (panels, tabs)
+     - `loadLoupe(loupeViewer, env, dataset)`: Add 3D viewer features
+  3. The module is auto-discovered and loaded in dependency order.
 
 ### Contributing
 
