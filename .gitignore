@@ -166,3 +166,10 @@ config/user.json
 CLAUDE.md
 .DS_Store
 /results
+
+# Internal working docs — not for the public repo (planning scratch, AI-agent
+# workflow config, issue drafts). Kept local only.
+FFAST_v2_plan.md
+ffast_vsize_todo.md
+docs/agents/
+docs/issues/
