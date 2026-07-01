@@ -3,7 +3,12 @@
 import hashlib
 from pathlib import Path
 
+import pytest
+
+from cluster.backend import ClusterError
+from cluster.config import ClusterProfile
 from cluster.bootstrap import (
+    provision_node,
     HEAVY_DEPS,
     _dist_name,
     light_dependencies,
@@ -61,13 +66,17 @@ def test_needs_provision():
 
 
 def test_server_launch_cmd():
-    assert server_launch_cmd("~/.ffast/venv", ["Python/3.11", "PyTorch"]) == (
+    s = server_launch_cmd("~/.ffast/venv", ["Python/3.11", "PyTorch"])
+    assert s.startswith(
         "module load Python/3.11 && module load PyTorch"
-        " && source ~/.ffast/venv/bin/activate && ffast-server"
+        " && source ~/.ffast/venv/bin/activate && "
     )
-    # No modules -> just activate + run.
-    assert server_launch_cmd("~/.ffast/venv", []) == (
-        "source ~/.ffast/venv/bin/activate && ffast-server"
+    # Compatibility gate runs before the real launch.
+    assert "grep -qe '--token-hash'" in s
+    assert s.endswith("&& ffast-server")
+    # No modules -> just activate + verify + run.
+    assert server_launch_cmd("~/.ffast/venv", []).startswith(
+        "source ~/.ffast/venv/bin/activate && "
     )
 
 
@@ -86,6 +95,10 @@ def test_provision_launch_cmd():
     assert "source ~/.ffast/venv/bin/activate" in s
     assert "--no-deps --force-reinstall ~/.ffast/ffast-2.0.0-py3-none-any.whl" in s
     assert "python -m pip install msgpack websockets" in s
+    # Compatibility gate runs AFTER install but BEFORE the marker, so a bad
+    # install is never recorded as current.
+    assert "grep -qe '--token-hash'" in s
+    assert s.index("grep -qe '--token-hash'") < s.index("printf '%s' deadbeef")
     # Marker written just before launch; command ends with bare ffast-server so
     # connect_to_cluster's --port/--token flags attach to it.
     assert "printf '%s' deadbeef > ~/.ffast/installed.sha256 && ffast-server" in s
@@ -97,3 +110,12 @@ def test_provision_launch_cmd_no_light_deps():
     installs = [p for p in s.split(" && ") if p.startswith("python -m pip install")]
     assert len(installs) == 1  # only the wheel install, no light-deps step
     assert "--no-deps --force-reinstall" in installs[0]
+
+
+async def test_provision_node_build_failure_raises_clustererror(tmp_path):
+    """A wheel-build failure surfaces as ClusterError (the type connect handles
+    and logs), not an unhandled RuntimeError. tmp_path has no pyproject.toml, so
+    the build fails before any SSH — cluster-free."""
+    profile = ClusterProfile(name="x", host="nonexistent.invalid", provision=True)
+    with pytest.raises(ClusterError):
+        await provision_node(profile, project_root=tmp_path)

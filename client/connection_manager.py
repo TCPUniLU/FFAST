@@ -263,6 +263,9 @@ class ConnectionManager:
             raise
         except ClusterError as exc:
             logger.error("Cluster connection failed: %s", exc)
+            if getattr(exc, "stderr", ""):
+                logger.error("  remote stderr:\n%s", exc.stderr)
+            await self._log_provision_diagnostics(profile, _job_id)
             # Job is definitively dead — purge the stale record so the
             # reconnect dialog doesn't re-appear on the next connect attempt.
             if reconnect_job_id is not None:
@@ -276,6 +279,7 @@ class ConnectionManager:
             )
         except OSError as exc:
             logger.error("SSH/WebSocket error: %s", exc)
+            await self._log_provision_diagnostics(profile, _job_id)
             # If we submitted a new job but the tunnel/WebSocket failed,
             # cancel it on the cluster so it doesn't run to its time limit.
             # For reconnect jobs we leave the job alone (tunnel failure is
@@ -288,6 +292,38 @@ class ConnectionManager:
                 message=f"Connection failed: {exc}",
                 error=True,
             )
+        except Exception as exc:  # never swallow — log the full traceback
+            logger.exception("Unexpected error during cluster connect")
+            await self._log_provision_diagnostics(profile, _job_id)
+            if reconnect_job_id is None and _job_id is not None:
+                asyncio.create_task(_scancel(_job_id))
+            self.eventPush(
+                "TASK_PROGRESS",
+                taskID,
+                message=f"Connection failed: {exc}",
+                error=True,
+            )
+
+    async def _log_provision_diagnostics(self, profile, job_id):
+        """On a provision-enabled connect failure, fetch + log the SLURM job log.
+
+        Provisioning runs inside the job, so a failure there (bad module, pip
+        error on the compute node) lives in the job log, not a client exception.
+        Best-effort — never raises."""
+        if not getattr(profile, "provision", False) or not job_id:
+            return
+        try:
+            from cluster.bootstrap import tail_job_log
+            log = await tail_job_log(profile, job_id)
+            if log:
+                logger.error("SLURM job %s log — provisioning diagnostics:\n%s",
+                             job_id, log)
+            else:
+                logger.error(
+                    "SLURM job %s: no log found (~/slurm-%s.{out,err}); "
+                    "check the cluster for provisioning output.", job_id, job_id)
+        except Exception as diag_exc:
+            logger.warning("Could not fetch SLURM job log for %s: %s", job_id, diag_exc)
 
     async def connectDirect(self, host, port, taskID=None):
         """Connect directly to a local ffast-server (no SLURM/SSH).

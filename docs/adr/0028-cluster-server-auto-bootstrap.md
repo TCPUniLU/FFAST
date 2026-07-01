@@ -98,10 +98,14 @@ Auto-bootstrap the server, staged so each piece lands independently.
    so venv+install happen on the allocated node; the manual `ffast_server_cmd`
    remains the fallback. `ClusterProfile` gained `provision` / `modules` /
    `venv_path`.
-4. **(covered)** UX — `provision_node` threads the existing `progress_cb`
-   (feeding the task-progress system) at each step, re-provisions only on hash
-   mismatch, and raises structured errors carrying remote stderr. Deeper Qt
-   progress UI can layer on later.
+4. **(covered)** UX + logging guardrails — `provision_node` threads the existing
+   `progress_cb`, re-provisions only on hash mismatch, and logs every remote step
+   to the `FFAST` logger (which fans out to both `debug.log` and the terminal).
+   Failures raise `ClusterError` with an actionable message + the remote stderr;
+   `connectToCluster` logs that stderr, has a catch-all so nothing is swallowed,
+   and — because provisioning now runs *in the job* — best-effort fetches and logs
+   the SLURM job log (`~/slurm-<id>.{out,err}`) on failure so in-job errors are
+   visible locally. Deeper Qt progress UI can layer on later.
 
 ## Consequences
 

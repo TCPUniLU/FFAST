@@ -21,6 +21,8 @@ import tomllib
 from pathlib import Path
 from typing import Callable, Optional
 
+from cluster.backend import ClusterError
+
 logger = logging.getLogger("FFAST")
 
 # Heavy scientific deps expected from the cluster's `module load` — compiled and
@@ -123,6 +125,16 @@ def build_server_wheel(project_root: Path, out_dir: Path) -> Path:
 # the wheel (a file copy). So both commands below are the *job* command; connect
 # appends `--port`/`--token-hash`, which attach to the trailing `ffast-server`.
 
+# Fail loudly in the job log if the activated ffast-server is stale/incompatible
+# (doesn't accept the flags the client passes) — instead of launching it and
+# erroring on `--token-hash` after the fact, then hanging the client on retries.
+_VERIFY_SERVER = (
+    "( ffast-server --help 2>&1 | grep -qe '--token-hash' "
+    "|| { echo 'ffast-bootstrap ERROR: installed ffast-server lacks --token-hash "
+    "(stale/incompatible install)'; exit 1; } )"
+)
+
+
 def server_launch_cmd(venv_path: str, modules: list[str]) -> str:
     """Job command for an already-provisioned node: modules → activate → run.
 
@@ -131,6 +143,7 @@ def server_launch_cmd(venv_path: str, modules: list[str]) -> str:
     """
     parts = [f"module load {m}" for m in modules]
     parts.append(f"source {venv_path}/bin/activate")
+    parts.append(_VERIFY_SERVER)
     parts.append("ffast-server")
     return " && ".join(parts)
 
@@ -160,6 +173,9 @@ def provision_launch_cmd(
     parts.append(f"python -m pip install --no-deps --force-reinstall {remote_wheel}")
     if light_deps:
         parts.append("python -m pip install " + " ".join(light_deps))
+    # Verify the just-installed server is compatible BEFORE writing the marker,
+    # so a bad install is never recorded as current.
+    parts.append(_VERIFY_SERVER)
     parts.append(f"printf '%s' {wheel_sha} > {marker_path}")
     parts.append("ffast-server")
     return " && ".join(parts)
@@ -178,7 +194,12 @@ def _ssh_base(profile) -> list[str]:
 
 
 async def _ssh_run(profile, *args: str, stdin: Optional[str] = None):
-    """Run a command on the login node; return (stdout, stderr, returncode)."""
+    """Run a command on the login node; return (stdout, stderr, returncode).
+
+    Logs the remote command and, on a non-zero exit, the exit code + stderr —
+    so any failure is actionable in ``debug.log`` and the terminal.
+    """
+    logger.info("bootstrap ssh %s: %s", profile.host, " ".join(args))
     proc = await asyncio.create_subprocess_exec(
         *_ssh_base(profile), *args,
         stdin=asyncio.subprocess.PIPE if stdin is not None else asyncio.subprocess.DEVNULL,
@@ -186,7 +207,13 @@ async def _ssh_run(profile, *args: str, stdin: Optional[str] = None):
         stderr=asyncio.subprocess.PIPE,
     )
     out, err = await proc.communicate(stdin.encode() if stdin is not None else None)
-    return out.decode(errors="replace"), err.decode(errors="replace"), proc.returncode
+    out_s, err_s = out.decode(errors="replace"), err.decode(errors="replace")
+    if proc.returncode != 0:
+        logger.error(
+            "bootstrap ssh FAILED (exit %s) on %s: %s\nstderr:\n%s",
+            proc.returncode, profile.host, " ".join(args), err_s.strip(),
+        )
+    return out_s, err_s, proc.returncode
 
 
 async def _scp_push(profile, local: Path, remote: str) -> None:
@@ -197,14 +224,39 @@ async def _scp_push(profile, local: Path, remote: str) -> None:
         cmd += ["-i", os.path.expanduser(profile.identity_file)]
     target = f"{profile.username}@{profile.host}" if profile.username else profile.host
     cmd += [str(local), f"{target}:{remote}"]
+    logger.info("bootstrap scp %s -> %s:%s", local.name, profile.host, remote)
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
     )
     _, err = await proc.communicate()
     if proc.returncode != 0:
-        raise RuntimeError(
-            f"scp push failed (exit {proc.returncode}): {err.decode(errors='replace')}"
+        err_s = err.decode(errors="replace").strip()
+        logger.error(
+            "bootstrap scp FAILED (exit %s): %s -> %s:%s\nstderr:\n%s",
+            proc.returncode, local, profile.host, remote, err_s,
         )
+        raise ClusterError(
+            f"Failed to copy the server wheel to {profile.host} "
+            f"(scp exit {proc.returncode}). Check SSH key auth and disk quota.",
+            err_s,
+        )
+
+
+async def tail_job_log(profile, job_id: str, lines: int = 40) -> str:
+    """Best-effort tail of the SLURM job's output log (``''`` if unavailable).
+
+    Since provisioning now runs *inside the job*, a failure there (bad module,
+    pip error on the compute node) shows up in the job log, not as a client-side
+    exception. Fetching it makes those failures actionable locally (ADR 0028).
+    """
+    for path in (f"~/slurm-{job_id}.out", f"~/slurm-{job_id}.err"):
+        try:
+            out, _, rc = await _ssh_run(profile, "tail", "-n", str(lines), path)
+        except Exception:
+            continue
+        if rc == 0 and out.strip():
+            return f"{path} (last {lines} lines):\n{out}"
+    return ""
 
 
 async def provision_node(
@@ -228,13 +280,29 @@ async def provision_node(
     root = Path(project_root) if project_root else Path(__file__).resolve().parents[1]
     venv = getattr(profile, "venv_path", "") or DEFAULT_VENV
     modules = list(getattr(profile, "modules", []) or [])
+    logger.info(
+        "auto-bootstrap start: host=%s venv=%s modules=%s root=%s",
+        profile.host, venv, modules, root,
+    )
 
     with tempfile.TemporaryDirectory(prefix="ffast-wheel-") as tmp:
         _progress("Building ffast wheel…")
-        wheel = build_server_wheel(root, Path(tmp))
+        try:
+            wheel = build_server_wheel(root, Path(tmp))
+        except Exception as exc:  # build tooling / not a repo checkout
+            logger.exception("auto-bootstrap: wheel build failed")
+            raise ClusterError(
+                f"Could not build the ffast wheel from {root}: {exc}. "
+                f"Run from a repo checkout with uv/build/pip available.",
+                str(exc),
+            )
         sha = wheel_sha256(wheel)
+        logger.info("auto-bootstrap: built %s (sha %s)", wheel.name, sha[:12])
 
-        marker_out, _, marker_rc = await _ssh_run(profile, "cat", NODE_MARKER)
+        # Marker lives INSIDE the venv, not a global path — so switching
+        # venv_path (or replacing the venv) always re-provisions correctly.
+        marker_path = f"{venv}/.ffast-wheel.sha256"
+        marker_out, _, marker_rc = await _ssh_run(profile, "cat", marker_path)
         node_marker = marker_out if marker_rc == 0 else None
 
         if not needs_provision(sha, node_marker):
@@ -248,9 +316,15 @@ async def provision_node(
         remote_wheel = f"{NODE_DIR}/{wheel.name}"
         _, mk_err, mk_rc = await _ssh_run(profile, "mkdir", "-p", NODE_DIR)
         if mk_rc != 0:
-            raise RuntimeError(f"could not create {NODE_DIR} on {profile.host}: {mk_err}")
+            raise ClusterError(
+                f"Could not create {NODE_DIR} on {profile.host} — check SSH key "
+                f"auth (BatchMode) and that the host/username are correct.",
+                mk_err,
+            )
         await _scp_push(profile, wheel, remote_wheel)
         _progress("Wheel staged; venv build + install will run inside the SLURM job")
 
     light = light_dependencies(read_dependencies(root / "pyproject.toml"))
-    return provision_launch_cmd(venv, remote_wheel, light, modules, NODE_MARKER, sha)
+    cmd = provision_launch_cmd(venv, remote_wheel, light, modules, marker_path, sha)
+    logger.info("auto-bootstrap: job will provision-and-launch: %s", cmd)
+    return cmd
