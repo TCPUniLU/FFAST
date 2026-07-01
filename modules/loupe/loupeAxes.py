@@ -1,6 +1,6 @@
 import numpy as np
 from config.userConfig import getConfig
-from UI.loupeProperties import VisualElement, CanvasProperty
+from UI.loupeProperties import VisualElement, CanvasProperty, ClientFeature
 
 DEPENDENCIES = ["loupeCamera"]
 
@@ -66,3 +66,6 @@ def loadLoupe(UIHandler, loupe):
 
     pane = loupe.getSettingsPane("CAMERA")
     pane.addSetting("CheckBox", "Axes", settingsKey="cameraAxes")
+
+
+CLIENT_FEATURES = [ClientFeature(widget_factory=loadLoupe)]

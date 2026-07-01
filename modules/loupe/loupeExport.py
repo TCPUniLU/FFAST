@@ -356,3 +356,7 @@ def loadLoupe(UIHandler, loupe):
     """Main entry point for loading the export module."""
     addSettings(UIHandler, loupe)
     addSettingsPane(UIHandler, loupe)
+
+
+from UI.loupeProperties import ClientFeature
+CLIENT_FEATURES = [ClientFeature(widget_factory=loadLoupe)]

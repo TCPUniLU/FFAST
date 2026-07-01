@@ -1,5 +1,5 @@
 import logging
-from UI.loupeProperties import AtomSelectionBase, CanvasProperty
+from UI.loupeProperties import AtomSelectionBase, CanvasProperty, ClientFeature
 from functools import partial
 import numpy as np
 
@@ -166,3 +166,6 @@ def addSettingsPane(UIHandler, loupe):
 def loadLoupe(UIHandler, loupe):
     addSetting(UIHandler, loupe)
     addSettingsPane(UIHandler, loupe)
+
+
+CLIENT_FEATURES = [ClientFeature(stage_id="ffast.atom_filter", widget_factory=loadLoupe, tool_class=AtomFilterSelect)]

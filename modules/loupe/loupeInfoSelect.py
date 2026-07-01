@@ -1,4 +1,4 @@
-from UI.loupeProperties import AtomSelectionBase
+from UI.loupeProperties import AtomSelectionBase, ClientFeature
 import numpy as np
 from client.mathUtils import getVV0Angle, getDihedral
 
@@ -86,3 +86,6 @@ def loadLoupe(UIHandler, loupe):
     )
     selectButton.clicked.connect(selectAtomInfoIndices)
     container.layout.addWidget(selectButton)
+
+
+CLIENT_FEATURES = [ClientFeature(stage_id=None, widget_factory=loadLoupe, tool_class=AtomInfoSelect)]

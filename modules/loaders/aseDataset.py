@@ -9,6 +9,98 @@ from collections.abc import Iterable
 
 logger = logging.getLogger("FFAST")
 
+# Standard ASE arrays keys that are not user-facing Dataset Fields.
+_RESERVED_ARRAY_KEYS = {"positions", "numbers", "momenta"}
+
+
+def _atoms_subset(atomsList, indices):
+    """Resolve a frame-index selector to (list_of_atoms, is_scalar).
+
+    Mirrors the ``indices`` contract of getForces/getEnergies: None → all
+    frames, a scalar → that single frame, an iterable → that subset.
+    """
+    if indices is None:
+        return [atomsList[i] for i in range(len(atomsList))], False
+    if not isinstance(indices, np.ndarray) and not hasattr(indices, "__iter__"):
+        return [atomsList[indices]], True
+    return [atomsList[i] for i in indices], False
+
+
+def read_frame_field(atomsList, key, indices=None):
+    """Read a per-frame scalar Dataset Field (``atoms.info[key]``).
+
+    Strict, all-or-nothing (ADR 0023): returns an ``(N,)`` float array only if
+    the key is present in every selected frame and is a numeric scalar there;
+    otherwise logs and returns ``None``. A scalar ``indices`` returns the bare
+    value, matching getEnergies.
+    """
+    atoms, is_scalar = _atoms_subset(atomsList, indices)
+    vals = []
+    for a in atoms:
+        if key not in a.info:
+            logger.warning("Dataset field: frame field '%s' missing in a frame; field unavailable", key)
+            return None
+        v = np.asarray(a.info[key])
+        if v.ndim != 0 or not np.issubdtype(v.dtype, np.number):
+            logger.warning("Dataset field: frame field '%s' is not a numeric per-frame scalar (shape %s, dtype %s); skipped", key, v.shape, v.dtype)
+            return None
+        vals.append(float(v))
+    arr = np.asarray(vals, dtype=np.float64)
+    return arr[0] if is_scalar else arr
+
+
+def read_atom_field(atomsList, key, variable, indices=None):
+    """Read a per-atom scalar Dataset Field (``atoms.arrays[key]``).
+
+    Strict, all-or-nothing (ADR 0023). Uniform datasets return ``(N, nAtoms)``;
+    variable datasets return a per-frame list of ``(n_atoms_i,)`` arrays (the
+    same contract as getForces, so InputResolver._flatten aligns them). Wrong
+    width (e.g. a per-atom *vector*), a missing key, or non-numeric data → logs
+    and returns ``None``. A scalar ``indices`` returns the single ``(n,)`` array.
+    """
+    atoms, is_scalar = _atoms_subset(atomsList, indices)
+    per_frame = []
+    for a in atoms:
+        if key not in a.arrays:
+            logger.warning("Dataset field: atom field '%s' missing in a frame; field unavailable", key)
+            return None
+        v = np.asarray(a.arrays[key])
+        if v.ndim != 1 or v.shape[0] != len(a) or not np.issubdtype(v.dtype, np.number):
+            logger.warning("Dataset field: atom field '%s' is not a numeric per-atom scalar (shape %s, dtype %s); skipped", key, v.shape, v.dtype)
+            return None
+        per_frame.append(v.astype(np.float64))
+    if is_scalar:
+        return per_frame[0]
+    if variable:
+        return per_frame
+    return np.asarray(per_frame, dtype=np.float64)
+
+
+def available_field_keys(atomsList):
+    """Discovery: (frame_keys, atom_keys) eligible as Dataset Fields.
+
+    Inspects the first frame only (cheap). Frame keys are numeric scalars in
+    ``atoms.info``; atom keys are numeric per-atom scalars in ``atoms.arrays``
+    excluding reserved ASE keys. Used by ``ffast-cli dataset keys``.
+    """
+    if not atomsList:
+        return [], []
+    a = atomsList[0]
+    frame_keys = []
+    for k, v in a.info.items():
+        v = np.asarray(v)
+        if v.ndim == 0 and np.issubdtype(v.dtype, np.number):
+            frame_keys.append(k)
+    atom_keys = []
+    for k in a.arrays.keys():
+        if k in _RESERVED_ARRAY_KEYS:
+            continue
+        v = np.asarray(a.arrays[k])
+        if v.ndim == 1 and v.shape[0] == len(a) and np.issubdtype(v.dtype, np.number):
+            atom_keys.append(k)
+    return sorted(frame_keys), sorted(atom_keys)
+
+
 class aseDatasetLoader(DatasetLoader):
     datasetName = "ase"
     datasetFileExtension = "*"
@@ -172,6 +264,15 @@ class aseDatasetLoader(DatasetLoader):
 
     def getElements(self):
         return self.z
+
+    def getFrameField(self, key, indices=None):
+        return read_frame_field(self.atomsList, key, indices=indices)
+
+    def getAtomField(self, key, indices=None):
+        return read_atom_field(self.atomsList, key, variable=False, indices=indices)
+
+    def availableFieldKeys(self):
+        return available_field_keys(self.atomsList)
 
     def getLattice(self, indices=None):
         """Return the unit cell/lattice for specified frame(s)."""
@@ -354,6 +455,15 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
     def EneregyKeys(self):
         """Get energy keys (for compatibility with uniform loader)."""
         return self._detectEnergyKeys()
+
+    def getFrameField(self, key, indices=None):
+        return read_frame_field(self.atomsList, key, indices=indices)
+
+    def getAtomField(self, key, indices=None):
+        return read_atom_field(self.atomsList, key, variable=True, indices=indices)
+
+    def availableFieldKeys(self):
+        return available_field_keys(self.atomsList)
 
     @staticmethod
     def saveDataset(dataset, path, format=None, taskID=None):
