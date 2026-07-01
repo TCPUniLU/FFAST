@@ -21,6 +21,7 @@ def setupLogger(level=logging.INFO):
             ),
             logging.StreamHandler(),
         ],
+        force=True,  # install our handlers even if logging was already configured
     )
 
 
@@ -138,7 +139,20 @@ def loadModules(UI, env, headless=False):
 
         spec = importlib.util.spec_from_file_location(f"module_{name}", path)
         mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
+        try:
+            spec.loader.exec_module(mod)
+        except Exception as exc:
+            # A headless server has no display/Qt: client-feature plugins (e.g.
+            # modules/loupe/* → UI.Templates → PySide6/libGL) can't import there.
+            # Skip them rather than crash; their client features aren't needed
+            # server-side. On the desktop, an import error is still fatal.
+            if headless:
+                logger.warning(
+                    "Skipping plugin '%s' in headless mode (import failed: %s)",
+                    name, exc,
+                )
+                continue
+            raise
 
         mods[name] = mod
         if hasattr(mod, "DEPENDENCIES"):
@@ -146,6 +160,9 @@ def loadModules(UI, env, headless=False):
         else:
             depGraph[name] = []
 
+    # Drop dependencies on plugins that were skipped (headless import failures),
+    # so the topological sort stays valid and never KeyErrors on a missing name.
+    depGraph = {n: [d for d in deps if d in mods] for n, deps in depGraph.items()}
     depGraph = checkForInvalidDependencies(depGraph)
     order, degreeMap = kahnsAlgorithm(depGraph)
     if order is None:
