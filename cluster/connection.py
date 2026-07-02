@@ -82,6 +82,18 @@ def save_session_record(
     logger.info("Session record saved: job=%s node=%s", job_id, node)
 
 
+def recover_token_for_job(job_id: str) -> str:
+    """Return the Session Token saved for ``job_id``, or "" if none is recorded.
+
+    Used on reconnect to reclaim the CONTROLLING role (ADR 0012): the token is
+    persisted at first connect by :func:`save_session_record`.
+    """
+    for rec in _load_session_records():
+        if str(rec.get("job_id")) == str(job_id):
+            return rec.get("token") or ""
+    return ""
+
+
 def delete_session_record(job_id: str) -> None:
     """Remove the session record for a job (call on user-initiated disconnect)."""
     records = _load_session_records()
@@ -1010,6 +1022,20 @@ async def reconnect_to_cluster(
         logger.info(msg)
         if progress_cb is not None:
             progress_cb(msg)
+
+    # Recover the Session Token saved at first connect (ADR 0012) so we reclaim
+    # the CONTROLLING role. Without it the HELLO is tokenless, the server grants
+    # READ_ONLY, and the client cannot drive metric generation — plots stay
+    # empty and phantom tasks never complete.
+    if not token:
+        token = recover_token_for_job(job_id)
+        if token:
+            _progress(f"Recovered session token for job {job_id} (reclaiming control)")
+        else:
+            logger.warning(
+                "Reconnect: no saved token for job %s — connection will be READ_ONLY",
+                job_id,
+            )
 
     backend = _build_backend(profile)
 
