@@ -447,7 +447,15 @@ class TimelineKind(PanelKind):
 
     def draw(self, panel, data, spec):
         y = np.asarray(data["dataEntry"][spec["y"]].values).ravel()
-        panel.plot(np.arange(y.shape[0]), y, autoColor=data, autoLabel=data)
+        # antialias=False: a timeline is a long per-frame signal; zoomed in, its
+        # off-screen points reach million-pixel device coords and AA coverage
+        # math over segments that large is what stalls the software raster
+        # (~180ms/paint). The signal is dense/noisy so aliasing is not visible,
+        # and dropping AA removes the stall without changing what you see.
+        panel.plot(
+            np.arange(y.shape[0]), y, autoColor=data, autoLabel=data,
+            antialias=False,
+        )
 
     def sub_indices(self, panel, dataset, model, spec):
         # Phase 1: drawn-index ≈ frame index. The smoothing-window offset that a
@@ -811,7 +819,11 @@ class OverlayTimelineKind(PanelKind):
                 peak = np.max(y)
                 if peak > 0:
                     y = y / peak
-            kwargs = {"autoLabel": data}
+            # antialias=False: same as TimelineKind -- a long per-frame signal
+            # whose off-screen points reach huge device coords when zoomed;
+            # AA-stroking those stalls the software raster, and the dense signal
+            # hides the aliasing.
+            kwargs = {"autoLabel": data, "antialias": False}
             if i < len(labels):
                 kwargs["label"] = labels[i]
             if i == 0:

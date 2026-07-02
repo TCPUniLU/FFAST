@@ -13,6 +13,11 @@ from client import display_overrides
 import numpy as np
 from datasetLoaders.loader import SubDataset
 from config.userConfig import getConfig
+from UI import plot_profiler
+
+# No-op unless FFAST_PLOT_PROFILE is set; times the scatter/curve paint paths
+# to locate the real pan/zoom repaint cost (see UI/plot_profiler.py).
+plot_profiler.maybe_enable()
 
 _DEFAULT_LABEL_FONT_SIZE = 20
 _MIN_LABEL_FONT_SIZE = 8
@@ -736,6 +741,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         # each request and rebuild ONCE after results stop arriving. Flags are
         # merged so the coalesced rebuild is at least as eager as any request:
         # force if any asked to force; autoRange unless every request opted out.
+        plot_profiler.note_refresh("request")
         self._pendingForce = self._pendingForce or force
         self._pendingNoAutoRange = self._pendingNoAutoRange and noAutoRange
         self._refreshTimer.start()
@@ -750,6 +756,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         if (not force) and self.eventStamp <= self.lastUpdatedStamp:
             return
 
+        plot_profiler.note_refresh("rebuild")
         self.lastUpdatedStamp = self.eventStamp
 
         # Reconcile rather than clear()+rebuild. _addPlots() calls plot() per
