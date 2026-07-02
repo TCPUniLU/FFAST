@@ -207,6 +207,14 @@ def _reply_metric(args, kwargs):
     return args[0], unpack_metric_result(kwargs)
 
 
+def _reply_dir_listing(args, kwargs):
+    # DIR_LISTING: keyed by the ECHOED requested path (args[1]) so None→home
+    # and relative inputs correlate; falls back to the abspath (args[0]) if an
+    # older server did not echo the request.
+    key = args[1] if len(args) > 1 else args[0]
+    return key, kwargs
+
+
 def _reply_arrays(args, kwargs):
     from ffast.protocol.rpc import unpack_arrays
 
@@ -224,6 +232,7 @@ _REPLY_CHANNELS = {
     "PREDICTION_ARRAYS": (2, _reply_prediction),
     "METRIC_RESULT": (1, _reply_metric),
     "SUBDATASET_ARRAYS": (1, _reply_arrays),
+    "DIR_LISTING": (1, _reply_dir_listing),
 }
 
 
@@ -550,6 +559,30 @@ class ServerConnection:
         return await self._pending.request(
             "DATASET_KEYS_RESPONSE", path,
             lambda: self.push_event("PROBE_DATASET_KEYS", path, typ),
+            timeout=timeout,
+        )
+
+    async def list_dir(self, path: str | None = None, timeout: float = 30.0) -> dict:
+        """Ask the server to list a directory in *its own* filesystem.
+
+        Sends LIST_DIR and awaits DIR_LISTING. ``path=None`` starts at the
+        server user's home directory. Because the server lists the filesystem
+        *it* can see (the cluster compute node, ADR 0028), any file the browser
+        shows is one the server can actually open — unlike an SFTP browse of the
+        login node, whose view can differ.
+
+        Returns
+        -------
+        dict with keys:
+            path    : str            — resolved absolute path listed
+            parent  : str | None     — parent dir, None at filesystem root
+            home    : str            — server user's home directory
+            entries : list[dict]     — {name, is_dir, size}, dirs first
+            error   : str | None     — set if the listing failed
+        """
+        return await self._pending.request(
+            "DIR_LISTING", path,
+            lambda: self.push_event("LIST_DIR", path),
             timeout=timeout,
         )
 

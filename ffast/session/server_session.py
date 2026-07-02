@@ -532,9 +532,13 @@ class ServerSession:
             parent = None  # filesystem root has no parent
 
         from ffast.protocol import DirListing
+        # Echo the *requested* path as a second positional arg so the desktop
+        # client can correlate the reply to its request (the abspath differs
+        # from the request for None→home or relative inputs). The web client
+        # reads only kwargs and ignores the extra positional.
         data = pack(
             "DIR_LISTING",
-            (abspath,),
+            (abspath, path),
             DirListing(
                 path=abspath,
                 parent=parent,

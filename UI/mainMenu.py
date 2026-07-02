@@ -462,14 +462,19 @@ class MainMenuHandler(MenuHandlerBase):
             return
 
         # ── 1. path ──────────────────────────────────────────────────────────
-        path, ok = QInputDialog.getText(
-            self.handler.window,
-            "Load Remote Dataset",
-            "Cluster path to dataset file:",
+        # Browse the *server's* filesystem (LIST_DIR RPC) rather than typing a
+        # path: the server lists what it can see (compute node, ADR 0028), so a
+        # picked file is one the server can actually open.
+        from UI.RemoteFileDialog import RemoteFileDialog
+        dlg = RemoteFileDialog(
+            session, env.remote._event_loop,
+            parent=self.handler.window, title="Load Remote Dataset",
         )
-        if not ok or not path.strip():
+        if not dlg.exec():
             return
-        path = path.strip()
+        path = (dlg.selectedPath() or "").strip()
+        if not path:
+            return
 
         # ── 2. type ──────────────────────────────────────────────────────────
         types = sorted(list(env.datasetTypes.keys()))
@@ -776,14 +781,17 @@ class MainMenuHandler(MenuHandlerBase):
         dataset = remote_datasets[ds_names.index(ds_name)]
 
         # ── 2. Cluster path to prediction file ──────────────────────────────
-        path, ok = QInputDialog.getText(
-            self.handler.window,
-            "Load Remote Prediction",
-            "Cluster path to prediction file (.npz or ASE format):",
+        # Browse the server's filesystem (see onRemoteDatasetLoad).
+        from UI.RemoteFileDialog import RemoteFileDialog
+        dlg = RemoteFileDialog(
+            session, env.remote._event_loop,
+            parent=self.handler.window, title="Load Remote Prediction",
         )
-        if not ok or not path.strip():
+        if not dlg.exec():
             return
-        path = path.strip()
+        path = (dlg.selectedPath() or "").strip()
+        if not path:
+            return
         ds_fp = dataset.fingerprint
 
         logger.info(
