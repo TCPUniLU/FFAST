@@ -186,13 +186,13 @@ A read-only shared-memory or memory-mapped numeric input passed to a Metric Work
 An optional estimate of CPU, memory, runtime, and GPU preference declared by a Metric for scheduling and concurrency; server policy defines separate hard safety limits.
 
 ### Result Buffer
-The immutable numeric payload of a Metric Result or Render Primitive transferred separately from Scene Snapshots and Scene Patches and referenced by content-addressed ID so renderer clients can cache and reuse it.
+The immutable numeric payload of a Metric Result or Render Primitive, content-addressed by ID so a renderer client can cache and reuse it. **Designed-but-dormant** (ADR 0031): the live path transfers arrays via `pack_arrays` (msgpack over the WebSocket), not the buffer service. The service exists and is tested; it is not wired because the lazy-proxy + server-side-metric design rarely ships bulk arrays.
 
 ### Buffer Codec
-A transport encoding negotiated between server and renderer client for Result Buffer transfer. `none` is mandatory and `zstd` is preferred when supported; the uncompressed canonical buffer determines identity and checksum.
+The transport encoding for a **Result Buffer** — `none` or `zstd`, with the uncompressed canonical buffer fixing identity/checksum. **Dormant** (ADR 0031): the server advertises only `raw`, so `zstd` is never negotiated. Compression is already handled by WebSocket permessage-deflate on every path; stacking zstd on deflate would be double compression.
 
 ### Buffer Transfer
-The ordered, progress-reporting delivery of a Result Buffer in bounded chunks, with chunk validation and final verification against the buffer's SHA-256 identity.
+The ordered, progress-reporting delivery of a **Result Buffer** in bounded chunks, with chunk validation and verification against the buffer's SHA-256 identity. **Dormant** (ADR 0031); its real value if ever activated is dedup + reconnect-resume on the remote path, not compression.
 
 ### Visualization Configuration
 A partial, declarative override of FFAST's built-in visualization defaults. An empty configuration preserves the complete default experience; named entries add, disable, or tune features, Metrics, Metric Presentations, and Pipeline Parameters.
