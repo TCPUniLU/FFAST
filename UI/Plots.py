@@ -9,9 +9,72 @@ from events import EventChildClass
 import pyqtgraph
 import logging
 from client.dataWatcher import DataWatcher
+from client import display_overrides
 import numpy as np
 from datasetLoaders.loader import SubDataset
 from config.userConfig import getConfig
+
+_DEFAULT_LABEL_FONT_SIZE = 20
+_MIN_LABEL_FONT_SIZE = 8
+_MAX_LABEL_FONT_SIZE = 48
+_DEFAULT_LEGEND_FONT_PT = 12
+_MIN_LEGEND_FONT_PT = 6
+_MAX_LEGEND_FONT_PT = 32
+
+
+class _EditableLegendItem(pyqtgraph.LegendItem):
+    """LegendItem with drag-to-reposition, scroll-to-resize, and double-click-to-
+    rename entries (Panel Display Override, ADR 0029). Dragging replaces the base
+    corner-anchored ``autoAnchor`` with a plain absolute ``setPos`` -- simpler to
+    persist/restore, at the cost of no longer re-anchoring on window resize once a
+    user has moved it, which is an acceptable trade for a user-placed position."""
+
+    def __init__(self, owner, **kwargs):
+        super().__init__(**kwargs)
+        self._owner = owner
+
+    def updateSize(self):
+        # pyqtgraph's base updateSize() (called on every clear()/addItem(),
+        # i.e. every legend rebuild -- a rename, a data refresh, anything)
+        # ends in self.setGeometry(0, 0, w, h), which for a QGraphicsWidget
+        # resets position to (0, 0) as a side effect of resizing. That silently
+        # undid every drag the moment the legend's contents next changed --
+        # preserve position across the resize (ADR 0029 bug fix).
+        pos = self.pos()
+        super().updateSize()
+        self.setPos(pos)
+
+    def mouseDragEvent(self, ev):
+        if ev.button() != QtCore.Qt.MouseButton.LeftButton:
+            return
+        ev.accept()
+        dpos = ev.pos() - ev.lastPos()
+        self.setPos(self.pos() + dpos)
+        if ev.isFinish():
+            pos = self.pos()
+            self._owner._onLegendMoved(pos.x(), pos.y())
+
+    def wheelEvent(self, ev):
+        ev.accept()
+        self._owner._onLegendWheel(ev.delta())
+
+    def mouseClickEvent(self, ev):
+        # pyqtgraph's GraphicsScene convention (distinct from Qt's own
+        # mousePressEvent): sendClickEvent() walks items front-to-back and
+        # stops at the first one whose mouseClickEvent() accepts, so accepting
+        # here keeps the ViewBox's own right-click menu (ViewBox.mouseClickEvent,
+        # unconditional -- it doesn't check isAccepted() itself) from also firing.
+        if ev.button() == QtCore.Qt.MouseButton.RightButton:
+            ev.accept()
+            self._owner._showLegendMenu(ev.screenPos().toPoint())
+
+    def mouseDoubleClickEvent(self, ev):
+        for sample, label in self.items:
+            if label.geometry().contains(ev.pos()):
+                ev.accept()
+                self._owner._startLegendEntryEdit(sample, label)
+                return
+        super().mouseDoubleClickEvent(ev)
 
 
 class DataDependentObject:
@@ -148,6 +211,22 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self.colorCount = 0
         self.symbolCount = 0
 
+        # Panel Display Override state (ADR 0029). ``_displayOverrideKey`` is
+        # None until a caller (e.g. MetricPlotPanel) sets it to (tab, kind,
+        # metric_ids); until then edits still work live but don't persist.
+        # ``_labelState[axis]["text"]`` is the user override (None = show the
+        # Panel Kind/TOML default in "default_text"); "font_size" likewise.
+        self._displayOverrideKey = None
+        self._labelState = {
+            "bottom": {"text": None, "font_size": None, "default_text": ""},
+            "left": {"text": None, "font_size": None, "default_text": ""},
+        }
+        self._legendEntryOverrides = {}       # "<dataset_fp>|<model_fp>" -> text
+        self._legendItemAutoLabels = {}       # id(plotDataItem) -> autoLabel dict
+        self._legendFontSize = None           # None = _DEFAULT_LEGEND_FONT_PT
+        self._activeEditBox = None
+        self._activeEditBoxCancel = None
+
         # Incremental refresh (ADR 0022): persistent Series keyed by
         # (dataset_fp, model_fp, kind, sub-index). A refresh reconciles against
         # these — skip unchanged, setData changed, create new, drop unvisited —
@@ -198,6 +277,11 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self.layout.addWidget(self.plotWidget)
         self.applyPlotWidget()
         self.applyToolbar(title=title)  # needs the plotwidget to exist
+        # Double-click-to-edit / scroll-to-resize axis labels (ADR 0029, Q7/Q8):
+        # only consumed when the event actually lands on a label's bounding rect,
+        # so normal double-click-to-autorange and wheel-to-zoom pass through
+        # everywhere else on the plot.
+        self.plotWidget.installEventFilter(self)
 
         # REFRESH
         self.eventSubscribe("WIDGET_REFRESH", self.onWidgetRefresh)
@@ -268,12 +352,18 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         if not self.hasLegend:
             return
 
-        self.legend = pyqtgraph.LegendItem(
-            offset=(30, 10),
-            labelTextSize="12pt",
+        self.legend = _EditableLegendItem(
+            self,
+            offset=None,
+            labelTextSize=f"{_DEFAULT_LEGEND_FONT_PT}pt",
             labelTextColor=self.handler.config["envs"].get("TextColor1"),
         )
         self.legend.setParentItem(self.plotWidget.graphicsItem())
+        # offset=None deliberately skips pyqtgraph's corner-anchor: passing an
+        # offset here would connect the legend to the parent's geometryChanged
+        # signal and re-snap it to that anchor on every resize/redraw, fighting
+        # every drag update's plain setPos() (ADR 0029 -- the bug this fixes).
+        self.legend.setPos(30, 10)
         self.updateLegend()
 
     def updateLegend(self):
@@ -294,16 +384,204 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self.toolbarLayout.insertWidget(n - 1, widget)
 
     def setXLabel(self, label, unit=None):
-        fontOptions = {"font-size": "20px", "color": "lightgray"}
-        if unit is not None:
-            label = f"{label} [{unit}]"
-        self.plotWidget.setLabel("bottom", label, **fontOptions)
+        self._setAxisDefaultLabel("bottom", label, unit)
 
     def setYLabel(self, label, unit=None):
-        fontOptions = {"font-size": "20px", "color": "lightgray"}
+        self._setAxisDefaultLabel("left", label, unit)
+
+    # ----------------------------------------------------------------- #
+    # Panel Display Override: editable axis labels (ADR 0029)
+    # ----------------------------------------------------------------- #
+    def _setAxisDefaultLabel(self, axisName, label, unit=None):
+        """Set the Panel Kind/TOML default for one axis. A live text override
+        (from a prior edit or a loaded Panel Display Override) still wins;
+        this only changes what's shown once that override is cleared."""
         if unit is not None:
             label = f"{label} [{unit}]"
-        self.plotWidget.setLabel("left", label, **fontOptions)
+        self._labelState[axisName]["default_text"] = label
+        self._renderAxisLabel(axisName)
+
+    def _currentAxisText(self, axisName):
+        state = self._labelState[axisName]
+        return state["text"] if state["text"] is not None else state["default_text"]
+
+    def _renderAxisLabel(self, axisName):
+        state = self._labelState[axisName]
+        size = state["font_size"] or _DEFAULT_LABEL_FONT_SIZE
+        fontOptions = {"font-size": f"{size}px", "color": "lightgray"}
+        self.plotWidget.setLabel(axisName, self._currentAxisText(axisName), **fontOptions)
+
+    def _axisLabelSceneRect(self, axisName):
+        axis = self.plotWidget.getAxis(axisName)
+        item = getattr(axis, "label", None)
+        if item is None or not item.isVisible():
+            return None
+        return item.mapRectToScene(item.boundingRect())
+
+    _LABEL_HIT_PAD = 12  # generous tolerance so a near-miss doesn't fall through
+    # to the ViewBox's own wheel-zoom / double-click-to-autorange -- the label's
+    # tight boundingRect is easy to miss by a few pixels, which read as "scroll
+    # sometimes zooms the plot instead of resizing the label" (ADR 0029 fix).
+
+    def _labelAxisAt(self, viewPos):
+        scenePos = self.plotWidget.mapToScene(viewPos)
+        for axisName in ("bottom", "left"):
+            rect = self._axisLabelSceneRect(axisName)
+            if rect is None:
+                continue
+            pad = self._LABEL_HIT_PAD
+            if rect.adjusted(-pad, -pad, pad, pad).contains(scenePos):
+                return axisName
+        return None
+
+    def _startAxisLabelEdit(self, axisName):
+        axis = self.plotWidget.getAxis(axisName)
+        self._openInlineEditor(
+            axis.label, self._currentAxisText(axisName),
+            lambda text: self._commitAxisLabelEdit(axisName, text),
+        )
+
+    def _commitAxisLabelEdit(self, axisName, text):
+        self._labelState[axisName]["text"] = text or None
+        self._renderAxisLabel(axisName)
+        role = "x_label" if axisName == "bottom" else "y_label"
+        self._persistOverride((role, "text"), text or None)
+
+    def _setAxisLabelFontSize(self, axisName, size):
+        size = min(_MAX_LABEL_FONT_SIZE, max(_MIN_LABEL_FONT_SIZE, size))
+        self._labelState[axisName]["font_size"] = size
+        self._renderAxisLabel(axisName)
+        role = "x_label" if axisName == "bottom" else "y_label"
+        self._persistOverride((role, "font_size"), size)
+
+    def _resizeAxisLabel(self, axisName, delta):
+        state = self._labelState[axisName]
+        size = state["font_size"] or _DEFAULT_LABEL_FONT_SIZE
+        self._setAxisLabelFontSize(axisName, size + (1 if delta > 0 else -1))
+
+    def _resetAxisLabel(self, axisName):
+        self._labelState[axisName]["text"] = None
+        self._labelState[axisName]["font_size"] = None
+        self._renderAxisLabel(axisName)
+        role = "x_label" if axisName == "bottom" else "y_label"
+        self._persistOverride((role, "text"), None)
+        self._persistOverride((role, "font_size"), None)
+
+    def _promptAxisLabelFontSize(self, axisName):
+        current = self._labelState[axisName]["font_size"] or _DEFAULT_LABEL_FONT_SIZE
+
+        def _apply(size, ok):
+            if ok:
+                self._setAxisLabelFontSize(axisName, size)
+
+        self._askFontSizeDialog(current, _MIN_LABEL_FONT_SIZE, _MAX_LABEL_FONT_SIZE, _apply)
+
+    def _buildAxisLabelMenu(self, axisName):
+        """Right-click menu on an axis label -- a discoverable alternative to
+        scroll-to-resize/double-click-to-edit, not a replacement for them.
+        Split from showing it so tests can inspect the built menu without
+        invoking the (now non-blocking, see _showAxisLabelMenu) popup."""
+        menu = QtWidgets.QMenu(self.plotWidget)
+        menu.addAction("Set Font Size…", lambda: self._promptAxisLabelFontSize(axisName))
+        menu.addAction("Increase Font Size", lambda: self._resizeAxisLabel(axisName, 1))
+        menu.addAction("Decrease Font Size", lambda: self._resizeAxisLabel(axisName, -1))
+        menu.addSeparator()
+        menu.addAction("Edit Label…", lambda: self._startAxisLabelEdit(axisName))
+        menu.addAction("Reset Label", lambda: self._resetAxisLabel(axisName))
+        return menu
+
+    def _showAxisLabelMenu(self, axisName, globalPos):
+        # popup(), not exec(): exec() spins a nested Qt event loop for as long
+        # as the menu stays open. Qt and asyncio share one event loop here
+        # (qasync, main.py), so a menu left open too long can starve the
+        # WebSocket keepalive ping/pong and get the connection dropped by the
+        # server (1011 ping timeout). popup() is also what ViewBox itself uses
+        # for its own right-click menu (ViewBox.raiseContextMenu).
+        menu = self._buildAxisLabelMenu(axisName)
+        menu.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        menu.popup(globalPos)
+
+    # ----------------------------------------------------------------- #
+    # Panel Display Override: shared inline-edit widget (ADR 0029, Q7)
+    # ----------------------------------------------------------------- #
+    def _openInlineEditor(self, graphicsItem, currentText, onCommit):
+        """Float a QLineEdit over ``graphicsItem`` pre-filled with ``currentText``;
+        Enter/focus-out commits via ``onCommit(text)``, Escape cancels. No dialogs
+        or context menus -- direct manipulation, consistent with legend dragging."""
+        if self._activeEditBox is not None:
+            self._activeEditBoxCancel()
+
+        rect = graphicsItem.mapRectToScene(graphicsItem.boundingRect())
+        topLeft = self.plotWidget.mapFromScene(rect.topLeft())
+        bottomRight = self.plotWidget.mapFromScene(rect.bottomRight())
+        pad = 4
+        box = QtWidgets.QLineEdit(self.plotWidget)
+        box.setText(currentText or "")
+        box.setGeometry(
+            topLeft.x() - pad, topLeft.y() - pad,
+            max(80, bottomRight.x() - topLeft.x() + 2 * pad),
+            max(20, bottomRight.y() - topLeft.y() + 2 * pad),
+        )
+
+        state = {"committed": False}
+
+        def commit():
+            if state["committed"]:
+                return
+            state["committed"] = True
+            text = box.text().strip()
+            box.deleteLater()
+            if self._activeEditBox is box:
+                self._activeEditBox = None
+                self._activeEditBoxCancel = None
+            onCommit(text)
+
+        def cancel():
+            if state["committed"]:
+                return
+            state["committed"] = True
+            box.deleteLater()
+            if self._activeEditBox is box:
+                self._activeEditBox = None
+                self._activeEditBoxCancel = None
+
+        box.editingFinished.connect(commit)
+        box.installEventFilter(self)
+        self._activeEditBox = box
+        self._activeEditBoxCancel = cancel
+        box.show()
+        box.setFocus()
+        box.selectAll()
+
+    def _persistOverride(self, path, value):
+        if self._displayOverrideKey is None:
+            return
+        tab, kind, mids = self._displayOverrideKey
+        display_overrides.set_panel_override(tab, kind, mids, path, value)
+
+    def _askFontSizeDialog(self, current, minSize, maxSize, onResult):
+        """Numeric font-size prompt shared by the axis-label and legend
+        context menus. Isolated as its own method so tests can stub it
+        without ever constructing a real dialog.
+
+        Uses QInputDialog.open() (non-blocking), not the static getInt()
+        convenience (blocking): Qt and asyncio share one event loop in this
+        app (qasync, main.py), so a dialog left open blocks that loop in a
+        nested Qt event loop for as long as it stays open, which can starve
+        the WebSocket keepalive ping/pong long enough for the server to drop
+        the connection (1011 ping timeout). open() shows the dialog without a
+        nested loop; onResult(size, ok) fires later via signal instead.
+        """
+        dialog = QtWidgets.QInputDialog(self.plotWidget)
+        dialog.setWindowTitle("Font Size")
+        dialog.setLabelText("Font size (pt):")
+        dialog.setInputMode(QtWidgets.QInputDialog.InputMode.IntInput)
+        dialog.setIntRange(minSize, maxSize)
+        dialog.setIntValue(current)
+        dialog.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.intValueSelected.connect(lambda size: onResult(size, True))
+        dialog.rejected.connect(lambda: onResult(current, False))
+        dialog.open()
 
     def setXTicks(self, x, labels):
         ax = self.plotWidget.getAxis("bottom")
@@ -396,6 +674,36 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self._refreshTimer.stop()
         self.plotWidget.close()
 
+    def eventFilter(self, obj, event):
+        if obj is self._activeEditBox:
+            if (event.type() == QEvent.Type.KeyPress
+                    and event.key() == Qt.Key.Key_Escape):
+                self._activeEditBoxCancel()
+                return True
+            return False
+        if obj is self.plotWidget:
+            if event.type() == QEvent.Type.MouseButtonDblClick:
+                axisName = self._labelAxisAt(event.position().toPoint())
+                if axisName is not None:
+                    self._startAxisLabelEdit(axisName)
+                    return True
+            elif (event.type() == QEvent.Type.MouseButtonPress
+                    and event.button() == Qt.MouseButton.RightButton):
+                # Consumed here (before pyqtgraph's own right-click handling
+                # sees the press) so this doesn't also raise the ViewBox's
+                # menu -- AxisItem has no context menu of its own to conflict
+                # with; this is a clean, separate menu over the label only.
+                axisName = self._labelAxisAt(event.position().toPoint())
+                if axisName is not None:
+                    self._showAxisLabelMenu(axisName, event.globalPosition().toPoint())
+                    return True
+            elif event.type() == QEvent.Type.Wheel:
+                axisName = self._labelAxisAt(event.position().toPoint())
+                if axisName is not None:
+                    self._resizeAxisLabel(axisName, event.angleDelta().y())
+                    return True
+        return super().eventFilter(obj, event)
+
     def getWatchedData(self):
         return self.dataWatcher.getWatchedData()
 
@@ -474,12 +782,26 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
 
         return s
 
+    def _legendEntryKey(self, autoLabel):
+        """Stable identity for a legend entry -- a Series' (dataset, model)
+        fingerprints, same identity ``_seriesKey`` uses (ADR 0029: a Colorbar/
+        Panel Display Override rename is keyed on content, not a display name
+        the user might also rename)."""
+        if not autoLabel:
+            return None
+        dsFp = getattr(autoLabel.get("dataset"), "fingerprint", None)
+        mFp = getattr(autoLabel.get("model"), "fingerprint", None)
+        if dsFp is None and mFp is None:
+            return None
+        return f"{dsFp}|{mFp}"
+
     def refreshLegend(self):
         dw = self.dataWatcher
         hasDataset = len(dw.getDatasetDependencies()) >= 1
         hasModel = len(dw.getModelDependencies()) >= 1
 
         self.legend.clear()
+        self._legendItemAutoLabels = {}
 
         if not (hasDataset or hasModel):
             return
@@ -500,7 +822,116 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
 
             if label is None:
                 continue
+
+            entryKey = self._legendEntryKey(autoLabel)
+            override = self._legendEntryOverrides.get(entryKey) if entryKey else None
+            if override is not None:
+                label = override
+            self._legendItemAutoLabels[id(item)] = autoLabel
             self.legend.addItem(item, label)
+
+    # ----------------------------------------------------------------- #
+    # Panel Display Override: editable legend (ADR 0029)
+    # ----------------------------------------------------------------- #
+    def _onLegendMoved(self, x, y):
+        self._persistOverride(("legend", "position"), [x, y])
+
+    def _setLegendFontSize(self, size):
+        size = min(_MAX_LEGEND_FONT_PT, max(_MIN_LEGEND_FONT_PT, size))
+        self._legendFontSize = size
+        self.legend.setLabelTextSize(f"{size}pt")
+        self._persistOverride(("legend", "font_size"), size)
+
+    def _resizeLegendFontSize(self, delta):
+        size = self._legendFontSize or _DEFAULT_LEGEND_FONT_PT
+        self._setLegendFontSize(size + delta)
+
+    def _onLegendWheel(self, delta):
+        self._resizeLegendFontSize(1 if delta > 0 else -1)
+
+    def _promptLegendFontSize(self):
+        current = self._legendFontSize or _DEFAULT_LEGEND_FONT_PT
+
+        def _apply(size, ok):
+            if ok:
+                self._setLegendFontSize(size)
+
+        self._askFontSizeDialog(current, _MIN_LEGEND_FONT_PT, _MAX_LEGEND_FONT_PT, _apply)
+
+    def _resetLegend(self):
+        self._legendFontSize = None
+        self.legend.setLabelTextSize(f"{_DEFAULT_LEGEND_FONT_PT}pt")
+        self.legend.setPos(30, 10)
+        self._persistOverride(("legend", "font_size"), None)
+        self._persistOverride(("legend", "position"), None)
+
+    def _buildLegendMenu(self):
+        """Right-click menu on the legend -- mirrors the axis label menu
+        (numeric entry + steppers), minus per-entry renaming (that stays
+        double-click-only, since it needs picking which entry first)."""
+        menu = QtWidgets.QMenu(self.plotWidget)
+        menu.addAction("Set Font Size…", self._promptLegendFontSize)
+        menu.addAction("Increase Font Size", lambda: self._resizeLegendFontSize(1))
+        menu.addAction("Decrease Font Size", lambda: self._resizeLegendFontSize(-1))
+        menu.addSeparator()
+        menu.addAction("Reset Legend", self._resetLegend)
+        return menu
+
+    def _showLegendMenu(self, globalPos):
+        # popup(), not exec() -- see _showAxisLabelMenu for why.
+        menu = self._buildLegendMenu()
+        menu.setAttribute(QtCore.Qt.WidgetAttribute.WA_DeleteOnClose)
+        menu.popup(globalPos)
+
+    def _startLegendEntryEdit(self, sample, label):
+        entryKey = self._legendEntryKey(self._legendItemAutoLabels.get(id(sample.item)))
+        self._openInlineEditor(
+            label, label.text,
+            lambda text: self._commitLegendEntryEdit(entryKey, text),
+        )
+
+    def _commitLegendEntryEdit(self, entryKey, text):
+        if entryKey is not None:
+            if text:
+                self._legendEntryOverrides[entryKey] = text
+            else:
+                self._legendEntryOverrides.pop(entryKey, None)
+            self._persistOverride(("legend", "entries", entryKey), text or None)
+        self.refreshLegend()
+
+    # ----------------------------------------------------------------- #
+    # Panel Display Override: load/apply a saved override (ADR 0029)
+    # ----------------------------------------------------------------- #
+    def _loadDisplayOverride(self):
+        if self._displayOverrideKey is None:
+            return
+        tab, kind, mids = self._displayOverrideKey
+        override = display_overrides.get_panel_override(tab, kind, mids)
+        self.applyDisplayOverride(override)
+
+    def applyDisplayOverride(self, override):
+        """Apply a saved Panel Display Override on top of the Panel Kind/TOML
+        defaults already set via ``setXLabel``/``setYLabel``."""
+        for axisName, role in (("bottom", "x_label"), ("left", "y_label")):
+            field = override.get(role) or {}
+            if "text" in field:
+                self._labelState[axisName]["text"] = field["text"]
+            if "font_size" in field:
+                self._labelState[axisName]["font_size"] = field["font_size"]
+            self._renderAxisLabel(axisName)
+
+        if not self.hasLegend:
+            return
+        legend = override.get("legend") or {}
+        if "position" in legend:
+            x, y = legend["position"]
+            self.legend.setPos(x, y)
+        if "font_size" in legend:
+            self._legendFontSize = legend["font_size"]
+            self.legend.setLabelTextSize(f"{self._legendFontSize}pt")
+        self._legendEntryOverrides = dict(legend.get("entries") or {})
+        if self._legendEntryOverrides:
+            self.refreshLegend()
 
     def clear(self):
         for rec in self._series.values():

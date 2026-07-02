@@ -120,7 +120,7 @@ class InteractiveCanvas(Widget):
     nAtoms = -1
     hasBeenInited = False
     dataset = None
-    _colorbar = None  # vispy ColorBarWidget for value-driven coloring (ADR 0016)
+    _colorbar = None  # ColorbarOverlay for value-driven coloring (ADR 0016, ADR 0029)
 
     def __init__(self, loupe, **kwargs):
         super().__init__(layout="vertical", **kwargs)
@@ -137,8 +137,6 @@ class InteractiveCanvas(Widget):
         self.view.camera = Camera(self)
         self.camera = self.view.camera
 
-        self.grid = self.newGrid()
-
         self.scene = self.view.scene
         self.loupe = loupe
         self.canvas.native.setParent(loupe)
@@ -153,9 +151,6 @@ class InteractiveCanvas(Widget):
         self.freeze()
 
     ## VISUAL ELEMENTS & PROPERTIES
-
-    def newGrid(self):
-        return self.canvas.central_widget.add_grid(margin=4)
 
     def addVisualElement(self, Element, name, viewParent=False):
         if viewParent:
@@ -190,34 +185,31 @@ class InteractiveCanvas(Widget):
             bond_width=self._scaledBondWidth(),
         )
 
-    # COLORBAR (ADR 0016): client draws the legend from the color descriptor.
+    # COLORBAR (ADR 0016, ADR 0029): a Qt-native overlay draws the legend from
+    # the color descriptor -- not vispy's grid-cell ColorBarWidget, which
+    # can't float, drag, or accept text-edit events (see colorbar_overlay.py).
     def updateColorbar(self, color_by):
         """Show/update or hide the colorbar from the active color descriptor."""
         if color_by is None:
             if self._colorbar is not None:
-                self._colorbar.visible = False
+                self._colorbar.hide_colorbar()
             return
         if self._colorbar is None:
             self._initColorbar()
-        self._colorbar.cmap = self.sceneAdapter._get_colormap(color_by.colormap)
-        self._colorbar.clim = (f"{color_by.vmin:.2f}", f"{color_by.vmax:.2f}")
+        cmap = self.sceneAdapter._get_colormap(color_by.colormap)
         label = color_by.label + (f" [{color_by.unit}]" if color_by.unit else "")
-        self._colorbar.label.text = label
-        self._colorbar.visible = True
+        self._colorbar.update_descriptor(cmap, color_by.vmin, color_by.vmax, label)
+
+    def _currentColorMetricId(self):
+        """The client-tracked Metric ID currently driving atom-coloring, or
+        None -- the identity a Colorbar Display Override is keyed on (the
+        wire-level AtomColorBy descriptor carries no identity, ADR 0016)."""
+        label = self.loupe.settings.get("atomColorType")
+        return getattr(self.loupe, "_colorLabelToMetricId", {}).get(label)
 
     def _initColorbar(self):
-        from vispy import scene as vscene
-        self._colorbar = vscene.ColorBarWidget(
-            cmap="viridis",
-            label_color="lightgray",
-            label="",
-            clim=("0", "1"),
-            orientation="right",
-            border_color="lightgray",
-            border_width=1,
-        )
-        self._colorbar.width_max = 70
-        self.grid.add_widget(self._colorbar)
+        from UI.loupe.colorbar_overlay import ColorbarOverlay
+        self._colorbar = ColorbarOverlay(self, self._currentColorMetricId)
 
     # ADAPTER PICKING (ADR 0015)
     def _pickRadius(self):

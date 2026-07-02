@@ -364,6 +364,10 @@ class MetricPlotPanel(_ParamControls, BasicPlotWidget):
     def __init__(self, handler, kind, spec, **kwargs):
         self._kind = kind
         self._spec = spec
+        # Analysis Tab name, stashed onto the ContentTab by UIHandler.addContentTab
+        # -- read before super().__init__ reparents this widget under it, since a
+        # Panel Display Override's identity (ADR 0029) needs it at apply_labels time.
+        tab_name = getattr(kwargs.get("parent"), "tabName", "") or ""
         super().__init__(
             handler,
             name=spec["name"],
@@ -375,6 +379,8 @@ class MetricPlotPanel(_ParamControls, BasicPlotWidget):
         self._initParams()
         self.setMetricDependencies(self._currentDeps())
         kind.apply_labels(self, spec)
+        self._displayOverrideKey = (tab_name, kind.name, kind.bound_metrics(spec))
+        self._loadDisplayOverride()
         self._buildParamControls()
         tooltip = spec.get("tooltip")
         if tooltip:

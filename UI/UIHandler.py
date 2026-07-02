@@ -160,4 +160,7 @@ class UIHandler(EventClass):
         )
 
     def addContentTab(self, widget, name):
+        # Stashed so Panels built inside this tab can read their Analysis Tab
+        # name for the content-based Panel Display Override identity (ADR 0029).
+        widget.tabName = name
         self.mainWindow.mainContent.addTab(widget, name)
