@@ -39,10 +39,13 @@ A view over a parent Dataset restricted to a subset of indices. Created when a u
 A permanently snapshotted SubDataset, treated as an independent Dataset.
 
 ### Model / ModelLoader
-A loaded MLFF model (sGDML, MACE, Nequip, SchNet, SpookyNet). Identified by fingerprint. Used to generate predictions against Datasets.
+A loaded MLFF model (sGDML, MACE, Nequip, SchNet, SpookyNet). Identified by fingerprint. Used to generate predictions against Datasets. The real Model lives **only inside `ffast-server`** (ADR 0030) — never in the client process; the client's stand-in is a **GhostModel**.
+
+### GhostModel
+The client-side proxy for a Model whose inference runs elsewhere (in `ffast-server`). Created from `REMOTE_MODEL_META` (`GhostModelLoader`); it carries a fingerprint and display name but no weights, and is the client's only representation of *any* Model after ADR 0030. A file-backed GhostModel cannot generate fresh predictions; a real-model-backed one can (the server re-runs inference). Distinct from the real **Model**, which exists solely server-side.
 
 ### Prediction
-A (Dataset, Model) pair used for error analysis. Either generated at runtime by a real Model, or loaded from a pre-computed file via "Load Prediction" (which creates a GhostModel placeholder). The atomic unit of comparison in all error plots. In remote mode, a Prediction can be loaded from a cluster-side file via "Load Remote Prediction"; the server creates the GhostModel and transfers prediction arrays to the client via the Prediction-Only Array Channel.
+A (Dataset, Model) pair used for error analysis; the atomic unit of comparison in all error plots. Inference always runs **server-side** (ADR 0030): the client only ever holds a **GhostModel** proxy and receives prediction arrays via the Prediction-Only Array Channel. The real-vs-file distinction is a *server* concept, invisible to the client — a Prediction is either generated on demand by a real server-side Model, or read from a pre-computed file via "Load Prediction" / "Load Remote Prediction".
 
 ### Loupe
 The 3D molecular viewer. Uses Vispy for GPU-accelerated rendering with color-based atom picking. Runs locally (requires local GPU/OpenGL context). In remote mode, Loupe only operates on transferred subsets, not the full remote dataset. Loupe is the Qt/Vispy **Renderer Client**. As code it spans layers by design: the Qt shell (`UI/loupe/`), pluggable features (`modules/loupe/`), the renderer-neutral scene/pipeline core shared with the web renderer (`ffast/visualization/`, part of the **Headless Core**), and the Vispy adapter (`ffast/renderers/vispy/`).

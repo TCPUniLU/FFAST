@@ -277,17 +277,12 @@ class MainMenuHandler(MenuHandlerBase):
         if path is None:
             return
 
-        # Stage 2 server-side model loading (env.requestModelLoad → server runs
-        # predictions on demand) is implemented end-to-end but DEPRIORITIZED.
-        # In-process load is kept as default as a PRECAUTION — the suspected
-        # regression vs the server path was never actually measured. Flip to
-        # env.requestModelLoad(path, typ) to make live real-model inference
-        # server-owned (infra is in place: server metas real models + generates
-        # on demand; client _fetchPredictionArraysSync wires generateMetric).
-        # NOTE: this call is unconditional, so in REMOTE mode a real model loads
-        # into the local client, not the cluster — remote live inference from the
-        # UI is not reachable until this flips (remote uses prediction files).
-        env.taskLoadModel(path, typ)
+        # Real-model inference is server-owned (ADR 0030): the model loads and
+        # predicts inside ffast-server — the managed local server on desktop, or
+        # the cluster in remote mode — and the client receives a GhostModel proxy
+        # via REMOTE_MODEL_META. In-process taskLoadModel survives only as the
+        # requestModelLoad fallback for the pre-connection / connection-down gap.
+        env.requestModelLoad(path, typ)
 
     def onPrepredictedModelLoad(self):
         import logging

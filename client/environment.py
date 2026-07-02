@@ -159,11 +159,30 @@ class Environment(EventClass):
             )
             return None
 
-        model = self.modelTypes[modelType](self, path)
-        if model is None:
-            logging.warn(f"Model `{path}` did not load successfully")
-            return
-        model.initialise()
+        # Instantiating a concrete predicting ModelLoader triggers its heavy ML
+        # backend (torch/mace/nequip/...), which is loaded lazily and runs
+        # server-side (ADR 0030). Guard it: a missing/broken backend must warn
+        # and abort this one load, not crash the server task (local or remote).
+        try:
+            model = self.modelTypes[modelType](self, path)
+            if model is None:
+                logger.warning(f"Model `{path}` did not load successfully")
+                return
+            model.initialise()
+        except (ImportError, ModuleNotFoundError) as exc:
+            logger.error(
+                f"Cannot load model `{path}` of type `{modelType}`: its ML "
+                f"backend is not available in this ffast-server environment "
+                f"({exc}). Install the backend where the server runs "
+                f"(local venv or cluster). Predictions require server-side "
+                f"inference (ADR 0030)."
+            )
+            return None
+        except Exception as exc:
+            logger.error(
+                f"Failed to load model `{path}` of type `{modelType}`: {exc}"
+            )
+            return None
 
         self.models.add(model)
         logging.info(f"Model `{path}` successfully loaded")

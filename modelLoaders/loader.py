@@ -1,8 +1,11 @@
 import os
 from events import EventClass
 from utils import removeExtension
-import torch
 import logging
+# NOTE: torch is intentionally NOT imported here. The base ModelLoader and the
+# GhostModel proxy must import cleanly on a headless server (and client) that
+# has no ML backend installed. Heavy deps (torch, mace, ...) are imported lazily
+# inside the concrete predicting ModelLoaders, which run server-side (ADR 0030).
 import numpy as np
 from config.userConfig import getConfig
 from utils import hexToRGB
