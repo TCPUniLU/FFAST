@@ -452,12 +452,16 @@ class MainMenuHandler(MenuHandlerBase):
         env = self.handler.env
         session = env.remote.serverConnection
 
-        if session is None:
+        # serverConnection is ALWAYS set on desktop (the managed local server,
+        # ADR 0027), so `is None` alone never catches "not on a real cluster".
+        # The local server is tagged is_local=True; a cluster session is not.
+        if session is None or getattr(session, "is_local", False):
             QMessageBox.warning(
                 self.handler.window,
                 "No Cluster Connection",
                 "Not connected to a cluster.\n"
-                "Use File → Connect to Cluster… first.",
+                "A local server always runs on desktop, but remote loads need a "
+                "real cluster — use File → Connect to Cluster… first.",
             )
             return
 
@@ -742,12 +746,16 @@ class MainMenuHandler(MenuHandlerBase):
         env = self.handler.env
         session = env.remote.serverConnection
 
-        if session is None:
+        # serverConnection is ALWAYS set on desktop (the managed local server,
+        # ADR 0027), so `is None` alone never catches "not on a real cluster".
+        # The local server is tagged is_local=True; a cluster session is not.
+        if session is None or getattr(session, "is_local", False):
             QMessageBox.warning(
                 self.handler.window,
                 "No Cluster Connection",
                 "Not connected to a cluster.\n"
-                "Use File → Connect to Cluster… first.",
+                "A local server always runs on desktop, but remote loads need a "
+                "real cluster — use File → Connect to Cluster… first.",
             )
             return
 
