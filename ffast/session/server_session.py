@@ -29,6 +29,32 @@ import numpy as np
 
 logger = logging.getLogger("FFAST")
 
+
+def _probe_path_diagnostics(path):
+    """Report the server process's own view of a path for FileNotFound triage.
+
+    A remote path that exists on the login node but not for the server process
+    (e.g. the server runs in a SLURM job on a compute node that mounts a
+    different filesystem — ADR 0028) is otherwise indistinguishable from a typo.
+    Returns (hostname, cwd, exists, parent_exists) for a single log line.
+    """
+    import os, socket
+    try:
+        host = socket.gethostname()
+    except Exception:
+        host = "?"
+    try:
+        cwd = os.getcwd()
+    except Exception:
+        cwd = "?"
+    return (
+        host,
+        cwd,
+        os.path.exists(path),
+        os.path.isdir(os.path.dirname(path) or "."),
+    )
+
+
 # Metric computation runs in the SAME process as the GUI (the local server is
 # in-process). Routing it through asyncio's default thread pool lets a burst of
 # recomputes — e.g. toggling the energy shift re-runs ~15 KDE/density metrics
@@ -455,6 +481,10 @@ class ServerSession:
             )
         except Exception as exc:
             logger.warning("PROBE_DATASET_KEYS error for %r: %s", path, exc)
+            logger.warning(
+                "  server view: host=%s cwd=%s exists=%s parent_exists=%s",
+                *_probe_path_diagnostics(path),
+            )
             error = str(exc)
 
         from ffast.protocol import DatasetKeysResponse
@@ -484,6 +514,10 @@ class ServerSession:
             logger.info("PROBE_DATASET_LENGTH %r: n=%d", path, n)
         except Exception as exc:
             logger.warning("PROBE_DATASET_LENGTH error for %r: %s", path, exc)
+            logger.warning(
+                "  server view: host=%s cwd=%s exists=%s parent_exists=%s",
+                *_probe_path_diagnostics(path),
+            )
             error = str(exc)
 
         from ffast.protocol import DatasetLengthResponse
