@@ -684,6 +684,18 @@ QMenu::indicator:exclusive:checked:selected {
 }
 
 /*  ------------------------------------------------------------------------  */
+/*  Compact context menus -- 2D plot axis-label/legend menus and the Loupe    */
+/*  colorbar's right-click menu. Plain flat action lists (no checkboxes,      */
+/*  radio buttons, or submenus), so they skip QMenu::item's default 24px      */
+/*  right padding reserved for that indicator column -- without this, the    */
+/*  popup is visibly wider than the text it holds. Scoped by objectName so    */
+/*  it doesn't affect the menu bar or any checkable/submenu QMenu elsewhere.  */
+
+QMenu#compactContextMenu::item {
+  padding: 0px 8px 0px 8px;
+}
+
+/*  ------------------------------------------------------------------------  */
 /*  QMenuBar  */
 
 QMenuBar {

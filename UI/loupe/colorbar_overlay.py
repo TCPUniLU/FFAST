@@ -216,6 +216,10 @@ class _ColorItem(QtWidgets.QWidget):
 
     def _buildMenu(self):
         menu = QtWidgets.QMenu(self)
+        # Flat action list, no checkboxes/submenus -- the "compactContextMenu"
+        # QSS rule (style.qss) sizes the popup to the text instead of leaving
+        # dead space for an indicator column it never uses.
+        menu.setObjectName("compactContextMenu")
         grouped = self._coord.group_of(self) is not None
         menu.addAction("Rotate 90°", self._coord.rotate_selection_or(self))
         menu.addAction("Rotate all 90°", self._coord.rotate_all)

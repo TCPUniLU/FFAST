@@ -26,6 +26,44 @@ _DEFAULT_LEGEND_FONT_PT = 12
 _MIN_LEGEND_FONT_PT = 6
 _MAX_LEGEND_FONT_PT = 32
 
+# PyQtGraph's built-in "X axis"/"Y axis" right-click submenu (ViewBoxMenu)
+# embeds a compact form -- radio buttons, checkboxes, a combo, two line
+# edits -- in a zero-margin, zero-spacing QGridLayout sized for native Qt
+# control heights. Our app-wide QSS (style.qss) inflates those same widget
+# types for our own toolbars/forms (QCheckBox/QRadioButton to 36px with 28px
+# indicators, QComboBox to 32px, QLineEdit/QSpinBox to 24px) -- under this
+# zero-spacing template that crowded the rows into each other (measured
+# 356x250, overlapping). This resets sizing to compact but readable: a
+# slightly larger font than the inherited default, a couple pixels of row
+# margin so it doesn't look cramped (the grid has zero spacing of its own),
+# and a small inset around the embedded form. Measured 378x189 -- still well
+# under the original's overlapping 250px tall, with breathing room restored.
+# Nothing else in the app uses this stylesheet.
+_AXIS_CONTROL_MENU_QSS = """
+QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {
+  height: 22px;
+  padding: 0px 6px;
+  margin: 2px 0px;
+  font-size: 11pt;
+}
+QCheckBox, QRadioButton {
+  height: 22px;
+  spacing: 8px;
+  margin: 2px 0px;
+  font-size: 11pt;
+}
+QCheckBox::indicator, QRadioButton::indicator {
+  width: 15px;
+  height: 15px;
+}
+QLabel {
+  font-size: 11pt;
+}
+QMenu {
+  padding: 6px;
+}
+"""
+
 
 class _EditableLegendItem(pyqtgraph.LegendItem):
     """LegendItem with drag-to-reposition, scroll-to-resize, and double-click-to-
@@ -343,6 +381,15 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         pw = self.plotWidget
 
         pi.setContentsMargins(7, 7, 7, 7)  # fixes axis cutting
+        self._compactifyAxisControlMenu(pi)
+
+    def _compactifyAxisControlMenu(self, plotItem):
+        """See _AXIS_CONTROL_MENU_QSS: rescope the built-in X/Y-axis submenu's
+        controls back to compact sizing so its zero-margin grid doesn't
+        overflow under our app-wide QSS."""
+        viewBoxMenu = plotItem.getViewBox().menu
+        if viewBoxMenu is not None:
+            viewBoxMenu.setStyleSheet(_AXIS_CONTROL_MENU_QSS)
 
     def applyStyle(self):
         self.setMinimumSize(400, 400)
@@ -487,6 +534,10 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         Split from showing it so tests can inspect the built menu without
         invoking the (now non-blocking, see _showAxisLabelMenu) popup."""
         menu = QtWidgets.QMenu(self.plotWidget)
+        # Flat action list, no checkboxes/submenus -- the "compactContextMenu"
+        # QSS rule (style.qss) sizes the popup to the text instead of leaving
+        # dead space for an indicator column it never uses.
+        menu.setObjectName("compactContextMenu")
         menu.addAction("Set Font Size…", lambda: self._promptAxisLabelFontSize(axisName))
         menu.addAction("Increase Font Size", lambda: self._resizeAxisLabel(axisName, 1))
         menu.addAction("Decrease Font Size", lambda: self._resizeAxisLabel(axisName, -1))
@@ -877,6 +928,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         (numeric entry + steppers), minus per-entry renaming (that stays
         double-click-only, since it needs picking which entry first)."""
         menu = QtWidgets.QMenu(self.plotWidget)
+        menu.setObjectName("compactContextMenu")
         menu.addAction("Set Font Size…", self._promptLegendFontSize)
         menu.addAction("Increase Font Size", lambda: self._resizeLegendFontSize(1))
         menu.addAction("Decrease Font Size", lambda: self._resizeLegendFontSize(-1))
