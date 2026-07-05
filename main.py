@@ -6,6 +6,16 @@ import sys
 from pathlib import Path
 import site
 
+# Redirect Python's bytecode cache out of the (iCloud-synced) repo BEFORE any
+# project module is imported. Writing __pycache__ next to source makes iCloud
+# sync-churn the tree, which intermittently locks/evicts source files mid-import
+# -- surfaced as `PermissionError: Operation not permitted` on e.g.
+# ffast/session/__init__.py when starting the local server. sys.pycache_prefix
+# takes effect at runtime for all subsequent imports; honour an explicit
+# PYTHONPYCACHEPREFIX if the user set one, else default outside iCloud.
+os.environ.setdefault("PYTHONPYCACHEPREFIX", os.path.expanduser("~/.cache/ffast-pyc"))
+sys.pycache_prefix = os.environ["PYTHONPYCACHEPREFIX"]
+
 # Fix Qt plugin path issue - must be set before importing PySide6
 if "QT_PLUGIN_PATH" not in os.environ:
     # Find PySide6 without importing it (to avoid triggering Qt init)
