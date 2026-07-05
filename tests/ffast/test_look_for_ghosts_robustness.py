@@ -14,7 +14,8 @@ skipped, not parsed.
 """
 import types
 
-import client.environment as cenv
+import client.loading_coordinator as lcmod
+from client.loading_coordinator import LoadingCoordinator
 
 
 class _Models:
@@ -43,7 +44,7 @@ def test_lookForGhosts_skips_metric_cache_keys(monkeypatch):
         def initialise(self):
             pass
 
-    monkeypatch.setattr(cenv, "GhostModelLoader", _FakeGhost)
+    monkeypatch.setattr(lcmod, "GhostModelLoader", _FakeGhost)
 
     fake = types.SimpleNamespace(
         cache={
@@ -56,7 +57,7 @@ def test_lookForGhosts_skips_metric_cache_keys(monkeypatch):
         datasets=_Datasets(),
     )
 
-    cenv.Environment.lookForGhosts(fake)  # must not raise (was ValueError)
+    LoadingCoordinator(fake).lookForGhosts()  # must not raise (was ValueError)
 
     # Only the raw prediction keys recover ghosts; metric keys are skipped.
     assert set(created) == {"modelA", "modelC"}

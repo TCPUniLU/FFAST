@@ -546,11 +546,7 @@ class ConnectionManager:
 
         model_name = meta.name if meta.name else fingerprint[:8]
         # Register info so GhostModelLoader.initialise() finds the display name.
-        self.objects.register(fingerprint, {
-            "path": "remote",
-            "name": model_name,
-            "type": "ghost_model",
-        })
+        self._env.loading.registerGhostModel(fingerprint, path="remote", name=model_name)
         model = GhostModelLoader(self._env, fingerprint)
         model.initialise()
         self.setNewModel(model)
@@ -700,11 +696,9 @@ class ConnectionManager:
 
                 # Store model info so GhostModelLoader.initialise() finds it.
                 model_name = model_names.get(model_fp, model_fp[:8])
-                self.objects.register(model_fp, {
-                    "path": "remote",
-                    "name": model_name,
-                    "type": "ghost_model",
-                })
+                self._env.loading.registerGhostModel(
+                    model_fp, path="remote", name=model_name
+                )
                 logger.info(
                     "Imported predictions for %r (model %s)",
                     model_name, model_fp[:8],

@@ -10,7 +10,6 @@ from UI.menuLogic import (
 )
 from utils import deep_getsizeof
 from client.dataType import AtomsList
-from ffast.protocol import control
 
 
 class MainMenuHandler(MenuHandlerBase):
@@ -496,235 +495,97 @@ class MainMenuHandler(MenuHandlerBase):
 
         logger.info("Requesting remote load: path=%s type=%s", path, typ)
 
-        if typ == "ase (auto)":
-            # ── 3. ASE: probe keys on server, show KeySelectionDialog ─────
-            #
-            # IMPORTANT: dialog.exec() must NOT be called while an asyncio
-            # task is active — calling it inside a coroutine triggers:
-            #   RuntimeError: Cannot enter into task … while another task …
-            #   is being executed.
-            # Fix: probe keys in an async task, then defer the dialog to a
-            # QTimer callback (no task running at that point) and bridge back
-            # into the task via an asyncio.Future.
-            handler_window = self.handler.window
+        # The load algorithm (probe → stride → probe → keys → dispatch) lives in
+        # the Qt-free Loading Coordinator (ADR 0034). The UI supplies only the
+        # dialog interactions as callbacks. dialog.exec() must NOT run while an
+        # asyncio task is active (RuntimeError: "Cannot enter into task … while
+        # another task is being executed"), so each callback defers exec() to a
+        # QTimer tick and bridges the result back via an asyncio.Future — by then
+        # the coordinator coroutine is suspended on ``await``, so no task runs.
+        handler_window = self.handler.window
 
-            async def _probeAndLoadTask(taskID=None):
-                import asyncio as _asyncio
-                from PySide6.QtCore import QTimer
+        async def get_stride(n_total):
+            """Stride dialog → slice_num (or None if cancelled)."""
+            import asyncio as _asyncio
+            from PySide6.QtCore import QTimer
 
-                # ── 3a. probe dataset length for stride estimate ──────────
-                env.eventPush(
-                    "TASK_PROGRESS", taskID,
-                    message="Probing dataset length on server…",
-                )
-                n_total = None
+            loop = _asyncio.get_event_loop()
+            fut = loop.create_future()
+
+            def _show():
                 try:
-                    length_result = await session.probe_dataset_length(path)
-                    if not length_result.get("error"):
-                        n_total = length_result.get("n")
+                    dlg = RemoteStrideDialog(n_total=n_total, parent=handler_window)
+                    if dlg.exec() == RemoteStrideDialog.Accepted:
+                        if not fut.done():
+                            fut.set_result(dlg.get_stride())
+                    else:
+                        if not fut.done():
+                            fut.set_result(None)
                 except Exception as exc:
-                    logger.warning("Length probe failed (non-fatal): %s", exc)
+                    if not fut.done():
+                        fut.set_exception(exc)
 
-                # ── 3b. show stride dialog on main thread ─────────────────
-                loop = _asyncio.get_event_loop()
-                stride_future = loop.create_future()
+            QTimer.singleShot(0, _show)
+            stride = await fut
+            if stride is None:
+                return None
+            # slice_num=0 means "load all" (efficient path); N>1 = every Nth
+            return stride_to_slice_num(stride)
 
-                def _show_stride_dialog():
-                    try:
-                        dlg = RemoteStrideDialog(
-                            n_total=n_total,
-                            parent=handler_window,
-                        )
-                        if dlg.exec() == RemoteStrideDialog.Accepted:
-                            if not stride_future.done():
-                                stride_future.set_result(dlg.get_stride())
-                        else:
-                            if not stride_future.done():
-                                stride_future.set_result(None)
-                    except Exception as exc:
-                        if not stride_future.done():
-                            stride_future.set_exception(exc)
+        async def get_keys(probe):
+            """Resolve keys from a probe result, showing KeySelectionDialog only
+            when ambiguous. Returns (energy_key, force_key, prediction_keys) or
+            None if cancelled. Mirrors the local _showASEKeySelectionDialog."""
+            import asyncio as _asyncio
+            from PySide6.QtCore import QTimer
 
-                QTimer.singleShot(0, _show_stride_dialog)
-                env.eventPush(
-                    "TASK_PROGRESS", taskID,
-                    message="Waiting for stride selection…",
-                )
-                stride = await stride_future
-                if stride is None:
-                    logger.info("Remote dataset loading cancelled by user")
-                    return
-                # slice_num=0 means "load all" (efficient path); N>1 = every Nth
-                slice_num = stride_to_slice_num(stride)
-                logger.info(
-                    "Requesting remote load: path=%s type=%s stride=%d",
-                    path, typ, stride,
-                )
+            energy_keys = probe.get("energy_keys") or []
+            force_keys = probe.get("force_keys") or []
+            has_calc_energy = bool(probe.get("has_calculator_energy"))
+            has_calc_forces = bool(probe.get("has_calculator_forces"))
 
-                # ── 3c. probe keys ────────────────────────────────────────
-                env.eventPush(
-                    "TASK_PROGRESS", taskID,
-                    message="Probing dataset keys on server…",
-                )
+            need_dialog, selected_energy_key, selected_force_key = resolve_key_options(
+                energy_keys, force_keys, has_calc_energy, has_calc_forces
+            )
+            if not need_dialog:
+                return (selected_energy_key, selected_force_key, [])
+
+            loop = _asyncio.get_event_loop()
+            fut = loop.create_future()
+
+            def _show():
                 try:
-                    probe = await session.probe_dataset_keys(path, typ)
+                    from UI.KeySelectionDialog import KeySelectionDialog
+                    dlg = KeySelectionDialog(
+                        energy_keys, force_keys, parent=handler_window,
+                    )
+                    if dlg.exec() == KeySelectionDialog.Accepted:
+                        if not fut.done():
+                            fut.set_result(dlg.getSelection())
+                    else:
+                        if not fut.done():
+                            fut.set_result(None)
                 except Exception as exc:
-                    logger.error("Key probe failed: %s", exc)
-                    env.eventPush(
-                        "TASK_PROGRESS", taskID,
-                        message=f"Key probe failed: {exc}", error=True,
-                    )
-                    return
+                    if not fut.done():
+                        fut.set_exception(exc)
 
-                if probe.get("error"):
-                    logger.warning(
-                        "Server probe error for %r: %s", path, probe["error"]
-                    )
-                    # Fall back: load without explicit key selection
-                    await session.push_event(control.LOAD_DATASET, path, typ, slice_num=slice_num)
-                    return
-
-                energy_keys = probe.get("energy_keys") or []
-                force_keys = probe.get("force_keys") or []
-                has_calc_energy = bool(probe.get("has_calculator_energy"))
-                has_calc_forces = bool(probe.get("has_calculator_forces"))
-
-                # Mirrors local _showASEKeySelectionDialog logic:
-                # skip dialog when there is only one option for each.
-                need_dialog, selected_energy_key, selected_force_key = resolve_key_options(
-                    energy_keys, force_keys, has_calc_energy, has_calc_forces
-                )
-                prediction_keys = []
-
-                if need_dialog:
-                    loop = _asyncio.get_event_loop()
-                    dialog_future = loop.create_future()
-
-                    def _show_dialog_on_main_thread():
-                        """Run dialog outside any asyncio task (QTimer callback).
-
-                        When this fires, the probe task is suspended on
-                        ``await dialog_future``, so no asyncio task is
-                        "executing".  dialog.exec() can safely enter Qt's
-                        nested event loop without the RuntimeError.
-                        """
-                        try:
-                            from UI.KeySelectionDialog import KeySelectionDialog
-                            dlg = KeySelectionDialog(
-                                energy_keys, force_keys,
-                                parent=handler_window,
-                            )
-                            if dlg.exec() == KeySelectionDialog.Accepted:
-                                if not dialog_future.done():
-                                    dialog_future.set_result(
-                                        dlg.getSelection()
-                                    )
-                            else:
-                                # User cancelled
-                                if not dialog_future.done():
-                                    dialog_future.set_result(None)
-                        except Exception as exc:
-                            if not dialog_future.done():
-                                dialog_future.set_exception(exc)
-
-                    # Schedule dialog for next Qt event loop tick.
-                    # By this point our coroutine will be suspended on
-                    # ``await dialog_future`` (no task executing).
-                    QTimer.singleShot(0, _show_dialog_on_main_thread)
-
-                    env.eventPush(
-                        "TASK_PROGRESS", taskID,
-                        message="Waiting for key selection…",
-                    )
-                    selection = await dialog_future  # task suspended here
-
-                    if selection is None:
-                        logger.info("Remote dataset loading cancelled by user")
-                        return
-
-                    selected_energy_key = selection["energy_ref"]
-                    selected_force_key = selection["force_ref"]
-                    prediction_keys = selection["predictions"]
-
-                logger.info(
-                    "Remote LOAD_DATASET: energy_key=%r force_key=%r "
-                    "prediction_keys=%r",
-                    selected_energy_key, selected_force_key, prediction_keys,
-                )
-                await session.push_event(
-                    control.LOAD_DATASET, path, typ,
-                    selected_energy_key=selected_energy_key,
-                    selected_force_key=selected_force_key,
-                    prediction_keys=prediction_keys,
-                    slice_num=slice_num,
-                )
-
-            env.tm.newTask(
-                _probeAndLoadTask,
-                visual=True,
-                name="Load remote dataset…",
+            QTimer.singleShot(0, _show)
+            selection = await fut
+            if selection is None:
+                return None
+            return (
+                selection["energy_ref"],
+                selection["force_ref"],
+                selection["predictions"],
             )
 
-        else:
-            # ── non-ASE: probe length + stride dialog, then send ──────────
-            handler_window = self.handler.window
-
-            async def _nonAseLoadTask(taskID=None):
-                import asyncio as _asyncio
-                from PySide6.QtCore import QTimer
-
-                env.eventPush(
-                    "TASK_PROGRESS", taskID,
-                    message="Probing dataset length on server…",
-                )
-                n_total = None
-                try:
-                    length_result = await session.probe_dataset_length(path)
-                    if not length_result.get("error"):
-                        n_total = length_result.get("n")
-                except Exception as exc:
-                    logger.warning("Length probe failed (non-fatal): %s", exc)
-
-                loop = _asyncio.get_event_loop()
-                stride_future = loop.create_future()
-
-                def _show_stride_dialog():
-                    try:
-                        dlg = RemoteStrideDialog(
-                            n_total=n_total,
-                            parent=handler_window,
-                        )
-                        if dlg.exec() == RemoteStrideDialog.Accepted:
-                            if not stride_future.done():
-                                stride_future.set_result(dlg.get_stride())
-                        else:
-                            if not stride_future.done():
-                                stride_future.set_result(None)
-                    except Exception as exc:
-                        if not stride_future.done():
-                            stride_future.set_exception(exc)
-
-                QTimer.singleShot(0, _show_stride_dialog)
-                env.eventPush(
-                    "TASK_PROGRESS", taskID,
-                    message="Waiting for stride selection…",
-                )
-                stride = await stride_future
-                if stride is None:
-                    logger.info("Remote dataset loading cancelled by user")
-                    return
-                slice_num = stride_to_slice_num(stride)
-                logger.info(
-                    "Requesting remote load: path=%s type=%s stride=%d",
-                    path, typ, stride,
-                )
-                await session.push_event(control.LOAD_DATASET, path, typ, slice_num=slice_num)
-
-            env.tm.newTask(
-                _nonAseLoadTask,
-                visual=True,
-                name="Load remote dataset…",
-            )
+        env.tm.newTask(
+            env.loading.loadRemoteDataset,
+            args=(session, path, typ),
+            kwargs={"get_stride": get_stride, "get_keys": get_keys},
+            visual=True,
+            name="Load remote dataset…",
+        )
 
     def onRemotePredictionLoad(self):
         """Load a cluster-side prediction file against an already-loaded remote dataset.
@@ -739,7 +600,6 @@ class MainMenuHandler(MenuHandlerBase):
            receives REMOTE_MODEL_META and auto-fetches prediction arrays via
            the Prediction-Only Array Channel.
         """
-        import asyncio
         import logging
         from PySide6.QtWidgets import QInputDialog, QMessageBox
 
@@ -808,36 +668,18 @@ class MainMenuHandler(MenuHandlerBase):
             path, ds_fp[:8],
         )
 
-        # ── 3. NPZ vs ASE ────────────────────────────────────────────────────
-        if path.lower().endswith(".npz"):
-            # NPZ: E/F keys are fixed ("E", "F") — no key dialog needed.
-            asyncio.create_task(
-                session.push_event(control.LOAD_PREDICTION, path, ds_fp)
-            )
-            return
-
-        # ASE: probe keys on server, then show KeySelectionDialog if needed.
+        # The prediction-load algorithm (NPZ direct-dispatch, or ASE probe → keys
+        # → dispatch) lives in the Qt-free Loading Coordinator (ADR 0034). The UI
+        # supplies only the key-dialog interaction as a callback, deferring
+        # exec() to a QTimer tick to avoid the "Cannot enter into task" error.
         handler_window = self.handler.window
 
-        async def _probeAndLoadPredTask(taskID=None):
-            env.eventPush(
-                "TASK_PROGRESS", taskID,
-                message="Probing prediction file keys on server…",
-            )
-            try:
-                probe = await session.probe_dataset_keys(path, "ase (auto)")
-            except Exception as exc:
-                logger.error("Key probe failed: %s", exc)
-                env.eventPush(
-                    "TASK_PROGRESS", taskID,
-                    message=f"Key probe failed: {exc}", error=True,
-                )
-                return
-
-            if probe.get("error"):
-                # Fall back: load without explicit key selection
-                await session.push_event(control.LOAD_PREDICTION, path, ds_fp)
-                return
+        async def get_keys(probe):
+            """Resolve prediction keys from a probe result, showing
+            KeySelectionDialog (for_predictions) only when ambiguous. Returns
+            (energy_key, force_key) or None if cancelled."""
+            import asyncio as _asyncio
+            from PySide6.QtCore import QTimer
 
             energy_keys = probe.get("energy_keys") or []
             force_keys = probe.get("force_keys") or []
@@ -847,60 +689,39 @@ class MainMenuHandler(MenuHandlerBase):
             need_dialog, selected_energy_key, selected_force_key = resolve_key_options(
                 energy_keys, force_keys, has_calc_energy, has_calc_forces
             )
+            if not need_dialog:
+                return (selected_energy_key, selected_force_key)
 
-            if need_dialog:
-                import asyncio as _asyncio
-                from PySide6.QtCore import QTimer
+            loop = _asyncio.get_event_loop()
+            fut = loop.create_future()
 
-                loop = _asyncio.get_event_loop()
-                dialog_future = loop.create_future()
+            def _show():
+                try:
+                    from UI.KeySelectionDialog import KeySelectionDialog
+                    dlg = KeySelectionDialog(
+                        energy_keys, force_keys,
+                        parent=handler_window, for_predictions=True,
+                    )
+                    if dlg.exec() == KeySelectionDialog.Accepted:
+                        if not fut.done():
+                            fut.set_result(dlg.getSelection())
+                    else:
+                        if not fut.done():
+                            fut.set_result(None)
+                except Exception as exc:
+                    if not fut.done():
+                        fut.set_exception(exc)
 
-                def _show_dialog():
-                    """Show KeySelectionDialog outside any asyncio task."""
-                    try:
-                        from UI.KeySelectionDialog import KeySelectionDialog
-                        dlg = KeySelectionDialog(
-                            energy_keys, force_keys,
-                            parent=handler_window,
-                            for_predictions=True,
-                        )
-                        if dlg.exec() == KeySelectionDialog.Accepted:
-                            if not dialog_future.done():
-                                dialog_future.set_result(dlg.getSelection())
-                        else:
-                            if not dialog_future.done():
-                                dialog_future.set_result(None)
-                    except Exception as exc:
-                        if not dialog_future.done():
-                            dialog_future.set_exception(exc)
-
-                QTimer.singleShot(0, _show_dialog)
-                env.eventPush(
-                    "TASK_PROGRESS", taskID,
-                    message="Waiting for key selection…",
-                )
-                selection = await dialog_future
-
-                if selection is None:
-                    logger.info("Remote prediction load cancelled by user")
-                    return
-
-                selected_energy_key = selection["energy_ref"]
-                selected_force_key = selection["force_ref"]
-
-            logger.info(
-                "Remote LOAD_PREDICTION: path=%r dataset=%r "
-                "energy_key=%r force_key=%r",
-                path, ds_fp[:8], selected_energy_key, selected_force_key,
-            )
-            await session.push_event(
-                control.LOAD_PREDICTION, path, ds_fp,
-                selected_energy_key=selected_energy_key,
-                selected_force_key=selected_force_key,
-            )
+            QTimer.singleShot(0, _show)
+            selection = await fut
+            if selection is None:
+                return None
+            return (selection["energy_ref"], selection["force_ref"])
 
         env.tm.newTask(
-            _probeAndLoadPredTask,
+            env.loading.loadRemotePrediction,
+            args=(session, path, ds_fp),
+            kwargs={"get_keys": get_keys},
             visual=True,
             name="Load remote prediction…",
         )
