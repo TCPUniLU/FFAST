@@ -26,7 +26,10 @@ import socket
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
+
+if TYPE_CHECKING:
+    from cluster.inbound_router import ListenerHandle
 
 logger = logging.getLogger("FFAST")
 
@@ -303,19 +306,24 @@ class ServerConnection:
         data = pack(event, args, kwargs)
         await self.websocket.send(data)
 
-    async def start_listener(self, local_env) -> asyncio.Task:
+    async def start_listener(self, local_env) -> "ListenerHandle":
         """Start a background task that forwards server events to local_env.
 
         Receives msgpack messages from the server and re-injects them into
-        *local_env*'s event system via ``eventPush``.  This drives the local
-        UI (progress bars, plot refreshes) from remote task activity.
+        *local_env*'s event system via the Inbound Event Router (ADR 0032),
+        which drives the local UI (progress bars, plot refreshes) from remote
+        task activity.
 
-        Returns the ``asyncio.Task`` — cancel it to stop listening.
+        Returns a ``ListenerHandle`` — its ``cancel()``/``wait_done()`` are the
+        listener's lifecycle API; callers must not reach into the task inside.
 
         Note: do not call ``ping()`` while the listener is running; both
         compete for the same websocket receive stream.
         """
         from ffast.protocol.rpc import CLIENT_ENV_SAFE, unpack
+        from cluster.inbound_router import InboundEventRouter, ListenerHandle
+
+        router = InboundEventRouter(local_env)
 
         async def _listen():
             try:
@@ -359,49 +367,7 @@ class ServerConnection:
                             )
                             continue
 
-                        if event == "REMOTE_DATASET_META" and args:
-                            logger.info(
-                                "Listener: forwarding REMOTE_DATASET_META"
-                                " fp=%r kwargs=%r", args[0], kwargs
-                            )
-
-                        # ── remote task ID namespacing ────────────────────
-                        # Both the server and the local env use incrementing
-                        # integer task IDs starting from 1, so they collide:
-                        # the local connect task is typically ID 1, and the
-                        # first remote task (dataset load) is also ID 1.
-                        # Without namespacing, _inject_phantom_task overwrites
-                        # the connect task entry, and TASK_DONE [1] from the
-                        # server removes the connect bar from the sidebar.
-                        # Prefix remote IDs so they occupy a distinct namespace.
-                        if (
-                            event in (
-                                "TASK_CREATED", "TASK_PROGRESS",
-                                "TASK_DONE", "TASK_FAILED",
-                            )
-                            and args
-                        ):
-                            args = list(args)
-                            args[0] = f"remote_{args[0]}"
-
-                        # Phantom task: TASK_CREATED from server carries only
-                        # taskID.  The local TaskManager has no record of it,
-                        # so TasksList.onTaskCreated would silently skip it.
-                        # Insert a minimal entry so progress bars appear.
-                        if event == "TASK_CREATED" and args:
-                            logger.info(
-                                "Listener: registering phantom task %r",
-                                args[0],
-                            )
-                            local_env.tm.registerPhantomTask(args[0])
-                        if event == "TASK_DONE":
-                            # Delay TASK_DONE so Qt can paint the progress
-                            # bar before it disappears.  Without this, fast
-                            # remote tasks (TASK_CREATED + TASK_DONE arrive
-                            # buffered together) vanish before the first
-                            # paint cycle.
-                            await asyncio.sleep(2.0)
-                        local_env.eventPush(event, *args, **kwargs)
+                        await router.route(event, args, kwargs)
                         # Yield to the Qt/asyncio event loop so that widget
                         # changes from this event are painted before the next
                         # event is processed.
@@ -415,7 +381,7 @@ class ServerConnection:
             except Exception as exc:
                 logger.warning("Listener terminated: %s", exc)
 
-        return asyncio.create_task(_listen())
+        return ListenerHandle(asyncio.create_task(_listen()))
 
     async def request_subdataset_arrays(
         self, fingerprint: str, timeout: float = 300.0

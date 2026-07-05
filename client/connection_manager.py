@@ -180,9 +180,7 @@ class ConnectionManager:
             # For reconnect sessions the server replays REMOTE_DATASET_META
             # and REMOTE_MODEL_META automatically on connection, so the
             # listener will receive and forward them as normal.
-            self.serverConnection._listener = (
-                await session.start_listener(self._env)
-            )
+            listener = await session.start_listener(self._env)
             logger.info(
                 "Remote session ready: job=%s local_port=%d",
                 session.job_id,
@@ -198,23 +196,11 @@ class ConnectionManager:
             )
 
             # Keep task alive so the sidebar item stays as a
-            # disconnect handle.
-            #
-            # Use a Future (not `await session._listener`) so that
-            # CancelledError always lands here regardless of whether
-            # the listener has already exited.  Awaiting a completed
-            # Task returns immediately without raising CancelledError,
-            # which caused scancel to be skipped in a race condition.
-            _alive = asyncio.get_event_loop().create_future()
-
-            def _on_listener_done(t):
-                if not _alive.done():
-                    _alive.set_result("listener_exited")
-
-            session._listener.add_done_callback(_on_listener_done)
-
+            # disconnect handle. ListenerHandle.wait_done() always raises
+            # CancelledError to the caller (see its docstring for why this
+            # matters over awaiting the task directly).
             try:
-                await _alive
+                await listener.wait_done()
                 # Natural exit — listener died (server dropped).
                 # Keep session record: user can still reconnect if the
                 # job is still alive (e.g. transient tunnel failure).
@@ -241,7 +227,7 @@ class ConnectionManager:
                     "Disconnecting from cluster (user request, job %s)",
                     session.job_id,
                 )
-                session._listener.cancel()
+                listener.cancel()
                 await session.disconnect()
                 self.serverConnection = None
                 if reconnect_job_id is None:
@@ -342,9 +328,7 @@ class ConnectionManager:
         try:
             session = await connect_direct(host, port)
             self.serverConnection = session
-            self.serverConnection._listener = (
-                await session.start_listener(self._env)
-            )
+            listener = await session.start_listener(self._env)
             logger.info("Local server connected: %s:%d", host, port)
             self.eventPush("REMOTE_CONNECTED")
             self.eventPush(
@@ -354,16 +338,8 @@ class ConnectionManager:
                 message="Connected — ✕ to disconnect",
             )
 
-            _alive = asyncio.get_event_loop().create_future()
-
-            def _on_done(_t):
-                if not _alive.done():
-                    _alive.set_result("done")
-
-            session._listener.add_done_callback(_on_done)
-
             try:
-                await _alive
+                await listener.wait_done()
                 self.eventPush(
                     "TASK_PROGRESS",
                     taskID,
@@ -372,7 +348,7 @@ class ConnectionManager:
                 )
                 self.serverConnection = None
             except asyncio.CancelledError:
-                session._listener.cancel()
+                listener.cancel()
                 await session.disconnect()
                 self.serverConnection = None
                 raise
@@ -447,18 +423,12 @@ class ConnectionManager:
             )
             logger.info("Local server ready on port %d", port)
 
-            _alive = self._event_loop.create_future() if self._event_loop else None
-            if _alive is not None:
-                def _on_done(_t):
-                    if not _alive.done():
-                        _alive.set_result("done")
-                self._localServerListener.add_done_callback(_on_done)
-                await _alive
-                self.eventPush(
-                    "TASK_PROGRESS", taskID,
-                    message="Local server stopped",
-                    error=True,
-                )
+            await self._localServerListener.wait_done()
+            self.eventPush(
+                "TASK_PROGRESS", taskID,
+                message="Local server stopped",
+                error=True,
+            )
             return
 
         manager.stop(handle)
