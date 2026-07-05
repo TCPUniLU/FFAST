@@ -327,6 +327,10 @@ _Avoid_: RemoteSession (former name), remote session, session (bare — that is 
 The client-side owner of the **Server Connection** lifecycle (`ConnectionManager` in `client/connection_manager.py`, reached as `env.remote`). It establishes/tears down the connection (remote cluster or managed local server), holds the active `serverConnection`/`localServerConnection`, and mirrors the server-owned **Metric Catalog**. Renamed from `RemoteSessionManager`.
 _Avoid_: RemoteSessionManager (former name), session manager
 
+### Loading Coordinator
+The single client-side owner of turning a *what to load* request — dataset, model, or **Prediction**, plus source path and stride/keys — into the *where*: an in-process **TaskManager** task, or a dispatch to `ffast-server` over the **Server Connection** (`LoadingCoordinator` in `client/loading_coordinator.py`, reached as `env.loading`). It owns the local-vs-server routing decision (the connect-window fallback of ADR 0030), the load implementations and their validation, all load-related server transport (the **Dataset Length Probe** / key-probe round-trips and the `LOAD_DATASET` / `LOAD_MODEL` / `LOAD_PREDICTION` dispatch), and the one ghost register/discover chokepoint (`registerGhostModel` + ghost discovery, feeding **GhostModel** creation). It is **Qt-free by design** so it is the piece that can migrate into the **Headless Core** (ADR 0034); the **Desktop Client** keeps the file/key/stride dialogs and hands the coordinator dialog *callbacks* for its remote-load orchestration, so the load *algorithm* stays testable with a fake session and fake callbacks. `Environment` keeps thin same-name delegates (`env.loadDataset`, `env.taskLoadModel`, `env.lookForGhosts`, …) so existing call sites and the **Server Session**'s `LOAD_*` handlers are unchanged. Distinct from the **Connection Manager**, which owns the connection *lifecycle* and the server→client metadata handlers, not the load decision.
+_Avoid_: loader (that is a DatasetLoader/ModelLoader), load manager, data loader
+
 ### RPC Channel
 WebSocket connection (over SSH port-forward) between `ffast-client` and `ffast-server`. Uses `msgpack` for serialization. Carries two message classes:
 - **Control messages** — messages with a structured, defined payload (user actions, request/reply metadata, metric-result metadata). Eligible to be typed against the **Protocol Schema**.
@@ -368,6 +372,7 @@ A task identifier namespaced `remote_<n>` for work running on `ffast-server`. Ke
 
 - An **Environment** owns zero or more **Visualization Views**
 - Local and remote renderer clients access the **Environment** through `ffast-server`; desktop mode uses a **Local Server Session**
+- The **Loading Coordinator** decides whether a dataset/model/**Prediction** load runs in-process (a **TaskManager** task) or server-side over the **Server Connection**, and is the single point that registers and rediscovers **GhostModels**; its remote-load orchestration is Qt-free and receives the **Desktop Client**'s dialogs as callbacks
 - Connected renderer clients have explicit **Client Roles**
 - **Visualization Views** belong to the **Server Session** and may have a current client owner; client window placement and panel geometry remain client-local
 - A **Visualization View** has exactly one **Visualization State**
