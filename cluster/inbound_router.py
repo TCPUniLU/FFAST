@@ -16,15 +16,15 @@ named, unit-testable home.
 import asyncio
 import logging
 
-logger = logging.getLogger("FFAST")
+from ffast.protocol import control
 
-# Server and local env task IDs both start from 1, so they collide (the local
-# connect task is typically ID 1, and the first remote task — a dataset load
-# — is also ID 1). Prefixing remote IDs keeps them in a distinct namespace.
-_TASK_EVENTS = ("TASK_CREATED", "TASK_PROGRESS", "TASK_DONE", "TASK_FAILED")
+logger = logging.getLogger("FFAST")
 
 
 def _namespace_task_id(args):
+    # Server and local env task IDs both start from 1, so they collide (the
+    # local connect task is typically ID 1, and the first remote task — a
+    # dataset load — is also ID 1). Prefixing keeps them in distinct spaces.
     if not args:
         return args
     args = list(args)
@@ -47,7 +47,7 @@ class InboundEventRouter:
             "TASK_PROGRESS": self._on_task_namespaced,
             "TASK_DONE": self._on_task_done,
             "TASK_FAILED": self._on_task_namespaced,
-            "REMOTE_DATASET_META": self._on_remote_dataset_meta,
+            control.REMOTE_DATASET_META: self._on_remote_dataset_meta,
         }
 
     async def route(self, event, args, kwargs) -> None:

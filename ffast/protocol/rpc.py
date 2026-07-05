@@ -14,6 +14,8 @@ Use pack_arrays / unpack_arrays for the SUBDATASET_ARRAYS event.
 import msgpack
 import numpy as np
 
+from ffast.protocol import control
+
 # Events the server broadcasts to every connected client via the generic
 # subscription loop in server._main().
 SERVER_TO_CLIENT = frozenset(
@@ -51,16 +53,16 @@ CLIENT_ENV_SAFE = frozenset(
         "TASK_FAILED",
         # Remote object announcements — handled by env._onRemoteDatasetMeta
         # and env._onRemoteModelMeta to create local proxy objects.
-        "REMOTE_DATASET_META",
-        "REMOTE_MODEL_META",
+        control.REMOTE_DATASET_META,
+        control.REMOTE_MODEL_META,
         # Server-owned render path (ADR 0014): renderer-neutral scene data.
         # Forwarded verbatim to the Loupe scene adapter via eventPush; the
         # local env holds no matching objects, so the Loupe handlers consume
         # them directly rather than mutating env state.
-        "SCENE_SNAPSHOT",
-        "SCENE_PATCH",
+        control.SCENE_SNAPSHOT,
+        control.SCENE_PATCH,
         # Fired by server after LOAD_CONFIG loads new user metrics.
-        "METRICS_UPDATED",
+        control.METRICS_UPDATED,
     }
 )
 
@@ -131,7 +133,7 @@ def pack_arrays(fingerprint: str, arrays: dict, **extra_kwargs) -> bytes:
     for k, v in arrays.items():
         encoded[k] = None if v is None else _encode_array(v)
     return pack(
-        "SUBDATASET_ARRAYS", (fingerprint,), {"arrays": encoded, **extra_kwargs}
+        control.SUBDATASET_ARRAYS, (fingerprint,), {"arrays": encoded, **extra_kwargs}
     )
 
 
@@ -174,7 +176,7 @@ def pack_prediction_arrays(
     for k, v in arrays.items():
         encoded[k] = None if v is None else _encode_array(v)
     return pack(
-        "PREDICTION_ARRAYS",
+        control.PREDICTION_ARRAYS,
         (dataset_fp, model_fp),
         {"arrays": encoded},
     )
@@ -211,7 +213,7 @@ def pack_metric_result(key: str, metric_id: str, ok: bool, result=None) -> bytes
     else:
         msg = MetricResultMessage(ok=bool(ok))
     return pack(
-        "METRIC_RESULT", (key, metric_id), msg.model_dump(exclude_none=True)
+        control.METRIC_RESULT, (key, metric_id), msg.model_dump(exclude_none=True)
     )
 
 

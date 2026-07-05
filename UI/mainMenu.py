@@ -10,6 +10,7 @@ from UI.menuLogic import (
 )
 from utils import deep_getsizeof
 from client.dataType import AtomsList
+from ffast.protocol import control
 
 
 class MainMenuHandler(MenuHandlerBase):
@@ -580,7 +581,7 @@ class MainMenuHandler(MenuHandlerBase):
                         "Server probe error for %r: %s", path, probe["error"]
                     )
                     # Fall back: load without explicit key selection
-                    await session.push_event("LOAD_DATASET", path, typ, slice_num=slice_num)
+                    await session.push_event(control.LOAD_DATASET, path, typ, slice_num=slice_num)
                     return
 
                 energy_keys = probe.get("energy_keys") or []
@@ -651,7 +652,7 @@ class MainMenuHandler(MenuHandlerBase):
                     selected_energy_key, selected_force_key, prediction_keys,
                 )
                 await session.push_event(
-                    "LOAD_DATASET", path, typ,
+                    control.LOAD_DATASET, path, typ,
                     selected_energy_key=selected_energy_key,
                     selected_force_key=selected_force_key,
                     prediction_keys=prediction_keys,
@@ -717,7 +718,7 @@ class MainMenuHandler(MenuHandlerBase):
                     "Requesting remote load: path=%s type=%s stride=%d",
                     path, typ, stride,
                 )
-                await session.push_event("LOAD_DATASET", path, typ, slice_num=slice_num)
+                await session.push_event(control.LOAD_DATASET, path, typ, slice_num=slice_num)
 
             env.tm.newTask(
                 _nonAseLoadTask,
@@ -811,7 +812,7 @@ class MainMenuHandler(MenuHandlerBase):
         if path.lower().endswith(".npz"):
             # NPZ: E/F keys are fixed ("E", "F") — no key dialog needed.
             asyncio.create_task(
-                session.push_event("LOAD_PREDICTION", path, ds_fp)
+                session.push_event(control.LOAD_PREDICTION, path, ds_fp)
             )
             return
 
@@ -835,7 +836,7 @@ class MainMenuHandler(MenuHandlerBase):
 
             if probe.get("error"):
                 # Fall back: load without explicit key selection
-                await session.push_event("LOAD_PREDICTION", path, ds_fp)
+                await session.push_event(control.LOAD_PREDICTION, path, ds_fp)
                 return
 
             energy_keys = probe.get("energy_keys") or []
@@ -893,7 +894,7 @@ class MainMenuHandler(MenuHandlerBase):
                 path, ds_fp[:8], selected_energy_key, selected_force_key,
             )
             await session.push_event(
-                "LOAD_PREDICTION", path, ds_fp,
+                control.LOAD_PREDICTION, path, ds_fp,
                 selected_energy_key=selected_energy_key,
                 selected_force_key=selected_force_key,
             )

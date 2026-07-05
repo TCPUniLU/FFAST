@@ -23,6 +23,8 @@ import logging
 
 import numpy as np
 
+from ffast.protocol import control
+
 logger = logging.getLogger("FFAST")
 
 
@@ -747,7 +749,7 @@ class ConnectionManager:
         async def _send():
             try:
                 await session.push_event(
-                    "OPEN_VIEW",
+                    control.OPEN_VIEW,
                     view_id=view_id,
                     dataset_ref=dataset_ref,
                     prediction_ref=prediction_ref,
@@ -769,7 +771,7 @@ class ConnectionManager:
 
         async def _send():
             try:
-                await session.push_event("CLOSE_VIEW", view_id=view_id)
+                await session.push_event(control.CLOSE_VIEW, view_id=view_id)
             except Exception as exc:
                 logger.error("closeRemoteView failed: %s", exc)
 
@@ -790,7 +792,7 @@ class ConnectionManager:
 
         async def _send():
             try:
-                await session.push_event("VIEW_COMMAND", **fields)
+                await session.push_event(control.VIEW_COMMAND, **fields)
             except Exception as exc:
                 logger.error("sendViewCommand failed: %s", exc)
 

@@ -96,6 +96,7 @@ async def _auto_snapshot_loop(
 
 async def _do_hello_handshake(websocket, addr, registry, token_hash: str):
     """Ping/pong then HELLO/HELLO_ACK. Returns the assigned ClientRole."""
+    from ffast.protocol import control
     from ffast.protocol.rpc import pack, unpack
     from ffast.session.token import ClientRole, SessionToken
     from ffast.visualization.protocol import ClientCapabilities, negotiate
@@ -131,7 +132,7 @@ async def _do_hello_handshake(websocket, addr, registry, token_hash: str):
         logger.warning("Client %s: HELLO decode error: %s — READ_ONLY", addr, exc)
         return registry.claim(websocket, False)
 
-    if event != "HELLO":
+    if event != control.HELLO:
         logger.info("Client %s: expected HELLO, got %r — READ_ONLY", addr, event)
         return registry.claim(websocket, False)
 
@@ -155,7 +156,7 @@ async def _do_hello_handshake(websocket, addr, registry, token_hash: str):
         server_caps = negotiate(client_caps)
         ack_dict = server_caps.model_dump()
         ack_dict["role"] = role.value
-        ack = pack("HELLO_ACK", [], ack_dict)
+        ack = pack(control.HELLO_ACK, [], ack_dict)
         await websocket.send(ack)
         logger.info("HELLO_ACK → %s: role=%s", addr, role.value)
     except Exception as exc:
@@ -191,6 +192,7 @@ async def _handler(
     session.replay()
 
     # ── receive / send loops ──────────────────────────────────────────────
+    from ffast.protocol import control
     from ffast.protocol.rpc import unpack
     graceful = False
 
@@ -200,7 +202,7 @@ async def _handler(
             if isinstance(message, bytes):
                 try:
                     event, args, kwargs = unpack(message)
-                    if event == "GRACEFUL_DISCONNECT":
+                    if event == control.GRACEFUL_DISCONNECT:
                         graceful = True
                         logger.info("GRACEFUL_DISCONNECT from %s", addr)
                     elif role == ClientRole.CONTROLLING:
@@ -386,6 +388,7 @@ async def _main(
 ):
     """Bootstrap env, wire RPC subscriptions, run server + event loop."""
     from client.environment import HeadlessEnvironment
+    from ffast.protocol import control
     from ffast.protocol.rpc import SERVER_TO_CLIENT, pack
     from utils import loadModules
 
@@ -430,7 +433,7 @@ async def _main(
             return
         try:
             data = pack(
-                "REMOTE_DATASET_META",
+                control.REMOTE_DATASET_META,
                 (fingerprint,),
                 DatasetMeta.model_validate(dataset.toMetaDict()).model_dump(),
             )
@@ -464,7 +467,7 @@ async def _main(
                         dataset_fps.append(ck.dataset_fp)
 
             data = pack(
-                "REMOTE_MODEL_META",
+                control.REMOTE_MODEL_META,
                 (model_fp,),
                 ModelMeta(name=name, dataset_fingerprints=dataset_fps).model_dump(),
             )

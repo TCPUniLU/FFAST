@@ -28,6 +28,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
 
+from ffast.protocol import control
+
 if TYPE_CHECKING:
     from cluster.inbound_router import ListenerHandle
 
@@ -240,14 +242,15 @@ def _reply_arrays(args, kwargs):
     }
 
 
-# reply event → (min args required, extractor)
+# reply event → (min args required, extractor). Keys are drift-tested against
+# control.REPLY_EVENTS (ADR 0033) — see tests/ffast/test_control_events.py.
 _REPLY_CHANNELS = {
-    "DATASET_KEYS_RESPONSE": (1, _reply_probe),
-    "DATASET_LENGTH_RESPONSE": (1, _reply_probe),
-    "PREDICTION_ARRAYS": (2, _reply_prediction),
-    "METRIC_RESULT": (1, _reply_metric),
-    "SUBDATASET_ARRAYS": (1, _reply_arrays),
-    "DIR_LISTING": (1, _reply_dir_listing),
+    control.DATASET_KEYS_RESPONSE: (1, _reply_probe),
+    control.DATASET_LENGTH_RESPONSE: (1, _reply_probe),
+    control.PREDICTION_ARRAYS: (2, _reply_prediction),
+    control.METRIC_RESULT: (1, _reply_metric),
+    control.SUBDATASET_ARRAYS: (1, _reply_arrays),
+    control.DIR_LISTING: (1, _reply_dir_listing),
 }
 
 
@@ -419,8 +422,8 @@ class ServerConnection:
 
         logger.info("Requesting arrays for %r from server…", fingerprint)
         arrays = await self._pending.request(
-            "SUBDATASET_ARRAYS", fingerprint,
-            lambda: self.push_event("REQUEST_SUBDATASET_ARRAYS", fingerprint),
+            control.SUBDATASET_ARRAYS, fingerprint,
+            lambda: self.push_event(control.REQUEST_SUBDATASET_ARRAYS, fingerprint),
             timeout=timeout,
         )
         self._array_cache[fingerprint] = arrays
@@ -460,9 +463,9 @@ class ServerConnection:
             dataset_fp[:8], model_fp[:8],
         )
         return await self._pending.request(
-            "PREDICTION_ARRAYS", (dataset_fp, model_fp),
+            control.PREDICTION_ARRAYS, (dataset_fp, model_fp),
             lambda: self.push_event(
-                "REQUEST_PREDICTION_ARRAYS", dataset_fp, model_fp
+                control.REQUEST_PREDICTION_ARRAYS, dataset_fp, model_fp
             ),
             timeout=timeout, coalesce=True,
         )
@@ -479,9 +482,9 @@ class ServerConnection:
         model), in which case the caller falls back to in-process computation.
         """
         return await self._pending.request(
-            "METRIC_RESULT", key,
+            control.METRIC_RESULT, key,
             lambda: self.push_event(
-                "REQUEST_METRIC", metric_id, key,
+                control.REQUEST_METRIC, metric_id, key,
                 params=params or {}, model_fp=model_fp, dataset_fp=dataset_fp,
             ),
             timeout=timeout,
@@ -502,8 +505,8 @@ class ServerConnection:
         """
         logger.info("Probing dataset length for %r", path)
         return await self._pending.request(
-            "DATASET_LENGTH_RESPONSE", path,
-            lambda: self.push_event("PROBE_DATASET_LENGTH", path),
+            control.DATASET_LENGTH_RESPONSE, path,
+            lambda: self.push_event(control.PROBE_DATASET_LENGTH, path),
             timeout=timeout,
         )
 
@@ -535,8 +538,8 @@ class ServerConnection:
         """
         logger.info("Probing dataset keys for %r (type=%s)", path, typ)
         return await self._pending.request(
-            "DATASET_KEYS_RESPONSE", path,
-            lambda: self.push_event("PROBE_DATASET_KEYS", path, typ),
+            control.DATASET_KEYS_RESPONSE, path,
+            lambda: self.push_event(control.PROBE_DATASET_KEYS, path, typ),
             timeout=timeout,
         )
 
@@ -559,8 +562,8 @@ class ServerConnection:
             error   : str | None     — set if the listing failed
         """
         return await self._pending.request(
-            "DIR_LISTING", path,
-            lambda: self.push_event("LIST_DIR", path),
+            control.DIR_LISTING, path,
+            lambda: self.push_event(control.LIST_DIR, path),
             timeout=timeout,
         )
 
@@ -576,7 +579,7 @@ class ServerConnection:
         a send failure on an already-dead socket must not block the close.
         """
         try:
-            await self.push_event("GRACEFUL_DISCONNECT")
+            await self.push_event(control.GRACEFUL_DISCONNECT)
         except Exception:
             pass
         try:
@@ -609,14 +612,14 @@ async def _do_hello(websocket, token: str = "", renderer: str = "vispy") -> None
         renderer=renderer,
         session_token=token if token else None,
     )
-    hello = pack("HELLO", [], caps.model_dump())
+    hello = pack(control.HELLO, [], caps.model_dump())
     await websocket.send(hello)
 
     try:
         ack_msg = await asyncio.wait_for(websocket.recv(), timeout=10)
         if isinstance(ack_msg, bytes):
             ack_event, _, ack_kwargs = unpack(ack_msg)
-            if ack_event == "HELLO_ACK":
+            if ack_event == control.HELLO_ACK:
                 logger.info("HELLO_ACK received: role=%s", ack_kwargs.get("role"))
             else:
                 logger.warning("Expected HELLO_ACK, got %r", ack_event)

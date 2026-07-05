@@ -20,6 +20,7 @@ from client.data_service import DataService
 from client.connection_manager import ConnectionManager
 from client.session_persistence import SessionPersistence
 from client.object_catalog import ObjectCatalog
+from ffast.protocol import control
 import logging
 import os, glob
 import numpy as np
@@ -143,7 +144,7 @@ class Environment(EventClass):
             return
         import asyncio as _asyncio
         _asyncio.run_coroutine_threadsafe(
-            session.push_event("LOAD_MODEL", path, modelType),
+            session.push_event(control.LOAD_MODEL, path, modelType),
             self.remote._event_loop,
         )
 
@@ -742,7 +743,7 @@ class Environment(EventClass):
         if session is not None and self.remote._event_loop is not None:
             import asyncio as _asyncio
             _asyncio.run_coroutine_threadsafe(
-                session.push_event("DELETE_OBJECT", key),
+                session.push_event(control.DELETE_OBJECT, key),
                 self.remote._event_loop,
             )
 
@@ -807,7 +808,7 @@ class Environment(EventClass):
             return
         import asyncio as _asyncio
         _asyncio.run_coroutine_threadsafe(
-            session.push_event("SAVE_SESSION", path), self.remote._event_loop
+            session.push_event(control.SAVE_SESSION, path), self.remote._event_loop
         )
 
     def requestSessionLoad(self, path):
@@ -821,7 +822,7 @@ class Environment(EventClass):
             return
         import asyncio as _asyncio
         _asyncio.run_coroutine_threadsafe(
-            session.push_event("LOAD_SESSION", path), self.remote._event_loop
+            session.push_event(control.LOAD_SESSION, path), self.remote._event_loop
         )
 
 

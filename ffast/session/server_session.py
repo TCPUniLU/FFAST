@@ -10,22 +10,30 @@ Connection lifecycle — handshake, Client Role gating, recovery window, the
 receive/send loops — stays in ``server.py``; this object assumes ``dispatch`` is
 only called for events the connecting client is authorized to drive.
 
-The dispatch table maps each event to a handler method plus an ordered list of
-parameter names (``"name"`` required, ``"?name"`` optional). ``dispatch``
-resolves each name from positional ``args`` by index, falling back to the
-same-named kwarg, validates that the required names are present, and calls the
-handler with named parameters — so handlers read ``path`` rather than
-``args[0]``. Genuinely irregular events (``VIEW_COMMAND`` pydantic parsing)
-declare no names and validate inside the handler.
+The dispatch table maps each event to a handler method, an ordered list of
+parameter names (``"name"`` required, ``"?name"`` optional), and — per ADR
+0033 — the typed request model that documents and validates its payload.
+``dispatch`` resolves each name from positional ``args`` by index, falling
+back to the same-named kwarg, validates that the required names are present,
+validates the resolved payload against the route's model (a gate only — a
+malformed message is dropped with the event named in the log, never reshaped
+before reaching the handler), and calls the handler with named parameters —
+so handlers read ``path`` rather than ``args[0]``. Genuinely irregular events
+(``VIEW_COMMAND`` pydantic parsing) declare no names and no model; they
+validate inside the handler instead.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections import namedtuple
+from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 import numpy as np
+from pydantic import BaseModel, ValidationError
+
+from ffast.protocol import control
 
 logger = logging.getLogger("FFAST")
 
@@ -80,9 +88,15 @@ def _metric_compute_pool() -> ThreadPoolExecutor:
         )
     return _METRIC_COMPUTE_POOL
 
-# A table row: the handler method plus the ordered names it binds from
-# (args, kwargs). A leading "?" marks an optional name (resolves to None).
-_Route = namedtuple("_Route", ["fn", "arg_names"])
+# A table row: the handler method, the ordered names it binds from
+# (args, kwargs) — a leading "?" marks an optional name (resolves to None) —
+# and the typed request model that validates the resolved payload. ``model``
+# is None only for VIEW_COMMAND, which validates its own irregular payload.
+@dataclass(frozen=True)
+class _Route:
+    fn: object
+    arg_names: list
+    model: Optional[type[BaseModel]] = None
 
 
 class _PredictionView:
@@ -112,26 +126,35 @@ class ServerSession:
         self.outbound = outbound
         self.views: dict = {}  # view_id → VisualizationView
 
-        # event → (handler, ordered arg-name list). Built once; the table IS
-        # the documented RPC surface. "?name" marks an optional parameter.
+        # event → (handler, ordered arg-name list, request model). Built once;
+        # the table IS the documented RPC surface. "?name" marks an optional
+        # parameter.
+        from ffast.protocol.messages import (
+            CloseViewRequest, DeleteObjectRequest, EmptyRequest,
+            ListDirRequest, LoadDatasetRequest, LoadModelRequest,
+            LoadPredictionRequest, LoadSessionRequest, OpenViewRequest,
+            ProbeDatasetKeysRequest, ProbeDatasetLengthRequest,
+            RequestMetricRequest, RequestPredictionArraysRequest,
+            RequestSubdatasetArraysRequest, SaveSessionRequest,
+        )
         self._handlers: dict[str, _Route] = {
-            "LOAD_DATASET":               _Route(self._on_load_dataset, ["path", "dataset_type"]),
-            "LOAD_MODEL":                 _Route(self._on_load_model, ["path", "model_type"]),
-            "DELETE_OBJECT":              _Route(self._on_delete_object, ["fingerprint"]),
-            "REQUEST_SUBDATASET_ARRAYS":  _Route(self._on_request_subdataset_arrays, ["fingerprint"]),
-            "PROBE_DATASET_KEYS":         _Route(self._on_probe_dataset_keys, ["path", "dataset_type"]),
-            "PROBE_DATASET_LENGTH":       _Route(self._on_probe_dataset_length, ["path"]),
-            "LIST_DIR":                   _Route(self._on_list_dir, ["?path"]),
-            "LOAD_PREDICTION":            _Route(self._on_load_prediction, ["path", "dataset_fp"]),
-            "REQUEST_PREDICTION_ARRAYS":  _Route(self._on_request_prediction_arrays, ["dataset_fp", "model_fp"]),
-            "OPEN_VIEW":                  _Route(self._on_open_view, []),
-            "CLOSE_VIEW":                 _Route(self._on_close_view, ["view_id"]),
-            "VIEW_COMMAND":               _Route(self._on_view_command, []),
-            "REQUEST_STATE_SYNC":         _Route(self._on_request_state_sync, []),
-            "SAVE_SESSION":               _Route(self._on_save_session, ["path"]),
-            "LOAD_SESSION":               _Route(self._on_load_session, ["path"]),
-            "REQUEST_METRIC":             _Route(self._on_request_metric, ["metric_id", "?key"]),
-            "REQUEST_METRIC_CATALOG":     _Route(self._on_request_metric_catalog, []),
+            control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
+            control.LOAD_MODEL:                 _Route(self._on_load_model, ["path", "model_type"], LoadModelRequest),
+            control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint"], DeleteObjectRequest),
+            control.REQUEST_SUBDATASET_ARRAYS:  _Route(self._on_request_subdataset_arrays, ["fingerprint"], RequestSubdatasetArraysRequest),
+            control.PROBE_DATASET_KEYS:         _Route(self._on_probe_dataset_keys, ["path", "dataset_type"], ProbeDatasetKeysRequest),
+            control.PROBE_DATASET_LENGTH:       _Route(self._on_probe_dataset_length, ["path"], ProbeDatasetLengthRequest),
+            control.LIST_DIR:                   _Route(self._on_list_dir, ["?path"], ListDirRequest),
+            control.LOAD_PREDICTION:            _Route(self._on_load_prediction, ["path", "dataset_fp"], LoadPredictionRequest),
+            control.REQUEST_PREDICTION_ARRAYS:  _Route(self._on_request_prediction_arrays, ["dataset_fp", "model_fp"], RequestPredictionArraysRequest),
+            control.OPEN_VIEW:                  _Route(self._on_open_view, [], OpenViewRequest),
+            control.CLOSE_VIEW:                 _Route(self._on_close_view, ["view_id"], CloseViewRequest),
+            control.VIEW_COMMAND:               _Route(self._on_view_command, []),
+            control.REQUEST_STATE_SYNC:         _Route(self._on_request_state_sync, [], EmptyRequest),
+            control.SAVE_SESSION:               _Route(self._on_save_session, ["path"], SaveSessionRequest),
+            control.LOAD_SESSION:               _Route(self._on_load_session, ["path"], LoadSessionRequest),
+            control.REQUEST_METRIC:             _Route(self._on_request_metric, ["metric_id", "?key"], RequestMetricRequest),
+            control.REQUEST_METRIC_CATALOG:     _Route(self._on_request_metric_catalog, [], EmptyRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -141,7 +164,11 @@ class ServerSession:
 
         Resolves the route's named parameters from ``args``/``kwargs``,
         validates that required names are present (logs and drops otherwise),
-        and calls the handler with named params plus any leftover kwargs.
+        validates the resolved payload against the route's request model —
+        a gate only, per ADR 0033: on failure the event is named in the log
+        and dropped, but a passing payload still reaches the handler as the
+        original resolved dict, never the validated/reshaped one, so
+        presence-sensitive fields keep their exact pre-validation meaning.
         """
         route = self._handlers.get(event)
         if route is None:
@@ -154,6 +181,14 @@ class ServerSession:
             return
 
         extra = {k: v for k, v in kwargs.items() if k not in consumed}
+
+        if route.model is not None:
+            try:
+                route.model.model_validate({**resolved, **extra})
+            except ValidationError as exc:
+                logger.warning("%s: payload validation failed: %s", event, exc)
+                return
+
         await route.fn(**resolved, **extra)
 
     @staticmethod
@@ -265,7 +300,7 @@ class ServerSession:
                 continue
             try:
                 data = pack(
-                    "REMOTE_DATASET_META",
+                    control.REMOTE_DATASET_META,
                     (fingerprint,),
                     DatasetMeta.model_validate(dataset.toMetaDict()).model_dump(),
                 )
@@ -290,7 +325,7 @@ class ServerSession:
                         if ck.dataset_fp not in dataset_fps:
                             dataset_fps.append(ck.dataset_fp)
                 data = pack(
-                    "REMOTE_MODEL_META",
+                    control.REMOTE_MODEL_META,
                     (model_fp,),
                     ModelMeta(name=name, dataset_fingerprints=dataset_fps).model_dump(),
                 )
@@ -318,7 +353,7 @@ class ServerSession:
             from ffast.metrics.registry import _default_registry
             from ffast.protocol import MetricCatalog
             catalog = build_metric_catalog(_default_registry)
-            data = pack("METRIC_CATALOG", [], MetricCatalog(metrics=catalog).model_dump())
+            data = pack(control.METRIC_CATALOG, [], MetricCatalog(metrics=catalog).model_dump())
             self._emit_or_drop(data, "METRIC_CATALOG")
             logger.info("State replay: METRIC_CATALOG queued (%d metrics)", len(catalog))
         except Exception as exc:
@@ -335,7 +370,7 @@ class ServerSession:
                     get_prediction=self.get_prediction,
                     get_forces=self.get_forces,
                 )
-                data = pack("SCENE_SNAPSHOT", [], snapshot.model_dump())
+                data = pack(control.SCENE_SNAPSHOT, [], snapshot.model_dump())
                 self._emit_or_drop(data, f"SCENE_SNAPSHOT view={view.state.view_id!r}")
                 logger.debug("State replay: SCENE_SNAPSHOT queued for view=%r", view.state.view_id)
             except Exception as exc:
@@ -489,7 +524,7 @@ class ServerSession:
 
         from ffast.protocol import DatasetKeysResponse
         data = pack(
-            "DATASET_KEYS_RESPONSE",
+            control.DATASET_KEYS_RESPONSE,
             (path,),
             DatasetKeysResponse(
                 energy_keys=energy_keys,
@@ -522,7 +557,7 @@ class ServerSession:
 
         from ffast.protocol import DatasetLengthResponse
         data = pack(
-            "DATASET_LENGTH_RESPONSE",
+            control.DATASET_LENGTH_RESPONSE,
             (path,),
             DatasetLengthResponse(n=n, error=error).model_dump(),
         )
@@ -571,7 +606,7 @@ class ServerSession:
         # from the request for None→home or relative inputs). The web client
         # reads only kwargs and ignores the extra positional.
         data = pack(
-            "DIR_LISTING",
+            control.DIR_LISTING,
             (abspath, path),
             DirListing(
                 path=abspath,
@@ -693,7 +728,7 @@ class ServerSession:
             get_prediction=self.get_prediction,
             get_forces=self.get_forces,
         )
-        data = pack("SCENE_SNAPSHOT", [], snapshot.model_dump())
+        data = pack(control.SCENE_SNAPSHOT, [], snapshot.model_dump())
         await self._emit(data)
         logger.info(
             "OPEN_VIEW: view_id=%r dataset_ref=%r prediction_ref=%r scene_version=%d",
@@ -736,11 +771,11 @@ class ServerSession:
             )
             fill_patch_from_scene(result.patch, scene)
 
-        result_data = pack("COMMAND_RESULT", [], result.model_dump())
+        result_data = pack(control.COMMAND_RESULT, [], result.model_dump())
         await self._emit(result_data)
 
         if result.success and result.patch:
-            patch_data = pack("SCENE_PATCH", [], result.patch.model_dump())
+            patch_data = pack(control.SCENE_PATCH, [], result.patch.model_dump())
             await self._emit(patch_data)
 
         logger.debug(

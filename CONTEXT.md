@@ -334,6 +334,8 @@ WebSocket connection (over SSH port-forward) between `ffast-client` and `ffast-s
 
 A message carrying *both* structured metadata and a numpy array (e.g. `METRIC_RESULT`) is classified by its **metadata**: the metadata envelope is a typed Control message, and the array rides inside it as an Array payload. Pure multi-array transfers (`SUBDATASET_ARRAYS`, `PREDICTION_ARRAYS`) stay untyped Array messages.
 
+Every event name on the RPC Channel — Control messages both directions, the handshake, and Array messages — is a named constant in `ffast/protocol/control.py` (ADR 0033); no send or handle site spells one as a bare string literal. Broadcast Events are named separately in `ffast/protocol/notifications.py`.
+
 ### In-Process Event
 A string-keyed notification on the **EventClass** bus, dispatched *within a single process* (UI or server) between objects that inherit `EventClass` / `EventChildClass`: a subscriber registers a handler with `eventSubscribe`, a publisher calls `eventPush`, and each subscriber drains its own queue on the next `eventHandle` cycle. Distinct from a **Broadcast Event**, which crosses the server→client RPC boundary; an In-Process Event never leaves its process. A subscriber that is a Qt widget (an `EventChildClass`) holds, and is held by, the bus strongly, so its lifetime is bound to an explicit `deleteEvents` call.
 _Avoid_: signal, slot (those are Qt's own mechanism), message, broadcast (that is the cross-process one).

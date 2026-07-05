@@ -4,6 +4,13 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+# ── Control message requests (client→server, ADR 0033) ──────────────────────
+# Typed payloads for ServerSession._handlers. Validated at dispatch as a gate
+# only (see ServerSession.dispatch) — a malformed message is dropped with the
+# event named in the log, but the handler is still called with the resolved
+# args/kwargs exactly as before, so presence-sensitive fields (e.g.
+# OpenViewRequest.prediction_ref) keep their existing absent-vs-null meaning.
+
 
 class DatasetMeta(BaseModel):
     """Typed payload for the ``REMOTE_DATASET_META`` transport message.
@@ -170,3 +177,155 @@ class MetricResultMessage(BaseModel):
     implementation_hash: Optional[str] = None
     checksum: Optional[str] = None
     values: Optional[dict] = None
+
+
+# ── Control message requests (client→server) ─────────────────────────────────
+
+class LoadDatasetRequest(BaseModel):
+    """Typed payload for ``LOAD_DATASET`` (see ``ServerSession._on_load_dataset``).
+
+    ``prediction_keys`` travels as a list of 2-element lists — msgpack has no
+    tuple type — the handler restores them to tuples before calling
+    ``env.taskLoadDataset``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    dataset_type: str
+    selected_energy_key: Optional[str] = None
+    selected_force_key: Optional[str] = None
+    prediction_keys: Optional[list] = None
+    slice_num: Optional[int] = None
+
+
+class LoadModelRequest(BaseModel):
+    """Typed payload for ``LOAD_MODEL``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    model_type: str
+
+
+class DeleteObjectRequest(BaseModel):
+    """Typed payload for ``DELETE_OBJECT``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+
+
+class RequestSubdatasetArraysRequest(BaseModel):
+    """Typed payload for ``REQUEST_SUBDATASET_ARRAYS``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+
+
+class ProbeDatasetKeysRequest(BaseModel):
+    """Typed payload for ``PROBE_DATASET_KEYS``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    dataset_type: str
+
+
+class ProbeDatasetLengthRequest(BaseModel):
+    """Typed payload for ``PROBE_DATASET_LENGTH``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+
+
+class ListDirRequest(BaseModel):
+    """Typed payload for ``LIST_DIR``. ``path=None`` starts at the server
+    user's home directory."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: Optional[str] = None
+
+
+class LoadPredictionRequest(BaseModel):
+    """Typed payload for ``LOAD_PREDICTION``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    dataset_fp: str
+    selected_energy_key: Optional[str] = None
+    selected_force_key: Optional[str] = None
+
+
+class RequestPredictionArraysRequest(BaseModel):
+    """Typed payload for ``REQUEST_PREDICTION_ARRAYS``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_fp: str
+    model_fp: str
+
+
+class OpenViewRequest(BaseModel):
+    """Typed payload for ``OPEN_VIEW``.
+
+    All fields are optional — a fresh ``view_id`` is generated server-side
+    when absent. ``prediction_ref`` is validated here but the handler still
+    reads it from the raw kwargs to preserve the absent-vs-explicit-null
+    distinction (presence clears the overlay; absence leaves it untouched).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    view_id: Optional[str] = None
+    dataset_ref: Optional[str] = None
+    prediction_ref: Optional[str] = None
+
+
+class CloseViewRequest(BaseModel):
+    """Typed payload for ``CLOSE_VIEW``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    view_id: str
+
+
+class RequestMetricRequest(BaseModel):
+    """Typed payload for ``REQUEST_METRIC`` (server-owned metric computation,
+    Stage 4a)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    metric_id: str
+    key: Optional[str] = None
+    params: Optional[dict[str, Any]] = None
+    model_fp: Optional[str] = None
+    dataset_fp: Optional[str] = None
+
+
+class SaveSessionRequest(BaseModel):
+    """Typed payload for ``SAVE_SESSION``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+
+
+class LoadSessionRequest(BaseModel):
+    """Typed payload for ``LOAD_SESSION``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+
+
+class EmptyRequest(BaseModel):
+    """Typed payload for Control messages that carry no fields at all
+    (``REQUEST_STATE_SYNC``, ``REQUEST_METRIC_CATALOG``) — ``extra="forbid"``
+    still catches an unexpected stray kwarg."""
+
+    model_config = ConfigDict(extra="forbid")
