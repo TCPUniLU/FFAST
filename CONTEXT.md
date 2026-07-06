@@ -161,6 +161,9 @@ _Avoid_: extra key, custom column, property, metadata
 ### Metric Graph
 The acyclic dependency graph formed by Metric Inputs that reference other Metrics; used by the server to resolve execution order, cache intermediate values, and reject missing dependencies or cycles.
 
+### Metric Execution Context
+The single module (`ffast/metrics/execution.py`, ADR 0035) that resolves a Metric's inputs, dependencies, and Compute Parameters once into an ordered, transport-ready **Execution Plan** — the sole place optional-input and missing-dependency semantics are defined. `build_execution_plan` walks the Metric Graph once (dependency-ordered steps, each input pre-classified as a raw value or a dependency output, Compute Parameters pre-filtered from presentation ones); `run_plan` is the shared driver that wires dependency outputs, consults the result cache, and constructs every Metric Result. The in-process executor and the **Metric Worker Pool** are then adapters that differ only in transport (direct call vs pickle-to-worker), and the panel path's env-backed resolution plugs in as an **Input Source** (`InputResolver` sourcing whole-dataset arrays). The plan is picklable so a worker can consume it without an Environment.
+
 ### Metric Failure
 A structured, isolated failure of one Metric calculation that makes the metric and its dependents unavailable without stopping unrelated Metrics, Pipeline Stages, Visualization Views, or the server.
 

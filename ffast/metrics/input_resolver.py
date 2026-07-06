@@ -24,6 +24,7 @@ import logging
 
 import numpy as np
 
+from ffast.metrics.execution import InputSource
 from ffast.metrics.inputs import parse_field_ref
 
 logger = logging.getLogger("FFAST")
@@ -82,6 +83,24 @@ def _flatten(value):
             return None
         return np.concatenate([np.asarray(v) for v in value], axis=0)
     return np.asarray(value)
+
+
+class _ResolverSource(InputSource):
+    """Metric Execution Context input source backed by an ``InputResolver``.
+
+    Resolves each raw input by its symbolic ref against the env/DataService for a
+    given ``(model, dataset)``.  Resolution is always "found" — an unavailable
+    input surfaces as ``None`` (``InputResolver.resolve`` never raises), which the
+    plan builder then treats as an optional/missing input.
+    """
+
+    def __init__(self, resolver, model, dataset):
+        self._resolver = resolver
+        self._model = model
+        self._dataset = dataset
+
+    def get(self, metric_id, local_key, ref):
+        return True, self._resolver.resolve(ref, model=self._model, dataset=self._dataset)
 
 
 class InputResolver:
@@ -168,40 +187,36 @@ class InputResolver:
             return np.asarray(dataset.molecule_offsets)
         return None
 
-    # ── metric input assembly (mirrors color_values._collect_leaf_inputs) ──────
+    # ── metric input assembly ──────────────────────────────────────────────
 
     def build_metric_inputs(self, metric_id, model=None, dataset=None):
         """Flat ``{input_key: array}`` for a metric and its transitive deps.
 
-        Walks ``schema.inputs``: raw refs are resolved here, metric-dep refs are
-        recursed into (the executor resolves those internally, so we only need to
-        supply the leaf raw inputs).  Optional inputs (e.g. ``offsets``) are
-        resolved by name.  Values may be ``None`` for optional/unavailable inputs.
+        The Metric Execution Context (ADR 0035) walks the dependency tree; this
+        is its env-backed sourcing adapter.  Metric-dep refs stay as dependency
+        markers (the executor resolves those internally, so we only supply the
+        leaf raw inputs); every other ref — including optional ones like
+        ``offsets`` — is resolved via ``InputResolver.resolve``.  The flat dict
+        harvests each plan step's raw bindings; values may be ``None`` for
+        optional/unavailable inputs.
 
-        Note: builds one flat dict keyed by each metric's *local* input names. The
-        built-in metrics never mix an energy and a force tree, so a local name
+        Note: keyed by each metric's *local* input names. The built-in metrics
+        never mix an energy and a force tree, so a local name
         (``reference``/``predicted``) never maps to two different refs; first
         binding wins if a future metric does combine them.
         """
+        from ffast.metrics.execution import RawInput, build_execution_plan
         from ffast.metrics.registry import default_registry as registry
 
+        plan = build_execution_plan(
+            registry, metric_id, {}, _ResolverSource(self, model, dataset)
+        )
         inputs: dict = {}
-        self._collect(registry, metric_id, model, dataset, inputs, set())
+        for step in plan.steps:
+            for key, binding in step.bindings.items():
+                if isinstance(binding, RawInput) and key not in inputs:
+                    inputs[key] = binding.value
         return inputs
-
-    def _collect(self, registry, metric_id, model, dataset, inputs, seen):
-        if metric_id in seen:
-            return
-        seen.add(metric_id)
-        schema, _ = registry.get(metric_id)
-        for key, ref in schema.inputs.items():
-            if registry.has(ref):
-                self._collect(registry, ref, model, dataset, inputs, seen)
-            elif key not in inputs:
-                inputs[key] = self.resolve(ref, model=model, dataset=dataset)
-        for opt in schema.optional_inputs:
-            if opt not in inputs:
-                inputs[opt] = self.resolve(opt, model=model, dataset=dataset)
 
     def missing_prediction_keys(self, metric_id, model=None, dataset=None):
         """Prediction DataType keys (``energy``/``forces``) the metric needs but

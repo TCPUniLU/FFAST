@@ -25,14 +25,15 @@ Cancellation
 - Forced: parent calls process.terminate() after the grace period.
 
 Dependency resolution
-- Metric-to-metric dependencies are resolved in the parent process (recursive
-  run() calls, same as InProcessExecutor).  The worker receives only resolved
-  scalar / array inputs and pre-computed compute_params.
+- Metric-to-metric dependencies are resolved in the parent process by the Metric
+  Execution Context (ADR 0035): each metric in the plan is a separate worker
+  task, and a dependency's output is wired into its dependent's inputs before
+  that dependent ships.  The worker receives only resolved scalar / array inputs
+  and pre-computed compute_params.
 """
 
 from __future__ import annotations
 
-import hashlib
 import multiprocessing as mp
 import pickle
 import time
@@ -43,8 +44,8 @@ from typing import Any
 
 import numpy as np
 
-from ffast.metrics.cache import MetricCache, function_hash
-from ffast.metrics.dims import shape_to_str
+from ffast.metrics.cache import MetricCache
+from ffast.metrics.execution import FlatInputSource, build_execution_plan, run_plan
 from ffast.metrics.executor import MetricExecutor
 from ffast.metrics.models import MetricFailure, MetricResult
 from ffast.metrics.registry import MetricRegistry
@@ -219,9 +220,10 @@ class WorkerProcessExecutor(MetricExecutor):
     returns MetricResult / MetricFailure.
 
     Dependency resolution, parameter filtering, caching, and MetricResult
-    construction all happen in the parent process.  The worker subprocess
-    receives only resolved inputs and pre-computed compute_params and returns
-    only the raw function output.
+    construction all happen in the parent process via the Metric Execution
+    Context (ADR 0035) — the same plan/driver the in-process executor uses.  The
+    worker subprocess receives only resolved inputs and pre-computed
+    compute_params and returns only the raw function output.
 
     Large numpy inputs use shared memory (Worker Buffers).
     Workers self-recycle after policy.max_tasks_per_worker tasks.
@@ -282,40 +284,40 @@ class WorkerProcessExecutor(MetricExecutor):
         return False
 
     def run(self, id: str, inputs: dict[str, Any], parameters: dict[str, Any]) -> MetricResult | MetricFailure:
-        schema, fn = self._registry.get(id)
+        """Run a single metric and its dependencies.
 
-        # Resolve metric-to-metric dependencies in parent process.
-        resolved: dict[str, Any] = {}
-        for input_key, input_ref in schema.inputs.items():
-            if self._registry.has(input_ref):
-                dep = self.run(input_ref, inputs, parameters)
-                if isinstance(dep, MetricFailure):
-                    return MetricFailure(
-                        metric_id=id,
-                        traceback=f"Dependency '{input_ref}' failed:\n{dep.traceback}",
-                        parameters=parameters,
-                    )
-                resolved[input_key] = dep.values
-            else:
-                if input_key not in inputs:
-                    return MetricFailure(
-                        metric_id=id,
-                        traceback=f"Missing raw input '{input_key}' (symbolic ref '{input_ref}')",
-                        parameters=parameters,
-                    )
-                resolved[input_key] = inputs[input_key]
+        Input resolution, dependency ordering, Compute Parameter filtering, and
+        caching all live in the Metric Execution Context (ADR 0035); this
+        executor only supplies the transport — see ``_ship_to_worker``.  Each
+        step is a separate worker task (dependencies resolved in the parent, same
+        as before), and cached results never reach the worker.
+        """
+        plan = build_execution_plan(self._registry, id, parameters, FlatInputSource(inputs))
+        results = run_plan(
+            plan,
+            self._registry,
+            self._cache,
+            lambda mid, schema, fn, kwargs, cparams: self._ship_to_worker(
+                mid, schema, kwargs, cparams, parameters
+            ),
+        )
+        return results[id]
 
-        compute_params = {
-            k: parameters.get(k, p.default)
-            for k, p in schema.parameters.items()
-            if p.role == "compute"
-        }
+    def _ship_to_worker(
+        self,
+        id: str,
+        schema: Any,
+        resolved: dict[str, Any],
+        compute_params: dict[str, Any],
+        parameters: dict[str, Any],
+    ) -> Any:
+        """Transport: run one metric in a worker subprocess, returning its raw
+        output (or a ``MetricFailure`` on timeout / crash / worker-side error).
 
-        cache_key = self._cache.make_key(id, fn, compute_params, resolved)
-        cached = self._cache.get(cache_key)
-        if cached is not None:
-            return cached
-
+        Large numpy inputs travel via shared memory (Worker Buffers).  The worker
+        cold-start deadline (``spawn_timeout_s``) is consumed before the metric's
+        hard time limit is armed, so boot time is never charged to the metric.
+        """
         # Effective timeout: metric hint clamped by policy hard limit.
         hint = schema.hints.max_runtime_s
         effective_timeout = (
@@ -376,8 +378,7 @@ class WorkerProcessExecutor(MetricExecutor):
                     worker.task_count += 1
                     if worker.task_count >= self._policy.max_tasks_per_worker:
                         self._worker = None
-                    raw = msg["value"]
-                    break
+                    return msg["value"]
 
         except (BrokenPipeError, EOFError, OSError):
             worker.terminate()
@@ -394,24 +395,6 @@ class WorkerProcessExecutor(MetricExecutor):
                     shm.unlink()
                 except Exception:
                     pass
-
-        if isinstance(raw, MetricFailure):
-            return raw
-
-        arr = np.asarray(raw)
-        checksum = hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()
-        result = MetricResult(
-            metric_id=id,
-            shape=shape_to_str(schema.shape),
-            dtype=str(arr.dtype),
-            unit=schema.unit,
-            compute_parameters=compute_params,
-            implementation_hash=function_hash(fn),
-            checksum=checksum,
-            values=arr,
-        )
-        self._cache.put(cache_key, result)
-        return result
 
     def shutdown(self) -> None:
         """Gracefully stop the worker: cooperative sentinel then forced terminate."""
