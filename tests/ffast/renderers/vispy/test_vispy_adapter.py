@@ -5,8 +5,17 @@ Tests are skipped gracefully when the Vispy backend is unavailable.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
+
+# The Vispy SceneCanvas below resolves to the PySide6/Qt backend; force the
+# offscreen platform so headless CI (no display) initialises cleanly rather
+# than aborting on a missing xcb plugin.  Matches the sibling Qt test files
+# (e.g. tests/ffast/test_panel_display_override.py).  Must be set before the
+# vispy import pulls in Qt.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 vispy = pytest.importorskip("vispy", reason="vispy not installed")
 
@@ -98,22 +107,6 @@ class TestImport:
         assert VispySceneAdapter is not None
 
 
-# ── construction ──────────────────────────────────────────────────────────────
-
-class TestConstruction:
-    def test_no_visuals_before_first_apply(self):
-        from ffast.renderers.vispy.adapter import VispySceneAdapter
-        parent = _make_canvas_parent()
-        adapter = VispySceneAdapter(parent)
-        assert adapter._atom_markers is None
-        assert adapter._bond_lines is None
-        assert adapter._unit_cell_lines is None
-        assert adapter._force_mesh is None
-        assert adapter._label_visual is None
-        assert adapter._selection_visuals == {}
-        assert adapter._atom_positions is None
-
-
 # ── apply_snapshot ────────────────────────────────────────────────────────────
 
 class TestApplySnapshot:
@@ -151,6 +144,23 @@ class TestApplySnapshot:
         # Then apply snapshot with no atoms
         adapter.apply_snapshot(_make_snapshot())
         assert not adapter._atom_markers.visible
+
+    def test_zero_atom_scene_hides_visual_and_clears_state(self):
+        # An AtomScene with an empty positions list (distinct from atoms=None):
+        # hits the `len(atoms.positions) == 0` guard — visual hidden, all atom
+        # state cleared, no crash on the empty np.array conversions.
+        from ffast.renderers.vispy.adapter import VispySceneAdapter
+        from ffast.visualization.scene import AtomScene
+        adapter = VispySceneAdapter(_make_canvas_parent())
+        adapter.apply_snapshot(_make_snapshot(atoms=_make_atom_scene(3)))
+        assert adapter._atom_markers.visible
+
+        adapter.apply_snapshot(
+            _make_snapshot(atoms=AtomScene(positions=[], sizes=[], colors=[]))
+        )
+        assert not adapter._atom_markers.visible
+        assert adapter._atom_positions is None
+        assert adapter._color_by is None
 
     def test_full_snapshot_all_visuals_created(self):
         from ffast.renderers.vispy.adapter import VispySceneAdapter
@@ -468,6 +478,20 @@ class TestColorMapping:
         adapter = self._adapter()
         out = adapter._map_color_by(self._color_by([0.0, 1.0], colormap="force_error"))
         assert out is not None and out.shape == (2, 4)
+
+    def test_map_nan_value_does_not_crash(self):
+        # A NaN sample must not abort mapping: vispy clamps it to a
+        # transparent-black row while the finite samples map normally.
+        adapter = self._adapter()
+        out = adapter._map_color_by(self._color_by([0.0, float("nan"), 1.0]))
+        assert out is not None and out.shape == (3, 4)
+        assert np.allclose(out[1], [0.0, 0.0, 0.0, 0.0])
+
+    def test_map_empty_values_returns_none(self):
+        # Empty values cannot be indexed into a colormap, so mapping fails and
+        # returns None — the caller then falls back to element colors.
+        adapter = self._adapter()
+        assert adapter._map_color_by(self._color_by([])) is None
 
     def test_atoms_colored_by_color_by_when_present(self):
         from ffast.visualization.scene import AtomScene

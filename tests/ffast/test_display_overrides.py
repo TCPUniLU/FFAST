@@ -98,3 +98,55 @@ def test_overrides_persist_across_reload(tmp_path, monkeypatch):
         "Basic Errors", "density", ["ffast.energy_difference_density"]
     )
     assert override == {"legend": {"font_size": 16}}
+
+
+# --- panel_key identity: order-independence + collision boundaries --------- #
+
+def test_panel_key_is_order_independent():
+    # panel_key does ``','.join(sorted(ids))``, so the same set of metric ids in
+    # a different order collapses to the same key (ADR 0029 content identity).
+    k1 = do.panel_key("Basic Errors", "density", ["ffast.b", "ffast.a"])
+    k2 = do.panel_key("Basic Errors", "density", ["ffast.a", "ffast.b"])
+    assert k1 == k2 == "Basic Errors|density|ffast.a,ffast.b"
+
+
+def test_panel_override_shared_regardless_of_metric_id_order(tmp_path, monkeypatch):
+    # An override saved with one metric-id ordering is retrieved when the same
+    # ids are passed in the opposite order (order-independence round-trip).
+    _redirect(tmp_path, monkeypatch)
+    do.set_panel_override(
+        "Basic Errors", "density", ["ffast.b", "ffast.a"],
+        ("x_label", "text"), "Shared",
+    )
+    override = do.get_panel_override(
+        "Basic Errors", "density", ["ffast.a", "ffast.b"]
+    )
+    assert override == {"x_label": {"text": "Shared"}}
+
+
+def test_same_tab_and_kind_but_different_metrics_do_not_collide():
+    # Only a differing tab name was previously tested; a differing *metric id*
+    # (same tab + same kind) must also produce a distinct key.
+    k1 = do.panel_key("Basic Errors", "density", ["ffast.energy_error"])
+    k2 = do.panel_key("Basic Errors", "density", ["ffast.force_error"])
+    assert k1 != k2
+
+
+def test_different_metrics_keep_separate_overrides(tmp_path, monkeypatch):
+    # Two panels differing only by bound metric id must not read each other's
+    # override even though tab name + Panel Kind are identical.
+    _redirect(tmp_path, monkeypatch)
+    do.set_panel_override(
+        "Basic Errors", "density", ["ffast.energy_error"],
+        ("x_label", "text"), "Energy",
+    )
+    do.set_panel_override(
+        "Basic Errors", "density", ["ffast.force_error"],
+        ("x_label", "text"), "Force",
+    )
+    assert do.get_panel_override(
+        "Basic Errors", "density", ["ffast.energy_error"]
+    ) == {"x_label": {"text": "Energy"}}
+    assert do.get_panel_override(
+        "Basic Errors", "density", ["ffast.force_error"]
+    ) == {"x_label": {"text": "Force"}}

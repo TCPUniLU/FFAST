@@ -99,9 +99,30 @@ def test_value_colors_auto_range():
 def test_value_colors_constant_input():
     pytest.importorskip("vispy")
     from ffast.visualization.stages.builtin.color_stages import value_colors
+    from vispy.color import get_colormap
 
     values = np.ones(5) * 3.0
     colors = value_colors(values, vmin=0.0, vmax=1.0)
-    # all clamped to 0 (below vmin is impossible here, so all map to 1.0 normalized)
-    # just check shape and no crash
     assert colors.shape == (5, 4)
+    # value (3.0) is above vmax (1.0), so normalized = clip((3-0)/(1-0), 0, 1)
+    # == 1.0 for every atom: every row must equal the colormap's endpoint
+    # color exactly (independently computed via vispy's real "inferno"
+    # colormap — the default used by value_colors — not re-derived logic).
+    expected = get_colormap("inferno")[np.float32(1.0)].rgba
+    assert np.allclose(colors, expected)
+
+
+def test_value_colors_force_error_colormap_maps_gradient_endpoints():
+    # The "force_error" branch of _get_colormap builds a custom blue→…→red
+    # gradient (NOT a vispy builtin), so it must be exercised separately from the
+    # named-colormap path. Its control endpoints are blue (0.1,0.1,0.9) at the
+    # minimum and red (0.9,0.1,0.1) at the maximum.
+    pytest.importorskip("vispy")
+    from ffast.visualization.stages.builtin.color_stages import value_colors
+
+    colors = value_colors(
+        np.array([0.0, 10.0]), vmin=0.0, vmax=10.0, colormap="force_error"
+    )
+    assert np.allclose(colors[0, :3], [0.1, 0.1, 0.9], atol=1e-6)   # low → blue
+    assert np.allclose(colors[-1, :3], [0.9, 0.1, 0.1], atol=1e-6)  # high → red
+    assert np.allclose(colors[:, 3], 1.0)

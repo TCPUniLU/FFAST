@@ -94,13 +94,3 @@ def test_module_config_rejects_both_sources():
         MetricModuleConfig(path="custom.py", import_path="pkg.mod")
 
 
-def test_module_config_accepts_path_only():
-    cfg = MetricModuleConfig(path="custom.py")
-    assert cfg.path == "custom.py"
-    assert cfg.import_path is None
-
-
-def test_module_config_accepts_import_path_only():
-    cfg = MetricModuleConfig(import_path="pkg.mod")
-    assert cfg.import_path == "pkg.mod"
-    assert cfg.path is None

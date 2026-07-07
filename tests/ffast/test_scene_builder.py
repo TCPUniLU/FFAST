@@ -131,9 +131,15 @@ class TestBuildSceneWithDataset:
         assert len(scene.bonds.segments) % 2 == 0
 
     def test_structure_index_clamped_to_valid_range(self, ds):
+        # An out-of-range index must clamp to the LAST valid frame, not just
+        # "any" frame — compare against building the scene with that exact
+        # last index (ds.getN() - 1) and require the resolved atoms to match.
+        last_valid = ds.getN() - 1
         state = self._state(structure_index=999)
         scene = build_scene(state, get_dataset=lambda fp: ds)
+        expected = build_scene(self._state(structure_index=last_valid), get_dataset=lambda fp: ds)
         assert scene.atoms is not None
+        assert scene.atoms.positions == expected.atoms.positions
 
     def test_unknown_dataset_returns_empty(self):
         state = VisualizationState(view_id="v1", dataset_ref="missing")
@@ -282,7 +288,10 @@ from tests.ffast._env_facets import _attach_env_facets
 
 class _FakeEnvWithPrediction:
     """Stub of the headless Environment exposing the prediction cache the way
-    the real server does: forces keyed ``forces__{model_fp}__{dataset_fp}``."""
+    the real server does: forces keyed via the production CacheKey format
+    (see ``ffast.cache.keys.CacheKey``), not a hardcoded string literal, so
+    this test survives a cache-key format refactor as long as
+    ServerSession.get_prediction's hit/miss behavior is unchanged."""
 
     DS_FP = "DSfp"
     MODEL_FP = "MODELfp"
@@ -296,7 +305,9 @@ class _FakeEnvWithPrediction:
             np.full((4, 3), 0.2),
             np.full((4, 3), 0.3),
         ])
-        self.cache = {f"forces__{self.MODEL_FP}__{self.DS_FP}": {"forces": forces}}
+        from ffast.cache.keys import CacheKey
+        cache_key = CacheKey("forces", self.MODEL_FP, self.DS_FP).format()
+        self.cache = {cache_key: {"forces": forces}}
         self._ds = ds
         _attach_env_facets(self)  # ADR 0020 sub-objects
 
@@ -327,7 +338,9 @@ class TestPredictionForces:
 
     def test_adapter_none_when_forces_entry_missing(self):
         env = _FakeEnvWithPrediction()
-        env.cache[f"forces__{env.MODEL_FP}__{env.DS_FP}"] = {}  # no "forces" key
+        from ffast.cache.keys import CacheKey
+        cache_key = CacheKey("forces", env.MODEL_FP, env.DS_FP).format()
+        env.cache[cache_key] = {}  # no "forces" key
         assert self._get_prediction(env)(env.DS_FP, env.MODEL_FP) is None
 
     def test_build_scene_populates_forces(self):
@@ -864,6 +877,76 @@ class TestResolveFilterIndices:
         z_frame = np.array([8, 1, 6], dtype=np.int64)
         assert _resolve_filter_indices(["C"], z_frame) == [2]
         assert _resolve_filter_indices(["-O"], z_frame) == [1, 2]
+
+
+class TestAtomPipelineFallback:
+    def test_atom_pipeline_exception_falls_back_to_neutral_styling(self, monkeypatch):
+        # If the stage pipeline itself throws (e.g. element radii/colors config
+        # unavailable), atoms must still render: positions from the raw
+        # transforms, neutral gray color (0.7) and size 0.5, downstream stages
+        # skipped — never a blank view.
+        import ffast.visualization.pipeline as pipeline_mod
+
+        def _boom(*a, **k):
+            raise RuntimeError("pipeline down")
+
+        # build_scene imports `execute` function-locally from the pipeline
+        # module, so patch it at the source.
+        monkeypatch.setattr(pipeline_mod, "execute", _boom)
+        state = VisualizationState(view_id="v1", dataset_ref="fp", structure_index=0)
+        scene = build_scene(state, get_dataset=lambda fp: _FakeDataset())
+
+        assert scene.atoms is not None
+        assert len(scene.atoms.positions) == 4          # positions still present
+        assert scene.atoms.sizes == [0.5] * 4
+        assert all(c == [0.7, 0.7, 0.7, 1.0] for c in scene.atoms.colors)
+
+
+class TestForceSceneFilterRemap:
+    """_build_force_scene's filter_enabled/atom_indices remap branch: force
+    arrows for an explicit atom subset under an active atom filter."""
+
+    def _forces_4(self):
+        return np.array([[1.0, 0, 0], [2.0, 0, 0], [3.0, 0, 0], [4.0, 0, 0]])
+
+    def _keep_1_and_3(self):
+        keep = np.array([False, True, False, True])
+        old_to_new = -np.ones(4, dtype=int)
+        old_to_new[keep] = np.arange(2)  # [-1, 0, -1, 1]
+        return keep, old_to_new
+
+    def test_filter_remaps_forces_onto_kept_subset(self):
+        from ffast.visualization.scene_builder import _build_force_scene
+        keep, old_to_new = self._keep_1_and_3()
+        positions = np.array([[10.0, 0, 0], [20.0, 0, 0]])  # post-filter compact
+        scene = _build_force_scene(
+            positions=positions,
+            forces=self._forces_4(),                # full 4-atom forces
+            keep=keep,
+            old_to_new=old_to_new,
+            transforms=[],
+            params={"filter_enabled": True, "atom_indices": [3],
+                    "normalised": False, "length_factor": 500},
+        )
+        assert scene is not None
+        # scientific idx 3 → compact idx 1 → position [20,0,0]; its force (the
+        # 4th, post-keep index 1) is [4,0,0], scaled by length/500 == 1.0.
+        assert scene.starts == [[20.0, 0.0, 0.0]]
+        assert scene.vectors == [[4.0, 0.0, 0.0]]
+
+    def test_filter_with_only_excluded_indices_returns_none(self):
+        from ffast.visualization.scene_builder import _build_force_scene
+        keep, old_to_new = self._keep_1_and_3()
+        scene = _build_force_scene(
+            positions=np.array([[10.0, 0, 0], [20.0, 0, 0]]),
+            forces=self._forces_4(),
+            keep=keep,
+            old_to_new=old_to_new,
+            transforms=[],
+            # scientific idx 0 is filtered out (old_to_new[0] == -1) → compact empty
+            params={"filter_enabled": True, "atom_indices": [0]},
+        )
+        assert scene is None
 
 
 class TestBuildSceneElementFilter:

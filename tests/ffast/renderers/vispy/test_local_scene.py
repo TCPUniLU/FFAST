@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import pytest
+
+# Force Qt's offscreen platform before any transitive PySide6 import (via
+# client.dataType et al.) so this file collects on headless CI without a
+# display.  Matches the sibling Qt test files.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 
 class _Settings(dict):

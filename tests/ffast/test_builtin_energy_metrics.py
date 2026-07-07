@@ -9,18 +9,18 @@ from ffast.metrics.builtin.energy_metrics import (
 )
 
 
-def test_builtin_registry():
+def test_builtin_registered_under_expected_ids():
     from ffast.metrics.registry import _default_registry
-    for metric_id, fn in [
-        ("ffast.energy_difference", energy_difference),
-        ("ffast.energy_shift", energy_shift),
-        ("ffast.energy_mae", energy_mae),
-        ("ffast.energy_rmse", energy_rmse),
-        ("ffast.energy_mae_shifted", energy_mae_shifted),
-        ("ffast.energy_rmse_shifted", energy_rmse_shifted),
+    for metric_id in [
+        "ffast.energy_difference",
+        "ffast.energy_shift",
+        "ffast.energy_mae",
+        "ffast.energy_rmse",
+        "ffast.energy_mae_shifted",
+        "ffast.energy_rmse_shifted",
     ]:
-        _, registered_fn = _default_registry.get(metric_id)
-        assert registered_fn is fn
+        decl, _ = _default_registry.get(metric_id)
+        assert decl.id == metric_id
 
 
 # reference=[1, 2, 3], predicted=[2, 3, 5] → diff=[1, 1, 2]
@@ -66,3 +66,38 @@ def test_shifted_metrics_less_than_unshifted():
     result_mae = energy_mae(DIFF)
     result_mae_shifted = energy_mae_shifted(DIFF, SHIFT)
     assert result_mae_shifted < result_mae
+
+
+# ── Degenerate scientific inputs ──────────────────────────────────────────────
+
+def test_energy_difference_single_frame():
+    # A one-frame trajectory still yields a one-element difference vector.
+    result = energy_difference(np.array([2.0]), np.array([3.5]))
+    assert result.shape == (1,)
+    assert np.isclose(result[0], 1.5)
+
+
+def test_energy_mae_single_frame():
+    # mean(|[0.5]|) = 0.5 — the single value is the mean.
+    assert np.isclose(energy_mae(np.array([0.5])), 0.5)
+
+
+def test_energy_rmse_single_frame():
+    # sqrt(mean([0.5]^2)) = 0.5
+    assert np.isclose(energy_rmse(np.array([0.5])), 0.5)
+
+
+def test_energy_difference_propagates_nan():
+    # A NaN reference energy taints only its own frame; the clean frame survives.
+    result = energy_difference(np.array([np.nan, 2.0]), np.array([1.0, 3.0]))
+    assert np.isnan(result[0])
+    assert np.isclose(result[1], 1.0)
+
+
+def test_energy_mae_propagates_nan():
+    # np.mean over any NaN element is NaN (no nan-aware reduction here).
+    assert np.isnan(energy_mae(np.array([np.nan, 0.5])))
+
+
+def test_energy_rmse_propagates_nan():
+    assert np.isnan(energy_rmse(np.array([np.nan, 0.5])))

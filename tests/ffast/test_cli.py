@@ -2,6 +2,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from ffast.cli.main import main
@@ -125,6 +126,100 @@ def test_metrics_validate_ok(tmp_path, capsys, monkeypatch):
     out = capsys.readouterr().out
     assert "OK" in out
     assert "graph valid" in out
+
+
+# ── dataset keys ───────────────────────────────────────────────────────────
+
+def _write_xyz_with_fields(path):
+    """Write a single-frame extxyz (raw text, for full control over the
+    Properties/comment line) with a numeric-scalar info field (``myval``) and a
+    per-atom array field (``charge``), so `dataset keys` reports both as usable."""
+    path.write_text(
+        "3\n"
+        'Properties=species:S:1:pos:R:3:foo:R:1 myval=2.5 pbc="F F F"\n'
+        "H 0.0 0.0 0.0 0.1\n"
+        "H 0.0 0.0 1.0 -0.2\n"
+        "O 0.0 1.0 0.0 0.1\n"
+    )
+    return path
+
+
+def test_dataset_keys_lists_frame_and_atom_fields(tmp_path, capsys):
+    path = _write_xyz_with_fields(tmp_path / "d.xyz")
+    main(["dataset", "keys", str(path)])
+    out = capsys.readouterr().out
+    assert "reference.info.<key>" in out
+    assert "reference.atoms.<key>" in out
+    # The numeric-scalar info field and per-atom array field are both usable (✓).
+    assert "myval" in out
+    assert "foo" in out
+    assert "✓" in out
+
+
+def test_dataset_keys_unreadable_file_exits_1(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["dataset", "keys", str(tmp_path / "does_not_exist.xyz")])
+    assert exc.value.code == 1
+    assert "could not read" in capsys.readouterr().err
+
+
+# ── stages list / inspect / test ─────────────────────────────────────────────
+
+def test_stages_list_includes_builtins(capsys):
+    main(["stages", "list"])
+    out = capsys.readouterr().out
+    assert "ffast.atom_colors" in out
+    assert "ffast.atom_positions" in out
+
+
+def test_stages_inspect_emits_schema_json(capsys):
+    main(["stages", "inspect", "ffast.atom_colors"])
+    data = json.loads(capsys.readouterr().out)
+    assert data["id"] == "ffast.atom_colors"
+
+
+def test_stages_inspect_unknown_exits_1(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["stages", "inspect", "ffast.nonexistent_stage"])
+    assert exc.value.code == 1
+    assert "not found" in capsys.readouterr().err
+
+
+def test_stages_test_reports_no_tests_for_testless_stage(capsys):
+    # ffast.atom_colors carries no embedded tests → the command reports that and
+    # exits 0 (the no-tests branch), rather than running or failing anything.
+    main(["stages", "test", "ffast.atom_colors"])
+    out = capsys.readouterr().out
+    assert "ffast.atom_colors: no tests" in out
+
+
+def test_stages_test_unknown_exits_1(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["stages", "test", "ffast.nonexistent_stage"])
+    assert exc.value.code == 1
+    assert "not found" in capsys.readouterr().err
+
+
+# ── metrics test ─────────────────────────────────────────────────────────────
+
+def test_metrics_test_reports_ok(tmp_path, capsys):
+    # ffast.accel_mae carries embedded correctness/determinism tests; the command
+    # runs them twice and prints "OK <label>" for each, exiting 0.
+    config_file = tmp_path / "ffast.toml"
+    config_file.write_text("")
+    main(["metrics", "test", "ffast.accel_mae", "--config", str(config_file)])
+    out = capsys.readouterr().out
+    assert "OK" in out
+    assert "ffast.accel_mae[0]" in out
+
+
+def test_metrics_test_unknown_exits_1(tmp_path, capsys):
+    config_file = tmp_path / "ffast.toml"
+    config_file.write_text("")
+    with pytest.raises(SystemExit) as exc:
+        main(["metrics", "test", "ffast.nonexistent", "--config", str(config_file)])
+    assert exc.value.code == 1
+    assert "not found" in capsys.readouterr().err
 
 
 @pytest.mark.skipif(not _has_example_data, reason="examples/data not present")

@@ -203,3 +203,41 @@ def test_service_transfer_resume():
     all_chunks = list(svc.transfer(buf.id))
     resumed_chunks = list(svc.transfer(buf.id, resume_from=2))
     assert [c.chunk_index for c in resumed_chunks] == list(range(2, len(all_chunks)))
+
+
+@pytest.mark.skipif(not HAS_ZSTD, reason="zstandard not installed")
+def test_service_transfer_zstd_codec_recovers_original():
+    # End-to-end zstd through BufferService.transfer (the other service tests
+    # only drive codec=none); the joined compressed chunks must decompress back
+    # to the buffer's canonical bytes.
+    svc = BufferService(chunk_size=512)
+    arr = np.zeros(2000, dtype=np.float32)  # compressible
+    buf = svc.store(arr)
+
+    import zstandard as zstd
+    chunks = list(svc.transfer(buf.id, codec=BufferCodec.zstd))
+    assert all(c.codec == BufferCodec.zstd for c in chunks)
+    compressed = b"".join(c.data for c in chunks)
+    assert zstd.decompress(compressed) == buf.data
+
+
+# ── empty-array edge ────────────────────────────────────────────────────────
+
+def test_empty_array_roundtrips():
+    arr = np.array([], dtype=np.float32)
+    buf = ResultBuffer.from_array(arr)
+    assert buf.data == b""
+    assert buf.verify()
+    np.testing.assert_array_equal(buf.to_array(), arr)
+
+
+def test_empty_buffer_transfer_yields_single_empty_chunk():
+    # An empty payload produces zero slices; the `if not self._chunks:
+    # self._chunks = [b""]` guard must still emit exactly one (empty) chunk so
+    # total_chunks is 1 and the transfer isn't mistaken for "nothing to send".
+    buf = ResultBuffer.from_array(np.array([], dtype=np.float64))
+    transfer = BufferTransfer(buffer=buf, codec=BufferCodec.none, chunk_size=64)
+    assert transfer.total_chunks == 1
+    chunks = list(transfer.all_chunks())
+    assert [c.data for c in chunks] == [b""]
+    assert b"".join(c.data for c in chunks) == buf.data

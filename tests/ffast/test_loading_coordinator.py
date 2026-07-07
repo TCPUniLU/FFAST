@@ -169,11 +169,34 @@ def test_loadRemoteDataset_probe_error_falls_back_to_keyless():
 def test_requestDatasetLoad_no_session_falls_back_to_local_task():
     env = _fake_env()  # remote.serverConnection is None
     coord = LoadingCoordinator(env)
+
+    # Stub the real loadDataset (file I/O, ASE loaders, ...) with a fake that
+    # records whether it was actually invoked and with what, so this proves
+    # the queued local task really executes end-to-end — not just that
+    # taskLoadDataset happened to reference the right method.
+    recorded = []
+    coord.loadDataset = lambda *a, **k: recorded.append((a, k))
+
     coord.requestDatasetLoad("/d.xyz", "ase (auto)", slice_num=7)
+
     # fell back to taskLoadDataset → env.newTask(self.loadDataset, ...)
     (task_args, task_kwargs), = env._calls["tasks"]
-    assert task_args[0] == coord.loadDataset
-    assert task_kwargs["kwargs"]["slice_num"] == 7
+    assert task_args[0] is coord.loadDataset
+
+    # Actually run the queued task (as the real TaskManager would) and check
+    # it produces the expected effect: the local loader invoked with the
+    # right path/type/kwargs.
+    queued_fn = task_args[0]
+    queued_fn(*task_kwargs["args"], **task_kwargs["kwargs"])
+    assert recorded == [(
+        ("/d.xyz", "ase (auto)"),
+        {
+            "selected_energy_key": None,
+            "selected_force_key": None,
+            "prediction_keys": None,
+            "slice_num": 7,
+        },
+    )]
 
 
 def test_remoteSession_returns_none_without_loop():

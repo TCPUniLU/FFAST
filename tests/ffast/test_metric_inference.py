@@ -166,6 +166,53 @@ def test_namespace_drives_id():
     assert reg.has("mylab.fn")
 
 
+def test_jaxtyping_return_infers_dim_tuple():
+    """A ``Float[np.ndarray, "N_atoms xyz"]`` return maps axis names -> dims tuple."""
+    from jaxtyping import Float
+    reg = MetricRegistry()
+
+    @reg.metric(unit=units.force, namespace="demo")
+    def per_atom_vec(
+        reference: Ref["reference.forces"],
+    ) -> Float[np.ndarray, "N_atoms xyz"]:
+        return reference
+
+    decl, _ = reg.get("demo.per_atom_vec")
+    # Axis names resolve to the exact Dim objects from ffast.metrics.dims.
+    assert decl.shape == (dims.N_atoms, dims.xyz)
+    assert decl.serialize_shape(decl.shape) == "(N_atoms, xyz)"
+
+
+def test_jaxtyping_scalar_axis_return():
+    """A single-axis jaxtyping return infers a one-element dims tuple."""
+    from jaxtyping import Float
+    reg = MetricRegistry()
+
+    @reg.metric(unit=units.energy, namespace="demo")
+    def per_frame(
+        reference: Ref["reference.energies"],
+    ) -> Float[np.ndarray, "N_frames"]:
+        return reference
+
+    decl, _ = reg.get("demo.per_frame")
+    assert decl.shape == (dims.N_frames,)
+
+
+def test_jaxtyping_unknown_axis_name_raises():
+    """An axis name that is not a known dim raises ValueError at registration."""
+    from jaxtyping import Float
+    reg = MetricRegistry()
+
+    # signature._shape_from_return raises ValueError("... are not known dims ...")
+    # when an axis label has no matching Dim in ffast.metrics.dims.
+    with pytest.raises(ValueError, match="not known dims"):
+        @reg.metric(unit=units.force, namespace="demo")
+        def bad_axis(
+            reference: Ref["reference.forces"],
+        ) -> Float[np.ndarray, "bogus_axis xyz"]:
+            return reference
+
+
 def test_explicit_args_still_win_backward_compat():
     """Fully-declared metric is unchanged by the inference layer."""
     reg = MetricRegistry()

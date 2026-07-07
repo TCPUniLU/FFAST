@@ -338,3 +338,52 @@ class TestServerMetricColoring:
         assert cb is not None
         assert len(cb.values) == 4
         assert cb.values[1] > 0.0   # atom 1 has the force/accel error
+
+
+class TestSymbolicRefResolution:
+    """Direct coverage of color_values._resolve_symbolic_ref edge branches that
+    build_scene reaches only indirectly: the ASE mass-fallback *failure* path
+    and Dataset Field (ADR 0023) refs."""
+
+    def _resolve(self, ref, ds, z):
+        import types
+
+        import ffast.visualization.color_values as cv
+
+        return cv._resolve_symbolic_ref(
+            ref, ds, 0, np.zeros((len(z), 3)), np.asarray(z), None,
+            types.SimpleNamespace(),
+        )
+
+    def test_masses_ase_fallback_failure_raises_keyerror(self):
+        # ds has no getMasses → ASE fallback; an out-of-range Z makes the
+        # atomic_masses lookup raise (IndexError), which must surface as KeyError
+        # so coloring degrades to element colors rather than crashing build_scene.
+        import types
+        ds = types.SimpleNamespace()  # no getMasses
+        with pytest.raises(KeyError):
+            self._resolve("reference.masses", ds, [99999])
+
+    def test_reference_atom_field_resolves_via_get_atom_field(self):
+        import types
+        ds = types.SimpleNamespace(
+            getAtomField=lambda key, indices: (
+                np.array([0.1, 0.2, 0.3]) if key == "charge" else None
+            )
+        )
+        out = self._resolve("reference.atoms.charge", ds, [1, 1, 1])
+        assert np.allclose(out, [0.1, 0.2, 0.3])
+
+    def test_reference_atom_field_absent_raises_keyerror(self):
+        import types
+        ds = types.SimpleNamespace(getAtomField=lambda key, indices: None)
+        with pytest.raises(KeyError):
+            self._resolve("reference.atoms.missing", ds, [1])
+
+    def test_prediction_atom_field_not_sourced_raises_keyerror(self):
+        # Only reference atom fields are colorable in this path; a prediction
+        # field ref falls through to KeyError (→ element colors).
+        import types
+        ds = types.SimpleNamespace(getAtomField=lambda key, indices: np.array([1.0]))
+        with pytest.raises(KeyError):
+            self._resolve("prediction.atoms.charge", ds, [1])

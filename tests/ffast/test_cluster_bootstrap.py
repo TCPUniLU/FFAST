@@ -5,11 +5,13 @@ from pathlib import Path
 
 import pytest
 
+import cluster.bootstrap as bootstrap
 from cluster.backend import ClusterError
 from cluster.config import ClusterProfile
 from cluster.bootstrap import (
     provision_node,
     HEAVY_DEPS,
+    NODE_DIR,
     _dist_name,
     light_dependencies,
     needs_provision,
@@ -118,4 +120,93 @@ async def test_provision_node_build_failure_raises_clustererror(tmp_path):
     the build fails before any SSH — cluster-free."""
     profile = ClusterProfile(name="x", host="nonexistent.invalid", provision=True)
     with pytest.raises(ClusterError):
+        await provision_node(profile, project_root=tmp_path)
+
+
+# ── provision_node: skip + SSH-failure branches (SSH surface faked) ───────────
+#
+# These exercise the *login-node* logic without a real cluster by stubbing the
+# three module-level SSH/subprocess entry points (build_server_wheel, _ssh_run,
+# _scp_push). The build is faked to emit a wheel with known bytes, so the local
+# sha256 is deterministic and the "already up to date" marker can be matched.
+
+_FAKE_WHEEL_BYTES = b"fake-wheel-bytes-for-provision-tests"
+_FAKE_WHEEL_SHA = hashlib.sha256(_FAKE_WHEEL_BYTES).hexdigest()
+
+
+def _install_fake_build(monkeypatch):
+    def _fake_build(project_root, out_dir):
+        p = Path(out_dir) / "ffast-2.0.0-py3-none-any.whl"
+        p.write_bytes(_FAKE_WHEEL_BYTES)
+        return p
+
+    monkeypatch.setattr(bootstrap, "build_server_wheel", _fake_build)
+
+
+async def test_provision_node_skips_when_node_up_to_date(tmp_path, monkeypatch):
+    """When the on-node marker already matches the freshly built wheel,
+    provisioning is skipped: no mkdir, no scp — just the plain launch command."""
+    _install_fake_build(monkeypatch)
+    ssh_calls = []
+    scp_calls = []
+
+    async def _fake_ssh_run(profile, *args, stdin=None):
+        ssh_calls.append(args)
+        if args[0] == "cat":                     # marker read → matches local sha
+            return (_FAKE_WHEEL_SHA, "", 0)
+        return ("", "", 0)
+
+    async def _fake_scp(profile, local, remote):
+        scp_calls.append((local, remote))
+
+    monkeypatch.setattr(bootstrap, "_ssh_run", _fake_ssh_run)
+    monkeypatch.setattr(bootstrap, "_scp_push", _fake_scp)
+
+    profile = ClusterProfile(
+        name="x", host="login.fake", provision=True,
+        modules=["Python/3.11"], venv_path="~/.ffast/venv",
+    )
+    cmd = await provision_node(profile, project_root=tmp_path)
+
+    # Skip path returns the "activate existing venv" launch command verbatim.
+    assert cmd == server_launch_cmd("~/.ffast/venv", ["Python/3.11"])
+    assert scp_calls == []                                   # nothing staged
+    assert all(a[0] != "mkdir" for a in ssh_calls)           # no provisioning
+
+
+async def test_provision_node_mkdir_failure_raises_clustererror(tmp_path, monkeypatch):
+    """A failed remote mkdir (bad SSH auth / wrong host) surfaces as ClusterError."""
+    _install_fake_build(monkeypatch)
+
+    async def _fake_ssh_run(profile, *args, stdin=None):
+        if args[0] == "cat":
+            return ("", "no such file", 1)      # no marker → needs provisioning
+        if args[0] == "mkdir":
+            return ("", "Permission denied", 1)  # mkdir fails
+        return ("", "", 0)
+
+    monkeypatch.setattr(bootstrap, "_ssh_run", _fake_ssh_run)
+
+    profile = ClusterProfile(name="x", host="login.fake", provision=True)
+    with pytest.raises(ClusterError, match=f"Could not create {NODE_DIR}"):
+        await provision_node(profile, project_root=tmp_path)
+
+
+async def test_provision_node_scp_failure_raises_clustererror(tmp_path, monkeypatch):
+    """A failed wheel scp propagates the ClusterError raised by _scp_push."""
+    _install_fake_build(monkeypatch)
+
+    async def _fake_ssh_run(profile, *args, stdin=None):
+        if args[0] == "cat":
+            return ("", "", 1)                   # no marker → needs provisioning
+        return ("", "", 0)                       # mkdir succeeds
+
+    async def _fake_scp(profile, local, remote):
+        raise ClusterError("Failed to copy the server wheel", "scp exit 1")
+
+    monkeypatch.setattr(bootstrap, "_ssh_run", _fake_ssh_run)
+    monkeypatch.setattr(bootstrap, "_scp_push", _fake_scp)
+
+    profile = ClusterProfile(name="x", host="login.fake", provision=True)
+    with pytest.raises(ClusterError, match="Failed to copy the server wheel"):
         await provision_node(profile, project_root=tmp_path)

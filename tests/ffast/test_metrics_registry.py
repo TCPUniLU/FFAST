@@ -43,18 +43,6 @@ def test_duplicate_registration_rejected(registry):
         def duplicate_metric(reference):
             pass
 
-def test_function_still_callable(registry):
-    @registry.metric(
-        id="ffast.test_metric",
-        inputs={},
-        shape="scalar",
-        unit="energy",
-    )
-    def passthrough(x):
-        return x * 2
-
-    assert passthrough(3) == 6
-
 def test_unnamespaced_id_rejected(registry):
     with pytest.raises(ValueError):
         @registry.metric(

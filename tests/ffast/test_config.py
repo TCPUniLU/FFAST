@@ -1,3 +1,5 @@
+import tomllib
+
 import pytest
 from pydantic import ValidationError
 
@@ -38,6 +40,28 @@ enabled = false
 def test_unknown_key_rejected(tmp_path):
     config_file = tmp_path / "ffast.toml"
     config_file.write_text("unknown_key = 42\n")
+    with pytest.raises(ValidationError):
+        load_project_config(config_file)
+
+
+def test_unparseable_toml_raises_decode_error(tmp_path):
+    # Syntactically broken TOML (unterminated array) surfaces as a tomllib
+    # decode error out of load_project_config, not a pydantic error.
+    config_file = tmp_path / "ffast.toml"
+    config_file.write_text("x = [1, 2\n")
+    with pytest.raises(tomllib.TOMLDecodeError):
+        load_project_config(config_file)
+
+
+def test_wrong_typed_field_raises_validation_error(tmp_path):
+    # A structurally valid TOML whose value has the wrong type for its pydantic
+    # field (vmin must be float|None; a non-numeric string cannot coerce).
+    config_file = tmp_path / "ffast.toml"
+    config_file.write_text("""
+[visualization.atom_color]
+metric_id = "ffast.force_mae"
+vmin = "not_a_number"
+""")
     with pytest.raises(ValidationError):
         load_project_config(config_file)
 

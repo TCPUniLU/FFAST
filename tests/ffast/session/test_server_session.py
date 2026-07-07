@@ -12,12 +12,31 @@ with no env, queue, or event loop at all.
 """
 import asyncio
 
-from ffast.protocol.rpc import unpack
+import numpy as np
+
+from ffast.cache import CacheKey, PredictionArrayKey
+from ffast.metrics.models import MetricResult
+from ffast.protocol import control
+from ffast.protocol.rpc import unpack, unpack_arrays, unpack_metric_result
 from ffast.session.server_session import ServerSession
 
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def _make_metric_result(metric_id="ffast.force_mae", values=None):
+    """A real MetricResult so pack_metric_result reads its actual fields."""
+    return MetricResult(
+        metric_id=metric_id,
+        shape="()",
+        dtype="float64",
+        unit="eV",
+        compute_parameters={},
+        implementation_hash="hash123",
+        checksum="chk456",
+        values=np.asarray([1.5] if values is None else values),
+    )
 
 
 # ── fakes ───────────────────────────────────────────────────────────────────
@@ -58,10 +77,11 @@ class _FakeCache:
 class _FakeEnv:
     """Records the env-facing calls the handlers make."""
 
-    def __init__(self, datasets=None, models=None, cache=None):
+    def __init__(self, datasets=None, models=None, cache=None, data=None):
         self.datasets = _FakeDatasets(datasets)
         self.models = _FakeModels(models)
         self.cache = _FakeCache(cache)
+        self.data = data
         self.deleted = []
         self.load_dataset_calls = []
 
@@ -70,6 +90,55 @@ class _FakeEnv:
 
     def taskLoadDataset(self, path, dataset_type, **kwargs):
         self.load_dataset_calls.append((path, dataset_type, kwargs))
+
+
+class _FakeData:
+    """Stand-in for ``env.data`` (the DataService).
+
+    Records metric/prediction generation and writes results into the shared
+    fake cache, so the handlers observe a populated cache exactly as they would
+    against the real in-process spine — no worker subprocess involved.
+    """
+
+    def __init__(self, cache):
+        self._cache = cache
+        self.make_key_calls = []
+        self.generate_metric_calls = []
+        self.generate_data_calls = []
+
+    def make_metric_cache_key(self, metric_id, params, model, dataset):
+        self.make_key_calls.append((metric_id, params, model, dataset))
+        # Format-valid CacheKey string (identity__model__dataset).
+        return f"{metric_id}__nil__nil"
+
+    def generateMetric(self, metric_id, params, model, dataset, key):
+        self.generate_metric_calls.append((metric_id, key))
+        self._cache._entries[key] = _make_metric_result(
+            metric_id=metric_id, values=np.array([3.0])
+        )
+        return True
+
+    def generateData(self, dt_key, model, dataset):
+        self.generate_data_calls.append(dt_key)
+        key = CacheKey(dt_key, model.fingerprint, dataset.fingerprint).format()
+        payload = np.zeros((1, 3)) if dt_key == "forces" else np.array([1.0])
+        self._cache._entries[key] = {dt_key: payload}
+
+
+class _FakeVarDataset:
+    """Variable-size dataset double exposing the transfer-array surface."""
+
+    isVariable = True
+
+    def __init__(self, transfer_arrays, n):
+        self._transfer = transfer_arrays
+        self._n = n
+
+    def getN(self):
+        return self._n
+
+    def to_transfer_arrays(self):
+        return dict(self._transfer)
 
 
 # ── _resolve: the S2b rule (pure — no env, queue, or loop) ────────────────────
@@ -203,3 +272,242 @@ def test_request_state_sync_triggers_replay():
 
     event, _args, _kwargs = unpack(_run(scenario()))
     assert event == "METRIC_CATALOG"
+
+
+# ── _on_request_metric ────────────────────────────────────────────────────────
+
+def test_request_metric_cache_hit_returns_result_without_computing():
+    """A cached MetricResult is served straight back as an ok=True
+    METRIC_RESULT — the compute path (env.data) is never touched."""
+    key = "ffast.force_mae__nil__ds1"
+    result = _make_metric_result(values=np.array([1.5, 2.5]))
+    env = _FakeEnv(datasets={"ds1": object()}, cache={key: result})  # data=None
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch(
+            "REQUEST_METRIC", ["ffast.force_mae", key], {"dataset_fp": "ds1"}
+        )
+        return s.outbound.get_nowait()
+
+    event, args, kwargs = unpack(_run(scenario()))
+    assert event == control.METRIC_RESULT
+    assert args == [key, "ffast.force_mae"]        # (key, metric_id) positional
+    recovered = unpack_metric_result(kwargs)
+    assert recovered is not None
+    assert recovered.metric_id == "ffast.force_mae"
+    np.testing.assert_array_equal(recovered.values, np.array([1.5, 2.5]))
+
+
+def test_request_metric_missing_model_signals_client_fallback():
+    """A model-dependent metric whose model isn't on the server replies ok=False
+    (server_can_compute=False), so the client falls back to in-process compute."""
+    key = "ffast.energy_mae__realmodel__ds1"
+    env = _FakeEnv(datasets={"ds1": object()}, cache={})   # empty cache, no models
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch(
+            "REQUEST_METRIC", ["ffast.energy_mae", key],
+            {"model_fp": "realmodel", "dataset_fp": "ds1"},
+        )
+        return s.outbound.get_nowait()
+
+    event, args, kwargs = unpack(_run(scenario()))
+    assert event == control.METRIC_RESULT
+    assert args == [key, "ffast.energy_mae"]
+    assert kwargs["ok"] is False
+    assert unpack_metric_result(kwargs) is None
+
+
+def test_request_metric_computes_on_cache_miss_and_derives_key():
+    """No key + cache miss: the handler derives the key via
+    make_metric_cache_key, computes through env.data.generateMetric, and returns
+    the freshly cached result."""
+    env = _FakeEnv(datasets={"ds1": object()}, cache={})
+    env.data = _FakeData(env.cache)
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        # No positional key → the ?key slot resolves to None.
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_rmse"], {"dataset_fp": "ds1"})
+        return s.outbound.get_nowait()
+
+    event, args, kwargs = unpack(_run(scenario()))
+    expected_key = "ffast.force_rmse__nil__nil"    # from make_metric_cache_key
+    assert event == control.METRIC_RESULT
+    assert args == [expected_key, "ffast.force_rmse"]
+    assert env.data.make_key_calls, "make_metric_cache_key should be used"
+    assert env.data.generate_metric_calls == [("ffast.force_rmse", expected_key)]
+    recovered = unpack_metric_result(kwargs)
+    assert recovered is not None
+    assert recovered.metric_id == "ffast.force_rmse"
+    np.testing.assert_array_equal(recovered.values, np.array([3.0]))
+
+
+# ── _on_request_subdataset_arrays ─────────────────────────────────────────────
+
+def test_request_subdataset_arrays_concatenates_variable_prediction_forces():
+    """Variable-dataset predictions arrive as a list of (natoms_i, 3) arrays and
+    are flattened to (total_atoms, 3); base transfer arrays + model names ride
+    along in the same message."""
+    fp = "dsvar"
+    f1 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])   # (2, 3)
+    f2 = np.array([[7.0, 8.0, 9.0]])                     # (1, 3)
+    base = {"R_flat": np.arange(9.0).reshape(3, 3), "z_flat": np.array([1, 6, 8])}
+    ds = _FakeVarDataset(base, n=2)
+    pred_key = CacheKey("forces", "modelA", fp).format()
+    model = type("_M", (), {"name": "SO3LR"})()
+    env = _FakeEnv(
+        datasets={fp: ds}, models={"modelA": model},
+        cache={pred_key: {"forces": [f1, f2]}},
+    )
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_SUBDATASET_ARRAYS", [fp], {})
+        return s.outbound.get_nowait()
+
+    event, args, kwargs = unpack(_run(scenario()))
+    assert event == control.SUBDATASET_ARRAYS
+    assert args == [fp]
+    arrays = unpack_arrays(kwargs)
+    pa_key = PredictionArrayKey("forces", "modelA").format()
+    np.testing.assert_array_equal(
+        arrays[pa_key], np.concatenate([f1, f2], axis=0)   # (3, 3)
+    )
+    np.testing.assert_array_equal(arrays["z_flat"], np.array([1, 6, 8]))
+    assert kwargs["model_names"] == {"modelA": "SO3LR"}
+
+
+def test_request_subdataset_arrays_unknown_fingerprint_emits_nothing():
+    env = _FakeEnv(datasets={})
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_SUBDATASET_ARRAYS", ["nope"], {})
+        return s
+
+    s = _run(scenario())
+    assert s.outbound.empty()
+
+
+# ── _on_request_prediction_arrays ─────────────────────────────────────────────
+
+def test_request_prediction_arrays_assembles_cached_ghost_predictions():
+    """Ghost model: cached energy+forces are packed onto the prediction-only
+    channel and NO on-demand generation runs."""
+    ds_fp, m_fp = "ds1", "ghost1"
+    energy = np.array([1.0, 2.0])
+    forces = np.array([[0.1, 0.2, 0.3]])
+    cache = {
+        CacheKey("energy", m_fp, ds_fp).format(): {"energy": energy},
+        CacheKey("forces", m_fp, ds_fp).format(): {"forces": forces},
+    }
+    ghost = type("_G", (), {"isGhost": True})()
+    env = _FakeEnv(datasets={ds_fp: object()}, models={m_fp: ghost}, cache=cache)
+    env.data = _FakeData(env.cache)
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_PREDICTION_ARRAYS", [ds_fp, m_fp], {})
+        return s.outbound.get_nowait()
+
+    event, args, kwargs = unpack(_run(scenario()))
+    assert event == control.PREDICTION_ARRAYS
+    assert args == [ds_fp, m_fp]
+    arrays = unpack_arrays(kwargs)
+    np.testing.assert_array_equal(
+        arrays[PredictionArrayKey("energy", m_fp).format()], energy
+    )
+    np.testing.assert_array_equal(
+        arrays[PredictionArrayKey("forces", m_fp).format()], forces
+    )
+    assert env.data.generate_data_calls == []   # ghost → no on-demand compute
+
+
+def test_request_prediction_arrays_generates_on_demand_for_real_model():
+    """Real (non-ghost) model + empty cache: the handler generates energy and
+    forces on demand, then assembles them for transfer."""
+    ds_fp, m_fp = "ds2", "real2"
+    dataset = type("_D", (), {"fingerprint": ds_fp})()
+    model = type("_M", (), {"isGhost": False, "fingerprint": m_fp})()
+    env = _FakeEnv(datasets={ds_fp: dataset}, models={m_fp: model}, cache={})
+    env.data = _FakeData(env.cache)
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_PREDICTION_ARRAYS", [ds_fp, m_fp], {})
+        return s.outbound.get_nowait()
+
+    event, args, kwargs = unpack(_run(scenario()))
+    assert event == control.PREDICTION_ARRAYS
+    assert env.data.generate_data_calls == ["energy", "forces"]
+    arrays = unpack_arrays(kwargs)
+    assert PredictionArrayKey("energy", m_fp).format() in arrays
+    assert PredictionArrayKey("forces", m_fp).format() in arrays
+
+
+# ── _on_view_command (VIEW_COMMAND: model=None, own ValidationError branch) ────
+
+def test_view_command_applies_and_emits_command_result_then_scene_patch():
+    """A well-formed command parses via the pydantic discriminated union,
+    applies to the view, and emits COMMAND_RESULT + SCENE_PATCH."""
+    env = _FakeEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("OPEN_VIEW", [], {"view_id": "v1"})   # no dataset needed
+        snapshot = s.outbound.get_nowait()                     # SCENE_SNAPSHOT
+        await s.dispatch("VIEW_COMMAND", [], {
+            "type": "SET_SELECTION", "view_id": "v1", "view_version": 0,
+            "name": "picked", "scope": "current_structure", "indices": [0, 1],
+        })
+        return s, snapshot
+
+    s, snapshot = _run(scenario())
+    assert unpack(snapshot)[0] == control.SCENE_SNAPSHOT
+
+    result_event, _, result_kwargs = unpack(s.outbound.get_nowait())
+    assert result_event == control.COMMAND_RESULT
+    assert result_kwargs["success"] is True
+    assert result_kwargs["new_version"] == 1
+
+    patch_event, _, patch_kwargs = unpack(s.outbound.get_nowait())
+    assert patch_event == control.SCENE_PATCH
+    assert "selections" in patch_kwargs["changed"]
+    assert s.outbound.empty()
+
+
+def test_view_command_malformed_payload_is_dropped():
+    """The VIEW_COMMAND route carries model=None and validates inside the
+    handler; a payload that fails the pydantic parse is dropped with no reply."""
+    env = _FakeEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        # SET_SELECTION missing required name/scope/indices → ValidationError.
+        await s.dispatch("VIEW_COMMAND", [], {
+            "type": "SET_SELECTION", "view_id": "v1", "view_version": 0,
+        })
+        return s
+
+    s = _run(scenario())
+    assert s.outbound.empty()
+
+
+def test_view_command_for_unknown_view_is_dropped():
+    """A well-formed command targeting a view that was never opened is dropped
+    (the view-is-None branch) with nothing emitted."""
+    env = _FakeEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("VIEW_COMMAND", [], {
+            "type": "SET_FRAME", "view_id": "ghost", "view_version": 0,
+            "frame_index": 2,
+        })
+        return s
+
+    s = _run(scenario())
+    assert s.outbound.empty()

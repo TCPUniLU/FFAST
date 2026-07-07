@@ -16,6 +16,17 @@ sys.path.insert(0, ROOT)
 DATASET_PATH = os.path.join(ROOT, "examples", "data", "dataset.xyz")
 DATASET_TYPE = "ase (auto)"
 
+# Launches a real ffast-server subprocess; run the fast suite with
+# ``pytest -m "not integration"``.  Skips (rather than errors) when the
+# example dataset is absent, matching tests/ffast/test_array_transfer.py.
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(
+        not os.path.exists(DATASET_PATH),
+        reason=f"example dataset not found at {DATASET_PATH}",
+    ),
+]
+
 
 @pytest.fixture
 def local_server():

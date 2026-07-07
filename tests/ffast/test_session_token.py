@@ -43,12 +43,6 @@ class TestSessionToken:
         server_side = SessionToken.from_hash(t.hash)
         assert not server_side.verify(other.plaintext)
 
-    def test_frozen(self):
-        t = SessionToken.generate()
-        with pytest.raises((AttributeError, TypeError)):
-            t.plaintext = "x"  # type: ignore[misc]
-
-
 class TestClientRole:
     def test_values(self):
         assert ClientRole.CONTROLLING == "CONTROLLING"

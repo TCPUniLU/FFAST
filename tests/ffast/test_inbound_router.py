@@ -89,3 +89,28 @@ def test_remote_dataset_meta_forwards_without_namespacing():
         assert env.pushed == [("REMOTE_DATASET_META", ("fp123",), {"n": 10})]
 
     _run(scenario())
+
+
+def test_task_progress_with_empty_args_does_not_crash():
+    # The `if not args: return args` guard in _namespace_task_id: a namespaced
+    # event arriving with no taskID must forward as-is, not IndexError on args[0].
+    async def scenario():
+        env = FakeEnv()
+        router = InboundEventRouter(env)
+        await router.route("TASK_PROGRESS", [], {"message": "hi"})
+        assert env.pushed == [("TASK_PROGRESS", (), {"message": "hi"})]
+
+    _run(scenario())
+
+
+def test_task_created_with_empty_args_skips_phantom_registration():
+    # Empty args → no taskID to namespace or register; the `if args:` guard in
+    # _on_task_created skips registerPhantomTask but still forwards the event.
+    async def scenario():
+        env = FakeEnv()
+        router = InboundEventRouter(env)
+        await router.route("TASK_CREATED", [], {})
+        assert env.tm.registered == []
+        assert env.pushed == [("TASK_CREATED", (), {})]
+
+    _run(scenario())

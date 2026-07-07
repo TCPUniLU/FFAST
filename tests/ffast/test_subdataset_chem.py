@@ -11,6 +11,7 @@ self) to avoid the heavy SubDataset constructor.
 import types
 
 import numpy as np
+import pytest
 
 from datasetLoaders.loader import SubDataset
 
@@ -44,3 +45,35 @@ def test_variable_parent_branch_unchanged():
         getNAtoms=lambda: np.array([21, 21, 21]),
     )
     assert SubDataset.getChemicalFormula(fake) == "Variable (21-21 atoms)"
+
+
+def test_variable_parent_scalar_count_returns_n_atoms():
+    # Non-ndarray getNAtoms hits the `{count} atoms` else-branch — covers a
+    # zero-atom / scalar-count variable parent.
+    fake = types.SimpleNamespace(
+        parent=types.SimpleNamespace(isVariable=True),
+        getNAtoms=lambda: 0,
+    )
+    assert SubDataset.getChemicalFormula(fake) == "0 atoms"
+
+
+def test_variable_parent_zero_atom_array_formats_range():
+    fake = types.SimpleNamespace(
+        parent=types.SimpleNamespace(isVariable=True),
+        getNAtoms=lambda: np.array([0]),
+    )
+    assert SubDataset.getChemicalFormula(fake) == "Variable (0-0 atoms)"
+
+
+def test_parent_formula_error_propagates_not_masked():
+    # Delegation means a parent whose own getChemicalFormula raises propagates
+    # that error — it is NOT swallowed, and crucially it is the parent's error,
+    # not the old AttributeError from reading `parent.chem`.
+    class _RaisingParent:
+        isVariable = False
+
+        def getChemicalFormula(self):
+            raise RuntimeError("parent boom")
+
+    with pytest.raises(RuntimeError, match="parent boom"):
+        _formula_for_parent(_RaisingParent())

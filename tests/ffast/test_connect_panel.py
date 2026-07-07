@@ -189,6 +189,26 @@ async def test_submit_failure():
         await fake_connect(profile, backend, progress_cb=lambda m: None)
 
 
+async def test_poll_failure_raises_clustererror():
+    # Job transitions to FAILED before RUNNING → connect_to_cluster aborts with
+    # a ClusterError naming the job, rather than polling forever.
+    profile = FakeProfile()
+    backend = FakeSlurmBackend(fail_at="poll", job_id="77")
+
+    with pytest.raises(ClusterError, match="failed before reaching RUNNING"):
+        await fake_connect(profile, backend, progress_cb=lambda m: None)
+
+
+async def test_node_lookup_failure_raises_clustererror():
+    # Job reaches RUNNING but the node-address lookup fails → the backend's
+    # ClusterError propagates out of connect_to_cluster (stage 4).
+    profile = FakeProfile()
+    backend = FakeSlurmBackend(fail_at="node")
+
+    with pytest.raises(ClusterError, match="node lookup failed"):
+        await fake_connect(profile, backend, progress_cb=lambda m: None)
+
+
 async def test_cancel_triggers_scancel():
     scancel_called = []
     profile = FakeProfile()
@@ -253,25 +273,30 @@ async def test_cancel_triggers_scancel():
 
 
 async def test_error_kwarg_propagated():
-    # Simulate what _connectTask does: on failure, push TASK_PROGRESS error=True
-    error_events = []
+    # Drives the real production path: ConnectionManager.connectToCluster
+    # catches a ClusterError raised inside cluster.connection.connect_to_cluster
+    # (here, a SLURM submit failure from FakeSlurmBackend) and reports it to
+    # the UI as a TASK_PROGRESS event with error=True.
+    from client.connection_manager import ConnectionManager
 
-    def fake_event_push(event, taskID, message=None, error=False, **kw):
-        if event == "TASK_PROGRESS":
-            error_events.append({"message": message, "error": error})
+    events = []
 
-    async def _connectTask(taskID="T1"):
-        try:
-            raise ClusterError("fake failure")
-        except ClusterError as exc:
-            fake_event_push(
-                "TASK_PROGRESS",
-                taskID,
-                message=f"Connection failed: {exc}",
-                error=True,
-            )
+    class _FakeEnv:
+        def eventPush(self, *args, **kwargs):
+            events.append((args, kwargs))
 
-    await _connectTask()
+    manager = ConnectionManager(_FakeEnv())
+    profile = FakeProfile()
+    backend = FakeSlurmBackend(fail_at="submit")
 
-    assert len(error_events) == 1 and error_events[0]["error"]
-    assert "fake failure" in error_events[0]["message"]
+    import cluster.slurm as slurm_mod
+
+    with mock.patch.object(slurm_mod, "RemoteSlurmBackend", return_value=backend):
+        await manager.connectToCluster(profile, taskID="T1")
+
+    error_events = [
+        kwargs for args, kwargs in events
+        if args[:1] == ("TASK_PROGRESS",) and kwargs.get("error")
+    ]
+    assert len(error_events) == 1
+    assert "fake submit failure" in error_events[0]["message"]

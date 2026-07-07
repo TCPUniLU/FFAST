@@ -23,19 +23,10 @@ def test_client_capabilities_defaults():
     assert caps.features == []
 
 
-def test_client_capabilities_vispy_renderer():
-    caps = ClientCapabilities(protocol_version="1.0", renderer="vispy")
-    assert caps.renderer == "vispy"
-
-
-def test_client_capabilities_webgl_renderer():
-    caps = ClientCapabilities(protocol_version="1.0", renderer="webgl")
-    assert caps.renderer == "webgl"
-
-
-def test_client_capabilities_headless_renderer():
-    caps = ClientCapabilities(protocol_version="1.0", renderer="headless")
-    assert caps.renderer == "headless"
+@pytest.mark.parametrize("renderer", ["vispy", "webgl", "headless"])
+def test_client_capabilities_accepts_known_renderer(renderer):
+    caps = ClientCapabilities(protocol_version="1.0", renderer=renderer)
+    assert caps.renderer == renderer
 
 
 def test_client_capabilities_invalid_renderer():

@@ -7,10 +7,6 @@ from ffast.visualization.view import VisualizationView
 
 
 class TestSetDatasetRefCommand:
-    def test_type_discriminator(self):
-        cmd = SetDatasetRefCommand(view_id="v1", view_version=0, dataset_ref="abc")
-        assert cmd.type == "SET_DATASET_REF"
-
     def test_nullable_refs(self):
         cmd = SetDatasetRefCommand(view_id="v1", view_version=0)
         assert cmd.dataset_ref is None

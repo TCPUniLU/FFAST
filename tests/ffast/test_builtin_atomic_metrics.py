@@ -81,6 +81,35 @@ def test_per_element_sorted_by_z():
     assert np.isclose(result_rmse[1], np.sqrt(1.0 / 3.0))
 
 
+# ── Degenerate scientific inputs ──────────────────────────────────────────────
+
+def test_force_mae_per_element_single_atom_single_element():
+    # A one-atom structure with a single element: the mean over that element's
+    # components is |1|+|0|+|0| averaged over 3 -> 1/3.
+    fd = np.array([[[1.0, 0.0, 0.0]]])   # (1 frame, 1 atom, 3)
+    el = np.array([1])
+    result = force_mae_per_element(fd, el)
+    assert result.shape == (1,)
+    assert np.isclose(result[0], 1.0 / 3.0)
+
+
+def test_force_mae_per_element_propagates_nan():
+    # A NaN in the H atom's force diff makes H's mean NaN; C stays clean.
+    fd = np.array([[[np.nan, 0.0, 0.0], [0.0, 0.0, 0.0]]])
+    el = np.array([1, 6])
+    result = force_mae_per_element(fd, el)
+    assert np.isnan(result[0])   # H
+    assert np.isclose(result[1], 0.0)  # C
+
+
+def test_force_rmse_per_element_propagates_nan():
+    fd = np.array([[[np.nan, 0.0, 0.0], [0.0, 0.0, 0.0]]])
+    el = np.array([1, 6])
+    result = force_rmse_per_element(fd, el)
+    assert np.isnan(result[0])   # H
+    assert np.isclose(result[1], 0.0)  # C
+
+
 def test_executor_resolves_dependency():
     r = _registry_with_builtins()
     executor = InProcessExecutor(r)

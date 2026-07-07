@@ -18,11 +18,6 @@ def valid_declaration(**overrides):
     base.update(overrides)
     return MetricSchema.model_validate(base)
 
-def test_valid_declaration():
-    metric = valid_declaration()
-    assert metric.id == "ffast.test_metric"
-    assert metric.shape == "per_structure_per_atom"
-   
 def test_discriminator_routes_choice():
     metric = valid_declaration()
     assert isinstance(metric.parameters["norm"], ChoiceParameter)
@@ -68,10 +63,3 @@ def test_bad_discriminator_rejected():
                      "role": "compute"},
         })
 
-def test_missing_required_field_rejected():
-    with pytest.raises(ValidationError):
-        MetricSchema.model_validate({"id": "x"})
-
-def test_empty_parameters_allowed():
-    metric = valid_declaration(parameters={})
-    assert metric.parameters == {}

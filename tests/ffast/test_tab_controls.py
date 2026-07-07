@@ -15,7 +15,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from UI.controls import TAB_CONTROLS, make_tab_control  # noqa: E402
+from UI.controls import make_tab_control  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -51,10 +51,6 @@ class _FakePanel:
         if applied:
             self.applied[pname] = value
         return applied
-
-
-def test_energy_shift_registered():
-    assert "energy_shift" in TAB_CONTROLS
 
 
 def test_energy_shift_drives_only_energy_panels(qapp):

@@ -1,7 +1,10 @@
 """Phase 5b: TOML Analysis-Tab / Panel schema + compile pass (ADR 0021)."""
+import tomllib
+
 import pytest
 from pydantic import ValidationError
 
+import ffast.config.tabs as tabs_mod
 from ffast.config.models import AnalysisTabConfig, ProjectConfig
 from ffast.config.tabs import (
     compile_tabs_metrics,
@@ -91,6 +94,31 @@ def test_unknown_key_rejected():
             {"name": "Bad", "panels": [{"kind": "table", "row": 0, "col": 0,
                                         "bogus_key": 1}]}
         )
+
+
+def test_unparseable_tab_toml_raises_decode_error(tmp_path, monkeypatch):
+    # Broken TOML in the builtin-tabs dir surfaces as a tomllib decode error
+    # out of the tab loader (unterminated table header).
+    monkeypatch.setattr(tabs_mod, "_BUILTIN_TABS_DIR", tmp_path)
+    (tmp_path / "01_bad.toml").write_text("[[tabs\n")
+    with pytest.raises(tomllib.TOMLDecodeError):
+        load_builtin_tabs()
+
+
+def test_wrong_typed_panel_row_raises_validation_error(tmp_path, monkeypatch):
+    # Structurally valid TOML but a panel `row` (pydantic int) given a
+    # non-numeric string fails validation inside the tab loader.
+    monkeypatch.setattr(tabs_mod, "_BUILTIN_TABS_DIR", tmp_path)
+    (tmp_path / "01_bad.toml").write_text("""
+[[tabs]]
+name = "T"
+[[tabs.panels]]
+kind = "table"
+row = "notanumber"
+col = 0
+""")
+    with pytest.raises(ValidationError):
+        load_builtin_tabs()
 
 
 def test_metric_ref_forms():

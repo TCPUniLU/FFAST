@@ -98,6 +98,16 @@ def test_failing_stage_raises_with_stage_id(registry):
         execute(registry, ["ffast.boom"], {"frame.x": np.array([1.0])})
 
 
+def test_missing_required_external_input_wrapped_as_stage_error(registry):
+    # ffast.double declares input x=frame.x and its function has no default for
+    # x. When frame.x is absent from the context, the "fall back to default"
+    # path leaves x unbound, so fn(**kwargs) raises TypeError — which execute()
+    # must surface as a StageExecutionError naming the offending stage, not leak
+    # the raw TypeError.
+    with pytest.raises(StageExecutionError, match="ffast.double"):
+        execute(registry, ["ffast.double"], {})  # no frame.x supplied
+
+
 def test_bad_output_arity_raises(registry):
     @registry.stage(id="ffast.wrong_arity", inputs={}, outputs={"a": "..", "b": ".."})
     def wrong():

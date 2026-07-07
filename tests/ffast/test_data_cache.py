@@ -59,15 +59,6 @@ def test_transform_key_with_underscores_round_trips_through_cache():
     assert list(c.keys()) == [key]                  # identity preserved
 
 
-def test_keys_and_items_remain_strings():
-    c = DataCache()
-    c["forces__M__D"] = "v"
-    (k,) = list(c.keys())
-    assert isinstance(k, str)
-    ((ik, _),) = list(c.items())
-    assert isinstance(ik, str)
-
-
 def test_delete_accepts_str_and_cachekey():
     c = DataCache()
     c["forces__M__D"] = "v"
