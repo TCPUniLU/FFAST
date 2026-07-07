@@ -11,8 +11,11 @@ from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.registry import MetricRegistry
 from ffast.metrics.transforms import (
     TRANSFORMS,
+    Transform,
+    _kde_xy,
     compile_pipeline,
     compile_transform,
+    register_transform,
 )
 
 
@@ -158,3 +161,92 @@ def test_catalog_has_expected_transforms():
     for name in ("smooth", "abs", "mirror_kde", "abs_kde", "value_kde",
                  "mean_abs", "rmse", "shift"):
         assert name in TRANSFORMS
+
+
+# --- compiler edge cases ---------------------------------------------------- #
+def test_empty_pipeline_raises_value_error():
+    # A valid source but no steps: the empty-steps guard fires with its exact
+    # message (source-existence is checked first, so the source must be real).
+    r = _src_registry()
+    with pytest.raises(ValueError, match="at least one transform step is required"):
+        compile_pipeline("t.series", [], registry=r)
+
+
+def test_id_override_pins_the_final_id():
+    # The `id=` override (docstring: pin a legacy literal id) is honoured: the
+    # returned id is the override and the metric is registered under it.
+    r = _src_registry()
+    cid = compile_transform("t.series", "smooth", id="legacy.pinned", registry=r)
+    assert cid == "legacy.pinned"
+    assert r.has("legacy.pinned")
+
+
+def test_pipeline_id_override_pins_only_the_final_step():
+    # For a multi-step pipeline the override pins the final id; intermediates
+    # keep their deterministic derived ids.
+    r = _src_registry()
+    final = compile_pipeline(
+        "t.series", ["smooth", "abs"], id="legacy.final", registry=r
+    )
+    assert final == "legacy.final"
+    assert r.has("legacy.final")
+    assert r.has("t.series__smooth")  # intermediate keeps its derived id
+
+
+@pytest.fixture
+def _conflicting_knob_transforms():
+    """Two transforms declaring the SAME compute-param name (`knob`) with
+    different schemas. Registered in the global catalog for the compile pass,
+    then removed so no other test sees them."""
+    register_transform(Transform(
+        "conflict_a", lambda s, e, p: s,
+        compute_params={"knob": {"type": "int", "default": 1,
+                                 "role": "compute", "label": "First"}},
+    ))
+    register_transform(Transform(
+        "conflict_b", lambda s, e, p: s,
+        compute_params={"knob": {"type": "int", "default": 99,
+                                 "role": "compute", "label": "Second"}},
+    ))
+    try:
+        yield
+    finally:
+        TRANSFORMS.pop("conflict_a", None)
+        TRANSFORMS.pop("conflict_b", None)
+
+
+def test_conflicting_compute_param_raises(_conflicting_knob_transforms):
+    # Two steps declaring the same compute-param name (`knob`) is a compile-time
+    # error rather than a silent last-wins overwrite.
+    r = _src_registry()
+    with pytest.raises(ValueError, match="knob"):
+        compile_pipeline("t.series", ["conflict_a", "conflict_b"], registry=r)
+
+
+# --- _kde_xy degenerate branch ---------------------------------------------- #
+def _bounds(s):
+    return float(np.min(s)), float(np.max(s))
+
+
+def test_kde_empty_sample_returns_flat_zero_grid_over_unit_interval():
+    # size 0 -> degenerate branch; `top` falls back to 1.0, density is all zero.
+    out = _kde_xy([], _bounds)
+    assert out.shape == (2, 200)
+    assert out[0][0] == 0.0 and out[0][-1] == 1.0
+    assert np.all(out[1] == 0.0)
+
+
+def test_kde_single_point_returns_flat_zero_grid_to_that_value():
+    # size 1 < 2 -> degenerate; x-grid spans 0..max(point,1e-10), density zero.
+    out = _kde_xy([5.0], _bounds)
+    assert out.shape == (2, 200)
+    assert out[0][0] == 0.0 and out[0][-1] == 5.0
+    assert np.all(out[1] == 0.0)
+
+
+def test_kde_all_identical_points_returns_flat_zero_grid():
+    # std ~ 0 (< 1e-10) -> degenerate branch even with >= 2 points; no raise.
+    out = _kde_xy([3.0, 3.0, 3.0], _bounds)
+    assert out.shape == (2, 200)
+    assert out[0][0] == 0.0 and out[0][-1] == 3.0
+    assert np.all(out[1] == 0.0)

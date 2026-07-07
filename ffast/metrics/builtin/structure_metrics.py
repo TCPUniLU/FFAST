@@ -8,24 +8,17 @@
   make interactive measurements server-owned Metrics.
 
 All are pure geometry: no model, no prediction.
-
-These metrics carry no schema label/description (``label=""``/``description=""``);
-their docstrings are developer docs only.
 """
 import numpy as np
-from jaxtyping import Float
 
-from ffast.metrics import metric, units, inputs as I
-from ffast.metrics.signature import Ref
-
-# id = METRIC_NAMESPACE + "." + function name (inputs/shape/params inferred from
-# the signature; see ffast/metrics/signature.py).
-METRIC_NAMESPACE = "ffast"
+from ffast.metrics import metric, dims, inputs as I, units
 
 
 @metric(
-    label="",
-    description="",
+    id="ffast.gyradius",
+    inputs={"positions": I.reference_positions, "elements": I.reference_elements},
+    optional_inputs=["offsets"],
+    shape=(dims.N_frames,),
     unit=units.length,
     tests=[
         {
@@ -38,7 +31,7 @@ METRIC_NAMESPACE = "ffast"
             "atol": 1e-10,
         },
         {
-            # uniform: 2 frames x 2 atoms; second frame at ±2 → Rg = 1, 2
+            # uniform: 2 frames × 2 atoms; second frame at ±2 → Rg = 1, 2
             "inputs": {
                 "positions": [
                     [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]],
@@ -51,11 +44,7 @@ METRIC_NAMESPACE = "ffast"
         },
     ],
 )
-def gyradius(
-    positions: Ref[I.reference_positions],
-    elements: Ref[I.reference_elements],
-    offsets=None,
-) -> Float[np.ndarray, "N_frames"]:
+def gyradius(positions, elements, offsets=None):
     """Atomic-number-weighted radius of gyration per structure.
 
     Accepts three input shapes (matching what the InputResolver supplies):
@@ -69,7 +58,10 @@ def gyradius(
 
     if R.ndim == 3:
         # (N, M, 3) uniform; z is (M,)
-        w = z / np.sum(z)
+        total_z = np.sum(z)
+        if total_z == 0:
+            raise ValueError("gyradius: total atomic-number weight is zero")
+        w = z / total_z
         com = np.einsum("a,nax->nx", w, R)            # (N, 3) weighted COM
         s2 = np.sum((R - com[:, None, :]) ** 2, axis=2)  # (N, M)
         return np.sqrt(s2 @ w)                         # (N,)
@@ -81,6 +73,8 @@ def gyradius(
             r = R[offs[i]:offs[i + 1]]
             zi = z[offs[i]:offs[i + 1]]
             sw = np.sum(zi)
+            if sw == 0:
+                raise ValueError("gyradius: total atomic-number weight is zero")
             com = np.sum(zi[:, None] * r, axis=0) / sw
             s2 = np.sum((r - com) ** 2, axis=1)
             out[i] = np.sqrt(np.sum(zi * s2) / sw)
@@ -88,14 +82,17 @@ def gyradius(
 
     # single structure (n_atoms, 3) → scalar
     sw = np.sum(z)
+    if sw == 0:
+        raise ValueError("gyradius: total atomic-number weight is zero")
     com = np.sum(z[:, None] * R, axis=0) / sw
     s2 = np.sum((R - com) ** 2, axis=1)
     return np.sqrt(np.sum(z * s2) / sw)
 
 
 @metric(
-    label="",
-    description="",
+    id="ffast.distance",
+    inputs={"positions": I.reference_positions, "selection": I.selection_indices},
+    shape=(dims.scalar,),
     unit=units.length,
     tests=[
         {
@@ -108,10 +105,7 @@ def gyradius(
         },
     ],
 )
-def distance(
-    positions: Ref[I.reference_positions],
-    selection: Ref[I.selection_indices],
-) -> float:
+def distance(positions, selection):
     """Distance between the first two selected atoms."""
     R = np.asarray(positions, dtype=np.float64)
     i, j = int(selection[0]), int(selection[1])
@@ -119,8 +113,9 @@ def distance(
 
 
 @metric(
-    label="",
-    description="",
+    id="ffast.angle",
+    inputs={"positions": I.reference_positions, "selection": I.selection_indices},
+    shape=(dims.scalar,),
     unit=units.angle,
     tests=[
         {
@@ -134,10 +129,7 @@ def distance(
         },
     ],
 )
-def angle(
-    positions: Ref[I.reference_positions],
-    selection: Ref[I.selection_indices],
-) -> float:
+def angle(positions, selection):
     """Angle (degrees) at the middle of three selected atoms i-j-k."""
     R = np.asarray(positions, dtype=np.float64)
     i, j, k = int(selection[0]), int(selection[1]), int(selection[2])
@@ -148,8 +140,9 @@ def angle(
 
 
 @metric(
-    label="",
-    description="",
+    id="ffast.dihedral",
+    inputs={"positions": I.reference_positions, "selection": I.selection_indices},
+    shape=(dims.scalar,),
     unit=units.angle,
     tests=[
         {
@@ -166,10 +159,7 @@ def angle(
         },
     ],
 )
-def dihedral(
-    positions: Ref[I.reference_positions],
-    selection: Ref[I.selection_indices],
-) -> float:
+def dihedral(positions, selection):
     """Dihedral (degrees, unsigned) of four selected atoms i-j-k-l."""
     R = np.asarray(positions, dtype=np.float64)
     p = R[[int(selection[0]), int(selection[1]), int(selection[2]), int(selection[3])]]

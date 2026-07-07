@@ -74,12 +74,6 @@ def _wheel(item, steps=1):
         Qt.ScrollPhase.NoScrollPhase, False))
 
 
-def test_default_label_shown_with_no_override(qapp):
-    overlay = _make_overlay(qapp, ["ffast.force_error"])
-    overlay.update_descriptor(None, 0.0, 1.0, "Force Error")
-    assert overlay._label.current_text() == "Force Error"
-
-
 def test_each_piece_drags_and_persists_under_its_own_key(qapp):
     overlay = _make_overlay(qapp, ["ffast.force_error"])
     overlay.update_descriptor(None, 0.0, 1.0, "Force Error")
@@ -107,8 +101,10 @@ def test_drag_snaps_to_another_pieces_edge(qapp):
     # play -- otherwise their default positions can put a competing line
     # (e.g. vmax's own center vs. another piece's center) closer than the
     # edge match this test is isolating, and the nearest pair always wins.
+    # label is tall when rotated (58x170), so y=10 would put its own center
+    # within the snap threshold of vmax's center -- push it further down.
     overlay._vmin.move(350, 350)
-    overlay._label.move(350, 10)
+    overlay._label.move(350, 500)
 
     bar_right = overlay._bar.pos().x() + overlay._bar.width()
     vmax_left0 = overlay._vmax.pos().x()

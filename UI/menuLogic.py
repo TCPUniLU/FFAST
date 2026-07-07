@@ -43,14 +43,39 @@ def stride_to_slice_num(stride):
 def parse_host_port(addr_str, default_host="127.0.0.1"):
     """Parse a ``host:port`` (or bare ``port``) string.
 
-    Raises ``ValueError`` on a non-integer port — same failure the caller
-    surfaces as an "Invalid address" dialog.
+    IPv6 hosts require bracket syntax (``[host]:port``) since a bare IPv6
+    address is itself colon-separated and would otherwise be ambiguous with
+    the ``host:port`` split.
+
+    Raises ``ValueError`` on a non-integer port, an out-of-range port
+    (must be 1-65535), or a bare (unbracketed) multi-colon address — same
+    failure the caller surfaces as an "Invalid address" dialog.
     """
     addr_str = addr_str.strip()
-    if ":" in addr_str:
+    if addr_str.startswith("["):
+        end = addr_str.find("]")
+        if end == -1:
+            raise ValueError(f"Invalid address: {addr_str!r}")
+        host = addr_str[1:end]
+        rest = addr_str[end + 1:].strip()
+        if not rest.startswith(":"):
+            raise ValueError(f"Invalid address: {addr_str!r}")
+        port = int(rest[1:].strip())
+    elif addr_str.count(":") > 1:
+        raise ValueError(
+            f"Ambiguous IPv6 address {addr_str!r}; use [host]:port bracket syntax"
+        )
+    elif ":" in addr_str:
         host, port_s = addr_str.rsplit(":", 1)
-        return host.strip(), int(port_s.strip())
-    return default_host, int(addr_str)
+        host = host.strip()
+        port = int(port_s.strip())
+    else:
+        host = default_host
+        port = int(addr_str)
+
+    if not (1 <= port <= 65535):
+        raise ValueError(f"Port out of range (1-65535): {port}")
+    return host, port
 
 
 def latest_session_record(records, profile_name):

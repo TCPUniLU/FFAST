@@ -149,16 +149,24 @@ def build_execution_plan(
     Dependencies are ordered before their dependents (post-order DFS); each
     metric appears exactly once even when shared.  No frozen graph is required —
     ordering comes from the walk itself.
+
+    Raises ``ValueError`` if the dependency graph reached from ``root_ids``
+    contains a cycle (including a metric that depends on itself), matching
+    ``MetricGraph.freeze``'s cycle detection on the same graph.
     """
     if isinstance(root_ids, str):
         root_ids = [root_ids]
 
     steps: list[PlanStep] = []
     seen: set[str] = set()
+    visiting: set[str] = set()
 
     def visit(metric_id: str) -> None:
+        if metric_id in visiting:
+            raise ValueError(f"Dependency cycle detected at metric '{metric_id}'")
         if metric_id in seen:
             return
+        visiting.add(metric_id)
         seen.add(metric_id)
         schema, _ = registry.get(metric_id)
 
@@ -206,6 +214,7 @@ def build_execution_plan(
                 failure=failure,
             )
         )
+        visiting.discard(metric_id)
 
     for rid in root_ids:
         visit(rid)

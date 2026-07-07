@@ -65,5 +65,5 @@ def atom_colors(z: np.ndarray, *, dimming: float = 1.0) -> np.ndarray:
     from ffast.chemistry import atomColors  # type: ignore[import]
     n = len(z)
     rgba = np.ones((n, 4), dtype=np.float32)
-    rgba[:, :3] = atomColors[z] / 255.0 * dimming
+    rgba[:, :3] = np.clip(atomColors[z] / 255.0 * dimming, 0.0, 1.0)
     return rgba

@@ -266,6 +266,12 @@ def compile_pipeline(source_id: str, steps, *, id: str | None = None,
             raise ValueError(
                 f"compile: unknown transform '{tname}'. Known: {sorted(TRANSFORMS)}"
             )
+        collisions = union_params.keys() & transform.compute_params.keys()
+        if collisions:
+            raise ValueError(
+                f"compile: duplicate compute-param name(s) {sorted(collisions)} "
+                f"declared by both an earlier step and '{tname}'"
+            )
         union_params.update(transform.compute_params)
         is_last = i == n - 1
         cid = id if (is_last and id) else f"{current}__{tname}{_id_suffix(ident)}"

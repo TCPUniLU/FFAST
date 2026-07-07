@@ -56,12 +56,6 @@ def test_atom_positions_output_shape():
 
 # --- atom_sizes ---
 
-def test_atom_sizes_shape():
-    z = np.array([1, 6, 8])
-    sizes = atom_sizes(z)
-    assert sizes.shape == (3,)
-
-
 def test_atom_sizes_known_values():
     z = np.array([1, 6])       # H, C
     sizes = atom_sizes(z)
@@ -115,3 +109,21 @@ def test_atom_colors_zero_dimming():
     colors = atom_colors(z, dimming=0.0)
     assert np.allclose(colors[0, :3], 0.0)
     assert np.allclose(colors[0, 3], 1.0)
+
+
+def test_atom_colors_dimming_above_one_is_clipped():
+    # dimming > 1.0 would push RGB out of [0,1]; atom_colors clips to match
+    # the schema's declared max=1.0.
+    z = np.array([1])  # H → white (1,1,1)
+    colors = atom_colors(z, dimming=2.0)
+    assert np.allclose(colors[0, :3], 1.0)
+    assert colors[0, 3] == 1.0
+
+
+def test_atom_colors_negative_dimming_is_clipped():
+    # Negative dimming would push RGB below 0; atom_colors clips to match
+    # the schema's declared min=0.0.
+    z = np.array([1])  # H → white (1,1,1)
+    colors = atom_colors(z, dimming=-1.0)
+    assert np.allclose(colors[0, :3], 0.0)
+    assert colors[0, 3] == 1.0

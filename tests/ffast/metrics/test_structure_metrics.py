@@ -25,6 +25,21 @@ class TestGyradius:
         from ffast.metrics.registry import _default_registry as reg
         assert reg.has("ffast.gyradius")
 
+    def test_single_atom_is_zero(self):
+        # A single atom is its own centre of mass -> radius of gyration 0.
+        assert gyradius([[0.0, 0.0, 0.0]], [1]) == pytest.approx(0.0)
+
+    def test_zero_total_weight_raises(self):
+        # All-zero elements make the total atomic-number weight 0; gyradius
+        # raises rather than silently dividing 0/0 into a NaN centre of mass.
+        with pytest.raises(ValueError, match="zero"):
+            gyradius([[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]], [0, 0])
+
+    def test_nan_position_propagates(self):
+        # A NaN coordinate taints the whole radius-of-gyration reduction.
+        rg = gyradius([[np.nan, 0.0, 0.0], [-1.0, 0.0, 0.0]], [1, 1])
+        assert np.isnan(rg)
+
 
 class TestDistance:
     def test_3_4_5(self):

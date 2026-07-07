@@ -489,6 +489,9 @@ A task identifier namespaced `remote_<n>` for work running on `ffast-server`. Ke
 - SSH tunnel authenticates remote transport; a separate per-session token authorizes session ownership and reconnect control
 - A **Session Record** persisted client-side lets the reconnect UI rediscover a running `ffast-server` job after a client restart; it is purged on user-initiated disconnect or confirmed job death so a dead job never re-triggers the reconnect dialog
 - Server-issued **Remote Task IDs** are namespaced `remote_<n>` to avoid collision with local task IDs when `TASK_PROGRESS` / `TASK_DONE` events are replayed to the client
+- A Metric implementation guards non-finite results explicitly (e.g. a zero-mass or zero-total-weight divisor) by raising rather than returning silent `inf`/`nan`
+- `build_execution_plan` rejects a dependency cycle the same way `MetricGraph.freeze` does (both paths must agree) rather than silently building an unsatisfiable plan
+- Compiling a Transform Metric pipeline rejects a cross-step Compute Parameter name collision rather than letting a later step silently shadow an earlier one's schema
 
 ---
 

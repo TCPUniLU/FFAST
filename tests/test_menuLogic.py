@@ -78,6 +78,31 @@ class TestParseHostPort:
         with pytest.raises(ValueError):
             parse_host_port("localhost:abc")
 
+    def test_negative_port_is_rejected(self):
+        # Out-of-range ports (must be 1-65535) are rejected rather than passed
+        # through as a nonsensical negative port.
+        with pytest.raises(ValueError):
+            parse_host_port("127.0.0.1:-8765")
+        with pytest.raises(ValueError):
+            parse_host_port("-8765")
+
+    def test_empty_port_string_raises(self):
+        # host:"" -> int("") raises ValueError (the caller's "Invalid address").
+        with pytest.raises(ValueError):
+            parse_host_port("127.0.0.1:")
+
+    def test_bare_ipv6_address_raises(self):
+        # A bare (unbracketed) IPv6 address is ambiguous with host:port
+        # splitting — rejected rather than silently mangled.
+        with pytest.raises(ValueError):
+            parse_host_port("2001:db8::1")
+        with pytest.raises(ValueError):
+            parse_host_port("::1")
+
+    def test_bracketed_ipv6_address_is_parsed(self):
+        assert parse_host_port("[::1]:8765") == ("::1", 8765)
+        assert parse_host_port("[2001:db8::1]:9000") == ("2001:db8::1", 9000)
+
 
 class TestLatestSessionRecord:
     def test_returns_latest_matching(self):

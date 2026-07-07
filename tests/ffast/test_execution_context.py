@@ -211,3 +211,77 @@ def test_run_plan_run_fn_failure_recorded(registry):
     results = run_plan(plan, registry, MetricCache(), failing)
     assert isinstance(results["t.params"], MetricFailure)
     assert results["t.params"].traceback == "boom"
+
+
+# ── cycle handling ─────────────────────────────────────────────────────────
+#
+# The DFS in build_execution_plan uses a plain ``seen`` set to avoid revisiting a
+# metric. On a dependency cycle that guard silently *terminates* the walk instead
+# of detecting the cycle — unlike ffast/metrics/graph.py's MetricGraph.freeze,
+# which runs TopologicalSorter and reports a CycleError. These tests pin the
+# current (divergent) behaviour.
+
+@pytest.fixture
+def cyclic_registry():
+    """Two metrics that depend on each other: cyc.a <-> cyc.b."""
+    r = MetricRegistry()
+    r.metric(id="cyc.a", inputs={"x": "cyc.b"}, shape="scalar", unit="energy")(lambda x: x)
+    r.metric(id="cyc.b", inputs={"y": "cyc.a"}, shape="scalar", unit="energy")(lambda y: y)
+    return r
+
+
+def test_build_execution_plan_raises_on_cycle(cyclic_registry):
+    # build_execution_plan's DFS tracks the current recursion stack (not just a
+    # ``seen`` set), so a dependency cycle raises instead of silently emitting
+    # an unsatisfiable plan. MetricGraph.freeze rejects the same graph (below).
+    with pytest.raises(ValueError, match="cycle"):
+        build_execution_plan(cyclic_registry, "cyc.a", {}, FlatInputSource({}))
+
+
+def test_metric_graph_freeze_does_detect_the_same_cycle(cyclic_registry):
+    # Contrast: the frozen-graph path (graph.py) flags the same cycle that
+    # build_execution_plan now raises on above.
+    from ffast.metrics.graph import MetricGraph
+
+    graph = MetricGraph()
+    errors = graph.freeze(cyclic_registry._metrics, valid_refs=None)
+    assert any(mid == "__cycle__" for mid, _ in errors)
+
+
+def test_self_cycle_raises():
+    # A metric that lists itself as an input is the degenerate 1-node cycle.
+    r = MetricRegistry()
+    r.metric(id="loop.self", inputs={"x": "loop.self"}, shape="scalar", unit="energy")(lambda x: x)
+
+    with pytest.raises(ValueError, match="cycle"):
+        build_execution_plan(r, "loop.self", {}, FlatInputSource({}))
+
+
+def test_valid_diamond_dag_produces_correct_topological_order():
+    # Contrast to the cycle cases: a well-formed diamond
+    #   leaf  <-  left, right  <-  root
+    # must order the shared leaf before both middles, both middles before the
+    # root, and list the shared leaf exactly once.
+    r = MetricRegistry()
+    r.metric(id="d.leaf", inputs={"x": "ref.x"}, shape="scalar", unit="energy")(lambda x: x)
+    r.metric(id="d.left", inputs={"a": "d.leaf"}, shape="scalar", unit="energy")(lambda a: a)
+    r.metric(id="d.right", inputs={"b": "d.leaf"}, shape="scalar", unit="energy")(lambda b: b)
+    r.metric(
+        id="d.root",
+        inputs={"l": "d.left", "r": "d.right"},
+        shape="scalar",
+        unit="energy",
+    )(lambda l, r: l + r)
+
+    plan = build_execution_plan(r, "d.root", {}, FlatInputSource({"x": np.array(2.0)}))
+    ids = [s.metric_id for s in plan.steps]
+    assert ids.count("d.leaf") == 1
+    assert ids.index("d.leaf") < ids.index("d.left")
+    assert ids.index("d.leaf") < ids.index("d.right")
+    assert ids.index("d.left") < ids.index("d.root")
+    assert ids.index("d.right") < ids.index("d.root")
+
+    # And it actually executes end-to-end: root = left + right = 2 + 2 = 4.
+    results = run_plan(plan, r, MetricCache(), _direct_run_fn([]))
+    assert isinstance(results["d.root"], MetricResult)
+    assert float(results["d.root"].values) == pytest.approx(4.0)

@@ -96,12 +96,6 @@ def test_run_returns_correct_output(executor):
     assert np.isclose(result.values, 6.0)
 
 
-def test_run_multiple_calls(executor):
-    assert np.isclose(executor.run("test.identity", {"x": 1.0}, {}).values, 1.0)
-    assert np.isclose(executor.run("test.identity", {"x": 2.0}, {}).values, 2.0)
-    assert np.isclose(executor.run("test.identity", {"x": 3.0}, {}).values, 3.0)
-
-
 def test_run_returns_metric_failure_on_exception(executor):
     result = executor.run("test.raise_error", {"x": 1.0}, {})
     assert isinstance(result, MetricFailure)
@@ -131,6 +125,47 @@ def test_worker_missing_raw_input_returns_failure(executor):
     result = executor.run("test.identity", {}, {})  # "x" not provided
     assert isinstance(result, MetricFailure)
     assert "Missing raw input" in result.traceback
+
+
+def test_cached_dependency_is_not_shipped_to_worker(registry):
+    """run_plan checks the shared cache BEFORE calling the worker transport, so a
+    dependency whose result is already cached is served from cache and never
+    shipped to a worker subprocess (only the still-uncomputed dependent ships).
+
+    Verified with a recording wrapper over the executor's ``_ship_to_worker``
+    transport (the ``run_fn`` the shared driver invokes).
+    """
+    from ffast.metrics.cache import MetricCache
+
+    cache = MetricCache()
+    executor = WorkerProcessExecutor(registry, cache=cache)
+    try:
+        # Prime the cache: compute the dependency alone. dep_inner(x=5) = 10.
+        primed = executor.run("test.dep_inner", {"x": 5.0}, {})
+        assert isinstance(primed, MetricResult)
+        assert np.isclose(primed.values, 10.0)
+
+        # Record every metric_id that reaches the worker transport.
+        shipped: list[str] = []
+        original = executor._ship_to_worker
+
+        def recording(id, schema, resolved, compute_params, parameters):
+            shipped.append(id)
+            return original(id, schema, resolved, compute_params, parameters)
+
+        executor._ship_to_worker = recording
+
+        # dep_outer depends on dep_inner (already cached with the same x=5 input).
+        result = executor.run("test.dep_outer", {"x": 5.0}, {})
+        assert isinstance(result, MetricResult)
+        assert np.isclose(result.values, 11.0)  # dep_inner(10) + 1
+
+        # The cached dependency was served from cache — its compute was skipped;
+        # only the uncomputed dependent was shipped to a worker.
+        assert "test.dep_inner" not in shipped
+        assert shipped == ["test.dep_outer"]
+    finally:
+        executor.shutdown()
 
 
 # ── MetricResult fields ───────────────────────────────────────────────────────

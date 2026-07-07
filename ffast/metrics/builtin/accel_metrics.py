@@ -1,18 +1,15 @@
-from typing import Literal
-
 import numpy as np
-from jaxtyping import Float
-
-from ffast.metrics import metric, units, inputs as I
-from ffast.metrics.signature import Ref
-
-# id = METRIC_NAMESPACE + "." + function name (inputs/shape/params inferred from
-# the signature; see ffast/metrics/signature.py).
-METRIC_NAMESPACE = "ffast"
+from ffast.metrics import metric, dims, inputs as I, units
 
 
 @metric(
+    id="ffast.accel_difference",
     label="Acceleration Difference",
+    inputs={
+        "force_difference": "ffast.force_difference",
+        "masses": I.reference_masses,
+    },
+    shape=(dims.N_atoms, dims.xyz),
     unit=units.acceleration,
     tests=[
         {
@@ -27,20 +24,25 @@ METRIC_NAMESPACE = "ffast"
         }
     ],
 )
-def accel_difference(
-    force_difference: Ref["ffast.force_difference"],
-    masses: Ref[I.reference_masses],
-) -> Float[np.ndarray, "N_atoms xyz"]:
+def accel_difference(force_difference, masses):
     fd = np.asarray(force_difference)
     if fd.ndim == 2:
         fd = fd[np.newaxis]
     m = np.asarray(masses, dtype=np.float64)
+    if np.any(m == 0.0):
+        raise ValueError("accel_difference: zero-mass atom(s) make acceleration undefined")
     return fd / m[np.newaxis, :, np.newaxis]
 
 
 @metric(
+    id="ffast.accel_mae",
     label="Acceleration MAE (per frame)",
+    inputs={"accel_difference": "ffast.accel_difference"},
+    shape=(dims.N_frames, dims.N_atoms),
     unit=units.acceleration,
+    parameters={
+        "norm": {"type": "choice", "choices": ["l1", "l2"], "default": "l2", "role": "compute"},
+    },
     tests=[
         {
             "inputs": {
@@ -64,18 +66,17 @@ def accel_difference(
         },
     ],
 )
-def accel_mae(
-    accel_difference: Ref["ffast.accel_difference"],
-    *,
-    norm: Literal["l1", "l2"] = "l2",
-) -> Float[np.ndarray, "N_frames N_atoms"]:
+def accel_mae(accel_difference, *, norm="l2"):
     if norm == "l1":
         return np.mean(np.abs(accel_difference), axis=-1)
     return np.linalg.norm(accel_difference, axis=-1)
 
 
 @metric(
+    id="ffast.accel_rmse",
     label="Acceleration RMSE (per frame)",
+    inputs={"accel_mae": "ffast.accel_mae"},
+    shape=(dims.N_frames,),
     unit=units.acceleration,
     tests=[
         {
@@ -90,12 +91,15 @@ def accel_mae(
         }
     ],
 )
-def accel_rmse(accel_mae: Ref["ffast.accel_mae"]) -> Float[np.ndarray, "N_frames"]:
+def accel_rmse(accel_mae):
     return np.sqrt(np.mean(accel_mae ** 2, axis=-1))
 
 
 @metric(
+    id="ffast.accel_mae_global",
     label="Acceleration MAE",
+    inputs={"accel_mae": "ffast.accel_mae"},
+    shape=(dims.scalar,),
     unit=units.acceleration,
     tests=[
         {
@@ -110,12 +114,15 @@ def accel_rmse(accel_mae: Ref["ffast.accel_mae"]) -> Float[np.ndarray, "N_frames
         }
     ],
 )
-def accel_mae_global(accel_mae: Ref["ffast.accel_mae"]) -> float:
+def accel_mae_global(accel_mae):
     return np.mean(accel_mae)
 
 
 @metric(
+    id="ffast.accel_rmse_global",
     label="Acceleration RMSE",
+    inputs={"accel_mae": "ffast.accel_mae"},
+    shape=(dims.scalar,),
     unit=units.acceleration,
     tests=[
         {
@@ -130,13 +137,16 @@ def accel_mae_global(accel_mae: Ref["ffast.accel_mae"]) -> float:
         }
     ],
 )
-def accel_rmse_global(accel_mae: Ref["ffast.accel_mae"]) -> float:
+def accel_rmse_global(accel_mae):
     return np.sqrt(np.mean(accel_mae ** 2))
 
 
 @metric(
+    id="ffast.accel_mae_per_atom",
     label="Acceleration Error",
     description="Per-atom mean absolute acceleration error (force error divided by mass).",
+    inputs={"accel_mae": "ffast.accel_mae"},
+    shape=(dims.N_atoms,),
     unit=units.acceleration,
     tests=[
         {
@@ -151,7 +161,7 @@ def accel_rmse_global(accel_mae: Ref["ffast.accel_mae"]) -> float:
         }
     ],
 )
-def accel_mae_per_atom(accel_mae: Ref["ffast.accel_mae"]) -> Float[np.ndarray, "N_atoms"]:
+def accel_mae_per_atom(accel_mae):
     am = np.asarray(accel_mae)
     if am.ndim == 1:
         am = am[np.newaxis]
@@ -159,7 +169,13 @@ def accel_mae_per_atom(accel_mae: Ref["ffast.accel_mae"]) -> Float[np.ndarray, "
 
 
 @metric(
+    id="ffast.accel_mae_per_element",
     label="Acceleration Error (by element)",
+    inputs={
+        "accel_mae": "ffast.accel_mae",
+        "elements": I.reference_elements,
+    },
+    shape=(dims.N_elements,),
     unit=units.acceleration,
     tests=[
         {
@@ -175,10 +191,7 @@ def accel_mae_per_atom(accel_mae: Ref["ffast.accel_mae"]) -> Float[np.ndarray, "
         }
     ],
 )
-def accel_mae_per_element(
-    accel_mae: Ref["ffast.accel_mae"],
-    elements: Ref[I.reference_elements],
-) -> Float[np.ndarray, "N_elements"]:
+def accel_mae_per_element(accel_mae, elements):
     am = np.asarray(accel_mae)
     if am.ndim == 1:
         am = am[np.newaxis]

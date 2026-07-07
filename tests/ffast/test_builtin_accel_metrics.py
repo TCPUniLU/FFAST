@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 import ffast.metrics.builtin.force_metrics  # noqa: F401 — register force_difference dependency
 import ffast.metrics.builtin.accel_metrics  # noqa: F401 — register accel chain
 from ffast.metrics.builtin.accel_metrics import (
@@ -128,6 +129,41 @@ def test_executor_resolves_accel_chain():
     assert result.shape == "(N_frames, N_atoms)"
     assert result.unit == "acceleration"
     np.testing.assert_allclose(result.values[0], [5.0, 0.0])
+
+
+# ── Degenerate scientific inputs ──────────────────────────────────────────────
+
+def test_accel_difference_zero_mass_raises():
+    # A zero-mass atom makes acceleration undefined; accel_difference raises
+    # rather than silently producing inf/nan.
+    fd = np.array([[3.0, 4.0, 0.0]])   # (1 atom, 3)
+    masses = np.array([0.0])
+    with pytest.raises(ValueError, match="zero-mass"):
+        accel_difference(fd, masses)
+
+
+def test_accel_difference_propagates_nan_force():
+    # A NaN force-error component propagates through the mass division.
+    fd = np.array([[np.nan, 4.0, 0.0]])
+    result = accel_difference(fd, np.array([1.0]))
+    assert np.isnan(result[0, 0, 0])
+    np.testing.assert_allclose(result[0, 0, 1], 4.0)
+    np.testing.assert_allclose(result[0, 0, 2], 0.0)
+
+
+def test_accel_mae_single_atom_single_frame():
+    # One frame, one atom: accel diff [3,4,0] -> l2 norm 5.0, shape (1, 1).
+    ad = np.array([[[3.0, 4.0, 0.0]]])
+    result = accel_mae(ad, norm="l2")
+    assert result.shape == (1, 1)
+    np.testing.assert_allclose(result[0, 0], 5.0)
+
+
+def test_accel_mae_propagates_nan():
+    ad = np.array([[[np.nan, 4.0, 0.0], [0.0, 0.0, 0.0]]])
+    result = accel_mae(ad, norm="l2")
+    assert np.isnan(result[0, 0])
+    np.testing.assert_allclose(result[0, 1], 0.0)
 
 
 def test_executor_accel_mae_per_element():
