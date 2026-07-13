@@ -51,6 +51,7 @@ class VispySceneAdapter:
         self._label_visual = None     # scene.visuals.Text
         self._selection_visuals: dict = {}  # name → scene.visuals.Markers
         self._hover_visual = None     # scene.visuals.Markers (client-local hover)
+        self._pick_visual = None      # scene.visuals.Markers (active pick-tool selection)
         # Cached from last _apply_atoms call; needed by _apply_selections and by
         # ray-cast picking (ADR 0015).
         self._atom_positions: np.ndarray | None = None
@@ -105,6 +106,7 @@ class VispySceneAdapter:
             self._force_mesh,
             self._label_visual,
             self._hover_visual,
+            self._pick_visual,
         ):
             if visual is not None:
                 visual.visible = False
@@ -459,3 +461,55 @@ class VispySceneAdapter:
             pos, face_color=(1.0, 1.0, 1.0, 0.55), size=size, edge_width=0,
         )
         self._hover_visual.visible = True
+
+    def set_pick_highlight(self, atom_ids) -> None:
+        """Client-local highlight of the active pick tool's current selection.
+
+        ``atom_ids`` are scientific ids (as accumulated by AtomSelectionBase);
+        they are mapped back to displayed indices so the markers track the
+        current frame's atom positions. Distinct green tint separates them from
+        the white hover highlight and server-owned selection overlays.
+        """
+        disp = self._atom_ids_to_displayed(atom_ids)
+        if not disp or self._atom_positions is None:
+            if self._pick_visual is not None:
+                self._pick_visual.visible = False
+            return
+        pos = self._atom_positions[disp]
+        # Draw a halo (areola): an opaque green *sphere* a bit larger than the
+        # atom, rendered *behind* the atoms with depth-test off. The atom then
+        # paints over the centre, so only the rim shows as a ring and the atom's
+        # own colour stays fully visible. It is a sphere (not a flat disc) so it
+        # scales and projects exactly like the atom at every zoom — a flat disc
+        # gets swallowed by the atom's perspective bulge when zoomed in close.
+        if self._atom_sizes is not None:
+            size = self._atom_sizes[disp] * 1.4
+        else:
+            size = np.full(len(disp), 16.0, dtype=np.float32)
+        n = len(disp)
+        face = np.tile(np.array([0.1, 0.9, 0.2, 1.0], dtype=np.float32), (n, 1))
+        if self._pick_visual is None:
+            from vispy import scene
+            self._pick_visual = scene.visuals.Markers(
+                parent=self._parent, scaling=True, spherical=True,
+                light_color=(0, 0, 0), light_ambient=1, antialias=0,
+            )
+            self._pick_visual.order = -1  # drawn before atoms (order 0)
+            self._pick_visual.set_gl_state(
+                depth_test=False, blend=True,
+                blend_func=("src_alpha", "one_minus_src_alpha"),
+            )
+        self._pick_visual.set_data(
+            pos, face_color=face, size=size, edge_width=0,
+        )
+        self._pick_visual.visible = True
+
+    def _atom_ids_to_displayed(self, atom_ids):
+        """Inverse of displayed_to_atom_id for a list of ids (identity if no ids)."""
+        if not atom_ids or self._atom_positions is None:
+            return []
+        n = len(self._atom_positions)
+        if self._atom_ids is not None:
+            id_to_disp = {int(a): i for i, a in enumerate(self._atom_ids)}
+            return [id_to_disp[int(a)] for a in atom_ids if int(a) in id_to_disp]
+        return [int(a) for a in atom_ids if 0 <= int(a) < n]

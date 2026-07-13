@@ -11,6 +11,8 @@ class AtomFilterSelect(AtomSelectionBase):
     multiselect = 10000
     rectangleSelect = True
     label = "Atom Filter Selection"
+    toolbarName = "Filter"
+    paneName = "ATOM FILTER"
 
     def __init__(self, canvas, **kwargs):
         super().__init__(canvas, **kwargs)
@@ -123,21 +125,11 @@ def addSettingsPane(UIHandler, loupe):
         labelWidth=50,
     )
 
-    ## ADD BONDS BUTTONS
+    # Atom-picking is armed from the shared pick toolbar (ADR 0039); this pane
+    # keeps only the one-shot operators.
     container = pane.addSetting(
         "Container", "Atom Filter Indices Container", layout="horizontal"
     )
-
-    # SELECT ATOMS BTN
-    def selectAtoms():
-        loupe.setActiveAtomSelectTool(AtomFilterSelect)
-
-    selectButton = PushButton("Select")
-    selectButton.setToolTip(
-        "Click to manually add/remove indices in the atom filter. Hold CMD/CTRL to create selection rectangle."
-    )
-    selectButton.clicked.connect(selectAtoms)
-    container.layout.addWidget(selectButton)
 
     # CREATE ATOM FILTERED DATASET BTB
     def createAtomFilteredDataset():

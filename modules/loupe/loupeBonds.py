@@ -9,6 +9,8 @@ DEPENDENCIES = ["loupeCamera"]
 class BondSelect(AtomSelectionBase):
     multiselect = 2
     label = "Bond Selection"
+    toolbarName = "Bonds"
+    paneName = "BONDS"
 
     def __init__(self, canvas, **kwargs):
         super().__init__(canvas, **kwargs)
@@ -22,7 +24,18 @@ class BondSelect(AtomSelectionBase):
         loupe = self.canvas.loupe
         bonds = loupe.settings.get("fixedBondIndices")
 
-        bonds = set(bonds)
+        # The default view shows dynamic (distance-computed) bonds while the
+        # fixed set is empty. Editing an empty set would collapse the view to
+        # the single picked bond, so seed it with the currently-shown bonds —
+        # then picking an existing bond removes just that one, and picking a
+        # new pair adds it. (Also avoids set(None) on the None default.)
+        if not bonds:
+            dataset = loupe.getSelectedDataset()
+            try:
+                bonds = dataset.getBondIndices(loupe.index)
+            except Exception:
+                bonds = []
+        bonds = set(tuple(sorted((int(a), int(b)))) for a, b in bonds)
         (p1, p2) = self.selectedPoints
         p1, p2 = int(p1), int(p2)
         if p1 < p2:
@@ -100,17 +113,7 @@ def addSettingsPane(UIHandler, loupe):
     dynamicFillBtn.clicked.connect(bondsDynamicFill)
     container.layout.addWidget(dynamicFillBtn)
 
-    # SELECT BONDS BTN
-
-    def selectBonds():
-        loupe.setActiveAtomSelectTool(BondSelect)
-
-    selectButton = PushButton("Select")
-    selectButton.setToolTip(
-        "Click to manually add/remove bonds in the visualiser"
-    )
-    selectButton.clicked.connect(selectBonds)
-    container.layout.addWidget(selectButton)
+    # Bond picking is armed from the shared pick toolbar (ADR 0039).
 
     loupe.addSidebarPane("BONDS", pane)
 
@@ -120,4 +123,4 @@ def loadLoupe(UIHandler, loupe):
     addSettingsPane(UIHandler, loupe)
 
 
-CLIENT_FEATURES = [ClientFeature(stage_id="ffast.bond_positions", widget_factory=loadLoupe)]
+CLIENT_FEATURES = [ClientFeature(stage_id="ffast.bond_positions", widget_factory=loadLoupe, tool_class=BondSelect)]

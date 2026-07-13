@@ -34,6 +34,8 @@ class _ForceVectorSelect(AtomSelectionBase):
     multiselect = 10000
     rectangleSelect = True
     label = "Force Vector Atoms"
+    toolbarName = "Forces"
+    paneName = "FORCE VECTORS"
 
     def __init__(self, canvas, **kwargs):
         super().__init__(canvas, **kwargs)
@@ -107,12 +109,8 @@ def loadLoupe(UIHandler, loupe):
     filterRowLayout = QHBoxLayout(filterRow)
     filterRowLayout.setContentsMargins(0, 0, 0, 0)
 
-    selectBtn = PushButton("Select atoms")
-    selectBtn.setToolTip(
-        "Pick atoms to show force arrows on. Click to toggle; drag to box-select."
-    )
-    selectBtn.clicked.connect(lambda: loupe.setActiveAtomSelectTool(_ForceVectorSelect))
-
+    # Atom picking is armed from the shared pick toolbar (ADR 0039); this pane
+    # keeps only the Clear operator.
     clearBtn = PushButton("Clear")
     clearBtn.setToolTip("Remove all atoms from force vector selection.")
 
@@ -124,7 +122,6 @@ def loadLoupe(UIHandler, loupe):
             canvas.visualRefresh(force=True)
 
     clearBtn.clicked.connect(_clear_force_selection)
-    filterRowLayout.addWidget(selectBtn)
     filterRowLayout.addWidget(clearBtn)
     pane.layout.addWidget(filterRow)
 

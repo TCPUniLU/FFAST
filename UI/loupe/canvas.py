@@ -1,11 +1,12 @@
-from UI.Templates import Widget, ContentBar, SettingsPane, ToolButton
+from UI.Templates import Widget, ContentBar, SettingsPane, ToolButton, PushButton
 from UI.loupe.visual import VisualElement
 from config.userConfig import getConfig
+from config.uiConfig import configStyleSheet
 from vispy import scene
 from vispy.scene.cameras.turntable import TurntableCamera
 from vispy.util import keys
 from ffast.renderers.vispy.adapter import VispySceneAdapter
-from PySide6 import QtWidgets
+from PySide6 import QtWidgets, QtCore
 import numpy as np
 
 
@@ -230,12 +231,48 @@ class InteractiveCanvas(Widget):
         self.props[prop.key] = prop
 
     def addAtomSelectToolbar(self):
+        # ADR 0039: one flat pick toolbar is the single home for all atom-pick
+        # tools (formerly a Select button scattered in each pane). Buttons are
+        # built from every registered ClientFeature that declares a tool_class,
+        # so plugins get a toolbar entry for free.
+        self._toolButtons = {}
+        self.pickToolBar = Widget(
+            color="@BGColor1", layout="horizontal", parent=self
+        )
+        self.pickToolBar.setFixedHeight(34)
+        self.pickToolBar.setContentsMargins(8, 4, 8, 4)
+        self.pickToolBar.layout.setSpacing(6)
+        self.pickToolBar.layout.addWidget(
+            QtWidgets.QLabel("Pick:", parent=self.pickToolBar)
+        )
+        btnQSS = configStyleSheet(
+            "QPushButton{background-color:@BGColor3;color:@TextColor1;border:none;"
+            "border-radius:3px;padding:4px 8px;}"
+            "QPushButton:hover{background-color:@BGColor4;color:@TextColorHover;}"
+            "QPushButton:checked{background-color:@HLColor2;color:@TextColor2;}"
+        )
+        for toolClass in self._registeredToolClasses():
+            name = toolClass.toolbarName or toolClass.label
+            btn = PushButton(name, parent=self.pickToolBar)
+            btn.setCheckable(True)
+            btn.setToolTip(toolClass.label)
+            btn.setStyleSheet(btnQSS)
+            # Buttons share the bar width evenly (diverge horizontally).
+            btn.setSizePolicy(
+                QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
+            )
+            btn.clicked.connect(
+                lambda _=False, tc=toolClass: self.setActiveAtomSelectTool(tc)
+            )
+            self.pickToolBar.layout.addWidget(btn)
+            self._toolButtons[toolClass] = btn
+
+        # Contextual strip: shown only while a tool is armed, names the active
+        # tool and hosts its live read-out (pick count / distance / angle).
         self.atomSelectBar = Widget(
             color="@BGColor1", layout="horizontal", parent=self
         )
         self.atomSelectBar.setFixedHeight(40)
-        self.layout.insertWidget(0, self.atomSelectBar)
-
         self.atomSelectBar.setContentsMargins(8, 0, 8, 0)
 
         self.atomSelectBar.label1 = QtWidgets.QLabel("/", parent=self.atomSelectBar)
@@ -247,6 +284,35 @@ class InteractiveCanvas(Widget):
         self.atomSelectBar.layout.addWidget(self.atomSelectBar.label1)
         self.atomSelectBar.layout.addWidget(self.atomSelectBar.label2)
         self.atomSelectBar.layout.addWidget(self.atomSelectBar.cancelButton)
+
+        # Strip sits directly above the canvas; toolbar above the strip.
+        self.layout.insertWidget(0, self.atomSelectBar)
+        self.layout.insertWidget(0, self.pickToolBar)
+
+    def _registeredToolClasses(self):
+        """Tool classes contributed by loaded plugins (ADR 0039), in load order."""
+        handler = getattr(self.loupe, "handler", None)
+        seen, out = set(), []
+        for feature in getattr(handler, "client_features", []):
+            tc = getattr(feature, "tool_class", None)
+            if tc is not None and tc not in seen:
+                seen.add(tc)
+                out.append(tc)
+        return out
+
+    def _syncPickToolbar(self):
+        """Reflect the single active tool onto the toolbar buttons + cursor."""
+        for toolClass, btn in getattr(self, "_toolButtons", {}).items():
+            active = self.isActiveAtomSelectTool(toolClass)
+            btn.blockSignals(True)
+            btn.setChecked(active)
+            btn.blockSignals(False)
+        native = getattr(self.canvas, "native", None)
+        if native is not None:
+            if self.activeAtomSelectTool is None:
+                native.unsetCursor()
+            else:
+                native.setCursor(QtCore.Qt.CrossCursor)
 
     ## INIT
 
@@ -303,6 +369,8 @@ class InteractiveCanvas(Widget):
 
         if self.activeAtomSelectTool is not None:
             self.activeAtomSelectTool.updateInfo()
+        # Keep the selection highlight tracking the current frame's positions.
+        self._pushPickHighlight()
 
     ## CAMERA
     def onCameraChange(self):
@@ -325,14 +393,25 @@ class InteractiveCanvas(Widget):
     def addSelectedAtom(self, index, refresh=True):
         if self.activeAtomSelectTool is not None:
             self.activeAtomSelectTool.selectAtom(index)
+        self._pushPickHighlight()
         if refresh:
             self.visualRefresh(force=True)
 
     def addSelectedAtoms(self, indices, refresh=True):
         if self.activeAtomSelectTool is not None:
             self.activeAtomSelectTool.selectAtoms(indices)
+        self._pushPickHighlight()
         if refresh:
             self.visualRefresh(force=True)
+
+    def _pushPickHighlight(self):
+        """Render the active pick tool's current selection (ADR 0039)."""
+        adapter = getattr(self, "sceneAdapter", None)
+        if adapter is None:
+            return
+        tool = self.activeAtomSelectTool
+        adapter.set_pick_highlight(tool.selectedPoints if tool is not None else None)
+        self.canvas.update()
 
     def isActiveAtomSelectTool(self, tool):
         if tool is None:
@@ -358,7 +437,18 @@ class InteractiveCanvas(Widget):
                 self.activeAtomSelectTool.rectangleSelect
             )
             self.atomSelectBar.show()
+            # ADR 0039: tool ↔ pane handshake — surface the pane holding the
+            # tool's target field so the user sees where picked atoms land.
+            paneName = getattr(tool, "paneName", None)
+            if paneName:
+                try:
+                    self.loupe.sideBar.setExpanded(paneName)
+                except Exception:
+                    pass
 
+        # ADR 0039: redundant active-state signals — highlight the owning
+        # toolbar button and switch the canvas cursor.
+        self._syncPickToolbar()
         self.onNewGeometry()
 
     def getSelectedAtoms(self):

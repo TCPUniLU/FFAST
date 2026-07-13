@@ -9,6 +9,8 @@ DEPENDENCIES = ["loupeAtoms"]
 class AtomInfoSelect(AtomSelectionBase):
     multiselect = 4
     label = "Atoms Info"
+    toolbarName = "Info"
+    paneName = "ATOMS"
     cycle = True
 
     def __init__(self, canvas, **kwargs):
@@ -66,27 +68,7 @@ class AtomInfoSelect(AtomSelectionBase):
         return f"Atoms {i},{j},{k},{l} / Elements {z[i]},{z[j]},{z[k]},{z[l]} / Dihedral: {a:.1f}"
 
 
-def loadLoupe(UIHandler, loupe):
-    from PySide6 import QtWidgets
-    from UI.Templates import PushButton
-
-    ## ADD BUTTON
-    pane = loupe.getSettingsPane("ATOMS")
-    container = pane.addSetting(
-        "Container", "Atoms Info Container", layout="horizontal"
-    )
-    container.layout.addWidget(QtWidgets.QLabel("Atom Info"))
-
-    ## SELECT BUTTON
-    def selectAtomInfoIndices():
-        loupe.setActiveAtomSelectTool(AtomInfoSelect)
-
-    selectButton = PushButton("Select")
-    selectButton.setToolTip(
-        "Select to 1/2/3/4 atom(s) to see position/distance/angle/dihedral"
-    )
-    selectButton.clicked.connect(selectAtomInfoIndices)
-    container.layout.addWidget(selectButton)
-
-
-CLIENT_FEATURES = [ClientFeature(stage_id=None, widget_factory=loadLoupe, tool_class=AtomInfoSelect)]
+# The Atoms-Info readout (position/distance/angle/dihedral) is shown in the
+# contextual pick strip on the canvas; the tool is armed from the shared pick
+# toolbar (ADR 0039), so this feature contributes only its tool_class.
+CLIENT_FEATURES = [ClientFeature(stage_id=None, tool_class=AtomInfoSelect)]

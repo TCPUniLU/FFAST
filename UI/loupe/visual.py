@@ -56,6 +56,11 @@ class AtomSelectionBase:
     cycle = False
     rectangleSelect = False
     label = "N/A"
+    # ADR 0039: short name shown on the shared pick toolbar button (falls back
+    # to `label`), and the sidebar pane the tool targets (auto-expanded when the
+    # tool is armed). None → tool is omitted from the toolbar / no pane handshake.
+    toolbarName = None
+    paneName = None
 
     def __init__(self, canvas):
         self.selectedPoints = []

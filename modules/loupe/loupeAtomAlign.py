@@ -29,6 +29,8 @@ def cleanAlignAtomsIndices(arr):
 class AtomAlignSelect(AtomSelectionBase):
     multiselect = 3
     label = "Align Atoms Selection"
+    toolbarName = "Align"
+    paneName = "ATOMS"
 
     def __init__(self, canvas, **kwargs):
         super().__init__(canvas, **kwargs)
@@ -55,8 +57,6 @@ class AtomAlignSelect(AtomSelectionBase):
 
 
 def addSettings(UIHandler, loupe):
-    from UI.Templates import PushButton
-
     def updateAlignAtomsConfIndex():
         index = loupe.canvas.index
         loupe.settings.setParameter("alignAtomsConfIndex", index)
@@ -111,17 +111,7 @@ def addSettings(UIHandler, loupe):
     )
     container.layout.addWidget(codeBox)
     codeBox.setToolTip("Set 3 atom indices to visualise on a fixed plane")
-
-    ## SELECT BUTTON
-    def selectAlignAtomIndices():
-        loupe.setActiveAtomSelectTool(AtomAlignSelect)
-
-    selectButton = PushButton("Select")
-    selectButton.clicked.connect(selectAlignAtomIndices)
-    selectButton.setToolTip(
-        "Manually select 3 atoms to visualise on a fixed plane"
-    )
-    container.layout.addWidget(selectButton)
+    # Align picking is armed from the shared pick toolbar (ADR 0039).
 
 
 def loadLoupe(UIHandler, loupe):
