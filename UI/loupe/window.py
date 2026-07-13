@@ -114,6 +114,7 @@ class Loupe(Widget, EventChildClass):
         self.settings.addAction("applyColormap", self.onApplyColormap)
         self.settings.addAction("applyAtomAlign", self.onApplyAtomAlign)
         self.settings.addAction("applyForceVectors", self.onApplyForceVectors)
+        self.settings.addAction("applyAtomSize", self.onApplyAtomSize)
         self.settings.addAction("applyUnitCell", self.onApplyUnitCell)
         self.settings.addAction("applyBondStyle", self.onApplyBondStyle)
         self.settings.addAction("applyBonds", self.onApplyBonds)
@@ -367,6 +368,11 @@ class Loupe(Widget, EventChildClass):
             self._sendSetParameter("ffast.force_arrows", "normalised", bool(self.settings.get("forceVectorsNormalised")))
             self._sendSetParameter("ffast.force_arrows", "filter_enabled", bool(self.settings.get("forceVectorsFilterEnabled")))
             self._sendSetParameter("ffast.force_arrows", "atom_indices", list(self.settings.get("forceVectorsAtomIndices") or []))
+
+    def onApplyAtomSize(self):
+        """Drive the server-side atom size scale (ffast.atom_sizes)."""
+        scale = float(self.settings.get("atomSizeScale") or 1.0)
+        self._sendSetParameter("ffast.atom_sizes", "scale", scale)
 
     def onApplyUnitCell(self):
         # opt-out: add "no_unit_cell" when hiding, remove it when showing

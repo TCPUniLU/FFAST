@@ -86,7 +86,6 @@ def addSettings(UIHandler, loupe):
     settings = loupe.settings
     settings.addParameters(**{
         "atomColorType": ["Elements"],   # combo selection (UI state)
-        "atomSizeScale": [1.0],
         "scenePredictionRef": ["", "applyScenePrediction"],
         "atomColorSource": ["element", "applyColorSource"],
         "atomColorMap": ["viridis", "applyColormap"],

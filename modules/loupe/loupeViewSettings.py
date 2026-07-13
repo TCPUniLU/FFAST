@@ -1,6 +1,8 @@
 from UI.Templates import SettingsPane
 from UI.clientFeatures import ClientFeature
-from ffast.metrics.models import BoolParameter, IntParameter, StringParameter
+from ffast.metrics.models import (
+    BoolParameter, FloatParameter, IntParameter, StringParameter,
+)
 
 # ADR 0040: the old VIEW SETTINGS grab-bag is dissolved into two themed panes.
 # This module keeps ownership of the parameter registrations + action wirings
@@ -32,6 +34,11 @@ SCHEMA_ALIGN = {
 
 # ── DISPLAY pane (Appearance group) ──────────────────────────────────────────
 SCHEMA_DISPLAY = {
+    "atomSizeScale": FloatParameter(
+        type="float", default=1.0, min=0.1, max=10.0, role="present",
+        label="Atom size",
+        description="Scale factor for atom radii (1.0 = default).",
+    ),
     "showSceneLabels": BoolParameter(
         type="bool", default=False, role="present",
         label="Atom index labels",
@@ -59,6 +66,7 @@ def loadLoupe(UIHandler, loupe):
     # these here); only the presentation is regrouped below.
     settings.addParameters(
         **{
+            "atomSizeScale": [1.0, "applyAtomSize"],
             "alignKabsch": [False, "toggleKabschAlign"],
             "alignKabschHeavyOnly": [True, "toggleKabschAlign"],
             "showSceneLabels": [False, "toggleSceneLabels"],
@@ -77,6 +85,25 @@ def loadLoupe(UIHandler, loupe):
     # DISPLAY pane
     displayPane = SettingsPane(UIHandler, settings, parent=loupe)
     displayPane.addFromParameterSchema(SCHEMA_DISPLAY)
+
+    # Background colour: live canvas background (not a persisted setting).
+    from UI.Templates import PushButton
+    bgBtn = PushButton("Background colour…", parent=displayPane)
+    bgBtn.setToolTip("Pick the 3D canvas background colour")
+
+    def _pickBackgroundColor():
+        from PySide6.QtWidgets import QColorDialog
+        from PySide6.QtGui import QColor
+        from config.userConfig import getConfig
+        current = QColor(getConfig("loupeBGColor", "#000000"))
+        color = QColorDialog.getColor(current, loupe, "Select Background Colour")
+        if color.isValid():
+            loupe.canvas.canvas.bgcolor = color.getRgbF()[:3]
+            loupe.canvas.canvas.update()
+
+    bgBtn.clicked.connect(_pickBackgroundColor)
+    displayPane.layout.addWidget(bgBtn)
+
     loupe.addSidebarPane("DISPLAY", displayPane)
 
     # ALIGNMENT pane — dependent fields hidden until their mode is on.

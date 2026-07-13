@@ -77,6 +77,31 @@ def addSettingsPane(UIHandler, loupe):
 
     pane = SettingsPane(UIHandler, loupe.settings, parent=loupe)
 
+    # Bond width + colour (moved off the top menu). bondWidth/bondColor changes
+    # are picked up live via the adapter restyle hook (window._ensureAdapterHooks).
+    pane.addSetting(
+        "Slider",
+        "Bond width",
+        settingsKey="bondWidth",
+        nMin=10,
+        nMax=100,
+        toolTip="Thickness of the bond cylinders",
+    )
+
+    bondColorBtn = PushButton("Bond colour…")
+    bondColorBtn.setToolTip("Pick the bond colour")
+
+    def _pickBondColor():
+        from PySide6.QtWidgets import QColorDialog
+        from PySide6.QtGui import QColor
+        current = QColor(settings.get("bondColor", getConfig("loupeBondsColor", "#404040")))
+        color = QColorDialog.getColor(current, loupe, "Select Bond Colour")
+        if color.isValid():
+            settings.setParameter("bondColor", color.name(), refresh=True)
+
+    bondColorBtn.clicked.connect(_pickBondColor)
+    pane.layout.addWidget(bondColorBtn)
+
     pane.addSetting(
         "ComboBox",
         f"Bonds Type",
