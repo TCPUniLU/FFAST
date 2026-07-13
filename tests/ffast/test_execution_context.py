@@ -215,11 +215,11 @@ def test_run_plan_run_fn_failure_recorded(registry):
 
 # ── cycle handling ─────────────────────────────────────────────────────────
 #
-# The DFS in build_execution_plan uses a plain ``seen`` set to avoid revisiting a
-# metric. On a dependency cycle that guard silently *terminates* the walk instead
-# of detecting the cycle — unlike ffast/metrics/graph.py's MetricGraph.freeze,
-# which runs TopologicalSorter and reports a CycleError. These tests pin the
-# current (divergent) behaviour.
+# build_execution_plan's DFS tracks the current recursion stack (a ``visiting``
+# set) in addition to the ``seen`` dedup set, so a dependency cycle raises a
+# ValueError instead of silently emitting an unsatisfiable plan. This matches
+# ffast/metrics/graph.py's MetricGraph.freeze, which reports the same cycle via
+# TopologicalSorter (contrast test below).
 
 @pytest.fixture
 def cyclic_registry():

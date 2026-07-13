@@ -30,9 +30,11 @@ class TestGyradius:
         assert gyradius([[0.0, 0.0, 0.0]], [1]) == pytest.approx(0.0)
 
     def test_zero_total_weight_raises(self):
-        # All-zero elements make the total atomic-number weight 0; gyradius
-        # raises rather than silently dividing 0/0 into a NaN centre of mass.
-        with pytest.raises(ValueError, match="zero"):
+        # gyradius normalises by the total atomic-number weight (sum of
+        # ``elements``); an all-zero-element structure would make the
+        # centre-of-mass division 0/0. The metric guards this and raises a clear
+        # ValueError rather than silently returning NaN.
+        with pytest.raises(ValueError, match="total atomic-number weight is zero"):
             gyradius([[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]], [0, 0])
 
     def test_nan_position_propagates(self):
