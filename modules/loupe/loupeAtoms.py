@@ -118,6 +118,11 @@ def addSettingsPane(UIHandler, loupe):
         labelWidth=60,
     )
 
+    # ADR 0040: Colormap + Prediction are meaningless for element coloring, so
+    # hide them until Coloring leaves "Elements".
+    def _colorIsElements():
+        return settings.get("atomColorType") == "Elements"
+
     # Prediction selector (dynamic model list)
     row = QtWidgets.QWidget(pane)
     row_layout = QtWidgets.QHBoxLayout(row)
@@ -135,15 +140,23 @@ def addSettingsPane(UIHandler, loupe):
     pane.layout.addWidget(row)
     loupe.updatePredictionComboBox()
 
-    pane.addSetting(
+    colormap = pane.addSetting(
         "ComboBox",
         "Colormap",
         settingsKey="atomColorMap",
         items=["viridis", "inferno", "plasma", "coolwarm", "hot", "bwr", "force_error"],
         labelWidth=60,
     )
+    colormap.setHideCondition(_colorIsElements)  # refreshed via pane.updateVisibilities
 
-    loupe.addSidebarPane("ATOMS", pane)
+    # The prediction row is a raw widget (not a SettingsPane control), so drive
+    # its visibility directly off the Coloring value.
+    def _syncPredictionRow():
+        row.setVisible(not _colorIsElements())
+    settings.addParameterActions("atomColorType", _syncPredictionRow)
+    _syncPredictionRow()
+
+    loupe.addSidebarPane("COLOR BY", pane)
 
 
 def metric_color_label(entry):
@@ -177,7 +190,7 @@ def addMetricControls(UIHandler, loupe):
     catalog, plus parameter controls for the selected metric coloring."""
     from PySide6 import QtWidgets
 
-    pane = loupe.getSettingsPane("ATOMS")
+    pane = loupe.getSettingsPane("COLOR BY")
     settings = loupe.settings
     coloring_combo = pane.settingsWidgets.get("Coloring")
 

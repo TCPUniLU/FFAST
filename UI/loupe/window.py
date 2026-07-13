@@ -634,6 +634,20 @@ class Loupe(Widget, EventChildClass):
         if isinstance(pane, SettingsPane):
             collapsibleWidget.setCallback(pane.updateVisibilities)
 
+    # ADR 0040: sidebar panes are grouped by concern once all modules have
+    # added them. Panes not listed here still show (under "OTHER").
+    SIDEBAR_GROUPS = [
+        ("PLAYBACK", ["INDEX / VIDEO"]),
+        ("APPEARANCE", ["DISPLAY", "BONDS", "UNIT CELL"]),
+        ("ANALYSIS", ["COLOR BY", "FORCE VECTORS", "EXTRACT SUBSET", "ALIGNMENT"]),
+        ("VIEW", ["CAMERA", "EXPORT"]),
+    ]
+
+    def arrangeSidebarGroups(self):
+        order = [g for g, _ in self.SIDEBAR_GROUPS]
+        mapping = {g: names for g, names in self.SIDEBAR_GROUPS}
+        self.sideBar.arrangeGroups(order, mapping)
+
     def getSettingsPane(self, name):
         return self.panes.get(name, None)
 

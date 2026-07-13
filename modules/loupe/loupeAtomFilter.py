@@ -10,9 +10,9 @@ logger = logging.getLogger("FFAST")
 class AtomFilterSelect(AtomSelectionBase):
     multiselect = 10000
     rectangleSelect = True
-    label = "Atom Filter Selection"
-    toolbarName = "Filter"
-    paneName = "ATOM FILTER"
+    label = "Extract-Subset Selection"
+    toolbarName = "Extract"
+    paneName = "EXTRACT SUBSET"
 
     def __init__(self, canvas, **kwargs):
         super().__init__(canvas, **kwargs)
@@ -43,7 +43,7 @@ class AtomFilterPaneHiding(CanvasProperty):
         dataset = loupe.getSelectedDataset()
 
         loupe.setSettingsPaneVisibility(
-            "ATOM FILTER", not dataset.isSubDataset
+            "EXTRACT SUBSET", not dataset.isSubDataset
         )
 
 
@@ -76,7 +76,7 @@ def addSettingsPane(UIHandler, loupe):
     from UI.Templates import SettingsPane, PushButton, Label
 
     pane = SettingsPane(UIHandler, loupe.settings, parent=loupe)
-    loupe.addSidebarPane("ATOM FILTER", pane)
+    loupe.addSidebarPane("EXTRACT SUBSET", pane)
 
     def cleanIndices(arr):
         dataset = loupe.getSelectedDataset()
@@ -144,7 +144,7 @@ def addSettingsPane(UIHandler, loupe):
 
         UIHandler.env.createAtomFilteredDataset(dataset, idxs)
 
-    createButton = PushButton("Create")
+    createButton = PushButton("Extract as Subset Dataset")
     createButton.setToolTip(
         "Create an atom-filtered dataset with only the current atom indices"
     )

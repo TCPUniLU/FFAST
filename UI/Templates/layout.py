@@ -248,3 +248,48 @@ class ContentBar(Widget):
             widget.show()
         else:
             widget.hide()
+
+    def arrangeGroups(self, group_order, pane_group):
+        """Reorder the added panes into labelled groups (ADR 0040).
+
+        ``group_order`` is the group sequence; ``pane_group`` maps each group to
+        its ordered pane names. Panes are added in whatever order their modules
+        load, so this runs once after all panes exist and rebuilds the layout:
+        a muted header per non-empty group, then that group's panes. Any pane
+        not listed is appended at the end so nothing silently disappears.
+        """
+        # Detach every pane and the trailing stretch, keeping the widgets alive.
+        for widget in self.widgets.values():
+            self.layout.removeWidget(widget)
+        for i in reversed(range(self.layout.count())):
+            item = self.layout.itemAt(i)
+            if item is not None and item.spacerItem() is not None:
+                self.layout.takeAt(i)
+
+        placed = set()
+        for group in group_order:
+            names = [n for n in pane_group.get(group, []) if n in self.widgets]
+            if not names:
+                continue
+            self.layout.addWidget(self._groupHeader(group))
+            for name in names:
+                self.layout.addWidget(self.widgets[name])
+                placed.add(name)
+
+        # Any pane not assigned to a group still gets shown, at the end.
+        leftover = [n for n in self.widgets if n not in placed]
+        if leftover:
+            self.layout.addWidget(self._groupHeader("OTHER"))
+            for name in leftover:
+                self.layout.addWidget(self.widgets[name])
+
+        self.layout.addStretch()
+
+    def _groupHeader(self, text):
+        header = QtWidgets.QLabel(text.upper())
+        header.setFixedHeight(22)
+        header.setStyleSheet(
+            "color:#8a8d94; font-weight:bold; font-size:10px;"
+            "padding:6px 8px 2px 8px; letter-spacing:1px;"
+        )
+        return header

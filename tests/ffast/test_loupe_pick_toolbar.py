@@ -36,7 +36,8 @@ def test_pick_module_contributes_tool_with_toolbar_metadata(module_name):
     assert tools, f"{module_name} declares no pick tool_class"
     for tc in tools:
         assert tc.toolbarName, f"{tc.__name__} missing toolbarName (ADR 0039)"
-        assert tc.paneName, f"{tc.__name__} missing paneName (ADR 0039)"
+        # paneName is optional: None means the tool has no sidebar pane to
+        # expand (e.g. Atoms Info, whose readout lives in the pick strip).
 
 
 def test_bonds_feature_wires_tool_class():

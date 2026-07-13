@@ -4,7 +4,7 @@ DEPENDENCIES = ["loupeAtoms", "loupeForceError"]
 
 
 def loadLoupe(UIHandler, loupe):
-    pane = loupe.getSettingsPane("ATOMS")
+    pane = loupe.getSettingsPane("COLOR BY")
     comboBox = pane.settingsWidgets.get("Coloring")
     comboBox.addItems(["Displacement"])
 

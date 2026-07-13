@@ -80,6 +80,7 @@ class UIHandler(EventClass):
             if feature.widget_factory is not None:
                 feature.widget_factory(self, loupe)
 
+        loupe.arrangeSidebarGroups()  # ADR 0040: group panes once all are added
         loupe.forceUpdate()
         self.loupes += 1
 

@@ -10,7 +10,7 @@ class AtomInfoSelect(AtomSelectionBase):
     multiselect = 4
     label = "Atoms Info"
     toolbarName = "Info"
-    paneName = "ATOMS"
+    paneName = None  # readout lives in the pick strip, no sidebar pane to expand
     cycle = True
 
     def __init__(self, canvas, **kwargs):

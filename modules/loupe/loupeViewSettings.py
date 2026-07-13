@@ -1,8 +1,13 @@
-from UI.Templates import Widget, SettingsPane
+from UI.Templates import SettingsPane
 from UI.clientFeatures import ClientFeature
 from ffast.metrics.models import BoolParameter, IntParameter, StringParameter
 
-SCHEMA_PARAMS = {
+# ADR 0040: the old VIEW SETTINGS grab-bag is dissolved into two themed panes.
+# This module keeps ownership of the parameter registrations + action wirings
+# (moving those is the risky part), and only changes which panes present them.
+
+# ── ALIGNMENT pane (Analysis group) ──────────────────────────────────────────
+SCHEMA_ALIGN = {
     "alignKabsch": BoolParameter(
         type="bool", default=False, role="present",
         label="Kabsch align",
@@ -13,31 +18,10 @@ SCHEMA_PARAMS = {
         label="Heavy atoms only",
         description="Use only heavy atoms (Z > 1) to compute the Kabsch alignment rotation.",
     ),
-    "showSceneLabels": BoolParameter(
-        type="bool", default=False, role="present",
-        label="Atom index labels",
-    ),
-    "sceneFilterIndices": StringParameter(
-        type="string", default="", role="present",
-        label="Filter indices",
-        description="Indices or elements to keep: '0 1 2', 'C', or '-H' to exclude. Empty = all.",
-    ),
-    "sceneSelectIndices": StringParameter(
-        type="string", default="", role="present",
-        label="Highlight indices",
-        description="Atom indices to highlight as a selection overlay. Empty = none.",
-    ),
-}
-
-SCHEMA_PARAMS_COLOR = {
-    "pickRadius": IntParameter(
-        type="int", default=12, min=4, max=40, role="present",
-        label="Pick radius (px)",
-    ),
     "alignAtoms": BoolParameter(
         type="bool", default=False, role="present",
         label="3-atom frame align",
-        description="Align frames using 3 reference atoms. Enter 3 atom indices below.",
+        description="Align frames using 3 reference atoms. Pick 3 atoms with the Align tool.",
     ),
     "alignAtomsIndices": StringParameter(
         type="string", default="", role="present",
@@ -46,9 +30,33 @@ SCHEMA_PARAMS_COLOR = {
     ),
 }
 
+# ── DISPLAY pane (Appearance group) ──────────────────────────────────────────
+SCHEMA_DISPLAY = {
+    "showSceneLabels": BoolParameter(
+        type="bool", default=False, role="present",
+        label="Atom index labels",
+    ),
+    "sceneFilterIndices": StringParameter(
+        type="string", default="", role="present",
+        label="Hide atoms",
+        description="Indices or elements to hide from the view: '0 1 2', 'C', or '-H'. Empty = show all. (View only — does not create a dataset.)",
+    ),
+    "sceneSelectIndices": StringParameter(
+        type="string", default="", role="present",
+        label="Highlight atoms",
+        description="Atom indices to highlight as a selection overlay. Empty = none.",
+    ),
+    "pickRadius": IntParameter(
+        type="int", default=12, min=4, max=40, role="present",
+        label="Pick radius (px)",
+    ),
+}
+
 
 def loadLoupe(UIHandler, loupe):
     settings = loupe.settings
+    # Parameter registrations + action wirings are unchanged (ADR 0040 keeps
+    # these here); only the presentation is regrouped below.
     settings.addParameters(
         **{
             "alignKabsch": [False, "toggleKabschAlign"],
@@ -66,12 +74,21 @@ def loadLoupe(UIHandler, loupe):
     settings.markAsPerDataset("alignAtomsIndices")
     settings.markAsPerDataset("alignAtomsConfIndex")
 
-    pane = Widget(parent=loupe, layout="vertical")
-    settingsPane = SettingsPane(UIHandler, settings, parent=pane)
-    settingsPane.addFromParameterSchema(SCHEMA_PARAMS)
-    settingsPane.addFromParameterSchema(SCHEMA_PARAMS_COLOR)
-    pane.layout.addWidget(settingsPane)
-    loupe.addSidebarPane("VIEW SETTINGS", pane)
+    # DISPLAY pane
+    displayPane = SettingsPane(UIHandler, settings, parent=loupe)
+    displayPane.addFromParameterSchema(SCHEMA_DISPLAY)
+    loupe.addSidebarPane("DISPLAY", displayPane)
+
+    # ALIGNMENT pane — dependent fields hidden until their mode is on.
+    alignPane = SettingsPane(UIHandler, settings, parent=loupe)
+    alignWidgets = alignPane.addFromParameterSchema(SCHEMA_ALIGN)
+    alignWidgets["alignKabschHeavyOnly"].setHideCondition(
+        lambda: not settings.get("alignKabsch")
+    )
+    alignWidgets["alignAtomsIndices"].setHideCondition(
+        lambda: not settings.get("alignAtoms")
+    )
+    loupe.addSidebarPane("ALIGNMENT", alignPane)
 
 
 CLIENT_FEATURES = [ClientFeature(stage_id=None, widget_factory=loadLoupe)]

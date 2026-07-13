@@ -30,7 +30,7 @@ class AtomAlignSelect(AtomSelectionBase):
     multiselect = 3
     label = "Align Atoms Selection"
     toolbarName = "Align"
-    paneName = "ATOMS"
+    paneName = "ALIGNMENT"
 
     def __init__(self, canvas, **kwargs):
         super().__init__(canvas, **kwargs)
@@ -84,34 +84,9 @@ def addSettings(UIHandler, loupe):
         if settings.get("originCenterOfMass")
         else None,
     )
-
-    ## SETTINGS PANE (legacy — hidden; use Kabsch alignment instead)
-    pane = loupe.getSettingsPane("ATOMS")
-    alignCheckBox = pane.addSetting(
-        "CheckBox",
-        "Align Atoms",
-        settingsKey="alignAtoms",
-        toolTip="Select 3 atoms to visualise on a fixed plane",
-    )
-    alignCheckBox.setHideCondition(lambda: True)
-
-    container = pane.addSetting(
-        "Container", "Align Atoms Indices Container", layout="horizontal"
-    )
-    container.setHideCondition(lambda: not settings.get("alignAtoms"))
-    container.setFixedHeight(30)
-
-    codeBox = pane.addSetting(
-        "CodeBox",
-        "Indices",
-        settingsKey="alignAtomsIndices",
-        validationFunc=cleanAlignAtomsIndices,
-        labelDirection="horizontal",
-        singleLine=True,
-    )
-    container.layout.addWidget(codeBox)
-    codeBox.setToolTip("Set 3 atom indices to visualise on a fixed plane")
-    # Align picking is armed from the shared pick toolbar (ADR 0039).
+    # ADR 0040: the align controls (checkbox + indices) live in the ALIGNMENT
+    # pane (loupeViewSettings); picking is armed from the shared toolbar
+    # (ADR 0039). This module only attaches the picker behaviours above.
 
 
 def loadLoupe(UIHandler, loupe):
