@@ -204,18 +204,24 @@ QSpinBox::down-button:disabled {
 QPushButton {
   /* text-transform: uppercase; */
   margin: 0px;
-  padding: 1px 4px;
+  padding: 4px 8px;
   height: 24px;
   /* font-weight: bold; */
 
-  border-radius: 4px;
-  color: @TextColor2;
-  
+  border-radius: 3px;
+  border: none;
+  color: @TextColor1;
+  background-color: @BGColor3;
+}
+
+QPushButton:hover {
+  background-color: @BGColor4;
+  color: @TextColorHover;
 }
 
 QPushButton:checked,
 QPushButton:pressed {
-  color: @BGColor2;
+  color: @TextColor2;
   background-color: @HLColor2;
 }
 

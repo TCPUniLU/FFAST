@@ -1,7 +1,6 @@
 from UI.Templates import Widget, ContentBar, SettingsPane, ToolButton, PushButton
 from UI.loupe.visual import VisualElement
 from config.userConfig import getConfig
-from config.uiConfig import configStyleSheet
 from vispy import scene
 from vispy.scene.cameras.turntable import TurntableCamera
 from vispy.util import keys
@@ -245,18 +244,13 @@ class InteractiveCanvas(Widget):
         self.pickToolBar.layout.addWidget(
             QtWidgets.QLabel("Pick:", parent=self.pickToolBar)
         )
-        btnQSS = configStyleSheet(
-            "QPushButton{background-color:@BGColor3;color:@TextColor1;border:none;"
-            "border-radius:3px;padding:4px 8px;}"
-            "QPushButton:hover{background-color:@BGColor4;color:@TextColorHover;}"
-            "QPushButton:checked{background-color:@HLColor2;color:@TextColor2;}"
-        )
+        # Buttons use the shared global QPushButton style (style.qss) so pick
+        # and panel buttons look identical; :checked marks the active tool.
         for toolClass in self._registeredToolClasses():
             name = toolClass.toolbarName or toolClass.label
             btn = PushButton(name, parent=self.pickToolBar)
             btn.setCheckable(True)
             btn.setToolTip(toolClass.label)
-            btn.setStyleSheet(btnQSS)
             # Buttons share the bar width evenly (diverge horizontally).
             btn.setSizePolicy(
                 QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed
