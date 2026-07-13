@@ -144,21 +144,26 @@ def loadLoupe(UIHandler, loupe):
         loupe.canvas.settings.setParameter("cameraElevation", elevation, refresh=True)
 
     buttonContainer = Widget(parent=pane, layout="horizontal")
+    buttonContainer.layout.setSpacing(6)  # small gaps between the presets
+    buttonContainer.layout.addStretch()   # leading stretch → centre the group
 
-    topBtn = PushButton("Top", parent=buttonContainer)
-    topBtn.setToolTip("View from top (azimuth=0°, elevation=90°)")
-    topBtn.clicked.connect(lambda: setPresetView(0, 90))
-    buttonContainer.layout.addWidget(topBtn)
+    # Labelled by the projection plane each view shows.
+    xyBtn = PushButton("XY", parent=buttonContainer)
+    xyBtn.setToolTip("Top view — XY plane (azimuth 0°, elevation 90°)")
+    xyBtn.clicked.connect(lambda: setPresetView(0, 90))
+    buttonContainer.layout.addWidget(xyBtn)
 
-    frontBtn = PushButton("Front", parent=buttonContainer)
-    frontBtn.setToolTip("View from front (azimuth=0°, elevation=0°)")
-    frontBtn.clicked.connect(lambda: setPresetView(0, 0))
-    buttonContainer.layout.addWidget(frontBtn)
+    xzBtn = PushButton("XZ", parent=buttonContainer)
+    xzBtn.setToolTip("Front view — XZ plane (azimuth 0°, elevation 0°)")
+    xzBtn.clicked.connect(lambda: setPresetView(0, 0))
+    buttonContainer.layout.addWidget(xzBtn)
 
-    sideBtn = PushButton("Side", parent=buttonContainer)
-    sideBtn.setToolTip("View from side (azimuth=90°, elevation=0°)")
-    sideBtn.clicked.connect(lambda: setPresetView(90, 0))
-    buttonContainer.layout.addWidget(sideBtn)
+    yzBtn = PushButton("YZ", parent=buttonContainer)
+    yzBtn.setToolTip("Side view — YZ plane (azimuth 90°, elevation 0°)")
+    yzBtn.clicked.connect(lambda: setPresetView(90, 0))
+    buttonContainer.layout.addWidget(yzBtn)
+
+    buttonContainer.layout.addStretch()  # trailing stretch → centre the group
 
     pane.layout.addWidget(buttonContainer)
 
