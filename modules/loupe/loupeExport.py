@@ -308,6 +308,7 @@ def addSettingsPane(UIHandler, loupe):
     pane.layout.addWidget(pilLabel)
 
     buttonContainerPIL = Widget(parent=pane, layout="vertical")
+    buttonContainerPIL.layout.setSpacing(6)
 
     pngOpaqueBtnPIL = PushButton("PNG (Opaque)", parent=buttonContainerPIL)
     pngOpaqueBtnPIL.setToolTip("Save as PNG with current background using PIL")

@@ -119,7 +119,7 @@ def addSettingsPane(UIHandler, loupe):
         "Indices",
         settingsKey="atomFilterIndices",
         validationFunc=cleanIndices,
-        labelDirection="horizontal",
+        labelDirection="vertical",  # label sits on top of the box
         singleLine=False,
         toolTip='Python list of indices. "Z" to include all elements Z. "-Z" to remove them',
         labelWidth=50,
