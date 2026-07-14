@@ -105,7 +105,7 @@ class aseDatasetLoader(DatasetLoader):
         # - Empty string explicitly selected (calculator chosen in dialog), OR
         # - Key is literally 'energy' (standard ASE calculator result key), OR
         # - No keys available
-        use_calculator = (selected_key == "" or selected_key == "energy")
+        use_calculator = (selected_key == "" or selected_key == "energy" or selected_key == "<Use Energy>")
 
         if use_calculator:
             if indices is None:
@@ -145,7 +145,7 @@ class aseDatasetLoader(DatasetLoader):
         # - Empty string explicitly selected (calculator chosen in dialog), OR
         # - Key is literally 'forces' (standard ASE calculator result key), OR
         # - No keys available
-        use_calculator = (selected_key == "" or selected_key == "forces")
+        use_calculator = (selected_key == "" or selected_key == "forces" or selected_key == "<Use Force>")
 
         if use_calculator:
             if indices is None:

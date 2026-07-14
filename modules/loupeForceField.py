@@ -139,7 +139,7 @@ def _build_arrow_mesh(starts, ends, arrow_colors=None):
         verts_per_arrow = (2 * n) + (n + 1) + (n + 1) + (n + 1)  # shaft + shaft cap + cone + cone cap
         rgba = np.ones((N, 4), dtype=float)
 
-        rgba[:, :arrow_colors.shape[1]] = arrow_colors
+        rgba[:, :arrow_colors.shape[1]] = arrow_colors[mask]
         shaft_colors = np.repeat(rgba, 2 * n, axis=0)  # matches sv.reshape(-1, 3)
         shaft_cap_colors = np.repeat(rgba, n + 1, axis=0)  # matches bsv.reshape(-1, 3)
         cone_colors = np.repeat(rgba, n + 1, axis=0)  # matches cv.reshape(-1, 3)
