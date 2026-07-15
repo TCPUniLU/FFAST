@@ -133,6 +133,42 @@ def test_run_serves_the_app_and_opens_browser():
         fake.terminate()
 
 
+@dataclass
+class _DeadProc:
+    """A subprocess that has already exited (server failed to start)."""
+
+    returncode: int = 1
+
+    def poll(self):
+        return self.returncode
+
+    def wait(self):  # pragma: no cover - abort path never blocks on wait
+        return self.returncode
+
+    def terminate(self):
+        pass
+
+
+def test_run_aborts_when_server_dies_during_startup():
+    web_port = launcher.pick_free_port()
+    ws_port = launcher.pick_free_port()  # nothing ever listens here
+
+    opened = []
+    with pytest.raises(launcher.LauncherError):
+        launcher.run(
+            ws_port=ws_port,
+            web_port=web_port,
+            spawn_server=lambda p: _DeadProc(returncode=2),
+            opener=opened.append,
+            block=False,
+            ready_timeout=2.0,
+        )
+    assert opened == []  # never open a browser at a server that already died
+    # the static server was torn down, so its port is free to bind again
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", web_port))
+
+
 def test_run_picks_free_ports_when_unspecified():
     fake = _FakeProc(listener=socket.socket())
     captured = {}

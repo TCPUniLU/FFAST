@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 
 LOOPBACK = "127.0.0.1"
 
+
+class LauncherError(RuntimeError):
+    """The launch could not complete — e.g. ffast-server died during startup."""
+
 # Chromium-family executables that support a chromeless ``--app=URL`` window,
 # most-preferred first. Discovered on PATH via shutil.which; macOS app bundles
 # are not on PATH, so their absolute launcher paths are checked too.
@@ -94,12 +98,19 @@ def wait_until_ready(
     """Block until a TCP connect to (host, port) succeeds, or timeout elapses."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
-            with socket.create_connection((host, port), timeout=1):
-                return True
-        except OSError:
-            time.sleep(interval)
+        if _port_open(port, host=host):
+            return True
+        time.sleep(interval)
     return False
+
+
+def _port_open(port: int, *, host: str = LOOPBACK) -> bool:
+    """True if a TCP connect to (host, port) succeeds right now."""
+    try:
+        with socket.create_connection((host, port), timeout=1):
+            return True
+    except OSError:
+        return False
 
 
 def _find_app_mode_executable() -> str | None:
@@ -185,7 +196,23 @@ def run(
     httpd = start_static_server(web_port, host=host)
     proc = spawn_server(ws_port)
 
-    if not wait_until_ready(ws_port, host=host, timeout=ready_timeout):
+    # Wait for the WS server to accept connections, but fail fast if it exits
+    # during startup (bad config, port in use, import error) — otherwise we'd
+    # open a browser at a dead server after the full timeout.
+    deadline = time.monotonic() + ready_timeout
+    ready = False
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            httpd.shutdown()
+            raise LauncherError(
+                f"ffast-server exited with code {proc.returncode} during startup; "
+                f"not opening the browser (see the server log above)"
+            )
+        if _port_open(ws_port, host=host):
+            ready = True
+            break
+        time.sleep(0.1)
+    if not ready:
         logger.error(
             "ffast-server did not accept connections on %s:%d within %.0fs; "
             "opening the browser anyway",
@@ -247,12 +274,16 @@ def main(argv: list | None = None) -> None:
     args = parser.parse_args(argv)
 
     opener = (lambda url: logger.info("Web app ready at %s", url)) if args.no_browser else webbrowser.open
-    run(
-        ws_port=args.ws_port,
-        web_port=args.web_port,
-        app_mode=args.app,
-        opener=opener,
-    )
+    try:
+        run(
+            ws_port=args.ws_port,
+            web_port=args.web_port,
+            app_mode=args.app,
+            opener=opener,
+        )
+    except LauncherError as exc:
+        logger.error("%s", exc)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
