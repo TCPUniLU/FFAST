@@ -348,18 +348,20 @@ def _load_project_metric_modules(config_arg: str | None = None) -> None:
 
 
 def _compile_project_metrics(config_arg: str | None) -> None:
-    """Compile the project's declarative metrics before freeze, refusing to start
-    on a config-load error.
+    """Compile the project's declarative metrics before freeze — non-fatally.
 
     Dataset Fields (ADR 0023), Expression Metrics (ADR 0042), and Analysis-Tab
     Transform Metrics (ADR 0021) are registered here (idempotent — the client
     plugin may have compiled the valid ones already) so the server owns the
-    correctness decision rather than depending on the Qt client plugin, which is
-    skipped in a headless environment without PySide6. A config-load failure
-    (e.g. an Expression Metric shape mismatch) is a Configuration Failure handled
-    exactly like a freeze validation failure: the server refuses to start rather
-    than silently serving an incomplete registry (ADR 0042: errors surface at
-    config-load, not plot time).
+    compile rather than depending on the Qt client plugin, which is skipped in a
+    headless environment without PySide6.
+
+    A config-load failure (e.g. an Expression Metric shape mismatch) does **not**
+    stop the server: the offending metric is left unregistered and every error is
+    logged clearly (no traceback) so the user is made aware, while the rest of the
+    app keeps running (ADR 0042: errors surface at config-load, not plot time —
+    but a bad custom metric shouldn't take the whole app down). Use
+    ``ffast-cli metrics validate`` for a strict pass/fail check.
     """
     from pathlib import Path
 
@@ -376,16 +378,22 @@ def _compile_project_metrics(config_arg: str | None) -> None:
         try:
             project_config = load_project_config(config_path)
         except Exception as exc:
-            # An unparseable/invalid config is itself a Configuration Failure.
-            raise SystemExit(f"Invalid project config {config_path}: {exc}") from exc
+            logger.error(
+                "Project config %s could not be parsed (%s); its custom metrics "
+                "are disabled. The app will run with built-in metrics only.",
+                config_path, exc,
+            )
+            # Still compile the bundled tabs so the app has its built-in metrics.
 
     result = compile_project_metrics(project_config)
+    for context, msg in result.errors:
+        logger.error("Metric config error in %s: %s", context, msg)
     if result.errors:
-        for context, msg in result.errors:
-            logger.error("Metric config error in %s: %s", context, msg)
-        raise SystemExit(
-            f"Metric configuration failed with {len(result.errors)} error(s); "
-            f"refusing to start (see log above)."
+        logger.warning(
+            "%d custom metric(s) disabled due to the config error(s) above; the "
+            "app is running without them. Fix ffast.toml and restart to enable "
+            "them (run `ffast-cli metrics validate` to check).",
+            len(result.errors),
         )
     logger.info("Compiled %d declarative metric(s) from project config.", len(result.ids))
 
@@ -444,8 +452,9 @@ async def _main(
     _load_project_metric_modules(config)
 
     # Compile the project's declarative metrics (Dataset Fields, Expression
-    # Metrics, Analysis Tabs) into the registry and refuse to start on any
-    # config-load error, before the graph is frozen.
+    # Metrics, Analysis Tabs) into the registry before the graph is frozen. A bad
+    # custom-metric config is logged clearly and its metric disabled, but does not
+    # stop the server.
     _compile_project_metrics(config)
 
     # Validate the full metric graph once, after builtins + external modules are
