@@ -244,8 +244,10 @@ def cmd_metrics_run(args: argparse.Namespace) -> None:
     # mirroring the server's pre-freeze compile pass (modules/configTabs.loadData).
     if project_config is not None:
         from ffast.config.tabs import compile_tabs_metrics, merge_tabs
+        from ffast.metrics.expr import compile_expr_metrics
         from ffast.metrics.fields import compile_field_metrics
         compile_field_metrics(project_config.metrics.fields)
+        compile_expr_metrics(project_config.metrics.expr)
         compile_tabs_metrics(merge_tabs(project_config))
 
     try:
@@ -374,10 +376,14 @@ def cmd_metrics_validate(args: argparse.Namespace) -> None:
     # (the headless equivalent of the server's pre-freeze compile pass in
     # modules/configTabs.loadData).
     if project_config is not None:
+        from ffast.metrics.expr import compile_expr_metrics
         from ffast.metrics.fields import compile_field_metrics
         fids = compile_field_metrics(project_config.metrics.fields)
         if fids:
             print(f"Compiled {len(fids)} Dataset Field metric(s).")
+        eids = compile_expr_metrics(project_config.metrics.expr)
+        if eids:
+            print(f"Compiled {len(eids)} Expression Metric(s).")
 
     compiled = compile_tabs_metrics(merge_tabs(project_config))
     if compiled:

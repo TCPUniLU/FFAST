@@ -128,6 +128,8 @@ class InputResolver:
                 return _flatten(entity.get(field))
             if ref == "offsets":
                 return self._offsets(dataset)
+            if ref == "n_atoms":
+                return self._n_atoms(dataset)
             # Dataset Field refs (ADR 0023): {reference,prediction}.{info,atoms}.<key>
             parsed = parse_field_ref(ref)
             if parsed is not None:
@@ -186,6 +188,19 @@ class InputResolver:
         if getattr(dataset, "isVariable", False):
             return np.asarray(dataset.molecule_offsets)
         return None
+
+    def _n_atoms(self, dataset):
+        """Per-structure atom count (the reserved Expression Variable, ADR 0042).
+
+        Variable datasets: ``np.diff(molecule_offsets)``. Uniform datasets: the
+        constant per-frame count repeated over all frames — a ``(N_frames,)``
+        array so per-atom normalisation lines up with per-structure quantities.
+        """
+        if dataset is None:
+            return None
+        if getattr(dataset, "isVariable", False):
+            return np.diff(np.asarray(dataset.molecule_offsets))
+        return np.full(int(dataset.getN()), int(dataset.getNAtoms()), dtype=np.int64)
 
     # ── metric input assembly ──────────────────────────────────────────────
 

@@ -278,6 +278,14 @@ _Avoid_: colorbar style, colorbar settings, legend (3D has no plot legend, only 
 ### Transform Metric
 A **Metric** whose **Metric Input** is another Metric, applying a reduction or transform (KDE, smoothing, downsampling, per-structure reduction) through the **Metric Graph** and emitting a derived **Metric Result**. Its transform settings are **Compute Parameters**, so changing one recomputes the derived Metric rather than mutating a Panel client-side. This is why **Panels never reduce**: every axis is a Metric Result array.
 
+### Expression Metric
+A **Metric** compiled from a `[[metrics.expr]]` configuration entry that evaluates an **element-wise** (shape-preserving) arithmetic expression over named **Expression Variables**, requiring no Python (unlike a hand-authored `@metric`). Contrast a **Transform Metric**, which reduces or reshapes: an Expression Metric never changes shape, so all its non-scalar variables must share one **Metric Shape** (per-structure, per-atom, or vector-per-structure-per-atom), while scalar variables and numeric literals broadcast. Variables bind raw refs, **Dataset Fields**, or other **Metric IDs**, resolved through the **Metric Graph**; the expression string plus variable bindings are its computation identity. Non-finite output raises a **Metric Failure** rather than emitting silent `inf`/`nan` (per the Key Constraint that Metrics do not return silent non-finite values). See [ADR 0042](docs/adr/0042-expression-metrics.md).
+_Avoid_: formula metric, derived metric (not a distinct term), computed field.
+
+### Expression Variable
+A local identifier inside an **Expression Metric**'s expression, bound by its `[metrics.expr.vars]` table to exactly one **Metric Input**. It is the expression-local *alias* for that Metric Input, not a new dependency concept. `n_atoms` is a reserved Expression Variable the server provides as a per-structure atom count; a user variable named `n_atoms` is a **Configuration Failure**. The same-shape rule constrains only the non-scalar Expression Variables.
+_Avoid_: argument, parameter (those are Compute/Presentation Parameters), field.
+
 ---
 
 ## Remote Connection Domain
@@ -452,6 +460,7 @@ A task identifier namespaced `remote_<n>` for work running on `ffast-server`. Ke
 - A **Panel Kind** declares its widget (plot or table), its **Metric Shape** input requirements, its axis/cell mapping, and (for plots) a `sub_indices` viewport→index map used for subbing
 - A **Panel**'s interactive controls are generated from the **Parameter Schemas** of the Metrics it binds; a control change is a debounced **Compute Parameter** update routed through `SET_PARAMETER`
 - A reduction (KDE, smoothing, downsampling, per-structure reduction) is a **Transform Metric** compiled from a Panel's `{metric, transform, params}` into a deterministically named concrete **Metric** with a static **Metric Graph** edge to its source
+- An **Expression Metric** is compiled from a `[[metrics.expr]]` entry and evaluates an element-wise expression over **Expression Variables**; unlike a **Transform Metric** it preserves shape, so its non-scalar variables must share one **Metric Shape** while scalars and literals broadcast, and its variables (raw ref, **Dataset Field**, or **Metric ID**) become **Metric Inputs** in the **Metric Graph**
 - A subbing **Panel** binds both its drawn (reduced) Metric and the indexed source Metric the **Transform Metric** declares as input; the indexed source drives `sub_indices`, while downsampling stays visual-only
 - 2D **Panels** are computed and laid out client-side; the server stays unaware of **Panel Kinds** and layout, exposing only **Metric Results** — in contrast to the server-owned **Visualization State** that drives the 3D scene
 - A **Panel Display Override** is optional per Panel, matched by content-based identity rather than grid position, and is pure cosmetic UI state — it never changes a Panel's bound **Metric IDs**, parameters, or the **Metric Results** it draws
@@ -498,6 +507,7 @@ A task identifier namespaced `remote_<n>` for work running on `ffast-server`. Ke
 ## Flagged Ambiguities
 
 - "server-based visualization" means server-owned **Visualization State** consumed by swappable renderer backends; it does not mean rendering pixels on the cluster/server.
+- "frame" and "structure" denote the same thing — one molecular configuration in a trajectory. **Metric Shape** names use *per-structure*; trajectory-count and file-field terms (**Dataset Field**'s Frame Field, **Dataset Length Probe**) use *frame*. They are synonyms for the per-configuration axis, not two concepts.
 
 ---
 

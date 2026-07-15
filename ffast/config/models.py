@@ -45,10 +45,41 @@ class FieldMetricConfig(BaseModel):
         return self
 
 
+class ExprMetricConfig(BaseModel):
+    """An Expression Metric: element-wise algebra over refs, no Python (ADR 0042).
+
+    ``expr`` is an element-wise arithmetic string over the named ``vars`` (each
+    binding an Expression Variable to a raw ref, a **Dataset Field**, or a
+    registered **Metric ID**); ``compile_expr_metric`` registers the result as an
+    ordinary Metric under ``id``. The reserved variable ``n_atoms`` (a
+    per-structure atom count) is auto-provided, so a ``vars`` key named
+    ``n_atoms`` is a Configuration Failure. The whitelist, same-shape rule, and
+    AST validation are enforced by the compiler at config-load.
+    """
+    model_config = ConfigDict(extra="forbid")
+    id: str
+    expr: str
+    vars: dict[str, str] = Field(default_factory=dict)
+    label: str = ""
+    unit: str = ""
+
+    @model_validator(mode="after")
+    def _valid(self) -> "ExprMetricConfig":
+        if "." not in self.id:
+            raise ValueError(f"expr metric id '{self.id}' must be namespaced (contain a dot)")
+        if "n_atoms" in self.vars:
+            raise ValueError(
+                f"expr metric '{self.id}': 'n_atoms' is a reserved Expression "
+                f"Variable (auto-provided per-structure atom count) — rename it"
+            )
+        return self
+
+
 class MetricsConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     modules: list[MetricModuleConfig] = Field(default_factory=list)
     fields: list[FieldMetricConfig] = Field(default_factory=list)
+    expr: list[ExprMetricConfig] = Field(default_factory=list)
 
 class AtomColorPresentation(BaseModel):
     model_config = ConfigDict(extra="forbid")

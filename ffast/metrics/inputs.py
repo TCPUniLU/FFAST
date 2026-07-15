@@ -27,6 +27,12 @@ prediction_stress   = "prediction.stress"
 
 selection_indices   = "selection.indices"
 
+# Reserved dataset-topology ref: a per-structure atom-count array (ADR 0042
+# Decision 4). Auto-wired as the reserved Expression Variable ``n_atoms`` and
+# resolved by InputResolver (np.diff(offsets) for variable datasets,
+# count-per-structure for uniform).
+n_atoms = "n_atoms"
+
 ALL_VALID_REFS: frozenset = frozenset({
     reference_energies,
     reference_forces,
@@ -38,6 +44,7 @@ ALL_VALID_REFS: frozenset = frozenset({
     prediction_forces,
     prediction_stress,
     selection_indices,
+    n_atoms,
 })
 
 # Dataset Field refs (ADR 0023): {reference,prediction}.{info,atoms}.<key>.

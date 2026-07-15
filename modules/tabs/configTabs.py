@@ -41,11 +41,14 @@ def loadData(env):
         transform_metrics,
     )
     from ffast.config.tabs import compile_tabs_metrics, merge_tabs
+    from ffast.metrics.expr import compile_expr_metrics
     from ffast.metrics.fields import compile_field_metrics
 
     project_config = _project_config()
-    # Dataset Field passthrough metrics (ADR 0023) come from the project config's
-    # [[metrics.fields]] and must register before freeze, alongside tab metrics.
+    # Dataset Field passthrough metrics (ADR 0023) and Expression Metrics
+    # (ADR 0042) come from the project config's [[metrics.fields]] /
+    # [[metrics.expr]] and must register before freeze, alongside tab metrics.
+    # Fields compile first: an Expression Variable may bind a Dataset Field.
     if project_config is not None:
         try:
             fids = compile_field_metrics(project_config.metrics.fields)
@@ -53,6 +56,12 @@ def loadData(env):
                 logger.info("configTabs: compiled %d Dataset Field metric(s)", len(fids))
         except Exception:
             logger.exception("configTabs: failed compiling Dataset Field metrics")
+        try:
+            eids = compile_expr_metrics(project_config.metrics.expr)
+            if eids:
+                logger.info("configTabs: compiled %d Expression Metric(s)", len(eids))
+        except Exception:
+            logger.exception("configTabs: failed compiling Expression Metrics")
 
     try:
         tabs = merge_tabs(project_config)
