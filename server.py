@@ -177,15 +177,25 @@ async def _recovery_window_task(registry, recovery_window: int, quit_event: asyn
 
 
 async def _handler(
-    websocket, session, registry, token_hash: str,
+    websocket, env, hub, registry, token_hash: str,
     recovery_window: int, quit_event: asyncio.Event,
 ):
-    """Handle one WebSocket connection against the shared ServerSession."""
+    """Handle one WebSocket connection: its own ServerSession + outbound queue
+    over the shared Environment (ADR 0044). Shared Environment events arrive via
+    the hub; per-view scenes and replies stay on this connection's queue."""
     addr = websocket.remote_address
     logger.info("Client connected: %s", addr)
 
-    # ── handshake ─────────────────────────────────────────────────────────
+    from ffast.session import ServerSession
     from ffast.session.token import ClientRole
+
+    # Per-connection queue + session; register with the hub so shared events
+    # (object metadata, deletes, metric catalog) fan out to this client too.
+    outbound: asyncio.Queue = asyncio.Queue(maxsize=200)
+    session = ServerSession(env, outbound)
+    hub.register(outbound)
+
+    # ── handshake ─────────────────────────────────────────────────────────
     role = await _do_hello_handshake(websocket, addr, registry, token_hash)
 
     # ── state replay ──────────────────────────────────────────────────────
@@ -238,10 +248,11 @@ async def _handler(
         except asyncio.CancelledError:
             pass
 
+        hub.deregister(outbound)
         released_role = registry.release(websocket)
         logger.info(
-            "Client disconnected: %s role=%s graceful=%s",
-            addr, released_role and released_role.value, graceful,
+            "Client disconnected: %s role=%s graceful=%s remaining=%d",
+            addr, released_role and released_role.value, graceful, hub.count,
         )
 
         if (
@@ -256,7 +267,7 @@ async def _handler(
 
 async def _serve(
     env,
-    outbound,
+    hub,
     port: int,
     token_hash: str = "",
     recovery_window: int = 0,
@@ -264,17 +275,17 @@ async def _serve(
     """Run the WebSocket server until the environment signals quit or quit_event fires."""
     import websockets
 
-    from ffast.session import ConnectionRegistry, ServerSession
+    from ffast.session import ConnectionRegistry
 
     registry = ConnectionRegistry()
     quit_event = asyncio.Event()
-    # One ServerSession per server process — owns the open Visualization Views
-    # and dispatches client events; connections attach to it (one CONTROLLING).
-    session = ServerSession(env, outbound)
+    # ADR 0044: one ServerSession + outbound queue PER connection (built in
+    # _handler) over the single shared Environment; shared events fan out via
+    # the hub. No server-scoped session — views are per-connection.
 
     async def handler(websocket):
         await _handler(
-            websocket, session,
+            websocket, env, hub,
             registry=registry,
             token_hash=token_hash,
             recovery_window=recovery_window,
@@ -461,20 +472,18 @@ async def _main(
     # registered. Refuses to start on unknown refs, cycles, or legacy shapes.
     _validate_metric_registry()
 
-    # Queue for server→client events (events dropped when full / no client)
-    outbound: asyncio.Queue = asyncio.Queue(maxsize=200)
+    # Shared server→client events broadcast to every connected client (ADR
+    # 0044). Per-connection replies stay on each connection's own queue; these
+    # Environment-level signals fan out through the hub. One global
+    # eventSubscribe (the bus has no unsubscribe), pointed at the hub.
+    from ffast.session import ConnectionHub
+    hub = ConnectionHub()
 
     for evt in SERVER_TO_CLIENT:
 
         def make_sender(e: str):
             def handler(*args, **kwargs):
-                try:
-                    data = pack(e, args, kwargs)
-                    outbound.put_nowait(data)
-                except asyncio.QueueFull:
-                    logger.debug(
-                        "Outbound queue full, dropping %s event", e
-                    )
+                hub.broadcast(pack(e, args, kwargs))
 
             return handler
 
@@ -494,7 +503,7 @@ async def _main(
                 (fingerprint,),
                 DatasetMeta.model_validate(dataset.toMetaDict()).model_dump(),
             )
-            outbound.put_nowait(data)
+            hub.broadcast(data)
             logger.debug("REMOTE_DATASET_META sent for %r", fingerprint)
         except Exception as exc:
             logger.warning("REMOTE_DATASET_META error: %s", exc)
@@ -528,7 +537,7 @@ async def _main(
                 (model_fp,),
                 ModelMeta(name=name, dataset_fingerprints=dataset_fps).model_dump(),
             )
-            outbound.put_nowait(data)
+            hub.broadcast(data)
             logger.info(
                 "REMOTE_MODEL_META sent: model=%r name=%r datasets=%r",
                 model_fp[:8], name, dataset_fps,
@@ -547,7 +556,7 @@ async def _main(
 
     coros = [
         env.headlessEventLoop(),
-        _serve(env, outbound, port, token_hash=token_hash, recovery_window=recovery_window),
+        _serve(env, hub, port, token_hash=token_hash, recovery_window=recovery_window),
     ]
     if snapshot_interval > 0:
         coros.append(_auto_snapshot_loop(env, job_id, snapshot_interval))
