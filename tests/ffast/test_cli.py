@@ -128,6 +128,27 @@ def test_metrics_validate_ok(tmp_path, capsys, monkeypatch):
     assert "graph valid" in out
 
 
+def test_metrics_validate_bad_expr_exits_1(tmp_path, capsys):
+    # A shape-mismatched Expression Metric is a Configuration Failure: validate
+    # surfaces the precise error at config-load and exits non-zero (ADR 0042 —
+    # errors surface at config-load, not plot time).
+    config_file = tmp_path / "ffast.toml"
+    config_file.write_text(
+        '[[metrics.expr]]\n'
+        'id = "projtest.mixedcli"\n'
+        'expr = "e + f"\n'
+        '[metrics.expr.vars]\n'
+        'e = "reference.energies"\n'
+        'f = "reference.forces"\n'
+    )
+    with pytest.raises(SystemExit) as exc:
+        main(["metrics", "validate", "--config", str(config_file)])
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "projtest.mixedcli" in err
+    assert "config-load" in err.lower() or "Metric Shapes" in err
+
+
 # ── dataset keys ───────────────────────────────────────────────────────────
 
 def _write_xyz_with_fields(path):

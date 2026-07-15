@@ -33,42 +33,21 @@ def _project_config():
 
 
 def loadData(env):
-    # Register the base metrics the tabs reduce, then compile every Transform
-    # Metric referenced by the bundled + project tabs into the default registry.
-    # Runs before freeze on the server, so the compiled metrics are computable.
-    from ffast.metrics.builtin import (  # noqa: F401
-        atomic_metrics, energy_metrics, force_metrics, structure_metrics,
-        transform_metrics,
-    )
-    from ffast.config.tabs import compile_tabs_metrics, merge_tabs
-    from ffast.metrics.expr import compile_expr_metrics
-    from ffast.metrics.fields import compile_field_metrics
+    # Compile every declarative metric the project + bundled tabs contribute
+    # (Dataset Fields, Expression Metrics, Analysis-Tab Transform Metrics) into
+    # the default registry before freeze, so they are computable. The compiler
+    # registers the base built-ins first and collects per-entry config errors.
+    #
+    # Client policy: log each config error *clearly* (no traceback) and keep
+    # running with the offending metric absent — the server enforces the stricter
+    # "refuse to start on a Configuration Failure" policy (server._main); a config
+    # error surfaces there and in `ffast-cli metrics validate` (ADR 0042).
+    from ffast.config.tabs import compile_project_metrics
 
-    project_config = _project_config()
-    # Dataset Field passthrough metrics (ADR 0023) and Expression Metrics
-    # (ADR 0042) come from the project config's [[metrics.fields]] /
-    # [[metrics.expr]] and must register before freeze, alongside tab metrics.
-    # Fields compile first: an Expression Variable may bind a Dataset Field.
-    if project_config is not None:
-        try:
-            fids = compile_field_metrics(project_config.metrics.fields)
-            if fids:
-                logger.info("configTabs: compiled %d Dataset Field metric(s)", len(fids))
-        except Exception:
-            logger.exception("configTabs: failed compiling Dataset Field metrics")
-        try:
-            eids = compile_expr_metrics(project_config.metrics.expr)
-            if eids:
-                logger.info("configTabs: compiled %d Expression Metric(s)", len(eids))
-        except Exception:
-            logger.exception("configTabs: failed compiling Expression Metrics")
-
-    try:
-        tabs = merge_tabs(project_config)
-        ids = compile_tabs_metrics(tabs)
-        logger.info("configTabs: compiled %d analysis-tab metric(s)", len(ids))
-    except Exception:
-        logger.exception("configTabs: failed compiling analysis-tab metrics")
+    result = compile_project_metrics(_project_config())
+    for context, msg in result.errors:
+        logger.error("configTabs: metric config error in %s: %s", context, msg)
+    logger.info("configTabs: compiled %d declarative metric(s)", len(result.ids))
 
 
 def loadUI(UIHandler, env):

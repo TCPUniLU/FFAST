@@ -243,12 +243,10 @@ def cmd_metrics_run(args: argparse.Namespace) -> None:
     # Analysis-Tab Transform Metrics so a project-defined metric id can be run,
     # mirroring the server's pre-freeze compile pass (modules/configTabs.loadData).
     if project_config is not None:
-        from ffast.config.tabs import compile_tabs_metrics, merge_tabs
-        from ffast.metrics.expr import compile_expr_metrics
-        from ffast.metrics.fields import compile_field_metrics
-        compile_field_metrics(project_config.metrics.fields)
-        compile_expr_metrics(project_config.metrics.expr)
-        compile_tabs_metrics(merge_tabs(project_config))
+        from ffast.config.tabs import compile_project_metrics
+        result = compile_project_metrics(project_config)
+        for context, msg in result.errors:
+            print(f"Warning: metric config error in {context}: {msg}", file=sys.stderr)
 
     try:
         schema, _ = _default_registry.get(args.metric_id)
@@ -358,8 +356,6 @@ def cmd_metrics_validate(args: argparse.Namespace) -> None:
     discovered) are loaded first so the whole graph is validated together. This
     is the headless equivalent of the server's startup validation.
     """
-    from ffast.config.tabs import compile_tabs_metrics, merge_tabs
-
     project_config = None
     if getattr(args, "config", None):
         config_path = Path(args.config)
@@ -371,23 +367,24 @@ def cmd_metrics_validate(args: argparse.Namespace) -> None:
             project_config = load_project_config(discovered)
             load_metric_modules(project_config, discovered)
 
-    # Compile the declarative Dataset Field passthrough metrics (ADR 0023) and
-    # Analysis-Tab Transform Metrics so they are validated alongside the built-ins
-    # (the headless equivalent of the server's pre-freeze compile pass in
-    # modules/configTabs.loadData).
-    if project_config is not None:
-        from ffast.metrics.expr import compile_expr_metrics
-        from ffast.metrics.fields import compile_field_metrics
-        fids = compile_field_metrics(project_config.metrics.fields)
-        if fids:
-            print(f"Compiled {len(fids)} Dataset Field metric(s).")
-        eids = compile_expr_metrics(project_config.metrics.expr)
-        if eids:
-            print(f"Compiled {len(eids)} Expression Metric(s).")
-
-    compiled = compile_tabs_metrics(merge_tabs(project_config))
-    if compiled:
-        print(f"Compiled {len(compiled)} analysis-tab metric(s).")
+    # Compile every declarative metric (Dataset Fields ADR 0023, Expression
+    # Metrics ADR 0042, Analysis-Tab Transform Metrics ADR 0021 + bundled tabs)
+    # so they are validated alongside the built-ins — the headless equivalent of
+    # the server's pre-freeze compile pass. A config-load error is a
+    # Configuration Failure: print it and exit non-zero before freezing.
+    from ffast.config.tabs import compile_project_metrics
+    result = compile_project_metrics(project_config)
+    if result.errors:
+        for context, msg in result.errors:
+            print(f"  ERROR {context}: {msg}", file=sys.stderr)
+        print(
+            f"Metric configuration FAILED: {len(result.errors)} error(s) at "
+            f"config-load.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if result.ids:
+        print(f"Compiled {len(result.ids)} declarative metric(s).")
 
     errors = _default_registry.freeze()
     if errors:

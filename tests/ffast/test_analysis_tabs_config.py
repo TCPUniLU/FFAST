@@ -163,3 +163,48 @@ def test_project_tabs_append_to_builtin():
     merged = merge_tabs(project)
     names = [t.name for t in merged]
     assert "Subsystem Errors" in names and names[-1] == "Custom"
+
+
+# --- compile_project_metrics: fail-soft error collection (ADR 0042 Gap 1) --- #
+def test_compile_project_metrics_none_compiles_bundled_tabs():
+    from ffast.config.tabs import compile_project_metrics
+
+    result = compile_project_metrics(None)
+    assert result.errors == []
+    assert result.ids  # the bundled tabs still compile without a project config
+
+
+def test_compile_project_metrics_collects_per_entry_errors():
+    # A good expr registers; a shape-mismatched expr is collected as an error
+    # (naming the offending entry) instead of aborting the whole compile pass.
+    from ffast.config.tabs import compile_project_metrics
+
+    project = ProjectConfig.model_validate({
+        "metrics": {"expr": [
+            {"id": "projtest.good", "expr": "a - b",
+             "vars": {"a": "reference.energies", "b": "prediction.energies"}},
+            {"id": "projtest.badshape", "expr": "e + f",
+             "vars": {"e": "reference.energies", "f": "reference.forces"}},
+        ]},
+    })
+    result = compile_project_metrics(project)
+    assert "projtest.good" in result.ids
+    assert any("projtest.badshape" in ctx for ctx, _ in result.errors)
+    assert not any("projtest.good" in ctx for ctx, _ in result.errors)
+
+
+def test_compile_project_metrics_fields_before_expr():
+    # An Expression Variable binding a Dataset Field id resolves in the same pass
+    # only because fields compile before exprs.
+    from ffast.config.tabs import compile_project_metrics
+
+    project = ProjectConfig.model_validate({
+        "metrics": {
+            "fields": [{"id": "projtest.q", "ref": "reference.atoms.charges"}],
+            "expr": [{"id": "projtest.absq", "expr": "abs(q)",
+                      "vars": {"q": "projtest.q"}}],
+        },
+    })
+    result = compile_project_metrics(project)
+    assert "projtest.q" in result.ids and "projtest.absq" in result.ids
+    assert result.errors == []

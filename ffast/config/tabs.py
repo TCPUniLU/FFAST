@@ -11,6 +11,7 @@ register the metrics locally, then :func:`resolve_ref` per Panel to turn each
 from __future__ import annotations
 
 import tomllib
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from ffast.config.models import AnalysisTabConfig, PanelMetricRef, ProjectConfig
@@ -74,3 +75,67 @@ def compile_tabs_metrics(tabs, *, registry=None) -> list[str]:
             for ref in _panel_refs(panel):
                 seen.setdefault(resolve_ref(ref, registry=registry), None)
     return list(seen)
+
+
+@dataclass
+class MetricCompileResult:
+    """Outcome of compiling a project's declarative metrics before freeze.
+
+    ``ids`` are the successfully-registered metric ids; ``errors`` are
+    ``(context, message)`` pairs — one per config entry that failed to compile,
+    each carrying a precise config-load message (e.g. an Expression Metric shape
+    mismatch). Callers apply the policy: the server refuses to start on any error
+    (like a freeze validation failure), ``ffast-cli metrics validate`` prints and
+    exits non-zero, and the desktop client logs and keeps running (ADR 0042 /
+    ADR 0023: config errors surface at config-load, not at plot time)."""
+
+    ids: list[str] = field(default_factory=list)
+    errors: list[tuple[str, str]] = field(default_factory=list)
+
+
+def compile_project_metrics(project_config, *, registry=None) -> MetricCompileResult:
+    """Compile every declarative metric a project contributes, before freeze.
+
+    Covers Dataset Fields (ADR 0023), Expression Metrics (ADR 0042), and
+    Analysis-Tab Transform Metrics (ADR 0021) plus the bundled tabs. **Fields
+    compile first** because an Expression Variable may bind a Dataset Field id.
+    The base built-ins are registered first so tab/expr metric-id refs resolve.
+
+    Idempotent (safe to run on server, client, and headless thread) and
+    fail-soft: each entry compiles under its own guard, so one bad entry records
+    an error instead of aborting the rest. Returns the registered ids and the
+    per-entry failures for the caller to surface. ``project_config`` may be
+    ``None`` — the bundled tabs still compile.
+    """
+    import ffast.metrics.builtin  # noqa: F401 — register base metrics before compile
+    from ffast.metrics.expr import compile_expr_metric
+    from ffast.metrics.fields import compile_field_metric
+
+    result = MetricCompileResult()
+
+    fields = project_config.metrics.fields if project_config is not None else []
+    for c in fields:
+        try:
+            result.ids.append(compile_field_metric(
+                c.id, c.ref, label=c.label, unit=c.unit, registry=registry))
+        except Exception as exc:
+            result.errors.append((f"[[metrics.fields]] '{c.id}'", str(exc)))
+
+    exprs = project_config.metrics.expr if project_config is not None else []
+    for c in exprs:
+        try:
+            result.ids.append(compile_expr_metric(
+                c.id, c.expr, dict(c.vars), label=c.label, unit=c.unit,
+                registry=registry))
+        except Exception as exc:
+            result.errors.append((f"[[metrics.expr]] '{c.id}'", str(exc)))
+
+    # Bundled + project analysis tabs. compile_tabs_metrics is itself a batch
+    # (a bad Panel ref aborts it), so guard it as one unit.
+    try:
+        result.ids.extend(
+            compile_tabs_metrics(merge_tabs(project_config), registry=registry))
+    except Exception as exc:
+        result.errors.append(("[[visualization.tabs]]", str(exc)))
+
+    return result

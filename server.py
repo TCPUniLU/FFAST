@@ -347,6 +347,49 @@ def _load_project_metric_modules(config_arg: str | None = None) -> None:
         logger.warning("Failed loading external metric modules from %s: %s", config_path, exc)
 
 
+def _compile_project_metrics(config_arg: str | None) -> None:
+    """Compile the project's declarative metrics before freeze, refusing to start
+    on a config-load error.
+
+    Dataset Fields (ADR 0023), Expression Metrics (ADR 0042), and Analysis-Tab
+    Transform Metrics (ADR 0021) are registered here (idempotent — the client
+    plugin may have compiled the valid ones already) so the server owns the
+    correctness decision rather than depending on the Qt client plugin, which is
+    skipped in a headless environment without PySide6. A config-load failure
+    (e.g. an Expression Metric shape mismatch) is a Configuration Failure handled
+    exactly like a freeze validation failure: the server refuses to start rather
+    than silently serving an incomplete registry (ADR 0042: errors surface at
+    config-load, not plot time).
+    """
+    from pathlib import Path
+
+    try:
+        from ffast.config.loader import discover_config, load_project_config
+        from ffast.config.tabs import compile_project_metrics
+    except Exception as exc:
+        logger.warning("Config loader unavailable; declarative metrics skipped: %s", exc)
+        return
+
+    config_path = Path(config_arg) if config_arg else discover_config(Path.cwd())
+    project_config = None
+    if config_path is not None and config_path.exists():
+        try:
+            project_config = load_project_config(config_path)
+        except Exception as exc:
+            # An unparseable/invalid config is itself a Configuration Failure.
+            raise SystemExit(f"Invalid project config {config_path}: {exc}") from exc
+
+    result = compile_project_metrics(project_config)
+    if result.errors:
+        for context, msg in result.errors:
+            logger.error("Metric config error in %s: %s", context, msg)
+        raise SystemExit(
+            f"Metric configuration failed with {len(result.errors)} error(s); "
+            f"refusing to start (see log above)."
+        )
+    logger.info("Compiled %d declarative metric(s) from project config.", len(result.ids))
+
+
 def _validate_metric_registry() -> None:
     """Freeze the metric graph at startup (Metric DX decision M1 / H2).
 
@@ -399,6 +442,11 @@ async def _main(
     # they appear in METRIC_CATALOG and can be computed. Done before any client
     # connects / first metric runs, so the worker pool pickles the full registry.
     _load_project_metric_modules(config)
+
+    # Compile the project's declarative metrics (Dataset Fields, Expression
+    # Metrics, Analysis Tabs) into the registry and refuse to start on any
+    # config-load error, before the graph is frozen.
+    _compile_project_metrics(config)
 
     # Validate the full metric graph once, after builtins + external modules are
     # registered. Refuses to start on unknown refs, cycles, or legacy shapes.
