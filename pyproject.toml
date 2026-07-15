@@ -36,6 +36,10 @@ zstd = ["zstandard>=0.21"]
 ffast = "main:cli"
 ffast-server = "server:cli"
 ffast-cli = "ffast.cli.main:main"
+# One-command web launcher (ADR 0045): start the server on loopback + open the
+# browser. `ffast` stays the Qt desktop while both clients coexist; at Qt
+# retirement (ADR 0045 Phase 6) `ffast` flips to this launcher.
+ffast-web = "ffast.renderers.web.launcher:main"
 
 [tool.setuptools]
 py-modules = ["events", "main", "server", "tasks", "utils"]

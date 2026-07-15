@@ -45,14 +45,17 @@ class _SilentStaticHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
 
-def start_static_server(port: int) -> http.server.HTTPServer:
+def start_static_server(port: int, host: str = "0.0.0.0") -> http.server.HTTPServer:
     """Start an HTTP server serving the web app in a daemon thread.
 
-    Returns the HTTPServer instance so callers can shut it down explicitly if
-    needed (though the daemon thread will die with the process anyway).
+    ``host`` defaults to ``0.0.0.0`` (the cluster/remote case, where a browser
+    on another machine reaches the served app); the local launcher passes
+    ``127.0.0.1`` to keep the app loopback-only. Returns the HTTPServer so
+    callers can shut it down explicitly (the daemon thread dies with the
+    process regardless).
     """
-    httpd = http.server.HTTPServer(("0.0.0.0", port), _SilentStaticHandler)
+    httpd = http.server.HTTPServer((host, port), _SilentStaticHandler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True, name=f"ffast-web-{port}")
     thread.start()
-    logger.info("Web renderer serving at http://0.0.0.0:%d (static dir: %s)", port, STATIC_DIR)
+    logger.info("Web renderer serving at http://%s:%d (static dir: %s)", host, port, STATIC_DIR)
     return httpd
