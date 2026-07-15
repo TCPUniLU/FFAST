@@ -81,6 +81,18 @@ def test_wait_until_ready_false_when_nothing_listens():
     assert launcher.wait_until_ready(port, timeout=0.3, interval=0.05) is False
 
 
+def test_spawn_server_binds_the_given_host(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: "/usr/bin/ffast-server")
+    monkeypatch.setattr(
+        launcher.subprocess, "Popen", lambda cmd, *a, **k: captured.setdefault("cmd", cmd)
+    )
+    launcher._spawn_server(8765, host="127.0.0.1")
+    cmd = captured["cmd"]
+    assert "--host" in cmd and cmd[cmd.index("--host") + 1] == "127.0.0.1"
+    assert "--port" in cmd and "8765" in cmd
+
+
 @dataclass
 class _FakeProc:
     """Stands in for the ffast-server subprocess in tests."""
@@ -109,15 +121,17 @@ def test_run_serves_the_app_and_opens_browser():
     fake.listener.listen(1)
 
     opened = []
+    spawn_calls = []
     result = launcher.run(
         ws_port=ws_port,
         web_port=web_port,
         app_mode=False,
-        spawn_server=lambda p: fake,
+        spawn_server=lambda p, h: spawn_calls.append((p, h)) or fake,
         opener=opened.append,
         block=False,
     )
     try:
+        assert spawn_calls == [(ws_port, "127.0.0.1")]  # host threaded to the server
         assert opened == [f"http://127.0.0.1:{web_port}/?port={ws_port}"]
         assert result.url == opened[0]
         # The static server really serves the FFAST web app.
@@ -158,7 +172,7 @@ def test_run_aborts_when_server_dies_during_startup():
         launcher.run(
             ws_port=ws_port,
             web_port=web_port,
-            spawn_server=lambda p: _DeadProc(returncode=2),
+            spawn_server=lambda p, h: _DeadProc(returncode=2),
             opener=opened.append,
             block=False,
             ready_timeout=2.0,
@@ -173,7 +187,7 @@ def test_run_picks_free_ports_when_unspecified():
     fake = _FakeProc(listener=socket.socket())
     captured = {}
 
-    def spawn(ws_port):
+    def spawn(ws_port, host):
         captured["ws_port"] = ws_port
         fake.listener.bind(("127.0.0.1", ws_port))
         fake.listener.listen(1)

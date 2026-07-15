@@ -9,16 +9,11 @@ is the reliability payoff the Qt/Vispy desktop could not deliver.
 The WS server runs as a subprocess (a clean process boundary matching how a
 user would run `ffast-server` by hand); the launcher process owns the static
 server and the browser, and blocks until the WS server exits or is interrupted.
-Pointed at a remote server instead, the same web app drives a Server Connection
-to that server — that path uses `ffast-server --web-port` directly and is out
-of this launcher's scope.
-
-Loopback caveat: the static web app is bound to 127.0.0.1, but the RPC surface
-is not yet — `ffast-server` has no bind-host flag, so it listens on all
-interfaces. Fully loopback-only operation (ADR 0045 decision #1) needs a
-`--host 127.0.0.1` flag on `ffast-server`, which is blocked on the in-flight
-ADR 0044 rewrite of `server._serve`. Until then, do not run this on an
-untrusted network.
+Both the web app and the RPC bind loopback (127.0.0.1) by default, so a local
+session is not reachable from the network (ADR 0045 decision #1). Pointed at a
+remote server instead, the same web app drives a Server Connection to that
+server — that path uses `ffast-server --web-port` directly and is out of this
+launcher's scope.
 """
 
 from __future__ import annotations
@@ -150,15 +145,15 @@ def open_browser(
     opener(url)
 
 
-def _spawn_server(ws_port: int) -> subprocess.Popen:
-    """Start `ffast-server` on ``ws_port`` as a subprocess.
+def _spawn_server(ws_port: int, host: str = LOOPBACK) -> subprocess.Popen:
+    """Start `ffast-server` on ``host:ws_port`` as a subprocess.
 
     Prefers the installed console script; falls back to ``python -m server``
-    so a source checkout works without an editable install. Auto-snapshots are
-    disabled — a throwaway local run does not need them. The server currently
-    binds all interfaces (see the loopback caveat in the module docstring).
+    so a source checkout works without an editable install. Binds ``host``
+    (loopback by default, keeping the RPC local); auto-snapshots are disabled —
+    a throwaway local run does not need them.
     """
-    args = ["--port", str(ws_port), "--snapshot-interval", "0"]
+    args = ["--host", host, "--port", str(ws_port), "--snapshot-interval", "0"]
     exe = shutil.which("ffast-server")
     cmd = [exe, *args] if exe else [sys.executable, "-m", "server", *args]
     logger.info("Starting ffast-server: %s", " ".join(cmd))
@@ -179,7 +174,7 @@ def run(
     web_port: int = 0,
     host: str = LOOPBACK,
     app_mode: bool = False,
-    spawn_server: Callable[[int], object] = _spawn_server,
+    spawn_server: Callable[[int, str], object] = _spawn_server,
     opener: Callable[[str], object] = webbrowser.open,
     ready_timeout: float = 30.0,
     block: bool = True,
@@ -194,7 +189,7 @@ def run(
     web_port = web_port or pick_free_port()
 
     httpd = start_static_server(web_port, host=host)
-    proc = spawn_server(ws_port)
+    proc = spawn_server(ws_port, host)
 
     # Wait for the WS server to accept connections, but fail fast if it exits
     # during startup (bad config, port in use, import error) — otherwise we'd

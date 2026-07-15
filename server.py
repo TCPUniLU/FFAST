@@ -271,6 +271,7 @@ async def _serve(
     port: int,
     token_hash: str = "",
     recovery_window: int = 0,
+    host: str = "",
 ):
     """Run the WebSocket server until the environment signals quit or quit_event fires."""
     import websockets
@@ -294,12 +295,12 @@ async def _serve(
 
     logger.info("Starting ffast-server on port %d", port)
     async with websockets.serve(
-        handler, "", port,
+        handler, host, port,
         max_size=None,
         ping_interval=30,
         ping_timeout=60,
     ):
-        logger.info("ffast-server listening on ws://0.0.0.0:%d", port)
+        logger.info("ffast-server listening on ws://%s:%d", host or "0.0.0.0", port)
         while not env.quitReady and not quit_event.is_set():
             await asyncio.sleep(1)
     logger.info("ffast-server shut down")
@@ -447,6 +448,7 @@ async def _main(
     recovery_window: int = 0,
     web_port: int = 0,
     config: str | None = None,
+    host: str = "0.0.0.0",
 ):
     """Bootstrap env, wire RPC subscriptions, run server + event loop."""
     from client.environment import HeadlessEnvironment
@@ -551,12 +553,12 @@ async def _main(
 
     if web_port > 0:
         from ffast.renderers.web.serve import start_static_server
-        start_static_server(web_port)
-        logger.info("Web app served at http://0.0.0.0:%d/?port=%d", web_port, port)
+        start_static_server(web_port, host=host)
+        logger.info("Web app served at http://%s:%d/?port=%d", host, web_port, port)
 
     coros = [
         env.headlessEventLoop(),
-        _serve(env, hub, port, token_hash=token_hash, recovery_window=recovery_window),
+        _serve(env, hub, port, token_hash=token_hash, recovery_window=recovery_window, host=host),
     ]
     if snapshot_interval > 0:
         coros.append(_auto_snapshot_loop(env, job_id, snapshot_interval))
@@ -632,6 +634,15 @@ def cli():
              "If omitted, the nearest ffast.toml is discovered from the working "
              "directory; built-in metrics are always available.",
     )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        metavar="ADDR",
+        help="Interface to bind the WebSocket RPC (and --web-port app) to "
+             "(default: 0.0.0.0, all interfaces). The `ffast-web` launcher passes "
+             "127.0.0.1 to keep a local session loopback-only.",
+    )
     args = parser.parse_args()
 
     # Auto-detect job_id from SLURM environment; fall back to CLI arg or "local"
@@ -650,6 +661,7 @@ def cli():
             recovery_window=args.recovery_window,
             web_port=args.web_port,
             config=args.config,
+            host=args.host,
         ))
     except KeyboardInterrupt:
         logger.info("Interrupted — shutting down")
