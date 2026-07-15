@@ -1,7 +1,7 @@
 """One-command launcher for the FFAST web client (ADR 0045, decision #1).
 
-`ffast-web` starts `ffast-server` bound to loopback (WebSocket RPC) plus the
-static web app and opens the user's already-installed browser at the app,
+`ffast-web` serves the web app on loopback, starts `ffast-server` for the
+WebSocket RPC, and opens the user's already-installed browser at the app,
 pointed at the WS port. This is the "just run one command, get the whole
 workflow in a browser" entry point — no native GUI to install or launch, which
 is the reliability payoff the Qt/Vispy desktop could not deliver.
@@ -9,14 +9,22 @@ is the reliability payoff the Qt/Vispy desktop could not deliver.
 The WS server runs as a subprocess (a clean process boundary matching how a
 user would run `ffast-server` by hand); the launcher process owns the static
 server and the browser, and blocks until the WS server exits or is interrupted.
-Pointed at a remote server instead, the same web app drives a cluster session —
-that path uses `ffast-server --web-port` directly and is out of this launcher's
-scope.
+Pointed at a remote server instead, the same web app drives a Server Connection
+to that server — that path uses `ffast-server --web-port` directly and is out
+of this launcher's scope.
+
+Loopback caveat: the static web app is bound to 127.0.0.1, but the RPC surface
+is not yet — `ffast-server` has no bind-host flag, so it listens on all
+interfaces. Fully loopback-only operation (ADR 0045 decision #1) needs a
+`--host 127.0.0.1` flag on `ffast-server`, which is blocked on the in-flight
+ADR 0044 rewrite of `server._serve`. Until then, do not run this on an
+untrusted network.
 """
 
 from __future__ import annotations
 
 import argparse
+import http.server
 import logging
 import os
 import shutil
@@ -60,8 +68,8 @@ class LaunchResult:
     url: str
     web_port: int
     ws_port: int
-    httpd: object  # http.server.HTTPServer
-    proc: object  # subprocess.Popen-like
+    httpd: http.server.HTTPServer
+    proc: subprocess.Popen
 
 
 def app_url(web_port: int, ws_port: int, *, host: str = LOOPBACK) -> str:
@@ -136,7 +144,8 @@ def _spawn_server(ws_port: int) -> subprocess.Popen:
 
     Prefers the installed console script; falls back to ``python -m server``
     so a source checkout works without an editable install. Auto-snapshots are
-    disabled — a throwaway local session does not need them.
+    disabled — a throwaway local run does not need them. The server currently
+    binds all interfaces (see the loopback caveat in the module docstring).
     """
     args = ["--port", str(ws_port), "--snapshot-interval", "0"]
     exe = shutil.which("ffast-server")
@@ -145,7 +154,7 @@ def _spawn_server(ws_port: int) -> subprocess.Popen:
     return subprocess.Popen(cmd)
 
 
-def _terminate(proc) -> None:
+def _terminate(proc: subprocess.Popen) -> None:
     try:
         if proc.poll() is None:
             proc.terminate()
