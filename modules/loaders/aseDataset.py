@@ -112,7 +112,8 @@ class aseDatasetLoader(DatasetLoader):
         # Read file only if atomsList not provided (avoid double-read)
         if atomsList is None:
             logger.warning("atomsList was none, hence loading the entire dataset.")
-            self.atomsList = ase.io.read(path, index=':')
+            from ffast.io.xyz import read_ase_or_explain
+            self.atomsList = read_ase_or_explain(path, index=':')
         else:
             self.atomsList = atomsList
 
@@ -322,7 +323,8 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         # Read file only if atomsList not provided (avoid double-read)
         if atomsList is None:
             logger.warning("atomsList was none, hence loading the entire dataset.")
-            self.atomsList = ase.io.read(path, index=':')
+            from ffast.io.xyz import read_ase_or_explain
+            self.atomsList = read_ase_or_explain(path, index=':')
         else:
             self.atomsList = atomsList
 

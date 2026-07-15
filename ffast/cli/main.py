@@ -21,10 +21,10 @@ def cmd_dataset_keys(args: argparse.Namespace) -> None:
     """List the per-frame (atoms.info) and per-atom (atoms.arrays) keys in a file
     and whether each is usable as a Dataset Field (ADR 0023). Inspects the first
     frame; full-dataset validation happens at metric time (all-or-nothing)."""
-    import ase.io
+    from ffast.io.xyz import read_ase_or_explain
 
     try:
-        atoms = ase.io.read(args.path, index=0)
+        atoms = read_ase_or_explain(args.path, index=0)
     except Exception as exc:
         print(f"Error: could not read {args.path}: {exc}", file=sys.stderr)
         sys.exit(1)

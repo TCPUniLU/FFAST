@@ -152,7 +152,8 @@ class MainMenuHandler(MenuHandlerBase):
         logger.info(f"Total dataset length: {length}")
 
         logger.info("Total length calculated, approximating size of each atom in dataset.")
-        temp_dataset = ase.io.read(path, index=slice(0, 1000, None))
+        from ffast.io.xyz import read_ase_or_explain
+        temp_dataset = read_ase_or_explain(path, index=slice(0, 1000, None))
         temp_size = deep_getsizeof(temp_dataset)  # the size of temp_dataset in bytes.
         avg_per_atom_size = temp_size/1000
         file_size = length*avg_per_atom_size
@@ -204,8 +205,11 @@ class MainMenuHandler(MenuHandlerBase):
         logger = logging.getLogger("FFAST")
 
         try:
-            # Read ONLY first frame to detect keys (much faster for large datasets)
-            first_atoms = ase.io.read(path, index=0)
+            # Read ONLY first frame to detect keys (much faster for large datasets).
+            # ASE still scans the whole file to index frames, so a malformed frame
+            # deep in the file surfaces here — read_ase_or_explain pinpoints it.
+            from ffast.io.xyz import read_ase_or_explain
+            first_atoms = read_ase_or_explain(path, index=0)
 
             # Create temporary loader with just first frame to access key detection
             # We'll load the full dataset later in the background thread

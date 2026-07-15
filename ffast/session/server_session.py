@@ -491,10 +491,10 @@ class ServerSession:
         error: str | None = None
 
         try:
-            import ase.io
+            from ffast.io.xyz import read_ase_or_explain
             from modules.loaders.aseDataset import aseDatasetLoader
 
-            first_atoms = ase.io.read(path, index=0)
+            first_atoms = read_ase_or_explain(path, index=0)
             temp_loader = aseDatasetLoader(path, atomsList=[first_atoms])
             energy_keys = list(temp_loader.EneregyKeys())
             force_keys = list(temp_loader.ForceKeys())
