@@ -197,11 +197,12 @@ async def test_web_renderer_connects_and_draws_scene(ffast_web_server):
             await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
 
-            dataset_select = page.locator("#dataset-select")
-            await expect(dataset_select.locator(f"option[value='{dataset_fp}']")).to_have_count(1)
-            await dataset_select.select_option(dataset_fp)
+            # The dataset shows as a row in the object rail; selecting it opens
+            # the Loupe view (the 3D tab is active by default).
+            dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
+            await expect(dataset_row).to_have_count(1)
+            await dataset_row.click()
 
-            await page.locator("#open-view-btn").click()
             await expect(page.locator("#overlay")).to_have_class(
                 re.compile(r"\bhidden\b")
             )
@@ -209,7 +210,7 @@ async def test_web_renderer_connects_and_draws_scene(ffast_web_server):
 
             png = await page.locator("#canvas").screenshot()
             image = Image.open(io.BytesIO(png)).convert("RGBA")
-            bg = (26, 26, 30, 255)
+            bg = (0, 0, 0, 255)  # viewport clears to black (Qt loupe default)
             rgba = image.tobytes()
             non_background_pixels = sum(
                 1
@@ -253,17 +254,16 @@ async def test_web_renderer_draws_prediction_force_arrows(ffast_web_server):
             await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
 
-            await expect(
-                page.locator(f"#dataset-select option[value='{dataset_fp}']")
-            ).to_have_count(1)
-            await page.locator("#dataset-select").select_option(dataset_fp)
+            dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
+            await expect(dataset_row).to_have_count(1)
+            await dataset_row.click()
 
-            await expect(
-                page.locator(f"#model-select option[value='{model_fp}']")
-            ).to_have_count(1)
-            await page.locator("#model-select").select_option(model_fp)
+            # The prediction applies to the selected dataset; selecting its row
+            # reopens the view with the force overlay.
+            model_row = page.locator(f"#model-list .obj-row[data-fp='{model_fp}']")
+            await expect(model_row).to_have_count(1)
+            await model_row.click()
 
-            await page.locator("#open-view-btn").click()
             await expect(page.locator("#overlay")).to_have_class(
                 re.compile(r"\bhidden\b")
             )

@@ -307,7 +307,7 @@ class MoleculeRenderer {
 
     this._renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     this._renderer.setPixelRatio(window.devicePixelRatio);
-    this._renderer.setClearColor(0x1a1a1e, 1);
+    this._renderer.setClearColor(0x000000, 1);  // Qt loupe default (default.json loupeBGColor)
 
     this._scene   = new THREE.Scene();
     this._camera  = new THREE.PerspectiveCamera(60, 1, 0.01, 5000);
@@ -650,9 +650,15 @@ class FFastApp {
     this._renderer = null;
     this._datasets = new Map();   // fingerprint → meta
     this._models = new Map();     // model fingerprint → {name, dataset_fingerprints}
+    this._currentDatasetFp = null;  // selected dataset (object rail)
+    this._currentModelFp = null;    // selected prediction, or null
     this._currentViewId = null;
+    this._activeTab = 'loupe';
     this._frameCount = 0;
     this._cameraThrottle = null;
+    this._bc = null;          // BroadcastChannel to popped-out loupe tabs
+    this._chId = null;
+    this._lastScene = null;   // cached snapshot for a late-joining satellite
 
     // Remote file browser state
     this._fbMode = 'dataset';  // 'dataset' | 'prediction'
@@ -662,8 +668,57 @@ class FFastApp {
     this._fbSelected = null;   // selected filename within _fbPath
 
     this._initRenderer();
+    this._initTabs();
     this._initUI();
     this._applyUrlParams();
+  }
+
+  // ── tabs: 3D Loupe + analysis tabs (mirrors the Qt MainContentTabWidget) ──
+  // The analysis tabs are placeholders until ADR 0043 ships REQUEST_TAB_LAYOUT
+  // (server-owned panel specs) + the metric channel. Names/order mirror the
+  // desktop's ffast/config/builtin_tabs/*.toml so the shells read the same.
+  _initTabs() {
+    const TABS = [
+      { id: 'loupe',     name: '3D Loupe' },
+      { id: 'basic',     name: 'Basic Errors',     placeholder: true },
+      { id: 'subsystem', name: 'Subsystem Errors', placeholder: true },
+      { id: 'atomic',    name: 'Atomic Errors',    placeholder: true },
+      { id: 'gyration',  name: 'Gyration',         placeholder: true },
+    ];
+    const tabbar = document.getElementById('tabbar');
+    const panels = document.getElementById('tabpanels');
+    for (const t of TABS) {
+      const tab = document.createElement('div');
+      tab.className = 'tab' + (t.id === this._activeTab ? ' active' : '');
+      tab.textContent = t.name;
+      tab.dataset.tab = t.id;
+      tab.addEventListener('click', () => this._selectTab(t.id));
+      tabbar.appendChild(tab);
+
+      if (t.placeholder) {
+        const panel = document.createElement('div');
+        panel.className = 'tabpanel';
+        panel.id = `panel-${t.id}`;
+        panel.innerHTML =
+          `<div class="placeholder">
+             <div class="ph-title">${t.name}</div>
+             <div class="ph-sub">2D analysis plots are served over the same WebSocket
+               as the desktop. This tab activates once ADR 0043 wires the panel-spec
+               event and the metric channel into the browser.</div>
+           </div>`;
+        panels.appendChild(panel);
+      }
+    }
+  }
+
+  _selectTab(id) {
+    this._activeTab = id;
+    for (const tab of document.querySelectorAll('#tabbar .tab'))
+      tab.classList.toggle('active', tab.dataset.tab === id);
+    for (const panel of document.querySelectorAll('#tabpanels .tabpanel'))
+      panel.classList.toggle('active', panel.id === `panel-${id}`);
+    // Opening/returning to the Loupe with a dataset selected ensures a live view.
+    if (id === 'loupe' && this._conn && this._currentDatasetFp) this._openView();
   }
 
   _initRenderer() {
@@ -675,20 +730,17 @@ class FFastApp {
   _initUI() {
     document.getElementById('connect-btn').addEventListener('click', () => this._connect());
     document.getElementById('disconnect-btn').addEventListener('click', () => this._disconnect());
-    document.getElementById('open-view-btn').addEventListener('click', () => this._openView());
     document.getElementById('reset-camera-btn').addEventListener('click', () => {
       this._renderer.resetCamera();
     });
+    document.getElementById('popout-btn').addEventListener('click', () => this._openPopout());
 
     const slider = document.getElementById('frame-slider');
     slider.addEventListener('input', () => this._onFrameSlider());
 
-    // Dataset selection drives which predictions (models) are applicable.
-    document.getElementById('dataset-select').addEventListener('change', () => this._updateModelSelect());
-
-    // Remote file browser — dataset vs prediction mode
-    document.getElementById('load-remote-btn').addEventListener('click', () => this._openFileBrowser('dataset'));
-    document.getElementById('load-prediction-btn').addEventListener('click', () => this._openFileBrowser('prediction'));
+    // Object rail load actions — dataset vs prediction mode.
+    document.getElementById('add-dataset-btn').addEventListener('click', () => this._openFileBrowser('dataset'));
+    document.getElementById('add-prediction-btn').addEventListener('click', () => this._openFileBrowser('prediction'));
     document.getElementById('fb-cancel').addEventListener('click', () => this._closeFileBrowser());
     document.getElementById('fb-load').addEventListener('click', () => this._fbLoad());
     document.getElementById('fb-force-key').addEventListener('change', () => this._updateFbLoadEnabled());
@@ -739,13 +791,14 @@ class FFastApp {
 
       await conn.connect();
       this._conn = conn;
+      this._setupBroadcast(wsUrl);
 
       this._setStatus(`Connected (${conn.role})`, 'connected');
       document.getElementById('connect-btn').disabled = true;
       document.getElementById('disconnect-btn').disabled = false;
-      document.getElementById('open-view-btn').disabled = false;
-      document.getElementById('load-remote-btn').disabled = false;
-      document.getElementById('load-prediction-btn').disabled = false;
+      document.getElementById('add-dataset-btn').disabled = false;
+      document.getElementById('add-prediction-btn').disabled = false;
+      this._renderObjects();
 
     } catch (err) {
       console.error('Connection failed:', err);
@@ -758,17 +811,24 @@ class FFastApp {
       this._conn.close();
       this._conn = null;
     }
+    if (this._bc) {
+      this._bc.postMessage({ t: 'bye' });   // tell popped-out loupes the main view is gone
+      this._bc.close();
+      this._bc = null;
+    }
+    this._lastScene = null;
     this._datasets.clear();
     this._models.clear();
+    this._currentDatasetFp = null;
+    this._currentModelFp = null;
     this._currentViewId = null;
-    this._updateDatasetSelect();
-    this._updateModelSelect();
+    this._renderObjects();
     document.getElementById('connect-btn').disabled = false;
     document.getElementById('disconnect-btn').disabled = true;
-    document.getElementById('open-view-btn').disabled = true;
-    document.getElementById('load-remote-btn').disabled = true;
-    document.getElementById('load-prediction-btn').disabled = true;
+    document.getElementById('add-dataset-btn').disabled = true;
+    document.getElementById('add-prediction-btn').disabled = true;
     document.getElementById('reset-camera-btn').disabled = true;
+    document.getElementById('popout-btn').disabled = true;
     document.getElementById('frame-slider').disabled = true;
     this._closeFileBrowser();
     this._setStatus('Disconnected', '');
@@ -776,65 +836,103 @@ class FFastApp {
 
   _onDatasetMeta(fp, meta) {
     this._datasets.set(fp, meta);
-    this._updateDatasetSelect();
-  }
-
-  _updateDatasetSelect() {
-    const sel = document.getElementById('dataset-select');
-    const prev = sel.value;
-    sel.innerHTML = '<option value="">— none —</option>';
-    for (const [fp, meta] of this._datasets) {
-      const opt = document.createElement('option');
-      opt.value = fp;
-      opt.textContent = `${meta.name || fp.slice(0,8)} (${meta.n} frames)`;
-      sel.appendChild(opt);
-    }
-    if (this._datasets.has(prev)) sel.value = prev;
-    // Prediction applicability depends on the selected dataset.
-    this._updateModelSelect();
+    // The first dataset auto-selects so the Loupe has something to show.
+    const firstSelect = !this._currentDatasetFp;
+    if (firstSelect) this._currentDatasetFp = fp;
+    this._renderObjects();
+    if (firstSelect && this._conn && this._activeTab === 'loupe') this._openView();
   }
 
   _onModelMeta(fp, meta) {
     // meta = {name, dataset_fingerprints}. Fired on connect-replay and after
     // a LOAD_PREDICTION completes (the ghost model registers its forces cache).
     this._models.set(fp, meta || {});
-    this._updateModelSelect();
-    // Auto-select a freshly loaded prediction for the current dataset so the
-    // user can just click Open View.
-    const dsFp = document.getElementById('dataset-select').value;
-    if (dsFp && (meta?.dataset_fingerprints || []).includes(dsFp)) {
-      document.getElementById('model-select').value = fp;
+    // Auto-select a freshly loaded prediction that applies to the current
+    // dataset and refresh the view so its force overlay appears.
+    if (this._currentDatasetFp &&
+        (meta?.dataset_fingerprints || []).includes(this._currentDatasetFp)) {
+      this._currentModelFp = fp;
       this._setStatus(`Prediction "${meta.name || fp.slice(0,8)}" ready`, 'connected');
+      if (this._activeTab === 'loupe') this._openView();
+    }
+    this._renderObjects();
+  }
+
+  // ── object rail: datasets + predictions as selectable rows ──────────────
+  _renderObjects() {
+    this._renderDatasetList();
+    this._renderModelList();
+  }
+
+  _renderDatasetList() {
+    const list = document.getElementById('dataset-list');
+    list.innerHTML = '';
+    if (this._datasets.size === 0) {
+      list.innerHTML = '<div class="obj-empty">— none loaded —</div>';
+      return;
+    }
+    for (const [fp, meta] of this._datasets) {
+      const row = document.createElement('div');
+      row.className = 'obj-row' + (fp === this._currentDatasetFp ? ' selected' : '');
+      row.dataset.fp = fp;
+      row.innerHTML =
+        `<span class="name">${meta.name || fp.slice(0,8)}</span>` +
+        `<span class="meta">${meta.n} fr</span>`;
+      row.addEventListener('click', () => this._selectDataset(fp));
+      list.appendChild(row);
     }
   }
 
-  _updateModelSelect() {
-    const sel = document.getElementById('model-select');
-    const prev = sel.value;
-    const dsFp = document.getElementById('dataset-select').value || null;
-    sel.innerHTML = '<option value="">— none —</option>';
-    for (const [fp, meta] of this._models) {
-      // Only offer predictions computed for the selected dataset.
-      const fps = meta.dataset_fingerprints || [];
-      if (dsFp && fps.length && !fps.includes(dsFp)) continue;
-      const opt = document.createElement('option');
-      opt.value = fp;
-      opt.textContent = meta.name || fp.slice(0, 8);
-      sel.appendChild(opt);
+  _renderModelList() {
+    const list = document.getElementById('model-list');
+    list.innerHTML = '';
+    if (this._models.size === 0) {
+      list.innerHTML = '<div class="obj-empty">— none —</div>';
+      return;
     }
-    if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+    const dsFp = this._currentDatasetFp;
+    for (const [fp, meta] of this._models) {
+      const fps = meta.dataset_fingerprints || [];
+      // A prediction applies only to the dataset it was computed for.
+      const applies = !dsFp || !fps.length || fps.includes(dsFp);
+      const row = document.createElement('div');
+      row.className = 'obj-row'
+        + (fp === this._currentModelFp ? ' selected' : '')
+        + (applies ? '' : ' disabled');
+      row.dataset.fp = fp;
+      row.innerHTML = `<span class="name">${meta.name || fp.slice(0,8)}</span>`;
+      if (applies) row.addEventListener('click', () => this._selectModel(fp));
+      list.appendChild(row);
+    }
+  }
+
+  _selectDataset(fp) {
+    this._currentDatasetFp = fp;
+    // Drop a prediction that no longer applies to the selected dataset.
+    const m = this._models.get(this._currentModelFp);
+    const fps = m?.dataset_fingerprints || [];
+    if (this._currentModelFp && fps.length && !fps.includes(fp)) this._currentModelFp = null;
+    this._renderObjects();
+    if (this._activeTab === 'loupe') this._openView();
+    else this._selectTab('loupe');
+  }
+
+  _selectModel(fp) {
+    this._currentModelFp = fp;
+    this._renderObjects();
+    if (this._activeTab === 'loupe') this._openView();
+    else this._selectTab('loupe');
   }
 
   _openView() {
-    if (!this._conn) return;
-    const fp = document.getElementById('dataset-select').value || null;
-    const modelFp = document.getElementById('model-select').value || null;
+    if (!this._conn || !this._currentDatasetFp) return;
     this._currentViewId = 'view-0';
     this._conn.send('OPEN_VIEW', {
       view_id: this._currentViewId,
-      dataset_ref: fp || null,
-      prediction_ref: modelFp,   // null clears the force overlay
+      dataset_ref: this._currentDatasetFp,
+      prediction_ref: this._currentModelFp,   // null clears the force overlay
     });
+    if (this._bc) document.getElementById('popout-btn').disabled = false;
   }
 
   // ── remote file browser ────────────────────────────────────────────────
@@ -864,7 +962,7 @@ class FFastApp {
       opt.textContent = `${meta.name || fp.slice(0,8)} (${meta.n} frames)`;
       sel.appendChild(opt);
     }
-    const dsFp = document.getElementById('dataset-select').value;
+    const dsFp = this._currentDatasetFp;
     if (dsFp && this._datasets.has(dsFp)) sel.value = dsFp;
     document.getElementById('fb-energy-key').innerHTML = '';
     document.getElementById('fb-force-key').innerHTML = '';
@@ -942,7 +1040,8 @@ class FFastApp {
       const path = this._fbJoin(this._fbPath, name);
       document.getElementById('fb-energy-key').innerHTML = '<option value="">…probing…</option>';
       document.getElementById('fb-force-key').innerHTML = '<option value="">…probing…</option>';
-      this._conn.send('PROBE_DATASET_KEYS', {}, [path]);
+      // Server route requires (path, dataset_type); ASE auto-detect reads the keys.
+      this._conn.send('PROBE_DATASET_KEYS', {}, [path, 'ase (auto)']);
     }
     this._updateFbLoadEnabled();
   }
@@ -1037,6 +1136,10 @@ class FFastApp {
       slider.disabled = false;
       this._updateFrameLabel(0, n);
     }
+
+    // Mirror to any popped-out loupe tab.
+    this._lastScene = scene;
+    this._broadcastScene();
   }
 
   _onScenePatch(kw) {
@@ -1044,9 +1147,7 @@ class FFastApp {
     if (!patch) return;
     const changed = patch.changed || [];
     this._renderer.applyPatch(patch, changed);
-    if (changed.includes?.('structure_index') || changed.structure_index) {
-      // frame label update handled by slider
-    }
+    if (this._bc) this._bc.postMessage({ t: 'patch', patch, changed });
   }
 
   _onCommandResult(kw) {
@@ -1057,16 +1158,71 @@ class FFastApp {
   }
 
   _onFrameSlider() {
-    if (!this._conn || !this._currentViewId) return;
-    const slider = document.getElementById('frame-slider');
-    const frame = parseInt(slider.value, 10);
+    const frame = parseInt(document.getElementById('frame-slider').value, 10);
     this._updateFrameLabel(frame, this._frameCount);
+    this._sendSetFrame(frame);
+    this._broadcastMeta();  // keep any popped-out loupe's slider in step
+  }
+
+  _sendSetFrame(frame) {
+    if (!this._conn || !this._currentViewId) return;
     this._conn.send('VIEW_COMMAND', {
       type: 'SET_FRAME',
       view_id: this._currentViewId,
       view_version: 0,  // server applies SET_FRAME without version check
       frame_index: frame,
     });
+  }
+
+  // ── popped-out loupe (BroadcastChannel satellite) ───────────────────────
+  // The main tab owns the single WebSocket; a popped tab renders scenes we
+  // relay here and posts frame intents back, which we drive over the WS.
+  _setupBroadcast(wsUrl) {
+    if (typeof BroadcastChannel === 'undefined') return;  // unsupported browser
+    this._chId = 'ffast-loupe:' + wsUrl;
+    this._bc = new BroadcastChannel(this._chId);
+    this._bc.onmessage = (e) => this._onBroadcast(e.data);
+  }
+
+  _broadcastScene() {
+    if (!this._bc || !this._lastScene) return;
+    this._bc.postMessage({ t: 'scene', scene: this._lastScene });
+    this._broadcastMeta();
+  }
+
+  _broadcastMeta() {
+    if (!this._bc) return;
+    const slider = document.getElementById('frame-slider');
+    this._bc.postMessage({
+      t: 'meta',
+      frameCount: this._frameCount,
+      frameIndex: parseInt(slider.value, 10) || 0,
+      title: this._datasets.get(this._currentDatasetFp)?.name || '',
+    });
+  }
+
+  _onBroadcast(msg) {
+    if (!msg || !msg.t) return;
+    if (msg.t === 'hello') {
+      // A satellite loupe just opened — hand it the current scene + meta.
+      this._broadcastScene();
+    } else if (msg.t === 'frame') {
+      // Satellite drove the frame; reflect it here and over the WS. Do NOT
+      // re-broadcast meta (the satellite's own slider is already there).
+      const slider = document.getElementById('frame-slider');
+      slider.value = msg.index;
+      this._updateFrameLabel(msg.index, this._frameCount);
+      this._sendSetFrame(msg.index);
+    }
+  }
+
+  _openPopout() {
+    if (!this._chId || !this._currentDatasetFp) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('mode', 'loupe');
+    url.searchParams.set('ch', this._chId);
+    window.open(url.toString(), '_blank', 'noopener');
+    // The new tab sends 'hello' on load; _onBroadcast replies with the scene.
   }
 
   _sendSetCamera(cam) {
@@ -1086,9 +1242,8 @@ class FFastApp {
   }
 
   _getViewDataset(scene) {
-    // Try to find which dataset the scene belongs to by checking the current view
-    const sel = document.getElementById('dataset-select');
-    return sel.value || null;
+    // The scene belongs to the currently selected dataset (object rail).
+    return this._currentDatasetFp;
   }
 
   _setStatus(text, cls) {
@@ -1099,7 +1254,78 @@ class FFastApp {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Bootstrap
+// Loupe satellite — a popped-out 3D view in its own browser tab.
+//
+// It holds NO WebSocket. It renders scenes the main tab relays over a
+// BroadcastChannel and posts frame intents back, which the main tab drives over
+// its single (controlling) connection. This mirrors the Qt "separate Loupe
+// window" without a second server connection (the server is single-client:
+// one shared outbound queue, one CONTROLLING client).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const app = new FFastApp();
+class LoupeSatelliteApp {
+  constructor(chId) {
+    document.body.classList.add('loupe-only');
+    this._renderer = new MoleculeRenderer(document.getElementById('canvas'));
+    this._frameCount = 0;
+
+    this._bc = new BroadcastChannel(chId);
+    this._bc.onmessage = (e) => this._onMessage(e.data);
+
+    this._initUI();
+    this._setStatus('Linked loupe — waiting for main view…');
+    this._bc.postMessage({ t: 'hello' });   // ask the main tab for current state
+  }
+
+  _initUI() {
+    document.getElementById('frame-slider').addEventListener('input', () => {
+      const frame = parseInt(document.getElementById('frame-slider').value, 10);
+      this._updateFrameLabel(frame, this._frameCount);
+      this._bc.postMessage({ t: 'frame', index: frame });
+    });
+    document.getElementById('reset-camera-btn').addEventListener('click', () => {
+      this._renderer.resetCamera();
+    });
+  }
+
+  _onMessage(msg) {
+    if (!msg || !msg.t) return;
+    if (msg.t === 'scene') {
+      this._renderer.applyScene(msg.scene);
+      this._renderer.frameAtoms();
+      document.getElementById('overlay').classList.add('hidden');
+      document.getElementById('reset-camera-btn').disabled = false;
+    } else if (msg.t === 'patch') {
+      this._renderer.applyPatch(msg.patch, msg.changed);
+    } else if (msg.t === 'meta') {
+      this._frameCount = msg.frameCount || 0;
+      const slider = document.getElementById('frame-slider');
+      slider.max = Math.max(0, this._frameCount - 1);
+      if (typeof msg.frameIndex === 'number') slider.value = msg.frameIndex;
+      slider.disabled = this._frameCount <= 1;
+      this._updateFrameLabel(parseInt(slider.value, 10) || 0, this._frameCount);
+      this._setStatus(msg.title ? `Linked loupe — ${msg.title}` : 'Linked loupe', 'connected');
+    } else if (msg.t === 'bye') {
+      this._setStatus('Main view disconnected', 'error');
+    }
+  }
+
+  _updateFrameLabel(frame, total) {
+    document.getElementById('frame-label').textContent = `${frame} / ${Math.max(0, total - 1)}`;
+  }
+
+  _setStatus(text, cls = '') {
+    const el = document.getElementById('status');
+    el.textContent = text;
+    el.className = cls;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bootstrap — main app, or a satellite loupe when opened with ?mode=loupe
+// ─────────────────────────────────────────────────────────────────────────────
+
+const _params = new URLSearchParams(window.location.search);
+const app = (_params.get('mode') === 'loupe' && typeof BroadcastChannel !== 'undefined')
+  ? new LoupeSatelliteApp(_params.get('ch') || 'ffast-loupe')
+  : new FFastApp();

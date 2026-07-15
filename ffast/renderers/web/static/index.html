@@ -5,216 +5,265 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FFAST Web Viewer</title>
   <style>
+    /* palette — mirrors the Qt desktop tokens (config/uiConfig.py BGColor and
+       HLColor families, config/default.json loupeBGColor) so the browser reads
+       as the same app: Discord-grey surfaces, muted-grey text, teal accent.
+       Layout mirrors the Qt shell: object-list rail beside tabbed main content,
+       with the 3D Loupe as one tab among the analysis tabs. */
+    :root {
+      --bg1: #202225;   /* darkest — app base            (@BGColor1) */
+      --bg2: #2f3136;   /* panels, inputs                (@BGColor2) */
+      --bg3: #36393f;   /* buttons, borders              (@BGColor3) */
+      --bg4: #494d55;   /* hover                         (@BGColor4) */
+      --bg5: #575b63;   /* active hover                  (@BGColor5) */
+      --text1: #b9bbc2; /* default text (grey)           (@TextColor1) */
+      --text2: #ffffff; /* active / selected text        (@TextColor2) */
+      --text-hover: #dbdde4;                          /* (@TextColorHover) */
+      --hl1: #4e747a;   /* muted teal — input underline  (@HLColor1) */
+      --hl2: #1ca6bb;   /* vivid teal — accent, active   (@HLColor2) */
+      --muted: #8a8d94; /* section / group headers */
+      --danger: #dc3545;
+      --success: #17a2b8;
+      --sel: rgba(28, 166, 187, 0.22);
+      /* The Qt QSS declares `font-family: monoespace` — a typo Qt can't resolve,
+         so the desktop actually renders in the platform default (San Francisco
+         on macOS), a proportional sans. Match that, not monospace. */
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: system-ui, -apple-system, sans-serif;
+      font-family: var(--font);
       font-size: 13px;
-      background: #1a1a1e;
-      color: #d0d0d8;
+      background: var(--bg1);
+      color: var(--text1);
       height: 100vh;
       display: flex;
       flex-direction: column;
       overflow: hidden;
     }
 
-    /* ── top bar ─────────────────────────────────────────────────────── */
+    /* thin scrollbars, matching the Qt QScrollBar 8px track */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--bg1); }
+    ::-webkit-scrollbar-thumb { background: var(--bg4); }
+    ::-webkit-scrollbar-thumb:hover { background: var(--hl2); }
+    * { scrollbar-width: thin; scrollbar-color: var(--bg4) var(--bg1); }
+
+    /* ── top bar (connection) ────────────────────────────────────────── */
     #topbar {
       display: flex;
       align-items: center;
       gap: 8px;
       padding: 6px 10px;
-      background: #25252c;
-      border-bottom: 1px solid #3a3a44;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--bg3);
       flex-shrink: 0;
     }
-    #topbar h1 { font-size: 13px; font-weight: 600; color: #7eb8f7; margin-right: 6px; }
-    .connection-field {
-      display: flex;
-      align-items: center;
-      gap: 6px;
+    #topbar h1 {
+      font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+      color: var(--hl2); margin-right: 6px;
     }
-    #topbar label { color: #888; font-size: 11px; }
+    .connection-field { display: flex; align-items: center; gap: 6px; }
+    #topbar label {
+      color: var(--muted); font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
     #topbar input {
-      background: #1a1a1e; border: 1px solid #44445a; border-radius: 4px;
-      color: #d0d0d8; padding: 3px 6px; font-size: 12px; width: 160px;
+      background: var(--bg1); border: none; border-bottom: 2px solid var(--hl1);
+      border-radius: 4px 4px 0 0; color: var(--text1);
+      padding: 3px 8px; font-family: var(--font); font-size: 12px; width: 160px;
     }
-    #topbar input:focus { outline: none; border-color: #5588cc; }
-    button {
-      padding: 4px 10px; border: 1px solid #44445a; border-radius: 4px;
-      background: #2e2e38; color: #d0d0d8; cursor: pointer; font-size: 12px;
-    }
-    button:hover { background: #3a3a4a; }
-    button:disabled { opacity: 0.4; cursor: default; }
-    #status {
-      margin-left: auto; font-size: 11px; color: #666;
-    }
-    #status.connected { color: #5ca85c; }
-    #status.error { color: #c05050; }
+    #topbar input:focus { outline: none; border-bottom-color: var(--hl2); }
 
-    @media (max-width: 720px) {
-      #topbar {
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 6px;
-      }
-      #topbar h1 {
-        flex: 0 0 auto;
-      }
-      .connection-field {
-        flex: 1 1 170px;
-      }
-      .server-field {
-        flex-basis: 250px;
-      }
-      .token-field {
-        flex-basis: 150px;
-      }
-      #topbar input {
-        width: auto;
-        min-width: 0;
-        flex: 1 1 auto;
-      }
-      #token-input {
-        width: auto !important;
-      }
-      #connect-btn,
-      #disconnect-btn {
-        flex: 1 1 110px;
-      }
-      #connect-btn:disabled,
-      #disconnect-btn:disabled {
-        display: none;
-      }
-      #status {
-        flex: 1 0 100%;
-        margin-left: 0;
-        min-height: 14px;
-      }
+    button {
+      padding: 4px 10px; border: none; border-radius: 3px;
+      background: var(--bg3); color: var(--text1); cursor: pointer;
+      font-family: var(--font); font-size: 12px; height: 24px;
     }
+    button:hover { background: var(--bg4); color: var(--text-hover); }
+    button:active { background: var(--hl2); color: var(--text2); }
+    button:disabled {
+      color: rgba(139, 141, 148, 0.5); background: transparent;
+      box-shadow: inset 0 0 0 2px var(--bg3); cursor: default;
+    }
+
+    #status { margin-left: auto; font-size: 11px; color: var(--muted); }
+    #status.connected { color: var(--success); }
+    #status.error { color: var(--danger); }
 
     /* ── main layout ─────────────────────────────────────────────────── */
     #main { display: flex; flex: 1; overflow: hidden; }
 
-    @media (max-width: 720px) {
-      #main {
-        flex-direction: column;
-      }
-    }
-
-    /* ── sidebar ─────────────────────────────────────────────────────── */
-    #sidebar {
-      width: 200px;
+    /* ── object rail (datasets + predictions) ────────────────────────── */
+    #objectbar {
+      width: 220px;
       flex-shrink: 0;
-      background: #20202a;
-      border-right: 1px solid #3a3a44;
+      background: var(--bg2);
+      border-right: 1px solid var(--bg3);
       display: flex;
       flex-direction: column;
       overflow-y: auto;
       padding: 8px;
-      gap: 10px;
+      gap: 14px;
     }
-    @media (max-width: 720px) {
-      #sidebar {
-        width: 100%;
-        max-height: 320px;
-        border-right: 0;
-        border-bottom: 1px solid #3a3a44;
-      }
+    .obj-group { display: flex; flex-direction: column; gap: 4px; }
+    .obj-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 4px; margin-bottom: 2px; border-bottom: 1px solid var(--bg3);
     }
     .section-title {
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #556;
-      padding-bottom: 4px;
-      border-bottom: 1px solid #2e2e3a;
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--muted);
     }
-    select {
-      width: 100%; background: #1a1a1e; border: 1px solid #44445a;
-      border-radius: 4px; color: #d0d0d8; padding: 3px 4px; font-size: 12px;
+    button.mini {
+      width: 22px; height: 20px; padding: 0; font-size: 14px; line-height: 1;
+      border-radius: 3px;
     }
-    select:focus { outline: none; border-color: #5588cc; }
+    .obj-list { display: flex; flex-direction: column; gap: 2px; }
+    .obj-empty { color: var(--muted); font-size: 11px; padding: 4px 6px; font-style: italic; }
+    .obj-row {
+      display: flex; align-items: baseline; gap: 6px;
+      padding: 5px 8px; border-radius: 4px; cursor: pointer;
+      border-left: 2px solid transparent;
+    }
+    .obj-row:hover { background: var(--bg3); }
+    .obj-row.selected { background: var(--sel); border-left-color: var(--hl2); }
+    .obj-row.disabled { opacity: 0.4; cursor: default; }
+    .obj-row.disabled:hover { background: transparent; }
+    .obj-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text1); }
+    .obj-row.selected .name { color: var(--text2); }
+    .obj-row .meta { color: var(--muted); font-size: 10px; flex-shrink: 0; }
 
-    #frame-section { display: flex; flex-direction: column; gap: 4px; }
-    #frame-slider { width: 100%; accent-color: #5588cc; }
-    #frame-label { font-size: 11px; color: #888; text-align: center; }
+    /* ── tabbed content ──────────────────────────────────────────────── */
+    #content { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg1); }
+    #tabbar {
+      display: flex; align-items: stretch; flex-shrink: 0;
+      background: var(--bg1); border-bottom: 1px solid var(--bg3);
+      overflow-x: auto;
+    }
+    .tab {
+      padding: 0 16px; height: 30px; display: flex; align-items: center;
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--muted); cursor: pointer; white-space: nowrap;
+      border-bottom: 2px solid transparent; user-select: none;
+    }
+    .tab:hover { color: var(--text-hover); border-bottom-color: var(--hl1); }
+    .tab.active { color: var(--text2); background: var(--bg2); border-bottom-color: var(--hl2); }
 
-    /* ── 3D viewport ─────────────────────────────────────────────────── */
+    #tabpanels { flex: 1; position: relative; overflow: hidden; }
+    .tabpanel { position: absolute; inset: 0; display: none; flex-direction: column; }
+    .tabpanel.active { display: flex; }
+
+    /* placeholder analysis tabs — real plots wired via ADR 0043 */
+    .placeholder {
+      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 8px; text-align: center; color: var(--muted); padding: 24px;
+    }
+    .placeholder .ph-title { color: var(--text1); font-size: 14px; }
+    .placeholder .ph-sub { font-size: 11px; max-width: 380px; line-height: 1.6; }
+
+    /* ── 3D viewport (inside the Loupe tab) ──────────────────────────── */
     #viewport {
       flex: 1;
       position: relative;
       overflow: hidden;
+      background: #000;   /* Qt loupe default (default.json loupeBGColor) */
     }
-    #canvas {
-      display: block;
-      width: 100%;
-      height: 100%;
-    }
-    @media (max-width: 720px) {
-      #viewport {
-        min-height: 300px;
-      }
-    }
+    #canvas { display: block; width: 100%; height: 100%; }
     #overlay {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      text-align: center;
-      color: #444;
-      pointer-events: none;
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      text-align: center; color: #55585f; pointer-events: none;
     }
     #overlay.hidden { display: none; }
     #overlay .big { font-size: 18px; font-weight: 300; margin-bottom: 6px; }
     #overlay .small { font-size: 11px; }
 
+    /* loupe control strip (Playback + View, MVP subset) */
+    #loupe-controls {
+      display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+      padding: 6px 10px; background: var(--bg2); border-top: 1px solid var(--bg3);
+    }
+    #loupe-controls .ctl-label {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--muted);
+    }
+    #frame-slider { flex: 1; accent-color: var(--hl2); min-width: 80px; }
+    #frame-label { font-size: 11px; color: var(--muted); min-width: 64px; text-align: right; }
+
+    /* satellite (popped-out) loupe: chrome hidden, viewport fills the window.
+       The main tab owns the single WebSocket; this tab renders scenes relayed
+       over a BroadcastChannel and sends frame intents back through it. */
+    body.loupe-only #objectbar,
+    body.loupe-only #tabbar,
+    body.loupe-only #popout-btn,
+    body.loupe-only .connection-field,
+    body.loupe-only #connect-btn,
+    body.loupe-only #disconnect-btn { display: none; }
+
+    @media (max-width: 720px) {
+      #main { flex-direction: column; }
+      #objectbar { width: 100%; max-height: 240px; border-right: 0; border-bottom: 1px solid var(--bg3); }
+      #topbar { flex-wrap: wrap; }
+      #topbar input { width: auto; min-width: 0; flex: 1 1 auto; }
+    }
+
     /* ── file browser modal ──────────────────────────────────────────── */
     #fb-modal {
       position: fixed; inset: 0; z-index: 100;
-      background: rgba(0,0,0,0.55);
+      background: rgba(0,0,0,0.6);
       display: flex; align-items: center; justify-content: center;
     }
     #fb-modal.hidden { display: none; }
     #fb-panel {
       width: 640px; max-width: 92vw; height: 70vh; max-height: 600px;
-      background: #20202a; border: 1px solid #3a3a44; border-radius: 8px;
+      background: var(--bg2); border: 1px solid var(--bg3); border-radius: 6px;
       display: flex; flex-direction: column; overflow: hidden;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6);
     }
     #fb-header {
       display: flex; align-items: center; gap: 6px;
-      padding: 8px 10px; border-bottom: 1px solid #3a3a44; flex-shrink: 0;
+      padding: 8px 10px; border-bottom: 1px solid var(--bg3); flex-shrink: 0;
     }
-    #fb-header .title { font-size: 12px; font-weight: 600; color: #7eb8f7; margin-right: 4px; }
+    #fb-header .title {
+      font-size: 12px; font-weight: 700; color: var(--hl2); margin-right: 4px;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
     #fb-path {
-      flex: 1; font-family: ui-monospace, monospace; font-size: 11px;
-      color: #99a; background: #1a1a1e; border: 1px solid #33333e;
+      flex: 1; font-family: var(--font); font-size: 11px;
+      color: var(--text1); background: var(--bg1); border: 1px solid var(--bg3);
       border-radius: 4px; padding: 3px 6px; overflow-x: auto; white-space: nowrap;
     }
-    #fb-list {
-      flex: 1; overflow-y: auto; padding: 4px;
-    }
+    #fb-list { flex: 1; overflow-y: auto; padding: 4px; }
     .fb-row {
       display: flex; align-items: center; gap: 8px;
       padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;
       user-select: none;
     }
-    .fb-row:hover { background: #2a2a36; }
-    .fb-row.selected { background: #2e4a6e; }
+    .fb-row:hover { background: var(--bg3); }
+    .fb-row.selected { background: var(--sel); }
     .fb-row .icon { width: 16px; text-align: center; flex-shrink: 0; }
     .fb-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .fb-row .size { color: #667; font-size: 10px; flex-shrink: 0; }
-    .fb-row.dir .name { color: #cfd2dc; }
-    .fb-row.file .name { color: #aab; }
-    #fb-error { color: #c05050; font-size: 11px; padding: 8px 12px; }
+    .fb-row .size { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+    .fb-row.dir .name { color: var(--text1); }
+    .fb-row.file .name { color: #9a9ca3; }
+    #fb-error { color: var(--danger); font-size: 11px; padding: 8px 12px; }
     #fb-footer {
       display: flex; align-items: center; gap: 8px;
-      padding: 8px 10px; border-top: 1px solid #3a3a44; flex-shrink: 0;
+      padding: 8px 10px; border-top: 1px solid var(--bg3); flex-shrink: 0;
     }
-    #fb-footer label { font-size: 11px; color: #888; }
+    #fb-footer label {
+      font-size: 10px; color: var(--muted); font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
     #fb-footer .spacer { flex: 1; }
+    select {
+      background: var(--bg2); border: none; border-bottom: 2px solid var(--hl1);
+      border-radius: 4px 4px 0 0; color: var(--hl2); padding: 3px 8px;
+      font-family: var(--font); font-size: 12px; height: 28px;
+    }
+    select:focus { outline: none; border-bottom-color: var(--hl2); }
     #fb-type { width: 130px; }
   </style>
 
@@ -245,41 +294,50 @@
   </div>
 
   <div id="main">
-    <div id="sidebar">
-      <div>
-        <div class="section-title">Dataset</div>
-        <select id="dataset-select" size="1">
-          <option value="">— none loaded —</option>
-        </select>
-        <button id="load-remote-btn" style="width:100%;margin-top:4px" disabled>Load Remote…</button>
+    <!-- object rail: loaded datasets + predictions, mirroring the Qt SideBar -->
+    <div id="objectbar">
+      <div class="obj-group">
+        <div class="obj-head">
+          <span class="section-title">Datasets</span>
+          <button id="add-dataset-btn" class="mini" title="Load dataset" disabled>+</button>
+        </div>
+        <div id="dataset-list" class="obj-list">
+          <div class="obj-empty">— none loaded —</div>
+        </div>
       </div>
 
-      <div>
-        <div class="section-title">Prediction</div>
-        <select id="model-select" size="1">
-          <option value="">— none —</option>
-        </select>
-        <button id="load-prediction-btn" style="width:100%;margin-top:4px" disabled>Load Prediction…</button>
-        <button id="open-view-btn" style="width:100%;margin-top:4px" disabled>Open View</button>
-      </div>
-
-      <div id="frame-section">
-        <div class="section-title">Frame</div>
-        <input id="frame-slider" type="range" min="0" max="0" value="0" step="1" disabled>
-        <div id="frame-label">0 / 0</div>
-      </div>
-
-      <div>
-        <div class="section-title">View</div>
-        <button id="reset-camera-btn" style="width:100%" disabled>Reset Camera</button>
+      <div class="obj-group">
+        <div class="obj-head">
+          <span class="section-title">Predictions</span>
+          <button id="add-prediction-btn" class="mini" title="Load prediction" disabled>+</button>
+        </div>
+        <div id="model-list" class="obj-list">
+          <div class="obj-empty">— none —</div>
+        </div>
       </div>
     </div>
 
-    <div id="viewport">
-      <canvas id="canvas"></canvas>
-      <div id="overlay">
-        <div class="big">No scene loaded</div>
-        <div class="small">Connect to ffast-server and open a view</div>
+    <!-- tabbed main content: 3D Loupe + analysis tabs -->
+    <div id="content">
+      <div id="tabbar"></div>
+      <div id="tabpanels">
+        <div class="tabpanel active" id="panel-loupe">
+          <div id="viewport">
+            <canvas id="canvas"></canvas>
+            <div id="overlay">
+              <div class="big">No scene loaded</div>
+              <div class="small">Connect, load a dataset, then select it to open the view</div>
+            </div>
+          </div>
+          <div id="loupe-controls">
+            <span class="ctl-label">Frame</span>
+            <input id="frame-slider" type="range" min="0" max="0" value="0" step="1" disabled>
+            <span id="frame-label">0 / 0</span>
+            <button id="reset-camera-btn" disabled>Reset Camera</button>
+            <button id="popout-btn" title="Open this 3D view in a new browser tab" disabled>⧉ New Tab</button>
+          </div>
+        </div>
+        <!-- analysis tab panels injected by ffast-viewer.js -->
       </div>
     </div>
   </div>
