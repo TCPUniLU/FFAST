@@ -75,10 +75,19 @@ class LocalServerManager:
             cmd.extend(extra_args)
 
         logger.info("Starting local server: %s", " ".join(cmd))
+        # Redirect the child's stdout/stderr to a log file rather than an
+        # undrained PIPE: an unread PIPE deadlocks the child once the OS buffer
+        # fills, and it hid the server's own startup errors/traceback from us.
+        # A file is drained by the OS and lets us read what the server did.
+        log_dir = os.path.expanduser(os.path.join("~", ".ffast", "logs"))
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, f"local-server-{port}.log")
+        log_file = open(log_path, "w")
+        logger.info("Local server log → %s", log_path)
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
         )
         return LocalServerProcess(
             port=port,

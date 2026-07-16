@@ -20,6 +20,7 @@ this manager's ``_fetch*Sync`` methods.
 
 import asyncio
 import logging
+import time
 
 import numpy as np
 
@@ -396,8 +397,17 @@ class ConnectionManager:
         manager = LocalServerManager()
         handle = manager.start(port, token)
 
-        for delay in (0.3, 0.5, 0.8, 1.0, 1.5):
-            import asyncio
+        # Poll until the server is ready or a wall-clock deadline elapses.
+        # A fixed short retry budget starved out under real load: the server's
+        # cold-import bootstrap competes with the Qt app's own startup (heavy
+        # imports, software rendering) and iCloud file-I/O jitter, so "ready"
+        # routinely slips past a few seconds. Poll generously and log *why*
+        # each attempt fails so a genuine startup failure is diagnosable.
+        deadline = time.monotonic() + 30.0
+        delay = 0.3
+        session = None
+        last_exc = None
+        while time.monotonic() < deadline:
             await asyncio.sleep(delay)
             if handle.process.poll() is not None:
                 self.eventPush(
@@ -407,10 +417,23 @@ class ConnectionManager:
                 )
                 return
             try:
-                session = await connect_direct(port=port, token=token.plaintext)
-            except Exception:
+                # Dial 127.0.0.1 explicitly, not "localhost": the managed local
+                # server binds 0.0.0.0 (IPv4), but "localhost" resolves to ::1
+                # first on macOS, so an IPv6 connect is attempted and refused
+                # before any IPv4 fallback. Pinning IPv4 avoids that detour.
+                session = await connect_direct(
+                    host="127.0.0.1", port=port, token=token.plaintext
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                logger.debug(
+                    "local server not ready yet (port %d): %s", port, exc
+                )
+                delay = min(delay * 1.4, 1.5)   # backoff, capped
                 continue
 
+        if session is not None:
             self.localServerConnection = session
             self.serverConnection = session   # ADR 0017-desktop: local IS remote
             session.is_local = True        # same-machine ⇒ eager-populate proxies
@@ -434,9 +457,13 @@ class ConnectionManager:
             return
 
         manager.stop(handle)
+        logger.warning(
+            "Local server did not become ready on port %d; last connect error: %r",
+            port, last_exc,
+        )
         self.eventPush(
             "TASK_PROGRESS", taskID,
-            message="Local server did not become ready",
+            message=f"Local server did not become ready ({last_exc})",
             error=True,
         )
 
