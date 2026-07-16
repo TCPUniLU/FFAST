@@ -50,6 +50,8 @@ function sampleStops(stops, t) {
  * Returns null on an unrecognized colormap name — the caller falls back to
  * the server's baked element colors, exactly the vispy adapter's contract
  * (`_map_color_by` returns None on failure).
+ * @param {import('./protocol.js').AtomColorBy} colorBy
+ * @returns {number[][]|null}
  */
 export function mapColorBy(colorBy) {
   const stops = COLORMAP_STOPS[colorBy.colormap];

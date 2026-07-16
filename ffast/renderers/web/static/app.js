@@ -476,6 +476,7 @@ export class FFastApp {
     return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
   }
 
+  /** @param {import('./protocol.js').SceneSnapshotKwargs} kw */
   _onSceneSnapshot(kw) {
     const scene = kw.scene;
     if (!scene) return;
@@ -503,18 +504,17 @@ export class FFastApp {
     this._broadcastScene();
   }
 
+  /** @param {import('./protocol.js').ScenePatchKwargs} kw */
   _onScenePatch(kw) {
-    const patch = kw.patch || kw;
-    if (!patch) return;
-    const changed = patch.changed || [];
-    this._renderer.applyPatch(patch, changed);
-    if (this._bc) this._bc.postMessage({ t: 'patch', patch, changed });
+    const changed = kw.changed || [];
+    this._renderer.applyPatch(kw, changed);
+    if (this._bc) this._bc.postMessage({ t: 'patch', patch: kw, changed });
   }
 
+  /** @param {import('./protocol.js').CommandResultKwargs} kw */
   _onCommandResult(kw) {
-    const result = kw.result || kw;
-    if (!result?.success) {
-      console.warn('VIEW_COMMAND failed:', result?.error);
+    if (!kw?.success) {
+      console.warn('VIEW_COMMAND failed:', kw?.error);
     }
   }
 

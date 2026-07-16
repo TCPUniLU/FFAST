@@ -78,6 +78,7 @@ export class MoleculeRenderer {
 
   // ── scene update ──────────────────────────────────────────────────────────
 
+  /** @param {import('./protocol.js').RenderScene} scene */
   applyScene(scene) {
     if (scene.atoms)      this._updateAtoms(scene.atoms);
     if (scene.bonds)      this._updateBonds(scene.bonds);
@@ -90,6 +91,10 @@ export class MoleculeRenderer {
     if (scene.camera)     this._applyCamera(scene.camera);
   }
 
+  /**
+   * @param {import('./protocol.js').ScenePatchKwargs} patch
+   * @param {string[]} changed
+   */
   applyPatch(patch, changed) {
     const c = new Set(Array.isArray(changed) ? changed : Object.keys(changed));
     if (c.has('atoms'))      { if (patch.atoms)      this._updateAtoms(patch.atoms);         else this._clearAtoms(); }
@@ -101,6 +106,7 @@ export class MoleculeRenderer {
     if (c.has('camera') && patch.camera) this._applyCamera(patch.camera);
   }
 
+  /** @param {import('./protocol.js').AtomScene} atoms */
   _updateAtoms(atoms) {
     this._clearAtoms();
     const n = atoms.positions.length;
@@ -143,6 +149,7 @@ export class MoleculeRenderer {
     this._scene.add(mesh);
   }
 
+  /** @param {import('./protocol.js').BondScene} bonds */
   _updateBonds(bonds) {
     this._clearBonds();
     const segs = bonds.segments;
@@ -161,6 +168,7 @@ export class MoleculeRenderer {
     this._scene.add(this._bondLines);
   }
 
+  /** @param {import('./protocol.js').ForceScene} forces */
   _updateForces(forces) {
     this._clearForces();
     if (!forces.starts || forces.starts.length === 0) return;
@@ -182,6 +190,7 @@ export class MoleculeRenderer {
     this._scene.add(group);
   }
 
+  /** @param {import('./protocol.js').UnitCellScene|null} unitCell */
   _updateUnitCell(unitCell) {
     this._clearUnitCell();
     const segs = unitCell?.segments;
@@ -238,6 +247,7 @@ export class MoleculeRenderer {
     this._clearSelections();
   }
 
+  /** @param {import('./protocol.js').LabelScene|null} labels */
   _updateLabels(labels) {
     this._clearLabels();
     if (!labels || !labels.texts || labels.texts.length === 0) return;
@@ -269,6 +279,7 @@ export class MoleculeRenderer {
     }
   }
 
+  /** @param {import('./protocol.js').SelectionOverlay[]} selections */
   _updateSelections(selections) {
     this._clearSelections();
     if (!selections || selections.length === 0 || !this._cachedAtomPositions) return;
@@ -302,6 +313,7 @@ export class MoleculeRenderer {
     }
   }
 
+  /** @param {import('./protocol.js').CameraState} cam */
   _applyCamera(cam) {
     // cam fields: center, distance, azimuth, elevation, fov, projection
     const { center = [0,0,0], distance = 10, azimuth = 0, elevation = 30, fov = 60 } = cam;
@@ -318,6 +330,7 @@ export class MoleculeRenderer {
     this._controls.update();
   }
 
+  /** @returns {import('./protocol.js').CameraState} */
   _exportCamera() {
     const pos = this._camera.position;
     const target = this._controls.target;
