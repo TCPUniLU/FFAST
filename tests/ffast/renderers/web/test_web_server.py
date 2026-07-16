@@ -199,3 +199,68 @@ class TestRendererAPIContract:
         sel_def_start = viewer_js_source.index("_updateSelections(selections) {")
         sel_preamble = viewer_js_source[sel_def_start:sel_def_start + 300]
         assert "_cachedAtomPositions" in sel_preamble
+
+    # ── color_by (ADR 0016/0043): value-driven coloring, browser twin of the
+    # vispy adapter's _map_color_by ──────────────────────────────────────────
+
+    def test_update_atoms_reads_color_by(self, viewer_js_source):
+        update_atoms_start = viewer_js_source.index("_updateAtoms(atoms)")
+        update_atoms_end = viewer_js_source.index("_updateBonds(bonds)")
+        body = viewer_js_source[update_atoms_start:update_atoms_end]
+        assert "atoms.color_by" in body
+
+    def test_update_atoms_falls_back_on_unmapped_color_by(self, viewer_js_source):
+        # Mirrors the vispy adapter: mapColorBy returning falsy → element colors.
+        update_atoms_start = viewer_js_source.index("_updateAtoms(atoms)")
+        update_atoms_end = viewer_js_source.index("_updateBonds(bonds)")
+        body = viewer_js_source[update_atoms_start:update_atoms_end]
+        assert "mapColorBy(" in body
+        assert "atoms.colors" in body  # the fallback value
+
+
+@pytest.fixture(scope="module")
+def colormap_js_source():
+    path = os.path.join(STATIC_DIR, "colormap.js")
+    with open(path) as f:
+        return f.read()
+
+
+class TestColorByMapping:
+    """colormap.js is pure mapping logic — pinned with source-level assertions
+    per the ADR 0045 testing decision, rather than a browser test."""
+
+    def test_exports_map_color_by(self, colormap_js_source):
+        assert "export function mapColorBy(" in colormap_js_source
+
+    def test_normalizes_between_vmin_and_vmax(self, colormap_js_source):
+        assert "vmin" in colormap_js_source and "vmax" in colormap_js_source
+
+    def test_guards_degenerate_range(self, colormap_js_source):
+        # hi <= lo must not divide by zero (mirrors adapter.py's hi <= lo branch).
+        assert "hi <= lo" in colormap_js_source
+
+    def test_recognizes_configured_colormaps(self, colormap_js_source):
+        # These are the colormap names actually configured/tested elsewhere in
+        # the repo (test_config.py, test_metric_adapter.py, adapter.py).
+        for name in ("viridis", "plasma", "force_error"):
+            assert f"{name}:" in colormap_js_source
+
+    def test_force_error_stops_match_the_vispy_adapter(self, colormap_js_source):
+        # adapter.py's custom colormap is defined by these literal RGB triples
+        # (ffast/renderers/vispy/adapter.py `_get_colormap`, "force_error"
+        # branch) — keep the JS twin numerically identical, not just similarly
+        # named.
+        # STATIC_DIR = .../ffast/renderers/web/static
+        adapter_path = os.path.join(
+            os.path.dirname(os.path.dirname(STATIC_DIR)), "vispy", "adapter.py"
+        )
+        with open(adapter_path) as f:
+            adapter_src = f.read()
+        start = adapter_src.index('if name == "force_error"')
+        end = adapter_src.index("return get_colormap(name)")
+        stops_src = adapter_src[start:end]
+        for triple in ("0.1, 0.1, 0.9", "0.1, 0.9, 0.1", "0.9, 0.9, 0.1", "0.5, 0.1, 0.1", "0.9, 0.1, 0.1"):
+            assert triple in stops_src, "adapter.py's force_error stops changed"
+            assert f"[{triple}]" in colormap_js_source, (
+                f"colormap.js force_error stop [{triple}] no longer matches adapter.py"
+            )

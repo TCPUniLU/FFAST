@@ -4,6 +4,7 @@
 
 import * as THREE from 'three';
 import { OrbitControls } from './vendor/three/OrbitControls.js';
+import { mapColorBy } from './colormap.js';
 
 export class MoleculeRenderer {
   constructor(canvas) {
@@ -107,6 +108,16 @@ export class MoleculeRenderer {
     this._cachedAtomPositions = atoms.positions;
     this._cachedAtomSizes = atoms.sizes;
 
+    // Value-driven coloring (ADR 0016): map color_by.values→RGB client-side;
+    // fall back to the server's baked element colors on an unrecognized
+    // colormap (the browser twin of the vispy adapter's _map_color_by).
+    let colors = atoms.colors;
+    if (atoms.color_by) {
+      const mapped = mapColorBy(atoms.color_by);
+      if (mapped) colors = mapped;
+      else console.warn(`MoleculeRenderer: unknown colormap '${atoms.color_by.colormap}' — using element colors`);
+    }
+
     const mesh = new THREE.InstancedMesh(this._sphereGeo, this._atomMat.clone(), n);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
@@ -121,7 +132,7 @@ export class MoleculeRenderer {
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
 
-      const [cr, cg, cb] = atoms.colors[i];
+      const [cr, cg, cb] = colors[i];
       color.setRGB(cr, cg, cb);
       mesh.setColorAt(i, color);
     }
