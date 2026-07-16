@@ -61,23 +61,31 @@ class TestStartStaticServer:
 
 @pytest.fixture(scope="module")
 def viewer_js_source():
-    """Read ffast-viewer.js once for all contract tests."""
-    path = os.path.join(STATIC_DIR, "ffast-viewer.js")
+    """Read renderer.js once for all contract tests — MoleculeRenderer's module
+    since the ES-module split (ADR 0045 Phase 0)."""
+    path = os.path.join(STATIC_DIR, "renderer.js")
     with open(path) as f:
         return f.read()
 
 
+@pytest.fixture(scope="module")
+def connection_js_source():
+    path = os.path.join(STATIC_DIR, "connection.js")
+    with open(path) as f:
+        return f.read()
+
+
+class TestConnectionAPIContract:
+    def test_hello_advertises_webgl_renderer(self, connection_js_source):
+        assert "renderer: 'webgl'" in connection_js_source
+
+
 class TestRendererAPIContract:
-    """Verify ffast-viewer.js implements the same scene-adapter API as VispySceneAdapter.
+    """Verify renderer.js implements the same scene-adapter API as VispySceneAdapter.
 
     These are static contract tests — they parse the JS source for required identifiers
     rather than running it (no browser required).
     """
-
-    # ── protocol ──────────────────────────────────────────────────────────────
-
-    def test_hello_advertises_webgl_renderer(self, viewer_js_source):
-        assert "renderer: 'webgl'" in viewer_js_source
 
     # ── public API surface ────────────────────────────────────────────────────
 
