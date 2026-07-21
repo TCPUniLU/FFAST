@@ -454,3 +454,201 @@ async def test_web_playback_advances_frames_and_stops_on_pause(ffast_web_server)
             assert still_paused_frame == paused_frame, "frame index kept advancing after pause"
         finally:
             await browser.close()
+
+
+# ── Phase 2: selection & picking ─────────────────────────────────────────────
+
+async def _open_loupe(page, ws_port, web_port, dataset_fp):
+    """Connect, select the dataset, wait for the 3D view to be live."""
+    await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+    await page.locator("#connect-btn").click()
+    await expect(page.locator("#status")).to_contain_text("Connected")
+    dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
+    await expect(dataset_row).to_have_count(1)
+    await dataset_row.click()
+    await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
+    await page.wait_for_timeout(300)
+
+
+async def _atom_page_xy(page, index):
+    """Page-space (client) pixel position of a displayed atom, or None."""
+    return await page.evaluate(
+        """(i) => {
+          const s = window.ffastApp.renderer.atomScreenPosition(i);
+          if (!s) return null;
+          const r = document.getElementById('canvas').getBoundingClientRect();
+          return { x: r.left + s.x, y: r.top + s.y };
+        }""",
+        index,
+    )
+
+
+async def _selection_mesh_count(page):
+    return await page.evaluate("() => window.ffastApp.renderer._selectionMeshes.size")
+
+
+async def test_web_pick_click_and_box_render_selection_overlay(ffast_web_server):
+    """ADR 0045 issue 10 gate: with a pick tool armed, a click selects the
+    nearest atom and a box-drag selects a group — each commits to the server
+    and renders a selection overlay."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            assert await _selection_mesh_count(page) == 0
+
+            # Arm the Extract tool (keeps the picked overlay; rectangle-capable).
+            await page.locator("#pick-toolbar button[data-tool='extract']").click()
+            await expect(page.locator("#pick-strip")).not_to_have_class(re.compile(r"\bhidden\b"))
+
+            # Click the nearest atom → overlay renders.
+            xy = await _atom_page_xy(page, 0)
+            assert xy is not None
+            await page.mouse.click(xy["x"], xy["y"])
+            await expect(page.locator("#pick-strip-count")).to_contain_text("picked")
+            await page.wait_for_function(
+                "() => window.ffastApp.renderer._selectionMeshes.size > 0"
+            )
+
+            # Clear (overlay drops to zero), then box-drag across the viewport →
+            # overlay renders again, proving the box gesture itself selected.
+            await page.locator("#pick-clear").click()
+            await page.wait_for_function(
+                "() => window.ffastApp.renderer._selectionMeshes.size === 0"
+            )
+            rect = await page.locator("#canvas").bounding_box()
+            cx, cy = rect["x"] + rect["width"] / 2, rect["y"] + rect["height"] / 2
+            await page.mouse.move(cx - rect["width"] / 3, cy - rect["height"] / 3)
+            await page.mouse.down()
+            await page.mouse.move(cx + rect["width"] / 3, cy + rect["height"] / 3, steps=6)
+            await page.mouse.up()
+            await page.wait_for_function(
+                "() => window.ffastApp.renderer._selectionMeshes.size > 0"
+            )
+        finally:
+            await browser.close()
+
+
+async def test_web_info_tool_reports_distance(ffast_web_server):
+    """ADR 0045 issue 11 gate: picking two atoms with the Info tool reports a
+    distance read-out in the pick strip."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator("#pick-toolbar button[data-tool='info']").click()
+
+            # Two atoms that project far apart on screen, so a click on each
+            # lands within the pick radius of distinct atoms.
+            far = await page.evaluate(
+                """() => {
+                  const R = window.ffastApp.renderer;
+                  const rect = document.getElementById('canvas').getBoundingClientRect();
+                  const a = R.atomScreenPosition(0);
+                  let bestI = -1, bestD = -1;
+                  for (let i = 1; i < R.atomCount; i++) {
+                    const s = R.atomScreenPosition(i);
+                    if (!s) continue;
+                    const d = (s.x - a.x) ** 2 + (s.y - a.y) ** 2;
+                    if (d > bestD) { bestD = d; bestI = i; }
+                  }
+                  const b = R.atomScreenPosition(bestI);
+                  return {
+                    a: { x: rect.left + a.x, y: rect.top + a.y },
+                    b: { x: rect.left + b.x, y: rect.top + b.y },
+                  };
+                }"""
+            )
+            await page.mouse.click(far["a"]["x"], far["a"]["y"])
+            await page.mouse.click(far["b"]["x"], far["b"]["y"])
+            await expect(page.locator("#pick-strip-count")).to_contain_text("2 picked")
+            await expect(page.locator("#pick-readout")).to_contain_text("Distance")
+        finally:
+            await browser.close()
+
+
+async def test_web_extract_creates_subset_dataset(ffast_web_server):
+    """ADR 0045 issue 12 gate: typing indices and extracting creates a new
+    subset dataset that appears in the dataset list."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(1)
+
+            indices = page.locator(
+                ".pane[data-pane='Extract Subset'] .ctl-row[data-label='Indices'] input"
+            )
+            await indices.fill("0 1 2")
+            await page.locator(
+                ".pane[data-pane='Extract Subset'] button", has_text="Extract as Subset Dataset"
+            ).click()
+
+            # The server materialises an AtomFilteredDataset and announces it via
+            # REMOTE_DATASET_META → a second row appears in the dataset list.
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
+        finally:
+            await browser.close()
+
+
+async def test_web_alignment_pane_wires_kabsch_and_exclusive_modes(ffast_web_server):
+    """ADR 0045 issue 13 gate: the Alignment pane drives the server alignment
+    features (a VIEW_COMMAND is issued) and its two modes are mutually
+    exclusive as in Qt. A rendered-orientation diff is not asserted here — the
+    bundled example trajectory is a variable dataset (per-frame atom counts
+    differ), for which Kabsch-to-frame-0 correctly no-ops; the wiring and the
+    mode exclusivity are the parts this data can verify."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    page_errors: list[str] = []
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        page.on("pageerror", lambda exc: page_errors.append(str(exc)))
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+
+            kabsch = page.locator(
+                ".pane[data-pane='Alignment'] .ctl-row[data-label='Kabsch align'] input"
+            )
+            heavy_row = page.locator(
+                ".pane[data-pane='Alignment'] .ctl-row[data-label='Heavy atoms only']"
+            )
+            atom_align = page.locator(
+                ".pane[data-pane='Alignment'] .ctl-row[data-label='3-atom frame align'] input"
+            )
+
+            # Heavy-only is contextual on Kabsch (hidden until enabled).
+            await expect(heavy_row).to_be_hidden()
+            v0 = await page.evaluate("() => window.ffastApp._viewVersion")
+            await kabsch.check()
+            await expect(heavy_row).to_be_visible()
+            v1 = await page.evaluate("() => window.ffastApp._viewVersion")
+            assert v1 > v0, "checking Kabsch should issue a VIEW_COMMAND"
+
+            # Enabling 3-atom mode auto-disables Kabsch (mutually exclusive).
+            await atom_align.check()
+            await expect(kabsch).not_to_be_checked()
+            await expect(heavy_row).to_be_hidden()
+            ref_row = page.locator(
+                ".pane[data-pane='Alignment'] .ctl-row[data-label='Reference atoms']"
+            )
+            await expect(ref_row).to_be_visible()
+        finally:
+            await browser.close()
+
+    assert not page_errors

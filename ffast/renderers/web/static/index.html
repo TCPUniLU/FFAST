@@ -164,6 +164,38 @@
     .placeholder .ph-title { color: var(--text1); font-size: 14px; }
     .placeholder .ph-sub { font-size: 11px; max-width: 380px; line-height: 1.6; }
 
+    /* ── pick toolbar + contextual strip (issue 10) ──────────────────── */
+    #pick-bar {
+      display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+      padding: 4px 10px; background: var(--bg2); border-bottom: 1px solid var(--bg3);
+      min-height: 30px;
+    }
+    #pick-toolbar { display: flex; gap: 4px; }
+    .pick-tool-btn {
+      width: 30px; height: 24px; padding: 0; font-size: 13px; line-height: 1;
+      background: var(--bg3); border-radius: 3px;
+    }
+    .pick-tool-btn.active {
+      background: var(--hl2); color: var(--text2);
+      box-shadow: inset 0 0 0 1px var(--hl2);
+    }
+    #pick-strip {
+      display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text1);
+    }
+    #pick-strip.hidden { display: none; }
+    #pick-strip .pick-sep { color: var(--muted); }
+    #pick-strip-tool { color: var(--hl2); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+    #pick-strip-count { color: var(--text1); }
+    #pick-strip-radius { color: var(--muted); }
+    #pick-readout { color: var(--text2); font-variant-numeric: tabular-nums; }
+    #pick-clear { width: 22px; height: 20px; padding: 0; font-size: 11px; }
+
+    /* rubber-band box while dragging a rectangle pick tool */
+    #pick-rect {
+      position: absolute; display: none; z-index: 5; pointer-events: none;
+      border: 1px solid var(--hl2); background: var(--sel);
+    }
+
     /* ── 3D viewport (inside the Loupe tab) ──────────────────────────── */
     #viewport {
       flex: 1;
@@ -264,6 +296,7 @@
     body.loupe-only #connect-btn,
     body.loupe-only #disconnect-btn,
     body.loupe-only #loupe-sidebar,
+    body.loupe-only #pick-bar,
     body.loupe-only #prev-frame-btn,
     body.loupe-only #play-pause-btn,
     body.loupe-only #next-frame-btn,
@@ -394,6 +427,19 @@
       <div id="tabpanels">
         <div class="tabpanel active" id="panel-loupe">
           <div id="viewport-col">
+            <!-- pick toolbar + contextual strip (ADR 0045 Phase 2, issue 10):
+                 one armed tool at a time, with its live pick count + read-out -->
+            <div id="pick-bar">
+              <div id="pick-toolbar"></div>
+              <div id="pick-strip" class="hidden">
+                <span id="pick-strip-tool"></span>
+                <span class="pick-sep">·</span>
+                <span id="pick-strip-count"></span>
+                <span id="pick-strip-radius"></span>
+                <span id="pick-readout"></span>
+                <button id="pick-clear" title="Clear picks">✕</button>
+              </div>
+            </div>
             <div id="viewport">
               <canvas id="canvas"></canvas>
               <div id="overlay">

@@ -1,9 +1,10 @@
 /**
  * Bonds pane (ADR 0045 issue 06). Mirrors modules/loupe/loupeBonds.py.
  * Width/colour are client-render-only (no wire parameter, matches Qt); mode
- * and fixed-indices drive the server's ffast.bonds stage. Pick-to-add/remove
- * is deferred to the picking infrastructure (#10) — this pane covers the
- * non-picking controls only.
+ * and fixed-indices drive the server's ffast.bonds stage. The Bonds pick tool
+ * (#10) edits the fixed set via toggleBondPair — two picks toggle a canonical
+ * pair, seeding from the current dynamic bonds when the set is empty (Qt's
+ * BondSelect.selectCallback).
  */
 
 import { createPane, sliderRow, colorRow, selectRow, row, buttonRow, rowElement } from '../sidebar.js';
@@ -102,5 +103,27 @@ export function createBondsPane(sidebarEl, callbacks) {
   }
   _syncVisibility();
 
-  return {};
+  return {
+    /**
+     * Toggle bond (a, b) in the fixed set from two picked atoms (Qt's
+     * BondSelect): seed from the current dynamic bonds when the set is empty so
+     * editing doesn't collapse the topology, canonicalise as a sorted pair,
+     * toggle membership, switch to Fixed mode, and re-apply.
+     */
+    toggleBondPair(a, b) {
+      if (a === b) return;
+      if (fixedIndices.length === 0) fixedIndices = callbacks.getDynamicBondPairs();
+      const key = ([x, y]) => (x < y ? `${x}-${y}` : `${y}-${x}`);
+      const target = key([a, b]);
+      const idx = fixedIndices.findIndex((p) => key(p) === target);
+      if (idx >= 0) fixedIndices.splice(idx, 1);
+      else fixedIndices.push(a < b ? [a, b] : [b, a]);
+      bondType = 'Fixed';
+      typeSelect.value = 'Fixed';
+      _syncVisibility();
+      textarea.value = formatBondPairs(fixedIndices);
+      _showHint(0);
+      callbacks.onApply(bondType, fixedIndices);
+    },
+  };
 }

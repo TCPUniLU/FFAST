@@ -19,3 +19,7 @@ const _params = new URLSearchParams(window.location.search);
 const app = (_params.get('mode') === 'loupe' && typeof BroadcastChannel !== 'undefined')
   ? new LoupeSatelliteApp(_params.get('ch') || 'ffast-loupe')
   : new FFastApp();
+
+// Expose the live app for debugging and the Playwright runtime tests (which
+// compute an atom's screen position via app.renderer to drive a real pick).
+window.ffastApp = app;

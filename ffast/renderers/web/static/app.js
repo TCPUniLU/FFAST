@@ -4,11 +4,29 @@
 
 import { FFastConnection } from './connection.js';
 import { MoleculeRenderer } from './renderer.js';
+import { PickController } from './picking.js';
+import { infoReadout } from './measure.js';
 import { createColorByPane } from './panes/colorby.js';
 import { createCameraPane } from './panes/camera.js';
 import { createDisplayPane } from './panes/display.js';
 import { createBondsPane } from './panes/bonds.js';
 import { createForcesPane } from './panes/forces.js';
+import { createExtractPane } from './panes/extract.js';
+import { createAlignPane } from './panes/align.js';
+
+/**
+ * The five pick tools (ADR 0045 Phase 2). Each mirrors a Qt AtomSelectionBase
+ * subclass: `multiselect` caps the picked set, `cycle` makes it a rolling
+ * window, `rectangle` enables box-select drag.
+ * @type {Object<string,{label:string, icon:string, multiselect:number, cycle?:boolean, rectangle?:boolean}>}
+ */
+const PICK_TOOLS = {
+  info:    { label: 'Info',    icon: '📐', multiselect: 4,     cycle: true },
+  bonds:   { label: 'Bonds',   icon: '🔗', multiselect: 2 },
+  align:   { label: 'Align',   icon: '△', multiselect: 3 },
+  forces:  { label: 'Force',   icon: '➤', multiselect: 10000, rectangle: true },
+  extract: { label: 'Extract', icon: '✂', multiselect: 10000, rectangle: true },
+};
 
 export class FFastApp {
   constructor() {
@@ -39,17 +57,29 @@ export class FFastApp {
     this._viewVersion = 0;
     this._metricCatalog = [];
     this._originCenterOfMass = true;
-    this._forcesState = { show: false, modelKey: null, length: 10, normalised: true };
+    this._forcesState = { show: false, modelKey: null, length: 10, normalised: true, filterEnabled: false, atomIndices: [] };
     this._dsSettings = new Map();  // dataset fp → restorable per-dataset settings
     this._playing = false;
     this._patchPending = false;
+
+    // Picking (ADR 0045 Phase 2, issue 10): one armed tool at a time, its
+    // accumulated picks (displayed index + scientific atom id), and the pick
+    // radius the Display pane feeds in.
+    this._pickController = null;
+    this._activeTool = null;   // tool id, or null (orbit)
+    this._picked = [];         // [{displayIndex, atomId}] for the active tool
+    this._pickRadius = 12;
 
     this._initRenderer();
     this._initTabs();
     this._initUI();
     this._initSidebarPanes();
+    this._initPickTools();
     this._applyUrlParams();
   }
+
+  /** @returns {MoleculeRenderer} public accessor (tests, tooltips). */
+  get renderer() { return this._renderer; }
 
   // ── tabs: 3D Loupe + analysis tabs (mirrors the Qt MainContentTabWidget) ──
   // The analysis tabs are placeholders until ADR 0043 ships REQUEST_TAB_LAYOUT
@@ -165,7 +195,7 @@ export class FFastApp {
       onAtomSize: (scale) => this._sendSetParameter('ffast.atom_sizes', 'scale', scale),
       onHideAtoms: (tokens) => this._sendSetParameter('ffast.atom_filter', 'indices', tokens),
       onHighlight: (indices) => this._sendSetSelection('picked', 'current_structure', indices),
-      onPickRadius: () => {},   // stored for future picking infra (#10); no wire effect yet
+      onPickRadius: (px) => { this._pickRadius = px; this._updatePickStrip(); },
       onUnitCell: (visible) => this._sendToggleFeature('no_unit_cell', !visible),
     });
 
@@ -186,7 +216,25 @@ export class FFastApp {
       getModels: () => this._models,
     });
 
-    this._panes = { colorBy, camera, display, bonds, forces };
+    const extract = createExtractPane(sidebarEl, {
+      onExtract: (tokens) => this._sendCreateSubset(tokens),
+    });
+
+    const align = createAlignPane(sidebarEl, {
+      onKabsch: (enabled, heavyOnly) => {
+        this._sendToggleFeature('kabsch_align', enabled);
+        if (enabled) this._sendSetParameter('ffast.kabsch_alignment', 'heavy_only', heavyOnly);
+      },
+      onAtomAlign: (enabled, indices) => {
+        this._sendToggleFeature('atom_align', enabled);
+        if (enabled && indices.length === 3) {
+          this._sendSetParameter('ffast.atom_align', 'atom_indices', indices);
+          this._sendSetParameter('ffast.atom_align', 'reference_frame', this._currentFrame());
+        }
+      },
+    });
+
+    this._panes = { colorBy, camera, display, bonds, forces, extract, align };
   }
 
   _applyUrlParams() {
@@ -260,6 +308,7 @@ export class FFastApp {
     this._currentViewId = null;
     this._lastOpenedDatasetFp = null;
     this._playing = false;
+    this._setActiveTool(null);   // release any armed pick tool
     this._renderObjects();
     document.getElementById('connect-btn').disabled = false;
     document.getElementById('disconnect-btn').disabled = true;
@@ -381,7 +430,11 @@ export class FFastApp {
     if (datasetChanged) {
       this._lastOpenedDatasetFp = this._currentDatasetFp;
       this._restoreDatasetSettings(this._currentDatasetFp);
+      this._clearPicks();   // picked atom ids are dataset-specific
     }
+    // The Extract Subset pane is meaningless for datasets that are already
+    // subsets (Qt's AtomFilterPaneHiding).
+    this._panes.extract.setVisible(!(this._datasets.get(this._currentDatasetFp)?.is_sub));
   }
 
   // ── per-dataset settings (issues 04/07/08): Qt's Settings.markAsPerDataset,
@@ -676,6 +729,125 @@ export class FFastApp {
     this._sendViewCommand({ type: 'SET_SELECTION', name, scope, indices });
   }
 
+  // ── picking (ADR 0045 Phase 2) ──────────────────────────────────────────
+  // A pick toolbar (one button per tool) + a contextual strip (active tool,
+  // pick count, radius, read-out, clear). The PickController owns the pointer
+  // while a tool is armed and reports resolved atoms here.
+  _initPickTools() {
+    const toolbar = document.getElementById('pick-toolbar');
+    for (const [id, t] of Object.entries(PICK_TOOLS)) {
+      const btn = document.createElement('button');
+      btn.className = 'pick-tool-btn';
+      btn.dataset.tool = id;
+      btn.textContent = t.icon;
+      btn.title = `${t.label} pick tool`;
+      btn.addEventListener('click', () => this._setActiveTool(this._activeTool === id ? null : id));
+      toolbar.appendChild(btn);
+    }
+    document.getElementById('pick-clear').addEventListener('click', () => this._clearPicks());
+    this._pickController = new PickController(
+      document.getElementById('canvas'),
+      document.getElementById('viewport'),
+      this._renderer,
+      { getRadius: () => this._pickRadius, onPick: (entries, opts) => this._onPick(entries, opts) },
+    );
+    this._pickReadout = '';
+    this._updatePickStrip();
+  }
+
+  /** Arm a pick tool (or `null` to return to orbit); toggling the active one disarms. */
+  _setActiveTool(id) {
+    this._activeTool = id;
+    this._clearPicks();   // switching tools starts a fresh picked set
+    for (const btn of document.querySelectorAll('#pick-toolbar .pick-tool-btn'))
+      btn.classList.toggle('active', btn.dataset.tool === id);
+    if (id) {
+      this._pickController.arm({ id, ...PICK_TOOLS[id] });
+      if (id === 'align') this._panes.align.enableAtomAlignMode();
+    } else if (this._pickController) {
+      this._pickController.disarm();
+    }
+    this._updatePickStrip();
+  }
+
+  /** Toggle an entry in the picked set (Qt AtomSelectionBase.selectAtom). */
+  _togglePick(entry, tool) {
+    const i = this._picked.findIndex((e) => e.atomId === entry.atomId);
+    if (i >= 0) this._picked.splice(i, 1);
+    else this._picked.push(entry);
+    if (tool.cycle && this._picked.length > tool.multiselect)
+      this._picked.splice(0, this._picked.length - tool.multiselect);
+  }
+
+  /** @param {Array<{displayIndex:number, atomId:number}>} entries */
+  _onPick(entries, { isBox } = {}) {
+    if (!this._activeTool) return;
+    const tool = PICK_TOOLS[this._activeTool];
+    for (const e of entries) this._togglePick(e, tool);
+    if (!tool.cycle && this._picked.length > tool.multiselect)
+      this._picked.splice(0, this._picked.length - tool.multiselect);
+    this._reactTool(this._activeTool);
+    this._updatePickStrip();
+  }
+
+  /** Apply the active tool's effect to its accumulated picks. */
+  _reactTool(id) {
+    const ids = this._picked.map((e) => e.atomId);
+    // Every tool shows the current picks as a selection overlay; bonds/align
+    // clear the set after acting so the overlay tracks the fresh set.
+    this._sendSetSelection('picked', 'current_structure', ids);
+    if (id === 'info') {
+      const pts = this._picked.map((e) => this._renderer.atomPosition(e.displayIndex)).filter(Boolean);
+      this._pickReadout = infoReadout(pts, ids);
+    } else if (id === 'extract') {
+      this._panes.extract.setPickedIndices(ids);
+    } else if (id === 'forces') {
+      this._panes.forces.setPickedIndices(ids);
+    } else if (id === 'bonds') {
+      if (this._picked.length === 2) {
+        this._panes.bonds.toggleBondPair(ids[0], ids[1]);
+        this._picked = [];
+        this._sendSetSelection('picked', 'current_structure', []);
+      }
+    } else if (id === 'align') {
+      this._panes.align.setPickedIndices(ids);
+      if (this._picked.length === 3) {
+        this._panes.align.applyAtomAlign();
+        this._picked = [];
+        this._setActiveTool(null);   // Qt auto-disarms the align tool after 3
+      }
+    }
+  }
+
+  _clearPicks() {
+    this._picked = [];
+    this._pickReadout = '';
+    this._sendSetSelection('picked', 'current_structure', []);
+    this._updatePickStrip();
+  }
+
+  _updatePickStrip() {
+    const strip = document.getElementById('pick-strip');
+    if (!strip) return;
+    if (!this._activeTool) { strip.classList.add('hidden'); return; }
+    strip.classList.remove('hidden');
+    document.getElementById('pick-strip-tool').textContent = PICK_TOOLS[this._activeTool].label;
+    document.getElementById('pick-strip-count').textContent = `${this._picked.length} picked`;
+    document.getElementById('pick-strip-radius').textContent = `radius ${this._pickRadius}px`;
+    document.getElementById('pick-readout').textContent = this._pickReadout || '';
+  }
+
+  /** Extract-as-subset: ship the raw index/element tokens; the server resolves
+   * them and announces the new AtomFilteredDataset via REMOTE_DATASET_META. */
+  _sendCreateSubset(tokens) {
+    if (!this._conn || !this._currentDatasetFp) return;
+    this._conn.send('CREATE_SUBSET', {
+      parent_fingerprint: this._currentDatasetFp,
+      indices: tokens,
+    });
+    this._setStatus('Extracting subset…', 'connected');
+  }
+
   /** @param {import('./protocol.js').MetricCatalogKwargs} kw */
   _onMetricCatalog(kw) {
     this._metricCatalog = kw.metrics || [];
@@ -694,6 +866,8 @@ export class FFastApp {
       this._sendSetParameter('ffast.force_arrows', 'prediction_ref', state.modelKey);
       this._sendSetParameter('ffast.force_arrows', 'length_factor', state.length);
       this._sendSetParameter('ffast.force_arrows', 'normalised', state.normalised);
+      this._sendSetParameter('ffast.force_arrows', 'filter_enabled', !!state.filterEnabled);
+      this._sendSetParameter('ffast.force_arrows', 'atom_indices', state.atomIndices || []);
     }
   }
 

@@ -51,6 +51,7 @@ export class MoleculeRenderer {
     this._selectionMeshes = new Map(); // overlay name → THREE.InstancedMesh
     this._cachedAtomPositions = null;  // atoms.positions from last _updateAtoms call
     this._cachedAtomSizes = null;      // atoms.sizes from last _updateAtoms call
+    this._cachedAtomIds = null;        // atoms.atom_ids (displayed→scientific, ADR 0015)
 
     // Geometry template for atoms (shared, low-poly sphere)
     this._sphereGeo = new THREE.SphereGeometry(1, 10, 8);
@@ -198,6 +199,7 @@ export class MoleculeRenderer {
     if (n === 0) return;
     this._cachedAtomPositions = atoms.positions;
     this._cachedAtomSizes = atoms.sizes;
+    this._cachedAtomIds = atoms.atom_ids || null;
 
     // Value-driven coloring (ADR 0016): map color_by.values→RGB client-side;
     // fall back to the server's baked element colors on an unrecognized
@@ -321,6 +323,7 @@ export class MoleculeRenderer {
     }
     this._cachedAtomPositions = null;
     this._cachedAtomSizes = null;
+    this._cachedAtomIds = null;
   }
   _clearBonds()     { if (this._bondLines)    { this._scene.remove(this._bondLines);    this._bondLines.geometry.dispose();     this._bondLines    = null; } this._lastBonds = null; }
   _clearForces()    { if (this._forceGroup)   { this._scene.remove(this._forceGroup);                                            this._forceGroup   = null; } }
@@ -484,5 +487,94 @@ export class MoleculeRenderer {
     this._controls.target.add(delta);
     this._camera.position.add(delta);
     this._controls.update();
+  }
+
+  // ── picking (ADR 0045 issue 10 / ADR 0015) ───────────────────────────────
+  // The browser twin of the vispy adapter's pick_at/pick_in_rect: project the
+  // cached displayed atom centres to canvas pixels through the live camera and
+  // resolve by screen distance + depth. Displayed indices map to scientific
+  // atom ids via atom_ids (ADR 0015), the same space SET_SELECTION expects.
+
+  /** Suspend/resume orbit while a pick tool owns the pointer. */
+  setControlsEnabled(enabled) {
+    this._controls.enabled = !!enabled;
+  }
+
+  /** Displayed index → scientific atom id (identity when the server ships no map). */
+  atomIdOf(displayIndex) {
+    const ids = this._cachedAtomIds;
+    return ids && ids[displayIndex] != null ? ids[displayIndex] : displayIndex;
+  }
+
+  get atomCount() {
+    return this._cachedAtomPositions ? this._cachedAtomPositions.length : 0;
+  }
+
+  /** Project displayed atom `i` to canvas-local CSS pixels; returns null when
+   * it is behind the camera / outside the clip volume. `_v` is a scratch vec. */
+  _projectAtom(i, rect, v) {
+    const p = this._cachedAtomPositions[i];
+    v.set(p[0], p[1], p[2]).project(this._camera);
+    if (v.z < -1 || v.z > 1) return null;   // clipped (behind camera or beyond far)
+    return {
+      x: (v.x * 0.5 + 0.5) * rect.width,
+      y: (-v.y * 0.5 + 0.5) * rect.height,
+      ndcZ: v.z,
+    };
+  }
+
+  /**
+   * Occlusion-correct click-pick: nearest visible atom within `radiusPx` of the
+   * canvas-local point, tie-broken by depth (mirrors adapter.pick_at).
+   * @returns {{displayIndex:number, atomId:number}|null}
+   */
+  pickAtom(px, py, radiusPx = 12) {
+    if (!this._cachedAtomPositions) return null;
+    const rect = this._canvas.getBoundingClientRect();
+    const v = new THREE.Vector3();
+    const r2 = radiusPx * radiusPx;
+    let best = null, bestZ = Infinity;
+    for (let i = 0; i < this._cachedAtomPositions.length; i++) {
+      const s = this._projectAtom(i, rect, v);
+      if (!s) continue;
+      const dx = s.x - px, dy = s.y - py;
+      if (dx * dx + dy * dy > r2) continue;
+      if (s.ndcZ < bestZ) { bestZ = s.ndcZ; best = i; }
+    }
+    return best == null ? null : { displayIndex: best, atomId: this.atomIdOf(best) };
+  }
+
+  /**
+   * Box-select: every atom whose projected centre falls inside the canvas-local
+   * rectangle (mirrors adapter.pick_in_rect). No occlusion test, by design.
+   * @returns {{displayIndex:number, atomId:number}[]}
+   */
+  boxSelect(x0, y0, x1, y1) {
+    if (!this._cachedAtomPositions) return [];
+    const rect = this._canvas.getBoundingClientRect();
+    const v = new THREE.Vector3();
+    const lo = { x: Math.min(x0, x1), y: Math.min(y0, y1) };
+    const hi = { x: Math.max(x0, x1), y: Math.max(y0, y1) };
+    const out = [];
+    for (let i = 0; i < this._cachedAtomPositions.length; i++) {
+      const s = this._projectAtom(i, rect, v);
+      if (!s) continue;
+      if (s.x >= lo.x && s.x <= hi.x && s.y >= lo.y && s.y <= hi.y)
+        out.push({ displayIndex: i, atomId: this.atomIdOf(i) });
+    }
+    return out;
+  }
+
+  /** Canvas-local CSS-pixel position of a displayed atom, for tests/tooltips. */
+  atomScreenPosition(displayIndex) {
+    if (!this._cachedAtomPositions || !this._cachedAtomPositions[displayIndex]) return null;
+    const rect = this._canvas.getBoundingClientRect();
+    return this._projectAtom(displayIndex, rect, new THREE.Vector3());
+  }
+
+  /** World-space position of a displayed atom (for client-side measurements). */
+  atomPosition(displayIndex) {
+    const p = this._cachedAtomPositions?.[displayIndex];
+    return p ? [p[0], p[1], p[2]] : null;
   }
 }
