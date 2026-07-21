@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -214,6 +214,21 @@ class DeleteObjectRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     fingerprint: str
+
+
+class CreateSubsetRequest(BaseModel):
+    """Typed payload for ``CREATE_SUBSET`` (ADR 0045 issue 12).
+
+    ``indices`` is the same mixed atom-filter spec the view "hide atoms" filter
+    accepts — integer atom indices and element-symbol tokens ("C", "-H"),
+    resolved server-side against the parent dataset. The result is a new
+    ``AtomFilteredDataset`` announced via ``REMOTE_DATASET_META``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    parent_fingerprint: str
+    indices: list[Union[int, str]]
 
 
 class RequestSubdatasetArraysRequest(BaseModel):

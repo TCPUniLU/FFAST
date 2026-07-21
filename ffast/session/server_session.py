@@ -130,8 +130,8 @@ class ServerSession:
         # the table IS the documented RPC surface. "?name" marks an optional
         # parameter.
         from ffast.protocol.messages import (
-            CloseViewRequest, DeleteObjectRequest, EmptyRequest,
-            ListDirRequest, LoadDatasetRequest, LoadModelRequest,
+            CloseViewRequest, CreateSubsetRequest, DeleteObjectRequest,
+            EmptyRequest, ListDirRequest, LoadDatasetRequest, LoadModelRequest,
             LoadPredictionRequest, LoadSessionRequest, OpenViewRequest,
             ProbeDatasetKeysRequest, ProbeDatasetLengthRequest,
             RequestMetricRequest, RequestPredictionArraysRequest,
@@ -141,6 +141,7 @@ class ServerSession:
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
             control.LOAD_MODEL:                 _Route(self._on_load_model, ["path", "model_type"], LoadModelRequest),
             control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint"], DeleteObjectRequest),
+            control.CREATE_SUBSET:              _Route(self._on_create_subset, ["parent_fingerprint", "indices"], CreateSubsetRequest),
             control.REQUEST_SUBDATASET_ARRAYS:  _Route(self._on_request_subdataset_arrays, ["fingerprint"], RequestSubdatasetArraysRequest),
             control.PROBE_DATASET_KEYS:         _Route(self._on_probe_dataset_keys, ["path", "dataset_type"], ProbeDatasetKeysRequest),
             control.PROBE_DATASET_LENGTH:       _Route(self._on_probe_dataset_length, ["path"], ProbeDatasetLengthRequest),
@@ -391,6 +392,37 @@ class ServerSession:
 
     async def _on_delete_object(self, fingerprint, **kwargs) -> None:
         self.env.deleteObject(fingerprint)
+
+    async def _on_create_subset(self, parent_fingerprint, indices, **kwargs) -> None:
+        """Extract an atom-filtered subset dataset (ADR 0045 issue 12).
+
+        ``indices`` is the mixed spec the view "hide atoms" filter accepts —
+        integers and element-symbol tokens ("C", "-H"). It is resolved here
+        against the parent's frame-0 composition (the same ``_resolve_filter_indices``
+        the scene builder uses), then materialized through the existing
+        in-process ``createAtomFilteredDataset``. The new dataset announces
+        itself via the ``DATASET_LOADED`` → ``REMOTE_DATASET_META`` subscriber,
+        so there is nothing to emit here.
+        """
+        from ffast.visualization.scene_builder import _resolve_filter_indices
+
+        parent = self.env.datasets.get(parent_fingerprint)
+        if parent is None:
+            logger.warning("CREATE_SUBSET: parent %r not found", parent_fingerprint)
+            return
+        try:
+            z = parent.getElements(0)
+            idxs = _resolve_filter_indices(list(indices or []), z)
+        except Exception as exc:
+            logger.warning("CREATE_SUBSET: index resolution failed: %s", exc)
+            return
+        if not idxs:
+            logger.warning("CREATE_SUBSET: %r resolved to no atoms", indices)
+            return
+        try:
+            self.env.createAtomFilteredDataset(parent, idxs)
+        except Exception as exc:
+            logger.warning("CREATE_SUBSET: createAtomFilteredDataset failed: %s", exc)
 
     async def _on_request_subdataset_arrays(self, fingerprint, **kwargs) -> None:
         """Serialize SubDataset arrays and push them onto the outbound queue.

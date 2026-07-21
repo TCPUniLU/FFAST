@@ -84,9 +84,13 @@ class _FakeEnv:
         self.data = data
         self.deleted = []
         self.load_dataset_calls = []
+        self.create_subset_calls = []
 
     def deleteObject(self, fp):
         self.deleted.append(fp)
+
+    def createAtomFilteredDataset(self, dataset, idxs):
+        self.create_subset_calls.append((dataset, idxs))
 
     def taskLoadDataset(self, path, dataset_type, **kwargs):
         self.load_dataset_calls.append((path, dataset_type, kwargs))
@@ -211,6 +215,59 @@ def test_dispatch_delete_object_reaches_env():
 
     _run(scenario())
     assert env.deleted == ["fp123"]
+
+
+class _FakeParentDataset:
+    """A parent dataset for CREATE_SUBSET: only ``getElements`` is exercised."""
+
+    def __init__(self, z):
+        self._z = np.asarray(z)
+
+    def getElements(self, index=None):
+        return self._z
+
+
+def test_dispatch_create_subset_resolves_tokens_and_materializes():
+    """CREATE_SUBSET resolves the mixed index spec (integers + element tokens)
+    against the parent's composition, then calls createAtomFilteredDataset."""
+    parent = _FakeParentDataset([6, 6, 1, 1])  # C C H H
+    env = _FakeEnv(datasets={"ds1": parent})
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        # "C" includes both carbons; "-H" is a no-op here (no H included);
+        # integer 3 adds the last hydrogen.
+        await s.dispatch("CREATE_SUBSET", ["ds1", ["C", 3]], {})
+
+    _run(scenario())
+    assert len(env.create_subset_calls) == 1
+    dataset, idxs = env.create_subset_calls[0]
+    assert dataset is parent
+    assert idxs == [0, 1, 3]
+
+
+def test_dispatch_create_subset_missing_parent_is_dropped():
+    env = _FakeEnv(datasets={})
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("CREATE_SUBSET", ["nope", [0, 1]], {})
+
+    _run(scenario())
+    assert env.create_subset_calls == []
+
+
+def test_dispatch_create_subset_empty_resolution_is_dropped():
+    """A spec that resolves to no atoms must not create an empty dataset."""
+    parent = _FakeParentDataset([6, 6, 1, 1])
+    env = _FakeEnv(datasets={"ds1": parent})
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("CREATE_SUBSET", ["ds1", ["Xe"]], {})  # element absent
+
+    _run(scenario())
+    assert env.create_subset_calls == []
 
 
 def test_dispatch_load_dataset_restores_prediction_key_tuples():
