@@ -4,6 +4,11 @@
 
 import { FFastConnection } from './connection.js';
 import { MoleculeRenderer } from './renderer.js';
+import { createColorByPane } from './panes/colorby.js';
+import { createCameraPane } from './panes/camera.js';
+import { createDisplayPane } from './panes/display.js';
+import { createBondsPane } from './panes/bonds.js';
+import { createForcesPane } from './panes/forces.js';
 
 export class FFastApp {
   constructor() {
@@ -14,6 +19,7 @@ export class FFastApp {
     this._currentDatasetFp = null;  // selected dataset (object rail)
     this._currentModelFp = null;    // selected prediction, or null
     this._currentViewId = null;
+    this._lastOpenedDatasetFp = null;  // last dataset_ref sent via OPEN_VIEW
     this._activeTab = 'loupe';
     this._frameCount = 0;
     this._cameraThrottle = null;
@@ -28,9 +34,20 @@ export class FFastApp {
     this._fbHome = null;       // server user's home directory
     this._fbSelected = null;   // selected filename within _fbPath
 
+    // ADR 0045 Phase 1: scientific view-command plumbing (mirrors Qt's
+    // window._sendViewCommand / _sceneVersion, UI/loupe/window.py:320-349).
+    this._viewVersion = 0;
+    this._metricCatalog = [];
+    this._originCenterOfMass = true;
+    this._forcesState = { show: false, modelKey: null, length: 10, normalised: true };
+    this._dsSettings = new Map();  // dataset fp → restorable per-dataset settings
+    this._playing = false;
+    this._patchPending = false;
+
     this._initRenderer();
     this._initTabs();
     this._initUI();
+    this._initSidebarPanes();
     this._applyUrlParams();
   }
 
@@ -85,7 +102,10 @@ export class FFastApp {
   _initRenderer() {
     const canvas = document.getElementById('canvas');
     this._renderer = new MoleculeRenderer(canvas);
-    this._renderer._onCameraChange = (cam) => this._sendSetCamera(cam);
+    this._renderer._onCameraChange = (cam) => {
+      this._sendSetCamera(cam);
+      this._panes?.camera.syncFromCamera(cam);
+    };
   }
 
   _initUI() {
@@ -98,6 +118,11 @@ export class FFastApp {
 
     const slider = document.getElementById('frame-slider');
     slider.addEventListener('input', () => this._onFrameSlider());
+
+    // Playback (issue 08): prev/next/play-pause + FPS/skip, response-synced.
+    document.getElementById('prev-frame-btn').addEventListener('click', () => this._stepFrame(-1));
+    document.getElementById('next-frame-btn').addEventListener('click', () => this._stepFrame(1));
+    document.getElementById('play-pause-btn').addEventListener('click', () => this._togglePlayback());
 
     // Object rail load actions — dataset vs prediction mode.
     document.getElementById('add-dataset-btn').addEventListener('click', () => this._openFileBrowser('dataset'));
@@ -114,6 +139,54 @@ export class FFastApp {
     document.getElementById('fb-modal').addEventListener('click', (e) => {
       if (e.target.id === 'fb-modal') this._closeFileBrowser();
     });
+  }
+
+  // ── sidebar panes (ADR 0045 Phase 1: issues 03-07) ──────────────────────
+  _initSidebarPanes() {
+    const sidebarEl = document.getElementById('loupe-sidebar');
+
+    const colorBy = createColorByPane(sidebarEl, {
+      onSourceChange: (source) => this._sendSetParameter('ffast.atom_color', 'source', source),
+      onPredictionChange: (modelKey) => this._sendSetParameter('ffast.atom_color', 'prediction_ref', modelKey),
+      onColormapChange: (cm) => this._sendSetParameter('ffast.atom_color', 'colormap', cm),
+      onMetricParam: (key, value) => this._sendSetParameter('ffast.atom_color', key, value),
+    });
+
+    const camera = createCameraPane(sidebarEl, {
+      onOrtho: (enabled) => this._renderer.setOrthographic(enabled),
+      onPreset: (az, el) => this._renderer.setCameraAngles({ azimuth: az, elevation: el }),
+      onManual: (az, el, dist) => this._renderer.setCameraAngles({ azimuth: az, elevation: el, distance: dist }),
+      onCOM: (enabled) => { this._originCenterOfMass = enabled; },
+      onGizmo: (enabled) => this._renderer.setGizmoEnabled(enabled),
+      onBackground: (hex) => this._renderer.setBackgroundColor(hex),
+    });
+
+    const display = createDisplayPane(sidebarEl, {
+      onAtomSize: (scale) => this._sendSetParameter('ffast.atom_sizes', 'scale', scale),
+      onHideAtoms: (tokens) => this._sendSetParameter('ffast.atom_filter', 'indices', tokens),
+      onHighlight: (indices) => this._sendSetSelection('picked', 'current_structure', indices),
+      onPickRadius: () => {},   // stored for future picking infra (#10); no wire effect yet
+      onUnitCell: (visible) => this._sendToggleFeature('no_unit_cell', !visible),
+    });
+
+    const bonds = createBondsPane(sidebarEl, {
+      onStyle: (width, color) => this._renderer.setBondStyle(width, color),
+      onApply: (bondType, fixedIndices) => {
+        this._sendSetParameter('ffast.bonds', 'bond_type', bondType);
+        this._sendSetParameter('ffast.bonds', 'fixed_indices', bondType === 'Fixed' ? fixedIndices : []);
+      },
+      getDynamicBondPairs: () => this._currentDynamicBondPairs(),
+    });
+
+    const forces = createForcesPane(sidebarEl, {
+      onApply: (state) => {
+        this._forcesState = state;
+        this._applyForceVectorsState(state);
+      },
+      getModels: () => this._models,
+    });
+
+    this._panes = { colorBy, camera, display, bonds, forces };
   }
 
   _applyUrlParams() {
@@ -149,6 +222,8 @@ export class FFastApp {
       conn.on('SCENE_PATCH',    (kw) => this._onScenePatch(kw));
       conn.on('COMMAND_RESULT', (kw) => this._onCommandResult(kw));
       conn.on('DIR_LISTING',    (kw) => this._onDirListing(kw));
+      conn.on('METRIC_CATALOG', (kw) => this._onMetricCatalog(kw));
+      conn.on('METRICS_UPDATED', () => this._conn?.send('REQUEST_METRIC_CATALOG', {}));
 
       await conn.connect();
       this._conn = conn;
@@ -183,6 +258,8 @@ export class FFastApp {
     this._currentDatasetFp = null;
     this._currentModelFp = null;
     this._currentViewId = null;
+    this._lastOpenedDatasetFp = null;
+    this._playing = false;
     this._renderObjects();
     document.getElementById('connect-btn').disabled = false;
     document.getElementById('disconnect-btn').disabled = true;
@@ -191,6 +268,7 @@ export class FFastApp {
     document.getElementById('reset-camera-btn').disabled = true;
     document.getElementById('popout-btn').disabled = true;
     document.getElementById('frame-slider').disabled = true;
+    for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = true;
     this._closeFileBrowser();
     this._setStatus('Disconnected', '');
   }
@@ -216,6 +294,8 @@ export class FFastApp {
       this._setStatus(`Prediction "${meta.name || fp.slice(0,8)}" ready`, 'connected');
       if (this._activeTab === 'loupe') this._openView();
     }
+    this._panes?.forces.refreshModels();
+    this._panes?.colorBy.refreshModels(this._models);
     this._renderObjects();
   }
 
@@ -287,6 +367,9 @@ export class FFastApp {
 
   _openView() {
     if (!this._conn || !this._currentDatasetFp) return;
+    const datasetChanged = this._currentDatasetFp !== this._lastOpenedDatasetFp;
+    if (datasetChanged && this._lastOpenedDatasetFp) this._saveDatasetSettings(this._lastOpenedDatasetFp);
+
     this._currentViewId = 'view-0';
     this._conn.send('OPEN_VIEW', {
       view_id: this._currentViewId,
@@ -294,6 +377,40 @@ export class FFastApp {
       prediction_ref: this._currentModelFp,   // null clears the force overlay
     });
     if (this._bc) document.getElementById('popout-btn').disabled = false;
+
+    if (datasetChanged) {
+      this._lastOpenedDatasetFp = this._currentDatasetFp;
+      this._restoreDatasetSettings(this._currentDatasetFp);
+    }
+  }
+
+  // ── per-dataset settings (issues 04/07/08): Qt's Settings.markAsPerDataset,
+  // reimplemented as a plain map since the web client has no such mechanism.
+  // Bond/display/colour settings are intentionally NOT persisted here — Qt
+  // doesn't mark those per-dataset either (they're global settings there too).
+  _saveDatasetSettings(fp) {
+    this._dsSettings.set(fp, {
+      originCenterOfMass: this._originCenterOfMass,
+      showForceVectors: this._forcesState.show,
+      forceVectorsModelKey: this._forcesState.modelKey,
+      videoFPS: this._videoFPS(),
+      videoSkipFrames: this._videoSkipFrames(),
+    });
+  }
+
+  _restoreDatasetSettings(fp) {
+    const d = this._dsSettings.get(fp) || {
+      originCenterOfMass: true, showForceVectors: false, forceVectorsModelKey: null,
+      videoFPS: 30, videoSkipFrames: 0,
+    };
+    this._originCenterOfMass = d.originCenterOfMass;
+    this._panes.camera.setCOM(d.originCenterOfMass);
+    document.getElementById('fps-input').value = d.videoFPS;
+    document.getElementById('skip-input').value = d.videoSkipFrames;
+
+    this._forcesState = { ...this._forcesState, show: d.showForceVectors, modelKey: d.forceVectorsModelKey };
+    this._panes.forces.setState(d.showForceVectors, d.forceVectorsModelKey);
+    this._applyForceVectorsState(this._forcesState);
   }
 
   // ── remote file browser ────────────────────────────────────────────────
@@ -480,10 +597,17 @@ export class FFastApp {
   _onSceneSnapshot(kw) {
     const scene = kw.scene;
     if (!scene) return;
+    this._viewVersion = scene.version;
     this._renderer.applyScene(scene);
     this._renderer.frameAtoms();
     document.getElementById('overlay').classList.add('hidden');
     document.getElementById('reset-camera-btn').disabled = false;
+    for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = false;
+
+    if (scene.atoms) {
+      this._panes.colorBy.setColorBy(scene.atoms.color_by || null);
+      this._trackCameraCOM(scene.atoms.positions);
+    }
 
     // Update frame slider
     if (scene.view_id) this._currentViewId = scene.view_id;
@@ -507,17 +631,103 @@ export class FFastApp {
   /** @param {import('./protocol.js').ScenePatchKwargs} kw */
   _onScenePatch(kw) {
     const changed = kw.changed || [];
+    this._viewVersion = kw.to_version;
     this._renderer.applyPatch(kw, changed);
+    if (changed.includes('atoms') && kw.atoms) {
+      this._panes.colorBy.setColorBy(kw.atoms.color_by || null);
+      this._trackCameraCOM(kw.atoms.positions);
+    }
     if (this._bc) this._bc.postMessage({ t: 'patch', patch: kw, changed });
+    this._patchPending = false;   // playback: unblock the wait in _playLoop
   }
 
   /** @param {import('./protocol.js').CommandResultKwargs} kw */
   _onCommandResult(kw) {
     if (!kw?.success) {
       console.warn('VIEW_COMMAND failed:', kw?.error);
+      if (typeof kw?.new_version === 'number') this._viewVersion = kw.new_version;
     }
   }
 
+  // ── scientific view commands (ADR 0014/0045 Phase 1) ────────────────────
+  // Mirrors Qt's window._sendViewCommand: stamp the expected version, then
+  // optimistically advance it; COMMAND_RESULT/SCENE_PATCH resync it above.
+  _sendViewCommand(fields) {
+    if (!this._conn || !this._currentViewId) return;
+    this._conn.send('VIEW_COMMAND', { view_id: this._currentViewId, view_version: this._viewVersion, ...fields });
+    this._viewVersion++;
+  }
+
+  /** @param {string} feature @param {boolean} enabled
+   *  @see import('./protocol.js').ToggleFeatureCommand */
+  _sendToggleFeature(feature, enabled) {
+    this._sendViewCommand({ type: 'TOGGLE_FEATURE', feature, enabled: !!enabled });
+  }
+
+  /** @param {string} stageId @param {string} parameter @param {any} value
+   *  @see import('./protocol.js').SetParameterCommand */
+  _sendSetParameter(stageId, parameter, value) {
+    this._sendViewCommand({ type: 'SET_PARAMETER', stage_id: stageId, parameter, value });
+  }
+
+  /** @param {string} name @param {string} scope @param {number[]} indices
+   *  @see import('./protocol.js').SetSelectionCommand */
+  _sendSetSelection(name, scope, indices) {
+    this._sendViewCommand({ type: 'SET_SELECTION', name, scope, indices });
+  }
+
+  /** @param {import('./protocol.js').MetricCatalogKwargs} kw */
+  _onMetricCatalog(kw) {
+    this._metricCatalog = kw.metrics || [];
+    this._panes.colorBy.setMetricCatalog(this._metricCatalog);
+  }
+
+  /** Send TOGGLE_FEATURE("forces", ...) plus its SET_PARAMETERs together —
+   * the Force Vectors pane always re-sends all four as one logical action
+   * (mirrors Qt's onApplyForceVectors), so the callback and the per-dataset
+   * restore path (`_restoreDatasetSettings`) share this one seam.
+   * @param {{show: boolean, modelKey: string|null, length: number, normalised: boolean}} state
+   */
+  _applyForceVectorsState(state) {
+    this._sendToggleFeature('forces', state.show);
+    if (state.show) {
+      this._sendSetParameter('ffast.force_arrows', 'prediction_ref', state.modelKey);
+      this._sendSetParameter('ffast.force_arrows', 'length_factor', state.length);
+      this._sendSetParameter('ffast.force_arrows', 'normalised', state.normalised);
+    }
+  }
+
+  /** Origin-COM tracking (issue 04): recentre the camera on the atoms'
+   * centroid as frames advance, preserving azimuth/elevation/distance. */
+  _trackCameraCOM(positions) {
+    if (!this._originCenterOfMass || !positions || positions.length === 0) return;
+    const n = positions.length;
+    const sum = [0, 0, 0];
+    for (const [x, y, z] of positions) { sum[0] += x; sum[1] += y; sum[2] += z; }
+    this._renderer.recenterTo([sum[0] / n, sum[1] / n, sum[2] / n]);
+  }
+
+  /** Bonds "fill from dynamic" (issue 06): the wire only ships bond segments
+   * (coordinates), never atom-index pairs, so pairs are recovered by matching
+   * each segment endpoint back to the last-rendered atom positions — exact
+   * matches since both come from the same server-computed frame. */
+  _currentDynamicBondPairs() {
+    const scene = this._lastScene;
+    const segs = scene?.bonds?.segments;
+    const positions = scene?.atoms?.positions;
+    if (!segs || !positions) return [];
+    const indexByCoord = new Map();
+    positions.forEach((p, i) => indexByCoord.set(p.join(','), i));
+    const pairs = [];
+    for (let i = 0; i < segs.length; i += 2) {
+      const a = indexByCoord.get(segs[i].join(','));
+      const b = indexByCoord.get(segs[i + 1].join(','));
+      if (a !== undefined && b !== undefined) pairs.push([a, b]);
+    }
+    return pairs;
+  }
+
+  // ── playback (issue 08): prev/next/play-pause, FPS, skip-frames ─────────
   _onFrameSlider() {
     const frame = parseInt(document.getElementById('frame-slider').value, 10);
     this._updateFrameLabel(frame, this._frameCount);
@@ -533,6 +743,59 @@ export class FFastApp {
       view_version: 0,  // server applies SET_FRAME without version check
       frame_index: frame,
     });
+  }
+
+  _currentFrame() {
+    return parseInt(document.getElementById('frame-slider').value, 10) || 0;
+  }
+
+  _setFrame(frame) {
+    const slider = document.getElementById('frame-slider');
+    const clamped = Math.max(0, Math.min(this._frameCount - 1, frame));
+    slider.value = clamped;
+    this._updateFrameLabel(clamped, this._frameCount);
+    this._sendSetFrame(clamped);
+    this._broadcastMeta();
+    return clamped;
+  }
+
+  _videoFPS() {
+    return Math.max(1, parseInt(document.getElementById('fps-input').value, 10) || 30);
+  }
+
+  _videoSkipFrames() {
+    return parseInt(document.getElementById('skip-input').value, 10) || 0;
+  }
+
+  _stepFrame(direction) {
+    if (this._playing) this._togglePlayback();  // manual stepping stops playback
+    this._setFrame(this._currentFrame() + direction * (1 + this._videoSkipFrames()));
+  }
+
+  _togglePlayback() {
+    this._playing = !this._playing;
+    document.getElementById('play-pause-btn').textContent = this._playing ? '⏸' : '▶';
+    if (this._playing) this._playLoop();
+  }
+
+  async _playLoop() {
+    while (this._playing) {
+      const frameStart = performance.now();
+      const next = this._currentFrame() + 1 + this._videoSkipFrames();
+      if (next > this._frameCount - 1) { this._togglePlayback(); break; }
+      this._patchPending = true;
+      this._setFrame(next);
+      // Response-synced (mirrors Qt's runOnNext): wait for the server's
+      // SCENE_PATCH before advancing again, capped so a slow/dropped reply
+      // can't stall playback forever.
+      const deadline = performance.now() + 500;
+      while (this._patchPending && this._playing && performance.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      const elapsed = performance.now() - frameStart;
+      const remaining = (1000 / this._videoFPS()) - elapsed;
+      if (remaining > 0) await new Promise((r) => setTimeout(r, remaining));
+    }
   }
 
   // ── popped-out loupe (BroadcastChannel satellite) ───────────────────────

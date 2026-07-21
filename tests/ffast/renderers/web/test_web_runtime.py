@@ -239,7 +239,23 @@ async def test_web_renderer_connects_and_draws_scene(ffast_web_server):
     ]
 
 
+def _count_orange_force_pixels(png_bytes: bytes) -> int:
+    image = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+    rgba = image.tobytes()
+    return sum(
+        1
+        for i in range(0, len(rgba), 4)
+        if rgba[i] > 170
+        and 55 <= rgba[i + 1] <= 150
+        and rgba[i + 2] < 80
+        and rgba[i + 3] > 200
+    )
+
+
 async def test_web_renderer_draws_prediction_force_arrows(ffast_web_server):
+    """ADR 0045 issue 07: the Force Vectors pane's 'Show force vectors' toggle
+    must actually gate the server-side TOGGLE_FEATURE("forces", ...) — arrows
+    appear when checked, disappear when cleared."""
     ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
 
@@ -259,7 +275,7 @@ async def test_web_renderer_draws_prediction_force_arrows(ffast_web_server):
             await dataset_row.click()
 
             # The prediction applies to the selected dataset; selecting its row
-            # reopens the view with the force overlay.
+            # reopens the view with it as the active prediction overlay.
             model_row = page.locator(f"#model-list .obj-row[data-fp='{model_fp}']")
             await expect(model_row).to_have_count(1)
             await model_row.click()
@@ -267,19 +283,174 @@ async def test_web_renderer_draws_prediction_force_arrows(ffast_web_server):
             await expect(page.locator("#overlay")).to_have_class(
                 re.compile(r"\bhidden\b")
             )
+
+            show_forces = page.locator(
+                ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Show force vectors'] input"
+            )
+            source = page.locator(
+                ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Source'] select"
+            )
+            length = page.locator(
+                ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Length'] input[type=range]"
+            )
+            # Baseline (off): a few stray orange-ish pixels can occur from
+            # antialiased edges between other elements, so compare relatively
+            # rather than against a small absolute count.
+            baseline_count = _count_orange_force_pixels(await page.locator("#canvas").screenshot())
+
+            await show_forces.check()
+            await expect(source.locator("option", has_text="prediction.xyz")).to_have_count(1)
+            await source.select_option(label="prediction.xyz")   # the loaded prediction, not ground truth
+            # Arrows are normalised to the single largest per-atom force error
+            # (scene_builder._build_force_scene); at the default length that
+            # one arrow can be foreshortened to a small dot depending on the
+            # fitted camera's viewing angle. Max the length so its cone footprint
+            # is large regardless of orientation.
+            await length.evaluate(
+                "(el) => { el.value = el.max; el.dispatchEvent(new Event('input', {bubbles: true})); }"
+            )
+            await page.wait_for_timeout(700)
+            on_count = _count_orange_force_pixels(await page.locator("#canvas").screenshot())
+            assert on_count > baseline_count + 20
+
+            await show_forces.uncheck()
+            await page.wait_for_timeout(700)
+            off_count = _count_orange_force_pixels(await page.locator("#canvas").screenshot())
+            assert off_count < on_count
+        finally:
+            await browser.close()
+
+
+async def test_web_color_by_selector_recolors_atoms_and_shows_colorbar(ffast_web_server):
+    """ADR 0045 issue 03 / Phase 1 gate: selecting a metric in 'Colour By'
+    changes atom instance colours (not baked element colours) and shows a
+    colourbar; switching back to Elements hides it again."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(
+                f"http://127.0.0.1:{web_port}/?port={ws_port}",
+                wait_until="networkidle",
+            )
+            await page.locator("#connect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+
+            dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
+            await dataset_row.click()
+            model_row = page.locator(f"#model-list .obj-row[data-fp='{model_fp}']")
+            await model_row.click()
+            await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
+            await page.wait_for_timeout(300)
+
+            colorbar = page.locator("#colorbar")
+            await expect(colorbar).to_have_class(re.compile(r"\bhidden\b"))
+            before_png = await page.locator("#canvas").screenshot()
+
+            coloring = page.locator(
+                ".pane[data-pane='Colour By'] .ctl-row[data-label='Coloring'] select"
+            )
+            # Exact match: "Acceleration Error (by element)" also exists and
+            # would otherwise satisfy a substring match.
+            await expect(
+                coloring.locator("option", has_text=re.compile(r"^Acceleration Error$"))
+            ).to_have_count(1)
+            await coloring.select_option(label="Acceleration Error")
             await page.wait_for_timeout(700)
 
-            png = await page.locator("#canvas").screenshot()
-            image = Image.open(io.BytesIO(png)).convert("RGBA")
-            rgba = image.tobytes()
-            orange_force_pixels = sum(
-                1
-                for i in range(0, len(rgba), 4)
-                if rgba[i] > 170
-                and 55 <= rgba[i + 1] <= 150
-                and rgba[i + 2] < 80
-                and rgba[i + 3] > 200
+            await expect(colorbar).not_to_have_class(re.compile(r"\bhidden\b"))
+            after_png = await page.locator("#canvas").screenshot()
+            assert before_png != after_png
+
+            await coloring.select_option(label="Elements")
+            await page.wait_for_timeout(300)
+            await expect(colorbar).to_have_class(re.compile(r"\bhidden\b"))
+        finally:
+            await browser.close()
+
+
+async def test_web_camera_preset_reorients_view(ffast_web_server):
+    """ADR 0045 issue 04 / Phase 1 gate: a camera preset button reorients the
+    rendered view (observed as a materially different image, not a no-op)."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(
+                f"http://127.0.0.1:{web_port}/?port={ws_port}",
+                wait_until="networkidle",
             )
-            assert orange_force_pixels > 20
+            await page.locator("#connect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+
+            dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
+            await dataset_row.click()
+            await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
+            await page.wait_for_timeout(300)
+
+            before_png = await page.locator("#canvas").screenshot()
+
+            # frameAtoms()'s initial fit-to-view already sits at az=0/el=0
+            # (looking down -Z, i.e. the "XZ" front view) — use "XY" (top view,
+            # el=90) so the preset is a genuine reorientation, not a no-op.
+            xy_preset = page.locator(".pane[data-pane='Camera'] .ctl-btn-group button", has_text="XY")
+            await expect(xy_preset).to_have_count(1)
+            await xy_preset.click()
+            await page.wait_for_timeout(300)
+
+            after_png = await page.locator("#canvas").screenshot()
+            assert before_png != after_png
+
+            # The manual elevation field reflects the preset (az 0°, el 90°).
+            elevation = page.locator(
+                ".pane[data-pane='Camera'] .ctl-row[data-label='Elevation (°)'] input"
+            )
+            await expect(elevation).to_have_value(re.compile(r"^90\.0$"))
+        finally:
+            await browser.close()
+
+
+async def test_web_playback_advances_frames_and_stops_on_pause(ffast_web_server):
+    """ADR 0045 issue 08: play advances the frame index automatically; pause
+    stops it — the frame slider must not keep moving once paused."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(
+                f"http://127.0.0.1:{web_port}/?port={ws_port}",
+                wait_until="networkidle",
+            )
+            await page.locator("#connect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+
+            dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
+            await dataset_row.click()
+            await expect(page.locator("#frame-slider")).to_be_enabled()
+
+            fps_input = page.locator("#fps-input")
+            await fps_input.fill("20")   # fast enough to see multiple frames advance quickly
+
+            play_pause = page.locator("#play-pause-btn")
+            await play_pause.click()
+            await page.wait_for_timeout(600)
+            playing_frame = int(await page.locator("#frame-slider").input_value())
+            assert playing_frame > 0, "frame index should have advanced while playing"
+
+            await play_pause.click()   # pause
+            await page.wait_for_timeout(200)
+            paused_frame = int(await page.locator("#frame-slider").input_value())
+            await page.wait_for_timeout(400)
+            still_paused_frame = int(await page.locator("#frame-slider").input_value())
+            assert still_paused_frame == paused_frame, "frame index kept advancing after pause"
         finally:
             await browser.close()

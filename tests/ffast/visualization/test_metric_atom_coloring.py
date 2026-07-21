@@ -88,6 +88,48 @@ def test_resolve_color_force_mae_returns_per_atom_values():
     assert np.all(values > 0), "Expected nonzero force errors"
 
 
+def test_resolve_color_prediction_ref_override_wins_over_global():
+    """ADR 0045 issue 03: an explicit ffast.atom_color 'prediction_ref' param
+    overrides the view's global state.prediction_ref — the same Option B
+    pattern as ffast.force_arrows (scene_builder.py) — so coloring by one
+    model's error doesn't force the whole view onto that model."""
+    from ffast.metrics.builtin import force_metrics  # noqa: F401
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    n_atoms = 3
+    ds = _FakeDataset(n_atoms=n_atoms)
+    ref_forces = np.zeros((n_atoms, 3), dtype=np.float64)
+
+    global_fp = "global-pred-fp"
+    override_fp = "override-pred-fp"
+    dataset_fp = "ds-fp-001"
+
+    state = VisualizationState(view_id="v1")
+    state.dataset_ref = dataset_fp
+    state.prediction_ref = global_fp   # the view's overlay prediction
+    state.parameters["ffast.atom_color"] = {
+        "source": "metric:ffast.force_mae",
+        "prediction_ref": override_fp,   # coloring explicitly asks for a different model
+    }
+
+    calls = []
+
+    def get_prediction(ds_fp, model_fp):
+        calls.append(model_fp)
+        if ds_fp == dataset_fp and model_fp == override_fp:
+            return _PredictionView((ref_forces + 5.0)[np.newaxis])
+        if ds_fp == dataset_fp and model_fp == global_fp:
+            return _PredictionView(ref_forces[np.newaxis])
+        return None
+
+    result = resolve_atom_color_values(state, ds, 0, np.zeros((n_atoms, 3)), ds._z, get_prediction)
+
+    assert result is not None
+    assert override_fp in calls and global_fp not in calls
+    values, _label, _unit = result
+    assert np.all(values > 0)   # resolved from the override prediction's nonzero forces
+
+
 def test_resolve_color_no_prediction_ref_returns_none():
     """Without prediction_ref, metric coloring falls back to None (element colors)."""
     from ffast.metrics.builtin import force_metrics  # noqa: F401

@@ -43,8 +43,14 @@ def _get_executor():
     return _executor
 
 
-def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state):
-    """Map a metric's symbolic input ref to a current-frame array (ADR 0016)."""
+def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state, prediction_ref):
+    """Map a metric's symbolic input ref to a current-frame array (ADR 0016).
+
+    ``prediction_ref`` is the resolved prediction for *this* coloring (the
+    ``ffast.atom_color`` stage's own ``prediction_ref`` parameter if set, else
+    the view's global ``state.prediction_ref`` — same override pattern as
+    ``ffast.force_arrows``, scene_builder.py's "Option B").
+    """
     if ref == "frame.positions":
         return raw_positions
     if ref in ("frame.elements", "reference.elements"):
@@ -52,9 +58,9 @@ def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state)
     if ref == "reference.forces":
         return np.asarray(ds.getForces(idx), dtype=np.float64)
     if ref == "prediction.forces":
-        if get_prediction is None or not state.prediction_ref:
+        if get_prediction is None or not prediction_ref:
             raise KeyError(ref)
-        pred = get_prediction(state.dataset_ref, state.prediction_ref)
+        pred = get_prediction(state.dataset_ref, prediction_ref)
         if pred is None:
             raise KeyError(ref)
         return np.asarray(pred.forces[idx], dtype=np.float64)
@@ -112,6 +118,9 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction):
     """
     params = state.parameters.get("ffast.atom_color", {})
     source = params.get("source", "element")
+    # Per-stage override: an explicit "prediction_ref" key (even None, meaning
+    # ground truth) wins; absent key falls back to the view's global prediction.
+    prediction_ref = params["prediction_ref"] if "prediction_ref" in params else state.prediction_ref
     logger.debug("atom-color: requested source=%r params=%s", source, params)
     if not source or source == "element":
         return None
@@ -144,7 +153,7 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction):
                 )
                 return None
             resolve = lambda ref: _resolve_symbolic_ref(
-                ref, ds, idx, raw_positions, z, get_prediction, state
+                ref, ds, idx, raw_positions, z, get_prediction, state, prediction_ref
             )
             try:
                 inputs = _collect_leaf_inputs(reg, metric_id, resolve)

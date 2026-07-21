@@ -28,6 +28,23 @@ const COLORMAP_STOPS = {
     [0.1, 0.1, 0.9], [0.1, 0.9, 0.1], [0.9, 0.9, 0.1],
     [0.5, 0.1, 0.1], [0.9, 0.1, 0.1],
   ],
+  // Compact approximations of the remaining server colormaps
+  // (ffast/visualization/stages/builtin/color_stages.py `_COLORMAPS`) — same
+  // "public approximation, not pixel-identical" status as viridis/plasma above.
+  inferno: [
+    [0.000, 0.000, 0.016], [0.259, 0.039, 0.408], [0.576, 0.149, 0.404],
+    [0.867, 0.318, 0.227], [0.988, 0.647, 0.039], [0.988, 1.000, 0.643],
+  ],
+  coolwarm: [
+    [0.231, 0.298, 0.753], [0.451, 0.588, 0.961], [0.863, 0.863, 0.863],
+    [0.949, 0.573, 0.455], [0.706, 0.016, 0.149],
+  ],
+  hot: [
+    [0.043, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 1.0, 0.0], [1.0, 1.0, 1.0],
+  ],
+  bwr: [
+    [0.0, 0.0, 1.0], [1.0, 1.0, 1.0], [1.0, 0.0, 0.0],
+  ],
 };
 
 function lerp(a, b, t) { return a + (b - a) * t; }

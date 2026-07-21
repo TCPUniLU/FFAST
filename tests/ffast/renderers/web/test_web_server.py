@@ -240,9 +240,10 @@ class TestColorByMapping:
         assert "hi <= lo" in colormap_js_source
 
     def test_recognizes_configured_colormaps(self, colormap_js_source):
-        # These are the colormap names actually configured/tested elsewhere in
-        # the repo (test_config.py, test_metric_adapter.py, adapter.py).
-        for name in ("viridis", "plasma", "force_error"):
+        # All 7 server colormaps (ffast/visualization/stages/builtin/color_stages.py
+        # `_COLORMAPS`) must have a stop table, or selecting one in the "Colour By"
+        # pane (ADR 0045 issue 03) silently falls back to element colors.
+        for name in ("viridis", "plasma", "inferno", "coolwarm", "hot", "bwr", "force_error"):
             assert f"{name}:" in colormap_js_source
 
     def test_force_error_stops_match_the_vispy_adapter(self, colormap_js_source):
@@ -264,3 +265,40 @@ class TestColorByMapping:
             assert f"[{triple}]" in colormap_js_source, (
                 f"colormap.js force_error stop [{triple}] no longer matches adapter.py"
             )
+
+
+@pytest.fixture(scope="module")
+def app_js_source():
+    path = os.path.join(STATIC_DIR, "app.js")
+    with open(path) as f:
+        return f.read()
+
+
+class TestUnitCellToggleInversion:
+    """ADR 0045 issue 05: the unit-cell checkbox must send the INVERTED value —
+    scene_builder.py opts *out* of the cell via a 'no_unit_cell' feature flag
+    (build_scene: 'if "no_unit_cell" not in state.enabled_features') — pinned
+    at the source level since the example dataset carries no lattice data,
+    making a pixel-diff browser test unable to observe anything either way."""
+
+    def test_sends_inverted_no_unit_cell_toggle(self, app_js_source):
+        # The wiring (app.js _initSidebarPanes) is what actually negates the
+        # checkbox value before sending; display.js just declares the callback.
+        start = app_js_source.index("onUnitCell:")
+        end = app_js_source.index("\n", start)
+        line = app_js_source[start:end]
+        assert "!visible" in line, (
+            f"onUnitCell must negate the checkbox value for 'no_unit_cell': got {line!r}"
+        )
+
+    def test_scene_builder_uses_no_unit_cell_opt_out(self):
+        path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(STATIC_DIR))),
+            "visualization", "scene_builder.py",
+        )
+        with open(path) as f:
+            src = f.read()
+        assert '"no_unit_cell" not in state.enabled_features' in src, (
+            "scene_builder.py's opt-out convention changed — display.js's "
+            "onUnitCell inversion must be updated to match"
+        )

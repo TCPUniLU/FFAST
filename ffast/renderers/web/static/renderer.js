@@ -15,12 +15,26 @@ export class MoleculeRenderer {
     this._renderer.setClearColor(0x000000, 1);  // Qt loupe default (default.json loupeBGColor)
 
     this._scene   = new THREE.Scene();
-    this._camera  = new THREE.PerspectiveCamera(60, 1, 0.01, 5000);
-    this._camera.position.set(0, 0, 20);
+    this._perspCamera = new THREE.PerspectiveCamera(60, 1, 0.01, 5000);
+    this._perspCamera.position.set(0, 0, 20);
+    this._orthoCamera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.01, 5000);
+    this._orthoCamera.position.set(0, 0, 20);
+    this._camera = this._perspCamera;   // active camera (issue 04: orthographic toggle)
 
     this._controls = new OrbitControls(this._camera, canvas);
     this._controls.enableDamping = true;
     this._controls.dampingFactor = 0.1;
+
+    // Axis orientation gizmo (issue 04): a small AxesHelper rendered into a
+    // scissored corner viewport, oriented to mirror the main camera.
+    this._gizmoEnabled = false;
+    this._gizmoScene = new THREE.Scene();
+    this._gizmoScene.add(new THREE.AxesHelper(1));
+    this._gizmoCamera = new THREE.OrthographicCamera(-1.5, 1.5, 1.5, -1.5, 0.1, 10);
+
+    this._bondRadius = 0.10;   // world units; set via setBondStyle (issue 06)
+    this._bondColor  = new THREE.Color(0x888888);
+    this._lastBonds  = null;  // cached BondScene, for rebuilding on style change
 
     // Lighting
     const ambient = new THREE.AmbientLight(0xffffff, 0.4);
@@ -63,17 +77,88 @@ export class MoleculeRenderer {
     const w = this._canvas.clientWidth;
     const h = this._canvas.clientHeight;
     this._renderer.setSize(w, h, false);
-    this._camera.aspect = w / h;
-    this._camera.updateProjectionMatrix();
+    this._perspCamera.aspect = w / h;
+    this._perspCamera.updateProjectionMatrix();
+    this._updateOrthoFrustum(w / h);
+  }
+
+  /** Size the ortho frustum from the perspective camera's current distance,
+   * so toggling projection doesn't change the apparent object scale. */
+  _updateOrthoFrustum(aspect) {
+    const dist = this._camera.position.distanceTo(this._controls.target);
+    const halfHeight = Math.max(0.01, dist * Math.tan((this._perspCamera.fov / 2) * Math.PI / 180));
+    const halfWidth = halfHeight * aspect;
+    this._orthoCamera.left = -halfWidth;
+    this._orthoCamera.right = halfWidth;
+    this._orthoCamera.top = halfHeight;
+    this._orthoCamera.bottom = -halfHeight;
+    this._orthoCamera.updateProjectionMatrix();
+  }
+
+  /** @param {boolean} enabled */
+  setOrthographic(enabled) {
+    const next = enabled ? this._orthoCamera : this._perspCamera;
+    if (next === this._camera) return;
+    next.position.copy(this._camera.position);
+    this._camera = next;
+    this._controls.object = this._camera;
+    this._updateOrthoFrustum(this._canvas.clientWidth / this._canvas.clientHeight);
+    this._controls.update();
+  }
+
+  /**
+   * Set one or more camera angles/distance, keeping the rest at their current
+   * live value (issue 04: preset buttons + manual az/el/dist entry). Fires
+   * the same 'change' event as an interactive drag, so SET_CAMERA sends and
+   * the camera pane's fields stay in sync.
+   * @param {{azimuth?: number, elevation?: number, distance?: number}} overrides
+   */
+  setCameraAngles(overrides) {
+    this._applyCamera({ ...this._exportCamera(), ...overrides });
+  }
+
+  /** @param {string} hex CSS colour, e.g. '#000000' */
+  setBackgroundColor(hex) {
+    this._renderer.setClearColor(new THREE.Color(hex), 1);
+  }
+
+  /** @param {boolean} enabled */
+  setGizmoEnabled(enabled) {
+    this._gizmoEnabled = enabled;
+  }
+
+  /** @param {number} width Qt-style 10..100 slider value @param {string} colorHex */
+  setBondStyle(width, colorHex) {
+    this._bondRadius = Math.max(0.01, (width / 100) * 0.12);
+    this._bondColor = new THREE.Color(colorHex);
+    if (this._lastBonds) this._updateBonds(this._lastBonds);
   }
 
   _startLoop() {
     const loop = () => {
       this._rafId = requestAnimationFrame(loop);
       this._controls.update();
+      this._renderer.setViewport(0, 0, this._canvas.clientWidth, this._canvas.clientHeight);
       this._renderer.render(this._scene, this._camera);
+      if (this._gizmoEnabled) this._renderGizmo();
     };
     loop();
+  }
+
+  _renderGizmo() {
+    const size = 70, margin = 10;
+    const w = this._canvas.clientWidth, h = this._canvas.clientHeight;
+    const dir = this._camera.position.clone().sub(this._controls.target).normalize();
+    this._gizmoCamera.position.copy(dir).multiplyScalar(3);
+    this._gizmoCamera.up.copy(this._camera.up);
+    this._gizmoCamera.lookAt(0, 0, 0);
+    this._gizmoCamera.updateProjectionMatrix();
+    const r = this._renderer;
+    r.setViewport(w - size - margin, h - size - margin, size, size);
+    r.setScissor(w - size - margin, h - size - margin, size, size);
+    r.setScissorTest(true);
+    r.render(this._gizmoScene, this._gizmoCamera);
+    r.setScissorTest(false);
   }
 
   // ── scene update ──────────────────────────────────────────────────────────
@@ -149,23 +234,43 @@ export class MoleculeRenderer {
     this._scene.add(mesh);
   }
 
-  /** @param {import('./protocol.js').BondScene} bonds */
+  /**
+   * Bonds render as cylinder instances (not THREE.Line) so width/colour
+   * (issue 06) actually change appearance — WebGL's LineBasicMaterial
+   * linewidth is clamped to 1px on most platforms.
+   * @param {import('./protocol.js').BondScene} bonds
+   */
   _updateBonds(bonds) {
     this._clearBonds();
+    this._lastBonds = bonds;
     const segs = bonds.segments;
     if (!segs || segs.length === 0) return;
+    const n = Math.floor(segs.length / 2);
 
-    const positions = new Float32Array(segs.length * 3);
-    for (let i = 0; i < segs.length; i++) {
-      positions[i * 3]     = segs[i][0];
-      positions[i * 3 + 1] = segs[i][1];
-      positions[i * 3 + 2] = segs[i][2];
+    const geo = new THREE.CylinderGeometry(1, 1, 1, 6, 1);
+    const mat = new THREE.MeshStandardMaterial({ color: this._bondColor, roughness: 0.6, metalness: 0.05 });
+    const mesh = new THREE.InstancedMesh(geo, mat, n);
+    const dummy = new THREE.Object3D();
+    const up = new THREE.Vector3(0, 1, 0);
+    const start = new THREE.Vector3(), end = new THREE.Vector3(), dir = new THREE.Vector3();
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+      start.set(segs[2 * i][0], segs[2 * i][1], segs[2 * i][2]);
+      end.set(segs[2 * i + 1][0], segs[2 * i + 1][1], segs[2 * i + 1][2]);
+      dir.copy(end).sub(start);
+      const length = dir.length();
+      if (length < 1e-6) continue;
+      dir.normalize();
+      dummy.position.copy(start).add(end).multiplyScalar(0.5);
+      dummy.quaternion.setFromUnitVectors(up, dir);
+      dummy.scale.set(this._bondRadius, length, this._bondRadius);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(count++, dummy.matrix);
     }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const mat = new THREE.LineBasicMaterial({ color: 0x888888, linewidth: 1 });
-    this._bondLines = new THREE.LineSegments(geo, mat);
-    this._scene.add(this._bondLines);
+    mesh.count = count;
+    mesh.instanceMatrix.needsUpdate = true;
+    this._bondLines = mesh;
+    this._scene.add(mesh);
   }
 
   /** @param {import('./protocol.js').ForceScene} forces */
@@ -217,7 +322,7 @@ export class MoleculeRenderer {
     this._cachedAtomPositions = null;
     this._cachedAtomSizes = null;
   }
-  _clearBonds()     { if (this._bondLines)    { this._scene.remove(this._bondLines);    this._bondLines.geometry.dispose();     this._bondLines    = null; } }
+  _clearBonds()     { if (this._bondLines)    { this._scene.remove(this._bondLines);    this._bondLines.geometry.dispose();     this._bondLines    = null; } this._lastBonds = null; }
   _clearForces()    { if (this._forceGroup)   { this._scene.remove(this._forceGroup);                                            this._forceGroup   = null; } }
   _clearUnitCell()  { if (this._unitCellLines){ this._scene.remove(this._unitCellLines); this._unitCellLines.geometry.dispose(); this._unitCellLines = null; } }
 
@@ -316,9 +421,10 @@ export class MoleculeRenderer {
   /** @param {import('./protocol.js').CameraState} cam */
   _applyCamera(cam) {
     // cam fields: center, distance, azimuth, elevation, fov, projection
-    const { center = [0,0,0], distance = 10, azimuth = 0, elevation = 30, fov = 60 } = cam;
-    this._camera.fov = fov;
-    this._camera.updateProjectionMatrix();
+    const { center = [0,0,0], distance = 10, azimuth = 0, elevation = 30, fov = 60, projection = 'perspective' } = cam;
+    this.setOrthographic(projection === 'orthographic');
+    this._perspCamera.fov = fov;
+    this._perspCamera.updateProjectionMatrix();
 
     const phi   = (90 - elevation) * Math.PI / 180;
     const theta = azimuth * Math.PI / 180;
@@ -327,6 +433,7 @@ export class MoleculeRenderer {
     const z = center[2] + distance * Math.sin(phi) * Math.cos(theta);
     this._camera.position.set(x, y, z);
     this._controls.target.set(center[0], center[1], center[2]);
+    this._updateOrthoFrustum(this._canvas.clientWidth / this._canvas.clientHeight);
     this._controls.update();
   }
 
@@ -345,8 +452,8 @@ export class MoleculeRenderer {
       distance,
       azimuth,
       elevation,
-      fov: this._camera.fov,
-      projection: 'perspective',
+      fov: this._perspCamera.fov,
+      projection: this._camera === this._orthoCamera ? 'orthographic' : 'perspective',
     };
   }
 
@@ -364,6 +471,18 @@ export class MoleculeRenderer {
     const size   = box.getSize(new THREE.Vector3()).length();
     this._controls.target.copy(center);
     this._camera.position.copy(center).addScaledVector(new THREE.Vector3(0, 0, 1), size * 1.5);
+    this._updateOrthoFrustum(this._canvas.clientWidth / this._canvas.clientHeight);
+    this._controls.update();
+  }
+
+  /** Shift the look-at point to `point`, preserving azimuth/elevation/distance
+   * (issue 04: origin-on-centre-of-mass tracking). Fires the 'change' event. */
+  recenterTo(point) {
+    const [x, y, z] = point;
+    const delta = new THREE.Vector3(x, y, z).sub(this._controls.target);
+    if (delta.lengthSq() < 1e-12) return;
+    this._controls.target.add(delta);
+    this._camera.position.add(delta);
     this._controls.update();
   }
 }

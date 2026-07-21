@@ -352,7 +352,7 @@ class TestSymbolicRefResolution:
 
         return cv._resolve_symbolic_ref(
             ref, ds, 0, np.zeros((len(z), 3)), np.asarray(z), None,
-            types.SimpleNamespace(),
+            types.SimpleNamespace(), None,
         )
 
     def test_masses_ase_fallback_failure_raises_keyerror(self):

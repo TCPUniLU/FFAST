@@ -127,4 +127,65 @@
  * @property {Object<string, any>} kwargs
  */
 
+/**
+ * VIEW_COMMAND kwargs (ffast/visualization/commands.py `ViewCommand`) — a
+ * discriminated union on `type`; only the variants app.js sends are typed
+ * here (SET_FRAME/SET_CAMERA are sent directly, not through `_sendViewCommand`).
+ * @typedef {Object} ToggleFeatureCommand
+ * @property {'TOGGLE_FEATURE'} type
+ * @property {string} view_id
+ * @property {number} view_version
+ * @property {string} feature
+ * @property {boolean} enabled
+ */
+
+/**
+ * @typedef {Object} SetParameterCommand
+ * @property {'SET_PARAMETER'} type
+ * @property {string} view_id
+ * @property {number} view_version
+ * @property {string} stage_id
+ * @property {string} parameter
+ * @property {any} value
+ */
+
+/**
+ * @typedef {Object} SetSelectionCommand
+ * @property {'SET_SELECTION'} type
+ * @property {string} view_id
+ * @property {number} view_version
+ * @property {string} name
+ * @property {'current_structure'|'stable_topology'|'element'|'per_structure'} scope
+ * @property {number[]} indices
+ */
+
+/**
+ * One tunable parameter in a {@link MetricCatalogEntry} (ffast/protocol/messages.py
+ * `MetricCatalogParameter`).
+ * @typedef {Object} MetricCatalogParameter
+ * @property {'choice'|'float'|'bool'} type
+ * @property {string[]} [choices]
+ * @property {number} [min]
+ * @property {number} [max]
+ * @property {any} default
+ */
+
+/**
+ * One metric in the METRIC_CATALOG message (ffast/protocol/messages.py
+ * `MetricCatalogEntry`) — filtered to `shape` in `("N_atoms","N_elements")`
+ * for atom-colorable metrics (ADR 0016).
+ * @typedef {Object} MetricCatalogEntry
+ * @property {string} id
+ * @property {string} [label]
+ * @property {string} shape
+ * @property {string} [unit]
+ * @property {Object<string, MetricCatalogParameter>} [parameters]
+ */
+
+/**
+ * METRIC_CATALOG kwargs (ffast/protocol/messages.py `MetricCatalog`).
+ * @typedef {Object} MetricCatalogKwargs
+ * @property {MetricCatalogEntry[]} metrics
+ */
+
 export {};
