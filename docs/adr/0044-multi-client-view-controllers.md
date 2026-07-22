@@ -1,4 +1,4 @@
-Status: Proposed
+Status: Accepted — implemented (all 4 phases done 2026-07-22)
 
 # Multi-client independent view controllers
 
@@ -162,13 +162,46 @@ multi-client in `HELLO_ACK`, else falls back to the satellite mirror.
    once, each receives its own `METRIC_CATALOG` replay — the stream no longer
    splits). Role/recovery logic deliberately untouched — a second client is
    still `READ_ONLY`, but multi-connect is now *safe* (no stream corruption).
-2. **Role model.** Drop the single-CONTROLLING dispatch gate; admit every
-   connection as a controller; keep `READ_ONLY` opt-in. Recovery window →
-   last-client.
-3. **Concurrency hardening.** Audit/lock Environment mutations; graceful
-   view degrade on broadcast delete.
-4. **Web client.** Pop-out opens a live second controller when the server
-   advertises multi-client; retire or gate the satellite relay.
+2. **Role model. — DONE 2026-07-22.** `ConnectionRegistry.claim` grants
+   CONTROLLING to every valid-token connection (no longer gated on
+   `not has_controlling`); `READ_ONLY` is an explicit opt-in via a new
+   `read_only` HELLO field, independent of the token. The single dispatch
+   gate is replaced by `server._may_dispatch`: CONTROLLING dispatches
+   everything, READ_ONLY still dispatches read/query events (its own
+   `OPEN_VIEW`, `REQUEST_METRIC`, ...) so it gets scenes/results, but the new
+   `control.MUTATING_CLIENT_EVENTS` set (`LOAD_*`, `DELETE_OBJECT`,
+   `VIEW_COMMAND`, `SAVE_SESSION`, `EXPORT_SUBSET`, ...) is dropped for it.
+   The recovery window keys off `hub.is_empty` (last connection, checked at
+   both arm-time in `_handler` and expiry-time in `_recovery_window_task`)
+   instead of `registry.has_controlling`. Verified:
+   `tests/ffast/test_multi_client_role_model.py`,
+   `tests/ffast/test_session_registry.py` (updated).
+3. **Concurrency hardening. — DONE 2026-07-22.** `Environment.mutation_lock`
+   (a plain `threading.Lock`, since loads run via `asyncio.to_thread`)
+   serializes the registry-mutating tail of `loadModel`/`loadDataset`/
+   `loadPrepredictedDataset`/`deleteObject` — the file-I/O-heavy parts stay
+   unlocked. `_on_view_command`/`_on_open_view` catch an unexpected scene-
+   rebuild exception (e.g. a colour-by metric erroring on a just-deleted
+   model — `build_scene`'s existing `ds is None` fallback doesn't cover
+   every path) and degrade to a bare/empty scene rather than dropping the
+   reply entirely. Verified: `tests/ffast/test_environment_concurrency.py`,
+   delete-race tests in `tests/ffast/session/test_server_session.py`.
+4. **Web client. — DONE 2026-07-22.** `negotiate()` always advertises a
+   `multi_client` feature in `HELLO_ACK`. The pop-out (`app.js
+   _openPopout`) opens its own live connection (`?mode=loupe-live`) when the
+   opener's connection reports `multiClient` — auto-connecting, hiding
+   chrome via the existing `body.loupe-only` CSS, and auto-selecting the
+   opener's dataset/prediction from state replay via `_onDatasetMeta`/
+   `_onModelMeta` — falling back to the `mode=loupe` BroadcastChannel
+   satellite otherwise. Fixed a latent bug found by this: `_connect()` set
+   `this._conn` *after* `await conn.connect()`, but `connect()` dispatches
+   buffered replay messages (which can trigger the auto-open-view path)
+   *before* its promise resolves, so `_openView()`'s `this._conn` guard
+   always failed for a pop-out onto a server with an already-loaded dataset;
+   `this._conn` is now set immediately after construction. Verified:
+   `tests/ffast/session/test_connection_hub.py` (two-connection SET_FRAME
+   isolation), `tests/ffast/renderers/web/test_web_runtime.py::test_web_popout_opens_independent_live_controller`
+   (real two-tab Playwright run — independent frames, both rendering).
 
 ## Tests
 

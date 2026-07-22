@@ -346,9 +346,12 @@
     #colorbar .cb-min, #colorbar .cb-max { font-size: 9px; color: var(--muted); }
     #colorbar-label { font-size: 10px; color: var(--text1); text-align: center; }
 
-    /* satellite (popped-out) loupe: chrome hidden, viewport fills the window.
-       The main tab owns the single WebSocket; this tab renders scenes relayed
-       over a BroadcastChannel and sends frame intents back through it. */
+    /* popped-out loupe: chrome hidden, viewport fills the window. Two
+       mechanisms share this class (ADR 0044 Phase 4): the live pop-out opens
+       its OWN connection (a real second controller, mode=loupe-live); the
+       BroadcastChannel satellite (mode=loupe) is the fallback for a server
+       that hasn't advertised multi-client support, and renders scenes the
+       main tab relays instead of holding a socket of its own. */
     body.loupe-only #objectbar,
     body.loupe-only #tabbar,
     body.loupe-only #popout-btn,
@@ -491,6 +494,15 @@
     <div class="connection-field token-field">
       <label for="token-input">Token</label>
       <input id="token-input" type="text" placeholder="(optional)" style="width:120px">
+    </div>
+    <!-- Explicit READ_ONLY viewer opt-in (ADR 0044 Phase 2, PRD story 73):
+         drops inbound control server-side but still opens views and sees
+         shared broadcasts — for mirroring a session without driving it. -->
+    <div class="connection-field readonly-field">
+      <label for="readonly-toggle" style="text-transform:none; font-weight:400;">
+        <input id="readonly-toggle" type="checkbox" style="vertical-align:middle">
+        Read-only
+      </label>
     </div>
     <button id="connect-btn">Connect</button>
     <button id="disconnect-btn" disabled>Disconnect</button>

@@ -51,6 +51,14 @@ class Environment(EventClass):
         self.datasets = DatasetRegistry(self.cache, self)
         self.modelTypes = {}
         self.datasetTypes = {}
+        # Serializes dataset/model registry mutations across the threaded load
+        # tasks (ADR 0044 Phase 3): two controllers loading/deleting at once
+        # would otherwise run their loadDataset/loadModel bodies concurrently
+        # on separate worker threads (``asyncio.to_thread``), racing on
+        # self.datasets/self.models/self.cache. A coarse per-Environment lock
+        # orders them instead — correctness over the (small, I/O-already-
+        # dominated) loss of true load parallelism.
+        self.mutation_lock = threading.Lock()
         # Single owner of per-object session metadata (path/name/type). Was a
         # raw ``self.info['objects']`` dict mutated across 6 files; now behind
         # ObjectCatalog's register/prune/get/snapshot/load interface.
@@ -295,12 +303,13 @@ class Environment(EventClass):
 
     def deleteObject(self, key):
         """Route generic delete requests to the appropriate registry."""
-        if self.datasets.exists(key):
-            self.datasets.delete(key)
-        elif self.models.exists(key):
-            self.models.delete(key)
-        else:
-            return
+        with self.mutation_lock:
+            if self.datasets.exists(key):
+                self.datasets.delete(key)
+            elif self.models.exists(key):
+                self.models.delete(key)
+            else:
+                return
 
         session = self.remote.serverConnection
         if session is not None and self.remote._event_loop is not None:

@@ -124,7 +124,11 @@ class LoadingCoordinator:
             )
             return None
 
-        self._env.models.add(model)
+        # Registry mutation serialized against concurrent loads/deletes from
+        # other controllers (ADR 0044 Phase 3) — the heavy backend init above
+        # runs unlocked.
+        with self._env.mutation_lock:
+            self._env.models.add(model)
         logging.info(f"Model `{path}` successfully loaded")
 
     #############
@@ -250,53 +254,56 @@ class LoadingCoordinator:
                 )
                 F = None
 
-        dataset = self._env.datasets.get(datasetKey)
+        # mutation_lock again (see loadModel above) — the file parse above
+        # runs unlocked.
+        with self._env.mutation_lock:
+            dataset = self._env.datasets.get(datasetKey)
 
-        if E is not None:
-            eDataset = dataset.getEnergies()
-            if E.shape != eDataset.shape:
-                logger.error(
-                    f"Shape mismatch when loading prepredicted model. Model energy shape: {E.shape}, dataset energy shape: {eDataset.shape}"
-                )
-                logger.error(
-                    "Prediction load failed, you have probably selected the wrong prediction for the designated dataset. "
-                    "Please try again and choose the correct prediction file according to the dataset selected "
-                    "in the file filter dropdown."
-                )
-                return
+            if E is not None:
+                eDataset = dataset.getEnergies()
+                if E.shape != eDataset.shape:
+                    logger.error(
+                        f"Shape mismatch when loading prepredicted model. Model energy shape: {E.shape}, dataset energy shape: {eDataset.shape}"
+                    )
+                    logger.error(
+                        "Prediction load failed, you have probably selected the wrong prediction for the designated dataset. "
+                        "Please try again and choose the correct prediction file according to the dataset selected "
+                        "in the file filter dropdown."
+                    )
+                    return
 
-        available = [x for x in (E, F) if x is not None]
-        modelKey = (
-            md5FromArraysAndStrings(*available)
-            if available
-            else md5FromArraysAndStrings(path)
-        )
-
-        if E is not None:
-            energyDataType = self._env.data.getDataType("energy")
-            energyDataEntity = energyDataType.newDataEntity(energy=E.flatten())
-            self._env.data.setData(
-                energyDataEntity, "energy", model=modelKey, dataset=dataset
+            available = [x for x in (E, F) if x is not None]
+            modelKey = (
+                md5FromArraysAndStrings(*available)
+                if available
+                else md5FromArraysAndStrings(path)
             )
 
-        if F is not None:
-            forcesDataType = self._env.data.getDataType("forces")
-            forcesDataEntity = forcesDataType.newDataEntity(forces=F)
-            self._env.data.setData(
-                forcesDataEntity, "forces", model=modelKey, dataset=dataset
-            )
+            if E is not None:
+                energyDataType = self._env.data.getDataType("energy")
+                energyDataEntity = energyDataType.newDataEntity(energy=E.flatten())
+                self._env.data.setData(
+                    energyDataEntity, "energy", model=modelKey, dataset=dataset
+                )
 
-        # Prediction Dataset Fields (ADR 0023): eagerly extract the declared set
-        # of prediction.{info,atoms}.<key> from the prediction's loader (its ASE
-        # source is discarded below). Only ASE files carry extra keys; npz holds
-        # only E/F, so 'aseObject' is absent there and this is skipped.
-        if "npz" not in path:
-            self._extractPredictionFields(aseObject, modelKey, dataset)
+            if F is not None:
+                forcesDataType = self._env.data.getDataType("forces")
+                forcesDataEntity = forcesDataType.newDataEntity(forces=F)
+                self._env.data.setData(
+                    forcesDataEntity, "forces", model=modelKey, dataset=dataset
+                )
 
-        # Register this ghost model's info so it survives session save/restore.
-        self.registerGhostModel(modelKey, path=path, name=os.path.basename(path))
+            # Prediction Dataset Fields (ADR 0023): eagerly extract the declared set
+            # of prediction.{info,atoms}.<key> from the prediction's loader (its ASE
+            # source is discarded below). Only ASE files carry extra keys; npz holds
+            # only E/F, so 'aseObject' is absent there and this is skipped.
+            if "npz" not in path:
+                self._extractPredictionFields(aseObject, modelKey, dataset)
 
-        self.lookForGhosts()
+            # Register this ghost model's info so it survives session save/restore.
+            self.registerGhostModel(modelKey, path=path, name=os.path.basename(path))
+
+            self.lookForGhosts()
 
         # NOTE: in-process prediction load is now the no-server FALLBACK only
         # (routing goes through requestPredictionLoad → server-side
@@ -461,21 +468,35 @@ class LoadingCoordinator:
             return
 
         dataset.initialise()
-        self._env.datasets.add(dataset, slice_num)
-        logging.info(f"Dataset `{path}` successfully loaded")
 
         # NOTE: in-process load is now the no-server FALLBACK only (routing goes
         # through requestDatasetLoad → server-side LOAD_DATASET when a session
         # exists).  No mirror-to-local-server here: if we reached this method a
         # server was unavailable, so there is nothing to mirror to.
 
-        # Load predictions as ghost models if specified
-        if prediction_keys:
-            # Reuse atomsList from dataset to avoid re-reading file
-            atomsList = dataset.atomsList if hasattr(dataset, 'atomsList') else None
-            self._loadPredictionsFromKeys(dataset, path, prediction_keys, atomsList=atomsList)
+        # Resolve the prediction-keys atomsList BEFORE the lock: a cache miss
+        # here (dataset has no .atomsList) falls through to a full re-read of
+        # the file inside _loadPredictionsFromKeys. That must not happen while
+        # holding mutation_lock — deleteObject (ADR 0044 Phase 3) acquires the
+        # same lock synchronously on the event loop thread (no to_thread), so
+        # a slow read held under the lock would freeze the whole event loop —
+        # every connection's dispatch — for its duration, not just serialize
+        # the registry mutation.
+        atomsList = dataset.atomsList if hasattr(dataset, 'atomsList') else None
+        if prediction_keys and atomsList is None:
+            import ase.io
+            atomsList = ase.io.read(path, index=":")
 
-        self.lookForGhosts()
+        # mutation_lock again (see loadModel above).
+        with self._env.mutation_lock:
+            self._env.datasets.add(dataset, slice_num)
+            logging.info(f"Dataset `{path}` successfully loaded")
+
+            # Load predictions as ghost models if specified
+            if prediction_keys:
+                self._loadPredictionsFromKeys(dataset, path, prediction_keys, atomsList=atomsList)
+
+            self.lookForGhosts()
 
     def _loadPredictionsFromKeys(self, dataset, path, prediction_keys, atomsList=None):
         """Materialize extra energy/force columns as ghost-model cache entries.

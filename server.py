@@ -37,14 +37,19 @@ Handshake sequence (after WebSocket upgrade):
     server → state replay
 
 Token auth (managed mode only):
-    Pass --token-hash <sha256_hex> to restrict CONTROLLING role to the
-    client that sends the matching plaintext in the HELLO message.
-    Without --token-hash every first-connecting client becomes CONTROLLING.
+    Pass --token-hash <sha256_hex> to restrict CONTROLLING role to
+    clients that send the matching plaintext in the HELLO message.
+    Without --token-hash every connecting client becomes CONTROLLING
+    (ADR 0044: every connection controls its own views over the shared
+    Environment — CONTROLLING is no longer a single global slot). A
+    client may still opt into READ_ONLY explicitly via HELLO's
+    `read_only` flag regardless of its token.
 
 Recovery window (managed mode only):
     Pass --recovery-window N (seconds, default 0 = disabled).
-    When the CONTROLLING client disconnects without GRACEFUL_DISCONNECT,
-    the server stays alive for N seconds so it can reconnect.
+    When the LAST connection drops without GRACEFUL_DISCONNECT, the
+    server stays alive for N seconds so a client can reconnect (ADR 0044:
+    the window arms on last-client, not first/CONTROLLING).
 
 Log file: server.log (same directory as this file).
 """
@@ -143,10 +148,14 @@ async def _do_hello_handshake(websocket, addr, registry, token_hash: str):
         if candidate:
             token_ok = SessionToken.from_hash(token_hash).verify(candidate)
     else:
-        # No token required — first client gets CONTROLLING automatically
+        # No token required — every client gets CONTROLLING automatically
         token_ok = True
 
-    role = registry.claim(websocket, token_ok)
+    # Explicit READ_ONLY viewer opt-in (ADR 0044 Phase 2), independent of the
+    # token: a client may hold a valid token and still ask to be a passive
+    # viewer (PRD story 73).
+    read_only_requested = bool(kwargs.get("read_only", False))
+    role = registry.claim(websocket, token_ok, read_only_requested=read_only_requested)
 
     # ── HELLO_ACK ─────────────────────────────────────────────────────────
     try:
@@ -165,15 +174,38 @@ async def _do_hello_handshake(websocket, addr, registry, token_hash: str):
     return role
 
 
-async def _recovery_window_task(registry, recovery_window: int, quit_event: asyncio.Event):
-    """Wait N seconds; shut down if no CONTROLLING client reconnected."""
+def _may_dispatch(role, event: str) -> bool:
+    """Whether a connection with this role may have this Control message dispatched.
+
+    ADR 0044 Phase 2: CONTROLLING dispatches everything. READ_ONLY still
+    dispatches read/query events — it can open its own view and request
+    metrics, so it receives scenes and results — but the events that mutate
+    the shared Environment or drive an existing view (``MUTATING_CLIENT_EVENTS``)
+    are dropped, which is the "inbound control" a READ_ONLY viewer opts out of.
+    """
+    from ffast.protocol import control
+    from ffast.session.token import ClientRole
+
+    return role == ClientRole.CONTROLLING or event not in control.MUTATING_CLIENT_EVENTS
+
+
+async def _recovery_window_task(hub, recovery_window: int, quit_event: asyncio.Event):
+    """Wait N seconds; shut down if no client reconnected.
+
+    ADR 0044 Phase 2: the window arms on the LAST connection dropping, not the
+    first/CONTROLLING one — every connection is a controller now, so "is
+    anyone still watching this job" is a hub emptiness check, not a role
+    check. Any reconnect (by any client) during the window keeps the job
+    alive; it re-admits as a controller (registry.claim), it doesn't reclaim
+    a sole role.
+    """
     logger.info("Recovery window started: %ds", recovery_window)
     await asyncio.sleep(recovery_window)
-    if not registry.has_controlling:
+    if hub.is_empty:
         logger.info("Recovery window expired — no reconnect, shutting down")
         quit_event.set()
     else:
-        logger.info("Recovery window: CONTROLLING client reconnected, staying alive")
+        logger.info("Recovery window: a client reconnected, staying alive")
 
 
 async def _handler(
@@ -187,7 +219,6 @@ async def _handler(
     logger.info("Client connected: %s", addr)
 
     from ffast.session import ServerSession
-    from ffast.session.token import ClientRole
 
     # Per-connection queue + session; register with the hub so shared events
     # (object metadata, deletes, metric catalog) fan out to this client too.
@@ -215,11 +246,12 @@ async def _handler(
                     if event == control.GRACEFUL_DISCONNECT:
                         graceful = True
                         logger.info("GRACEFUL_DISCONNECT from %s", addr)
-                    elif role == ClientRole.CONTROLLING:
+                    elif _may_dispatch(role, event):
                         await session.dispatch(event, args, kwargs)
                     else:
                         logger.debug(
-                            "READ_ONLY client %s sent %s — ignored", addr, event
+                            "READ_ONLY client %s sent mutating event %s — ignored",
+                            addr, event,
                         )
                 except Exception as exc:
                     logger.warning("RPC decode error: %s", exc)
@@ -255,13 +287,12 @@ async def _handler(
             addr, released_role and released_role.value, graceful, hub.count,
         )
 
-        if (
-            released_role == ClientRole.CONTROLLING
-            and not graceful
-            and recovery_window > 0
-        ):
+        # ADR 0044 Phase 2: the window arms on the LAST connection dropping
+        # (hub now empty) without a graceful disconnect — not on the first/
+        # CONTROLLING client, since every connection is a controller.
+        if hub.is_empty and not graceful and recovery_window > 0:
             asyncio.create_task(
-                _recovery_window_task(registry, recovery_window, quit_event)
+                _recovery_window_task(hub, recovery_window, quit_event)
             )
 
 

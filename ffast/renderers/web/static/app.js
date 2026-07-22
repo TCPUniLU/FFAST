@@ -81,6 +81,14 @@ export class FFastApp {
     // next TASK_DONE/TASK_FAILED (see _connect) can report completion.
     this._pendingSessionOp = null;   // {kind: 'save'|'load', path: string} | null
 
+    // Live pop-out controller (ADR 0044 Phase 4): when opened with
+    // ?mode=loupe-live this instance auto-connects, hides the chrome
+    // (body.loupe-only, shared with the BroadcastChannel satellite), and
+    // selects the same dataset/prediction the opener had open — but as its
+    // OWN connection, with its own view, driving its own frame/camera.
+    this._autoDatasetFp = null;
+    this._autoModelFp = null;
+
     this._initRenderer();
     this._initTabs();
     this._initUI();
@@ -257,16 +265,39 @@ export class FFastApp {
       document.getElementById('ws-url').value = `ws://${host}:${port}`;
     }
     if (token) document.getElementById('token-input').value = token;
+
+    // Live pop-out (ADR 0044 Phase 4): a second FFastApp instance opened by
+    // _openPopout() when the server advertised multi_client. Hide the chrome
+    // (same body.loupe-only CSS the satellite mirror uses) and auto-connect —
+    // REMOTE_DATASET_META replay then drives _onDatasetMeta to select the
+    // requested dataset and open this connection's own view.
+    if (p.get('mode') === 'loupe-live') {
+      document.body.classList.add('loupe-only');
+      this._autoDatasetFp = p.get('ds') || null;
+      this._autoModelFp = p.get('pred') || null;
+      if (port) this._connect();
+    }
   }
 
   async _connect() {
     const wsUrl = document.getElementById('ws-url').value.trim();
     const token = document.getElementById('token-input').value.trim() || null;
+    // Explicit READ_ONLY viewer opt-in (ADR 0044 Phase 2, PRD story 73): drops
+    // inbound control but still opens its own views and sees shared broadcasts.
+    const readOnly = document.getElementById('readonly-toggle')?.checked || false;
 
     this._setStatus('Connecting…', '');
 
     try {
-      const conn = new FFastConnection(wsUrl, token);
+      const conn = new FFastConnection(wsUrl, token, readOnly);
+      // Set before awaiting connect(): connect() dispatches buffered
+      // handshake-time replay messages (REMOTE_DATASET_META, ...) to their
+      // handlers *before* its promise resolves. A server with an
+      // already-loaded dataset (e.g. a live pop-out's opener already has one
+      // open) fires the auto-select-and-open-view path during that replay —
+      // if this._conn were still null then, _openView()'s guard would bail
+      // and the view would never open.
+      this._conn = conn;
 
       // Metric channel + analysis-tab manager (ADR 0045 Phase 3). The metric
       // client registers the METRIC_RESULT handler; build both before connect
@@ -306,22 +337,26 @@ export class FFastApp {
       conn.on('SUBSET_EXPORTED', (kw) => this._onSubsetExported(kw));
 
       await conn.connect();
-      this._conn = conn;
       this._setupBroadcast(wsUrl);
 
       this._setStatus(`Connected (${conn.role})`, 'connected');
       document.getElementById('connect-btn').disabled = true;
       document.getElementById('disconnect-btn').disabled = false;
-      document.getElementById('add-dataset-btn').disabled = false;
-      document.getElementById('add-prediction-btn').disabled = false;
-      document.getElementById('export-dataset-btn').disabled = false;
-      document.getElementById('save-session-btn').disabled = false;
-      document.getElementById('load-session-btn').disabled = false;
+      // A READ_ONLY viewer's mutating Control messages are dropped server-side
+      // (ADR 0044 Phase 2) — grey out the buttons that would send one, rather
+      // than let the click silently do nothing.
+      const canMutate = conn.role !== 'READ_ONLY';
+      document.getElementById('add-dataset-btn').disabled = !canMutate;
+      document.getElementById('add-prediction-btn').disabled = !canMutate;
+      document.getElementById('export-dataset-btn').disabled = !canMutate;
+      document.getElementById('save-session-btn').disabled = !canMutate;
+      document.getElementById('load-session-btn').disabled = !canMutate;
       this._renderObjects();
       // Fetch the analysis-tab layout (METRIC_CATALOG arrives via connect-replay).
       conn.send('REQUEST_TAB_LAYOUT', {});
 
     } catch (err) {
+      this._conn = null;   // handshake failed — undo the early assignment above
       console.error('Connection failed:', err);
       this._setStatus(`Error: ${err.message}`, 'error');
     }
@@ -369,8 +404,11 @@ export class FFastApp {
 
   _onDatasetMeta(fp, meta) {
     this._datasets.set(fp, meta);
-    // The first dataset auto-selects so the Loupe has something to show.
-    const firstSelect = !this._currentDatasetFp;
+    // The first dataset auto-selects so the Loupe has something to show. A
+    // live pop-out (ADR 0044 Phase 4) overrides that with the dataset its
+    // opener had open, whenever that one's metadata arrives during replay.
+    const isAutoTarget = this._autoDatasetFp === fp;
+    const firstSelect = !this._currentDatasetFp || isAutoTarget;
     if (firstSelect) this._currentDatasetFp = fp;
     this._renderObjects();
     if (firstSelect) this._syncAnalysisContext();
@@ -382,8 +420,11 @@ export class FFastApp {
     // a LOAD_PREDICTION completes (the ghost model registers its forces cache).
     this._models.set(fp, meta || {});
     // Auto-select a freshly loaded prediction that applies to the current
-    // dataset and refresh the view so its force overlay appears.
-    if (this._currentDatasetFp &&
+    // dataset and refresh the view so its force overlay appears. A live
+    // pop-out with a requested prediction (ADR 0044 Phase 4) only settles on
+    // that one, so replay order among several candidates doesn't matter.
+    const wantsSpecificModel = this._autoModelFp && fp !== this._autoModelFp;
+    if (!wantsSpecificModel && this._currentDatasetFp &&
         (meta?.dataset_fingerprints || []).includes(this._currentDatasetFp)) {
       this._currentModelFp = fp;
       this._setStatus(`Prediction "${meta.name || fp.slice(0,8)}" ready`, 'connected');
@@ -1231,12 +1272,36 @@ export class FFastApp {
   }
 
   _openPopout() {
-    if (!this._chId || !this._currentDatasetFp) return;
+    if (!this._currentDatasetFp) return;
     const url = new URL(window.location.href);
-    url.searchParams.set('mode', 'loupe');
-    url.searchParams.set('ch', this._chId);
+
+    // ADR 0044 Phase 4: when the server advertised multi-client support
+    // (HELLO_ACK features), open the pop-out as its OWN live controller
+    // connection instead of a same-tab-only BroadcastChannel mirror — it
+    // gets its own state replay, view, and frame/camera control, and shares
+    // the fingerprint-keyed cache with this tab. Older, single-client
+    // servers fall back to the satellite mirror (ADR 0043).
+    if (this._conn?.multiClient) {
+      const wsMatch = /:(\d+)\/?$/.exec(document.getElementById('ws-url').value.trim());
+      if (wsMatch) url.searchParams.set('port', wsMatch[1]);
+      const token = document.getElementById('token-input').value.trim();
+      if (token) url.searchParams.set('token', token);
+      else url.searchParams.delete('token');
+      url.searchParams.set('mode', 'loupe-live');
+      url.searchParams.set('ds', this._currentDatasetFp);
+      if (this._currentModelFp) url.searchParams.set('pred', this._currentModelFp);
+      else url.searchParams.delete('pred');
+      url.searchParams.delete('ch');
+    } else {
+      if (!this._chId) return;
+      url.searchParams.set('mode', 'loupe');
+      url.searchParams.set('ch', this._chId);
+      url.searchParams.delete('ds');
+      url.searchParams.delete('pred');
+    }
     window.open(url.toString(), '_blank', 'noopener');
-    // The new tab sends 'hello' on load; _onBroadcast replies with the scene.
+    // Satellite mode: the new tab sends 'hello' on load; _onBroadcast replies
+    // with the scene. Live mode: the new tab connects and replays for itself.
   }
 
   _sendSetCamera(cam) {

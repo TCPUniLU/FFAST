@@ -39,6 +39,12 @@ def test_reply_channels_match_reply_event_constants():
     assert set(_REPLY_CHANNELS) == control.REPLY_EVENTS
 
 
+def test_mutating_client_events_is_a_subset_of_client_to_server():
+    """ADR 0044 Phase 2: the READ_ONLY dispatch gate only makes sense for
+    events that are actually part of the client→server surface."""
+    assert control.MUTATING_CLIENT_EVENTS <= control.CLIENT_TO_SERVER
+
+
 # ── request model shape ──────────────────────────────────────────────────────
 
 def test_load_dataset_request_accepts_the_real_wire_shape():

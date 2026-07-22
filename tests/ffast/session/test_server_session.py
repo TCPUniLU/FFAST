@@ -658,6 +658,64 @@ def test_view_command_for_unknown_view_is_dropped():
     assert s.outbound.empty()
 
 
+# ── delete-race graceful degrade (ADR 0044 Phase 3) ─────────────────────────
+# Another connection may delete the dataset/model this view is showing between
+# a command arriving and the scene rebuild running. build_scene already
+# degrades to a bare scene when the dataset lookup returns None; these pin the
+# deeper guard — an unexpected exception from further in the pipeline (e.g. a
+# colour-by metric erroring on a just-deleted model) must not stop
+# COMMAND_RESULT/SCENE_PATCH (or SCENE_SNAPSHOT) from reaching the client.
+
+def test_view_command_scene_rebuild_exception_degrades_gracefully():
+    env = _FakeEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("OPEN_VIEW", [], {"view_id": "v1"})
+        s.outbound.get_nowait()  # SCENE_SNAPSHOT
+        with patch(
+            "ffast.visualization.scene_builder.build_scene",
+            side_effect=RuntimeError("boom: referenced object vanished mid-rebuild"),
+        ):
+            await s.dispatch("VIEW_COMMAND", [], {
+                "type": "TOGGLE_FEATURE", "view_id": "v1", "view_version": 0,
+                "feature": "kabsch_align", "enabled": True,
+            })
+        return s
+
+    s = _run(scenario())  # must not raise
+
+    result_event, _, result_kwargs = unpack(s.outbound.get_nowait())
+    assert result_event == control.COMMAND_RESULT
+    assert result_kwargs["success"] is True
+
+    patch_event, _, patch_kwargs = unpack(s.outbound.get_nowait())
+    assert patch_event == control.SCENE_PATCH
+    assert "atoms" in patch_kwargs["changed"]
+    assert patch_kwargs["atoms"] is None   # degraded to an empty scene, not crashed
+    assert s.outbound.empty()
+
+
+def test_open_view_snapshot_exception_degrades_to_bare_scene():
+    env = _FakeEnv(datasets={"ds1": object()})  # present but "poisoned"
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        with patch(
+            "ffast.visualization.scene_builder.build_scene",
+            side_effect=RuntimeError("boom: dataset in a torn-down state"),
+        ):
+            await s.dispatch("OPEN_VIEW", [], {"view_id": "v1", "dataset_ref": "ds1"})
+        return s
+
+    s = _run(scenario())  # must not raise
+
+    snapshot_event, _, snapshot_kwargs = unpack(s.outbound.get_nowait())
+    assert snapshot_event == control.SCENE_SNAPSHOT
+    assert snapshot_kwargs["scene"]["atoms"] is None
+    assert s.outbound.empty()
+
+
 # ── _on_export_subset (ADR 0045 Phase 4, issue 20) ──────────────────────────
 
 class _FakeExportDataset:

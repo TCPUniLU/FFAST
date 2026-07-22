@@ -21,9 +21,21 @@ class ConnectionRegistry:
     def __init__(self) -> None:
         self._clients: dict[object, _ClientRecord] = {}
 
-    def claim(self, websocket: object, token_ok: bool) -> ClientRole:
-        """Register client; grant CONTROLLING if token valid and no one holds it yet."""
-        if token_ok and not self.has_controlling:
+    def claim(
+        self, websocket: object, token_ok: bool, read_only_requested: bool = False
+    ) -> ClientRole:
+        """Register a client and assign its role (ADR 0044 Phase 2).
+
+        Every admitted connection controls its own views — CONTROLLING is no
+        longer a single global slot the first client claims and everyone else
+        is locked out of. A client is READ_ONLY only when it explicitly opts
+        in (``read_only_requested``) or fails token validation; a valid token
+        always grants CONTROLLING, regardless of how many other connections
+        already hold it.
+        """
+        if read_only_requested:
+            role = ClientRole.READ_ONLY
+        elif token_ok:
             role = ClientRole.CONTROLLING
         else:
             role = ClientRole.READ_ONLY

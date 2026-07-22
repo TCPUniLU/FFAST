@@ -48,6 +48,18 @@ CLIENT_TO_SERVER = frozenset(
     }
 )
 
+# Control messages that mutate the shared Environment or drive an existing
+# view (ADR 0044 Phase 2). A READ_ONLY connection's inbound control is
+# dropped for these — everything else in CLIENT_TO_SERVER is a read/query
+# (open its own view, list a directory, request a metric) a viewer may still
+# issue so it can see scenes and results without being able to change them.
+MUTATING_CLIENT_EVENTS = frozenset(
+    {
+        LOAD_DATASET, LOAD_MODEL, DELETE_OBJECT, CREATE_SUBSET, DECLARE_SUBSET,
+        LOAD_PREDICTION, VIEW_COMMAND, SAVE_SESSION, LOAD_SESSION, EXPORT_SUBSET,
+    }
+)
+
 # ── handshake / connection lifecycle (outside ServerSession.dispatch — the
 # server intercepts these in server.py before role-gated dispatch runs) ─────
 HELLO = "HELLO"

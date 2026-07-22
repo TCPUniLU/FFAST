@@ -275,6 +275,17 @@ class ServerSession:
             logger.debug("server: get_forces(%r, %d) failed: %s", dataset_ref, idx, exc)
             return None
 
+    @staticmethod
+    def _log_scene_degrade(where: str, view_id: str, exc: Exception) -> None:
+        """Shared log line for the OPEN_VIEW/VIEW_COMMAND delete-race guards
+        (ADR 0044 Phase 3) — an unexpected scene-rebuild exception, most
+        likely a concurrent delete, degrades to a bare/empty scene."""
+        logger.warning(
+            "%s: scene rebuild failed for view=%r (likely a concurrent "
+            "delete) — degrading to an empty scene: %s",
+            where, view_id, exc,
+        )
+
     # ── state replay ──────────────────────────────────────────────────────────
 
     def replay(self) -> None:
@@ -789,11 +800,19 @@ class ServerSession:
         if "prediction_ref" in kwargs:
             view.state.prediction_ref = kwargs.get("prediction_ref") or None
 
-        snapshot = view.snapshot(
-            get_dataset=self.env.datasets.get,
-            get_prediction=self.get_prediction,
-            get_forces=self.get_forces,
-        )
+        # ADR 0044 Phase 3: the referenced dataset/model may have been deleted
+        # by another connection between OPEN_VIEW arriving and the snapshot
+        # build (delete race) — degrade to a bare (camera-only) snapshot
+        # instead of raising, mirroring _on_view_command's guard.
+        try:
+            snapshot = view.snapshot(
+                get_dataset=self.env.datasets.get,
+                get_prediction=self.get_prediction,
+                get_forces=self.get_forces,
+            )
+        except Exception as exc:
+            self._log_scene_degrade("OPEN_VIEW", view_id, exc)
+            snapshot = view.snapshot()
         data = pack(control.SCENE_SNAPSHOT, [], snapshot.model_dump())
         await self._emit(data)
         logger.info(
@@ -829,12 +848,29 @@ class ServerSession:
         # Rebuild scene components that changed. build_scene is synchronous and
         # may block while the worker-process executor communicates with its
         # subprocess, so run it in a thread to keep the event loop responsive.
+        #
+        # ADR 0044 Phase 3 (delete race): another connection may have deleted
+        # this view's dataset/model between the command arriving and the
+        # rebuild running. build_scene itself already degrades to a bare scene
+        # when get_dataset returns None; this guards against anything deeper
+        # in the pipeline (e.g. a colour-by metric referencing a just-deleted
+        # model) raising instead — the view degrades to an empty patch rather
+        # than the COMMAND_RESULT/SCENE_PATCH never reaching the client.
         if result.success and result.patch and result.patch.changed:
             view_state = view.state
-            scene = await asyncio.to_thread(
-                build_scene, view_state, self.env.datasets.get,
-                self.get_prediction, self.get_forces,
-            )
+            try:
+                scene = await asyncio.to_thread(
+                    build_scene, view_state, self.env.datasets.get,
+                    self.get_prediction, self.get_forces,
+                )
+            except Exception as exc:
+                self._log_scene_degrade("VIEW_COMMAND", cmd.view_id, exc)
+                from ffast.visualization.scene import RenderScene
+                scene = RenderScene(
+                    view_id=view_state.view_id,
+                    version=view_state.version,
+                    camera=view_state.camera,
+                )
             fill_patch_from_scene(result.patch, scene)
 
         result_data = pack(control.COMMAND_RESULT, [], result.model_dump())

@@ -898,6 +898,51 @@ async def test_web_export_subset_writes_extxyz_and_reports_path(ffast_web_server
             await browser.close()
 
 
+async def test_web_popout_opens_independent_live_controller(ffast_web_server):
+    """ADR 0044 Phase 4 gate: the pop-out button opens its OWN WebSocket
+    connection (the server advertises ``multi_client`` in HELLO_ACK) — a real
+    second controller with its own view, not a same-tab BroadcastChannel
+    mirror (ADR 0043). It replays the shared dataset, auto-selects the one the
+    opener had open, and scrubbing its frame slider must not move the
+    opener's — independent views over the shared Environment (ADR 0044)."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(page.locator("#popout-btn")).to_be_enabled()
+
+            async with page.context.expect_page() as popup_info:
+                await page.locator("#popout-btn").click()
+            popup = await popup_info.value
+            await popup.wait_for_load_state("networkidle")
+
+            # Its own live controller connection — status/frame-slider are
+            # live even though the object rail/toolbar chrome is hidden
+            # (loupe-only), unlike the chrome-mirroring satellite fallback.
+            await expect(popup.locator("#status")).to_contain_text("Connected")
+            await expect(popup.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
+            await expect(popup.locator("#frame-slider")).to_be_enabled()
+
+            # Scrub the popped-out tab to a different frame...
+            await popup.locator("#frame-slider").evaluate(
+                """(slider) => {
+                  slider.value = '1';
+                  slider.dispatchEvent(new Event('input', { bubbles: true }));
+                }"""
+            )
+            await expect(popup.locator("#frame-label")).to_contain_text("1 /")
+
+            # ...the opener's own view stays put — independent views, not a
+            # mirror of one shared view.
+            await expect(page.locator("#frame-label")).to_contain_text("0 /")
+        finally:
+            await browser.close()
+
+
 async def test_web_save_and_load_session_restores_dataset(tmp_path):
     """ADR 0045 issue 21 gate: a session saved from one server process is
     restored by a *fresh* second process with nothing pre-loaded — the true
