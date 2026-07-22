@@ -35,6 +35,7 @@ LOAD_SESSION = "LOAD_SESSION"
 REQUEST_METRIC = "REQUEST_METRIC"
 REQUEST_METRIC_CATALOG = "REQUEST_METRIC_CATALOG"
 REQUEST_TAB_LAYOUT = "REQUEST_TAB_LAYOUT"
+EXPORT_SUBSET = "EXPORT_SUBSET"
 
 CLIENT_TO_SERVER = frozenset(
     {
@@ -43,7 +44,7 @@ CLIENT_TO_SERVER = frozenset(
         PROBE_DATASET_KEYS, PROBE_DATASET_LENGTH, LIST_DIR, LOAD_PREDICTION,
         REQUEST_PREDICTION_ARRAYS, OPEN_VIEW, CLOSE_VIEW, VIEW_COMMAND,
         REQUEST_STATE_SYNC, SAVE_SESSION, LOAD_SESSION, REQUEST_METRIC,
-        REQUEST_METRIC_CATALOG, REQUEST_TAB_LAYOUT,
+        REQUEST_METRIC_CATALOG, REQUEST_TAB_LAYOUT, EXPORT_SUBSET,
     }
 )
 
@@ -82,3 +83,8 @@ METRICS_UPDATED = "METRICS_UPDATED"
 # asks for it, and it carries the whole layout in one shot, so it stays out of
 # REPLY_EVENTS (no cluster.connection correlator entry).
 TAB_LAYOUT = "TAB_LAYOUT"
+# Reply to EXPORT_SUBSET (ADR 0045 Phase 4, issue 20). A dedicated one-shot
+# announcement (like TAB_LAYOUT): the server writes the extxyz and reports the
+# written path (or an error) so the browser can confirm the export. Only the
+# web client asks for it, so it stays out of REPLY_EVENTS.
+SUBSET_EXPORTED = "SUBSET_EXPORTED"

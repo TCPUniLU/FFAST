@@ -355,6 +355,8 @@
     body.loupe-only .connection-field,
     body.loupe-only #connect-btn,
     body.loupe-only #disconnect-btn,
+    body.loupe-only #save-session-btn,
+    body.loupe-only #load-session-btn,
     body.loupe-only #loupe-sidebar,
     body.loupe-only #pick-bar,
     body.loupe-only #prev-frame-btn,
@@ -426,6 +428,44 @@
     }
     select:focus { outline: none; border-bottom-color: var(--hl2); }
     #fb-type { width: 130px; }
+
+    /* ── server-side path prompt (issues 20/21) ──────────────────────── */
+    #path-modal {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,0.6);
+      display: flex; align-items: center; justify-content: center;
+    }
+    #path-modal.hidden { display: none; }
+    #path-panel {
+      width: 440px; max-width: 92vw;
+      background: var(--bg2); border: 1px solid var(--bg3); border-radius: 6px;
+      display: flex; flex-direction: column; overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+    }
+    #path-header {
+      padding: 8px 10px; border-bottom: 1px solid var(--bg3);
+    }
+    #path-header .title {
+      font-size: 12px; font-weight: 700; color: var(--hl2);
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    #path-body { padding: 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+    #path-body label {
+      font-size: 10px; color: var(--muted); font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    #path-input {
+      font-family: var(--font); font-size: 12px;
+      color: var(--text1); background: var(--bg1); border: 1px solid var(--bg3);
+      border-radius: 4px; padding: 5px 8px; width: 100%;
+    }
+    #path-input:focus { outline: none; border-color: var(--hl2); }
+    #path-error { color: var(--danger); font-size: 11px; }
+    #path-footer {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; border-top: 1px solid var(--bg3);
+    }
+    #path-footer .spacer { flex: 1; }
   </style>
 
   <!-- Three.js is vendored under vendor/three/ (no CDN — the client must work
@@ -454,6 +494,10 @@
     </div>
     <button id="connect-btn">Connect</button>
     <button id="disconnect-btn" disabled>Disconnect</button>
+    <!-- Session save/load (ADR 0045 issue 21): mirrors Qt's File > Save/Load —
+         a global action over the whole session, not a per-dataset one. -->
+    <button id="save-session-btn" disabled title="Save session (datasets, views, settings)">Save Session</button>
+    <button id="load-session-btn" disabled title="Load a previously saved session">Load Session</button>
     <span id="status">Disconnected</span>
   </div>
 
@@ -463,6 +507,10 @@
       <div class="obj-group">
         <div class="obj-head">
           <span class="section-title">Datasets</span>
+          <!-- Subset export (ADR 0045 issue 20): writes the SELECTED dataset
+               row — a pick-derived AtomFilteredDataset, a plot-derived
+               SubDataset, or any loaded dataset — to extxyz server-side. -->
+          <button id="export-dataset-btn" class="mini" title="Export selected dataset as extxyz" disabled>⬇</button>
           <button id="add-dataset-btn" class="mini" title="Load dataset" disabled>+</button>
         </div>
         <div id="dataset-list" class="obj-list">
@@ -559,6 +607,28 @@
         <span class="spacer"></span>
         <button id="fb-cancel">Cancel</button>
         <button id="fb-load" disabled>Load</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── server-side path prompt (issues 20/21): session save/load + subset
+       export all write server-side, with no native file dialog reachable
+       from the browser — one small modal collects a path for whichever
+       action armed it. ──────────────────────────────────────────────── -->
+  <div id="path-modal" class="hidden">
+    <div id="path-panel">
+      <div id="path-header">
+        <span class="title" id="path-title">Save Session</span>
+      </div>
+      <div id="path-body">
+        <label for="path-input">Server-side path</label>
+        <input id="path-input" type="text" placeholder="~/ffast-session">
+        <div id="path-error" style="display:none"></div>
+      </div>
+      <div id="path-footer">
+        <span class="spacer"></span>
+        <button id="path-cancel">Cancel</button>
+        <button id="path-ok">Save</button>
       </div>
     </div>
   </div>

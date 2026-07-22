@@ -20,6 +20,7 @@ from ffast.protocol.messages import (
     DirEntry,
     DirListing,
     EmptyRequest,
+    ExportSubsetRequest,
     ListDirRequest,
     LoadDatasetRequest,
     LoadModelRequest,
@@ -67,5 +68,6 @@ __all__ = [
     "RequestMetricRequest",
     "SaveSessionRequest",
     "LoadSessionRequest",
+    "ExportSubsetRequest",
     "EmptyRequest",
 ]

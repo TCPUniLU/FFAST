@@ -15,6 +15,7 @@ import { createBondsPane } from './panes/bonds.js';
 import { createForcesPane } from './panes/forces.js';
 import { createExtractPane } from './panes/extract.js';
 import { createAlignPane } from './panes/align.js';
+import { createExportPane } from './panes/export.js';
 
 /**
  * The five pick tools (ADR 0045 Phase 2). Each mirrors a Qt AtomSelectionBase
@@ -75,6 +76,10 @@ export class FFastApp {
     this._activeTool = null;   // tool id, or null (orbit)
     this._picked = [];         // [{displayIndex, atomId}] for the active tool
     this._pickRadius = 12;
+
+    // Save/load session (issue 21): the in-flight op's kind + path, so the
+    // next TASK_DONE/TASK_FAILED (see _connect) can report completion.
+    this._pendingSessionOp = null;   // {kind: 'save'|'load', path: string} | null
 
     this._initRenderer();
     this._initTabs();
@@ -141,6 +146,21 @@ export class FFastApp {
     // Object rail load actions — dataset vs prediction mode.
     document.getElementById('add-dataset-btn').addEventListener('click', () => this._openFileBrowser('dataset'));
     document.getElementById('add-prediction-btn').addEventListener('click', () => this._openFileBrowser('prediction'));
+    document.getElementById('export-dataset-btn').addEventListener('click', () => this._exportSelectedDataset());
+
+    // Session save/load (issue 21) + subset export (issue 20) reuse one path
+    // prompt — the browser has no native server-side save dialog.
+    document.getElementById('save-session-btn').addEventListener('click', () => this._saveSession());
+    document.getElementById('load-session-btn').addEventListener('click', () => this._loadSession());
+    document.getElementById('path-cancel').addEventListener('click', () => this._closePathModal());
+    document.getElementById('path-ok').addEventListener('click', () => this._confirmPathModal());
+    document.getElementById('path-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') this._confirmPathModal();
+      else if (e.key === 'Escape') this._closePathModal();
+    });
+    document.getElementById('path-modal').addEventListener('click', (e) => {
+      if (e.target.id === 'path-modal') this._closePathModal();
+    });
     document.getElementById('fb-cancel').addEventListener('click', () => this._closeFileBrowser());
     document.getElementById('fb-load').addEventListener('click', () => this._fbLoad());
     document.getElementById('fb-force-key').addEventListener('change', () => this._updateFbLoadEnabled());
@@ -172,7 +192,10 @@ export class FFastApp {
       onManual: (az, el, dist) => this._renderer.setCameraAngles({ azimuth: az, elevation: el, distance: dist }),
       onCOM: (enabled) => { this._originCenterOfMass = enabled; },
       onGizmo: (enabled) => this._renderer.setGizmoEnabled(enabled),
-      onBackground: (hex) => this._renderer.setBackgroundColor(hex),
+      onBackground: (hex) => {
+        this._renderer.setBackgroundColor(hex);
+        this._panes?.export.setBackground(hex);   // keep the Export bg in step
+      },
     });
 
     const display = createDisplayPane(sidebarEl, {
@@ -204,6 +227,10 @@ export class FFastApp {
       onExtract: (tokens) => this._sendCreateSubset(tokens),
     });
 
+    const exportPane = createExportPane(sidebarEl, {
+      onExport: (opts) => this._exportPng(opts),
+    });
+
     const align = createAlignPane(sidebarEl, {
       onKabsch: (enabled, heavyOnly) => {
         this._sendToggleFeature('kabsch_align', enabled);
@@ -218,7 +245,7 @@ export class FFastApp {
       },
     });
 
-    this._panes = { colorBy, camera, display, bonds, forces, extract, align };
+    this._panes = { colorBy, camera, display, bonds, forces, extract, export: exportPane, align };
   }
 
   _applyUrlParams() {
@@ -260,8 +287,14 @@ export class FFastApp {
       conn.on('DATASET_KEYS_RESPONSE', (kw, args) => this._onDatasetKeys(args[0], kw));
       conn.on('TASK_CREATED',  (kw) => console.debug('TASK_CREATED', kw));
       conn.on('TASK_PROGRESS', (kw) => console.debug('TASK_PROGRESS', kw));
-      conn.on('TASK_DONE',     (kw) => console.debug('TASK_DONE', kw));
-      conn.on('TASK_FAILED',   (kw) => console.warn('TASK_FAILED', kw));
+      // No per-task correlation id travels back to the browser today (Qt's
+      // equivalent is a generic "Tasks" sidebar list, out of scope here), so
+      // a pending save/load session is resolved by the next TASK_DONE/FAILED
+      // to arrive — good enough for a single-user session (ADR 0044: shared
+      // workspace, not multi-tenant) and gives issue 21 a real completion
+      // signal instead of the previous silent console.debug-only handling.
+      conn.on('TASK_DONE',     (kw) => { console.debug('TASK_DONE', kw); this._resolveSessionOp(true); });
+      conn.on('TASK_FAILED',   (kw) => { console.warn('TASK_FAILED', kw); this._resolveSessionOp(false); });
       conn.on('DATASET_LOADED', () => {});
       conn.on('MODEL_LOADED',   () => {});
       conn.on('SCENE_SNAPSHOT', (kw) => this._onSceneSnapshot(kw));
@@ -270,6 +303,7 @@ export class FFastApp {
       conn.on('DIR_LISTING',    (kw) => this._onDirListing(kw));
       conn.on('METRIC_CATALOG', (kw) => this._onMetricCatalog(kw));
       conn.on('METRICS_UPDATED', () => this._conn?.send('REQUEST_METRIC_CATALOG', {}));
+      conn.on('SUBSET_EXPORTED', (kw) => this._onSubsetExported(kw));
 
       await conn.connect();
       this._conn = conn;
@@ -280,6 +314,9 @@ export class FFastApp {
       document.getElementById('disconnect-btn').disabled = false;
       document.getElementById('add-dataset-btn').disabled = false;
       document.getElementById('add-prediction-btn').disabled = false;
+      document.getElementById('export-dataset-btn').disabled = false;
+      document.getElementById('save-session-btn').disabled = false;
+      document.getElementById('load-session-btn').disabled = false;
       this._renderObjects();
       // Fetch the analysis-tab layout (METRIC_CATALOG arrives via connect-replay).
       conn.send('REQUEST_TAB_LAYOUT', {});
@@ -311,17 +348,22 @@ export class FFastApp {
     this._currentViewId = null;
     this._lastOpenedDatasetFp = null;
     this._playing = false;
+    this._pendingSessionOp = null;
     this._setActiveTool(null);   // release any armed pick tool
     this._renderObjects();
     document.getElementById('connect-btn').disabled = false;
     document.getElementById('disconnect-btn').disabled = true;
     document.getElementById('add-dataset-btn').disabled = true;
     document.getElementById('add-prediction-btn').disabled = true;
+    document.getElementById('export-dataset-btn').disabled = true;
+    document.getElementById('save-session-btn').disabled = true;
+    document.getElementById('load-session-btn').disabled = true;
     document.getElementById('reset-camera-btn').disabled = true;
     document.getElementById('popout-btn').disabled = true;
     document.getElementById('frame-slider').disabled = true;
     for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = true;
     this._closeFileBrowser();
+    this._closePathModal();
     this._setStatus('Disconnected', '');
   }
 
@@ -588,11 +630,22 @@ export class FFastApp {
 
   _onDatasetKeys(path, kw) {
     if (this._fbMode !== 'prediction') return;
-    const fillKeys = (sel, keys, allowNone) => {
+    // ASE's extxyz reader routes the standard `energy=`/`forces` columns into a
+    // SinglePointCalculator, not atoms.info/.arrays — so a plain MACE/DFT dump
+    // has empty key lists but has_calculator_*=true. Offer a "calculator"
+    // option whose value is the literal 'energy'/'forces' the loader already
+    // maps to the calculator (modules/loaders/aseDataset.py), so no named keys
+    // are needed to load such a prediction.
+    const fillKeys = (sel, keys, { allowNone = false, calc = false, calcValue }) => {
       sel.innerHTML = '';
       if (allowNone) {
         const o = document.createElement('option');
         o.value = ''; o.textContent = '— none —';
+        sel.appendChild(o);
+      }
+      if (calc) {
+        const o = document.createElement('option');
+        o.value = calcValue; o.textContent = 'calculator (built-in)';
         sel.appendChild(o);
       }
       for (const k of (keys || [])) {
@@ -601,8 +654,10 @@ export class FFastApp {
         sel.appendChild(o);
       }
     };
-    fillKeys(document.getElementById('fb-energy-key'), kw.energy_keys, true);  // energy optional
-    fillKeys(document.getElementById('fb-force-key'), kw.force_keys, false);   // force required for arrows
+    fillKeys(document.getElementById('fb-energy-key'), kw.energy_keys,
+             { allowNone: true, calc: kw.has_calculator_energy, calcValue: 'energy' });
+    fillKeys(document.getElementById('fb-force-key'), kw.force_keys,
+             { calc: kw.has_calculator_forces, calcValue: 'forces' });  // force required for arrows
     if (kw.error) this._setStatus(`Probe error: ${kw.error}`, 'error');
     this._updateFbLoadEnabled();
   }
@@ -653,6 +708,120 @@ export class FFastApp {
     let i = 0, n = bytes;
     while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
     return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
+  }
+
+  // ── server-side path prompt (issues 20/21): session save/load and subset
+  // export all write on the server, which has no native file dialog reachable
+  // from the browser, so one small modal collects a path and dispatches to
+  // whichever action armed it. ────────────────────────────────────────────
+  _openPathModal({ title, okLabel, defaultValue = '', onConfirm }) {
+    this._pathModalConfirm = onConfirm;
+    document.getElementById('path-title').textContent = title;
+    document.getElementById('path-ok').textContent = okLabel;
+    document.getElementById('path-error').style.display = 'none';
+    const input = document.getElementById('path-input');
+    input.value = defaultValue;
+    document.getElementById('path-modal').classList.remove('hidden');
+    input.focus();
+    input.select();
+  }
+
+  _closePathModal() {
+    document.getElementById('path-modal').classList.add('hidden');
+    this._pathModalConfirm = null;
+  }
+
+  _confirmPathModal() {
+    const path = document.getElementById('path-input').value.trim();
+    if (!path) {
+      const err = document.getElementById('path-error');
+      err.textContent = 'Enter a path first';
+      err.style.display = 'block';
+      return;
+    }
+    const onConfirm = this._pathModalConfirm;
+    this._closePathModal();
+    onConfirm?.(path);
+  }
+
+  // ── save / load session (ADR 0045 issue 21) ─────────────────────────────
+  // Reuses the existing SAVE_SESSION/LOAD_SESSION control messages (Stage 5,
+  // client/environment.py requestSessionSave/Load) — session state is owned
+  // and written server-side exactly as the Qt client already does; this only
+  // adds the browser-side path prompt Qt's native save dialog provided.
+  _saveSession() {
+    if (!this._conn) return;
+    this._openPathModal({
+      title: 'Save Session',
+      okLabel: 'Save',
+      defaultValue: '~/ffast-session',
+      onConfirm: (path) => {
+        this._conn.send('SAVE_SESSION', { path });
+        this._pendingSessionOp = { kind: 'save', path };
+        this._setStatus(`Saving session to ${path}…`, 'connected');
+      },
+    });
+  }
+
+  _loadSession() {
+    if (!this._conn) return;
+    this._openPathModal({
+      title: 'Load Session',
+      okLabel: 'Load',
+      defaultValue: '~/ffast-session',
+      onConfirm: (path) => {
+        this._conn.send('LOAD_SESSION', { path });
+        this._pendingSessionOp = { kind: 'load', path };
+        this._setStatus(`Loading session from ${path}…`, 'connected');
+      },
+    });
+  }
+
+  /** @param {boolean} ok */
+  _resolveSessionOp(ok) {
+    const op = this._pendingSessionOp;
+    if (!op) return;   // this task wasn't a save/load (e.g. a dataset load)
+    this._pendingSessionOp = null;
+    const verb = op.kind === 'save' ? 'Saved' : 'Loaded';
+    if (ok) this._setStatus(`${verb} session ${op.kind === 'save' ? 'to' : 'from'} ${op.path}`, 'connected');
+    else this._setStatus(`Session ${op.kind} failed for ${op.path}`, 'error');
+  }
+
+  // ── PNG export (issue 19) ────────────────────────────────────────────────
+  /** @param {{transparent: boolean, background: string}} opts */
+  _exportPng({ transparent, background }) {
+    const url = this._renderer.capturePng({ transparent, background });
+    const name = (this._datasets.get(this._currentDatasetFp)?.name || 'ffast')
+      .replace(/[^\w.-]+/g, '_');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${name}_${transparent ? 'transparent' : 'opaque'}.png`;
+    a.click();
+    this._setStatus('PNG exported', 'connected');
+  }
+
+  // ── subset export to extxyz (issue 20) ──────────────────────────────────
+  // The currently-selected object-rail dataset — a pick-derived
+  // AtomFilteredDataset, a plot-derived SubDataset, or any loaded dataset —
+  // is written server-side; EXPORT_SUBSET/SUBSET_EXPORTED report the result.
+  _exportSelectedDataset() {
+    if (!this._conn || !this._currentDatasetFp) return;
+    const meta = this._datasets.get(this._currentDatasetFp);
+    const base = (meta?.name || 'subset').replace(/[^\w.-]+/g, '_');
+    this._openPathModal({
+      title: 'Export Subset (extxyz)',
+      okLabel: 'Export',
+      defaultValue: `~/${base}.extxyz`,
+      onConfirm: (path) => {
+        this._conn.send('EXPORT_SUBSET', { fingerprint: this._currentDatasetFp, path });
+        this._setStatus(`Exporting to ${path}…`, 'connected');
+      },
+    });
+  }
+
+  _onSubsetExported(kw) {
+    if (kw.ok) this._setStatus(`Exported ${kw.n} structure(s) → ${kw.path}`, 'connected');
+    else this._setStatus(`Export failed: ${kw.error}`, 'error');
   }
 
   /** @param {import('./protocol.js').SceneSnapshotKwargs} kw */

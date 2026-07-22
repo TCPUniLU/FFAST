@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import re
 import socket
@@ -10,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import ase.io
 from PIL import Image
 import pytest
 import websockets
@@ -97,8 +99,16 @@ async def _connect_headless_client(port: int):
     return ws
 
 
-@pytest.fixture
-async def ffast_web_server():
+@contextlib.asynccontextmanager
+async def _spawn_server():
+    """Launch one ``server.py`` subprocess on free ports; terminate on exit.
+
+    A bare async context manager (not a fixture) so a test that needs *two*
+    independent server processes in sequence — e.g. a save/load session
+    round trip, where "load" must restore state a *fresh* process never
+    itself loaded — can open a second one without fighting pytest's
+    one-fixture-instance-per-test model.
+    """
     ws_port = _free_port()
     web_port = _free_port()
     proc = subprocess.Popen(
@@ -130,6 +140,26 @@ async def ffast_web_server():
         if out:
             tail = out.decode(errors="replace").splitlines()[-60:]
             print("[server log]\n" + "\n".join(tail))
+
+
+@pytest.fixture
+async def ffast_web_server():
+    async with _spawn_server() as ports:
+        yield ports
+
+
+async def _wait_for_server_ready(ws_port: int) -> None:
+    """Block until the server accepts a WS connection (and, by extension, is
+    also serving the static web app — both start together in server.py).
+
+    Every other test in this file gets this for free because `_preload_dataset`
+    always runs before the first `page.goto()`; a test with nothing to preload
+    (a fresh server for a session-load round trip) needs it explicitly, or
+    `page.goto()` can race the subprocess's startup and hit connection-refused.
+    """
+    ws = await _connect_headless_client(ws_port)
+    await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+    await ws.close()
 
 
 async def _preload_dataset(ws_port: int) -> str:
@@ -770,3 +800,156 @@ async def test_web_custom_toml_tab_matches_builtin(ffast_web_server):
                 _PANEL_HAS_POINTS, arg="Total charge per frame", timeout=25000)
         finally:
             await browser.close()
+
+
+# ── Phase 4: export + session ────────────────────────────────────────────────
+
+async def test_web_export_png_opaque_and_transparent_download(ffast_web_server):
+    """ADR 0045 issue 19 gate: both PNG export buttons trigger a real browser
+    download of a non-empty PNG produced from the WebGL canvas."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+
+            opaque_btn = page.locator(
+                ".pane[data-pane='Export'] button", has_text="Export PNG (opaque)")
+            transparent_btn = page.locator(
+                ".pane[data-pane='Export'] button", has_text="Export PNG (transparent)")
+
+            async with page.expect_download() as dl_info:
+                await opaque_btn.click()
+            download = await dl_info.value
+            data = Path(await download.path()).read_bytes()
+            assert len(data) > 0
+            assert data[:8] == b"\x89PNG\r\n\x1a\n"   # PNG magic bytes
+
+            async with page.expect_download() as dl_info:
+                await transparent_btn.click()
+            download = await dl_info.value
+            data2 = Path(await download.path()).read_bytes()
+            assert len(data2) > 0
+            assert data2[:8] == b"\x89PNG\r\n\x1a\n"
+        finally:
+            await browser.close()
+
+
+async def test_web_export_subset_writes_extxyz_and_reports_path(ffast_web_server, tmp_path):
+    """ADR 0045 issue 20 gate: exporting a plot-declared SubDataset writes an
+    extxyz on the server containing exactly its structures, and the browser
+    reports the written path."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await page.locator("#connect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+
+            # Declare a frame-index SubDataset via box-select subbing (same
+            # gesture as the Phase 3 subbing gate) — gives a known, real
+            # structure count to check the exported file against.
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(
+                _PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+            panel = ("#tabpanels .tabpanel.active "
+                     ".analysis-panel[data-title='Energy MAE timeline']")
+            await page.locator(f"{panel} .sub-toggle input").check()
+            box = await page.locator(f"{panel} .panel-plot").bounding_box()
+            x0, x1 = box["x"] + box["width"] * 0.25, box["x"] + box["width"] * 0.75
+            y0, y1 = box["y"] + box["height"] * 0.2, box["y"] + box["height"] * 0.8
+            await page.mouse.move(x0, y0)
+            await page.mouse.down()
+            await page.mouse.move(x1, y1, steps=10)
+            await page.mouse.up()
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
+
+            sub_fp = await page.evaluate(
+                """(parentFp) => [...window.ffastApp._datasets.keys()].find(fp => fp !== parentFp)""",
+                dataset_fp,
+            )
+            n_expected = await page.evaluate(
+                """(fp) => window.ffastApp._datasets.get(fp).n""", sub_fp,
+            )
+            assert n_expected > 0
+
+            await page.locator(f"#dataset-list .obj-row[data-fp='{sub_fp}']").click()
+
+            target = tmp_path / "sub.extxyz"
+            await page.locator("#export-dataset-btn").click()
+            await page.locator("#path-input").fill(str(target))
+            await page.locator("#path-ok").click()
+
+            await expect(page.locator("#status")).to_contain_text(str(target), timeout=15000)
+            await expect(page.locator("#status")).not_to_contain_text("failed")
+
+            atoms = ase.io.read(str(target), index=":")
+            assert len(atoms) == n_expected
+        finally:
+            await browser.close()
+
+
+async def test_web_save_and_load_session_restores_dataset(tmp_path):
+    """ADR 0045 issue 21 gate: a session saved from one server process is
+    restored by a *fresh* second process with nothing pre-loaded — the true
+    proof of a working round trip, not just "the dataset was already there"."""
+    session_dir = tmp_path / "session"
+
+    async with _spawn_server() as (ws_port_a, web_port_a):
+        dataset_fp = await _preload_dataset(ws_port_a)
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1100, "height": 760})
+            try:
+                await _open_loupe(page, ws_port_a, web_port_a, dataset_fp)
+
+                await page.locator("#save-session-btn").click()
+                await page.locator("#path-input").fill(str(session_dir))
+                await page.locator("#path-ok").click()
+
+                # TASK_DONE resolves the pending save op to a status message
+                # (issue 21's completion signal — save() has already returned
+                # and written info.json by the time this fires).
+                await expect(page.locator("#status")).to_contain_text("Saved session", timeout=15000)
+                assert (session_dir / "info.json").exists()
+            finally:
+                await browser.close()
+
+    # A brand-new server process — its Environment has never loaded anything;
+    # any dataset it shows can only have come from LOAD_SESSION.
+    async with _spawn_server() as (ws_port_b, web_port_b):
+        await _wait_for_server_ready(ws_port_b)
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1100, "height": 760})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port_b}/?port={ws_port_b}", wait_until="networkidle")
+                await page.locator("#connect-btn").click()
+                await expect(page.locator("#status")).to_contain_text("Connected")
+                await expect(page.locator("#dataset-list .obj-row")).to_have_count(0)
+
+                await page.locator("#load-session-btn").click()
+                await page.locator("#path-input").fill(str(session_dir))
+                await page.locator("#path-ok").click()
+
+                await expect(page.locator("#dataset-list .obj-row")).to_have_count(1, timeout=15000)
+                await expect(page.locator("#status")).to_contain_text("Loaded session")
+                restored_meta = await page.evaluate(
+                    """() => { const [, m] = [...window.ffastApp._datasets][0]; return m; }"""
+                )
+                # DatasetLoader.initialise() names an object from its path
+                # basename with the extension stripped (utils.removeExtension).
+                assert restored_meta["name"] == "dataset"
+            finally:
+                await browser.close()

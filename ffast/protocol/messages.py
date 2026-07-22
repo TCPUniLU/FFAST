@@ -377,6 +377,25 @@ class LoadSessionRequest(BaseModel):
     path: str
 
 
+class ExportSubsetRequest(BaseModel):
+    """Typed payload for ``EXPORT_SUBSET`` (ADR 0045 Phase 4, issue 20).
+
+    Writes a dataset (a pick-derived ``AtomFilteredDataset`` or a plot-derived
+    ``SubDataset``, but any loaded dataset is valid) out to an extxyz on the
+    *server's* filesystem — the browser has no local files, so the write is
+    server-side and the resolved ``path`` is reported back via
+    ``SUBSET_EXPORTED``. ``path`` may use ``~`` / be relative; the server
+    expands it. ``format`` defaults to the ASE format inferred from the
+    extension (``.extxyz`` → energies + forces).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+    path: str
+    format: Optional[str] = None
+
+
 class EmptyRequest(BaseModel):
     """Typed payload for Control messages that carry no fields at all
     (``REQUEST_STATE_SYNC``, ``REQUEST_METRIC_CATALOG``) — ``extra="forbid"``

@@ -132,7 +132,8 @@ class ServerSession:
         from ffast.protocol.messages import (
             CloseViewRequest, CreateSubsetRequest, DeclareSubsetRequest,
             DeleteObjectRequest,
-            EmptyRequest, ListDirRequest, LoadDatasetRequest, LoadModelRequest,
+            EmptyRequest, ExportSubsetRequest, ListDirRequest,
+            LoadDatasetRequest, LoadModelRequest,
             LoadPredictionRequest, LoadSessionRequest, OpenViewRequest,
             ProbeDatasetKeysRequest, ProbeDatasetLengthRequest,
             RequestMetricRequest, RequestPredictionArraysRequest,
@@ -159,6 +160,7 @@ class ServerSession:
             control.REQUEST_METRIC:             _Route(self._on_request_metric, ["metric_id", "?key"], RequestMetricRequest),
             control.REQUEST_METRIC_CATALOG:     _Route(self._on_request_metric_catalog, [], EmptyRequest),
             control.REQUEST_TAB_LAYOUT:         _Route(self._on_request_tab_layout, [], EmptyRequest),
+            control.EXPORT_SUBSET:              _Route(self._on_export_subset, ["fingerprint", "path"], ExportSubsetRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -857,6 +859,11 @@ class ServerSession:
     async def _on_save_session(self, path, **kwargs) -> None:
         # Stage 5: save runs on the server, which owns the real datasets +
         # prediction cache. Reuses the env task manager (same path as loads).
+        # The web client's path prompt may send "~/…" or a relative path
+        # (it has no server file dialog), so expand it here — a no-op on the
+        # absolute paths the Qt file dialog produces (ADR 0045 Phase 4).
+        import os
+        path = os.path.abspath(os.path.expanduser(path))
         self.env.newTask(
             self.env.persistence.save, args=(path,), visual=True,
             name="Saving session", threaded=True,
@@ -866,7 +873,64 @@ class ServerSession:
         # Server restores its Environment (datasets in-process + prediction
         # cache); DATASET_LOADED / MODEL_LOADED subscribers announce them to the
         # client via REMOTE_DATASET_META / REMOTE_MODEL_META.
+        import os
+        path = os.path.abspath(os.path.expanduser(path))
         self.env.persistence.taskLoad(path)
+
+    async def _on_export_subset(self, fingerprint, path, **kwargs) -> None:
+        """Write a dataset out to an extxyz server-side (ADR 0045 issue 20).
+
+        The browser has no local files, so the export is a server-side write:
+        we resolve the dataset by fingerprint, pick the ASE serializer matching
+        its uniform/variable shape (the same static ``saveDataset`` the Qt
+        "save dataset" path uses), write it off the event loop, and report the
+        resolved path — or an error — back over ``SUBSET_EXPORTED``. Any loaded
+        dataset is valid; the common cases are a pick-derived
+        ``AtomFilteredDataset`` and a plot-derived ``SubDataset``.
+        """
+        import os
+        from ffast.protocol.rpc import pack
+
+        async def _reply(ok: bool, resolved: str, error: str | None = None, n: int = 0):
+            data = pack(
+                control.SUBSET_EXPORTED, (),
+                {"ok": ok, "path": resolved, "error": error, "n": n},
+            )
+            await self._emit(data)
+
+        resolved = os.path.abspath(os.path.expanduser(path))
+        dataset = self.env.datasets.get(fingerprint)
+        if dataset is None:
+            logger.warning("EXPORT_SUBSET: dataset %r not found", fingerprint)
+            await _reply(False, resolved, error="dataset not found")
+            return
+
+        fmt = kwargs.get("format")
+        if fmt is None:
+            ext = os.path.splitext(resolved)[1].lower()
+            # .xyz too → extxyz so energies/forces survive (plain xyz drops them).
+            fmt = "extxyz" if ext in (".xyz", ".extxyz", "") else None
+
+        # Uniform vs variable picks the serializer, exactly as the desktop
+        # SideBar export does. A SubDataset forwards its parent's isVariable;
+        # an AtomFilteredDataset is atom-filtering, always the uniform path.
+        from modules.loaders.aseDataset import (
+            VariableASEDatasetLoader, aseDatasetLoader,
+        )
+        is_variable = bool(getattr(dataset, "isVariable", False))
+        saver = VariableASEDatasetLoader if is_variable else aseDatasetLoader
+
+        try:
+            parent = os.path.dirname(resolved)
+            if parent and not os.path.exists(parent):
+                os.makedirs(parent, exist_ok=True)
+            await asyncio.to_thread(saver.saveDataset, dataset, resolved, fmt)
+            n = int(dataset.getN())
+            logger.info("EXPORT_SUBSET: wrote %d structure(s) → %s", n, resolved)
+            await _reply(True, resolved, n=n)
+        except Exception as exc:
+            logger.warning("EXPORT_SUBSET: write failed for %r: %s", resolved, exc)
+            await _reply(False, resolved, error=str(exc))
 
     async def _on_request_metric(self, metric_id, key=None, **kwargs) -> None:
         """Compute a metric server-side and reply with METRIC_RESULT (Stage 4a).

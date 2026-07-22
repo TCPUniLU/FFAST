@@ -11,6 +11,7 @@ The S2b argument-resolution rule (``_resolve``) is a pure staticmethod and so te
 with no env, queue, or event loop at all.
 """
 import asyncio
+from unittest.mock import patch
 
 import numpy as np
 
@@ -655,3 +656,143 @@ def test_view_command_for_unknown_view_is_dropped():
 
     s = _run(scenario())
     assert s.outbound.empty()
+
+
+# ── _on_export_subset (ADR 0045 Phase 4, issue 20) ──────────────────────────
+
+class _FakeExportDataset:
+    """Stands in for whatever dataset object EXPORT_SUBSET resolves — the
+    handler only reads ``isVariable`` (routing) and ``getN()`` (reported
+    count); the actual write goes through the mocked ASE loader static
+    methods below, so this fake never needs real coordinate arrays."""
+
+    def __init__(self, n=3, is_variable=False):
+        self.isVariable = is_variable
+        self._n = n
+
+    def getN(self):
+        return self._n
+
+
+def test_dispatch_export_subset_missing_dataset_emits_error():
+    env = _FakeEnv(datasets={})
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "nope", "path": "/tmp/x.extxyz"})
+        return s.outbound.get_nowait()
+
+    event, _args, kwargs = unpack(_run(scenario()))
+    assert event == control.SUBSET_EXPORTED
+    assert kwargs["ok"] is False
+    assert "not found" in kwargs["error"]
+
+
+def test_dispatch_export_subset_uniform_dataset_uses_ase_saver(tmp_path):
+    """A non-variable dataset (plain or AtomFilteredDataset) routes to the
+    uniform ``aseDatasetLoader.saveDataset`` and reports getN() structures."""
+    ds = _FakeExportDataset(n=5, is_variable=False)
+    env = _FakeEnv(datasets={"ds1": ds})
+    target = tmp_path / "out.extxyz"
+
+    with patch("modules.loaders.aseDataset.aseDatasetLoader.saveDataset") as uniform, \
+         patch("modules.loaders.aseDataset.VariableASEDatasetLoader.saveDataset") as variable:
+
+        async def scenario():
+            s = ServerSession(env, asyncio.Queue())
+            await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": str(target)})
+            return s.outbound.get_nowait()
+
+        event, _args, kwargs = unpack(_run(scenario()))
+
+    assert event == control.SUBSET_EXPORTED
+    assert kwargs == {"ok": True, "path": str(target), "error": None, "n": 5}
+    uniform.assert_called_once_with(ds, str(target), "extxyz")
+    variable.assert_not_called()
+
+
+def test_dispatch_export_subset_variable_dataset_uses_variable_saver(tmp_path):
+    """A variable dataset (a SubDataset forwarding isVariable from a variable
+    parent, or a loaded variable dataset) routes to the variable saver."""
+    ds = _FakeExportDataset(n=2, is_variable=True)
+    env = _FakeEnv(datasets={"ds1": ds})
+    target = tmp_path / "out.extxyz"
+
+    with patch("modules.loaders.aseDataset.aseDatasetLoader.saveDataset") as uniform, \
+         patch("modules.loaders.aseDataset.VariableASEDatasetLoader.saveDataset") as variable:
+
+        async def scenario():
+            s = ServerSession(env, asyncio.Queue())
+            await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": str(target)})
+            return s.outbound.get_nowait()
+
+        event, _args, kwargs = unpack(_run(scenario()))
+
+    assert event == control.SUBSET_EXPORTED
+    assert kwargs == {"ok": True, "path": str(target), "error": None, "n": 2}
+    variable.assert_called_once_with(ds, str(target), "extxyz")
+    uniform.assert_not_called()
+
+
+def test_dispatch_export_subset_expands_user_and_relative_path(tmp_path, monkeypatch):
+    """A browser-typed "~/…" path (no server file dialog to produce an
+    absolute one) is expanded server-side before writing and reporting."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    ds = _FakeExportDataset()
+    env = _FakeEnv(datasets={"ds1": ds})
+
+    with patch("modules.loaders.aseDataset.aseDatasetLoader.saveDataset") as uniform:
+        async def scenario():
+            s = ServerSession(env, asyncio.Queue())
+            await s.dispatch(
+                "EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": "~/sub/out.extxyz"},
+            )
+            return s.outbound.get_nowait()
+
+        event, _args, kwargs = unpack(_run(scenario()))
+
+    expected = str(tmp_path / "sub" / "out.extxyz")
+    assert kwargs["ok"] is True
+    assert kwargs["path"] == expected
+    uniform.assert_called_once_with(ds, expected, "extxyz")
+
+
+def test_dispatch_export_subset_reports_error_on_write_failure(tmp_path):
+    ds = _FakeExportDataset()
+    env = _FakeEnv(datasets={"ds1": ds})
+    target = tmp_path / "out.extxyz"
+
+    with patch(
+        "modules.loaders.aseDataset.aseDatasetLoader.saveDataset",
+        side_effect=OSError("disk full"),
+    ):
+        async def scenario():
+            s = ServerSession(env, asyncio.Queue())
+            await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": str(target)})
+            return s.outbound.get_nowait()
+
+        event, _args, kwargs = unpack(_run(scenario()))
+
+    assert event == control.SUBSET_EXPORTED
+    assert kwargs["ok"] is False
+    assert "disk full" in kwargs["error"]
+
+
+def test_dispatch_export_subset_respects_explicit_format(tmp_path):
+    """An explicit ``format`` kwarg overrides the extension-inferred default."""
+    ds = _FakeExportDataset()
+    env = _FakeEnv(datasets={"ds1": ds})
+    target = tmp_path / "out.xyz"
+
+    with patch("modules.loaders.aseDataset.aseDatasetLoader.saveDataset") as uniform:
+        async def scenario():
+            s = ServerSession(env, asyncio.Queue())
+            await s.dispatch(
+                "EXPORT_SUBSET", [],
+                {"fingerprint": "ds1", "path": str(target), "format": "xyz"},
+            )
+            return s.outbound.get_nowait()
+
+        unpack(_run(scenario()))
+
+    uniform.assert_called_once_with(ds, str(target), "xyz")

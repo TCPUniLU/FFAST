@@ -10,7 +10,15 @@ export class MoleculeRenderer {
   constructor(canvas) {
     this._canvas = canvas;
 
-    this._renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    // alpha:true + preserveDrawingBuffer:true are for PNG export (ADR 0045
+    // issue 19): a real alpha buffer lets a transparent-background export use
+    // clear-alpha 0 (no near-black→alpha keying the vispy path needed), and
+    // preserving the drawing buffer makes `toDataURL()` read reliable pixels
+    // regardless of the continuous render loop. Normal appearance is unchanged
+    // (clear alpha stays 1 for on-screen rendering).
+    this._renderer = new THREE.WebGLRenderer({
+      canvas, antialias: true, alpha: true, preserveDrawingBuffer: true,
+    });
     this._renderer.setPixelRatio(window.devicePixelRatio);
     this._renderer.setClearColor(0x000000, 1);  // Qt loupe default (default.json loupeBGColor)
 
@@ -121,6 +129,32 @@ export class MoleculeRenderer {
   /** @param {string} hex CSS colour, e.g. '#000000' */
   setBackgroundColor(hex) {
     this._renderer.setClearColor(new THREE.Color(hex), 1);
+  }
+
+  /**
+   * Render one frame at the requested background and return it as a PNG data
+   * URL (ADR 0045 issue 19). `transparent` clears to alpha 0 (real WebGL
+   * alpha, no colour-keying); otherwise the scene is drawn over `background`.
+   * The orientation gizmo is omitted so the export is a clean figure. The
+   * previous clear colour/alpha is restored so on-screen rendering continues
+   * unchanged.
+   * @param {{transparent?: boolean, background?: string}} [opts]
+   * @returns {string} a `data:image/png;base64,…` URL
+   */
+  capturePng({ transparent = false, background = '#000000' } = {}) {
+    const r = this._renderer;
+    const prevColor = new THREE.Color();
+    r.getClearColor(prevColor);
+    const prevAlpha = r.getClearAlpha();
+
+    if (transparent) r.setClearColor(0x000000, 0);
+    else r.setClearColor(new THREE.Color(background), 1);
+    r.setViewport(0, 0, this._canvas.clientWidth, this._canvas.clientHeight);
+    r.render(this._scene, this._camera);
+    const url = this._canvas.toDataURL('image/png');
+
+    r.setClearColor(prevColor, prevAlpha);
+    return url;
   }
 
   /** @param {boolean} enabled */
