@@ -359,6 +359,32 @@ def _load_project_metric_modules(config_arg: str | None = None) -> None:
         logger.warning("Failed loading external metric modules from %s: %s", config_path, exc)
 
 
+def _discover_project_config(config_arg: str | None):
+    """Discover + parse the project ``ffast.toml`` (ADR 0007) once, fail-soft.
+
+    Shared by ``_compile_project_metrics`` and ``_build_analysis_tab_layout`` so
+    the discover→exists→parse block lives in one place. Returns the
+    ``ProjectConfig`` or ``None`` (no config found, or unparseable — logged once
+    here); callers treat ``None`` as "built-ins only".
+    """
+    from pathlib import Path
+
+    from ffast.config.loader import discover_config, load_project_config
+
+    config_path = Path(config_arg) if config_arg else discover_config(Path.cwd())
+    if config_path is None or not config_path.exists():
+        return None
+    try:
+        return load_project_config(config_path)
+    except Exception as exc:
+        logger.error(
+            "Project config %s could not be parsed (%s); its custom metrics and "
+            "analysis tabs are disabled. The app will run with built-ins only.",
+            config_path, exc,
+        )
+        return None
+
+
 def _compile_project_metrics(config_arg: str | None) -> None:
     """Compile the project's declarative metrics before freeze — non-fatally.
 
@@ -375,28 +401,14 @@ def _compile_project_metrics(config_arg: str | None) -> None:
     but a bad custom metric shouldn't take the whole app down). Use
     ``ffast-cli metrics validate`` for a strict pass/fail check.
     """
-    from pathlib import Path
-
     try:
-        from ffast.config.loader import discover_config, load_project_config
         from ffast.config.tabs import compile_project_metrics
     except Exception as exc:
         logger.warning("Config loader unavailable; declarative metrics skipped: %s", exc)
         return
 
-    config_path = Path(config_arg) if config_arg else discover_config(Path.cwd())
-    project_config = None
-    if config_path is not None and config_path.exists():
-        try:
-            project_config = load_project_config(config_path)
-        except Exception as exc:
-            logger.error(
-                "Project config %s could not be parsed (%s); its custom metrics "
-                "are disabled. The app will run with built-in metrics only.",
-                config_path, exc,
-            )
-            # Still compile the bundled tabs so the app has its built-in metrics.
-
+    # None (missing/unparseable) still compiles the bundled tabs' metrics.
+    project_config = _discover_project_config(config_arg)
     result = compile_project_metrics(project_config)
     for context, msg in result.errors:
         logger.error("Metric config error in %s: %s", context, msg)
@@ -408,6 +420,35 @@ def _compile_project_metrics(config_arg: str | None) -> None:
             len(result.errors),
         )
     logger.info("Compiled %d declarative metric(s) from project config.", len(result.ids))
+
+
+def _build_analysis_tab_layout(config_arg: str | None) -> list:
+    """Resolve the merged Analysis-Tab layout once at startup (ADR 0045 Phase 3).
+
+    The web client fetches this over ``REQUEST_TAB_LAYOUT`` instead of running
+    the Transform-Metric compiler in the browser, so the resolution happens here
+    — after ``_compile_project_metrics`` has registered every Panel's transform
+    metric and *before* the registry is frozen, so ``resolve_ref`` only looks
+    ids up (idempotent). Fail-soft: any config problem falls back to the bundled
+    tabs, matching ``_compile_project_metrics``' policy (the built-in analyses
+    stay available even when a project config is broken).
+    """
+    try:
+        from ffast.config.tabs import build_tab_layout, merge_tabs
+    except Exception as exc:
+        logger.warning("Config loader unavailable; analysis tabs skipped: %s", exc)
+        return []
+
+    # Reuses the shared discover/parse (config already logged once there).
+    project_config = _discover_project_config(config_arg)
+    try:
+        return build_tab_layout(merge_tabs(project_config))
+    except Exception as exc:
+        logger.warning("Analysis tab layout build failed (%s); using bundled tabs", exc)
+        try:
+            return build_tab_layout(merge_tabs(None))
+        except Exception:
+            return []
 
 
 def _validate_metric_registry() -> None:
@@ -469,6 +510,12 @@ async def _main(
     # custom-metric config is logged clearly and its metric disabled, but does not
     # stop the server.
     _compile_project_metrics(config)
+
+    # Resolve the Analysis-Tab layout for the web client (ADR 0045 Phase 3) now
+    # that every Panel transform metric is registered, but before the freeze —
+    # resolve_ref only looks ids up here. Cached on the Environment so each
+    # per-connection ServerSession serves it from REQUEST_TAB_LAYOUT.
+    env.analysis_tab_layout = _build_analysis_tab_layout(config)
 
     # Validate the full metric graph once, after builtins + external modules are
     # registered. Refuses to start on unknown refs, cycles, or legacy shapes.

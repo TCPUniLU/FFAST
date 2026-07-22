@@ -65,6 +65,50 @@ def _panel_refs(panel) -> list[PanelMetricRef]:
     return refs
 
 
+def _panel_layout(panel, *, registry=None) -> dict:
+    """One Panel serialized for the wire (ADR 0045 Phase 3 ``TAB_LAYOUT``).
+
+    Every renderer-side field passes through verbatim (``kind``, grid placement,
+    labels, ``diagonal``, ``hidden_params``, ``controls``, ``scroll_group``,
+    ``options`` …), except each metric role is replaced by its **resolved
+    concrete metric id** (``resolve_ref``) — a single id, or a list of ids for
+    an overlay ``series`` role. Resolving server-side keeps the transform
+    compiler off the browser: the client requests the returned id straight over
+    the metric channel and reads its shape/unit/params from the Metric Catalog.
+    """
+    d = panel.model_dump()
+    resolved: dict = {}
+    for role, val in panel.metrics.items():
+        if isinstance(val, list):
+            resolved[role] = [resolve_ref(r, registry=registry) for r in val]
+        else:
+            resolved[role] = resolve_ref(val, registry=registry)
+    d["metrics"] = resolved
+    return d
+
+
+def build_tab_layout(tabs, *, registry=None) -> list[dict]:
+    """Serialize merged Analysis Tabs to JSON-safe dicts for the ``TAB_LAYOUT``
+    wire message (ADR 0045 Phase 3).
+
+    The browser client cannot run the Transform-Metric compiler, so the server
+    resolves every Panel metric ref to its concrete id here (see
+    :func:`_panel_layout`) and ships the whole layout — the same merged
+    ``[[visualization.tabs]]`` both renderers see. Pure and Qt-free; safe to
+    call at server startup (before ``registry.freeze()``) or from the handler.
+    """
+    return [
+        {
+            "name": tab.name,
+            "has_data_selector": tab.has_data_selector,
+            "selector": tab.selector,
+            "controls": list(tab.controls),
+            "panels": [_panel_layout(p, registry=registry) for p in tab.panels],
+        }
+        for tab in tabs
+    ]
+
+
 def compile_tabs_metrics(tabs, *, registry=None) -> list[str]:
     """Walk every Panel metric ref across ``tabs`` and compile it. Returns the
     resolved ids (deduped, order-preserving). Registers the Transform Metrics

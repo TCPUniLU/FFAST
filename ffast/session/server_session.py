@@ -130,7 +130,8 @@ class ServerSession:
         # the table IS the documented RPC surface. "?name" marks an optional
         # parameter.
         from ffast.protocol.messages import (
-            CloseViewRequest, CreateSubsetRequest, DeleteObjectRequest,
+            CloseViewRequest, CreateSubsetRequest, DeclareSubsetRequest,
+            DeleteObjectRequest,
             EmptyRequest, ListDirRequest, LoadDatasetRequest, LoadModelRequest,
             LoadPredictionRequest, LoadSessionRequest, OpenViewRequest,
             ProbeDatasetKeysRequest, ProbeDatasetLengthRequest,
@@ -142,6 +143,7 @@ class ServerSession:
             control.LOAD_MODEL:                 _Route(self._on_load_model, ["path", "model_type"], LoadModelRequest),
             control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint"], DeleteObjectRequest),
             control.CREATE_SUBSET:              _Route(self._on_create_subset, ["parent_fingerprint", "indices"], CreateSubsetRequest),
+            control.DECLARE_SUBSET:             _Route(self._on_declare_subset, ["parent_fingerprint", "indices"], DeclareSubsetRequest),
             control.REQUEST_SUBDATASET_ARRAYS:  _Route(self._on_request_subdataset_arrays, ["fingerprint"], RequestSubdatasetArraysRequest),
             control.PROBE_DATASET_KEYS:         _Route(self._on_probe_dataset_keys, ["path", "dataset_type"], ProbeDatasetKeysRequest),
             control.PROBE_DATASET_LENGTH:       _Route(self._on_probe_dataset_length, ["path"], ProbeDatasetLengthRequest),
@@ -156,6 +158,7 @@ class ServerSession:
             control.LOAD_SESSION:               _Route(self._on_load_session, ["path"], LoadSessionRequest),
             control.REQUEST_METRIC:             _Route(self._on_request_metric, ["metric_id", "?key"], RequestMetricRequest),
             control.REQUEST_METRIC_CATALOG:     _Route(self._on_request_metric_catalog, [], EmptyRequest),
+            control.REQUEST_TAB_LAYOUT:         _Route(self._on_request_tab_layout, [], EmptyRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -423,6 +426,35 @@ class ServerSession:
             self.env.createAtomFilteredDataset(parent, idxs)
         except Exception as exc:
             logger.warning("CREATE_SUBSET: createAtomFilteredDataset failed: %s", exc)
+
+    async def _on_declare_subset(self, parent_fingerprint, indices, **kwargs) -> None:
+        """Declare a frame-index SubDataset from a plot box-select (subbing).
+
+        The desktop's ``BasicPlotWidget`` turns a plot viewport/selection into a
+        set of parent **configuration** indices and calls
+        ``env.declareSubDataset(parent, model, idx, name)`` in-process (ADR 0021
+        subbing). The browser has no in-process Environment, so it ships the
+        covered indices here; this is the server-side twin of that call. The new
+        (or refreshed) ``SubDataset`` announces itself via ``DATASET_LOADED`` →
+        ``REMOTE_DATASET_META``, so — like ``CREATE_SUBSET`` — nothing is emitted
+        directly, and the subset becomes usable by the 3D view and other tabs
+        (PRD stories 61-62).
+        """
+        parent = self.env.datasets.get(parent_fingerprint)
+        if parent is None:
+            logger.warning("DECLARE_SUBSET: parent %r not found", parent_fingerprint)
+            return
+        model_fp = kwargs.get("model_fp")
+        model = self.env.models.get(model_fp) if model_fp else None
+        name = kwargs.get("name") or "Subset"
+        idx = [int(i) for i in (indices or [])]
+        if not idx:
+            logger.warning("DECLARE_SUBSET: empty index set for %r", parent_fingerprint)
+            return
+        try:
+            self.env.declareSubDataset(parent, model, idx, name)
+        except Exception as exc:
+            logger.warning("DECLARE_SUBSET: declareSubDataset failed: %s", exc)
 
     async def _on_request_subdataset_arrays(self, fingerprint, **kwargs) -> None:
         """Serialize SubDataset arrays and push them onto the outbound queue.
@@ -883,3 +915,23 @@ class ServerSession:
 
     async def _on_request_metric_catalog(self, **kwargs) -> None:
         self._replay_metric_catalog()
+
+    async def _on_request_tab_layout(self, **kwargs) -> None:
+        """Reply with TAB_LAYOUT: the merged Analysis-Tab layout (ADR 0045
+        Phase 3). Mirrors ``_on_request_metric_catalog`` — a dedicated
+        announcement, not a correlated reply. The layout is resolved once at
+        server startup and cached on the Environment (``analysis_tab_layout``);
+        if it isn't there (e.g. a unit test with a bare env), fall back to the
+        bundled tabs so the built-in analyses are always available."""
+        from ffast.protocol.rpc import pack
+        try:
+            from ffast.protocol import TabLayout
+            tabs = getattr(self.env, "analysis_tab_layout", None)
+            if tabs is None:
+                from ffast.config.tabs import build_tab_layout, merge_tabs
+                tabs = build_tab_layout(merge_tabs())
+            data = pack(control.TAB_LAYOUT, [], TabLayout(tabs=tabs).model_dump())
+            await self._emit(data)
+            logger.info("TAB_LAYOUT queued (%d tab(s))", len(tabs))
+        except Exception as exc:
+            logger.warning("TAB_LAYOUT error: %s", exc)

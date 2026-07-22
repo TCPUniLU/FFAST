@@ -188,4 +188,67 @@
  * @property {MetricCatalogEntry[]} metrics
  */
 
+/**
+ * One wire ndarray (ffast/protocol/rpc.py `_encode_array`): raw `tobytes()`
+ * bytes reinterpreted client-side by ndarray.js `decodeNdarray`.
+ * @typedef {Object} WireNdarray
+ * @property {boolean} __ndarray__
+ * @property {string} dtype
+ * @property {number[]} shape
+ * @property {Uint8Array} data
+ */
+
+/**
+ * METRIC_RESULT: `args = [key, metric_id]`, kwargs = this
+ * (ffast/protocol/messages.py `MetricResultMessage`). `ok:false` means the
+ * server can't compute it (a client-only model); `values` is absent then.
+ * @typedef {Object} MetricResultKwargs
+ * @property {boolean} ok
+ * @property {string} [metric_id]
+ * @property {string} [shape]
+ * @property {string} [dtype]
+ * @property {string} [unit]
+ * @property {WireNdarray} [values]
+ */
+
+/**
+ * One Panel in a {@link TabConfig}, resolved for the wire by
+ * `ffast/config/tabs.py` `build_tab_layout` — every metric role is a *concrete
+ * metric id* (or a list, for the overlay `series` role), not an authoring ref.
+ * @typedef {Object} PanelLayout
+ * @property {string} kind timeline|density|scatter|table|grouped_density|grouped_table|overlay_timeline
+ * @property {number} row
+ * @property {number} col
+ * @property {number} rowspan
+ * @property {number} colspan
+ * @property {string|null} title
+ * @property {string|null} tooltip
+ * @property {boolean} legend
+ * @property {Object<string, string|string[]>} metrics role → resolved metric id(s)
+ * @property {string|string[]|null} x_label
+ * @property {string|string[]|null} y_label
+ * @property {boolean} diagonal
+ * @property {number} precision
+ * @property {string[]} hidden_params
+ * @property {string[]} controls
+ * @property {string|null} scroll_group
+ * @property {Object<string, any>} options
+ */
+
+/**
+ * One Analysis Tab (ffast/config/models.py `AnalysisTabConfig`), resolved.
+ * @typedef {Object} TabConfig
+ * @property {string} name
+ * @property {boolean} has_data_selector
+ * @property {string|null} selector 'atomic' → the element-picker tab selector
+ * @property {string[]} controls tab-level controls ('energy_shift', …)
+ * @property {PanelLayout[]} panels
+ */
+
+/**
+ * TAB_LAYOUT kwargs (ffast/protocol/messages.py `TabLayout`).
+ * @typedef {Object} TabLayoutKwargs
+ * @property {TabConfig[]} tabs
+ */
+
 export {};

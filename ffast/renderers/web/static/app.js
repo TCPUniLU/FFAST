@@ -6,6 +6,8 @@ import { FFastConnection } from './connection.js';
 import { MoleculeRenderer } from './renderer.js';
 import { PickController } from './picking.js';
 import { infoReadout } from './measure.js';
+import { MetricClient } from './metrics.js';
+import { AnalysisManager } from './analysis.js';
 import { createColorByPane } from './panes/colorby.js';
 import { createCameraPane } from './panes/camera.js';
 import { createDisplayPane } from './panes/display.js';
@@ -56,6 +58,10 @@ export class FFastApp {
     // window._sendViewCommand / _sceneVersion, UI/loupe/window.py:320-349).
     this._viewVersion = 0;
     this._metricCatalog = [];
+    // Analysis plots (ADR 0045 Phase 3): the metric channel + tab manager,
+    // created on connect (they need the live connection).
+    this._metricClient = null;
+    this._analysis = null;
     this._originCenterOfMass = true;
     this._forcesState = { show: false, modelKey: null, length: 10, normalised: true, filterEnabled: false, atomIndices: [] };
     this._dsSettings = new Map();  // dataset fp → restorable per-dataset settings
@@ -82,41 +88,17 @@ export class FFastApp {
   get renderer() { return this._renderer; }
 
   // ── tabs: 3D Loupe + analysis tabs (mirrors the Qt MainContentTabWidget) ──
-  // The analysis tabs are placeholders until ADR 0043 ships REQUEST_TAB_LAYOUT
-  // (server-owned panel specs) + the metric channel. Names/order mirror the
-  // desktop's ffast/config/builtin_tabs/*.toml so the shells read the same.
+  // Only the Loupe tab is static; the analysis tabs are built from the server's
+  // TAB_LAYOUT by AnalysisManager (ADR 0045 Phase 3), so browser and desktop
+  // read the same server-parsed layout.
   _initTabs() {
-    const TABS = [
-      { id: 'loupe',     name: '3D Loupe' },
-      { id: 'basic',     name: 'Basic Errors',     placeholder: true },
-      { id: 'subsystem', name: 'Subsystem Errors', placeholder: true },
-      { id: 'atomic',    name: 'Atomic Errors',    placeholder: true },
-      { id: 'gyration',  name: 'Gyration',         placeholder: true },
-    ];
     const tabbar = document.getElementById('tabbar');
-    const panels = document.getElementById('tabpanels');
-    for (const t of TABS) {
-      const tab = document.createElement('div');
-      tab.className = 'tab' + (t.id === this._activeTab ? ' active' : '');
-      tab.textContent = t.name;
-      tab.dataset.tab = t.id;
-      tab.addEventListener('click', () => this._selectTab(t.id));
-      tabbar.appendChild(tab);
-
-      if (t.placeholder) {
-        const panel = document.createElement('div');
-        panel.className = 'tabpanel';
-        panel.id = `panel-${t.id}`;
-        panel.innerHTML =
-          `<div class="placeholder">
-             <div class="ph-title">${t.name}</div>
-             <div class="ph-sub">2D analysis plots are served over the same WebSocket
-               as the desktop. This tab activates once ADR 0043 wires the panel-spec
-               event and the metric channel into the browser.</div>
-           </div>`;
-        panels.appendChild(panel);
-      }
-    }
+    const tab = document.createElement('div');
+    tab.className = 'tab' + (this._activeTab === 'loupe' ? ' active' : '');
+    tab.textContent = '3D Loupe';
+    tab.dataset.tab = 'loupe';
+    tab.addEventListener('click', () => this._selectTab('loupe'));
+    tabbar.appendChild(tab);
   }
 
   _selectTab(id) {
@@ -127,6 +109,8 @@ export class FFastApp {
       panel.classList.toggle('active', panel.id === `panel-${id}`);
     // Opening/returning to the Loupe with a dataset selected ensures a live view.
     if (id === 'loupe' && this._conn && this._currentDatasetFp) this._openView();
+    // An analysis tab renders (or refreshes) its panels lazily on activation.
+    else if (id.startsWith('analysis-')) this._analysis?.activate(id);
   }
 
   _initRenderer() {
@@ -257,6 +241,20 @@ export class FFastApp {
     try {
       const conn = new FFastConnection(wsUrl, token);
 
+      // Metric channel + analysis-tab manager (ADR 0045 Phase 3). The metric
+      // client registers the METRIC_RESULT handler; build both before connect
+      // so buffered handshake-time replays reach them.
+      this._metricClient = new MetricClient(conn);
+      this._analysis = new AnalysisManager({
+        tabbar: document.getElementById('tabbar'),
+        tabpanels: document.getElementById('tabpanels'),
+        metricClient: this._metricClient,
+        onSelectTab: (id) => this._selectTab(id),
+        onSub: (o) => this._sendDeclareSubset(o),
+        onPointFrame: (ci) => this._jumpToFrame(ci),
+      });
+      conn.on('TAB_LAYOUT', (kw) => this._analysis?.setLayout(kw.tabs || []));
+
       conn.on('REMOTE_DATASET_META', (kw, args) => this._onDatasetMeta(args[0], kw));
       conn.on('REMOTE_MODEL_META',   (kw, args) => this._onModelMeta(args[0], kw));
       conn.on('DATASET_KEYS_RESPONSE', (kw, args) => this._onDatasetKeys(args[0], kw));
@@ -283,6 +281,8 @@ export class FFastApp {
       document.getElementById('add-dataset-btn').disabled = false;
       document.getElementById('add-prediction-btn').disabled = false;
       this._renderObjects();
+      // Fetch the analysis-tab layout (METRIC_CATALOG arrives via connect-replay).
+      conn.send('REQUEST_TAB_LAYOUT', {});
 
     } catch (err) {
       console.error('Connection failed:', err);
@@ -300,6 +300,9 @@ export class FFastApp {
       this._bc.close();
       this._bc = null;
     }
+    if (this._analysis) { this._analysis.clear(); this._analysis = null; }
+    this._metricClient = null;
+    if (this._activeTab.startsWith('analysis-')) this._selectTab('loupe');
     this._lastScene = null;
     this._datasets.clear();
     this._models.clear();
@@ -328,6 +331,7 @@ export class FFastApp {
     const firstSelect = !this._currentDatasetFp;
     if (firstSelect) this._currentDatasetFp = fp;
     this._renderObjects();
+    if (firstSelect) this._syncAnalysisContext();
     if (firstSelect && this._conn && this._activeTab === 'loupe') this._openView();
   }
 
@@ -342,6 +346,7 @@ export class FFastApp {
       this._currentModelFp = fp;
       this._setStatus(`Prediction "${meta.name || fp.slice(0,8)}" ready`, 'connected');
       if (this._activeTab === 'loupe') this._openView();
+      this._syncAnalysisContext();
     }
     this._panes?.forces.refreshModels();
     this._panes?.colorBy.refreshModels(this._models);
@@ -403,15 +408,19 @@ export class FFastApp {
     const fps = m?.dataset_fingerprints || [];
     if (this._currentModelFp && fps.length && !fps.includes(fp)) this._currentModelFp = null;
     this._renderObjects();
+    this._syncAnalysisContext();
+    // Selecting an object drives the 3D view; an analysis tab stays put and
+    // just refetches (via the context sync above).
     if (this._activeTab === 'loupe') this._openView();
-    else this._selectTab('loupe');
+    else if (!this._activeTab.startsWith('analysis-')) this._selectTab('loupe');
   }
 
   _selectModel(fp) {
     this._currentModelFp = fp;
     this._renderObjects();
+    this._syncAnalysisContext();
     if (this._activeTab === 'loupe') this._openView();
-    else this._selectTab('loupe');
+    else if (!this._activeTab.startsWith('analysis-')) this._selectTab('loupe');
   }
 
   _openView() {
@@ -848,10 +857,48 @@ export class FFastApp {
     this._setStatus('Extracting subset…', 'connected');
   }
 
+  /** Declare a frame-index SubDataset from an analysis-plot box-select
+   * (ADR 0045 Phase 3 subbing). The server materialises it as a live
+   * SubDataset announced via REMOTE_DATASET_META, so it appears in the object
+   * rail and is usable by the 3D view and other tabs (PRD 61-62).
+   * @param {{parentFp: string, modelFp: string|null, indices: number[], name: string}} o */
+  _sendDeclareSubset(o) {
+    if (!this._conn || !o.parentFp || !o.indices.length) return;
+    this._conn.send('DECLARE_SUBSET', {
+      parent_fingerprint: o.parentFp,
+      indices: o.indices,
+      model_fp: o.modelFp,
+      name: o.name,
+    });
+    this._setStatus(`Sub-selecting ${o.indices.length} structure(s)…`, 'connected');
+  }
+
+  /** Jump the 3D view to a structure clicked in an analysis scatter (PRD 63). */
+  _jumpToFrame(configIndex) {
+    this._selectTab('loupe');
+    this._setFrame(configIndex);
+  }
+
+  /** Push the current dataset/prediction selection into the analysis manager
+   * so its active tab refetches against it (metric channel scope). */
+  _syncAnalysisContext() {
+    if (!this._analysis) return;
+    const meta = this._currentDatasetFp
+      ? this._datasets.get(this._currentDatasetFp) : null;
+    this._analysis.setContext({
+      datasetFp: this._currentDatasetFp,
+      modelFp: this._currentModelFp,
+      datasetMeta: meta,
+      seriesName: (meta && meta.name)
+        || (this._currentDatasetFp ? this._currentDatasetFp.slice(0, 8) : ''),
+    });
+  }
+
   /** @param {import('./protocol.js').MetricCatalogKwargs} kw */
   _onMetricCatalog(kw) {
     this._metricCatalog = kw.metrics || [];
     this._panes.colorBy.setMetricCatalog(this._metricCatalog);
+    this._analysis?.setMetricCatalog(this._metricCatalog);
   }
 
   /** Send TOGGLE_FEATURE("forces", ...) plus its SET_PARAMETERs together —

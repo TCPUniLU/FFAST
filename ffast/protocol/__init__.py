@@ -15,6 +15,7 @@ from ffast.protocol.messages import (
     DatasetKeysResponse,
     DatasetLengthResponse,
     DatasetMeta,
+    DeclareSubsetRequest,
     DeleteObjectRequest,
     DirEntry,
     DirListing,
@@ -36,6 +37,7 @@ from ffast.protocol.messages import (
     RequestPredictionArraysRequest,
     RequestSubdatasetArraysRequest,
     SaveSessionRequest,
+    TabLayout,
 )
 
 __all__ = [
@@ -44,6 +46,7 @@ __all__ = [
     "MetricParameter",
     "MetricCatalogEntry",
     "MetricCatalog",
+    "TabLayout",
     "MetricResultMessage",
     "DatasetKeysResponse",
     "DatasetLengthResponse",

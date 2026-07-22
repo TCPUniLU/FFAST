@@ -19,6 +19,10 @@ def _param_to_dict(p) -> dict:
         "choices": list(getattr(p, "choices", []) or []),
         "min": getattr(p, "min", None),
         "max": getattr(p, "max", None),
+        # role lets a renderer show only "compute" params as retune controls
+        # (ADR 0021 / ADR 0045 Phase 3 panel controls); "present" params are
+        # applied differently and must not appear as recompute inputs.
+        "role": getattr(p, "role", None),
     }
 
 

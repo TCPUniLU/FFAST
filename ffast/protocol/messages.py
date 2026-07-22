@@ -72,6 +72,7 @@ class MetricParameter(BaseModel):
     choices: list = Field(default_factory=list)
     min: Any = None
     max: Any = None
+    role: Optional[str] = None  # "compute" | "present" (ADR 0045 Phase 3 controls)
 
 
 class MetricCatalogEntry(BaseModel):
@@ -96,6 +97,24 @@ class MetricCatalog(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metrics: list[MetricCatalogEntry] = Field(default_factory=list)
+
+
+class TabLayout(BaseModel):
+    """Payload for the ``TAB_LAYOUT`` message (ADR 0045 Phase 3).
+
+    The server owns the merged Analysis-Tab config (bundled ``builtin_tabs`` +
+    the project's ``[[visualization.tabs]]``) and announces it so the browser
+    builds its analysis tabs from the *same* server-parsed layout both renderers
+    see — no browser-specific config or second parser. ``tabs`` are the
+    JSON-safe dicts produced by ``ffast.config.tabs.build_tab_layout`` (each
+    Panel's metric roles already resolved to concrete metric ids); they stay
+    ``dict`` here rather than re-validated models so the one source of truth is
+    the config-tabs model, not a duplicate wire schema.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tabs: list[dict] = Field(default_factory=list)
 
 
 class DatasetKeysResponse(BaseModel):
@@ -229,6 +248,26 @@ class CreateSubsetRequest(BaseModel):
 
     parent_fingerprint: str
     indices: list[Union[int, str]]
+
+
+class DeclareSubsetRequest(BaseModel):
+    """Typed payload for ``DECLARE_SUBSET`` (ADR 0045 Phase 3 subbing).
+
+    Where ``CREATE_SUBSET`` filters *atoms within* each frame, this declares a
+    frame-index subset: ``indices`` are parent **configuration** indices (the
+    points a plot box-select covered), materialised server-side into a live
+    ``SubDataset`` via ``env.declareSubDataset``. ``model_fp`` (optional) is the
+    prediction the subbing panel was bound to — part of the SubDataset identity,
+    matching the desktop ``declareSubDataset(parent, model, idx, name)`` call.
+    ``name`` labels the subset (defaults to the originating panel/tab name).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    parent_fingerprint: str
+    indices: list[int]
+    model_fp: Optional[str] = None
+    name: str = "Subset"
 
 
 class RequestSubdatasetArraysRequest(BaseModel):

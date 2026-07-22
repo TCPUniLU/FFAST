@@ -85,12 +85,16 @@ class _FakeEnv:
         self.deleted = []
         self.load_dataset_calls = []
         self.create_subset_calls = []
+        self.declare_subset_calls = []
 
     def deleteObject(self, fp):
         self.deleted.append(fp)
 
     def createAtomFilteredDataset(self, dataset, idxs):
         self.create_subset_calls.append((dataset, idxs))
+
+    def declareSubDataset(self, parent, model, idx, name):
+        self.declare_subset_calls.append((parent, model, idx, name))
 
     def taskLoadDataset(self, path, dataset_type, **kwargs):
         self.load_dataset_calls.append((path, dataset_type, kwargs))
@@ -255,6 +259,89 @@ def test_dispatch_create_subset_missing_parent_is_dropped():
 
     _run(scenario())
     assert env.create_subset_calls == []
+
+
+# ── DECLARE_SUBSET: frame-index subbing (ADR 0045 Phase 3) ──────────────────
+def test_dispatch_declare_subset_materializes_frame_subset():
+    """DECLARE_SUBSET turns a covered configuration-index list into a live
+    SubDataset via declareSubDataset (parent, model, idx, name)."""
+    parent = _FakeParentDataset([6, 6, 1, 1])
+    model = object()
+    env = _FakeEnv(datasets={"ds1": parent}, models={"m1": model})
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch(
+            "DECLARE_SUBSET", ["ds1", [3, 5, 7]],
+            {"model_fp": "m1", "name": "Basic Errors"},
+        )
+
+    _run(scenario())
+    assert len(env.declare_subset_calls) == 1
+    p, mdl, idx, name = env.declare_subset_calls[0]
+    assert p is parent and mdl is model and idx == [3, 5, 7] and name == "Basic Errors"
+
+
+def test_dispatch_declare_subset_without_model_uses_none():
+    parent = _FakeParentDataset([1, 1])
+    env = _FakeEnv(datasets={"ds1": parent})
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("DECLARE_SUBSET", ["ds1", [0, 1]], {})
+
+    _run(scenario())
+    assert len(env.declare_subset_calls) == 1
+    _, mdl, idx, name = env.declare_subset_calls[0]
+    assert mdl is None and idx == [0, 1] and name == "Subset"
+
+
+def test_dispatch_declare_subset_empty_indices_is_dropped():
+    parent = _FakeParentDataset([1, 1])
+    env = _FakeEnv(datasets={"ds1": parent})
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("DECLARE_SUBSET", ["ds1", []], {})
+
+    _run(scenario())
+    assert env.declare_subset_calls == []
+
+
+# ── REQUEST_TAB_LAYOUT: analysis-tab layout announcement (ADR 0045 Phase 3) ──
+def test_dispatch_request_tab_layout_emits_cached_layout():
+    """With a layout cached on the env, REQUEST_TAB_LAYOUT emits TAB_LAYOUT
+    carrying exactly those tabs."""
+    env = _FakeEnv()
+    env.analysis_tab_layout = [{"name": "Custom", "panels": []}]
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_TAB_LAYOUT", [], {})
+        return s
+
+    s = _run(scenario())
+    event, args, kwargs = unpack(s.outbound.get_nowait())
+    assert event == control.TAB_LAYOUT
+    assert kwargs["tabs"] == [{"name": "Custom", "panels": []}]
+
+
+def test_dispatch_request_tab_layout_falls_back_to_bundled_tabs():
+    """No cached layout (bare env) → the bundled built-in tabs are emitted, so
+    the built-in analyses are always available."""
+    import ffast.metrics.builtin  # noqa: F401
+    env = _FakeEnv()  # no analysis_tab_layout attribute
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_TAB_LAYOUT", [], {})
+        return s
+
+    s = _run(scenario())
+    event, args, kwargs = unpack(s.outbound.get_nowait())
+    assert event == control.TAB_LAYOUT
+    names = [t["name"] for t in kwargs["tabs"]]
+    assert "Basic Errors" in names
 
 
 def test_dispatch_create_subset_empty_resolution_is_dropped():

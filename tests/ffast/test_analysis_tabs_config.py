@@ -7,6 +7,7 @@ from pydantic import ValidationError
 import ffast.config.tabs as tabs_mod
 from ffast.config.models import AnalysisTabConfig, ProjectConfig
 from ffast.config.tabs import (
+    build_tab_layout,
     compile_tabs_metrics,
     load_builtin_tabs,
     merge_tabs,
@@ -154,6 +155,64 @@ def test_resolve_ref_raw_vs_transform():
 
     smoothed = PanelMetricRef(metric="ffast.gyradius", transform="smooth")
     assert resolve_ref(smoothed) == "ffast.gyradius__smooth"
+
+
+# --- build_tab_layout: the ADR 0045 Phase 3 TAB_LAYOUT wire payload --------- #
+def test_build_tab_layout_shape_and_resolved_ids():
+    """The layout carries every renderer-side field and replaces each metric
+    role with its resolved concrete id (so the browser skips the compiler)."""
+    import ffast.metrics.builtin  # noqa: F401
+
+    layout = build_tab_layout(load_builtin_tabs())
+    names = [t["name"] for t in layout]
+    assert names[0] == "Basic Errors" and "Gyration" in names
+
+    by_name = {t["name"]: t for t in layout}
+    basic = by_name["Basic Errors"]
+    assert basic["controls"] == ["energy_shift"]
+
+    # A raw (no-transform) role resolves to the bare id.
+    energy_scatter = next(
+        p for p in basic["panels"] if p["kind"] == "scatter" and p["title"] == "Energy Scatter"
+    )
+    assert energy_scatter["diagonal"] is True
+    assert energy_scatter["metrics"]["x"] == "ffast.energy_reference"
+
+    # A transform role resolves to the compiled `{source}__{transform}` id.
+    subsystem = by_name["Subsystem Errors"]
+    density = next(p for p in subsystem["panels"] if p["kind"] == "density")
+    assert density["metrics"]["value"] == "ffast.force_net_mae_per_structure__mirror_kde"
+
+    # An overlay `series` list role resolves to a list of ids.
+    gyration = by_name["Gyration"]
+    overlay = next(p for p in gyration["panels"] if p["kind"] == "overlay_timeline")
+    assert isinstance(overlay["metrics"]["series"], list)
+    assert overlay["metrics"]["series"][0] == "ffast.gyradius__smooth"
+    assert overlay["options"]["series_labels"][0].startswith("Gyradius")
+
+
+def test_build_tab_layout_appends_custom_tab_identically():
+    """A project [[visualization.tabs]] entry appears after the built-ins with
+    the same dict shape — the parity the browser custom-tab test relies on."""
+    import ffast.metrics.builtin  # noqa: F401
+
+    project = ProjectConfig.model_validate({
+        "visualization": {"tabs": [{
+            "name": "Custom",
+            "panels": [{
+                "kind": "scatter", "row": 0, "col": 0, "diagonal": True,
+                "metrics": {"x": {"metric": "ffast.energy_reference"},
+                            "y": {"metric": "ffast.energy_prediction"}},
+            }],
+        }]},
+    })
+    layout = build_tab_layout(merge_tabs(project))
+    custom = layout[-1]
+    assert custom["name"] == "Custom"
+    # Same keys as a built-in tab and its panels.
+    assert set(custom) == set(layout[0])
+    assert set(custom["panels"][0]) == set(layout[0]["panels"][0])
+    assert custom["panels"][0]["metrics"]["y"] == "ffast.energy_prediction"
 
 
 def test_project_tabs_append_to_builtin():

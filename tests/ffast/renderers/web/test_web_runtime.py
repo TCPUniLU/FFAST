@@ -652,3 +652,121 @@ async def test_web_alignment_pane_wires_kabsch_and_exclusive_modes(ffast_web_ser
             await browser.close()
 
     assert not page_errors
+
+
+# ── Phase 3: analysis plots + subbing (daily-driver milestone) ───────────────
+
+# JS predicate: the named analysis panel in the active tab has rendered a Plotly
+# plot with at least one plotted data point.
+_PANEL_HAS_POINTS = """(title) => {
+  const el = document.querySelector(
+    `#tabpanels .tabpanel.active .analysis-panel[data-title="${title}"] .panel-plot`);
+  return !!el && el.classList.contains('js-plotly-plot')
+    && Array.isArray(el.data) && el.data.length
+    && Array.isArray(el.data[0].x) && el.data[0].x.length > 0;
+}"""
+
+
+async def _open_analysis_tab(page, name):
+    tab = page.locator("#tabbar .tab", has_text=name)
+    await expect(tab).to_have_count(1)
+    await tab.click()
+
+
+async def test_web_analysis_scatter_renders(ffast_web_server):
+    """ADR 0045 Phase 3 gate: the Basic Errors tab's true-vs-predicted scatter
+    renders a Plotly plot fed by the metric channel."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await page.locator("#connect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(
+                _PANEL_HAS_POINTS, arg="Energy Scatter", timeout=25000)
+        finally:
+            await browser.close()
+
+
+async def test_web_analysis_box_select_declares_subset(ffast_web_server):
+    """ADR 0045 Phase 3 gate: enabling a subbable timeline's Sub toggle and
+    box-dragging declares a SubDataset that appears in the object rail."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await page.locator("#connect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(1)
+
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(
+                _PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+
+            panel = ("#tabpanels .tabpanel.active "
+                     ".analysis-panel[data-title='Energy MAE timeline']")
+            await page.locator(f"{panel} .sub-toggle input").check()
+
+            box = await page.locator(f"{panel} .panel-plot").bounding_box()
+            x0 = box["x"] + box["width"] * 0.25
+            x1 = box["x"] + box["width"] * 0.75
+            y0 = box["y"] + box["height"] * 0.2
+            y1 = box["y"] + box["height"] * 0.8
+            await page.mouse.move(x0, y0)
+            await page.mouse.down()
+            await page.mouse.move(x1, y1, steps=10)
+            await page.mouse.up()
+
+            # The server materialises a SubDataset (REMOTE_DATASET_META) → a
+            # second row appears in the dataset list.
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
+        finally:
+            await browser.close()
+
+
+async def test_web_custom_toml_tab_matches_builtin(ffast_web_server):
+    """ADR 0045 Phase 3 gate: a project TOML [[visualization.tabs]] (the repo's
+    'Dataset Fields (demo)' tab) appears in the tab bar with the same structure
+    as a built-in tab and renders identically over the same layout channel."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await page.locator("#connect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+
+            builtin = page.locator("#tabbar .tab", has_text="Basic Errors")
+            custom = page.locator("#tabbar .tab", has_text="Dataset Fields")
+            await expect(builtin).to_have_count(1)
+            await expect(custom).to_have_count(1)
+            # Same kind of tab node — a dynamically-built analysis tab, not a
+            # bespoke one (identical DOM contract to a built-in).
+            assert (await custom.get_attribute("data-tab")).startswith("analysis-")
+            assert (await builtin.get_attribute("data-tab")).startswith("analysis-")
+
+            # Its panels render over the same layout+metric channel (the custom
+            # tab's field metric is per-frame and needs no prediction).
+            await custom.click()
+            await page.wait_for_function(
+                _PANEL_HAS_POINTS, arg="Total charge per frame", timeout=25000)
+        finally:
+            await browser.close()

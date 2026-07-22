@@ -156,13 +156,73 @@
     .tabpanel { position: absolute; inset: 0; display: none; flex-direction: column; }
     .tabpanel.active { display: flex; }
 
-    /* placeholder analysis tabs — real plots wired via ADR 0043 */
-    .placeholder {
-      flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 8px; text-align: center; color: var(--muted); padding: 24px;
+    /* ── analysis tabs: header controls + panel grid (ADR 0045 Phase 3) ── */
+    /* NB: no `display` here — visibility stays governed by `.tabpanel`/
+       `.tabpanel.active` (a `display:flex` here would override `.tabpanel`'s
+       `display:none` and leave every analysis panel stacked + visible). */
+    .analysis-tab { overflow: hidden; }
+    .analysis-controls {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+      flex-shrink: 0; padding: 6px 12px; min-height: 32px;
+      background: var(--bg2); border-bottom: 1px solid var(--bg3);
     }
-    .placeholder .ph-title { color: var(--text1); font-size: 14px; }
-    .placeholder .ph-sub { font-size: 11px; max-width: 380px; line-height: 1.6; }
+    .analysis-controls .ac-item { display: flex; align-items: center; gap: 6px; }
+    .analysis-controls label {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--muted);
+    }
+    .analysis-controls .ac-empty { color: var(--muted); font-size: 11px; font-style: italic; }
+    .analysis-controls .elem-btn {
+      min-width: 30px; height: 22px; padding: 0 6px; font-size: 11px;
+      background: var(--bg3); border-radius: 3px;
+    }
+    .analysis-controls .elem-btn.active {
+      background: var(--hl2); color: var(--text2); box-shadow: inset 0 0 0 1px var(--hl2);
+    }
+    .analysis-grid {
+      flex: 1; overflow: auto; padding: 10px;
+      display: grid; gap: 10px; align-content: start;
+    }
+    .analysis-panel {
+      background: var(--bg2); border: 1px solid var(--bg3); border-radius: 5px;
+      display: flex; flex-direction: column; overflow: hidden; min-width: 0; min-height: 0;
+    }
+    .analysis-panel .panel-title {
+      font-size: 11px; font-weight: 700; color: var(--text1); padding: 6px 8px 2px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .analysis-panel .panel-title .sub-toggle {
+      font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--muted); display: flex; align-items: center; gap: 4px; cursor: pointer;
+    }
+    .analysis-panel .panel-title .sub-toggle input { accent-color: var(--hl2); }
+    .analysis-panel .panel-plot { flex: 1; min-height: 180px; }
+    .analysis-panel .panel-params {
+      display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 8px 6px;
+    }
+    .analysis-panel .panel-params .pp-item { display: flex; align-items: center; gap: 4px; }
+    .analysis-panel .panel-params label { font-size: 10px; color: var(--muted); }
+    .analysis-panel .panel-params input[type=number],
+    .analysis-panel .panel-params select { height: 20px; font-size: 10px; max-width: 90px; }
+    .analysis-panel .panel-msg {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      color: var(--muted); font-size: 11px; font-style: italic; padding: 16px; text-align: center;
+    }
+    /* scroll_group strip: panels laid side-by-side, horizontally scrolling */
+    .analysis-scrollstrip {
+      display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px;
+    }
+    .analysis-scrollstrip .analysis-panel { flex: 0 0 260px; }
+    /* HTML tables for table / grouped_table kinds */
+    table.panel-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    table.panel-table th, table.panel-table td {
+      padding: 3px 8px; text-align: right; border-bottom: 1px solid var(--bg3);
+      font-variant-numeric: tabular-nums;
+    }
+    table.panel-table th { color: var(--muted); font-weight: 700; text-align: right; }
+    table.panel-table th:first-child, table.panel-table td:first-child {
+      text-align: left; color: var(--text1);
+    }
 
     /* ── pick toolbar + contextual strip (issue 10) ──────────────────── */
     #pick-bar {
@@ -503,6 +563,10 @@
     </div>
   </div>
 
+  <!-- Plotly.js is vendored under vendor/plotly/ (basic bundle, UMD → window.Plotly).
+       Loaded as a classic script (not a module) before the app so panels.js can
+       read globalThis.Plotly. No CDN — offline / cluster parity (ADR 0045). -->
+  <script src="vendor/plotly/plotly-basic.min.js"></script>
   <script type="module" src="ffast-viewer.js"></script>
 </body>
 </html>
