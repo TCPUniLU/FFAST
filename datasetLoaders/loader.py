@@ -909,7 +909,16 @@ class AtomFilteredDataset(DatasetLoader):
         self.indices = indices
         self.updatePath()
 
-        self.z = parentDataset.getElements()[indices]
+        # An atom-filter keeps the same atom indices in every frame, so its
+        # output is uniform (constant atom count = len(indices)). For a variable
+        # parent (different atoms per frame) there is no single element list, so
+        # frame 0 is the canonical one — matching how the filter is displayed
+        # and how the uniform export writes a single symbol list per frame.
+        if getattr(parentDataset, "isVariable", False):
+            parentElements = parentDataset.getElements(0)
+        else:
+            parentElements = parentDataset.getElements()
+        self.z = parentElements[indices]
         self.chem = self.zToChemicalFormula(self.z)
 
         # bondSizes is None for variable datasets (computed dynamically); only
@@ -946,25 +955,34 @@ class AtomFilteredDataset(DatasetLoader):
     def getN(self):
         return self.parent.getN()
 
+    def _filterAtoms(self, a):
+        """Keep only the filtered atoms from a parent geometry result.
+
+        Handles all three shapes the parent may return:
+        - a list of per-frame arrays (variable parent, all frames): filter each
+          frame and stack into a uniform ``(N, len(indices), ...)`` array — the
+          atom-filter's output is uniform even over a variable parent;
+        - a 3D ``(N, nAtoms, ...)`` array (uniform parent, all frames);
+        - a 2D single-frame array (either parent, one frame).
+        """
+        if isinstance(a, list):
+            return np.array([frame[self.indices] for frame in a])
+        a = np.asarray(a)
+        if a.ndim == 3:
+            return a[:, self.indices]
+        return a[self.indices]
+
     ## PARENT DEPENDENT METHODS HERE
     ## MOSTLY DEFINED IN SPECIFIC (e.g. sGDML) LOADERS
     def getCoordinates(self, indices=None):
-        a = self.parent.getCoordinates(indices=indices)
-        if len(a.shape) == 3:
-            return a[:, self.indices]
-        else:
-            return a[self.indices]
+        return self._filterAtoms(self.parent.getCoordinates(indices=indices))
 
     def getEnergies(self, indices=None):
         e = self.parent.getEnergies(indices=indices)
         return e
 
     def getForces(self, indices=None):
-        f = self.parent.getForces(indices=indices)
-        if len(f.shape) == 3:
-            return f[:, self.indices]
-        else:
-            return f[self.indices]
+        return self._filterAtoms(self.parent.getForces(indices=indices))
 
     def getFrameField(self, key, indices=None):
         # Frame fields are per-frame, unaffected by atom filtering.
