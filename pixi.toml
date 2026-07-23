@@ -1,0 +1,41 @@
+# pixi distribution for FFAST (ADR 0045 Phase 6).
+#
+# The web client needs no native GL/Qt libraries — just the Python server, the
+# vendored static assets (shipped in the package), and the user's own browser.
+# That makes a pixi environment a reliable, one-command install on any distro:
+#
+#     pixi install          # resolve + create the env
+#     pixi run ffast        # launch the web client (server on loopback + browser)
+#
+# The heavy native dependency (PyTorch) is pulled from conda-forge; FFAST itself
+# is installed from this source tree as a PyPI dependency, which registers the
+# console scripts (`ffast`, `ffast-web`, `ffast-qt`, `ffast-server`,
+# `ffast-cli`). Version pins are kept in sync with `pyproject.toml`, the source
+# of truth for dependencies.
+[project]
+name = "ffast"
+version = "2.0.0"
+description = "Force Field Analysis and Screening Tool — web client (no Qt/GL)"
+channels = ["conda-forge"]
+platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+
+[dependencies]
+python = "3.11.*"
+# Native / compiled dependencies resolve most reliably from conda-forge.
+pytorch = ">=2.8.0"
+numpy = "<2.0.0"
+scipy = ">=1.13.1"
+scikit-learn = ">=1.6.1"
+ase = ">=3.26.0"
+
+[pypi-dependencies]
+# FFAST and its pure-Python deps (msgpack, websockets, pydantic, tomli-w,
+# jaxtyping) come from the source tree; this registers the console scripts.
+# A non-editable install so the env matches a real distribution, not a dev
+# checkout (swap `path = "."` for `version = "..."` once published to PyPI).
+ffast = { path = "." }
+
+[tasks]
+ffast = "ffast"
+server = "ffast-server"
+cli = "ffast-cli"

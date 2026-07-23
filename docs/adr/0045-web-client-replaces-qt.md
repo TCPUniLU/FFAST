@@ -1,4 +1,4 @@
-Status: Proposed (2026-07-15)
+Status: Accepted — implemented (Phases 0–6 complete 2026-07-23)
 
 # Web client replaces the Qt/Vispy desktop — full capability parity
 

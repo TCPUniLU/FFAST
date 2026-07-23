@@ -33,13 +33,17 @@ dev = ["pytest>=7.0", "pytest-asyncio>=0.23"]
 zstd = ["zstandard>=0.21"]
 
 [project.scripts]
-ffast = "main:cli"
+# One-command web launcher (ADR 0045): start the server on loopback + open the
+# browser. Phase 6 retires the Qt desktop as the default — `ffast` now launches
+# the web client, which needs no native GL/Qt libraries and so installs and
+# runs reliably on any distro. `ffast-web` stays as an explicit alias.
+ffast = "ffast.renderers.web.launcher:main"
+ffast-web = "ffast.renderers.web.launcher:main"
+# The Qt/Vispy desktop stays reachable as an escape hatch for anyone with a
+# working `ffast[gui]` install (`pip install ffast[gui]`).
+ffast-qt = "main:cli"
 ffast-server = "server:cli"
 ffast-cli = "ffast.cli.main:main"
-# One-command web launcher (ADR 0045): start the server on loopback + open the
-# browser. `ffast` stays the Qt desktop while both clients coexist; at Qt
-# retirement (ADR 0045 Phase 6) `ffast` flips to this launcher.
-ffast-web = "ffast.renderers.web.launcher:main"
 
 [tool.setuptools]
 py-modules = ["events", "main", "server", "tasks", "utils"]
@@ -69,6 +73,11 @@ namespaces = true
 [tool.setuptools.package-data]
 config = ["default.json"]
 "ffast.config" = ["*.toml", "builtin_tabs/*.toml"]
+# Vendored web client assets (ADR 0045): HTML/JS/CSS + vendored Three.js and
+# Plotly under static/. These must ship in the wheel or `ffast` (the web
+# launcher) serves a dead page. The recursive `static/**/*` glob covers the
+# vendor/ and panes/ subdirs (recursive `**` needs the setuptools>=64 we pin).
+"ffast.renderers.web" = ["static/**/*"]
 
 [tool.black]
 line-length = 79

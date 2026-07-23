@@ -1,6 +1,6 @@
 # FFAST - Force Field Analysis and Screening Tool
 
-A Python GUI application for analyzing and visualizing Machine Learning Force Field (MLFF) models. FFAST provides interactive tools for comparing predictions from different models against ground truth data, with rich visualization capabilities including error analysis plots and a 3D molecular viewer.
+A Python application for analyzing and visualizing Machine Learning Force Field (MLFF) models, driven from your web browser. FFAST provides interactive tools for comparing predictions from different models against ground truth data, with rich visualization capabilities including error analysis plots and a 3D molecular viewer. The client runs in the browser over a WebSocket to a local or remote/HPC server — no native GL/Qt libraries to install.
 
 **Key Features:**
 - Config-driven error analysis tabs (Basic, Atomic, Subsystem, Gyration) built from declarative TOML — add your own metrics, plots, and whole tabs without touching Python
@@ -21,11 +21,14 @@ A Python GUI application for analyzing and visualizing Machine Learning Force Fi
 
 - [Installation](#installation)
   - [Prerequisites](#prerequisites)
-  - [Using uv (Recommended)](#using-uv-recommended)
+  - [Using pipx (Recommended)](#using-pipx-recommended)
   - [Using pip](#using-pip)
-  - [Install Model Support (Optional)](#install-model-support-optional)
+  - [Using conda / pixi](#using-conda--pixi)
+  - [Using uv](#using-uv)
+  - [Optional: the Qt desktop (legacy)](#optional-the-qt-desktop-legacy)
   - [Verify Installation](#verify-installation)
 - [Quick Start](#quick-start)
+  - [Qt → web migration](#qt--web-migration)
 - [Features](#features)
   - [Model Support](#model-support)
   - [Dataset Support](#dataset-support)
@@ -57,37 +60,62 @@ A Python GUI application for analyzing and visualizing Machine Learning Force Fi
 ### Prerequisites
 
 - **Python 3.11** (`pyproject.toml` pins `requires-python = "==3.11.*"`)
-- **PySide6 6.8.x** (pinned `>=6.8,<6.9`) — desktop GUI only, via the `gui` extra
+- **A modern web browser** (Chrome/Edge/Chromium give a chromeless app window; any browser works)
 - **Supported OS**: Linux, macOS, Windows
 
-FFAST ships as a headless core plus an optional desktop GUI. The base install
-gives you the `ffast-server` and `ffast-cli` tools with no Qt/GUI dependencies;
-the `gui` extra adds the PySide6/Vispy desktop app. (See [ADR 0026](docs/adr/0026-headless-core-migration-direction.md).)
+FFAST ships as a headless Python core plus a **web client**: the `ffast` command
+starts a local server and opens the app in your browser — there are **no native
+GL/Qt libraries to install**, which is what makes it install and launch reliably
+on any distro (see [ADR 0045](docs/adr/0045-web-client-replaces-qt.md)). The
+same base install also gives you the `ffast-server` and `ffast-cli` tools.
 
-### Using uv (Recommended)
+> **Migrating from the Qt desktop?** See [Qt → web migration](#qt--web-migration)
+> below. In short: `ffast` now launches the web client; the old Qt/Vispy desktop
+> is available as `ffast-qt` if you install the optional `gui` extra.
+
+### Using pipx (Recommended)
+
+Installs `ffast` into an isolated environment and puts the command on your PATH —
+the simplest way to get a working launch on a clean machine:
 
 ```bash
-uv venv --python 3.11
-
-# Desktop app (GUI + headless tools)
-uv sync --extra gui
-
-# Headless only (server + CLI, e.g. on a compute node)
-uv sync
+pipx install ffast          # from a release; or `pipx install .` from a checkout
+ffast                       # starts the server on loopback + opens the browser
 ```
 
 ### Using pip
 
 ```bash
-# Create a virtual environment
 python3.11 -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+source .venv/bin/activate   # On Windows: .venv\Scripts\activate
 
-# Desktop app (GUI + headless tools)
-pip install -e ".[gui]"
-
-# Headless only (server + CLI, e.g. on a compute node)
+pip install ffast           # web client + server + CLI (no Qt/GL)
+# or from a source checkout:
 pip install -e .
+```
+
+### Using conda / pixi
+
+A [`pixi.toml`](pixi.toml) and a conda-forge [`recipe/meta.yaml`](recipe/meta.yaml)
+are provided (PyTorch resolves most reliably from conda-forge):
+
+```bash
+pixi install                # resolve + create the environment
+pixi run ffast              # launch the web client
+```
+
+### Using uv
+
+```bash
+uv venv --python 3.11
+uv sync                     # web client + server + CLI
+```
+
+### Optional: the Qt desktop (legacy)
+
+```bash
+pip install -e ".[gui]"     # adds PySide6/Vispy
+ffast-qt                    # launch the legacy Qt desktop
 ```
 
 <!-- ### Install Model Support (Optional)
@@ -105,14 +133,14 @@ pip install spookynet    # SpookyNet
 ### Verify Installation
 
 ```bash
-# Desktop app (installed console script; `python main.py` from the repo root also works)
+# Web client (opens the app in your browser)
 ffast
 
-# Headless install
+# Headless tools
 ffast-cli metrics list
 ```
 
-If the GUI opens (desktop) or the CLI lists metrics (headless), installation is
+If the app opens in your browser (or the CLI lists metrics), installation is
 complete.
 
 ---
@@ -122,13 +150,40 @@ complete.
 ### 1. Launch FFAST
 
 ```bash
-python main.py
+ffast                       # server on loopback + browser
+ffast --app                 # chromeless app window (Chrome/Edge/Chromium)
+ffast --no-browser          # print the URL, open it yourself
 ```
 
-Optionally specify a working directory for file dialogs:
+The launcher picks free ports automatically; `--ws-port` / `--web-port` pin
+them. Everything binds `127.0.0.1`, so a local session is not reachable from the
+network.
+
+**Remote / HPC server.** To drive a server running elsewhere (e.g. a SLURM
+compute node), start the server there with a web port and open the app pointed
+at its WebSocket port:
+
 ```bash
-python main.py --workdir /path/to/your/data
+ffast-server --host 0.0.0.0 --port 8765 --web-port 9000
+# then browse to  http://<server-host>:9000/?port=8765
 ```
+
+### Qt → web migration
+
+Phase 6 of [ADR 0045](docs/adr/0045-web-client-replaces-qt.md) retires the
+Qt/Vispy desktop as the default client — it was unreliable on some Linux
+distributions (native GL/Qt bundle failures). The web client delivers the same
+workflow through your browser with no native libraries to install.
+
+| Before (Qt) | Now (web) |
+|-------------|-----------|
+| `ffast` / `python main.py` opened the Qt desktop | `ffast` launches the web client |
+| `pip install ffast[gui]` was required | base `pip install ffast` is enough |
+| — | `ffast-qt` still opens the legacy Qt desktop (needs the `[gui]` extra) |
+
+Everything else — datasets, predictions, error-analysis tabs, the 3D viewer,
+remote/HPC execution, sessions — works the same; the UI just runs in a browser
+tab instead of a Qt window.
 
 ### 2. Load a Dataset
 
