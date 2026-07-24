@@ -1,6 +1,46 @@
-Status: Proposed — 2026-07-24
+Status: Accepted — Phases 0–4 implemented (2026-07-24); Phases 5–6 open
 
 # The HeadlessEnvironment keystone: relocate the Environment graph `client/` → `ffast/` (ADR 0026 Step B continuation)
+
+## Implementation notes (Phases 0–4, 2026-07-24)
+
+Phases 0–4 landed as 5 commits, each green on the full suite (1176 passed) and
+independently revertible behind re-export shims. Three findings corrected the
+draft plan:
+
+1. **The closure guard is static and eager/lazy-split, not a runtime snapshot.**
+   The drafted "subprocess snapshot of the server closure" does not work: the
+   server imports the env lazily inside `_main`, so `import server` pulls almost
+   nothing, and shims keep flat module names alive in `sys.modules` until
+   Phase 6. `tests/ffast/test_ffast_core_boundary.py` instead scans `ffast/`
+   statically and splits **eager** (module-level — breaks a headless import;
+   must reach empty) from **lazy** (function-level, client-only paths that never
+   run headless; allowed). After Phase 4 the eager set is exactly 3 edges
+   (`loading_coordinator`/`persistence` → `client.dataType`/`modelLoaders.ghost`),
+   all clearing at Phase 5.
+
+2. **Phase 3's "inert over-import" was already lazy.** `ConnectionManager`'s
+   `cluster.*` imports are all function-level, so importing the full env graph
+   pulls in **zero** `cluster/` modules at runtime — the over-import the draft
+   set out to break does not happen. Phase 3 became a pure relocation; the
+   cluster edges are tracked as allowed lazy edges and `cluster/` stays
+   Desktop-Client.
+
+3. **`config/userConfig.py` deferred from Phase 1.** It reads `config/*.json`
+   via `__file__` and writes `user.json` at runtime, so relocating it is a
+   data-file migration (where should `user.json` live — `~/.ffast/`?) orthogonal
+   to the code keystone. No env-cluster module imports it, so deferring adds no
+   edge. The dead KDE helpers in `utils.py` (superseded by
+   `ffast/metrics/transforms.py`) were likewise left, not relocated — only the
+   live `md5FromArraysAndStrings` moved.
+
+**Net after Phase 4:** `server.py` and `ffast/cli/main.py` run
+`ffast.core.environment.HeadlessEnvironment`; the Environment graph lives in
+`ffast/core/` (+ `ffast/cache/store.py`, `ffast/session/persistence.py`). The
+only remaining `ffast/ → client/` *eager* dependency is the 3-edge loader
+residual that Phase 5 (dataset-IO port + `AtomsList`) removes. Phase 6 (repoint
+`main.py`/tests/examples off the shims, delete shims, config/userConfig, plugin
+discovery) remains open.
 
 ## Context
 
