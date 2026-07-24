@@ -277,7 +277,7 @@ def cmd_metrics_run(args: argparse.Namespace) -> None:
 
     # The headless Environment pulls in the full data-loading + module stack and
     # starts a worker thread; only spin it up once cheap validation has passed.
-    from client.environment import startHeadlessEnvironment
+    from ffast.core.environment import startHeadlessEnvironment
 
     env = startHeadlessEnvironment()
     try:

@@ -55,11 +55,16 @@ ALLOWED_EAGER = {
 # design (ADR 0047). Allowed to be non-empty; asserted exactly so a NEW one is
 # caught. cli/main.environment resolves once Phase 6 repoints it off the shim.
 ALLOWED_LAZY = {
-    ("ffast/cli/main.py", "client.environment"),
     ("ffast/core/data_service.py", "client.dataType"),
     ("ffast/core/loading_coordinator.py", "modules.loaders.aseDataset"),
     ("ffast/session/server_session.py", "client.dataType"),
     ("ffast/session/server_session.py", "modules.loaders.aseDataset"),
+    # Environment's Desktop-Client loaders + color helper (Phase 4), lazily
+    # imported so ffast.core.environment stays eager-flat-free. Loaders clear at
+    # Phase 5; utils (mixColors pure, loadModules deferred) at the plugin ADR.
+    ("ffast/core/environment.py", "datasetLoaders.loader"),
+    ("ffast/core/environment.py", "modelLoaders.zeroModel"),
+    ("ffast/core/environment.py", "utils"),
     # ConnectionManager's cluster connect-out / SLURM / bootstrap machinery
     # (Phase 3). All lazy and client-only — the headless server never initiates
     # an outbound cluster connection, so cluster/ never enters its import

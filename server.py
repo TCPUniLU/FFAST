@@ -523,7 +523,7 @@ async def _main(
     host: str = "0.0.0.0",
 ):
     """Bootstrap env, wire RPC subscriptions, run server + event loop."""
-    from client.environment import HeadlessEnvironment
+    from ffast.core.environment import HeadlessEnvironment
     from ffast.protocol import control
     from ffast.protocol.rpc import SERVER_TO_CLIENT, pack
     from utils import loadModules
