@@ -1,133 +1,15 @@
-from collections import defaultdict
-import logging
+"""Re-export shim — the event spine now lives in ffast.core.events (ADR 0047).
 
-logger = logging.getLogger("FFAST")
-subs = defaultdict(list)
-
-
-def doNothing(*args):
-    pass
-
-
-class EventClass:
-    """
-    Main EventClass, to be inherited by any object that has an independent event loop (i.e. the UI Handler and the Environment).
-
-    Gives access to subscribing, pushing and handling events.
-    """
-
-    isEventChild = False
-    eventStamp = 0
-
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-        self.eventQueue = []
-        self.eventChildren = []
-        self.subscribedTo = set()
-
-    def eventSubscribe(self, event, func, asynchronous=False):
-        """
-        Subscribes to an event and provides the response function to be called.
-
-        Args:
-            event (str): Event name
-            func (func): Function to me called when event happens
-        """
-        subs[event].append((self, func, asynchronous))
-        self.subscribedTo.add(event)
-
-    def eventPush(self, event, *args, quiet=False, **kwargs):
-        """
-        Pushes event onto the stack.
-
-        Args:
-            event (str): Event name
-            quiet (bool, optional): Flag controlling whether the event should
-                be included in logs. Set to True for quick-fire events such as
-                TASK_PROGRESS. Defaults to False.
-        """
-
-        if not quiet:
-            logger.debug(f"Event pushed: {event} by {type(self)}")
-
-        for obj, func, asynchronous in subs[event]:
-            obj.eventQueue.append(
-                (event, func, asynchronous, quiet, args, kwargs)
-            )
-
-    async def eventHandle(self):
-        """
-        Goes through the event queue, which includes every event pushed since
-        last call, and calls the corresponding functions.
-
-        This method needs to be called continously and regularly called,
-        see main.py.
-        """
-
-        self.eventStamp += 1
-
-        if (self.isEventChild) and (len(self.eventQueue) < 1):
-            return
-
-        for event, func, asynchronous, quiet, args, kwargs in self.eventQueue:
-            if not quiet:
-                logger.debug(
-                    f"{self} handling event {event}, function: {func}"
-                )
-            try:
-                if asynchronous:
-                    await func(*args, **kwargs)
-                else:
-                    func(*args, **kwargs)
-            except Exception:
-                logger.exception(
-                    f"Exception while {self} tried to handle event {event}.\nfunc:{func}\nargs:{args}\nkwargs:{kwargs}"
-                )
-
-        self.eventQueue.clear()
-
-        if not self.isEventChild:
-            for child in self.eventChildren:
-                await child.eventHandle()
-
-    def addEventChild(self, obj):
-        obj.eventParent = self
-        self.eventChildren.append(obj)
-
-
-class EventChildClass(EventClass):
-    """
-    EventClass for Qt Widgets, which cannot have an independent event handling loop. Instead, this class hooks onto the UI Handler and use its event handling methods instead.
-
-    Note that after initialising the object, the parent needs to call addEventChild.
-
-    LIFETIME INVARIANT: subscriptions in `subs` hold the subscriber STRONGLY, so
-    a churning EventChildClass that is dropped without calling deleteEvents leaks
-    (and its dead handlers keep firing). Every such widget MUST be removed via the
-    list machinery's removeObject -> prepareDeletion -> deleteEvents path
-    (UI/Templates/lists.py, UI/Templates/base.py). Do not drop event children with
-    a bare .clear()/reassignment. This discipline is why subs is kept strong
-    rather than weakref'd.
-    """
-
-    isEventChild = True
-
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-
-        if hasattr(self, "handler"):
-            self.handler.addEventChild(self)
-
-    def deleteEvents(self):
-        # REMOVE IT FROM HANDLER'S EVENT CHILDREN
-        eventChildren = self.eventParent.eventChildren
-        eventChildren.remove(self)
-
-        # REMOVE IT FROM SUBS
-        for event in self.subscribedTo:
-            eventSubs = subs[event]
-            for i in range(len(eventSubs) - 1, -1, -1):
-                if eventSubs[i][0] is self:
-                    del eventSubs[i]
-
-        self.deleteLater()
+Kept so Desktop-Client call sites (`from events import EventClass`, `import
+events`) keep working during the phased migration. Re-exports the SAME objects
+— including the module-global ``subs`` event bus — so there is still exactly
+one bus per process. Deleted in ADR 0047 Phase 6 once all importers are
+repointed to ffast.core.events.
+"""
+from ffast.core.events import (  # noqa: F401
+    EventChildClass,
+    EventClass,
+    doNothing,
+    logger,
+    subs,
+)
