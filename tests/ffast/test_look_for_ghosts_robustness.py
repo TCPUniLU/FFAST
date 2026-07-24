@@ -14,8 +14,8 @@ skipped, not parsed.
 """
 import types
 
-import client.loading_coordinator as lcmod
-from client.loading_coordinator import LoadingCoordinator
+import ffast.core.loading_coordinator as lcmod
+from ffast.core.loading_coordinator import LoadingCoordinator
 from ffast.cache import CacheKey
 
 

@@ -319,7 +319,7 @@ class _Models(dict):
 
 
 def test_instantiateGhost_constructs_initialises_and_registers(monkeypatch):
-    import client.loading_coordinator as lcmod
+    import ffast.core.loading_coordinator as lcmod
 
     initialised = []
 

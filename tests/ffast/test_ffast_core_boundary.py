@@ -38,12 +38,21 @@ _FLAT_ROOTS = {
 # The ONLY ffast/ → flat edges permitted today. Each is scheduled for removal:
 #   - client.environment          → gone at Phase 4 (Environment moves to ffast/core)
 #   - client.dataType             → gone at Phase 5 (AtomsList into the dataset-IO port)
+#   - modelLoaders.ghost          → gone at Phase 5 (loader registers into the port)
 #   - modules.loaders.aseDataset  → gone at Phase 5 (loader registers into the port)
+# Phase 2 relocated the mid-layer (data_service/session_persistence/
+# loading_coordinator) into ffast/, so they now carry their still-flat deps as
+# transient edges — this is the expected grow-then-shrink; all clear at Phase 5.
 # Target: this set is empty when ADR 0047 completes.
 ALLOWED_EDGES = {
     ("ffast/cli/main.py", "client.environment"),
     ("ffast/session/server_session.py", "client.dataType"),
     ("ffast/session/server_session.py", "modules.loaders.aseDataset"),
+    ("ffast/core/data_service.py", "client.dataType"),
+    ("ffast/session/persistence.py", "client.dataType"),
+    ("ffast/core/loading_coordinator.py", "client.dataType"),
+    ("ffast/core/loading_coordinator.py", "modelLoaders.ghost"),
+    ("ffast/core/loading_coordinator.py", "modules.loaders.aseDataset"),
 }
 
 
