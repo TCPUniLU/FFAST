@@ -165,6 +165,8 @@ def test_build_loupe_scene_snapshot_prediction_ref_alone_does_not_show_forces():
 
 
 def test_build_loupe_scene_snapshot_metric_coloring_uses_prediction_without_forces():
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import default_registry
     from ffast.renderers.vispy.local_scene import (
         build_loupe_scene_snapshot,
         make_cache_prediction_resolver,
@@ -180,6 +182,7 @@ def test_build_loupe_scene_snapshot_metric_coloring_uses_prediction_without_forc
         settings=_Settings(atomColorSource="metric:ffast.force_mae"),
         prediction_ref="mace",
         get_prediction=make_cache_prediction_resolver(env),
+        executor=InProcessExecutor(default_registry),
     )
 
     assert snapshot.scene.atoms.color_by is not None

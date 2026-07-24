@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ffast.metrics.input_resolver import InputResolver, metric_needs_prediction
+from ffast.metrics.input_resolver import InputResolver, _ResolverSource, metric_needs_prediction
 from ffast.metrics.builtin import energy_metrics, force_metrics  # noqa: F401 register
 from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.models import MetricResult
@@ -91,8 +91,8 @@ class _FakeEnv:
         # mirrors Environment.generateMetric
         if key is None:
             key = self.make_metric_cache_key(metric_id, params, model, dataset)
-        inputs = self.inputResolver.build_metric_inputs(metric_id, model=model, dataset=dataset)
-        result = self.metricExecutor.run(metric_id, inputs, params or {})
+        source = _ResolverSource(self.inputResolver, model, dataset)
+        result = self.metricExecutor.run(metric_id, source, params or {})
         if isinstance(result, MetricResult):
             self.cache[key] = result
             self.events.append(("DATA_UPDATED", (key,)))
@@ -136,25 +136,6 @@ def test_resolve_prediction_requires_generated_data():
     np.testing.assert_array_equal(
         r.resolve("prediction.forces", model=model, dataset=ds), [[2.0, 0, 0]]
     )
-
-
-def test_build_metric_inputs_collects_leaf_refs():
-    ds = _Dataset(energies=[1.0, 2.0], forces=[[1, 0, 0], [0, 0, 0]])
-    model = _Model()
-    env = _FakeEnv(
-        ds,
-        predictions={
-            ("forces", "model-fp", "ds-fp"): _Entity(
-                forces=np.array([[2.0, 0, 0], [0, 0, 0]])
-            )
-        },
-    )
-    r = InputResolver(env)
-    inputs = r.build_metric_inputs("ffast.force_mae", model=model, dataset=ds)
-    # force_mae → force_difference(reference=reference.forces, predicted=prediction.forces)
-    assert set(inputs) >= {"reference", "predicted"}
-    np.testing.assert_array_equal(inputs["reference"], [[1, 0, 0], [0, 0, 0]])
-    np.testing.assert_array_equal(inputs["predicted"], [[2.0, 0, 0], [0, 0, 0]])
 
 
 def test_metric_needs_prediction_is_transitive():

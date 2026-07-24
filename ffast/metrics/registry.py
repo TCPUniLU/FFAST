@@ -96,13 +96,6 @@ class MetricRegistry:
             logger.error("MetricRegistry.freeze [%s]: %s", mid, msg)
         return errors
 
-    def compute_plan(self, metric_ids: list[str]) -> list[str]:
-        """Topological execution plan for metric_ids + all transitive deps."""
-        return self._graph.compute_plan(metric_ids)
-
-    def dependencies_of(self, metric_id: str) -> set[str]:
-        return self._graph.dependencies_of(metric_id)
-
 
 _default_registry = MetricRegistry()
 default_registry = _default_registry

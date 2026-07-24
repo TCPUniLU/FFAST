@@ -34,8 +34,15 @@ def test_load_metric_modules_registers_metric(tmp_path):
     load_metric_modules(config, config_file)
 
     from ffast.metrics.registry import _default_registry
-    _, fn = _default_registry.get("test.custom_metric")
-    assert callable(fn)
+    try:
+        _, fn = _default_registry.get("test.custom_metric")
+        assert callable(fn)
+    finally:
+        # load_metric_modules' path-based loading never registers the module in
+        # sys.modules, so this function is never picklable — clean up the
+        # shared _default_registry so a later WorkerProcessExecutor built over
+        # it elsewhere in the suite doesn't try (and fail) to pickle it.
+        _default_registry._metrics.pop("test.custom_metric", None)
 
 
 def test_disabled_module_not_loaded(tmp_path):

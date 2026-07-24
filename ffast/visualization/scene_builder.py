@@ -9,7 +9,7 @@ pipeline stages via ``pipeline.execute`` (which resolves dependency order throug
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from typing import Any, Callable
 
 import numpy as np
 
@@ -38,9 +38,15 @@ def build_scene(
     get_dataset: Callable,
     get_prediction: Callable | None = None,
     get_forces: Callable | None = None,
+    executor: Any | None = None,
     _legacy_forces: bool = False,
 ) -> RenderScene:
     """Derive a RenderScene from VisualizationState.
+
+    ``executor`` is the injected ``MetricExecutor`` (ADR 0046) threaded to
+    value-driven atom coloring — the caller's ``DataService.metricExecutor``,
+    so coloring and ``REQUEST_METRIC`` share the same server-side executor
+    instance instead of each maintaining its own.
 
     Returns a scene with only camera populated when no dataset is loaded or
     when any data access fails.
@@ -126,7 +132,7 @@ def build_scene(
     color_values = None
     color_meta = None
     from ffast.visualization.color_values import resolve_atom_color_values
-    _color_src = resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction)
+    _color_src = resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, executor=executor)
     if _color_src is not None:
         color_values, _clabel, _cunit = _color_src
         cparams = state.parameters.get("ffast.atom_color", {})

@@ -30,7 +30,7 @@ class DataService:
     """Cache-key resolution, data generation, and in-process metrics (ADR 0020)."""
 
     def __init__(self, cache, models, datasets, tm, events,
-                 source=None, headless=True):
+                 source=None, headless=True, executor=None):
         self.cache = cache
         self._models = models
         self._datasets = datasets
@@ -51,7 +51,7 @@ class DataService:
         # in-process by generateMetric and cached alongside DataType results.
         self._metricRequests = {}   # cache_key -> (metric_id, params, model, dataset)
         self._inputResolver = None
-        self._metricExecutor = None
+        self._metricExecutor = executor
 
         # Prediction Dataset Fields (ADR 0023): eagerly extracted at prediction
         # load (the prediction's ASE source is otherwise discarded). Keyed by
@@ -226,12 +226,25 @@ class DataService:
 
     @property
     def metricExecutor(self):
-        """Lazily-built in-process metric executor over the built-in registry."""
+        """The MetricExecutor serving both REQUEST_METRIC and atom coloring (ADR 0046).
+
+        Injected via the constructor when the caller wants a specific instance
+        (tests, or a future Environment override); otherwise built lazily on
+        first use and memoized, so every metric path through this DataService
+        shares one executor. The headless/server DataService gets a
+        WorkerProcessExecutor — metric code must not run in the long-lived
+        server process (the Worker Pool Key Constraint) — the desktop/client
+        DataService gets an InProcessExecutor.
+        """
         if self._metricExecutor is None:
             import ffast.metrics.builtin  # noqa: F401 — register built-in metrics
-            from ffast.metrics.executor import InProcessExecutor
             from ffast.metrics.registry import default_registry
-            self._metricExecutor = InProcessExecutor(default_registry)
+            if self.headless:
+                from ffast.metrics.pool import WorkerProcessExecutor
+                self._metricExecutor = WorkerProcessExecutor(default_registry)
+            else:
+                from ffast.metrics.executor import InProcessExecutor
+                self._metricExecutor = InProcessExecutor(default_registry)
         return self._metricExecutor
 
     def registerMetricRequest(self, metric_id, params, model, dataset):
@@ -330,10 +343,10 @@ class DataService:
                 )
                 return False
 
-        inputs = self.inputResolver.build_metric_inputs(
-            metric_id, model=model, dataset=dataset
-        )
-        result = self.metricExecutor.run(metric_id, inputs, params or {})
+        from ffast.metrics.input_resolver import _ResolverSource
+
+        source = _ResolverSource(self.inputResolver, model, dataset)
+        result = self.metricExecutor.run(metric_id, source, params or {})
         if isinstance(result, MetricResult):
             self.cache[key] = result
             self.eventPush("DATA_UPDATED", key)

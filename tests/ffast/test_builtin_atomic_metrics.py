@@ -6,6 +6,7 @@ from ffast.metrics.builtin.atomic_metrics import (
     force_mae_per_structure_per_element_kde,
     force_rmse_per_element,
 )
+from ffast.metrics.execution import FlatInputSource
 from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.registry import MetricRegistry
 
@@ -118,7 +119,7 @@ def test_executor_resolves_dependency():
         "predicted": np.array([[[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]]]),
         "elements": np.array([1, 6]),
     }
-    result = executor.run("ffast.force_mae_per_element", inputs, {})
+    result = executor.run("ffast.force_mae_per_element", FlatInputSource(inputs), {})
     assert result.shape == "N_elements"
     assert np.isclose(result.values[0], 1.0 / 3.0)  # H diff=[1,0,0]
     assert np.isclose(result.values[1], 0.0)          # C diff=[0,0,0]
@@ -168,6 +169,6 @@ def test_per_element_kde_through_executor():
                                [[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]]]),
         "elements": np.array([1, 6]),
     }
-    result = executor.run("ffast.force_mae_per_structure_per_element_kde", inputs, {})
+    result = executor.run("ffast.force_mae_per_structure_per_element_kde", FlatInputSource(inputs), {})
     assert result.shape == "(N_elements, curve_xy, grid)"
     assert np.asarray(result.values).shape == (2, 2, 200)

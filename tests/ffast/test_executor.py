@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from ffast.metrics.execution import FlatInputSource
 from ffast.metrics.models import MetricFailure, MetricResult
 from ffast.metrics.registry import MetricRegistry
 from ffast.metrics.executor import InProcessExecutor
@@ -42,7 +43,7 @@ def test_run_returns_metric_result(registry_with_force_mae):
 
     result = executor.run(
         "test.force_mae",
-        inputs={"force_difference": diff},
+        source=FlatInputSource({"force_difference": diff}),
         parameters={"norm": "l2"},
     )
 
@@ -61,8 +62,8 @@ def test_result_is_cached(registry_with_force_mae):
     executor = InProcessExecutor(registry_with_force_mae, cache=cache)
     diff = np.ones((2, 3, 3))
 
-    result1 = executor.run("test.force_mae", inputs={"force_difference": diff}, parameters={"norm": "l2"})
-    result2 = executor.run("test.force_mae", inputs={"force_difference": diff}, parameters={"norm": "l2"})
+    result1 = executor.run("test.force_mae", source=FlatInputSource({"force_difference": diff}), parameters={"norm": "l2"})
+    result2 = executor.run("test.force_mae", source=FlatInputSource({"force_difference": diff}), parameters={"norm": "l2"})
 
     assert result1 is result2  # same object from cache
 
@@ -73,8 +74,8 @@ def test_cache_miss_on_different_compute_param(registry_with_force_mae):
     executor = InProcessExecutor(registry_with_force_mae, cache=cache)
     diff = np.ones((2, 3, 3))
 
-    result_l2 = executor.run("test.force_mae", inputs={"force_difference": diff}, parameters={"norm": "l2"})
-    result_l1 = executor.run("test.force_mae", inputs={"force_difference": diff}, parameters={"norm": "l1"})
+    result_l2 = executor.run("test.force_mae", source=FlatInputSource({"force_difference": diff}), parameters={"norm": "l2"})
+    result_l1 = executor.run("test.force_mae", source=FlatInputSource({"force_difference": diff}), parameters={"norm": "l1"})
 
     assert result_l2 is not result_l1
     assert result_l2.checksum != result_l1.checksum
@@ -86,8 +87,8 @@ def test_presentation_param_does_not_affect_cache(registry_with_force_mae):
     executor = InProcessExecutor(registry_with_force_mae, cache=cache)
     diff = np.ones((2, 3, 3))
 
-    result1 = executor.run("test.force_mae", inputs={"force_difference": diff}, parameters={"norm": "l2", "colormap": "viridis"})
-    result2 = executor.run("test.force_mae", inputs={"force_difference": diff}, parameters={"norm": "l2", "colormap": "plasma"})
+    result1 = executor.run("test.force_mae", source=FlatInputSource({"force_difference": diff}), parameters={"norm": "l2", "colormap": "viridis"})
+    result2 = executor.run("test.force_mae", source=FlatInputSource({"force_difference": diff}), parameters={"norm": "l2", "colormap": "plasma"})
 
     # Presentation params don't affect compute — same cache entry
     assert result1 is result2
@@ -110,14 +111,14 @@ def test_present_parameters_not_passed_to_function(registry):
         return x
 
     executor = InProcessExecutor(registry)
-    executor.run("test.spy_metric", inputs={"x": 1.0}, parameters={"colormap": "b"})
+    executor.run("test.spy_metric", source=FlatInputSource({"x": 1.0}), parameters={"colormap": "b"})
 
     assert "colormap" not in received
 
 
 def test_unknown_id_raises(executor):
     with pytest.raises(KeyError):
-        executor.run("test.nonexistent", inputs={}, parameters={})
+        executor.run("test.nonexistent", source=FlatInputSource({}), parameters={})
 
 
 def test_failing_metric_returns_metric_failure(registry):
@@ -126,7 +127,7 @@ def test_failing_metric_returns_metric_failure(registry):
         raise ValueError("something went wrong")
 
     executor = InProcessExecutor(registry)
-    result = executor.run("test.bad_metric", inputs={"x": 1.0}, parameters={})
+    result = executor.run("test.bad_metric", source=FlatInputSource({"x": 1.0}), parameters={})
 
     assert isinstance(result, MetricFailure)
     assert result.metric_id == "test.bad_metric"
@@ -144,8 +145,8 @@ def test_failure_does_not_affect_other_metrics(registry):
         return x * 2
 
     executor = InProcessExecutor(registry)
-    bad_result = executor.run("test.bad2", inputs={"x": 1.0}, parameters={})
-    good_result = executor.run("test.good", inputs={"x": 3.0}, parameters={})
+    bad_result = executor.run("test.bad2", source=FlatInputSource({"x": 1.0}), parameters={})
+    good_result = executor.run("test.good", source=FlatInputSource({"x": 3.0}), parameters={})
 
     assert isinstance(bad_result, MetricFailure)
     assert isinstance(good_result, MetricResult)
@@ -174,7 +175,7 @@ def test_auto_resolves_metric_dependencies(registry):
         return doubled * 2
 
     executor = InProcessExecutor(registry)
-    result = executor.run("test.quadruple", inputs={"x": 3.0}, parameters={})
+    result = executor.run("test.quadruple", source=FlatInputSource({"x": 3.0}), parameters={})
 
     assert isinstance(result, MetricResult)
     assert np.isclose(result.values, 12.0)
@@ -190,7 +191,7 @@ def test_dependency_failure_propagates(registry):
         return y
 
     executor = InProcessExecutor(registry)
-    result = executor.run("test.uses_fails", inputs={"x": 1.0}, parameters={})
+    result = executor.run("test.uses_fails", source=FlatInputSource({"x": 1.0}), parameters={})
 
     assert isinstance(result, MetricFailure)
     assert result.metric_id == "test.uses_fails"
@@ -203,7 +204,7 @@ def test_result_has_implementation_hash(registry):
         return x
 
     executor = InProcessExecutor(registry)
-    result = executor.run("test.simple", inputs={"x": 1.0}, parameters={})
+    result = executor.run("test.simple", source=FlatInputSource({"x": 1.0}), parameters={})
 
     assert isinstance(result.implementation_hash, str)
     assert len(result.implementation_hash) == 16
@@ -215,7 +216,7 @@ def test_result_has_checksum(registry):
         return x
 
     executor = InProcessExecutor(registry)
-    result = executor.run("test.simple2", inputs={"x": 1.0}, parameters={})
+    result = executor.run("test.simple2", source=FlatInputSource({"x": 1.0}), parameters={})
 
     assert isinstance(result.checksum, str)
     assert len(result.checksum) == 64  # SHA-256 hex

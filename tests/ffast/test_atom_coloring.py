@@ -149,12 +149,20 @@ class TestMetricCatalog:
         )
         (tmp_path / "ffast.toml").write_text('[[metrics.modules]]\npath = "ext_metrics.py"\n')
 
-        server._load_project_metric_modules(str(tmp_path / "ffast.toml"))
+        try:
+            server._load_project_metric_modules(str(tmp_path / "ffast.toml"))
 
-        cat = {e["id"]: e for e in build_metric_catalog(reg)}
-        assert "test.server_ext" in cat
-        assert cat["test.server_ext"]["label"] == "Server Ext"
-        assert cat["test.server_ext"]["shape"] == "N_atoms"   # colorable
+            cat = {e["id"]: e for e in build_metric_catalog(reg)}
+            assert "test.server_ext" in cat
+            assert cat["test.server_ext"]["label"] == "Server Ext"
+            assert cat["test.server_ext"]["shape"] == "N_atoms"   # colorable
+        finally:
+            # load_metric_modules loads the file via spec_from_file_location
+            # without registering it in sys.modules, so its function is never
+            # picklable — clean up the shared _default_registry so a later
+            # WorkerProcessExecutor(default_registry) elsewhere in the suite
+            # doesn't try (and fail) to pickle this tmp-file-backed metric.
+            reg._metrics.pop("test.server_ext", None)
 
 
 class TestColorSourceResolution:
@@ -272,47 +280,46 @@ class _Pred:
 class TestServerMetricColoring:
     """Value-driven coloring through build_scene (ADR 0016)."""
 
-    def _color_by(self, monkeypatch, extra_params):
-        import ffast.visualization.color_values as cv
+    def _color_by(self, extra_params):
         from ffast.metrics.executor import InProcessExecutor
-        # In-process executor → no worker subprocess in the test.
-        monkeypatch.setattr(cv, "_executor", InProcessExecutor(reg))
+        # In-process executor → no worker subprocess in the test (ADR 0046:
+        # executor is injected via build_scene, not a monkeypatched module global).
+        executor = InProcessExecutor(reg)
         params = {"source": "metric:ffast.force_mae", "colormap": "viridis"}
         params.update(extra_params)
         state = VisualizationState(
             view_id="v", dataset_ref="fp", prediction_ref="m",
             structure_index=0, parameters={"ffast.atom_color": params},
         )
-        scene = build_scene(state, lambda fp: _DS(), lambda d, m: _Pred())
+        scene = build_scene(state, lambda fp: _DS(), lambda d, m: _Pred(), executor=executor)
         return scene.atoms.color_by
 
-    def test_metric_coloring_produces_per_atom_values(self, monkeypatch):
-        cb = self._color_by(monkeypatch, {})
+    def test_metric_coloring_produces_per_atom_values(self):
+        cb = self._color_by({})
         assert cb is not None
         assert len(cb.values) == 4
         # default norm is l2 → high-error atom = 5.0
         assert cb.values[1] == pytest.approx(5.0)
         assert cb.colormap == "viridis"
 
-    def test_compute_parameter_changes_colors(self, monkeypatch):
-        cb = self._color_by(monkeypatch, {"norm": "l1"})
+    def test_compute_parameter_changes_colors(self):
+        cb = self._color_by({"norm": "l1"})
         assert cb is not None
         # l1 norm → mean of |components| = (3+4+0)/3
         assert cb.values[1] == pytest.approx(7.0 / 3.0)
 
-    def test_per_element_metric_broadcasts_onto_atoms(self, monkeypatch):
+    def test_per_element_metric_broadcasts_onto_atoms(self):
         """A per-element metric (N_elements) colors atoms by broadcasting each
         element's value onto its atoms. _DS is C,H,H,H."""
-        import ffast.visualization.color_values as cv
         from ffast.metrics.executor import InProcessExecutor
-        monkeypatch.setattr(cv, "_executor", InProcessExecutor(reg))
+        executor = InProcessExecutor(reg)
         state = VisualizationState(
             view_id="v", dataset_ref="fp", prediction_ref="m", structure_index=0,
             parameters={"ffast.atom_color": {
                 "source": "metric:ffast.force_mae_per_element", "colormap": "viridis",
             }},
         )
-        scene = build_scene(state, lambda fp: _DS(), lambda d, m: _Pred())
+        scene = build_scene(state, lambda fp: _DS(), lambda d, m: _Pred(), executor=executor)
         cb = scene.atoms.color_by
         assert cb is not None
         assert len(cb.values) == 4                       # one value per atom
@@ -320,24 +327,55 @@ class TestServerMetricColoring:
         assert cb.values[0] != pytest.approx(cb.values[1])   # C differs from H
         assert cb.label == "Force Error (per element)"        # metric display name
 
-    def test_accel_metric_resolves_via_ase_mass_fallback(self, monkeypatch):
+    def test_accel_metric_resolves_via_ase_mass_fallback(self):
         """Acceleration error needs atomic masses; _DS has no getMasses, so the
         server must derive them from the elements (ASE) instead of falling back
         to element colors."""
-        import ffast.visualization.color_values as cv
         from ffast.metrics.executor import InProcessExecutor
-        monkeypatch.setattr(cv, "_executor", InProcessExecutor(reg))
+        executor = InProcessExecutor(reg)
         state = VisualizationState(
             view_id="v", dataset_ref="fp", prediction_ref="m", structure_index=0,
             parameters={"ffast.atom_color": {
                 "source": "metric:ffast.accel_mae_per_atom", "colormap": "viridis",
             }},
         )
-        scene = build_scene(state, lambda fp: _DS(), lambda d, m: _Pred())
+        scene = build_scene(state, lambda fp: _DS(), lambda d, m: _Pred(), executor=executor)
         cb = scene.atoms.color_by
         assert cb is not None
         assert len(cb.values) == 4
         assert cb.values[1] > 0.0   # atom 1 has the force/accel error
+
+    def test_metric_coloring_through_real_worker_process_executor(self):
+        """ADR 0046 e2e: a real WorkerProcessExecutor (pickling, shared-memory
+        transport, subprocess round-trip) drives atom coloring — closing the
+        pool-never-tested trap CONTEXT.md's Metric Worker Pool note warns about
+        (every other coloring test injects InProcessExecutor for speed)."""
+        from ffast.metrics.pool import WorkerProcessExecutor
+        from ffast.metrics.registry import MetricRegistry
+        # A fresh registry snapshotting just the two metrics needed, rather than
+        # the whole (possibly test-polluted) shared `reg` — another test in this
+        # module registers an ephemeral external-module metric into it, which is
+        # unpicklable once its tmp_path module is gone; isolating here keeps this
+        # e2e test independent of suite ordering.
+        scratch = MetricRegistry()
+        for mid in ("ffast.force_difference", "ffast.force_mae"):
+            scratch._metrics[mid] = reg.get(mid)
+        executor = WorkerProcessExecutor(scratch)
+        try:
+            state = VisualizationState(
+                view_id="v", dataset_ref="fp", prediction_ref="m",
+                structure_index=0,
+                parameters={"ffast.atom_color": {
+                    "source": "metric:ffast.force_mae", "colormap": "viridis",
+                }},
+            )
+            scene = build_scene(state, lambda fp: _DS(), lambda d, m: _Pred(), executor=executor)
+        finally:
+            executor.shutdown()
+        cb = scene.atoms.color_by
+        assert cb is not None
+        assert len(cb.values) == 4
+        assert cb.values[1] == pytest.approx(5.0)
 
 
 class TestSymbolicRefResolution:

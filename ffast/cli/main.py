@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from ffast.config.loader import discover_config, load_metric_modules, load_project_config
 from ffast.metrics.builtin import force_metrics, energy_metrics, atomic_metrics, accel_metrics, structure_metrics  # noqa: F401 — register built-ins
+from ffast.metrics.execution import FlatInputSource
 from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.models import MetricFailure
 from ffast.metrics.registry import MetricRegistry, _default_registry
@@ -127,7 +128,7 @@ def cmd_metrics_test(args: argparse.Namespace) -> None:
             # Run 1: correctness check (fresh registry + executor, no shared cache)
             registry1 = _fresh_registry_with_builtins()
             load_metric_modules(config, config_path)
-            result1 = InProcessExecutor(registry1).run(metric_id, raw_inputs, test.parameters)
+            result1 = InProcessExecutor(registry1).run(metric_id, FlatInputSource(raw_inputs), test.parameters)
 
             if isinstance(result1, MetricFailure):
                 print(f"  FAIL {label}: run 1 raised — {result1.traceback.splitlines()[-1]}")
@@ -149,7 +150,7 @@ def cmd_metrics_test(args: argparse.Namespace) -> None:
             # Run 2: determinism check
             registry2 = _fresh_registry_with_builtins()
             load_metric_modules(config, config_path)
-            result2 = InProcessExecutor(registry2).run(metric_id, raw_inputs, test.parameters)
+            result2 = InProcessExecutor(registry2).run(metric_id, FlatInputSource(raw_inputs), test.parameters)
 
             if isinstance(result2, MetricFailure):
                 print(f"  FAIL {label}: run 2 raised — {result2.traceback.splitlines()[-1]}")

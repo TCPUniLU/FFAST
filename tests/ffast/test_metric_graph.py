@@ -1,9 +1,13 @@
-"""Metric DX: registry.freeze() validation + graph compute plans (decision M1/H2)."""
+"""Metric DX: registry.freeze() validation (decision M1/H2).
+
+Ordering/compute-plan surface (compute_plan/dependencies_of/run_batch) was
+removed by ADR 0046 — build_execution_plan's own walk (ffast.metrics.execution)
+derives ordering now; MetricGraph.freeze stays as the startup/CLI validator
+tested here.
+"""
 import numpy as np
-import pytest
 
 from ffast.metrics import dims
-from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.registry import MetricRegistry
 
 
@@ -44,23 +48,6 @@ def _registry_with_dep_chain():
 def test_freeze_clean_passes():
     r = _registry_with_dep_chain()
     assert r.freeze() == []
-
-
-def test_compute_plan_orders_and_dedupes_shared_dep():
-    r = _registry_with_dep_chain()
-    r.freeze()
-    plan = r.compute_plan(["t.mae", "t.rmse"])
-    # Shared dependency appears exactly once, before both dependents.
-    assert plan.count("t.diff") == 1
-    assert plan.index("t.diff") < plan.index("t.mae")
-    assert plan.index("t.diff") < plan.index("t.rmse")
-
-
-def test_dependencies_of():
-    r = _registry_with_dep_chain()
-    r.freeze()
-    assert r.dependencies_of("t.mae") == {"t.diff"}
-    assert r.dependencies_of("t.diff") == set()
 
 
 def test_freeze_flags_unknown_symbolic_ref():
@@ -110,24 +97,3 @@ def test_freeze_detects_cycle():
     assert any(mid == "__cycle__" for mid, _ in errors)
 
 
-def test_compute_plan_requires_freeze():
-    r = _registry_with_dep_chain()
-    with pytest.raises(RuntimeError):
-        r.compute_plan(["t.mae"])
-
-
-def test_run_batch_shares_intermediate_and_matches_single_run():
-    r = _registry_with_dep_chain()
-    r.freeze()
-    ex = InProcessExecutor(r)
-    inputs = {
-        "reference": np.zeros((4, 3)),
-        "predicted": np.ones((4, 3)),
-    }
-    batch = ex.run_batch(["t.mae", "t.rmse"], inputs, {})
-    assert set(batch) == {"t.mae", "t.rmse"}
-    assert float(batch["t.mae"].values) == pytest.approx(1.0)
-    assert float(batch["t.rmse"].values) == pytest.approx(1.0)
-    # Batch result matches an independent single run of the same metric.
-    single = ex.run("t.mae", inputs, {})
-    assert float(single.values) == pytest.approx(float(batch["t.mae"].values))

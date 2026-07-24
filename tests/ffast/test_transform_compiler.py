@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from ffast.metrics import dims
+from ffast.metrics.execution import FlatInputSource, build_execution_plan
 from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.registry import MetricRegistry
 from ffast.metrics.transforms import (
@@ -76,7 +77,11 @@ def test_static_graph_edge_to_source():
     r = _src_registry()
     cid = compile_transform("t.series", "smooth", registry=r)
     assert r.freeze() == []
-    assert r.dependencies_of(cid) == {"t.series"}
+    # Retargeted to observable structure (ADR 0046): dependencies_of is gone —
+    # the execution plan itself orders the source metric before the compiled one.
+    plan = build_execution_plan(r, cid, {}, FlatInputSource({"reference": [1.0, 2.0, 3.0]}))
+    ids = [step.metric_id for step in plan.steps]
+    assert "t.series" in ids and ids.index("t.series") < ids.index(cid)
 
 
 def test_compute_params_surfaced_on_final_metric():
@@ -116,7 +121,7 @@ def test_smooth_window_one_is_identity():
     r = _src_registry()
     cid = compile_transform("t.series", "smooth", registry=r)
     ex = InProcessExecutor(r)
-    out = ex.run(cid, {"reference": [1.0, 2.0, 3.0]}, {"window": 1})
+    out = ex.run(cid, FlatInputSource({"reference": [1.0, 2.0, 3.0]}), {"window": 1})
     np.testing.assert_allclose(out.values, [1.0, 2.0, 3.0])
 
 
@@ -124,7 +129,7 @@ def test_smooth_window_two_averages():
     r = _src_registry()
     cid = compile_transform("t.series", "smooth", registry=r)
     ex = InProcessExecutor(r)
-    out = ex.run(cid, {"reference": [1.0, 3.0, 5.0]}, {"window": 2})
+    out = ex.run(cid, FlatInputSource({"reference": [1.0, 3.0, 5.0]}), {"window": 2})
     np.testing.assert_allclose(out.values, [2.0, 4.0])  # valid-mode convolution
 
 
@@ -132,7 +137,7 @@ def test_mirror_kde_emits_2_by_grid():
     r = _src_registry()
     cid = compile_transform("t.series", "mirror_kde", registry=r)
     ex = InProcessExecutor(r)
-    out = ex.run(cid, {"reference": list(np.random.RandomState(0).randn(50))}, {})
+    out = ex.run(cid, FlatInputSource({"reference": list(np.random.RandomState(0).randn(50))}), {})
     arr = np.asarray(out.values)
     assert arr.ndim == 2 and arr.shape[0] == 2 and arr.shape[1] == 200
     assert np.all(arr[0] >= 0)  # mirror-KDE x grid starts at 0
@@ -150,8 +155,8 @@ def test_pipeline_matches_legacy_energy_error_smoothed():
     inputs = {"reference": [1.0, 2.0, 3.0], "predicted": [1.5, 2.5, 3.5]}
     params = {"window": 1, "shifted": False}
 
-    compiled = ex.run(pid, inputs, params)
-    legacy = ex.run("ffast.energy_error_smoothed", inputs, params)
+    compiled = ex.run(pid, FlatInputSource(inputs), params)
+    legacy = ex.run("ffast.energy_error_smoothed", FlatInputSource(inputs), params)
     assert not hasattr(compiled, "traceback"), getattr(compiled, "traceback", "")
     np.testing.assert_allclose(compiled.values, legacy.values, atol=1e-10)
     np.testing.assert_allclose(compiled.values, [0.5, 0.5, 0.5], atol=1e-10)

@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 
 from ffast.config.models import AtomColorPresentation
+from ffast.metrics.execution import FlatInputSource
 from ffast.metrics.executor import MetricExecutor
 from ffast.metrics.models import MetricFailure
 
@@ -22,7 +23,7 @@ class MetricColorAdapter:
         parameters: dict[str, Any],
         presentation: AtomColorPresentation,
     ) -> np.ndarray | MetricFailure:
-        result = self._executor.run(metric_id, inputs, parameters)
+        result = self._executor.run(metric_id, FlatInputSource(inputs), parameters)
         if isinstance(result, MetricFailure):
             return result
 

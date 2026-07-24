@@ -7,7 +7,7 @@ from typing import Any
 from ffast.metrics.cache import MetricCache
 from ffast.metrics.execution import (
     ExecutionPlan,
-    FlatInputSource,
+    InputSource,
     build_execution_plan,
     run_plan,
 )
@@ -17,7 +17,7 @@ from ffast.metrics.registry import MetricRegistry
 
 class MetricExecutor(ABC):
     @abstractmethod
-    def run(self, id: str, inputs: dict[str, Any], parameters: dict[str, Any]) -> MetricResult | MetricFailure:
+    def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
         ...
 
 
@@ -50,25 +50,7 @@ class InProcessExecutor(MetricExecutor):
             ),
         )
 
-    def run(self, id: str, inputs: dict[str, Any], parameters: dict[str, Any]) -> MetricResult | MetricFailure:
+    def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
         """Run a single metric and its dependencies."""
-        plan = build_execution_plan(self._registry, id, parameters, FlatInputSource(inputs))
+        plan = build_execution_plan(self._registry, id, parameters, source)
         return self._execute(plan)[id]
-
-    def run_batch(
-        self,
-        metric_ids: list[str],
-        inputs: dict[str, Any],
-        parameters: dict[str, Any],
-    ) -> dict[str, MetricResult | MetricFailure]:
-        """Run multiple metrics sharing intermediate results.
-
-        A single plan spans all requested metrics + their transitive deps, so a
-        shared dependency runs exactly once (the plan lists it once, and
-        ``run_plan`` reuses its result across dependents).
-
-        Returns {metric_id: result} for all requested metric_ids.
-        """
-        plan = build_execution_plan(self._registry, metric_ids, parameters, FlatInputSource(inputs))
-        results = self._execute(plan)
-        return {mid: results[mid] for mid in metric_ids if mid in results}

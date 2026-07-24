@@ -13,6 +13,7 @@ import time
 import numpy as np
 import pytest
 
+from ffast.metrics.execution import FlatInputSource
 from ffast.metrics.models import MetricFailure, MetricResult
 from ffast.metrics.pool import PoolPolicy, WorkerProcessExecutor
 from ffast.metrics.registry import MetricRegistry
@@ -85,19 +86,19 @@ def executor(registry):
 # ── Basic execution ───────────────────────────────────────────────────────────
 
 def test_run_returns_metric_result(executor):
-    result = executor.run("test.double", {"x": 3.0}, {})
+    result = executor.run("test.double", FlatInputSource({"x": 3.0}), {})
     assert isinstance(result, MetricResult)
     assert result.metric_id == "test.double"
 
 
 def test_run_returns_correct_output(executor):
-    result = executor.run("test.double", {"x": 3.0}, {})
+    result = executor.run("test.double", FlatInputSource({"x": 3.0}), {})
     assert isinstance(result, MetricResult)
     assert np.isclose(result.values, 6.0)
 
 
 def test_run_returns_metric_failure_on_exception(executor):
-    result = executor.run("test.raise_error", {"x": 1.0}, {})
+    result = executor.run("test.raise_error", FlatInputSource({"x": 1.0}), {})
     assert isinstance(result, MetricFailure)
     assert result.metric_id == "test.raise_error"
     assert "ValueError" in result.traceback
@@ -105,9 +106,9 @@ def test_run_returns_metric_failure_on_exception(executor):
 
 
 def test_failure_does_not_affect_subsequent_calls(executor):
-    bad = executor.run("test.raise_error", {"x": 1.0}, {})
+    bad = executor.run("test.raise_error", FlatInputSource({"x": 1.0}), {})
     assert isinstance(bad, MetricFailure)
-    good = executor.run("test.identity", {"x": 42.0}, {})
+    good = executor.run("test.identity", FlatInputSource({"x": 42.0}), {})
     assert isinstance(good, MetricResult)
     assert np.isclose(good.values, 42.0)
 
@@ -116,13 +117,13 @@ def test_failure_does_not_affect_subsequent_calls(executor):
 
 def test_worker_resolves_metric_dependency(executor):
     # dep_inner(x=5) = 10; dep_outer(y=dep_inner) = 11
-    result = executor.run("test.dep_outer", {"x": 5.0}, {})
+    result = executor.run("test.dep_outer", FlatInputSource({"x": 5.0}), {})
     assert isinstance(result, MetricResult)
     assert np.isclose(result.values, 11.0)
 
 
 def test_worker_missing_raw_input_returns_failure(executor):
-    result = executor.run("test.identity", {}, {})  # "x" not provided
+    result = executor.run("test.identity", FlatInputSource({}), {})  # "x" not provided
     assert isinstance(result, MetricFailure)
     assert "Missing raw input" in result.traceback
 
@@ -141,7 +142,7 @@ def test_cached_dependency_is_not_shipped_to_worker(registry):
     executor = WorkerProcessExecutor(registry, cache=cache)
     try:
         # Prime the cache: compute the dependency alone. dep_inner(x=5) = 10.
-        primed = executor.run("test.dep_inner", {"x": 5.0}, {})
+        primed = executor.run("test.dep_inner", FlatInputSource({"x": 5.0}), {})
         assert isinstance(primed, MetricResult)
         assert np.isclose(primed.values, 10.0)
 
@@ -156,7 +157,7 @@ def test_cached_dependency_is_not_shipped_to_worker(registry):
         executor._ship_to_worker = recording
 
         # dep_outer depends on dep_inner (already cached with the same x=5 input).
-        result = executor.run("test.dep_outer", {"x": 5.0}, {})
+        result = executor.run("test.dep_outer", FlatInputSource({"x": 5.0}), {})
         assert isinstance(result, MetricResult)
         assert np.isclose(result.values, 11.0)  # dep_inner(10) + 1
 
@@ -171,15 +172,15 @@ def test_cached_dependency_is_not_shipped_to_worker(registry):
 # ── MetricResult fields ───────────────────────────────────────────────────────
 
 def test_result_has_correct_shape_and_unit(executor, registry):
-    result = executor.run("test.double", {"x": 2.0}, {})
+    result = executor.run("test.double", FlatInputSource({"x": 2.0}), {})
     schema, _ = registry.get("test.double")
     assert result.shape == schema.shape
     assert result.unit == schema.unit
 
 
 def test_result_checksum_is_deterministic(executor):
-    r1 = executor.run("test.identity", {"x": 7.0}, {})
-    r2 = executor.run("test.identity", {"x": 7.0}, {})
+    r1 = executor.run("test.identity", FlatInputSource({"x": 7.0}), {})
+    r2 = executor.run("test.identity", FlatInputSource({"x": 7.0}), {})
     assert isinstance(r1, MetricResult)
     assert isinstance(r2, MetricResult)
     assert r1.checksum == r2.checksum
@@ -192,7 +193,7 @@ def test_large_array_via_shared_memory(registry):
     executor = WorkerProcessExecutor(registry, policy)
     try:
         arr = np.arange(100, dtype=np.float64)
-        result = executor.run("test.sum_arr", {"arr": arr}, {})
+        result = executor.run("test.sum_arr", FlatInputSource({"arr": arr}), {})
         assert isinstance(result, MetricResult)
         assert np.isclose(result.values, arr.sum())
     finally:
@@ -204,7 +205,7 @@ def test_array_below_threshold_not_shared_memory(registry):
     executor = WorkerProcessExecutor(registry, policy)
     try:
         arr = np.array([1.0, 2.0, 3.0])
-        result = executor.run("test.sum_arr", {"arr": arr}, {})
+        result = executor.run("test.sum_arr", FlatInputSource({"arr": arr}), {})
         assert isinstance(result, MetricResult)
         assert np.isclose(result.values, 6.0)
     finally:
@@ -219,11 +220,11 @@ def test_worker_recycles_after_max_tasks(registry):
     try:
         pid_before = executor._get_worker().process.pid
 
-        executor.run("test.identity", {"x": 1.0}, {})
-        executor.run("test.identity", {"x": 2.0}, {})
+        executor.run("test.identity", FlatInputSource({"x": 1.0}), {})
+        executor.run("test.identity", FlatInputSource({"x": 2.0}), {})
         # After 2 tasks, parent clears worker reference
 
-        executor.run("test.identity", {"x": 3.0}, {})  # Spawns fresh worker
+        executor.run("test.identity", FlatInputSource({"x": 3.0}), {})  # Spawns fresh worker
         pid_after = executor._get_worker().process.pid
 
         assert pid_before != pid_after
@@ -234,11 +235,11 @@ def test_worker_recycles_after_max_tasks(registry):
 def test_worker_spawns_replacement_after_crash(registry):
     executor = WorkerProcessExecutor(registry)
     try:
-        result = executor.run("test.crash", {"x": 1.0}, {})
+        result = executor.run("test.crash", FlatInputSource({"x": 1.0}), {})
         assert isinstance(result, MetricFailure)
         assert "died unexpectedly" in result.traceback
 
-        result2 = executor.run("test.identity", {"x": 7.0}, {})
+        result2 = executor.run("test.identity", FlatInputSource({"x": 7.0}), {})
         assert isinstance(result2, MetricResult)
         assert np.isclose(result2.values, 7.0)
     finally:
@@ -251,7 +252,7 @@ def test_hard_time_limit_returns_metric_failure(registry):
     policy = PoolPolicy(max_runtime_s=0.3, grace_period_s=0.1)
     executor = WorkerProcessExecutor(registry, policy)
     try:
-        result = executor.run("test.slow", {"x": 1.0}, {})
+        result = executor.run("test.slow", FlatInputSource({"x": 1.0}), {})
         assert isinstance(result, MetricFailure)
         assert result.metric_id == "test.slow"
         assert "time limit" in result.traceback.lower()
@@ -263,10 +264,10 @@ def test_executor_recovers_after_time_limit(registry):
     policy = PoolPolicy(max_runtime_s=0.3, grace_period_s=0.1)
     executor = WorkerProcessExecutor(registry, policy)
     try:
-        result1 = executor.run("test.slow", {"x": 0.0}, {})
+        result1 = executor.run("test.slow", FlatInputSource({"x": 0.0}), {})
         assert isinstance(result1, MetricFailure)
 
-        result2 = executor.run("test.identity", {"x": 99.0}, {})
+        result2 = executor.run("test.identity", FlatInputSource({"x": 99.0}), {})
         assert isinstance(result2, MetricResult)
         assert np.isclose(result2.values, 99.0)
     finally:
@@ -288,7 +289,7 @@ def test_scheduling_hint_tightens_timeout():
 
     executor = WorkerProcessExecutor(reg, PoolPolicy(max_runtime_s=300.0, grace_period_s=0.1))
     try:
-        result = executor.run("test.slow_hinted", {"x": 1.0}, {})
+        result = executor.run("test.slow_hinted", FlatInputSource({"x": 1.0}), {})
         assert isinstance(result, MetricFailure)
         assert "time limit" in result.traceback.lower()
         # Failure message must mention the hint-derived timeout, not 300s
@@ -310,7 +311,7 @@ def test_scheduling_hint_cannot_exceed_policy():
 
     executor = WorkerProcessExecutor(reg, PoolPolicy(max_runtime_s=0.3, grace_period_s=0.1))
     try:
-        result = executor.run("test.slow_long_hint", {"x": 1.0}, {})
+        result = executor.run("test.slow_long_hint", FlatInputSource({"x": 1.0}), {})
         assert isinstance(result, MetricFailure)
         assert "time limit" in result.traceback.lower()
         # Effective timeout clamped to policy 0.3s
@@ -344,7 +345,7 @@ def test_metric_schema_stores_declared_hints():
 
 def test_shutdown_is_idempotent(registry):
     executor = WorkerProcessExecutor(registry)
-    executor.run("test.identity", {"x": 1.0}, {})
+    executor.run("test.identity", FlatInputSource({"x": 1.0}), {})
     executor.shutdown()
     executor.shutdown()  # Must not raise
 
@@ -382,7 +383,7 @@ def test_compiled_transform_metric_runs_in_worker():
     reg, cid = _compiled_reg()
     executor = WorkerProcessExecutor(reg)  # pre-fix: raised in __init__ (pickle.dumps)
     try:
-        result = executor.run(cid, {"x": np.array([-1.0, 2.0, -3.0])}, {})
+        result = executor.run(cid, FlatInputSource({"x": np.array([-1.0, 2.0, -3.0])}), {})
     finally:
         executor.shutdown()
     assert isinstance(result, MetricResult), getattr(result, "traceback", result)

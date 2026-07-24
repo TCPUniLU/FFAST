@@ -22,25 +22,32 @@ import logging
 
 import numpy as np
 
+from ffast.metrics.execution import InputSource
+
 logger = logging.getLogger(__name__)
 
-_executor = None
 
+class _FrameInputSource(InputSource):
+    """Metric Execution Context input source backed by frame-scoped symbolic-ref
+    resolution (mirrors ``input_resolver._ResolverSource`` for the panel path —
+    ADR 0046).
 
-def _get_executor():
-    """Lazy out-of-process metric executor over the default registry (ADR 0016).
-
-    WorkerProcessExecutor is used instead of InProcessExecutor so that metric
-    computation runs in an isolated subprocess — crashes and long-running
-    metrics cannot affect the server process.  The worker is spawned lazily on
-    first use and recycled automatically by PoolPolicy.
+    Wraps ``_resolve_symbolic_ref`` (which raises ``KeyError`` for a missing or
+    unavailable ref) so ``get`` never raises: any resolution failure surfaces as
+    ``(True, None)``, which the plan builder treats as an unavailable input —
+    unavailable *required* inputs then flow through to a ``MetricFailure``,
+    which ``resolve_atom_color_values`` maps to ``None`` → element-color
+    fallback (ADR 0016).
     """
-    global _executor
-    if _executor is None:
-        from ffast.metrics.pool import WorkerProcessExecutor
-        from ffast.metrics.registry import _default_registry
-        _executor = WorkerProcessExecutor(_default_registry)
-    return _executor
+
+    def __init__(self, resolve) -> None:
+        self._resolve = resolve
+
+    def get(self, metric_id, local_key, ref):
+        try:
+            return True, self._resolve(ref)
+        except Exception:
+            return True, None
 
 
 def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state, prediction_ref):
@@ -96,21 +103,13 @@ def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state,
     raise KeyError(ref)
 
 
-def _collect_leaf_inputs(registry, metric_id, resolve):
-    """Walk the metric dependency tree, resolving leaf (non-metric) inputs into
-    a flat {input_key: array} dict the executor consumes (ADR 0016)."""
-    schema, _ = registry.get(metric_id)
-    inputs: dict = {}
-    for key, ref in schema.inputs.items():
-        if registry.has(ref):
-            inputs.update(_collect_leaf_inputs(registry, ref, resolve))
-        else:
-            inputs[key] = resolve(ref)
-    return inputs
-
-
-def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction):
+def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, executor=None):
     """Per-atom values for the active atom-color source, or None for element.
+
+    ``executor`` is the injected ``MetricExecutor`` (ADR 0046) — the server
+    threads its ``DataService.metricExecutor`` in via ``build_scene``; a
+    metric-coloring request with no executor injected falls back to element
+    colors, same as any other resolution failure.
 
     Returns ``(values (N,) float64, label, unit)``. Any failure (missing
     prediction, metric error, shape mismatch) returns None so the renderer falls
@@ -152,21 +151,16 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction):
                     "colors", metric_id,
                 )
                 return None
+            if executor is None:
+                logger.warning(
+                    "atom-color: no metric executor injected; falling back to "
+                    "element colors"
+                )
+                return None
             resolve = lambda ref: _resolve_symbolic_ref(
                 ref, ds, idx, raw_positions, z, get_prediction, state, prediction_ref
             )
-            try:
-                inputs = _collect_leaf_inputs(reg, metric_id, resolve)
-            except KeyError as exc:
-                # Expected when a required input (e.g. prediction.forces) is
-                # unavailable — fall back to element colors (ADR 0016), but say so.
-                logger.warning(
-                    "atom-color: metric %r needs input %s which is unavailable "
-                    "(no prediction loaded for this view?); falling back to element "
-                    "colors", metric_id, exc,
-                )
-                return None
-            result = _get_executor().run(metric_id, inputs, params)
+            result = executor.run(metric_id, _FrameInputSource(resolve), params)
             if isinstance(result, MetricFailure):
                 logger.warning(
                     "atom-color: metric %s failed: %s", metric_id, result.traceback,

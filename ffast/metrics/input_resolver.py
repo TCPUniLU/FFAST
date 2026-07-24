@@ -204,35 +204,6 @@ class InputResolver:
 
     # ── metric input assembly ──────────────────────────────────────────────
 
-    def build_metric_inputs(self, metric_id, model=None, dataset=None):
-        """Flat ``{input_key: array}`` for a metric and its transitive deps.
-
-        The Metric Execution Context (ADR 0035) walks the dependency tree; this
-        is its env-backed sourcing adapter.  Metric-dep refs stay as dependency
-        markers (the executor resolves those internally, so we only supply the
-        leaf raw inputs); every other ref — including optional ones like
-        ``offsets`` — is resolved via ``InputResolver.resolve``.  The flat dict
-        harvests each plan step's raw bindings; values may be ``None`` for
-        optional/unavailable inputs.
-
-        Note: keyed by each metric's *local* input names. The built-in metrics
-        never mix an energy and a force tree, so a local name
-        (``reference``/``predicted``) never maps to two different refs; first
-        binding wins if a future metric does combine them.
-        """
-        from ffast.metrics.execution import RawInput, build_execution_plan
-        from ffast.metrics.registry import default_registry as registry
-
-        plan = build_execution_plan(
-            registry, metric_id, {}, _ResolverSource(self, model, dataset)
-        )
-        inputs: dict = {}
-        for step in plan.steps:
-            for key, binding in step.bindings.items():
-                if isinstance(binding, RawInput) and key not in inputs:
-                    inputs[key] = binding.value
-        return inputs
-
     def missing_prediction_keys(self, metric_id, model=None, dataset=None):
         """Prediction DataType keys (``energy``/``forces``) the metric needs but
         that aren't cached yet, so the queue can generate them first."""

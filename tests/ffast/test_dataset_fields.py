@@ -10,6 +10,7 @@ import pytest
 from ase import Atoms
 
 from ffast.metrics import dims
+from ffast.metrics.execution import FlatInputSource
 from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.registry import MetricRegistry
 from ffast.metrics.inputs import is_field_ref, is_valid_ref, parse_field_ref
@@ -95,7 +96,7 @@ def test_field_metric_runs_passthrough():
     r = MetricRegistry()
     compile_field_metric("lab.q", "reference.atoms.charges", registry=r)
     r.freeze()
-    result = InProcessExecutor(r).run("lab.q", {"value": [0.1, -0.2, 0.3]}, {})
+    result = InProcessExecutor(r).run("lab.q", FlatInputSource({"value": [0.1, -0.2, 0.3]}), {})
     np.testing.assert_allclose(result.values, [0.1, -0.2, 0.3])
 
 

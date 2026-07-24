@@ -11,6 +11,7 @@ from ffast.metrics.builtin.accel_metrics import (
     accel_mae_per_atom,
     accel_mae_per_element,
 )
+from ffast.metrics.execution import FlatInputSource
 from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.registry import MetricRegistry
 
@@ -125,7 +126,7 @@ def test_executor_resolves_accel_chain():
         "predicted": _PRED,
         "masses": _MASSES,
     }
-    result = executor.run("ffast.accel_mae", inputs, {"norm": "l2"})
+    result = executor.run("ffast.accel_mae", FlatInputSource(inputs), {"norm": "l2"})
     assert result.shape == "(N_frames, N_atoms)"
     assert result.unit == "acceleration"
     np.testing.assert_allclose(result.values[0], [5.0, 0.0])
@@ -175,7 +176,7 @@ def test_executor_accel_mae_per_element():
         "masses": _MASSES,
         "elements": _ELEMENTS,
     }
-    result = executor.run("ffast.accel_mae_per_element", inputs, {})
+    result = executor.run("ffast.accel_mae_per_element", FlatInputSource(inputs), {})
     assert result.shape == "N_elements"
     assert result.unit == "acceleration"
     np.testing.assert_allclose(result.values[0], 5.0)

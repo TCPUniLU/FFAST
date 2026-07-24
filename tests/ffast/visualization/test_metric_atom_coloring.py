@@ -62,6 +62,8 @@ def test_resolve_color_force_mae_returns_per_atom_values():
     """Core path: force_mae metric produces one value per atom."""
     # Register built-ins so the metric is in the registry.
     from ffast.metrics.builtin import force_metrics  # noqa: F401
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
     from ffast.visualization.color_values import resolve_atom_color_values
 
     n_atoms = 3
@@ -79,7 +81,10 @@ def test_resolve_color_force_mae_returns_per_atom_values():
         return None
 
     raw_positions = ref_forces[:, 0:3] * 0  # (n_atoms, 3) dummy coords
-    result = resolve_atom_color_values(state, ds, 0, raw_positions, ds._z, get_prediction)
+    result = resolve_atom_color_values(
+        state, ds, 0, raw_positions, ds._z, get_prediction,
+        executor=InProcessExecutor(reg),
+    )
 
     assert result is not None, "Expected per-atom values, got None (metric failed)"
     values, label, unit = result
@@ -94,6 +99,8 @@ def test_resolve_color_prediction_ref_override_wins_over_global():
     pattern as ffast.force_arrows (scene_builder.py) — so coloring by one
     model's error doesn't force the whole view onto that model."""
     from ffast.metrics.builtin import force_metrics  # noqa: F401
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
     from ffast.visualization.color_values import resolve_atom_color_values
 
     n_atoms = 3
@@ -122,7 +129,10 @@ def test_resolve_color_prediction_ref_override_wins_over_global():
             return _PredictionView(ref_forces[np.newaxis])
         return None
 
-    result = resolve_atom_color_values(state, ds, 0, np.zeros((n_atoms, 3)), ds._z, get_prediction)
+    result = resolve_atom_color_values(
+        state, ds, 0, np.zeros((n_atoms, 3)), ds._z, get_prediction,
+        executor=InProcessExecutor(reg),
+    )
 
     assert result is not None
     assert override_fp in calls and global_fp not in calls
@@ -133,6 +143,8 @@ def test_resolve_color_prediction_ref_override_wins_over_global():
 def test_resolve_color_no_prediction_ref_returns_none():
     """Without prediction_ref, metric coloring falls back to None (element colors)."""
     from ffast.metrics.builtin import force_metrics  # noqa: F401
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
     from ffast.visualization.color_values import resolve_atom_color_values
 
     state = VisualizationState(view_id="v1")
@@ -142,19 +154,27 @@ def test_resolve_color_no_prediction_ref_returns_none():
 
     ds = _FakeDataset(n_atoms=3)
 
-    result = resolve_atom_color_values(state, ds, 0, np.zeros((3, 3)), ds._z, lambda *a: None)
+    result = resolve_atom_color_values(
+        state, ds, 0, np.zeros((3, 3)), ds._z, lambda *a: None,
+        executor=InProcessExecutor(reg),
+    )
     assert result is None, "Should fall back to None when prediction_ref is absent"
 
 
 def test_resolve_color_prediction_lookup_failure_returns_none():
     """If get_prediction returns None (server cache miss), graceful fallback."""
     from ffast.metrics.builtin import force_metrics  # noqa: F401
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
     from ffast.visualization.color_values import resolve_atom_color_values
 
     state = _make_state_with_metric("ffast.force_mae")
     ds = _FakeDataset(n_atoms=3)
 
-    result = resolve_atom_color_values(state, ds, 0, np.zeros((3, 3)), ds._z, lambda *a: None)
+    result = resolve_atom_color_values(
+        state, ds, 0, np.zeros((3, 3)), ds._z, lambda *a: None,
+        executor=InProcessExecutor(reg),
+    )
     assert result is None, "Cache miss should return None, not raise"
 
 

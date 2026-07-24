@@ -14,6 +14,12 @@ import types
 def _attach_env_facets(env):
     _m = env.models if isinstance(getattr(env, "models", None), dict) else None
     env.data = env  # data-access methods (getData/getCacheByKey/…) live on the double
+    # DataService.metricExecutor (ADR 0046): production code threads
+    # env.data.metricExecutor into build_scene/view.snapshot unconditionally.
+    # None is a valid "no executor injected" value — metric-coloring degrades
+    # to element colors, everything else (forces, bonds, ...) is unaffected.
+    if not hasattr(env, "metricExecutor"):
+        env.metricExecutor = None
     env.datasets = types.SimpleNamespace(
         get=getattr(env, "getDataset", lambda *a, **k: None),
         all=getattr(env, "getAllDatasets", lambda **k: []),

@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from ffast.metrics import dims
+from ffast.metrics.execution import FlatInputSource, build_execution_plan
 from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.registry import MetricRegistry
 from ffast.metrics.expr import (
@@ -193,7 +194,11 @@ def test_metric_id_vars_become_deps_and_freeze_ok():
     mid = compile_expr_metric("lab.x", "pred - ref",
                              {"pred": "t.pred_e", "ref": "t.ref_e"}, registry=r)
     assert r.freeze() == []
-    assert {"t.pred_e", "t.ref_e"} <= r.dependencies_of(mid)
+    # Retargeted to observable structure (ADR 0046): dependencies_of is gone —
+    # the execution plan itself walks the metric-id deps into its steps.
+    plan = build_execution_plan(r, mid, {}, FlatInputSource({}))
+    ids = {step.metric_id for step in plan.steps}
+    assert {"t.pred_e", "t.ref_e"} <= ids
 
 
 def test_freeze_ok_with_n_atoms():
@@ -209,9 +214,9 @@ def test_eval_energy_per_atom():
                              {"pred": "t.pred_e", "ref": "t.ref_e"}, registry=r)
     r.freeze()
     ex = InProcessExecutor(r)
-    out = ex.run(mid, {
+    out = ex.run(mid, FlatInputSource({
         "predicted": [10.0, 20.0], "reference": [8.0, 26.0], "n_atoms": [2, 3],
-    }, {})
+    }), {})
     assert not hasattr(out, "traceback"), getattr(out, "traceback", "")
     np.testing.assert_allclose(out.values, [1.0, 2.0])
 
@@ -223,7 +228,7 @@ def test_eval_offset_correction():
     r.freeze()
     ex = InProcessExecutor(r)
     # t.shift = mean(reference) = 2.0; ref - s = [-1, 0, 1]
-    out = ex.run(mid, {"reference": [1.0, 2.0, 3.0]}, {})
+    out = ex.run(mid, FlatInputSource({"reference": [1.0, 2.0, 3.0]}), {})
     np.testing.assert_allclose(out.values, [-1.0, 0.0, 1.0])
 
 
@@ -232,7 +237,7 @@ def test_eval_whitelist_functions():
     mid = compile_expr_metric("lab.x", "sqrt(clip(ref, 0, 100)) + pi",
                              {"ref": "t.ref_e"}, registry=r)
     r.freeze()
-    out = InProcessExecutor(r).run(mid, {"reference": [4.0, 9.0]}, {})
+    out = InProcessExecutor(r).run(mid, FlatInputSource({"reference": [4.0, 9.0]}), {})
     np.testing.assert_allclose(out.values, [2.0 + np.pi, 3.0 + np.pi])
 
 
@@ -242,7 +247,7 @@ def test_non_finite_raises_metric_failure():
     mid = compile_expr_metric("lab.x", "ref / n_atoms",
                              {"ref": "t.ref_e"}, registry=r)
     r.freeze()
-    out = InProcessExecutor(r).run(mid, {"reference": [1.0, 2.0], "n_atoms": [1, 0]}, {})
+    out = InProcessExecutor(r).run(mid, FlatInputSource({"reference": [1.0, 2.0], "n_atoms": [1, 0]}), {})
     assert hasattr(out, "traceback")
     assert mid in out.metric_id
 

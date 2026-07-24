@@ -386,6 +386,7 @@ class ServerSession:
                     get_dataset=self.env.datasets.get,
                     get_prediction=self.get_prediction,
                     get_forces=self.get_forces,
+                    executor=self.env.data.metricExecutor,
                 )
                 data = pack(control.SCENE_SNAPSHOT, [], snapshot.model_dump())
                 self._emit_or_drop(data, f"SCENE_SNAPSHOT view={view.state.view_id!r}")
@@ -809,6 +810,7 @@ class ServerSession:
                 get_dataset=self.env.datasets.get,
                 get_prediction=self.get_prediction,
                 get_forces=self.get_forces,
+                executor=self.env.data.metricExecutor,
             )
         except Exception as exc:
             self._log_scene_degrade("OPEN_VIEW", view_id, exc)
@@ -862,6 +864,7 @@ class ServerSession:
                 scene = await asyncio.to_thread(
                     build_scene, view_state, self.env.datasets.get,
                     self.get_prediction, self.get_forces,
+                    self.env.data.metricExecutor,
                 )
             except Exception as exc:
                 self._log_scene_degrade("VIEW_COMMAND", cmd.view_id, exc)

@@ -795,6 +795,9 @@ class TestBuildSceneColorBy:
         assert scene.atoms.color_by.vmax == 10.0
 
     def test_metric_source_force_mae(self, ds):
+        from ffast.metrics.executor import InProcessExecutor
+        from ffast.metrics.registry import default_registry
+
         pred = np.stack([np.full((4, 3), 0.5)] * 3)  # predicted forces
         state = VisualizationState(
             view_id="v1", dataset_ref="DS", prediction_ref="M", structure_index=1,
@@ -803,6 +806,7 @@ class TestBuildSceneColorBy:
         scene = build_scene(
             state, get_dataset=lambda fp: ds,
             get_prediction=lambda dfp, mfp: _Pred(pred),
+            executor=InProcessExecutor(default_registry),
         )
         assert scene.atoms.color_by is not None
         assert scene.atoms.color_by.label == "Force Error (per atom)"  # metric display name

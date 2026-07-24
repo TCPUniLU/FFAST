@@ -1,8 +1,10 @@
 """MetricGraph — DAG of metric dependencies (M1).
 
-Built once at registry.freeze(). Provides topological compute plans
-so InProcessExecutor.run_batch() shares intermediates rather than
-recomputing them per dependent.
+Built once at registry.freeze() as the startup/CLI validator: it checks every
+registered metric's symbolic input refs, shape declarations, and dependency
+acyclicity in one pass. Ordering and cycle detection for actual execution live
+in ``ffast.metrics.execution.build_execution_plan``'s own walk (ADR 0046) —
+this graph is not consulted at run time.
 """
 from __future__ import annotations
 
@@ -76,38 +78,3 @@ class MetricGraph:
         self._deps = graph
         self._frozen = True
         return errors
-
-    def compute_plan(self, metric_ids: list[str]) -> list[str]:
-        """Return ordered execution list for the given metrics + all transitive deps.
-
-        Only metrics needed for the requested IDs are included.
-        """
-        if not self._frozen:
-            raise RuntimeError("MetricGraph.freeze() must be called before compute_plan()")
-
-        needed: set[str] = set()
-        stack = list(metric_ids)
-        while stack:
-            mid = stack.pop()
-            if mid in needed:
-                continue
-            needed.add(mid)
-            stack.extend(self._deps.get(mid, ()))
-
-        subgraph = {mid: self._deps[mid] & needed for mid in needed}
-        ts = TopologicalSorter(subgraph)
-        return list(ts.static_order())
-
-    def dependencies_of(self, metric_id: str) -> set[str]:
-        """Full transitive dependency set for one metric."""
-        if not self._frozen:
-            raise RuntimeError("MetricGraph.freeze() must be called before dependencies_of()")
-        result: set[str] = set()
-        stack = list(self._deps.get(metric_id, ()))
-        while stack:
-            mid = stack.pop()
-            if mid in result:
-                continue
-            result.add(mid)
-            stack.extend(self._deps.get(mid, ()))
-        return result

@@ -45,7 +45,7 @@ from typing import Any
 import numpy as np
 
 from ffast.metrics.cache import MetricCache
-from ffast.metrics.execution import FlatInputSource, build_execution_plan, run_plan
+from ffast.metrics.execution import InputSource, build_execution_plan, run_plan
 from ffast.metrics.executor import MetricExecutor
 from ffast.metrics.models import MetricFailure, MetricResult
 from ffast.metrics.registry import MetricRegistry
@@ -283,7 +283,7 @@ class WorkerProcessExecutor(MetricExecutor):
             pass
         return False
 
-    def run(self, id: str, inputs: dict[str, Any], parameters: dict[str, Any]) -> MetricResult | MetricFailure:
+    def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
         """Run a single metric and its dependencies.
 
         Input resolution, dependency ordering, Compute Parameter filtering, and
@@ -292,7 +292,7 @@ class WorkerProcessExecutor(MetricExecutor):
         step is a separate worker task (dependencies resolved in the parent, same
         as before), and cached results never reach the worker.
         """
-        plan = build_execution_plan(self._registry, id, parameters, FlatInputSource(inputs))
+        plan = build_execution_plan(self._registry, id, parameters, source)
         results = run_plan(
             plan,
             self._registry,
