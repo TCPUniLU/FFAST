@@ -311,12 +311,12 @@ class Environment(EventClass):
             else:
                 return
 
-        session = self.remote.serverConnection
-        if session is not None and self.remote._event_loop is not None:
+        session, loop = self.remote.active_session()
+        if session is not None:
             import asyncio as _asyncio
             _asyncio.run_coroutine_threadsafe(
                 session.push_event(control.DELETE_OBJECT, key),
-                self.remote._event_loop,
+                loop,
             )
 
     #############
@@ -371,8 +371,8 @@ class Environment(EventClass):
         cache (the real data) are persisted (Stage 5). Falls back to an
         in-process save when no server is connected.
         """
-        session = self.remote.serverConnection
-        if session is None or self.remote._event_loop is None:
+        session, loop = self.remote.active_session()
+        if session is None:
             self.newTask(
                 self.persistence.save, args=(path,), visual=True,
                 name="Saving session", threaded=True,
@@ -380,7 +380,7 @@ class Environment(EventClass):
             return
         import asyncio as _asyncio
         _asyncio.run_coroutine_threadsafe(
-            session.push_event(control.SAVE_SESSION, path), self.remote._event_loop
+            session.push_event(control.SAVE_SESSION, path), loop
         )
 
     def requestSessionLoad(self, path):
@@ -388,13 +388,13 @@ class Environment(EventClass):
         (datasets + prediction cache) and announces them to the client via
         REMOTE_DATASET_META / REMOTE_MODEL_META. Falls back to in-process load.
         """
-        session = self.remote.serverConnection
-        if session is None or self.remote._event_loop is None:
+        session, loop = self.remote.active_session()
+        if session is None:
             self.persistence.taskLoad(path)
             return
         import asyncio as _asyncio
         _asyncio.run_coroutine_threadsafe(
-            session.push_event(control.LOAD_SESSION, path), self.remote._event_loop
+            session.push_event(control.LOAD_SESSION, path), loop
         )
 
 

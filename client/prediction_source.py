@@ -43,9 +43,8 @@ class RemoteSource(PredictionSource):
     """Delegates metric/prediction sourcing to a connected server session.
 
     ``remote`` is any object exposing the live-session surface
-    (``serverConnection``, ``_event_loop``, ``_fetchMetricResultSync``,
-    ``_fetchPredictionArraysSync``) — the Environment today, the
-    ConnectionManager after Step 4b.
+    (``active_session()``, ``_fetchMetricResultSync``,
+    ``_fetchPredictionArraysSync``) — the ConnectionManager.
     """
 
     def __init__(self, remote):
@@ -53,10 +52,8 @@ class RemoteSource(PredictionSource):
 
     @property
     def available(self):
-        return (
-            self._remote.serverConnection is not None
-            and self._remote._event_loop is not None
-        )
+        session, _ = self._remote.active_session()
+        return session is not None
 
     def fetch_metric_result(self, metric_id, params, model, dataset, key):
         return self._remote._fetchMetricResultSync(

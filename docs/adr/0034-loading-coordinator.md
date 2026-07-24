@@ -50,7 +50,7 @@ Two refinements were made during implementation, expanding the written scope abo
    constants and the `prediction_keys` tuple→list coercion). The three `request*` methods and the two
    remote-menu flows now funnel through these one-owner coroutines. `requestSessionSave` /
    `requestSessionLoad` / `deleteObject` share the same fallback-guard idiom but are session-lifecycle,
-   not loading, and are left for a future slice.
+   not loading — see addendum 3 below for where that idiom ended up.
 
 2. **The coordinator stays Qt-free via a callback-orchestration interface.** Because the coordinator's
    stated purpose is to be the piece that migrates into the Headless Core, it cannot import Qt. But the
@@ -69,3 +69,33 @@ Two refinements were made during implementation, expanding the written scope abo
 Ghost registration collapsed to a single `registerGhostModel` chokepoint reused by all sites
 (2 in the coordinator's own load paths, 2 in `ConnectionManager`'s server→client metadata handlers) —
 the ADR's "3 copies" had drifted to 4 by implementation time.
+
+## Decision addendum 3 (2026-07-24): fallback-guard fold + ghost-instantiate fold
+
+A later architecture review (2026-07-23) flagged two duplications this ADR left open: the
+"is a session live?" guard (`serverConnection is not None and _event_loop is not None`, or its
+inverse) copy-pasted at 7 sites across `LoadingCoordinator`, `ConnectionManager`, `Environment`, and
+`PredictionSource`; and ghost-model construction (`GhostModelLoader(env, key)` → `initialise()` →
+registry `add()`) duplicated between `lookForGhosts()` and `ConnectionManager._onRemoteModelMeta`. A
+9th copy of the guard (`Environment.deleteObject`) turned up during the fold, missed by the review.
+
+Both collapsed to single chokepoints:
+
+- `ConnectionManager.active_session()` — the one place the guard lives now. Every other site
+  (including `requestSessionSave` / `requestSessionLoad` / `deleteObject`, deferred by addendum 1
+  above) delegates to it; `LoadingCoordinator._remoteSession()` is now a 1-line wrapper.
+- `LoadingCoordinator.instantiateGhost()` — the other half of the ghost-model chokepoint alongside
+  `registerGhostModel`. `ConnectionManager._onRemoteModelMeta` calls it instead of constructing a
+  `GhostModelLoader` itself (and drops its own now-dead `GhostModelLoader` import).
+
+Folding `_onRemoteModelMeta` into the shared chokepoint surfaced a real bug: unlike every other
+ghost-creation path, it mutated the models registry without holding `mutation_lock` — a genuine
+Environment-Decomposition-era gap (ADR 0044 Phase 3), not something this ADR introduced. Fixed by
+wrapping its existence-check-through-create sequence in `mutation_lock`, matching
+`loadModel`/`loadDataset`'s own discipline.
+
+Out of scope, still open: the Coordinator's 11-distinct-attribute reach into `Environment`
+(`remote`, `newTask`, `modelTypes`, `mutation_lock`, `models`, `datasets`, `data`, `datasetTypes`,
+`eventPush`, `objects`, `cache`) that the same review calls the actual blocker for migrating the
+Coordinator into the Headless Core (ADR 0026). That needs a named load-port with two adapters (real
+`Environment` + a headless stand-in) — a larger, separate design decision, not a mechanical fold.

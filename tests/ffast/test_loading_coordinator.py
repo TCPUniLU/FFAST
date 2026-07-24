@@ -10,6 +10,7 @@ branches, and the local-vs-server routing decision.
 import asyncio
 import types
 
+from client.connection_manager import ConnectionManager
 from client.loading_coordinator import LoadingCoordinator
 from ffast.protocol import control
 
@@ -38,11 +39,15 @@ class _FakeSession:
 
 
 def _fake_env():
-    """Minimal env: records eventPush + newTask, carries a remote namespace."""
+    """Minimal env: records eventPush + newTask, carries a real ConnectionManager.
+
+    A real ``ConnectionManager`` (not a hand-rolled fake) so routing tests
+    exercise ``active_session()`` through its actual implementation; its
+    ``__init__`` never touches ``env``, so passing the env being built is safe.
+    """
     calls = {"events": [], "tasks": []}
-    env = types.SimpleNamespace(
-        remote=types.SimpleNamespace(serverConnection=None, _event_loop=None),
-    )
+    env = types.SimpleNamespace()
+    env.remote = ConnectionManager(env)
     env.eventPush = lambda *a, **k: calls["events"].append((a, k))
     env.newTask = lambda *a, **k: calls["tasks"].append((a, k))
     env._calls = calls
@@ -302,3 +307,37 @@ def test_requestPredictionLoad_no_session_falls_back_to_local_task():
     (task_args, task_kwargs), = env._calls["tasks"]
     assert task_args[0] == coord.loadPrepredictedDataset
     assert task_kwargs["kwargs"]["selected_energy_key"] == "E"
+
+
+# ── ghost creation ───────────────────────────────────────────────────────────
+
+class _Models(dict):
+    """Registry double: ``add`` keys by the model's ``modelKey``."""
+
+    def add(self, model):
+        self[model.modelKey] = model
+
+
+def test_instantiateGhost_constructs_initialises_and_registers(monkeypatch):
+    import client.loading_coordinator as lcmod
+
+    initialised = []
+
+    class _FakeGhost:
+        def __init__(self, env, modelKey):
+            self.modelKey = modelKey
+
+        def initialise(self):
+            initialised.append(self.modelKey)
+
+    monkeypatch.setattr(lcmod, "GhostModelLoader", _FakeGhost)
+
+    env = _fake_env()
+    env.models = _Models()
+    coord = LoadingCoordinator(env)
+
+    model = coord.instantiateGhost("modelA")
+
+    assert initialised == ["modelA"]
+    assert env.models["modelA"] is model
+    assert isinstance(model, _FakeGhost)

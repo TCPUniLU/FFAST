@@ -44,16 +44,14 @@ class LoadingCoordinator:
     def _remoteSession(self):
         """Resolve the active server session + its event loop, or ``(None, None)``.
 
-        The connect-window fallback guard from ADR 0030, in one place: a load
-        routes server-side only when both a ``serverConnection`` and the client's
+        The connect-window fallback guard from ADR 0030: a load routes
+        server-side only when both a ``serverConnection`` and the client's
         asyncio ``_event_loop`` exist; otherwise the caller falls back to an
-        in-process TaskManager task.
+        in-process TaskManager task. Delegates to
+        :meth:`ConnectionManager.active_session`, the one place this guard
+        lives.
         """
-        remote = self._env.remote
-        session = remote.serverConnection
-        if session is None or remote._event_loop is None:
-            return None, None
-        return session, remote._event_loop
+        return self._env.remote.active_session()
 
     #############
     ## MODELS
@@ -799,6 +797,19 @@ class LoadingCoordinator:
             **extra,
         })
 
+    def instantiateGhost(self, modelKey):
+        """Construct, initialise, and register a :class:`GhostModelLoader`.
+
+        The other half of the ghost-model chokepoint alongside
+        :meth:`registerGhostModel`: both ``lookForGhosts`` and the
+        ConnectionManager's ``REMOTE_MODEL_META`` handler create a ghost model
+        the same way — this is that one body.
+        """
+        model = GhostModelLoader(self._env, modelKey)
+        model.initialise()
+        self._env.models.add(model)
+        return model
+
     def lookForGhosts(self):
         """Recreate ghost model placeholders for cached prediction-only data.
 
@@ -822,6 +833,4 @@ class LoadingCoordinator:
                     and (modelKey not in self._env.models)
                     and self._env.datasets.exists(datasetKey)
             ):
-                model = GhostModelLoader(self._env, modelKey)
-                model.initialise()
-                self._env.models.add(model)
+                self.instantiateGhost(modelKey)

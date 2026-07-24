@@ -92,6 +92,17 @@ class ConnectionManager:
     def objects(self):
         return self._env.objects
 
+    def active_session(self):
+        """Resolve the live remote-cluster session, or ``(None, None)``.
+
+        Single home for the "is a session live?" guard: a session only counts
+        as live when both ``serverConnection`` and the asyncio ``_event_loop``
+        exist (the ADR 0030 connect-window fallback needs both).
+        """
+        if self.serverConnection is None or self._event_loop is None:
+            return None, None
+        return self.serverConnection, self._event_loop
+
     # ── local-server push ─────────────────────────────────────────────────
     def _sync_to_local_server(self, event, *args, **kwargs):
         """Thread-safe push to the managed local server.
@@ -551,35 +562,39 @@ class ConnectionManager:
         (``is_remote_proxy=True``).  This pulls the arrays *including* the
         prediction data so plots work immediately.
         """
-        from modelLoaders.ghost import GhostModelLoader
         from ffast.protocol import ModelMeta
         from pydantic import ValidationError
 
-        if self.getModel(fingerprint) is not None:
-            logger.debug(
-                "REMOTE_MODEL_META: ghost model already exists for %r", fingerprint
-            )
-            return
+        # Registry mutation serialized against concurrent loads/deletes from
+        # other controllers (ADR 0044 Phase 3) — matches loadModel/loadDataset's
+        # own mutation_lock discipline (loading_coordinator.py). Validation is
+        # fast/in-memory (no I/O), so it stays inside the lock too: that closes
+        # the gap between the existence check and the create, rather than
+        # leaving a second unlocked re-check needed after it.
+        with self._env.mutation_lock:
+            if self.getModel(fingerprint) is not None:
+                logger.debug(
+                    "REMOTE_MODEL_META: ghost model already exists for %r", fingerprint
+                )
+                return
 
-        # Slice 3: validate the announcement against the typed transport contract
-        # (ffast.protocol.ModelMeta) instead of trusting raw kwargs.
-        try:
-            meta = ModelMeta(name=name, dataset_fingerprints=dataset_fingerprints)
-        except ValidationError as exc:
-            logger.warning(
-                "REMOTE_MODEL_META: invalid metadata for %r: %s", fingerprint, exc
-            )
-            return
+            # Slice 3: validate the announcement against the typed transport
+            # contract (ffast.protocol.ModelMeta) instead of trusting raw kwargs.
+            try:
+                meta = ModelMeta(name=name, dataset_fingerprints=dataset_fingerprints)
+            except ValidationError as exc:
+                logger.warning(
+                    "REMOTE_MODEL_META: invalid metadata for %r: %s", fingerprint, exc
+                )
+                return
 
-        model_name = meta.name if meta.name else fingerprint[:8]
-        # Register info so GhostModelLoader.initialise() finds the display name.
-        self._env.loading.registerGhostModel(fingerprint, path="remote", name=model_name)
-        model = GhostModelLoader(self._env, fingerprint)
-        model.initialise()
-        self.setNewModel(model)
-        logger.info(
-            "Remote ghost model created: %r (%s)", fingerprint[:8], model_name
-        )
+            model_name = meta.name if meta.name else fingerprint[:8]
+            # Register info so GhostModelLoader.initialise() finds the display name.
+            self._env.loading.registerGhostModel(fingerprint, path="remote", name=model_name)
+            self._env.loading.instantiateGhost(fingerprint)
+            logger.info(
+                "Remote ghost model created: %r (%s)", fingerprint[:8], model_name
+            )
         # The zero baseline is NOT auto-loaded here. It loads only on explicit
         # request (File ▸ Load Zero Model / Ctrl+0); a prediction arriving must
         # not silently add a model the user never asked for.
@@ -938,14 +953,14 @@ class ConnectionManager:
         metric computes in the same task — no defer/retry needed.  Safe to block
         here: we are off the event loop, which stays free to receive the reply.
         """
-        session = self.serverConnection
-        if session is None or self._event_loop is None:
+        session, loop = self.active_session()
+        if session is None:
             return False
         import asyncio as _asyncio
         try:
             fut = _asyncio.run_coroutine_threadsafe(
                 session.request_prediction_arrays(ds_fp, model_fp, timeout=timeout),
-                self._event_loop,
+                loop,
             )
             arrays = fut.result(timeout=timeout + 20)
         except Exception as exc:
@@ -964,13 +979,13 @@ class ConnectionManager:
         first time a consumer reads R/F/E.  Pulls the geometry arrays from the
         server and populates the proxy.  Off the event loop, so blocking is safe.
         """
-        session = self.serverConnection
-        if session is None or self._event_loop is None:
+        session, loop = self.active_session()
+        if session is None:
             return False
         import asyncio as _asyncio
         try:
             fut = _asyncio.run_coroutine_threadsafe(
-                session.request_subdataset_arrays(fingerprint), self._event_loop
+                session.request_subdataset_arrays(fingerprint), loop
             )
             payload = fut.result(timeout=300)
         except Exception as exc:
@@ -999,8 +1014,8 @@ class ConnectionManager:
         to in-process computation.  Safe to block here — off the event loop,
         which stays free to receive the reply.
         """
-        session = self.serverConnection
-        if session is None or self._event_loop is None:
+        session, loop = self.active_session()
+        if session is None:
             return False
         import asyncio as _asyncio
         model_fp = model.fingerprint if model is not None else None
@@ -1010,7 +1025,7 @@ class ConnectionManager:
                 session.request_metric(
                     metric_id, params, model_fp, dataset_fp, key
                 ),
-                self._event_loop,
+                loop,
             )
             result = fut.result(timeout=140)
         except Exception as exc:
