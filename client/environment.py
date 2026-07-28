@@ -481,7 +481,8 @@ class Environment(EventClass):
                 logger.error(f"Failed to load dataset {path} in method 'loadDataset'")
                 return None
         else:
-            result = self.datasetTypes[datasetType](path, file_size=file_size)
+            logger.info(".npz dataset detected, caching is not applicable here, only slicing.")
+            result = self.datasetTypes[datasetType](path, file_size=file_size, slice_num=slice_num)
 
         # Handle SmartASELoader return value (tuple) or regular loader (dataset object)
         if isinstance(result, tuple):

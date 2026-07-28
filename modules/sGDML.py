@@ -116,24 +116,41 @@ class sGDMLDatasetLoader(DatasetLoader):
     datasetName = "sGDML"
     datasetFileExtension = "*.npz"
 
-    def __init__(self, path, *args, **kwargs):
+    def __init__(self, path, slice_num, *args, **kwargs):
         super().__init__(path, *args, **kwargs)
         self.data = np.load(path, allow_pickle=True)
-        self.chem = self.zToChemicalFormula(self.data["z"])
+        if slice_num > 0:
+            self.chem = self.zToChemicalFormula(self.data["z"][::slice_num])
 
-        data = {key.lower(): value for key, value in self.data.items()}
+            data = {key.lower(): value for key, value in self.data.items()}
 
-        self.R = data["r"]
-        self.E = data["e"]
-        self.F = data["f"]
-        self.z = data["z"]
-        self.N = self.R.shape[0]
-        self.nAtoms = self.R.shape[1]
+            self.R = data["r"][::slice_num]
+            self.E = data["e"][::slice_num]
+            self.F = data["f"][::slice_num]
+            self.z = data["z"][::slice_num]
+            self.N = self.R.shape[0]
+            self.nAtoms = self.R.shape[1]
 
-        if "lattice" in data:
-            self.lattice = data["lattice"]
+            if "lattice" in data:
+                self.lattice = data["lattice"][::slice_num]
+            else:
+                self.lattice = None
         else:
-            self.lattice = None
+            self.chem = self.zToChemicalFormula(self.data["z"])
+
+            data = {key.lower(): value for key, value in self.data.items()}
+
+            self.R = data["r"]
+            self.E = data["e"]
+            self.F = data["f"]
+            self.z = data["z"]
+            self.N = self.R.shape[0]
+            self.nAtoms = self.R.shape[1]
+    
+            if "lattice" in data:
+                self.lattice = data["lattice"]
+            else:
+                self.lattice = None
 
     def getN(self):
         return self.N
