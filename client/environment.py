@@ -212,9 +212,15 @@ class Environment(EventClass):
 
     def loadPrepredictedDataset(self, path, datasetKey, taskID=None, selected_energy_key=None, selected_force_key=None):
         """Attach precomputed energies and forces to a dataset as a ghost model."""
+        slice_num = self.dataset_slice_numbers.get(datasetKey)
         if "npz" in path:
+            logger.info(".npz prediction detected, caching is not supported for this type, only slicing.")
             d = np.load(path, allow_pickle=True)
             E, F = d["E"], d["F"]
+            if slice_num is not None and slice_num > 0:
+                logger.info(f"Loading prediction with slice number of:{slice_num}")
+                E = E[::slice_num]
+                F = F[::slice_num]
         else:
             # Use smart loader to detect uniform vs variable datasets
             import ase.io
@@ -230,7 +236,6 @@ class Environment(EventClass):
                 return True
 
             # Read once to detect type
-            slice_num = self.dataset_slice_numbers.get(datasetKey)
             if slice_num is not None and slice_num > 0:
                 logger.info(f"Loading dataset with slice number of: {slice_num}")
                 atomsList = ase.io.read(path, index=slice(0, None, slice_num))

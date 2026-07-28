@@ -245,7 +245,7 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         # - Literal 'forces'/'energy' means use calculator (standard ASE keys)
         # - Specific key string means use that key from arrays/info
         # - None or not set means use first available key (legacy behavior)
-        if self.selected_energy_key == "":
+        if self.selected_energy_key == "" or self.selected_energy_key == "<Use Energy>":
             selected_energy_key = None  # Use calculator
         elif self.selected_energy_key == "energy":
             selected_energy_key = None  # Standard ASE key, use calculator
@@ -254,7 +254,7 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         else:
             selected_energy_key = energy_keys[0] if energy_keys else None
 
-        if self.selected_force_key == "":
+        if self.selected_force_key == "" or self.selected_force_key == "<Use Force>":
             selected_force_key = None  # Use calculator
         elif self.selected_force_key == "forces":
             selected_force_key = None  # Standard ASE key, use calculator
