@@ -110,12 +110,12 @@ def graphene():
 
     dataset = ase.io.read(start_path_dataset, index='::150')
     pred = np.load(start_path_pred, allow_pickle=True)
-    pred_E = pred["E"][::150]
-    pred_F = pred["F"][::150]
-    print(f"dataset loaded ({len(dataset)})\npred loaded: F ({pred_F.shape}), E ({pred_E.shape})")
+
+    pred = {key: value[::150] for key, value in pred.items()}
+    print(f"dataset loaded ({len(dataset)})\npred loaded: F ({pred['F'].shape}), E ({pred['E'].shape})")
 
     ase.io.write(end_path_dataset, dataset)
-    np.savez(end_path_pred, E=pred_E, F=pred_F)
+    np.savez(end_path_pred, **pred)
 
     print("successfully sampled and saved graphene predictions")
 

@@ -122,35 +122,23 @@ class sGDMLDatasetLoader(DatasetLoader):
         if slice_num > 0:
             self.chem = self.zToChemicalFormula(self.data["z"][::slice_num])
 
-            data = {key.lower(): value for key, value in self.data.items()}
-
-            self.R = data["r"][::slice_num]
-            self.E = data["e"][::slice_num]
-            self.F = data["f"][::slice_num]
-            self.z = data["z"][::slice_num]
-            self.N = self.R.shape[0]
-            self.nAtoms = self.R.shape[1]
-
-            if "lattice" in data:
-                self.lattice = data["lattice"][::slice_num]
-            else:
-                self.lattice = None
+            data = {key.lower(): value[::slice_num] for key, value in self.data.items()}
         else:
             self.chem = self.zToChemicalFormula(self.data["z"])
 
             data = {key.lower(): value for key, value in self.data.items()}
 
-            self.R = data["r"]
-            self.E = data["e"]
-            self.F = data["f"]
-            self.z = data["z"]
-            self.N = self.R.shape[0]
-            self.nAtoms = self.R.shape[1]
-    
-            if "lattice" in data:
-                self.lattice = data["lattice"]
-            else:
-                self.lattice = None
+        self.R = data["r"]
+        self.E = data["e"]
+        self.F = data["f"]
+        self.z = data["z"]
+        self.N = self.R.shape[0]
+        self.nAtoms = self.R.shape[1]
+
+        if "lattice" in data:
+            self.lattice = data["lattice"]
+        else:
+            self.lattice = None
 
     def getN(self):
         return self.N
