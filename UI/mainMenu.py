@@ -9,7 +9,7 @@ from UI.menuLogic import (
     latest_session_record,
 )
 from utils import deep_getsizeof
-from client.dataType import AtomsList
+from ffast.core.data_types import AtomsList
 
 
 class MainMenuHandler(MenuHandlerBase):

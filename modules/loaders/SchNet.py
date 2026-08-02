@@ -1,4 +1,4 @@
-from modelLoaders.loader import ModelLoader
+from ffast.loaders.model import ModelLoader
 import numpy as np
 from utils import md5FromArraysAndStrings
 

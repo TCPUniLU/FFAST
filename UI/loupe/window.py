@@ -1,4 +1,4 @@
-from events import EventChildClass
+from ffast.core.events import EventChildClass
 from UI.Templates import Widget, ObjectComboBox, SettingsPane
 from UI.loupe.menu import LoupeMenuHandler
 from UI.loupe.canvas import SideBar, InteractiveCanvas

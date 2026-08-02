@@ -5,13 +5,13 @@ from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import QWidget, QTabWidget
 from config.uiConfig import config, getIcon
 from PySide6.QtWidgets import QSizePolicy
-from events import EventChildClass
+from ffast.core.events import EventChildClass
 import pyqtgraph
 import logging
 from client.dataWatcher import DataWatcher
 from client import display_overrides
 import numpy as np
-from datasetLoaders.loader import SubDataset
+from ffast.loaders.dataset import SubDataset
 from config.userConfig import getConfig
 from UI import plot_profiler
 

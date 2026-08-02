@@ -223,7 +223,7 @@ def test_available_prediction_refs_handles_dataentity_cache():
     can be attached to the view (so metric coloring silently falls back to
     element colors)."""
     from ffast.renderers.vispy.local_scene import available_prediction_refs
-    from client.dataType import DataEntity
+    from ffast.core.data_types import DataEntity
 
     DS = "ds-fp"
 
@@ -261,7 +261,7 @@ def test_available_prediction_refs_decomposed_env_data_service():
     """
     import types
     from ffast.renderers.vispy.local_scene import available_prediction_refs
-    from client.dataType import DataEntity
+    from ffast.core.data_types import DataEntity
 
     DS = "ds-fp"
 

@@ -18,7 +18,7 @@ B. Every panel metric fires a concurrent ``request_prediction_arrays`` for the
 import asyncio
 import types
 
-from client.data_service import DataService
+from ffast.core.data_service import DataService
 import cluster.connection as cs
 
 

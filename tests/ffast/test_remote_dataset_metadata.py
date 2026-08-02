@@ -1,7 +1,7 @@
 import numpy as np
 
 from cluster.remote_dataset import CachedRemoteDataset
-from datasetLoaders.loader import DatasetLoader, VariableDatasetLoader
+from ffast.loaders.dataset import DatasetLoader, VariableDatasetLoader
 from ffast.protocol import DatasetMeta
 
 

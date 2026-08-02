@@ -12,10 +12,10 @@ Exercised through the real ``ModelRegistry`` / ``DatasetRegistry`` with a real
 
 from types import SimpleNamespace
 
-from client.data_cache import DataCache
-from client.model_registry import ModelRegistry
-from client.dataset_registry import DatasetRegistry
-from client.object_catalog import ObjectCatalog
+from ffast.cache.store import DataCache
+from ffast.core.model_registry import ModelRegistry
+from ffast.core.dataset_registry import DatasetRegistry
+from ffast.core.object_catalog import ObjectCatalog
 
 # The two keys the old len==3 filter leaked.
 PARAMS_KEY = "ffast.force_mae__pdeadbeef__M__D"          # 4 segments

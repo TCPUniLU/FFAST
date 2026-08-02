@@ -7,7 +7,7 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 os.chdir(PROJECT_ROOT)
 sys.path.insert(0, PROJECT_ROOT)
 
-from client.environment import startHeadlessEnvironment
+from ffast.core.environment import startHeadlessEnvironment
 
 # Initialize headless environment
 env = startHeadlessEnvironment()

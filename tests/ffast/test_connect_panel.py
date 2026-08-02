@@ -277,7 +277,7 @@ async def test_error_kwarg_propagated():
     # catches a ClusterError raised inside cluster.connection.connect_to_cluster
     # (here, a SLURM submit failure from FakeSlurmBackend) and reports it to
     # the UI as a TASK_PROGRESS event with error=True.
-    from client.connection_manager import ConnectionManager
+    from ffast.core.connection_manager import ConnectionManager
 
     events = []
 

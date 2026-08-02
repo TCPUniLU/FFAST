@@ -14,8 +14,8 @@ from types import SimpleNamespace
 import pytest
 
 from ffast.cache import CacheKey
-from client.dataType import DataType
-from client.data_service import DataService
+from ffast.core.data_types import DataType
+from ffast.core.data_service import DataService
 
 
 def _dt(key, model_dep, dataset_dep):

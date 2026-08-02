@@ -1,4 +1,4 @@
-from events import EventClass
+from ffast.core.events import EventClass
 
 
 class MenuHandlerBase(EventClass):

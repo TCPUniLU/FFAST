@@ -12,7 +12,7 @@ mutate the models registry unlocked, unlike every other ghost-creation path
 import threading
 import types
 
-from client.connection_manager import ConnectionManager
+from ffast.core.connection_manager import ConnectionManager
 
 
 def _manager():

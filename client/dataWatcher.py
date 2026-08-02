@@ -1,4 +1,4 @@
-from events import EventChildClass
+from ffast.core.events import EventChildClass
 import logging
 
 logger = logging.getLogger("FFAST")

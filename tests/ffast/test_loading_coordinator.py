@@ -10,8 +10,8 @@ branches, and the local-vs-server routing decision.
 import asyncio
 import types
 
-from client.connection_manager import ConnectionManager
-from client.loading_coordinator import LoadingCoordinator
+from ffast.core.connection_manager import ConnectionManager
+from ffast.core.loading_coordinator import LoadingCoordinator
 from ffast.protocol import control
 
 

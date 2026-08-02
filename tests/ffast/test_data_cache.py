@@ -8,7 +8,7 @@ for well-formed strings).
 
 import pytest
 
-from client.data_cache import DataCache
+from ffast.cache.store import DataCache
 from ffast.cache import CacheKey
 
 

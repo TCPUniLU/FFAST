@@ -37,8 +37,8 @@ if "QT_PLUGIN_PATH" not in os.environ:
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 
-from client.environment import Environment
-from events import EventClass
+from ffast.core.environment import Environment
+from ffast.core.events import EventClass
 from utils import loadModules, setupLogger
 
 logger = logging.getLogger("FFAST")

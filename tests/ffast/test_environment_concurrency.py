@@ -13,8 +13,8 @@ import asyncio
 import threading
 import time
 
-from client.environment import Environment
-from client.loading_coordinator import LoadingCoordinator
+from ffast.core.environment import Environment
+from ffast.core.loading_coordinator import LoadingCoordinator
 
 
 def _ensure_event_loop():

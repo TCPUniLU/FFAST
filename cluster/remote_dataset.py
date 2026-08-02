@@ -21,7 +21,7 @@ import logging
 
 import numpy as np
 
-from datasetLoaders.loader import DatasetLoader
+from ffast.loaders.dataset import DatasetLoader
 
 logger = logging.getLogger("FFAST")
 

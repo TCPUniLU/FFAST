@@ -1,4 +1,4 @@
-from modelLoaders.loader import ModelLoaderACE
+from ffast.loaders.model import ModelLoaderACE
 import torch
 import logging
 

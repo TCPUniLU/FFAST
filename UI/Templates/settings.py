@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QSizePolicy
 import logging
 from functools import partial
-from events import EventChildClass
+from ffast.core.events import EventChildClass
 from UI.Templates.base import Widget, ComboBox, LineEdit
 from UI.Templates.interactive import Slider, CodeTextEdit, CodeLineEdit
 

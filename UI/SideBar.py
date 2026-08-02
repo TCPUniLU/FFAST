@@ -12,7 +12,7 @@ from UI.Templates import (
 )
 from config.uiConfig import configStyleSheet
 from utils import rgbToHex
-from events import EventChildClass
+from ffast.core.events import EventChildClass
 
 
 class DatasetModelItem(ObjectListItem, EventChildClass):

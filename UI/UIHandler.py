@@ -6,7 +6,7 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import QDir
 from PySide6.QtWidgets import QMessageBox
 
-from events import EventClass
+from ffast.core.events import EventClass
 from UI.loupe.window import Loupe
 from UI.MainWindow import MainWindow
 

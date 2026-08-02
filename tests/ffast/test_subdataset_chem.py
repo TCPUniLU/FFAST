@@ -13,7 +13,7 @@ import types
 import numpy as np
 import pytest
 
-from datasetLoaders.loader import SubDataset
+from ffast.loaders.dataset import SubDataset
 
 
 class _UniformRemoteParent:

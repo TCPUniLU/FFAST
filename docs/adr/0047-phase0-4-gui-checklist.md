@@ -43,13 +43,13 @@ Phase 5 moved the data primitives (`dataType`) and every loader (`ModelLoader`,
 `AtomFiltered`, the ASE loader) into `ffast/`, and lazified the colour/bond
 config lookups. Loading anything now runs the relocated code.
 
-- [ ] **Load an ASE dataset (xyz/extxyz/traj)** — the ASE loader is now
+- [x] **Load an ASE dataset (xyz/extxyz/traj)** — the ASE loader is now
       `ffast/loaders/ase.py`, registered via the `modules/loaders/aseDataset.py`
       shim's `loadData`. A dataset must appear with the right colour (colour path
       = lazified `getConfig`/`hexToRGB`).
-- [ ] **Load a prediction with key selection** (ASE) — exercises
+- [x] **Load a prediction with key selection** (ASE) — exercises
       `aseDatasetLoader`/`VariableASEDatasetLoader` + the key dialog.
-- [ ] **Bonds render in 3D** — `DatasetLoader` bond sizing uses the lazified
+- [x] **Bonds render in 3D** — `DatasetLoader` bond sizing uses the lazified
       `getConfig("loupeBondsLenience")` + `cleanBondIdxsArray`.
 - [ ] **Load an ML model** (MACE/NequIP/… if available) — the ML loaders are now
       additive plugins in `modules/loaders/` subclassing `ffast.loaders.model`.

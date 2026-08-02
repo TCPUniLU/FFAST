@@ -1,5 +1,5 @@
 import logging
-from events import EventChildClass
+from ffast.core.events import EventChildClass
 from UI.Templates.base import ComboBox
 
 logger = logging.getLogger("FFAST")

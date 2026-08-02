@@ -8,7 +8,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from config.uiConfig import configStyleSheet
 from utils import rgbToHex
 import logging
-from events import EventChildClass
+from ffast.core.events import EventChildClass
 from PySide6.QtWidgets import QSizePolicy
 
 logger = logging.getLogger("FFAST")

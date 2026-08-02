@@ -12,7 +12,7 @@ the queue-drain logic under test is independent of the DataType registry.
 """
 import asyncio
 
-from client.data_service import DataService
+from ffast.core.data_service import DataService
 
 
 class _DS(DataService):
