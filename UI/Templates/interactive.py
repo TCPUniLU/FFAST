@@ -184,26 +184,43 @@ class CodeTextEdit(QtWidgets.QTextEdit):
         Widget.applyDefaultStyleSheet(self, color="black")
 
         self.validationFunc = validationFunc
+        self._lastCommitted = None
 
         self.installEventFilter(self)
 
     def setReturnCallback(self, func):
         self.returnCallback = func
 
+    def _commit(self, clearFocusAfter=True):
+        """Validate the current text and fire the return callback if it changed.
+
+        Shared by Enter (``keyPressEvent``) and focus-out (``focusOutEvent``) so
+        editing the box and clicking away applies the value without an explicit
+        Enter. The change guard skips a redundant scene refresh when focus leaves
+        an unedited box.
+        """
+        validated, cleanedT = self.validate()
+        if not validated:
+            return
+        if clearFocusAfter:
+            self.clearFocus()
+        self.setCode(cleanedT)
+        changed = cleanedT != self._lastCommitted
+        self._lastCommitted = cleanedT
+        if changed and self.returnCallback is not None:
+            self.returnCallback()
+
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Return:
-            if event.modifiers() == Qt.ShiftModifier:
-                super().keyPressEvent(event)
-            else:
-                validated, cleanedT = self.validate()
-                if not validated:
-                    return
-                self.clearFocus()
-                self.setCode(cleanedT)
-                if self.returnCallback is not None:
-                    self.returnCallback()
+        if event.key() == Qt.Key_Return and event.modifiers() != Qt.ShiftModifier:
+            self._commit()  # Shift+Return still inserts a newline (falls through)
         else:
             super().keyPressEvent(event)
+
+    def focusOutEvent(self, event):
+        # Commit on focus-out so a delete/edit applies when you click away — no
+        # explicit Enter needed. Don't clearFocus here: focus is already leaving.
+        self._commit(clearFocusAfter=False)
+        super().focusOutEvent(event)
 
     def validate(self):
         valid, validT = True, self.getValue()
