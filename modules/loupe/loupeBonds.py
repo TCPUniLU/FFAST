@@ -1,4 +1,4 @@
-from config.userConfig import getConfig
+from ffast.config.user import getConfig
 from utils import cleanBondIdxsArray
 from UI.loupe.visual import AtomSelectionBase
 from UI.clientFeatures import ClientFeature

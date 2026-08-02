@@ -26,7 +26,7 @@ import logging
 import numpy as np
 from PySide6 import QtCore, QtWidgets
 
-from config.userConfig import getConfig
+from ffast.config.user import getConfig
 from UI.Plots import BasicPlotWidget, Table
 from UI.Templates import Slider
 

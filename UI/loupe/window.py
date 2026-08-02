@@ -5,7 +5,7 @@ from UI.loupe.canvas import SideBar, InteractiveCanvas
 from PySide6 import QtCore, QtWidgets
 import logging
 import asyncio
-from config.userConfig import Settings
+from ffast.config.user import Settings
 import uuid
 from ffast.renderers.vispy.local_scene import available_prediction_refs
 from ffast.visualization.scene import SceneSnapshot, ScenePatch

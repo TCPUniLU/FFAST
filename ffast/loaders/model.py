@@ -32,8 +32,8 @@ class ModelLoader(EventClass):
 
         global GLOBAL_MODELS_COUNTER
 
-        from config.userConfig import getConfig  # ADR 0047: lazy (userConfig deferred)
-        from utils import hexToRGB  # ADR 0047: lazy (pure helper stays flat)
+        from ffast.config.user import getConfig  # ADR 0047: lazy (userConfig deferred)
+        from ffast.core.util import hexToRGB
         colors = getConfig("modelColors")
         nColors = len(colors)
         self.color = hexToRGB(colors[GLOBAL_MODELS_COUNTER % nColors])
@@ -66,7 +66,7 @@ class ModelLoader(EventClass):
     def initialise(self):
         self.fingerprint = self.getFingerprint()
 
-        from utils import removeExtension  # ADR 0047: lazy (pure helper stays flat)
+        from ffast.core.util import removeExtension
         name = removeExtension(os.path.basename(self.path))
         self.setName(name)
 

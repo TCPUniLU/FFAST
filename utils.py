@@ -190,7 +190,7 @@ def _kde_xy(sample, bounds):
     this replaces. Number of grid points comes from the ``plotDistNum`` config.
     """
     from scipy.stats import gaussian_kde
-    from config.userConfig import getConfig
+    from ffast.config.user import getConfig
 
     sample = np.asarray(sample, dtype=np.float64).ravel()
     nPts = getConfig("plotDistNum")

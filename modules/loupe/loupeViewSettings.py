@@ -94,7 +94,7 @@ def loadLoupe(UIHandler, loupe):
     def _pickBackgroundColor():
         from PySide6.QtWidgets import QColorDialog
         from PySide6.QtGui import QColor
-        from config.userConfig import getConfig
+        from ffast.config.user import getConfig
         current = QColor(getConfig("loupeBGColor", "#000000"))
         color = QColorDialog.getColor(current, loupe, "Select Background Colour")
         if color.isValid():

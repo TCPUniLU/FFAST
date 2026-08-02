@@ -123,7 +123,7 @@ class CachedRemoteDataset(DatasetLoader):
                 self._z = np.asarray(elements, dtype=np.int32)
                 self._natoms = len(self._z)
                 from ffast.chemistry import covalentBonds
-                from config.userConfig import getConfig
+                from ffast.config.user import getConfig
                 self.bondSizes = covalentBonds[self._z][:, self._z] * getConfig(
                     "loupeBondsLenience"
                 )
@@ -168,7 +168,7 @@ class CachedRemoteDataset(DatasetLoader):
         # Recompute bond sizes for uniform datasets where z is known
         if not self.isVariable and self._z is not None:
             from ffast.chemistry import covalentBonds
-            from config.userConfig import getConfig
+            from ffast.config.user import getConfig
             z = self._z
             self.bondSizes = covalentBonds[z][:, z] * getConfig(
                 "loupeBondsLenience"
@@ -384,7 +384,7 @@ class CachedRemoteDataset(DatasetLoader):
             if self._R_flat is None or self._offsets is None:
                 return np.zeros((1, 1), dtype=bool)
             from ffast.chemistry import covalentBonds
-            from config.userConfig import getConfig
+            from ffast.config.user import getConfig
             r = self.getCoordinates(index)
             z = self.getElements(index)
             bond_sizes = covalentBonds[z][:, z] * getConfig("loupeBondsLenience")

@@ -55,7 +55,7 @@ class DatasetLoader(EventClass):
 
         global GLOBAL_DATASETS_COUNTER
 
-        from config.userConfig import getConfig  # ADR 0047: lazy (userConfig deferred)
+        from ffast.config.user import getConfig  # ADR 0047: lazy (userConfig deferred)
         colors = getConfig("datasetColors")
         nColors = len(colors)
         self.color = hexToRGB(colors[GLOBAL_DATASETS_COUNTER % nColors])
@@ -160,7 +160,7 @@ class DatasetLoader(EventClass):
         self.setName(name)
 
         z = self.getElements()
-        from config.userConfig import getConfig  # ADR 0047: lazy (userConfig deferred)
+        from ffast.config.user import getConfig  # ADR 0047: lazy (userConfig deferred)
         self.bondSizes = covalentBonds[z][:, z] * getConfig(
             "loupeBondsLenience"
         )
@@ -326,7 +326,7 @@ class VariableDatasetLoader(EventClass):
 
         global GLOBAL_DATASETS_COUNTER
 
-        from config.userConfig import getConfig  # ADR 0047: lazy (userConfig deferred)
+        from ffast.config.user import getConfig  # ADR 0047: lazy (userConfig deferred)
         colors = getConfig("datasetColors")
         nColors = len(colors)
         self.color = hexToRGB(colors[GLOBAL_DATASETS_COUNTER % nColors])
@@ -634,7 +634,7 @@ class VariableDatasetLoader(EventClass):
         """Get bond matrix for a specific molecule."""
         r = self.getCoordinates(index)
         z = self.getElements(index)
-        from config.userConfig import getConfig  # ADR 0047: lazy (userConfig deferred)
+        from ffast.config.user import getConfig  # ADR 0047: lazy (userConfig deferred)
         bondSizes = covalentBonds[z][:, z] * getConfig("loupeBondsLenience")
         d = distance_matrix(r, r)
         return d < bondSizes

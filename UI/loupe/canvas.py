@@ -1,6 +1,6 @@
 from UI.Templates import Widget, ContentBar, SettingsPane, ToolButton, PushButton
 from UI.loupe.visual import VisualElement
-from config.userConfig import getConfig
+from ffast.config.user import getConfig
 from vispy import scene
 from vispy.scene.cameras.turntable import TurntableCamera
 from vispy.util import keys

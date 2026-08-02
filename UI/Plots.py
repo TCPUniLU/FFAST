@@ -12,7 +12,7 @@ from client.dataWatcher import DataWatcher
 from client import display_overrides
 import numpy as np
 from ffast.loaders.dataset import SubDataset
-from config.userConfig import getConfig
+from ffast.config.user import getConfig
 from UI import plot_profiler
 
 # No-op unless FFAST_PLOT_PROFILE is set; times the scatter/curve paint paths
