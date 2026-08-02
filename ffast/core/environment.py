@@ -216,7 +216,7 @@ class Environment(EventClass):
 
     def declareSubDataset(self, parent, model, idx, subName):
         """Create or refresh a logical subset view over a parent dataset."""
-        from datasetLoaders.loader import SubDataset  # ADR 0047: lazy (-> Phase 5)
+        from ffast.loaders.dataset import SubDataset  # ADR 0047 Phase 5c
 
         # check if already exists
         fp = SubDataset.getFingerprint(SubDataset, parent, model, subName)
@@ -237,7 +237,7 @@ class Environment(EventClass):
 
     def freezeSubDataset(self, fingerprint):
         """Persist the current subdataset selection as its own frozen dataset object."""
-        from datasetLoaders.loader import FrozenSubDataset  # ADR 0047: lazy (-> Phase 5)
+        from ffast.loaders.dataset import FrozenSubDataset  # ADR 0047 Phase 5c
         dataset = self.datasets.get(fingerprint)
         if (dataset is None) or (not dataset.isSubDataset):
             return
@@ -260,7 +260,7 @@ class Environment(EventClass):
 
     def createAtomFilteredDataset(self, dataset, idxs):
         """Build a per-atom filtered dataset view for atom-level analyses."""
-        from datasetLoaders.loader import AtomFilteredDataset  # ADR 0047: lazy (-> Phase 5)
+        from ffast.loaders.dataset import AtomFilteredDataset  # ADR 0047 Phase 5c
         fp = AtomFilteredDataset.getFingerprint(
             AtomFilteredDataset, dataset, idxs
         )

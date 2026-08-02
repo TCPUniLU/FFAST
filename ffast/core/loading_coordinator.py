@@ -184,7 +184,7 @@ class LoadingCoordinator:
         else:
             # Use smart loader to detect uniform vs variable datasets
             import ase.io
-            from modules.loaders.aseDataset import aseDatasetLoader, VariableASEDatasetLoader
+            from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader
             def check_homogeneity(atoms_list):
                 for i in range(20):
                     temp_atoms_list = []
@@ -505,7 +505,7 @@ class LoadingCoordinator:
             prediction_keys: List of (energy_key, force_key, model_name) tuples
             atomsList: Optional pre-loaded atoms list to avoid re-reading file
         """
-        from modules.loaders.aseDataset import aseDatasetLoader, VariableASEDatasetLoader
+        from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader
         import ase.io
         from ffast.cache.fingerprint import md5FromArraysAndStrings
 

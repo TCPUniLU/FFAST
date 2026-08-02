@@ -570,7 +570,7 @@ class ServerSession:
 
         try:
             from ffast.io.xyz import read_ase_or_explain
-            from modules.loaders.aseDataset import aseDatasetLoader
+            from ffast.loaders.ase import aseDatasetLoader
 
             first_atoms = read_ase_or_explain(path, index=0)
             temp_loader = aseDatasetLoader(path, atomsList=[first_atoms])
@@ -953,7 +953,7 @@ class ServerSession:
         # Uniform vs variable picks the serializer, exactly as the desktop
         # SideBar export does. A SubDataset forwards its parent's isVariable;
         # an AtomFilteredDataset is atom-filtering, always the uniform path.
-        from modules.loaders.aseDataset import (
+        from ffast.loaders.ase import (
             VariableASEDatasetLoader, aseDatasetLoader,
         )
         is_variable = bool(getattr(dataset, "isVariable", False))

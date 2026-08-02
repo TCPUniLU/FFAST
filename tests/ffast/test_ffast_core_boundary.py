@@ -52,14 +52,14 @@ ALLOWED_EAGER = set()
 # one is caught. Remaining ones clear at Phase 5c (aseDataset + datasetLoaders
 # base) and Phase 6 (utils/userConfig relocation, shim repoints).
 ALLOWED_LAZY = {
-    ("ffast/core/loading_coordinator.py", "modules.loaders.aseDataset"),  # -> 5c
-    ("ffast/session/server_session.py", "modules.loaders.aseDataset"),    # -> 5c
-    ("ffast/core/environment.py", "datasetLoaders.loader"),               # -> 5c
-    ("ffast/core/environment.py", "utils"),                               # -> P6
-    # Model loader base's color/name helpers (Phase 5b lazify), so ffast.loaders
-    # imports flat-free. Clear when utils/userConfig relocate (P6/plugin ADR).
-    ("ffast/loaders/model.py", "utils"),
+    # Environment's plugin bootstrap (utils.loadModules/setupLogger). loadModules
+    # is the deferred plugin-discovery redesign; utils relocation is Phase 6.
+    ("ffast/core/environment.py", "utils"),
+    # Loader bases' user-config lookups (colours, bond lenience), lazy so
+    # ffast.loaders imports flat-free. Clear when config.userConfig relocates (P6).
     ("ffast/loaders/model.py", "config.userConfig"),
+    ("ffast/loaders/model.py", "utils"),
+    ("ffast/loaders/dataset.py", "config.userConfig"),
     # ConnectionManager's cluster connect-out / SLURM / bootstrap machinery
     # (Phase 3). All lazy and client-only — the headless server never initiates
     # an outbound cluster connection, so cluster/ never enters its import
