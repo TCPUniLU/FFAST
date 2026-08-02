@@ -85,7 +85,7 @@ class DataService:
     # ── datatypes ─────────────────────────────────────────────────────────
     def initialiseDataTypes(self):
         """Register the built-in prediction data types that other modules depend on."""
-        from client.dataType import EnergyPredictionData, ForcesPredictionData
+        from ffast.core.data_types import EnergyPredictionData, ForcesPredictionData
 
         self.registerDataType(EnergyPredictionData)
         self.registerDataType(ForcesPredictionData)

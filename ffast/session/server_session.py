@@ -622,7 +622,7 @@ class ServerSession:
         n: int | None = None
         error: str | None = None
         try:
-            from client.dataType import AtomsList
+            from ffast.core.data_types import AtomsList
             n = AtomsList.calc_dataset_length_static(path)
             logger.info("PROBE_DATASET_LENGTH %r: n=%d", path, n)
         except Exception as exc:

@@ -17,7 +17,7 @@ import logging
 
 import numpy as np
 
-from client.dataType import SubDataEntity
+from ffast.core.data_types import SubDataEntity
 
 logger = logging.getLogger("FFAST")
 

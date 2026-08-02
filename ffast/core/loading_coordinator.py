@@ -23,7 +23,7 @@ import numpy as np
 from ase.calculators.calculator import PropertyNotImplementedError
 from ase.io.trajectory import Trajectory
 
-from client.dataType import AtomsList
+from ffast.core.data_types import AtomsList
 from ffast.protocol import control
 from modelLoaders.ghost import GhostModelLoader
 from ffast.cache.fingerprint import md5FromArraysAndStrings

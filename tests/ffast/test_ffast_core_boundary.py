@@ -45,9 +45,7 @@ _FLAT_ROOTS = {
 # Every one is scheduled to disappear at Phase 5 (dataType.AtomsList and the
 # loaders move behind the ffast/-owned dataset-IO port). Target: EMPTY.
 ALLOWED_EAGER = {
-    ("ffast/core/loading_coordinator.py", "client.dataType"),      # -> Phase 5
-    ("ffast/core/loading_coordinator.py", "modelLoaders.ghost"),   # -> Phase 5
-    ("ffast/session/persistence.py", "client.dataType"),           # -> Phase 5
+    ("ffast/core/loading_coordinator.py", "modelLoaders.ghost"),   # -> Phase 5b
 }
 
 # LAZY (function-level) ffast/ -> flat edges — client-only code paths that never
@@ -55,9 +53,7 @@ ALLOWED_EAGER = {
 # design (ADR 0047). Allowed to be non-empty; asserted exactly so a NEW one is
 # caught. cli/main.environment resolves once Phase 6 repoints it off the shim.
 ALLOWED_LAZY = {
-    ("ffast/core/data_service.py", "client.dataType"),
     ("ffast/core/loading_coordinator.py", "modules.loaders.aseDataset"),
-    ("ffast/session/server_session.py", "client.dataType"),
     ("ffast/session/server_session.py", "modules.loaders.aseDataset"),
     # Environment's Desktop-Client loaders + color helper (Phase 4), lazily
     # imported so ffast.core.environment stays eager-flat-free. Loaders clear at
