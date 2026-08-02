@@ -1,4 +1,40 @@
-Status: Accepted — Phases 0–5 implemented (2026-07-25); Phase 6 open
+Status: Accepted — Phases 0–6 implemented (2026-07-25); relocation complete. Headless plugin discovery carved out to its own ADR.
+
+## Phase 6 implementation notes (2026-07-25)
+
+The relocation is complete. After GUI verification of Phases 0–5, Phase 6 removed
+the transitional shims and finished the config relocation.
+
+- **6a (`1f1dfd2`):** deleted all 17 re-export shims (the 11 `client/` modules,
+  root `events.py`/`tasks.py`, `modelLoaders/{loader,ghost,zeroModel}.py`,
+  `datasetLoaders/loader.py`) and repointed the 34 remaining call sites (UI/,
+  `main.py`, `cluster/`, the `modules/loaders/` ML plugins, tests, examples) at
+  the real `ffast.*` modules. `modelLoaders/` and `datasetLoaders/` are now empty;
+  `client/` keeps only its genuine Desktop-Client modules (`display_overrides`,
+  `mathUtils`, `dataWatcher`).
+- **6b (`eb0ddb4`):** `config/userConfig.py` → `ffast/config/user.py` and
+  `config/default.json` → `ffast/config/` (read `__file__`-relative, behaviour
+  unchanged; `user.json` was absent so no settings migration). 11 call sites
+  repointed; the loader bases' colour/name lookups now use `ffast.core.util` /
+  `ffast.config.user`.
+
+**Final boundary state** (`tests/ffast/test_ffast_core_boundary.py`): eager
+ffast/ → flat edges are EMPTY; the only remaining edges are 6 lazy ones that are
+the *intended* architecture, not leaks:
+- `ConnectionManager → cluster.*` (×5): the client-only connect-out / SLURM /
+  bootstrap machinery. `cluster/` is a Desktop-Client dir by design — the
+  node-side server never dials out — so these never move.
+- `Environment → utils` (for `loadModules` + `setupLogger`): the plugin-discovery
+  seam. `loadModules` globs `modules/`.
+
+**Carved out — headless plugin discovery (its own ADR).** One shim intentionally
+remains: `modules/loaders/aseDataset.py`, an 18-line re-export that keeps its
+`loadData` entry point so `loadModules` still registers `"ase (auto)"` when it
+globs `modules/` on the desktop. For a `pip install ffast` that ships *without*
+`modules/`, the core loaders must register without the glob — i.e. explicit
+core-loader registration and/or an entry-point plugin mechanism. That is a new
+feature (not part of this relocation), it touches the load/registration path, and
+ADR 0047 always scoped it to a separate ADR. It is the one genuinely-open item.
 
 ## Phase 5 implementation notes (2026-07-25)
 
