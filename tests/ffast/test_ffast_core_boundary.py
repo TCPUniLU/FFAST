@@ -42,25 +42,24 @@ _FLAT_ROOTS = {
 }
 
 # EAGER (module-level) ffast/ -> flat edges — these break a headless import.
-# Every one is scheduled to disappear at Phase 5 (dataType.AtomsList and the
-# loaders move behind the ffast/-owned dataset-IO port). Target: EMPTY.
-ALLOWED_EAGER = {
-    ("ffast/core/loading_coordinator.py", "modelLoaders.ghost"),   # -> Phase 5b
-}
+# EMPTY as of Phase 5b: the Headless Core imports no Desktop-Client module at
+# module load. Keep it empty — any new eager edge is a regression.
+ALLOWED_EAGER = set()
 
-# LAZY (function-level) ffast/ -> flat edges — client-only code paths that never
-# run in the headless server; cluster/ and the loaders stay Desktop-Client by
-# design (ADR 0047). Allowed to be non-empty; asserted exactly so a NEW one is
-# caught. cli/main.environment resolves once Phase 6 repoints it off the shim.
+# LAZY (function-level) ffast/ -> flat edges — code paths that never run at
+# import time; client-only (cluster connect-out) or deferred-relocation loaders
+# and utils/config helpers. Allowed to be non-empty; asserted exactly so a NEW
+# one is caught. Remaining ones clear at Phase 5c (aseDataset + datasetLoaders
+# base) and Phase 6 (utils/userConfig relocation, shim repoints).
 ALLOWED_LAZY = {
-    ("ffast/core/loading_coordinator.py", "modules.loaders.aseDataset"),
-    ("ffast/session/server_session.py", "modules.loaders.aseDataset"),
-    # Environment's Desktop-Client loaders + color helper (Phase 4), lazily
-    # imported so ffast.core.environment stays eager-flat-free. Loaders clear at
-    # Phase 5; utils (mixColors pure, loadModules deferred) at the plugin ADR.
-    ("ffast/core/environment.py", "datasetLoaders.loader"),
-    ("ffast/core/environment.py", "modelLoaders.zeroModel"),
-    ("ffast/core/environment.py", "utils"),
+    ("ffast/core/loading_coordinator.py", "modules.loaders.aseDataset"),  # -> 5c
+    ("ffast/session/server_session.py", "modules.loaders.aseDataset"),    # -> 5c
+    ("ffast/core/environment.py", "datasetLoaders.loader"),               # -> 5c
+    ("ffast/core/environment.py", "utils"),                               # -> P6
+    # Model loader base's color/name helpers (Phase 5b lazify), so ffast.loaders
+    # imports flat-free. Clear when utils/userConfig relocate (P6/plugin ADR).
+    ("ffast/loaders/model.py", "utils"),
+    ("ffast/loaders/model.py", "config.userConfig"),
     # ConnectionManager's cluster connect-out / SLURM / bootstrap machinery
     # (Phase 3). All lazy and client-only — the headless server never initiates
     # an outbound cluster connection, so cluster/ never enters its import

@@ -25,7 +25,7 @@ from ase.io.trajectory import Trajectory
 
 from ffast.core.data_types import AtomsList
 from ffast.protocol import control
-from modelLoaders.ghost import GhostModelLoader
+from ffast.loaders.ghost import GhostModelLoader
 from ffast.cache.fingerprint import md5FromArraysAndStrings
 
 logger = logging.getLogger("FFAST")

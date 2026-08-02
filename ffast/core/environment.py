@@ -431,7 +431,7 @@ class Environment(EventClass):
 
     def loadZeroModel(self, taskID=None):
         """Ensure the singleton zero baseline model exists in the session."""
-        from modelLoaders.zeroModel import ZeroModelLoader  # ADR 0047: lazy (-> Phase 5)
+        from ffast.loaders.zero import ZeroModelLoader  # ADR 0047 Phase 5b
         fp = ZeroModelLoader.fingerprint
         if self.models.exists(fp):
             return
