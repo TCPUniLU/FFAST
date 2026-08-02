@@ -1,4 +1,36 @@
-Status: Accepted — Phases 0–4 implemented (2026-07-24); Phases 5–6 open
+Status: Accepted — Phases 0–5 implemented (2026-07-25); Phase 6 open
+
+## Phase 5 implementation notes (2026-07-25)
+
+Phase 5 landed as 3 commits (`5786c96` data primitives, `65e9a48` model loaders,
+`3c32085` dataset loaders + ASE), full suite green each time. Outcome: the
+**eager** ffast/ → Desktop-Client import set is EMPTY — the Headless Core imports
+no flat module at import time.
+
+- `client/dataType.py` → `ffast/core/data_types.py`; `modelLoaders/{loader,ghost,
+  zeroModel}.py` → `ffast/loaders/{model,ghost,zero}.py`; `datasetLoaders/loader.py`
+  → `ffast/loaders/dataset.py`; `modules/loaders/aseDataset.py` →
+  `ffast/loaders/ase.py`. Pure colour/name/bond helpers → `ffast/core/util.py`.
+- **Plugin model, pragmatic:** rather than the drafted registry-port + a new
+  plugin-discovery ADR, the essential ASE loader simply became a Headless-Core
+  baseline in `ffast/loaders/ase.py`, and `modules/loaders/aseDataset.py` was kept
+  as a re-export **shim that retains its `loadData` entry point** — so
+  `utils.loadModules` still registers `"ase (auto)"` when it globs `modules/` on
+  the desktop (verified). The optional ML-backend loaders (MACE, NequIP, …) stay
+  real additive plugins in `modules/loaders/`. This defers the *headless-without-
+  `modules/`* registration question to Phase 6 without blocking the relocation.
+- The loader bases' `config.userConfig.getConfig` lookups (colours, bond
+  lenience) were lazified so `ffast/loaders` imports flat-free; those become
+  allowed **lazy** edges, cleared when `userConfig` relocates (Phase 6).
+
+Remaining ffast/ → flat edges are all lazy and documented in
+`tests/ffast/test_ffast_core_boundary.py`: `utils.loadModules` (plugin discovery),
+`config.userConfig` (loader colours/lenience), and the client-only `cluster/`
+machinery. Phase 6 (repoint the remaining shim call sites in `UI/`/`main.py`/
+tests/examples, delete the shims, relocate `userConfig`, redesign headless plugin
+discovery) is deliberately left for after GUI verification of Phases 0–5 — shim
+deletion is a wide, functionally-neutral change best done once the relocation is
+confirmed working in the running app.
 
 # The HeadlessEnvironment keystone: relocate the Environment graph `client/` → `ffast/` (ADR 0026 Step B continuation)
 
