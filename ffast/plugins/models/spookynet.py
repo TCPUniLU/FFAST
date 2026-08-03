@@ -117,7 +117,7 @@ class SpookyNetModelLoader(ModelLoader):
         self.model.eval()
 
     def getFingerprint(self):
-        from utils import md5FromArraysAndStrings
+        from ffast.cache.fingerprint import md5FromArraysAndStrings
 
         lst = []
         for child in self.model.children():

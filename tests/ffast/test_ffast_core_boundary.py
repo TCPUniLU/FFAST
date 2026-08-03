@@ -47,16 +47,13 @@ _FLAT_ROOTS = {
 ALLOWED_EAGER = set()
 
 # LAZY (function-level) ffast/ -> flat edges — code paths that never run at
-# import time. After Phase 6 only two justified kinds remain, asserted exactly so
-# a NEW one is caught:
-#   1. Environment -> utils, for utils.loadModules (plugin discovery) + setupLogger.
-#      loadModules globs modules/ and is the one genuinely-deferred piece (headless
-#      plugin discovery needs its own redesign); it only runs at explicit bootstrap.
-#   2. ConnectionManager -> cluster.*, the client-only connect-out / SLURM / bootstrap
+# import time. After ADR 0048 (plugin discovery relocated into
+# ffast.core.plugin_discovery) only one justified kind remains, asserted
+# exactly so a NEW one is caught:
+#   1. ConnectionManager -> cluster.*, the client-only connect-out / SLURM / bootstrap
 #      machinery. The headless server never initiates an outbound cluster connection,
 #      so cluster/ never enters its import closure and stays a Desktop-Client dir.
 ALLOWED_LAZY = {
-    ("ffast/core/environment.py", "utils"),
     ("ffast/core/connection_manager.py", "cluster.backend"),
     ("ffast/core/connection_manager.py", "cluster.bootstrap"),
     ("ffast/core/connection_manager.py", "cluster.connection"),

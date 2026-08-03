@@ -198,7 +198,7 @@ class MainMenuHandler(MenuHandlerBase):
             tuple: (selected_energy_key, selected_force_key, prediction_keys) or (None, None, None) if cancelled
         """
         import ase.io
-        from modules.loaders.aseDataset import aseDatasetLoader
+        from ffast.loaders.ase import aseDatasetLoader
         from UI.KeySelectionDialog import KeySelectionDialog
         import logging
 

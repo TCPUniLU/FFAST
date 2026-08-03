@@ -19,7 +19,7 @@ from ffast.metrics.fields import (
     declared_field_keys,
     field_passthrough,
 )
-from modules.loaders.aseDataset import (
+from ffast.loaders.ase import (
     available_field_keys,
     read_atom_field,
     read_frame_field,

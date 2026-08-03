@@ -29,6 +29,20 @@ gui = [
     "qasync>=0.28.0",
     "vispy>=0.16.1",
 ]
+# Server plugins (ADR 0048): each ML-backend model loader in
+# ffast/plugins/models/ pulls its own heavy framework, gated behind its own
+# extra so a base install stays slim. torch itself is already a base
+# dependency above. A backend's module still imports cleanly with its extra
+# absent — the real dependency is lazily imported inside the loader's
+# __init__/predict — so the plugin registers fine either way; a missing
+# backend only surfaces when a user actually loads a model of that type.
+mace = ["mace-torch"]
+nequip = ["nequip"]
+schnetpack = ["schnetpack"]
+sgdml = ["sgdml"]
+# spookynet has no PyPI distribution (vendor ships it as source only, see
+# https://github.com/OUnke/SpookyNet) — no extra to declare; install it
+# manually per the vendor's own instructions if needed.
 dev = ["pytest>=7.0", "pytest-asyncio>=0.23"]
 zstd = ["zstandard>=0.21"]
 

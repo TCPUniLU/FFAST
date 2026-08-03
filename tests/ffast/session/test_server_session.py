@@ -753,8 +753,8 @@ def test_dispatch_export_subset_uniform_dataset_uses_ase_saver(tmp_path):
     env = _FakeEnv(datasets={"ds1": ds})
     target = tmp_path / "out.extxyz"
 
-    with patch("modules.loaders.aseDataset.aseDatasetLoader.saveDataset") as uniform, \
-         patch("modules.loaders.aseDataset.VariableASEDatasetLoader.saveDataset") as variable:
+    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as uniform, \
+         patch("ffast.loaders.ase.VariableASEDatasetLoader.saveDataset") as variable:
 
         async def scenario():
             s = ServerSession(env, asyncio.Queue())
@@ -776,8 +776,8 @@ def test_dispatch_export_subset_variable_dataset_uses_variable_saver(tmp_path):
     env = _FakeEnv(datasets={"ds1": ds})
     target = tmp_path / "out.extxyz"
 
-    with patch("modules.loaders.aseDataset.aseDatasetLoader.saveDataset") as uniform, \
-         patch("modules.loaders.aseDataset.VariableASEDatasetLoader.saveDataset") as variable:
+    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as uniform, \
+         patch("ffast.loaders.ase.VariableASEDatasetLoader.saveDataset") as variable:
 
         async def scenario():
             s = ServerSession(env, asyncio.Queue())
@@ -799,7 +799,7 @@ def test_dispatch_export_subset_expands_user_and_relative_path(tmp_path, monkeyp
     ds = _FakeExportDataset()
     env = _FakeEnv(datasets={"ds1": ds})
 
-    with patch("modules.loaders.aseDataset.aseDatasetLoader.saveDataset") as uniform:
+    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as uniform:
         async def scenario():
             s = ServerSession(env, asyncio.Queue())
             await s.dispatch(
@@ -821,7 +821,7 @@ def test_dispatch_export_subset_reports_error_on_write_failure(tmp_path):
     target = tmp_path / "out.extxyz"
 
     with patch(
-        "modules.loaders.aseDataset.aseDatasetLoader.saveDataset",
+        "ffast.loaders.ase.aseDatasetLoader.saveDataset",
         side_effect=OSError("disk full"),
     ):
         async def scenario():
@@ -842,7 +842,7 @@ def test_dispatch_export_subset_respects_explicit_format(tmp_path):
     env = _FakeEnv(datasets={"ds1": ds})
     target = tmp_path / "out.xyz"
 
-    with patch("modules.loaders.aseDataset.aseDatasetLoader.saveDataset") as uniform:
+    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as uniform:
         async def scenario():
             s = ServerSession(env, asyncio.Queue())
             await s.dispatch(

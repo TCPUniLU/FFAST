@@ -120,15 +120,17 @@ ffast-qt                    # launch the legacy Qt desktop
 
 <!-- ### Install Model Support (Optional)
 
-Install packages for the ML models you plan to use:
+Each ML backend is a server plugin (ADR 0048) gated behind its own extra:
 
 ```bash
-pip install sgdml        # sGDML
-pip install schnetpack   # SchNet
-pip install mace-torch   # MACE
-pip install nequip       # Nequip
-pip install spookynet    # SpookyNet
-``` -->
+pip install "ffast[sgdml]"       # sGDML
+pip install "ffast[schnetpack]"  # SchNet
+pip install "ffast[mace]"        # MACE
+pip install "ffast[nequip]"      # Nequip
+```
+
+SpookyNet has no PyPI distribution — install it manually from
+https://github.com/OUnke/SpookyNet if needed. -->
 
 ### Verify Installation
 

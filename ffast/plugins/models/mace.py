@@ -50,7 +50,7 @@ class MACEModelLoader(ModelLoaderACE):
             self.dtype = "float32"
 
     def getFingerprint(self):
-        from utils import md5FromArraysAndStrings
+        from ffast.cache.fingerprint import md5FromArraysAndStrings
 
         # NOTE: This is *terrible* practice but the only way I have found
         # to make this workable on CPU. Unfortunately this will have to do.

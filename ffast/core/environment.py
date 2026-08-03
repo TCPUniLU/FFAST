@@ -17,13 +17,15 @@ import asyncio
 import json
 import threading, time
 
-# NOTE (ADR 0047 Phase 4): the Desktop-Client loaders + color helper this module
-# uses (datasetLoaders.loader SubDataset/FrozenSubDataset/AtomFilteredDataset,
-# modelLoaders.zeroModel.ZeroModelLoader, utils.mixColors/loadModules) are
-# imported LAZILY inside the methods that use them, so importing ffast.core.
-# environment stays flat-free at module load (a headless install does not need
-# them until a subset/zero-model/subclass code path actually runs). They move
-# into ffast/ at Phase 5 (loaders) / the plugin-discovery ADR (loadModules).
+# NOTE (ADR 0047 Phase 4): the Desktop-Client loaders this module uses
+# (datasetLoaders.loader SubDataset/FrozenSubDataset/AtomFilteredDataset,
+# modelLoaders.zeroModel.ZeroModelLoader) are imported LAZILY inside the
+# methods that use them, so importing ffast.core.environment stays flat-free
+# at module load (a headless install does not need them until a
+# subset/zero-model/subclass code path actually runs). Plugin discovery
+# (loadModules) moved into ffast.core.plugin_discovery and the color helper
+# (mixColors) is imported from its relocated ffast.core.util home (ADR 0048);
+# this module no longer imports anything from flat utils.
 
 logger = logging.getLogger("FFAST")
 
@@ -115,13 +117,26 @@ class Environment(EventClass):
     # Callers reach them directly, e.g. env.models.get(fp), env.data.getData(...),
     # env.remote.serverConnection.
 
+    def _registerPluginType(self, registry, name, value, kind):
+        """Choke point shared by initialiseModelType/initialiseDatasetType.
+
+        Raises if ``name`` is already in ``registry`` (ADR 0048): duplicate
+        plugin names are an error, not a shadow, regardless of which of the
+        three discovery roots (bundled/entry-point/``modules/``) found them.
+        """
+        if name in registry:
+            raise ValueError(f"{kind} '{name}' is already registered")
+        registry[name] = value
+
     #############
     ## MODELS
     #############
 
     def initialiseModelType(self, modelType):
         """Register a model loader class discovered during module loading."""
-        self.modelTypes[modelType.modelName] = modelType
+        self._registerPluginType(
+            self.modelTypes, modelType.modelName, modelType, "Model loader"
+        )
 
 
     def getModelFromPath(self, path):
@@ -172,7 +187,9 @@ class Environment(EventClass):
 
     def initialiseDatasetType(self, datasetType):
         """Register a dataset loader class discovered during module loading."""
-        self.datasetTypes[datasetType.datasetName] = datasetType
+        self._registerPluginType(
+            self.datasetTypes, datasetType.datasetName, datasetType, "Dataset loader"
+        )
 
 
     def getDatasetFromPath(self, path):
@@ -412,7 +429,7 @@ class Environment(EventClass):
         elif model is None:
             return dataset.color
         else:
-            from utils import mixColors  # ADR 0047: lazy (pure color helper stays flat)
+            from ffast.core.util import mixColors
             return mixColors(model.color, dataset.color)
 
     def lookForGhosts(self):
@@ -526,10 +543,13 @@ class HeadlessEnvironment(Environment, threading.Thread):
 
 def startHeadlessEnvironment():
     """Bootstrap modules, logging, and the headless event thread for scripts."""
-    from utils import setupLogger, loadModules  # ADR 0047: lazy (loadModules deferred)
+    from ffast.core.plugin_discovery import loadModules
 
     thread = HeadlessEnvironment()
-    setupLogger()
+    # Minimal stdlib logging config for CLI/script use — deliberately not
+    # utils.setupLogger (Desktop-only: anchors debug.log next to the flat
+    # repo root, which a real headless install has no business writing into).
+    logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", force=True)
 
     loadModules(None, thread, headless=True)
     thread.start()

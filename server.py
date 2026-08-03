@@ -526,7 +526,7 @@ async def _main(
     from ffast.core.environment import HeadlessEnvironment
     from ffast.protocol import control
     from ffast.protocol.rpc import SERVER_TO_CLIENT, pack
-    from utils import loadModules
+    from ffast.core.plugin_discovery import loadModules
 
     env = HeadlessEnvironment()
     loadModules(None, env, headless=True)

@@ -39,7 +39,8 @@ from qasync import QEventLoop
 
 from ffast.core.environment import Environment
 from ffast.core.events import EventClass
-from utils import loadModules, setupLogger
+from ffast.core.plugin_discovery import loadModules
+from utils import setupLogger
 
 logger = logging.getLogger("FFAST")
 

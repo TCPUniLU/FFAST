@@ -1,6 +1,6 @@
 from ffast.loaders.model import ModelLoaderACE
 import numpy as np
-from utils import md5FromArraysAndStrings
+from ffast.cache.fingerprint import md5FromArraysAndStrings
 import torch
 
 
@@ -19,7 +19,6 @@ class NequipModelLoader(ModelLoaderACE):
         self.calculator = calc
 
     def getFingerprint(self):
-        from utils import md5FromArraysAndStrings
         from nequip.scripts.deploy import _ALL_METADATA_KEYS
 
         metadata = {k: "" for k in _ALL_METADATA_KEYS}

@@ -23,7 +23,7 @@ from ase import Atoms  # noqa: E402
 from ase.calculators.singlepoint import SinglePointCalculator  # noqa: E402
 
 from ffast.loaders.dataset import AtomFilteredDataset  # noqa: E402
-from modules.loaders.aseDataset import (  # noqa: E402
+from ffast.loaders.ase import (  # noqa: E402
     VariableASEDatasetLoader,
     aseDatasetLoader,
 )
