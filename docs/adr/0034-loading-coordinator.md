@@ -99,3 +99,98 @@ Out of scope, still open: the Coordinator's 11-distinct-attribute reach into `En
 `eventPush`, `objects`, `cache`) that the same review calls the actual blocker for migrating the
 Coordinator into the Headless Core (ADR 0026). That needs a named load-port with two adapters (real
 `Environment` + a headless stand-in) — a larger, separate design decision, not a mechanical fold.
+
+## Decision addendum 4 (2026-08-03): prediction-ingest collapse; the port declined
+
+### The migration premise expired
+
+Addendum 3 left the Coordinator's 11-attribute reach into `Environment` open, on the reasoning
+(from the 2026-07-23 architecture review) that it was "the actual blocker for migrating the
+Coordinator into the Headless Core (ADR 0026)". **It was not, in the end.** ADR 0047 reached the same
+destination from the other side: it relocated `Environment` *itself* into `ffast/core/`, and the
+Coordinator moved with it. `ffast/core/loading_coordinator.py` is in the Headless Core today, passes
+the `tests/ffast/test_ffast_core_boundary.py` guard, and imports nothing from `client/` or the flat
+Desktop-Client dirs. Whatever the wide seam costs, it is no longer blocking a migration.
+
+### What this addendum does fix
+
+The duplication *this ADR itself* flagged at proposal time — "`_loadPredictionsFromKeys`
+near-duplicates `loadPrepredictedDataset`" — was never resolved and had drifted badly. Both paths
+independently implemented: choose ASE loader flavour → pull E/F → validate against the dataset →
+cache energies → cache forces → register the ghost. Collapsed now into one
+`_ingestPrediction` body plus two shared helpers (`_aseLoaderFor`, `_predictionMatchesDataset`) and
+a module-level `_isUniformAtomsList`. `_readPredictionAtomsList` was split out of
+`loadPrepredictedDataset` at the same time so the stride-vs-lazy read decision has a name.
+
+Callers keep the one thing that legitimately differed: the fingerprint. The two paths hash different
+inputs (`md5(E, F)` vs `md5(E, F, model_name)`), and a ghost's fingerprint *is* its identity in the
+cache and in saved sessions, so unifying it would have silently invalidated existing sessions.
+Mismatch policy also stays per-caller — `_ingestPrediction` returns a bool, the standalone-file path
+aborts the load (there is no other column to fall back to, and the cause is a mis-picked file), the
+prediction-keys path skips that one column and carries on.
+
+Four real defects fell out of having one body instead of two. All four were confirmed against the
+real ASE loaders, not inferred from reading:
+
+1. **In-file prediction columns skipped ADR 0023 field extraction.** `loadPrepredictedDataset`
+   extracted declared `prediction.{info,atoms}.<key>` fields; `_loadPredictionsFromKeys` did not. A
+   metric referencing such a field silently resolved to `None` for any prediction that came from an
+   extra column in the dataset file. This is the one with user-visible consequences.
+2. **Homogeneity detection crashed below 3 frames.** The standalone path sampled
+   `np.random.choice(len(atoms_list), size=3, replace=False)`, which raises
+   `ValueError: Cannot take a larger sample than population` for a 1- or 2-frame prediction file.
+3. **Homogeneity detection was non-deterministic.** 20 iterations of 3 random frames. Measured on
+   1000 frames with one differing frame: it returned "uniform" in **184 of 200 runs**, and the
+   verdict varied run to run. Since the verdict picks the loader *class*, the same file could load
+   as two different dataset identities on two runs. `_isUniformAtomsList` samples at deterministic
+   even spacing instead, always including the first and last frame, exhaustive at or below 60 frames.
+   Note the honest limit: above 60 frames a sampled check still cannot see a lone outlier frame —
+   the fix here is reproducibility, not detection power.
+4. **The prediction-keys path compared atom counts, not composition.** `len(set(atom_counts)) == 1`
+   accepts frames that share an atom count but not their elements into the uniform
+   `aseDatasetLoader`, which reads frame 0's atomic numbers and applies them to every frame.
+   Confirmed: given `[CH4, SiH4]` (both 5 atoms) that loader reports `z == [6,1,1,1,1]` and formula
+   `C1H4` for *both* frames — the silicon frame is silently reported as methane. The unified check
+   compares chemical formulas, which is what the uniform loader actually requires. It also stops
+   forcing a full materialisation of a lazy `AtomsList` just to count atoms.
+
+**One suspected defect that was not real.** The two copies disagreed on shape validation: the
+prediction-keys copy had an `isinstance(E, list)` branch for variable datasets, the standalone copy
+only `E.shape != eDataset.shape`. That looked like an `AttributeError` waiting to happen on variable
+data, and an earlier draft of this addendum claimed it as a bug. It is not: `getEnergies()` returns an
+`ndarray` on *every* dataset type (`VariableASEDatasetLoader` builds `self.E` with `np.array`), so the
+list branch is unreachable and the standalone check was correct. The shared
+`_predictionMatchesDataset` keeps both branches defensively — energies-as-list is a shape the
+`getForces()` side does return — but no behaviour was fixed here.
+
+24 unit tests added (`tests/ffast/test_loading_coordinator.py`): 16 against fakes, plus 8 driving the
+real ASE loaders over real extxyz files, since defects 2-4 are all about loader selection and cannot
+be reached through a fake. Suite: 1206 pass.
+
+### The port: declined, and the measurement that decided it
+
+Addendum 3 proposed resolving the wide seam with "a named load-port with two adapters (real
+`Environment` + a headless stand-in)". Declined, for two reasons that only became clear once the
+collapse was done and the surface could be measured rather than estimated:
+
+- **There is no second adapter in production.** The imagined headless stand-in does not exist and is
+  not planned: the server runs `HeadlessEnvironment`, an `Environment` subclass. The only second
+  implementation a port would get is a test fake. An interface with one real implementation is
+  renaming, not a seam.
+- **The collapse did not narrow the surface enough to change that verdict.** Measured before and
+  after: `self._env.*` references 38 → 34, distinct attributes 11 → 11, executable code lines
+  524 → 523. The estimate going in was that folding the duplicate bodies would take the reach to
+  ~26 refs and shrink the data surface from 7 sites to 2; it did neither, because the duplicated
+  region was only ~4 of the 38 references and the shared helpers replacing it cost about what the
+  duplication did. A port over the remaining surface still needs ~13 verbs to stand in for 11
+  attributes.
+
+The reach itself is therefore recorded as **accepted, not open**: the Coordinator holds `Environment`
+and reaches domain state through it, exactly as `ConnectionManager` and `SessionPersistence` do
+(ADR 0020). The routing and remote-load algorithm — the parts worth isolating — are already driven by
+parameters (`session`, dialog callbacks) and already unit-tested without Qt or a live server.
+
+What would reopen this: a genuine second `LoadPort` implementation appearing in production. The
+plausible trigger is a server-side loading path that must run without a full `Environment` — an
+`ffast-server` that ingests datasets without registries or a task manager. Until something needs
+that, the port has one caller and one implementation.

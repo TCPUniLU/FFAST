@@ -31,6 +31,44 @@ from ffast.cache.fingerprint import md5FromArraysAndStrings
 logger = logging.getLogger("FFAST")
 
 
+def _isUniformAtomsList(atomsList, sampleSize=60):
+    """Decide whether every frame in ``atomsList`` is the same molecule.
+
+    Picks which ASE loader flavour a prediction needs.  The uniform
+    :class:`aseDatasetLoader` reads frame 0's atom count *and* atomic numbers
+    and applies them to every frame, so "uniform" has to mean same
+    *composition* — comparing atom counts alone would accept frames that share
+    a count but not their elements, and silently stamp frame 0's ``z`` onto all
+    of them.  Hence chemical formulas.
+
+    Full scans are avoided: ``atomsList`` is routinely a lazy ``AtomsList`` /
+    ``Trajectory`` where materialising every frame costs a re-read of the whole
+    file.  Lists at or below ``sampleSize`` are checked exhaustively; larger
+    ones on an evenly-spaced sample that always includes the first and last
+    frame.  The spacing is deterministic on purpose — a random sample can
+    classify the same file differently between runs, which changes the loader
+    class and therefore the dataset's identity.
+    """
+    n = len(atomsList)
+    if n < 2:
+        return True
+
+    if n <= sampleSize:
+        indices = range(n)
+    else:
+        step = (n - 1) / (sampleSize - 1)
+        indices = sorted({int(round(i * step)) for i in range(sampleSize)} | {0, n - 1})
+
+    reference = None
+    for i in indices:
+        formula = atomsList[i].get_chemical_formula()
+        if reference is None:
+            reference = formula
+        elif formula != reference:
+            return False
+    return True
+
+
 class LoadingCoordinator:
     """Owns dataset/model/prediction load routing, implementations, and ghosts (ADR 0034)."""
 
@@ -181,59 +219,13 @@ class LoadingCoordinator:
         if "npz" in path:
             d = np.load(path, allow_pickle=True)
             E, F = d["E"], d["F"]
+            aseObject = None
         else:
-            # Use smart loader to detect uniform vs variable datasets
-            import ase.io
-            from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader
-            def check_homogeneity(atoms_list):
-                for i in range(20):
-                    temp_atoms_list = []
-                    for j in np.random.choice(len(atoms_list), size=3, replace=False):
-                        temp_atoms_list.append(atoms_list[j].get_chemical_formula())
-                    if len(set(temp_atoms_list)) != 1:
-                        return False
-
-                return True
-
-            # Read once to detect type
-            slice_num = self._env.datasets.slice_numbers.get(datasetKey)
-            if slice_num is not None and slice_num > 0:
-                logger.info(f"Loading dataset with slice number of: {slice_num}")
-                atomsList = ase.io.read(path, index=slice(0, None, slice_num))
-            elif slice_num is not None and slice_num == 0:
-                logger.info("Loading prediction dataset with caching.")
-                if path.endswith(".traj"):
-                    logger.info("Trajectory prediction dataset detected, loading with class ase.io.Trajectory")
-                    atomsList = Trajectory(path)
-                else:
-                    atomsList = AtomsList(path)
-            else:
-                logger.info("Loading the dataset entirely on RAM.")
-                atomsList = ase.io.read(path, index=':')
-
-            # atom_counts = [len(atoms) for atoms in atomsList] --> inefficient for large datasets because it
-            # literally creates a copy of the entire dataset on RAM, just to check whether the dataset is variable or
-            # fixed. Instead, the following probabilistic method:
-            fixed_or_variable = check_homogeneity(atomsList)
-            if fixed_or_variable:
-                # Uniform dataset
-                logger.info(
-                    f"Loading prepredicted data as uniform ASE dataset: {len(atomsList)} molecules, {len(atomsList[0])} atoms each")
-                aseObject = aseDatasetLoader(
-                    path,
-                    atomsList=atomsList,
-                    selected_energy_key=selected_energy_key,
-                    selected_force_key=selected_force_key
-                )
-            else:
-                # Variable dataset
-                logger.info(f"Loading prepredicted data as variable ASE dataset: {len(atomsList)} molecules")
-                aseObject = VariableASEDatasetLoader(
-                    path,
-                    atomsList=atomsList,
-                    selected_energy_key=selected_energy_key,
-                    selected_force_key=selected_force_key
-                )
+            atomsList = self._readPredictionAtomsList(path, datasetKey)
+            aseObject = self._aseLoaderFor(
+                path, atomsList,
+                energy_key=selected_energy_key, force_key=selected_force_key,
+            )
 
             try:
                 E = aseObject.getEnergies()
@@ -257,19 +249,6 @@ class LoadingCoordinator:
         with self._env.mutation_lock:
             dataset = self._env.datasets.get(datasetKey)
 
-            if E is not None:
-                eDataset = dataset.getEnergies()
-                if E.shape != eDataset.shape:
-                    logger.error(
-                        f"Shape mismatch when loading prepredicted model. Model energy shape: {E.shape}, dataset energy shape: {eDataset.shape}"
-                    )
-                    logger.error(
-                        "Prediction load failed, you have probably selected the wrong prediction for the designated dataset. "
-                        "Please try again and choose the correct prediction file according to the dataset selected "
-                        "in the file filter dropdown."
-                    )
-                    return
-
             available = [x for x in (E, F) if x is not None]
             modelKey = (
                 md5FromArraysAndStrings(*available)
@@ -277,31 +256,46 @@ class LoadingCoordinator:
                 else md5FromArraysAndStrings(path)
             )
 
-            if E is not None:
-                energyDataType = self._env.data.getDataType("energy")
-                energyDataEntity = energyDataType.newDataEntity(energy=E.flatten())
-                self._env.data.setData(
-                    energyDataEntity, "energy", model=modelKey, dataset=dataset
+            name = os.path.basename(path)
+            if not self._ingestPrediction(
+                dataset, E, F, path=path, name=name, fingerprint=modelKey,
+                source=aseObject,
+            ):
+                # A mismatch here means the whole load fails — unlike the
+                # prediction-keys path, there is no other column to fall back
+                # to, and the cause is almost always a mis-picked file.
+                logger.error(
+                    "Prediction load failed, you have probably selected the wrong prediction for the designated dataset. "
+                    "Please try again and choose the correct prediction file according to the dataset selected "
+                    "in the file filter dropdown."
                 )
-
-            if F is not None:
-                forcesDataType = self._env.data.getDataType("forces")
-                forcesDataEntity = forcesDataType.newDataEntity(forces=F)
-                self._env.data.setData(
-                    forcesDataEntity, "forces", model=modelKey, dataset=dataset
-                )
-
-            # Prediction Dataset Fields (ADR 0023): eagerly extract the declared set
-            # of prediction.{info,atoms}.<key> from the prediction's loader (its ASE
-            # source is discarded below). Only ASE files carry extra keys; npz holds
-            # only E/F, so 'aseObject' is absent there and this is skipped.
-            if "npz" not in path:
-                self._extractPredictionFields(aseObject, modelKey, dataset)
-
-            # Register this ghost model's info so it survives session save/restore.
-            self.registerGhostModel(modelKey, path=path, name=os.path.basename(path))
+                return
 
             self.lookForGhosts()
+
+    def _readPredictionAtomsList(self, path, datasetKey):
+        """Read a prediction file's frames at the parent dataset's stride.
+
+        A prediction has to be sampled exactly like the dataset it is being
+        attached to, so the stride comes from the dataset registry rather than
+        the caller.  ``slice_num == 0`` means "no stride": that is the lazy
+        path, where frames are read on demand (``AtomsList``, or ``Trajectory``
+        for ``.traj``) instead of held in RAM.
+        """
+        import ase.io
+
+        slice_num = self._env.datasets.slice_numbers.get(datasetKey)
+        if slice_num is not None and slice_num > 0:
+            logger.info(f"Loading dataset with slice number of: {slice_num}")
+            return ase.io.read(path, index=slice(0, None, slice_num))
+        if slice_num is not None and slice_num == 0:
+            logger.info("Loading prediction dataset with caching.")
+            if path.endswith(".traj"):
+                logger.info("Trajectory prediction dataset detected, loading with class ase.io.Trajectory")
+                return Trajectory(path)
+            return AtomsList(path)
+        logger.info("Loading the dataset entirely on RAM.")
+        return ase.io.read(path, index=':')
 
         # NOTE: in-process prediction load is now the no-server FALLBACK only
         # (routing goes through requestPredictionLoad → server-side
@@ -341,6 +335,118 @@ class LoadingCoordinator:
                 "Prediction fields: extracted %d frame + %d atom field(s) for %s",
                 len(store["info"]), len(store["atoms"]), os.path.basename(dataset.getName()),
             )
+
+    #############
+    ## PREDICTION INGEST (one body, two entry points)
+    #############
+
+    @staticmethod
+    def _aseLoaderFor(path, atomsList, *, energy_key=None, force_key=None, uniform=None):
+        """Build the ASE loader flavour ``atomsList``'s homogeneity calls for.
+
+        ``uniform`` lets a caller reuse an already-made decision — it is
+        loop-invariant when several prediction columns are read off one
+        ``atomsList``, and deciding it walks a sample of the frames.
+        """
+        from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader
+
+        if uniform is None:
+            uniform = _isUniformAtomsList(atomsList)
+        loaderClass = aseDatasetLoader if uniform else VariableASEDatasetLoader
+        logger.info(
+            "Loading prediction as %s ASE dataset: %d molecules",
+            "uniform" if uniform else "variable", len(atomsList),
+        )
+        return loaderClass(
+            path,
+            atomsList=atomsList,
+            selected_energy_key=energy_key,
+            selected_force_key=force_key,
+        )
+
+    @staticmethod
+    def _predictionMatchesDataset(E, dataset, name):
+        """Check a prediction's energies line up with the dataset's, frame for frame.
+
+        Handles both dataset flavours: a variable dataset returns a list of
+        per-frame scalars (compare lengths), a uniform one a numpy array
+        (compare shapes).  The array-shape branch on its own — all the
+        standalone-prediction-file path used to do — raises ``AttributeError``
+        against a variable dataset.
+        """
+        if E is None:
+            return True
+
+        dataset_E = dataset.getEnergies()
+        if isinstance(E, list) or isinstance(dataset_E, list):
+            if len(E) != len(dataset_E):
+                logger.error(
+                    f"Shape mismatch for prediction '{name}'. "
+                    f"Expected {len(dataset_E)} molecules, got {len(E)}."
+                )
+                return False
+        elif hasattr(E, "shape") and hasattr(dataset_E, "shape"):
+            if E.shape != dataset_E.shape:
+                logger.error(
+                    f"Shape mismatch for prediction '{name}'. "
+                    f"Expected {dataset_E.shape}, got {E.shape}."
+                )
+                return False
+        return True
+
+    def _ingestPrediction(self, dataset, E, F, *, path, name, fingerprint,
+                          source=None, **catalogExtra):
+        """Register one prediction's arrays against ``dataset`` as a ghost model.
+
+        The single body behind both prediction entry points — a standalone
+        prediction file (:meth:`loadPrepredictedDataset`) and an extra
+        energy/force column pair inside the dataset file itself
+        (:meth:`_loadPredictionsFromKeys`).  Both validate the arrays against
+        the dataset, cache energies, cache forces, extract the declared
+        ADR 0023 prediction fields and register the ghost's catalog entry; they
+        were written out twice and drifted (ADR 0034 addendum 4).
+
+        ``source`` is the prediction's ASE loader where it has one (``None`` for
+        npz, which carries nothing but E/F) and is read for prediction Dataset
+        Fields before the caller discards it.  ``fingerprint`` stays the
+        caller's to compute — the two paths hash different things, and a
+        fingerprint *is* the ghost's identity in the cache and in saved
+        sessions.
+
+        Returns ``True`` when the prediction was ingested, ``False`` when its
+        arrays do not match the dataset; the caller decides whether that aborts
+        the whole load or skips this one column.
+
+        Callers must hold ``mutation_lock``.
+        """
+        if not self._predictionMatchesDataset(E, dataset, name):
+            return False
+
+        if E is not None:
+            energyDataType = self._env.data.getDataType("energy")
+            self._env.data.setData(
+                energyDataType.newDataEntity(energy=np.asarray(E).flatten()),
+                "energy", model=fingerprint, dataset=dataset,
+            )
+
+        if F is not None:
+            forcesDataType = self._env.data.getDataType("forces")
+            self._env.data.setData(
+                forcesDataType.newDataEntity(forces=F),
+                "forces", model=fingerprint, dataset=dataset,
+            )
+
+        # Prediction Dataset Fields (ADR 0023): the loader's ASE source is
+        # discarded once E/F are pulled, so any declared prediction.{info,
+        # atoms}.<key> has to be read now.  Reaching this from the
+        # prediction-keys path is new — that path skipped extraction entirely
+        # while it carried its own copy of this body, so fields declared by a
+        # metric silently resolved to None for in-file prediction columns.
+        if source is not None:
+            self._extractPredictionFields(source, fingerprint, dataset)
+
+        self.registerGhostModel(fingerprint, path=path, name=name, **catalogExtra)
+        return True
 
     #############
     ## DATASETS
@@ -499,87 +605,45 @@ class LoadingCoordinator:
     def _loadPredictionsFromKeys(self, dataset, path, prediction_keys, atomsList=None):
         """Materialize extra energy/force columns as ghost-model cache entries.
 
+        One ghost model per ``(energy_key, force_key, model_name)`` triple, each
+        ingested through the shared :meth:`_ingestPrediction` body — so these
+        in-file prediction columns now get the same ADR 0023 prediction-field
+        extraction the standalone-prediction-file path always did (ADR 0034
+        addendum 4).  A column whose arrays do not line up with the dataset, or
+        whose loader raises, is skipped; the remaining columns still load.
+
         Args:
             dataset: The loaded dataset
             path: Path to the file
             prediction_keys: List of (energy_key, force_key, model_name) tuples
             atomsList: Optional pre-loaded atoms list to avoid re-reading file
         """
-        from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader
-        import ase.io
-        from ffast.cache.fingerprint import md5FromArraysAndStrings
-
         # Read file only if not provided
         if atomsList is None:
+            import ase.io
             atomsList = ase.io.read(path, index=":")
 
-        atom_counts = [len(atoms) for atoms in atomsList]
-        is_uniform = len(set(atom_counts)) == 1
+        # Loop-invariant: every column is read off this one atomsList.
+        is_uniform = _isUniformAtomsList(atomsList)
 
         for energy_key, force_key, model_name in prediction_keys:
             try:
-                # Create temporary loader with selected keys and pre-loaded atomsList
-                if is_uniform:
-                    temp_loader = aseDatasetLoader(
-                        path,
-                        atomsList=atomsList,
-                        selected_energy_key=energy_key,
-                        selected_force_key=force_key
-                    )
-                else:
-                    temp_loader = VariableASEDatasetLoader(
-                        path,
-                        atomsList=atomsList,
-                        selected_energy_key=energy_key,
-                        selected_force_key=force_key
-                    )
+                temp_loader = self._aseLoaderFor(
+                    path, atomsList,
+                    energy_key=energy_key, force_key=force_key,
+                    uniform=is_uniform,
+                )
 
-                # Extract predictions
                 E = temp_loader.getEnergies()
                 F = temp_loader.getForces()
-
-                # Verify shape matches dataset
-                dataset_E = dataset.getEnergies()
-                if isinstance(E, list) and isinstance(dataset_E, list):
-                    # Variable dataset - check list lengths
-                    if len(E) != len(dataset_E):
-                        logger.error(
-                            f"Shape mismatch for prediction '{model_name}'. "
-                            f"Expected {len(dataset_E)} molecules, got {len(E)}. Skipping."
-                        )
-                        continue
-                elif hasattr(E, 'shape') and hasattr(dataset_E, 'shape'):
-                    # Uniform dataset - check array shapes
-                    if E.shape != dataset_E.shape:
-                        logger.error(
-                            f"Shape mismatch for prediction '{model_name}'. "
-                            f"Expected {dataset_E.shape}, got {E.shape}. Skipping."
-                        )
-                        continue
-
-                # Create ghost model fingerprint
                 ghost_fp = md5FromArraysAndStrings(E, F, model_name)
 
-                # Cache predictions
-                energy_dt = self._env.data.getDataType("energy")
-                if isinstance(E, list):
-                    # Variable dataset - E is list of scalars, need to convert to array
-                    import numpy as np
-                    E_array = np.array(E)
-                    energy_de = energy_dt.newDataEntity(energy=E_array.flatten())
-                else:
-                    energy_de = energy_dt.newDataEntity(energy=E.flatten())
-                self._env.data.setData(energy_de, "energy", model=ghost_fp, dataset=dataset)
-
-                forces_dt = self._env.data.getDataType("forces")
-                forces_de = forces_dt.newDataEntity(forces=F)
-                self._env.data.setData(forces_de, "forces", model=ghost_fp, dataset=dataset)
-
-                # Register ghost model info
-                self.registerGhostModel(
-                    ghost_fp, path=path, name=model_name,
+                if not self._ingestPrediction(
+                    dataset, E, F, path=path, name=model_name,
+                    fingerprint=ghost_fp, source=temp_loader,
                     energy_key=energy_key, force_key=force_key,
-                )
+                ):
+                    continue
 
                 logger.info(f"Loaded predictions for '{model_name}' from keys {energy_key}/{force_key}")
 
