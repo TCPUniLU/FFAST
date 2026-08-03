@@ -841,3 +841,90 @@ def test_loadPredictionsFromKeys_over_a_real_file(tmp_path):
     assert ghost["energy_key"] == "pred_energy"
     energy, = [p for k, p, _, _ in env.data.stored if k == "energy"]
     np.testing.assert_allclose(energy["energy"], [-1.5, -2.5, -3.5, -4.5])
+
+
+# ── shared load helpers ─────────────────────────────────────────────────────
+#
+# _progress / _queueLoad / _resolveLoad each replaced an idiom that was spelled
+# out at every call site (8, 3 and 5 times respectively).
+
+import logging
+
+
+def test_progress_forwards_the_error_flag():
+    env = _fake_env()
+    coord = LoadingCoordinator(env)
+
+    coord._progress("t1", "probing…")
+    coord._progress("t2", "boom", error=True)
+
+    assert env._calls["events"] == [
+        (("TASK_PROGRESS", "t1"), {"message": "probing…", "error": False}),
+        (("TASK_PROGRESS", "t2"), {"message": "boom", "error": True}),
+    ]
+
+
+def test_queueLoad_always_asks_for_a_visual_threaded_task():
+    env = _fake_env()
+    coord = LoadingCoordinator(env)
+
+    coord._queueLoad(coord.loadModel, "Loading model", args=("/m.pt", "zero"))
+
+    (args, kwargs), = env._calls["tasks"]
+    assert args == (coord.loadModel,)
+    assert kwargs == {
+        "args": ("/m.pt", "zero"), "kwargs": {},
+        "visual": True, "name": "Loading model", "threaded": True,
+    }
+
+
+def _resolve_env(**registries):
+    env = _fake_env()
+    env.modelTypes = registries.get("modelTypes", {})
+    env.datasetTypes = registries.get("datasetTypes", {})
+    return env
+
+
+def test_resolveLoad_returns_the_registered_loader_class(tmp_path):
+    path = tmp_path / "m.pt"
+    path.write_text("x")
+    sentinel = object()
+    coord = LoadingCoordinator(_resolve_env(modelTypes={"zero": sentinel}))
+
+    assert coord._resolveLoad("model", str(path), "zero") is sentinel
+
+
+def test_resolveLoad_missing_path_names_the_right_kind(caplog, tmp_path):
+    """The model path used to log 'Tried to load dataset' — a copy-paste artefact.
+
+    Both in-process load paths were copies of one body, so a failed *model*
+    load reported itself as a dataset problem in the user-visible log.
+    """
+    coord = LoadingCoordinator(_resolve_env(modelTypes={"zero": object()}))
+
+    with caplog.at_level(logging.ERROR, logger="FFAST"):
+        assert coord._resolveLoad("model", str(tmp_path / "nope.pt"), "zero") is None
+
+    assert "Tried to load model, but path" in caplog.text
+    assert "dataset" not in caplog.text
+
+
+def test_resolveLoad_unknown_type_names_the_right_kind(caplog, tmp_path):
+    path = tmp_path / "m.pt"
+    path.write_text("x")
+    coord = LoadingCoordinator(_resolve_env(modelTypes={}))
+
+    with caplog.at_level(logging.ERROR, logger="FFAST"):
+        assert coord._resolveLoad("model", str(path), "mace") is None
+
+    assert "model type `mace` not recognised" in caplog.text
+
+
+def test_resolveLoad_dataset_kind_reads_the_dataset_registry(tmp_path):
+    path = tmp_path / "d.xyz"
+    path.write_text("x")
+    sentinel = object()
+    coord = LoadingCoordinator(
+        _resolve_env(datasetTypes={"ase (auto)": sentinel}, modelTypes={"ase (auto)": object()}))
+
+    assert coord._resolveLoad("dataset", str(path), "ase (auto)") is sentinel

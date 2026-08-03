@@ -91,19 +91,60 @@ class LoadingCoordinator:
         """
         return self._env.remote.active_session()
 
+    def _queueLoad(self, fn, name, args=(), kwargs=None):
+        """Queue an in-process load so disk I/O and setup stay off the main loop.
+
+        Every ``taskLoad*`` entry point wants the same task shape — visual,
+        threaded, named "Loading <thing>" — so that shape lives here rather than
+        being spelled out at each of them.
+        """
+        return self._env.newTask(
+            fn,
+            args=args,
+            kwargs=kwargs or {},
+            visual=True,
+            name=name,
+            threaded=True,
+        )
+
+    def _progress(self, taskID, message, *, error=False):
+        """Report one step of a remote load to the Tasks panel.
+
+        The remote-load algorithms narrate themselves at every probe and every
+        dialog wait; ``error=False`` matches the default both ``TASK_PROGRESS``
+        consumers already apply.
+        """
+        self._env.eventPush("TASK_PROGRESS", taskID, message=message, error=error)
+
+    def _resolveLoad(self, kind, path, typeName):
+        """Validate a load request and resolve the plugin class that serves it.
+
+        Both in-process load paths open with the same two checks — the file is
+        there, the plugin type is registered — and both used to report every
+        failure as a *dataset* problem, so a missing model file or an
+        unrecognised model type logged "Tried to load dataset".  ``kind`` is
+        ``"model"`` or ``"dataset"``; returns the loader class, or ``None`` when
+        the request is not loadable (already logged).
+        """
+        if not os.path.exists(path):
+            logger.error(f"Tried to load {kind}, but path `{path}` not found")
+            return None
+
+        registry = self._env.modelTypes if kind == "model" else self._env.datasetTypes
+        loaderClass = registry.get(typeName)
+        if loaderClass is None:
+            logger.error(
+                f"Tried to load {kind}, but {kind} type `{typeName}` not recognised"
+            )
+        return loaderClass
+
     #############
     ## MODELS
     #############
 
     def taskLoadModel(self, path, modelType):
         """Queue model loading so disk I/O and setup do not block the main loop."""
-        self._env.newTask(
-            self.loadModel,
-            args=(path, modelType),
-            visual=True,
-            name="Loading model",
-            threaded=True,
-        )
+        self._queueLoad(self.loadModel, "Loading model", args=(path, modelType))
 
     def requestModelLoad(self, path, modelType):
         """Dispatch a model load through the server, or in-process as fallback.
@@ -125,14 +166,8 @@ class LoadingCoordinator:
 
     def loadModel(self, path, modelType, taskID=None):
         """Validate and instantiate a concrete model from disk."""
-        if not os.path.exists(path):
-            logger.error(f"Tried to load dataset, but path `{path}` not found")
-            return None
-
-        if modelType not in self._env.modelTypes:
-            logger.error(
-                f"Tried to load dataset, but dataset type {modelType} not recognised"
-            )
+        loaderClass = self._resolveLoad("model", path, modelType)
+        if loaderClass is None:
             return None
 
         # Instantiating a concrete predicting ModelLoader triggers its heavy ML
@@ -140,7 +175,7 @@ class LoadingCoordinator:
         # server-side (ADR 0030). Guard it: a missing/broken backend must warn
         # and abort this one load, not crash the server task (local or remote).
         try:
-            model = self._env.modelTypes[modelType](self._env, path)
+            model = loaderClass(self._env, path)
             if model is None:
                 logger.warning(f"Model `{path}` did not load successfully")
                 return
@@ -173,16 +208,14 @@ class LoadingCoordinator:
 
     def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None, selected_force_key=None):
         """Queue import of external predictions as cached model outputs for a dataset."""
-        self._env.newTask(
+        self._queueLoad(
             self.loadPrepredictedDataset,
+            "Loading prepredicted dataset",
             args=(path, datasetKey),
             kwargs={
                 'selected_energy_key': selected_energy_key,
                 'selected_force_key': selected_force_key
             },
-            visual=True,
-            name="Loading prepredicted dataset",
-            threaded=True,
         )
 
     def requestPredictionLoad(self, path, datasetKey, selected_energy_key=None,
@@ -464,8 +497,9 @@ class LoadingCoordinator:
             prediction_keys: List of (energy_key, force_key, model_name) tuples
             :param slice_num: slicing number for sampled load of datasets.
         """
-        self._env.newTask(
+        self._queueLoad(
             self.loadDataset,
+            "Loading dataset",
             args=(path, datasetType),
             kwargs={
                 'selected_energy_key': selected_energy_key,
@@ -473,9 +507,6 @@ class LoadingCoordinator:
                 'prediction_keys': prediction_keys,
                 'slice_num': slice_num
             },
-            visual=True,
-            name="Loading dataset",
-            threaded=True,
         )
 
     def requestDatasetLoad(self, path, datasetType, selected_energy_key=None,
@@ -521,21 +552,14 @@ class LoadingCoordinator:
     def loadDataset(self, path, datasetType, taskID=None, selected_energy_key=None,
                    selected_force_key=None, prediction_keys=None, slice_num=0):
         """Load dataset and create ghost models for prediction keys."""
-        #logger.info(f"self.datasetTypes:\n{self.datasetTypes}\narg datasetType:\n{datasetType}")
-        if not os.path.exists(path):
-            logger.error(f"Tried to load dataset, but path `{path}` not found")
-            return None
-
-        if datasetType not in self._env.datasetTypes:  # This if statement seems to be useless
-            logger.error(
-                f"Tried to load dataset, but dataset type {datasetType} not recognised"
-            )
+        loaderClass = self._resolveLoad("dataset", path, datasetType)
+        if loaderClass is None:
             return None
 
         # Load dataset - pass selected keys to ASE loader
         if datasetType == "ase (auto)":
             try:
-                result = self._env.datasetTypes[datasetType](
+                result = loaderClass(
                     path,
                     selected_energy_key=selected_energy_key,
                     selected_force_key=selected_force_key,
@@ -547,7 +571,7 @@ class LoadingCoordinator:
                 logger.error(f"Failed to load dataset {path} in method 'loadDataset'")
                 return None
         else:
-            result = self._env.datasetTypes[datasetType](path)
+            result = loaderClass(path)
 
         # Handle SmartASELoader return value (tuple) or regular loader (dataset object)
         if isinstance(result, tuple):
@@ -718,9 +742,7 @@ class LoadingCoordinator:
         return fully-cooked values (``None`` == the user cancelled); the delicate
         ``QDialog.exec()`` bridging lives inside them, in the UI.
         """
-        self._env.eventPush(
-            "TASK_PROGRESS", taskID, message="Probing dataset length on server…"
-        )
+        self._progress(taskID, "Probing dataset length on server…")
         n_total = None
         try:
             length_result = await self.probeDatasetLength(session, path)
@@ -729,9 +751,7 @@ class LoadingCoordinator:
         except Exception as exc:
             logger.warning("Length probe failed (non-fatal): %s", exc)
 
-        self._env.eventPush(
-            "TASK_PROGRESS", taskID, message="Waiting for stride selection…"
-        )
+        self._progress(taskID, "Waiting for stride selection…")
         slice_num = await get_stride(n_total)
         if slice_num is None:
             logger.info("Remote dataset loading cancelled by user")
@@ -747,17 +767,12 @@ class LoadingCoordinator:
             )
             return
 
-        self._env.eventPush(
-            "TASK_PROGRESS", taskID, message="Probing dataset keys on server…"
-        )
+        self._progress(taskID, "Probing dataset keys on server…")
         try:
             probe = await self.probeDatasetKeys(session, path, dataset_type)
         except Exception as exc:
             logger.error("Key probe failed: %s", exc)
-            self._env.eventPush(
-                "TASK_PROGRESS", taskID,
-                message=f"Key probe failed: {exc}", error=True,
-            )
+            self._progress(taskID, f"Key probe failed: {exc}", error=True)
             return
 
         if probe.get("error"):
@@ -768,9 +783,7 @@ class LoadingCoordinator:
             )
             return
 
-        self._env.eventPush(
-            "TASK_PROGRESS", taskID, message="Waiting for key selection…"
-        )
+        self._progress(taskID, "Waiting for key selection…")
         selection = await get_keys(probe)
         if selection is None:
             logger.info("Remote dataset loading cancelled by user")
@@ -804,18 +817,12 @@ class LoadingCoordinator:
             await self.dispatchPredictionLoad(session, path, dataset_fp)
             return
 
-        self._env.eventPush(
-            "TASK_PROGRESS", taskID,
-            message="Probing prediction file keys on server…",
-        )
+        self._progress(taskID, "Probing prediction file keys on server…")
         try:
             probe = await self.probeDatasetKeys(session, path, "ase (auto)")
         except Exception as exc:
             logger.error("Key probe failed: %s", exc)
-            self._env.eventPush(
-                "TASK_PROGRESS", taskID,
-                message=f"Key probe failed: {exc}", error=True,
-            )
+            self._progress(taskID, f"Key probe failed: {exc}", error=True)
             return
 
         if probe.get("error"):
@@ -823,9 +830,7 @@ class LoadingCoordinator:
             await self.dispatchPredictionLoad(session, path, dataset_fp)
             return
 
-        self._env.eventPush(
-            "TASK_PROGRESS", taskID, message="Waiting for key selection…"
-        )
+        self._progress(taskID, "Waiting for key selection…")
         selection = await get_keys(probe)
         if selection is None:
             logger.info("Remote prediction load cancelled by user")

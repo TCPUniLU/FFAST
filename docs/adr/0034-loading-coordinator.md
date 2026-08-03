@@ -163,9 +163,9 @@ list branch is unreachable and the standalone check was correct. The shared
 `_predictionMatchesDataset` keeps both branches defensively — energies-as-list is a shape the
 `getForces()` side does return — but no behaviour was fixed here.
 
-24 unit tests added (`tests/ffast/test_loading_coordinator.py`): 16 against fakes, plus 8 driving the
-real ASE loaders over real extxyz files, since defects 2-4 are all about loader selection and cannot
-be reached through a fake. Suite: 1206 pass.
+30 unit tests added (`tests/ffast/test_loading_coordinator.py`): 16 against fakes, 8 driving the real
+ASE loaders over real extxyz files (defects 2-4 are all about loader selection and cannot be reached
+through a fake), and 6 covering the shared helpers introduced below. Suite: 1212 pass.
 
 ### The port: declined, and the measurement that decided it
 
@@ -194,3 +194,41 @@ What would reopen this: a genuine second `LoadPort` implementation appearing in 
 plausible trigger is a server-side loading path that must run without a full `Environment` — an
 `ffast-server` that ingests datasets without registries or a task manager. Until something needs
 that, the port has one caller and one implementation.
+
+### Reference count compresses; attribute surface does not
+
+Asked whether the reach could be compressed further, three more idioms turned out to be spelled out
+at every call site rather than shared, and were folded into helpers:
+
+- `_progress(taskID, message, error=False)` — `eventPush("TASK_PROGRESS", …)` written out **8 times**
+  across the two remote-load algorithms.
+- `_queueLoad(fn, name, args, kwargs)` — the `visual=True, threaded=True` task shape written out at
+  each of the three `taskLoad*` entry points.
+- `_resolveLoad(kind, path, typeName)` — the file-exists + type-registered pair of checks, written
+  out in both `loadModel` and `loadDataset`, plus the registry indexing that followed (5 sites).
+
+That took `self._env.*` from 34 references to **22**, and executable code from 523 lines to **506**.
+`_resolveLoad` also fixed a copy-paste artefact the duplication had been hiding: `loadModel` reported
+both its failure modes as dataset problems, so a missing model file logged *"Tried to load dataset,
+but path … not found"* and an unregistered model type logged *"dataset type … not recognised"*.
+
+**But the distinct-attribute count did not move: 11 before, 11 after.** That is the real answer to
+the review's premise, and it is worth stating plainly because it is not a shortcoming of the
+Coordinator. Loading needs, irreducibly: read a loader registry, instantiate the loader, take the
+mutation lock, write the dataset registry, write the model registry, write the cache, write the
+object catalog, queue a task, push progress, resolve a session, write the data service. Eleven
+capabilities, because "load a thing into a session" is the operation that touches every part of a
+session.
+
+So the seam the review measured as wide was measuring the *job*, not the coupling — which is also why
+the port priced out at ~13 verbs. No port can be narrower than the operation it fronts. Helper
+extraction can keep reducing how often each capability is named (and is worth doing for readability),
+but it cannot reduce how many are needed.
+
+One structural extraction does exist and was considered: `registerGhostModel` / `instantiateGhost` /
+`lookForGhosts` are the only sub-cluster with *private* attributes — `cache` and `objects` are touched
+by nothing else in the Coordinator — so lifting them out would take the surface from 11 attributes to
+9, genuinely removed rather than renamed. It also has a real second caller already
+(`ConnectionManager._onRemoteModelMeta`). Declined for now anyway: ~25 lines of behaviour, and moving
+it churns call sites (`env.loading.registerGhostModel` → `env.ghosts.register`) to relocate two
+attributes. Worth revisiting if ghost recovery grows, not on its own.
