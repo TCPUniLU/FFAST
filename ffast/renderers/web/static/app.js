@@ -45,11 +45,12 @@ export class FFastApp {
     this._currentViewId = null;
     this._lastOpenedDatasetFp = null;  // last dataset_ref sent via OPEN_VIEW
     this._activeTab = 'loupe';
+    // Last rendered snapshot. Read by _currentDynamicBondPairs(): the wire
+    // ships bond segments as coordinates, never index pairs, so bonds
+    // "fill from dynamic" recovers pairs by matching endpoints to these atoms.
+    this._lastScene = null;
     this._frameCount = 0;
     this._cameraThrottle = null;
-    this._bc = null;          // BroadcastChannel to popped-out loupe tabs
-    this._chId = null;
-    this._lastScene = null;   // cached snapshot for a late-joining satellite
 
     // Server-side file browsing and server-side writes (ADR 0050). Ports are
     // closures so both work with whatever connection is live at call time.
@@ -95,7 +96,7 @@ export class FFastApp {
 
     // Live pop-out controller (ADR 0044 Phase 4): when opened with
     // ?mode=loupe-live this instance auto-connects, hides the chrome
-    // (body.loupe-only, shared with the BroadcastChannel satellite), and
+    // (body.loupe-only), and
     // selects the same dataset/prediction the opener had open — but as its
     // OWN connection, with its own view, driving its own frame/camera.
     this._autoDatasetFp = null;
@@ -262,7 +263,7 @@ export class FFastApp {
 
     // Live pop-out (ADR 0044 Phase 4): a second FFastApp instance opened by
     // _openPopout() when the server advertised multi_client. Hide the chrome
-    // (same body.loupe-only CSS the satellite mirror uses) and auto-connect —
+    // (body.loupe-only chrome) and auto-connect —
     // REMOTE_DATASET_META replay then drives _onDatasetMeta to select the
     // requested dataset and open this connection's own view.
     if (p.get('mode') === 'loupe-live') {
@@ -336,7 +337,6 @@ export class FFastApp {
       conn.on(IN.SESSION_LOADED, (kw) => this._sessionOps.onSessionResult('load', kw));
 
       await conn.connect();
-      this._setupBroadcast(wsUrl);
 
       this._setStatus(`Connected (${conn.role})`, 'connected');
       document.getElementById('connect-btn').disabled = true;
@@ -365,11 +365,6 @@ export class FFastApp {
     if (this._conn) {
       this._conn.close();
       this._conn = null;
-    }
-    if (this._bc) {
-      this._bc.postMessage({ t: 'bye' });   // tell popped-out loupes the main view is gone
-      this._bc.close();
-      this._bc = null;
     }
     if (this._analysis) { this._analysis.clear(); this._analysis = null; }
     this._metricClient = null;
@@ -516,7 +511,7 @@ export class FFastApp {
       dataset_ref: this._currentDatasetFp,
       prediction_ref: this._currentModelFp,   // null clears the force overlay
     });
-    if (this._bc) document.getElementById('popout-btn').disabled = false;
+    document.getElementById('popout-btn').disabled = false;
 
     if (datasetChanged) {
       this._lastOpenedDatasetFp = this._currentDatasetFp;
@@ -588,9 +583,7 @@ export class FFastApp {
       this._updateFrameLabel(0, n);
     }
 
-    // Mirror to any popped-out loupe tab.
     this._lastScene = scene;
-    this._broadcastScene();
   }
 
   /** @param {import('./protocol.js').ScenePatchKwargs} kw */
@@ -602,7 +595,6 @@ export class FFastApp {
       this._panes.colorBy.setColorBy(kw.atoms.color_by || null);
       this._trackCameraCOM(kw.atoms.positions);
     }
-    if (this._bc) this._bc.postMessage({ t: 'patch', patch: kw, changed });
     this._patchPending = false;   // playback: unblock the wait in _playLoop
   }
 
@@ -856,7 +848,6 @@ export class FFastApp {
     const frame = parseInt(document.getElementById('frame-slider').value, 10);
     this._updateFrameLabel(frame, this._frameCount);
     this._sendSetFrame(frame);
-    this._broadcastMeta();  // keep any popped-out loupe's slider in step
   }
 
   _sendSetFrame(frame) {
@@ -879,7 +870,6 @@ export class FFastApp {
     slider.value = clamped;
     this._updateFrameLabel(clamped, this._frameCount);
     this._sendSetFrame(clamped);
-    this._broadcastMeta();
     return clamped;
   }
 
@@ -922,79 +912,27 @@ export class FFastApp {
     }
   }
 
-  // ── popped-out loupe (BroadcastChannel satellite) ───────────────────────
-  // The main tab owns the single WebSocket; a popped tab renders scenes we
-  // relay here and posts frame intents back, which we drive over the WS.
-  _setupBroadcast(wsUrl) {
-    if (typeof BroadcastChannel === 'undefined') return;  // unsupported browser
-    this._chId = 'ffast-loupe:' + wsUrl;
-    this._bc = new BroadcastChannel(this._chId);
-    this._bc.onmessage = (e) => this._onBroadcast(e.data);
-  }
-
-  _broadcastScene() {
-    if (!this._bc || !this._lastScene) return;
-    this._bc.postMessage({ t: 'scene', scene: this._lastScene });
-    this._broadcastMeta();
-  }
-
-  _broadcastMeta() {
-    if (!this._bc) return;
-    const slider = document.getElementById('frame-slider');
-    this._bc.postMessage({
-      t: 'meta',
-      frameCount: this._frameCount,
-      frameIndex: parseInt(slider.value, 10) || 0,
-      title: this._datasets.get(this._currentDatasetFp)?.name || '',
-    });
-  }
-
-  _onBroadcast(msg) {
-    if (!msg || !msg.t) return;
-    if (msg.t === 'hello') {
-      // A satellite loupe just opened — hand it the current scene + meta.
-      this._broadcastScene();
-    } else if (msg.t === 'frame') {
-      // Satellite drove the frame; reflect it here and over the WS. Do NOT
-      // re-broadcast meta (the satellite's own slider is already there).
-      const slider = document.getElementById('frame-slider');
-      slider.value = msg.index;
-      this._updateFrameLabel(msg.index, this._frameCount);
-      this._sendSetFrame(msg.index);
-    }
-  }
-
+  // ── popped-out loupe ────────────────────────────────────────────────────
   _openPopout() {
     if (!this._currentDatasetFp) return;
-    const url = new URL(window.location.href);
 
-    // ADR 0044 Phase 4: when the server advertised multi-client support
-    // (HELLO_ACK features), open the pop-out as its OWN live controller
-    // connection instead of a same-tab-only BroadcastChannel mirror — it
-    // gets its own state replay, view, and frame/camera control, and shares
-    // the fingerprint-keyed cache with this tab. Older, single-client
-    // servers fall back to the satellite mirror (ADR 0043).
-    if (this._conn?.multiClient) {
-      const wsMatch = /:(\d+)\/?$/.exec(document.getElementById('ws-url').value.trim());
-      if (wsMatch) url.searchParams.set('port', wsMatch[1]);
-      const token = document.getElementById('token-input').value.trim();
-      if (token) url.searchParams.set('token', token);
-      else url.searchParams.delete('token');
-      url.searchParams.set('mode', 'loupe-live');
-      url.searchParams.set('ds', this._currentDatasetFp);
-      if (this._currentModelFp) url.searchParams.set('pred', this._currentModelFp);
-      else url.searchParams.delete('pred');
-      url.searchParams.delete('ch');
-    } else {
-      if (!this._chId) return;
-      url.searchParams.set('mode', 'loupe');
-      url.searchParams.set('ch', this._chId);
-      url.searchParams.delete('ds');
-      url.searchParams.delete('pred');
-    }
+    // ADR 0044 Phase 4: the pop-out is its OWN live controller connection —
+    // its own state replay, view, and frame/camera control, sharing the
+    // fingerprint-keyed cache with this tab. The ADR 0043 BroadcastChannel
+    // mirror it replaced is deleted (ADR 0051): negotiate() advertises
+    // multi_client unconditionally, and the client is served by the same
+    // server process, so the single-client fallback was unreachable.
+    const url = new URL(window.location.href);
+    const wsMatch = /:(\d+)\/?$/.exec(document.getElementById('ws-url').value.trim());
+    if (wsMatch) url.searchParams.set('port', wsMatch[1]);
+    const token = document.getElementById('token-input').value.trim();
+    if (token) url.searchParams.set('token', token);
+    else url.searchParams.delete('token');
+    url.searchParams.set('mode', 'loupe-live');
+    url.searchParams.set('ds', this._currentDatasetFp);
+    if (this._currentModelFp) url.searchParams.set('pred', this._currentModelFp);
+    else url.searchParams.delete('pred');
     window.open(url.toString(), '_blank', 'noopener');
-    // Satellite mode: the new tab sends 'hello' on load; _onBroadcast replies
-    // with the scene. Live mode: the new tab connects and replays for itself.
   }
 
   _sendSetCamera(cam) {

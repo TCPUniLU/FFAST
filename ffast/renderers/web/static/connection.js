@@ -14,13 +14,6 @@ export class FFastConnection {
     this._ws = null;
     this._handlers = new Map();
     this.role = 'READ_ONLY';
-    // Whether the server advertised multi-client support in HELLO_ACK (ADR
-    // 0044 Phase 1+): every connection gets its own outbound queue, session,
-    // and view namespace. A pop-out only opens its own live controller
-    // connection when this is true — otherwise it falls back to the
-    // BroadcastChannel satellite mirror (ADR 0043) for an older, single-
-    // client server.
-    this.multiClient = false;
   }
 
   connect() {
@@ -87,7 +80,6 @@ export class FFastConnection {
       );
       const ack = msgpack.decode(ackData)?.kwargs || {};
       role = ack.role || 'READ_ONLY';
-      this.multiClient = (ack.features || []).includes('multi_client');
     } catch (_) {
       console.warn('FFAST: no HELLO_ACK received — using READ_ONLY (backward compat)');
     }

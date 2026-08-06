@@ -1,70 +1,40 @@
-"""ConnectionRegistry: track connected clients and their roles."""
+"""Assign a connecting client's role (ADR 0044 Phase 2, ADR 0051).
+
+This was a ``ConnectionRegistry`` holding a ``websocket -> role`` dict. ADR 0044
+Phase 2 removed the single-CONTROLLING gate — every admitted connection controls
+its own views — which left the dict with nothing to arbitrate: ``role_of``,
+``has_controlling`` and ``count`` had no callers outside their own tests, and
+connection liveness is owned by ``ConnectionHub``, which the server already
+consults for ``count`` / ``is_empty`` / broadcast fan-out. What remained was a
+three-line role decision wrapped in redundant bookkeeping, so ADR 0051 reduced it
+to the decision itself.
+"""
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 
 from .token import ClientRole
 
 logger = logging.getLogger("FFAST")
 
 
-@dataclass
-class _ClientRecord:
-    role: ClientRole
+def decide_role(token_ok: bool, read_only_requested: bool = False) -> ClientRole:
+    """Resolve the role for one connecting client.
 
-
-class ConnectionRegistry:
-    """Asyncio-safe registry of connected WebSocket clients."""
-
-    def __init__(self) -> None:
-        self._clients: dict[object, _ClientRecord] = {}
-
-    def claim(
-        self, websocket: object, token_ok: bool, read_only_requested: bool = False
-    ) -> ClientRole:
-        """Register a client and assign its role (ADR 0044 Phase 2).
-
-        Every admitted connection controls its own views — CONTROLLING is no
-        longer a single global slot the first client claims and everyone else
-        is locked out of. A client is READ_ONLY only when it explicitly opts
-        in (``read_only_requested``) or fails token validation; a valid token
-        always grants CONTROLLING, regardless of how many other connections
-        already hold it.
-        """
-        if read_only_requested:
-            role = ClientRole.READ_ONLY
-        elif token_ok:
-            role = ClientRole.CONTROLLING
-        else:
-            role = ClientRole.READ_ONLY
-        self._clients[websocket] = _ClientRecord(role=role)
-        logger.info(
-            "Client registered: role=%s total=%d", role.value, len(self._clients)
-        )
-        return role
-
-    def release(self, websocket: object) -> ClientRole | None:
-        """Unregister client. Returns the role it held, or None if unknown."""
-        record = self._clients.pop(websocket, None)
-        if record is None:
-            return None
-        logger.info(
-            "Client released: role=%s remaining=%d",
-            record.role.value,
-            len(self._clients),
-        )
-        return record.role
-
-    def role_of(self, websocket: object) -> ClientRole | None:
-        record = self._clients.get(websocket)
-        return record.role if record is not None else None
-
-    @property
-    def has_controlling(self) -> bool:
-        return any(r.role == ClientRole.CONTROLLING for r in self._clients.values())
-
-    @property
-    def count(self) -> int:
-        return len(self._clients)
+    A client is READ_ONLY when it explicitly opts in (``read_only_requested``)
+    or fails token validation; a valid token grants CONTROLLING regardless of
+    how many other connections already hold it. The explicit opt-in wins over a
+    valid token — a client may hold one and still ask to be a passive viewer.
+    """
+    if read_only_requested:
+        role = ClientRole.READ_ONLY
+    elif token_ok:
+        role = ClientRole.CONTROLLING
+    else:
+        role = ClientRole.READ_ONLY
+    logger.info(
+        "Client role assigned: %s (token_ok=%s read_only_requested=%s)",
+        role.value, token_ok, read_only_requested,
+    )
+    return role

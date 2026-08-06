@@ -346,12 +346,10 @@
     #colorbar .cb-min, #colorbar .cb-max { font-size: 9px; color: var(--muted); }
     #colorbar-label { font-size: 10px; color: var(--text1); text-align: center; }
 
-    /* popped-out loupe: chrome hidden, viewport fills the window. Two
-       mechanisms share this class (ADR 0044 Phase 4): the live pop-out opens
-       its OWN connection (a real second controller, mode=loupe-live); the
-       BroadcastChannel satellite (mode=loupe) is the fallback for a server
-       that hasn't advertised multi-client support, and renders scenes the
-       main tab relays instead of holding a socket of its own. */
+    /* popped-out loupe: chrome hidden, viewport fills the window. The pop-out
+       (mode=loupe-live) opens its OWN connection and is a real second
+       controller (ADR 0044 Phase 4). The socket-less BroadcastChannel
+       satellite that also used this class is gone (ADR 0051). */
     body.loupe-only #objectbar,
     body.loupe-only #tabbar,
     body.loupe-only #popout-btn,

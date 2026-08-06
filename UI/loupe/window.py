@@ -1,6 +1,5 @@
 from ffast.core.events import EventChildClass
 from UI.Templates import Widget, ObjectComboBox, SettingsPane
-from UI.loupe.menu import LoupeMenuHandler
 from UI.loupe.canvas import SideBar, InteractiveCanvas
 from PySide6 import QtCore, QtWidgets
 import logging
@@ -87,14 +86,13 @@ class Loupe(Widget, EventChildClass):
         self.eventSubscribe("SCENE_PATCH", self.onScenePatch)
         self.eventSubscribe("METRICS_UPDATED", self.onMetricsUpdated)
 
-        #MENU BAR
+        # MENU BAR — deliberately empty. Bond width/colour, atom size and
+        # background colour used to live here; ADR 0040 moved every item into the
+        # sidebar panes, leaving a LoupeMenuHandler whose connectActions() was
+        # `pass`. That handler is deleted (ADR 0051); the bar itself stays so the
+        # window keeps its current layout.
         self.mBar = QtWidgets.QMenuBar(self)
-        self.menuHandler = LoupeMenuHandler(self)
         self.layout.setMenuBar(self.mBar)
-
-    # Adding menu bar getter for MenuHandler to be able to properly initialize the menu
-    def menuBar(self):
-        return self.mBar
 
     # SETTINGS
     def initialiseSettings(self):

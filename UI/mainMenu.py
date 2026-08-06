@@ -1,24 +1,53 @@
 import os
 from PySide6.QtWidgets import QFileDialog
 from UI.Templates import customFileDialog, BigDatasetWarningDialog, RemoteStrideDialog
-from UI.menuShared import MenuHandlerBase
 from UI.menuLogic import (
     resolve_key_options,
     stride_to_slice_num,
     parse_host_port,
     latest_session_record,
 )
+from ffast.core.events import EventClass
 from utils import deep_getsizeof
 from ffast.core.data_types import AtomsList
 
 
-class MainMenuHandler(MenuHandlerBase):
+class MainMenuHandler(EventClass):
     """Main-window menu: session, dataset/model/prediction load, cluster, remote.
 
     Reaches into ``self.handler.env``. The heavy remote-load flows are async
     orchestration that bridges Qt dialogs and the RPC session; the pure
     decisions they make live in ``UI.menuLogic``.
     """
+
+    def __init__(self, window):
+        self.handler = window.handler
+        self.window = window
+        self.connectActions()
+
+    def _addLoupeMenu(self, mb):
+        """Add the ``&3D View`` menu with a (disabled) New action.
+
+        The New action starts disabled and is enabled by ``REMOTE_CONNECTED``
+        via ``UIHandler._onRemoteConnected`` → ``setNewLoupeEnabled``.
+
+        This and the three members below were ``MenuHandlerBase``, shared with a
+        ``LoupeMenuHandler`` that ADR 0040 emptied and ADR 0051 deleted. With one
+        subclass left the base had nothing to share, so it folded in here.
+        """
+        Loupe = mb.addMenu("&3D &View")
+        self._newLoupeAction = Loupe.addAction("New", self.newLoupe, "Ctrl+n")
+        self._newLoupeAction.setEnabled(False)
+        Loupe.addSeparator()
+        return Loupe
+
+    def newLoupe(self):
+        self.handler.newLoupe()
+
+    def setNewLoupeEnabled(self, enabled: bool):
+        action = getattr(self, "_newLoupeAction", None)
+        if action is not None:
+            action.setEnabled(enabled)
 
     def connectActions(self):
         handler, window = (self.handler, self.window)

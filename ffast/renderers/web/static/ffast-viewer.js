@@ -7,18 +7,16 @@
  *
  * Split into native ES modules (ADR 0045 decision #2): msgpack.js (codec),
  * connection.js (FFastConnection), renderer.js (MoleculeRenderer), app.js
- * (FFastApp), satellite.js (LoupeSatelliteApp). This file is just the
- * bootstrap — pick the main app, or a popped-out satellite Loupe when opened
- * with ?mode=loupe.
+ * (FFastApp). This file is just the bootstrap.
+ *
+ * A popped-out 3D view is `?mode=loupe-live`, handled by FFastApp itself: it
+ * opens its own controlling connection (ADR 0044 Phase 4). The socket-less
+ * BroadcastChannel satellite that preceded it is gone (ADR 0051).
  */
 
 import { FFastApp } from './app.js';
-import { LoupeSatelliteApp } from './satellite.js';
 
-const _params = new URLSearchParams(window.location.search);
-const app = (_params.get('mode') === 'loupe' && typeof BroadcastChannel !== 'undefined')
-  ? new LoupeSatelliteApp(_params.get('ch') || 'ffast-loupe')
-  : new FFastApp();
+const app = new FFastApp();
 
 // Expose the live app for debugging and the Playwright runtime tests (which
 // compute an atom's screen position via app.renderer to drive a real pick).

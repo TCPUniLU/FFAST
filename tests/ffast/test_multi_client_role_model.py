@@ -14,7 +14,6 @@ import server
 from ffast.protocol import control
 from ffast.protocol.rpc import pack
 from ffast.session.hub import ConnectionHub
-from ffast.session.registry import ConnectionRegistry
 from ffast.session.token import ClientRole, SessionToken
 
 
@@ -47,42 +46,38 @@ def _run(coro):
 
 class TestHandshakeRoleModel:
     def test_two_connections_both_get_controlling_no_token_hash(self):
-        registry = ConnectionRegistry()
         ws_a = _FakeWebSocket(_hello_messages())
         ws_b = _FakeWebSocket(_hello_messages())
 
-        role_a = _run(server._do_hello_handshake(ws_a, ws_a.remote_address, registry, ""))
-        role_b = _run(server._do_hello_handshake(ws_b, ws_b.remote_address, registry, ""))
+        role_a = _run(server._do_hello_handshake(ws_a, ws_a.remote_address, ""))
+        role_b = _run(server._do_hello_handshake(ws_b, ws_b.remote_address, ""))
 
         assert role_a == ClientRole.CONTROLLING
         assert role_b == ClientRole.CONTROLLING
 
     def test_second_connection_with_valid_token_also_gets_controlling(self):
         token = SessionToken.generate()
-        registry = ConnectionRegistry()
         ws_a = _FakeWebSocket(_hello_messages(session_token=token.plaintext))
         ws_b = _FakeWebSocket(_hello_messages(session_token=token.plaintext))
 
-        role_a = _run(server._do_hello_handshake(ws_a, ws_a.remote_address, registry, token.hash))
-        role_b = _run(server._do_hello_handshake(ws_b, ws_b.remote_address, registry, token.hash))
+        role_a = _run(server._do_hello_handshake(ws_a, ws_a.remote_address, token.hash))
+        role_b = _run(server._do_hello_handshake(ws_b, ws_b.remote_address, token.hash))
 
         assert role_a == ClientRole.CONTROLLING
         assert role_b == ClientRole.CONTROLLING
 
     def test_explicit_read_only_opt_in_wins_over_valid_token(self):
-        registry = ConnectionRegistry()
         ws = _FakeWebSocket(_hello_messages(read_only=True))
 
-        role = _run(server._do_hello_handshake(ws, ws.remote_address, registry, ""))
+        role = _run(server._do_hello_handshake(ws, ws.remote_address, ""))
 
         assert role == ClientRole.READ_ONLY
 
     def test_invalid_token_gets_read_only(self):
         token = SessionToken.generate()
-        registry = ConnectionRegistry()
         ws = _FakeWebSocket(_hello_messages(session_token="wrong"))
 
-        role = _run(server._do_hello_handshake(ws, ws.remote_address, registry, token.hash))
+        role = _run(server._do_hello_handshake(ws, ws.remote_address, token.hash))
 
         assert role == ClientRole.READ_ONLY
 

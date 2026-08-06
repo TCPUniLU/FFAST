@@ -99,10 +99,11 @@ async def _auto_snapshot_loop(
             logger.warning("Auto-snapshot failed: %s", exc)
 
 
-async def _do_hello_handshake(websocket, addr, registry, token_hash: str):
+async def _do_hello_handshake(websocket, addr, token_hash: str):
     """Ping/pong then HELLO/HELLO_ACK. Returns the assigned ClientRole."""
     from ffast.protocol import control
     from ffast.protocol.rpc import pack, unpack
+    from ffast.session.registry import decide_role
     from ffast.session.token import ClientRole, SessionToken
     from ffast.visualization.protocol import ClientCapabilities, negotiate
 
@@ -111,11 +112,11 @@ async def _do_hello_handshake(websocket, addr, registry, token_hash: str):
         msg = await asyncio.wait_for(websocket.recv(), timeout=30)
     except asyncio.TimeoutError:
         logger.warning("Client %s: no ping in 30s — assigning READ_ONLY", addr)
-        return registry.claim(websocket, False)
+        return decide_role(False)
 
     if msg != "ping":
         logger.warning("Client %s: expected 'ping', got %r", addr, msg)
-        return registry.claim(websocket, False)
+        return decide_role(False)
 
     await websocket.send("pong")
     logger.debug("Pong sent to %s", addr)
@@ -125,21 +126,21 @@ async def _do_hello_handshake(websocket, addr, registry, token_hash: str):
         msg = await asyncio.wait_for(websocket.recv(), timeout=5)
     except asyncio.TimeoutError:
         logger.info("Client %s: no HELLO in 5s — READ_ONLY (backward compat)", addr)
-        return registry.claim(websocket, False)
+        return decide_role(False)
 
     if not isinstance(msg, bytes):
         logger.info("Client %s: expected binary HELLO, got text — READ_ONLY", addr)
-        return registry.claim(websocket, False)
+        return decide_role(False)
 
     try:
         event, _args, kwargs = unpack(msg)
     except Exception as exc:
         logger.warning("Client %s: HELLO decode error: %s — READ_ONLY", addr, exc)
-        return registry.claim(websocket, False)
+        return decide_role(False)
 
     if event != control.HELLO:
         logger.info("Client %s: expected HELLO, got %r — READ_ONLY", addr, event)
-        return registry.claim(websocket, False)
+        return decide_role(False)
 
     # ── token validation ──────────────────────────────────────────────────
     token_ok = False
@@ -155,7 +156,7 @@ async def _do_hello_handshake(websocket, addr, registry, token_hash: str):
     # token: a client may hold a valid token and still ask to be a passive
     # viewer (PRD story 73).
     read_only_requested = bool(kwargs.get("read_only", False))
-    role = registry.claim(websocket, token_ok, read_only_requested=read_only_requested)
+    role = decide_role(token_ok, read_only_requested=read_only_requested)
 
     # ── HELLO_ACK ─────────────────────────────────────────────────────────
     try:
@@ -196,7 +197,7 @@ async def _recovery_window_task(hub, recovery_window: int, quit_event: asyncio.E
     first/CONTROLLING one — every connection is a controller now, so "is
     anyone still watching this job" is a hub emptiness check, not a role
     check. Any reconnect (by any client) during the window keeps the job
-    alive; it re-admits as a controller (registry.claim), it doesn't reclaim
+    alive; it re-admits as a controller (``decide_role``), it doesn't reclaim
     a sole role.
     """
     logger.info("Recovery window started: %ds", recovery_window)
@@ -209,7 +210,7 @@ async def _recovery_window_task(hub, recovery_window: int, quit_event: asyncio.E
 
 
 async def _handler(
-    websocket, env, hub, registry, token_hash: str,
+    websocket, env, hub, token_hash: str,
     recovery_window: int, quit_event: asyncio.Event,
 ):
     """Handle one WebSocket connection: its own ServerSession + outbound queue
@@ -227,7 +228,7 @@ async def _handler(
     hub.register(outbound)
 
     # ── handshake ─────────────────────────────────────────────────────────
-    role = await _do_hello_handshake(websocket, addr, registry, token_hash)
+    role = await _do_hello_handshake(websocket, addr, token_hash)
 
     # ── state replay ──────────────────────────────────────────────────────
     session.replay()
@@ -281,10 +282,11 @@ async def _handler(
             pass
 
         hub.deregister(outbound)
-        released_role = registry.release(websocket)
+        # The role is this connection's own local — there is no registry to ask
+        # (ADR 0051); the hub owns liveness and reports what is left.
         logger.info(
             "Client disconnected: %s role=%s graceful=%s remaining=%d",
-            addr, released_role and released_role.value, graceful, hub.count,
+            addr, role and role.value, graceful, hub.count,
         )
 
         # ADR 0044 Phase 2: the window arms on the LAST connection dropping
@@ -307,9 +309,6 @@ async def _serve(
     """Run the WebSocket server until the environment signals quit or quit_event fires."""
     import websockets
 
-    from ffast.session import ConnectionRegistry
-
-    registry = ConnectionRegistry()
     quit_event = asyncio.Event()
     # ADR 0044: one ServerSession + outbound queue PER connection (built in
     # _handler) over the single shared Environment; shared events fan out via
@@ -318,7 +317,6 @@ async def _serve(
     async def handler(websocket):
         await _handler(
             websocket, env, hub,
-            registry=registry,
             token_hash=token_hash,
             recovery_window=recovery_window,
             quit_event=quit_event,
