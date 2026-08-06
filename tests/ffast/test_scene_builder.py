@@ -883,20 +883,19 @@ class TestResolveFilterIndices:
         assert _resolve_filter_indices(["-O"], z_frame) == [1, 2]
 
 
-class TestAtomPipelineFallback:
-    def test_atom_pipeline_exception_falls_back_to_neutral_styling(self, monkeypatch):
-        # If the stage pipeline itself throws (e.g. element radii/colors config
+class TestAtomStageFallback:
+    def test_atom_stage_exception_falls_back_to_neutral_styling(self, monkeypatch):
+        # If a styling stage throws (e.g. element radii/colors config
         # unavailable), atoms must still render: positions from the raw
-        # transforms, neutral gray color (0.7) and size 0.5, downstream stages
-        # skipped — never a blank view.
-        import ffast.visualization.pipeline as pipeline_mod
+        # transforms, neutral gray color (0.7) and size 0.5 — never a blank view.
+        import ffast.visualization.stages.builtin.atom_stages as atom_stages
 
         def _boom(*a, **k):
-            raise RuntimeError("pipeline down")
+            raise RuntimeError("element radii unavailable")
 
-        # build_scene imports `execute` function-locally from the pipeline
-        # module, so patch it at the source.
-        monkeypatch.setattr(pipeline_mod, "execute", _boom)
+        # build_scene imports the stage functions function-locally, so patch at
+        # the source module.
+        monkeypatch.setattr(atom_stages, "atom_sizes", _boom)
         state = VisualizationState(view_id="v1", dataset_ref="fp", structure_index=0)
         scene = build_scene(state, get_dataset=lambda fp: _FakeDataset())
 
@@ -904,6 +903,26 @@ class TestAtomPipelineFallback:
         assert len(scene.atoms.positions) == 4          # positions still present
         assert scene.atoms.sizes == [0.5] * 4
         assert all(c == [0.7, 0.7, 0.7, 1.0] for c in scene.atoms.colors)
+
+    def test_label_failure_no_longer_degrades_atom_styling(self, monkeypatch):
+        # Labels used to share one execute() call with positions/sizes/colors, so
+        # a label failure dropped the whole scene to the neutral fallback.
+        # They are separate calls now: labels vanish, styling survives.
+        import ffast.visualization.stages.builtin.label_stages as label_stages
+
+        monkeypatch.setattr(
+            label_stages, "atom_labels",
+            lambda *a, **k: (_ for _ in ()).throw(RuntimeError("labels down")),
+        )
+        state = VisualizationState(
+            view_id="v1", dataset_ref="fp", structure_index=0,
+            enabled_features=["labels"],
+        )
+        scene = build_scene(state, get_dataset=lambda fp: _FakeDataset())
+
+        assert scene.labels is None
+        assert scene.atoms.sizes != [0.5] * 4                       # real radii
+        assert not all(c == [0.7, 0.7, 0.7, 1.0] for c in scene.atoms.colors)
 
 
 class TestForceSceneFilterRemap:

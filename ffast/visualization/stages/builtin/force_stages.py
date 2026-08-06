@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from ffast.visualization.stages.registry import stage
-
 _SHAFT_RADIUS = 0.05
 _HEAD_RADIUS = 0.12
 _HEAD_LENGTH = 0.25
@@ -133,48 +131,3 @@ def _arrow_mesh(starts: np.ndarray, ends: np.ndarray) -> tuple[np.ndarray, np.nd
     ])
 
     return all_verts, all_faces
-
-
-@stage(
-    id="ffast.force_arrows",
-    inputs={
-        "positions": "stage.ffast.atom_positions.positions",
-        "forces": "prediction.forces",
-    },
-    outputs={
-        "vertices": "(V,3) float64 arrow mesh vertices",
-        "faces": "(F,3) int64 arrow mesh face indices",
-    },
-    parameters={
-        "length_factor": {"type": "float", "default": 1.0, "role": "present"},
-        "normalised": {"type": "bool", "default": False, "role": "present"},
-    },
-    tests=[
-        {
-            "inputs": {"positions": [[0.0, 0.0, 0.0]], "forces": [[0.0, 0.0, 0.0]]},
-            "expected": [None, None],
-        },
-    ],
-)
-def force_arrows(
-    positions: np.ndarray,
-    forces: np.ndarray,
-    *,
-    length_factor: float = 1.0,
-    normalised: bool = False,
-) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
-    F = np.asarray(forces, dtype=float)
-
-    if normalised:
-        norms = np.linalg.norm(F, axis=1)
-        max_norm = np.max(norms)
-        if max_norm > 1e-10:
-            F = F / max_norm * length_factor / 5.0
-        else:
-            return None, None
-    else:
-        F = F * length_factor / 500.0
-
-    starts = np.asarray(positions, dtype=float)
-    ends = starts + F
-    return _arrow_mesh(starts, ends)

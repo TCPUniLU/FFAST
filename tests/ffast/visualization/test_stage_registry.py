@@ -113,134 +113,28 @@ def test_stage_schema_forbids_extra_fields():
 
 
 def test_builtin_stages_registered():
+    """Exact set, deliberately — every registered stage must have a live caller.
+
+    ADR 0049 removed six stages that were registered and tested but reached by
+    nothing in production (``bond_indices``, ``bond_positions``,
+    ``selection_mask``, ``value_colors``, ``force_arrows``, ``frame``). An
+    equality assertion is what makes a re-introduced dead stage fail here; the
+    previous ``issubset`` check would have let one back in silently.
+    """
     from ffast.visualization.stages.registry import _default_registry
-    ids = _default_registry.list_stages()
-    expected = {
+    assert set(_default_registry.list_stages()) == {
+        # driven directly by scene_builder
         "ffast.atom_positions",
         "ffast.atom_sizes",
         "ffast.atom_colors",
-        "ffast.bond_indices",
-        "ffast.bond_positions",
-        "ffast.unit_cell_edges",
-        "ffast.force_arrows",
-        "ffast.kabsch_alignment",
-        "ffast.value_colors",
-        "ffast.displacement_stats",
-        # M2: frame, selection, filtering, label stages
-        "ffast.frame",
-        "ffast.selection_mask",
-        "ffast.atom_filter",
         "ffast.atom_labels",
+        "ffast.unit_cell_edges",
+        "ffast.atom_filter",
+        # driven from elsewhere: transforms and metric coloring
+        "ffast.kabsch_alignment",
+        "ffast.displacement_stats",
     }
-    assert expected.issubset(set(ids))
 
-
-# ── dependencies ─────────────────────────────────────────────────────────────
-
-def test_dependencies_parsed_from_stage_inputs(registry):
-    @registry.stage(id="ffast.dep_a", inputs={"x": "frame.positions"}, outputs={"y": "..."})
-    def a(x):
-        return x
-
-    @registry.stage(
-        id="ffast.dep_b",
-        inputs={"y": "stage.ffast.dep_a.y", "z": "dataset.foo"},
-        outputs={"out": "..."},
-    )
-    def b(y, z=None):
-        return y
-
-    decl_a, _ = registry.get("ffast.dep_a")
-    decl_b, _ = registry.get("ffast.dep_b")
-    assert decl_a.dependencies == set()          # only external namespaces
-    assert decl_b.dependencies == {"ffast.dep_a"}  # only the stage reference
-
-
-def test_builtin_label_depends_on_atom_positions():
-    from ffast.visualization.stages.registry import _default_registry
-    decl, _ = _default_registry.get("ffast.atom_labels")
-    assert "ffast.atom_positions" in decl.dependencies
-
-
-# ── resolve_order ──────────────────────────────────────────────────────────
-
-def _chain_registry():
-    r = StageRegistry()
-
-    @r.stage(id="ffast.a", inputs={"x": "frame.positions"}, outputs={"y": "..."})
-    def a(x):
-        return x
-
-    @r.stage(id="ffast.b", inputs={"y": "stage.ffast.a.y"}, outputs={"z": "..."})
-    def b(y):
-        return y
-
-    @r.stage(id="ffast.c", inputs={"z": "stage.ffast.b.z", "y": "stage.ffast.a.y"}, outputs={"w": "..."})
-    def c(z, y):
-        return z
-
-    return r
-
-
-def test_resolve_order_topological():
-    r = _chain_registry()
-    order = r.resolve_order(["ffast.c"])
-    # dependencies precede dependents
-    assert order.index("ffast.a") < order.index("ffast.b") < order.index("ffast.c")
-    assert set(order) == {"ffast.a", "ffast.b", "ffast.c"}
-
-
-def test_resolve_order_no_duplicates_for_shared_dep():
-    r = _chain_registry()
-    order = r.resolve_order(["ffast.c"])
-    assert order.count("ffast.a") == 1
-
-
-def test_resolve_order_independent_target_only_pulls_its_deps():
-    r = _chain_registry()
-    assert r.resolve_order(["ffast.a"]) == ["ffast.a"]
-
-
-def test_resolve_order_unknown_target_raises():
-    r = _chain_registry()
-    with pytest.raises(KeyError):
-        r.resolve_order(["ffast.nonexistent"])
-
-
-def test_resolve_order_missing_dependency_raises():
-    r = StageRegistry()
-
-    @r.stage(id="ffast.orphan", inputs={"y": "stage.ffast.ghost.y"}, outputs={"z": "..."})
-    def orphan(y):
-        return y
-
-    with pytest.raises(KeyError, match="ghost"):
-        r.resolve_order(["ffast.orphan"])
-
-
-def test_resolve_order_cycle_raises():
-    r = StageRegistry()
-
-    @r.stage(id="ffast.x", inputs={"v": "stage.ffast.y.v"}, outputs={"v": "..."})
-    def x(v):
-        return v
-
-    @r.stage(id="ffast.y", inputs={"v": "stage.ffast.x.v"}, outputs={"v": "..."})
-    def y(v):
-        return v
-
-    with pytest.raises(ValueError, match="cycle"):
-        r.resolve_order(["ffast.x"])
-
-
-def test_resolve_order_builtin_bond_positions_chain():
-    from ffast.visualization.stages.registry import _default_registry
-    order = _default_registry.resolve_order(["ffast.bond_positions"])
-    assert order.index("ffast.atom_positions") < order.index("ffast.bond_positions")
-    assert order.index("ffast.bond_indices") < order.index("ffast.bond_positions")
-
-
-# ── parameter scope ──────────────────────────────────────────────────────────
 
 def test_parameter_scope_defaults_to_view(registry):
     @registry.stage(
@@ -284,3 +178,81 @@ def test_parameter_scope_rejects_unknown_value(registry):
         )
         def fn():
             pass
+
+
+# ── resolve_parameters ───────────────────────────────────────────────────────
+#
+# The catalog stays the single home for declared defaults after ADR 0049 removed
+# the executor: scene_builder calls stage functions directly but resolves their
+# parameters through here, so a default is never restated at a call site.
+
+def test_resolve_parameters_returns_declared_defaults(registry):
+    @registry.stage(
+        id="ffast.styled",
+        inputs={"z": "frame.elements"},
+        outputs={"out": "..."},
+        parameters={
+            "scale": {"type": "float", "default": 2.5, "role": "present"},
+            "mode": {"type": "choice", "choices": ["a", "b"], "default": "a", "role": "present"},
+        },
+    )
+    def styled(z, *, scale=2.5, mode="a"):
+        return z
+
+    assert registry.resolve_parameters("ffast.styled") == {"scale": 2.5, "mode": "a"}
+
+
+def test_resolve_parameters_overlays_caller_values(registry):
+    @registry.stage(
+        id="ffast.styled",
+        inputs={"z": "frame.elements"},
+        outputs={"out": "..."},
+        parameters={"scale": {"type": "float", "default": 1.0, "role": "present"}},
+    )
+    def styled(z, *, scale=1.0):
+        return z
+
+    assert registry.resolve_parameters("ffast.styled", {"scale": 9.0}) == {"scale": 9.0}
+
+
+def test_resolve_parameters_ignores_unknown_keys(registry):
+    """A view's stored parameters outlive the stage that read them."""
+    @registry.stage(
+        id="ffast.styled",
+        inputs={"z": "frame.elements"},
+        outputs={"out": "..."},
+        parameters={"scale": {"type": "float", "default": 1.0, "role": "present"}},
+    )
+    def styled(z, *, scale=1.0):
+        return z
+
+    resolved = registry.resolve_parameters(
+        "ffast.styled", {"scale": 3.0, "retired_param": "ignore me"}
+    )
+    assert resolved == {"scale": 3.0}
+
+
+def test_resolve_parameters_empty_for_parameterless_stage(registry):
+    @registry.stage(
+        id="ffast.plain", inputs={"z": "frame.elements"}, outputs={"out": "..."},
+    )
+    def plain(z):
+        return z
+
+    assert registry.resolve_parameters("ffast.plain") == {}
+    assert registry.resolve_parameters("ffast.plain", {"nope": 1}) == {}
+
+
+def test_resolve_parameters_unknown_stage_raises(registry):
+    with pytest.raises(KeyError):
+        registry.resolve_parameters("ffast.nonexistent")
+
+
+def test_scene_builder_resolves_live_stage_defaults():
+    """The three parameterised stages scene_builder drives resolve cleanly."""
+    import ffast.visualization.stages.builtin  # noqa: F401
+    from ffast.visualization.stages.registry import _default_registry
+
+    assert _default_registry.resolve_parameters("ffast.atom_sizes") == {"scale": 1.0}
+    assert _default_registry.resolve_parameters("ffast.atom_colors") == {"dimming": 1.0}
+    assert _default_registry.resolve_parameters("ffast.atom_labels") == {"mode": "index"}

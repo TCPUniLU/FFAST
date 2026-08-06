@@ -67,7 +67,7 @@ One open inspection surface for a molecular scene. Has its own Visualization Sta
 A backend-ready representation of a Visualization View: geometry buffers, colors, sizes, line segments, labels, camera parameters, and other drawing primitives derived from Visualization State.
 
 ### Visualization Pipeline
-A composable sequence of renderer-neutral stages that derives a Render Scene from Visualization State, datasets, predictions, and cached analysis data.
+The renderer-neutral derivation of a Render Scene from Visualization State, datasets, predictions, and cached analysis data. Composition is by ordinary call order in the Render Scene builder, not by a generic executor: ADR 0049 removed the executor after measuring that the live stage graph held a single stage-to-stage dependency, and that the stages most in need of orchestration (bonds, force arrows) could not cross it because they require conditional data fetching mid-derivation.
 
 ### Pipeline Stage
 One renderer-neutral step in a Visualization Pipeline. Declares its required inputs, produced outputs, and tunable parameters; receives parameters from configuration or Visualization State rather than reading global UI settings directly.
@@ -100,7 +100,7 @@ A complete, versioned Render Scene sent when opening, reconnecting, changing a v
 A versioned update containing only changed Render Scene components, such as camera, selection, parameters, colors, bonds, or force-vector buffers.
 
 ### Stage Catalog
-The server-side registry of available Pipeline Stages and their dependencies. A Visualization View enables features and parameters while the server resolves a valid execution order.
+The server-side registry of available Pipeline Stages: each stage's declared inputs, outputs, and Pipeline Parameters with their defaults. It is a *declarative* registry — it describes stages, it does not run them. Execution order belongs to the caller (see [ADR 0049](docs/adr/0049-demote-the-pipeline-executor.md), which removed the executor that resolved order from declared dependencies). The catalog is what `ffast-cli stages list/inspect/test` reads, and what resolves a Pipeline Parameter's declared default against a view's stored value.
 
 ### View Transformation
 A reversible, presentation-only transformation such as alignment, centering, filtering, or rotation that changes the viewed geometry without changing scientific source data.
@@ -391,7 +391,7 @@ A task identifier namespaced `remote_<n>` for work running on `ffast-server`. Ke
 - A **Visualization Pipeline** derives a **Render Scene** from a **Visualization State**
 - A **Render Scene** contains a standard set of **Render Primitives** translated into backend-native objects by each renderer
 - A **Visualization Pipeline** is composed of one or more **Pipeline Stages**
-- The **Stage Catalog** defines valid stage dependencies; a **Visualization View** chooses enabled features, not arbitrary stage order
+- The **Stage Catalog** declares each stage's inputs, outputs, and parameters; a **Visualization View** chooses enabled features, not arbitrary stage order
 - A **Pipeline Stage** consumes **Pipeline Parameters** resolved from defaults, app configuration, saved session settings, and per-view overrides
 - A **Parameter Schema** lets each renderer backend generate controls for declared Metric and Pipeline Parameters
 - **Compute Parameters** invalidate affected computation caches; **Presentation Parameters** reuse existing numeric results

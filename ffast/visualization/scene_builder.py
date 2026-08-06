@@ -1,10 +1,11 @@
 """Build a renderer-neutral RenderScene from VisualizationState + dataset access.
 
-Scene construction runs through the Stage Catalog: ``build_scene`` populates an
-external-namespace context from the dataset/view state and drives the registered
-pipeline stages via ``pipeline.execute`` (which resolves dependency order through
-``StageRegistry.resolve_order``). View parameters flow into the stages, so a
-``SET_PARAMETER`` command changes the produced scene.
+``build_scene`` calls the Stage Catalog's stage functions directly, in the order
+written (ADR 0049 — the pipeline executor was demoted; the only dependency in the
+live graph, labels-needs-positions, is expressed as line order). Stage
+*parameters* still resolve through ``StageRegistry.resolve_parameters`` so
+declared defaults have one home, and a ``SET_PARAMETER`` command changes the
+produced scene.
 """
 from __future__ import annotations
 
@@ -28,9 +29,14 @@ from ffast.visualization.scene import (
 
 logger = logging.getLogger(__name__)
 
-_ATOM_POSITIONS = "stage.ffast.atom_positions.positions"
-_ATOM_SIZES = "stage.ffast.atom_sizes.sizes"
-_ATOM_COLORS = "stage.ffast.atom_colors.colors"
+
+def _stage_params(state: VisualizationState, stage_id: str) -> dict:
+    """Declared defaults for ``stage_id`` overlaid with the view's stored values."""
+    from ffast.visualization.stages.registry import _default_registry
+
+    return _default_registry.resolve_parameters(
+        stage_id, state.parameters.get(stage_id)
+    )
 
 
 def build_scene(
@@ -51,10 +57,16 @@ def build_scene(
     Returns a scene with only camera populated when no dataset is loaded or
     when any data access fails.
     """
-    # Ensure the built-in stages are registered before resolving the pipeline.
+    # Deferred: the stage modules pull element radii/colors from ffast.chemistry
+    # inside their bodies, and importing the package registers the catalog the
+    # parameter lookups below read.
     import ffast.visualization.stages.builtin  # noqa: F401
-    from ffast.visualization.pipeline import execute
-    from ffast.visualization.stages.registry import _default_registry
+    from ffast.visualization.stages.builtin.atom_stages import (
+        atom_colors,
+        atom_positions,
+        atom_sizes,
+    )
+    from ffast.visualization.stages.builtin.label_stages import atom_labels
 
     scene = RenderScene(
         view_id=state.view_id,
@@ -100,31 +112,40 @@ def build_scene(
     if "atom_align" in state.enabled_features:
         transforms = transforms + _atom_align_to_reference(ds, raw_positions, state)
 
-    # External-namespace inputs the pipeline stages consume.
-    context = {
-        "frame.positions": raw_positions,
-        "frame.elements": z,
-        "view.transforms": transforms,
-    }
-
-    atom_targets = ["ffast.atom_positions", "ffast.atom_sizes", "ffast.atom_colors"]
-    if "labels" in state.enabled_features:
-        atom_targets.append("ffast.atom_labels")
-
     try:
-        results = execute(_default_registry, atom_targets, context, parameters=state.parameters)
-        positions = np.asarray(results[_ATOM_POSITIONS], dtype=np.float64)
-        sizes = np.asarray(results[_ATOM_SIZES]).tolist()
-        colors = np.asarray(results[_ATOM_COLORS]).tolist()
+        positions = np.asarray(
+            atom_positions(raw_positions, transforms), dtype=np.float64
+        )
+        sizes = np.asarray(
+            atom_sizes(z, **_stage_params(state, "ffast.atom_sizes"))
+        ).tolist()
+        colors = np.asarray(
+            atom_colors(z, **_stage_params(state, "ffast.atom_colors"))
+        ).tolist()
     except Exception as exc:
         # config/atoms (element radii/colors) may be unavailable; positions still
-        # render with neutral styling and downstream stages are skipped.
-        logger.warning("scene_builder: atom pipeline failed: %s", exc)
-        results = {}
+        # render with neutral styling.
+        logger.warning("scene_builder: atom stages failed: %s", exc)
         positions = _apply_transforms(raw_positions, transforms)
         n_atoms = len(positions)
         sizes = [0.5] * n_atoms
         colors = [[0.7, 0.7, 0.7, 1.0]] * n_atoms
+
+    # Labels anchor to the FULL transformed positions; the atom filter below
+    # trims them alongside atoms. Isolated from the block above so a label
+    # failure no longer drags atom styling down to the neutral fallback with it
+    # (it did when both crossed one execute() call).
+    label_positions = None
+    label_texts = None
+    if "labels" in state.enabled_features:
+        try:
+            _lpos, _ltexts = atom_labels(
+                positions, z, **_stage_params(state, "ffast.atom_labels")
+            )
+            label_positions = np.asarray(_lpos, dtype=np.float64)
+            label_texts = list(_ltexts)
+        except Exception as exc:
+            logger.warning("scene_builder: atom_labels failed: %s", exc)
 
     # Value-driven atom coloring (ADR 0016): compute per-atom values on the FULL
     # set and resolve the range here, so the colorbar/scale stay stable across
@@ -194,10 +215,9 @@ def build_scene(
         color_by=color_by,
     )
 
-    # Labels (pipeline output; depends on atom_positions via resolve_order)
-    if _label_outputs_present(results):
-        label_positions = np.asarray(results["stage.ffast.atom_labels.positions"], dtype=np.float64)
-        texts = list(results["stage.ffast.atom_labels.texts"])
+    # Labels (computed above from the unfiltered positions).
+    if label_positions is not None and label_texts is not None:
+        texts = label_texts
         if keep is not None:
             # Keep original-index text ("3","5",…) at the surviving atoms.
             label_positions = label_positions[keep]
@@ -294,9 +314,10 @@ def build_scene(
                     )
                     # Full (unfiltered) centroid so an atom filter doesn't shift the cell.
                     origin = np.mean(positions_all, axis=0) - np.sum(latt_arr, axis=0) / 2
-                    cell_ctx = {"frame.lattice": latt_arr, "view.cell_origin": origin}
-                    cell_results = execute(_default_registry, ["ffast.unit_cell_edges"], cell_ctx)
-                    edges = np.asarray(cell_results["stage.ffast.unit_cell_edges.segments"])
+                    from ffast.visualization.stages.builtin.geometry_stages import (
+                        unit_cell_edges,
+                    )
+                    edges = np.asarray(unit_cell_edges(latt_arr, origin))
                     scene.unit_cell = UnitCellScene(segments=edges.tolist())
         except Exception as exc:
             logger.debug("scene_builder: unit_cell failed: %s", exc)
@@ -323,13 +344,6 @@ def build_scene(
     scene.selections = overlays
 
     return scene
-
-
-def _label_outputs_present(results: dict) -> bool:
-    return (
-        "stage.ffast.atom_labels.positions" in results
-        and "stage.ffast.atom_labels.texts" in results
-    )
 
 
 def fill_patch_from_scene(patch: ScenePatch, scene: RenderScene) -> None:

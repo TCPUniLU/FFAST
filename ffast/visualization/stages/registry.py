@@ -47,37 +47,27 @@ class StageRegistry:
     def list_stages(self) -> list[str]:
         return list(self._stages.keys())
 
-    def resolve_order(self, targets: list[str]) -> list[str]:
-        """Topologically order the stages needed to compute ``targets``.
+    def resolve_parameters(
+        self, id: str, overrides: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        """Declared parameter defaults overlaid with caller overrides.
 
-        Returns the transitive dependency closure of ``targets`` with every
-        stage appearing after all stages it depends on. Raises ``KeyError`` for
-        an unknown target or dependency and ``ValueError`` on a dependency cycle.
+        Unknown keys in ``overrides`` are ignored: a view's stored parameters
+        outlive the stage that read them, and a client may send a key this
+        server's stage does not know.
+
+        Callers invoke stage functions directly (ADR 0049 demoted the executor),
+        but still resolve parameters through the catalog so a default lives in
+        exactly one place — the ``@stage`` declaration. Hard-coding defaults at
+        the call site is what let ``ffast.force_arrows`` declare
+        ``length_factor=1.0`` while the renderer shipped ``10``.
         """
-        order: list[str] = []
-        visited: set[str] = set()
-        visiting: set[str] = set()
-
-        def visit(sid: str) -> None:
-            if sid in visited:
-                return
-            if sid in visiting:
-                raise ValueError(f"Stage dependency cycle detected at '{sid}'")
-            if sid not in self._stages:
-                raise KeyError(f"Stage dependency '{sid}' is not registered")
-            visiting.add(sid)
-            schema, _ = self._stages[sid]
-            for dep in sorted(schema.dependencies):
-                visit(dep)
-            visiting.discard(sid)
-            visited.add(sid)
-            order.append(sid)
-
-        for target in targets:
-            if target not in self._stages:
-                raise KeyError(f"Stage '{target}' is not registered")
-            visit(target)
-        return order
+        schema, _ = self.get(id)
+        params = {name: p.default for name, p in schema.parameters.items()}
+        for key, value in (overrides or {}).items():
+            if key in schema.parameters:
+                params[key] = value
+        return params
 
 
 _default_registry = StageRegistry()
