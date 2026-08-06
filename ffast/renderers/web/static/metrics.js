@@ -22,6 +22,7 @@
  */
 
 import { decodeNdarray } from './ndarray.js';
+import { IN, OUT } from './events.js';
 
 const NIL = 'nil';
 
@@ -49,7 +50,7 @@ export class MetricClient {
     this._conn = conn;
     /** @type {Map<string, Array<{resolve: Function, timer: any}>>} */
     this._waiters = new Map();
-    conn.on('METRIC_RESULT', (kw, args) => this._onResult(kw, args));
+    conn.on(IN.METRIC_RESULT, (kw, args) => this._onResult(kw, args));
   }
 
   /**
@@ -69,7 +70,7 @@ export class MetricClient {
       const list = this._waiters.get(key) || [];
       list.push({ resolve, timer });
       this._waiters.set(key, list);
-      this._conn.send('REQUEST_METRIC', {
+      this._conn.send(OUT.REQUEST_METRIC, {
         metric_id: metricId,
         key,                      // echoed back as args[0] → 1:1 correlation
         params,

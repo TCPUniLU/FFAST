@@ -16,6 +16,9 @@ import { createForcesPane } from './panes/forces.js';
 import { createExtractPane } from './panes/extract.js';
 import { createAlignPane } from './panes/align.js';
 import { createExportPane } from './panes/export.js';
+import { IN, OUT } from './events.js';
+import { RemoteBrowser } from './remote_browser.js';
+import { SessionOps } from './session_ops.js';
 
 /**
  * The five pick tools (ADR 0045 Phase 2). Each mirrors a Qt AtomSelectionBase
@@ -48,12 +51,22 @@ export class FFastApp {
     this._chId = null;
     this._lastScene = null;   // cached snapshot for a late-joining satellite
 
-    // Remote file browser state
-    this._fbMode = 'dataset';  // 'dataset' | 'prediction'
-    this._fbPath = null;       // current directory abspath (server-side)
-    this._fbParent = null;     // parent abspath, or null at root
-    this._fbHome = null;       // server user's home directory
-    this._fbSelected = null;   // selected filename within _fbPath
+    // Server-side file browsing and server-side writes (ADR 0050). Ports are
+    // closures so both work with whatever connection is live at call time.
+    const send = (event, kwargs = {}, args = []) => this._conn?.send(event, kwargs, args);
+    this._browser = new RemoteBrowser({
+      send,
+      getDatasets: () => this._datasets,
+      getCurrentDatasetFp: () => this._currentDatasetFp,
+      setStatus: (text, kind) => this._setStatus(text, kind),
+    });
+    this._sessionOps = new SessionOps({
+      send,
+      setStatus: (text, kind) => this._setStatus(text, kind),
+      getCurrentDatasetFp: () => this._currentDatasetFp,
+      getDatasetMeta: (fp) => this._datasets.get(fp),
+      capturePng: (opts) => this._renderer.capturePng(opts),
+    });
 
     // ADR 0045 Phase 1: scientific view-command plumbing (mirrors Qt's
     // window._sendViewCommand / _sceneVersion, UI/loupe/window.py:320-349).
@@ -79,7 +92,6 @@ export class FFastApp {
 
     // Save/load session (issue 21): the in-flight op's kind + path, so the
     // next TASK_DONE/TASK_FAILED (see _connect) can report completion.
-    this._pendingSessionOp = null;   // {kind: 'save'|'load', path: string} | null
 
     // Live pop-out controller (ADR 0044 Phase 4): when opened with
     // ?mode=loupe-live this instance auto-connects, hides the chrome
@@ -152,35 +164,17 @@ export class FFastApp {
     document.getElementById('play-pause-btn').addEventListener('click', () => this._togglePlayback());
 
     // Object rail load actions — dataset vs prediction mode.
-    document.getElementById('add-dataset-btn').addEventListener('click', () => this._openFileBrowser('dataset'));
-    document.getElementById('add-prediction-btn').addEventListener('click', () => this._openFileBrowser('prediction'));
-    document.getElementById('export-dataset-btn').addEventListener('click', () => this._exportSelectedDataset());
+    document.getElementById('add-dataset-btn').addEventListener('click', () => this._browser.open('dataset'));
+    document.getElementById('add-prediction-btn').addEventListener('click', () => this._browser.open('prediction'));
+    document.getElementById('export-dataset-btn').addEventListener('click', () => this._sessionOps.exportSelectedDataset());
 
     // Session save/load (issue 21) + subset export (issue 20) reuse one path
     // prompt — the browser has no native server-side save dialog.
-    document.getElementById('save-session-btn').addEventListener('click', () => this._saveSession());
-    document.getElementById('load-session-btn').addEventListener('click', () => this._loadSession());
-    document.getElementById('path-cancel').addEventListener('click', () => this._closePathModal());
-    document.getElementById('path-ok').addEventListener('click', () => this._confirmPathModal());
-    document.getElementById('path-input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') this._confirmPathModal();
-      else if (e.key === 'Escape') this._closePathModal();
-    });
-    document.getElementById('path-modal').addEventListener('click', (e) => {
-      if (e.target.id === 'path-modal') this._closePathModal();
-    });
-    document.getElementById('fb-cancel').addEventListener('click', () => this._closeFileBrowser());
-    document.getElementById('fb-load').addEventListener('click', () => this._fbLoad());
-    document.getElementById('fb-force-key').addEventListener('change', () => this._updateFbLoadEnabled());
-    document.getElementById('fb-up').addEventListener('click', () => {
-      if (this._fbParent) this._fbNavigate(this._fbParent);
-    });
-    document.getElementById('fb-home').addEventListener('click', () => {
-      this._fbNavigate(this._fbHome || null);
-    });
-    document.getElementById('fb-modal').addEventListener('click', (e) => {
-      if (e.target.id === 'fb-modal') this._closeFileBrowser();
-    });
+    document.getElementById('save-session-btn').addEventListener('click', () => this._sessionOps.saveSession());
+    document.getElementById('load-session-btn').addEventListener('click', () => this._sessionOps.loadSession());
+    // Each modal owns its own controls (ADR 0050).
+    this._sessionOps.bindControls();
+    this._browser.bindControls();
   }
 
   // ── sidebar panes (ADR 0045 Phase 1: issues 03-07) ──────────────────────
@@ -236,7 +230,7 @@ export class FFastApp {
     });
 
     const exportPane = createExportPane(sidebarEl, {
-      onExport: (opts) => this._exportPng(opts),
+      onExport: (opts) => this._sessionOps.exportPng(opts),
     });
 
     const align = createAlignPane(sidebarEl, {
@@ -311,30 +305,35 @@ export class FFastApp {
         onSub: (o) => this._sendDeclareSubset(o),
         onPointFrame: (ci) => this._jumpToFrame(ci),
       });
-      conn.on('TAB_LAYOUT', (kw) => this._analysis?.setLayout(kw.tabs || []));
+      conn.on(IN.TAB_LAYOUT, (kw) => this._analysis?.setLayout(kw.tabs || []));
 
-      conn.on('REMOTE_DATASET_META', (kw, args) => this._onDatasetMeta(args[0], kw));
-      conn.on('REMOTE_MODEL_META',   (kw, args) => this._onModelMeta(args[0], kw));
-      conn.on('DATASET_KEYS_RESPONSE', (kw, args) => this._onDatasetKeys(args[0], kw));
-      conn.on('TASK_CREATED',  (kw) => console.debug('TASK_CREATED', kw));
-      conn.on('TASK_PROGRESS', (kw) => console.debug('TASK_PROGRESS', kw));
+      conn.on(IN.REMOTE_DATASET_META, (kw, args) => this._onDatasetMeta(args[0], kw));
+      conn.on(IN.REMOTE_MODEL_META,   (kw, args) => this._onModelMeta(args[0], kw));
+      conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
+      conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
+      conn.on(IN.TASK_PROGRESS, (kw) => console.debug('TASK_PROGRESS', kw));
       // No per-task correlation id travels back to the browser today (Qt's
       // equivalent is a generic "Tasks" sidebar list, out of scope here), so
       // a pending save/load session is resolved by the next TASK_DONE/FAILED
       // to arrive — good enough for a single-user session (ADR 0044: shared
       // workspace, not multi-tenant) and gives issue 21 a real completion
       // signal instead of the previous silent console.debug-only handling.
-      conn.on('TASK_DONE',     (kw) => { console.debug('TASK_DONE', kw); this._resolveSessionOp(true); });
-      conn.on('TASK_FAILED',   (kw) => { console.warn('TASK_FAILED', kw); this._resolveSessionOp(false); });
-      conn.on('DATASET_LOADED', () => {});
-      conn.on('MODEL_LOADED',   () => {});
-      conn.on('SCENE_SNAPSHOT', (kw) => this._onSceneSnapshot(kw));
-      conn.on('SCENE_PATCH',    (kw) => this._onScenePatch(kw));
-      conn.on('COMMAND_RESULT', (kw) => this._onCommandResult(kw));
-      conn.on('DIR_LISTING',    (kw) => this._onDirListing(kw));
-      conn.on('METRIC_CATALOG', (kw) => this._onMetricCatalog(kw));
-      conn.on('METRICS_UPDATED', () => this._conn?.send('REQUEST_METRIC_CATALOG', {}));
-      conn.on('SUBSET_EXPORTED', (kw) => this._onSubsetExported(kw));
+      conn.on(IN.TASK_DONE,    (kw) => console.debug('TASK_DONE', kw));
+      conn.on(IN.TASK_FAILED,  (kw) => console.warn('TASK_FAILED', kw));
+      conn.on(IN.DATASET_LOADED, () => {});
+      conn.on(IN.MODEL_LOADED,   () => {});
+      conn.on(IN.SCENE_SNAPSHOT, (kw) => this._onSceneSnapshot(kw));
+      conn.on(IN.SCENE_PATCH,    (kw) => this._onScenePatch(kw));
+      conn.on(IN.COMMAND_RESULT, (kw) => this._onCommandResult(kw));
+      conn.on(IN.DIR_LISTING,    (kw) => this._browser.onDirListing(kw));
+      conn.on(IN.METRIC_CATALOG, (kw) => this._onMetricCatalog(kw));
+      conn.on(IN.METRICS_UPDATED, () => this._conn?.send(OUT.REQUEST_METRIC_CATALOG, {}));
+      conn.on(IN.SUBSET_EXPORTED, (kw) => this._sessionOps.onSubsetExported(kw));
+      // Session outcomes are named events now, not a guess from the next
+      // TASK_DONE — which resolved a pending save against an unrelated task's
+      // completion (ADR 0050).
+      conn.on(IN.SESSION_SAVED,  (kw) => this._sessionOps.onSessionResult('save', kw));
+      conn.on(IN.SESSION_LOADED, (kw) => this._sessionOps.onSessionResult('load', kw));
 
       await conn.connect();
       this._setupBroadcast(wsUrl);
@@ -353,7 +352,7 @@ export class FFastApp {
       document.getElementById('load-session-btn').disabled = !canMutate;
       this._renderObjects();
       // Fetch the analysis-tab layout (METRIC_CATALOG arrives via connect-replay).
-      conn.send('REQUEST_TAB_LAYOUT', {});
+      conn.send(OUT.REQUEST_TAB_LAYOUT, {});
 
     } catch (err) {
       this._conn = null;   // handshake failed — undo the early assignment above
@@ -397,8 +396,8 @@ export class FFastApp {
     document.getElementById('popout-btn').disabled = true;
     document.getElementById('frame-slider').disabled = true;
     for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = true;
-    this._closeFileBrowser();
-    this._closePathModal();
+    this._browser.close();
+    this._sessionOps.reset();
     this._setStatus('Disconnected', '');
   }
 
@@ -512,7 +511,7 @@ export class FFastApp {
     if (datasetChanged && this._lastOpenedDatasetFp) this._saveDatasetSettings(this._lastOpenedDatasetFp);
 
     this._currentViewId = 'view-0';
-    this._conn.send('OPEN_VIEW', {
+    this._conn.send(OUT.OPEN_VIEW, {
       view_id: this._currentViewId,
       dataset_ref: this._currentDatasetFp,
       prediction_ref: this._currentModelFp,   // null clears the force overlay
@@ -558,312 +557,6 @@ export class FFastApp {
     this._applyForceVectorsState(this._forcesState);
   }
 
-  // ── remote file browser ────────────────────────────────────────────────
-
-  _openFileBrowser(mode = 'dataset') {
-    if (!this._conn) return;
-    this._fbMode = mode;
-    const isPred = mode === 'prediction';
-    document.getElementById('fb-title').textContent = isPred ? 'Load Prediction' : 'Load Remote Dataset';
-    document.getElementById('fb-dataset-fields').style.display = isPred ? 'none' : '';
-    document.getElementById('fb-prediction-fields').style.display = isPred ? 'inline-flex' : 'none';
-    if (isPred) this._populatePredictionTargets();
-    document.getElementById('fb-modal').classList.remove('hidden');
-    this._fbSelected = null;
-    document.getElementById('fb-load').disabled = true;
-    // null path → server starts at its home directory
-    this._fbNavigate(this._fbPath || null);
-  }
-
-  _populatePredictionTargets() {
-    // A prediction is loaded *against* an already-loaded dataset.
-    const sel = document.getElementById('fb-target-ds');
-    sel.innerHTML = '';
-    for (const [fp, meta] of this._datasets) {
-      const opt = document.createElement('option');
-      opt.value = fp;
-      opt.textContent = `${meta.name || fp.slice(0,8)} (${meta.n} frames)`;
-      sel.appendChild(opt);
-    }
-    const dsFp = this._currentDatasetFp;
-    if (dsFp && this._datasets.has(dsFp)) sel.value = dsFp;
-    document.getElementById('fb-energy-key').innerHTML = '';
-    document.getElementById('fb-force-key').innerHTML = '';
-  }
-
-  _closeFileBrowser() {
-    document.getElementById('fb-modal').classList.add('hidden');
-  }
-
-  _fbNavigate(path) {
-    if (!this._conn) return;
-    this._fbSelected = null;
-    document.getElementById('fb-load').disabled = true;
-    // path travels as a positional arg; server reads args[0]
-    this._conn.send('LIST_DIR', {}, [path]);
-  }
-
-  _onDirListing(kw) {
-    if (kw.error) {
-      const err = document.getElementById('fb-error');
-      err.style.display = 'block';
-      err.textContent = kw.error;
-      document.getElementById('fb-list').innerHTML = '';
-      // keep the previous path so ↑ still works
-      document.getElementById('fb-path').value = kw.path || '';
-      return;
-    }
-    this._fbPath = kw.path;
-    this._fbParent = kw.parent;
-    if (kw.home) this._fbHome = kw.home;
-    document.getElementById('fb-error').style.display = 'none';
-    document.getElementById('fb-path').value = kw.path || '';
-    document.getElementById('fb-up').disabled = !kw.parent;
-    this._fbRender(kw.entries || []);
-  }
-
-  _fbRender(entries) {
-    const list = document.getElementById('fb-list');
-    list.innerHTML = '';
-    for (const e of entries) {
-      const row = document.createElement('div');
-      row.className = `fb-row ${e.is_dir ? 'dir' : 'file'}`;
-      const icon = document.createElement('span');
-      icon.className = 'icon';
-      icon.textContent = e.is_dir ? '📁' : '📄';
-      const name = document.createElement('span');
-      name.className = 'name';
-      name.textContent = e.name;
-      row.append(icon, name);
-      if (!e.is_dir) {
-        const size = document.createElement('span');
-        size.className = 'size';
-        size.textContent = this._fmtSize(e.size);
-        row.append(size);
-      }
-      if (e.is_dir) {
-        row.addEventListener('click', () => this._fbNavigate(this._fbJoin(this._fbPath, e.name)));
-      } else {
-        row.addEventListener('click', () => this._fbSelectFile(row, e.name));
-        row.addEventListener('dblclick', () => {
-          this._fbSelectFile(row, e.name);
-          if (!document.getElementById('fb-load').disabled) this._fbLoad();
-        });
-      }
-      list.appendChild(row);
-    }
-  }
-
-  _fbSelectFile(row, name) {
-    this._fbSelected = name;
-    for (const r of document.querySelectorAll('#fb-list .fb-row.selected')) r.classList.remove('selected');
-    row.classList.add('selected');
-    if (this._fbMode === 'prediction') {
-      // Probe the chosen file for the energy/force keys it actually contains.
-      const path = this._fbJoin(this._fbPath, name);
-      document.getElementById('fb-energy-key').innerHTML = '<option value="">…probing…</option>';
-      document.getElementById('fb-force-key').innerHTML = '<option value="">…probing…</option>';
-      // Server route requires (path, dataset_type); ASE auto-detect reads the keys.
-      this._conn.send('PROBE_DATASET_KEYS', {}, [path, 'ase (auto)']);
-    }
-    this._updateFbLoadEnabled();
-  }
-
-  _onDatasetKeys(path, kw) {
-    if (this._fbMode !== 'prediction') return;
-    // ASE's extxyz reader routes the standard `energy=`/`forces` columns into a
-    // SinglePointCalculator, not atoms.info/.arrays — so a plain MACE/DFT dump
-    // has empty key lists but has_calculator_*=true. Offer a "calculator"
-    // option whose value is the literal 'energy'/'forces' the loader already
-    // maps to the calculator (modules/loaders/aseDataset.py), so no named keys
-    // are needed to load such a prediction.
-    const fillKeys = (sel, keys, { allowNone = false, calc = false, calcValue }) => {
-      sel.innerHTML = '';
-      if (allowNone) {
-        const o = document.createElement('option');
-        o.value = ''; o.textContent = '— none —';
-        sel.appendChild(o);
-      }
-      if (calc) {
-        const o = document.createElement('option');
-        o.value = calcValue; o.textContent = 'calculator (built-in)';
-        sel.appendChild(o);
-      }
-      for (const k of (keys || [])) {
-        const o = document.createElement('option');
-        o.value = k; o.textContent = k;
-        sel.appendChild(o);
-      }
-    };
-    fillKeys(document.getElementById('fb-energy-key'), kw.energy_keys,
-             { allowNone: true, calc: kw.has_calculator_energy, calcValue: 'energy' });
-    fillKeys(document.getElementById('fb-force-key'), kw.force_keys,
-             { calc: kw.has_calculator_forces, calcValue: 'forces' });  // force required for arrows
-    if (kw.error) this._setStatus(`Probe error: ${kw.error}`, 'error');
-    this._updateFbLoadEnabled();
-  }
-
-  _updateFbLoadEnabled() {
-    const btn = document.getElementById('fb-load');
-    if (!this._fbSelected) { btn.disabled = true; return; }
-    if (this._fbMode === 'prediction') {
-      const fKey = document.getElementById('fb-force-key').value;
-      const tgt = document.getElementById('fb-target-ds').value;
-      btn.disabled = !(fKey && tgt);
-    } else {
-      btn.disabled = false;
-    }
-  }
-
-  _fbLoad() {
-    if (!this._conn || !this._fbSelected) return;
-    const path = this._fbJoin(this._fbPath, this._fbSelected);
-    if (this._fbMode === 'prediction') {
-      const dsFp = document.getElementById('fb-target-ds').value;
-      const eKey = document.getElementById('fb-energy-key').value || null;
-      const fKey = document.getElementById('fb-force-key').value || null;
-      if (!dsFp || !fKey) return;
-      // LOAD_PREDICTION reads args=[path, dataset_fp] + key kwargs; on success
-      // the server fires REMOTE_MODEL_META → _onModelMeta selects it.
-      this._conn.send('LOAD_PREDICTION',
-        { selected_energy_key: eKey, selected_force_key: fKey },
-        [path, dsFp]);
-      this._setStatus(`Loading prediction ${this._fbSelected}…`, 'connected');
-    } else {
-      const typ = document.getElementById('fb-type').value;
-      // LOAD_DATASET reads args=[path, datasetType]; "ase (auto)" auto-detects keys
-      this._conn.send('LOAD_DATASET', {}, [path, typ]);
-      this._setStatus(`Loading ${this._fbSelected}…`, 'connected');
-    }
-    this._closeFileBrowser();
-  }
-
-  _fbJoin(dir, name) {
-    if (!dir) return name;
-    return dir.endsWith('/') ? dir + name : dir + '/' + name;
-  }
-
-  _fmtSize(bytes) {
-    if (!bytes) return '';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    let i = 0, n = bytes;
-    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-    return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)} ${units[i]}`;
-  }
-
-  // ── server-side path prompt (issues 20/21): session save/load and subset
-  // export all write on the server, which has no native file dialog reachable
-  // from the browser, so one small modal collects a path and dispatches to
-  // whichever action armed it. ────────────────────────────────────────────
-  _openPathModal({ title, okLabel, defaultValue = '', onConfirm }) {
-    this._pathModalConfirm = onConfirm;
-    document.getElementById('path-title').textContent = title;
-    document.getElementById('path-ok').textContent = okLabel;
-    document.getElementById('path-error').style.display = 'none';
-    const input = document.getElementById('path-input');
-    input.value = defaultValue;
-    document.getElementById('path-modal').classList.remove('hidden');
-    input.focus();
-    input.select();
-  }
-
-  _closePathModal() {
-    document.getElementById('path-modal').classList.add('hidden');
-    this._pathModalConfirm = null;
-  }
-
-  _confirmPathModal() {
-    const path = document.getElementById('path-input').value.trim();
-    if (!path) {
-      const err = document.getElementById('path-error');
-      err.textContent = 'Enter a path first';
-      err.style.display = 'block';
-      return;
-    }
-    const onConfirm = this._pathModalConfirm;
-    this._closePathModal();
-    onConfirm?.(path);
-  }
-
-  // ── save / load session (ADR 0045 issue 21) ─────────────────────────────
-  // Reuses the existing SAVE_SESSION/LOAD_SESSION control messages (Stage 5,
-  // client/environment.py requestSessionSave/Load) — session state is owned
-  // and written server-side exactly as the Qt client already does; this only
-  // adds the browser-side path prompt Qt's native save dialog provided.
-  _saveSession() {
-    if (!this._conn) return;
-    this._openPathModal({
-      title: 'Save Session',
-      okLabel: 'Save',
-      defaultValue: '~/ffast-session',
-      onConfirm: (path) => {
-        this._conn.send('SAVE_SESSION', { path });
-        this._pendingSessionOp = { kind: 'save', path };
-        this._setStatus(`Saving session to ${path}…`, 'connected');
-      },
-    });
-  }
-
-  _loadSession() {
-    if (!this._conn) return;
-    this._openPathModal({
-      title: 'Load Session',
-      okLabel: 'Load',
-      defaultValue: '~/ffast-session',
-      onConfirm: (path) => {
-        this._conn.send('LOAD_SESSION', { path });
-        this._pendingSessionOp = { kind: 'load', path };
-        this._setStatus(`Loading session from ${path}…`, 'connected');
-      },
-    });
-  }
-
-  /** @param {boolean} ok */
-  _resolveSessionOp(ok) {
-    const op = this._pendingSessionOp;
-    if (!op) return;   // this task wasn't a save/load (e.g. a dataset load)
-    this._pendingSessionOp = null;
-    const verb = op.kind === 'save' ? 'Saved' : 'Loaded';
-    if (ok) this._setStatus(`${verb} session ${op.kind === 'save' ? 'to' : 'from'} ${op.path}`, 'connected');
-    else this._setStatus(`Session ${op.kind} failed for ${op.path}`, 'error');
-  }
-
-  // ── PNG export (issue 19) ────────────────────────────────────────────────
-  /** @param {{transparent: boolean, background: string}} opts */
-  _exportPng({ transparent, background }) {
-    const url = this._renderer.capturePng({ transparent, background });
-    const name = (this._datasets.get(this._currentDatasetFp)?.name || 'ffast')
-      .replace(/[^\w.-]+/g, '_');
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${name}_${transparent ? 'transparent' : 'opaque'}.png`;
-    a.click();
-    this._setStatus('PNG exported', 'connected');
-  }
-
-  // ── subset export to extxyz (issue 20) ──────────────────────────────────
-  // The currently-selected object-rail dataset — a pick-derived
-  // AtomFilteredDataset, a plot-derived SubDataset, or any loaded dataset —
-  // is written server-side; EXPORT_SUBSET/SUBSET_EXPORTED report the result.
-  _exportSelectedDataset() {
-    if (!this._conn || !this._currentDatasetFp) return;
-    const meta = this._datasets.get(this._currentDatasetFp);
-    const base = (meta?.name || 'subset').replace(/[^\w.-]+/g, '_');
-    this._openPathModal({
-      title: 'Export Subset (extxyz)',
-      okLabel: 'Export',
-      defaultValue: `~/${base}.extxyz`,
-      onConfirm: (path) => {
-        this._conn.send('EXPORT_SUBSET', { fingerprint: this._currentDatasetFp, path });
-        this._setStatus(`Exporting to ${path}…`, 'connected');
-      },
-    });
-  }
-
-  _onSubsetExported(kw) {
-    if (kw.ok) this._setStatus(`Exported ${kw.n} structure(s) → ${kw.path}`, 'connected');
-    else this._setStatus(`Export failed: ${kw.error}`, 'error');
-  }
 
   /** @param {import('./protocol.js').SceneSnapshotKwargs} kw */
   _onSceneSnapshot(kw) {
@@ -926,7 +619,7 @@ export class FFastApp {
   // optimistically advance it; COMMAND_RESULT/SCENE_PATCH resync it above.
   _sendViewCommand(fields) {
     if (!this._conn || !this._currentViewId) return;
-    this._conn.send('VIEW_COMMAND', { view_id: this._currentViewId, view_version: this._viewVersion, ...fields });
+    this._conn.send(OUT.VIEW_COMMAND, { view_id: this._currentViewId, view_version: this._viewVersion, ...fields });
     this._viewVersion++;
   }
 
@@ -1060,7 +753,7 @@ export class FFastApp {
    * them and announces the new AtomFilteredDataset via REMOTE_DATASET_META. */
   _sendCreateSubset(tokens) {
     if (!this._conn || !this._currentDatasetFp) return;
-    this._conn.send('CREATE_SUBSET', {
+    this._conn.send(OUT.CREATE_SUBSET, {
       parent_fingerprint: this._currentDatasetFp,
       indices: tokens,
     });
@@ -1074,7 +767,7 @@ export class FFastApp {
    * @param {{parentFp: string, modelFp: string|null, indices: number[], name: string}} o */
   _sendDeclareSubset(o) {
     if (!this._conn || !o.parentFp || !o.indices.length) return;
-    this._conn.send('DECLARE_SUBSET', {
+    this._conn.send(OUT.DECLARE_SUBSET, {
       parent_fingerprint: o.parentFp,
       indices: o.indices,
       model_fp: o.modelFp,
@@ -1168,7 +861,7 @@ export class FFastApp {
 
   _sendSetFrame(frame) {
     if (!this._conn || !this._currentViewId) return;
-    this._conn.send('VIEW_COMMAND', {
+    this._conn.send(OUT.VIEW_COMMAND, {
       type: 'SET_FRAME',
       view_id: this._currentViewId,
       view_version: 0,  // server applies SET_FRAME without version check
@@ -1308,7 +1001,7 @@ export class FFastApp {
     if (!this._conn || !this._currentViewId) return;
     clearTimeout(this._cameraThrottle);
     this._cameraThrottle = setTimeout(() => {
-      this._conn.send('VIEW_COMMAND', {
+      this._conn.send(OUT.VIEW_COMMAND, {
         type: 'SET_CAMERA',
         view_id: this._currentViewId,
         camera: cam,

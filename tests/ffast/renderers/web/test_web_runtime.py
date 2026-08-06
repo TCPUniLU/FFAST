@@ -962,9 +962,10 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
                 await page.locator("#path-input").fill(str(session_dir))
                 await page.locator("#path-ok").click()
 
-                # TASK_DONE resolves the pending save op to a status message
-                # (issue 21's completion signal — save() has already returned
-                # and written info.json by the time this fires).
+                # SESSION_SAVED carries {ok, path} and is what produces this
+                # status (ADR 0050). It replaced inferring completion from the
+                # next TASK_DONE, which names no operation — so an unrelated
+                # task finishing first reported itself as the save.
                 await expect(page.locator("#status")).to_contain_text("Saved session", timeout=15000)
                 assert (session_dir / "info.json").exists()
             finally:

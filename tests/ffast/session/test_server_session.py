@@ -11,6 +11,7 @@ The S2b argument-resolution rule (``_resolve``) is a pure staticmethod and so te
 with no env, queue, or event loop at all.
 """
 import asyncio
+import os
 from unittest.mock import patch
 
 import numpy as np
@@ -854,3 +855,131 @@ def test_dispatch_export_subset_respects_explicit_format(tmp_path):
         unpack(_run(scenario()))
 
     uniform.assert_called_once_with(ds, str(target), "xyz")
+
+
+# ── session save/load acks (ADR 0050) ─────────────────────────────────────────
+#
+# SAVE_SESSION / LOAD_SESSION run in a task, and TASK_DONE carries only a task
+# id that the requesting client never learns. A client therefore could not tell
+# its own save's completion from an unrelated dataset load's, and the web client
+# resolved whichever finished first as its own — reporting "Saved session" for a
+# dataset load. SESSION_SAVED / SESSION_LOADED name the operation and its path.
+
+class _RecordingPersistence:
+    """Persistence double: records calls and can be made to fail."""
+
+    def __init__(self, error=None):
+        self.saved = []
+        self.loaded = []
+        self._error = error
+
+    def save(self, path, taskID=None):
+        self.saved.append(path)
+        if self._error:
+            raise RuntimeError(self._error)
+
+    def load(self, path, taskID=None):
+        self.loaded.append(path)
+        if self._error:
+            raise RuntimeError(self._error)
+
+
+class _InlineTaskEnv(_FakeEnv):
+    """Runs queued tasks immediately, so the ack is observable in one step.
+
+    The real TaskManager runs the body on a worker thread; the handler's ack is
+    handed back to the loop with ``call_soon_threadsafe``, which works the same
+    way when the caller is already on the loop.
+    """
+
+    def __init__(self, persistence):
+        super().__init__()
+        self.persistence = persistence
+        self.task_names = []
+
+    def newTask(self, func, args=(), kwargs=None, visual=False, name=None,
+                threaded=False, **_):
+        self.task_names.append(name)
+        try:
+            func(*args, **(kwargs or {}), taskID="t1")
+        except Exception:
+            pass          # the real TaskManager logs and moves on
+
+
+async def _drain(session):
+    """Let queued call_soon_threadsafe callbacks run, then read the queue."""
+    await asyncio.sleep(0)
+    out = []
+    while not session.outbound.empty():
+        out.append(unpack(session.outbound.get_nowait()))
+    return out
+
+
+def test_save_session_acks_with_the_resolved_path():
+    persistence = _RecordingPersistence()
+    env = _InlineTaskEnv(persistence)
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("SAVE_SESSION", [], {"path": "~/sess"})
+        return s, await _drain(s)
+
+    s, messages = _run(scenario())
+
+    assert len(persistence.saved) == 1
+    saved_path = persistence.saved[0]
+    assert os.path.isabs(saved_path), "the ~ must be expanded server-side"
+
+    event, args, kwargs = messages[0]
+    assert event == control.SESSION_SAVED
+    assert kwargs == {"ok": True, "path": saved_path, "error": None}
+
+
+def test_load_session_acks_with_the_resolved_path():
+    persistence = _RecordingPersistence()
+    env = _InlineTaskEnv(persistence)
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("LOAD_SESSION", [], {"path": "~/sess"})
+        return s, await _drain(s)
+
+    s, messages = _run(scenario())
+
+    assert len(persistence.loaded) == 1
+    event, args, kwargs = messages[0]
+    assert event == control.SESSION_LOADED
+    assert kwargs["ok"] is True
+    assert kwargs["path"] == persistence.loaded[0]
+
+
+def test_failed_save_acks_not_ok_with_the_reason():
+    """A failure has to reach the client: the replaced TASK_DONE guess could
+    only ever report ok/not-ok, never why."""
+    env = _InlineTaskEnv(_RecordingPersistence(error="disk full"))
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("SAVE_SESSION", [], {"path": "/tmp/sess"})
+        return s, await _drain(s)
+
+    _, messages = _run(scenario())
+
+    event, _, kwargs = messages[0]
+    assert event == control.SESSION_SAVED
+    assert kwargs["ok"] is False
+    assert "disk full" in kwargs["error"]
+
+
+def test_session_tasks_keep_their_desktop_visible_names():
+    """The desktop Tasks panel shows these strings; the ack did not replace the
+    task, so they must not have changed."""
+    env = _InlineTaskEnv(_RecordingPersistence())
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("SAVE_SESSION", [], {"path": "/tmp/a"})
+        await s.dispatch("LOAD_SESSION", [], {"path": "/tmp/a"})
+
+    _run(scenario())
+    assert env.task_names == ["Saving session", "Loading save"]

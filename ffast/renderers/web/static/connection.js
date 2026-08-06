@@ -1,6 +1,8 @@
 /**
  * WebSocket connection with HELLO handshake.
  */
+import { OUT } from './events.js';
+
 
 import { msgpack } from './msgpack.js';
 
@@ -127,7 +129,7 @@ export class FFastConnection {
   off(event)           { this._handlers.delete(event); }
 
   close() {
-    this.send('GRACEFUL_DISCONNECT', {});
+    this.send(OUT.GRACEFUL_DISCONNECT, {});
     this._ws?.close();
   }
 }

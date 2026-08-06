@@ -901,20 +901,60 @@ class ServerSession:
         # The web client's path prompt may send "~/…" or a relative path
         # (it has no server file dialog), so expand it here — a no-op on the
         # absolute paths the Qt file dialog produces (ADR 0045 Phase 4).
-        import os
-        path = os.path.abspath(os.path.expanduser(path))
-        self.env.newTask(
-            self.env.persistence.save, args=(path,), visual=True,
-            name="Saving session", threaded=True,
-        )
+        self._queue_session_op("save", path)
 
     async def _on_load_session(self, path, **kwargs) -> None:
         # Server restores its Environment (datasets in-process + prediction
         # cache); DATASET_LOADED / MODEL_LOADED subscribers announce them to the
         # client via REMOTE_DATASET_META / REMOTE_MODEL_META.
+        self._queue_session_op("load", path)
+
+    def _queue_session_op(self, kind: str, path: str) -> None:
+        """Queue a session save/load and announce its outcome when it finishes.
+
+        The task stays (``visual=True``, so both clients keep their Tasks-panel
+        entry) but its completion is now also reported as ``SESSION_SAVED`` /
+        ``SESSION_LOADED`` carrying ``{ok, path, error}`` — ADR 0050.
+        ``TASK_DONE`` carries only a task id, and a client never learns which id
+        its own request produced, so a browser waiting on a save could not tell
+        its completion from an unrelated dataset load's and reported whichever
+        task finished first as its own.
+
+        The work runs in a task worker thread, so the ack is handed back to this
+        session's event loop rather than enqueued directly — ``asyncio.Queue``
+        is not thread-safe.
+        """
         import os
+
+        loop = asyncio.get_running_loop()
         path = os.path.abspath(os.path.expanduser(path))
-        self.env.persistence.taskLoad(path)
+        saving = kind == "save"
+        event = control.SESSION_SAVED if saving else control.SESSION_LOADED
+        run = self.env.persistence.save if saving else self.env.persistence.load
+
+        def _work(taskID=None):
+            try:
+                run(path, taskID=taskID)
+            except Exception as exc:
+                logger.warning("%s session failed for %r: %s", kind, path, exc)
+                self._ack_from_thread(loop, event, False, path, error=str(exc))
+                raise
+            self._ack_from_thread(loop, event, True, path)
+
+        self.env.newTask(
+            _work,
+            visual=True,
+            # Unchanged task names: the desktop Tasks panel shows these strings.
+            name="Saving session" if saving else "Loading save",
+            threaded=True,
+        )
+
+    def _ack_from_thread(self, loop, event, ok, path, error=None) -> None:
+        """Hand a session-op ack from a task worker thread onto ``loop``."""
+        from ffast.protocol.rpc import pack
+
+        data = pack(event, (), {"ok": bool(ok), "path": path, "error": error})
+        loop.call_soon_threadsafe(self._emit_or_drop, data, f"session ack {event}")
 
     async def _on_export_subset(self, fingerprint, path, **kwargs) -> None:
         """Write a dataset out to an extxyz server-side (ADR 0045 issue 20).

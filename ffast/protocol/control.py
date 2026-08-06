@@ -100,3 +100,13 @@ TAB_LAYOUT = "TAB_LAYOUT"
 # written path (or an error) so the browser can confirm the export. Only the
 # web client asks for it, so it stays out of REPLY_EVENTS.
 SUBSET_EXPORTED = "SUBSET_EXPORTED"
+# Outcome of SAVE_SESSION / LOAD_SESSION (ADR 0050). Same shape as
+# SUBSET_EXPORTED — {ok, path, error} — and for the same reason: the session
+# write happens in a task, and TASK_DONE carries only a task id that the
+# requesting client never learns, so a client waiting on its own save could not
+# distinguish its completion from an unrelated dataset load's. These name the
+# operation and its path explicitly. One-shot announcements, so they stay out of
+# REPLY_EVENTS and out of SERVER_TO_CLIENT (emitted by the handler, not the
+# generic broadcast loop).
+SESSION_SAVED = "SESSION_SAVED"
+SESSION_LOADED = "SESSION_LOADED"
