@@ -315,13 +315,18 @@ export class MoleculeRenderer {
     if (!forces.starts || forces.starts.length === 0) return;
 
     const group = new THREE.Group();
-    const scale = 0.5; // visual scale factor for force vectors
+    // No local scale factor: `build_scene` already resolves arrow vectors to
+    // scene length units (FORCE_LENGTH_FACTOR and the normalising divisors in
+    // ffast/visualization/presentation.py). A renderer-side multiplier on top —
+    // this had 0.5 — made the browser draw every arrow at half the Loupe's
+    // length for the same scene, which is the presentation leak ADR 0052 closed
+    // for colour. The Loupe is the reference: it draws `starts + vectors`.
     for (let i = 0; i < forces.starts.length; i++) {
       const [ox, oy, oz] = forces.starts[i];
       const [vx, vy, vz] = forces.vectors[i];
       // One RGBA per arrow is a ForceScene invariant (ADR 0052) — no local default.
       const [cr, cg, cb] = forces.colors[i];
-      const len = Math.sqrt(vx*vx + vy*vy + vz*vz) * scale;
+      const len = Math.sqrt(vx*vx + vy*vy + vz*vz);
       if (len < 0.001) continue;
       const dir = new THREE.Vector3(vx, vy, vz).normalize();
       const origin = new THREE.Vector3(ox, oy, oz);

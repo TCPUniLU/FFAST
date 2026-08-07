@@ -27,6 +27,9 @@ class _FakeAdapter:
         self.rect_calls += 1
         return [0, 1, 2]
 
+    def pick_at(self, pos, radius=None):
+        return 0                 # a hit on the first displayed atom
+
     def displayed_to_atom_id(self, i):
         return int(i) + 100      # a distinct id space, as under a filter
 
@@ -50,8 +53,14 @@ class _FakeWidget:
     def addSelectedAtoms(self, atom_ids, refresh=False):
         self.selected.extend(atom_ids)
 
+    def addSelectedAtom(self, atom_id, refresh=False):
+        self.selected.append(atom_id)
+
     def hideSelectionRectangle(self):
         self.rectangleHidden += 1
+
+    def _pickRadius(self):
+        return 12
 
 
 class _Event:
@@ -157,3 +166,55 @@ def test_the_select_indices_field_can_still_clear_the_selection():
         "scope": "current_structure",
         "indices": [],
     }]
+
+
+# ── the rubber band only starts when it can select ──────────────────────────
+
+class _PressEvent:
+    button = 1
+    pos = (40.0, 40.0)
+
+    def __init__(self, ctrl=True):
+        from vispy.util import keys
+        self.modifiers = (keys.CONTROL,) if ctrl else ()
+
+
+def _pressed(*, tool_armed, rect_capable=True, ctrl=True):
+    from UI.loupe.canvas import SceneCanvas
+    c = SceneCanvas.__new__(SceneCanvas)
+    c.widget = _FakeWidget()
+    c.isCtrlDragging = False
+    c.draggingStart = (0.0, 0.0)
+    c.mouseClickActive = tool_armed
+    c.rectangleSelectActive = tool_armed and rect_capable
+    c.on_mouse_press(_PressEvent(ctrl=ctrl))
+    return c
+
+
+def test_unarmed_ctrl_drag_does_not_start_a_rubber_band():
+    """Drawing a box that selects nothing promises a selection it cannot make."""
+    assert _pressed(tool_armed=False).isCtrlDragging is False
+
+
+def test_armed_rect_tool_starts_a_rubber_band():
+    c = _pressed(tool_armed=True)
+    assert c.isCtrlDragging is True
+    assert c.draggingStart == (40.0, 40.0)
+
+
+def test_a_tool_without_rectangle_select_starts_no_band():
+    """`rectangleSelectActive` mirrors the tool's own `rectangleSelect` flag."""
+    assert _pressed(tool_armed=True, rect_capable=False).isCtrlDragging is False
+
+
+def test_ctrl_never_picks_a_single_atom():
+    """Ctrl is the rubber-band modifier; it must not fall through to a pick."""
+    c = _pressed(tool_armed=True, rect_capable=False)
+    assert c.widget.selected == []
+
+
+def test_a_plain_click_with_a_tool_armed_still_picks():
+    """The unmodified click path is untouched."""
+    c = _pressed(tool_armed=True, ctrl=False)
+    assert c.isCtrlDragging is False
+    assert c.widget.selected == [100]     # displayed 0 → atom id 100

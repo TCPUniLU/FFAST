@@ -54,8 +54,14 @@ class SceneCanvas(scene.SceneCanvas):
         if event.button != 1:
             return
         if keys.CONTROL in event.modifiers:
-            self.isCtrlDragging = True
-            self.draggingStart = event.pos
+            # Only begin a rubber band that can actually select something. An
+            # unarmed Ctrl+drag used to draw the box anyway and commit a
+            # server-owned selection with no gesture that could clear it; now
+            # that it selects nothing, drawing the box would promise a
+            # selection it cannot make. Ctrl still never picks a single atom.
+            if self.mouseClickActive and self.rectangleSelectActive:
+                self.isCtrlDragging = True
+                self.draggingStart = event.pos
         elif self.mouseClickActive:
             # Atom select tool active: ray-cast → tool, not server selection.
             displayed = self.widget.sceneAdapter.pick_at(event.pos, radius=self.widget._pickRadius())
