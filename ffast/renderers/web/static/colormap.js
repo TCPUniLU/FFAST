@@ -85,3 +85,36 @@ export function mapColorBy(colorBy) {
   }
   return out;
 }
+
+/**
+ * CSS colour-stop list for a `linear-gradient(...)` colourbar, derived from the
+ * same stops `mapColorBy` draws atoms with.
+ *
+ * The colourbar used to carry its own hand-written hex table in
+ * `panes/colorby.js` — the true matplotlib hexes, while the atoms were drawn
+ * from the compact approximations above, so the bar and the molecule disagreed
+ * on what a value looked like. One table means the bar cannot drift from the
+ * atoms (ADR 0052).
+ *
+ * Unknown names fall back to viridis, matching `setColorBy`'s old behaviour —
+ * a missing colourbar is worse than a wrong-palette one.
+ * @param {string} colormap
+ * @returns {string}
+ */
+export function gradientCss(colormap) {
+  const stops = COLORMAP_STOPS[colormap] || COLORMAP_STOPS.viridis;
+  return stops.map(rgbToHex).join(', ');
+}
+
+/**
+ * `[r, g, b]` (0..1 each) → `#rrggbb`. Hex rather than `rgb(...)` so a stop
+ * never contains the `, ` that separates stops.
+ * @param {number[]} rgb
+ * @returns {string}
+ */
+export function rgbToHex([r, g, b]) {
+  return '#' + [r, g, b].map((v) => {
+    const byte = Math.max(0, Math.min(255, Math.round(v * 255)));
+    return byte.toString(16).padStart(2, '0');
+  }).join('');
+}

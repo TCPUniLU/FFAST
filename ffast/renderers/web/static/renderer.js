@@ -319,7 +319,8 @@ export class MoleculeRenderer {
     for (let i = 0; i < forces.starts.length; i++) {
       const [ox, oy, oz] = forces.starts[i];
       const [vx, vy, vz] = forces.vectors[i];
-      const [cr, cg, cb] = forces.colors[i] || [0.9, 0.4, 0.1];
+      // One RGBA per arrow is a ForceScene invariant (ADR 0052) — no local default.
+      const [cr, cg, cb] = forces.colors[i];
       const len = Math.sqrt(vx*vx + vy*vy + vz*vz) * scale;
       if (len < 0.001) continue;
       const dir = new THREE.Vector3(vx, vy, vz).normalize();

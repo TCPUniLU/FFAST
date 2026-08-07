@@ -284,10 +284,19 @@ class VispySceneAdapter:
                 self._force_mesh.visible = False
             return
         try:
-            from ffast.visualization.stages.builtin.force_stages import _arrow_mesh
+            from ffast.renderers.vispy.arrow_mesh import arrow_mesh
             starts = np.array(forces.starts, dtype=np.float64)
             ends = starts + np.array(forces.vectors, dtype=np.float64)
-            verts, faces = _arrow_mesh(starts, ends)
+            verts, faces, arrow_index = arrow_mesh(starts, ends)
+            # Colour from the scene, never from a literal of our own (ADR 0052).
+            # ForceScene guarantees one RGBA per arrow, and arrow_index carries
+            # the caller-side arrow per vertex, so a dropped zero-length arrow
+            # cannot shift the mapping.
+            vertex_colors = (
+                np.asarray(forces.colors, dtype=np.float32)[arrow_index]
+                if verts is not None
+                else None
+            )
         except Exception as exc:
             logger.debug("VispySceneAdapter: force arrow mesh failed: %s", exc)
             if self._force_mesh is not None:
@@ -305,11 +314,13 @@ class VispySceneAdapter:
                 vertices=verts,
                 faces=faces,
                 parent=self._parent,
-                color=(0.9, 0.4, 0.1, 0.8),
+                vertex_colors=vertex_colors,
                 shading="smooth",
             )
         else:
-            self._force_mesh.set_data(vertices=verts, faces=faces)
+            self._force_mesh.set_data(
+                vertices=verts, faces=faces, vertex_colors=vertex_colors
+            )
         self._force_mesh.visible = True
 
     # ── labels ────────────────────────────────────────────────────────────────

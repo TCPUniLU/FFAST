@@ -1,3 +1,17 @@
+"""Batched arrow tessellation for the Vispy adapter (ADR 0052).
+
+This was ``_arrow_mesh`` in ``ffast/visualization/stages/builtin/force_stages.py``.
+ADR 0049 deleted the ``ffast.force_arrows`` stage that file existed to register,
+leaving it as 133 lines of private helpers inside the stage package — which the
+Vispy adapter then reached into by private import, across the seam ADR 0014 says
+the adapter must consume only ``scene.py`` through.
+
+Vispy needs a triangle mesh because it has no instanced-arrow visual; the web
+renderer builds its arrows in Three.js. There is no second consumer to share
+with, so the tessellation lives beside its one renderer and is public. Pure
+numpy — no Vispy import, so it is testable without a GL context.
+"""
+
 from __future__ import annotations
 
 import numpy as np
@@ -46,10 +60,19 @@ def _batch_rotation_z_to(U: np.ndarray) -> np.ndarray:
     return R
 
 
-def _arrow_mesh(starts: np.ndarray, ends: np.ndarray) -> tuple[np.ndarray, np.ndarray] | tuple[None, None]:
+def arrow_mesh(
+    starts: np.ndarray, ends: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | tuple[None, None, None]:
     """Batched cylinder+cone mesh for a set of arrows.
 
-    Returns (vertices (V,3), faces (F,3)) or (None, None) when all arrows are zero-length.
+    Returns ``(vertices (V,3), faces (F,3), arrow_index (V,))``, or
+    ``(None, None, None)`` when every arrow is zero-length.
+
+    ``arrow_index[v]`` is the index of the arrow vertex ``v`` belongs to **in the
+    caller's arrays**, not in the tessellated subset: zero-length arrows are
+    skipped, so the two numberings differ as soon as one is dropped. It is the
+    caller's means of colouring per arrow — ``np.asarray(colors)[arrow_index]``
+    gives the vertex colours for ``ForceScene.colors``.
     """
     n = _N_SEGMENTS
     angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
@@ -86,7 +109,7 @@ def _arrow_mesh(starts: np.ndarray, ends: np.ndarray) -> tuple[np.ndarray, np.nd
     lengths = np.linalg.norm(D, axis=1)
     mask = lengths > 1e-10
     if not np.any(mask):
-        return None, None
+        return None, None, None
 
     S = starts[mask]
     D = D[mask]
@@ -130,4 +153,14 @@ def _arrow_mesh(starts: np.ndarray, ends: np.ndarray) -> tuple[np.ndarray, np.nd
         (cap_faces[None] + bc_off).reshape(-1, 3),
     ])
 
-    return all_verts, all_faces
+    # Vertex → caller-side arrow, in the same block order as the vstack above:
+    # shaft (2n per arrow), shaft cap (n+1), cone (n+1), cone cap (n+1).
+    original = np.flatnonzero(mask)
+    arrow_index = np.concatenate([
+        np.repeat(original, 2 * n),
+        np.repeat(original, n + 1),
+        np.repeat(original, n + 1),
+        np.repeat(original, n + 1),
+    ])
+
+    return all_verts, all_faces, arrow_index

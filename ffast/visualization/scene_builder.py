@@ -15,6 +15,17 @@ from typing import Any, Callable
 import numpy as np
 
 from ffast.visualization.models import VisualizationState
+from ffast.visualization.presentation import (
+    FORCE_ARROW_COLOR,
+    FORCE_LENGTH_FACTOR,
+    FORCE_NORMALISED,
+    FORCE_NORMALISED_DIVISOR,
+    FORCE_RAW_DIVISOR,
+    LABEL_COLOR,
+    NEUTRAL_ATOM_COLOR,
+    NEUTRAL_ATOM_SIZE,
+    SELECTION_OVERLAY_COLOR,
+)
 from ffast.visualization.scene import (
     AtomColorBy,
     AtomScene,
@@ -128,8 +139,8 @@ def build_scene(
         logger.warning("scene_builder: atom stages failed: %s", exc)
         positions = _apply_transforms(raw_positions, transforms)
         n_atoms = len(positions)
-        sizes = [0.5] * n_atoms
-        colors = [[0.7, 0.7, 0.7, 1.0]] * n_atoms
+        sizes = [NEUTRAL_ATOM_SIZE] * n_atoms
+        colors = [list(NEUTRAL_ATOM_COLOR)] * n_atoms
 
     # Labels anchor to the FULL transformed positions; the atom filter below
     # trims them alongside atoms. Isolated from the block above so a label
@@ -222,13 +233,10 @@ def build_scene(
             # Keep original-index text ("3","5",…) at the surviving atoms.
             label_positions = label_positions[keep]
             texts = [t for t, k in zip(texts, keep) if k]
-        # Black for parity with the legacy loupeIndices text on the light
-        # loupe background. Label color/size should become a presentation
-        # parameter (see ADR 0014 labels parity follow-up).
         scene.labels = LabelScene(
             positions=label_positions.tolist(),
             texts=texts,
-            colors=[[0.0, 0.0, 0.0, 1.0]] * len(texts),
+            colors=[list(LABEL_COLOR)] * len(texts),
         )
 
     # Bonds. Topology is dynamic (distance-based) unless the view selects an
@@ -338,7 +346,7 @@ def build_scene(
             SelectionOverlay(
                 name=sel.name,
                 atom_indices=idxs,
-                color=[1.0, 1.0, 0.0, 1.0],
+                color=list(SELECTION_OVERLAY_COLOR),
             )
         )
     scene.selections = overlays
@@ -407,16 +415,16 @@ def _build_force_scene(
             forces = forces @ transform
 
     if params:
-        length = float(params.get("length_factor", 10))
-        normalised = bool(params.get("normalised", True))
+        length = float(params.get("length_factor", FORCE_LENGTH_FACTOR))
+        normalised = bool(params.get("normalised", FORCE_NORMALISED))
         norms = np.linalg.norm(forces, axis=1)
         max_norm = float(norms.max()) if len(norms) else 0.0
         if normalised and max_norm > 1e-10:
-            forces = forces / max_norm * length / 5
+            forces = forces / max_norm * length / FORCE_NORMALISED_DIVISOR
         else:
-            forces = forces * length / 500
+            forces = forces * length / FORCE_RAW_DIVISOR
 
-    colors = [[0.9, 0.4, 0.1, 0.8]] * len(force_positions)
+    colors = [list(FORCE_ARROW_COLOR)] * len(force_positions)
     return ForceScene(
         starts=force_positions.tolist(),
         vectors=forces.tolist(),

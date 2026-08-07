@@ -534,3 +534,87 @@ class TestColorMapping:
         assert adapter._color_by is not None
         adapter.apply_patch(_make_patch(["atoms"], atoms=None))
         assert adapter._color_by is None
+
+
+# ── force arrow colours come from the scene (ADR 0052) ──────────────────────
+
+class TestForceArrowColors:
+    """The adapter used to hardcode ``color=(0.9, 0.4, 0.1, 0.8)`` — the same
+    RGBA ``build_scene`` had already put in ``ForceScene.colors`` — and discard
+    the scene's copy. Presentation crossed the seam and was then ignored, so a
+    per-arrow colour was unreachable however the server set it.
+    """
+
+    def _adapter(self):
+        from ffast.renderers.vispy.adapter import VispySceneAdapter
+        return VispySceneAdapter(parent=_make_canvas_parent())
+
+    @staticmethod
+    def _forces(vectors, colors):
+        from ffast.visualization.scene import ForceScene
+        return ForceScene(
+            starts=[[0.0, 0.0, 0.0]] * len(vectors),
+            vectors=vectors,
+            colors=colors,
+        )
+
+    def _vertex_colors(self, adapter):
+        return np.asarray(adapter._force_mesh.mesh_data.get_vertex_colors())
+
+    def test_scene_color_reaches_the_mesh(self):
+        adapter = self._adapter()
+        adapter.apply_snapshot(_make_snapshot(
+            forces=self._forces([[1.0, 0, 0]], [[0.0, 0.25, 0.75, 0.5]])
+        ))
+        vc = self._vertex_colors(adapter)
+        assert np.allclose(vc, [0.0, 0.25, 0.75, 0.5])
+
+    def test_the_default_matches_the_shared_constant(self):
+        """No second copy of the orange: what build_scene ships is what is drawn."""
+        from ffast.visualization.presentation import FORCE_ARROW_COLOR
+        adapter = self._adapter()
+        adapter.apply_snapshot(_make_snapshot(
+            forces=self._forces([[1.0, 0, 0]], [list(FORCE_ARROW_COLOR)])
+        ))
+        assert np.allclose(self._vertex_colors(adapter), FORCE_ARROW_COLOR)
+
+    def test_per_arrow_colors_are_kept_distinct(self):
+        adapter = self._adapter()
+        adapter.apply_snapshot(_make_snapshot(forces=self._forces(
+            [[1.0, 0, 0], [0.0, 1.0, 0]],
+            [[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
+        )))
+        vc = self._vertex_colors(adapter)
+        assert {tuple(c) for c in np.unique(vc, axis=0)} == {
+            (1.0, 0.0, 0.0, 1.0), (0.0, 0.0, 1.0, 1.0)
+        }
+
+    def test_a_dropped_zero_length_arrow_does_not_shift_colors(self):
+        """Zero-length arrows are not tessellated. Colouring by the tessellated
+        position instead of the original index would paint arrow 1 with arrow
+        0's colour.
+        """
+        adapter = self._adapter()
+        adapter.apply_snapshot(_make_snapshot(forces=self._forces(
+            [[0.0, 0.0, 0.0], [1.0, 0, 0]],          # arrow 0 dropped
+            [[1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0]],
+        )))
+        vc = self._vertex_colors(adapter)
+        assert np.allclose(vc, [0.0, 0.0, 1.0, 1.0])   # arrow 1's colour only
+
+    def test_a_short_color_array_is_rejected_by_the_scene_not_the_renderer(self):
+        """The adapter needs no fallback: one RGBA per arrow is a ForceScene
+        invariant, so a short list cannot reach a renderer to be guarded against.
+        """
+        with pytest.raises(Exception, match="colors for"):
+            self._forces([[1.0, 0, 0], [0.0, 1.0, 0]], [[1.0, 0.0, 0.0, 1.0]])
+
+    def test_colors_update_on_a_patch(self):
+        adapter = self._adapter()
+        adapter.apply_snapshot(_make_snapshot(
+            forces=self._forces([[1.0, 0, 0]], [[1.0, 0.0, 0.0, 1.0]])
+        ))
+        adapter.apply_patch(_make_patch(
+            ["forces"], forces=self._forces([[1.0, 0, 0]], [[0.0, 1.0, 0.0, 1.0]])
+        ))
+        assert np.allclose(self._vertex_colors(adapter), [0.0, 1.0, 0.0, 1.0])

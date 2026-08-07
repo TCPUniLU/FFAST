@@ -82,7 +82,9 @@ renderer is now the single home for that calculation.
   raised, resolved by removal rather than by imported constants).
 - Deleted the six production-dead stages and the tests covering them: 25 pytest cases plus 6 inline
   declarative cases. `_arrow_mesh` is kept — `ffast/renderers/vispy/adapter.py` imports it, and that
-  cross-seam private import is candidate #07's business, not this one.
+  cross-seam private import is candidate #07's business, not this one. (Closed by ADR 0052: it moved
+  to `ffast/renderers/vispy/arrow_mesh.py` and `force_stages.py` — which registered nothing after
+  this ADR — is deleted.)
 - Added `StageRegistry.resolve_parameters`, with tests.
 - `test_builtin_stages_registered` now asserts the registered set *exactly*. It previously used
   `issubset`, which is why six dead stages sat in the catalog unnoticed; equality makes a

@@ -64,7 +64,7 @@ A renderer-neutral description of the molecular scene being inspected, including
 One open inspection surface for a molecular scene. Has its own Visualization State, identified independently from other open views so multiple viewers can inspect and tune the same data differently.
 
 ### Render Scene
-A backend-ready representation of a Visualization View: geometry buffers, colors, sizes, line segments, labels, camera parameters, and other drawing primitives derived from Visualization State.
+A backend-ready representation of a Visualization View: geometry buffers, colors, sizes, line segments, labels, camera parameters, and other drawing primitives derived from Visualization State. Baked colors are resolved server-side and are binding: a renderer draws the scene's RGBA and never substitutes a default of its own (ADR 0052). Value-driven coloring is the deliberate exception — under `color_by` the server ships scalar values plus a colormap name and each renderer maps them itself (ADR 0016). Default presentation values live in `ffast/visualization/presentation.py`.
 
 ### Visualization Pipeline
 The renderer-neutral derivation of a Render Scene from Visualization State, datasets, predictions, and cached analysis data. Composition is by ordinary call order in the Render Scene builder, not by a generic executor: ADR 0049 removed the executor after measuring that the live stage graph held a single stage-to-stage dependency, and that the stages most in need of orchestration (bonds, force arrows) could not cross it because they require conditional data fetching mid-derivation.

@@ -25,6 +25,7 @@ import asyncio
 import functools
 import http.server
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -76,6 +77,31 @@ CASES = {
     "safe_name_hostile": "so.safeName('my data/set:1.xyz')",
     "safe_name_empty": "so.safeName('///', 'subset')",
     "safe_name_missing": "so.safeName(null)",
+
+    # ── cm.gradientCss — the colourbar derives from the atoms' LUT (ADR 0052) ──
+    "grad_viridis": "cm.gradientCss('viridis')",
+    "grad_unknown": "cm.gradientCss('not_a_colormap')",
+    # Every colormap the colour-by pane offers must produce a bar.
+    "grad_all_offered": (
+        "['viridis','inferno','plasma','coolwarm','hot','bwr','force_error']"
+        ".map(n => cm.gradientCss(n).split(', ').length)"
+    ),
+    # The bar's stops, sampled through mapColorBy at the same fractions. Equal
+    # ⇒ bar and molecule cannot disagree about what a value looks like.
+    "grad_matches_mapped": (
+        "(() => {"
+        "  const out = {};"
+        "  for (const n of ['viridis','coolwarm','force_error','hot']) {"
+        "    const bar = cm.gradientCss(n).split(', ');"
+        "    const k = bar.length;"
+        "    const values = Array.from({length: k}, (_, i) => i / (k - 1));"
+        "    const mapped = cm.mapColorBy({values, colormap: n, vmin: 0, vmax: 1})"
+        "      .map(cm.rgbToHex);"
+        "    out[n] = JSON.stringify(bar) === JSON.stringify(mapped);"
+        "  }"
+        "  return out;"
+        "})()"
+    ),
 }
 
 
@@ -96,6 +122,7 @@ def results():
         "async () => {\n"
         f"  const rb = await import('{origin}/remote_browser.js');\n"
         f"  const so = await import('{origin}/session_ops.js');\n"
+        f"  const cm = await import('{origin}/colormap.js');\n"
         "  const out = {};\n"
         + "".join(
             f"  out[{json.dumps(name)}] = {expr};\n" for name, expr in CASES.items()
@@ -226,3 +253,33 @@ def test_safe_name_falls_back_when_nothing_survives(results):
 
 def test_safe_name_falls_back_on_a_missing_name(results):
     assert results["safe_name_missing"] == "ffast"
+
+
+# ── colormap.gradientCss (ADR 0052) ─────────────────────────────────────────
+
+def test_gradient_css_is_a_css_colour_stop_list(results):
+    stops = results["grad_viridis"].split(", ")
+    assert len(stops) > 1
+    assert all(re.fullmatch(r"#[0-9a-f]{6}", s) for s in stops)
+
+
+def test_gradient_css_falls_back_to_viridis(results):
+    """A missing colourbar is worse than a wrong-palette one — matches the
+    behaviour of the hand-written table this replaced."""
+    assert results["grad_unknown"] == results["grad_viridis"]
+
+
+def test_gradient_css_covers_every_colormap_the_pane_offers(results):
+    """The pane's dropdown and the LUT are separate lists; a name in one and
+    not the other silently drew a viridis bar for a non-viridis molecule."""
+    assert all(n > 1 for n in results["grad_all_offered"])
+
+
+def test_the_colourbar_matches_the_colours_the_atoms_get(results):
+    """The bar carried the true matplotlib hexes while atoms were drawn from
+    compact approximations, so the two disagreed about what a value looked
+    like. Deriving the bar from the same stops makes that impossible.
+    """
+    assert results["grad_matches_mapped"] == {
+        "viridis": True, "coolwarm": True, "force_error": True, "hot": True,
+    }

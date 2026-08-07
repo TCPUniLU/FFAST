@@ -12,6 +12,7 @@
  */
 
 import { createPane, selectRow, row, rowElement } from '../sidebar.js';
+import { gradientCss } from '../colormap.js';
 
 const COLORMAPS = ['viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'force_error'];
 const COLORABLE_SHAPES = new Set(['N_atoms', 'N_elements']);
@@ -144,24 +145,10 @@ export function createColorByPane(sidebarEl, callbacks) {
     setColorBy(colorBy) {
       if (!colorBy) { colorbar.classList.add('hidden'); return; }
       colorbar.classList.remove('hidden');
-      cbGradient.style.background = `linear-gradient(to right, ${_gradientCss(colorBy.colormap)})`;
+      cbGradient.style.background = `linear-gradient(to right, ${gradientCss(colorBy.colormap)})`;
       cbMin.textContent = colorBy.vmin.toPrecision(3);
       cbMax.textContent = colorBy.vmax.toPrecision(3);
       cbLabel.textContent = colorBy.label + (colorBy.unit ? ` (${colorBy.unit})` : '');
     },
   };
-}
-
-const GRADIENT_CSS = {
-  viridis: '#440154, #414487, #2a788e, #22a884, #7ad151, #fde725',
-  plasma: '#0d0887, #6a00a8, #b12a90, #e16462, #fca636, #f0f921',
-  inferno: '#000004, #420a68, #932667, #dd513a, #fca50a, #fcffa4',
-  coolwarm: '#3b4cc0, #7396f5, #dcdcdc, #f29274, #b40426',
-  hot: '#0b0000, #ff0000, #ffff00, #ffffff',
-  bwr: '#0000ff, #ffffff, #ff0000',
-  force_error: '#1a1ae6, #1ae61a, #e6e61a, #801a1a, #e61a1a',
-};
-
-function _gradientCss(colormap) {
-  return GRADIENT_CSS[colormap] || GRADIENT_CSS.viridis;
 }

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ffast.visualization.models import CameraState, DatasetProvenance
 
@@ -50,6 +50,22 @@ class ForceScene(BaseModel):
     starts: list[list[float]]     # (N, 3)
     vectors: list[list[float]]    # (N, 3)
     colors: list[list[float]]     # (N, 4) RGBA
+
+    @model_validator(mode="after")
+    def _one_color_per_arrow(self):
+        """Colours are per-arrow, so a short list is a malformed scene.
+
+        Stated here rather than guarded in each renderer (ADR 0052): the Vispy
+        adapter indexes ``colors`` by arrow to build vertex colours, and a
+        renderer that has to invent a colour for the arrows the list does not
+        reach is back to owning presentation the core was supposed to send.
+        """
+        if len(self.colors) != len(self.starts):
+            raise ValueError(
+                f"ForceScene has {len(self.colors)} colors for "
+                f"{len(self.starts)} arrows; one RGBA per arrow is required"
+            )
+        return self
 
 
 class LabelScene(BaseModel):
