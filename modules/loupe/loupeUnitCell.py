@@ -30,4 +30,4 @@ def loadLoupe(UIHandler, loupe):
     addSettingsPane(UIHandler, loupe)
 
 
-CLIENT_FEATURES = [ClientFeature(stage_id="ffast.unit_cell_edges", widget_factory=loadLoupe)]
+CLIENT_FEATURES = [ClientFeature(widget_factory=loadLoupe)]

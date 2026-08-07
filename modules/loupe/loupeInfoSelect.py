@@ -71,4 +71,4 @@ class AtomInfoSelect(AtomSelectionBase):
 # The Atoms-Info readout (position/distance/angle/dihedral) is shown in the
 # contextual pick strip on the canvas; the tool is armed from the shared pick
 # toolbar (ADR 0039), so this feature contributes only its tool_class.
-CLIENT_FEATURES = [ClientFeature(stage_id=None, tool_class=AtomInfoSelect)]
+CLIENT_FEATURES = [ClientFeature(tool_class=AtomInfoSelect)]

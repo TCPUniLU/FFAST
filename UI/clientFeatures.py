@@ -17,8 +17,22 @@ from typing import Callable
 
 @dataclass
 class ClientFeature:
-    """Loupe-panel feature pairing an optional server stage with client Qt widgets."""
-    stage_id: str | None = None
+    """Loupe-panel feature: the Qt widgets that present a server capability.
+
+    There is deliberately no `stage_id`. The field existed, eleven plugins set
+    it, and **nothing ever read it** — so it silently rotted: three of its values
+    named stages ADR 0049 had deleted (`ffast.bond_positions`,
+    `ffast.force_arrows`, `ffast.value_colors`), which a field anything consumed
+    would have caught.
+
+    It was also the wrong shape for the job it was added for. A feature does not
+    drive *a* stage parameter: Force Vectors alone drives five, and four of the
+    live parameter namespaces (`ffast.bonds`, `ffast.force_arrows`,
+    `ffast.atom_align`, `ffast.atom_color`) are not registered stages at all
+    after ADR 0049. Any setting → parameter map has to be keyed per *setting*,
+    not per feature, so this field could never have become the thing a
+    dispatcher reads.
+    """
     widget_factory: Callable | None = None
     tool_class: type | None = None  # subclass of AtomSelectionBase (UI.loupe.visual)
 

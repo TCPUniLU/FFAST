@@ -36,4 +36,4 @@ def loadLoupe(UIHandler, loupe):
     addSettings(UIHandler, loupe)
 
 
-CLIENT_FEATURES = [ClientFeature(stage_id="ffast.value_colors", widget_factory=loadLoupe)]
+CLIENT_FEATURES = [ClientFeature(widget_factory=loadLoupe)]

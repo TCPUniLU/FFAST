@@ -148,4 +148,4 @@ def loadLoupe(UIHandler, loupe):
     addSettingsPane(UIHandler, loupe)
 
 
-CLIENT_FEATURES = [ClientFeature(stage_id="ffast.bond_positions", widget_factory=loadLoupe, tool_class=BondSelect)]
+CLIENT_FEATURES = [ClientFeature(widget_factory=loadLoupe, tool_class=BondSelect)]

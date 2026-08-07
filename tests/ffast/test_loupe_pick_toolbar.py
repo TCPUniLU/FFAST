@@ -58,10 +58,10 @@ def test_registered_tool_classes_dedupes_and_keeps_order():
 
     handler = type("H", (), {})()
     handler.client_features = [
-        ClientFeature(stage_id="s1"),                 # no tool -> skipped
-        ClientFeature(stage_id="s2", tool_class=A),
-        ClientFeature(stage_id="s3", tool_class=B),
-        ClientFeature(stage_id="s4", tool_class=A),   # dup -> skipped
+        ClientFeature(),                  # no tool -> skipped
+        ClientFeature(tool_class=A),
+        ClientFeature(tool_class=B),
+        ClientFeature(tool_class=A),      # dup -> skipped
     ]
 
     canvas = InteractiveCanvas.__new__(InteractiveCanvas)  # no Qt widget tree

@@ -13,4 +13,4 @@ def loadLoupe(UIHandler, loupe):
     loupe._colorSourceByLabel["Displacement"] = "displacement"
 
 
-CLIENT_FEATURES = [ClientFeature(stage_id="ffast.displacement_stats", widget_factory=loadLoupe)]
+CLIENT_FEATURES = [ClientFeature(widget_factory=loadLoupe)]

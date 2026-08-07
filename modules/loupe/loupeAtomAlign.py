@@ -93,4 +93,4 @@ def loadLoupe(UIHandler, loupe):
     addSettings(UIHandler, loupe)
 
 
-CLIENT_FEATURES = [ClientFeature(stage_id=None, widget_factory=loadLoupe, tool_class=AtomAlignSelect)]
+CLIENT_FEATURES = [ClientFeature(widget_factory=loadLoupe, tool_class=AtomAlignSelect)]

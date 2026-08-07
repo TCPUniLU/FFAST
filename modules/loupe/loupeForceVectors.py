@@ -128,4 +128,4 @@ def loadLoupe(UIHandler, loupe):
     loupe.addSidebarPane("FORCE VECTORS", pane)
 
 
-CLIENT_FEATURES = [ClientFeature(stage_id="ffast.force_arrows", widget_factory=loadLoupe, tool_class=_ForceVectorSelect)]
+CLIENT_FEATURES = [ClientFeature(widget_factory=loadLoupe, tool_class=_ForceVectorSelect)]

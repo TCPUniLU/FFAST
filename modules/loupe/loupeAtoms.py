@@ -303,4 +303,4 @@ def loadLoupe(UIHandler, loupe):
     addMetricControls(UIHandler, loupe)
 
 
-CLIENT_FEATURES = [ClientFeature(stage_id="ffast.atom_colors", widget_factory=loadLoupe)]
+CLIENT_FEATURES = [ClientFeature(widget_factory=loadLoupe)]

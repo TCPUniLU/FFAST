@@ -118,4 +118,4 @@ def loadLoupe(UIHandler, loupe):
     loupe.addSidebarPane("ALIGNMENT", alignPane)
 
 
-CLIENT_FEATURES = [ClientFeature(stage_id=None, widget_factory=loadLoupe)]
+CLIENT_FEATURES = [ClientFeature(widget_factory=loadLoupe)]
