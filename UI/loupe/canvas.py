@@ -73,8 +73,8 @@ class SceneCanvas(scene.SceneCanvas):
             pos0, pos1 = self.draggingStart, event.pos
             self.draggingStart = np.array([0, 0])
             if np.linalg.norm(np.asarray(pos1, float) - np.asarray(pos0, float)) > 3.0:
-                idxs = self.widget.sceneAdapter.pick_in_rect(pos0, pos1)
                 if self.mouseClickActive and self.rectangleSelectActive:
+                    idxs = self.widget.sceneAdapter.pick_in_rect(pos0, pos1)
                     atom_ids = [
                         self.widget.sceneAdapter.displayed_to_atom_id(i)
                         for i in idxs
@@ -82,8 +82,10 @@ class SceneCanvas(scene.SceneCanvas):
                     self.widget.addSelectedAtoms(
                         [a for a in atom_ids if a is not None], refresh=True
                     )
-                else:
-                    self.widget.loupe.onAdapterPickRect(idxs)
+                # else: the rectangle selects nothing, for the same reason a
+                # plain click does — an unarmed rubber-band used to commit a
+                # server-owned selection that only grew and had no clearing
+                # gesture, so an accidental Ctrl+drag left atoms stuck yellow.
             self.widget.hideSelectionRectangle()
 
     def on_mouse_move(self, event):

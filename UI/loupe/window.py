@@ -484,26 +484,16 @@ class Loupe(Widget, EventChildClass):
         logger.info("Loupe[%s]: applyColormap → colormap=%r", self.viewId, colormap)
         self._setColorParam("colormap", colormap)
 
-    # PICKING (ADR 0015): client accumulates a working set, commits the full set.
-    def onAdapterPick(self, displayed_index):
-        """Toggle a clicked atom in the working selection and commit it."""
-        if displayed_index is None:
-            return
-        atom_id = self.canvas.sceneAdapter.displayed_to_atom_id(displayed_index)
-        if atom_id in self._pickedSet:
-            self._pickedSet.remove(atom_id)
-        else:
-            self._pickedSet.append(atom_id)
-        self._commitPicked()
-
-    def onAdapterPickRect(self, displayed_indices):
-        """Add a rectangle of atoms to the working selection and commit it."""
-        for k in displayed_indices:
-            atom_id = self.canvas.sceneAdapter.displayed_to_atom_id(k)
-            if atom_id not in self._pickedSet:
-                self._pickedSet.append(atom_id)
-        self._commitPicked()
-
+    # PICKING (ADR 0015): the working set is committed as one named selection.
+    #
+    # Canvas gestures no longer reach this. Two adapter-pick handlers used to:
+    # `onAdapterPick` (toggle one atom) had no caller at all, and
+    # `onAdapterPickRect` was reached by a Ctrl+drag with *no* select tool armed
+    # — which contradicted the rule the plain-click path states, that atom
+    # selection requires an intentionally-activated tool. Worse, it only ever
+    # *added*, so a rectangle dragged by accident left atoms highlighted with no
+    # gesture that could clear them. Both are gone; the select-indices field is
+    # now the only way to set this selection, and it can also empty it.
     def _commitPicked(self):
         """Commit the working set as the server-owned 'picked' selection."""
         self._sendViewCommand(
