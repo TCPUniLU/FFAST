@@ -434,6 +434,9 @@ export class FFastApp {
   _renderObjects() {
     this._renderDatasetList();
     this._renderModelList();
+    // The analysis tabs offer their own multi-select over the same objects, so
+    // they need the full lists, not just the rail's current pick.
+    this._analysis?.setAvailable({ datasets: this._datasets, models: this._models });
   }
 
   _renderDatasetList() {
@@ -780,12 +783,13 @@ export class FFastApp {
     if (!this._analysis) return;
     const meta = this._currentDatasetFp
       ? this._datasets.get(this._currentDatasetFp) : null;
+    // Series names come from the analysis manager's own object lists
+    // (setAvailable), so this carries only the rail's selection — the default a
+    // tab follows until it pins its own.
     this._analysis.setContext({
       datasetFp: this._currentDatasetFp,
       modelFp: this._currentModelFp,
       datasetMeta: meta,
-      seriesName: (meta && meta.name)
-        || (this._currentDatasetFp ? this._currentDatasetFp.slice(0, 8) : ''),
     });
   }
 

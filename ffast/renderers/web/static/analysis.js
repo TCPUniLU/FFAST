@@ -25,6 +25,54 @@ import { renderPanel, PLOT_KINDS, elementSymbol } from './panels.js';
 /** control name → the shared compute-param it drives. */
 const CONTROL_PARAM = { energy_shift: 'shifted', smoothing: 'window' };
 
+/**
+ * Pair the selected datasets with the selected predictions — one series per
+ * drawable combination, in dataset-major order.
+ *
+ * A prediction applies only to the dataset it was computed for
+ * (`datasetFps`); an empty list means "unknown, allow it", matching the object
+ * rail's own applicability test. `models` may contain a single `null` to mean
+ * reference-only (no prediction selected).
+ *
+ * Naming follows the desktop's compaction rule for the same problem
+ * (`GroupedTableKind.table_left_header`): the prediction alone identifies a
+ * series while one dataset is in play, and the dataset joins the name once
+ * several are — so four models against one dataset do not produce four copies
+ * of its name in the legend.
+ *
+ * @param {Array<{fp: string, name: string}>} datasets
+ * @param {Array<{fp: string, name: string, datasetFps?: string[]}|null>} models
+ * @returns {Array<{datasetFp: string, modelFp: string|null, name: string,
+ *   datasetName: string, modelName: string}>}
+ */
+export function pairSeries(datasets, models) {
+  const ds = datasets || [];
+  const ms = (models && models.length) ? models : [null];
+  const manyDatasets = ds.length > 1;
+  const out = [];
+  for (const d of ds) {
+    for (const m of ms) {
+      if (m) {
+        const fps = m.datasetFps || [];
+        if (fps.length && !fps.includes(d.fp)) continue;
+      }
+      const modelName = m ? m.name : '';
+      let name;
+      if (!m) name = d.name;
+      else if (manyDatasets) name = `${d.name} & ${modelName}`;
+      else name = modelName;
+      out.push({
+        datasetFp: d.fp,
+        modelFp: m ? m.fp : null,
+        name,
+        datasetName: d.name,
+        modelName,
+      });
+    }
+  }
+  return out;
+}
+
 export class AnalysisManager {
   /**
    * @param {{
@@ -48,8 +96,34 @@ export class AnalysisManager {
     /** @type {Array<object>} per-tab state */
     this._tabs = [];
     this._activeId = null;
-    this._ctx = { datasetFp: null, modelFp: null, datasetMeta: null, seriesName: '' };
+    this._ctx = { datasetFp: null, modelFp: null, datasetMeta: null };
+    /** Everything loaded, for the per-tab selectors: fp → meta. */
+    this._available = { datasets: new Map(), models: new Map() };
     this._renderToken = 0;
+  }
+
+  /**
+   * Publish the loaded datasets/predictions the per-tab selectors offer.
+   * Separate from `setContext`, which carries the *rail's* single selection —
+   * the rail drives the 3D view, a tab's own selection drives its panels.
+   * @param {{datasets: Map<string, object>, models: Map<string, object>}} avail
+   */
+  setAvailable({ datasets, models }) {
+    this._available = {
+      datasets: datasets || new Map(),
+      models: models || new Map(),
+    };
+    for (const t of this._tabs) {
+      // Drop anything that has since been deleted; an empty list falls back to
+      // following the rail rather than showing nothing.
+      if (t.selectedDatasets)
+        t.selectedDatasets = t.selectedDatasets.filter((fp) => this._available.datasets.has(fp));
+      if (t.selectedModels)
+        t.selectedModels = t.selectedModels.filter((fp) => this._available.models.has(fp));
+      if (t.seriesSelectorEl) this._renderSeriesSelector(t);
+    }
+    const active = this._activeTab();
+    if (active) this._renderTab(active);
   }
 
   /** @param {Array<object>} entries METRIC_CATALOG entries */
@@ -65,8 +139,8 @@ export class AnalysisManager {
   }
 
   /** Update the current selection context and refresh the active tab. */
-  setContext({ datasetFp, modelFp, datasetMeta, seriesName }) {
-    this._ctx = { datasetFp, modelFp, datasetMeta, seriesName: seriesName || '' };
+  setContext({ datasetFp, modelFp, datasetMeta }) {
+    this._ctx = { datasetFp, modelFp, datasetMeta };
     // Element order for the picker/grouped kinds: sorted unique atomic numbers.
     const zs = (datasetMeta && datasetMeta.elements) || [];
     this._elementOrder = [...new Set(zs.map(Number))].sort((a, b) => a - b);
@@ -75,6 +149,8 @@ export class AnalysisManager {
       t.selectedElements = t.selectedElements.filter(
         (z) => z === 'All' || this._elementOrder.includes(z));
       if (t.selectorEl) this._renderElementPicker(t);
+      // The rail moved, so a tab still following it shows a different default.
+      if (t.seriesSelectorEl) this._renderSeriesSelector(t);
     }
     const active = this._activeTab();
     if (active) this._renderTab(active);
@@ -126,6 +202,11 @@ export class AnalysisManager {
       sharedParams: {},                 // shifted / window
       selectedElements: ['All'],        // element picker state
       selectorEl: null,
+      // null = follow the object rail's single selection (the behaviour before
+      // per-tab comparison existed); a list = this tab's own choice.
+      selectedDatasets: null,
+      selectedModels: null,
+      seriesSelectorEl: null,
       panelStates: [],                  // one per rendered panel
       built: false,
     };
@@ -200,12 +281,109 @@ export class AnalysisManager {
       this._renderElementPicker(t);
     }
 
+    // Every analysis tab gets the comparison selector — it is not a configured
+    // control but the tab's own data scope, the desktop's per-tab
+    // DatasetModelSelector.
+    const series = document.createElement('div');
+    series.className = 'ac-item ac-series';
+    series.dataset.control = 'series-selector';
+    el.appendChild(series);
+    t.seriesSelectorEl = series;
+    this._renderSeriesSelector(t);
+
     if (!el.children.length) {
       const empty = document.createElement('span');
       empty.className = 'ac-empty';
       empty.textContent = t.spec.name;
       el.appendChild(empty);
     }
+  }
+
+  // ── series resolution (dataset × prediction) ────────────────────────────
+  //
+  // The desktop's per-tab `DatasetModelSelector` holds *lists* and its panels
+  // draw one entry per (model, dataset) pair (UI/ContentTab.py,
+  // UI/panels.py:211). This is that, resolved per tab.
+
+  _nameOf(which, fp) {
+    const meta = this._available[which].get(fp);
+    return (meta && meta.name) || (fp ? fp.slice(0, 8) : '');
+  }
+
+  /** Datasets this tab draws — its own selection, else the rail's. */
+  _tabDatasets(t) {
+    if (t.selectedDatasets && t.selectedDatasets.length) return t.selectedDatasets;
+    return this._ctx.datasetFp ? [this._ctx.datasetFp] : [];
+  }
+
+  /** Predictions this tab draws; `[null]` means reference-only. */
+  _tabModels(t) {
+    if (t.selectedModels && t.selectedModels.length) return t.selectedModels;
+    return this._ctx.modelFp ? [this._ctx.modelFp] : [null];
+  }
+
+  /** The (dataset × prediction) pairs this tab draws (see `pairSeries`). */
+  seriesRefs(t) {
+    return pairSeries(
+      this._tabDatasets(t).map((fp) => ({ fp, name: this._nameOf('datasets', fp) })),
+      this._tabModels(t).map((fp) => fp && {
+        fp,
+        name: this._nameOf('models', fp),
+        datasetFps: (this._available.models.get(fp) || {}).dataset_fingerprints || [],
+      }),
+    );
+  }
+
+  _renderSeriesSelector(t) {
+    const holder = t.seriesSelectorEl;
+    if (!holder) return;
+    holder.innerHTML = '';
+
+    const group = (which, label, selected, follow) => {
+      const entries = [...this._available[which].entries()];
+      if (!entries.length) return;
+      const wrap = document.createElement('span');
+      wrap.className = 'ac-item';
+      wrap.dataset.series = which;
+      const lbl = document.createElement('label');
+      lbl.textContent = label;
+      wrap.appendChild(lbl);
+      for (const [fp, meta] of entries) {
+        const btn = document.createElement('button');
+        const isOn = selected ? selected.includes(fp) : follow.includes(fp);
+        btn.className = 'elem-btn' + (isOn ? ' active' : '')
+          + (selected ? '' : ' following');
+        btn.textContent = meta.name || fp.slice(0, 8);
+        btn.dataset.fp = fp;
+        btn.title = selected ? '' : 'Following the object rail — click to pin';
+        btn.addEventListener('click', () => this._toggleSeries(t, which, fp));
+        wrap.appendChild(btn);
+      }
+      holder.appendChild(wrap);
+    };
+
+    group('datasets', 'Datasets', t.selectedDatasets, this._tabDatasets(t));
+    group('models', 'Predictions', t.selectedModels,
+      this._tabModels(t).filter(Boolean));
+  }
+
+  _toggleSeries(t, which, fp) {
+    const key = which === 'datasets' ? 'selectedDatasets' : 'selectedModels';
+    // First click on a following tab pins the rail's current choice, then
+    // applies the toggle to it — so clicking a second prediction *adds* it
+    // rather than silently discarding the one already on screen.
+    let list = t[key];
+    if (!list) {
+      list = which === 'datasets'
+        ? [...this._tabDatasets(t)]
+        : this._tabModels(t).filter(Boolean);
+    }
+    list = list.includes(fp) ? list.filter((x) => x !== fp) : [...list, fp];
+    // Datasets cannot all be off — a panel with no dataset has nothing to say.
+    if (which === 'datasets' && !list.length) list = [...this._tabDatasets(t)];
+    t[key] = list;
+    this._renderSeriesSelector(t);
+    this._renderTab(t);
   }
 
   _renderElementPicker(t) {
@@ -238,7 +416,7 @@ export class AnalysisManager {
       grid.innerHTML = '<div class="panel-msg">Waiting for metric catalog…</div>';
       return;
     }
-    if (!this._ctx.datasetFp) {
+    if (!this._tabDatasets(t).length) {
       grid.innerHTML = '<div class="panel-msg">Select a dataset to view this analysis.</div>';
       return;
     }
@@ -297,45 +475,58 @@ export class AnalysisManager {
   }
 
   async _fetchAndRenderPanel(t, spec, card, token) {
-    const { datasetFp, modelFp } = this._ctx;
+    const refs = this.seriesRefs(t);
 
-    // Assemble the fetch jobs (a role is one id, except `series` = list of ids).
+    // Assemble the fetch jobs (a role is one id, except `series` = list of ids)
+    // and issue them for every series. Requests are keyed per
+    // (metric, params, model, dataset), so two series sharing a reference-only
+    // metric hit one cache slot rather than computing it twice.
     const jobs = [];
     for (const [role, val] of Object.entries(spec.metrics || {})) {
       if (Array.isArray(val)) val.forEach((id, k) => jobs.push({ role, id, k }));
       else jobs.push({ role, id: val });
     }
-    const results = await Promise.all(jobs.map((j) =>
-      this._metrics.request(j.id, {
-        datasetFp, modelFp, params: this._metricParams(t, spec, j.id),
-      })));
+    const perSeries = await Promise.all(refs.map((ref) =>
+      Promise.all(jobs.map((j) => this._metrics.request(j.id, {
+        datasetFp: ref.datasetFp,
+        modelFp: ref.modelFp,
+        params: this._metricParams(t, spec, j.id),
+      })))));
     if (token !== this._renderToken) return;   // superseded
 
-    const data = {};
-    jobs.forEach((j, i) => {
-      if (j.k !== undefined) { (data[j.role] ||= [])[j.k] = results[i]; }
-      else data[j.role] = results[i];
+    // A series whose every metric came back empty is dropped rather than drawn
+    // as a gap: a prediction that cannot compute this panel should not cost the
+    // panel its other predictions.
+    const series = [];
+    refs.forEach((ref, si) => {
+      const results = perSeries[si];
+      const data = {};
+      jobs.forEach((j, i) => {
+        if (j.k !== undefined) { (data[j.role] ||= [])[j.k] = results[i]; }
+        else data[j.role] = results[i];
+      });
+      if (results.some((r) => r && r.nd)) series.push({ ...ref, data });
     });
 
-    // Any required data missing → a friendly message rather than a blank plot.
-    const anyResult = results.some((r) => r && r.nd);
-    if (!anyResult) {
+    if (!series.length) {
       card.body.className = '';
+      const anyModel = refs.some((r) => r.modelFp);
       card.body.innerHTML =
-        `<div class="panel-msg">${modelFp ? 'No data for this selection.'
+        `<div class="panel-msg">${anyModel ? 'No data for this selection.'
           : 'Select a prediction to compute this panel.'}</div>`;
       card.params.innerHTML = '';
       return;
     }
+    card.body.className = PLOT_KINDS.has(spec.kind) ? 'panel-plot' : '';
 
     const ctx = {
-      seriesName: this._ctx.seriesName,
       units: this._panelUnits(spec),
       perFrame: this._isPerFrameScatter(spec),
       elementOrder: this._elementOrder || [],
       selectedElements: t.selectedElements,
     };
-    renderPanel(card.body, spec, data, ctx);
+    renderPanel(card.body, spec, series, ctx);
+    card.series = series;
     this._wirePanelInteractions(t, spec, card);
     this._buildPanelParams(t, spec, card);
   }
@@ -450,10 +641,15 @@ export class AnalysisManager {
   }
 
   /**
-   * Map a Plotly box-select event to parent configuration indices.
+   * Map a Plotly box-select event to parent configuration indices, and to the
+   * series they came from.
+   *
    * timeline/overlay: x IS the config index, so use the box's x-*range* (a
-   * lines trace reports no points). scatter: markers are selectable, so map
-   * each selected data point's index through subInfo.x.
+   * lines trace reports no points) — a range names no curve, so the sub goes to
+   * the first series. scatter: markers are selectable, so each selected point's
+   * index within its curve *is* its config index, and `curveSeries` says which
+   * series that curve belongs to.
+   * @returns {{indices: number[], seriesIndex: number}}
    */
   _selectionToIndices(info, ev) {
     if (info.xIsConfigIndex && ev.range && ev.range.x) {
@@ -462,15 +658,22 @@ export class AnalysisManager {
       const hi = Math.min((info.n || 0) - 1, Math.floor(Math.max(a, b)));
       const out = [];
       for (let i = lo; i <= hi; i++) out.push(i);
-      return out;
+      return { indices: out, seriesIndex: 0 };
     }
     const cfg = new Set();
+    let seriesIndex = 0;
+    let named = false;
     for (const pt of ev.points || []) {
       if (info.dataCurveCount != null && pt.curveNumber >= info.dataCurveCount) continue;
-      const ci = info.x ? info.x[pt.pointIndex] : pt.pointIndex;
-      if (ci != null) cfg.add(ci);
+      if (pt.pointIndex != null) cfg.add(pt.pointIndex);
+      if (!named && info.curveSeries) {
+        // A box can straddle series; the first selected point decides whose
+        // subset this is, rather than mixing two datasets into one SubDataset.
+        seriesIndex = info.curveSeries[pt.curveNumber] ?? 0;
+        named = true;
+      }
     }
-    return [...cfg].sort((a, b) => a - b);
+    return { indices: [...cfg].sort((a, b) => a - b), seriesIndex };
   }
 
   // ── subbing + point→frame (PRD 61-63) ──────────────────────────────────────
@@ -500,11 +703,12 @@ export class AnalysisManager {
     el.on('plotly_selected', (ev) => {
       const info = el._subInfo;
       if (!ev || !info) return;
-      const indices = this._selectionToIndices(info, ev);
-      if (indices.length && this._onSub) {
+      const { indices, seriesIndex } = this._selectionToIndices(info, ev);
+      const src = (card.series || [])[seriesIndex];
+      if (indices.length && src && this._onSub) {
         this._onSub({
-          parentFp: this._ctx.datasetFp,
-          modelFp: this._ctx.modelFp,
+          parentFp: src.datasetFp,
+          modelFp: src.modelFp,
           indices,
           name: t.spec.name,
         });
@@ -518,8 +722,7 @@ export class AnalysisManager {
       const pt = ev && ev.points && ev.points[0];
       if (!pt || !info) return;
       if (info.dataCurveCount != null && pt.curveNumber >= info.dataCurveCount) return;
-      const ci = info.x ? info.x[pt.pointIndex] : pt.pointIndex;
-      if (ci != null && this._onPointFrame) this._onPointFrame(ci);
+      if (pt.pointIndex != null && this._onPointFrame) this._onPointFrame(pt.pointIndex);
     });
   }
 }

@@ -179,6 +179,19 @@
     .analysis-controls .elem-btn.active {
       background: var(--hl2); color: var(--text2); box-shadow: inset 0 0 0 1px var(--hl2);
     }
+    /* The tab's own dataset/prediction scope (its comparison selector). Wraps as
+       one group so the Datasets and Predictions rows stay legible with many
+       objects loaded. */
+    .analysis-controls .ac-series {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+    }
+    /* "Following the object rail" — active because the rail selected it, not
+       because this tab pinned it. Outlined rather than filled so a tab that has
+       been given its own scope reads differently at a glance. */
+    .analysis-controls .elem-btn.active.following {
+      background: transparent; color: var(--text);
+      box-shadow: inset 0 0 0 1px var(--hl2);
+    }
     .analysis-grid {
       flex: 1; overflow: auto; padding: 10px;
       display: grid; gap: 10px; align-content: start;
