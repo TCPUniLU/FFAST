@@ -272,6 +272,30 @@ def test_select_shift_click_then_group_drags_together(qapp):
     assert "pos" in ov["bar"] and "pos" in ov["label"]
 
 
+def test_click_away_clears_the_selection_highlight(qapp):
+    """A click that misses every piece lands on the 3D canvas underneath, which
+    calls clear_selection -- otherwise the dashed highlight, once on, could
+    never be turned off."""
+    overlay = _make_overlay(qapp, ["ffast.force_error"])
+    overlay.update_descriptor(None, 0.0, 1.0, "Force Error")
+    overlay.on_press(overlay._label, additive=False)
+    assert overlay._label._selected
+
+    overlay.clear_selection()
+    assert overlay._selected == set()
+    assert not any(it._selected for it in overlay._items)
+
+    # grouping survives a deselect -- it clears the highlight, not the group
+    overlay.on_press(overlay._bar, additive=False)
+    overlay.on_press(overlay._vmax, additive=True)
+    overlay.group_selected()
+    overlay.clear_selection()
+    assert overlay.group_of(overlay._bar) is not None
+    # and a plain click on a grouped piece re-selects the whole group
+    overlay.on_press(overlay._bar, additive=False)
+    assert overlay._selected == {overlay._bar, overlay._vmax}
+
+
 def test_ungroup_restores_independent_drag(qapp):
     overlay = _make_overlay(qapp, ["ffast.force_error"])
     overlay.update_descriptor(None, 0.0, 2.0, "Force Error")

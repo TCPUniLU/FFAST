@@ -49,6 +49,7 @@ class _FakeWidget:
         self.loupe = _FakeLoupe()
         self.selected = []
         self.rectangleHidden = 0
+        self.colorbarDeselects = 0
 
     def addSelectedAtoms(self, atom_ids, refresh=False):
         self.selected.extend(atom_ids)
@@ -61,6 +62,9 @@ class _FakeWidget:
 
     def _pickRadius(self):
         return 12
+
+    def clearColorbarSelection(self):
+        self.colorbarDeselects += 1
 
 
 class _Event:
@@ -194,6 +198,14 @@ def _pressed(*, tool_armed, rect_capable=True, ctrl=True):
 def test_unarmed_ctrl_drag_does_not_start_a_rubber_band():
     """Drawing a box that selects nothing promises a selection it cannot make."""
     assert _pressed(tool_armed=False).isCtrlDragging is False
+
+
+@pytest.mark.parametrize("tool_armed,ctrl", [(False, False), (True, False), (True, True)])
+def test_any_press_on_the_canvas_deselects_the_colorbar(tool_armed, ctrl):
+    """The colorbar's floating pieces are siblings of the canvas, so a click
+    that misses them lands here — the only place that can clear their dashed
+    highlight, whatever the click was otherwise doing."""
+    assert _pressed(tool_armed=tool_armed, ctrl=ctrl).widget.colorbarDeselects == 1
 
 
 def test_armed_rect_tool_starts_a_rubber_band():

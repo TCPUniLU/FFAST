@@ -51,6 +51,11 @@ class SceneCanvas(scene.SceneCanvas):
         self.widget = widget
 
     def on_mouse_press(self, event):
+        # Click away = deselect the colorbar. The overlay's floating pieces are
+        # siblings of this canvas, so a click that misses them lands here and
+        # nowhere else -- without this the dashed highlight, once on, can never
+        # be turned off. Runs for every button, before the button filter below.
+        self.widget.clearColorbarSelection()
         if event.button != 1:
             return
         if keys.CONTROL in event.modifiers:
@@ -104,6 +109,12 @@ class SceneCanvas(scene.SceneCanvas):
                 atom_id = self.widget.sceneAdapter.displayed_to_atom_id(displayed) if displayed is not None else None
                 self.widget.setHoveredPoint(atom_id, refresh=False)
             self.widget.canvas.update()
+
+    def on_key_press(self, event):
+        # Escape is the keyboard half of the same deselect gesture -- useful
+        # when the pieces cover the spot you'd otherwise click.
+        if event.key == keys.ESCAPE:
+            self.widget.clearColorbarSelection()
 
     def on_resize(self, *args):
         scene.SceneCanvas.on_resize(self, *args)
@@ -218,6 +229,12 @@ class InteractiveCanvas(Widget):
     def _initColorbar(self):
         from UI.loupe.colorbar_overlay import ColorbarOverlay
         self._colorbar = ColorbarOverlay(self, self._currentColorMetricId)
+
+    def clearColorbarSelection(self):
+        """Drop the colorbar's selection highlight (click on the 3D view, or
+        Escape). No-op when no colorbar is up."""
+        if self._colorbar is not None:
+            self._colorbar.clear_selection()
 
     # ADAPTER PICKING (ADR 0015)
     def _pickRadius(self):

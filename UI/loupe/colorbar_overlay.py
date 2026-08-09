@@ -544,6 +544,17 @@ class ColorbarOverlay:
         # else: item already selected -> keep the selection so a drag moves it all
         self._sync_highlight()
 
+    def clear_selection(self):
+        """Drop the selection highlight -- the "click away to deselect" gesture.
+        Nothing inside the overlay can deliver it: a click that misses every
+        piece lands on the 3D canvas underneath, so the canvas calls this (see
+        InteractiveCanvas.clearColorbarSelection). A *grouped* piece stays
+        grouped; this clears the highlight, not the group."""
+        if not self._selected:
+            return
+        self._selected.clear()
+        self._sync_highlight()
+
     def _sync_highlight(self):
         for it in self._items:
             it.set_selected(it in self._selected)
