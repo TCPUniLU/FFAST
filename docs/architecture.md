@@ -13,7 +13,7 @@ split into a compute half and a display half, and the split is a network socket
 even when both halves are on the same machine.
 
 ```
-    browser (or Qt window)          WebSocket, msgpack           ffast-server
+   desktop window or browser        WebSocket, msgpack           ffast-server
   ┌────────────────────────┐  ◄────────────────────────────►  ┌────────────────┐
   │ draws plots            │                                  │ Environment    │
   │ draws the 3D scene     │      scenes, metric arrays,       │ datasets       │
@@ -65,16 +65,22 @@ Inside it:
 per connection with an explicit handler table, so you can read the whole protocol
 surface in one file.
 
-**The web client** is `ffast/renderers/web/static/`, roughly 5k lines of
-hand-written ES modules. No build step, no bundler, no npm. Three.js and Plotly
-are vendored as files. You edit a `.js` and reload the tab. This was a deliberate
-trade: a scientific tool that needs a Node toolchain to change one line will not
-get changed.
+**The desktop client** (`UI/`, `client/`, `modules/loupe/`) is PySide6 plus
+vispy, reached as `ffast-qt`. It is the complete client: everything FFAST can do,
+it can do.
 
-**The Qt desktop** (`UI/`, `client/`, `modules/loupe/`) is the original client
-and still works via `ffast-qt`. It stopped being the default because the native
-GL and Qt bundle failed to install on too many Linux setups, which for a tool
-people install on a shared cluster login node is fatal (ADR 0045).
+**The browser client** is `ffast/renderers/web/static/`, roughly 5k lines of
+hand-written ES modules. No build step, no bundler, no npm. Three.js and Plotly
+are vendored as files. You edit a `.js` and reload the tab, which was a
+deliberate trade: a scientific tool that needs a Node toolchain to change one
+line will not get changed.
+
+It exists because the native GL and Qt bundle failed to install on too many Linux
+setups, and a shared cluster login node is exactly where you cannot fix that
+(ADR 0045). It is younger than the desktop and does not cover everything yet.
+Because the server side and the protocol are already done, adding to it is
+mostly client work — which makes it the easiest place for someone new to
+contribute.
 
 **`cluster/`** submits a SLURM job, waits for it, opens an SSH tunnel to the
 compute node, and connects the same protocol to it. It will also install itself
@@ -126,4 +132,4 @@ If you want to understand the codebase, read in this order:
    explain most of the analysis side.
 3. ADR 0010 and ADR 0016 for how a 3D scene crosses the socket.
 4. ADR 0026 and ADR 0047 for why `ffast/` looks the way it does.
-5. ADR 0045 for why the client is a web page.
+5. ADR 0045 for why there is a browser client at all.

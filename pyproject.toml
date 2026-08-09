@@ -47,14 +47,15 @@ dev = ["pytest>=7.0", "pytest-asyncio>=0.23"]
 zstd = ["zstandard>=0.21"]
 
 [project.scripts]
-# One-command web launcher (ADR 0045): start the server on loopback + open the
-# browser. Phase 6 retires the Qt desktop as the default — `ffast` now launches
-# the web client, which needs no native GL/Qt libraries and so installs and
-# runs reliably on any distro. `ffast-web` stays as an explicit alias.
+# Two clients, one protocol. `ffast` is the browser launcher (ADR 0045): it
+# starts the server on loopback and opens the app, and needs no native GL/Qt
+# libraries, so it installs anywhere — including the machines where the Qt
+# bundle refuses to build. It is the newer of the two and still catching up
+# with the desktop. `ffast-web` is an explicit alias for it.
 ffast = "ffast.renderers.web.launcher:main"
 ffast-web = "ffast.renderers.web.launcher:main"
-# The Qt/Vispy desktop stays reachable as an escape hatch for anyone with a
-# working `ffast[gui]` install (`pip install ffast[gui]`).
+# The Qt/Vispy desktop is the complete client; it needs the `gui` extra
+# (`pip install ffast[gui]`) and a working native Qt/OpenGL stack.
 ffast-qt = "main:cli"
 ffast-server = "server:cli"
 ffast-cli = "ffast.cli.main:main"

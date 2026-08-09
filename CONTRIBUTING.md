@@ -13,9 +13,12 @@ newer breaks at least one of the ML backends.
 git clone https://github.com/TCPUniLU/FFAST.git
 cd FFAST
 python3.11 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"          # server, CLI and web client
-pip install -e ".[gui,dev]"      # add this if you touch the Qt client
+pip install -e ".[gui,dev]"      # both clients, server, CLI, test tools
 ```
+
+Use the `gui` extra unless you specifically want to work without a Qt/OpenGL
+stack; part of the test suite exercises the desktop client and needs PySide6.
+`pip install -e ".[dev]"` gives you the server, CLI and browser client alone.
 
 Put the virtualenv somewhere that is not synced by iCloud or Dropbox. A synced
 directory corrupts the Qt plugin layout and makes `.pyc` files disappear
@@ -45,6 +48,17 @@ ffast-cli metrics test        # runs the metrics' own declared test cases
   `tests/ffast/test_ffast_core_boundary.py` will fail if you break it.
 - Metrics must be picklable and deterministic. They run in a separate worker
   process, so no closures, no lambdas, no global mutation.
+
+## A good place to start
+
+The browser client is behind the desktop one, and closing that gap is the most
+useful work going. It is unusually approachable: the server already does the
+computing and the protocol events mostly exist, so a missing feature is usually
+client-side wiring rather than new machinery. The code is plain ES modules in
+`ffast/renderers/web/static/` with no build step — edit a `.js`, reload the tab.
+
+Run both clients side by side (`ffast-qt` and `ffast`), find something the
+desktop does that the browser doesn't, and open an issue saying you're taking it.
 
 ## Adding things
 

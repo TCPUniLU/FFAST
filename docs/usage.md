@@ -5,6 +5,7 @@ the [README](../README.md) is shorter.
 
 - [The interface](#the-interface)
 - [Loading data](#loading-data)
+- [Example data](#example-data)
 - [Analysis tabs](#analysis-tabs)
 - [The 3D view](#the-3d-view)
 - [Subsets](#subsets)
@@ -13,27 +14,43 @@ the [README](../README.md) is shorter.
 - [The command line](#the-command-line)
 - [Custom metrics and tabs](#custom-metrics-and-tabs)
 - [Scripting without a UI](#scripting-without-a-ui)
-- [The Qt desktop](#the-qt-desktop)
+- [Configuration files](#configuration-files)
+- [Notes on the two clients](#notes-on-the-two-clients)
 
 ## The interface
 
-`ffast` starts a server on loopback and opens a browser tab. What you get is one
-page, not a menu-driven desktop app:
+Two clients, same server, same protocol. The desktop client is the complete one;
+use it unless you have a reason not to.
 
-- **Top bar.** Server address, optional session token, a read-only toggle,
-  Connect / Disconnect, and Save / Load Session. When you launch with `ffast` the
-  address is already filled in and connected.
-- **Left rail.** Two lists, Datasets and Predictions, each with a `+` button to
-  load one. Datasets also have a download button that exports the current
-  selection as extxyz.
-- **Tabs.** The 3D view plus one tab per analysis tab defined in config.
-- **Right sidebar** (in the 3D view). Collapsible panes: Display, Bonds, Colour
-  By, Force Vectors, Camera, Alignment, Extract Subset, Export.
+### The desktop client (`ffast-qt`)
 
-Selecting a dataset in the rail is what makes everything else light up. Analysis
-tabs additionally need at least one prediction selected.
+```bash
+pip install -e ".[gui]"
+ffast-qt [--workdir PATH]
+```
 
-Command-line options:
+It starts a managed local `ffast-server` in the background and connects to it,
+so a local session runs the same code path as a remote one. Menu-driven:
+
+| Shortcut | Action |
+|----------|--------|
+| `Ctrl+d` | Load dataset |
+| `Ctrl+m` | Load model |
+| `Ctrl+p` | Load prediction |
+| `Ctrl+0` | Load zero model |
+| `Ctrl+l` | Load session |
+| `Ctrl+s` | Save session |
+| `Ctrl+n` | New 3D view window |
+| `Ctrl+Shift+C` | Connect to cluster |
+| `Ctrl+Shift+L` | Connect to a local server |
+| `Ctrl+Shift+D` | Load remote dataset |
+| `Ctrl+Shift+P` | Load remote prediction |
+
+Loaded datasets and models appear in the left sidebar; analysis tabs run across
+the top; the 3D view opens in its own window with the settings panes on its
+right. Debug output goes to `debug.log` in the working directory.
+
+### The browser client (`ffast`)
 
 ```bash
 ffast                    # loopback server plus a browser tab
@@ -43,7 +60,29 @@ ffast --ws-port 8765 --web-port 9000    # pin ports instead of taking free ones
 ```
 
 Everything binds `127.0.0.1`, so a local session is not reachable from the
-network.
+network. It needs no native GL or Qt libraries, which is the point of it: it
+installs and runs where the desktop client won't.
+
+One page rather than a menu bar:
+
+- **Top bar.** Server address, optional session token, a read-only toggle,
+  Connect / Disconnect, and Save / Load Session. Launching with `ffast` fills the
+  address in and connects for you.
+- **Left rail.** Datasets and Predictions, each with a `+` to load one. Datasets
+  also get a download button that exports the current selection as extxyz.
+- **Tabs.** The 3D view plus one per analysis tab defined in config.
+- **Right sidebar** (in the 3D view). Collapsible panes, grouped: Display, Bonds
+  and Unit Cell under Appearance; Colour By, Force Vectors, Extract Subset and
+  Alignment under Analysis; Camera and Export under View.
+
+Selecting a dataset is what makes everything else light up; analysis tabs also
+need at least one prediction selected.
+
+It is still catching up with the desktop, and is the easiest part of FFAST to
+contribute to — see [CONTRIBUTING.md](../CONTRIBUTING.md).
+
+The rest of this document describes behaviour both clients share. Where they
+differ, the desktop is described first.
 
 ## Loading data
 
@@ -73,7 +112,8 @@ The normal path is a file of pre-computed energies and forces:
 - **ASE-readable** files carrying energies and forces the same way a dataset
   does.
 
-Load one with `+` in the Predictions list and pick the dataset it belongs to.
+Load one (File > Load Prediction, or `+` in the browser's Predictions list) and
+pick the dataset it belongs to.
 FFAST checks the fingerprint, so attaching predictions to the wrong dataset fails
 loudly rather than producing quiet nonsense.
 
@@ -134,11 +174,36 @@ molecule is extended.
 Each tab has its own dataset and prediction selector, and you can select several
 predictions at once to compare them in one panel.
 
+### Units, and editing labels by hand
+
+FFAST does not invent units. Energy and force units depend on whatever produced
+your data, so an axis shows `[energyUnit]` or `[forceUnit]` when nothing has told
+it otherwise. That is a prompt, not a rendering fault: it names the setting you
+can fill in.
+
+Two ways to fill it in, in the desktop client:
+
+- **Per plot.** Double-click an axis label or a legend entry and type. Right-click
+  gives a menu with font size and legend position. Good for one figure.
+- **Everywhere at once.** Set `energyUnit` and `forceUnit` in
+  `config/default.json` (both ship as `null`). Every panel that declares a unit
+  slot picks them up.
+
+Hand edits are cosmetic and client-local. They are stored in
+`~/.ffast/display_overrides.json`, keyed by content — the tab name, the panel
+kind and the metrics it binds — so they survive a panel being rebuilt or your
+TOML being reordered, and they never touch what gets computed or cached
+(ADR 0029). Renaming an axis does not rename a metric.
+
+Label editing is a desktop-client feature; the browser client does not have it
+yet.
+
 ## The 3D view
 
 Left-drag rotates, right-drag pans, scroll zooms. The strip under the viewport
-steps through frames, plays them at a set frame rate, optionally skipping frames,
-and pops the view out into its own browser tab.
+steps through frames, plays them at a set frame rate and optionally skips
+frames. The desktop opens each view as its own window; the browser pops one out
+into a new tab.
 
 Clicking uses whichever pick tool is armed in the toolbar:
 
@@ -463,32 +528,12 @@ Settings in `default.json` you are most likely to want:
 | `loupeBondsColor` | `#404040` | Default bond colour |
 | `loupeForceErrorPercentile` | 0.995 | Percentile that saturates the force-error colour scale |
 
-## The Qt desktop
+## Notes on the two clients
 
-The original client. It still works, still has features the web client is
-catching up on, and is kept as an escape hatch:
+Anything above that says "click" applies to both clients; only the route differs.
+Where the desktop uses a menu item, the browser uses a button in the top bar or
+the object rail.
 
-```bash
-pip install -e ".[gui]"
-ffast-qt [--workdir PATH]
-```
-
-It is menu-driven, unlike the web client:
-
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+d` | Load dataset |
-| `Ctrl+m` | Load model |
-| `Ctrl+p` | Load prediction |
-| `Ctrl+0` | Load zero model |
-| `Ctrl+l` | Load session |
-| `Ctrl+s` | Save session |
-| `Ctrl+n` | New 3D view window |
-| `Ctrl+Shift+C` | Connect to cluster |
-| `Ctrl+Shift+L` | Connect to a local server |
-| `Ctrl+Shift+D` | Load remote dataset |
-| `Ctrl+Shift+P` | Load remote prediction |
-
-Its debug output goes to `debug.log` in the working directory. If it will not
-start, [troubleshooting.md](troubleshooting.md) covers the usual causes, nearly
-all of which are the native OpenGL and Qt stack rather than FFAST.
+If the desktop client will not start, [troubleshooting.md](troubleshooting.md)
+covers the usual causes, nearly all of which are the native OpenGL and Qt stack
+rather than FFAST itself.

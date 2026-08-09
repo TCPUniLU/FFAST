@@ -38,10 +38,11 @@ lives in iCloud Drive, Dropbox or OneDrive. The sync client deletes and rewrites
 `.pyc` files under you, and on macOS it breaks the Qt plugin layout badly enough
 that the app cannot find its platform plugin. Move the venv out and reinstall.
 
-## The Qt desktop specifically
+## The desktop client specifically
 
-Nearly every problem here is the native OpenGL/Qt stack rather than FFAST. The
-web client exists partly because this was unfixable in general.
+Nearly every problem here is the native OpenGL/Qt stack rather than FFAST
+itself, which is why the browser client exists as an alternative when the stack
+cannot be fixed.
 
 **"Could not find the Qt platform plugin 'cocoa'" (macOS).** Almost always the
 synced-folder problem above. Recreate the venv somewhere local:
@@ -77,6 +78,11 @@ molecule". Regenerate the predictions or find the original file.
 reconstructed from cached predictions when the original model file was not
 available. They work for everything already computed and cannot compute anything
 new. Delete them if you do not want them.
+
+**Axes read `[energyUnit]` or `[forceUnit]`.** Working as intended: no unit has
+been set, and FFAST won't guess one from your data. Double-click the label to
+type one, or set `energyUnit` / `forceUnit` in `config/default.json` to apply it
+everywhere. See [usage.md](usage.md#units-and-editing-labels-by-hand).
 
 **Plots say there is no data.** Both a dataset and a prediction have to be
 selected, and the computation has to have finished. Watch the task list.
