@@ -175,3 +175,10 @@ ffast_vsize_todo.md
 docs/agents/
 docs/issues/
 docs/legacy-thinning-plan.md
+
+# Local agent/editor state (holds absolute paths from this machine)
+.claude/
+
+# iCloud Drive duplicates ("build 2/", "server 2.py")
+* 2
+* 2.*
