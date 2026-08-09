@@ -12,8 +12,8 @@ frames and orbiting the camera. Served via `serve.py` when `ffast-server` is
 launched with `--web-port`. What it does **not** yet do is the analysis loop the
 v2.0 release check turns on: 2D plots, using configured metrics, colouring atoms
 by a metric, selecting suspicious structures from a plot, and exporting the
-result. `FFAST_v2_plan.md` §3 lists exactly these as the "finish the browser MVP
-workflow" task.
+result. The internal v2 plan (not published in this repo) lists exactly these as the
+"finish the browser MVP workflow" task.
 
 The load-bearing fact, traced 2026-07-14: **the server side of every missing
 workflow already exists and is renderer-neutral.** Finishing the MVP is
@@ -145,7 +145,7 @@ indices drive two existing paths, no new protocol:
 Files live on the server (or cluster), not in the browser, so export is a
 **server-side write the browser triggers**. `SAVE_SESSION` persists the session.
 Subset export of the plot-selection set (the v2.0 minimal-subset workflow,
-`FFAST_v2_plan.md` §6 — export selected / worst-error / random) writes an
+internal v2 plan §6 — export selected / worst-error / random) writes an
 `extxyz` server-side and reports the path; a browser download of that small
 artifact over HTTP is an optional follow-on, not a v1 gate.
 
@@ -242,5 +242,5 @@ alpha + the noted web `color_by` gap). Code: `ffast/renderers/web/`
 `ffast/visualization/commands.py` (`SET_PARAMETER`, `SET_SELECTION`),
 `ffast/visualization/scene_builder.py`, `ffast/config/tabs.py`,
 `ffast/renderers/vispy/adapter.py:217` (`_map_color_by`), `server.py`
-(`--web-port`, role gating). Plan: `FFAST_v2_plan.md` §3 (browser MVP), §6
+(`--web-port`, role gating). Plan: internal v2 plan §3 (browser MVP), §6
 (minimal subset export).

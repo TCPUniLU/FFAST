@@ -16,7 +16,7 @@ Kept honest two ways:
 * **The field lists are descriptive only** — the generic loop forwards the
   positional ``args`` / ``kwargs`` verbatim and ``TASK_PROGRESS`` alone has ~30
   emitters with varying keyword fields, so nothing mechanically guarantees the
-  fields. See docs/legacy-thinning-plan.md (Slice 3 / bullet 2) for why these
+  fields. See the internal legacy-thinning plan (Slice 3 / bullet 2) for why these
   are catalogued rather than typed.
 """
 

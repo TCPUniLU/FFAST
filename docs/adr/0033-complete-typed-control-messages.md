@@ -31,7 +31,7 @@ classification — only their event names moved into `control.py`.
 `*_DELETED`, `DATA_UPDATED`) stay catalogued-not-typed in `ffast/protocol/notifications.py` — they
 carry an identifier, not a structured payload, and `TASK_PROGRESS` alone has ~30 emitters with
 varying keyword fields, so there is no single producer shape to type. This was already the case
-before this ADR (see `docs/legacy-thinning-plan.md` Slice 3) and is unchanged by it.
+before this ADR (see the legacy-thinning plan, Slice 3 -- an internal working document, not published in this repo) and is unchanged by it.
 
 ## Why
 

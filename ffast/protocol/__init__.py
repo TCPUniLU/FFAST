@@ -4,7 +4,7 @@ Renderer-neutral wire payloads exchanged over the RPC Channel (``ffast.protocol.
 The visualization-specific contract (View Commands, Scene Snapshots/Patches,
 capability negotiation) lives in ``ffast.visualization``; this package holds the
 remaining control/announcement messages as they are progressively migrated off
-hand-rolled untyped dicts (see docs/legacy-thinning-plan.md, Slice 3). Event
+hand-rolled untyped dicts (see the internal legacy-thinning plan, Slice 3). Event
 names for all of it live in ``ffast.protocol.control`` and
 ``ffast.protocol.notifications`` (ADR 0033).
 """
