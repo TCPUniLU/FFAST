@@ -126,6 +126,37 @@ def test_committing_edit_updates_label_and_persists(qapp):
     assert override["x_label"]["text"] == "Custom X Label"
 
 
+def _axis_label_offcenter_px(w, axisName):
+    """How far the axis label's own centre sits from the axis centre, along the
+    axis. pyqtgraph draws the left label rotated -90°, so its along-axis extent
+    is the bounding rect's *width* on both axes, and its anchor is the bottom
+    (hence the sign flip)."""
+    axis = w.plotWidget.getAxis(axisName)
+    br, pos = axis.label.boundingRect(), axis.label.pos()
+    if axisName == "bottom":
+        return abs(pos.x() + br.width() / 2 - axis.size().width() / 2)
+    return abs(pos.y() - br.width() / 2 - axis.size().height() / 2)
+
+
+@pytest.mark.parametrize("axisName,setter", [("bottom", "setXLabel"), ("left", "setYLabel")])
+def test_edited_label_stays_centered_on_its_axis(qapp, axisName, setter):
+    """A text edit changes the label's width but not the axis size, so Qt fires
+    no resizeEvent -- the only place pyqtgraph re-centers the label. Without an
+    explicit re-center the renamed label sits off by half the width change."""
+    w = _make_widget(qapp)
+    getattr(w, setter)("E")
+    qapp.processEvents()
+
+    role = "bottom" if axisName == "bottom" else "left"
+    w._commitAxisLabelEdit(role, "A Considerably Longer Custom Label")
+    qapp.processEvents()
+    assert _axis_label_offcenter_px(w, axisName) <= 1.0
+
+    w._commitAxisLabelEdit(role, "Short")  # and back the other way
+    qapp.processEvents()
+    assert _axis_label_offcenter_px(w, axisName) <= 1.0
+
+
 def test_clearing_edit_reverts_to_default_and_clears_override(qapp):
     w = _make_widget(qapp)
     w.setXLabel("Energy MAE")

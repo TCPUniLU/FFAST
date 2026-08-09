@@ -462,6 +462,12 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         size = state["font_size"] or _DEFAULT_LABEL_FONT_SIZE
         fontOptions = {"font-size": f"{size}px", "color": "lightgray"}
         self.plotWidget.setLabel(axisName, self._currentAxisText(axisName), **fontOptions)
+        # pyqtgraph re-centers the label only in AxisItem.resizeEvent, which
+        # setLabel never triggers when the text changes but the axis size
+        # doesn't -- so a renamed label kept the OLD text's centering.
+        axis = self.plotWidget.getAxis(axisName)
+        axis.resizeEvent()
+        axis.update()
 
     def _axisLabelSceneRect(self, axisName):
         axis = self.plotWidget.getAxis(axisName)
