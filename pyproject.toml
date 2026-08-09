@@ -43,7 +43,10 @@ sgdml = ["sgdml"]
 # spookynet has no PyPI distribution (vendor ships it as source only, see
 # https://github.com/OUnke/SpookyNet) — no extra to declare; install it
 # manually per the vendor's own instructions if needed.
-dev = ["pytest>=7.0", "pytest-asyncio>=0.23"]
+# playwright drives the browser-client runtime tests. Without it declared,
+# `pip install -e ".[dev]"` produced an environment that could not even
+# collect the suite.
+dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "playwright>=1.40", "pillow>=10.0"]
 zstd = ["zstandard>=0.21"]
 
 [project.scripts]

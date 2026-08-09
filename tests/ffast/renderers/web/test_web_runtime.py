@@ -15,14 +15,18 @@ import ase.io
 from PIL import Image
 import pytest
 import websockets
+# Collection must not die on a missing optional dependency: without this
+# the whole suite aborts, not just these tests (CI, 2026-08-09).
+pytest.importorskip("playwright.async_api")
+
 from playwright.async_api import async_playwright, expect
 
 from ffast.protocol.rpc import pack, unpack
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-DATASET_PATH = REPO_ROOT / "examples" / "data" / "dataset.xyz"
-PREDICTION_PATH = REPO_ROOT / "examples" / "data" / "prediction.xyz"
+DATASET_PATH = REPO_ROOT / "examples" / "data" / "variable-sized molecular" / "dataset.xyz"
+PREDICTION_PATH = REPO_ROOT / "examples" / "data" / "variable-sized molecular" / "prediction.xyz"
 
 
 pytestmark = [
