@@ -16,11 +16,13 @@ python -c "from importlib.metadata import entry_points
 print([f'{e.name} -> {e.value}' for e in entry_points(group='console_scripts') if 'ffast' in e.name])"
 ```
 
-You should see five: `ffast` and `ffast-web` both pointing at
-`ffast.renderers.web.launcher:main`, plus `ffast-qt`, `ffast-server` and
-`ffast-cli`. If `ffast` still points at `main:cli` you have a pre-2.0 install and
-the `ffast` command is launching the Qt desktop. Reinstall to fix it:
-`pip install -e . --no-deps`.
+You should see five: `ffast` pointing at `launcher:main`, plus `ffast-qt`
+(`main:cli`), `ffast-web`, `ffast-server` and `ffast-cli`. Anything else means a
+stale install — reinstall to rewrite the scripts: `pip install -e . --no-deps`.
+
+`ffast` runs the desktop client when PySide6 is importable and the browser
+client when it is not. If it starts the browser on a machine where you expect
+the desktop, PySide6 is missing or broken: `pip install -e ".[gui]"`.
 
 **The browser tab opens but stays disconnected.** The web page and the server are
 two ports. Run `ffast --no-browser`, read the URL it prints, and open that; if the

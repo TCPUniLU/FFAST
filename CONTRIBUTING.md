@@ -57,7 +57,7 @@ computing and the protocol events mostly exist, so a missing feature is usually
 client-side wiring rather than new machinery. The code is plain ES modules in
 `ffast/renderers/web/static/` with no build step — edit a `.js`, reload the tab.
 
-Run both clients side by side (`ffast-qt` and `ffast`), find something the
+Run both clients side by side (`ffast-qt` and `ffast-web`), find something the
 desktop does that the browser doesn't, and open an issue saying you're taking it.
 
 ## Adding things

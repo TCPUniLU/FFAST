@@ -38,20 +38,39 @@ def pyproject() -> dict:
 
 
 class TestEntryPoints:
-    """The ``ffast`` command must launch the web client (ADR 0045 Phase 6:
-    Qt retirement), while the Qt desktop stays reachable as an escape hatch."""
+    """`ffast` dispatches to whichever client is installed; both clients are
+    also addressable directly."""
 
-    def test_ffast_points_at_web_launcher(self, pyproject):
+    def test_ffast_dispatches(self, pyproject):
         scripts = pyproject["project"]["scripts"]
-        assert scripts["ffast"] == "ffast.renderers.web.launcher:main", (
-            "ADR 0045 Phase 6 flips `ffast` to the web launcher; it must not "
-            "point at the Qt desktop (main:cli)"
+        assert scripts["ffast"] == "launcher:main", (
+            "`ffast` goes through launcher.py, which picks the desktop client "
+            "when PySide6 is present and the browser client when it is not"
         )
 
-    def test_qt_desktop_reachable_via_ffast_qt(self, pyproject):
+    def test_both_clients_addressable_directly(self, pyproject):
         scripts = pyproject["project"]["scripts"]
-        assert scripts.get("ffast-qt") == "main:cli", (
-            "the Qt desktop must stay reachable as `ffast-qt` after the flip"
+        assert scripts.get("ffast-qt") == "main:cli"
+        assert scripts.get("ffast-web") == "ffast.renderers.web.launcher:main"
+
+    def test_dispatcher_ships_in_the_wheel(self, pyproject):
+        modules = pyproject["tool"]["setuptools"]["py-modules"]
+        assert "launcher" in modules, (
+            "launcher.py must be listed in py-modules or the `ffast` console "
+            "script points at a module the wheel does not contain"
+        )
+
+    def test_dispatcher_does_not_import_qt_at_module_level(self):
+        """It must stay importable on a base install: the Qt import lives
+        inside main(), behind the PySide6 check."""
+        import ast
+
+        tree = ast.parse((REPO_ROOT / "launcher.py").read_text())
+        top_level = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
+        names = {getattr(n, "module", None) or "" for n in top_level}
+        names |= {a.name for n in top_level if isinstance(n, ast.Import) for a in n.names}
+        assert not {n for n in names if n.split(".")[0] in {"PySide6", "main", "ffast"}}, (
+            f"launcher.py imports a client at module level: {sorted(names)}"
         )
 
     def test_headless_scripts_present(self, pyproject):

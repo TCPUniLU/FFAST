@@ -17,10 +17,11 @@ The compute half runs wherever your data is, which for most people means an HPC
 cluster: FFAST will submit the SLURM job and install itself there on first
 connect, and only the configurations you select come back to your machine.
 
-There are two clients, and they speak the same protocol to the same server. The
-desktop client (`ffast-qt`) is the complete one and the one to use. The browser
-client (`ffast`) needs no native GL or Qt libraries, so it installs anywhere,
-but it is younger and does not cover everything the desktop does yet — see
+There are two clients, and they speak the same protocol to the same server.
+`ffast` starts the desktop one, which is the complete one. Where Qt cannot be
+installed — a cluster login node, a container — the same command starts the
+browser client instead, which needs no native GL or Qt libraries but is younger
+and does not cover everything the desktop does yet. See
 [Two clients](#two-clients).
 
 ![Two force fields compared in FFAST: energy and force error distributions and per-frame timelines for both models on the left, and the same trajectory in the 3D view with atoms coloured by per-atom force error on the right.](docs/images/hero.png)
@@ -84,7 +85,7 @@ ffast-cli metrics list
 ## Quick start
 
 ```bash
-ffast-qt
+ffast
 ```
 
 A local server starts in the background and the desktop window opens. Then:
@@ -167,7 +168,11 @@ are made of and how finished they are.
 grew up as. It is the complete one: if a feature exists in FFAST, it exists here.
 Needs the `gui` extra and a working native Qt/OpenGL stack.
 
-**`ffast` — the browser client.** Hand-written ES modules with Three.js and
+`ffast` runs this one when PySide6 is importable and falls back to the browser
+client when it is not, so the bare command does the right thing on both a
+workstation and a login node.
+
+**`ffast-web` — the browser client.** Hand-written ES modules with Three.js and
 Plotly vendored in, no build step, no npm. It exists because the native Qt and
 GL bundle refused to install on too many machines — most painfully on shared
 Linux clusters, where you cannot fix the graphics stack and the person who needs

@@ -50,21 +50,19 @@ dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "playwright>=1.40", "pillow>=10.0"
 zstd = ["zstandard>=0.21"]
 
 [project.scripts]
-# Two clients, one protocol. `ffast` is the browser launcher (ADR 0045): it
-# starts the server on loopback and opens the app, and needs no native GL/Qt
-# libraries, so it installs anywhere — including the machines where the Qt
-# bundle refuses to build. It is the newer of the two and still catching up
-# with the desktop. `ffast-web` is an explicit alias for it.
-ffast = "ffast.renderers.web.launcher:main"
-ffast-web = "ffast.renderers.web.launcher:main"
-# The Qt/Vispy desktop is the complete client; it needs the `gui` extra
-# (`pip install ffast[gui]`) and a working native Qt/OpenGL stack.
+# Two clients, one protocol. `ffast` dispatches: the Qt/Vispy desktop when the
+# `gui` extra is installed, the browser client when it isn't (launcher.py). The
+# desktop is the complete client, so the bare command should reach it; a base
+# install has no PySide6 and gets the browser, which is the point of the
+# browser client existing. Both are also addressable directly.
+ffast = "launcher:main"
 ffast-qt = "main:cli"
+ffast-web = "ffast.renderers.web.launcher:main"
 ffast-server = "server:cli"
 ffast-cli = "ffast.cli.main:main"
 
 [tool.setuptools]
-py-modules = ["events", "main", "server", "tasks", "utils"]
+py-modules = ["events", "launcher", "main", "server", "tasks", "utils"]
 
 [tool.setuptools.packages.find]
 where = ["."]

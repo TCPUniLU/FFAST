@@ -26,7 +26,7 @@ use it unless you have a reason not to.
 
 ```bash
 pip install -e ".[gui]"
-ffast-qt [--workdir PATH]
+ffast-qt [--workdir PATH]     # or just `ffast`, which prefers this client
 ```
 
 It starts a managed local `ffast-server` in the background and connects to it,
@@ -50,14 +50,17 @@ Loaded datasets and models appear in the left sidebar; analysis tabs run across
 the top; the 3D view opens in its own window with the settings panes on its
 right. Debug output goes to `debug.log` in the working directory.
 
-### The browser client (`ffast`)
+### The browser client (`ffast-web`)
 
 ```bash
-ffast                    # loopback server plus a browser tab
-ffast --app              # chromeless window (Chrome, Edge or Chromium)
-ffast --no-browser       # print the URL and stop
-ffast --ws-port 8765 --web-port 9000    # pin ports instead of taking free ones
+ffast-web                # loopback server plus a browser tab
+ffast-web --app          # chromeless window (Chrome, Edge or Chromium)
+ffast-web --no-browser   # print the URL and stop
+ffast-web --ws-port 8765 --web-port 9000    # pin ports instead of taking free ones
 ```
+
+The bare `ffast` command lands here too when PySide6 is not installed, but it
+takes no arguments of its own — use `ffast-web` when you need these flags.
 
 Everything binds `127.0.0.1`, so a local session is not reachable from the
 network. It needs no native GL or Qt libraries, which is the point of it: it
@@ -66,8 +69,8 @@ installs and runs where the desktop client won't.
 One page rather than a menu bar:
 
 - **Top bar.** Server address, optional session token, a read-only toggle,
-  Connect / Disconnect, and Save / Load Session. Launching with `ffast` fills the
-  address in and connects for you.
+  Connect / Disconnect, and Save / Load Session. Launching with `ffast-web`
+  fills the address in and connects for you.
 - **Left rail.** Datasets and Predictions, each with a `+` to load one. Datasets
   also get a download button that exports the current selection as extxyz.
 - **Tabs.** The 3D view plus one per analysis tab defined in config.
