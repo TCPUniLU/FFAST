@@ -106,13 +106,11 @@ A local server starts in the background and the desktop window opens. Then:
    by force error, step through the frames and see what the molecule is actually
    doing there.
 
-No data of your own yet? `examples/data/` ships datasets with matching
-predictions, arranged to cover the cases that behave differently: fixed-sized and
-variable-sized systems, molecular, periodic and subsystem. Most pairs also have a
-`random_prediction.xyz`, which is the reference forces plus a small perturbation
-and acts as a near-perfect-model control. `examples/MACE/` and
-`examples/Nequip/` are saved sessions with pre-computed predictions for two MD22
-systems, loadable with Load Session.
+No data of your own yet? `examples/data/` has a small variable-sized organic set
+with a matching prediction, enough to see every tab populated. A wider corpus —
+fixed- and variable-sized, molecular, periodic and subsystem — is being prepared
+and will be published once its provenance and licences are confirmed. `examples/MACE/` and `examples/Nequip/` are saved sessions with
+pre-computed predictions for two MD22 systems, loadable with Load Session.
 
 Full reference: [docs/usage.md](docs/usage.md).
 

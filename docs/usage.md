@@ -128,31 +128,20 @@ people use. Generate predictions where you trained the model and load the file.
 
 ## Example data
 
-`examples/data/` holds a small corpus arranged as a matrix of the cases that
-behave differently, so you can check a change against all of them:
+`examples/data/dataset.xyz` and `prediction.xyz` are what ship today: 100
+configurations of mixed organic molecules, 4 to 50 atoms each, so atom count
+varies between configurations. Enough to see every tab populated.
 
-| | molecular | periodic | subsystem |
-|---|---|---|---|
-| fixed-sized | md22 stachyose | am26 | graphene |
-| variable-sized | (unnamed set) | mptrj sample | — |
-
-Each directory has the dataset, a prediction from a model, and in most cases a
-`random_prediction.xyz`. Despite the name, the latter is not noise: it is the
-reference forces with a small random perturbation added, so it behaves like a
-near-perfect model. It is the control for the low-error end of the scale —
-its error distributions should be narrow and featureless, with no structure
-along the trajectory.
+A wider corpus is being prepared: fixed- and
+variable-sized systems, molecular, periodic and subsystem, so a change can be
+checked against the cases that behave differently. It is not published yet —
+these are samples of datasets other people published, and their provenance and
+licence terms have to be confirmed before this repository can redistribute them.
+[examples/data/README.md](../examples/data/README.md) tracks what is still
+outstanding.
 
 `examples/MACE/` and `examples/Nequip/` are saved sessions rather than raw data;
 open them with Load Session.
-
-[examples/data/README.md](../examples/data/README.md) records what each file is,
-where it came from and under what licence — these are samples of other people's
-published datasets, not FFAST's to relicense.
-
-The test suite, the demo `ffast.toml` and the headless example all point at
-`variable-sized molecular/dataset.xyz`, so that pair is load-bearing: moving it
-breaks them.
 
 ## Analysis tabs
 
