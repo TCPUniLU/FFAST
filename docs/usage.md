@@ -146,9 +146,13 @@ along the trajectory.
 `examples/MACE/` and `examples/Nequip/` are saved sessions rather than raw data;
 open them with Load Session.
 
-`examples/data/dataset.xyz` and `prediction.xyz` are the same files as the ones
-under `variable-sized molecular/`. They stay at the top level because the test
-suite, `ffast.toml` and the headless example refer to them by that path.
+[examples/data/README.md](../examples/data/README.md) records what each file is,
+where it came from and under what licence — these are samples of other people's
+published datasets, not FFAST's to relicense.
+
+The test suite, the demo `ffast.toml` and the headless example all point at
+`variable-sized molecular/dataset.xyz`, so that pair is load-bearing: moving it
+breaks them.
 
 ## Analysis tabs
 
