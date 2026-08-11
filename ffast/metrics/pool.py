@@ -2,7 +2,11 @@
 
 Architecture
 ------------
-WorkerProcessExecutor wraps one lazily-spawned worker subprocess at a time.
+WorkerProcessExecutor owns a pool of lazily-spawned worker subprocesses, at most
+policy.max_workers of them.  A worker is checked out for the whole send/recv
+exchange, so its pipe is only ever touched by the thread holding it — callers
+(the TaskManager runs each metric via asyncio.to_thread) therefore run in
+parallel rather than queueing behind one another.
 
 Large numpy inputs (>= policy.shm_threshold_bytes) are passed via
 multiprocessing.shared_memory.SharedMemory (Worker Buffers) to avoid
@@ -34,8 +38,11 @@ Dependency resolution
 
 from __future__ import annotations
 
+import itertools
 import multiprocessing as mp
+import os
 import pickle
+import threading
 import time
 import traceback as tb
 from dataclasses import dataclass
@@ -65,6 +72,23 @@ class PoolPolicy:
     # unpickle) and reach its recv loop. Cold-start is NOT a metric's runtime,
     # so it is bounded separately and excluded from max_runtime_s.
     spawn_timeout_s: float = 30.0
+    # How many metrics may run at once. None leaves cores for the parent process
+    # and whatever else the machine is doing.
+    max_workers: int | None = None
+
+
+def _default_worker_count() -> int:
+    """Concurrency budget: the cores this process may actually use, less two.
+
+    ``os.cpu_count()`` reports the machine, not the allocation, so on a batch
+    node (SLURM and friends) it would oversubscribe a job pinned to a handful
+    of cores.  Affinity is the truthful number where the platform exposes it.
+    """
+    try:
+        available = len(os.sched_getaffinity(0))
+    except AttributeError:  # macOS / Windows have no affinity mask
+        available = os.cpu_count() or 4
+    return max(1, available - 2)
 
 
 # Sentinel a freshly-booted worker sends once it has unpickled the registry and
@@ -229,6 +253,9 @@ class WorkerProcessExecutor(MetricExecutor):
     Workers self-recycle after policy.max_tasks_per_worker tasks.
     Crashed workers are transparently replaced on the next run() call.
 
+    Thread-safe: concurrent run() calls each check out their own worker and
+    execute in parallel, up to policy.max_workers.  Beyond that they queue.
+
     Effective timeout per metric:
         min(schema.hints.max_runtime_s, policy.max_runtime_s)
     when the metric declares a max_runtime_s hint; otherwise policy.max_runtime_s.
@@ -244,8 +271,21 @@ class WorkerProcessExecutor(MetricExecutor):
         self._policy = policy or PoolPolicy()
         self._cache = cache if cache is not None else MetricCache()
         self._registry_bytes = pickle.dumps(registry)
-        self._worker: _Worker | None = None
-        self._task_counter = 0
+        self._max_workers = self._policy.max_workers or _default_worker_count()
+        # Workers are checked out for the whole send/recv exchange, so a pipe is
+        # only ever used by the one thread holding it. The lock guards the two
+        # bookkeeping collections, never the exchange itself.
+        self._idle: list[_Worker] = []
+        self._live: set[_Worker] = set()
+        self._pool_lock = threading.Lock()
+        self._slots = threading.BoundedSemaphore(self._max_workers)
+        self._closed = False
+        self._task_ids = itertools.count(1)
+
+    def worker_pids(self) -> list[int]:
+        """PIDs of the workers this executor currently owns (idle or busy)."""
+        with self._pool_lock:
+            return sorted(w.process.pid for w in self._live if w.process.pid is not None)
 
     def _spawn_worker(self) -> _Worker:
         parent_conn, child_conn = mp.Pipe(duplex=True)
@@ -258,10 +298,53 @@ class WorkerProcessExecutor(MetricExecutor):
         child_conn.close()  # Parent only uses the parent end
         return _Worker(conn=parent_conn, process=process)
 
-    def _get_worker(self) -> _Worker:
-        if self._worker is None or not self._worker.alive:
-            self._worker = self._spawn_worker()
-        return self._worker
+    def _checkout(self) -> _Worker:
+        """Take exclusive ownership of a worker, blocking while all are busy.
+
+        Reuses a warm idle worker when one is free; otherwise spawns, up to
+        policy.max_workers. The caller must always return it via _checkin.
+        """
+        self._slots.acquire()
+        try:
+            if self._closed:
+                raise RuntimeError("WorkerProcessExecutor has been shut down")
+            while True:
+                with self._pool_lock:
+                    if not self._idle:
+                        break
+                    worker = self._idle.pop()
+                if worker.alive:
+                    return worker
+                self._retire(worker)  # Died while sitting idle
+            worker = self._spawn_worker()
+            with self._pool_lock:
+                self._live.add(worker)
+            return worker
+        except BaseException:
+            self._slots.release()
+            raise
+
+    def _checkin(self, worker: _Worker, reuse: bool) -> None:
+        """Hand a worker back: park it for the next caller, or retire it."""
+        try:
+            reusable = (
+                reuse
+                and not self._closed  # Never park a worker into a pool being torn down
+                and worker.alive
+                and worker.task_count < self._policy.max_tasks_per_worker
+            )
+            if reusable:
+                with self._pool_lock:
+                    self._idle.append(worker)
+            else:
+                self._retire(worker)
+        finally:
+            self._slots.release()
+
+    def _retire(self, worker: _Worker) -> None:
+        worker.terminate()
+        with self._pool_lock:
+            self._live.discard(worker)
 
     def _await_ready(self, worker: _Worker) -> bool:
         """Block until a freshly-spawned worker has booted and is in its recv
@@ -314,6 +397,10 @@ class WorkerProcessExecutor(MetricExecutor):
         """Transport: run one metric in a worker subprocess, returning its raw
         output (or a ``MetricFailure`` on timeout / crash / worker-side error).
 
+        The worker is checked out for the whole exchange, so concurrent callers
+        (the TaskManager runs each metric via ``asyncio.to_thread``) each get
+        their own worker and pipe and run in parallel, up to policy.max_workers.
+
         Large numpy inputs travel via shared memory (Worker Buffers).  The worker
         cold-start deadline (``spawn_timeout_s``) is consumed before the metric's
         hard time limit is armed, so boot time is never charged to the metric.
@@ -326,28 +413,26 @@ class WorkerProcessExecutor(MetricExecutor):
             else self._policy.max_runtime_s
         )
 
-        self._task_counter += 1
-        task_id = self._task_counter
-
-        worker = self._get_worker()
-
-        # Wait for the worker to finish booting BEFORE arming the deadline, so a
-        # slow cold-start (common under load) can't falsely time out a fast metric.
-        if not self._await_ready(worker):
-            worker.terminate()
-            self._worker = None
-            return MetricFailure(
-                metric_id=id,
-                traceback=(
-                    f"Worker failed to start within "
-                    f"{self._policy.spawn_timeout_s:.1f}s"
-                ),
-                parameters=parameters,
-            )
-
-        packed_inputs, shm_list = _pack_inputs(resolved, self._policy.shm_threshold_bytes)
+        task_id = next(self._task_ids)
+        worker = self._checkout()
+        reuse = False  # Only a clean round-trip earns the worker its place back
+        shm_list: list[SharedMemory] = []
 
         try:
+            # Wait for the worker to finish booting BEFORE arming the deadline, so a
+            # slow cold-start (common under load) can't falsely time out a fast metric.
+            if not self._await_ready(worker):
+                return MetricFailure(
+                    metric_id=id,
+                    traceback=(
+                        f"Worker failed to start within "
+                        f"{self._policy.spawn_timeout_s:.1f}s"
+                    ),
+                    parameters=parameters,
+                )
+
+            packed_inputs, shm_list = _pack_inputs(resolved, self._policy.shm_threshold_bytes)
+
             worker.conn.send({
                 "task_id": task_id,
                 "metric_id": id,
@@ -359,8 +444,6 @@ class WorkerProcessExecutor(MetricExecutor):
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    worker.terminate()
-                    self._worker = None
                     return MetricFailure(
                         metric_id=id,
                         traceback=(
@@ -376,19 +459,17 @@ class WorkerProcessExecutor(MetricExecutor):
                 msg = worker.conn.recv()
                 if msg["task_id"] == task_id:
                     worker.task_count += 1
-                    if worker.task_count >= self._policy.max_tasks_per_worker:
-                        self._worker = None
+                    reuse = True
                     return msg["value"]
 
         except (BrokenPipeError, EOFError, OSError):
-            worker.terminate()
-            self._worker = None
             return MetricFailure(
                 metric_id=id,
                 traceback="Worker process died unexpectedly",
                 parameters=parameters,
             )
         finally:
+            self._checkin(worker, reuse)
             for shm in shm_list:
                 try:
                     shm.close()
@@ -397,12 +478,23 @@ class WorkerProcessExecutor(MetricExecutor):
                     pass
 
     def shutdown(self) -> None:
-        """Gracefully stop the worker: cooperative sentinel then forced terminate."""
-        if self._worker is not None:
+        """Gracefully stop every worker: cooperative sentinel then forced terminate.
+
+        Idempotent, and safe while calls are in flight: the executor is closed
+        first, so a worker handed back afterwards is retired rather than parked
+        for a reuse that can never come.
+        """
+        with self._pool_lock:
+            self._closed = True
+            workers = list(self._live)
+            self._live.clear()
+            self._idle.clear()
+
+        for worker in workers:
             try:
-                self._worker.conn.send(None)
+                worker.conn.send(None)
             except Exception:
                 pass
-            self._worker.process.join(timeout=self._policy.grace_period_s)
-            self._worker.terminate()
-            self._worker = None
+        for worker in workers:
+            worker.process.join(timeout=self._policy.grace_period_s)
+            worker.terminate()

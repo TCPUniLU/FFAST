@@ -215,18 +215,19 @@ def test_array_below_threshold_not_shared_memory(registry):
 # ── Worker recycling ──────────────────────────────────────────────────────────
 
 def test_worker_recycles_after_max_tasks(registry):
-    policy = PoolPolicy(max_tasks_per_worker=2)
+    policy = PoolPolicy(max_tasks_per_worker=2, max_workers=1)
     executor = WorkerProcessExecutor(registry, policy)
     try:
-        pid_before = executor._get_worker().process.pid
-
         executor.run("test.identity", FlatInputSource({"x": 1.0}), {})
+        pid_before = executor.worker_pids()
+
         executor.run("test.identity", FlatInputSource({"x": 2.0}), {})
-        # After 2 tasks, parent clears worker reference
+        # After 2 tasks the worker is retired rather than parked
 
         executor.run("test.identity", FlatInputSource({"x": 3.0}), {})  # Spawns fresh worker
-        pid_after = executor._get_worker().process.pid
+        pid_after = executor.worker_pids()
 
+        assert len(pid_before) == len(pid_after) == 1
         assert pid_before != pid_after
     finally:
         executor.shutdown()
@@ -388,3 +389,131 @@ def test_compiled_transform_metric_runs_in_worker():
         executor.shutdown()
     assert isinstance(result, MetricResult), getattr(result, "traceback", result)
     assert np.isclose(result.values, 2.0)  # mean(|-1|,|2|,|-3|) = 2.0
+
+
+# ── Thread safety ─────────────────────────────────────────────────────────────
+
+def _pool_sleep_double(x):
+    time.sleep(0.5)  # Wide enough for the calls to genuinely overlap
+    return x * 2
+
+
+def _threaded_runs(executor, metric_id, inputs, timeout=120):
+    import concurrent.futures as cf
+
+    with cf.ThreadPoolExecutor(max_workers=len(inputs)) as tp:
+        futures = {x: tp.submit(executor.run, metric_id, FlatInputSource({"x": x}), {})
+                   for x in inputs}
+        return {x: f.result(timeout=timeout) for x, f in futures.items()}
+
+
+def _sleep_registry():
+    reg = MetricRegistry()
+    reg.metric(id="test.sleep_double", inputs={"x": "ref.x"}, shape="scalar", unit="energy")(_pool_sleep_double)
+    return reg
+
+
+def test_concurrent_runs_on_a_warm_pool_each_get_their_own_answer():
+    """Threads sharing one executor must not cross wires.
+
+    The TaskManager runs every metric via ``asyncio.to_thread``, so real OS
+    threads drive one executor at once.  Before workers were checked out per
+    call they shared a single pipe: a thread could receive another thread's
+    result while waiting for the _READY sentinel (reported as "worker failed to
+    start", killing the worker for everyone), and the reply loop silently
+    dropped any message whose task_id was not its own.
+
+    The pool is warmed first on purpose: from cold, each thread spawns its own
+    worker and the pipes never cross, which hid the bug.
+    """
+    executor = WorkerProcessExecutor(_sleep_registry(), PoolPolicy(max_runtime_s=15.0))
+    try:
+        warm = executor.run("test.sleep_double", FlatInputSource({"x": 1.0}), {})
+        assert isinstance(warm, MetricResult), getattr(warm, "traceback", warm)
+
+        results = _threaded_runs(executor, "test.sleep_double", [float(i) for i in range(4)])
+    finally:
+        executor.shutdown()
+
+    for x, result in results.items():
+        assert isinstance(result, MetricResult), getattr(result, "traceback", result)
+        assert np.isclose(result.values, x * 2), f"input {x} got {result.values}"
+
+
+def test_concurrent_runs_actually_run_in_parallel():
+    """Four 0.5s metrics on four workers must not take four times 0.5s."""
+    executor = WorkerProcessExecutor(_sleep_registry(), PoolPolicy(max_workers=4))
+    try:
+        executor.run("test.sleep_double", FlatInputSource({"x": 1.0}), {})  # Pay worker boot once
+        start = time.monotonic()
+        results = _threaded_runs(executor, "test.sleep_double", [float(i) for i in range(4)])
+        elapsed = time.monotonic() - start
+    finally:
+        executor.shutdown()
+
+    assert all(isinstance(r, MetricResult) for r in results.values())
+    # Serialised would be >= 2.0s; parallel is ~0.5s plus three worker boots.
+    assert elapsed < 1.8, f"4 x 0.5s metrics took {elapsed:.2f}s — not running in parallel"
+
+
+def test_pool_never_exceeds_max_workers():
+    executor = WorkerProcessExecutor(_sleep_registry(), PoolPolicy(max_workers=2))
+    try:
+        results = _threaded_runs(executor, "test.sleep_double", [float(i) for i in range(6)])
+        assert len(executor.worker_pids()) <= 2
+    finally:
+        executor.shutdown()
+
+    for x, result in results.items():
+        assert isinstance(result, MetricResult), getattr(result, "traceback", result)
+        assert np.isclose(result.values, x * 2)
+
+
+def test_shutdown_terminates_every_worker():
+    executor = WorkerProcessExecutor(_sleep_registry(), PoolPolicy(max_workers=3))
+    try:
+        _threaded_runs(executor, "test.sleep_double", [1.0, 2.0, 3.0])
+        pids = executor.worker_pids()
+        assert len(pids) >= 2, "expected the pool to have spawned several workers"
+    finally:
+        executor.shutdown()  # Never leak workers into the rest of the suite
+    assert executor.worker_pids() == []
+    time.sleep(0.3)  # Give the OS a moment to reap the terminated children
+    for pid in pids:
+        with pytest.raises(OSError):
+            os.kill(pid, 0)  # Raises once the process is gone
+
+
+def test_shutdown_while_busy_leaves_no_orphan_worker():
+    """A worker checked out during shutdown must not be parked for reuse.
+
+    shutdown() empties the pool's bookkeeping; a call still in flight then
+    handed its worker back, which sat in _idle unreferenced by _live and
+    survived the next shutdown as an orphan process.
+    """
+    import concurrent.futures as cf
+
+    executor = WorkerProcessExecutor(_sleep_registry(), PoolPolicy(max_workers=2))
+    with cf.ThreadPoolExecutor(max_workers=1) as tp:
+        busy = tp.submit(executor.run, "test.sleep_double", FlatInputSource({"x": 2.0}), {})
+        time.sleep(0.2)          # Let the worker start the metric
+        pids = executor.worker_pids()
+        assert pids, "expected a worker to be checked out"
+
+        executor.shutdown()
+        busy.result(timeout=30)  # The in-flight call still returns
+
+    executor.shutdown()          # Idempotent, and must not leave the worker behind
+    assert executor.worker_pids() == []
+    time.sleep(0.3)
+    for pid in pids:
+        with pytest.raises(OSError):
+            os.kill(pid, 0)
+
+
+def test_run_after_shutdown_is_refused():
+    """A shut-down executor must not quietly spawn a fresh pool."""
+    executor = WorkerProcessExecutor(_sleep_registry())
+    executor.shutdown()
+    with pytest.raises(RuntimeError):
+        executor.run("test.sleep_double", FlatInputSource({"x": 1.0}), {})

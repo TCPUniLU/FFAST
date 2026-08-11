@@ -22,6 +22,7 @@ surface they use) rather than the full env.
 """
 
 import logging
+import threading
 
 logger = logging.getLogger("FFAST")
 
@@ -52,6 +53,7 @@ class DataService:
         self._metricRequests = {}   # cache_key -> (metric_id, params, model, dataset)
         self._inputResolver = None
         self._metricExecutor = executor
+        self._metricExecutorLock = threading.Lock()
 
         # Prediction Dataset Fields (ADR 0023): eagerly extracted at prediction
         # load (the prediction's ASE source is otherwise discarded). Keyed by
@@ -236,15 +238,19 @@ class DataService:
         server process (the Worker Pool Key Constraint) — the desktop/client
         DataService gets an InProcessExecutor.
         """
-        if self._metricExecutor is None:
-            import ffast.metrics.builtin  # noqa: F401 — register built-in metrics
-            from ffast.metrics.registry import default_registry
-            if self.headless:
-                from ffast.metrics.pool import WorkerProcessExecutor
-                self._metricExecutor = WorkerProcessExecutor(default_registry)
-            else:
-                from ffast.metrics.executor import InProcessExecutor
-                self._metricExecutor = InProcessExecutor(default_registry)
+        # Metric tasks run concurrently (asyncio.to_thread), so two of them can
+        # reach a cold DataService together; without the lock both would build
+        # an executor and one whole worker pool would be orphaned.
+        with self._metricExecutorLock:
+            if self._metricExecutor is None:
+                import ffast.metrics.builtin  # noqa: F401 — register built-in metrics
+                from ffast.metrics.registry import default_registry
+                if self.headless:
+                    from ffast.metrics.pool import WorkerProcessExecutor
+                    self._metricExecutor = WorkerProcessExecutor(default_registry)
+                else:
+                    from ffast.metrics.executor import InProcessExecutor
+                    self._metricExecutor = InProcessExecutor(default_registry)
         return self._metricExecutor
 
     def registerMetricRequest(self, metric_id, params, model, dataset):
