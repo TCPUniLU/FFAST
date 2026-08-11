@@ -71,6 +71,7 @@ things came up.
 - [0041](0041-displacement-geometry-trajectory-overlay.md) Displacement as geometry (proposed)
 - [0038](0038-pipeline-stage-output-contracts.md) Stage output contracts, rejected, with the measurements
 - [0054](0054-no-setting-to-parameter-map.md) Deleting a stage descriptor nobody read
+- [0055](0055-metrics-run-in-parallel-and-scripts-wait-on-a-signal.md) A worker pool instead of one shared pipe, and a gate instead of a poll
 
 ## The web client
 
