@@ -59,8 +59,10 @@ with an unstratified uniform draw.
 
 **Prediction** `prediction.xyz`. Keys `MACE_energy`, `MACE_forces`. Force MAE
 14.7 meV/Å, RMSE 30.8, worst component 703 meV/Å; energy MAE 0.83 meV/atom;
-r = 0.9996. Per-subset force MAE against MACE-OFF paper Table S1 test values
-(meV/Å):
+r = 0.9996. Force figures here and in the table below are per force component,
+matching the MACE-OFF paper. FFAST's own `ffast.force_mae_global` reports
+29.3 meV/Å for this pair because it averages per-atom vector norms instead.
+Per-subset force MAE against MACE-OFF paper Table S1 test values (meV/Å):
 
 | Subset | here | 23(S) | 23(M) | 23(L) |
 | --- | --- | --- | --- | --- |
