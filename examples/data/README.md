@@ -82,22 +82,25 @@ not. Stored here is model output, not weights.
 
 ## `fixed-sized-molecular/` — MD22 stachyose
 
-**Source.** MD22, stachyose, from [sgdml.org](https://sgdml.org).
+**Source.** MD22, stachyose, from [sgdml.org](https://sgdml.org). The full
+trajectory holds 27 272 configurations.
 
-- File: `[download name, e.g. md22_stachyose.npz, source page, fetch date]`
+- File: `[download name, e.g. md22_stachyose.npz, and fetch date]`
 
-**Licence.** Not established. sgdml.org publishes no dataset licence; its terms
-of use cover uploads, not downloads.
+**Licence.** CC0-1.0, per the
+[ColabFit record](https://colabfit.org/id/DS_87ojug1k96ef_0) for
+MD22_stachyose. Redistribution is unrestricted. Cite:
 
-- Decision: `["permission from the MD22 authors on <date>, keep the file", or
-  "no permission, delete and download at runtime from sgdml.org"; plus who
-  decided]`
-- Citation: `[the Chmiela et al. MD22 reference the authors require]`
+> S. Chmiela, V. Vassilev-Galindo, O. T. Unke, A. Kabylda, H. E. Sauceda,
+> A. Tkatchenko, K.-R. Müller, "Accurate global machine learning force fields
+> for molecules with hundreds of atoms", *Sci. Adv.* **9**, eadf0873 (2023).
+> [doi:10.1126/sciadv.adf0873](https://doi.org/10.1126/sciadv.adf0873)
 
 **Contents.** 273 frames, 87 atoms (C, H, O), non-periodic. Per-atom `forces`,
 `energy` in kcal/mol. No other `info` keys. Mean |F| 19.1 kcal/mol/Å (0.83 eV/Å).
 
-**Sampling.** Every 100th frame of the full stachyose trajectory from index 0.
+**Sampling.** Every 100th frame of the full stachyose trajectory from index 0,
+which is what 27 272 source frames give.
 
 **Prediction** `predictions_md22_stachyose.xyz`. SchNet, per the commit that
 added it. Force MAE 2.67 kcal/mol/Å, slope 0.98, r = 0.990. Energy biased
