@@ -108,5 +108,5 @@ pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
-    "integration: end-to-end tests that spawn a real ffast-server subprocess (deselect with '-m \"not integration\"')",
+    "integration: end-to-end tests that spawn a real subprocess — ffast-server, or the headless example (deselect with '-m \"not integration\"')",
 ]

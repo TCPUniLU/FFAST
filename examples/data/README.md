@@ -23,7 +23,11 @@ Notes that apply to all of them:
   verbatim; `predictions_mptrj_sampled.xyz` copies `energy_per_atom` and
   `corrected_total_energy`. Only `energy` and `forces` are predicted.
 - AM26 and MPtrj hold more than one energy-like key, so the loader asks which to
-  use. The other three load without asking.
+  use. The other three load without asking. **A script cannot answer that
+  question**, and the key taken unaided — `energy_per_at` / `energy_per_atom` —
+  is one the prediction copied verbatim, so the energy error comes out as
+  exactly zero. Pass the predicted key explicitly (`--energy-key energy` for the
+  headless example). With it, AM26 reports 29 meV/atom, not 0.
 - All twelve files parse with FFAST's ASE loaders and return the values below.
 
 ---
