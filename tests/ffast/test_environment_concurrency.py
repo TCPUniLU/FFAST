@@ -156,19 +156,21 @@ class TestLoadDatasetKeepsFileReadOutsideTheLock:
         coord._loadPredictionsFromKeys = lambda *a, **k: events.append("predictions")
         coord.lookForGhosts = lambda: events.append("ghosts")
 
-        def _fake_ase_read(path, index):
+        def _fake_read(path, index=":", report=None, **kwargs):
             events.append("file-read")
             return []
 
-        import ase.io
-        real_read = ase.io.read
-        ase.io.read = _fake_ase_read
+        # loadDataset reads frames through ffast.io.xyz.read_ase_or_explain so
+        # that a long read can report progress; patch there, not at ase.io.
+        import ffast.io.xyz as xyz_io
+        real_read = xyz_io.read_ase_or_explain
+        xyz_io.read_ase_or_explain = _fake_read
         try:
             coord.loadDataset(
                 str(dataset_path), "ase (auto)",
                 prediction_keys=[("e", "f", "m")],
             )
         finally:
-            ase.io.read = real_read
+            xyz_io.read_ase_or_explain = real_read
 
         assert events == ["file-read", "lock-enter", "predictions", "ghosts", "lock-exit"]

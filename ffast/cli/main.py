@@ -282,7 +282,7 @@ def cmd_metrics_run(args: argparse.Namespace) -> None:
     env = startHeadlessEnvironment()
     try:
         env.taskLoadDataset(args.dataset, args.dataset_type)
-        env.waitForTasks(verbose=args.verbose, dt=0.5)
+        env.waitForTasks(verbose=args.verbose)
         dataset = env.getDatasetFromPath(args.dataset)
         if dataset is None:
             print(
@@ -301,7 +301,7 @@ def cmd_metrics_run(args: argparse.Namespace) -> None:
                 selected_energy_key=args.pred_energy_key,
                 selected_force_key=args.pred_force_key,
             )
-            env.waitForTasks(verbose=args.verbose, dt=0.5)
+            env.waitForTasks(verbose=args.verbose)
             new_models = [m for m in env.models.all() if m.fingerprint not in before]
             if not new_models:
                 print(
@@ -314,7 +314,7 @@ def cmd_metrics_run(args: argparse.Namespace) -> None:
 
         key = env.data.make_metric_cache_key(args.metric_id, params, model, dataset)
         env.data.taskGenerateMetric(args.metric_id, params, model, dataset, key)
-        env.waitForTasks(verbose=args.verbose, dt=0.5)
+        env.waitForTasks(verbose=args.verbose)
 
         result = env.data.getCacheByKey(key, subChecks=False)
         if result is None:

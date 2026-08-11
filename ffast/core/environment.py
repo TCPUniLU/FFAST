@@ -9,13 +9,14 @@ from ffast.core.connection_manager import ConnectionManager
 from ffast.session.persistence import SessionPersistence
 from ffast.core.object_catalog import ObjectCatalog
 from ffast.core.loading_coordinator import LoadingCoordinator
+from ffast.core.work_gate import WorkGate
 from ffast.protocol import control
 import logging
 import os, glob
 import numpy as np
 import asyncio
 import json
-import threading, time
+import threading
 
 # NOTE (ADR 0047 Phase 4): the Desktop-Client loaders this module uses
 # (datasetLoaders.loader SubDataset/FrozenSubDataset/AtomFilteredDataset,
@@ -472,6 +473,17 @@ class HeadlessEnvironment(Environment, threading.Thread):
         threading.Thread.__init__(self)
         self.loop = None
 
+        # Scripts have no event loop to react in, so waitForTasks waits on this
+        # gate instead. TaskManager subscribed to TASK_DONE first (in its own
+        # __init__), so by the time we are called the finished task is already
+        # out of runningTasks and the predicate below sees the truth.
+        self._workGate = WorkGate(
+            self._hasPendingWork,
+            fingerprint=self._workFingerprint,
+            describe=self._describePendingWork,
+        )
+        self.eventSubscribe("TASK_DONE", self._onWorkMayHaveSettled)
+
     def run(self):
         """Own the asyncio event loop inside the headless worker thread."""
         self.loop = asyncio.new_event_loop()
@@ -493,6 +505,12 @@ class HeadlessEnvironment(Environment, threading.Thread):
                 await taskManager.handleTaskQueue()
             except Exception:
                 logger.exception("headlessEventLoop: iteration error (continuing)")
+
+            # Backstop for completion paths that raise no event of their own —
+            # notably a generation queue drained straight from cache.
+            if not self._hasPendingWork():
+                self._workGate.notify()
+
             await asyncio.sleep(0.1)
 
         await self.eventHandle()
@@ -502,43 +520,103 @@ class HeadlessEnvironment(Environment, threading.Thread):
         """Signal the headless loop to stop cleanly."""
         self.quitReady = True
 
-    def waitForTasks(self, verbose=False, dt=5):
-        """Block scripted callers until queued, running, and deferred work has settled."""
+    def _hasPendingWork(self) -> bool:
+        """True while anything is queued, running, or waiting to be generated."""
+        if self.quitReady:
+            return False
         tm = self.tm
-        while (
-                (tm.taskQueue.qsize() > 0)
-                or (len(tm.runningTasks) > 0)
-                or (len(self.data.generationQueue) > 0)
-        ) and not self.quitReady:
-            if verbose:
-                print("-" * 20)
-                lTaskQueue = tm.taskQueue.qsize()
-                if lTaskQueue > 0:
-                    print(f"{lTaskQueue} tasks queued.\n")
+        return bool(
+            tm.taskQueue.qsize()
+            or len(tm.runningTasks)
+            or len(self.data.generationQueue)
+        )
 
-                lRunningTasks = len(tm.runningTasks)
-                if lRunningTasks > 0:
-                    print(f"{lRunningTasks} tasks running:")
-                    for taskID in tm.runningTasks:
-                        task = tm.getTask(taskID)
-                        prog = "?%"
-                        if task["progress"] is not None:
-                            prog = f'{task["progress"] * 100:.0f}%'
+    def _onWorkMayHaveSettled(self, *args, **kwargs) -> None:
+        self._workGate.notify()
 
-                        print(
-                            f'{prog:<4} {task["name"]:<20}  {task["progressMessage"]}'
-                        )
-                    print()
+    def _workFingerprint(self):
+        """Snapshot of work state; changes whenever anything moves forward.
 
-                lGenQueue = len(self.data.generationQueue)
-                if lGenQueue > 0:
-                    print(f"{lGenQueue} tasks in generation queue:")
-                    for i in self.data.generationQueue:
-                        print(i)
+        Includes each running task's progress and message, so a single long task
+        that reports progress reads as alive rather than stalled.
+        """
+        tm = self.tm
+        # Copy before reading: the loop thread inserts and deletes entries.
+        # Sort by str(taskID) — remote tasks carry string IDs (phantom tasks),
+        # local ones ints, and the two do not compare.
+        running = tuple(
+            sorted(
+                (str(taskID), task["progress"], task["progressMessage"])
+                for taskID, task in list(tm.runningTasks.items())
+            )
+        )
+        return (tm.taskQueue.qsize(), running, len(self.data.generationQueue))
 
-                print(flush=True)
+    def _describePendingWork(self) -> str:
+        tm = self.tm
+        parts = []
+        if tm.runningTasks:
+            names = ", ".join(
+                str(task["name"]) for task in list(tm.runningTasks.values())
+            )
+            parts.append(f"{len(tm.runningTasks)} task(s) running: {names}")
+        if tm.taskQueue.qsize():
+            parts.append(f"{tm.taskQueue.qsize()} task(s) queued")
+        if self.data.generationQueue:
+            parts.append(f"{len(self.data.generationQueue)} metric(s) to generate")
+        return "; ".join(parts) if parts else "nothing"
 
-            time.sleep(dt)
+    def waitForTasks(self, verbose=False, stall_timeout_s=None):
+        """Block scripted callers until queued, running, and deferred work has settled.
+
+        Returns as soon as the work finishes rather than on a poll interval; the
+        gate's watchdog only decides how often ``verbose`` reprints progress.
+
+        ``stall_timeout_s`` bounds a script against work that never completes.
+        It measures progress, not elapsed time: a load that keeps reporting runs
+        as long as it needs, while work that stops moving for that many seconds
+        raises TimeoutError naming what is still outstanding.
+
+        Progress is only visible for work that publishes TASK_PROGRESS.  Loads
+        narrate themselves (per file, per batch of frames); metric computation
+        does NOT — a metric is opaque between the task starting and its result
+        arriving, so a single metric slower than the window reads as stalled.
+        Set the window above the slowest metric you expect, or leave it unset
+        (the default) and rely on the worker pool's own per-metric hard limit
+        (PoolPolicy.max_runtime_s) to bound a genuinely stuck computation.
+        """
+        self._workGate.wait(
+            on_tick=self._printProgress if verbose else None,
+            stall_timeout_s=stall_timeout_s,
+        )
+
+    def _printProgress(self) -> None:
+        tm = self.tm
+        print("-" * 20)
+        lTaskQueue = tm.taskQueue.qsize()
+        if lTaskQueue > 0:
+            print(f"{lTaskQueue} tasks queued.\n")
+
+        running = list(tm.runningTasks.items())  # Copy: the loop thread mutates it
+        if running:
+            print(f"{len(running)} tasks running:")
+            for taskID, task in running:
+                prog = "?%"
+                if task is not None and task["progress"] is not None:
+                    prog = f'{task["progress"] * 100:.0f}%'
+
+                name = task["name"] if task is not None else "?"
+                message = task["progressMessage"] if task is not None else ""
+                print(f'{prog:<4} {name:<20}  {message}')
+            print()
+
+        generating = list(self.data.generationQueue)
+        if generating:
+            print(f"{len(generating)} tasks in generation queue:")
+            for i in generating:
+                print(i)
+
+        print(flush=True)
 
 
 def startHeadlessEnvironment():

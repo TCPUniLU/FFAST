@@ -113,7 +113,12 @@ class LoadingCoordinator:
         The remote-load algorithms narrate themselves at every probe and every
         dialog wait; ``error=False`` matches the default both ``TASK_PROGRESS``
         consumers already apply.
+
+        Local loads narrate too, so that a caller waiting on the task layer can
+        tell a slow read from a stuck one (see Environment.waitForTasks).
         """
+        if taskID is None:
+            return
         self._env.eventPush("TASK_PROGRESS", taskID, message=message, error=error)
 
     def _resolveLoad(self, kind, path, typeName):
@@ -556,6 +561,8 @@ class LoadingCoordinator:
         if loaderClass is None:
             return None
 
+        self._progress(taskID, f"Reading {os.path.basename(path)}…")
+
         # Load dataset - pass selected keys to ASE loader
         if datasetType == "ase (auto)":
             try:
@@ -595,6 +602,7 @@ class LoadingCoordinator:
             logging.warn(f"Dataset `{path}` did not load successfully")
             return
 
+        self._progress(taskID, "Indexing dataset…")
         dataset.initialise()
 
         # NOTE: in-process load is now the no-server FALLBACK only (routing goes
@@ -612,8 +620,12 @@ class LoadingCoordinator:
         # the registry mutation.
         atomsList = dataset.atomsList if hasattr(dataset, 'atomsList') else None
         if prediction_keys and atomsList is None:
-            import ase.io
-            atomsList = ase.io.read(path, index=":")
+            from ffast.io.xyz import read_ase_or_explain
+            atomsList = read_ase_or_explain(
+                path,
+                index=":",
+                report=lambda n: self._progress(taskID, f"Read {n} frames…"),
+            )
 
         # mutation_lock again (see loadModel above).
         with self._env.mutation_lock:
@@ -644,8 +656,8 @@ class LoadingCoordinator:
         """
         # Read file only if not provided
         if atomsList is None:
-            import ase.io
-            atomsList = ase.io.read(path, index=":")
+            from ffast.io.xyz import read_ase_or_explain
+            atomsList = read_ase_or_explain(path, index=":")
 
         # Loop-invariant: every column is read off this one atomsList.
         is_uniform = _isUniformAtomsList(atomsList)

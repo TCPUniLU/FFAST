@@ -88,7 +88,7 @@ def diagnose_xyz(path: str) -> str | None:
 _XYZ_EXTS = (".xyz", ".extxyz")
 
 
-def read_ase_or_explain(path, index=":"):
+def read_ase_or_explain(path, index=":", report=None, report_every=200):
     """``ase.io.read(path, index=index)``, but turn a parse failure on an xyz
     file into an actionable error naming the malformed frame.
 
@@ -96,10 +96,24 @@ def read_ase_or_explain(path, index=":"):
     if it finds a concrete defect, raise ``ValueError`` with that message chained
     from the original exception. Non-xyz formats, or xyz files with no locatable
     structural defect, re-raise the original exception unchanged.
+
+    With ``report``, frames are streamed and the callback is handed the running
+    frame count every ``report_every`` frames.  Callers waiting on the task layer
+    use those ticks to tell a slow read from a stuck one — a read that says
+    nothing for minutes is indistinguishable from a hang.  Without ``report`` the
+    read is exactly as before.
     """
     import ase.io
 
     try:
+        if report is not None:
+            frames = []
+            for frame in ase.io.iread(path, index=index):
+                frames.append(frame)
+                if len(frames) % report_every == 0:
+                    report(len(frames))
+            report(len(frames))
+            return frames
         return ase.io.read(path, index=index)
     except Exception as exc:
         if str(path).lower().endswith(_XYZ_EXTS):
