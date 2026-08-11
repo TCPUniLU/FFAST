@@ -474,15 +474,14 @@ class HeadlessEnvironment(Environment, threading.Thread):
         self.loop = None
 
         # Scripts have no event loop to react in, so waitForTasks waits on this
-        # gate instead. TaskManager subscribed to TASK_DONE first (in its own
-        # __init__), so by the time we are called the finished task is already
-        # out of runningTasks and the predicate below sees the truth.
+        # gate instead.  headlessEventLoop signals it once an iteration ends with
+        # nothing outstanding — see there for why that, and not a TASK_DONE
+        # subscription, is what wakes the waiter.
         self._workGate = WorkGate(
             self._hasPendingWork,
             fingerprint=self._workFingerprint,
             describe=self._describePendingWork,
         )
-        self.eventSubscribe("TASK_DONE", self._onWorkMayHaveSettled)
 
     def run(self):
         """Own the asyncio event loop inside the headless worker thread."""
@@ -506,8 +505,15 @@ class HeadlessEnvironment(Environment, threading.Thread):
             except Exception:
                 logger.exception("headlessEventLoop: iteration error (continuing)")
 
-            # Backstop for completion paths that raise no event of their own —
-            # notably a generation queue drained straight from cache.
+            # Wake anyone in waitForTasks.  Subscribing to TASK_DONE instead
+            # does not work: every EventClass drains its own queue, and this
+            # loop drains the environment's before the TaskManager's, so the
+            # finished task is still in runningTasks when the handler runs and
+            # the waiter goes straight back to sleep.  Checking here — after
+            # both queues have been drained — sees the settled state, and it
+            # also covers completion paths that raise no event at all, such as
+            # a generation queue served straight from cache.  Costs at most one
+            # iteration of latency, once, at the end of a wait.
             if not self._hasPendingWork():
                 self._workGate.notify()
 
@@ -530,9 +536,6 @@ class HeadlessEnvironment(Environment, threading.Thread):
             or len(tm.runningTasks)
             or len(self.data.generationQueue)
         )
-
-    def _onWorkMayHaveSettled(self, *args, **kwargs) -> None:
-        self._workGate.notify()
 
     def _workFingerprint(self):
         """Snapshot of work state; changes whenever anything moves forward.

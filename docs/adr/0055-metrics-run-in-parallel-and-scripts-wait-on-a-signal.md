@@ -74,11 +74,16 @@ running count when handed a reporter. Without a reporter the read is unchanged.
   `PoolPolicy.max_runtime_s`.
 - **`max_workers` is not yet configuration.** It is a policy field with a
   sensible default; nothing plumbs it through user config.
-- **Two mechanisms cover the missed signal** — the loop's backstop and the
-  gate's watchdog. The backstop is what actually fires today, because each
-  subscriber drains its own event queue and the environment's is drained before
-  the TaskManager's. Kept both: the watchdog is what makes `WorkGate` correct on
-  its own terms, independent of who wires it up.
+- **The waiter is woken by the loop, not by `TASK_DONE`.** Subscribing to that
+  event looks like the obvious wiring and does not work: every `EventClass`
+  drains its own queue, and `headlessEventLoop` drains the environment's before
+  the TaskManager's, so the finished task is still in `runningTasks` when the
+  handler runs and the waiter goes straight back to sleep. The subscription was
+  written, measured as dead weight, and deleted; the loop signals once an
+  iteration ends with nothing outstanding, which also covers completion paths
+  that raise no event at all. The cost is at most one loop iteration (0.1 s) at
+  the end of a wait — unmeasurable against a 3.6 s run, and cheaper than
+  reordering an event bus every listener shares.
 - **Scripts must guard `__main__`.** Spawned workers re-import the main module,
   so a script with work at module level cannot start a worker at all. The
   example and the documented snippet in `docs/usage.md` now carry the guard.
