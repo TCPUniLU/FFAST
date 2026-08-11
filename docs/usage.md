@@ -479,21 +479,32 @@ For batch work, drive the Environment directly. A complete example is in
 ```python
 from ffast.core.environment import startHeadlessEnvironment
 
-env = startHeadlessEnvironment()
-env.taskLoadDataset("examples/data/variable-sized-molecular/dataset.xyz", "ase (auto)")
-env.waitForTasks(verbose=True)
+DATASET = "examples/data/variable-sized-molecular/dataset.xyz"
+PREDICTION = "examples/data/variable-sized-molecular/prediction.xyz"
 
-dataset = env.getDatasetFromPath("examples/data/variable-sized-molecular/dataset.xyz")
-env.loadPrepredictedDataset("examples/data/variable-sized-molecular/prediction.xyz", dataset.fingerprint)
-model = env.models.all()[0]
 
-key = env.data.make_metric_cache_key("ffast.energy_mae", {}, model, dataset)
-env.data.taskGenerateMetric("ffast.energy_mae", {}, model, dataset, key)
-env.waitForTasks(verbose=True)
-print(float(env.data.getCacheByKey(key, subChecks=False).values))
+def main():
+    env = startHeadlessEnvironment()
+    env.taskLoadDataset(DATASET, "ase (auto)")
+    env.waitForTasks(verbose=True)
 
-env.persistence.save("results")     # opens later in the UI
-env.headlessQuit()
+    dataset = env.getDatasetFromPath(DATASET)
+    env.loadPrepredictedDataset(PREDICTION, dataset.fingerprint)
+    model = env.models.all()[0]
+
+    key = env.data.make_metric_cache_key("ffast.energy_mae", {}, model, dataset)
+    env.data.taskGenerateMetric("ffast.energy_mae", {}, model, dataset, key)
+    env.waitForTasks(verbose=True)
+    print(float(env.data.getCacheByKey(key, subChecks=False).values))
+
+    env.persistence.save("results")     # opens later in the UI
+    env.headlessQuit()
+
+
+# Metrics run in worker processes, which re-import this file. Without the guard
+# the re-import re-runs the script and no worker can start at all.
+if __name__ == "__main__":
+    main()
 ```
 
 For a single number, don't write a script; `ffast-cli metrics run` already does

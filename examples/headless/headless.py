@@ -9,62 +9,76 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from ffast.core.environment import startHeadlessEnvironment
 
-# Initialize headless environment
-env = startHeadlessEnvironment()
+DATASET = "examples/data/variable-sized-molecular/dataset.xyz"
+PREDICTION = "examples/data/variable-sized-molecular/prediction.xyz"
 
-# Load dataset (use "sGDML" for .npz or "ase (auto)" for ASE formats)
-env.taskLoadDataset("examples/data/variable-sized-molecular/dataset.xyz", "ase (auto)")
-env.waitForTasks(verbose=True)
 
-# Get the loaded dataset and its fingerprint
-dataset = env.getDatasetFromPath("examples/data/variable-sized-molecular/dataset.xyz")
+def main():
+    # Initialize headless environment
+    env = startHeadlessEnvironment()
 
-# Load pre-computed predictions (ASE file with energies and forces)
-env.loadPrepredictedDataset("examples/data/variable-sized-molecular/prediction.xyz", dataset.fingerprint)
+    # Load dataset (use "sGDML" for .npz or "ase (auto)" for ASE formats)
+    env.taskLoadDataset(DATASET, "ase (auto)")
+    env.waitForTasks(verbose=True)
 
-# Get the model created from the predictions (ghost model)
-model = env.models.all()[0]
+    # Get the loaded dataset and its fingerprint
+    dataset = env.getDatasetFromPath(DATASET)
 
-# Queue metric computations
-metrics = [
-    ("ffast.energy_mae",        {}),
-    ("ffast.energy_rmse",       {}),
-    ("ffast.energy_mae_shifted",  {}),
-    ("ffast.energy_rmse_shifted", {}),
-    ("ffast.force_mae_global",  {}),
-    ("ffast.force_rmse_global", {}),
-    ("ffast.energy_difference", {}),
-    ("ffast.force_mae",         {"norm": "l1"}),
-]
-for metric_id, params in metrics:
-    key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
-    env.data.taskGenerateMetric(metric_id, params, model, dataset, key)
-env.waitForTasks(verbose=True)
+    # Load pre-computed predictions (ASE file with energies and forces)
+    env.loadPrepredictedDataset(PREDICTION, dataset.fingerprint)
 
-# Retrieve computed metrics from cache
-def get_metric(metric_id, params={}):
-    key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
-    result = env.data.getCacheByKey(key, subChecks=False)
-    return float(result.values) if result is not None else None
+    # Get the model created from the predictions (ghost model)
+    model = env.models.all()[0]
 
-e_mae   = get_metric("ffast.energy_mae")
-e_rmse  = get_metric("ffast.energy_rmse")
-f_mae   = get_metric("ffast.force_mae_global")
-f_rmse  = get_metric("ffast.force_rmse_global")
+    # Queue metric computations
+    metrics = [
+        ("ffast.energy_mae",        {}),
+        ("ffast.energy_rmse",       {}),
+        ("ffast.energy_mae_shifted",  {}),
+        ("ffast.energy_rmse_shifted", {}),
+        ("ffast.force_mae_global",  {}),
+        ("ffast.force_rmse_global", {}),
+        ("ffast.energy_difference", {}),
+        ("ffast.force_mae",         {"norm": "l1"}),
+    ]
+    for metric_id, params in metrics:
+        key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
+        env.data.taskGenerateMetric(metric_id, params, model, dataset, key)
+    env.waitForTasks(verbose=True)
 
-print(f"Energy MAE:  {e_mae:.4f}")
-print(f"Energy RMSE: {e_rmse:.4f}")
-print(f"Force MAE:   {f_mae:.4f}")
-print(f"Force RMSE:  {f_rmse:.4f}")
+    # Retrieve computed metrics from cache
+    def get_metric(metric_id, params={}):
+        key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
+        result = env.data.getCacheByKey(key, subChecks=False)
+        return float(result.values) if result is not None else None
 
-# Save session for later use in the GUI
-# Creates a directory at the given path containing:
-#   info.json      - dataset/model metadata
-#   cache/*.npz    - all computed data (errors, distributions, metrics)
-# Load it in the GUI via File > Load (Ctrl+l).
-savePath = os.path.join(PROJECT_ROOT, "results")
-env.persistence.save(savePath)
-print(f"\nSession saved to: {savePath}")
+    results = {
+        "Energy MAE":  get_metric("ffast.energy_mae"),
+        "Energy RMSE": get_metric("ffast.energy_rmse"),
+        "Force MAE":   get_metric("ffast.force_mae_global"),
+        "Force RMSE":  get_metric("ffast.force_rmse_global"),
+    }
+    for label, value in results.items():
+        # A metric is None when its task failed; the reason is in the log above.
+        print(f"{label + ':':<13}{value:.4f}" if value is not None else f"{label + ':':<13}FAILED")
 
-# Clean up
-env.headlessQuit()
+    # Save session for later use in the GUI
+    # Creates a directory at the given path containing:
+    #   info.json      - dataset/model metadata
+    #   cache/*.npz    - all computed data (errors, distributions, metrics)
+    # Load it in the GUI via File > Load (Ctrl+l).
+    savePath = os.path.join(PROJECT_ROOT, "results")
+    env.persistence.save(savePath)
+    print(f"\nSession saved to: {savePath}")
+
+    # Clean up
+    env.headlessQuit()
+
+    return 0 if all(v is not None for v in results.values()) else 1
+
+
+# Metric workers are spawned as separate processes, which re-import this file.
+# Without this guard the re-import re-runs the script body and multiprocessing
+# refuses to start the worker at all.
+if __name__ == "__main__":
+    sys.exit(main())
