@@ -7,7 +7,7 @@ import pytest
 
 from ffast.cli.main import main
 
-_DATA = Path(__file__).resolve().parents[2] / "examples" / "data"
+_DATA = Path(__file__).resolve().parents[2] / "examples" / "data" / "variable-sized-molecular"
 _DATASET = _DATA / "dataset.xyz"
 _PREDICTION = _DATA / "prediction.xyz"
 _has_example_data = _DATASET.exists() and _PREDICTION.exists()
@@ -75,8 +75,8 @@ def test_metrics_run_unknown_param(capsys):
     with pytest.raises(SystemExit) as exc:
         main([
             "metrics", "run", "ffast.force_mae",
-            "--dataset", "examples/data/dataset.xyz",
-            "--prediction", "examples/data/prediction.xyz",
+            "--dataset", "examples/data/variable-sized-molecular/dataset.xyz",
+            "--prediction", "examples/data/variable-sized-molecular/prediction.xyz",
             "--param", "bogus=1",
         ])
     assert exc.value.code == 1
@@ -88,7 +88,7 @@ def test_metrics_run_needs_prediction(capsys):
     with pytest.raises(SystemExit) as exc:
         main([
             "metrics", "run", "ffast.force_mae_global",
-            "--dataset", "examples/data/dataset.xyz",
+            "--dataset", "examples/data/variable-sized-molecular/dataset.xyz",
         ])
     assert exc.value.code == 1
     assert "requires model predictions" in capsys.readouterr().err

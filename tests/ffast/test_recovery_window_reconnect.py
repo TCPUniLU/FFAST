@@ -24,7 +24,7 @@ from ffast.protocol.rpc import pack, unpack
 from ffast.session.token import SessionToken
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DATASET_PATH = REPO_ROOT / "examples" / "data" / "dataset.xyz"
+DATASET_PATH = REPO_ROOT / "examples" / "data" / "variable-sized-molecular" / "dataset.xyz"
 
 pytestmark = [
     pytest.mark.integration,

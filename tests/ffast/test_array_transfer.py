@@ -2,7 +2,7 @@
 Integration test for Issue #13 — SubDataset array transfer to local Loupe.
 
 Spawns ``ffast-server`` locally (no SLURM/SSH), connects directly via
-WebSocket, loads ``examples/data/dataset.xyz``, then requests arrays and
+WebSocket, loads ``examples/data/variable-sized-molecular/dataset.xyz``, then requests arrays and
 verifies the round-trip.  No cluster required.
 
 Ported from the original root-level ``test_array_transfer.py`` manual harness.
@@ -21,7 +21,7 @@ import pytest
 import websockets
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DATASET_PATH = REPO_ROOT / "examples" / "data" / "dataset.xyz"
+DATASET_PATH = REPO_ROOT / "examples" / "data" / "variable-sized-molecular" / "dataset.xyz"
 SERVER_PORT = 18765  # unusual port so we don't clash with a real server
 
 pytestmark = [

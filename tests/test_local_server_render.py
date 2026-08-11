@@ -2,7 +2,7 @@
 Integration test: local server → load dataset → open view → SCENE_PATCH has atoms.
 
 Run: pytest tests/test_local_server_render.py -v -s
-(needs ffast-server in PATH and examples/data/dataset.xyz)
+(needs ffast-server in PATH and examples/data/variable-sized-molecular/dataset.xyz)
 """
 import asyncio
 import os
@@ -13,7 +13,7 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-DATASET_PATH = os.path.join(ROOT, "examples", "data", "dataset.xyz")
+DATASET_PATH = os.path.join(ROOT, "examples", "data", "variable-sized-molecular", "dataset.xyz")
 DATASET_TYPE = "ase (auto)"
 
 # Launches a real ffast-server subprocess; run the fast suite with

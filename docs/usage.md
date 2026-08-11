@@ -131,7 +131,7 @@ people use. Generate predictions where you trained the model and load the file.
 
 ## Example data
 
-`examples/data/dataset.xyz` and `prediction.xyz` are what ship today: 100
+`examples/data/variable-sized-molecular/dataset.xyz` and `prediction.xyz` are what ship today: 100
 configurations of mixed organic molecules, 4 to 50 atoms each, so atom count
 varies between configurations. Enough to see every tab populated.
 
@@ -465,7 +465,7 @@ Then check it before launching anything:
 ffast-cli config validate ffast.toml
 ffast-cli metrics validate
 ffast-cli metrics test my_lab.max_force_per_frame
-ffast-cli metrics run my_lab.max_force_per_frame --dataset examples/data/dataset.xyz
+ffast-cli metrics run my_lab.max_force_per_frame --dataset examples/data/variable-sized-molecular/dataset.xyz
 ```
 
 Anything you pass to `@metric(...)` overrides what would be inferred, so the
@@ -480,11 +480,11 @@ For batch work, drive the Environment directly. A complete example is in
 from ffast.core.environment import startHeadlessEnvironment
 
 env = startHeadlessEnvironment()
-env.taskLoadDataset("examples/data/dataset.xyz", "ase (auto)")
+env.taskLoadDataset("examples/data/variable-sized-molecular/dataset.xyz", "ase (auto)")
 env.waitForTasks(verbose=True)
 
-dataset = env.getDatasetFromPath("examples/data/dataset.xyz")
-env.loadPrepredictedDataset("examples/data/prediction.xyz", dataset.fingerprint)
+dataset = env.getDatasetFromPath("examples/data/variable-sized-molecular/dataset.xyz")
+env.loadPrepredictedDataset("examples/data/variable-sized-molecular/prediction.xyz", dataset.fingerprint)
 model = env.models.all()[0]
 
 key = env.data.make_metric_cache_key("ffast.energy_mae", {}, model, dataset)

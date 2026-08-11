@@ -13,14 +13,14 @@ from ffast.core.environment import startHeadlessEnvironment
 env = startHeadlessEnvironment()
 
 # Load dataset (use "sGDML" for .npz or "ase (auto)" for ASE formats)
-env.taskLoadDataset("examples/data/dataset.xyz", "ase (auto)")
+env.taskLoadDataset("examples/data/variable-sized-molecular/dataset.xyz", "ase (auto)")
 env.waitForTasks(verbose=True)
 
 # Get the loaded dataset and its fingerprint
-dataset = env.getDatasetFromPath("examples/data/dataset.xyz")
+dataset = env.getDatasetFromPath("examples/data/variable-sized-molecular/dataset.xyz")
 
 # Load pre-computed predictions (ASE file with energies and forces)
-env.loadPrepredictedDataset("examples/data/prediction.xyz", dataset.fingerprint)
+env.loadPrepredictedDataset("examples/data/variable-sized-molecular/prediction.xyz", dataset.fingerprint)
 
 # Get the model created from the predictions (ghost model)
 model = env.models.all()[0]

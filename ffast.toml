@@ -1,9 +1,9 @@
 # FFAST project config — Dataset Fields demo (ADR 0023).
 #
 # Exposes two arbitrary extxyz `atoms.info` keys carried by
-# examples/data/dataset.xyz as plottable Metrics with NO Python, then plots
+# examples/data/variable-sized-molecular/dataset.xyz as plottable Metrics with NO Python, then plots
 # them in a project Analysis Tab. Discover a file's usable keys with:
-#     ffast-cli dataset keys examples/data/dataset.xyz
+#     ffast-cli dataset keys examples/data/variable-sized-molecular/dataset.xyz
 
 # ── Dataset Field metrics: key-in-the-ref → passthrough Metric ───────────────
 [[metrics.fields]]
