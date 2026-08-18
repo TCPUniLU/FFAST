@@ -175,8 +175,10 @@ examples/data/fixed-sized molecular/md22_stachyose_sampled_spk_split.npz
 examples/data/fixed-sized periodic/am26_subbed_100.db
 examples/data/fixed-sized periodic/am26_subbed_100_spk.db
 examples/data/fixed-sized periodic/am26_subbed_100_spk_split.npz
+examples/data/fixed-sized periodic/predictions_am26_subbed_old.xyz
 
 examples/data/variable-sized periodic/mptrj_sampled_over_200.db
 examples/data/variable-sized periodic/mptrj_sampled_over_200_spk.db
 examples/data/variable-sized periodic/mptrj_sampled_over_200_spk_split.npz
+examples/data/variable-sized periodic/predictions_mptrj_sampled_old.xyz
 datasets_test/add_noise.py

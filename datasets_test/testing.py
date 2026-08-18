@@ -9,7 +9,7 @@ import numpy as np
 
 def longest_periodic():
     total_files = 145923
-    p = Path("D:/Quantum Student job/training_data/mptrj-gga-ggapu")
+    p = Path("../../training_data/mptrj-gga-ggapu")
     max_length = 0
     iterator = 1
     prev_perc = 0
@@ -47,14 +47,10 @@ def check_homogeneity(dpath):
 
 
 def get_sub_frames():
-    start_path = "D:/Quantum Student job/datasets/AM26/am26.extxyz"
-    dest_path = "D:/Quantum Student job/datasets/AM26/am26_subbed_100.extxyz"
+    start_path = "../../datasets/AM26/am26.extxyz"
+    dest_path = "../../datasets/AM26/am26_subbed_100.extxyz"
     dset = ase.io.read(start_path, ':')
-    """sframe = dset[:100]
-    print('sampling done, initiating writing procedure:')
-    ase.io.extxyz.write_extxyz()
-    ase.io.write(dest_path, sframe, ".extxyz")
-    print('writing done, checking homogeneity:')"""
+
     check_homogeneity(dest_path)
     print('homogeneity check done, checking the source and the sub-sampled datasets:')
 
@@ -74,8 +70,8 @@ def get_sub_frames():
 
 
 def gather_dataset():
-    p = Path("D:/Quantum Student job/training_data/mptrj-gga-ggapu")
-    output_path = "D:/Quantum Student job/training_data/mptrj_sampled_over_200.extxyz"
+    p = Path("../../training_data/mptrj-gga-ggapu")
+    output_path = "../../training_data/mptrj_sampled_over_200.extxyz"
     current_atoms_list = []
     while True:
         for path in p.iterdir():
@@ -94,19 +90,19 @@ def gather_dataset():
 
 
 def stachyose():
-    start_path = "D:/Quantum Student job/datasets/md22_stachyose/md22_stachyose.xyz"
-    output_path = "D:/Quantum Student job/datasets/md22_stachyose/md22_stachyose_sampled.xyz"
+    start_path = "../../datasets/md22_stachyose/md22_stachyose.xyz"
+    output_path = "../../md22_stachyose/md22_stachyose_sampled.xyz"
     dataset = ase.io.read(start_path, '::100')
     ase.io.write(output_path, dataset)
     print(f"Dataset sampled successfully")
 
 
 def graphene():
-    start_path_dataset = "D:/Quantum Student job/datasets/Graphene/test.xyz"
-    start_path_pred = "D:/Quantum Student job/datasets/Graphene/predict.npz"
+    start_path_dataset = "../../datasets/Graphene/test.xyz"
+    start_path_pred = "../../datasets/Graphene/predict.npz"
 
-    end_path_dataset = "D:/Quantum Student job/FFAST_NEW/examples/data/fixed-sized subsystem/graphene_sampled.xyz"
-    end_path_pred = "D:/Quantum Student job/FFAST_NEW/examples/data/fixed-sized subsystem/graphene_prediction.npz"
+    end_path_dataset = "../examples/data/fixed-sized subsystem/graphene_sampled.xyz"
+    end_path_pred = "../examples/data/fixed-sized subsystem/graphene_prediction.npz"
 
     dataset = ase.io.read(start_path_dataset, index='::150')
     pred = np.load(start_path_pred, allow_pickle=True)
@@ -120,4 +116,34 @@ def graphene():
     print("successfully sampled and saved graphene predictions")
 
 
-graphene()
+def fix_am26_energy_per_at_problem():
+    ds_path = "../examples/data/fixed-sized periodic/predictions_am26_subbed.xyz"
+    destination_path = "../examples/data/fixed-sized periodic/predictions_am26_subbed_epa.xyz"
+    ds = ase.io.read(ds_path, ':')
+
+    for atoms in ds:
+        energy = atoms.get_potential_energy()
+        energy /= len(atoms.numbers)
+        atoms.info['energy_per_at'] = energy
+
+    ase.io.write(destination_path, ds)
+    print('done!')
+
+
+def fix_mptrj_per_at_problem():
+    ds_path = "../examples/data/variable-sized periodic/predictions_mptrj_sampled.xyz"
+    destination_path = "../examples/data/variable-sized periodic/predictions_mptrj_sampled_epa.xyz"
+
+    ds = ase.io.read(ds_path, ':')
+
+    for atoms in ds:
+        energy = atoms.get_potential_energy()
+        energy /= len(atoms.numbers)
+        atoms.info['corrected_total_energy'] = energy
+        atoms.info['energy_per_atom'] = energy
+
+    ase.io.write(destination_path, ds)
+    print('done!')
+
+
+fix_mptrj_per_at_problem()
