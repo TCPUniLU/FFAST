@@ -317,6 +317,33 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         # PLOTWIDGET
         self.plotWidget = pyqtgraph.PlotWidget(name=f"{name}PlotWidget")
         self.plotItem = self.plotWidget.getPlotItem()
+        # Added for hover text functionality.
+        self.plotItem.hideButtons()
+        self.plotData = []
+
+        self.hoverVLine = pyqtgraph.InfiniteLine(angle=90, movable=False, pen=pyqtgraph.mkPen((180, 180, 180, 120)))
+        self.hoverHLine = pyqtgraph.InfiniteLine(angle=0, movable=False, pen=pyqtgraph.mkPen((180, 180, 180, 120)))
+        self.hoverText = pyqtgraph.TextItem(
+            html="",
+            anchor=(0, 1),
+            border=pyqtgraph.mkPen(180, 180, 180, 220),
+            fill=pyqtgraph.mkBrush(20, 20, 20, 235),
+        )
+        self.hoverText.setZValue(1e6)
+        self.plotItem.addItem(self.hoverVLine, ignoreBounds=True)
+        self.plotItem.addItem(self.hoverHLine, ignoreBounds=True)
+        self.plotItem.addItem(self.hoverText)
+
+        self.hoverVLine.hide()
+        self.hoverHLine.hide()
+        self.hoverText.hide()
+
+        self.mouseProxy = pyqtgraph.SignalProxy(
+            self.plotWidget.scene().sigMouseMoved,
+            rateLimit=60,
+            slot=self.onMouseMoved,
+        )
+
         self.layout.addWidget(self.plotWidget)
         self.applyPlotWidget()
         self.applyToolbar(title=title)  # needs the plotwidget to exist
@@ -1149,12 +1176,137 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
             self.plotItem.addItem(item, ignoreBounds=ignoreBounds)
             self._changedThisRefresh = True
 
+        # Added for hover text functionality.
+        self.plotData.append({
+            "item": item,
+            "x": np.asarray(x),
+            "y": np.asarray(y),
+            "scatter": scatter,
+            "label": label,
+            "autoLabel": autoLabel,
+        })
+
         self._series[key] = {
             "item": item,
             "sig": sig,
             "kind": kind,
             "label": (label, autoLabel),
         }
+
+    def hideHoverReadout(self):
+        # Added for hover text functionality.
+        self.hoverVLine.hide()
+        self.hoverHLine.hide()
+        self.hoverText.hide()
+
+    def getNearestPlotPoint(self, mx, my):
+        # Added for hover text functionality.
+        #TODO: probably can find the nearest point faster with binary search!!
+        viewRange = self.plotItem.vb.viewRange()
+        xRange = viewRange[0][1] - viewRange[0][0]
+        yRange = viewRange[1][1] - viewRange[1][0]
+
+        if xRange == 0 or yRange == 0:
+            return None
+
+        best = None
+        bestDist = None
+
+        for entry in self.plotData:
+            x = entry["x"]
+            y = entry["y"]
+
+            if len(x) == 0:
+                continue
+
+            dx = (x - mx) / xRange
+            dy = (y - my) / yRange
+            dist2 = dx * dx + dy * dy
+            idx = int(np.argmin(dist2))
+            d = float(dist2[idx])
+
+            if bestDist is None or d < bestDist:
+                bestDist = d
+                best = {
+                    "entry": entry,
+                    "index": idx,
+                    "x": float(x[idx]),
+                    "y": float(y[idx]),
+                }
+
+        if bestDist is None:
+            return None
+
+        # Optional: hide readout if cursor is too far from any point
+        if bestDist > 0.02:
+            return None
+
+        return best
+
+    def formatHoverText(self, best):
+        # Added for hover text functionality.
+        entry = best["entry"]
+        idx = best["index"]
+        x = best["x"]
+        y = best["y"]
+
+        label = entry["label"]
+        if label is None and entry["autoLabel"] is not None:
+            label = self.getLabelFromData(entry["autoLabel"])
+
+        lines = []
+        if label:
+            lines.append(f"<b>{label}</b>")
+        lines.append(f"x = {x:.6g}")
+        lines.append(f"y = {y:.6g}")
+
+        hoverData = entry.get("hoverData")
+        if hoverData is not None:
+            error = hoverData.get("error")
+            if error is not None:
+                lines.append(f"error = {float(error[idx]):.6g}")
+
+        body = "<br>".join(lines)
+
+        return (
+            "<div style='"
+            "background-color: rgba(20, 20, 20, 235);"
+            "color: white;"
+            "padding: 6px 8px;"
+            "border: 1px solid rgba(180, 180, 180, 220);"
+            "border-radius: 4px;"
+            "font-size: 11pt;"
+            "'>"
+            f"{body}"
+            "</div>"
+        )
+
+    def onMouseMoved(self, evt):
+        # Added for hover text functionality.
+        pos = evt[0]
+        if not self.plotWidget.sceneBoundingRect().contains(pos):
+            self.hideHoverReadout()
+            return
+
+        mousePoint = self.plotItem.vb.mapSceneToView(pos)
+        mx, my = mousePoint.x(), mousePoint.y()
+
+        best = self.getNearestPlotPoint(mx, my)
+        if best is None:
+            self.hideHoverReadout()
+            return
+
+        x = best["x"]
+        y = best["y"]
+
+        self.hoverVLine.setPos(x)
+        self.hoverHLine.setPos(y)
+        self.hoverVLine.show()
+        self.hoverHLine.show()
+
+        self.hoverText.setHtml(self.formatHoverText(best))
+        self.hoverText.setPos(x, y)
+        self.hoverText.show()
 
     def stepPlot(self, x, y, width=1, **kwargs):
         xLeft, xRight = (x - width / 2, x + width / 2)
