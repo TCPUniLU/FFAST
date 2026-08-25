@@ -1,4 +1,4 @@
-from UI.Templates import Widget, ToolButton, ToolCheckButton, PushButton, TableView, InfoToolButton
+from UI.Templates import Widget, ToolButton, ToolCheckButton, PushButton, TableView, InfoToolButton, RedoToolButton
 from PySide6 import QtCore, QtGui, QtWidgets
 from config.uiConfig import config, configStyleSheet
 from PySide6.QtCore import QEvent, Qt
@@ -356,6 +356,13 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self.infoButton = InfoToolButton()
         layout.addWidget(self.infoButton)
 
+        self.resetViewButton = RedoToolButton(
+            func=self.resetPlotView,
+        )
+        self.resetViewButton.setToolTip("Reset plot view")
+        layout.addWidget(self.resetViewButton)
+
+
         if self.hasLegend:
             self.legendCheckBox = ToolCheckButton(
                 self.handler, self.updateLegend, icon="legend"
@@ -375,6 +382,11 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
 
         self.loadButton = DataloaderButton(self.handler, self.dataWatcher)
         layout.addWidget(self.loadButton)
+
+    def resetPlotView(self):
+        """Reset plot view, function linked to redo button"""
+        self.plotItem.enableAutoRange()
+        self.plotItem.autoRange()
 
     def applyPlotWidget(self):
         pi = self.plotItem

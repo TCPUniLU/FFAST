@@ -328,3 +328,23 @@ class InfoToolButton(ToolButton):
     def leaveEvent(self, event):
         super().leaveEvent(event)
         QtWidgets.QToolTip.hideText()
+
+class RedoToolButton(ToolButton):
+    """Redo button: Auto ranges the plot and shows tooltip immediately on hover."""
+
+    def __init__(self, func, **kwargs):
+        super().__init__(func=func, icon="redo", **kwargs)
+
+    def _showTooltip(self, _checked=False):
+        tip = self.toolTip()
+        if tip and tip != "information":
+            pos = self.mapToGlobal(self.rect().bottomLeft())
+            QtWidgets.QToolTip.showText(pos, tip, self)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self._showTooltip()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        QtWidgets.QToolTip.hideText()
