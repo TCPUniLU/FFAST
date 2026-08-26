@@ -69,6 +69,11 @@ class VispySceneAdapter:
         self._bond_width = 2.0
         self._bond_color = "#404040"
 
+        self._only_forces = False # This boolean indicates whether to show only forces and remove atoms or not.
+                                  # It can only be changed by Loupe class, which is triggered only by the client loupe.
+        self._current_force_scene = None
+        self._current_atom_scene = None
+
     # ── public API ────────────────────────────────────────────────────────────
 
     def apply_snapshot(self, snapshot: SceneSnapshot) -> None:
@@ -149,6 +154,13 @@ class VispySceneAdapter:
                 edge_color=self._atom_edge_color,
             )
 
+    def toggle_only_forces(self):
+        self._only_forces = not self._only_forces
+
+    def apply_only_forces(self):
+        self._apply_atoms(self._current_atom_scene)
+        self._apply_forces(self._current_force_scene)
+
     # ── atoms ─────────────────────────────────────────────────────────────────
 
     def _get_atom_visual(self):
@@ -165,6 +177,7 @@ class VispySceneAdapter:
         return self._atom_markers
 
     def _apply_atoms(self, atoms: AtomScene | None) -> None:
+        self._current_atom_scene = atoms
         if atoms is None or len(atoms.positions) == 0:
             if self._atom_markers is not None:
                 self._atom_markers.visible = False
@@ -203,6 +216,8 @@ class VispySceneAdapter:
             pos, face_color=colors, size=sizes,
             edge_width=self._atom_edge_width, edge_color=self._atom_edge_color,
         )
+        if self._only_forces:
+            v.visible = False
 
     @staticmethod
     def _get_colormap(name: str):
@@ -279,6 +294,7 @@ class VispySceneAdapter:
     # ── force arrows ──────────────────────────────────────────────────────────
 
     def _apply_forces(self, forces: ForceScene | None) -> None:
+        self._current_force_scene = forces
         if forces is None or len(forces.starts) == 0:
             if self._force_mesh is not None:
                 self._force_mesh.visible = False
@@ -302,7 +318,8 @@ class VispySceneAdapter:
             if self._force_mesh is not None:
                 self._force_mesh.visible = False
             return
-
+        if self._only_forces:
+            vertex_colors = np.asarray(self._atom_face_colors, dtype=np.float32)[arrow_index]
         if verts is None:
             if self._force_mesh is not None:
                 self._force_mesh.visible = False

@@ -8,6 +8,11 @@ SCHEMA_PARAMS = {
         label="Show force vectors",
         description="Overlay 3D force arrows on atoms. Ground truth or prediction source.",
     ),
+    "showForcesOnly": BoolParameter(
+        type="bool", default=False, role="present",
+        label="Only show force vectors",
+        description="Remove atoms, only show force vectors",
+    ),
     "forceVectorsNormalised": BoolParameter(
         type="bool", default=True, role="present",
         label="Normalised",
@@ -57,6 +62,7 @@ def loadLoupe(UIHandler, loupe):
     settings.addParameters(
         **{
             "showForceVectors": [False, "applyForceVectors"],
+            "showForcesOnly": [False, "onlyForcesSelected"],
             "forceVectorsModelKey": [None, "applyForceVectors"],
             "forceVectorsLength": [10, "applyForceVectors"],
             "forceVectorsNormalised": [True, "applyForceVectors"],
@@ -65,6 +71,7 @@ def loadLoupe(UIHandler, loupe):
         }
     )
     settings.markAsPerDataset("showForceVectors")
+    settings.markAsPerDataset("showForcesOnly") # Or should it be a global filter???
     settings.markAsPerDataset("forceVectorsModelKey")
     settings.markAsPerDataset("forceVectorsAtomIndices")
 

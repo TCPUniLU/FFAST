@@ -116,6 +116,7 @@ class Loupe(Widget, EventChildClass):
         self.settings.addAction("applyUnitCell", self.onApplyUnitCell)
         self.settings.addAction("applyBondStyle", self.onApplyBondStyle)
         self.settings.addAction("applyBonds", self.onApplyBonds)
+        self.settings.addAction("onlyForcesSelected", self.onlyForcesSelected)
 
     # DATASET
     def forceUpdate(self):
@@ -417,6 +418,11 @@ class Loupe(Widget, EventChildClass):
     def onToggleSceneLabels(self):
         """Gate item 1: server-side atom index labels (ffast.atom_labels)."""
         self._sendToggleFeature("labels", self.settings.get("showSceneLabels"))
+
+    def onlyForcesSelected(self):
+        """This method indicates whether the loupe should only show the force vectors and remove atoms from the scene or not."""
+        self.canvas.sceneAdapter.toggle_only_forces()
+        self.canvas.sceneAdapter.apply_only_forces()
 
     @staticmethod
     def _parseIndexList(text):
