@@ -421,8 +421,10 @@ class Loupe(Widget, EventChildClass):
 
     def onlyForcesSelected(self):
         """This method indicates whether the loupe should only show the force vectors and remove atoms from the scene or not."""
-        self.canvas.sceneAdapter.toggle_only_forces()
-        self.canvas.sceneAdapter.apply_only_forces()
+        """self.canvas.sceneAdapter.toggle_only_forces() # OLD IMPLEMENTATION
+        self.canvas.sceneAdapter.apply_only_forces()"""
+        self._sendToggleFeature("only_forces", bool(self.settings.get("showForcesOnly")))
+
 
     @staticmethod
     def _parseIndexList(text):

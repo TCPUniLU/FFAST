@@ -100,6 +100,7 @@ def build_scene(
         raw_positions = np.asarray(ds.getCoordinates(idx), dtype=np.float64)
     except Exception as exc:
         logger.warning("scene_builder: getCoordinates(%d) failed: %s", idx, exc)
+        logger.warning("As a result, 'Only show forces' option may not work properly.")
         return scene
 
     # Elements
@@ -111,6 +112,7 @@ def build_scene(
             z = np.asarray(ds.getElements(), dtype=np.int64)
     except Exception as exc:
         logger.warning("scene_builder: getElements failed: %s", exc)
+        logger.warning("As a result, 'Only show forces' option may not work properly.")
         return scene
 
     # View transforms (ADR 0014, gate item 2): transforms are computed AND
@@ -137,6 +139,7 @@ def build_scene(
         # config/atoms (element radii/colors) may be unavailable; positions still
         # render with neutral styling.
         logger.warning("scene_builder: atom stages failed: %s", exc)
+        logger.warning("As a result, 'Only show forces' option may not work properly.")
         positions = _apply_transforms(raw_positions, transforms)
         n_atoms = len(positions)
         sizes = [NEUTRAL_ATOM_SIZE] * n_atoms
@@ -208,6 +211,7 @@ def build_scene(
                 color_values = color_values[keep]
         except Exception as exc:
             logger.warning("scene_builder: atom filter failed: %s", exc)
+            logger.warning("As a result, 'Only show forces' option may not work properly.")
             keep = None
 
     # atom_ids (ADR 0015): map each displayed atom to its scientific index so a
@@ -306,6 +310,7 @@ def build_scene(
                 )
         except Exception as exc:
             logger.debug("scene_builder: force vectors failed: %s", exc)
+            logger.warning("As a result, 'Only show forces' option may not work properly.")
 
     # Unit cell (pipeline stage; origin derived from transformed positions).
     # Shown by default when lattice data is available; the client opts out by

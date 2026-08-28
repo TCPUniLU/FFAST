@@ -90,13 +90,13 @@ class VispySceneAdapter:
         """Update only the scene components listed in patch.changed."""
         changed = patch.changed if isinstance(patch.changed, set) else set(patch.changed)
         if "atoms" in changed:
-            self._apply_atoms(patch.atoms)
+            self._apply_atoms(patch.atoms, "only_forces" in changed)
         if "bonds" in changed:
             self._apply_bonds(patch.bonds)
         if "unit_cell" in changed:
             self._apply_unit_cell(patch.unit_cell)
         if "forces" in changed:
-            self._apply_forces(patch.forces)
+            self._apply_forces(patch.forces, "only_forces" in changed)
         if "labels" in changed:
             self._apply_labels(patch.labels)
         if "selections" in changed:
@@ -154,12 +154,12 @@ class VispySceneAdapter:
                 edge_color=self._atom_edge_color,
             )
 
-    def toggle_only_forces(self):
+    """def toggle_only_forces(self): # OLD IMPLEMENTATION FOR THE 'ONLY FORCES' OPTION
         self._only_forces = not self._only_forces
 
     def apply_only_forces(self):
         self._apply_atoms(self._current_atom_scene)
-        self._apply_forces(self._current_force_scene)
+        self._apply_forces(self._current_force_scene)"""
 
     # ── atoms ─────────────────────────────────────────────────────────────────
 
@@ -176,8 +176,7 @@ class VispySceneAdapter:
             )
         return self._atom_markers
 
-    def _apply_atoms(self, atoms: AtomScene | None) -> None:
-        self._current_atom_scene = atoms
+    def _apply_atoms(self, atoms: AtomScene | None, only_forces: bool=False) -> None:
         if atoms is None or len(atoms.positions) == 0:
             if self._atom_markers is not None:
                 self._atom_markers.visible = False
@@ -216,7 +215,7 @@ class VispySceneAdapter:
             pos, face_color=colors, size=sizes,
             edge_width=self._atom_edge_width, edge_color=self._atom_edge_color,
         )
-        if self._only_forces:
+        if only_forces:
             v.visible = False
 
     @staticmethod
@@ -293,8 +292,7 @@ class VispySceneAdapter:
 
     # ── force arrows ──────────────────────────────────────────────────────────
 
-    def _apply_forces(self, forces: ForceScene | None) -> None:
-        self._current_force_scene = forces
+    def _apply_forces(self, forces: ForceScene | None, only_forces: bool=False) -> None:
         if forces is None or len(forces.starts) == 0:
             if self._force_mesh is not None:
                 self._force_mesh.visible = False
@@ -318,7 +316,7 @@ class VispySceneAdapter:
             if self._force_mesh is not None:
                 self._force_mesh.visible = False
             return
-        if self._only_forces:
+        if only_forces and self._atom_face_colors is not None:
             vertex_colors = np.asarray(self._atom_face_colors, dtype=np.float32)[arrow_index]
         if verts is None:
             if self._force_mesh is not None:

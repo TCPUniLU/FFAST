@@ -860,6 +860,7 @@ class ServerSession:
         # than the COMMAND_RESULT/SCENE_PATCH never reaching the client.
         if result.success and result.patch and result.patch.changed:
             view_state = view.state
+            only_forces_selected = "only_forces" in view_state.enabled_features
             try:
                 scene = await asyncio.to_thread(
                     build_scene, view_state, self.env.datasets.get,
@@ -875,6 +876,9 @@ class ServerSession:
                     camera=view_state.camera,
                 )
             fill_patch_from_scene(result.patch, scene)
+            if only_forces_selected:
+                result.patch.changed.add("only_forces")
+                print("server says yes!")
 
         result_data = pack(control.COMMAND_RESULT, [], result.model_dump())
         await self._emit(result_data)
