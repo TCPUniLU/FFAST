@@ -139,13 +139,13 @@ class TestRendererAPIContract:
 
     def test_apply_patch_handles_labels(self, viewer_js_source):
         patch_start = viewer_js_source.index("applyPatch(patch,")
-        patch_end = viewer_js_source.index("_updateAtoms(atoms)")
+        patch_end = viewer_js_source.index("_updateAtoms(atoms,")
         patch_body = viewer_js_source[patch_start:patch_end]
         assert "'labels'" in patch_body
 
     def test_apply_patch_handles_selections(self, viewer_js_source):
         patch_start = viewer_js_source.index("applyPatch(patch,")
-        patch_end = viewer_js_source.index("_updateAtoms(atoms)")
+        patch_end = viewer_js_source.index("_updateAtoms(atoms,")
         patch_body = viewer_js_source[patch_start:patch_end]
         assert "'selections'" in patch_body
 
@@ -186,7 +186,7 @@ class TestRendererAPIContract:
     # ── _updateAtoms caches atom positions ────────────────────────────────────
 
     def test_update_atoms_caches_positions(self, viewer_js_source):
-        update_atoms_start = viewer_js_source.index("_updateAtoms(atoms)")
+        update_atoms_start = viewer_js_source.index("_updateAtoms(atoms,")
         update_atoms_end = viewer_js_source.index("_updateBonds(bonds)")
         update_atoms_body = viewer_js_source[update_atoms_start:update_atoms_end]
         assert "_cachedAtomPositions" in update_atoms_body
@@ -204,14 +204,14 @@ class TestRendererAPIContract:
     # vispy adapter's _map_color_by ──────────────────────────────────────────
 
     def test_update_atoms_reads_color_by(self, viewer_js_source):
-        update_atoms_start = viewer_js_source.index("_updateAtoms(atoms)")
+        update_atoms_start = viewer_js_source.index("_updateAtoms(atoms,")
         update_atoms_end = viewer_js_source.index("_updateBonds(bonds)")
         body = viewer_js_source[update_atoms_start:update_atoms_end]
         assert "atoms.color_by" in body
 
     def test_update_atoms_falls_back_on_unmapped_color_by(self, viewer_js_source):
         # Mirrors the vispy adapter: mapColorBy returning falsy → element colors.
-        update_atoms_start = viewer_js_source.index("_updateAtoms(atoms)")
+        update_atoms_start = viewer_js_source.index("_updateAtoms(atoms,")
         update_atoms_end = viewer_js_source.index("_updateBonds(bonds)")
         body = viewer_js_source[update_atoms_start:update_atoms_end]
         assert "mapColorBy(" in body
