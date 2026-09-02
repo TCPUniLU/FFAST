@@ -804,11 +804,12 @@ export class FFastApp {
    * the Force Vectors pane always re-sends all four as one logical action
    * (mirrors Qt's onApplyForceVectors), so the callback and the per-dataset
    * restore path (`_restoreDatasetSettings`) share this one seam.
-   * @param {{show: boolean, modelKey: string|null, length: number, normalised: boolean}} state
+   * @param {{show: boolean, onlyForces, modelKey: string|null, length: number, normalised: boolean}} state
    */
   _applyForceVectorsState(state) {
     this._sendToggleFeature('forces', state.show);
     if (state.show) {
+      this._sendToggleFeature('only_forces', state.onlyForces)
       this._sendSetParameter('ffast.force_arrows', 'prediction_ref', state.modelKey);
       this._sendSetParameter('ffast.force_arrows', 'length_factor', state.length);
       this._sendSetParameter('ffast.force_arrows', 'normalised', state.normalised);

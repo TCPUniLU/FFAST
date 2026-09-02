@@ -878,7 +878,7 @@ class ServerSession:
             fill_patch_from_scene(result.patch, scene)
             if only_forces_selected:
                 result.patch.changed.add("only_forces")
-                print("server says yes!")
+                #print("server says yes!") # Debugging purposes
 
         result_data = pack(control.COMMAND_RESULT, [], result.model_dump())
         await self._emit(result_data)

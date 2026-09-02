@@ -10,7 +10,7 @@ import { createPane, checkboxRow, selectRow, sliderRow, rowElement } from '../si
 /**
  * @param {HTMLElement} sidebarEl
  * @param {{
- *   onApply: (state: {show: boolean, modelKey: string|null, length: number, normalised: boolean, filterEnabled: boolean, atomIndices: number[]}) => void,
+ *   onApply: (state: {show: boolean, onlyForces: boolean, modelKey: string|null, length: number, normalised: boolean, filterEnabled: boolean, atomIndices: number[]}) => void,
  *   getModels: () => Map<string, {name?: string}>,
  * }} callbacks
  */
@@ -18,12 +18,13 @@ export function createForcesPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Force Vectors');
   sidebarEl.appendChild(el);
 
-  const state = { show: false, modelKey: null, length: 10, normalised: true, filterEnabled: false, atomIndices: [] };
+  const state = { show: false, onlyForces: false, modelKey: null, length: 10, normalised: true, filterEnabled: false, atomIndices: [] };
   const apply = () => callbacks.onApply({ ...state, atomIndices: [...state.atomIndices] });
   let keyByLabel = new Map();   // combo label -> model fingerprint
 
   const showInput = checkboxRow(body, 'Show force vectors', state.show, (v) => { state.show = v; _syncVisibility(); apply(); });
-
+  const onlyForces = checkboxRow(body, 'Only show force vectors', state.onlyForces,
+      (v) => {state.onlyForces = v; if (v === true) window.alert("You made the atoms disappear. As a result, do not use the functionality related to the atoms (DISPLAY, EXTRACT SUBSET).\nIf you want to work with them again, please disable 'Only show forces'."); apply();})
   const sourceSelect = selectRow(body, 'Source', ['Ground Truth'], 'Ground Truth', (label) => {
     state.modelKey = label === 'Ground Truth' ? null : keyByLabel.get(label) ?? null;
     apply();
@@ -35,7 +36,7 @@ export function createForcesPane(sidebarEl, callbacks) {
 
   function _syncVisibility() {
     const show = state.show;
-    for (const control of [sourceSelect, normalisedInput, lengthInput, filterInput]) rowElement(control).style.display = show ? '' : 'none';
+    for (const control of [onlyForces, sourceSelect, normalisedInput, lengthInput, filterInput]) rowElement(control).style.display = show ? '' : 'none';
   }
   _syncVisibility();
 

@@ -64,7 +64,8 @@ export class MoleculeRenderer {
     // Geometry template for atoms (shared, low-poly sphere)
     this._sphereGeo = new THREE.SphereGeometry(1, 10, 8);
     this._atomMat   = new THREE.MeshStandardMaterial({ roughness: 0.35, metalness: 0.1 });
-
+    // Adding this for adoption of atoms colors, when 'Show only forces' is selected
+    this._atomColors = null;
     // RAF handle
     this._rafId = null;
 
@@ -217,17 +218,19 @@ export class MoleculeRenderer {
    */
   applyPatch(patch, changed) {
     const c = new Set(Array.isArray(changed) ? changed : Object.keys(changed));
-    if (c.has('atoms'))      { if (patch.atoms)      this._updateAtoms(patch.atoms);         else this._clearAtoms(); }
+    //if (c.has('only_forces')) {window.alert("YES")}
+    if (c.has('atoms'))      { if (patch.atoms)      this._updateAtoms(patch.atoms, c.has('only_forces'));         else this._clearAtoms(); }
     if (c.has('bonds'))      { if (patch.bonds)       this._updateBonds(patch.bonds);         else this._clearBonds(); }
-    if (c.has('forces'))     { if (patch.forces)      this._updateForces(patch.forces);       else this._clearForces(); }
+    if (c.has('forces'))     { if (patch.forces)      this._updateForces(patch.forces, c.has('only_forces'));       else this._clearForces(); }
     if (c.has('unit_cell'))  { if (patch.unit_cell)   this._updateUnitCell(patch.unit_cell);  else this._clearUnitCell(); }
     if (c.has('labels'))     this._updateLabels(patch.labels || null);
     if (c.has('selections')) this._updateSelections(patch.selections || []);
     if (c.has('camera') && patch.camera) this._applyCamera(patch.camera);
   }
 
-  /** @param {import('./protocol.js').AtomScene} atoms */
-  _updateAtoms(atoms) {
+  /** @param {import('./protocol.js').AtomScene} atoms
+   * @param {boolean} only_forces */
+  _updateAtoms(atoms, only_forces=false) {
     this._clearAtoms();
     const n = atoms.positions.length;
     if (n === 0) return;
@@ -244,6 +247,8 @@ export class MoleculeRenderer {
       if (mapped) colors = mapped;
       else console.warn(`MoleculeRenderer: unknown colormap '${atoms.color_by.colormap}' — using element colors`);
     }
+
+    this._atomColors = colors
 
     const mesh = new THREE.InstancedMesh(this._sphereGeo, this._atomMat.clone(), n);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -265,9 +270,10 @@ export class MoleculeRenderer {
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-
-    this._atomMesh = mesh;
-    this._scene.add(mesh);
+    if (! only_forces) {
+      this._atomMesh = mesh;
+      this._scene.add(mesh);
+    }
   }
 
   /**
@@ -309,8 +315,9 @@ export class MoleculeRenderer {
     this._scene.add(mesh);
   }
 
-  /** @param {import('./protocol.js').ForceScene} forces */
-  _updateForces(forces) {
+  /** @param {import('./protocol.js').ForceScene} forces
+   * @param {boolean} only_forces*/
+  _updateForces(forces, only_forces=false) {
     this._clearForces();
     if (!forces.starts || forces.starts.length === 0) return;
 
@@ -325,7 +332,8 @@ export class MoleculeRenderer {
       const [ox, oy, oz] = forces.starts[i];
       const [vx, vy, vz] = forces.vectors[i];
       // One RGBA per arrow is a ForceScene invariant (ADR 0052) — no local default.
-      const [cr, cg, cb] = forces.colors[i];
+      const colors = only_forces ? this._atomColors[i] : forces.colors[i];
+      const [cr, cg, cb] = colors;
       const len = Math.sqrt(vx*vx + vy*vy + vz*vz);
       if (len < 0.001) continue;
       const dir = new THREE.Vector3(vx, vy, vz).normalize();
