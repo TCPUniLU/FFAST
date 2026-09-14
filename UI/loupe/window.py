@@ -94,6 +94,8 @@ class Loupe(Widget, EventChildClass):
         self.mBar = QtWidgets.QMenuBar(self)
         self.layout.setMenuBar(self.mBar)
 
+        self.dont_show_warning_again = False # for onlyForcesSelected to remeber whether to show "Only show force vectors" warning.
+
     # SETTINGS
     def initialiseSettings(self):
         self.settings = Settings()
@@ -423,7 +425,28 @@ class Loupe(Widget, EventChildClass):
         """This method indicates whether the loupe should only show the force vectors and remove atoms from the scene or not."""
         """self.canvas.sceneAdapter.toggle_only_forces() # OLD IMPLEMENTATION
         self.canvas.sceneAdapter.apply_only_forces()"""
-        self._sendToggleFeature("only_forces", bool(self.settings.get("showForcesOnly")))
+        checked = bool(self.settings.get("showForcesOnly"))
+        from PySide6.QtWidgets import QMessageBox, QCheckBox
+
+        if not self.dont_show_warning_again and checked:
+            message_box = QMessageBox(self)
+            message_box.setIcon(QMessageBox.Icon.Warning)
+            message_box.setWindowTitle("Atoms hidden")
+            message_box.setText(
+                "Only show force vectors hides atoms.\n\n"
+                "Do not use Display or Extract Subset while this option is enabled."
+            )
+            message_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+
+            dont_show_again = QCheckBox("Don't show this warning again")
+            message_box.setCheckBox(dont_show_again)
+
+            message_box.exec()
+
+            if dont_show_again.isChecked():
+                self.dont_show_warning_again = True
+
+        self._sendToggleFeature("only_forces", checked)
 
 
     @staticmethod
