@@ -85,6 +85,11 @@ def build_scene(
         camera=state.camera,
     )
 
+    if "only_forces" in state.enabled_features:
+        scene.only_forces = True
+    else:
+        scene.only_forces = False
+
     if state.dataset_ref is None:
         return scene
 

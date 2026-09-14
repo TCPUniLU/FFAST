@@ -784,7 +784,10 @@ class ServerSession:
         from ffast.protocol.rpc import pack
         from ffast.visualization.view import VisualizationView
 
+        #print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+
         view_id = kwargs.get("view_id") or str(uuid.uuid4())
+        #print(view_id)
         dataset_ref = kwargs.get("dataset_ref") or None
 
         if view_id not in self.views:
@@ -792,6 +795,7 @@ class ServerSession:
             self.views[view_id] = view
         else:
             view = self.views[view_id]
+        #print('only_forces' in view.state.enabled_features)
 
         if dataset_ref is not None:
             view.state.dataset_ref = dataset_ref
@@ -816,6 +820,7 @@ class ServerSession:
             self._log_scene_degrade("OPEN_VIEW", view_id, exc)
             snapshot = view.snapshot()
         data = pack(control.SCENE_SNAPSHOT, [], snapshot.model_dump())
+        #if snapshot.scene.only_forces: print("only forces sent!")
         await self._emit(data)
         logger.info(
             "OPEN_VIEW: view_id=%r dataset_ref=%r prediction_ref=%r scene_version=%d",

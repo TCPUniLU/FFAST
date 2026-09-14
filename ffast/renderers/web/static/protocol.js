@@ -72,6 +72,7 @@
 /**
  * Renderer-neutral description of one Visualization View's scene.
  * @typedef {Object} RenderScene
+ * @property {boolean} only_forces
  * @property {string} view_id
  * @property {number} version
  * @property {AtomScene|null} atoms

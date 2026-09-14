@@ -95,6 +95,7 @@ class RenderScene(BaseModel):
     Renderer-neutral description of one Visualization View's scene.
     Renderer adapters translate these primitives to Vispy or WebGL objects.
     """
+    only_forces: bool = False
     model_config = ConfigDict(extra="forbid")
     view_id: str
     version: int
