@@ -396,6 +396,84 @@
       background: rgba(0,0,0,0.6);
       display: flex; align-items: center; justify-content: center;
     }
+    .warning-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      background: rgba(0, 0, 0, 0.60);
+    }
+
+    .warning-modal.hidden {
+      display: none;
+    }
+
+    .warning-modal-panel {
+      width: 440px;
+      max-width: calc(100vw - 32px);
+
+      background: var(--bg2);
+      color: var(--text1);
+      border: 1px solid var(--bg3);
+      border-radius: 6px;
+
+      overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.60);
+    }
+
+    .warning-modal-title {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--bg3);
+
+      color: var(--hl2);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .warning-modal-message {
+      margin: 0;
+      padding: 14px 12px 8px;
+
+      color: var(--text1);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .warning-modal-check {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+
+      padding: 6px 12px 14px;
+      cursor: pointer;
+
+      color: var(--text1);
+      font-size: 11px;
+    }
+
+    .warning-modal-check input {
+      width: 14px;
+      height: 14px;
+      accent-color: var(--hl2);
+    }
+
+    .warning-modal-footer {
+      display: flex;
+      justify-content: flex-end;
+
+      padding: 8px 10px;
+      border-top: 1px solid var(--bg3);
+    }
+
+    .warning-modal-footer button {
+      min-width: 72px;
+    }
     #fb-modal.hidden { display: none; }
     #fb-panel {
       width: 640px; max-width: 92vw; height: 70vh; max-height: 600px;
@@ -659,7 +737,30 @@
       </div>
     </div>
   </div>
+<!-- Warning shown when atoms are hidden by "Only show force vectors". -->
+<div id="only-forces-warning-modal" class="warning-modal hidden" role="dialog"
+     aria-modal="true" aria-labelledby="only-forces-warning-title">
+  <div class="warning-modal-panel">
+    <div id="only-forces-warning-title" class="warning-modal-title">
+      Atoms hidden
+    </div>
 
+    <p class="warning-modal-message">
+      You made the atoms disappear. Do not use functionality related to atoms,
+      such as <strong>Display</strong> or <strong>Extract Subset</strong>,
+      while “Only show force vectors” is enabled.
+    </p>
+
+    <label class="warning-modal-check">
+      <input id="only-forces-warning-dont-show" type="checkbox">
+      Don’t show this warning again
+    </label>
+
+    <div class="warning-modal-footer">
+      <button id="only-forces-warning-ok" type="button">OK</button>
+    </div>
+  </div>
+</div>
   <!-- Plotly.js is vendored under vendor/plotly/ (basic bundle, UMD → window.Plotly).
        Loaded as a classic script (not a module) before the app so panels.js can
        read globalThis.Plotly. No CDN — offline / cluster parity (ADR 0045). -->

@@ -6,7 +6,37 @@
  */
 
 import { createPane, checkboxRow, selectRow, sliderRow, rowElement } from '../sidebar.js';
+const ONLY_FORCES_WARNING_KEY = 'ffast.onlyForcesWarning.dismissed';
 
+/*This function is used to make the 'Only show force vectors' warning visible and handle user input*/
+function showOnlyForcesWarning() {
+  const modal = document.getElementById('only-forces-warning-modal');
+  const dontShowInput = document.getElementById('only-forces-warning-dont-show');
+  const okButton = document.getElementById('only-forces-warning-ok');
+
+  // The preference has already been saved in this browser.
+  if (localStorage.getItem(ONLY_FORCES_WARNING_KEY) === 'true') {
+    return;
+  }
+
+  // Start unchecked every time the dialog is shown.
+  dontShowInput.checked = false;
+
+  modal.classList.remove('hidden');
+
+  const close = () => {
+    if (dontShowInput.checked) {
+      localStorage.setItem(ONLY_FORCES_WARNING_KEY, 'true');
+    }
+
+    modal.classList.add('hidden');
+
+    okButton.removeEventListener('click', close);
+  };
+
+  okButton.addEventListener('click', close, { once: true });
+  okButton.focus();
+}
 /**
  * @param {HTMLElement} sidebarEl
  * @param {{
@@ -24,7 +54,8 @@ export function createForcesPane(sidebarEl, callbacks) {
 
   const showInput = checkboxRow(body, 'Show force vectors', state.show, (v) => { state.show = v; _syncVisibility(); apply(); });
   const onlyForces = checkboxRow(body, 'Only show force vectors', state.onlyForces,
-      (v) => {state.onlyForces = v; if (v === true) window.alert("You made the atoms disappear. As a result, do not use the functionality related to the atoms (DISPLAY, EXTRACT SUBSET).\nIf you want to work with them again, please disable 'Only show forces'."); apply();})
+      (v) => {state.onlyForces = v; if (v) {
+      showOnlyForcesWarning();} apply();})
   const sourceSelect = selectRow(body, 'Source', ['Ground Truth'], 'Ground Truth', (label) => {
     state.modelKey = label === 'Ground Truth' ? null : keyByLabel.get(label) ?? null;
     apply();
