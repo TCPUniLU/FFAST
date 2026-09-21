@@ -55,6 +55,7 @@
     #topbar {
       display: flex;
       align-items: center;
+      overflow-x: auto;
       gap: 8px;
       padding: 6px 10px;
       background: var(--bg2);
@@ -81,6 +82,9 @@
       padding: 4px 10px; border: none; border-radius: 3px;
       background: var(--bg3); color: var(--text1); cursor: pointer;
       font-family: var(--font); font-size: 12px; height: 24px;
+    }
+    button.height-adjustable {
+      height: auto;
     }
     button:hover { background: var(--bg4); color: var(--text-hover); }
     button:active { background: var(--hl2); color: var(--text2); }
@@ -601,8 +605,8 @@
     <button id="disconnect-btn" disabled>Disconnect</button>
     <!-- Session save/load (ADR 0045 issue 21): mirrors Qt's File > Save/Load —
          a global action over the whole session, not a per-dataset one. -->
-    <button id="save-session-btn" disabled title="Save session (datasets, views, settings)">Save Session</button>
-    <button id="load-session-btn" disabled title="Load a previously saved session">Load Session</button>
+    <button class="button height-adjustable" id="save-session-btn" disabled title="Save session (datasets, views, settings)">Save Session</button>
+    <button class="button height-adjustable" id="load-session-btn" disabled title="Load a previously saved session">Load Session</button>
     <span id="status">Disconnected</span>
   </div>
 
