@@ -73,7 +73,8 @@ class LaunchResult:
 
 def app_url(web_port: int, ws_port: int, *, host: str = LOOPBACK) -> str:
     """URL of the web app, carrying the WebSocket RPC port as a query arg."""
-    return f"http://{host}:{web_port}/?port={ws_port}"
+    from uuid import uuid4 # This parameter exists only to make every FFAST Web launch URL unique.
+    return f"http://{host}:{web_port}/?port={ws_port}&launch={uuid4().hex}"
 
 
 def pick_free_port() -> int:
