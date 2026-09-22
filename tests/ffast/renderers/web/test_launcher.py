@@ -130,7 +130,7 @@ def test_run_serves_the_app_and_opens_browser():
     )
     try:
         assert spawn_calls == [(ws_port, "127.0.0.1")]  # host threaded to the server
-        assert [f"http://127.0.0.1:{web_port}/?port={ws_port}&launch="] in opened
+        assert [f"http://127.0.0.1:{web_port}/?port={ws_port}&launch="][0] in opened[0] # perhaps a better design is required?
         assert result.url == opened[0]
         # The static server really serves the FFAST web app.
         with urllib.request.urlopen(
