@@ -21,15 +21,13 @@ from ffast.renderers.web import launcher
 
 def test_app_url_points_web_app_at_ws_port():
     assert (
-        launcher.app_url(9000, 8765)
-        == "http://127.0.0.1:9000/?port=8765"
+        "http://127.0.0.1:9000/?port=8765&launch=" in launcher.app_url(9000, 8765)
     )
 
 
 def test_app_url_honours_host():
     assert (
-        launcher.app_url(9000, 8765, host="192.168.0.5")
-        == "http://192.168.0.5:9000/?port=8765"
+        "http://192.168.0.5:9000/?port=8765&launch=" in launcher.app_url(9000, 8765, host="192.168.0.5")
     )
 
 
@@ -132,7 +130,7 @@ def test_run_serves_the_app_and_opens_browser():
     )
     try:
         assert spawn_calls == [(ws_port, "127.0.0.1")]  # host threaded to the server
-        assert opened == [f"http://127.0.0.1:{web_port}/?port={ws_port}"]
+        assert [f"http://127.0.0.1:{web_port}/?port={ws_port}&launch="] in opened
         assert result.url == opened[0]
         # The static server really serves the FFAST web app.
         with urllib.request.urlopen(
