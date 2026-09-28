@@ -626,8 +626,11 @@ export class AnalysisManager {
       if (p.min != null) input.min = String(p.min);
       if (p.max != null) input.max = String(p.max);
       input.step = p.type === 'int' ? '1' : 'any';
-      input.addEventListener('change', () =>
-        commit(p.type === 'int' ? parseInt(input.value, 10) : parseFloat(input.value)));
+      input.addEventListener('change', () => {
+        const value = p.type === 'int' ? parseInt(input.value, 10) : parseFloat(input.value);
+        commit(value);
+        p.default = value;
+      })
     }
     wrap.appendChild(input);
     holder.appendChild(wrap);
