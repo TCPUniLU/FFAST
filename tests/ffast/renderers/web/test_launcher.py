@@ -13,21 +13,23 @@ import socket
 import threading
 import urllib.request
 from dataclasses import dataclass
-
+from uuid import uuid4
 import pytest
 
 from ffast.renderers.web import launcher
 
 
 def test_app_url_points_web_app_at_ws_port():
+    uid = uuid4().hex
     assert (
-        "http://127.0.0.1:9000/?port=8765&launch=" in launcher.app_url(9000, 8765)
+        f"http://127.0.0.1:9000/?port=8765&launch={uid}" == launcher.app_url(9000, 8765, uid=uid)
     )
 
 
 def test_app_url_honours_host():
+    uid = uuid4().hex
     assert (
-        "http://192.168.0.5:9000/?port=8765&launch=" in launcher.app_url(9000, 8765, host="192.168.0.5")
+        f"http://192.168.0.5:9000/?port=8765&launch={uid}" == launcher.app_url(9000, 8765, host="192.168.0.5", uid=uid)
     )
 
 
@@ -118,6 +120,7 @@ def test_run_serves_the_app_and_opens_browser():
     fake.listener.bind(("127.0.0.1", ws_port))
     fake.listener.listen(1)
 
+    uid = uuid4().hex
     opened = []
     spawn_calls = []
     result = launcher.run(
@@ -127,10 +130,11 @@ def test_run_serves_the_app_and_opens_browser():
         spawn_server=lambda p, h: spawn_calls.append((p, h)) or fake,
         opener=opened.append,
         block=False,
+        uid=uid
     )
     try:
         assert spawn_calls == [(ws_port, "127.0.0.1")]  # host threaded to the server
-        assert [f"http://127.0.0.1:{web_port}/?port={ws_port}&launch="][0] in opened[0] # perhaps a better design is required?
+        assert [f"http://127.0.0.1:{web_port}/?port={ws_port}&launch={uid}"][0] == opened[0] # perhaps a better design is required?
         assert result.url == opened[0]
         # The static server really serves the FFAST web app.
         with urllib.request.urlopen(

@@ -30,6 +30,7 @@ import time
 import webbrowser
 from dataclasses import dataclass
 from typing import Callable
+import uuid
 
 from ffast.renderers.web.serve import start_static_server
 
@@ -71,10 +72,11 @@ class LaunchResult:
     proc: subprocess.Popen
 
 
-def app_url(web_port: int, ws_port: int, *, host: str = LOOPBACK) -> str:
+def app_url(web_port: int, ws_port: int, *, host: str = LOOPBACK, uid=None) -> str:
     """URL of the web app, carrying the WebSocket RPC port as a query arg."""
-    from uuid import uuid4 # This parameter exists only to make every FFAST Web launch URL unique.
-    return f"http://{host}:{web_port}/?port={ws_port}&launch={uuid4().hex}"
+    if uid is None:# This parameter exists only to make every FFAST Web launch URL unique.
+        uid = uuid.uuid4().hex
+    return f"http://{host}:{web_port}/?port={ws_port}&launch={uid}"
 
 
 def pick_free_port() -> int:
@@ -179,6 +181,7 @@ def run(
     opener: Callable[[str], object] = webbrowser.open,
     ready_timeout: float = 30.0,
     block: bool = True,
+    uid = None,
 ) -> LaunchResult:
     """Serve the app, start the WS server, open the browser.
 
@@ -217,7 +220,7 @@ def run(
             ready_timeout,
         )
 
-    url = app_url(web_port, ws_port, host=host)
+    url = app_url(web_port, ws_port, host=host, uid=uid)
     logger.info("Opening FFAST web app at %s", url)
     open_browser(url, app_mode=app_mode, opener=opener)
 
