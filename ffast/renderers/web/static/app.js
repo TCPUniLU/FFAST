@@ -562,7 +562,7 @@ export class FFastApp {
     if (!scene) return;
     this._viewVersion = scene.version;
     this._renderer.applyScene(scene);
-    this._renderer.frameAtoms();
+    //this._renderer.frameAtoms(); makes 3D View forget its camera settings every time the tab is changed
     document.getElementById('overlay').classList.add('hidden');
     document.getElementById('reset-camera-btn').disabled = false;
     for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = false;
