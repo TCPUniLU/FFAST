@@ -40,6 +40,10 @@ export class FFastApp {
     this._renderer = null;
     this._datasets = new Map();   // fingerprint → meta
     this._models = new Map();     // model fingerprint → {name, dataset_fingerprints}
+
+    this._datasetsViewId = new Map(); // fingerprint → view id in 3D View
+    this._viewIdCounter = 0;
+
     this._currentDatasetFp = null;  // selected dataset (object rail)
     this._currentModelFp = null;    // selected prediction, or null
     this._currentViewId = null;
@@ -508,7 +512,13 @@ export class FFastApp {
     const datasetChanged = this._currentDatasetFp !== this._lastOpenedDatasetFp;
     if (datasetChanged && this._lastOpenedDatasetFp) this._saveDatasetSettings(this._lastOpenedDatasetFp);
 
-    this._currentViewId = 'view-0';
+    if (this._datasetsViewId.has(this._currentDatasetFp)) {
+      this._currentViewId = `view-${this._datasetsViewId.get(this._currentDatasetFp)}`
+    } else {
+      this._datasetsViewId.set(this._currentDatasetFp, this._viewIdCounter)
+      this._currentViewId = `view-${this._viewIdCounter}`;
+      this._viewIdCounter += 1;
+    }
     this._conn.send(OUT.OPEN_VIEW, {
       view_id: this._currentViewId,
       dataset_ref: this._currentDatasetFp,

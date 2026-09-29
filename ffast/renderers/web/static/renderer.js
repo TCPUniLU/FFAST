@@ -202,9 +202,9 @@ export class MoleculeRenderer {
   /** @param {import('./protocol.js').RenderScene} scene */
   applyScene(scene) {
     //if (scene.only_forces) window.alert("YES!");
-    if (scene.atoms)      this._updateAtoms(scene.atoms, scene.only_forces);
-    if (scene.bonds)      this._updateBonds(scene.bonds);
-    if (scene.forces)     this._updateForces(scene.forces, scene.only_forces);
+    if (scene.atoms)      this._updateAtoms(scene.atoms, scene.only_forces); else this._clearAtoms();
+    if (scene.bonds)      this._updateBonds(scene.bonds); else this._clearBonds();
+    if (scene.forces)     this._updateForces(scene.forces, scene.only_forces); else this._clearForces();
     if (scene.unit_cell)  this._updateUnitCell(scene.unit_cell);
     if (!scene.atoms && !scene.bonds) this._clearAtoms();
     if (!scene.unit_cell) this._clearUnitCell();
