@@ -39,7 +39,6 @@ export class FFastApp {
     this._conn = null;
     this._renderer = null;
     this._datasets = new Map();   // fingerprint → meta
-    this._datasets_frame_index = new Map() // fingerprint -> their frame index in the 3D View tab
     this._models = new Map();     // model fingerprint → {name, dataset_fingerprints}
     this._currentDatasetFp = null;  // selected dataset (object rail)
     this._currentModelFp = null;    // selected prediction, or null
@@ -578,7 +577,7 @@ export class FFastApp {
     const fp = this._getViewDataset(scene);
     if (fp) {
       const meta = this._datasets.get(fp);
-      const frame_index = this._datasets_frame_index.has(fp) ? this._datasets_frame_index.get(fp) : 0;
+      const frame_index = scene.frame_index;
       const n = meta?.n || 1;
       this._frameCount = n;
       const slider = document.getElementById('frame-slider');
@@ -955,10 +954,6 @@ export class FFastApp {
   }
 
   _updateFrameLabel(frame, total) {
-    const fp = this._getViewDataset(null);
-    if (fp) {
-      this._datasets_frame_index.set(fp, frame);
-    }
     document.getElementById('frame-label').textContent = `${frame} / ${Math.max(0, total - 1)}`;
   }
 

@@ -82,6 +82,7 @@
  * @property {UnitCellScene|null} unit_cell
  * @property {SelectionOverlay[]} selections
  * @property {CameraState} camera
+ * @property {number} frame_index
  */
 
 /**

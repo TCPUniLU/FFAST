@@ -106,6 +106,7 @@ class RenderScene(BaseModel):
     unit_cell: UnitCellScene | None = None
     selections: list[SelectionOverlay] = Field(default_factory=list)
     camera: CameraState = Field(default_factory=CameraState)
+    frame_index: int = 0
 
 
 class SceneSnapshot(BaseModel):

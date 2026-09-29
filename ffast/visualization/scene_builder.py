@@ -84,7 +84,8 @@ def build_scene(
         version=state.version,
         camera=state.camera,
     )
-
+    # RenderScenes should also contain their structure index... for the web client to know which index is this structure for.
+    scene.frame_index = state.structure_index
     if "only_forces" in state.enabled_features:
         scene.only_forces = True
     else:
