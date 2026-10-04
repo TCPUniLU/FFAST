@@ -80,6 +80,7 @@ things came up.
 - [0050](0050-web-client-seams.md) Carving modules out of a 1300-line app object
 - [0051](0051-retire-hollowed-shells.md) Deleting three abstractions that had stopped abstracting
 - [0053](0053-compare-predictions-in-the-web-analysis-tabs.md) Multiple predictions per panel
+- [0055](0055-browser-client-gets-its-own-layout.md) Its own layout instead of a copy of the desktop; layout state stays out of sessions
 
 ## Running on a cluster
 
