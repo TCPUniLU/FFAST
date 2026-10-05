@@ -7,10 +7,12 @@
   scientific ``selection`` (atom indices) as input, matching the decision to
   make interactive measurements server-owned Metrics.
 
-All are pure geometry: no model, no prediction.
+All are pure geometry: no model, no prediction. The measurement maths itself
+lives in ``ffast.chemistry.geometry``, shared with the Qt Info tool.
 """
 import numpy as np
 
+from ffast.chemistry import geometry
 from ffast.metrics import metric, dims, inputs as I, units
 
 
@@ -108,8 +110,7 @@ def gyradius(positions, elements, offsets=None):
 def distance(positions, selection):
     """Distance between the first two selected atoms."""
     R = np.asarray(positions, dtype=np.float64)
-    i, j = int(selection[0]), int(selection[1])
-    return np.sqrt(np.sum((R[i] - R[j]) ** 2))
+    return geometry.distance(*R[[int(s) for s in selection[:2]]])
 
 
 @metric(
@@ -132,11 +133,7 @@ def distance(positions, selection):
 def angle(positions, selection):
     """Angle (degrees) at the middle of three selected atoms i-j-k."""
     R = np.asarray(positions, dtype=np.float64)
-    i, j, k = int(selection[0]), int(selection[1]), int(selection[2])
-    v, v0 = R[k] - R[j], R[i] - R[j]
-    u = v / np.linalg.norm(v)
-    u0 = v0 / np.linalg.norm(v0)
-    return np.degrees(np.arccos(np.clip(np.dot(u, u0), -1.0, 1.0)))
+    return geometry.angle(*R[[int(s) for s in selection[:3]]])
 
 
 @metric(
@@ -162,11 +159,4 @@ def angle(positions, selection):
 def dihedral(positions, selection):
     """Dihedral (degrees, unsigned) of four selected atoms i-j-k-l."""
     R = np.asarray(positions, dtype=np.float64)
-    p = R[[int(selection[0]), int(selection[1]), int(selection[2]), int(selection[3])]]
-    b = (p[:-1] - p[1:]).copy()
-    b[0] *= -1.0
-    v0 = np.cross(b[0], b[1])
-    v2 = np.cross(b[2], b[1])
-    v0 /= np.linalg.norm(v0)
-    v2 /= np.linalg.norm(v2)
-    return np.degrees(np.arccos(np.clip(np.dot(v0, v2), -1.0, 1.0)))
+    return geometry.dihedral(*R[[int(s) for s in selection[:4]]])

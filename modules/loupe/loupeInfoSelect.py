@@ -1,7 +1,12 @@
 from UI.loupe.visual import AtomSelectionBase
 from UI.clientFeatures import ClientFeature
-import numpy as np
-from client.mathUtils import getVV0Angle, getDihedral
+import math
+from ffast.chemistry import geometry
+
+
+def _degrees(value):
+    """Read-out text for an angle; undefined geometry (nan) says so."""
+    return "undefined (atoms in a line)" if math.isnan(value) else f"{value:.1f}"
 
 DEPENDENCIES = ["loupeAtoms"]
 
@@ -46,7 +51,7 @@ class AtomInfoSelect(AtomSelectionBase):
         R = self.canvas.getCurrentR()
         z = self.canvas.dataset.getElementsName()
 
-        d = np.sqrt(np.sum((R[i] - R[j]) ** 2))
+        d = geometry.distance(R[i], R[j])
 
         return f"Atoms {i},{j} / Elements {z[i]},{z[j]} / Distance: {d:.2f}"
 
@@ -54,18 +59,15 @@ class AtomInfoSelect(AtomSelectionBase):
         R = self.canvas.getCurrentR()
         z = self.canvas.dataset.getElementsName()
 
-        a = getVV0Angle(R[k] - R[j], R[i] - R[j])
-        a *= 180 / np.pi
-        return f"Atoms {i},{j},{k} / Elements {z[i]},{z[j]},{z[k]} / Angle: {a:.1f}"
+        a = geometry.angle(R[i], R[j], R[k])
+        return f"Atoms {i},{j},{k} / Elements {z[i]},{z[j]},{z[k]} / Angle: {_degrees(a)}"
 
     def dihedralInfo(self, i, j, k, l):
         R = self.canvas.getCurrentR()
         z = self.canvas.dataset.getElementsName()
 
-        a = getDihedral(R[[i, j, k, l]])
-        a *= 180 / np.pi
-
-        return f"Atoms {i},{j},{k},{l} / Elements {z[i]},{z[j]},{z[k]},{z[l]} / Dihedral: {a:.1f}"
+        a = geometry.dihedral(R[i], R[j], R[k], R[l])
+        return f"Atoms {i},{j},{k},{l} / Elements {z[i]},{z[j]},{z[k]},{z[l]} / Dihedral: {_degrees(a)}"
 
 
 # The Atoms-Info readout (position/distance/angle/dihedral) is shown in the
