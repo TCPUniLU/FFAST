@@ -6,6 +6,12 @@ import * as THREE from 'three';
 import { OrbitControls } from './vendor/three/OrbitControls.js';
 import { mapColorBy } from './colormap.js';
 
+/** Scene colours are sRGB, like CSS and the colour bar. Three.js reads bare
+ *  RGB numbers as linear and brightens them on output, so name the space. */
+function sceneColor(r, g, b, target = new THREE.Color()) {
+  return target.setRGB(r, g, b, THREE.SRGBColorSpace);
+}
+
 export class MoleculeRenderer {
   constructor(canvas) {
     this._canvas = canvas;
@@ -266,8 +272,7 @@ export class MoleculeRenderer {
       mesh.setMatrixAt(i, dummy.matrix);
 
       const [cr, cg, cb] = colors[i];
-      color.setRGB(cr, cg, cb);
-      mesh.setColorAt(i, color);
+      mesh.setColorAt(i, sceneColor(cr, cg, cb, color));
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
@@ -339,7 +344,7 @@ export class MoleculeRenderer {
       if (len < 0.001) continue;
       const dir = new THREE.Vector3(vx, vy, vz).normalize();
       const origin = new THREE.Vector3(ox, oy, oz);
-      const arrow = new THREE.ArrowHelper(dir, origin, len, new THREE.Color(cr, cg, cb), 0.3 * len, 0.15 * len);
+      const arrow = new THREE.ArrowHelper(dir, origin, len, sceneColor(cr, cg, cb), 0.3 * len, 0.15 * len);
       group.add(arrow);
     }
     this._forceGroup = group;
@@ -447,7 +452,7 @@ export class MoleculeRenderer {
       const [cr, cg, cb, ca] = overlay.color || [1, 0, 0, 0.5];
       const n = indices.length;
       const mat = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(cr, cg, cb),
+        color: sceneColor(cr, cg, cb),
         opacity: ca ?? 0.5,
         transparent: true,
         roughness: 0.35,

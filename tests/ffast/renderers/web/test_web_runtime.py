@@ -355,6 +355,56 @@ async def test_web_renderer_draws_prediction_force_arrows(ffast_web_server):
             await browser.close()
 
 
+async def test_web_renderer_draws_the_colours_the_scene_specifies(ffast_web_server):
+    """Scene colours are sRGB, like the CSS colour bar (ADR 0052: a renderer
+    draws the RGBA it is given). Three.js reads a bare ``setRGB`` as *linear*
+    and brightens it on output, so every atom and arrow came out paler than
+    specified — force-error colouring looked washed out and no longer matched
+    its colour bar. Read back what the GPU buffers hold, in sRGB."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(
+                f"http://127.0.0.1:{web_port}/?port={ws_port}",
+                wait_until="networkidle",
+            )
+            await page.locator("#connect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
+            await page.locator(
+                ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Show force vectors'] input"
+            ).check()
+            await page.wait_for_function("() => window.ffastApp.renderer._forceGroup !== null")
+
+            drawn = await page.evaluate(
+                """() => {
+                  const R = window.ffastApp.renderer;
+                  const hex = (rgb) => rgb.slice(0, 3)
+                    .map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
+                  const c = new R._bondColor.constructor();
+                  const atoms = R._atomColors.map((rgb, i) => {
+                    R._atomMesh.getColorAt(i, c);
+                    return [hex(rgb), c.getHexString()];
+                  });
+                  const arrow = R._forceGroup.children[0];
+                  return { atoms, arrow: arrow.cone.material.color.getHexString() };
+                }"""
+            )
+        finally:
+            await browser.close()
+
+    mismatched = [pair for pair in drawn["atoms"] if pair[0] != pair[1]]
+    assert not mismatched, f"atoms drawn in a different colour than specified: {mismatched[:5]}"
+    # presentation.FORCE_ARROW_COLOR = (0.9, 0.4, 0.1)
+    assert drawn["arrow"] == "e6661a"
+
+
 async def test_web_color_by_selector_recolors_atoms_and_shows_colorbar(ffast_web_server):
     """ADR 0045 issue 03 / Phase 1 gate: selecting a metric in 'Colour By'
     changes atom instance colours (not baked element colours) and shows a
