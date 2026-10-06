@@ -21,8 +21,8 @@ export function createCameraPane(sidebarEl, callbacks) {
   sidebarEl.appendChild(el);
 
   const comInput = checkboxRow(body, 'Origin COM', true, callbacks.onCOM);
-  checkboxRow(body, 'Orthographic', false, callbacks.onOrtho);
-  checkboxRow(body, 'Axes gizmo', false, callbacks.onGizmo);
+  const orthInput = checkboxRow(body, 'Orthographic', false, callbacks.onOrtho);
+  const gizInput = checkboxRow(body, 'Axes gizmo', false, callbacks.onGizmo);
 
   const azInput = numberRow(body, 'Azimuth (°)', 0, { step: 0.1 }, () => _sendManual());
   const elInput = numberRow(body, 'Elevation (°)', 30, { step: 0.1 }, () => _sendManual());
@@ -38,9 +38,12 @@ export function createCameraPane(sidebarEl, callbacks) {
     { text: 'YZ', title: 'Side view (az 90°, el 0°)', onClick: () => callbacks.onPreset(90, 0) },
   ]);
 
-  colorRow(body, 'Background', '#000000', callbacks.onBackground);
+  const backgroundRow = colorRow(body, 'Background', '#000000', callbacks.onBackground);
 
   return {
+    orthStatus: new Map(), // fp -> true/false;
+    gizStatus: new Map(), // fp -> true/fasle;
+    backgroundStatus: new Map(), //fp -> hex string;
     /** Reflect the renderer's live camera into the manual fields (no events fired). */
     syncFromCamera(cam) {
       azInput.value = cam.azimuth.toFixed(1);
@@ -50,6 +53,24 @@ export function createCameraPane(sidebarEl, callbacks) {
     /** Set the Origin COM checkbox without firing onCOM (per-dataset restore). */
     setCOM(enabled) {
       comInput.checked = enabled;
+    },
+
+    saveState(fp) {
+      this.orthStatus.set(fp, orthInput.checked);
+      this.gizStatus.set(fp, gizInput.checked);
+      this.backgroundStatus.set(fp, backgroundRow.value);
+    },
+
+    loadState(fp) {
+      orthInput.checked = this.orthStatus.get(fp);
+      gizInput.checked = this.gizStatus.get(fp);
+      backgroundRow.value = this.backgroundStatus.get(fp);
+
+      const randomEvent = new Event('change');
+      const randomInputEvent = new Event('input');
+      orthInput.dispatchEvent(randomEvent);
+      gizInput.dispatchEvent(randomEvent);
+      backgroundRow.dispatchEvent(randomInputEvent);
     },
   };
 }
