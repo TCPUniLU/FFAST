@@ -62,9 +62,9 @@ export function createCameraPane(sidebarEl, callbacks) {
     },
 
     loadState(fp) {
-      orthInput.checked = this.orthStatus.get(fp);
-      gizInput.checked = this.gizStatus.get(fp);
-      backgroundRow.value = this.backgroundStatus.get(fp);
+      orthInput.checked = this.orthStatus.get(fp) || false;
+      gizInput.checked = this.gizStatus.get(fp) || false;
+      backgroundRow.value = this.backgroundStatus.get(fp) || '#000000';
 
       const randomEvent = new Event('change');
       const randomInputEvent = new Event('input');
