@@ -1437,14 +1437,15 @@ title = "Bottom"
 
 async def test_web_tab_sizes_share_the_window(tmp_path):
     """ADR 0056 rule 12: column_widths and row_heights are relative; rows
-    with set heights share the window's height instead of scrolling."""
+    with set heights share the window's height instead of scrolling. (A
+    window wide enough that the narrow column is above its 400 px minimum.)"""
     config = tmp_path / "ffast.toml"
     config.write_text(_SIZED_TAB_TOML)
     async with _spawn_server("--config", str(config)) as (ws_port, web_port):
         dataset_fp = await _preload_dataset(ws_port)
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            page = await browser.new_page(viewport={"width": 2400, "height": 820})
             try:
                 await _open_loupe(page, ws_port, web_port, dataset_fp)
                 await _open_analysis_tab(page, "Sized")
@@ -1458,6 +1459,48 @@ async def test_web_tab_sizes_share_the_window(tmp_path):
                 box = await grid.bounding_box()
                 assert view["height"] == pytest.approx(box["height"] - 2 * gap, abs=2)
                 assert await grid.evaluate("(el) => el.scrollHeight <= el.clientHeight")
+            finally:
+                await browser.close()
+
+
+_WIDE_TAB_TOML = "[[visualization.tabs]]\nname = \"Wide\"\n" + "".join(
+    f"""
+[[visualization.tabs.panels]]
+kind = "table"
+row = 0
+col = {col}
+title = "T{col}"
+  [visualization.tabs.panels.metrics.value]
+  metric = "ffast.force_component_mae"
+""" for col in range(4))
+
+
+async def test_web_columns_keep_a_minimum_width_and_the_tab_scrolls_sideways(tmp_path):
+    """Columns are never narrower than 400 px (the desktop's smallest plot);
+    when they do not fit, the tab scrolls sideways, as it scrolls down for
+    rows. Columns that fit share the window as before."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_WIDE_TAB_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_analysis_tab(page, "Wide")
+                grid = page.locator(".tabpanel.active .analysis-grid")
+                await expect(grid.locator(".analysis-panel")).to_have_count(4)
+                widths = [(await grid.locator(f"[data-title='T{c}']").bounding_box())["width"]
+                          for c in range(4)]
+                assert min(widths) >= 400 - 1
+                assert await grid.evaluate("(el) => el.scrollWidth > el.clientWidth")
+                assert await page.evaluate(
+                    "() => document.documentElement.scrollWidth <= window.innerWidth")
+
+                await _open_analysis_tab(page, "Basic Errors")
+                basic = page.locator(".tabpanel.active .analysis-grid")
+                assert await basic.evaluate("(el) => el.scrollWidth <= el.clientWidth")
             finally:
                 await browser.close()
 
@@ -1572,7 +1615,7 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
     async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            page = await browser.new_page(viewport={"width": 1800, "height": 820})   # room to drag a divider
             draft = "() => window.ffastApp._editor.draft?.panels.map((p) => [p.kind, p.title, p.row, p.col])"
             try:
                 await _open_app(page, web_port, ws_port)

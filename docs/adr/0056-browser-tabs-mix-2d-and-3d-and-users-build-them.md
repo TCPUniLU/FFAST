@@ -93,7 +93,10 @@ Browser only. The Qt desktop gets one small change (point 17).
     with set heights share the window's height; a tab without them scrolls as
     today. A list may be longer than the panels reach, for columns or rows
     left empty, never shorter; a shorter one is a config error, like any
-    other.
+    other. Columns share the window's width but are never narrower than
+    400 px, the desktop's smallest plot; when they do not fit, the tab
+    scrolls sideways, as it scrolls down for rows (decided during the step 6
+    trial). A single column still fits a narrow window.
 13. **A tab file stores layout and starting settings, never data.** For an
     independent panel it stores linked/independent, the two link ticks, and its
     starting colouring, display, bonds and force arrows. It never stores which

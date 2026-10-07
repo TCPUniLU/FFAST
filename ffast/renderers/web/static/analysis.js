@@ -394,17 +394,20 @@ export class AnalysisManager {
    * `column_widths` when it has them. With `row_heights` the rows share the
    * tab's height (ADR 0056 rule 12); a tab with a single cell gives it the
    * whole height (the built-in "3D" tab); otherwise rows are at least 300 px
-   * and the grid scrolls.
+   * and the grid scrolls. Columns are at least 400 px; when they do not fit,
+   * the grid scrolls sideways.
    */
   _layoutGrid(t) {
     const grid = t.gridEl;
     const panels = t.spec.panels || [];
     const widths = t.spec.column_widths, heights = t.spec.row_heights;
     const maxCol = Math.max(1, widths?.length || 0, ...panels.map((p) => p.col + (p.colspan || 1)));
-    const share = (sizes) => sizes.map((size) => `minmax(0, ${size}fr)`).join(' ');
+    // Columns keep a minimum width (--col-min, index.html) and the tab
+    // scrolls sideways when they do not fit; sized rows share the height.
+    const share = (sizes, min) => sizes.map((size) => `minmax(${min}, ${size}fr)`).join(' ');
     grid.style.gridTemplateColumns = widths?.length === maxCol
-      ? share(widths) : `repeat(${maxCol}, minmax(0, 1fr))`;
-    grid.style.gridTemplateRows = heights?.length ? share(heights) : '';
+      ? share(widths, 'var(--col-min)') : `repeat(${maxCol}, minmax(var(--col-min), 1fr))`;
+    grid.style.gridTemplateRows = heights?.length ? share(heights, '0') : '';
     grid.classList.toggle('sized-rows', !!heights?.length);
 
     const strips = new Map();   // scroll_group → slot

@@ -162,7 +162,8 @@ class AnalysisTabConfig(BaseModel):
     column and one per row: ``[2, 1]`` makes the first column twice as wide.
     A list may be longer than the panels reach, for columns or rows left
     empty, never shorter. With ``row_heights`` the rows share the window's
-    height; without it rows are at least 300 px and the tab scrolls. The
+    height; without it rows are at least 300 px and the tab scrolls. Columns
+    are at least 400 px; when they do not fit, the tab scrolls sideways. The
     browser reads them; the desktop ignores them."""
     model_config = ConfigDict(extra="forbid")
     name: str

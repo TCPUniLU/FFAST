@@ -293,9 +293,13 @@
     .tab-msg[hidden], .analysis-grid[hidden] { display: none; }
     #chrome3d { display: none; }
     .analysis-grid {
+      /* Columns are never narrower than the desktop's smallest plot; when
+         they do not fit, the tab scrolls sideways, as it scrolls down for
+         rows. A single column still fits a narrow window. */
+      --col-min: min(400px, 100%);
       flex: 1; overflow: auto; padding: 10px; min-height: 0;
       display: grid; gap: 10px; align-content: start;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      grid-template-columns: repeat(2, minmax(var(--col-min), 1fr));
       grid-auto-rows: minmax(300px, auto);
     }
     /* A tab with one cell gives it the whole height. */

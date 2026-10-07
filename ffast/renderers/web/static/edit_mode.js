@@ -24,6 +24,9 @@ import {
 } from './tab_edit.js';
 import { KIND_3D, whyPanelStays } from './tab_rules.js';
 
+/** A column's minimum width, as index.html's --col-min. */
+const COL_MIN_PX = 400;
+
 export class TabEditor {
   /**
    * @param {{
@@ -320,7 +323,8 @@ export class TabEditor {
       const sizes = (axis === 'col' ? t.cols : t.rows).slice();
       const start = axis === 'col' ? e.clientX : e.clientY;
       const pair = sizes[k - 1] + sizes[k];
-      const min = Math.min(80, pair / 3);
+      // A column stops at its minimum width (index.html --col-min).
+      const min = axis === 'col' ? Math.min(COL_MIN_PX, pair / 2) : Math.min(80, pair / 3);
       let next = sizes;
       const move = (ev) => {
         const delta = (axis === 'col' ? ev.clientX : ev.clientY) - start;
@@ -328,7 +332,8 @@ export class TabEditor {
         next = sizes.slice();
         next[k - 1] = a;
         next[k] = pair - a;
-        const template = next.map((px) => `minmax(0, ${px}fr)`).join(' ');
+        const floor = axis === 'col' ? 'var(--col-min)' : '0';
+        const template = next.map((px) => `minmax(${floor}, ${px}fr)`).join(' ');
         if (axis === 'col') grid.style.gridTemplateColumns = template;
         else grid.style.gridTemplateRows = template;
       };
