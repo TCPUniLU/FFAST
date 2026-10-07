@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import io
 import re
 import socket
@@ -104,7 +105,7 @@ async def _connect_headless_client(port: int):
 
 
 @contextlib.asynccontextmanager
-async def _spawn_server():
+async def _spawn_server(*extra_args: str):
     """Launch one ``server.py`` subprocess on free ports; terminate on exit.
 
     A bare async context manager (not a fixture) so a test that needs *two*
@@ -127,6 +128,7 @@ async def _spawn_server():
             "0",
             "--recovery-window",
             "0",
+            *extra_args,
         ],
         cwd=str(REPO_ROOT),
         stdout=subprocess.PIPE,
@@ -166,6 +168,21 @@ async def _wait_for_server_ready(ws_port: int) -> None:
     await ws.close()
 
 
+async def _wait_for_port(port: int) -> None:
+    """Block until something accepts TCP connections on `port` — for a server
+    whose WebSocket needs a token the headless client does not have."""
+    for _ in range(300):
+        try:
+            _reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        except OSError:
+            await asyncio.sleep(0.1)
+            continue
+        writer.close()
+        await writer.wait_closed()
+        return
+    raise RuntimeError(f"nothing listening on port {port}")
+
+
 async def _preload_dataset(ws_port: int) -> str:
     ws = await _connect_headless_client(ws_port)
     try:
@@ -203,6 +220,122 @@ async def _preload_dataset_and_prediction(ws_port: int) -> tuple[str, str]:
         await ws.close()
 
 
+# ── connection (ADR 0055 "Connection" row) ─────────────────────────────────
+
+async def test_web_connects_by_itself_when_the_url_names_the_port(ffast_web_server):
+    """The launcher's link carries the port (and an extra `launch=` id that the
+    page ignores); the page connects without a click, and the top bar shows
+    only a status label — the connection fields live in the dialog."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(
+                f"http://127.0.0.1:{web_port}/?port={ws_port}&launch=abc123",
+                wait_until="networkidle",
+            )
+            await expect(page.locator("#status")).to_contain_text("Connected")
+            await expect(page.locator("#conn-dialog")).to_be_hidden()
+            for field in ("#ws-url", "#token-input", "#readonly-toggle",
+                          "#connect-btn", "#disconnect-btn"):
+                await expect(page.locator(field)).to_be_hidden()
+            assert await page.locator("#ws-url").input_value() == f"ws://127.0.0.1:{ws_port}"
+        finally:
+            await browser.close()
+
+
+async def test_web_status_label_opens_the_connection_dialog(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await expect(page.locator("#status")).to_contain_text("Connected")
+
+            await page.locator("#status").click()
+            dialog = page.locator("#conn-dialog")
+            await expect(dialog).to_be_visible()
+            for field in ("#ws-url", "#token-input", "#readonly-toggle", "#disconnect-btn"):
+                await expect(dialog.locator(field)).to_be_visible()
+
+            await dialog.locator("#disconnect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Disconnected")
+            await dialog.locator("#connect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+            await expect(dialog).to_be_hidden()
+        finally:
+            await browser.close()
+
+
+async def test_web_dialog_opens_by_itself_and_remembers_the_last_five_servers(ffast_web_server):
+    """With no port in the URL there is no server to connect to, so the dialog
+    opens. Servers that connected are remembered (newest first, five at most)
+    in browser storage — the address only, never the token."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await expect(page.locator("#conn-dialog")).to_be_visible()
+
+            older = [f"ws://old-{i}.example:1" for i in range(6)]
+            await page.evaluate(
+                "(list) => localStorage.setItem('ffast.recentServers', JSON.stringify(list))",
+                older,
+            )
+            await page.locator("#ws-url").fill(f"ws://127.0.0.1:{ws_port}")
+            await page.locator("#token-input").fill("secret-token-value")
+            await page.locator("#connect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+
+            stored = await page.evaluate(
+                "() => JSON.stringify({...localStorage}) + JSON.stringify({...sessionStorage})"
+            )
+            assert "secret-token-value" not in stored
+
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await expect(page.locator("#conn-dialog")).to_be_visible()
+            recent = page.locator("#recent-servers button")
+            await expect(recent).to_have_count(5)
+            await expect(recent.first).to_have_text(f"ws://127.0.0.1:{ws_port}")
+            assert await page.locator("#ws-url").input_value() == f"ws://127.0.0.1:{ws_port}"
+
+            await recent.first.click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+        finally:
+            await browser.close()
+
+
+async def test_web_dialog_asks_for_a_token_when_the_server_needs_one():
+    """A token-protected server makes the first automatic connection a
+    read-only one; the dialog opens and says a token is needed."""
+    token = "let-me-in"
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    async with _spawn_server("--token-hash", token_hash) as (ws_port, web_port):
+        await _wait_for_port(web_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1100, "height": 760})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                dialog = page.locator("#conn-dialog")
+                await expect(dialog).to_be_visible()
+                await expect(dialog).to_contain_text("token")
+
+                await page.locator("#token-input").fill(token)
+                await page.locator("#connect-btn").click()
+                await expect(page.locator("#status")).to_contain_text("Connected (CONTROLLING)")
+                await expect(dialog).to_be_hidden()
+            finally:
+                await browser.close()
+
+
 async def test_web_renderer_connects_and_draws_scene(ffast_web_server):
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)
@@ -228,7 +361,6 @@ async def test_web_renderer_connects_and_draws_scene(ffast_web_server):
                 f"http://127.0.0.1:{web_port}/?port={ws_port}",
                 wait_until="networkidle",
             )
-            await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
 
             # The dataset shows as a row in the object rail; selecting it opens
@@ -301,7 +433,6 @@ async def test_web_renderer_draws_prediction_force_arrows(ffast_web_server):
                 f"http://127.0.0.1:{web_port}/?port={ws_port}",
                 wait_until="networkidle",
             )
-            await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
 
             dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
@@ -372,7 +503,6 @@ async def test_web_renderer_draws_the_colours_the_scene_specifies(ffast_web_serv
                 f"http://127.0.0.1:{web_port}/?port={ws_port}",
                 wait_until="networkidle",
             )
-            await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
@@ -421,7 +551,6 @@ async def test_web_pick_highlight_does_not_rebuild_a_shader(ffast_web_server):
                 f"http://127.0.0.1:{web_port}/?port={ws_port}",
                 wait_until="networkidle",
             )
-            await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
@@ -588,7 +717,6 @@ async def test_web_color_by_selector_recolors_atoms_and_shows_colorbar(ffast_web
                 f"http://127.0.0.1:{web_port}/?port={ws_port}",
                 wait_until="networkidle",
             )
-            await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
 
             dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
@@ -638,7 +766,6 @@ async def test_web_camera_preset_reorients_view(ffast_web_server):
                 f"http://127.0.0.1:{web_port}/?port={ws_port}",
                 wait_until="networkidle",
             )
-            await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
 
             dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
@@ -682,7 +809,6 @@ async def test_web_playback_advances_frames_and_stops_on_pause(ffast_web_server)
                 f"http://127.0.0.1:{web_port}/?port={ws_port}",
                 wait_until="networkidle",
             )
-            await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
 
             dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
@@ -713,7 +839,6 @@ async def test_web_playback_advances_frames_and_stops_on_pause(ffast_web_server)
 async def _open_loupe(page, ws_port, web_port, dataset_fp):
     """Connect, select the dataset, wait for the 3D view to be live."""
     await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
-    await page.locator("#connect-btn").click()
     await expect(page.locator("#status")).to_contain_text("Connected")
     dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
     await expect(dataset_row).to_have_count(1)
@@ -1106,7 +1231,6 @@ async def test_web_analysis_scatter_renders(ffast_web_server):
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
             await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
-            await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
@@ -1129,7 +1253,6 @@ async def test_web_analysis_box_select_declares_subset(ffast_web_server):
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
             await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
-            await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
@@ -1172,7 +1295,6 @@ async def test_web_custom_toml_tab_matches_builtin(ffast_web_server):
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
             await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
-            await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
 
@@ -1242,7 +1364,6 @@ async def test_web_export_subset_writes_extxyz_and_reports_path(ffast_web_server
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
             await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
-            await page.locator("#connect-btn").click()
             await expect(page.locator("#status")).to_contain_text("Connected")
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
@@ -1373,7 +1494,6 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
             page = await browser.new_page(viewport={"width": 1100, "height": 760})
             try:
                 await page.goto(f"http://127.0.0.1:{web_port_b}/?port={ws_port_b}", wait_until="networkidle")
-                await page.locator("#connect-btn").click()
                 await expect(page.locator("#status")).to_contain_text("Connected")
                 await expect(page.locator("#dataset-list .obj-row")).to_have_count(0)
 

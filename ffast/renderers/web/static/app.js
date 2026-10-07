@@ -19,6 +19,7 @@ import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
+import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 
 /**
  * The five pick tools (ADR 0045 Phase 2). Each mirrors a Qt AtomSelectionBase
@@ -153,6 +154,13 @@ export class FFastApp {
   _initUI() {
     document.getElementById('connect-btn').addEventListener('click', () => this._connect());
     document.getElementById('disconnect-btn').addEventListener('click', () => this._disconnect());
+    document.getElementById('status').addEventListener('click', () => this._openConnDialog());
+    document.getElementById('conn-close').addEventListener('click', () => this._closeConnDialog());
+    const dialog = document.getElementById('conn-dialog');
+    dialog.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') this._closeConnDialog();
+      if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type === 'text') this._connect();
+    });
     document.getElementById('reset-camera-btn').addEventListener('click', () => {
       this._renderer.resetCamera();
     });
@@ -252,13 +260,20 @@ export class FFastApp {
     this._panes = { colorBy, camera, display, bonds, forces, extract, export: exportPane, align };
   }
 
+  /** The URL's `port` (from the launcher or `ffast-server --web-port`) names
+   * the server, so the page connects by itself; other parameters, such as the
+   * launcher's `launch=` id, are ignored. With no port the dialog opens,
+   * offering the most recent server (ADR 0055). */
   _applyUrlParams() {
     const p = new URLSearchParams(window.location.search);
     const port  = p.get('port');
     const token = p.get('token');
+    const recent = loadRecentServers();
     if (port) {
       const host = window.location.hostname || 'localhost';
       document.getElementById('ws-url').value = `ws://${host}:${port}`;
+    } else if (recent.length) {
+      document.getElementById('ws-url').value = recent[0];
     }
     if (token) document.getElementById('token-input').value = token;
 
@@ -271,8 +286,42 @@ export class FFastApp {
       document.body.classList.add('loupe-only');
       this._autoDatasetFp = p.get('ds') || null;
       this._autoModelFp = p.get('pred') || null;
-      if (port) this._connect();
     }
+    if (port) this._connect();
+    else this._openConnDialog();
+  }
+
+  // ── connection dialog (ADR 0055) ────────────────────────────────────────
+
+  /** @param {string} [message] why the dialog opened by itself, if it did */
+  _openConnDialog(message = '') {
+    const msg = document.getElementById('conn-message');
+    msg.textContent = message;
+    msg.classList.toggle('hidden', !message);
+    this._renderRecentServers();
+    document.getElementById('conn-dialog').classList.remove('hidden');
+    const focus = message && /token/i.test(message) ? 'token-input' : 'ws-url';
+    document.getElementById(focus).focus();
+  }
+
+  _closeConnDialog() {
+    document.getElementById('conn-dialog').classList.add('hidden');
+  }
+
+  _renderRecentServers() {
+    const list = loadRecentServers();
+    const box = document.getElementById('recent-servers');
+    box.replaceChildren(...list.map((url) => {
+      const btn = document.createElement('button');
+      btn.textContent = url;
+      btn.title = `Connect to ${url}`;
+      btn.addEventListener('click', () => {
+        document.getElementById('ws-url').value = url;
+        this._connect();
+      });
+      return btn;
+    }));
+    document.getElementById('recent-block').classList.toggle('hidden', list.length === 0);
   }
 
   async _connect() {
@@ -282,6 +331,8 @@ export class FFastApp {
     // inbound control but still opens its own views and sees shared broadcasts.
     const readOnly = document.getElementById('readonly-toggle')?.checked || false;
 
+    // Connect doubles as reconnect, e.g. after typing a token.
+    if (this._conn) this._disconnect();
     this._setStatus('Connecting…', '');
 
     try {
@@ -340,8 +391,17 @@ export class FFastApp {
       await conn.connect();
 
       this._setStatus(`Connected (${conn.role})`, 'connected');
-      document.getElementById('connect-btn').disabled = true;
       document.getElementById('disconnect-btn').disabled = false;
+      saveRecentServers(rememberServer(loadRecentServers(), wsUrl));   // never the token
+      // A server that needs a token gives a client without a valid one the
+      // read-only role rather than refusing it.
+      if (conn.role === 'READ_ONLY' && !readOnly) {
+        this._openConnDialog(token
+          ? 'That token was not accepted, so you are connected read-only. Check it and connect again.'
+          : 'This server needs a token to control the session; you are connected read-only. Enter the token and connect again.');
+      } else {
+        this._closeConnDialog();
+      }
       // A READ_ONLY viewer's mutating Control messages are dropped server-side
       // (ADR 0044 Phase 2) — grey out the buttons that would send one, rather
       // than let the click silently do nothing.
@@ -359,6 +419,7 @@ export class FFastApp {
       this._conn = null;   // handshake failed — undo the early assignment above
       console.error('Connection failed:', err);
       this._setStatus(`Error: ${err.message}`, 'error');
+      this._openConnDialog(`Could not connect to ${wsUrl} (${err.message}).`);
     }
   }
 
@@ -381,7 +442,6 @@ export class FFastApp {
     this._pendingSessionOp = null;
     this._setActiveTool(null);   // release any armed pick tool
     this._renderObjects();
-    document.getElementById('connect-btn').disabled = false;
     document.getElementById('disconnect-btn').disabled = true;
     document.getElementById('add-dataset-btn').disabled = true;
     document.getElementById('add-prediction-btn').disabled = true;

@@ -270,6 +270,13 @@ CASES = {
         "  };"
         "})()"
     ),
+    # ADR 0055: newest first, no duplicates, five at most
+    "recent_servers_remember": (
+        "rs.rememberServer(['a','b','c','d','e'], 'c')"
+    ),
+    "recent_servers_cap": (
+        "rs.rememberServer(['a','b','c','d','e'], 'f')"
+    ),
     "panel_unknown_kind_is_null": "pn.buildPanel({kind:'nope'}, [], {})",
     # ADR 0055 rule 4: decimals, but a non-zero value never prints as zero
     "table_value_format": (
@@ -313,6 +320,7 @@ def results():
         f"  const cm = await import('{origin}/colormap.js');\n"
         f"  const pn = await import('{origin}/panels.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
+        f"  const rs = await import('{origin}/recent_servers.js');\n"
         f"  const TABLE_VALUE_CASES = {json.dumps(TABLE_VALUE_CASES)};\n"
         "  const out = {};\n"
         + "".join(
@@ -577,6 +585,14 @@ def test_table_shows_a_dash_for_a_pair_that_was_not_computed(results):
         ["MACE", "1.00", "—"],
         ["SchNet", "—", "4.00"],
     ]
+
+
+def test_recent_servers_move_a_reconnected_server_to_the_front(results):
+    assert results["recent_servers_remember"] == ["c", "a", "b", "d", "e"]
+
+
+def test_recent_servers_keep_five(results):
+    assert results["recent_servers_cap"] == ["f", "a", "b", "c", "d"]
 
 
 def test_table_value_never_prints_a_non_zero_value_as_zero(results):
