@@ -43,6 +43,20 @@ def _metric_value(env, metric_id, model, dataset, params=None):
     return None if result is None else result.values
 
 
+def format_table_value(v, precision=2):
+    """A table cell: ``precision`` decimal places, but never a false zero.
+
+    A non-zero value that would round to zero shows three significant digits
+    instead (``0.00213``, not ``0.00``). The browser's ``formatTableValue``
+    follows the same rule (ADR 0055).
+    """
+    v = float(v)
+    text = f"{v:.{precision}f}"
+    if v != 0 and float(text) == 0:
+        return f"{v:#.3g}"
+    return text
+
+
 def _resolve_unit(unit):
     """A unit spec is a userConfig key (e.g. ``"energyUnit"``) or a literal."""
     if unit is None:
@@ -606,7 +620,7 @@ class TableKind(PanelKind):
         v = _metric_value(panel.env, mid, model, dataset, params)
         if v is None:
             return ""
-        return f"{float(v):.{panel._spec.get('precision', 2)}f}"
+        return format_table_value(v, panel._spec.get("precision", 2))
 
 
 # --------------------------------------------------------------------------- #
@@ -778,7 +792,7 @@ class GroupedTableKind(TableKind):
             if mid is None:
                 return ""
             v = _metric_value(env, mid, model, dataset)
-            return "" if v is None else f"{float(v):.2f}"
+            return "" if v is None else format_table_value(v, spec.get("precision", 2))
 
         mid = spec["mae"] if j == 0 else spec["rmse"]
         vals = _metric_value(env, mid, model, dataset)
@@ -788,7 +802,7 @@ class GroupedTableKind(TableKind):
         zi = infos[atom]["index"]
         if zi not in order:
             return ""
-        return f"{float(vals[order.index(zi)]):.2f}"
+        return format_table_value(vals[order.index(zi)], spec.get("precision", 2))
 
 
 class OverlayTimelineKind(PanelKind):

@@ -341,10 +341,18 @@ export function buildGroupedDensity(spec, series, ctx) {
 
 // ── table-kind builders (pure, return HTML) ─────────────────────────────────
 
-function fmt(v, precision) {
+/**
+ * A table cell: `precision` decimal places, but never a false zero — a
+ * non-zero value that would round to zero shows three significant digits
+ * (`0.00213`, not `0.00`). The desktop's `format_table_value` matches (ADR 0055).
+ */
+export function formatTableValue(v, precision = 2) {
   if (v == null || Number.isNaN(v)) return '—';
-  return Number(v).toFixed(precision);
+  const n = Number(v);
+  const text = n.toFixed(precision);
+  return n !== 0 && Number(text) === 0 ? n.toPrecision(3) : text;
 }
+const fmt = formatTableValue;
 
 function scalarOf(res) {
   const v = values1d(res);

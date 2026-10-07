@@ -33,6 +33,11 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
+# Shared with the desktop's table test, so both clients format alike.
+TABLE_VALUE_CASES = json.loads(
+    (Path(__file__).resolve().parents[2] / "table_value_cases.json").read_text()
+)
+
 STATIC_DIR = (
     Path(__file__).resolve().parents[4]
     / "ffast" / "renderers" / "web" / "static"
@@ -192,6 +197,16 @@ CASES = {
         "  };"
         "})()"
     ),
+    "panel_table_tiny_value": (
+        "(() => {"
+        "  const html = pn.buildPanel({kind:'table', precision:2}, [{datasetFp:'d1',"
+        "     datasetName:'aspirin', modelFp:'m1', modelName:'MACE',"
+        "     data:{value: {nd: {values: [0.002134], shape: [1]}}}}], {}).html;"
+        "  const doc = new DOMParser().parseFromString(html, 'text/html');"
+        "  return [...doc.querySelectorAll('tbody tr')].map("
+        "    tr => [...tr.children].map(td => td.textContent));"
+        "})()"
+    ),
     "panel_table_missing_pair_is_dashed": (
         "(() => {"
         "  const s = (v) => ({nd: {values: [v], shape: [1]}});"
@@ -256,6 +271,10 @@ CASES = {
         "})()"
     ),
     "panel_unknown_kind_is_null": "pn.buildPanel({kind:'nope'}, [], {})",
+    # ADR 0055 rule 4: decimals, but a non-zero value never prints as zero
+    "table_value_format": (
+        "TABLE_VALUE_CASES.map(([v, p]) => pn.formatTableValue(v, p))"
+    ),
 
     "grad_matches_mapped": (
         "(() => {"
@@ -294,6 +313,7 @@ def results():
         f"  const cm = await import('{origin}/colormap.js');\n"
         f"  const pn = await import('{origin}/panels.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
+        f"  const TABLE_VALUE_CASES = {json.dumps(TABLE_VALUE_CASES)};\n"
         "  const out = {};\n"
         + "".join(
             f"  out[{json.dumps(name)}] = {expr};\n" for name, expr in CASES.items()
@@ -557,6 +577,15 @@ def test_table_shows_a_dash_for_a_pair_that_was_not_computed(results):
         ["MACE", "1.00", "—"],
         ["SchNet", "—", "4.00"],
     ]
+
+
+def test_table_value_never_prints_a_non_zero_value_as_zero(results):
+    """ADR 0055 rule 4, shared with the desktop (tests/ffast/test_table_value_format.py)."""
+    assert results["table_value_format"] == [want for _, _, want in TABLE_VALUE_CASES]
+
+
+def test_table_prints_a_tiny_force_error_with_significant_digits(results):
+    assert results["panel_table_tiny_value"] == [["MACE", "0.00213"]]
 
 
 def test_grouped_table_rows_are_series_when_one_element_is_selected(results):
