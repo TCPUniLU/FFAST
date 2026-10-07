@@ -27,8 +27,9 @@ from ffast.protocol.rpc import pack, unpack
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DATASET_PATH = REPO_ROOT / "examples" / "data" / "dataset.xyz"
-# The canvas of the 3D panel on screen (ADR 0056: each 3D panel has its own).
-CANVAS = ".tabpanel.active canvas.view3d"
+# The canvas of the focused 3D panel on screen (ADR 0056: each 3D panel has
+# its own, and the 3D controls act on the focused one).
+CANVAS = ".tabpanel.active .panel-3d.focused canvas.view3d"
 PREDICTION_PATH = REPO_ROOT / "examples" / "data" / "prediction.xyz"
 
 
@@ -892,7 +893,7 @@ async def test_web_resizing_the_view_redraws_at_once(ffast_web_server):
             await _apply_synthetic(page, 1)   # one atom in the middle
             centre = await page.evaluate(
                 """() => {
-                  const R = window.ffastApp.renderer, c = document.querySelector('.tabpanel.active canvas.view3d');
+                  const R = window.ffastApp.renderer, c = document.querySelector('.tabpanel.active .panel-3d.focused canvas.view3d');
                   R.setCameraAngles({center: [0, 0, 0], distance: 6});
                   c.style.width = (c.clientWidth - 40) + 'px';   // what a drag does
                   R._resize();
@@ -1088,6 +1089,180 @@ async def test_web_a_tab_mixes_plots_with_a_3d_panel_showing_the_main_view(tmp_p
                 await browser.close()
 
 
+_TWO_VIEWS_TOML = """
+[[visualization.tabs]]
+name = "Two views"
+
+[[visualization.tabs.panels]]
+kind = "3d"
+row = 0
+col = 0
+
+[[visualization.tabs.panels]]
+kind = "3d"
+row = 0
+col = 1
+"""
+
+
+async def test_web_clicking_a_3d_panel_focuses_it_for_the_3d_controls(tmp_path):
+    """ADR 0056 rule 8: one set of 3D controls per tab, acting on the focused
+    panel. Clicking a panel focuses it (outlined when there are several), the
+    sidebar title names what it shows, a pick lands in it, and the browser
+    remembers the focus."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_TWO_VIEWS_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp, _ = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await expect(page.locator("#sidebar-title")).to_have_text(
+                    "Settings — dataset · prediction.xyz (main view)")
+                await _open_analysis_tab(page, "Two views")
+                panels = page.locator(".tabpanel.active .analysis-grid.multi3d > .panel-3d")
+                await expect(panels).to_have_count(2)
+                await expect(panels.nth(0)).to_have_class(re.compile(r"\bfocused\b"))
+
+                await panels.nth(1).locator("canvas").click(position={"x": 20, "y": 20})
+                await expect(panels.nth(1)).to_have_class(re.compile(r"\bfocused\b"))
+                await expect(panels.nth(0)).not_to_have_class(re.compile(r"\bfocused\b"))
+                await expect(panels.nth(1).locator("#overlay")).to_have_count(1)
+
+                await page.locator("#pick-toolbar [data-tool='info']").click()
+                atom = await _front_atom(page)
+                await page.mouse.click(atom["x"], atom["y"])
+                await expect(page.locator("#pick-strip-count")).to_have_text("1 picked")
+
+                await page.reload(wait_until="networkidle")
+                await expect(page.locator("#status")).to_contain_text("Connected")
+                await _open_analysis_tab(page, "Two views")
+                await expect(panels.nth(1)).to_have_class(re.compile(r"\bfocused\b"))
+            finally:
+                await browser.close()
+
+
+_PLOT_CLICK_TOML = """
+[[visualization.tabs]]
+name = "Compare"
+
+[[visualization.tabs.panels]]
+kind = "3d"
+row = 0
+col = 0
+
+[[visualization.tabs.panels]]
+kind = "timeline"
+row = 0
+col = 1
+title = "Energy"
+  [visualization.tabs.panels.metrics.y]
+  metric = "ffast.energy_reference"
+"""
+
+# Click point `frame` of the curve named `name` in the plot titled `title` on
+# screen, the way Plotly reports a click.
+_CLICK_POINT = """([title, name, frame]) => {
+  const el = document.querySelector(
+    `.tabpanel.active .analysis-panel[data-title="${title}"] .panel-plot`);
+  const curve = el.data.findIndex((trace) => trace.name === name);
+  el.emit('plotly_click', {points: [{curveNumber: curve, pointIndex: frame}]});
+  return curve;
+}"""
+
+
+async def _load_more(ws_port, known, *requests):
+    """Send each (event, args, kwargs) on one connection and return the
+    REMOTE_DATASET_META that announces its new dataset. `known` holds the
+    fingerprints already loaded, whose replays are skipped."""
+    ws = await _connect_headless_client(ws_port)
+    try:
+        announced = []
+        for event, args, kwargs in requests:
+            await ws.send(pack(event, args, kwargs))
+            while True:
+                meta = await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30)
+                if meta["args"][0] not in known:
+                    known.add(meta["args"][0])
+                    announced.append(meta)
+                    break
+        return announced
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+
+async def test_web_a_plot_click_shows_the_clicked_structure(tmp_path):
+    """ADR 0056 rules 4 and 5. A click on a plot point moves the main view to
+    the same configuration (a subset's frame i is its parent's frame
+    indices[i]); when the main view does not hold it, the main view switches
+    to the clicked data. From a tab without a 3D panel, the tab with a linked
+    3D panel used last takes over."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_PLOT_CLICK_TOML)
+    second = tmp_path / "second.xyz"
+    ase.io.write(second, ase.io.read(DATASET_PATH, index=":30"), format="extxyz")
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        (other,) = await _load_more(
+            ws_port, {dataset_fp}, ("LOAD_DATASET", (str(second), "ase (auto)"), {}))
+        other_fp, other_name = other["args"][0], other["kwargs"]["name"]
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            selected = page.locator("#dataset-list .obj-row.selected")
+            label = page.locator("#frame-label")
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+
+                # Rule 5: Compare was the last tab showing the main view.
+                await _open_analysis_tab(page, "Compare")
+                await _open_analysis_tab(page, "Gyration")
+                await page.wait_for_function(
+                    _PANEL_HAS_POINTS, arg="Total gyration radius", timeout=25000)
+                await page.evaluate(_CLICK_POINT, ["Total gyration radius", "dataset", 7])
+                await expect(page.locator("#tabbar .tab.active")).to_have_text("Compare")
+                await expect(label).to_have_text("7 / 99")
+
+                # Rules 3 and 4: the subset's frame 1 is the parent's frame 20.
+                # (Declared from this page: a new connection is not told
+                # about subsets made before it.)
+                await page.evaluate(
+                    """(fp) => window.ffastApp._sendDeclareSubset({parentFp: fp, modelFp: null,
+                         indices: [10, 20, 30], name: 'picked'})""", dataset_fp)
+                await expect(page.locator("#dataset-list .obj-row")).to_have_count(3)
+                sub_fp, sub_meta = await page.evaluate(
+                    """() => [...window.ffastApp._datasets].find(([fp, m]) => m.parent)""")
+                assert sub_meta["parent"] == dataset_fp
+                assert sub_meta["parent_frames"] == [10, 20, 30]
+                picker = page.locator(".tabpanel.active [data-series='datasets']")
+                await picker.locator(f"button[data-fp='{sub_fp}']").click()
+                await page.wait_for_function(
+                    """(name) => [...document.querySelectorAll(
+                         '.tabpanel.active .analysis-panel[data-title="Energy"] .panel-plot')]
+                       .some((el) => (el.data || []).some((t) => t.name === name))""",
+                    arg=sub_meta["name"], timeout=25000)
+                await page.evaluate(_CLICK_POINT, ["Energy", sub_meta["name"], 1])
+                await expect(label).to_have_text("20 / 99")
+                await expect(selected).to_have_attribute("data-fp", dataset_fp)
+
+                # Unrelated data: the main view switches to it.
+                await picker.locator(f"button[data-fp='{other_fp}']").click()
+                await page.wait_for_function(
+                    """(name) => [...document.querySelectorAll(
+                         '.tabpanel.active .analysis-panel[data-title="Energy"] .panel-plot')]
+                       .some((el) => (el.data || []).some((t) => t.name === name))""",
+                    arg=other_name, timeout=25000)
+                await page.evaluate(_CLICK_POINT, ["Energy", other_name, 5])
+                await expect(selected).to_have_attribute("data-fp", other_fp)
+                await expect(label).to_have_text("5 / 29")
+                await expect(page.locator("#tabbar .tab.active")).to_have_text("Compare")
+            finally:
+                await browser.close()
+
+
 async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(ffast_web_server):
     """The first time a dataset's view opens, every atom is in view. After
     that the camera is the user's: switching tabs and back keeps it (457dcaa)."""
@@ -1095,7 +1270,7 @@ async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(ffas
     dataset_fp = await _preload_dataset(ws_port)
     in_view = """() => {
       const R = window.ffastApp.renderer;
-      const rect = document.querySelector('.tabpanel.active canvas.view3d').getBoundingClientRect();
+      const rect = document.querySelector('.tabpanel.active .panel-3d.focused canvas.view3d').getBoundingClientRect();
       for (let i = 0; i < R.atomCount; i++) {
         const s = R.atomScreenPosition(i);
         if (!s || s.x < 0 || s.y < 0 || s.x > rect.width || s.y > rect.height) return false;
@@ -1840,7 +2015,7 @@ async def _atom_page_xy(page, index):
         """(i) => {
           const s = window.ffastApp.renderer.atomScreenPosition(i);
           if (!s) return null;
-          const r = document.querySelector('.tabpanel.active canvas.view3d').getBoundingClientRect();
+          const r = document.querySelector('.tabpanel.active .panel-3d.focused canvas.view3d').getBoundingClientRect();
           return { x: r.left + s.x, y: r.top + s.y };
         }""",
         index,
@@ -1915,7 +2090,7 @@ async def test_web_info_tool_reports_distance(ffast_web_server):
             far = await page.evaluate(
                 """() => {
                   const R = window.ffastApp.renderer;
-                  const rect = document.querySelector('.tabpanel.active canvas.view3d').getBoundingClientRect();
+                  const rect = document.querySelector('.tabpanel.active .panel-3d.focused canvas.view3d').getBoundingClientRect();
                   const a = R.atomScreenPosition(0);
                   let bestI = -1, bestD = -1;
                   for (let i = 1; i < R.atomCount; i++) {
@@ -1949,7 +2124,7 @@ async def _front_atom(page, zoom=1.0):
           const R = window.ffastApp.renderer;
           R.frameAtoms();
           R.setCameraAngles({distance: R._exportCamera().distance / zoom});
-          const rect = document.querySelector('.tabpanel.active canvas.view3d').getBoundingClientRect();
+          const rect = document.querySelector('.tabpanel.active .panel-3d.focused canvas.view3d').getBoundingClientRect();
           let best = null;
           for (let i = 0; i < R.atomCount; i++) {
             const s = R.atomScreenPosition(i);
@@ -2115,8 +2290,8 @@ async def test_web_picking_does_not_resize_the_3d_view(ffast_web_server):
     and the next click missed its atom."""
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)
-    size = """() => [document.querySelector('.tabpanel.active canvas.view3d').clientWidth,
-                     document.querySelector('.tabpanel.active canvas.view3d').clientHeight,
+    size = """() => [document.querySelector('.tabpanel.active .panel-3d.focused canvas.view3d').clientWidth,
+                     document.querySelector('.tabpanel.active .panel-3d.focused canvas.view3d').clientHeight,
                      document.getElementById('pick-bar').offsetHeight]"""
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)

@@ -253,7 +253,18 @@ class DatasetLoader(EventClass):
             "offsets": None,
             "path": self.path,
             "source_type": getattr(type(self), "datasetName", None),
+            **self.lineageMeta(),
         }
+
+    def lineageMeta(self) -> dict:
+        """Which configurations this dataset shares with another (ADR 0056).
+
+        ``parent`` is the fingerprint of the dataset this one was cut from;
+        ``parent_frames[i]`` is the parent frame that frame ``i`` is, or None
+        when frame ``i`` is the parent's frame ``i``. A loaded dataset has
+        neither. The browser uses this to show the same structure, not the
+        same frame number, in two related views."""
+        return {"parent": None, "parent_frames": None}
 
     def to_transfer_arrays(self) -> dict:
         """Serialize geometry arrays for SubDataset transfer over the RPC channel.
@@ -383,6 +394,8 @@ class VariableDatasetLoader(EventClass):
             "offsets": offsets,
             "path": self.path,
             "source_type": getattr(type(self), "datasetName", None),
+            "parent": None,
+            "parent_frames": None,
         }
 
     def to_transfer_arrays(self) -> dict:
@@ -691,6 +704,13 @@ class SubDataset(DatasetLoader):
         else:
             self.path = f"{self.subName},{self.parent.getName()},{self.modelDep.getName()}"
 
+    def lineageMeta(self) -> dict:
+        """A frame subset: frame ``i`` is the parent's frame ``indices[i]``."""
+        return {
+            "parent": self.parent.fingerprint,
+            "parent_frames": np.asarray(self.indices).reshape(-1).astype(int).tolist(),
+        }
+
     def setIndices(self, indices):
         if indices is None:
             indices = np.array([0])
@@ -934,6 +954,10 @@ class AtomFilteredDataset(DatasetLoader):
 
     def updatePath(self):
         self.path = f"{self.parent.getName()},atomFilter"
+
+    def lineageMeta(self) -> dict:
+        """An atom subset keeps every frame: its indices are atoms."""
+        return {"parent": self.parent.fingerprint, "parent_frames": None}
 
     def getFingerprint(self, parent=None, indices=None):
         if indices is None:

@@ -44,7 +44,11 @@ Browser only. The Qt desktop gets one small change (point 17).
    ("No frame 1200 (ethanol has 300)") instead of showing a different structure.
 4. **A plot click moves the 3D panel in this tab that shows the clicked curve's
    data,** or the main view if no panel there does. The frame is translated by
-   rule 3. This also fixes the wrong-dataset jump described above.
+   rule 3. This also fixes the wrong-dataset jump described above: when the
+   main view holds no frame with the clicked configuration (an unrelated
+   dataset, or a subset that left it out), the main view and the rail switch
+   to the clicked curve's dataset and prediction, so the structure on screen is
+   always the one clicked.
 5. **If the moved view is not in this tab, the page switches** to the most
    recently used tab with a linked 3D panel, as it does today.
 6. **The fixed 3D tab becomes an ordinary built-in tab** named "3D", holding one
@@ -60,7 +64,10 @@ Browser only. The Qt desktop gets one small change (point 17).
    3D panel focuses it (outlined). The tab's settings sidebar, pick toolbar and
    playback strip act on that panel, and the sidebar title names it
    ("Settings — aspirin · MACE (independent)"). A tab without 3D panels shows
-   none of these. ADR 0055's sidebar layout is unchanged.
+   none of these. ADR 0055's sidebar layout is unchanged. A linked panel's
+   title reads "Settings — aspirin · MACE (main view)". With several 3D panels
+   in a tab, the focused one is outlined; which one is focused is browser
+   layout state, remembered per tab.
 
 ### Building and saving tabs
 
@@ -115,6 +122,11 @@ tab carries its Panel Display Overrides (ADR 0029, keyed by tab name) along.
 
 In a tab file a 3D panel is `kind = "3d"`, with no `metrics`. The built-in
 "3D" tab is `ffast/config/builtin_tabs/00_3d.toml`, first in the bar.
+
+To match configurations (rule 3), each dataset's announcement
+(`REMOTE_DATASET_META`) names its `parent` and, for a frame subset,
+`parent_frames`: frame i of the subset is frame `parent_frames[i]` of the
+parent. An atom subset keeps every frame of its parent.
 
 ## Alternatives rejected
 

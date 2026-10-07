@@ -313,6 +313,19 @@ CASES = {
         "tr.whyPanelStays([{panels:[{kind:'3d'}, {kind:'3d', view:'independent'}]}], 0, 1)"
     ),
 
+    # ── fl: same configuration across related datasets (ADR 0056 rule 3) ────
+    # P has 10 frames; S = P frames [4, 6, 8]; SS = S frames [2, 0] (P 8, 4);
+    # A = atoms of P (every frame); Q is unrelated.
+    "fl_same_dataset": "fl.sameConfiguration('P', 7, 'P', FL)",
+    "fl_subset_to_parent": "fl.sameConfiguration('S', 1, 'P', FL)",
+    "fl_parent_to_subset": "fl.sameConfiguration('P', 8, 'S', FL)",
+    "fl_parent_frame_not_in_subset": "fl.sameConfiguration('P', 5, 'S', FL)",
+    "fl_nested_subset_to_sibling": "fl.sameConfiguration('SS', 0, 'S', FL)",
+    "fl_atom_subset_keeps_frames": "fl.sameConfiguration('A', 3, 'S', FL)",
+    "fl_unrelated": "fl.sameConfiguration('Q', 3, 'P', FL)",
+    "fl_unknown_dataset": "fl.sameConfiguration('X', 3, 'P', FL)",
+    "fl_frame_out_of_range": "fl.sameConfiguration('S', 9, 'P', FL)",
+
     "grad_matches_mapped": (
         "(() => {"
         "  const out = {};"
@@ -352,6 +365,13 @@ def results():
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
         f"  const tr = await import('{origin}/tab_rules.js');\n"
+        f"  const fl = await import('{origin}/frame_links.js');\n"
+        "  const FL = new Map(Object.entries({\n"
+        "    P: {n: 10}, Q: {n: 10},\n"
+        "    S: {n: 3, parent: 'P', parent_frames: [4, 6, 8]},\n"
+        "    SS: {n: 2, parent: 'S', parent_frames: [2, 0]},\n"
+        "    A: {n: 10, parent: 'P', parent_frames: null},\n"
+        "  }));\n"
         f"  const TABLE_VALUE_CASES = {json.dumps(TABLE_VALUE_CASES)};\n"
         "  const out = {};\n"
         + "".join(
@@ -705,3 +725,40 @@ def test_a_linked_3d_panel_can_go_while_another_shows_the_main_view(results):
 def test_plot_and_independent_panels_can_always_go(results):
     assert results["plot_panel_can_go"] == ""
     assert results["independent_panel_can_go"] == ""
+
+
+# ── frame_links (ADR 0056 rule 3) ───────────────────────────────────────────
+
+def test_a_frame_matches_itself_in_the_same_dataset(results):
+    assert results["fl_same_dataset"] == 7
+
+
+def test_a_subset_frame_is_its_parents_configuration(results):
+    assert results["fl_subset_to_parent"] == 6
+
+
+def test_a_parent_frame_is_found_in_the_subset_that_holds_it(results):
+    assert results["fl_parent_to_subset"] == 2
+
+
+def test_a_parent_frame_the_subset_lacks_has_no_counterpart(results):
+    assert results["fl_parent_frame_not_in_subset"] is None
+
+
+def test_nested_subsets_match_through_their_shared_root(results):
+    """SS frame 0 is S frame 2 is P frame 8."""
+    assert results["fl_nested_subset_to_sibling"] == 2
+
+
+def test_an_atom_subset_shares_its_parents_frames(results):
+    """A frame 3 is P frame 3, which S does not hold."""
+    assert results["fl_atom_subset_keeps_frames"] is None
+
+
+def test_unrelated_or_unknown_datasets_share_no_configuration(results):
+    assert results["fl_unrelated"] is None
+    assert results["fl_unknown_dataset"] is None
+
+
+def test_a_frame_past_the_end_of_a_subset_has_no_configuration(results):
+    assert results["fl_frame_out_of_range"] is None

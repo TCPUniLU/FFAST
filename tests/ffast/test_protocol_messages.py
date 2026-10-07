@@ -19,11 +19,13 @@ UNIFORM = {
     "name": "aspirin", "n": 100, "has_forces": True, "is_sub": False,
     "variable": False, "elements": [6, 1, 1, 8], "offsets": None,
     "path": "/data/aspirin.xyz", "source_type": "ASE",
+    "parent": None, "parent_frames": None,
 }
 VARIABLE = {
     "name": "mixed", "n": 50, "has_forces": False, "is_sub": True,
     "variable": True, "elements": [6, 1, 8], "offsets": [0, 2, 3],
     "path": "/data/mixed.xyz", "source_type": "Variable ASE",
+    "parent": "aspirinfp", "parent_frames": [4, 9],
 }
 
 
@@ -42,6 +44,7 @@ def test_model_fields_match_tometadict_keys():
     assert set(DatasetMeta.model_fields) == {
         "name", "n", "has_forces", "is_sub", "variable",
         "elements", "offsets", "path", "source_type",
+        "parent", "parent_frames",
     }
 
 

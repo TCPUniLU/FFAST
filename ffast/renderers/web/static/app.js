@@ -5,6 +5,7 @@
 import { FFastConnection } from './connection.js';
 import { Panel3D, ViewRenderers } from './views3d.js';
 import { ensureMainView, isLinked3D, showsMainView } from './tab_rules.js';
+import { sameConfiguration } from './frame_links.js';
 import { infoReadout } from './measure.js';
 import { MetricClient } from './metrics.js';
 import { AnalysisManager } from './analysis.js';
@@ -83,8 +84,11 @@ export class FFastApp {
     this._mainView = null;
     /** @type {Map<HTMLElement, Panel3D>} 3D grid cell → its panel */
     this._panels3d = new Map();
-    /** The 3D panel the active tab's 3D controls act on, or null. */
+    /** The focused 3D panel of the tab on screen: the one its 3D controls
+     * act on (ADR 0056 rule 8), or null in a tab without 3D panels. */
     this._activePanel = null;
+    /** Name of the tab with a linked 3D panel shown last (rule 5). */
+    this._recentMainViewTab = null;
     this._datasets = new Map();   // fingerprint → meta
     this._models = new Map();     // model fingerprint → {name, dataset_fingerprints}
 
@@ -95,6 +99,8 @@ export class FFastApp {
     this._currentModelFp = null;    // selected prediction, or null
     this._currentViewId = null;
     this._lastOpenedDatasetFp = null;  // last dataset_ref sent via OPEN_VIEW
+    this._openedModelFp = null;        // last prediction_ref sent via OPEN_VIEW
+    this._frameOnSnapshot = null;      // frame to show once the opening view's snapshot is in
     this._activeTab = null;            // id of the tab on screen
     this._viewShown = false;        // a scene is drawn; else the empty state (ADR 0055)
     this._framedViews = new Set();  // view ids whose first snapshot fitted the atoms
@@ -176,7 +182,7 @@ export class FFastApp {
       metricClient: null,
       onSelectTab: (id) => this._selectTab(id),
       onSub: (o) => this._sendDeclareSubset(o),
-      onPointFrame: (ci) => this._jumpToFrame(ci),
+      onPointFrame: (o) => this._onPlotPoint(o),
     });
     this._applyLayout([]);
   }
@@ -241,13 +247,19 @@ export class FFastApp {
         panel.mount(cell.el);
         this._panels3d.set(cell.el, panel);
       }
-      if (!panel.renderer)
+      if (!panel.renderer) {
         this._mainView.add(panel.ensureRenderer((entries, opts) => this._onPick(entries, opts)));
+        // Clicking a 3D panel focuses it; the click still orbits or picks.
+        panel.viewport.addEventListener('pointerdown', () => this._focusPanel(panel), true);
+      }
       panels.push(panel);
     }
     if (tab.cells3d.length) this._mountChrome(tab);
     else this._parkChrome();
-    this._setActivePanel(panels[0] || null);
+    // The focused panel of each tab is browser layout state (ADR 0056).
+    const focus = loadLayout().focus?.[tab.name];
+    this._setActivePanel(panels[Number.isInteger(focus) ? focus : 0] || panels[0] || null);
+    if (panels.length) this._recentMainViewTab = tab.name;
     // Showing the main view with a dataset selected ensures a live view.
     if (reopen && this._activePanel && this._conn && this._currentDatasetFp) this._openView();
     // 2D panels render (or refresh) lazily on activation.
@@ -276,10 +288,44 @@ export class FFastApp {
   _setActivePanel(panel) {
     if (panel === this._activePanel) return;
     this._activePanel?.pick?.disarm();
+    this._activePanel?.viewport.parentElement?.classList.remove('focused');
     this._activePanel = panel;
+    this._syncSidebarTitle();
     if (!panel) return;
+    panel.viewport.parentElement?.classList.add('focused');
     panel.viewport.append(document.getElementById('overlay'), document.getElementById('hint-bar'));
     if (this._activeTool) panel.pick.arm({ id: this._activeTool, ...PICK_TOOLS[this._activeTool] });
+  }
+
+  /** The user clicked a 3D panel: the tab's 3D controls now act on it. */
+  _focusPanel(panel) {
+    if (panel === this._activePanel) return;
+    const tab = this._analysis.tab(this._activeTab);
+    const index = tab?.cells3d.findIndex((cell) => cell.el === panel.viewport.parentElement);
+    if (index == null || index < 0) return;
+    this._setActivePanel(panel);
+    saveLayout({ focus: { ...(loadLayout().focus || {}), [tab.name]: index } });
+  }
+
+  /** The sidebar title names the panel its settings act on (rule 8). */
+  _syncSidebarTitle() {
+    const el = document.getElementById('sidebar-title');
+    if (!el) return;
+    const ds = this._datasets.get(this._currentDatasetFp);
+    const model = this._models.get(this._currentModelFp);
+    const name = (meta, fp) => meta?.name || fp?.slice(0, 8);
+    const shows = [ds && name(ds, this._currentDatasetFp), model && name(model, this._currentModelFp)]
+      .filter(Boolean).join(' · ');
+    el.textContent = this._activePanel && shows ? `Settings — ${shows} (main view)` : 'Settings';
+    el.title = el.textContent;
+  }
+
+  /** The tab with a linked 3D panel used last; the first one if none was. */
+  _recentMainViewTabId() {
+    const list = this._analysis.tabList;
+    const recent = list.find((t) => t.name === this._recentMainViewTab
+      && showsMainView(this._analysis.tab(t.id).spec));
+    return recent?.id || this._mainViewTabId();
   }
 
   _initViews() {
@@ -486,7 +532,10 @@ export class FFastApp {
     searchEmpty.hidden = true;
     const quickStyles = document.createElement('div');
     quickStyles.id = 'quick-styles';
-    sidebarEl.append(search, quickStyles, searchEmpty);
+    const title = document.createElement('div');
+    title.id = 'sidebar-title';
+    title.textContent = 'Settings';
+    sidebarEl.append(title, search, quickStyles, searchEmpty);
 
     const colorBy = createColorByPane(sidebarEl, {
       onSourceChange: (source) => this._sendSetParameter('ffast.atom_color', 'source', source),
@@ -762,6 +811,8 @@ export class FFastApp {
     this._currentModelFp = null;
     this._currentViewId = null;
     this._lastOpenedDatasetFp = null;
+    this._openedModelFp = null;
+    this._frameOnSnapshot = null;
     this._playing = false;
     this._pendingSessionOp = null;
     this._setActiveTool(null);   // release any armed pick tool
@@ -820,6 +871,7 @@ export class FFastApp {
     this._renderModelList();
     this._renderQuickStyles();
     this._syncHint();
+    this._syncSidebarTitle();
     // The analysis tabs offer their own multi-select over the same objects, so
     // they need the full lists, not just the rail's current pick.
     this._analysis?.setAvailable({ datasets: this._datasets, models: this._models });
@@ -869,15 +921,19 @@ export class FFastApp {
 
   _selectDataset(fp) {
     this._currentDatasetFp = fp;
-    // Drop a prediction that no longer applies to the selected dataset.
-    const m = this._models.get(this._currentModelFp);
-    const fps = m?.dataset_fingerprints || [];
-    if (this._currentModelFp && fps.length && !fps.includes(fp)) this._currentModelFp = null;
+    this._dropInapplicableModel();
     this._renderObjects();
     this._syncAnalysisContext();
     // Selecting an object drives the main view; a tab without one stays put
     // and just refetches (via the context sync above).
     if (this._activePanel) this._openView();
+  }
+
+  /** Drop a prediction that does not apply to the selected dataset. */
+  _dropInapplicableModel() {
+    const fps = this._models.get(this._currentModelFp)?.dataset_fingerprints || [];
+    if (this._currentModelFp && fps.length && !fps.includes(this._currentDatasetFp))
+      this._currentModelFp = null;
   }
 
   _selectModel(fp) {
@@ -905,6 +961,8 @@ export class FFastApp {
       dataset_ref: this._currentDatasetFp,
       prediction_ref: this._currentModelFp,   // null clears the force overlay
     });
+    this._openedModelFp = this._currentModelFp;
+    this._frameCount = this._datasets.get(this._currentDatasetFp)?.n || this._frameCount;
     document.getElementById('popout-btn').disabled = false;
 
     if (datasetChanged) {
@@ -990,6 +1048,13 @@ export class FFastApp {
       slider.value = frame_index;
       slider.disabled = false;
       this._updateFrameLabel(frame_index, n);
+    }
+    // A plot click that had to open the view first (_onPlotPoint): the
+    // snapshot shows the view's old frame, so ask for the clicked one now.
+    if (this._frameOnSnapshot != null && scene.view_id === this._currentViewId) {
+      const frame = this._frameOnSnapshot;
+      this._frameOnSnapshot = null;
+      this._setFrame(frame);
     }
   }
 
@@ -1175,10 +1240,41 @@ export class FFastApp {
     this._setStatus(`Sub-selecting ${o.indices.length} structure(s)…`, 'connected');
   }
 
-  /** Jump the main view to a structure clicked in an analysis scatter (PRD 63). */
-  _jumpToFrame(configIndex) {
-    if (!this._activePanel) this._selectTab(this._mainViewTabId());
-    this._setFrame(configIndex);
+  /**
+   * Show the structure behind a clicked plot point (PRD 63, ADR 0056 rules
+   * 4 and 5). The 3D view that holds the clicked curve's data moves: every
+   * 3D panel shows the main view for now, so that is the main view, at the
+   * frame that is the same configuration (rule 3: a subset's frame is its
+   * parent's frame indices[i]). When the main view holds no such frame (an
+   * unrelated dataset, or a subset that left it out), it switches to the
+   * clicked curve's dataset and prediction, so the structure on screen is
+   * always the one clicked. A tab without the main view hands over to the tab
+   * with a linked 3D panel used last.
+   * @param {{datasetFp: string, modelFp: string|null, frame: number}} point
+   */
+  _onPlotPoint({ datasetFp, modelFp, frame }) {
+    if (!this._conn || !this._datasets.has(datasetFp)) return;
+    let target = this._currentDatasetFp
+      ? sameConfiguration(datasetFp, frame, this._currentDatasetFp, this._datasets) : null;
+    if (target == null) {
+      this._currentDatasetFp = datasetFp;
+      const fps = this._models.get(modelFp)?.dataset_fingerprints || [];
+      if (modelFp && (!fps.length || fps.includes(datasetFp))) this._currentModelFp = modelFp;
+      else this._dropInapplicableModel();
+      this._renderObjects();
+      this._syncAnalysisContext();
+      target = frame;
+    }
+    if (!this._activePanel) this._selectTab(this._recentMainViewTabId(), { reopen: false });
+    const viewIsCurrent = this._currentViewId
+      && this._lastOpenedDatasetFp === this._currentDatasetFp
+      && this._openedModelFp === this._currentModelFp;
+    if (viewIsCurrent) {
+      this._setFrame(target);
+    } else {
+      this._frameOnSnapshot = target;
+      this._openView();
+    }
   }
 
   /** Push the current dataset/prediction selection into the analysis manager

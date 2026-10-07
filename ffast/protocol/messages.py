@@ -37,6 +37,10 @@ class DatasetMeta(BaseModel):
     offsets: Optional[list[int]] = None
     path: Optional[str] = None
     source_type: Optional[str] = None
+    # Lineage (ADR 0056): the dataset this one was cut from, and for a frame
+    # subset which parent frame each of its frames is (None: the same frame).
+    parent: Optional[str] = None
+    parent_frames: Optional[list[int]] = None
 
 
 class ModelMeta(BaseModel):

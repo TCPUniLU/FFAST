@@ -312,6 +312,9 @@
 
     /* ── 3D panels: one viewport and canvas each (ADR 0056) ──────────── */
     .analysis-panel.panel-3d { overflow: hidden; }
+    /* With several 3D panels in a tab, the focused one — the one the 3D
+       controls act on — is outlined (ADR 0056 rule 8). */
+    .analysis-grid.multi3d > .panel-3d.focused { border-color: var(--hl2); box-shadow: 0 0 0 1px var(--hl2); }
     .viewport {
       flex: 1;
       position: relative;
@@ -427,6 +430,11 @@
     /* a row waiting for something (setRowNeeds) — the search still finds it */
     .ctl-row.needs { display: none; }
 
+    /* names the 3D panel the settings act on (ADR 0056 rule 8) */
+    #sidebar-title {
+      flex: 0 0 auto; font-size: 11px; font-weight: 700; color: var(--text1);
+      overflow-wrap: anywhere; padding: 0 2px;
+    }
     /* sidebar search (ADR 0055) */
     #sidebar-search {
       flex: 0 0 auto; width: 100%; font-family: var(--font); font-size: 12px;

@@ -89,7 +89,7 @@ export class AnalysisManager {
    *   metricClient?: import('./metrics.js').MetricClient|null,
    *   onSelectTab: (id: string) => void,
    *   onSub: (o: {parentFp: string, modelFp: string|null, indices: number[], name: string}) => void,
-   *   onPointFrame: (configIndex: number) => void,
+   *   onPointFrame: (o: {datasetFp: string, modelFp: string|null, frame: number}) => void,
    * }} deps
    */
   constructor(deps) {
@@ -173,6 +173,8 @@ export class AnalysisManager {
 
   /** Update the current selection context and refresh the active tab. */
   setContext({ datasetFp, modelFp, datasetMeta }) {
+    const active = this._activeTab();
+    const before = active && this._drawnKey(active);
     this._ctx = { datasetFp, modelFp, datasetMeta };
     // Element order for the picker/grouped kinds: sorted unique atomic numbers.
     const zs = (datasetMeta && datasetMeta.elements) || [];
@@ -185,8 +187,15 @@ export class AnalysisManager {
       // The rail moved, so a tab still following it shows a different default.
       if (t.seriesSelectorEl) this._renderSeriesSelector(t);
     }
-    const active = this._activeTab();
-    if (active) this._renderTab(active);
+    // A tab with its own datasets and predictions draws the same plots as
+    // before; redrawing would only lose the zoom (a plot click can move the
+    // rail, ADR 0056 rule 4).
+    if (active && this._drawnKey(active) !== before) this._renderTab(active);
+  }
+
+  /** What a tab's plots depend on from the rail: its series and elements. */
+  _drawnKey(t) {
+    return JSON.stringify([this.seriesRefs(t), this._elementOrder || [], t.selectedElements]);
   }
 
   /** Called by app when a tab is activated (renders analysis tabs lazily). */
@@ -314,6 +323,8 @@ export class AnalysisManager {
     });
     t.has2d = t.slots.length > 0;
     grid.classList.toggle('fill', grid.childElementCount === 1);
+    // With several 3D panels, the focused one is outlined (ADR 0056 rule 8).
+    grid.classList.toggle('multi3d', t.cells3d.length > 1);
   }
 
   _buildControls(t) {
@@ -807,14 +818,18 @@ export class AnalysisManager {
       }
     });
 
-    // Point → frame: click a per-frame point to jump the 3D view (PRD 63).
+    // Point → frame: click a per-frame point to show that structure (PRD 63).
+    // The click names the clicked curve's data, so the structure is looked up
+    // in the 3D view that holds it (ADR 0056 rule 4).
     if (el.removeAllListeners) el.removeAllListeners('plotly_click');
     el.on('plotly_click', (ev) => {
       const info = el._subInfo;
       const pt = ev && ev.points && ev.points[0];
       if (!pt || !info) return;
       if (info.dataCurveCount != null && pt.curveNumber >= info.dataCurveCount) return;
-      if (pt.pointIndex != null && this._onPointFrame) this._onPointFrame(pt.pointIndex);
+      const src = (card.series || [])[(info.curveSeries || [])[pt.curveNumber] ?? 0];
+      if (pt.pointIndex != null && src && this._onPointFrame)
+        this._onPointFrame({ datasetFp: src.datasetFp, modelFp: src.modelFp, frame: pt.pointIndex });
     });
   }
 }
