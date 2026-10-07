@@ -826,6 +826,7 @@ export class FFastApp {
     this._panes.camera.saveState(fp);
     this._panes.display.saveState(fp);
     this._panes.bonds.saveState(fp);
+    this._panes.forces.saveState(fp);
   }
 
   _restoreDatasetSettings(fp) {
@@ -845,6 +846,7 @@ export class FFastApp {
     this._panes.camera.loadState(fp);
     this._panes.display.loadState(fp);
     this._panes.bonds.loadState(fp);
+    this._panes.forces.loadState(fp);
   }
 
 

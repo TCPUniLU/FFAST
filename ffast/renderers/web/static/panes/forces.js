@@ -75,6 +75,10 @@ export function createForcesPane(sidebarEl, callbacks) {
   _syncVisibility();
 
   return {
+    onlyForcesStatus: new Map(),
+    normalisedInputStatus: new Map(),
+    lengthInputStatus: new Map(),
+    filterInputStatus: new Map(),
     /** Fill the filter atom set from the Force pick tool; enable filtering. */
     setPickedIndices(ids) {
       state.atomIndices = [...(ids || [])];
@@ -110,6 +114,29 @@ export function createForcesPane(sidebarEl, callbacks) {
       if ([...sourceSelect.options].some((o) => o.value === prevLabel)) sourceSelect.value = prevLabel;
       hasPredictions = models.size > 0;
       _syncVisibility();
+    },
+
+    saveState(fp) {
+      this.onlyForcesStatus.set(fp, onlyForces.checked);
+      this.normalisedInputStatus.set(fp, normalisedInput.checked);
+      this.lengthInputStatus.set(fp, lengthInput.value);
+      this.filterInputStatus.set(fp, filterInput.checked);
+    },
+
+    loadState(fp) {
+      onlyForces.checked = this.onlyForcesStatus.get(fp) ?? false;
+      normalisedInput.checked = this.normalisedInputStatus.get(fp) ?? true;
+      lengthInput.value = this.lengthInputStatus.get(fp) || '10';
+      filterInput.checked = this.filterInputStatus.get(fp) ?? false;
+      const sliderText = document.querySelector('.pane[data-pane="Force Vectors"] ' +
+      '.ctl-row[data-label="Length"] ' +
+      '.ctl-slider-value')
+      sliderText.textContent = lengthInput.value;
+
+      state.onlyForces = onlyForces.checked;
+      state.normalised = normalisedInput.checked;
+      state.length = parseInt(lengthInput.value);
+      state.filterEnabled = filterInput.checked;
     },
   };
 }
