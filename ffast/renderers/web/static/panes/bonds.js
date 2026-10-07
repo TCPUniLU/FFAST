@@ -46,10 +46,10 @@ export function createBondsPane(sidebarEl, callbacks) {
 
   let width = 100, color = '#404040', bondType = 'Dynamic', fixedIndices = [];
 
-  sliderRow(body, 'Bond width', width, { min: 10, max: 100 }, (v) => {
+  const bondSlider = sliderRow(body, 'Bond width', width, { min: 10, max: 100 }, (v) => {
     width = v; callbacks.onStyle(width, color);
   });
-  colorRow(body, 'Bond colour', color, (v) => {
+  const bondColor = colorRow(body, 'Bond colour', color, (v) => {
     color = v; callbacks.onStyle(width, color);
   });
 
@@ -105,6 +105,10 @@ export function createBondsPane(sidebarEl, callbacks) {
   _syncVisibility();
 
   return {
+    bondSliderStatus: new Map(), // fp -> value
+    bondColorStatus: new Map(), // fp -> value
+    typeSelectStatus: new Map(),
+    textAreaStatus: new Map(),
     /**
      * Toggle bond (a, b) in the fixed set from two picked atoms (Qt's
      * BondSelect): seed from the current dynamic bonds when the set is empty so
@@ -126,5 +130,29 @@ export function createBondsPane(sidebarEl, callbacks) {
       _showHint(0);
       callbacks.onApply(bondType, fixedIndices);
     },
+
+    saveState(fp) {
+      this.bondSliderStatus.set(fp, bondSlider.value);
+      this.bondColorStatus.set(fp, bondColor.value);
+      this.typeSelectStatus.set(fp, typeSelect.value);
+      this.textAreaStatus.set(fp, textarea.value);
+    },
+
+    loadState(fp) {
+      bondSlider.value = this.bondSliderStatus.get(fp) || '100';
+      bondColor.value = this.bondColorStatus.get(fp) || '#404040';
+      typeSelect.value = this.typeSelectStatus.get(fp) || 'Dynamic';
+      textarea.value = this.textAreaStatus.get(fp) || '';
+
+      const randomEvent = new Event('input');
+      bondType = typeSelect.value;
+      bondColor.dispatchEvent(randomEvent);
+      bondSlider.dispatchEvent(randomEvent);
+      const { pairs, rejected } = parseBondPairs(textarea.value);
+      fixedIndices = pairs;
+      _showHint(rejected);
+
+      _syncVisibility();
+    }
   };
 }
