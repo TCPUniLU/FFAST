@@ -139,31 +139,40 @@ export function movePanel(tab, index, row, col) {
   return ok ? syncRows(next) : tab;
 }
 
-/** Set the span of panel `index`, as far as it goes without overlapping a
- * neighbour or leaving the columns. */
+/** The first place, at or below `fromRow`, where a box of this size overlaps
+ * nothing; rows below every panel are always free. */
+function freeSpot(panels, columns, size, skip, fromRow) {
+  for (let row = fromRow; ; row++) {
+    for (let col = 0; col + size.colspan <= columns; col++) {
+      const box = { row, col, ...size };
+      if (!hits(panels, box, skip).length) return box;
+    }
+  }
+}
+
+/** Set the span of panel `index` (inside the columns). Panels in the way
+ * move down to the first free place at or below their row, keeping their
+ * size. */
 export function resizePanel(tab, index, rowspan, colspan) {
   const next = clone(tab);
   const panels = next.panels = place(next);
   const columns = columnsOf(next);
   const unit = unitOf(panels, index);
   const box = boxOf(panels, unit);
-  const want = {
+  setBox(panels, unit, {
     ...box,
     rowspan: Math.max(1, rowspan),
     colspan: Math.max(1, Math.min(colspan, columns - box.col)),
-  };
-  // Grow one step at a time, keeping the last size that fitted.
-  const best = { ...box, rowspan: 1, colspan: 1 };
-  for (let r = 1; r <= want.rowspan; r++) {
-    for (let c = 1; c <= want.colspan; c++) {
-      const candidate = { ...box, rowspan: r, colspan: c };
-      if (!hits(panels, candidate, unit).length && r * c >= best.rowspan * best.colspan) {
-        best.rowspan = r;
-        best.colspan = c;
-      }
-    }
+  });
+  const moving = hits(panels, boxOf(panels, unit), unit);
+  // Panels still waiting to move do not block a place.
+  const pending = new Set(moving.flat());
+  for (const other of moving) {
+    const { row, rowspan: rs, colspan: cs } = boxOf(panels, other);
+    const size = { rowspan: rs, colspan: Math.min(cs, columns) };
+    setBox(panels, other, freeSpot(panels, columns, size, [...pending], row));
+    other.forEach((i) => pending.delete(i));
   }
-  setBox(panels, unit, best);
   return syncRows(next);
 }
 

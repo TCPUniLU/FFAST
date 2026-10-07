@@ -339,8 +339,10 @@ CASES = {
     "te_resize_grows": (
         "te.place(te.resizePanel(te.movePanel(TE(), 2, 2, 0), 0, 2, 1))"
         ".map(p => [p.title, p.rowspan, p.colspan])"),
-    "te_resize_stops_at_a_neighbour": (
-        "te.place(te.resizePanel(TE(), 0, 1, 2)).map(p => [p.title, p.rowspan, p.colspan])"),
+    "te_resize_moves_a_neighbour_down": (
+        "te.place(te.resizePanel(TE(), 0, 1, 2)).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])"),
+    "te_resize_moved_neighbour_keeps_its_size": (
+        "te.place(te.resizePanel(TE(), 0, 2, 1)).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])"),
     "te_resize_stays_in_the_columns": (
         "te.place(te.resizePanel(TE(), 1, 1, 5)).map(p => [p.title, p.colspan])"),
     "te_add_takes_the_first_free_cell": (
@@ -841,8 +843,16 @@ def test_te_resizing_grows_a_span(results):
     assert results["te_resize_grows"] == [["V", 2, 1], ["A", 1, 1], ["B", 1, 2]]
 
 
-def test_te_resizing_stops_at_a_neighbour(results):
-    assert results["te_resize_stops_at_a_neighbour"] == [["V", 1, 1], ["A", 1, 1], ["B", 1, 2]]
+def test_te_resizing_over_a_neighbour_moves_it_down(results):
+    """The panel gets the size drawn; A, in the way, goes to the first free
+    cell at or below its row (row 0 is now V's, row 1 is B's)."""
+    assert results["te_resize_moves_a_neighbour_down"] == [
+        ["V", 0, 0, 1, 2], ["A", 2, 0, 1, 1], ["B", 1, 0, 1, 2]]
+
+
+def test_te_a_neighbour_moved_by_a_resize_keeps_its_size(results):
+    assert results["te_resize_moved_neighbour_keeps_its_size"] == [
+        ["V", 0, 0, 2, 1], ["A", 0, 1, 1, 1], ["B", 2, 0, 1, 2]]
 
 
 def test_te_resizing_stays_inside_the_columns(results):

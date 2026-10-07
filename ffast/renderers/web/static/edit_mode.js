@@ -7,8 +7,8 @@
  *
  * While a tab is edited its controls row gives way to an edit bar, and each
  * panel gets a handle strip laid over it: drag ⠿ to move it (onto another
- * panel to swap the two), drag the corner ◢ to change its span, ⚙ opens it in
- * the builder, ✕ removes it. Dragging the thin dividers between columns and
+ * panel to swap the two), drag the corner ◢ to change its span (panels in
+ * the way move down), ⚙ opens it in the builder, ✕ removes it. Dragging the thin dividers between columns and
  * rows sets their sizes. The handles are grid items of their own, covering
  * the panels' cells, so redrawing a plot never wipes them.
  *
@@ -241,7 +241,7 @@ export class TabEditor {
     const corner = document.createElement('span');
     corner.className = 'edit-resize';
     corner.textContent = '◢';
-    corner.title = 'Drag to change how many cells it spans';
+    corner.title = 'Drag to change how many cells it spans; panels in the way move down';
     el.append(head, corner);
 
     this._dragOnto(grid, handle, (cell) => movePanel(this._draft, unit.indices[0], cell.row, cell.col),
@@ -249,7 +249,8 @@ export class TabEditor {
     this._dragOnto(grid, corner,
       (cell) => resizePanel(this._draft, unit.indices[0], cell.row - first.row + 1, cell.col - first.col + 1),
       (cell) => ({ row: first.row, col: first.col,
-        rowspan: Math.max(1, cell.row - first.row + 1), colspan: Math.max(1, cell.col - first.col + 1) }));
+        rowspan: Math.max(1, cell.row - first.row + 1),
+        colspan: Math.max(1, Math.min(cell.col, columnsOf(this._draft) - 1) - first.col + 1) }));
     return el;
   }
 

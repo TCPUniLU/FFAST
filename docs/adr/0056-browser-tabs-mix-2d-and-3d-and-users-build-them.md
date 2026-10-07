@@ -143,7 +143,8 @@ Save) takes the place of its controls row, and each panel gets a handle strip
 laid over it, the plots staying live underneath: drag ⠿ to move it, drag the
 corner ◢ to change its span, ⚙ opens it in the builder, ✕ removes it.
 Dropping a panel on another swaps the two; each keeps its size where it fits
-and shrinks where it does not. Panels sharing a scroll strip move and resize
+and shrinks where it does not. Growing a panel over others moves them down,
+each to the first free place at or below its row, keeping its size. Panels sharing a scroll strip move and resize
 as one. Dragging the dividers between columns or rows sets `column_widths` or
 `row_heights`; Tab settings has "Rows share the window height", and unticking
 it drops `row_heights` so the tab scrolls again. "+" opens Tab settings
