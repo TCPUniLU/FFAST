@@ -876,6 +876,36 @@ async def test_web_sidebar_and_object_list_widths_are_adjustable(ffast_web_serve
             await browser.close()
 
 
+async def test_web_resizing_the_view_redraws_at_once(ffast_web_server):
+    """Resizing a WebGL canvas wipes it. The view used to wait for the next
+    animation frame to redraw, so every step of a sidebar drag showed one
+    empty frame: the view blinked while dragging."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await _apply_synthetic(page, 1)   # one atom in the middle
+            centre = await page.evaluate(
+                """() => {
+                  const R = window.ffastApp.renderer, c = document.getElementById('canvas');
+                  R.setCameraAngles({center: [0, 0, 0], distance: 6});
+                  c.style.width = (c.clientWidth - 40) + 'px';   // what a drag does
+                  R._resize();
+                  // Read the drawing buffer now, before any animation frame.
+                  const gl = R._renderer.getContext(), px = new Uint8Array(4);
+                  gl.readPixels(gl.drawingBufferWidth >> 1, gl.drawingBufferHeight >> 1,
+                                1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+                  return Array.from(px.slice(0, 3));
+                }"""
+            )
+        finally:
+            await browser.close()
+    assert sum(centre) > 60, f"view empty right after a resize: {centre}"
+
+
 async def test_web_layout_works_when_browser_storage_is_blocked(ffast_web_server):
     """Private windows and blocked site data make storage throw; the page must
     still lay itself out, just without remembering anything."""

@@ -201,6 +201,10 @@ export class MoleculeRenderer {
     this._perspCamera.aspect = w / h;
     this._perspCamera.updateProjectionMatrix();
     this._updateOrthoFrustum(w / h);
+    // Resizing wipes the canvas, and a resize arrives after this frame's
+    // draw; without drawing now the browser shows one empty frame, so the
+    // view blinked on every step of a sidebar drag.
+    this._renderFrame();
   }
 
   /** Size the ortho frustum from the perspective camera's current distance,
@@ -293,12 +297,16 @@ export class MoleculeRenderer {
     const loop = () => {
       this._rafId = requestAnimationFrame(loop);
       this._controls.update();
-      this._lightTarget.position.copy(this._controls.target);
-      this._renderer.setViewport(0, 0, this._canvas.clientWidth, this._canvas.clientHeight);
-      this._renderer.render(this._scene, this._camera);
-      if (this._gizmoEnabled) this._renderGizmo();
+      this._renderFrame();
     };
     loop();
+  }
+
+  _renderFrame() {
+    this._lightTarget.position.copy(this._controls.target);
+    this._renderer.setViewport(0, 0, this._canvas.clientWidth, this._canvas.clientHeight);
+    this._renderer.render(this._scene, this._camera);
+    if (this._gizmoEnabled) this._renderGizmo();
   }
 
   _renderGizmo() {
