@@ -356,7 +356,10 @@ export class MoleculeRenderer {
     if (c.has('unit_cell'))  { if (patch.unit_cell)   this._updateUnitCell(patch.unit_cell);  else this._clearUnitCell(); }
     if (c.has('labels'))     this._updateLabels(patch.labels || null);
     if (c.has('selections')) this._updateSelections(patch.selections || []);
-    if (c.has('camera') && patch.camera) this._applyCamera(patch.camera);
+    // A patch's camera is not applied. Only SET_CAMERA changes a view's
+    // camera, and a view belongs to one connection, so the camera in a patch
+    // is this renderer's own, sent back. Arriving late, it would undo a newer
+    // change: Publication's switch to orthographic, or the last bit of a drag.
   }
 
   /** @param {import('./protocol.js').AtomScene} atoms
