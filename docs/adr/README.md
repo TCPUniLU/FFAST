@@ -81,6 +81,7 @@ things came up.
 - [0051](0051-retire-hollowed-shells.md) Deleting three abstractions that had stopped abstracting
 - [0053](0053-compare-predictions-in-the-web-analysis-tabs.md) Multiple predictions per panel
 - [0055](0055-browser-client-gets-its-own-layout.md) Its own layout instead of a copy of the desktop; layout state stays out of sessions
+- [0056](0056-browser-tabs-mix-2d-and-3d-and-users-build-them.md) Tabs mix plots and 3D panels; users build, edit and save their own tabs
 
 ## Running on a cluster
 

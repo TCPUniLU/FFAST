@@ -196,7 +196,49 @@ schemas of the metrics it binds.
 
 ### Analysis tab
 
-A named grid of panels sharing one data selector.
+A named grid of panels sharing one data selector. In the browser a tab may mix 2D
+panels with 3D panels.
+
+A tab comes from one of three places: **built-in** (shipped with FFAST),
+**project** (`[[visualization.tabs]]` in a project's `ffast.toml`, written by
+hand), or **user** (built in the browser and saved by the app on the server
+machine, one file per tab). All three use the same format, so a tab moves
+between them by copying it.
+
+Editing a built-in or project tab in the browser saves a user tab that
+**replaces** it; resetting deletes that user tab and the original returns. Any
+tab can be **hidden** from the tab bar.
+
+Don't call it: overriding a tab ("override" is taken by display overrides).
+
+### 3D panel
+
+A panel that shows a visualization view in a tab's grid, beside 2D panels.
+Browser only. It is either **linked** or **independent**:
+
+- **Linked** (the default): shows the main view. Every linked 3D panel, in any
+  tab, shows the same thing.
+- **Independent**: shows its own visualization view, with its own data,
+  colouring and display. Its frame and camera follow the main view by default;
+  each can be unlinked separately (to compare two frames of one trajectory, or
+  to orbit one side alone). A linked frame means the same configuration where
+  both sides contain it (a prediction and its dataset, a subset and its parent),
+  otherwise the same frame number. When there is no counterpart, the panel says
+  so instead of showing a different structure.
+
+The user switches a 3D panel between linked and independent.
+
+**Focused 3D panel**: the one 3D panel in a tab that the tab's 3D controls
+(settings sidebar, pick toolbar, playback strip) act on. The user focuses a panel
+by clicking it.
+
+Don't call it: the selected panel ("selection" already means picked atoms).
+
+### Main view
+
+The one visualization view the rail drives. Linked 3D panels show it. At least
+one linked 3D panel always exists in some tab, so the main view always has a
+place to appear.
 
 ### Series
 
