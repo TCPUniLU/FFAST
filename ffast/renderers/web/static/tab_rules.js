@@ -47,3 +47,16 @@ export function whyPanelStays(tabs, tabIndex, panelIndex) {
     (p, pi) => isLinked3D(p) && !(ti === tabIndex && pi === panelIndex)));
   return others ? '' : MAIN_VIEW_RULE;
 }
+
+/**
+ * What a new independent 3D panel shows (ADR 0056 rule 7): the first pair
+ * the tab's picker has selected that no other 3D panel in the tab shows,
+ * else the first pair, else null (nothing loaded yet).
+ * @param {Array<{datasetFp: string, modelFp: string|null}>} tabPairs
+ * @param {Array<{datasetFp: string, modelFp: string|null}>} shownPairs
+ */
+export function startPair(tabPairs, shownPairs) {
+  const same = (a, b) => a.datasetFp === b.datasetFp && (a.modelFp || null) === (b.modelFp || null);
+  const pick = tabPairs.find((p) => !shownPairs.some((s) => same(p, s))) || tabPairs[0];
+  return pick ? { datasetFp: pick.datasetFp, modelFp: pick.modelFp || null } : null;
+}

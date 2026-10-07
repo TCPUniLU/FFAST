@@ -1405,6 +1405,256 @@ async def test_web_a_subset_opens_looking_like_its_parent(ffast_web_server):
             await browser.close()
 
 
+_COMPARE_TOML = """
+[[visualization.tabs]]
+name = "Compare"
+row_heights = [1]
+
+[[visualization.tabs.panels]]
+kind = "3d"
+row = 0
+col = 0
+
+[[visualization.tabs.panels]]
+kind = "3d"
+row = 0
+col = 1
+view = "independent"
+  [visualization.tabs.panels.start]
+  colour_by = "ffast.force_mae"
+  colormap = "force_error"
+"""
+
+_INDEPENDENT = "window.ffastApp._independent.get('Compare#0,1')"
+_PANEL = "#panel-section"
+
+
+def _panel_control(label, tag="select"):
+    return f'{_PANEL} .ctl-row[data-label="{label}"] {tag}'
+
+
+async def _focus_3d(page, index):
+    box = await page.locator(".tabpanel.active .panel-3d").nth(index).bounding_box()
+    await page.mouse.click(box["x"] + 20, box["y"] + box["height"] - 20)
+
+
+async def _open_compare(page, ws_port, web_port, dataset_fp):
+    await _open_loupe(page, ws_port, web_port, dataset_fp)
+    await _open_analysis_tab(page, "Compare")
+    await page.wait_for_function(f"() => {_INDEPENDENT}?.isOpen && {_INDEPENDENT}.started", timeout=15000)
+
+
+async def test_web_an_independent_panel_has_its_own_data_and_look(tmp_path):
+    """ADR 0056 rules 2, 7, 8 and 13: an independent panel opens on its tab's
+    data with the starting look from the tab file, names what it shows, and
+    the sidebar acts on it once focused; the main view keeps its own look."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            coloring = page.locator(_control("Colour By", "Coloring"))
+            try:
+                await _open_compare(page, ws_port, web_port, dataset_fp)
+                caption = page.locator(".tabpanel.active .panel-3d .panel-caption:not([hidden])")
+                await expect(caption).to_have_count(1)
+                await expect(caption).to_contain_text("prediction")
+
+                await _focus_3d(page, 1)
+                await expect(page.locator("#sidebar-title")).to_contain_text("(independent)")
+                await expect(page.locator(_PANEL)).to_be_visible()
+                await expect(page.locator(_panel_control("Dataset"))).to_have_value(dataset_fp)
+                await expect(page.locator(_panel_control("Prediction"))).to_have_value(model_fp)
+                await expect(coloring).to_have_value("Force Error (per atom)")
+
+                await _focus_3d(page, 0)
+                await expect(page.locator("#sidebar-title")).to_contain_text("(main view)")
+                await expect(page.locator(_PANEL)).to_be_hidden()
+                await expect(coloring).to_have_value("Elements")
+            finally:
+                await browser.close()
+
+
+async def test_web_a_missing_start_colour_metric_shows_elements_and_says_why(tmp_path):
+    """Rule 13: a starting colour metric the server lacks gives element
+    colours, and the panel says why."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML.replace("ffast.force_mae", "nope.metric"))
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            why = "Colour metric nope.metric is not on this server; showing element colours"
+            try:
+                await _open_compare(page, ws_port, web_port, dataset_fp)
+                await expect(page.locator(".tabpanel.active .panel-3d .panel-caption-note")).to_have_text(why)
+                await _focus_3d(page, 1)
+                await expect(page.locator(f"{_PANEL} .ctl-hint")).to_have_text(why)
+                await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value("Elements")
+            finally:
+                await browser.close()
+
+
+async def test_web_an_independent_panel_follows_the_main_frame_or_says_it_cannot(tmp_path):
+    """Rules 2 and 3: a frame-linked panel takes the main view's frame; on
+    unrelated data, the same number, and when that frame does not exist it
+    greys out and says so. Unlinked, it keeps its frame and the playback
+    strip moves it alone."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML)
+    second = tmp_path / "second.xyz"
+    ase.io.write(second, ase.io.read(DATASET_PATH, index=":30"), format="extxyz")
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        (other,) = await _load_more(
+            ws_port, {dataset_fp}, ("LOAD_DATASET", (str(second), "ase (auto)"), {}))
+        other_fp, other_name = other["args"][0], other["kwargs"]["name"]
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            note = page.locator(".tabpanel.active .panel-3d .panel-note:not([hidden])")
+            frame_of = f"() => {_INDEPENDENT}.frame"
+            try:
+                await _open_compare(page, ws_port, web_port, dataset_fp)
+                await _focus_3d(page, 1)
+                await page.locator(_panel_control("Dataset")).select_option(other_fp)
+                await _focus_3d(page, 0)
+                await page.evaluate("window.ffastApp._setFrame(50)")
+                await expect(note).to_have_text(f"No frame 50 ({other_name} has 30)")
+                await expect(page.locator(".tabpanel.active .viewport.no-frame")).to_have_count(1)
+
+                await page.evaluate("window.ffastApp._setFrame(10)")
+                await expect(note).to_have_count(0)
+                assert await page.evaluate(frame_of) == 10
+
+                await _focus_3d(page, 1)
+                await page.locator(_panel_control("Follow main view's frame", "input")).uncheck()
+                await page.locator("#next-frame-btn").click()
+                await page.wait_for_function(f"() => {_INDEPENDENT}.frame === 11")
+                assert await page.evaluate("window.ffastApp._mainFrame") == 10
+                await _focus_3d(page, 0)
+                await page.evaluate("window.ffastApp._setFrame(20)")
+                await page.wait_for_timeout(300)
+                assert await page.evaluate(frame_of) == 11
+            finally:
+                await browser.close()
+
+
+async def test_web_an_independent_panel_follows_the_main_camera_while_linked(tmp_path):
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML)
+    camera_of = f"() => {_INDEPENDENT}.panel.renderer._exportCamera().azimuth"
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            try:
+                await _open_compare(page, ws_port, web_port, dataset_fp)
+                await _focus_3d(page, 0)
+                await page.evaluate("window.ffastApp.renderer.setCameraAngles({azimuth: 40, elevation: 20})")
+                await page.wait_for_function(f"() => Math.abs(({camera_of})() - 40) < 0.5")
+
+                await _focus_3d(page, 1)
+                await page.locator(_panel_control("Follow main view's camera", "input")).uncheck()
+                await _focus_3d(page, 0)
+                await page.evaluate("window.ffastApp.renderer.setCameraAngles({azimuth: -70, elevation: 20})")
+                await page.wait_for_timeout(300)
+                assert abs(await page.evaluate(camera_of) - 40) < 0.5
+            finally:
+                await browser.close()
+
+
+_UNLINKED_CLICK_TOML = """
+[[visualization.tabs]]
+name = "Compare"
+
+[[visualization.tabs.panels]]
+kind = "3d"
+row = 0
+col = 0
+view = "independent"
+link_frame = false
+
+[[visualization.tabs.panels]]
+kind = "timeline"
+row = 0
+col = 1
+title = "Energy"
+  [visualization.tabs.panels.metrics.y]
+  metric = "ffast.energy_reference"
+"""
+
+
+async def test_web_a_plot_click_moves_the_independent_panel_showing_the_data(tmp_path):
+    """Rule 4: the 3D panel in the tab showing the clicked data moves; an
+    independent one with its own frame moves alone."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_UNLINKED_CLICK_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            view = "window.ffastApp._independent.get('Compare#0,0')"
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_analysis_tab(page, "Compare")
+                await page.wait_for_function(f"() => {view}?.isOpen")
+                await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy", timeout=25000)
+                name = await page.evaluate(f"() => window.ffastApp._datasets.get('{dataset_fp}').name")
+                await page.evaluate(_CLICK_POINT, ["Energy", name, 7])
+                await page.wait_for_function(f"() => {view}.frame === 7")
+                await expect(page.locator("#tabbar .tab.active")).to_have_text("Compare")
+                assert await page.evaluate("window.ffastApp._mainFrame") == 0
+            finally:
+                await browser.close()
+
+
+async def test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_screen(tmp_path):
+    """Rules 1, 13 and 15: in Edit mode a 3D panel's ⚙ makes it independent,
+    sets its links, and "Use current 3D settings as start" takes the look on
+    screen; Save writes them to the tab file."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML.replace('view = "independent"\n  [visualization.tabs.panels.start]\n'
+                                            '  colour_by = "ffast.force_mae"\n  colormap = "force_error"\n', ""))
+    tabs_dir = tmp_path / "tabs"
+    async with _spawn_server("--config", str(config), "--tabs-dir", str(tabs_dir)) as (ws_port, web_port):
+        dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_analysis_tab(page, "Compare")
+                await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+                await page.locator("#quick-styles button", has_text="Force error").click()
+                await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value(
+                    "Force Error (per atom)")
+
+                await page.locator("#tab-edit-btn").click()
+                await page.locator(_CHROME).nth(1).locator("[data-edit=panel3d]").click()
+                dialog = page.locator(".edit-modal")
+                await dialog.locator("select[data-field=view]").select_option("independent")
+                await dialog.locator("input[data-field=link_camera]").uncheck()
+                await dialog.locator("[data-edit=use-current]").click()
+                await expect(dialog.locator("[data-field=start]")).to_contain_text("colour_by = ffast.force_mae")
+                await dialog.get_by_role("button", name="Apply").click()
+                await page.locator("[data-edit=save]").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+
+                saved = tomllib.loads((tabs_dir / "compare.toml").read_text())
+                panel = saved["tabs"][0]["panels"][1]
+                assert panel["view"] == "independent" and panel["link_camera"] is False
+                assert panel["start"]["colour_by"] == "ffast.force_mae"
+                assert panel["start"]["colormap"] == "force_error"
+            finally:
+                await browser.close()
+
+
 _SIZED_TAB_TOML = """
 [[visualization.tabs]]
 name = "Sized"

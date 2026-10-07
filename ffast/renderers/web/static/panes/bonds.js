@@ -7,7 +7,7 @@
  * BondSelect.selectCallback).
  */
 
-import { createPane, sliderRow, colorRow, selectRow, row, buttonRow, rowElement, setRowNeeds } from '../sidebar.js';
+import { createPane, sliderRow, colorRow, selectRow, row, buttonRow, rowElement, setRowNeeds, setSliderValue } from '../sidebar.js';
 
 /**
  * Parse "0-1, 2-5" / "0 1\n2 5" into [[0,1],[2,5]], skipping malformed pairs.
@@ -49,10 +49,10 @@ export function createBondsPane(sidebarEl, callbacks) {
   // A colour other than the default replaces the 3D view's two-tone bonds.
   const style = () => callbacks.onStyle(width, color, color !== DEFAULT_COLOR);
 
-  sliderRow(body, 'Bond width', width, { min: 10, max: 100 }, (v) => {
+  const widthInput = sliderRow(body, 'Bond width', width, { min: 10, max: 100 }, (v) => {
     width = v; style();
   });
-  colorRow(body, 'Bond colour', color, (v) => {
+  const colorInput = colorRow(body, 'Bond colour', color, (v) => {
     color = v; style();
   });
 
@@ -107,7 +107,39 @@ export function createBondsPane(sidebarEl, callbacks) {
   }
   _syncVisibility();
 
+  /** Bond look per view (ADR 0056): the main view keeps one, each
+   * independent 3D panel its own. */
+  const saved = new Map();   // key -> {width, color, bondType, fixedIndices}
   return {
+    saveState(key) {
+      saved.set(key, { width, color, bondType, fixedIndices: [...fixedIndices] });
+    },
+
+    /** Show `key`'s bond look and draw it; its bond type is the view's own,
+     * already on the server, so nothing is sent. */
+    loadState(key) {
+      const s = saved.get(key) || { width: 100, color: DEFAULT_COLOR, bondType: 'Dynamic', fixedIndices: [] };
+      ({ width, color, bondType } = s);
+      fixedIndices = [...s.fixedIndices];
+      setSliderValue(widthInput, width);
+      colorInput.value = color;
+      typeSelect.value = bondType;
+      textarea.value = formatBondPairs(fixedIndices);
+      _syncVisibility();
+      style();
+    },
+
+    /** Store a bond look for `key` without showing it (ADR 0056 start). */
+    presetState(key, { width: w = 100, colour = DEFAULT_COLOR } = {}) {
+      saved.set(key, { width: w, color: colour, bondType: 'Dynamic', fixedIndices: [] });
+    },
+
+    /** The bond width and colour stored for `key`. */
+    lookOf(key) {
+      const s = saved.get(key);
+      return { width: s?.width ?? 100, colour: s?.color ?? DEFAULT_COLOR };
+    },
+
     /**
      * Toggle bond (a, b) in the fixed set from two picked atoms (Qt's
      * BondSelect): seed from the current dynamic bonds when the set is empty so

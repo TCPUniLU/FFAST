@@ -233,7 +233,9 @@ window. It is either **linked** or **independent**:
   to orbit one side alone). A linked frame means the same configuration where
   both sides contain it (a prediction and its dataset, a subset and its parent),
   otherwise the same frame number. When there is no counterpart, the panel says
-  so instead of showing a different structure.
+  so instead of showing a different structure. Its starting look (colouring,
+  display, bonds, force arrows) can be saved with the tab; which dataset or
+  prediction it shows, and its camera, never are.
 
 The user switches a 3D panel between linked and independent.
 

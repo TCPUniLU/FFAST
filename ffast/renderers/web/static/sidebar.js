@@ -237,6 +237,13 @@ export function sliderRow(parent, label, value, opts, onChange) {
   return input;
 }
 
+/** Show `value` in a slider row without firing its change handler. */
+export function setSliderValue(input, value) {
+  input.value = String(value);
+  const out = input.parentElement?.querySelector('.ctl-slider-value');
+  if (out) out.textContent = input.value;
+}
+
 /** @returns {HTMLInputElement} */
 export function textRow(parent, label, value, onChange) {
   const input = document.createElement('input');

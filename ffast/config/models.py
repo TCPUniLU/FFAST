@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Union
+from typing import Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class MetricModuleConfig(BaseModel):
@@ -103,6 +103,27 @@ class PanelMetricRef(BaseModel):
 # The panel kind of a 3D panel (ADR 0056): a view, not a plot.
 PANEL_KIND_3D = "3d"
 
+
+class StartSettings(BaseModel):
+    """How an independent 3D panel looks when it opens (ADR 0056 rule 13): its
+    colouring, display, bonds and force arrows. Never which dataset or
+    prediction it shows, nor its camera. Colouring by a metric and force
+    arrows use the panel's own prediction. A key left out keeps today's
+    default. If ``colour_by`` names a metric the server lacks, the browser
+    shows element colours and says why."""
+    model_config = ConfigDict(extra="forbid")
+    # "element", "displacement", or a per-atom metric id ("ffast.force_mae").
+    colour_by: str | None = None
+    colormap: str | None = None
+    atom_size: float | None = Field(default=None, gt=0)
+    bond_width: int | None = Field(default=None, ge=10, le=100)   # percent
+    bond_colour: str | None = Field(
+        default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    force_arrows: bool | None = None
+    force_length: float | None = Field(default=None, ge=1, le=200)
+    force_normalised: bool | None = None
+
+
 # An axis label is null | "label" | ["label", "<userConfig unit key>"].
 AxisLabel = Union[str, list[str], None]
 # A panel role binds one metric, or (overlay kinds) a list of series.
@@ -124,7 +145,12 @@ class PanelConfig(BaseModel):
     each taking its own grid cell.
 
     ``kind = "3d"`` is a **3D panel** (ADR 0056): a cell showing a visualization
-    view instead of plotting metrics. Browser only; it binds no metric roles."""
+    view instead of plotting metrics. Browser only; it binds no metric roles.
+    It is ``view = "linked"`` (the default: it shows the main view) or
+    ``"independent"``; an independent panel also has ``link_frame`` and
+    ``link_camera`` (follow the main view's frame and camera; both on by
+    default) and its starting look, ``start``. A linked panel stores only its
+    place."""
     model_config = ConfigDict(extra="forbid")
     kind: str
     row: int
@@ -143,11 +169,23 @@ class PanelConfig(BaseModel):
     controls: list[str] = Field(default_factory=list)
     scroll_group: str | None = None
     options: dict[str, Any] = Field(default_factory=dict)
+    view: Literal["linked", "independent"] = "linked"
+    link_frame: bool = True
+    link_camera: bool = True
+    start: StartSettings | None = None
 
     @model_validator(mode="after")
     def _3d_panel_binds_no_metrics(self) -> "PanelConfig":
         if self.kind == PANEL_KIND_3D and self.metrics:
             raise ValueError("a 3D panel shows a 3D view and takes no 'metrics'")
+        if self.kind != PANEL_KIND_3D and self.view != "linked":
+            raise ValueError("only a 3D panel has a 'view'")
+        unlinked = not self.link_frame or not self.link_camera
+        if self.view == "linked" and (unlinked or self.start is not None):
+            raise ValueError(
+                "'link_frame', 'link_camera' and 'start' are for an "
+                "independent 3D panel (view = \"independent\"); a linked "
+                "one shows the main view")
         return self
 
 

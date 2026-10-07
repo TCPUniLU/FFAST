@@ -159,6 +159,35 @@ shapes each role takes mirror the desktop's panel kinds (`tab_edit.js`
 In a tab file a 3D panel is `kind = "3d"`, with no `metrics`. The built-in
 "3D" tab is `ffast/config/builtin_tabs/00_3d.toml`, first in the bar.
 
+An independent panel is `view = "independent"`, with `link_frame` and
+`link_camera` (both default `true`) and its starting look in
+`[tabs.panels.start]`: `colour_by` (`"element"`, `"displacement"` or a
+per-atom metric id), `colormap`, `atom_size`, `bond_width` (percent, 10 to
+100), `bond_colour` (`"#rrggbb"`), `force_arrows`, `force_length` (1 to 200)
+and `force_normalised`. Colouring by a metric and force arrows use the
+panel's own prediction. A key left out keeps today's default, and only
+values that differ from it are written. A linked panel with a link tick
+off, or with a `start`, is a config error.
+
+The independent panel's picker and link ticks sit in a Panel section at the
+top of the settings sidebar while it is focused, and the panel names what it
+shows in a small caption in its corner. With its frame linked, the playback
+strip moves the main view, which it follows; unlinked, the strip moves the
+panel alone. A linked camera takes the main view's angle and zoom but stays
+centred on the panel's own atoms. A plot click on data an independent panel
+shows moves that panel when its frame is its own, and the main view (which
+it follows) when its frame is linked. In Edit mode a 3D panel's ⚙ sets
+linked or independent, the link ticks and the starting look; "Use current
+3D settings as start" takes the look the panel has on screen (a linked
+panel's is the main view's). Each independent panel is its own server view
+(`ind-<n>`), opened when its tab is first shown and closed when a layout
+drops it; it keeps its data, settings and frame across a layout that keeps
+it in the same grid place with the same settings. Only the tab on screen
+follows the main view's frame; a tab shown later catches up. A start colour
+metric that is missing, or has no value per atom, is named under the
+panel's caption. Changing the panel's prediction moves metric colouring and
+force arrows that were on the old one.
+
 To match configurations (rule 3), each dataset's announcement
 (`REMOTE_DATASET_META`) names its `parent` and, for a frame subset,
 `parent_frames`: frame i of the subset is frame `parent_frames[i]` of the

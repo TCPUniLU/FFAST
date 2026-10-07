@@ -961,7 +961,9 @@ class ServerSession:
                 result.patch.changed.add("only_forces")
                 #print("server says yes!") # Debugging purposes
 
-        result_data = pack(control.COMMAND_RESULT, [], result.model_dump())
+        # Several views share a connection (independent 3D panels, ADR 0056),
+        # and a failed result carries no patch, so the result names its view.
+        result_data = pack(control.COMMAND_RESULT, [], {**result.model_dump(), "view_id": cmd.view_id})
         await self._emit(result_data)
 
         if result.success and result.patch:

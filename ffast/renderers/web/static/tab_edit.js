@@ -254,6 +254,30 @@ export function copyOf(tab, name) {
   return { ...rest, name };
 }
 
+/** Make 3D panel `index` linked or independent (ADR 0056 rule 1). A linked
+ * panel shows the main view and stores only its place, so the link ticks
+ * and the starting look go. */
+export function setPanelView(tab, index, { view, link_frame = true, link_camera = true }) {
+  const next = clone(tab);
+  const panel = next.panels[index];
+  if (view === 'independent') Object.assign(panel, { view, link_frame, link_camera });
+  else {
+    panel.view = 'linked';
+    delete panel.link_frame;
+    delete panel.link_camera;
+    delete panel.start;
+  }
+  return next;
+}
+
+/** Set an independent panel's starting look (rule 13); null clears it. */
+export function setPanelStart(tab, index, start) {
+  const next = clone(tab);
+  if (start && Object.keys(start).length) next.panels[index].start = clone(start);
+  else delete next.panels[index].start;
+  return next;
+}
+
 /** A 3D panel to add (linked, ADR 0056 rule 1). */
 export function new3DPanel() {
   return { kind: KIND_3D, title: null, metrics: {}, metric_refs: {} };

@@ -33,9 +33,41 @@ export class Panel3D {
     this.renderer = null;
     /** @type {PickController|null} */
     this.pick = null;
+    /** @type {IndependentView|null} the view an independent panel shows */
+    this.independent = null;
+    // An independent panel names what it shows, and says why it shows no
+    // frame when the main view's frame has no counterpart (rule 3).
+    this.caption = document.createElement('div');
+    this.caption.className = 'panel-caption';
+    this.caption.hidden = true;
+    this.noteEl = document.createElement('div');
+    this.noteEl.className = 'panel-note';
+    this.noteEl.hidden = true;
+    this.viewport.append(this.caption, this.noteEl);
   }
 
   get linked() { return isLinked3D(this.spec); }
+
+  /** The read-only caption in the panel's corner ('aspirin · MACE'), and a
+   * note under it (why its starting colour metric was not used). */
+  showCaption(text, note = '') {
+    this.caption.replaceChildren(document.createTextNode(text || ''));
+    if (note) {
+      const line = document.createElement('div');
+      line.className = 'panel-caption-note';
+      line.textContent = note;
+      this.caption.appendChild(line);
+    }
+    this.caption.hidden = !text;
+  }
+
+  /** A note over the panel; `dim` greys the panel out, hiding the structure
+   * it showed, which is not the one asked for (rule 3). */
+  showNote(text, { dim = false } = {}) {
+    this.noteEl.textContent = text || '';
+    this.noteEl.hidden = !text;
+    this.viewport.classList.toggle('no-frame', !!text && dim);
+  }
 
   /** Put the panel into a grid cell (moving it there if it was elsewhere). */
   mount(cell) {
@@ -91,6 +123,23 @@ export class ViewRenderers {
 
   /** The scene as drawn, for a renderer added later and for bond recovery. */
   get scene() { return this._scene; }
+
+  /** The camera the renderers share, or null before one is known. */
+  get camera() { return this._camera; }
+
+  /** Move every renderer to `cam` without hearing it back: a camera linked
+   * from another view (ADR 0056 rule 2). `keepCenter` keeps each renderer
+   * looking at its own atoms and takes only the angle and the zoom. */
+  setCamera(cam, { keepCenter = false } = {}) {
+    if (!cam) return;
+    this._quietly(() => {
+      for (const r of this._renderers) {
+        r._applyCamera(keepCenter ? { ...cam, center: r._exportCamera().center } : cam);
+      }
+    });
+    const shown = this.shown;
+    this._camera = shown ? shown._exportCamera() : { ...cam };
+  }
 
   add(renderer) {
     if (this._renderers.includes(renderer)) return;
@@ -180,4 +229,52 @@ export class ViewRenderers {
     this._syncing = true;
     try { fn(); } finally { this._syncing = was; }
   }
+}
+
+/**
+ * An independent 3D panel's own visualization view (ADR 0056 rule 2): its
+ * dataset and prediction, its own settings, and whether its frame and camera
+ * follow the main view. It outlives a layout rebuild that keeps the panel,
+ * so its choice of data stays (rule 7); it is keyed by tab name and panel
+ * index.
+ */
+export class IndependentView {
+  /**
+   * @param {string} key `${tab name}#${panel index}`
+   * @param {object} spec the panel's entry in the tab layout
+   * @param {string} viewId the server-side view id
+   * @param {(view: IndependentView, cam: object) => void} onCameraChange
+   */
+  constructor(key, spec, viewId, onCameraChange) {
+    this.key = key;
+    this.spec = spec;
+    this.viewId = viewId;
+    /** @type {Panel3D|null} */
+    this.panel = null;
+    this.renderers = new ViewRenderers({ onCameraChange: (cam) => onCameraChange(this, cam) });
+    this.datasetFp = null;
+    this.modelFp = null;
+    this.version = 0;
+    this.frame = null;
+    this.links = { frame: spec.link_frame !== false, camera: spec.link_camera !== false };
+    this.openedPair = '';    // the `dataset|prediction` its view was opened on, '' before
+    this.applyingScene = false;   // a scene of its own is being drawn
+    this.started = false;    // its starting look has been sent
+    this.note = '';          // why its starting colour metric was not used
+    this.missing = '';       // why it shows no frame (rule 3)
+    this.atomScale = 1;      // its Atom size while the sidebar shows another view
+    this.cameraThrottle = null;
+  }
+
+  /** Its server view is open. */
+  get isOpen() { return !!this.openedPair; }
+
+  /** Its settings in the sidebar's per-view store. */
+  get settingsKey() { return `ind:${this.key}`; }
+}
+
+/** An independent panel's server view id (`ind-<n>`); the main view's are
+ * `view-<n>`. */
+export function isIndependentViewId(viewId) {
+  return typeof viewId === 'string' && viewId.startsWith('ind-');
 }

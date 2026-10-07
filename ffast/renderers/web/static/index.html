@@ -408,6 +408,22 @@
     /* Out of the flow, so the canvas's own pixel size never feeds back into
        the grid's row heights. */
     canvas.view3d { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+    /* An independent 3D panel names what it shows, and says why it shows no
+       frame, greying the last one out (ADR 0056 rules 2 and 3). */
+    .panel-caption {
+      position: absolute; top: 6px; left: 8px; z-index: 2; max-width: calc(100% - 16px);
+      font-size: 11px; color: var(--text1); background: rgba(32, 34, 37, 0.75);
+      padding: 2px 6px; border-radius: 4px; pointer-events: none;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .panel-note {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
+      max-width: 80%; text-align: center; font-size: 12px; color: var(--text1);
+      background: rgba(32, 34, 37, 0.85); padding: 6px 10px; border-radius: 5px; pointer-events: none;
+    }
+    .panel-caption-note { white-space: normal; color: #e0a84e; margin-top: 2px; }
+    .viewport.no-frame { background: var(--bg2); }
+    .viewport.no-frame canvas.view3d { visibility: hidden; }
     #overlay {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       text-align: center; color: #55585f; pointer-events: none;
@@ -517,6 +533,15 @@
     #sidebar-title {
       flex: 0 0 auto; font-size: 11px; font-weight: 700; color: var(--text1);
       overflow-wrap: anywhere; padding: 0 2px;
+    }
+    /* the focused independent 3D panel's picker and link ticks (ADR 0056) */
+    .panel-section {
+      flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px;
+      padding: 6px 8px; border: 1px solid var(--bg3); border-radius: 5px; background: var(--bg2);
+    }
+    .panel-section[hidden] { display: none; }
+    .panel-section-title {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text1);
     }
     /* sidebar search (ADR 0055) */
     #sidebar-search {

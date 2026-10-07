@@ -60,6 +60,83 @@ def test_3d_panel_takes_no_metrics():
         }]})
 
 
+INDEPENDENT = """
+[[tabs]]
+name = "Compare"
+
+[[tabs.panels]]
+kind = "3d"
+row = 0
+col = 0
+
+[[tabs.panels]]
+kind = "3d"
+row = 0
+col = 1
+view = "independent"
+link_frame = false
+  [tabs.panels.start]
+  colour_by = "ffast.force_mae"
+  colormap = "force_error"
+  atom_size = 1.2
+  bond_width = 60
+  bond_colour = "#ff8800"
+  force_arrows = true
+  force_length = 20
+  force_normalised = false
+"""
+
+
+def test_an_independent_3d_panel_stores_its_links_and_starting_look():
+    """ADR 0056 rule 13: an independent panel stores linked/independent, the
+    two link ticks and its starting look, never data or camera."""
+    tab = AnalysisTabConfig.model_validate(tomllib.loads(INDEPENDENT)["tabs"][0])
+    linked, independent = tab.panels
+    assert (linked.view, linked.link_frame, linked.link_camera, linked.start) == (
+        "linked", True, True, None)
+    assert (independent.view, independent.link_frame, independent.link_camera) == (
+        "independent", False, True)
+    assert independent.start.model_dump() == {
+        "colour_by": "ffast.force_mae", "colormap": "force_error", "atom_size": 1.2,
+        "bond_width": 60, "bond_colour": "#ff8800", "force_arrows": True,
+        "force_length": 20, "force_normalised": False}
+
+
+def test_start_keys_left_out_keep_todays_defaults():
+    panel = AnalysisTabConfig.model_validate({"name": "T", "panels": [
+        {"kind": "3d", "row": 0, "col": 0, "view": "independent",
+         "start": {"colour_by": "displacement"}}]}).panels[0]
+    assert panel.start.model_dump(exclude_none=True) == {"colour_by": "displacement"}
+
+
+@pytest.mark.parametrize("panel, error", [
+    ({"kind": "3d", "view": "sideways"}, "view"),
+    ({"kind": "timeline", "view": "independent", "metrics": {"y": {"metric": "m"}}}, "3D panel"),
+    ({"kind": "3d", "link_frame": False}, "independent"),
+    ({"kind": "3d", "start": {"colormap": "viridis"}}, "independent"),
+    ({"kind": "3d", "view": "independent", "start": {"dataset": "aspirin"}}, "dataset"),
+    ({"kind": "3d", "view": "independent", "start": {"bond_width": 5}}, "bond_width"),
+    ({"kind": "3d", "view": "independent", "start": {"bond_colour": "orange"}}, "bond_colour"),
+    ({"kind": "3d", "view": "independent", "start": {"atom_size": 0}}, "atom_size"),
+    ({"kind": "3d", "view": "independent", "start": {"force_length": 500}}, "force_length"),
+])
+def test_3d_panel_fields_that_do_not_fit_are_config_errors(panel, error):
+    with pytest.raises(ValidationError, match=error):
+        AnalysisTabConfig.model_validate(
+            {"name": "T", "panels": [{"row": 0, "col": 0, **panel}]})
+
+
+def test_a_linked_panel_is_written_as_its_place_only():
+    """Defaults are not written, so a linked panel's file entry stays the
+    place alone, as rule 13 says."""
+    from ffast.config.user_tabs import _authoring
+    tab = AnalysisTabConfig.model_validate(tomllib.loads(INDEPENDENT)["tabs"][0])
+    linked, independent = _authoring(tab)["panels"]
+    assert linked == {"kind": "3d", "row": 0, "col": 0}
+    assert independent["view"] == "independent" and independent["link_frame"] is False
+    assert "link_camera" not in independent and independent["start"]["bond_width"] == 60
+
+
 def test_3d_panels_compile_no_metrics_and_reach_the_layout():
     """compile and layout skip over 3D panels' empty metrics; the panel still
     travels to the browser with its place."""

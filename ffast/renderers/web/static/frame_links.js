@@ -68,3 +68,34 @@ export function predictionApplies(modelMeta, fp, datasets) {
   }
   return false;
 }
+
+/** The loaded dataset `fp` was cut from (itself if it was loaded), or null. */
+export function rootOf(fp, datasets) {
+  let cur = fp;
+  for (let depth = 0; depth < 64; depth++) {
+    const meta = datasets.get(cur);
+    if (!meta) return null;
+    if (!meta.parent) return cur;
+    cur = meta.parent;
+  }
+  return null;
+}
+
+/**
+ * The frame of `toFp` an independent panel shows while it follows the main
+ * view's frame `frame` of `fromFp` (ADR 0056 rule 3): the same structure
+ * where both are cut from one dataset, else the same frame number. With no
+ * counterpart, `missing` says why, instead of a different structure.
+ * @returns {{frame: number}|{missing: string}}
+ */
+export function linkedFrame(fromFp, frame, toFp, datasets) {
+  const to = datasets.get(toFp);
+  if (!to || !datasets.has(fromFp)) return { missing: '' };
+  const name = to.name || toFp.slice(0, 8);
+  if (rootOf(fromFp, datasets) === rootOf(toFp, datasets)) {
+    const same = sameConfiguration(fromFp, frame, toFp, datasets);
+    return same == null ? { missing: `This structure is not in ${name}` } : { frame: same };
+  }
+  const n = to.n ?? 0;
+  return frame >= 0 && frame < n ? { frame } : { missing: `No frame ${frame} (${name} has ${n})` };
+}

@@ -571,6 +571,14 @@ export class AnalysisManager {
     return [...all.keys()].filter((fp) => predictionApplies(meta, fp, all));
   }
 
+  /** The dataset × prediction pairs tab `id`'s picker has selected (or the
+   * rail's, while it follows the rail): what a new independent 3D panel in
+   * it chooses from (ADR 0056 rule 7). */
+  tabPairs(id) {
+    const t = this._tabs.find((x) => x.id === id);
+    return t ? this.seriesRefs(t).map((r) => ({ datasetFp: r.datasetFp, modelFp: r.modelFp })) : [];
+  }
+
   /** The (dataset × prediction) pairs this tab draws (see `pairSeries`). */
   seriesRefs(t) {
     return pairSeries(

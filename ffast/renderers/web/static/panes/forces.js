@@ -5,7 +5,7 @@
  * and the Force pick tool fills the atom set (setPickedIndices).
  */
 
-import { createPane, checkboxRow, selectRow, sliderRow, rowElement, setRowNeeds } from '../sidebar.js';
+import { createPane, checkboxRow, selectRow, sliderRow, rowElement, setRowNeeds, setSliderValue } from '../sidebar.js';
 const ONLY_FORCES_WARNING_KEY = 'ffast.onlyForcesWarning.dismissed';
 
 /*This function is used to make the 'Only show force vectors' warning visible and handle user input*/
@@ -81,11 +81,18 @@ export function createForcesPane(sidebarEl, callbacks) {
       if (!state.filterEnabled) { state.filterEnabled = true; filterInput.checked = true; }
       apply();
     },
-    /** Set show/source without firing onApply (per-dataset restore). */
-    setState(show, modelKey) {
-      state.show = show;
-      state.modelKey = modelKey;
+    /** Set show/source and, for a view of its own, the rest without firing
+     * onApply (per-dataset and per-panel restore). */
+    setState(show, modelKey, extras = {}) {
+      const { length = state.length, normalised = state.normalised, onlyForces: only = state.onlyForces,
+        filterEnabled = state.filterEnabled, atomIndices = state.atomIndices } = extras;
+      Object.assign(state, { show, modelKey, length, normalised, onlyForces: only, filterEnabled,
+        atomIndices: [...(atomIndices || [])] });
       showInput.checked = show;
+      setSliderValue(lengthInput, length);
+      normalisedInput.checked = normalised;
+      onlyForces.checked = only;
+      filterInput.checked = filterEnabled;
       let label = 'Ground Truth';
       for (const [lbl, fp] of keyByLabel) if (fp === modelKey) label = lbl;
       if ([...sourceSelect.options].some((o) => o.value === label)) sourceSelect.value = label;

@@ -61,6 +61,16 @@ export function createDisplayPane(sidebarEl, callbacks) {
       this.showUnitStatus.set(fp, showUnitRow.checked);
     },
 
+    /** Store an Atom size for `key` without showing it (ADR 0056 start). */
+    presetState(key, { atomSize = 1 } = {}) {
+      this.atomSizeStatus.set(key, String(atomSize));
+    },
+
+    /** The Atom size stored for `key`. */
+    lookOf(key) {
+      return { atomSize: parseFloat(this.atomSizeStatus.get(key)) || 1 };
+    },
+
     loadState(fp) {
       atomSizeRow.value = this.atomSizeStatus.get(fp) || '1.0';
       atomHideRow.value = this.atomHidStatus.get(fp) || '';

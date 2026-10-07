@@ -20,9 +20,10 @@ import { askDialog } from './dialogs.js';
 import {
   KIND_ROLES, addPanel, copyOf, emptyTab, metricsFor, movePanel, new3DPanel,
   removePanel, replacePanel, resizePanel, rowsOf, columnsOf, setColumns,
-  setRowsShareWindow, toSaved,
+  setPanelStart, setPanelView, setRowsShareWindow, toSaved,
 } from './tab_edit.js';
 import { KIND_3D, whyPanelStays } from './tab_rules.js';
+import { cleanStart } from './start_settings.js';
 
 /** A column's minimum width, as index.html's --col-min. */
 const COL_MIN_PX = 400;
@@ -35,6 +36,7 @@ export class TabEditor {
    *   catalog: () => object[],             // METRIC_CATALOG entries
    *   refresh: (o: {show?: string}) => void,   // draw the layout (with the draft)
    *   setStatus: (text: string, kind: string) => void,
+   *   currentStart: (tabName: string, panel: object) => object,  // a 3D panel's look on screen
    * }} deps
    */
   constructor(deps) {
@@ -228,6 +230,15 @@ export class TabEditor {
       });
       gear.title = 'Open in the builder';
       gear.dataset.edit = 'builder';
+      head.appendChild(gear);
+    }
+    if (unit.indices.length === 1 && first.kind === KIND_3D) {
+      const gear = button('⚙', async () => {
+        const next = await this._panel3d(unit.indices[0], visibleTabs, tabIndex);
+        if (next) this.change(next);
+      });
+      gear.title = 'Linked or independent, links and starting look';
+      gear.dataset.edit = 'panel3d';
       head.appendChild(gear);
     }
     const why = unit.indices.map((i) => whyPanelStays(visibleTabs, tabIndex, i)).find(Boolean) || '';
@@ -484,6 +495,60 @@ export class TabEditor {
     return out;
   }
 
+  /** A 3D panel's settings (ADR 0056 rules 1, 2, 13 and 15): linked or
+   * independent; for an independent one, the two link ticks and its starting
+   * look, which "Use current 3D settings as start" takes from the screen. */
+  async _panel3d(index, visibleTabs, tabIndex) {
+    const panel = this._draft.panels[index];
+    const body = document.createElement('div');
+    body.className = 'panel3d-settings';
+    const view = document.createElement('select');
+    view.dataset.field = 'view';
+    view.append(new Option('The main view (linked)', 'linked'),
+      new Option('Its own view (independent)', 'independent'));
+    view.value = panel.view === 'independent' ? 'independent' : 'linked';
+    // The last linked panel stays linked (rule 6).
+    const stays = view.value === 'linked' ? whyPanelStays(visibleTabs, tabIndex, index) : '';
+    view.options[1].disabled = !!stays;
+    const [frameRow, frame] = checkField("Follow the main view's frame", panel.link_frame !== false, 'link_frame');
+    const [cameraRow, camera] = checkField("Follow the main view's camera", panel.link_camera !== false, 'link_camera');
+    let start = cleanStart(panel.start);
+    const summary = document.createElement('div');
+    summary.className = 'ctl-hint';
+    summary.dataset.field = 'start';
+    const describe = () => {
+      const keys = Object.entries(start || {});
+      summary.textContent = keys.length
+        ? `Starts with ${keys.map(([k, v]) => `${k} = ${v}`).join(', ')}`
+        : 'Starts with the default look';
+    };
+    const useCurrent = button('Use current 3D settings as start', () => {
+      start = cleanStart(this._deps.currentStart?.(this._draft.name, panel));
+      describe();
+    });
+    useCurrent.dataset.edit = 'use-current';
+    const reset = button('Default look', () => { start = null; describe(); });
+    const startButtons = document.createElement('div');
+    startButtons.className = 'edit-row';
+    startButtons.append(useCurrent, reset);
+    const hint = document.createElement('div');
+    hint.className = 'ctl-hint';
+    hint.textContent = stays ? `${stays}, so this panel stays linked.` : '';
+    const sync = () => {
+      const own = view.value === 'independent';
+      for (const control of [frame, camera, useCurrent, reset]) control.disabled = !own;
+    };
+    view.addEventListener('change', sync);
+    sync();
+    describe();
+    body.append(field('Shows', view), frameRow, cameraRow, summary, startButtons, hint);
+    const { answer } = modal('3D panel', body, ['Cancel', 'Apply']);
+    if ((await answer) !== 'Apply') return null;
+    const next = setPanelView(this._draft, index,
+      { view: view.value, link_frame: frame.checked, link_camera: camera.checked });
+    return view.value === 'independent' ? setPanelStart(next, index, start) : next;
+  }
+
   /** Tab settings (rule 14): name, column count, the tab controls, and
    * whether the rows share the window's height. */
   async _tabSettings(draft, { title, ok }) {
@@ -494,17 +559,9 @@ export class TabEditor {
     const columns = Object.assign(document.createElement('input'), {
       type: 'number', min: 1, max: 8, value: columnsOf(draft) });
     columns.dataset.field = 'columns';
-    const check = (label, checked, key) => {
-      const box = Object.assign(document.createElement('input'), { type: 'checkbox', checked });
-      box.dataset.field = key;
-      const lbl = document.createElement('label');
-      lbl.className = 'conn-check';
-      lbl.append(box, ` ${label}`);
-      return [lbl, box];
-    };
-    const [shiftRow, shift] = check('Energy shift', (draft.controls || []).includes('energy_shift'), 'energy_shift');
-    const [elemRow, elems] = check('Element picker', draft.selector === 'atomic', 'element_picker');
-    const [fitRow, fit] = check('Rows share the window height', !!draft.row_heights, 'rows_share');
+    const [shiftRow, shift] = checkField('Energy shift', (draft.controls || []).includes('energy_shift'), 'energy_shift');
+    const [elemRow, elems] = checkField('Element picker', draft.selector === 'atomic', 'element_picker');
+    const [fitRow, fit] = checkField('Rows share the window height', !!draft.row_heights, 'rows_share');
     const why = document.createElement('div');
     why.className = 'ctl-hint';
     body.append(field('Name', name), field('Columns', columns), shiftRow, elemRow, fitRow, why);
@@ -538,6 +595,16 @@ function button(text, onClick) {
   b.textContent = text;
   b.addEventListener('click', onClick);
   return b;
+}
+
+/** A labelled checkbox for a dialog: [its row, the box]. */
+function checkField(label, checked, key) {
+  const box = Object.assign(document.createElement('input'), { type: 'checkbox', checked });
+  box.dataset.field = key;
+  const lbl = document.createElement('label');
+  lbl.className = 'conn-check';
+  lbl.append(box, ` ${label}`);
+  return [lbl, box];
 }
 
 function field(label, control) {

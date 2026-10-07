@@ -11,11 +11,12 @@
  * overlay or the object rail's active prediction.
  */
 
+import { COLORABLE_SHAPES } from '../start_settings.js';
 import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.js';
 import { gradientCss } from '../colormap.js';
 
 const COLORMAPS = ['viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'force_error'];
-const COLORABLE_SHAPES = new Set(['N_atoms', 'N_elements']);
+// Shared with an independent panel's starting look (start_settings.js).
 
 /**
  * @param {HTMLElement} sidebarEl
@@ -159,6 +160,35 @@ export function createColorByPane(sidebarEl, callbacks) {
       cbMin.textContent = colorBy.vmin.toPrecision(3);
       cbMax.textContent = colorBy.vmax.toPrecision(3);
       cbLabel.textContent = colorBy.label + (colorBy.unit ? ` (${colorBy.unit})` : '');
+    },
+
+    /** Store a look for `key` without showing it (an independent 3D panel's
+     * starting look, ADR 0056): a colour source ("element", "displacement",
+     * "metric:<id>"), a colour map and the prediction metric colours use. */
+    presetState(key, { source = 'element', colormap = 'viridis', prediction = null } = {}) {
+      this.colorState.set(key, [...labelToSource].find(([, s]) => s === source)?.[0] || 'Elements');
+      this.colormapState.set(key, colormap);
+      this.predictionState.set(key,
+        [...keyByLabel].find(([, fp]) => fp === prediction)?.[0] || 'Ground Truth');
+      this.normState.set(key, 'None');
+    },
+
+    /** The prediction metric colours use now, or null (ground truth). */
+    predictionOf() {
+      return keyByLabel.get(predictionSelect.value) ?? null;
+    },
+
+    /** Show `fp` as the colouring prediction without sending it. */
+    setPrediction(fp) {
+      predictionSelect.value = [...keyByLabel].find(([, k]) => k === fp)?.[0] || 'Ground Truth';
+    },
+
+    /** The colour source and map stored for `key`. */
+    lookOf(key) {
+      return {
+        source: labelToSource.get(this.colorState.get(key)) || 'element',
+        colormap: this.colormapState.get(key) || 'viridis',
+      };
     },
 
     /**

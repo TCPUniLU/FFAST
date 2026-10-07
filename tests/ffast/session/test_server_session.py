@@ -618,6 +618,9 @@ def test_view_command_applies_and_emits_command_result_then_scene_patch():
     assert result_event == control.COMMAND_RESULT
     assert result_kwargs["success"] is True
     assert result_kwargs["new_version"] == 1
+    # Several views share a connection (ADR 0056 independent 3D panels), so
+    # the result names the view it answers.
+    assert result_kwargs["view_id"] == "v1"
 
     patch_event, _, patch_kwargs = unpack(s.outbound.get_nowait())
     assert patch_event == control.SCENE_PATCH

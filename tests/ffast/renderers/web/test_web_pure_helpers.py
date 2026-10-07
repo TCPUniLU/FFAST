@@ -350,6 +350,55 @@ CASES = {
         " new Map([['S', {name: 'Plot,P,MACE'}], ['T', {name: 'Other,Q,MACE'}]]))"
         ".map(r => [r.datasetFp, r.modelFp, r.name, r.datasetName])"),
 
+    # ── fl.linkedFrame: an independent panel following the main view (rule 3)
+    "lf_same_dataset": "fl.linkedFrame('P', 7, 'P', FL)",
+    "lf_parent_to_subset": "fl.linkedFrame('P', 8, 'S', FL)",
+    "lf_subset_left_it_out": "fl.linkedFrame('P', 5, 'S', FL)",
+    "lf_unrelated_by_number": "fl.linkedFrame('P', 3, 'T', FL)",
+    "lf_unrelated_out_of_range": "fl.linkedFrame('P', 9, 'T', FL)",
+    "lf_unknown": "fl.linkedFrame('P', 3, 'X', FL)",
+
+    # ── tr.startPair: what a new independent panel shows (rule 7) ───────────
+    "sp_first_free": (
+        "tr.startPair([{datasetFp:'P', modelFp:'m1'}, {datasetFp:'P', modelFp:'m2'}],"
+        " [{datasetFp:'P', modelFp:'m1'}])"),
+    "sp_all_shown": (
+        "tr.startPair([{datasetFp:'P', modelFp:'m1'}], [{datasetFp:'P', modelFp:'m1'}])"),
+    "sp_none": "tr.startPair([], [])",
+
+    # ── ss: an independent panel's starting look (rule 13) ──────────────────
+    "ss_full": (
+        "ss.startCommands({colour_by: 'ffast.force_mae', colormap: 'force_error', atom_size: 1.2,"
+        " bond_width: 60, bond_colour: '#ff8800', force_arrows: true, force_length: 20,"
+        " force_normalised: false}, {modelFp: 'm1', catalog: [{id: 'ffast.force_mae'}]})"),
+    "ss_missing_metric": (
+        "ss.startCommands({colour_by: 'nope.metric'}, {modelFp: 'm1', catalog: []})"),
+    "ss_plain": "ss.startCommands({colour_by: 'displacement'}, {modelFp: null, catalog: []})",
+    "ss_not_per_atom": (
+        "ss.startCommands({colour_by: 'ffast.energy_mae'},"
+        " {modelFp: 'm1', catalog: [{id: 'ffast.energy_mae', shape: 'scalar'}]}).note"),
+    "ss_clean": (
+        "[ss.cleanStart({colormap: 'viridis', atom_size: null, bond_width: undefined}),"
+        " ss.cleanStart({atom_size: null}), ss.cleanStart(null)]"),
+    "ss_empty": "ss.startCommands(null, {modelFp: null, catalog: []})",
+    "ss_from_current": (
+        "ss.startFromCurrent({source: 'metric:ffast.force_mae', colormap: 'force_error', atomSize: 1,"
+        " bondWidth: 100, bondColour: '#404040', forces: {show: true, length: 10, normalised: true}})"),
+    "ss_from_current_plain": (
+        "ss.startFromCurrent({source: 'element', colormap: 'viridis', atomSize: 1.5,"
+        " bondWidth: 40, bondColour: '#123456', forces: {show: false, length: 10, normalised: true}})"),
+
+    # ── te.setPanelView / setPanelStart ──────────────────────────────────────
+    "te_make_independent": (
+        "te.setPanelView(TE(), 0, {view: 'independent', link_frame: false, link_camera: true}).panels[0]"),
+    "te_make_linked_drops_the_rest": (
+        "te.setPanelView(te.setPanelStart(te.setPanelView(TE(), 0, {view: 'independent',"
+        " link_frame: false, link_camera: false}), 0, {colormap: 'viridis'}), 0, {view: 'linked'}).panels[0]"),
+    "te_set_start": "te.setPanelStart(TE(), 0, {colormap: 'viridis'}).panels[0].start",
+    "te_saved_keeps_view": (
+        "te.toSaved(te.setPanelView(TE(), 0, {view: 'independent', link_frame: true,"
+        " link_camera: false})).panels[0]"),
+
     # ── te: editing a tab draft (ADR 0056 rules 6, 11, 12, 14) ──────────────
     # A 2x2 tab: 3D panel at (0,0), table A at (0,1), timeline B at (1,0)
     # spanning 2 columns.
@@ -436,6 +485,7 @@ def results():
         f"  const tr = await import('{origin}/tab_rules.js');\n"
         f"  const fl = await import('{origin}/frame_links.js');\n"
         f"  const te = await import('{origin}/tab_edit.js');\n"
+        f"  const ss = await import('{origin}/start_settings.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -445,8 +495,8 @@ def results():
         "       metrics: {y: 'm.b'}, metric_refs: {y: {metric: 'm.b', transform: null, params: {}}}},\n"
         "    ]});\n"
         "  const FL = new Map(Object.entries({\n"
-        "    P: {n: 10}, Q: {n: 10},\n"
-        "    S: {n: 3, parent: 'P', parent_frames: [4, 6, 8]},\n"
+        "    P: {n: 10, name: 'P'}, Q: {n: 10, name: 'Q'}, T: {n: 5, name: 'ethanol'},\n"
+        "    S: {n: 3, parent: 'P', parent_frames: [4, 6, 8], name: 'S'},\n"
         "    SS: {n: 2, parent: 'S', parent_frames: [2, 0]},\n"
         "    A: {n: 10, parent: 'P', parent_frames: null},\n"
         "  }));\n"
@@ -869,6 +919,95 @@ def test_the_other_plots_of_a_subbed_tab_draw_each_series_subset(results):
     yet), so both stay as they are. Legend names do not change."""
     assert results["an_subset_refs"] == [
         ["S", "m", "MACE", "Plot,P,MACE"], ["Q", "m", "MACE", "Q"], ["H", None, "H", "H"]]
+
+
+def test_a_linked_frame_is_the_same_structure_else_the_same_number(results):
+    assert results["lf_same_dataset"] == {"frame": 7}
+    assert results["lf_parent_to_subset"] == {"frame": 2}
+    assert results["lf_unrelated_by_number"] == {"frame": 3}
+
+
+def test_a_linked_frame_with_no_counterpart_says_so(results):
+    """Rather than show a different structure (rule 3)."""
+    assert results["lf_subset_left_it_out"] == {"missing": "This structure is not in S"}
+    assert results["lf_unrelated_out_of_range"] == {"missing": "No frame 9 (ethanol has 5)"}
+    assert results["lf_unknown"] == {"missing": ""}
+
+
+def test_a_new_independent_panel_shows_the_first_pair_no_other_panel_shows(results):
+    assert results["sp_first_free"] == {"datasetFp": "P", "modelFp": "m2"}
+    assert results["sp_all_shown"] == {"datasetFp": "P", "modelFp": "m1"}
+    assert results["sp_none"] is None
+
+
+def test_a_starting_look_becomes_view_commands_on_the_panels_own_prediction(results):
+    full = results["ss_full"]
+    assert full["commands"] == [
+        {"type": "SET_PARAMETER", "stage_id": "ffast.atom_color", "parameter": "source",
+         "value": "metric:ffast.force_mae"},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.atom_color", "parameter": "prediction_ref",
+         "value": "m1"},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.atom_color", "parameter": "colormap",
+         "value": "force_error"},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.atom_sizes", "parameter": "scale",
+         "value": 1.2},
+        {"type": "TOGGLE_FEATURE", "feature": "forces", "enabled": True},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.force_arrows", "parameter": "prediction_ref",
+         "value": "m1"},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.force_arrows", "parameter": "length_factor",
+         "value": 20},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.force_arrows", "parameter": "normalised",
+         "value": False},
+    ]
+    assert full["bondStyle"] == [60, "#ff8800", True]
+    assert full["note"] == ""
+    assert full["settings"] == {
+        "source": "metric:ffast.force_mae", "colormap": "force_error", "prediction": "m1",
+        "atomSize": 1.2, "bondWidth": 60, "bondColour": "#ff8800",
+        "forces": {"show": True, "length": 20, "normalised": False}}
+
+
+def test_a_missing_colour_metric_falls_back_to_element_colours_and_says_why(results):
+    missing = results["ss_missing_metric"]
+    assert missing["commands"][0]["value"] == "element"
+    assert missing["note"] == "Colour metric nope.metric is not on this server; showing element colours"
+
+
+def test_a_start_colour_metric_without_a_value_per_atom_falls_back_too(results):
+    assert results["ss_not_per_atom"] == (
+        "Colour metric ffast.energy_mae has no value per atom; showing element colours")
+
+
+def test_a_start_compares_by_the_keys_that_are_set(results):
+    """The server sends unset keys as null; a start compares equal however
+    it was written, so Save does not restart a panel whose look is the same."""
+    assert results["ss_clean"] == [{"colormap": "viridis"}, None, None]
+
+
+def test_a_start_with_few_keys_sends_only_those(results):
+    assert [c["parameter"] for c in results["ss_plain"]["commands"]] == ["source"]
+    assert results["ss_plain"]["bondStyle"] is None
+    assert results["ss_empty"]["commands"] == [] and results["ss_empty"]["note"] == ""
+
+
+def test_use_current_3d_settings_as_start(results):
+    """Rule 15's "Use current 3D settings as start": the look on screen, as
+    the start keys; defaults are left out."""
+    assert results["ss_from_current"] == {
+        "colour_by": "ffast.force_mae", "colormap": "force_error", "force_arrows": True}
+    assert results["ss_from_current_plain"] == {
+        "atom_size": 1.5, "bond_width": 40, "bond_colour": "#123456"}
+
+
+def test_te_a_3d_panel_can_be_made_independent_and_linked_again(results):
+    made = results["te_make_independent"]
+    assert (made["view"], made["link_frame"], made["link_camera"]) == ("independent", False, True)
+    back = results["te_make_linked_drops_the_rest"]
+    assert back["view"] == "linked"
+    assert not ({"link_frame", "link_camera", "start"} & set(back))
+    assert results["te_set_start"] == {"colormap": "viridis"}
+    saved = results["te_saved_keeps_view"]
+    assert (saved["view"], saved["link_camera"]) == ("independent", False)
 
 
 def test_te_panels_keep_their_places(results):
