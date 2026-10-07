@@ -19,6 +19,7 @@ import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
+import { bindMenu } from './actions.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 
 /**
@@ -177,15 +178,43 @@ export class FFastApp {
     // Object rail load actions — dataset vs prediction mode.
     document.getElementById('add-dataset-btn').addEventListener('click', () => this._browser.open('dataset'));
     document.getElementById('add-prediction-btn').addEventListener('click', () => this._browser.open('prediction'));
-    document.getElementById('export-dataset-btn').addEventListener('click', () => this._sessionOps.exportSelectedDataset());
 
-    // Session save/load (issue 21) + subset export (issue 20) reuse one path
-    // prompt — the browser has no native server-side save dialog.
-    document.getElementById('save-session-btn').addEventListener('click', () => this._sessionOps.saveSession());
-    document.getElementById('load-session-btn').addEventListener('click', () => this._sessionOps.loadSession());
+    this._actions = this._buildActions();
+    bindMenu(
+      document.getElementById('file-menu-btn'),
+      document.getElementById('file-menu-list'),
+      this._actions,
+    );
     // Each modal owns its own controls (ADR 0050).
     this._sessionOps.bindControls();
     this._browser.bindControls();
+  }
+
+  /** The one action list (ADR 0055): the File menu today; shortcuts and the
+   * command palette read the same entries. Session save/load (issue 21) and
+   * subset export (issue 20) reuse one path prompt — the browser has no
+   * native server-side save dialog. */
+  _buildActions() {
+    const needsControl = () => {
+      if (!this._conn) return 'Connect to a server first';
+      if (this._conn.role === 'READ_ONLY') return 'Read-only connection';
+      return '';
+    };
+    return [
+      { id: 'load-dataset', label: 'Load Dataset…',
+        run: () => this._browser.open('dataset'), unavailable: needsControl },
+      { id: 'load-prediction', label: 'Load Prediction…',
+        run: () => this._browser.open('prediction'),
+        unavailable: () => needsControl() || (this._datasets.size ? '' : 'Load a dataset first') },
+      { id: 'save-session', label: 'Save Session…',
+        run: () => this._sessionOps.saveSession(), unavailable: needsControl },
+      { id: 'load-session', label: 'Load Session…',
+        run: () => this._sessionOps.loadSession(), unavailable: needsControl },
+      { id: 'export-dataset', label: 'Export Selected Dataset…',
+        run: () => this._sessionOps.exportSelectedDataset(),
+        unavailable: () => needsControl() || (this._currentDatasetFp ? '' : 'Select a dataset first') },
+      { id: 'connect', label: 'Connect to Server…', run: () => this._openConnDialog() },
+    ];
   }
 
   // ── sidebar panes (ADR 0045 Phase 1: issues 03-07) ──────────────────────
@@ -408,9 +437,6 @@ export class FFastApp {
       const canMutate = conn.role !== 'READ_ONLY';
       document.getElementById('add-dataset-btn').disabled = !canMutate;
       document.getElementById('add-prediction-btn').disabled = !canMutate;
-      document.getElementById('export-dataset-btn').disabled = !canMutate;
-      document.getElementById('save-session-btn').disabled = !canMutate;
-      document.getElementById('load-session-btn').disabled = !canMutate;
       this._renderObjects();
       // Fetch the analysis-tab layout (METRIC_CATALOG arrives via connect-replay).
       conn.send(OUT.REQUEST_TAB_LAYOUT, {});
@@ -445,9 +471,6 @@ export class FFastApp {
     document.getElementById('disconnect-btn').disabled = true;
     document.getElementById('add-dataset-btn').disabled = true;
     document.getElementById('add-prediction-btn').disabled = true;
-    document.getElementById('export-dataset-btn').disabled = true;
-    document.getElementById('save-session-btn').disabled = true;
-    document.getElementById('load-session-btn').disabled = true;
     document.getElementById('reset-camera-btn').disabled = true;
     document.getElementById('popout-btn').disabled = true;
     document.getElementById('frame-slider').disabled = true;

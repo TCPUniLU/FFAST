@@ -220,6 +220,84 @@ async def _preload_dataset_and_prediction(ws_port: int) -> tuple[str, str]:
         await ws.close()
 
 
+async def _file_menu(page, label):
+    """Run a File menu action by its label."""
+    await page.locator("#file-menu-btn").click()
+    await page.locator("#file-menu-list").get_by_role("menuitem", name=label, exact=True).click()
+
+
+FILE_MENU = [
+    "Load Dataset…", "Load Prediction…", "Save Session…", "Load Session…",
+    "Export Selected Dataset…", "Connect to Server…",
+]
+
+
+async def test_web_file_menu_holds_the_session_actions(ffast_web_server):
+    """ADR 0055 "Session actions": one File menu; an action that cannot run
+    yet is greyed out with the reason; the top-bar Save/Load buttons and the
+    rail's unlabelled ⬇ are gone, the rail's + shortcuts stay."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await expect(page.locator("#status")).to_contain_text("Connected")
+            for gone in ("#save-session-btn", "#load-session-btn", "#export-dataset-btn"):
+                await expect(page.locator(gone)).to_have_count(0)
+            await expect(page.locator("#add-dataset-btn")).to_be_enabled()
+            await expect(page.locator("#add-prediction-btn")).to_be_enabled()
+
+            await page.locator("#file-menu-btn").click()
+            items = page.locator("#file-menu-list [role=menuitem]")
+            await expect(items).to_have_text(FILE_MENU)
+            # Nothing loaded yet: these wait for data, and say so.
+            export = items.filter(has_text="Export Selected Dataset…")
+            await expect(export).to_be_disabled()
+            await expect(export).to_have_attribute("title", re.compile("Select a dataset"))
+            prediction = items.filter(has_text="Load Prediction…")
+            await expect(prediction).to_be_disabled()
+            await expect(prediction).to_have_attribute("title", re.compile("Load a dataset"))
+            await expect(items.filter(has_text="Save Session…")).to_be_enabled()
+
+            await page.keyboard.press("Escape")
+            await expect(page.locator("#file-menu-list")).to_be_hidden()
+            await page.locator("#file-menu-btn").click()
+            # Clicking outside closes the menu.
+            await page.locator("#tabbar").click()
+            await expect(page.locator("#file-menu-list")).to_be_hidden()
+
+            await _file_menu(page, "Connect to Server…")
+            await expect(page.locator("#conn-dialog")).to_be_visible()
+            await page.locator("#conn-close").click()
+
+            await _file_menu(page, "Load Dataset…")
+            await expect(page.locator("#fb-modal")).to_be_visible()
+        finally:
+            await browser.close()
+
+
+async def test_web_file_menu_greys_out_server_actions_while_disconnected(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await page.locator("#conn-close").click()
+            await page.locator("#file-menu-btn").click()
+            items = page.locator("#file-menu-list [role=menuitem]")
+            for label in FILE_MENU[:-1]:
+                item = items.filter(has_text=label)
+                await expect(item).to_be_disabled()
+                await expect(item).to_have_attribute("title", re.compile("Connect to a server"))
+            await expect(items.filter(has_text="Connect to Server…")).to_be_enabled()
+        finally:
+            await browser.close()
+
+
 # ── connection (ADR 0055 "Connection" row) ─────────────────────────────────
 
 async def test_web_connects_by_itself_when_the_url_names_the_port(ffast_web_server):
@@ -1398,7 +1476,7 @@ async def test_web_export_subset_writes_extxyz_and_reports_path(ffast_web_server
             await page.locator(f"#dataset-list .obj-row[data-fp='{sub_fp}']").click()
 
             target = tmp_path / "sub.extxyz"
-            await page.locator("#export-dataset-btn").click()
+            await _file_menu(page, "Export Selected Dataset…")
             await page.locator("#path-input").fill(str(target))
             await page.locator("#path-ok").click()
 
@@ -1471,7 +1549,7 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
             try:
                 await _open_loupe(page, ws_port_a, web_port_a, dataset_fp)
 
-                await page.locator("#save-session-btn").click()
+                await _file_menu(page, "Save Session…")
                 await page.locator("#path-input").fill(str(session_dir))
                 await page.locator("#path-ok").click()
 
@@ -1497,7 +1575,7 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
                 await expect(page.locator("#status")).to_contain_text("Connected")
                 await expect(page.locator("#dataset-list .obj-row")).to_have_count(0)
 
-                await page.locator("#load-session-btn").click()
+                await _file_menu(page, "Load Session…")
                 await page.locator("#path-input").fill(str(session_dir))
                 await page.locator("#path-ok").click()
 
