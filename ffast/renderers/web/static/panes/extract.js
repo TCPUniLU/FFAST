@@ -51,6 +51,7 @@ export function createExtractPane(sidebarEl, callbacks) {
   extractBtn.title = 'Create a new atom-filtered dataset from these indices';
 
   return {
+    indicesStatus: new Map(),
     /** Reflect the current picked atom-id set into the box (pick tool fill). */
     setPickedIndices(ids) {
       indices.value = (ids || []).join(' ');
@@ -63,5 +64,18 @@ export function createExtractPane(sidebarEl, callbacks) {
     setVisible(visible) {
       el.style.display = visible ? '' : 'none';
     },
+
+    saveState(fp) {
+      this.indicesStatus.set(fp, indices.value);
+    },
+
+    loadState(fp) {
+      indices.value = this.indicesStatus.get(fp) || '';
+    },
+
+    clearInput(fp) {
+      this.indicesStatus.set(fp, '');
+      indices.value = '';
+    }
   };
 }

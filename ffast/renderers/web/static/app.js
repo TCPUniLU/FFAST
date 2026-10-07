@@ -803,7 +803,7 @@ export class FFastApp {
     if (datasetChanged) {
       this._lastOpenedDatasetFp = this._currentDatasetFp;
       this._restoreDatasetSettings(this._currentDatasetFp);
-      this._clearPicks();   // picked atom ids are dataset-specific
+      //this._clearPicks();   // picked atom ids are dataset-specific
     }
     // The Extract Subset pane is meaningless for datasets that are already
     // subsets (Qt's AtomFilterPaneHiding).
@@ -821,21 +821,25 @@ export class FFastApp {
       forceVectorsModelKey: this._forcesState.modelKey,
       videoFPS: this._videoFPS(),
       videoSkipFrames: this._videoSkipFrames(),
+      pickSettings: this._picked,
     });
     this._panes.colorBy.saveState(fp);
     this._panes.camera.saveState(fp);
     this._panes.display.saveState(fp);
     this._panes.bonds.saveState(fp);
     this._panes.forces.saveState(fp);
+    this._panes.extract.saveState(fp);
   }
 
   _restoreDatasetSettings(fp) {
     const d = this._dsSettings.get(fp) || {
       originCenterOfMass: true, showForceVectors: false, forceVectorsModelKey: null,
-      videoFPS: 30, videoSkipFrames: 0,
+      videoFPS: 30, videoSkipFrames: 0, pickSettings: [],
     };
     this._originCenterOfMass = d.originCenterOfMass;
     this._panes.camera.setCOM(d.originCenterOfMass);
+    this._picked = d.pickSettings;
+    this._updatePickStrip();
     document.getElementById('fps-input').value = d.videoFPS;
     document.getElementById('skip-input').value = d.videoSkipFrames;
 
@@ -847,6 +851,7 @@ export class FFastApp {
     this._panes.display.loadState(fp);
     this._panes.bonds.loadState(fp);
     this._panes.forces.loadState(fp);
+    this._panes.extract.loadState(fp);
   }
 
 
@@ -1038,6 +1043,7 @@ export class FFastApp {
     this._pickReadout = '';
     this._sendSetSelection('picked', 'current_structure', []);
     this._updatePickStrip();
+    this._panes.extract.clearInput(this._currentDatasetFp);
   }
 
   _updatePickStrip() {
