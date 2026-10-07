@@ -179,6 +179,7 @@ export class FFastApp {
     document.getElementById('prev-frame-btn').addEventListener('click', () => this._stepFrame(-1));
     document.getElementById('next-frame-btn').addEventListener('click', () => this._stepFrame(1));
     document.getElementById('play-pause-btn').addEventListener('click', () => this._togglePlayback());
+    this._bindPlaybackPop();
 
     // Object rail load actions — dataset vs prediction mode.
     document.getElementById('add-dataset-btn').addEventListener('click', () => this._browser.open('dataset'));
@@ -223,6 +224,24 @@ export class FFastApp {
         unavailable: () => needsControl() || (this._currentDatasetFp ? '' : 'Select a dataset first') },
       { id: 'connect', label: 'Connect to Server…', run: () => this._openConnDialog() },
     ];
+  }
+
+  /** FPS and Skip live in a ⚙ pop-up (ADR 0055); Escape or a click outside closes it. */
+  _bindPlaybackPop() {
+    const gear = document.getElementById('playback-gear');
+    const pop = document.getElementById('playback-pop');
+    const show = (open) => {
+      pop.classList.toggle('hidden', !open);
+      gear.setAttribute('aria-expanded', String(open));
+      if (open) document.getElementById('fps-input').focus();
+    };
+    gear.addEventListener('click', () => show(pop.classList.contains('hidden')));
+    pop.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { show(false); gear.focus(); }
+    });
+    document.addEventListener('pointerdown', (e) => {
+      if (!pop.contains(e.target) && !gear.contains(e.target)) show(false);
+    });
   }
 
   _action(id) { return this._actions.find((a) => a.id === id); }

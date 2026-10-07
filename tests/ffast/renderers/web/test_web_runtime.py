@@ -1238,6 +1238,43 @@ async def test_web_camera_preset_reorients_view(ffast_web_server):
             await browser.close()
 
 
+async def test_web_fps_and_skip_live_in_a_gear_pop_up(ffast_web_server):
+    """ADR 0055: FPS and Skip move into a ⚙ pop-up, whose button is drawn
+    larger than the other strip icons."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            gear = page.locator("#playback-gear")
+            fields = (page.locator("#fps-input"), page.locator("#skip-input"))
+            for f in fields:
+                await expect(f).to_be_hidden()
+
+            sizes = await page.evaluate(
+                """() => ['playback-gear', 'play-pause-btn'].map(
+                     (id) => parseFloat(getComputedStyle(document.getElementById(id)).fontSize))"""
+            )
+            assert sizes[0] > sizes[1], sizes
+
+            await gear.click()
+            await expect(gear).to_have_attribute("aria-expanded", "true")
+            for f in fields:
+                await expect(f).to_be_visible()
+            await page.keyboard.press("Escape")
+            for f in fields:
+                await expect(f).to_be_hidden()
+
+            await gear.click()
+            await page.locator("#frame-label").click()   # outside the pop-up
+            for f in fields:
+                await expect(f).to_be_hidden()
+        finally:
+            await browser.close()
+
+
 async def test_web_playback_advances_frames_and_stops_on_pause(ffast_web_server):
     """ADR 0045 issue 08: play advances the frame index automatically; pause
     stops it — the frame slider must not keep moving once paused."""
@@ -1258,8 +1295,10 @@ async def test_web_playback_advances_frames_and_stops_on_pause(ffast_web_server)
             await dataset_row.click()
             await expect(page.locator("#frame-slider")).to_be_enabled()
 
+            await page.locator("#playback-gear").click()   # FPS lives in the ⚙ pop-up
             fps_input = page.locator("#fps-input")
-            await fps_input.fill("20")   # fast enough to see multiple frames advance quickly
+            await fps_input.fill("20")
+            await page.keyboard.press("Escape")   # fast enough to see multiple frames advance quickly
 
             play_pause = page.locator("#play-pause-btn")
             await play_pause.click()
