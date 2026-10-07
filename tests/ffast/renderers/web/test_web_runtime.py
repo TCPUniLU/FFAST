@@ -1314,6 +1314,37 @@ async def test_web_a_subset_made_with_sub_shows_in_the_main_view(tmp_path):
                 await browser.close()
 
 
+async def test_web_a_subset_opens_looking_like_its_parent(ffast_web_server):
+    """A frame subset shown for the first time takes its parent's look, so
+    a subset made with SUB is coloured the way its parent was."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            coloring = page.locator(_control("Colour By", "Coloring"))
+            await expect(coloring).to_have_value("Force Error (per atom)")
+
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(
+                _PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+            await page.locator(f"{_sub_panel('Energy MAE timeline')} .sub-toggle input").check()
+            await _zoom(page, "Energy MAE timeline", [10, 19.5])
+            await page.wait_for_function(
+                f"() => ({_SUBSETS})().some(s => s.n === 10)", timeout=15000)
+
+            await _open_analysis_tab(page, "3D")
+            await expect(page.locator("#frame-label")).to_have_text("0 / 9", timeout=15000)
+            await expect(coloring).to_have_value("Force Error (per atom)")
+            await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
+        finally:
+            await browser.close()
+
+
 _SIZED_TAB_TOML = """
 [[visualization.tabs]]
 name = "Sized"

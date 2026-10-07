@@ -70,7 +70,7 @@ def test_load_dataset_request_requires_path_and_type():
 
 def test_open_view_request_all_optional():
     assert OpenViewRequest.model_validate({}).model_dump() == {
-        "view_id": None, "dataset_ref": None, "prediction_ref": None,
+        "view_id": None, "dataset_ref": None, "prediction_ref": None, "start_from": None,
     }
 
 

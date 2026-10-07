@@ -1124,17 +1124,25 @@ export class FFastApp {
     const datasetChanged = this._currentDatasetFp !== this._lastOpenedDatasetFp;
     if (datasetChanged && this._lastOpenedDatasetFp) this._saveDatasetSettings(this._lastOpenedDatasetFp);
 
+    let startFrom = null;
     if (this._datasetsViewId.has(this._currentDatasetFp)) {
       this._currentViewId = `view-${this._datasetsViewId.get(this._currentDatasetFp)}`
     } else {
       this._datasetsViewId.set(this._currentDatasetFp, this._viewIdCounter)
       this._currentViewId = `view-${this._viewIdCounter}`;
       this._viewIdCounter += 1;
+      // A frame subset opens looking like its parent, camera included.
+      const parent = this._lookParentOf(this._currentDatasetFp);
+      if (parent && this._datasetsViewId.has(parent)) {
+        startFrom = `view-${this._datasetsViewId.get(parent)}`;
+        this._framedViews.add(this._currentViewId);
+      }
     }
     this._conn.send(OUT.OPEN_VIEW, {
       view_id: this._currentViewId,
       dataset_ref: this._currentDatasetFp,
       prediction_ref: this._currentModelFp,   // null clears the force overlay
+      ...(startFrom ? { start_from: startFrom } : {}),
     });
     this._openedModelFp = this._currentModelFp;
     this._frameCount = this._datasets.get(this._currentDatasetFp)?.n || this._frameCount;
@@ -1167,7 +1175,16 @@ export class FFastApp {
     this._panes.display.saveState(fp);
   }
 
+  /** The dataset a frame subset takes its look from until it has its own:
+   * its parent. Not an atom subset, whose atoms are numbered differently. */
+  _lookParentOf(fp) {
+    const meta = this._datasets.get(fp);
+    return meta?.parent && meta.parent_frames ? meta.parent : null;
+  }
+
   _restoreDatasetSettings(fp) {
+    const parent = this._lookParentOf(fp);
+    if (!this._dsSettings.has(fp) && parent && this._dsSettings.has(parent)) fp = parent;
     const d = this._dsSettings.get(fp) || {
       originCenterOfMass: true, showForceVectors: false, forceVectorsModelKey: null,
       videoFPS: 30, videoSkipFrames: 0,

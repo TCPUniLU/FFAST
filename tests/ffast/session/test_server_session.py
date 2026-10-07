@@ -1132,3 +1132,32 @@ def test_a_frame_subset_of_structures_of_different_sizes_draws_its_parents_force
                    cache={"forces__m1__ds1": {"forces": forces}})
     view = ServerSession(env, asyncio.Queue()).get_prediction("sub", "m1")
     assert [f.shape for f in view.forces] == [(3, 3), (1, 3)]
+
+
+# ── OPEN_VIEW start_from: a subset opens with its parent's look ─────────────
+def test_a_new_view_can_start_from_another_views_look():
+    """Colouring, display, bonds (the view's stage parameters and features)
+    and the camera are copied when the view is made; picks are not."""
+    env = _FakeEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("OPEN_VIEW", [], {"view_id": "parent"})
+        parent = s.views["parent"].state
+        parent.parameters = {"ffast.bonds": {"style": "sticks"}}
+        parent.enabled_features = ["forces"]
+        parent.camera = parent.camera.model_copy(update={"distance": 3.0})
+        parent.selections = {"picked": None}
+        await s.dispatch("OPEN_VIEW", [], {"view_id": "sub", "start_from": "parent"})
+        sub = s.views["sub"].state
+        assert sub.parameters == {"ffast.bonds": {"style": "sticks"}}
+        assert sub.parameters is not parent.parameters
+        assert sub.enabled_features == ["forces"] and sub.camera.distance == 3.0
+        assert sub.selections == {}
+
+        # Reopening a view keeps its own look.
+        sub.parameters = {"ffast.bonds": {"style": "lines"}}
+        await s.dispatch("OPEN_VIEW", [], {"view_id": "sub", "start_from": "parent"})
+        assert s.views["sub"].state.parameters == {"ffast.bonds": {"style": "lines"}}
+
+    _run(scenario())

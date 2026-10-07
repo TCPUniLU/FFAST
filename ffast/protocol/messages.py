@@ -363,6 +363,9 @@ class OpenViewRequest(BaseModel):
     view_id: Optional[str] = None
     dataset_ref: Optional[str] = None
     prediction_ref: Optional[str] = None
+    # A view to take the look of (colouring, display, bonds, camera) when this
+    # one is made: a frame subset opens looking like its parent.
+    start_from: Optional[str] = None
 
 
 class CloseViewRequest(BaseModel):

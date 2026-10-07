@@ -25,6 +25,7 @@ validate inside the handler instead.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
@@ -860,6 +861,14 @@ class ServerSession:
         if view_id not in self.views:
             view = VisualizationView(view_id)
             self.views[view_id] = view
+            # A frame subset opens looking like its parent: the stage
+            # parameters and features (colouring, display, bonds) and the
+            # camera. Picks name atoms of one view, so they stay behind.
+            like = self.views.get(kwargs.get("start_from"))
+            if like is not None:
+                view.state.parameters = copy.deepcopy(like.state.parameters)
+                view.state.enabled_features = list(like.state.enabled_features)
+                view.state.camera = like.state.camera.model_copy()
         else:
             view = self.views[view_id]
         #print('only_forces' in view.state.enabled_features)

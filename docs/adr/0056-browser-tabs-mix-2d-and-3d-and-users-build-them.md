@@ -186,6 +186,13 @@ structure. The server tells the window that ticked which subset it made
 (`SUBSET_DECLARED`). A prediction made for a dataset applies to its subsets,
 in the rail, in the plots and in the 3D view's force arrows.
 
+A frame subset shown for the first time looks like its parent: its colouring,
+display, bonds and camera (`OPEN_VIEW` `start_from` copies the parent view's
+settings on the server; the browser's per-dataset settings start from the
+parent's). After that it keeps its own. An atom subset still starts from
+defaults, since settings that name atoms by number would point at other
+atoms.
+
 ## Alternatives rejected
 
 - **One shared 3D view only (no independent panels).** Cheapest, but it rules out
