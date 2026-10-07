@@ -168,6 +168,11 @@ class OrbitControls extends EventDispatcher {
 
 		};
 
+		this.dispatch = function () {
+			return () => {
+				scope.dispatchEvent(_changeEvent);
+			}
+		}();
 		// this method is exposed, but perhaps it would be better if we can make it private...
 		this.update = function () {
 

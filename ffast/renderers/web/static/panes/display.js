@@ -39,10 +39,30 @@ export function createDisplayPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Display');
   sidebarEl.appendChild(el);
 
-  numberRow(body, 'Atom size', 1.0, { min: 0.1, max: 10, step: 0.1 }, callbacks.onAtomSize);
-  textRow(body, 'Hide atoms', '', (text) => callbacks.onHideAtoms(parseFilterTokens(text)));
-  textRow(body, 'Highlight atoms', '', (text) => callbacks.onHighlight(parseIndexList(text)));
-  checkboxRow(body, 'Show unit cell', true, callbacks.onUnitCell);
+  const atomSizeRow= numberRow(body, 'Atom size', 1.0, { min: 0.1, max: 10, step: 0.1 }, callbacks.onAtomSize);
+  const atomHideRow=textRow(body, 'Hide atoms', '', (text) => callbacks.onHideAtoms(parseFilterTokens(text)));
+  const highlightAtomRow = textRow(body, 'Highlight atoms', '', (text) => callbacks.onHighlight(parseIndexList(text)));
+  const showUnitRow = checkboxRow(body, 'Show unit cell', true, callbacks.onUnitCell);
 
-  return {};
+  return {
+    atomSizeStatus: new Map(), // fp -> number
+    atomHidStatus: new Map(),
+    highlightAtomStatus: new Map(),
+    showUnitStatus: new Map(),
+
+    saveState(fp) {
+      this.atomSizeStatus.set(fp, atomSizeRow.value);
+      this.atomHidStatus.set(fp, atomHideRow.value);
+      this.highlightAtomStatus.set(fp, highlightAtomRow.value);
+      this.showUnitStatus.set(fp, showUnitRow.checked);
+    },
+
+    loadState(fp) {
+      atomSizeRow.value = this.atomSizeStatus.get(fp) || '1.0';
+      atomHideRow.value = this.atomHidStatus.get(fp) || '';
+      highlightAtomRow.value = this.highlightAtomStatus.get(fp) || '';
+      showUnitRow.checked = this.showUnitStatus.get(fp) ?? true;
+    },
+
+  };
 }

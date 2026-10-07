@@ -109,6 +109,11 @@ export function createColorByPane(sidebarEl, callbacks) {
   }
 
   return {
+    /** The variables used to store the state of this whole element used for saving and loading the state when different datasets are chosen. */
+    colorState: new Map(), // fp -> string value
+    predictionState: new Map(), // fp -> string value
+    colormapState: new Map(), // fp -> string value
+    normState: new Map(), // fp -> string or Null
     /** Refresh the Prediction combo from the currently loaded models. */
     refreshModels(models) {
       const prevLabel = predictionSelect.value;
@@ -155,5 +160,55 @@ export function createColorByPane(sidebarEl, callbacks) {
       cbMax.textContent = colorBy.vmax.toPrecision(3);
       cbLabel.textContent = colorBy.label + (colorBy.unit ? ` (${colorBy.unit})` : '');
     },
+
+    /**
+     *
+     * @param {string} fp
+     */
+    saveState(fp) {
+      this.colorState.set(fp, coloringSelect.value);
+      this.colormapState.set(fp, colormapSelect.value);
+      this.predictionState.set(fp, predictionSelect.value);
+      const norm_row = [...document.getElementById('loupe-sidebar').querySelectorAll('.ctl-row')].find(
+          (row) => row.querySelector('label')?.textContent.trim() === 'norm'
+      ) ?? null;
+      if (norm_row !== null) {
+        const norm_value = norm_row.querySelector('select')?.value;
+        this.normState.set(fp, norm_value ?? 'None');
+        //console.log('stored: ', norm_value ?? 'None');
+      } else {
+        this.normState.set(fp, 'None');
+        //console.log('stored: ', 'None');
+      }
+    },
+
+    /**
+     *
+     * @param {string} fp
+     */
+    loadState(fp) {
+      coloringSelect.value = this.colorState.get(fp) || 'Elements';
+      //console.log('color select state:', coloringSelect.value);
+      currentLabel = coloringSelect.value;
+      predictionSelect.value = this.predictionState.get(fp) || 'Ground Truth';
+      //console.log('predictions state: ', predictionSelect.value);
+      colormapSelect.value = this.colormapState.get(fp) || 'viridis';
+      //console.log('colormap select: ', colormapSelect.value);
+
+      _syncVisibility();
+      _rebuildParamControls();
+
+      const normValue = this.normState.get(fp) || 'None';
+      //console.log('retrieved: ', normValue);
+
+      const normRow = [...document.getElementById('loupe-sidebar').querySelectorAll('.ctl-row')].find(
+          (row) => row.querySelector('label')?.textContent.trim() === 'norm'
+      )?.querySelector('select') ?? null;
+      if (normValue !== 'None') { //
+        if (normRow !== null) {
+          normRow.value = normValue;
+        }
+      }
+    }
   };
 }

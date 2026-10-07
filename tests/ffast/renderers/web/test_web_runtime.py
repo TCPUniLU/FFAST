@@ -738,6 +738,44 @@ async def test_web_analysis_tab_picker_has_a_help_button(ffast_web_server):
             await browser.close()
 
 
+async def test_web_switching_datasets_restores_display_settings_without_errors(ffast_web_server):
+    """Per-dataset Display settings (1e8caca..5429496) survive a switch and
+    back. Guards the merge with ADR 0055 step 2: the restore must not touch
+    the removed Pick radius control."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("LOAD_DATASET", (str(PREDICTION_PATH), "ase (auto)"), {}))
+        other_fp = dataset_fp   # the connect replay announces the first one again
+        while other_fp == dataset_fp:
+            other_fp = (await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30))["args"][0]
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+    assert other_fp != dataset_fp
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        errors = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_section(page, "Display")
+            size = page.locator(_control("Display", "Atom size", "input"))
+            await size.fill("2")
+            await size.dispatch_event("change")
+
+            await page.locator(f"#dataset-list .obj-row[data-fp='{other_fp}']").click()
+            await expect(size).to_have_value(re.compile(r"^1(\.0)?$"))
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await expect(size).to_have_value("2")
+        finally:
+            await browser.close()
+        assert not errors, errors
+
+
 async def test_web_arming_a_pick_tool_opens_its_section(ffast_web_server):
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)

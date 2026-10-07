@@ -193,6 +193,8 @@ export class MoleculeRenderer {
     this._controls.object = this._camera;
     this._updateOrthoFrustum(this._canvas.clientWidth / this._canvas.clientHeight);
     this._controls.update();
+
+    this._controls.dispatch(); // this function calls an event so that the orthorgraphic status is also recorded on the server.
   }
 
   /**
