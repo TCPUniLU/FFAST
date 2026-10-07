@@ -304,6 +304,13 @@
     #panel-loupe.no-view #loupe-controls,
     #panel-loupe.sidebar-hidden #loupe-sidebar { display: none; }
     #sidebar-toggle { margin-left: auto; flex-shrink: 0; }
+    .link-btn {
+      align-self: flex-start; height: auto; padding: 0; background: none;
+      color: var(--hl2); font-size: 11px; text-decoration: underline;
+    }
+    .link-btn:hover { background: none; color: var(--text-hover); }
+    .exact-angles { display: flex; flex-direction: column; gap: 6px; }
+    .exact-angles.hidden { display: none; }
     #overlay .big { font-size: 18px; font-weight: 300; margin-bottom: 6px; }
     #overlay .small { font-size: 11px; }
 

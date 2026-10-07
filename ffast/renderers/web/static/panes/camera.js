@@ -1,6 +1,8 @@
 /**
  * Camera pane (ADR 0045 issue 04): presets, projection, manual angle entry,
  * COM tracking, axis gizmo, background colour. Mirrors modules/loupe/loupeCamera.py.
+ * The exact azimuth/elevation/distance fields sit behind an "Exact angles"
+ * link (ADR 0055): dragging and the presets cover most uses.
  */
 
 import { createPane, checkboxRow, numberRow, colorRow, buttonGroup } from '../sidebar.js';
@@ -24,9 +26,23 @@ export function createCameraPane(sidebarEl, callbacks) {
   checkboxRow(body, 'Orthographic', false, callbacks.onOrtho);
   checkboxRow(body, 'Axes gizmo', false, callbacks.onGizmo);
 
-  const azInput = numberRow(body, 'Azimuth (°)', 0, { step: 0.1 }, () => _sendManual());
-  const elInput = numberRow(body, 'Elevation (°)', 30, { step: 0.1 }, () => _sendManual());
-  const distInput = numberRow(body, 'Distance', 10, { min: 0.1, step: 0.1 }, () => _sendManual());
+  const exactLink = document.createElement('button');
+  exactLink.className = 'link-btn';
+  exactLink.id = 'exact-angles-link';
+  exactLink.textContent = 'Exact angles';
+  exactLink.setAttribute('aria-expanded', 'false');
+  const exact = document.createElement('div');
+  exact.className = 'exact-angles hidden';
+  body.append(exactLink, exact);
+  const showExact = (shown) => {
+    exact.classList.toggle('hidden', !shown);
+    exactLink.setAttribute('aria-expanded', String(shown));
+  };
+  exactLink.addEventListener('click', () => showExact(exact.classList.contains('hidden')));
+
+  const azInput = numberRow(exact, 'Azimuth (°)', 0, { step: 0.1 }, () => _sendManual());
+  const elInput = numberRow(exact, 'Elevation (°)', 30, { step: 0.1 }, () => _sendManual());
+  const distInput = numberRow(exact, 'Distance', 10, { min: 0.1, step: 0.1 }, () => _sendManual());
 
   function _sendManual() {
     callbacks.onManual(parseFloat(azInput.value), parseFloat(elInput.value), parseFloat(distInput.value));
@@ -47,6 +63,8 @@ export function createCameraPane(sidebarEl, callbacks) {
       elInput.value = cam.elevation.toFixed(1);
       distInput.value = cam.distance.toFixed(2);
     },
+    /** Show or hide the rows behind "Exact angles" (sidebar search opens them). */
+    showExactAngles: showExact,
     /** Set the Origin COM checkbox without firing onCOM (per-dataset restore). */
     setCOM(enabled) {
       comInput.checked = enabled;

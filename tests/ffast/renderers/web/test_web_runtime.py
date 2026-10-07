@@ -462,6 +462,35 @@ async def test_web_sidebar_opens_one_section_at_a_time_and_remembers_it(ffast_we
             await browser.close()
 
 
+async def test_web_camera_exact_angles_wait_behind_a_link(ffast_web_server):
+    """ADR 0055 "Inside sections": azimuth, elevation and distance sit behind
+    an "Exact angles" link; the presets and toggles stay in view."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    rows = [f".pane[data-pane='Camera'] .ctl-row[data-label='{label}']"
+            for label in ("Azimuth (°)", "Elevation (°)", "Distance")]
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_section(page, "Camera")
+            for row in rows:
+                await expect(page.locator(row)).to_be_hidden()
+            await expect(page.locator(".pane[data-pane='Camera'] .ctl-btn-group")).to_be_visible()
+
+            link = page.locator("#exact-angles-link")
+            await expect(link).to_have_text("Exact angles")
+            await link.click()
+            for row in rows:
+                await expect(page.locator(row)).to_be_visible()
+            await link.click()
+            for row in rows:
+                await expect(page.locator(row)).to_be_hidden()
+        finally:
+            await browser.close()
+
+
 async def test_web_arming_a_pick_tool_opens_its_section(ffast_web_server):
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)
