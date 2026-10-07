@@ -12,6 +12,26 @@ const MIN_PICK_TARGET_PX = 4;
 const HOVER_SCALE = 1.3;
 const HOVER_LIGHTEN = 0.55;
 
+/**
+ * Two looks (ADR 0055 "3D drawing"). Structures with fewer atoms than
+ * RICH_LOOK_MAX_ATOMS get smoother spheres and bonds, glossier materials and
+ * lights that turn with the camera; larger ones keep the cheaper look. Atom
+ * sizes are the server's either way (ADR 0052). No tone mapping: it would
+ * shift data colours away from the colour bar.
+ */
+// Measured 2026-10-07 (Apple M3 Pro, pixel ratio 2, a bonded grid of atoms):
+// the rich look takes 1.6 ms a frame at 500 atoms, 2.2 ms at 1000, 3.1 ms at
+// 2000 and 6.4 ms at 4000; the plain look 1.0-1.5 ms. At 1000 a GPU five times
+// slower still stays well inside a 60 fps frame (16.7 ms).
+const RICH_LOOK_MAX_ATOMS = 1000;
+const LOOKS = {
+  plain: { sphere: [10, 8], bondSides: 6,
+           atom: { roughness: 0.35, metalness: 0.1 }, bond: { roughness: 0.6, metalness: 0.05 } },
+  rich:  { sphere: [32, 24], bondSides: 20,
+           atom: { roughness: 0.35, metalness: 0.25 }, bond: { roughness: 0.5, metalness: 0.2 } },
+};
+const MAX_PIXEL_RATIO = 2;
+
 /** Scene colours are sRGB, like CSS and the colour bar. Three.js reads bare
  *  RGB numbers as linear and brightens them on output, so name the space. */
 function sceneColor(r, g, b, target = new THREE.Color()) {
@@ -31,7 +51,7 @@ export class MoleculeRenderer {
     this._renderer = new THREE.WebGLRenderer({
       canvas, antialias: true, alpha: true, preserveDrawingBuffer: true,
     });
-    this._renderer.setPixelRatio(window.devicePixelRatio);
+    this._renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
     this._renderer.setClearColor(0x000000, 1);  // Qt loupe default (default.json loupeBGColor)
 
     this._scene   = new THREE.Scene();
@@ -39,6 +59,8 @@ export class MoleculeRenderer {
     this._perspCamera.position.set(0, 0, 20);
     this._orthoCamera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.01, 5000);
     this._orthoCamera.position.set(0, 0, 20);
+    // In the scene so the camera-mounted lights below are part of the graph.
+    this._scene.add(this._perspCamera, this._orthoCamera);
     this._camera = this._perspCamera;   // active camera (issue 04: orthographic toggle)
 
     this._controls = new OrbitControls(this._camera, canvas);
@@ -56,11 +78,28 @@ export class MoleculeRenderer {
     this._bondColor  = new THREE.Color(0x888888);
     this._lastBonds  = null;  // cached BondScene, for rebuilding on style change
 
-    // Lighting
-    const ambient = new THREE.AmbientLight(0xffffff, 0.4);
+    // Lighting. Plain look: ambient + one light fixed in the world. Rich
+    // look: a sky light + key, fill and rim lights riding on the camera and
+    // aimed at the orbit target, so an atom keeps its shade while you orbit.
+    this._plainLights = new THREE.Group();
     const dir = new THREE.DirectionalLight(0xffffff, 1.0);
     dir.position.set(5, 10, 8);
-    this._scene.add(ambient, dir);
+    this._plainLights.add(new THREE.AmbientLight(0xffffff, 0.4), dir);
+    this._skyLight = new THREE.HemisphereLight(0xbcd0ff, 0x151a26, 0.9);
+    this._lightTarget = new THREE.Object3D();   // follows the orbit target
+    this._cameraLights = new THREE.Group();
+    for (const [color, intensity, pos] of [
+      [0xffffff, 1.6, [1.2, 2.0, 1.6]],     // key
+      [0x88aaff, 0.5, [-1.6, -0.8, 1.2]],   // fill
+      [0xffffff, 0.6, [0, 1.2, -2.0]],      // rim
+    ]) {
+      const light = new THREE.DirectionalLight(color, intensity);
+      light.position.set(...pos);
+      light.target = this._lightTarget;
+      this._cameraLights.add(light);
+    }
+    this._camera.add(this._cameraLights);
+    this._scene.add(this._plainLights, this._skyLight, this._lightTarget);
 
     // Scene objects (replaced on each snapshot/patch)
     this._atomMesh     = null;
@@ -79,9 +118,12 @@ export class MoleculeRenderer {
     this._scratchObj = new THREE.Object3D();  // per-instance matrix/colour writes
     this._scratchColor = new THREE.Color();
 
-    // Geometry template for atoms (shared, low-poly sphere)
-    this._sphereGeo = new THREE.SphereGeometry(1, 10, 8);
-    this._atomMat   = new THREE.MeshStandardMaterial({ roughness: 0.35, metalness: 0.1 });
+    // Sphere templates for atoms and selection overlays, one per look.
+    this._sphereGeos = {};
+    for (const [name, look] of Object.entries(LOOKS))
+      this._sphereGeos[name] = new THREE.SphereGeometry(1, ...look.sphere);
+    this._look = null;
+    this._setLook('rich');
     // Adding this for adoption of atoms colors, when 'Show only forces' is selected
     this._atomColors = null;
     // RAF handle
@@ -99,6 +141,21 @@ export class MoleculeRenderer {
     this._resize();
     window.addEventListener('resize', () => this._resize());
     this._startLoop();
+  }
+
+  /** True while the richer look is drawn (fewer than richLookMaxAtoms atoms). */
+  get richLook() { return this._look === 'rich'; }
+  get richLookMaxAtoms() { return RICH_LOOK_MAX_ATOMS; }
+
+  _setLook(name) {
+    if (name === this._look) return;
+    this._look = name;
+    const rich = name === 'rich';
+    this._plainLights.visible = !rich;
+    this._skyLight.visible = rich;
+    this._cameraLights.visible = rich;
+    this._sphereGeo = this._sphereGeos[name];
+    this._atomMat = new THREE.MeshStandardMaterial(LOOKS[name].atom);
   }
 
   _resize() {
@@ -128,6 +185,7 @@ export class MoleculeRenderer {
     const next = enabled ? this._orthoCamera : this._perspCamera;
     if (next === this._camera) return;
     next.position.copy(this._camera.position);
+    next.add(this._cameraLights);
     this._camera = next;
     this._controls.object = this._camera;
     this._updateOrthoFrustum(this._canvas.clientWidth / this._canvas.clientHeight);
@@ -192,6 +250,7 @@ export class MoleculeRenderer {
     const loop = () => {
       this._rafId = requestAnimationFrame(loop);
       this._controls.update();
+      this._lightTarget.position.copy(this._controls.target);
       this._renderer.setViewport(0, 0, this._canvas.clientWidth, this._canvas.clientHeight);
       this._renderer.render(this._scene, this._camera);
       if (this._gizmoEnabled) this._renderGizmo();
@@ -253,6 +312,11 @@ export class MoleculeRenderer {
     this._clearAtoms();
     const n = atoms.positions.length;
     if (n === 0) return;
+    const look = n < RICH_LOOK_MAX_ATOMS ? 'rich' : 'plain';
+    if (look !== this._look) {
+      this._setLook(look);
+      if (this._lastBonds) this._updateBonds(this._lastBonds);   // re-tessellate
+    }
     this._cachedAtomPositions = atoms.positions;
     this._cachedAtomSizes = atoms.sizes;
     this._cachedAtomIds = atoms.atom_ids || null;
@@ -333,8 +397,8 @@ export class MoleculeRenderer {
     if (!segs || segs.length === 0) return;
     const n = Math.floor(segs.length / 2);
 
-    const geo = new THREE.CylinderGeometry(1, 1, 1, 6, 1);
-    const mat = new THREE.MeshStandardMaterial({ color: this._bondColor, roughness: 0.6, metalness: 0.05 });
+    const geo = new THREE.CylinderGeometry(1, 1, 1, LOOKS[this._look].bondSides, 1);
+    const mat = new THREE.MeshStandardMaterial({ color: this._bondColor, ...LOOKS[this._look].bond });
     const mesh = new THREE.InstancedMesh(geo, mat, n);
     const dummy = new THREE.Object3D();
     const up = new THREE.Vector3(0, 1, 0);

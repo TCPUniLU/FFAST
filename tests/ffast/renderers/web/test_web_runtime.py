@@ -454,6 +454,125 @@ async def test_web_pick_highlight_does_not_rebuild_a_shader(ffast_web_server):
     )
 
 
+# A synthetic structure of `n` atoms on a line, applied straight to the
+# renderer: the drawing rules depend only on what the scene holds.
+_SYNTHETIC_SCENE = """(n) => ({
+  atoms: {
+    positions: Array.from({length: n}, (_, i) => [i * 1.5 - (n - 1) * 0.75, 0, 0]),
+    sizes: Array(n).fill(0.6),
+    colors: Array(n).fill([0.75, 0.3, 0.3]),
+  },
+  bonds: { segments: n > 1 ? [[0, 0, 0], [1.5, 0, 0]] : [] },
+})"""
+
+_DRAWN_LOOK = """() => {
+  const R = window.ffastApp.renderer;
+  return {
+    rich: R.richLook,
+    sphere: R._atomMesh.geometry.parameters.widthSegments,
+    bond: R._bondLines.geometry.parameters.radialSegments,
+    metalness: R._atomMesh.material.metalness,
+    hemi: R._scene.getObjectsByProperty('isHemisphereLight', true).some((l) => l.visible),
+  };
+}"""
+
+
+async def _apply_synthetic(page, n):
+    await page.evaluate(
+        f"(n) => window.ffastApp.renderer.applyScene(({_SYNTHETIC_SCENE})(n))", n
+    )
+
+
+async def test_web_small_structures_get_the_richer_look(ffast_web_server):
+    """ADR 0055 "3D drawing": below the atom-count threshold, smoother spheres
+    and bonds, glossier materials and a sky light; above it, today's look."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            limit = await page.evaluate("() => window.ffastApp.renderer.richLookMaxAtoms")
+
+            await _apply_synthetic(page, 20)
+            small = await page.evaluate(_DRAWN_LOOK)
+            await _apply_synthetic(page, limit + 1)
+            large = await page.evaluate(_DRAWN_LOOK)
+            await _apply_synthetic(page, 20)
+            back = await page.evaluate(_DRAWN_LOOK)
+        finally:
+            await browser.close()
+
+    assert small["rich"] and small["hemi"]
+    assert small["sphere"] > large["sphere"] and small["bond"] > large["bond"]
+    assert small["metalness"] > large["metalness"]
+    assert not large["rich"] and not large["hemi"]
+    assert (large["sphere"], large["bond"]) == (10, 6)   # today's look, unchanged
+    assert back == small
+
+
+async def test_web_rich_look_keeps_an_atoms_shade_while_orbiting(ffast_web_server):
+    """ADR 0055: the lights turn with the camera, so an atom looks the same
+    from every side. Above the threshold the light stays fixed in the world."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    shade = """async (azimuth) => {
+      const R = window.ffastApp.renderer;
+      R.setCameraAngles({center: [0, 0, 0], distance: 8, elevation: 0, azimuth});
+      const img = new Image();
+      img.src = R.capturePng({background: '#000000'});
+      await img.decode();
+      const c = document.createElement('canvas');
+      c.width = img.width; c.height = img.height;
+      const g = c.getContext('2d');
+      g.drawImage(img, 0, 0);
+      return Array.from(g.getImageData(img.width >> 1, img.height >> 1, 1, 1).data.slice(0, 3));
+    }"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await _apply_synthetic(page, 1)
+            rich = [await page.evaluate(shade, az) for az in (0, 90, 180)]
+            limit = await page.evaluate("() => window.ffastApp.renderer.richLookMaxAtoms")
+            # Same single atom in the middle, plus far-away atoms to cross the threshold.
+            await page.evaluate(
+                f"""(n) => {{
+                  const s = ({_SYNTHETIC_SCENE})(n);
+                  s.atoms.positions = s.atoms.positions.map((p, i) => i ? [p[0], 500, 0] : [0, 0, 0]);
+                  window.ffastApp.renderer.applyScene(s);
+                }}""",
+                limit + 1,
+            )
+            plain = [await page.evaluate(shade, az) for az in (0, 90, 180)]
+        finally:
+            await browser.close()
+
+    assert sum(rich[0]) > 60, rich  # the atom is drawn, not background
+    for other in rich[1:]:
+        assert max(abs(a - b) for a, b in zip(rich[0], other)) <= 2, rich
+    assert any(max(abs(a - b) for a, b in zip(plain[0], o)) > 10 for o in plain[1:]), plain
+
+
+async def test_web_pixel_ratio_is_capped_at_two(ffast_web_server):
+    """ADR 0055: a 3x screen draws at 2x, for every structure size."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(
+            viewport={"width": 800, "height": 600}, device_scale_factor=3
+        )
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            ratio = await page.evaluate("() => window.ffastApp.renderer._renderer.getPixelRatio()")
+        finally:
+            await browser.close()
+    assert ratio == 2
+
+
 async def test_web_color_by_selector_recolors_atoms_and_shows_colorbar(ffast_web_server):
     """ADR 0045 issue 03 / Phase 1 gate: selecting a metric in 'Colour By'
     changes atom instance colours (not baked element colours) and shows a
