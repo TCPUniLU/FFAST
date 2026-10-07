@@ -30,6 +30,11 @@ export const OUT = Object.freeze({
   REQUEST_METRIC_CATALOG: 'REQUEST_METRIC_CATALOG',
   REQUEST_TAB_LAYOUT: 'REQUEST_TAB_LAYOUT',
   REQUEST_METRIC: 'REQUEST_METRIC',
+  // User tabs (ADR 0056)
+  SAVE_TAB: 'SAVE_TAB',
+  DELETE_TAB: 'DELETE_TAB',
+  HIDE_TAB: 'HIDE_TAB',
+  EXPORT_TAB: 'EXPORT_TAB',
   GRACEFUL_DISCONNECT: 'GRACEFUL_DISCONNECT',
 });
 
@@ -56,5 +61,9 @@ export const IN = Object.freeze({
   // Replaced guessing from TASK_DONE, which names no operation (ADR 0050).
   SESSION_SAVED: 'SESSION_SAVED',
   SESSION_LOADED: 'SESSION_LOADED',
+  // Outcome of SAVE_TAB / DELETE_TAB / HIDE_TAB, {ok, action, name, error},
+  // and the TOML for EXPORT_TAB (ADR 0056).
+  TAB_SAVED: 'TAB_SAVED',
+  TAB_EXPORTED: 'TAB_EXPORTED',
   METRIC_RESULT: 'METRIC_RESULT',
 });

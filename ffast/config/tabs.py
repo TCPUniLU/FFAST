@@ -83,8 +83,24 @@ def _panel_layout(panel, *, registry=None) -> dict:
             resolved[role] = [resolve_ref(r, registry=registry) for r in val]
         else:
             resolved[role] = resolve_ref(val, registry=registry)
+    # The authoring form too, so a tab built or edited in the browser saves
+    # what a person would write (ADR 0056), not the compiled ids.
+    d["metric_refs"] = d["metrics"]
     d["metrics"] = resolved
     return d
+
+
+def tab_layout(tab, *, registry=None) -> dict:
+    """One tab serialized for the wire (see :func:`build_tab_layout`)."""
+    return {
+        "name": tab.name,
+        "has_data_selector": tab.has_data_selector,
+        "selector": tab.selector,
+        "controls": list(tab.controls),
+        "panels": [_panel_layout(p, registry=registry) for p in tab.panels],
+        "column_widths": tab.column_widths,
+        "row_heights": tab.row_heights,
+    }
 
 
 def build_tab_layout(tabs, *, registry=None) -> list[dict]:
@@ -97,18 +113,7 @@ def build_tab_layout(tabs, *, registry=None) -> list[dict]:
     ``[[visualization.tabs]]`` both renderers see. Pure and Qt-free; safe to
     call at server startup (before ``registry.freeze()``) or from the handler.
     """
-    return [
-        {
-            "name": tab.name,
-            "has_data_selector": tab.has_data_selector,
-            "selector": tab.selector,
-            "controls": list(tab.controls),
-            "panels": [_panel_layout(p, registry=registry) for p in tab.panels],
-            "column_widths": tab.column_widths,
-            "row_heights": tab.row_heights,
-        }
-        for tab in tabs
-    ]
+    return [tab_layout(tab, registry=registry) for tab in tabs]
 
 
 def compile_tabs_metrics(tabs, *, registry=None) -> list[str]:

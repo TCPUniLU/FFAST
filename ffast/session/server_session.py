@@ -121,23 +121,27 @@ class ServerSession:
     thread in the loop.
     """
 
-    def __init__(self, env, outbound: asyncio.Queue) -> None:
+    def __init__(self, env, outbound: asyncio.Queue, broadcast=None) -> None:
         self.env = env
         self.outbound = outbound
         self.views: dict = {}  # view_id → VisualizationView
+        # Sends packed bytes to every connection (the hub, ADR 0044); a
+        # session on its own, as in a test, has only itself to tell.
+        self._broadcast = broadcast or (lambda data: self._emit_or_drop(data, "broadcast"))
 
         # event → (handler, ordered arg-name list, request model). Built once;
         # the table IS the documented RPC surface. "?name" marks an optional
         # parameter.
         from ffast.protocol.messages import (
             CloseViewRequest, CreateSubsetRequest, DeclareSubsetRequest,
-            DeleteObjectRequest,
-            EmptyRequest, ExportSubsetRequest, ListDirRequest,
+            DeleteObjectRequest, DeleteTabRequest,
+            EmptyRequest, ExportSubsetRequest, ExportTabRequest, HideTabRequest,
+            ListDirRequest,
             LoadDatasetRequest, LoadModelRequest,
             LoadPredictionRequest, LoadSessionRequest, OpenViewRequest,
             ProbeDatasetKeysRequest, ProbeDatasetLengthRequest,
             RequestMetricRequest, RequestPredictionArraysRequest,
-            RequestSubdatasetArraysRequest, SaveSessionRequest,
+            RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -161,6 +165,10 @@ class ServerSession:
             control.REQUEST_METRIC_CATALOG:     _Route(self._on_request_metric_catalog, [], EmptyRequest),
             control.REQUEST_TAB_LAYOUT:         _Route(self._on_request_tab_layout, [], EmptyRequest),
             control.EXPORT_SUBSET:              _Route(self._on_export_subset, ["fingerprint", "path"], ExportSubsetRequest),
+            control.SAVE_TAB:                   _Route(self._on_save_tab, ["tab", "?previous_name"], SaveTabRequest),
+            control.DELETE_TAB:                 _Route(self._on_delete_tab, ["name"], DeleteTabRequest),
+            control.HIDE_TAB:                   _Route(self._on_hide_tab, ["name", "hidden"], HideTabRequest),
+            control.EXPORT_TAB:                 _Route(self._on_export_tab, ["name"], ExportTabRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -1069,21 +1077,79 @@ class ServerSession:
         self._replay_metric_catalog()
 
     async def _on_request_tab_layout(self, **kwargs) -> None:
-        """Reply with TAB_LAYOUT: the merged Analysis-Tab layout (ADR 0045
-        Phase 3). Mirrors ``_on_request_metric_catalog`` — a dedicated
-        announcement, not a correlated reply. The layout is resolved once at
-        server startup and cached on the Environment (``analysis_tab_layout``);
-        if it isn't there (e.g. a unit test with a bare env), fall back to the
-        bundled tabs so the built-in analyses are always available."""
-        from ffast.protocol.rpc import pack
+        """Reply with TAB_LAYOUT: the merged tab layout (ADR 0045 Phase 3,
+        ADR 0056). Mirrors ``_on_request_metric_catalog`` — a dedicated
+        announcement, not a correlated reply. See ``_tab_layout_message``."""
         try:
-            from ffast.protocol import TabLayout
+            data = self._tab_layout_message()
+            await self._emit(data)
+            logger.info("TAB_LAYOUT queued")
+        except Exception as exc:
+            logger.warning("TAB_LAYOUT error: %s", exc)
+
+    def _tab_layout_message(self):
+        """TAB_LAYOUT, packed. The server's tab sources (built-in, project and
+        user tabs, ADR 0056) when it has them; else a layout cached at startup;
+        else the bundled tabs."""
+        from ffast.protocol import TabLayout
+        from ffast.protocol.rpc import pack
+        sources = getattr(self.env, "tab_sources", None)
+        if sources is not None:
+            tabs = sources.layout()
+        else:
             tabs = getattr(self.env, "analysis_tab_layout", None)
             if tabs is None:
                 from ffast.config.tabs import build_tab_layout, merge_tabs
                 tabs = build_tab_layout(merge_tabs())
-            data = pack(control.TAB_LAYOUT, [], TabLayout(tabs=tabs).model_dump())
-            await self._emit(data)
-            logger.info("TAB_LAYOUT queued (%d tab(s))", len(tabs))
+        return pack(control.TAB_LAYOUT, [], TabLayout(tabs=tabs).model_dump())
+
+    # ── user tabs (ADR 0056) ────────────────────────────────────────────────
+
+    async def _on_save_tab(self, tab, previous_name=None, **kwargs) -> None:
+        await self._change_tabs("save", tab.get("name"),
+                                lambda sources: sources.save(tab, previous_name))
+
+    async def _on_delete_tab(self, name, **kwargs) -> None:
+        await self._change_tabs("delete", name, lambda sources: sources.delete(name))
+
+    async def _on_hide_tab(self, name, hidden, **kwargs) -> None:
+        await self._change_tabs("hide" if hidden else "show", name,
+                                lambda sources: sources.set_hidden(name, bool(hidden)))
+
+    async def _change_tabs(self, action: str, name, change) -> None:
+        """Apply a tab change, answer this window with TAB_SAVED, then send the
+        new layout to every window — in that order, so the window that saved
+        hears its own outcome before the layout it caused."""
+        from ffast.config.user_tabs import TabError
+        from ffast.protocol.rpc import pack
+        sources = getattr(self.env, "tab_sources", None)
+        error = None
+        try:
+            if sources is None:
+                raise TabError("This server keeps no user tabs")
+            saved = await asyncio.to_thread(change, sources)
+            if isinstance(saved, str):
+                name = saved
+        except TabError as exc:
+            error = str(exc)
         except Exception as exc:
-            logger.warning("TAB_LAYOUT error: %s", exc)
+            logger.warning("Tab %s of %r failed: %s", action, name, exc)
+            error = f"Could not {action} the tab: {exc}"
+        await self._emit(pack(control.TAB_SAVED, [], {
+            "ok": error is None, "action": action, "name": name, "error": error}))
+        if error is None:
+            logger.info("Tab %s: %r; sending the layout to every window", action, name)
+            self._broadcast(self._tab_layout_message())
+
+    async def _on_export_tab(self, name, **kwargs) -> None:
+        from ffast.config.user_tabs import TabError
+        from ffast.protocol.rpc import pack
+        sources = getattr(self.env, "tab_sources", None)
+        toml = error = None
+        try:
+            if sources is None:
+                raise TabError("This server keeps no user tabs")
+            toml = sources.export(name)
+        except TabError as exc:
+            error = str(exc)
+        await self._emit(pack(control.TAB_EXPORTED, [], {"name": name, "toml": toml, "error": error}))

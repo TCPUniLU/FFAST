@@ -36,6 +36,13 @@ REQUEST_METRIC = "REQUEST_METRIC"
 REQUEST_METRIC_CATALOG = "REQUEST_METRIC_CATALOG"
 REQUEST_TAB_LAYOUT = "REQUEST_TAB_LAYOUT"
 EXPORT_SUBSET = "EXPORT_SUBSET"
+# User tabs (ADR 0056): save one built in the browser, delete one (for a tab
+# that replaces another, that is "Reset to original"), hide or show any tab,
+# and export any tab as TOML.
+SAVE_TAB = "SAVE_TAB"
+DELETE_TAB = "DELETE_TAB"
+HIDE_TAB = "HIDE_TAB"
+EXPORT_TAB = "EXPORT_TAB"
 
 CLIENT_TO_SERVER = frozenset(
     {
@@ -45,6 +52,7 @@ CLIENT_TO_SERVER = frozenset(
         REQUEST_PREDICTION_ARRAYS, OPEN_VIEW, CLOSE_VIEW, VIEW_COMMAND,
         REQUEST_STATE_SYNC, SAVE_SESSION, LOAD_SESSION, REQUEST_METRIC,
         REQUEST_METRIC_CATALOG, REQUEST_TAB_LAYOUT, EXPORT_SUBSET,
+        SAVE_TAB, DELETE_TAB, HIDE_TAB, EXPORT_TAB,
     }
 )
 
@@ -57,6 +65,7 @@ MUTATING_CLIENT_EVENTS = frozenset(
     {
         LOAD_DATASET, LOAD_MODEL, DELETE_OBJECT, CREATE_SUBSET, DECLARE_SUBSET,
         LOAD_PREDICTION, VIEW_COMMAND, SAVE_SESSION, LOAD_SESSION, EXPORT_SUBSET,
+        SAVE_TAB, DELETE_TAB, HIDE_TAB,
     }
 )
 
@@ -110,3 +119,10 @@ SUBSET_EXPORTED = "SUBSET_EXPORTED"
 # generic broadcast loop).
 SESSION_SAVED = "SESSION_SAVED"
 SESSION_LOADED = "SESSION_LOADED"
+# Outcome of SAVE_TAB / DELETE_TAB / HIDE_TAB (ADR 0056): {ok, action, name,
+# error}, to the window that asked. On success the new layout then goes to
+# every window as TAB_LAYOUT through the hub. Same shape and reasoning as
+# SESSION_SAVED: a one-shot announcement, out of REPLY_EVENTS.
+TAB_SAVED = "TAB_SAVED"
+# Reply to EXPORT_TAB: {name, toml, error}, the tab as a project would write it.
+TAB_EXPORTED = "TAB_EXPORTED"

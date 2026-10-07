@@ -121,6 +121,21 @@ Defaults taken without a separate decision: the "⧉ New Tab" pop-out acts on th
 focused panel; 3D panels in tabs you are not looking at stop drawing; renaming a
 tab carries its Panel Display Overrides (ADR 0029, keyed by tab name) along.
 
+User tabs are kept like this (`ffast/config/user_tabs.py`). Each tab file
+holds exactly the shared format; a file named after the tab, `compare.toml`.
+Which tab a user tab replaces, the original's fingerprint at edit time, the
+hidden list and the order of new user tabs are app state in a side file,
+`~/.ffast/tabs/state.json`, so a tab file can be copied into a project as it
+is. New user tabs follow the built-in and project tabs in the order they were
+made. A name another tab already has is refused, so tab names stay unique. A
+tab may only use metrics the running server already has; anything else is
+refused at Save. Export gives `[[visualization.tabs]]` TOML for a project's
+`ffast.toml`; dropped into `~/.ffast/tabs/` as it is, it loads as a user tab
+too. The browser saves, deletes, hides and exports over `SAVE_TAB`,
+`DELETE_TAB`, `HIDE_TAB` and `EXPORT_TAB`; a read-only window may only export.
+Export, Reset to original, Delete, Hide and the hidden tabs to show again are
+in a ⋯ menu at the right end of the tab bar, acting on the tab on screen.
+
 In a tab file a 3D panel is `kind = "3d"`, with no `metrics`. The built-in
 "3D" tab is `ffast/config/builtin_tabs/00_3d.toml`, first in the bar.
 

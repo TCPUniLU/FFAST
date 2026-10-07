@@ -248,7 +248,7 @@ async def _handler(
     # Per-connection queue + session; register with the hub so shared events
     # (object metadata, deletes, metric catalog) fan out to this client too.
     outbound: asyncio.Queue = asyncio.Queue(maxsize=200)
-    session = ServerSession(env, outbound)
+    session = ServerSession(env, outbound, broadcast=hub.broadcast)
     hub.register(outbound)
 
     # ── handshake ─────────────────────────────────────────────────────────
@@ -418,7 +418,7 @@ def _load_project_metric_modules(config_arg: str | None = None) -> None:
 def _discover_project_config(config_arg: str | None):
     """Discover + parse the project ``ffast.toml`` (ADR 0007) once, fail-soft.
 
-    Shared by ``_compile_project_metrics`` and ``_build_analysis_tab_layout`` so
+    Shared by ``_compile_project_metrics`` and ``_build_tab_sources`` so
     the discover→exists→parse block lives in one place. Returns the
     ``ProjectConfig`` or ``None`` (no config found, or unparseable — logged once
     here); callers treat ``None`` as "built-ins only".
@@ -478,33 +478,33 @@ def _compile_project_metrics(config_arg: str | None) -> None:
     logger.info("Compiled %d declarative metric(s) from project config.", len(result.ids))
 
 
-def _build_analysis_tab_layout(config_arg: str | None) -> list:
-    """Resolve the merged Analysis-Tab layout once at startup (ADR 0045 Phase 3).
+def _build_tab_sources(config_arg: str | None, tabs_dir: str | None = None):
+    """The browser's tabs: built-in, project and user (ADR 0056), merged.
 
-    The web client fetches this over ``REQUEST_TAB_LAYOUT`` instead of running
-    the Transform-Metric compiler in the browser, so the resolution happens here
-    — after ``_compile_project_metrics`` has registered every Panel's transform
-    metric and *before* the registry is frozen, so ``resolve_ref`` only looks
-    ids up (idempotent). Fail-soft: any config problem falls back to the bundled
-    tabs, matching ``_compile_project_metrics``' policy (the built-in analyses
-    stay available even when a project config is broken).
+    The web client fetches the layout over ``REQUEST_TAB_LAYOUT`` instead of
+    running the Transform-Metric compiler in the browser, and saves, deletes,
+    hides and exports user tabs through the same object. User tabs are files
+    in ``tabs_dir`` (default ``~/.ffast/tabs``) on this machine. Their metrics
+    are compiled here, after ``_compile_project_metrics`` and *before* the
+    registry is frozen, like the project's. Fail-soft: a tab that does not
+    compile is logged and left out of the layout; the rest stay.
     """
-    try:
-        from ffast.config.tabs import build_tab_layout, merge_tabs
-    except Exception as exc:
-        logger.warning("Config loader unavailable; analysis tabs skipped: %s", exc)
-        return []
+    from ffast.config.user_tabs import DEFAULT_DIR, TabSources, UserTabStore
 
     # Reuses the shared discover/parse (config already logged once there).
     project_config = _discover_project_config(config_arg)
+    store = UserTabStore(tabs_dir or DEFAULT_DIR)
     try:
-        return build_tab_layout(merge_tabs(project_config))
+        sources = TabSources.for_project(project_config, store)
     except Exception as exc:
-        logger.warning("Analysis tab layout build failed (%s); using bundled tabs", exc)
-        try:
-            return build_tab_layout(merge_tabs(None))
-        except Exception:
-            return []
+        logger.warning("Project tabs unusable (%s); using bundled and user tabs", exc)
+        sources = TabSources.for_project(None, store)
+    for name, msg in sources.compile():
+        logger.error("Tab %r does not compile and is left out: %s", name, msg)
+    for file, msg in store.errors:
+        logger.error("User tab file %s skipped: %s", store.root / file, msg)
+    logger.info("User tabs folder: %s", store.root)
+    return sources
 
 
 def _validate_metric_registry() -> None:
@@ -546,6 +546,7 @@ async def _main(
     web_port: int = 0,
     config: str | None = None,
     host: str = "0.0.0.0",
+    tabs_dir: str | None = None,
 ):
     """Bootstrap env, wire RPC subscriptions, run server + event loop."""
     from ffast.core.environment import HeadlessEnvironment
@@ -567,11 +568,11 @@ async def _main(
     # stop the server.
     _compile_project_metrics(config)
 
-    # Resolve the Analysis-Tab layout for the web client (ADR 0045 Phase 3) now
-    # that every Panel transform metric is registered, but before the freeze —
-    # resolve_ref only looks ids up here. Cached on the Environment so each
-    # per-connection ServerSession serves it from REQUEST_TAB_LAYOUT.
-    env.analysis_tab_layout = _build_analysis_tab_layout(config)
+    # The web client's tabs (ADR 0045 Phase 3, ADR 0056): built-in, project and
+    # user tabs, with the user tabs' metrics compiled now — before the freeze.
+    # Kept on the Environment so each per-connection ServerSession serves the
+    # layout from REQUEST_TAB_LAYOUT and changes it on SAVE_TAB and friends.
+    env.tab_sources = _build_tab_sources(config, tabs_dir)
 
     # Validate the full metric graph once, after builtins + external modules are
     # registered. Refuses to start on unknown refs, cycles, or legacy shapes.
@@ -738,6 +739,14 @@ def cli():
              "directory; built-in metrics are always available.",
     )
     parser.add_argument(
+        "--tabs-dir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Folder of the browser's user tabs, one TOML file per tab "
+             "(default: ~/.ffast/tabs on this machine).",
+    )
+    parser.add_argument(
         "--host",
         type=str,
         default="0.0.0.0",
@@ -765,6 +774,7 @@ def cli():
             web_port=args.web_port,
             config=args.config,
             host=args.host,
+            tabs_dir=args.tabs_dir,
         ))
     except KeyboardInterrupt:
         logger.info("Interrupted — shutting down")

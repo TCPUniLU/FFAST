@@ -79,7 +79,13 @@ One page rather than a menu bar:
   fills the address in and connects for you.
 - **Left rail.** Datasets and Predictions, each with a `+` to load one. Datasets
   also get a download button that exports the current selection as extxyz.
-- **Tabs.** The 3D view plus one per analysis tab defined in config.
+- **Tabs.** Each tab is a grid of panels: the built-in "3D" tab (one 3D panel
+  filling it), the analysis tabs, your project's tabs and your own. A tab may
+  put a 3D panel beside plots. The ⋯ at the end of the tab bar exports the tab
+  on screen as TOML for a project's `ffast.toml`, resets an edited built-in or
+  project tab to the original, hides a tab, and shows hidden ones again.
+  Your own tabs are saved on the server's machine, one TOML file per tab in
+  `~/.ffast/tabs/` (`ffast-server --tabs-dir` chooses another folder).
 - **Right sidebar** (in the 3D view). Collapsible panes, grouped: Display, Bonds
   and Unit Cell under Appearance; Colour By, Force Vectors, Extract Subset and
   Alignment under Analysis; Camera and Export under View.

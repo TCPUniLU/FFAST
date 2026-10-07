@@ -17,10 +17,13 @@ from ffast.protocol.messages import (
     DatasetMeta,
     DeclareSubsetRequest,
     DeleteObjectRequest,
+    DeleteTabRequest,
     DirEntry,
     DirListing,
     EmptyRequest,
     ExportSubsetRequest,
+    ExportTabRequest,
+    HideTabRequest,
     ListDirRequest,
     LoadDatasetRequest,
     LoadModelRequest,
@@ -38,6 +41,7 @@ from ffast.protocol.messages import (
     RequestPredictionArraysRequest,
     RequestSubdatasetArraysRequest,
     SaveSessionRequest,
+    SaveTabRequest,
     TabLayout,
 )
 
@@ -69,5 +73,9 @@ __all__ = [
     "SaveSessionRequest",
     "LoadSessionRequest",
     "ExportSubsetRequest",
+    "SaveTabRequest",
+    "DeleteTabRequest",
+    "HideTabRequest",
+    "ExportTabRequest",
     "EmptyRequest",
 ]

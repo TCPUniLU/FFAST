@@ -4,7 +4,7 @@
 
 import { FFastConnection } from './connection.js';
 import { Panel3D, ViewRenderers } from './views3d.js';
-import { ensureMainView, isLinked3D, showsMainView } from './tab_rules.js';
+import { ensureMainView, isLinked3D, MAIN_VIEW_RULE, showsMainView } from './tab_rules.js';
 import { sameConfiguration } from './frame_links.js';
 import { infoReadout } from './measure.js';
 import { MetricClient } from './metrics.js';
@@ -20,6 +20,8 @@ import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
+import { TabOps } from './tab_ops.js';
+import { askDialog, textDialog } from './dialogs.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
 import { loadLayout, saveLayout } from './layout_state.js';
 import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './quick_styles.js';
@@ -123,6 +125,10 @@ export class FFastApp {
       getDatasetMeta: (fp) => this._datasets.get(fp),
       capturePng: (opts) => this.renderer.capturePng(opts),
     });
+    // User tabs on the server (ADR 0056): save, delete, hide, export.
+    this._tabOps = new TabOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
+    /** The last layout the server sent, hidden tabs included. */
+    this._layoutTabs = [];
 
     // ADR 0045 Phase 1: scientific view-command plumbing (mirrors Qt's
     // window._sendViewCommand / _sceneVersion, UI/loupe/window.py:320-349).
@@ -191,13 +197,15 @@ export class FFastApp {
    * the new layout's linked cells, keeping their renderer and scene; the rest
    * are given back. The tab on screen stays on screen when it still exists. */
   _applyLayout(tabs) {
+    this._layoutTabs = tabs || [];
     const shownName = this._analysis.tab(this._activeTab)?.name;
     const old = [...this._panels3d.values()];
     const reusable = old.filter((panel) => panel.linked);
     this._parkChrome();
     this._setActivePanel(null);
     this._panels3d = new Map();
-    this._analysis.setLayout(ensureMainView(tabs));
+    // Hidden tabs stay out of the bar; the tab menu offers them again.
+    this._analysis.setLayout(ensureMainView(this._layoutTabs.filter((t) => !t.hidden)));
     for (const { id } of this._analysis.tabList) {
       for (const cell of this._analysis.tab(id).cells3d) {
         if (!isLinked3D(cell.spec) || !reusable.length) continue;
@@ -371,6 +379,11 @@ export class FFastApp {
       document.getElementById('file-menu-list'),
       this._actions.filter((a) => a.menu === 'file'),
     );
+    bindMenu(
+      document.getElementById('tab-menu-btn'),
+      document.getElementById('tab-menu-list'),
+      () => this._tabMenuActions(),
+    );
     document.getElementById('hint-dismiss').addEventListener('click', () => this._dismissHint());
     document.getElementById('empty-load-btn').addEventListener('click',
       () => runAction(this._action('load-dataset')));
@@ -384,12 +397,15 @@ export class FFastApp {
    * command palette read the same entries. Session save/load (issue 21) and
    * subset export (issue 20) reuse one path prompt — the browser has no
    * native server-side save dialog. */
+  /** '' when this window may change the shared session, else why not. */
+  _needsControl() {
+    if (!this._conn) return 'Connect to a server first';
+    if (this._conn.role === 'READ_ONLY') return 'Read-only connection';
+    return '';
+  }
+
   _buildActions() {
-    const needsControl = () => {
-      if (!this._conn) return 'Connect to a server first';
-      if (this._conn.role === 'READ_ONLY') return 'Read-only connection';
-      return '';
-    };
+    const needsControl = () => this._needsControl();
     return [
       { id: 'load-dataset', label: 'Load Dataset…', menu: 'file',
         run: () => this._browser.open('dataset'), unavailable: needsControl },
@@ -423,6 +439,76 @@ export class FFastApp {
         title: 'Back to the default colouring, background and projection',
         run: () => this._applyQuickStyle(RESET_STYLE) },
     ];
+  }
+
+  // ── tab actions: the ⋯ menu (ADR 0056 rules 9 and 10) ──────────────────
+
+  /** The ⋯ menu acts on the tab on screen; it also lists hidden tabs. */
+  _tabMenuActions() {
+    const spec = this._analysis.tab(this._activeTab)?.spec;
+    const name = spec?.name;
+    const needsControl = () => this._needsControl();
+    const actions = [{
+      id: 'tab-export', label: 'Export as TOML…',
+      run: () => this._exportTab(name),
+      unavailable: () => (this._conn ? '' : 'Connect to a server first'),
+    }];
+    if (spec?.source === 'user' && spec.replaces) {
+      actions.push({ id: 'tab-reset', label: 'Reset to original…',
+        run: () => this._removeTab(name, 'reset'), unavailable: needsControl });
+    } else if (spec?.source === 'user') {
+      actions.push({ id: 'tab-delete', label: 'Delete this tab…',
+        run: () => this._removeTab(name, 'delete'), unavailable: needsControl });
+    }
+    actions.push({ id: 'tab-hide', label: 'Hide this tab',
+      run: () => this._tabOps.setHidden(name, true).then((r) => this._reportTab(r)),
+      unavailable: () => needsControl() || this._whyTabStays(name) });
+    const hidden = this._layoutTabs.filter((t) => t.hidden);
+    if (hidden.length) actions.push({ separator: true });
+    for (const t of hidden) {
+      actions.push({ id: `tab-show:${t.name}`, label: `Show ${t.name}`,
+        run: () => this._tabOps.setHidden(t.name, false).then((r) => this._reportTab(r)),
+        unavailable: needsControl });
+    }
+    return actions;
+  }
+
+  /** Why tab `name` cannot be hidden: the main view needs a visible place. */
+  _whyTabStays(name) {
+    const others = this._layoutTabs.filter((t) => !t.hidden && t.name !== name);
+    return others.some(showsMainView) ? '' : MAIN_VIEW_RULE;
+  }
+
+  async _removeTab(name, how) {
+    const reset = how === 'reset';
+    const answer = await askDialog({
+      title: reset ? 'Reset to original' : 'Delete tab',
+      message: reset
+        ? `Reset ${name} to the original? Your edited version is deleted.`
+        : `Delete ${name}? Its file on the server is deleted.`,
+      buttons: ['Cancel', reset ? 'Reset' : 'Delete'],
+    });
+    if (answer === 'Reset' || answer === 'Delete')
+      this._reportTab(await this._tabOps.remove(name), reset ? 'Reset' : 'Deleted');
+  }
+
+  async _exportTab(name) {
+    const r = await this._tabOps.exportToml(name);
+    if (r.error || !r.toml) { this._setStatus(r.error || 'Export failed', 'error'); return; }
+    textDialog({
+      title: `Export ${name}`,
+      text: r.toml,
+      filename: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'tab'}.toml`,
+      note: "Paste it into a project's ffast.toml to share the tab with that project, "
+        + "or send it to someone.",
+    });
+  }
+
+  /** Say how a tab change went, in the status label. */
+  _reportTab(r, verb) {
+    if (!r.ok) { this._setStatus(r.error || 'The tab could not be changed', 'error'); return; }
+    const done = { save: 'Saved', delete: verb || 'Deleted', hide: 'Hid', show: 'Showing' }[r.action];
+    this._setStatus(`${done} ${r.name}`, 'connected');
   }
 
   _applyQuickStyle(steps) {
@@ -733,6 +819,8 @@ export class FFastApp {
       this._metricClient = new MetricClient(conn);
       this._analysis.setMetricClient(this._metricClient);
       conn.on(IN.TAB_LAYOUT, (kw) => this._applyLayout(kw.tabs || []));
+      conn.on(IN.TAB_SAVED, (kw) => this._tabOps.onSaved(kw));
+      conn.on(IN.TAB_EXPORTED, (kw) => this._tabOps.onExported(kw));
 
       conn.on(IN.REMOTE_DATASET_META, (kw, args) => this._onDatasetMeta(args[0], kw));
       conn.on(IN.REMOTE_MODEL_META,   (kw, args) => this._onModelMeta(args[0], kw));
@@ -827,6 +915,7 @@ export class FFastApp {
     for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = true;
     this._browser.close();
     this._sessionOps.reset();
+    this._tabOps.reset();
     this._setStatus('Disconnected', '');
     this._syncEmptyState();
   }

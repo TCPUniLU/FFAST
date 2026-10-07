@@ -365,6 +365,43 @@ class RequestMetricRequest(BaseModel):
     dataset_fp: Optional[str] = None
 
 
+class SaveTabRequest(BaseModel):
+    """Typed payload for ``SAVE_TAB`` (ADR 0056). ``tab`` is the tab in the
+    authoring form of a tab file; ``previous_name`` the tab it was edited from
+    (a built-in or project one gets a user tab replacing it), or None for a
+    new tab."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tab: dict
+    previous_name: Optional[str] = None
+
+
+class DeleteTabRequest(BaseModel):
+    """Typed payload for ``DELETE_TAB``: a user tab, by name."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+
+
+class HideTabRequest(BaseModel):
+    """Typed payload for ``HIDE_TAB``: hide (or show again) any tab."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    hidden: bool
+
+
+class ExportTabRequest(BaseModel):
+    """Typed payload for ``EXPORT_TAB``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+
+
 class SaveSessionRequest(BaseModel):
     """Typed payload for ``SAVE_SESSION``."""
 

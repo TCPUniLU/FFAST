@@ -23,10 +23,12 @@ export function runAction(action) {
 
 /**
  * A drop-down menu over `actions`. Items are rebuilt each time it opens, so
- * their enabled state is always current. Closes on Escape, on a click outside
- * and after running an item.
+ * their enabled state is always current; `actions` may be a function, for a
+ * menu whose items change (the tab menu's hidden tabs), and an entry
+ * `{separator: true}` draws a line. Closes on Escape, on a click outside and
+ * after running an item.
  * @param {HTMLButtonElement} button @param {HTMLElement} list
- * @param {Action[]} actions
+ * @param {Action[] | (() => Array<Action|{separator: true}>)} actions
  */
 export function bindMenu(button, list, actions) {
   const close = () => {
@@ -34,7 +36,14 @@ export function bindMenu(button, list, actions) {
     button.setAttribute('aria-expanded', 'false');
   };
   const open = () => {
-    list.replaceChildren(...actions.map((action) => {
+    const entries = typeof actions === 'function' ? actions() : actions;
+    list.replaceChildren(...entries.map((action) => {
+      if (action.separator) {
+        const line = document.createElement('div');
+        line.setAttribute('role', 'separator');
+        line.className = 'menu-sep';
+        return line;
+      }
       const item = document.createElement('button');
       item.setAttribute('role', 'menuitem');
       item.dataset.action = action.id;

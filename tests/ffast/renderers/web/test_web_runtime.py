@@ -7,9 +7,11 @@ import contextlib
 import hashlib
 import io
 import re
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import ase.io
@@ -119,6 +121,10 @@ async def _spawn_server(*extra_args: str):
     """
     ws_port = _free_port()
     web_port = _free_port()
+    # Never the real ~/.ffast/tabs: a test must not read, or write, your tabs.
+    tabs_dir = tempfile.mkdtemp(prefix="ffast-tabs-")
+    if "--tabs-dir" not in extra_args:
+        extra_args = (*extra_args, "--tabs-dir", tabs_dir)
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -149,6 +155,7 @@ async def _spawn_server(*extra_args: str):
         if out:
             tail = out.decode(errors="replace").splitlines()[-60:]
             print("[server log]\n" + "\n".join(tail))
+        shutil.rmtree(tabs_dir, ignore_errors=True)
 
 
 @pytest.fixture
@@ -1316,6 +1323,86 @@ async def test_web_tab_sizes_share_the_window(tmp_path):
                 box = await grid.bounding_box()
                 assert view["height"] == pytest.approx(box["height"] - 2 * gap, abs=2)
                 assert await grid.evaluate("(el) => el.scrollHeight <= el.clientHeight")
+            finally:
+                await browser.close()
+
+
+async def _tab_request(ws_port, event, kwargs):
+    """Send a tab message from another client; return its TAB_SAVED answer."""
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack(event, (), kwargs))
+        return (await _wait_for_event(ws, "TAB_SAVED", timeout=15))["kwargs"]
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+
+async def _tab_menu(page, label):
+    await page.locator("#tab-menu-btn").click()
+    await page.locator("#tab-menu-list").get_by_role("menuitem", name=label, exact=True).click()
+
+
+async def test_web_user_tabs_reach_every_window_and_can_be_reset_hidden_exported(tmp_path):
+    """ADR 0056 rules 9, 10 and 16. A tab saved anywhere appears in every
+    window; an edited built-in tab says so and Reset brings the original back;
+    any tab can be hidden and shown again, except the last one showing the main
+    view; Export gives TOML for a project's ffast.toml."""
+    tabs_dir = tmp_path / "tabs"
+    config = tmp_path / "ffast.toml"   # no project tabs: only built-in and user ones
+    config.write_text("")
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            tabbar = page.locator("#tabbar .tab")
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+
+                # Saved by another client: this window gets the new layout.
+                answer = await _tab_request(ws_port, "SAVE_TAB", {"tab": {
+                    "name": "Mine", "panels": [{"kind": "3d", "row": 0, "col": 0}]}})
+                assert answer["ok"], answer
+                await expect(tabbar.last).to_have_text("Mine")
+                assert (tabs_dir / "mine.toml").exists()
+
+                # An edited built-in tab, in its place, marked.
+                answer = await _tab_request(ws_port, "SAVE_TAB", {"previous_name": "Gyration", "tab": {
+                    "name": "Gyration", "panels": [{"kind": "table", "row": 0, "col": 0, "title": "MAE",
+                        "metrics": {"value": {"metric": "ffast.force_component_mae"}}}]}})
+                assert answer["ok"], answer
+                gyration = page.locator("#tabbar .tab", has_text="Gyration")
+                await expect(gyration.locator(".tab-mark")).to_have_text("edited")
+                await gyration.click()
+                await _tab_menu(page, "Reset to original…")
+                await page.get_by_role("button", name="Reset").click()
+                await expect(gyration.locator(".tab-mark")).to_have_count(0)
+                await expect(page.locator(".tabpanel.active .analysis-panel[data-kind='overlay_timeline']")).not_to_have_count(0)
+
+                # Hide, and show again from the menu.
+                await _tab_menu(page, "Hide this tab")
+                await expect(gyration).to_have_count(0)
+                await expect(page.locator("#tabbar .tab.active")).to_have_text("3D")
+                await _tab_menu(page, "Show Gyration")
+                await expect(gyration).to_have_count(1)
+
+                # The last tab showing the main view stays: "Mine" has one too.
+                await _tab_menu(page, "Hide this tab")   # on 3D
+                await expect(tabbar.first).to_have_text("Basic Errors")
+                await tabbar.last.click()                 # Mine
+                await page.locator("#tab-menu-btn").click()
+                hide = page.locator("#tab-menu-list").get_by_role("menuitem", name="Hide this tab")
+                await expect(hide).to_be_disabled()
+                assert await hide.get_attribute("title") == "At least one tab must show the main view"
+                await page.keyboard.press("Escape")
+
+                # Export, as a project would write the tab.
+                await page.locator("#tabbar .tab", has_text="Basic Errors").click()
+                await _tab_menu(page, "Export as TOML…")
+                text = await page.locator("#text-dialog textarea").input_value()
+                assert text.startswith("[[visualization.tabs]]")
+                assert 'name = "Basic Errors"' in text
             finally:
                 await browser.close()
 

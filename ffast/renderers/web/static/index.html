@@ -153,10 +153,33 @@
 
     /* ── tabbed content ──────────────────────────────────────────────── */
     #content { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg1); }
-    #tabbar {
+    #tabbar-row {
       display: flex; align-items: stretch; flex-shrink: 0;
       background: var(--bg1); border-bottom: 1px solid var(--bg3);
+    }
+    #tabbar {
+      display: flex; align-items: stretch; flex: 1; min-width: 0;
       overflow-x: auto;
+    }
+    /* tab actions at the right end of the bar (ADR 0056) */
+    #tab-actions { display: flex; align-items: center; gap: 4px; padding: 0 6px; flex-shrink: 0; }
+    #tab-actions button { height: 24px; min-width: 28px; padding: 0 8px; font-size: 14px; background: transparent; }
+    #tab-actions button:hover { background: var(--bg3); }
+    .menu-list.right { left: auto; right: 0; }
+    .menu-sep { height: 1px; margin: 4px 6px; background: var(--bg3); }
+    /* a user tab that replaces a built-in or project one (rule 10) */
+    .tab .tab-mark {
+      margin-left: 6px; font-size: 9px; font-weight: 600; text-transform: none;
+      letter-spacing: 0; color: var(--hl2); opacity: 0.85;
+    }
+    .tab .tab-mark.changed { color: #e0a84e; }
+    /* text to copy or download (Export, rule 9) */
+    .text-dialog-panel { width: 640px; }
+    .text-dialog-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .text-dialog-body textarea {
+      width: 100%; height: 50vh; resize: vertical; font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px; background: var(--bg1); color: var(--text1);
+      border: 1px solid var(--bg3); border-radius: 4px; padding: 6px 8px; white-space: pre;
     }
     .tab {
       padding: 0 16px; height: 30px; display: flex; align-items: center;
@@ -509,7 +532,7 @@
        satellite that also used this class is gone (ADR 0051). */
     body.loupe-only #objectbar,
     body.loupe-only .resize-handle,
-    body.loupe-only #tabbar,
+    body.loupe-only #tabbar-row,
     body.loupe-only .analysis-controls,
     body.loupe-only .grid-slot,
     body.loupe-only .analysis-scrollstrip,
@@ -815,7 +838,18 @@
     <!-- tabbed main content; every tab is built from the server's tab layout
          (analysis.js), the built-in "3D" tab included (ADR 0056) -->
     <div id="content" class="no-view">
-      <div id="tabbar"></div>
+      <div id="tabbar-row">
+        <div id="tabbar"></div>
+        <!-- Actions on the tab on screen (ADR 0056): export, reset, hide,
+             and the hidden tabs to show again. -->
+        <div id="tab-actions">
+          <div id="tab-menu" class="menu">
+            <button id="tab-menu-btn" aria-haspopup="menu" aria-expanded="false"
+                    title="Tab actions">⋯</button>
+            <div id="tab-menu-list" class="menu-list right hidden" role="menu"></div>
+          </div>
+        </div>
+      </div>
       <div id="tabpanels"></div>
     </div>
   </div>
