@@ -268,7 +268,12 @@ class ServerSession:
                     and getattr(dataset, "parent", None) is not None):
                 parent = self.get_prediction(dataset.parent.fingerprint, model_fp)
                 if parent is not None:
-                    return _PredictionView(np.asarray(parent.forces)[np.asarray(dataset.indices)])
+                    frames = [int(i) for i in np.asarray(dataset.indices).ravel()]
+                    forces = parent.forces
+                    # Structures of different sizes come as a list of arrays.
+                    if isinstance(forces, list):
+                        return _PredictionView([forces[i] for i in frames])
+                    return _PredictionView(np.asarray(forces)[frames])
             return None
         forces = de.get("forces")
         if forces is None:

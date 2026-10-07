@@ -1123,3 +1123,12 @@ def test_a_frame_subset_draws_its_parents_predicted_forces():
     view = ServerSession(env, asyncio.Queue()).get_prediction("sub", "m1")
     assert np.array_equal(view.forces[0], forces[3]) and np.array_equal(view.forces[1], forces[1])
     assert ServerSession(env, asyncio.Queue()).get_prediction("ds1", "nope") is None
+
+
+def test_a_frame_subset_of_structures_of_different_sizes_draws_its_parents_forces():
+    forces = [np.zeros((1, 3)), np.ones((2, 3)), np.full((3, 3), 2.0)]
+    parent = _FakeFrames("ds1", n=3)
+    env = _FakeEnv(datasets={"ds1": parent, "sub": _FakeFrameSubset(parent, [2, 0])},
+                   cache={"forces__m1__ds1": {"forces": forces}})
+    view = ServerSession(env, asyncio.Queue()).get_prediction("sub", "m1")
+    assert [f.shape for f in view.forces] == [(3, 3), (1, 3)]
