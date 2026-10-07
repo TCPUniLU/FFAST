@@ -414,6 +414,155 @@ async def test_web_dialog_asks_for_a_token_when_the_server_needs_one():
                 await browser.close()
 
 
+# ── 3D empty state (ADR 0055 "3D empty state" row) ──────────────────────────
+
+_LOUPE_CHROME = ("#loupe-sidebar", "#pick-bar", "#loupe-controls")
+
+
+async def test_web_3d_tab_shows_only_a_load_button_until_a_dataset_is_open(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            # Disconnected: the button says why it cannot load yet.
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await page.locator("#conn-close").click()
+            load = page.locator("#empty-load-btn")
+            await expect(load).to_be_visible()
+            await expect(load).to_be_disabled()
+            await expect(page.locator("#overlay")).to_contain_text("Connect to a server first")
+            for chrome in _LOUPE_CHROME:
+                await expect(page.locator(chrome)).to_be_hidden()
+
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await expect(page.locator("#status")).to_contain_text("Connected")
+            await expect(load).to_be_enabled()
+            for chrome in _LOUPE_CHROME:
+                await expect(page.locator(chrome)).to_be_hidden()
+            await load.click()
+            await expect(page.locator("#fb-modal")).to_be_visible()
+        finally:
+            await browser.close()
+
+
+async def test_web_3d_controls_appear_once_a_dataset_is_open(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(page.locator("#empty-load-btn")).to_be_hidden()
+            for chrome in _LOUPE_CHROME:
+                await expect(page.locator(chrome)).to_be_visible()
+
+            # Disconnecting closes the view: back to the empty state.
+            await page.locator("#status").click()
+            await page.locator("#disconnect-btn").click()
+            await expect(page.locator("#empty-load-btn")).to_be_visible()
+            for chrome in _LOUPE_CHROME:
+                await expect(page.locator(chrome)).to_be_hidden()
+        finally:
+            await browser.close()
+
+
+async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(ffast_web_server):
+    """The first time a dataset's view opens, every atom is in view. After
+    that the camera is the user's: switching tabs and back keeps it (457dcaa)."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    in_view = """() => {
+      const R = window.ffastApp.renderer;
+      const rect = document.getElementById('canvas').getBoundingClientRect();
+      for (let i = 0; i < R.atomCount; i++) {
+        const s = R.atomScreenPosition(i);
+        if (!s || s.x < 0 || s.y < 0 || s.x > rect.width || s.y > rect.height) return false;
+      }
+      return R.atomCount > 0;
+    }"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            assert await page.evaluate(in_view)
+
+            await page.evaluate(
+                "() => window.ffastApp.renderer.setCameraAngles({azimuth: 70, elevation: 25})"
+            )
+            await page.wait_for_timeout(400)   # SET_CAMERA is throttled to 100 ms
+            before = await page.evaluate("() => window.ffastApp.renderer._exportCamera()")
+
+            await page.evaluate(
+                """() => {
+                  const app = window.ffastApp, orig = app._onSceneSnapshot.bind(app);
+                  window.snapshots = 0;
+                  app._onSceneSnapshot = (kw) => { window.snapshots += 1; orig(kw); };
+                }"""
+            )
+            await page.locator("#tabbar .tab").nth(1).click()
+            await page.wait_for_timeout(200)
+            await page.locator("#tabbar .tab[data-tab='loupe']").click()
+            await page.wait_for_function("() => window.snapshots > 0", timeout=10000)
+            await page.wait_for_timeout(300)
+            after = await page.evaluate("() => window.ffastApp.renderer._exportCamera()")
+        finally:
+            await browser.close()
+
+    assert after["azimuth"] == pytest.approx(before["azimuth"], abs=0.5)
+    assert after["elevation"] == pytest.approx(before["elevation"], abs=0.5)
+    assert after["distance"] == pytest.approx(before["distance"], rel=0.01)
+
+
+_PREDICTION_ROWS = (
+    ".pane[data-pane='Colour By'] .ctl-row[data-label='Prediction']",
+    ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Source']",
+)
+
+
+async def _show_rows_that_offer_a_prediction(page):
+    """Both selectors also wait on their own pane: Colour By shows Prediction
+    only for a metric colouring, Force Vectors shows Source only with arrows on."""
+    coloring = page.locator(".pane[data-pane='Colour By'] .ctl-row[data-label='Coloring'] select")
+    await coloring.select_option(label="Acceleration Error")
+    await page.locator(
+        ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Show force vectors'] input"
+    ).check()
+
+
+async def test_web_prediction_selectors_wait_for_a_prediction(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _show_rows_that_offer_a_prediction(page)
+            for row in _PREDICTION_ROWS:
+                await expect(page.locator(row)).to_be_hidden()
+        finally:
+            await browser.close()
+
+
+async def test_web_prediction_selectors_appear_with_a_prediction(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp, _model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _show_rows_that_offer_a_prediction(page)
+            for row in _PREDICTION_ROWS:
+                await expect(page.locator(row)).to_be_visible()
+        finally:
+            await browser.close()
+
+
 async def test_web_renderer_connects_and_draws_scene(ffast_web_server):
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)
@@ -1033,8 +1182,8 @@ async def test_web_info_tool_reports_distance(ffast_web_server):
 async def _front_atom(page, zoom=1.0):
     """The front-most atom drawn wholly on screen, with its page-space centre
     and its drawn radius in pixels. Nothing in front can cover its ball, so a
-    click anywhere on it must pick it. Frames the atoms first (since 457dcaa the
-    camera no longer fits them by itself), then moves `zoom` times closer."""
+    click anywhere on it must pick it. Fits the atoms first, so the result does
+    not depend on where the camera was left, then moves `zoom` times closer."""
     return await page.evaluate(
         """(zoom) => {
           const R = window.ffastApp.renderer;

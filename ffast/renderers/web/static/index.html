@@ -298,6 +298,10 @@
       text-align: center; color: #55585f; pointer-events: none;
     }
     #overlay.hidden { display: none; }
+    #empty-load-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: 13px; }
+    #panel-loupe.no-view #loupe-sidebar,
+    #panel-loupe.no-view #pick-bar,
+    #panel-loupe.no-view #loupe-controls { display: none; }
     #overlay .big { font-size: 18px; font-weight: 300; margin-bottom: 6px; }
     #overlay .small { font-size: 11px; }
 
@@ -685,7 +689,7 @@
     <div id="content">
       <div id="tabbar"></div>
       <div id="tabpanels">
-        <div class="tabpanel active" id="panel-loupe">
+        <div class="tabpanel active no-view" id="panel-loupe">
           <div id="viewport-col">
             <!-- pick toolbar + contextual strip (ADR 0045 Phase 2, issue 10):
                  one armed tool at a time, with its live pick count + read-out -->
@@ -701,9 +705,12 @@
             </div>
             <div id="viewport">
               <canvas id="canvas"></canvas>
+              <!-- Empty state (ADR 0055): until a view is open, the viewport offers
+                   Load Dataset… and the 3D controls stay hidden. -->
               <div id="overlay">
-                <div class="big">No scene loaded</div>
-                <div class="small">Connect, load a dataset, then select it to open the view</div>
+                <div class="big">No dataset open</div>
+                <div class="small" id="overlay-hint">Load a dataset to see it here.</div>
+                <button id="empty-load-btn">Load Dataset…</button>
               </div>
             </div>
             <div id="loupe-controls">

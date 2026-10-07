@@ -19,7 +19,7 @@ import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
-import { bindMenu } from './actions.js';
+import { bindMenu, runAction, whyUnavailable } from './actions.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 
 /**
@@ -55,6 +55,8 @@ export class FFastApp {
     // ships bond segments as coordinates, never index pairs, so bonds
     // "fill from dynamic" recovers pairs by matching endpoints to these atoms.
     this._lastScene = null;
+    this._viewShown = false;        // a scene is drawn; else the empty state (ADR 0055)
+    this._framedViews = new Set();  // view ids whose first snapshot fitted the atoms
     this._frameCount = 0;
     this._cameraThrottle = null;
 
@@ -185,6 +187,9 @@ export class FFastApp {
       document.getElementById('file-menu-list'),
       this._actions,
     );
+    document.getElementById('empty-load-btn').addEventListener('click',
+      () => runAction(this._action('load-dataset')));
+    this._syncEmptyState();
     // Each modal owns its own controls (ADR 0050).
     this._sessionOps.bindControls();
     this._browser.bindControls();
@@ -215,6 +220,21 @@ export class FFastApp {
         unavailable: () => needsControl() || (this._currentDatasetFp ? '' : 'Select a dataset first') },
       { id: 'connect', label: 'Connect to Server…', run: () => this._openConnDialog() },
     ];
+  }
+
+  _action(id) { return this._actions.find((a) => a.id === id); }
+
+  /** Until a view is open the 3D tab shows only a Load Dataset… button (or
+   * why it cannot load yet); its sidebar, pick bar and playback strip wait
+   * for something to act on (ADR 0055). */
+  _syncEmptyState() {
+    const shown = this._viewShown;
+    document.getElementById('panel-loupe').classList.toggle('no-view', !shown);
+    document.getElementById('overlay').classList.toggle('hidden', shown);
+    const why = whyUnavailable(this._action('load-dataset'));
+    const btn = document.getElementById('empty-load-btn');
+    btn.disabled = !!why;
+    document.getElementById('overlay-hint').textContent = why || 'Load a dataset to see it here.';
   }
 
   // ── sidebar panes (ADR 0045 Phase 1: issues 03-07) ──────────────────────
@@ -422,6 +442,7 @@ export class FFastApp {
       this._setStatus(`Connected (${conn.role})`, 'connected');
       document.getElementById('disconnect-btn').disabled = false;
       saveRecentServers(rememberServer(loadRecentServers(), wsUrl));   // never the token
+      this._syncEmptyState();
       // A server that needs a token gives a client without a valid one the
       // read-only role rather than refusing it.
       if (conn.role === 'READ_ONLY' && !readOnly) {
@@ -458,6 +479,9 @@ export class FFastApp {
     this._metricClient = null;
     if (this._activeTab.startsWith('analysis-')) this._selectTab('loupe');
     this._lastScene = null;
+    this._viewShown = false;
+    this._framedViews.clear();
+    this._renderer.clear();
     this._datasets.clear();
     this._models.clear();
     this._currentDatasetFp = null;
@@ -478,6 +502,7 @@ export class FFastApp {
     this._browser.close();
     this._sessionOps.reset();
     this._setStatus('Disconnected', '');
+    this._syncEmptyState();
   }
 
   _onDatasetMeta(fp, meta) {
@@ -652,8 +677,16 @@ export class FFastApp {
     if (!scene) return;
     this._viewVersion = scene.version;
     this._renderer.applyScene(scene);
-    //this._renderer.frameAtoms(); makes 3D View forget its camera settings every time the tab is changed
-    document.getElementById('overlay').classList.add('hidden');
+    // Fit the atoms only on a view's first snapshot. Later snapshots (a tab
+    // switch reopens the view) carry the camera the user left, which the
+    // server keeps via SET_CAMERA (457dcaa); fitting again would discard it.
+    const viewKey = scene.view_id || this._currentViewId;
+    if (!this._framedViews.has(viewKey)) {
+      this._framedViews.add(viewKey);
+      this._renderer.frameAtoms();
+    }
+    this._viewShown = true;
+    this._syncEmptyState();
     document.getElementById('reset-camera-btn').disabled = false;
     for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = false;
 

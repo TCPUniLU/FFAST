@@ -70,11 +70,13 @@ export function createColorByPane(sidebarEl, callbacks) {
   cbLabel.id = 'colorbar-label';
   body.append(colorbar, cbLabel);
 
+  let hasPredictions = false;
   function _syncVisibility() {
     const isElements = currentLabel === 'Elements';
-    // Qt hides Colormap/Prediction until Coloring leaves "Elements" (ADR 0040).
+    // Qt hides Colormap/Prediction until Coloring leaves "Elements" (ADR 0040);
+    // Prediction also waits until there is a prediction to choose (ADR 0055).
     rowElement(colormapSelect).style.display = isElements ? 'none' : '';
-    rowElement(predictionSelect).style.display = isElements ? 'none' : '';
+    rowElement(predictionSelect).style.display = isElements || !hasPredictions ? 'none' : '';
   }
   _syncVisibility();
 
@@ -122,6 +124,8 @@ export function createColorByPane(sidebarEl, callbacks) {
         predictionSelect.appendChild(opt);
       }
       if ([...predictionSelect.options].some((o) => o.value === prevLabel)) predictionSelect.value = prevLabel;
+      hasPredictions = models.size > 0;
+      _syncVisibility();
     },
 
     /** @param {Array<{id:string,label?:string,shape:string,parameters?:object}>} entries */

@@ -51,6 +51,7 @@ export function createForcesPane(sidebarEl, callbacks) {
   const state = { show: false, onlyForces: false, modelKey: null, length: 10, normalised: true, filterEnabled: false, atomIndices: [] };
   const apply = () => callbacks.onApply({ ...state, atomIndices: [...state.atomIndices] });
   let keyByLabel = new Map();   // combo label -> model fingerprint
+  let hasPredictions = false;   // Source offers only Ground Truth until one loads (ADR 0055)
 
   const showInput = checkboxRow(body, 'Show force vectors', state.show, (v) => { state.show = v; _syncVisibility(); apply(); });
   const onlyForces = checkboxRow(body, 'Only show force vectors', state.onlyForces,
@@ -68,6 +69,7 @@ export function createForcesPane(sidebarEl, callbacks) {
   function _syncVisibility() {
     const show = state.show;
     for (const control of [onlyForces, sourceSelect, normalisedInput, lengthInput, filterInput]) rowElement(control).style.display = show ? '' : 'none';
+    if (!hasPredictions) rowElement(sourceSelect).style.display = 'none';
   }
   _syncVisibility();
 
@@ -105,6 +107,8 @@ export function createForcesPane(sidebarEl, callbacks) {
         sourceSelect.appendChild(opt);
       }
       if ([...sourceSelect.options].some((o) => o.value === prevLabel)) sourceSelect.value = prevLabel;
+      hasPredictions = models.size > 0;
+      _syncVisibility();
     },
   };
 }
