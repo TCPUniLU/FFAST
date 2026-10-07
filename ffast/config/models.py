@@ -100,6 +100,9 @@ class PanelMetricRef(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+# The panel kind of a 3D panel (ADR 0056): a view, not a plot.
+PANEL_KIND_3D = "3d"
+
 # An axis label is null | "label" | ["label", "<userConfig unit key>"].
 AxisLabel = Union[str, list[str], None]
 # A panel role binds one metric, or (overlay kinds) a list of series.
@@ -118,7 +121,10 @@ class PanelConfig(BaseModel):
     ``scroll_group`` is a layout-only hint: panels sharing a non-null group name
     are placed together in one horizontal scroll strip (the table row of the
     legacy error tabs) at the *first* member's ``row``/``col``/span, instead of
-    each taking its own grid cell."""
+    each taking its own grid cell.
+
+    ``kind = "3d"`` is a **3D panel** (ADR 0056): a cell showing a visualization
+    view instead of plotting metrics. Browser only; it binds no metric roles."""
     model_config = ConfigDict(extra="forbid")
     kind: str
     row: int
@@ -137,6 +143,12 @@ class PanelConfig(BaseModel):
     controls: list[str] = Field(default_factory=list)
     scroll_group: str | None = None
     options: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _3d_panel_binds_no_metrics(self) -> "PanelConfig":
+        if self.kind == PANEL_KIND_3D and self.metrics:
+            raise ValueError("a 3D panel shows a 3D view and takes no 'metrics'")
+        return self
 
 
 class AnalysisTabConfig(BaseModel):

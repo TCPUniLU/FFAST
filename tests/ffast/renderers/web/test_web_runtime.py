@@ -27,6 +27,8 @@ from ffast.protocol.rpc import pack, unpack
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DATASET_PATH = REPO_ROOT / "examples" / "data" / "dataset.xyz"
+# The canvas of the 3D panel on screen (ADR 0056: each 3D panel has its own).
+CANVAS = ".tabpanel.active canvas.view3d"
 PREDICTION_PATH = REPO_ROOT / "examples" / "data" / "prediction.xyz"
 
 
@@ -809,11 +811,11 @@ async def test_web_sidebar_can_be_hidden_and_stays_hidden(ffast_web_server):
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
             await _open_loupe(page, ws_port, web_port, dataset_fp)
-            width = (await page.locator("#canvas").bounding_box())["width"]
+            width = (await page.locator(CANVAS).bounding_box())["width"]
             await page.locator("#sidebar-toggle").click()
             await expect(page.locator("#loupe-sidebar")).to_be_hidden()
             await page.wait_for_timeout(200)
-            assert (await page.locator("#canvas").bounding_box())["width"] > width
+            assert (await page.locator(CANVAS).bounding_box())["width"] > width
 
             await _open_loupe(page, ws_port, web_port, dataset_fp)   # reload
             await expect(page.locator("#loupe-sidebar")).to_be_hidden()
@@ -848,13 +850,13 @@ async def test_web_sidebar_and_object_list_widths_are_adjustable(ffast_web_serve
         try:
             await _open_loupe(page, ws_port, web_port, dataset_fp)
             sidebar, rail = await _width(page, "#loupe-sidebar"), await _width(page, "#objectbar")
-            canvas = await _width(page, "#canvas")
+            canvas = await _width(page, CANVAS)
 
             await _drag(page, "#sidebar-resize", -120)   # sidebar is on the right
             await _drag(page, "#rail-resize", 80)
             assert await _width(page, "#loupe-sidebar") == pytest.approx(sidebar + 120, abs=3)
             assert await _width(page, "#objectbar") == pytest.approx(rail + 80, abs=3)
-            assert await _width(page, "#canvas") == pytest.approx(canvas - 200, abs=6)
+            assert await _width(page, CANVAS) == pytest.approx(canvas - 200, abs=6)
 
             await _open_loupe(page, ws_port, web_port, dataset_fp)   # reload
             assert await _width(page, "#loupe-sidebar") == pytest.approx(sidebar + 120, abs=3)
@@ -864,7 +866,7 @@ async def test_web_sidebar_and_object_list_widths_are_adjustable(ffast_web_serve
             await _drag(page, "#sidebar-resize", 600)
             assert await _width(page, "#loupe-sidebar") >= 200
             await _drag(page, "#sidebar-resize", -1200)
-            assert await _width(page, "#canvas") >= 300
+            assert await _width(page, CANVAS) >= 300
 
             await page.locator("#sidebar-resize").dblclick()
             assert await _width(page, "#loupe-sidebar") == pytest.approx(sidebar, abs=1)
@@ -890,7 +892,7 @@ async def test_web_resizing_the_view_redraws_at_once(ffast_web_server):
             await _apply_synthetic(page, 1)   # one atom in the middle
             centre = await page.evaluate(
                 """() => {
-                  const R = window.ffastApp.renderer, c = document.getElementById('canvas');
+                  const R = window.ffastApp.renderer, c = document.querySelector('.tabpanel.active canvas.view3d');
                   R.setCameraAngles({center: [0, 0, 0], distance: 6});
                   c.style.width = (c.clientWidth - 40) + 'px';   // what a drag does
                   R._resize();
@@ -987,6 +989,105 @@ async def test_web_3d_controls_appear_once_a_dataset_is_open(ffast_web_server):
             await browser.close()
 
 
+async def test_web_3d_tab_is_an_ordinary_tab_holding_one_3d_panel(ffast_web_server):
+    """ADR 0056 rule 6: the fixed 3D tab is the built-in "3D" tab now, built
+    from the layout like any other: one 3D panel filling its grid, and no
+    dataset picker, since nothing in it plots."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            first = page.locator("#tabbar .tab").first
+            await expect(first).to_have_text("3D")
+            assert (await first.get_attribute("data-tab")).startswith("tab-")
+            panel = page.locator(".tabpanel.active .analysis-grid > .panel-3d")
+            await expect(panel).to_have_count(1)
+            await expect(panel.locator("canvas.view3d")).to_have_count(1)
+            await expect(page.locator(".tabpanel.active [data-control='series-selector']")).to_have_count(0)
+            # The panel fills the grid, which fills the tab under the pick bar.
+            grid = await page.locator(".tabpanel.active .analysis-grid").bounding_box()
+            box = await panel.bounding_box()
+            assert box["height"] == pytest.approx(grid["height"], abs=2)
+            assert box["width"] == pytest.approx(grid["width"], abs=2)
+        finally:
+            await browser.close()
+
+
+_MIXED_TAB_TOML = """
+[[visualization.tabs]]
+name = "Compare"
+
+[[visualization.tabs.panels]]
+kind = "3d"
+row = 0
+col = 0
+rowspan = 2
+
+[[visualization.tabs.panels]]
+kind = "timeline"
+row = 0
+col = 1
+title = "Forces MAE timeline"
+  [visualization.tabs.panels.metrics.y]
+  metric = "ffast.force_mae_per_structure_smoothed"
+
+[[visualization.tabs.panels]]
+kind = "table"
+row = 1
+col = 1
+title = "Forces MAE"
+  [visualization.tabs.panels.metrics.value]
+  metric = "ffast.force_component_mae"
+"""
+
+
+async def test_web_a_tab_mixes_plots_with_a_3d_panel_showing_the_main_view(tmp_path):
+    """ADR 0056 rules 1 and 8: a project tab puts a linked 3D panel beside
+    plots. The panel shows the main view, the same frame as the "3D" tab, and
+    the tab gets the 3D controls; a tab without a 3D panel shows none."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_MIXED_TAB_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp, _ = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await page.locator("#next-frame-btn").click()
+                await expect(page.locator("#frame-label")).to_have_text("1 / 99")
+
+                await _open_analysis_tab(page, "Compare")
+                active = page.locator(".tabpanel.active")
+                await expect(active.locator(".panel-3d canvas.view3d")).to_have_count(1)
+                await page.wait_for_function(
+                    _PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+                await expect(active.locator(".analysis-panel[data-title='Forces MAE'] td")).not_to_have_count(0)
+                for chrome in _LOUPE_CHROME:
+                    await expect(active.locator(chrome)).to_be_visible()
+                await expect(page.locator("#frame-label")).to_have_text("1 / 99")
+                assert await page.evaluate("() => window.ffastApp.renderer.atomCount") > 0
+
+                # The main view's frame is the same wherever it is shown.
+                await page.locator("#next-frame-btn").click()
+                await expect(page.locator("#frame-label")).to_have_text("2 / 99")
+                await _open_analysis_tab(page, "Basic Errors")
+                for chrome in _LOUPE_CHROME:
+                    await expect(page.locator(chrome)).to_be_hidden()
+                # 3D panels in tabs you are not looking at stop drawing.
+                assert await page.evaluate(
+                    "() => window.ffastApp._mainView.renderers.map((r) => r.drawing)") == [False, False]
+                await page.locator("#tabbar .tab", has_text="3D").first.click()
+                await expect(page.locator("#frame-label")).to_have_text("2 / 99")
+                assert await page.evaluate(
+                    "() => document.querySelectorAll('canvas.view3d').length") == 2
+            finally:
+                await browser.close()
+
+
 async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(ffast_web_server):
     """The first time a dataset's view opens, every atom is in view. After
     that the camera is the user's: switching tabs and back keeps it (457dcaa)."""
@@ -994,7 +1095,7 @@ async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(ffas
     dataset_fp = await _preload_dataset(ws_port)
     in_view = """() => {
       const R = window.ffastApp.renderer;
-      const rect = document.getElementById('canvas').getBoundingClientRect();
+      const rect = document.querySelector('.tabpanel.active canvas.view3d').getBoundingClientRect();
       for (let i = 0; i < R.atomCount; i++) {
         const s = R.atomScreenPosition(i);
         if (!s || s.x < 0 || s.y < 0 || s.x > rect.width || s.y > rect.height) return false;
@@ -1023,7 +1124,7 @@ async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(ffas
             )
             await page.locator("#tabbar .tab").nth(1).click()
             await page.wait_for_timeout(200)
-            await page.locator("#tabbar .tab[data-tab='loupe']").click()
+            await page.locator("#tabbar .tab", has_text="3D").first.click()
             await page.wait_for_function("() => window.snapshots > 0", timeout=10000)
             await page.wait_for_timeout(300)
             after = await page.evaluate("() => window.ffastApp.renderer._exportCamera()")
@@ -1123,7 +1224,7 @@ async def test_web_renderer_connects_and_draws_scene(ffast_web_server):
             )
             await expect(page.locator("#frame-slider")).to_be_enabled()
 
-            png = await page.locator("#canvas").screenshot()
+            png = await page.locator(CANVAS).screenshot()
             image = Image.open(io.BytesIO(png)).convert("RGBA")
             bg = (0, 0, 0, 255)  # viewport clears to black (Qt loupe default)
             rgba = image.tobytes()
@@ -1211,7 +1312,7 @@ async def test_web_renderer_draws_prediction_force_arrows(ffast_web_server):
             # Baseline (off): a few stray orange-ish pixels can occur from
             # antialiased edges between other elements, so compare relatively
             # rather than against a small absolute count.
-            baseline_count = _count_orange_force_pixels(await page.locator("#canvas").screenshot())
+            baseline_count = _count_orange_force_pixels(await page.locator(CANVAS).screenshot())
 
             await show_forces.check()
             await expect(source.locator("option", has_text="prediction.xyz")).to_have_count(1)
@@ -1225,12 +1326,12 @@ async def test_web_renderer_draws_prediction_force_arrows(ffast_web_server):
                 "(el) => { el.value = el.max; el.dispatchEvent(new Event('input', {bubbles: true})); }"
             )
             await page.wait_for_timeout(700)
-            on_count = _count_orange_force_pixels(await page.locator("#canvas").screenshot())
+            on_count = _count_orange_force_pixels(await page.locator(CANVAS).screenshot())
             assert on_count > baseline_count + 20
 
             await show_forces.uncheck()
             await page.wait_for_timeout(700)
-            off_count = _count_orange_force_pixels(await page.locator("#canvas").screenshot())
+            off_count = _count_orange_force_pixels(await page.locator(CANVAS).screenshot())
             assert off_count < on_count
         finally:
             await browser.close()
@@ -1574,7 +1675,7 @@ async def test_web_color_by_selector_recolors_atoms_and_shows_colorbar(ffast_web
 
             colorbar = page.locator("#colorbar")
             await expect(colorbar).to_have_class(re.compile(r"\bhidden\b"))
-            before_png = await page.locator("#canvas").screenshot()
+            before_png = await page.locator(CANVAS).screenshot()
 
             coloring = page.locator(
                 ".pane[data-pane='Colour By'] .ctl-row[data-label='Coloring'] select"
@@ -1588,7 +1689,7 @@ async def test_web_color_by_selector_recolors_atoms_and_shows_colorbar(ffast_web
             await page.wait_for_timeout(700)
 
             await expect(colorbar).not_to_have_class(re.compile(r"\bhidden\b"))
-            after_png = await page.locator("#canvas").screenshot()
+            after_png = await page.locator(CANVAS).screenshot()
             assert before_png != after_png
 
             await coloring.select_option(label="Elements")
@@ -1620,7 +1721,7 @@ async def test_web_camera_preset_reorients_view(ffast_web_server):
             await page.wait_for_timeout(300)
 
             await _open_section(page, "Camera")
-            before_png = await page.locator("#canvas").screenshot()
+            before_png = await page.locator(CANVAS).screenshot()
 
             # frameAtoms()'s initial fit-to-view already sits at az=0/el=0
             # (looking down -Z, i.e. the "XZ" front view) — use "XY" (top view,
@@ -1630,7 +1731,7 @@ async def test_web_camera_preset_reorients_view(ffast_web_server):
             await xy_preset.click()
             await page.wait_for_timeout(300)
 
-            after_png = await page.locator("#canvas").screenshot()
+            after_png = await page.locator(CANVAS).screenshot()
             assert before_png != after_png
 
             # The manual elevation field reflects the preset (az 0°, el 90°).
@@ -1739,7 +1840,7 @@ async def _atom_page_xy(page, index):
         """(i) => {
           const s = window.ffastApp.renderer.atomScreenPosition(i);
           if (!s) return null;
-          const r = document.getElementById('canvas').getBoundingClientRect();
+          const r = document.querySelector('.tabpanel.active canvas.view3d').getBoundingClientRect();
           return { x: r.left + s.x, y: r.top + s.y };
         }""",
         index,
@@ -1783,7 +1884,7 @@ async def test_web_pick_click_and_box_render_selection_overlay(ffast_web_server)
             await page.wait_for_function(
                 "() => window.ffastApp.renderer._selectionMeshes.size === 0"
             )
-            rect = await page.locator("#canvas").bounding_box()
+            rect = await page.locator(CANVAS).bounding_box()
             cx, cy = rect["x"] + rect["width"] / 2, rect["y"] + rect["height"] / 2
             await page.mouse.move(cx - rect["width"] / 3, cy - rect["height"] / 3)
             await page.mouse.down()
@@ -1814,7 +1915,7 @@ async def test_web_info_tool_reports_distance(ffast_web_server):
             far = await page.evaluate(
                 """() => {
                   const R = window.ffastApp.renderer;
-                  const rect = document.getElementById('canvas').getBoundingClientRect();
+                  const rect = document.querySelector('.tabpanel.active canvas.view3d').getBoundingClientRect();
                   const a = R.atomScreenPosition(0);
                   let bestI = -1, bestD = -1;
                   for (let i = 1; i < R.atomCount; i++) {
@@ -1848,7 +1949,7 @@ async def _front_atom(page, zoom=1.0):
           const R = window.ffastApp.renderer;
           R.frameAtoms();
           R.setCameraAngles({distance: R._exportCamera().distance / zoom});
-          const rect = document.getElementById('canvas').getBoundingClientRect();
+          const rect = document.querySelector('.tabpanel.active canvas.view3d').getBoundingClientRect();
           let best = null;
           for (let i = 0; i < R.atomCount; i++) {
             const s = R.atomScreenPosition(i);
@@ -1980,7 +2081,7 @@ async def test_web_armed_tool_highlights_the_atom_under_the_pointer(ffast_web_se
             assert lit["light"] > base["light"] or base["light"] > 2.99
 
             # Off the molecule: the atom returns to how it was drawn.
-            rect = await page.locator("#canvas").bounding_box()
+            rect = await page.locator(CANVAS).bounding_box()
             await page.mouse.move(rect["x"] + 3, rect["y"] + 3)
             await page.wait_for_function("() => window.ffastApp.renderer.hoveredAtom === null")
             after = await page.evaluate(drawn, atom["index"])
@@ -2014,8 +2115,8 @@ async def test_web_picking_does_not_resize_the_3d_view(ffast_web_server):
     and the next click missed its atom."""
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)
-    size = """() => [document.getElementById('canvas').clientWidth,
-                     document.getElementById('canvas').clientHeight,
+    size = """() => [document.querySelector('.tabpanel.active canvas.view3d').clientWidth,
+                     document.querySelector('.tabpanel.active canvas.view3d').clientHeight,
                      document.getElementById('pick-bar').offsetHeight]"""
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2217,10 +2318,10 @@ async def test_web_custom_toml_tab_matches_builtin(ffast_web_server):
             custom = page.locator("#tabbar .tab", has_text="Dataset Fields")
             await expect(builtin).to_have_count(1)
             await expect(custom).to_have_count(1)
-            # Same kind of tab node — a dynamically-built analysis tab, not a
+            # Same kind of tab node — a tab built from the layout, not a
             # bespoke one (identical DOM contract to a built-in).
-            assert (await custom.get_attribute("data-tab")).startswith("analysis-")
-            assert (await builtin.get_attribute("data-tab")).startswith("analysis-")
+            assert (await custom.get_attribute("data-tab")).startswith("tab-")
+            assert (await builtin.get_attribute("data-tab")).startswith("tab-")
 
             # Its panels render over the same layout+metric channel (the custom
             # tab's field metric is per-frame and needs no prediction).

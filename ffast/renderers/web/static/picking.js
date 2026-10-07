@@ -56,8 +56,19 @@ export class PickController {
     // Hover: at most one pick per frame, however fast the pointer moves.
     this._hoverAt = null;
     this._hoverFrame = null;
-    canvas.addEventListener('pointermove', (e) => this._onHoverMove(e));
-    canvas.addEventListener('pointerleave', () => this._setHover(null));
+    this._onHover = (e) => this._onHoverMove(e);
+    this._onLeave = () => this._setHover(null);
+    canvas.addEventListener('pointermove', this._onHover);
+    canvas.addEventListener('pointerleave', this._onLeave);
+  }
+
+  /** Release the canvas, for a 3D panel that is going away. */
+  dispose() {
+    this.disarm();
+    this._canvas.removeEventListener('pointerdown', this._onDown);
+    this._canvas.removeEventListener('pointermove', this._onHover);
+    this._canvas.removeEventListener('pointerleave', this._onLeave);
+    this._rect?.remove();
   }
 
   get activeToolId() { return this._tool?.id ?? null; }
@@ -142,7 +153,7 @@ export class PickController {
   _showRect(a, b) {
     if (!this._rect) {
       this._rect = document.createElement('div');
-      this._rect.id = 'pick-rect';
+      this._rect.className = 'pick-rect';
       this._viewport.appendChild(this._rect);
     }
     const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);

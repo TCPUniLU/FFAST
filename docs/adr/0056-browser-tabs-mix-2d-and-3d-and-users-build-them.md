@@ -105,11 +105,16 @@ Browser only. The Qt desktop gets one small change (point 17).
 17. **The desktop, for now, ignores user tabs.** For a project tab that contains
     3D panels it draws the 2D panels, puts a grey "3D panel — shown in the
     browser only" box in each 3D panel's place, and ignores `column_widths` and
-    `row_heights`.
+    `row_heights`. A tab made only of 3D panels, the built-in "3D" tab among
+    them, it skips: it would be nothing but grey boxes, and the desktop has its
+    own 3D window.
 
 Defaults taken without a separate decision: the "⧉ New Tab" pop-out acts on the
 focused panel; 3D panels in tabs you are not looking at stop drawing; renaming a
 tab carries its Panel Display Overrides (ADR 0029, keyed by tab name) along.
+
+In a tab file a 3D panel is `kind = "3d"`, with no `metrics`. The built-in
+"3D" tab is `ffast/config/builtin_tabs/00_3d.toml`, first in the bar.
 
 ## Alternatives rejected
 

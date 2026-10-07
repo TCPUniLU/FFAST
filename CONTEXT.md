@@ -188,6 +188,9 @@ overlay_timeline, grouped_density, grouped_table. It declares what widget it
 builds, how many metric inputs it takes, which shapes those must satisfy, and how
 they map to axes or cells. It assembles and draws. It computes nothing.
 
+One more kind, `3d`, is a [3D panel](#3d-panel): it binds no metrics and shows
+a visualization view instead of a plot.
+
 ### Panel
 
 A configured panel kind: bound to specific metric IDs and parameter values,
@@ -213,8 +216,10 @@ Don't call it: overriding a tab ("override" is taken by display overrides).
 
 ### 3D panel
 
-A panel that shows a visualization view in a tab's grid, beside 2D panels.
-Browser only. It is either **linked** or **independent**:
+A panel that shows a visualization view in a tab's grid, beside 2D panels
+(`kind = "3d"` in a tab file). Browser only: the desktop skips a tab made only
+of 3D panels, the built-in "3D" tab among them, because it has its own 3D
+window. It is either **linked** or **independent**:
 
 - **Linked** (the default): shows the main view. Every linked 3D panel, in any
   tab, shows the same thing.

@@ -37,8 +37,42 @@ def test_builtin_tabs_are_one_file_per_tab():
         with open(path, "rb") as f:
             assert len(tomllib.load(f).get("tabs", [])) == 1, path.name
 
-    # First file (01_*) is Basic Errors → first tab returned.
-    assert load_builtin_tabs()[0].name == "Basic Errors"
+    # First file (00_*) is the 3D tab, then 01_* Basic Errors.
+    assert [t.name for t in load_builtin_tabs()[:2]] == ["3D", "Basic Errors"]
+
+
+def test_builtin_3d_tab_holds_one_linked_3d_panel():
+    """The fixed 3D tab of the browser is an ordinary built-in tab now
+    (ADR 0056 rule 6): one 3D panel filling it, showing the main view."""
+    tab = load_builtin_tabs()[0]
+    assert tab.name == "3D"
+    assert [(p.kind, p.row, p.col, p.rowspan, p.colspan) for p in tab.panels] == [
+        ("3d", 0, 0, 1, 1)]
+    assert tab.panels[0].metrics == {}
+
+
+def test_3d_panel_takes_no_metrics():
+    """A 3D panel shows a visualization view; it binds no metric roles."""
+    with pytest.raises(ValidationError, match="3D panel"):
+        AnalysisTabConfig.model_validate({"name": "T", "panels": [{
+            "kind": "3d", "row": 0, "col": 0,
+            "metrics": {"y": {"metric": "ffast.gyradius"}},
+        }]})
+
+
+def test_3d_panels_compile_no_metrics_and_reach_the_layout():
+    """compile and layout skip over 3D panels' empty metrics; the panel still
+    travels to the browser with its place."""
+    import ffast.metrics.builtin  # noqa: F401
+
+    tab = AnalysisTabConfig.model_validate({"name": "Mixed", "panels": [
+        {"kind": "3d", "row": 0, "col": 0},
+        {"kind": "timeline", "row": 0, "col": 1,
+         "metrics": {"y": {"metric": "ffast.gyradius", "transform": "smooth"}}},
+    ]})
+    assert compile_tabs_metrics([tab]) == ["ffast.gyradius__smooth"]
+    panels = build_tab_layout([tab])[0]["panels"]
+    assert panels[0]["kind"] == "3d" and panels[0]["metrics"] == {}
 
 
 def test_basic_errors_tab_is_declarative():
@@ -165,7 +199,7 @@ def test_build_tab_layout_shape_and_resolved_ids():
 
     layout = build_tab_layout(load_builtin_tabs())
     names = [t["name"] for t in layout]
-    assert names[0] == "Basic Errors" and "Gyration" in names
+    assert names[:2] == ["3D", "Basic Errors"] and "Gyration" in names
 
     by_name = {t["name"]: t for t in layout}
     basic = by_name["Basic Errors"]
@@ -210,8 +244,8 @@ def test_build_tab_layout_appends_custom_tab_identically():
     custom = layout[-1]
     assert custom["name"] == "Custom"
     # Same keys as a built-in tab and its panels.
-    assert set(custom) == set(layout[0])
-    assert set(custom["panels"][0]) == set(layout[0]["panels"][0])
+    assert set(custom) == set(layout[1])
+    assert set(custom["panels"][0]) == set(layout[1]["panels"][0])
     assert custom["panels"][0]["metrics"]["y"] == "ffast.energy_prediction"
 
 

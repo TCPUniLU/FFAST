@@ -3,8 +3,8 @@
  */
 
 import { FFastConnection } from './connection.js';
-import { MoleculeRenderer } from './renderer.js';
-import { PickController } from './picking.js';
+import { Panel3D, ViewRenderers } from './views3d.js';
+import { ensureMainView, isLinked3D, showsMainView } from './tab_rules.js';
 import { infoReadout } from './measure.js';
 import { MetricClient } from './metrics.js';
 import { AnalysisManager } from './analysis.js';
@@ -77,7 +77,14 @@ const HINTS = {
 export class FFastApp {
   constructor() {
     this._conn = null;
-    this._renderer = null;
+    // The main view (ADR 0056): the one visualization view the rail drives,
+    // drawn by every linked 3D panel. Its renderers come and go with the
+    // tabs; this keeps its scene, settings and camera together.
+    this._mainView = null;
+    /** @type {Map<HTMLElement, Panel3D>} 3D grid cell → its panel */
+    this._panels3d = new Map();
+    /** The 3D panel the active tab's 3D controls act on, or null. */
+    this._activePanel = null;
     this._datasets = new Map();   // fingerprint → meta
     this._models = new Map();     // model fingerprint → {name, dataset_fingerprints}
 
@@ -88,11 +95,7 @@ export class FFastApp {
     this._currentModelFp = null;    // selected prediction, or null
     this._currentViewId = null;
     this._lastOpenedDatasetFp = null;  // last dataset_ref sent via OPEN_VIEW
-    this._activeTab = 'loupe';
-    // Last rendered snapshot. Read by _currentDynamicBondPairs(): the wire
-    // ships bond segments as coordinates, never index pairs, so bonds
-    // "fill from dynamic" recovers pairs by matching endpoints to these atoms.
-    this._lastScene = null;
+    this._activeTab = null;            // id of the tab on screen
     this._viewShown = false;        // a scene is drawn; else the empty state (ADR 0055)
     this._framedViews = new Set();  // view ids whose first snapshot fitted the atoms
     this._frameCount = 0;
@@ -112,7 +115,7 @@ export class FFastApp {
       setStatus: (text, kind) => this._setStatus(text, kind),
       getCurrentDatasetFp: () => this._currentDatasetFp,
       getDatasetMeta: (fp) => this._datasets.get(fp),
-      capturePng: (opts) => this._renderer.capturePng(opts),
+      capturePng: (opts) => this.renderer.capturePng(opts),
     });
 
     // ADR 0045 Phase 1: scientific view-command plumbing (mirrors Qt's
@@ -130,8 +133,8 @@ export class FFastApp {
     this._patchPending = false;
 
     // Picking (ADR 0045 Phase 2, issue 10): one armed tool at a time and its
-    // accumulated picks (displayed index + scientific atom id).
-    this._pickController = null;
+    // accumulated picks (displayed index + scientific atom id). The tool is
+    // armed on the active 3D panel's pick controller.
     this._activeTool = null;   // tool id, or null (orbit)
     this._picked = [];         // [{displayIndex, atomId}] for the active tool
 
@@ -146,50 +149,146 @@ export class FFastApp {
     this._autoDatasetFp = null;
     this._autoModelFp = null;
 
-    this._initRenderer();
-    this._initTabs();
+    this._initViews();
     this._initUI();
     this._initSidebarPanes();
     this._initPickTools();
+    this._initTabs();
     this._applyUrlParams();
   }
 
-  /** @returns {MoleculeRenderer} public accessor (tests, tooltips). */
-  get renderer() { return this._renderer; }
+  /** The main-view renderer the 3D controls act on: the active tab's 3D
+   * panel, else one drawn earlier. Public for tests and tooltips.
+   * @returns {import('./renderer.js').MoleculeRenderer|null} */
+  get renderer() { return this._activePanel?.renderer || this._mainView.shown; }
 
-  // ── tabs: 3D Loupe + analysis tabs (mirrors the Qt MainContentTabWidget) ──
-  // Only the Loupe tab is static; the analysis tabs are built from the server's
-  // TAB_LAYOUT by AnalysisManager (ADR 0045 Phase 3), so browser and desktop
-  // read the same server-parsed layout.
+  // ── tabs (ADR 0056) ─────────────────────────────────────────────────────
+  // Every tab, the built-in "3D" tab included, comes from the server's
+  // TAB_LAYOUT (built by AnalysisManager, ADR 0045 Phase 3), so browser and
+  // desktop read the same server-parsed layout. Until a server has sent one,
+  // the default 3D tab stands in. A tab may mix 2D and 3D panels; the one set
+  // of 3D controls (pick bar, playback strip, settings sidebar) moves into
+  // whichever tab is shown, when that tab has a 3D panel.
   _initTabs() {
-    const tabbar = document.getElementById('tabbar');
-    const tab = document.createElement('div');
-    tab.className = 'tab' + (this._activeTab === 'loupe' ? ' active' : '');
-    tab.textContent = '3D Loupe';
-    tab.dataset.tab = 'loupe';
-    tab.addEventListener('click', () => this._selectTab('loupe'));
-    tabbar.appendChild(tab);
+    this._analysis = new AnalysisManager({
+      tabbar: document.getElementById('tabbar'),
+      tabpanels: document.getElementById('tabpanels'),
+      metricClient: null,
+      onSelectTab: (id) => this._selectTab(id),
+      onSub: (o) => this._sendDeclareSubset(o),
+      onPointFrame: (ci) => this._jumpToFrame(ci),
+    });
+    this._applyLayout([]);
   }
 
-  _selectTab(id) {
+  /** Build the tabs from a layout. Linked 3D panels already drawing move into
+   * the new layout's linked cells, keeping their renderer and scene; the rest
+   * are given back. The tab on screen stays on screen when it still exists. */
+  _applyLayout(tabs) {
+    const shownName = this._analysis.tab(this._activeTab)?.name;
+    const old = [...this._panels3d.values()];
+    const reusable = old.filter((panel) => panel.linked);
+    this._parkChrome();
+    this._setActivePanel(null);
+    this._panels3d = new Map();
+    this._analysis.setLayout(ensureMainView(tabs));
+    for (const { id } of this._analysis.tabList) {
+      for (const cell of this._analysis.tab(id).cells3d) {
+        if (!isLinked3D(cell.spec) || !reusable.length) continue;
+        const panel = reusable.shift();
+        panel.spec = cell.spec;
+        panel.mount(cell.el);
+        this._panels3d.set(cell.el, panel);
+      }
+    }
+    for (const panel of old) if (![...this._panels3d.values()].includes(panel)) this._disposePanel(panel);
+    const list = this._analysis.tabList;
+    const next = list.find((t) => t.name === shownName) || list.find((t) => t.id === this._mainViewTabId());
+    this._activeTab = null;
+    // No new snapshot needed: a reused panel still draws the scene, and a
+    // new one starts from the main view's kept scene and camera.
+    this._selectTab(next.id, { reopen: false });
+  }
+
+  /** The first tab with a linked 3D panel; there always is one (ADR 0056 rule 6). */
+  _mainViewTabId() {
+    return this._analysis.tabList.find((t) => showsMainView(this._analysis.tab(t.id).spec))?.id;
+  }
+
+  _disposePanel(panel) {
+    if (panel.renderer) this._mainView.remove(panel.renderer);
+    if (panel === this._activePanel) this._setActivePanel(null);
+    panel.dispose();
+  }
+
+  _selectTab(id, { reopen = true } = {}) {
+    const tab = this._analysis.tab(id);
+    if (!tab) return;
     this._activeTab = id;
-    for (const tab of document.querySelectorAll('#tabbar .tab'))
-      tab.classList.toggle('active', tab.dataset.tab === id);
-    for (const panel of document.querySelectorAll('#tabpanels .tabpanel'))
-      panel.classList.toggle('active', panel.id === `panel-${id}`);
-    // Opening/returning to the Loupe with a dataset selected ensures a live view.
-    if (id === 'loupe' && this._conn && this._currentDatasetFp) this._openView();
-    // An analysis tab renders (or refreshes) its panels lazily on activation.
-    else if (id.startsWith('analysis-')) this._analysis?.activate(id);
+    for (const el of document.querySelectorAll('#tabbar .tab'))
+      el.classList.toggle('active', el.dataset.tab === id);
+    for (const el of document.querySelectorAll('#tabpanels .tabpanel'))
+      el.classList.toggle('active', el.id === `panel-${id}`);
+
+    // The tab is on screen now, so its 3D panels have a size to draw at;
+    // a panel's renderer is made the first time its tab is shown.
+    const panels = [];
+    for (const cell of tab.cells3d) {
+      if (!isLinked3D(cell.spec)) continue;   // independent panels: ADR 0056 step 7
+      let panel = this._panels3d.get(cell.el);
+      if (!panel) {
+        panel = new Panel3D(cell.spec);
+        panel.mount(cell.el);
+        this._panels3d.set(cell.el, panel);
+      }
+      if (!panel.renderer)
+        this._mainView.add(panel.ensureRenderer((entries, opts) => this._onPick(entries, opts)));
+      panels.push(panel);
+    }
+    if (tab.cells3d.length) this._mountChrome(tab);
+    else this._parkChrome();
+    this._setActivePanel(panels[0] || null);
+    // Showing the main view with a dataset selected ensures a live view.
+    if (reopen && this._activePanel && this._conn && this._currentDatasetFp) this._openView();
+    // 2D panels render (or refresh) lazily on activation.
+    this._analysis.activate(id);
+    this._syncEmptyState();
   }
 
-  _initRenderer() {
-    const canvas = document.getElementById('canvas');
-    this._renderer = new MoleculeRenderer(canvas);
-    this._renderer._onCameraChange = (cam) => {
-      this._sendSetCamera(cam);
-      this._panes?.camera.syncFromCamera(cam);
-    };
+  /** The 3D controls go into a tab with a 3D panel: the pick bar above its
+   * grid, the playback strip below, the settings sidebar beside it. */
+  _mountChrome(tab) {
+    const byId = (x) => document.getElementById(x);
+    tab.mainEl.prepend(byId('pick-bar'));
+    tab.mainEl.append(byId('loupe-controls'));
+    tab.bodyEl.append(byId('sidebar-resize'), byId('loupe-sidebar'));
+  }
+
+  /** Put the 3D controls away, for a tab without a 3D panel. */
+  _parkChrome() {
+    const byId = (x) => document.getElementById(x);
+    byId('chrome3d').append(byId('pick-bar'), byId('loupe-controls'), byId('sidebar-resize'),
+      byId('loupe-sidebar'), byId('overlay'), byId('hint-bar'));
+  }
+
+  /** Point the 3D controls at `panel`: an armed pick tool moves to it, and so
+   * do the empty-state Load Dataset… button and the hint bar. */
+  _setActivePanel(panel) {
+    if (panel === this._activePanel) return;
+    this._activePanel?.pick?.disarm();
+    this._activePanel = panel;
+    if (!panel) return;
+    panel.viewport.append(document.getElementById('overlay'), document.getElementById('hint-bar'));
+    if (this._activeTool) panel.pick.arm({ id: this._activeTool, ...PICK_TOOLS[this._activeTool] });
+  }
+
+  _initViews() {
+    this._mainView = new ViewRenderers({
+      onCameraChange: (cam) => {
+        this._sendSetCamera(cam);
+        this._panes?.camera.syncFromCamera(cam);
+      },
+    });
   }
 
   _initUI() {
@@ -203,7 +302,7 @@ export class FFastApp {
       if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type === 'text') this._connect();
     });
     document.getElementById('reset-camera-btn').addEventListener('click', () => {
-      this._renderer.resetCamera();
+      this.renderer?.resetCamera();
     });
     document.getElementById('popout-btn').addEventListener('click', () => this._openPopout());
 
@@ -364,7 +463,7 @@ export class FFastApp {
    * for something to act on (ADR 0055). */
   _syncEmptyState() {
     const shown = this._viewShown;
-    document.getElementById('panel-loupe').classList.toggle('no-view', !shown);
+    document.getElementById('content').classList.toggle('no-view', !shown);
     document.getElementById('overlay').classList.toggle('hidden', shown);
     const why = whyUnavailable(this._action('load-dataset'));
     const btn = document.getElementById('empty-load-btn');
@@ -397,13 +496,13 @@ export class FFastApp {
     });
 
     const camera = createCameraPane(sidebarEl, {
-      onOrtho: (enabled) => this._renderer.setOrthographic(enabled),
-      onPreset: (az, el) => this._renderer.setCameraAngles({ azimuth: az, elevation: el }),
-      onManual: (az, el, dist) => this._renderer.setCameraAngles({ azimuth: az, elevation: el, distance: dist }),
+      onOrtho: (enabled) => this.renderer?.setOrthographic(enabled),
+      onPreset: (az, el) => this.renderer?.setCameraAngles({ azimuth: az, elevation: el }),
+      onManual: (az, el, dist) => this.renderer?.setCameraAngles({ azimuth: az, elevation: el, distance: dist }),
       onCOM: (enabled) => { this._originCenterOfMass = enabled; },
-      onGizmo: (enabled) => this._renderer.setGizmoEnabled(enabled),
+      onGizmo: (enabled) => this._mainView.setGizmoEnabled(enabled),
       onBackground: (hex) => {
-        this._renderer.setBackgroundColor(hex);
+        this._mainView.setBackgroundColor(hex);
         this._panes?.export.setBackground(hex);   // keep the Export bg in step
       },
     });
@@ -416,7 +515,7 @@ export class FFastApp {
     });
 
     const bonds = createBondsPane(sidebarEl, {
-      onStyle: (width, color, chosen) => this._renderer.setBondStyle(width, color, chosen),
+      onStyle: (width, color, chosen) => this._mainView.setBondStyle(width, color, chosen),
       onApply: (bondType, fixedIndices) => {
         this._sendSetParameter('ffast.bonds', 'bond_type', bondType);
         this._sendSetParameter('ffast.bonds', 'fixed_indices', bondType === 'Fixed' ? fixedIndices : []);
@@ -456,7 +555,7 @@ export class FFastApp {
 
     this._panes = { colorBy, camera, display, bonds, forces, extract, export: exportPane, align };
     // The rich look sizes ball-and-stick atoms from the Atom size setting.
-    this._renderer.atomScale = () => display.atomScale();
+    this._mainView.atomScale = () => display.atomScale();
 
     // One section open at a time; which one, and whether the sidebar is
     // hidden, is browser layout state, never session state (ADR 0055).
@@ -469,23 +568,23 @@ export class FFastApp {
     addSectionHelp(sidebarEl, SECTION_HELP, this._sections);
     this._renderQuickStyles();
     this._setSidebarHidden(layout.sidebarHidden === true, false);
-    // Draggable edges for the sidebar and the object list; the 3D view keeps
-    // at least 300 px.
-    const loupePanel = document.getElementById('panel-loupe');
+    // Draggable edges for the sidebar and the object list; the tab's grid
+    // keeps at least 300 px.
+    const content = document.getElementById('content');
     makeResizable(document.getElementById('sidebar-resize'), sidebarEl, {
       name: 'sidebar', side: 'right', width: 250, min: 200,
-      max: () => Math.max(200, loupePanel.clientWidth - 300 - 6),
+      max: () => Math.max(200, content.clientWidth - 300 - 6),
     });
     makeResizable(document.getElementById('rail-resize'), document.getElementById('objectbar'), {
       name: 'rail', side: 'left', width: 220, min: 150,
       max: () => Math.max(150, Math.min(480, window.innerWidth * 0.4)),
     });
     document.getElementById('sidebar-toggle').addEventListener('click', () =>
-      this._setSidebarHidden(!document.getElementById('panel-loupe').classList.contains('sidebar-hidden')));
+      this._setSidebarHidden(!document.getElementById('content').classList.contains('sidebar-hidden')));
   }
 
   _setSidebarHidden(hidden, remember = true) {
-    document.getElementById('panel-loupe').classList.toggle('sidebar-hidden', hidden);
+    document.getElementById('content').classList.toggle('sidebar-hidden', hidden);
     const btn = document.getElementById('sidebar-toggle');
     btn.setAttribute('aria-pressed', String(hidden));
     btn.textContent = hidden ? '◂ Settings' : 'Settings ▸';
@@ -579,19 +678,12 @@ export class FFastApp {
       // and the view would never open.
       this._conn = conn;
 
-      // Metric channel + analysis-tab manager (ADR 0045 Phase 3). The metric
-      // client registers the METRIC_RESULT handler; build both before connect
-      // so buffered handshake-time replays reach them.
+      // Metric channel (ADR 0045 Phase 3). The metric client registers the
+      // METRIC_RESULT handler; build it before connect so buffered
+      // handshake-time replays reach it.
       this._metricClient = new MetricClient(conn);
-      this._analysis = new AnalysisManager({
-        tabbar: document.getElementById('tabbar'),
-        tabpanels: document.getElementById('tabpanels'),
-        metricClient: this._metricClient,
-        onSelectTab: (id) => this._selectTab(id),
-        onSub: (o) => this._sendDeclareSubset(o),
-        onPointFrame: (ci) => this._jumpToFrame(ci),
-      });
-      conn.on(IN.TAB_LAYOUT, (kw) => this._analysis?.setLayout(kw.tabs || []));
+      this._analysis.setMetricClient(this._metricClient);
+      conn.on(IN.TAB_LAYOUT, (kw) => this._applyLayout(kw.tabs || []));
 
       conn.on(IN.REMOTE_DATASET_META, (kw, args) => this._onDatasetMeta(args[0], kw));
       conn.on(IN.REMOTE_MODEL_META,   (kw, args) => this._onModelMeta(args[0], kw));
@@ -659,13 +751,11 @@ export class FFastApp {
       this._conn.close();
       this._conn = null;
     }
-    if (this._analysis) { this._analysis.clear(); this._analysis = null; }
     this._metricClient = null;
-    if (this._activeTab.startsWith('analysis-')) this._selectTab('loupe');
-    this._lastScene = null;
+    this._analysis.setMetricClient(null);
     this._viewShown = false;
     this._framedViews.clear();
-    this._renderer.clear();
+    this._mainView.clear();
     this._datasets.clear();
     this._models.clear();
     this._currentDatasetFp = null;
@@ -675,6 +765,7 @@ export class FFastApp {
     this._playing = false;
     this._pendingSessionOp = null;
     this._setActiveTool(null);   // release any armed pick tool
+    this._applyLayout([]);       // back to the default 3D tab
     this._renderObjects();
     document.getElementById('disconnect-btn').disabled = true;
     document.getElementById('add-dataset-btn').disabled = true;
@@ -699,7 +790,7 @@ export class FFastApp {
     if (firstSelect) this._currentDatasetFp = fp;
     this._renderObjects();
     if (firstSelect) this._syncAnalysisContext();
-    if (firstSelect && this._conn && this._activeTab === 'loupe') this._openView();
+    if (firstSelect && this._conn && this._activePanel) this._openView();
   }
 
   _onModelMeta(fp, meta) {
@@ -715,7 +806,7 @@ export class FFastApp {
         (meta?.dataset_fingerprints || []).includes(this._currentDatasetFp)) {
       this._currentModelFp = fp;
       this._setStatus(`Prediction "${meta.name || fp.slice(0,8)}" ready`, 'connected');
-      if (this._activeTab === 'loupe') this._openView();
+      if (this._activePanel) this._openView();
       this._syncAnalysisContext();
     }
     this._panes?.forces.refreshModels();
@@ -784,22 +875,21 @@ export class FFastApp {
     if (this._currentModelFp && fps.length && !fps.includes(fp)) this._currentModelFp = null;
     this._renderObjects();
     this._syncAnalysisContext();
-    // Selecting an object drives the 3D view; an analysis tab stays put and
-    // just refetches (via the context sync above).
-    if (this._activeTab === 'loupe') this._openView();
-    else if (!this._activeTab.startsWith('analysis-')) this._selectTab('loupe');
+    // Selecting an object drives the main view; a tab without one stays put
+    // and just refetches (via the context sync above).
+    if (this._activePanel) this._openView();
   }
 
   _selectModel(fp) {
     this._currentModelFp = fp;
     this._renderObjects();
     this._syncAnalysisContext();
-    if (this._activeTab === 'loupe') this._openView();
-    else if (!this._activeTab.startsWith('analysis-')) this._selectTab('loupe');
+    if (this._activePanel) this._openView();
   }
 
   _openView() {
     if (!this._conn || !this._currentDatasetFp) return;
+    this._flushCamera();
     const datasetChanged = this._currentDatasetFp !== this._lastOpenedDatasetFp;
     if (datasetChanged && this._lastOpenedDatasetFp) this._saveDatasetSettings(this._lastOpenedDatasetFp);
 
@@ -868,14 +958,14 @@ export class FFastApp {
     const scene = kw.scene;
     if (!scene) return;
     this._viewVersion = scene.version;
-    this._renderer.applyScene(scene);
+    this._mainView.applyScene(scene);
     // Fit the atoms only on a view's first snapshot. Later snapshots (a tab
     // switch reopens the view) carry the camera the user left, which the
     // server keeps via SET_CAMERA (457dcaa); fitting again would discard it.
     const viewKey = scene.view_id || this._currentViewId;
     if (!this._framedViews.has(viewKey)) {
       this._framedViews.add(viewKey);
-      this._renderer.frameAtoms();
+      this._mainView.frameAtoms();
     }
     this._viewShown = true;
     this._syncEmptyState();
@@ -901,15 +991,13 @@ export class FFastApp {
       slider.disabled = false;
       this._updateFrameLabel(frame_index, n);
     }
-
-    this._lastScene = scene;
   }
 
   /** @param {import('./protocol.js').ScenePatchKwargs} kw */
   _onScenePatch(kw) {
     const changed = kw.changed || [];
     this._viewVersion = kw.to_version;
-    this._renderer.applyPatch(kw, changed);
+    this._mainView.applyPatch(kw, changed);
     if (changed.includes('atoms') && kw.atoms) {
       this._panes.colorBy.setColorBy(kw.atoms.color_by || null);
       this._trackCameraCOM(kw.atoms.positions);
@@ -954,8 +1042,8 @@ export class FFastApp {
 
   // ── picking (ADR 0045 Phase 2) ──────────────────────────────────────────
   // A pick toolbar (one named button per tool) + a contextual strip (active
-  // tool, pick count, read-out, clear). The PickController owns the pointer
-  // while a tool is armed and reports resolved atoms here.
+  // tool, pick count, read-out, clear). The active 3D panel's PickController
+  // owns the pointer while a tool is armed and reports resolved atoms here.
   _initPickTools() {
     const toolbar = document.getElementById('pick-toolbar');
     for (const [id, t] of Object.entries(PICK_TOOLS)) {
@@ -971,12 +1059,6 @@ export class FFastApp {
       toolbar.appendChild(btn);
     }
     document.getElementById('pick-clear').addEventListener('click', () => this._clearPicks());
-    this._pickController = new PickController(
-      document.getElementById('canvas'),
-      document.getElementById('viewport'),
-      this._renderer,
-      { onPick: (entries, opts) => this._onPick(entries, opts) },
-    );
     this._pickReadout = '';
     this._updatePickStrip();
   }
@@ -987,12 +1069,13 @@ export class FFastApp {
     this._clearPicks();   // switching tools starts a fresh picked set
     for (const btn of document.querySelectorAll('#pick-toolbar .pick-tool-btn'))
       btn.classList.toggle('active', btn.dataset.tool === id);
+    const pick = this._activePanel?.pick;
     if (id) {
-      this._pickController.arm({ id, ...PICK_TOOLS[id] });
+      pick?.arm({ id, ...PICK_TOOLS[id] });
       if (PICK_TOOLS[id].section) this._sections.open(PICK_TOOLS[id].section);
       if (id === 'align') this._panes.align.enableAtomAlignMode();
-    } else if (this._pickController) {
-      this._pickController.disarm();
+    } else {
+      pick?.disarm();
     }
     this._updatePickStrip();
   }
@@ -1024,7 +1107,7 @@ export class FFastApp {
     // clear the set after acting so the overlay tracks the fresh set.
     this._sendSetSelection('picked', 'current_structure', ids);
     if (id === 'info') {
-      const pts = this._picked.map((e) => this._renderer.atomPosition(e.displayIndex)).filter(Boolean);
+      const pts = this._picked.map((e) => this.renderer.atomPosition(e.displayIndex)).filter(Boolean);
       this._pickReadout = infoReadout(pts, ids);
     } else if (id === 'extract') {
       this._panes.extract.setPickedIndices(ids);
@@ -1092,9 +1175,9 @@ export class FFastApp {
     this._setStatus(`Sub-selecting ${o.indices.length} structure(s)…`, 'connected');
   }
 
-  /** Jump the 3D view to a structure clicked in an analysis scatter (PRD 63). */
+  /** Jump the main view to a structure clicked in an analysis scatter (PRD 63). */
   _jumpToFrame(configIndex) {
-    this._selectTab('loupe');
+    if (!this._activePanel) this._selectTab(this._mainViewTabId());
     this._setFrame(configIndex);
   }
 
@@ -1146,7 +1229,7 @@ export class FFastApp {
     const n = positions.length;
     const sum = [0, 0, 0];
     for (const [x, y, z] of positions) { sum[0] += x; sum[1] += y; sum[2] += z; }
-    this._renderer.recenterTo([sum[0] / n, sum[1] / n, sum[2] / n]);
+    this.renderer?.recenterTo([sum[0] / n, sum[1] / n, sum[2] / n]);
   }
 
   /** Bonds "fill from dynamic" (issue 06): the wire only ships bond segments
@@ -1154,7 +1237,7 @@ export class FFastApp {
    * each segment endpoint back to the last-rendered atom positions — exact
    * matches since both come from the same server-computed frame. */
   _currentDynamicBondPairs() {
-    const scene = this._lastScene;
+    const scene = this._mainView.scene;
     const segs = scene?.bonds?.segments;
     const positions = scene?.atoms?.positions;
     if (!segs || !positions) return [];
@@ -1264,13 +1347,20 @@ export class FFastApp {
   _sendSetCamera(cam) {
     if (!this._conn || !this._currentViewId) return;
     clearTimeout(this._cameraThrottle);
-    this._cameraThrottle = setTimeout(() => {
-      this._conn.send(OUT.VIEW_COMMAND, {
-        type: 'SET_CAMERA',
-        view_id: this._currentViewId,
-        camera: cam,
-      });
-    }, 100);
+    const viewId = this._currentViewId;
+    this._cameraSend = () => {
+      this._cameraSend = null;
+      this._conn?.send(OUT.VIEW_COMMAND, { type: 'SET_CAMERA', view_id: viewId, camera: cam });
+    };
+    this._cameraThrottle = setTimeout(this._cameraSend, 100);
+  }
+
+  /** Send a camera still waiting out the throttle now, before a request
+   * whose reply carries the server's camera (OPEN_VIEW's snapshot) could
+   * bring back the one from before it. */
+  _flushCamera() {
+    clearTimeout(this._cameraThrottle);
+    this._cameraSend?.();
   }
 
   _updateFrameLabel(frame, total) {

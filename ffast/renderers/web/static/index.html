@@ -8,8 +8,9 @@
     /* palette — mirrors the Qt desktop tokens (config/uiConfig.py BGColor and
        HLColor families, config/default.json loupeBGColor) so the browser reads
        as the same app: Discord-grey surfaces, muted-grey text, teal accent.
-       Layout mirrors the Qt shell: object-list rail beside tabbed main content,
-       with the 3D Loupe as one tab among the analysis tabs. */
+       Layout: object-list rail beside tabbed main content. Every tab is a
+       grid of 2D and 3D panels (ADR 0056); the built-in "3D" tab is one 3D
+       panel filling its tab. */
 :root { color-scheme: dark; }   /* native controls (spinners, pickers) drawn dark */
     :root {
       --bg1: #202225;   /* darkest — app base            (@BGColor1) */
@@ -206,12 +207,28 @@
       background: transparent; color: var(--text);
       box-shadow: inset 0 0 0 1px var(--hl2);
     }
+    .analysis-controls[hidden] { display: none; }
+    /* A tab: controls row, then the body — the main column (pick bar, grid,
+       playback strip) beside the 3D settings sidebar. app.js moves the 3D
+       controls into the tab on screen when it has a 3D panel (ADR 0056). */
+    .tab-body { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+    .tab-main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+    .tab-msg { flex: 1; }
+    .tab-msg[hidden], .analysis-grid[hidden] { display: none; }
+    #chrome3d { display: none; }
     .analysis-grid {
-      flex: 1; overflow: auto; padding: 10px;
+      flex: 1; overflow: auto; padding: 10px; min-height: 0;
       display: grid; gap: 10px; align-content: start;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       grid-auto-rows: minmax(300px, auto);
     }
+    /* A tab with one cell gives it the whole height. */
+    .analysis-grid.fill { grid-template-rows: minmax(0, 1fr); align-content: stretch; }
+    /* ...and a 3D panel alone is the whole tab, edge to edge (the "3D" tab). */
+    .analysis-grid.fill:has(> .panel-3d:not([data-title])) { padding: 0; }
+    .analysis-grid.fill > .panel-3d:not([data-title]) { border: 0; border-radius: 0; }
+    .grid-slot { display: flex; min-width: 0; min-height: 0; }
+    .grid-slot > .analysis-panel { flex: 1 1 auto; }
     .analysis-panel {
       background: var(--bg2); border: 1px solid var(--bg3); border-radius: 5px;
       display: flex; flex-direction: column; overflow: auto; min-width: 0; min-height: 0;
@@ -288,31 +305,35 @@
     #pick-clear { width: 22px; height: 20px; padding: 0; font-size: 11px; }
 
     /* rubber-band box while dragging a rectangle pick tool */
-    #pick-rect {
+    .pick-rect {
       position: absolute; display: none; z-index: 5; pointer-events: none;
       border: 1px solid var(--hl2); background: var(--sel);
     }
 
-    /* ── 3D viewport (inside the Loupe tab) ──────────────────────────── */
-    #viewport {
+    /* ── 3D panels: one viewport and canvas each (ADR 0056) ──────────── */
+    .analysis-panel.panel-3d { overflow: hidden; }
+    .viewport {
       flex: 1;
       position: relative;
       overflow: hidden;
+      min-height: 0;
       background: #000;   /* Qt loupe default (default.json loupeBGColor) */
     }
-    #canvas { display: block; width: 100%; height: 100%; }
+    /* Out of the flow, so the canvas's own pixel size never feeds back into
+       the grid's row heights. */
+    canvas.view3d { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
     #overlay {
       position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
       text-align: center; color: #55585f; pointer-events: none;
     }
     #overlay.hidden { display: none; }
     #empty-load-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: 13px; }
-    #panel-loupe.no-view #loupe-sidebar,
-    #panel-loupe.no-view #pick-bar,
-    #panel-loupe.no-view #loupe-controls,
-    #panel-loupe.sidebar-hidden #loupe-sidebar,
-    #panel-loupe.no-view #sidebar-resize,
-    #panel-loupe.sidebar-hidden #sidebar-resize { display: none; }
+    #content.no-view #loupe-sidebar,
+    #content.no-view #pick-bar,
+    #content.no-view #loupe-controls,
+    #content.sidebar-hidden #loupe-sidebar,
+    #content.no-view #sidebar-resize,
+    #content.sidebar-hidden #sidebar-resize { display: none; }
 
     /* draggable panel edges (resizers.js) */
     .resize-handle {
@@ -358,10 +379,7 @@
       border-radius: 3px; color: var(--text1); padding: 2px 4px; font-size: 11px;
     }
 
-    /* ── Loupe: viewport column + settings sidebar ──────────────────────── */
-    #panel-loupe { flex-direction: row; }
-    #viewport-col { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
-
+    /* ── 3D settings sidebar ─────────────────────────────────────────── */
     #loupe-sidebar {
       width: 250px; flex-shrink: 0;
       background: var(--bg2); border-left: 1px solid var(--bg3);
@@ -481,6 +499,9 @@
     body.loupe-only #objectbar,
     body.loupe-only .resize-handle,
     body.loupe-only #tabbar,
+    body.loupe-only .analysis-controls,
+    body.loupe-only .grid-slot,
+    body.loupe-only .analysis-scrollstrip,
     body.loupe-only #popout-btn,
     body.loupe-only #file-menu,
     body.loupe-only #loupe-sidebar,
@@ -780,68 +801,67 @@
     </div>
 
     <div id="rail-resize" class="resize-handle"></div>
-    <!-- tabbed main content: 3D Loupe + analysis tabs -->
-    <div id="content">
+    <!-- tabbed main content; every tab is built from the server's tab layout
+         (analysis.js), the built-in "3D" tab included (ADR 0056) -->
+    <div id="content" class="no-view">
       <div id="tabbar"></div>
-      <div id="tabpanels">
-        <div class="tabpanel active no-view" id="panel-loupe">
-          <div id="viewport-col">
-            <!-- pick toolbar + contextual strip (ADR 0045 Phase 2, issue 10):
-                 one armed tool at a time, with its live pick count + read-out -->
-            <div id="pick-bar">
-              <div id="pick-toolbar"></div>
-              <div id="pick-strip" class="hidden">
-                <span id="pick-strip-tool"></span>
-                <span class="pick-sep">·</span>
-                <span id="pick-strip-count"></span>
-                <span id="pick-readout"></span>
-                <button id="pick-clear" title="Clear picks">✕</button>
-              </div>
-              <button id="sidebar-toggle" aria-pressed="false" title="Hide the settings sidebar">Settings ▸</button>
-            </div>
-            <div id="viewport">
-              <canvas id="canvas"></canvas>
-              <!-- Empty state (ADR 0055): until a view is open, the viewport offers
-                   Load Dataset… and the 3D controls stay hidden. -->
-              <div id="overlay">
-                <div class="big">No dataset open</div>
-                <div class="small" id="overlay-hint">Load a dataset to see it here.</div>
-                <button id="empty-load-btn">Load Dataset…</button>
-              </div>
-              <!-- hint bar (ADR 0055): numbered next steps, dismissable -->
-              <div id="hint-bar" class="hidden" role="note">
-                <span id="hint-text"></span>
-                <button id="hint-dismiss" title="Dismiss this hint">✕</button>
-              </div>
-            </div>
-            <div id="loupe-controls">
-              <button id="prev-frame-btn" class="icon-btn" title="Previous frame" disabled>◀</button>
-              <button id="play-pause-btn" class="icon-btn" title="Play/Pause" disabled>▶</button>
-              <button id="next-frame-btn" class="icon-btn" title="Next frame" disabled>▶|</button>
-              <span class="ctl-label">Frame</span>
-              <input id="frame-slider" type="range" min="0" max="0" value="0" step="1" disabled>
-              <span id="frame-label">0 / 0</span>
-              <!-- FPS and Skip wait in a ⚙ pop-up (ADR 0055) -->
-              <div id="playback-settings">
-                <button id="playback-gear" class="icon-btn" aria-haspopup="dialog" aria-expanded="false"
-                        title="Playback settings (FPS, Skip)">⚙</button>
-                <div id="playback-pop" class="hidden" role="dialog" aria-label="Playback settings">
-                  <label class="ctl-label" for="fps-input">FPS</label>
-                  <input id="fps-input" class="ctl-number" type="number" min="1" max="5000" value="30">
-                  <label class="ctl-label" for="skip-input">Skip</label>
-                  <input id="skip-input" class="ctl-number" type="number" min="0" max="99999" value="0">
-                </div>
-              </div>
-              <button id="reset-camera-btn" disabled>Reset Camera</button>
-              <button id="popout-btn" title="Open this 3D view in a new browser tab" disabled>⧉ New Tab</button>
-            </div>
-          </div>
-          <div id="sidebar-resize" class="resize-handle"></div>
-          <div id="loupe-sidebar"></div>
-        </div>
-        <!-- analysis tab panels injected by ffast-viewer.js -->
-      </div>
+      <div id="tabpanels"></div>
     </div>
+  </div>
+
+  <!-- The one set of 3D controls. app.js moves them into the tab on screen
+       when that tab has a 3D panel: pick bar above its grid, playback strip
+       below, sidebar beside; the empty state and hint bar go into the 3D
+       panel they act on (ADR 0056). They wait here otherwise. -->
+  <div id="chrome3d">
+    <!-- pick toolbar + contextual strip (ADR 0045 Phase 2, issue 10):
+         one armed tool at a time, with its live pick count + read-out -->
+    <div id="pick-bar">
+      <div id="pick-toolbar"></div>
+      <div id="pick-strip" class="hidden">
+        <span id="pick-strip-tool"></span>
+        <span class="pick-sep">·</span>
+        <span id="pick-strip-count"></span>
+        <span id="pick-readout"></span>
+        <button id="pick-clear" title="Clear picks">✕</button>
+      </div>
+      <button id="sidebar-toggle" aria-pressed="false" title="Hide the settings sidebar">Settings ▸</button>
+    </div>
+    <!-- Empty state (ADR 0055): until a view is open, the viewport offers
+         Load Dataset… and the 3D controls stay hidden. -->
+    <div id="overlay">
+      <div class="big">No dataset open</div>
+      <div class="small" id="overlay-hint">Load a dataset to see it here.</div>
+      <button id="empty-load-btn">Load Dataset…</button>
+    </div>
+    <!-- hint bar (ADR 0055): numbered next steps, dismissable -->
+    <div id="hint-bar" class="hidden" role="note">
+      <span id="hint-text"></span>
+      <button id="hint-dismiss" title="Dismiss this hint">✕</button>
+    </div>
+    <div id="loupe-controls">
+      <button id="prev-frame-btn" class="icon-btn" title="Previous frame" disabled>◀</button>
+      <button id="play-pause-btn" class="icon-btn" title="Play/Pause" disabled>▶</button>
+      <button id="next-frame-btn" class="icon-btn" title="Next frame" disabled>▶|</button>
+      <span class="ctl-label">Frame</span>
+      <input id="frame-slider" type="range" min="0" max="0" value="0" step="1" disabled>
+      <span id="frame-label">0 / 0</span>
+      <!-- FPS and Skip wait in a ⚙ pop-up (ADR 0055) -->
+      <div id="playback-settings">
+        <button id="playback-gear" class="icon-btn" aria-haspopup="dialog" aria-expanded="false"
+                title="Playback settings (FPS, Skip)">⚙</button>
+        <div id="playback-pop" class="hidden" role="dialog" aria-label="Playback settings">
+          <label class="ctl-label" for="fps-input">FPS</label>
+          <input id="fps-input" class="ctl-number" type="number" min="1" max="5000" value="30">
+          <label class="ctl-label" for="skip-input">Skip</label>
+          <input id="skip-input" class="ctl-number" type="number" min="0" max="99999" value="0">
+        </div>
+      </div>
+      <button id="reset-camera-btn" disabled>Reset Camera</button>
+      <button id="popout-btn" title="Open this 3D view in a new browser tab" disabled>⧉ New Tab</button>
+    </div>
+    <div id="sidebar-resize" class="resize-handle"></div>
+    <div id="loupe-sidebar"></div>
   </div>
 
   <!-- ── remote filesystem browser ─────────────────────────────────────── -->

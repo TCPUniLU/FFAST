@@ -283,6 +283,36 @@ CASES = {
         "TABLE_VALUE_CASES.map(([v, p]) => pn.formatTableValue(v, p))"
     ),
 
+    # ── tr: tab layout rules (ADR 0056) ─────────────────────────────────────
+    "main_view_added_when_missing": (
+        "tr.ensureMainView([{name:'Plots', panels:[{kind:'table', row:0, col:0}]}])"
+        ".map(t => [t.name, t.panels.map(p => p.kind)])"
+    ),
+    "main_view_kept_when_present": (
+        "tr.ensureMainView([{name:'Plots', panels:[{kind:'table'}]},"
+        " {name:'Mine', panels:[{kind:'3d'}]}]).map(t => t.name)"
+    ),
+    "main_view_independent_does_not_count": (
+        "tr.ensureMainView([{name:'Mine', panels:[{kind:'3d', view:'independent'}]}])"
+        ".map(t => t.name)"
+    ),
+    "main_view_default_tab_is_a_copy": (
+        "(() => { const a = tr.ensureMainView([]), b = tr.ensureMainView([]);"
+        "  return a[0] !== b[0] && a[0].panels !== tr.DEFAULT_3D_TAB.panels; })()"
+    ),
+    "last_linked_panel_stays": (
+        "tr.whyPanelStays([{panels:[{kind:'3d'}, {kind:'table'}]}], 0, 0)"
+    ),
+    "linked_panel_with_another_can_go": (
+        "tr.whyPanelStays([{panels:[{kind:'3d'}]}, {panels:[{kind:'3d'}]}], 0, 0)"
+    ),
+    "plot_panel_can_go": (
+        "tr.whyPanelStays([{panels:[{kind:'3d'}, {kind:'table'}]}], 0, 1)"
+    ),
+    "independent_panel_can_go": (
+        "tr.whyPanelStays([{panels:[{kind:'3d'}, {kind:'3d', view:'independent'}]}], 0, 1)"
+    ),
+
     "grad_matches_mapped": (
         "(() => {"
         "  const out = {};"
@@ -321,6 +351,7 @@ def results():
         f"  const pn = await import('{origin}/panels.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
+        f"  const tr = await import('{origin}/tab_rules.js');\n"
         f"  const TABLE_VALUE_CASES = {json.dumps(TABLE_VALUE_CASES)};\n"
         "  const out = {};\n"
         + "".join(
@@ -641,3 +672,36 @@ def test_grouped_density_gives_colour_to_elements_or_to_series(results):
 
 def test_an_unknown_panel_kind_builds_nothing(results):
     assert results["panel_unknown_kind_is_null"] is None
+
+
+# ── tab_rules (ADR 0056) ────────────────────────────────────────────────────
+
+def test_a_layout_without_the_main_view_gets_the_default_3d_tab_first(results):
+    """The main view and the Load Dataset… button need a place (rule 6), even
+    from a server that predates 3D panels."""
+    assert results["main_view_added_when_missing"] == [["3D", ["3d"]], ["Plots", ["table"]]]
+
+
+def test_a_layout_with_a_linked_3d_panel_is_left_alone(results):
+    assert results["main_view_kept_when_present"] == ["Plots", "Mine"]
+
+
+def test_an_independent_3d_panel_does_not_show_the_main_view(results):
+    assert results["main_view_independent_does_not_count"] == ["3D", "Mine"]
+
+
+def test_the_default_3d_tab_is_copied_not_shared(results):
+    assert results["main_view_default_tab_is_a_copy"] is True
+
+
+def test_the_last_linked_3d_panel_cannot_be_removed(results):
+    assert results["last_linked_panel_stays"] == "At least one tab must show the main view"
+
+
+def test_a_linked_3d_panel_can_go_while_another_shows_the_main_view(results):
+    assert results["linked_panel_with_another_can_go"] == ""
+
+
+def test_plot_and_independent_panels_can_always_go(results):
+    assert results["plot_panel_can_go"] == ""
+    assert results["independent_panel_can_go"] == ""

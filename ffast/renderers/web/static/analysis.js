@@ -1,15 +1,18 @@
 /**
- * Analysis-tab manager (ADR 0045 Phase 3) — the browser twin of the desktop's
- * config-driven Analysis Tabs (ADR 0021). It builds the tab headers + panel
- * grids from the server's `TAB_LAYOUT`, fetches each Panel's metric arrays over
- * the metric channel for the current dataset/prediction, and renders them with
- * `panels.js`.
+ * Tab manager (ADR 0045 Phase 3, ADR 0056) — the browser twin of the desktop's
+ * config-driven Analysis Tabs (ADR 0021). It builds every tab header and
+ * panel grid from the server's `TAB_LAYOUT`, fetches each 2D Panel's metric
+ * arrays over the metric channel for the current dataset/prediction, and
+ * renders them with `panels.js`.
  *
- * It owns only the analysis tabs (the 3D Loupe tab stays in app.js). Tabs are
- * appended to `#tabbar` / `#tabpanels`; activation is delegated back to app's
- * generic `_selectTab`, which toggles `.active` by `panel-<id>`.
+ * A tab may mix 2D panels with 3D panels (ADR 0056). The grid cells are built
+ * once per layout; a 3D cell is left empty here for app.js to put a 3D panel
+ * in, and stays put while the 2D cards around it are redrawn. The built-in
+ * "3D" tab is one of these tabs. Tabs are appended to `#tabbar` /
+ * `#tabpanels`; activation is delegated back to app's `_selectTab`, which
+ * toggles `.active` by `panel-<id>`.
  *
- * Panels render lazily: a tab's panels are (re)fetched when it becomes the
+ * 2D panels render lazily: a tab's panels are (re)fetched when it becomes the
  * active tab or when the selection context changes while it is active. A
  * monotonic render token discards results that a newer refresh has superseded.
  *
@@ -22,6 +25,7 @@
 
 import { helpToggle } from './help.js';
 import { renderPanel, PLOT_KINDS, elementSymbol } from './panels.js';
+import { KIND_3D } from './tab_rules.js';
 
 const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
   + 'Outlined buttons follow the selection in the left list; click one to pin this '
@@ -82,7 +86,7 @@ export class AnalysisManager {
   /**
    * @param {{
    *   tabbar: HTMLElement, tabpanels: HTMLElement,
-   *   metricClient: import('./metrics.js').MetricClient,
+   *   metricClient?: import('./metrics.js').MetricClient|null,
    *   onSelectTab: (id: string) => void,
    *   onSub: (o: {parentFp: string, modelFp: string|null, indices: number[], name: string}) => void,
    *   onPointFrame: (configIndex: number) => void,
@@ -131,16 +135,40 @@ export class AnalysisManager {
     if (active) this._renderTab(active);
   }
 
+  /** The live connection's metric channel; null while disconnected. */
+  setMetricClient(client) {
+    this._metrics = client || null;
+    if (!client) this._catalog = new Map();
+  }
+
   /** @param {Array<object>} entries METRIC_CATALOG entries */
   setMetricCatalog(entries) {
     this._catalog = new Map((entries || []).map((e) => [e.id, e]));
     if (this._activeTab()) this._renderTab(this._activeTab());
   }
 
-  /** Build (or rebuild) the analysis tabs from a TAB_LAYOUT payload. */
+  /** Build (or rebuild) every tab from a TAB_LAYOUT payload. */
   setLayout(tabs) {
     this.clear();
     (tabs || []).forEach((spec, i) => this._buildTab(spec, i));
+  }
+
+  /** @returns {Array<{id: string, name: string}>} the tabs, in bar order */
+  get tabList() {
+    return this._tabs.map((t) => ({ id: t.id, name: t.spec.name }));
+  }
+
+  /**
+   * A tab's parts that app.js lays the 3D controls around, and its 3D cells.
+   * @returns {null|{id: string, name: string, spec: object, panelEl: HTMLElement,
+   *   bodyEl: HTMLElement, mainEl: HTMLElement,
+   *   cells3d: Array<{spec: object, index: number, el: HTMLElement}>}}
+   */
+  tab(id) {
+    const t = this._tabs.find((x) => x.id === id);
+    if (!t) return null;
+    const { panelEl, bodyEl, mainEl, cells3d } = t;
+    return { id, name: t.spec.name, spec: t.spec, panelEl, bodyEl, mainEl, cells3d };
   }
 
   /** Update the current selection context and refresh the active tab. */
@@ -168,7 +196,7 @@ export class AnalysisManager {
     if (t) this._renderTab(t);
   }
 
-  /** Remove all analysis tabs (on disconnect / relayout). */
+  /** Remove every tab (on relayout). */
   clear() {
     for (const t of this._tabs) {
       t.tabEl.remove();
@@ -183,7 +211,7 @@ export class AnalysisManager {
 
   // ── tab construction ────────────────────────────────────────────────────
   _buildTab(spec, index) {
-    const id = `analysis-${index}`;
+    const id = `tab-${index}`;
     const tabEl = document.createElement('div');
     tabEl.className = 'tab';
     tabEl.textContent = spec.name;
@@ -191,19 +219,33 @@ export class AnalysisManager {
     tabEl.addEventListener('click', () => this._onSelectTab(id));
     this._tabbar.appendChild(tabEl);
 
+    // .tabpanel > controls row + body; the body holds the main column (pick
+    // bar, grid, playback strip) and, beside it, the 3D settings sidebar —
+    // app.js moves those 3D controls into a tab that has a 3D panel.
     const panelEl = document.createElement('div');
     panelEl.className = 'tabpanel analysis-tab';
     panelEl.id = `panel-${id}`;
 
     const controlsEl = document.createElement('div');
     controlsEl.className = 'analysis-controls';
+    const bodyEl = document.createElement('div');
+    bodyEl.className = 'tab-body';
+    const mainEl = document.createElement('div');
+    mainEl.className = 'tab-main';
+    const msgEl = document.createElement('div');
+    msgEl.className = 'panel-msg tab-msg';
+    msgEl.hidden = true;
     const gridEl = document.createElement('div');
     gridEl.className = 'analysis-grid';
-    panelEl.append(controlsEl, gridEl);
+    mainEl.append(msgEl, gridEl);
+    bodyEl.append(mainEl);
+    panelEl.append(controlsEl, bodyEl);
     this._tabpanels.appendChild(panelEl);
 
     const t = {
-      id, spec, tabEl, panelEl, controlsEl, gridEl,
+      id, spec, tabEl, panelEl, controlsEl, bodyEl, mainEl, msgEl, gridEl,
+      slots: [],                        // 2D grid cells: {el, specs}
+      cells3d: [],                      // 3D grid cells, for app.js
       sharedParams: {},                 // shifted / window
       selectedElements: ['All'],        // element picker state
       selectorEl: null,
@@ -212,11 +254,66 @@ export class AnalysisManager {
       selectedDatasets: null,
       selectedModels: null,
       seriesSelectorEl: null,
-      panelStates: [],                  // one per rendered panel
-      built: false,
     };
     this._tabs.push(t);
+    this._layoutGrid(t);
     this._buildControls(t);
+  }
+
+  /**
+   * Make the grid cells once: honour row/col/span, fold scroll_group members
+   * into one horizontal strip at the first member's cell, and leave each 3D
+   * panel an empty cell. A tab with a single cell gives it the whole height
+   * (the built-in "3D" tab); otherwise rows are at least 300 px and the grid
+   * scrolls.
+   */
+  _layoutGrid(t) {
+    const grid = t.gridEl;
+    const panels = t.spec.panels || [];
+    const maxCol = Math.max(1, ...panels.map((p) => p.col + (p.colspan || 1)));
+    grid.style.gridTemplateColumns = `repeat(${maxCol}, minmax(0, 1fr))`;
+
+    const strips = new Map();   // scroll_group → slot
+    panels.forEach((spec, index) => {
+      const place = (el) => {
+        el.style.gridColumn = `${spec.col + 1} / span ${spec.colspan || 1}`;
+        el.style.gridRow = `${spec.row + 1} / span ${spec.rowspan || 1}`;
+        grid.appendChild(el);
+      };
+      if (spec.kind === KIND_3D) {
+        const el = document.createElement('div');
+        el.className = 'analysis-panel panel-3d';
+        el.dataset.kind = KIND_3D;
+        if (spec.title) {
+          el.dataset.title = spec.title;
+          const title = document.createElement('div');
+          title.className = 'panel-title';
+          title.textContent = spec.title;
+          el.appendChild(title);
+        }
+        place(el);
+        t.cells3d.push({ spec, index, el });
+      } else if (spec.scroll_group) {
+        let slot = strips.get(spec.scroll_group);
+        if (!slot) {
+          const el = document.createElement('div');
+          el.className = 'analysis-scrollstrip';
+          place(el);
+          el.style.gridRow = String(spec.row + 1);
+          slot = { el, specs: [] };
+          strips.set(spec.scroll_group, slot);
+          t.slots.push(slot);
+        }
+        slot.specs.push(spec);
+      } else {
+        const el = document.createElement('div');
+        el.className = 'grid-slot';
+        place(el);
+        t.slots.push({ el, specs: [spec] });
+      }
+    });
+    t.has2d = t.slots.length > 0;
+    grid.classList.toggle('fill', grid.childElementCount === 1);
   }
 
   _buildControls(t) {
@@ -286,22 +383,20 @@ export class AnalysisManager {
       this._renderElementPicker(t);
     }
 
-    // Every analysis tab gets the comparison selector — it is not a configured
-    // control but the tab's own data scope, the desktop's per-tab
-    // DatasetModelSelector.
-    const series = document.createElement('div');
-    series.className = 'ac-item ac-series';
-    series.dataset.control = 'series-selector';
-    el.appendChild(series);
-    t.seriesSelectorEl = series;
-    this._renderSeriesSelector(t);
-
-    if (!el.children.length) {
-      const empty = document.createElement('span');
-      empty.className = 'ac-empty';
-      empty.textContent = t.spec.name;
-      el.appendChild(empty);
+    // Every tab with 2D panels gets the comparison selector — it is not a
+    // configured control but the tab's own data scope, the desktop's per-tab
+    // DatasetModelSelector. A tab of 3D panels showing the main view has no
+    // use for it.
+    if (t.has2d) {
+      const series = document.createElement('div');
+      series.className = 'ac-item ac-series';
+      series.dataset.control = 'series-selector';
+      el.appendChild(series);
+      t.seriesSelectorEl = series;
+      this._renderSeriesSelector(t);
     }
+
+    el.hidden = !el.children.length;
   }
 
   // ── series resolution (dataset × prediction) ────────────────────────────
@@ -420,44 +515,27 @@ export class AnalysisManager {
   }
 
   // ── rendering ─────────────────────────────────────────────────────────────
+  /** Redraw the tab's 2D panels; its 3D cells are left alone. */
   _renderTab(t) {
     const token = ++this._renderToken;
-    const grid = t.gridEl;
-    if (!this._catalog.size) {
-      grid.innerHTML = '<div class="panel-msg">Waiting for metric catalog…</div>';
-      return;
-    }
-    if (!this._tabDatasets(t).length) {
-      grid.innerHTML = '<div class="panel-msg">Select a dataset to view this analysis.</div>';
-      return;
-    }
-    // Lay out the grid: honour row/col, folding scroll_group members into one
-    // horizontal strip at the first member's cell.
-    grid.innerHTML = '';
-    t.panelStates = [];
-    const maxCol = Math.max(1, ...t.spec.panels.map((p) => p.col + p.colspan));
-    grid.style.gridTemplateColumns = `repeat(${maxCol}, minmax(0, 1fr))`;
+    if (!t.has2d) return;
+    let msg = '';
+    if (!this._metrics || !this._catalog.size) msg = 'Waiting for metric catalog…';
+    else if (!this._tabDatasets(t).length) msg = 'Select a dataset to view this analysis.';
+    // A tab of plots only says it once; around a 3D panel each card says it.
+    const whole = !!msg && !t.cells3d.length;
+    t.msgEl.hidden = !whole;
+    t.msgEl.textContent = whole ? msg : '';
+    t.gridEl.hidden = whole;
+    if (whole) return;
 
-    const stripCells = new Map();   // scroll_group → strip element
-    for (const spec of t.spec.panels) {
-      const card = this._buildPanelCard(t, spec, token);
-      if (spec.scroll_group) {
-        let strip = stripCells.get(spec.scroll_group);
-        if (!strip) {
-          strip = document.createElement('div');
-          strip.className = 'analysis-scrollstrip';
-          strip.style.gridColumn = `${spec.col + 1} / span ${spec.colspan}`;
-          strip.style.gridRow = String(spec.row + 1);
-          grid.appendChild(strip);
-          stripCells.set(spec.scroll_group, strip);
-        }
-        strip.appendChild(card.el);
-      } else {
-        card.el.style.gridColumn = `${spec.col + 1} / span ${spec.colspan}`;
-        card.el.style.gridRow = `${spec.row + 1} / span ${spec.rowspan}`;
-        grid.appendChild(card.el);
-      }
-      this._fetchAndRenderPanel(t, spec, card, token);
+    for (const slot of t.slots) {
+      const cards = slot.specs.map((spec) => this._buildPanelCard(t, spec, token));
+      slot.el.replaceChildren(...cards.map((c) => c.el));
+      cards.forEach((card, i) => {
+        if (msg) card.body.innerHTML = `<div class="panel-msg">${msg}</div>`;
+        else this._fetchAndRenderPanel(t, slot.specs[i], card, token);
+      });
     }
   }
 
@@ -705,7 +783,7 @@ export class AnalysisManager {
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.addEventListener('change', () => {
-        globalThis.Plotly.relayout(el, { dragmode: cb.checked ? 'select' : 'zoom' });
+        globalThis.Plotly.relayout(card.body, { dragmode: cb.checked ? 'select' : 'zoom' });
       });
       toggle.append(cb, document.createTextNode('Sub'));
       card.title.appendChild(toggle);

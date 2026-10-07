@@ -160,11 +160,32 @@ export class MoleculeRenderer {
     });
 
     this._resize();
-    window.addEventListener('resize', () => this._resize());
+    this._onWindowResize = () => this._resize();
+    window.addEventListener('resize', this._onWindowResize);
     // The canvas also changes size without the window doing so, e.g. when
     // the sidebar is hidden or shown.
-    new ResizeObserver(() => this._resize()).observe(canvas);
+    this._resizeObserver = new ResizeObserver(() => this._resize());
+    this._resizeObserver.observe(canvas);
     this._startLoop();
+  }
+
+  /** True while the canvas is on screen; a 3D panel in a tab you are not
+   * looking at has no size and is not drawn (ADR 0056). */
+  get drawing() {
+    return this._canvas.isConnected && this._canvas.clientWidth > 0 && this._canvas.clientHeight > 0;
+  }
+
+  /** Stop drawing for good and give the WebGL context back: browsers allow a
+   * page only a handful, and each 3D panel holds one. */
+  dispose() {
+    cancelAnimationFrame(this._rafId);
+    this._rafId = null;
+    window.removeEventListener('resize', this._onWindowResize);
+    this._resizeObserver.disconnect();
+    this._controls.dispose();
+    this.clear();
+    this._renderer.dispose();
+    this._renderer.forceContextLoss();
   }
 
   /** True while the richer look is drawn (fewer than richLookMaxAtoms atoms). */
@@ -197,6 +218,7 @@ export class MoleculeRenderer {
   _resize() {
     const w = this._canvas.clientWidth;
     const h = this._canvas.clientHeight;
+    if (!w || !h) return;   // hidden (another tab); keep the last size
     this._renderer.setSize(w, h, false);
     this._perspCamera.aspect = w / h;
     this._perspCamera.updateProjectionMatrix();
@@ -296,6 +318,7 @@ export class MoleculeRenderer {
   _startLoop() {
     const loop = () => {
       this._rafId = requestAnimationFrame(loop);
+      if (!this.drawing) return;
       this._controls.update();
       this._renderFrame();
     };

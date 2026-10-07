@@ -8,6 +8,7 @@ both the server and the client.
 """
 import logging
 
+from ffast.config.models import PANEL_KIND_3D
 from ffast.config.tabs import merge_tabs, resolve_ref
 
 logger = logging.getLogger("FFAST")
@@ -95,14 +96,26 @@ def build_analysis_tab(UIHandler, env, tab):
     return ct
 
 
+def desktop_tabs(tabs):
+    """The tabs the desktop builds: all but those made only of 3D panels.
+
+    3D panels are browser-only (ADR 0056). The desktop shows its 3D view in
+    its own window, so a tab holding nothing but 3D panels, the built-in "3D"
+    tab among them, would be empty here."""
+    return [
+        t for t in tabs
+        if not t.panels or any(p.kind != PANEL_KIND_3D for p in t.panels)
+    ]
+
+
 def build_analysis_tabs(UIHandler, env, tabs=None):
-    """Build every configured Analysis Tab. ``tabs`` defaults to the merged
-    bundled + project tabs."""
+    """Build every configured Analysis Tab the desktop shows. ``tabs`` defaults
+    to the merged bundled + project tabs."""
     if tabs is None:
         project = _discover_project_config()
         tabs = merge_tabs(project)
     built = []
-    for tab in tabs:
+    for tab in desktop_tabs(tabs):
         try:
             built.append(build_analysis_tab(UIHandler, env, tab))
         except Exception:
