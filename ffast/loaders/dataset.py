@@ -753,6 +753,11 @@ class SubDataset(DatasetLoader):
     def getN(self):
         return len(self.indices)
 
+    def getBondMatrix(self, index):
+        """The bonds of the parent's frame this frame is. A parent whose
+        structures differ in size has no shared ``bondSizes`` to copy."""
+        return self.parent.getBondMatrix(int(np.asarray(self.indices).ravel()[index]))
+
     ## PARENT DEPENDENT METHODS HERE
     ## MOSTLY DEFINED IN SPECIFIC (e.g. sGDML) LOADERS
     def getCoordinates(self, indices=None):
