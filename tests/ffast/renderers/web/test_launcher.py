@@ -185,7 +185,8 @@ def test_run_aborts_when_server_dies_during_startup():
         probe.bind(("127.0.0.1", web_port))
 
 
-def test_run_picks_free_ports_when_unspecified():
+def _run_with_fake_server(**kwargs):
+    """``launcher.run`` against a bare listener standing in for ffast-server."""
     fake = _FakeProc(listener=socket.socket())
     captured = {}
 
@@ -200,11 +201,59 @@ def test_run_picks_free_ports_when_unspecified():
         opener=lambda url: None,
         block=False,
         ready_timeout=2.0,
+        **kwargs,
     )
+    return result, fake, captured
+
+
+def test_run_picks_a_free_ws_port_when_unspecified(monkeypatch):
+    monkeypatch.setattr(launcher, "DEFAULT_WEB_PORT", launcher.pick_free_port())
+    result, fake, captured = _run_with_fake_server()
     try:
         assert result.ws_port == captured["ws_port"] > 0
-        assert result.web_port > 0
         assert result.ws_port != result.web_port
     finally:
         result.httpd.shutdown()
         fake.terminate()
+
+
+def test_default_web_port_is_fixed():
+    """Browser storage belongs to the page's address, port included, so a
+    new port each launch forgot the layout every time (ADR 0056)."""
+    assert launcher.DEFAULT_WEB_PORT == 8764
+
+
+def test_run_serves_the_app_on_the_default_web_port(monkeypatch):
+    default = launcher.pick_free_port()
+    monkeypatch.setattr(launcher, "DEFAULT_WEB_PORT", default)
+    result, fake, _ = _run_with_fake_server()
+    try:
+        assert result.web_port == default
+        assert result.url.startswith(f"http://127.0.0.1:{default}/")
+    finally:
+        result.httpd.shutdown()
+        fake.terminate()
+
+
+def test_run_takes_a_free_web_port_when_the_default_is_busy(monkeypatch):
+    """A second ffast-web still starts; only its layout is not shared."""
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen(1)
+        default = busy.getsockname()[1]
+        monkeypatch.setattr(launcher, "DEFAULT_WEB_PORT", default)
+        result, fake, _ = _run_with_fake_server()
+        try:
+            assert result.web_port not in (0, default)
+        finally:
+            result.httpd.shutdown()
+            fake.terminate()
+
+
+def test_an_explicit_busy_web_port_is_an_error(monkeypatch):
+    """--web-port is a request for that port, not a hint."""
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen(1)
+        with pytest.raises(OSError):
+            _run_with_fake_server(web_port=busy.getsockname()[1])

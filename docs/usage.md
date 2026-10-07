@@ -59,6 +59,12 @@ ffast-web --no-browser   # print the URL and stop
 ffast-web --ws-port 8765 --web-port 9000    # pin ports instead of taking free ones
 ```
 
+The page is served on port 8764, so the browser remembers its layout (open
+settings section, sidebar width, recent servers) from one launch to the next;
+the browser keeps these per address, port included. If 8764 is taken, for
+example by a second `ffast-web`, that window gets a free port and starts with
+the default layout.
+
 The bare `ffast` command lands here too when PySide6 is not installed, but it
 takes no arguments of its own — use `ffast-web` when you need these flags.
 
