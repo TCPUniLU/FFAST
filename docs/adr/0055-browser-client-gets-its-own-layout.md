@@ -52,15 +52,17 @@ where they are needed, or wait until there is something for them to act on:
 | Sidebar search | Typing opens every section with a match and highlights the matching rows. It also finds rows behind "Exact angles". Rows that need missing data are shown greyed out with the reason ("Load a prediction first"). Clearing the search restores the section that was open. |
 | Quick styles | Three buttons that only set existing controls: Force error (disabled until a prediction is loaded), Publication and Reset. They live in the browser only. |
 | Help | A hint bar with numbered next steps, and a "?" on each section and on the tab picker. Input boxes become dark instead of white. |
-| 3D drawing | Below an atom-count threshold (initially 500, to be set by measuring frame time), structures get a richer look: smoother spheres and bonds, slightly glossier materials, and lights that turn with the camera (a sky light plus key, fill and rim lights), so an atom keeps its shade while you orbit. Atom sizes stay as the server sends them (ADR 0052); the Atom size slider shrinks them. Above the threshold, today's cheaper look stays. The pixel ratio is capped at 2. No tone mapping: it shifts data colours away from the colour bar. The background stays black. |
+| 3D drawing | Below an atom-count threshold (1000 atoms, set by measuring frame time), structures get the chemistry.alive look the prototype settled: ball-and-stick atoms (0.42 × covalent radius, kept within 0.24–0.55 Å, times the Atom size setting), thin bonds drawn in two halves coloured like their atoms (a chosen Bond colour replaces this), smoother spheres and bonds, slightly glossier materials, lights that turn with the camera (a sky light plus key, fill and rim lights) so an atom keeps its shade while you orbit, and a 35° lens. Above the threshold, today's cheaper look stays, with atoms at the server's sizes. The pixel ratio is capped at 2. No tone mapping: it shifts data colours away from the colour bar. The background stays black. |
 | Pick and playback strips | Pick tools show their names next to their icons. While a tool is armed, the atom under the pointer is highlighted, larger and lighter, so you can see what a click would pick. FPS and Skip move into a ⚙ pop-up; its ⚙ button is drawn larger than the other strip icons. |
 | Analysis tabs | The tab picker appears only when two or more datasets or predictions are loaded. A tab where no panel can draw shows one guide with a button. A tab where some panels can draw shows them, plus one line for the rest. The message says "Load" when nothing is loaded and "Select" when something is loaded but not chosen. Plot cards and table sizes are unchanged. |
 | Keyboard | One action list feeds the File menu, the shortcuts and a Ctrl/Cmd+K command palette. The shortcuts: Space (play/pause), ← → (frame), Esc, Ctrl/Cmd+S (save session), Ctrl/Cmd+O (load session) and `/` (sidebar search). Shortcuts are ignored while typing in a text box. Load Session takes Ctrl/Cmd+O rather than the desktop's Ctrl+L, because browsers use Ctrl+L for the address bar. |
 
 A throwaway prototype of the 3D tab settled five points in the table:
 
-- **Atom look.** The richer lighting was preferred over today's. The threshold
-  keeps large structures fast.
+- **Atom look.** The chemistry.alive look was preferred over today's: its
+  lighting and, after the first implementation kept server sizes and looked
+  wrong, its ball-and-stick atoms and two-tone bonds too. The threshold keeps
+  large structures fast.
 
 - **Pick radius.** It only limited how far from an atom's *centre* a click
   could land (12 px). Atoms are usually drawn larger than that, so changing it
@@ -125,6 +127,17 @@ one change to the desktop, and it is a bug fix rather than a layout change.
   intended: the dialog opens with a message saying a token is needed. Putting
   the token in the URL avoids it, at the cost of the token appearing in browser
   history.
+
+## The rich look is browser-only presentation
+
+ADR 0052 makes the server the owner of presentation, so both clients draw the
+same sizes and colours. The rich look departs from that in the browser only:
+the server still sends covalent radius × Atom size, and the browser redraws
+those as ball-and-stick; it also keeps its own 35° lens while reporting the
+server's field of view back unchanged, so no server state moves. The desktop
+keeps drawing the server's sizes. Moving this look onto the server, as a
+style both clients share, remains possible and would restore ADR 0052's
+single source; it was not done now because ADR 0055 changes no server code.
 
 ## Reversibility
 
