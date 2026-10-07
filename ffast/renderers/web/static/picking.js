@@ -6,9 +6,10 @@
  * modal-tool model, mirrored from the Qt loupe's single shared select
  * toolbar): arming disables orbit and shows a crosshair; a click resolves the
  * nearest visible atom; a drag with a rectangle-capable tool rubber-bands a
- * box. With no tool armed the pointer stays camera-orbit. The geometry itself
- * lives on the renderer (pickAtom/boxSelect); this class is just gesture +
- * arming state.
+ * box. While armed, the atom a click would pick is highlighted under the
+ * pointer (ADR 0055). With no tool armed the pointer stays camera-orbit. The
+ * geometry itself lives on the renderer (pickAtom/boxSelect/setHoveredAtom);
+ * this class is just gesture + arming state.
  */
 
 const DRAG_THRESHOLD_PX = 4;   // below this a press+release counts as a click
@@ -34,7 +35,7 @@ export class PickController {
    * @param {HTMLCanvasElement} canvas
    * @param {HTMLElement} viewport  element the rubber-band rect is drawn into
    * @param {import('./renderer.js').MoleculeRenderer} renderer
-   * @param {{ getRadius: () => number, onPick: (entries: Array<{displayIndex:number, atomId:number}>, opts: {isBox: boolean}) => void }} cb
+   * @param {{ onPick: (entries: Array<{displayIndex:number, atomId:number}>, opts: {isBox: boolean}) => void }} cb
    */
   constructor(canvas, viewport, renderer, cb) {
     this._canvas = canvas;
@@ -51,6 +52,12 @@ export class PickController {
     this._onMove = this._onPointerMove.bind(this);
     this._onUp = this._onPointerUp.bind(this);
     canvas.addEventListener('pointerdown', this._onDown);
+
+    // Hover: at most one pick per frame, however fast the pointer moves.
+    this._hoverAt = null;
+    this._hoverFrame = null;
+    canvas.addEventListener('pointermove', (e) => this._onHoverMove(e));
+    canvas.addEventListener('pointerleave', () => this._setHover(null));
   }
 
   get activeToolId() { return this._tool?.id ?? null; }
@@ -69,6 +76,24 @@ export class PickController {
     this._hideRect();
     this._down = null;
     this._moved = false;
+    this._setHover(null);
+  }
+
+  _onHoverMove(e) {
+    if (!this._tool || e.buttons) return;   // no tool, or mid-drag
+    this._hoverAt = this._canvasXY(e);
+    if (this._hoverFrame != null) return;
+    this._hoverFrame = requestAnimationFrame(() => {
+      this._hoverFrame = null;
+      if (!this._tool || !this._hoverAt) return;
+      const hit = this._renderer.pickAtom(this._hoverAt.x, this._hoverAt.y);
+      this._renderer.setHoveredAtom(hit ? hit.displayIndex : null);
+    });
+  }
+
+  _setHover(displayIndex) {
+    this._hoverAt = null;
+    this._renderer.setHoveredAtom(displayIndex);
   }
 
   _canvasXY(e) {
@@ -110,7 +135,7 @@ export class PickController {
       return;
     }
     // Click (or a drag with a non-rectangle tool): nearest atom at release.
-    const hit = this._renderer.pickAtom(up.x, up.y, this._cb.getRadius());
+    const hit = this._renderer.pickAtom(up.x, up.y);
     if (hit) this._cb.onPick([hit], { isBox: false });
   }
 

@@ -87,13 +87,11 @@ export class FFastApp {
     this._playing = false;
     this._patchPending = false;
 
-    // Picking (ADR 0045 Phase 2, issue 10): one armed tool at a time, its
-    // accumulated picks (displayed index + scientific atom id), and the pick
-    // radius the Display pane feeds in.
+    // Picking (ADR 0045 Phase 2, issue 10): one armed tool at a time and its
+    // accumulated picks (displayed index + scientific atom id).
     this._pickController = null;
     this._activeTool = null;   // tool id, or null (orbit)
     this._picked = [];         // [{displayIndex, atomId}] for the active tool
-    this._pickRadius = 12;
 
     // Save/load session (issue 21): the in-flight op's kind + path, so the
     // next TASK_DONE/TASK_FAILED (see _connect) can report completion.
@@ -209,7 +207,6 @@ export class FFastApp {
       onAtomSize: (scale) => this._sendSetParameter('ffast.atom_sizes', 'scale', scale),
       onHideAtoms: (tokens) => this._sendSetParameter('ffast.atom_filter', 'indices', tokens),
       onHighlight: (indices) => this._sendSetSelection('picked', 'current_structure', indices),
-      onPickRadius: (px) => { this._pickRadius = px; this._updatePickStrip(); },
       onUnitCell: (visible) => this._sendToggleFeature('no_unit_cell', !visible),
     });
 
@@ -648,8 +645,8 @@ export class FFastApp {
   }
 
   // ── picking (ADR 0045 Phase 2) ──────────────────────────────────────────
-  // A pick toolbar (one button per tool) + a contextual strip (active tool,
-  // pick count, radius, read-out, clear). The PickController owns the pointer
+  // A pick toolbar (one named button per tool) + a contextual strip (active
+  // tool, pick count, read-out, clear). The PickController owns the pointer
   // while a tool is armed and reports resolved atoms here.
   _initPickTools() {
     const toolbar = document.getElementById('pick-toolbar');
@@ -657,7 +654,10 @@ export class FFastApp {
       const btn = document.createElement('button');
       btn.className = 'pick-tool-btn';
       btn.dataset.tool = id;
-      btn.textContent = t.icon;
+      const icon = document.createElement('span');
+      icon.className = 'pick-tool-icon';
+      icon.textContent = t.icon;
+      btn.append(icon, t.label);
       btn.title = `${t.label} pick tool`;
       btn.addEventListener('click', () => this._setActiveTool(this._activeTool === id ? null : id));
       toolbar.appendChild(btn);
@@ -667,7 +667,7 @@ export class FFastApp {
       document.getElementById('canvas'),
       document.getElementById('viewport'),
       this._renderer,
-      { getRadius: () => this._pickRadius, onPick: (entries, opts) => this._onPick(entries, opts) },
+      { onPick: (entries, opts) => this._onPick(entries, opts) },
     );
     this._pickReadout = '';
     this._updatePickStrip();
@@ -751,7 +751,6 @@ export class FFastApp {
     strip.classList.remove('hidden');
     document.getElementById('pick-strip-tool').textContent = PICK_TOOLS[this._activeTool].label;
     document.getElementById('pick-strip-count').textContent = `${this._picked.length} picked`;
-    document.getElementById('pick-strip-radius').textContent = `radius ${this._pickRadius}px`;
     document.getElementById('pick-readout').textContent = this._pickReadout || '';
   }
 

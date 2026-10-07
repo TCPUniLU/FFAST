@@ -251,9 +251,11 @@
     }
     #pick-toolbar { display: flex; gap: 4px; }
     .pick-tool-btn {
-      width: 30px; height: 24px; padding: 0; font-size: 13px; line-height: 1;
+      height: 24px; padding: 0 8px; font-size: 12px; line-height: 1;
+      display: inline-flex; align-items: center; gap: 5px;
       background: var(--bg3); border-radius: 3px;
     }
+    .pick-tool-icon { font-size: 13px; }
     .pick-tool-btn.active {
       background: var(--hl2); color: var(--text2);
       box-shadow: inset 0 0 0 1px var(--hl2);
@@ -265,7 +267,6 @@
     #pick-strip .pick-sep { color: var(--muted); }
     #pick-strip-tool { color: var(--hl2); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
     #pick-strip-count { color: var(--text1); }
-    #pick-strip-radius { color: var(--muted); }
     #pick-readout { color: var(--text2); font-variant-numeric: tabular-nums; }
     #pick-clear { width: 22px; height: 20px; padding: 0; font-size: 11px; }
 
@@ -652,7 +653,6 @@
                 <span id="pick-strip-tool"></span>
                 <span class="pick-sep">·</span>
                 <span id="pick-strip-count"></span>
-                <span id="pick-strip-radius"></span>
                 <span id="pick-readout"></span>
                 <button id="pick-clear" title="Clear picks">✕</button>
               </div>

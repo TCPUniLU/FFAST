@@ -32,7 +32,6 @@ function parseIndexList(text) {
  *   onAtomSize: (scale: number) => void,
  *   onHideAtoms: (tokens: (number|string)[]) => void,
  *   onHighlight: (indices: number[]) => void,
- *   onPickRadius: (px: number) => void,
  *   onUnitCell: (visible: boolean) => void,
  * }} callbacks
  */
@@ -43,7 +42,6 @@ export function createDisplayPane(sidebarEl, callbacks) {
   numberRow(body, 'Atom size', 1.0, { min: 0.1, max: 10, step: 0.1 }, callbacks.onAtomSize);
   textRow(body, 'Hide atoms', '', (text) => callbacks.onHideAtoms(parseFilterTokens(text)));
   textRow(body, 'Highlight atoms', '', (text) => callbacks.onHighlight(parseIndexList(text)));
-  numberRow(body, 'Pick radius (px)', 12, { min: 4, max: 40, step: 1 }, callbacks.onPickRadius);
   checkboxRow(body, 'Show unit cell', true, callbacks.onUnitCell);
 
   return {};

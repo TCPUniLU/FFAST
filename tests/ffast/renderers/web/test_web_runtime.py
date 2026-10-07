@@ -708,6 +708,176 @@ async def test_web_info_tool_reports_distance(ffast_web_server):
             await browser.close()
 
 
+async def _front_atom(page, zoom=1.0):
+    """The front-most atom drawn wholly on screen, with its page-space centre
+    and its drawn radius in pixels. Nothing in front can cover its ball, so a
+    click anywhere on it must pick it. Frames the atoms first (since 457dcaa the
+    camera no longer fits them by itself), then moves `zoom` times closer."""
+    return await page.evaluate(
+        """(zoom) => {
+          const R = window.ffastApp.renderer;
+          R.frameAtoms();
+          R.setCameraAngles({distance: R._exportCamera().distance / zoom});
+          const rect = document.getElementById('canvas').getBoundingClientRect();
+          let best = null;
+          for (let i = 0; i < R.atomCount; i++) {
+            const s = R.atomScreenPosition(i);
+            if (!s || s.x < s.radiusPx || s.y < s.radiusPx
+                || s.x > rect.width - s.radiusPx || s.y > rect.height - s.radiusPx) continue;
+            if (!best || s.ndcZ < best.s.ndcZ) best = { i, s };
+          }
+          return {
+            index: best.i,
+            x: rect.left + best.s.x, y: rect.top + best.s.y,
+            radius: R.atomScreenRadius(best.i),
+          };
+        }""",
+        zoom,
+    )
+
+
+async def test_web_pick_tools_show_their_names(ffast_web_server):
+    """ADR 0055: pick tools show their names next to their icons."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            for tool, name in [("info", "Info"), ("bonds", "Bonds"), ("align", "Align"),
+                               ("forces", "Force"), ("extract", "Extract")]:
+                await expect(
+                    page.locator(f"#pick-toolbar button[data-tool='{tool}']")
+                ).to_contain_text(name)
+        finally:
+            await browser.close()
+
+
+async def test_web_click_anywhere_on_an_atoms_ball_picks_it(ffast_web_server):
+    """ADR 0055: the pick radius is gone; a click anywhere on an atom's drawn
+    ball picks it, even far beyond the old 12 px from its centre."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            # Zoom in so the ball is drawn much larger than the old radius.
+            atom = await _front_atom(page, zoom=4)
+            assert atom["radius"] > 30, atom
+
+            await page.locator("#pick-toolbar button[data-tool='info']").click()
+            await page.mouse.click(atom["x"] + 0.85 * atom["radius"], atom["y"])
+            await expect(page.locator("#pick-strip-count")).to_contain_text("1 picked")
+            picked = await page.evaluate("() => window.ffastApp._picked[0].displayIndex")
+            assert picked == atom["index"]
+        finally:
+            await browser.close()
+
+
+async def test_web_tiny_atoms_keep_a_minimum_pick_target(ffast_web_server):
+    """ADR 0055: very small atoms keep a minimum target of a few pixels."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            atom = await _front_atom(page)
+            hit = await page.evaluate(
+                """() => {
+                  const R = window.ffastApp.renderer;
+                  R.setCameraAngles({distance: 2000});
+                  let best = null;
+                  for (let i = 0; i < R.atomCount; i++) {
+                    const s = R.atomScreenPosition(i);
+                    if (s && (!best || s.ndcZ < best.s.ndcZ)) best = { i, s };
+                  }
+                  return {
+                    radius: R.atomScreenRadius(best.i),
+                    hit: R.pickAtom(best.s.x + 3, best.s.y)?.displayIndex ?? null,
+                    miss: R.pickAtom(best.s.x + 40, best.s.y + 40),
+                  };
+                }"""
+            )
+            assert hit["radius"] < 2, hit
+            assert hit["hit"] is not None
+            assert hit["miss"] is None
+        finally:
+            await browser.close()
+
+
+async def test_web_armed_tool_highlights_the_atom_under_the_pointer(ffast_web_server):
+    """ADR 0055: while a tool is armed, the atom a click would pick is drawn
+    larger and lighter; nothing is highlighted with no tool armed."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    drawn = """(i) => {
+      const R = window.ffastApp.renderer, m = R._atomMesh;
+      const M = new m.matrix.constructor(), c = new m.material.color.constructor();
+      m.getMatrixAt(i, M); m.getColorAt(i, c);
+      return { scale: Math.hypot(M.elements[0], M.elements[1], M.elements[2]),
+               light: c.r + c.g + c.b, hovered: R.hoveredAtom };
+    }"""
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            atom = await _front_atom(page)
+            base = await page.evaluate(drawn, atom["index"])
+
+            # No tool armed: hovering does nothing.
+            await page.mouse.move(atom["x"], atom["y"])
+            assert (await page.evaluate(drawn, atom["index"]))["hovered"] is None
+
+            await page.locator("#pick-toolbar button[data-tool='info']").click()
+            await page.mouse.move(atom["x"] + 1, atom["y"])
+            await page.wait_for_function(
+                f"() => window.ffastApp.renderer.hoveredAtom === {atom['index']}"
+            )
+            lit = await page.evaluate(drawn, atom["index"])
+            assert lit["scale"] > base["scale"] * 1.1
+            # A white atom (hydrogen) cannot get lighter, only larger.
+            assert lit["light"] > base["light"] or base["light"] > 2.99
+
+            # Off the molecule: the atom returns to how it was drawn.
+            rect = await page.locator("#canvas").bounding_box()
+            await page.mouse.move(rect["x"] + 3, rect["y"] + 3)
+            await page.wait_for_function("() => window.ffastApp.renderer.hoveredAtom === null")
+            after = await page.evaluate(drawn, atom["index"])
+            assert after["scale"] == pytest.approx(base["scale"])
+            assert after["light"] == pytest.approx(base["light"])
+        finally:
+            await browser.close()
+
+
+async def test_web_pick_radius_control_is_gone(ffast_web_server):
+    """ADR 0055: picking by the drawn ball replaces the Pick radius setting."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator("#pick-toolbar button[data-tool='info']").click()
+            await expect(page.locator("#pick-strip")).not_to_have_class(re.compile(r"\bhidden\b"))
+            await expect(page.locator("#pick-strip")).not_to_contain_text("radius")
+            await expect(page.get_by_text("Pick radius")).to_have_count(0)
+        finally:
+            await browser.close()
+
+
 async def test_web_extract_creates_subset_dataset(ffast_web_server):
     """ADR 0045 issue 12 gate: typing indices and extracting creates a new
     subset dataset that appears in the dataset list."""

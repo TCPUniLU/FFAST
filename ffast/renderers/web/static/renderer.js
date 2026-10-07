@@ -6,6 +6,12 @@ import * as THREE from 'three';
 import { OrbitControls } from './vendor/three/OrbitControls.js';
 import { mapColorBy } from './colormap.js';
 
+/** Smallest pick target, in CSS pixels, for atoms drawn tinier than this. */
+const MIN_PICK_TARGET_PX = 4;
+/** The atom a click would pick is drawn this much larger, and lighter. */
+const HOVER_SCALE = 1.3;
+const HOVER_LIGHTEN = 0.55;
+
 /** Scene colours are sRGB, like CSS and the colour bar. Three.js reads bare
  *  RGB numbers as linear and brightens them on output, so name the space. */
 function sceneColor(r, g, b, target = new THREE.Color()) {
@@ -69,6 +75,9 @@ export class MoleculeRenderer {
     this._cachedAtomPositions = null;  // atoms.positions from last _updateAtoms call
     this._cachedAtomSizes = null;      // atoms.sizes from last _updateAtoms call
     this._cachedAtomIds = null;        // atoms.atom_ids (displayed→scientific, ADR 0015)
+    this._hovered = null;              // displayed index under an armed pick tool
+    this._scratchObj = new THREE.Object3D();  // per-instance matrix/colour writes
+    this._scratchColor = new THREE.Color();
 
     // Geometry template for atoms (shared, low-poly sphere)
     this._sphereGeo = new THREE.SphereGeometry(1, 10, 8);
@@ -263,26 +272,52 @@ export class MoleculeRenderer {
     const mesh = new THREE.InstancedMesh(this._sphereGeo, this._atomMat.clone(), n);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
-    const dummy = new THREE.Object3D();
-    const color = new THREE.Color();
-
-    for (let i = 0; i < n; i++) {
-      const [x, y, z] = atoms.positions[i];
-      const r = atoms.sizes[i] || 0.5;
-      dummy.position.set(x, y, z);
-      dummy.scale.setScalar(r);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
-
-      const [cr, cg, cb] = colors[i];
-      mesh.setColorAt(i, sceneColor(cr, cg, cb, color));
-    }
+    if (this._hovered != null && this._hovered >= n) this._hovered = null;
+    for (let i = 0; i < n; i++) this._drawAtomInstance(mesh, i, i === this._hovered);
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     if (! only_forces) {
       this._atomMesh = mesh;
       this._scene.add(mesh);
     }
+  }
+
+  /** Write atom `i`'s matrix and colour into `mesh`; a hovered atom is drawn
+   * larger and lighter. Reads the cached positions, sizes and colours. */
+  _drawAtomInstance(mesh, i, hovered) {
+    const [x, y, z] = this._cachedAtomPositions[i];
+    const r = (this._cachedAtomSizes[i] || 0.5) * (hovered ? HOVER_SCALE : 1);
+    const d = this._scratchObj;
+    d.position.set(x, y, z);
+    d.scale.setScalar(r);
+    d.updateMatrix();
+    mesh.setMatrixAt(i, d.matrix);
+
+    let [cr, cg, cb] = this._atomColors[i];
+    if (hovered) {
+      cr += (1 - cr) * HOVER_LIGHTEN;
+      cg += (1 - cg) * HOVER_LIGHTEN;
+      cb += (1 - cb) * HOVER_LIGHTEN;
+    }
+    mesh.setColorAt(i, sceneColor(cr, cg, cb, this._scratchColor));
+  }
+
+  /** Displayed index of the atom drawn as hovered, or null. */
+  get hoveredAtom() { return this._hovered; }
+
+  /** Show which atom a click would pick (ADR 0055): only that one instance is
+   * rewritten, so hovering never rebuilds the mesh. `null` clears it. */
+  setHoveredAtom(displayIndex) {
+    const next = displayIndex ?? null;
+    if (next === this._hovered) return;
+    const prev = this._hovered;
+    this._hovered = next;
+    const mesh = this._atomMesh;
+    if (!mesh) return;
+    if (prev != null && prev < mesh.count) this._drawAtomInstance(mesh, prev, false);
+    if (next != null && next < mesh.count) this._drawAtomInstance(mesh, next, true);
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
 
   /**
@@ -546,10 +581,11 @@ export class MoleculeRenderer {
     this._controls.update();
   }
 
-  // ── picking (ADR 0045 issue 10 / ADR 0015) ───────────────────────────────
-  // The browser twin of the vispy adapter's pick_at/pick_in_rect: project the
-  // cached displayed atom centres to canvas pixels through the live camera and
-  // resolve by screen distance + depth. Displayed indices map to scientific
+  // ── picking (ADR 0045 issue 10 / ADR 0015 / ADR 0055) ────────────────────
+  // Project the cached displayed atom centres to canvas pixels through the
+  // live camera. A click picks the atom whose drawn ball is under it, front
+  // surface first; box-select (the twin of the vispy adapter's pick_in_rect)
+  // tests centres only. Displayed indices map to scientific
   // atom ids via atom_ids (ADR 0015), the same space SET_SELECTION expects.
 
   /** Suspend/resume orbit while a pick tool owns the pointer. */
@@ -568,35 +604,52 @@ export class MoleculeRenderer {
   }
 
   /** Project displayed atom `i` to canvas-local CSS pixels; returns null when
-   * it is behind the camera / outside the clip volume. `_v` is a scratch vec. */
+   * it is behind the camera / outside the clip volume. Also returns its depth
+   * from the camera and its drawn radius, in world units and in pixels.
+   * Call `_camera.updateMatrixWorld()` first. `v` is a scratch vec. */
   _projectAtom(i, rect, v) {
     const p = this._cachedAtomPositions[i];
-    v.set(p[0], p[1], p[2]).project(this._camera);
+    const cam = this._camera;
+    v.set(p[0], p[1], p[2]).applyMatrix4(cam.matrixWorldInverse);
+    const depth = -v.z;
+    v.applyMatrix4(cam.projectionMatrix);
     if (v.z < -1 || v.z > 1) return null;   // clipped (behind camera or beyond far)
+    // projectionMatrix[5] is 1/tan(fov/2) (perspective) or 2/height (ortho).
+    const radius = this._cachedAtomSizes?.[i] || 0.5;
+    const pxPerUnit = cam.projectionMatrix.elements[5] * rect.height / 2
+      / (cam.isPerspectiveCamera ? depth : 1);
     return {
       x: (v.x * 0.5 + 0.5) * rect.width,
       y: (-v.y * 0.5 + 0.5) * rect.height,
       ndcZ: v.z,
+      depth,
+      radius,
+      radiusPx: radius * pxPerUnit,
     };
   }
 
   /**
-   * Occlusion-correct click-pick: nearest visible atom within `radiusPx` of the
-   * canvas-local point, tie-broken by depth (mirrors adapter.pick_at).
+   * Click-pick: the atom whose drawn ball is under the canvas-local point,
+   * nearest surface first, so a click anywhere on a ball picks it. Atoms drawn
+   * smaller than MIN_PICK_TARGET_PX keep that much reach around their centre.
    * @returns {{displayIndex:number, atomId:number}|null}
    */
-  pickAtom(px, py, radiusPx = 12) {
+  pickAtom(px, py) {
     if (!this._cachedAtomPositions) return null;
+    this._camera.updateMatrixWorld();
     const rect = this._canvas.getBoundingClientRect();
     const v = new THREE.Vector3();
-    const r2 = radiusPx * radiusPx;
-    let best = null, bestZ = Infinity;
+    let best = null, bestDepth = Infinity;
     for (let i = 0; i < this._cachedAtomPositions.length; i++) {
       const s = this._projectAtom(i, rect, v);
       if (!s) continue;
-      const dx = s.x - px, dy = s.y - py;
-      if (dx * dx + dy * dy > r2) continue;
-      if (s.ndcZ < bestZ) { bestZ = s.ndcZ; best = i; }
+      const d = Math.hypot(s.x - px, s.y - py);
+      if (d > Math.max(s.radiusPx, MIN_PICK_TARGET_PX)) continue;
+      // Depth of the ball's surface along the click ray (the centre's depth
+      // when only the minimum target was hit).
+      const off = d < s.radiusPx ? (d / s.radiusPx) * s.radius : s.radius;
+      const surface = s.depth - Math.sqrt(Math.max(0, s.radius * s.radius - off * off));
+      if (surface < bestDepth) { bestDepth = surface; best = i; }
     }
     return best == null ? null : { displayIndex: best, atomId: this.atomIdOf(best) };
   }
@@ -608,6 +661,7 @@ export class MoleculeRenderer {
    */
   boxSelect(x0, y0, x1, y1) {
     if (!this._cachedAtomPositions) return [];
+    this._camera.updateMatrixWorld();
     const rect = this._canvas.getBoundingClientRect();
     const v = new THREE.Vector3();
     const lo = { x: Math.min(x0, x1), y: Math.min(y0, y1) };
@@ -625,8 +679,15 @@ export class MoleculeRenderer {
   /** Canvas-local CSS-pixel position of a displayed atom, for tests/tooltips. */
   atomScreenPosition(displayIndex) {
     if (!this._cachedAtomPositions || !this._cachedAtomPositions[displayIndex]) return null;
+    this._camera.updateMatrixWorld();
     const rect = this._canvas.getBoundingClientRect();
     return this._projectAtom(displayIndex, rect, new THREE.Vector3());
+  }
+
+  /** Drawn radius of a displayed atom in canvas CSS pixels (as the server
+   * sized it, without the hover enlargement), or null when clipped. */
+  atomScreenRadius(displayIndex) {
+    return this.atomScreenPosition(displayIndex)?.radiusPx ?? null;
   }
 
   /** World-space position of a displayed atom (for client-side measurements). */
