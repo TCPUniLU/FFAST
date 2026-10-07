@@ -426,8 +426,9 @@
     }
     #hint-bar.hidden { display: none; }
     #hint-bar b { color: var(--text2); font-weight: 600; }
-    #hint-bar .hint-n { color: var(--hl2); font-weight: 700; margin: 0 4px 0 10px; }
-    #hint-bar .hint-n:first-child { margin-left: 0; }
+    #hint-text { display: flex; flex-wrap: wrap; column-gap: 14px; row-gap: 2px; }
+    #hint-bar .hint-step { white-space: nowrap; }
+    #hint-bar .hint-n { color: var(--hl2); font-weight: 700; margin-right: 4px; }
     #hint-bar button { height: 20px; padding: 0 6px; background: transparent; }
     body.loupe-only #hint-bar { display: none; }
     #quick-styles { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }

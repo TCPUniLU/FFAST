@@ -698,6 +698,12 @@ async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
             await expect(hint).to_be_visible()
             await expect(hint).to_contain_text("Load a prediction")
             await expect(hint.locator(".hint-n")).to_have_text(["1", "2", "3"])
+            # A step never breaks across lines; the bar wraps between steps.
+            lines = await page.evaluate(
+                "() => [...document.querySelectorAll('#hint-bar .hint-step')]"
+                ".map((el) => el.getClientRects().length)"
+            )
+            assert lines == [1, 1, 1], lines
 
             await page.locator("#hint-dismiss").click()
             await expect(hint).to_be_hidden()

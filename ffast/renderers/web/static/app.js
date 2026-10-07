@@ -336,13 +336,16 @@ export class FFastApp {
     if (!show || bar.dataset.hint === key) return;
     bar.dataset.hint = key;
     const text = document.getElementById('hint-text');
-    text.replaceChildren(...HINTS[key].flatMap(([lead, strong, tail = ''], i) => {
+    text.replaceChildren(...HINTS[key].map(([lead, strong, tail = ''], i) => {
+      const step = document.createElement('span');
+      step.className = 'hint-step';   // kept on one line; the bar wraps between steps
       const n = document.createElement('span');
       n.className = 'hint-n';
       n.textContent = String(i + 1);
       const b = document.createElement('b');
       b.textContent = strong;
-      return [n, document.createTextNode(lead), b, document.createTextNode(tail)];
+      step.append(n, lead, b, tail);
+      return step;
     }));
   }
 
