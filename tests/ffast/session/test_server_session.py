@@ -1065,3 +1065,61 @@ def test_ticking_sub_again_shows_the_hidden_subset():
     env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, None, "T"): sub})
     _declare(env, parent_fingerprint="ds1", name="T", view=TIMELINE_VIEW)
     assert env.declare_subset_calls == [(parent, None, [1, 2, 3], "T")]
+
+
+def _declare_and_read(env, **kwargs):
+    async def scenario():
+        session = ServerSession(env, asyncio.Queue())
+        await session.dispatch("DECLARE_SUBSET", [], kwargs)
+        out = []
+        while not session.outbound.empty():
+            out.append(unpack(session.outbound.get_nowait()))
+        return out
+    return _run(scenario())
+
+
+def test_the_window_that_ticked_sub_is_told_which_subset_it_made():
+    """So that window can show the subset in its main view."""
+    parent = _FakeFrames()
+    env = _FakeEnv(datasets={"ds1": parent})
+    [(event, _, kwargs)] = _declare_and_read(
+        env, parent_fingerprint="ds1", name="T", view=TIMELINE_VIEW)
+    assert event == control.SUBSET_DECLARED
+    assert kwargs == {"fingerprint": _sub_fp(parent, None, "T"), "parent_fingerprint": "ds1",
+                      "model_fp": None, "name": "T"}
+
+
+def test_it_is_told_even_when_the_frames_did_not_change():
+    parent = _FakeFrames()
+    env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, None, "T"): _FakeSub([1, 2, 3])})
+    [(event, _, _)] = _declare_and_read(env, parent_fingerprint="ds1", name="T", view=TIMELINE_VIEW)
+    assert event == control.SUBSET_DECLARED
+
+
+def test_hiding_a_subset_or_finding_no_frames_tells_nothing():
+    parent = _FakeFrames()
+    env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, None, "T"): _FakeSub([1, 2, 3])})
+    assert _declare_and_read(env, parent_fingerprint="ds1", name="T", active=False) == []
+    assert _declare_and_read(env, parent_fingerprint="ds1", name="U",
+                             view={**TIMELINE_VIEW, "x": [40, 50]}) == []
+
+
+class _FakeFrameSubset:
+    isSubDataset = True
+    isAtomFiltered = False
+
+    def __init__(self, parent, indices):
+        self.parent = parent
+        self.indices = indices
+
+
+def test_a_frame_subset_draws_its_parents_predicted_forces():
+    """A prediction's forces for a subset are its forces for the parent's
+    frames, so the 3D view of a subset keeps its force arrows."""
+    forces = np.arange(4 * 2 * 3, dtype=float).reshape(4, 2, 3)
+    parent = _FakeFrames("ds1", n=4)
+    env = _FakeEnv(datasets={"ds1": parent, "sub": _FakeFrameSubset(parent, [3, 1])},
+                   cache={"forces__m1__ds1": {"forces": forces}})
+    view = ServerSession(env, asyncio.Queue()).get_prediction("sub", "m1")
+    assert np.array_equal(view.forces[0], forces[3]) and np.array_equal(view.forces[1], forces[1])
+    assert ServerSession(env, asyncio.Queue()).get_prediction("ds1", "nope") is None

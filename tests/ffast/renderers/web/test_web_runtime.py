@@ -1271,6 +1271,49 @@ async def test_web_a_plot_click_shows_the_clicked_structure(tmp_path):
                 await browser.close()
 
 
+async def test_web_a_subset_made_with_sub_shows_in_the_main_view(tmp_path):
+    """Ticking SUB shows the subset in the main view, which keeps up as the
+    zoom moves it, staying on the same structure where it can. The tab ticked
+    keeps drawing the full dataset (its choice is pinned). Unticking takes
+    the main view back to the full dataset, at the same structure."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_PLOT_CLICK_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            selected = page.locator("#dataset-list .obj-row.selected")
+            label = page.locator("#frame-label")
+            sub = f"{_sub_panel('Energy')} .sub-toggle input"
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_analysis_tab(page, "Compare")
+                await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy", timeout=25000)
+
+                await page.locator(sub).check()
+                await expect(selected).not_to_have_attribute("data-fp", dataset_fp, timeout=15000)
+                [made] = await page.evaluate(_SUBSETS)
+                await expect(selected).to_have_attribute("data-fp", made["fp"])
+                parent_button = page.locator(
+                    f".tabpanel.active [data-series='datasets'] button[data-fp='{dataset_fp}']")
+                await expect(parent_button).to_have_class(re.compile(r"\bactive\b"))
+                await expect(parent_button).not_to_have_class(re.compile(r"\bfollowing\b"))
+
+                await _zoom(page, "Energy", [10, 19.5])
+                await expect(label).to_have_text("0 / 9", timeout=15000)
+                await page.evaluate("window.ffastApp._setFrame(5)")      # parent frame 15
+                await expect(label).to_have_text("5 / 9")
+                await _zoom(page, "Energy", [12, 30])
+                await expect(label).to_have_text("3 / 18", timeout=15000)   # still frame 15
+
+                await page.locator(sub).uncheck()
+                await expect(selected).to_have_attribute("data-fp", dataset_fp, timeout=15000)
+                await expect(label).to_have_text("15 / 99", timeout=15000)
+            finally:
+                await browser.close()
+
+
 _SIZED_TAB_TOML = """
 [[visualization.tabs]]
 name = "Sized"

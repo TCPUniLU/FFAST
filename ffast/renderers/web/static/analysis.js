@@ -26,6 +26,7 @@
 import { helpToggle } from './help.js';
 import { renderPanel, PLOT_KINDS, elementSymbol } from './panels.js';
 import { KIND_3D } from './tab_rules.js';
+import { predictionApplies } from './frame_links.js';
 
 const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
   + 'Outlined buttons follow the selection in the left list; click one to pin this '
@@ -111,8 +112,8 @@ export class AnalysisManager {
    *   tabbar: HTMLElement, tabpanels: HTMLElement,
    *   metricClient?: import('./metrics.js').MetricClient|null,
    *   onSelectTab: (id: string) => void,
-   *   onSub: (o: {parentFp: string, modelFp: string|null, name: string,
-   *     view?: object, active?: boolean}) => void,
+   *   onSub: (o: {name: string, series: Array<{parentFp: string, modelFp: string|null}>,
+   *     view?: object, active?: boolean, tick?: boolean}) => void,
    *   onPointFrame: (o: {datasetFp: string, modelFp: string|null, frame: number}) => void,
    * }} deps
    */
@@ -485,6 +486,15 @@ export class AnalysisManager {
     return this._ctx.modelFp ? [this._ctx.modelFp] : [null];
   }
 
+  /** The datasets a prediction draws on: those it was made for and their
+   * subsets; empty when unknown (see `pairSeries`). */
+  _datasetsOf(modelFp) {
+    const meta = this._available.models.get(modelFp) || {};
+    if (!(meta.dataset_fingerprints || []).length) return [];
+    const all = this._available.datasets;
+    return [...all.keys()].filter((fp) => predictionApplies(meta, fp, all));
+  }
+
   /** The (dataset × prediction) pairs this tab draws (see `pairSeries`). */
   seriesRefs(t) {
     return pairSeries(
@@ -492,7 +502,7 @@ export class AnalysisManager {
       this._tabModels(t).map((fp) => fp && {
         fp,
         name: this._nameOf('models', fp),
-        datasetFps: (this._available.models.get(fp) || {}).dataset_fingerprints || [],
+        datasetFps: this._datasetsOf(fp),
       }),
     );
   }
@@ -813,8 +823,11 @@ export class AnalysisManager {
       cb.type = 'checkbox';
       cb.addEventListener('change', () => {
         if (cb.checked) {
+          // The main view moves to the subset; pinning keeps this tab on
+          // the data it shows, rather than following the rail to the subset.
+          this._pinSeries(t);
           t.subbing.set(key, []);
-          this._sendSubViews(t, spec, card);
+          this._sendSubViews(t, spec, card, { tick: true });
         } else {
           this._hideSubsets(t.subbing.get(key) || [], this._subName(t, spec));
           t.subbing.delete(key);
@@ -842,9 +855,17 @@ export class AnalysisManager {
     return spec.title || t.spec.name;
   }
 
+  /** Fix the tab's datasets and predictions to what it draws now. */
+  _pinSeries(t) {
+    if (!t.selectedDatasets) t.selectedDatasets = [...this._tabDatasets(t)];
+    const models = this._tabModels(t).filter(Boolean);
+    if (!t.selectedModels && models.length) t.selectedModels = models;
+    this._renderSeriesSelector(t);
+  }
+
   /** Send the plot's view for each series it draws; hide the subsets of
-   * series it no longer draws. */
-  _sendSubViews(t, spec, card) {
+   * series it no longer draws. `tick`: SUB was just ticked. */
+  _sendSubViews(t, spec, card, { tick = false } = {}) {
     const key = t.spec.panels.indexOf(spec);
     const range = plotRange(card.body);
     if (!this._onSub || !range || !t.subbing.has(key)) return;
@@ -860,11 +881,11 @@ export class AnalysisManager {
     const same = (a, b) => a.parentFp === b.parentFp && a.modelFp === b.modelFp;
     this._hideSubsets((t.subbing.get(key) || []).filter((old) => !series.some((s) => same(s, old))), name);
     t.subbing.set(key, series);
-    for (const s of series) this._onSub({ ...s, name, view });
+    if (series.length) this._onSub({ name, series, view, tick });
   }
 
-  _hideSubsets(list, name) {
-    for (const s of list) this._onSub?.({ ...s, name, active: false });
+  _hideSubsets(series, name) {
+    if (series.length) this._onSub?.({ name, series, active: false });
   }
 
   // ── subbing + point→frame (PRD 61-63) ──────────────────────────────────────

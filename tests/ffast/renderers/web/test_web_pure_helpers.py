@@ -325,6 +325,13 @@ CASES = {
     "fl_unrelated": "fl.sameConfiguration('Q', 3, 'P', FL)",
     "fl_unknown_dataset": "fl.sameConfiguration('X', 3, 'P', FL)",
     "fl_frame_out_of_range": "fl.sameConfiguration('S', 9, 'P', FL)",
+    "fl_prediction_applies": (
+        "[fl.predictionApplies({dataset_fingerprints: ['P']}, 'P', FL),"
+        " fl.predictionApplies({dataset_fingerprints: ['P']}, 'SS', FL),"
+        " fl.predictionApplies({dataset_fingerprints: ['P']}, 'A', FL),"
+        " fl.predictionApplies({dataset_fingerprints: ['P']}, 'Q', FL),"
+        " fl.predictionApplies({dataset_fingerprints: []}, 'Q', FL),"
+        " fl.predictionApplies({dataset_fingerprints: ['P']}, 'X', FL)]"),
 
     # ── an: SUB follows the plot's zoom ─────────────────────────────────────
     "an_plot_range": (
@@ -838,6 +845,13 @@ def test_a_tab_drawing_a_subset_redraws_when_its_frames_change(results):
     frames; the tabs drawing it must notice."""
     a, b, plain, missing = results["an_frames_key_moves_with_the_frames"]
     assert a != b and plain == "10" and missing == ""
+
+
+def test_a_prediction_applies_to_the_subsets_of_its_dataset(results):
+    """Its values for a subset are its values for the parent's frames, so a
+    prediction made for P draws on P's subsets too; an empty list means
+    "unknown, allow it", as the object rail has always read it."""
+    assert results["fl_prediction_applies"] == [True, True, True, False, True, False]
 
 
 def test_te_panels_keep_their_places(results):

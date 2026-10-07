@@ -261,6 +261,14 @@ class ServerSession:
             return None
         de = self.env.cache.get(f"forces__{model_fp}__{dataset_fp}")
         if de is None:
+            # A frame subset's predicted forces are its parent's, at the
+            # parent frames it holds (a subset made with SUB, say).
+            dataset = self.env.datasets.get(dataset_fp)
+            if (getattr(dataset, "isSubDataset", False) and not getattr(dataset, "isAtomFiltered", False)
+                    and getattr(dataset, "parent", None) is not None):
+                parent = self.get_prediction(dataset.parent.fingerprint, model_fp)
+                if parent is not None:
+                    return _PredictionView(np.asarray(parent.forces)[np.asarray(dataset.indices)])
             return None
         forces = de.get("forces")
         if forces is None:
@@ -459,12 +467,13 @@ class ServerSession:
         the ``indices`` or the plot's ``view`` here — while SUB is ticked it
         sends the view on every zoom, and ``ffast.session.subbing`` works out
         the frames it covers. ``active=False`` (SUB unticked) hides the subset.
-        The new or changed ``SubDataset`` announces itself via
-        ``REMOTE_DATASET_META`` (server.py), so nothing is emitted directly,
-        and the subset is usable by the 3D view and other tabs (PRD stories
-        61-62).
+        The new or changed ``SubDataset`` announces itself to every window via
+        ``REMOTE_DATASET_META`` (server.py), and is usable by the 3D view and
+        other tabs (PRD stories 61-62). The window that sent this is told which
+        subset it made (``SUBSET_DECLARED``), so it can show it.
         """
         from ffast.loaders.dataset import SubDataset  # ADR 0047 Phase 5c
+        from ffast.protocol.rpc import pack
 
         parent = self.env.datasets.get(parent_fingerprint)
         if parent is None:
@@ -494,13 +503,18 @@ class ServerSession:
             # Zoomed onto no frames: the subset keeps the frames it had.
             logger.info("DECLARE_SUBSET: no frames for %r", parent_fingerprint)
             return
-        if (existing is not None and getattr(existing, "active", True)
-                and list(existing.indices) == idx):
-            return   # the same frames: nothing to rebuild or announce
-        try:
-            self.env.declareSubDataset(parent, model, idx, name)
-        except Exception as exc:
-            logger.warning("DECLARE_SUBSET: declareSubDataset failed: %s", exc)
+        unchanged = (existing is not None and getattr(existing, "active", True)
+                     and list(existing.indices) == idx)
+        if not unchanged:   # the same frames: nothing to rebuild or announce
+            try:
+                self.env.declareSubDataset(parent, model, idx, name)
+            except Exception as exc:
+                logger.warning("DECLARE_SUBSET: declareSubDataset failed: %s", exc)
+                return
+        await self._emit(pack(control.SUBSET_DECLARED, [], {
+            "fingerprint": SubDataset.getFingerprint(SubDataset, parent, model, name),
+            "parent_fingerprint": parent_fingerprint, "model_fp": model_fp, "name": name,
+        }))
 
     def _frames_in_view(self, view, parent, model) -> list[int]:
         """The parent frames a plot's view covers, computing the metrics it

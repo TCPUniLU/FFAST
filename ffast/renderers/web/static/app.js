@@ -5,10 +5,10 @@
 import { FFastConnection } from './connection.js';
 import { Panel3D, ViewRenderers } from './views3d.js';
 import { ensureMainView, isLinked3D, MAIN_VIEW_RULE, showsMainView } from './tab_rules.js';
-import { sameConfiguration } from './frame_links.js';
+import { sameConfiguration, predictionApplies } from './frame_links.js';
 import { infoReadout } from './measure.js';
 import { MetricClient } from './metrics.js';
-import { AnalysisManager } from './analysis.js';
+import { AnalysisManager, framesKey } from './analysis.js';
 import { createColorByPane } from './panes/colorby.js';
 import { createCameraPane } from './panes/camera.js';
 import { createDisplayPane } from './panes/display.js';
@@ -104,6 +104,8 @@ export class FFastApp {
     this._lastOpenedDatasetFp = null;  // last dataset_ref sent via OPEN_VIEW
     this._openedModelFp = null;        // last prediction_ref sent via OPEN_VIEW
     this._frameOnSnapshot = null;      // frame to show once the opening view's snapshot is in
+    this._followSub = null;            // the SUB subset the main view moves to once made
+    this._showWhenKnown = null;        // ...and its fingerprint, if announced after the reply
     this._activeTab = null;            // id of the tab on screen
     this._viewShown = false;        // a scene is drawn; else the empty state (ADR 0055)
     this._framedViews = new Set();  // view ids whose first snapshot fitted the atoms
@@ -197,7 +199,7 @@ export class FFastApp {
       tabpanels: document.getElementById('tabpanels'),
       metricClient: null,
       onSelectTab: (id) => this._selectTab(id),
-      onSub: (o) => this._sendDeclareSubset(o),
+      onSub: (o) => this._onSub(o),
       onPointFrame: (o) => this._onPlotPoint(o),
     });
     this._applyLayout([]);
@@ -915,6 +917,7 @@ export class FFastApp {
       conn.on(IN.METRIC_CATALOG, (kw) => this._onMetricCatalog(kw));
       conn.on(IN.METRICS_UPDATED, () => this._conn?.send(OUT.REQUEST_METRIC_CATALOG, {}));
       conn.on(IN.SUBSET_EXPORTED, (kw) => this._sessionOps.onSubsetExported(kw));
+      conn.on(IN.SUBSET_DECLARED, (kw) => this._onSubsetDeclared(kw));
       // Session outcomes are named events now, not a guess from the next
       // TASK_DONE — which resolved a pending save against an unrelated task's
       // completion (ADR 0050).
@@ -973,6 +976,8 @@ export class FFastApp {
     this._lastOpenedDatasetFp = null;
     this._openedModelFp = null;
     this._frameOnSnapshot = null;
+    this._followSub = null;
+    this._showWhenKnown = null;
     this._playing = false;
     this._pendingSessionOp = null;
     this._setActiveTool(null);   // release any armed pick tool
@@ -994,7 +999,14 @@ export class FFastApp {
   }
 
   _onDatasetMeta(fp, meta) {
+    const before = this._datasets.get(fp);
     this._datasets.set(fp, meta);
+    if (before && fp === this._currentDatasetFp && this._followMainViewSubset(fp, before, meta)) return;
+    if (fp === this._showWhenKnown) {
+      this._showWhenKnown = null;
+      this._showInMainView(fp);
+      return;
+    }
     // The first dataset auto-selects so the Loupe has something to show. A
     // live pop-out (ADR 0044 Phase 4) overrides that with the dataset its
     // opener had open, whenever that one's metadata arrives during replay.
@@ -1016,7 +1028,8 @@ export class FFastApp {
     // that one, so replay order among several candidates doesn't matter.
     const wantsSpecificModel = this._autoModelFp && fp !== this._autoModelFp;
     if (!wantsSpecificModel && this._currentDatasetFp &&
-        (meta?.dataset_fingerprints || []).includes(this._currentDatasetFp)) {
+        (meta?.dataset_fingerprints || []).length
+        && predictionApplies(meta, this._currentDatasetFp, this._datasets)) {
       this._currentModelFp = fp;
       this._setStatus(`Prediction "${meta.name || fp.slice(0,8)}" ready`, 'connected');
       if (this._activePanel) this._openView();
@@ -1068,9 +1081,8 @@ export class FFastApp {
     }
     const dsFp = this._currentDatasetFp;
     for (const [fp, meta] of this._models) {
-      const fps = meta.dataset_fingerprints || [];
-      // A prediction applies only to the dataset it was computed for.
-      const applies = !dsFp || !fps.length || fps.includes(dsFp);
+      // A prediction applies to the dataset it was computed for and its subsets.
+      const applies = !dsFp || predictionApplies(meta, dsFp, this._datasets);
       const row = document.createElement('div');
       row.className = 'obj-row'
         + (fp === this._currentModelFp ? ' selected' : '')
@@ -1094,8 +1106,8 @@ export class FFastApp {
 
   /** Drop a prediction that does not apply to the selected dataset. */
   _dropInapplicableModel() {
-    const fps = this._models.get(this._currentModelFp)?.dataset_fingerprints || [];
-    if (this._currentModelFp && fps.length && !fps.includes(this._currentDatasetFp))
+    if (this._currentModelFp && !predictionApplies(
+      this._models.get(this._currentModelFp), this._currentDatasetFp, this._datasets))
       this._currentModelFp = null;
   }
 
@@ -1404,6 +1416,62 @@ export class FFastApp {
     this._conn.send(OUT.DECLARE_SUBSET, msg);
   }
 
+  /** A plot with SUB ticked made, moved or hid subsets (analysis.js). The
+   * main view moves to the one just made: the series showing the main view's
+   * dataset and prediction, else the first. */
+  _onSub({ name, series, view, active, tick }) {
+    for (const s of series) this._sendDeclareSubset({ ...s, name, view, active });
+    if (active === false) {
+      if (this._followSub?.name === name) this._followSub = null;
+      return;
+    }
+    if (!tick) return;
+    const main = series.find((s) => s.parentFp === this._currentDatasetFp
+        && s.modelFp === this._currentModelFp)
+      || series.find((s) => s.parentFp === this._currentDatasetFp) || series[0];
+    this._followSub = { ...main, name };
+  }
+
+  /** The server made the subset SUB asked for; show the one the main view
+   * follows. */
+  _onSubsetDeclared({ fingerprint, parent_fingerprint, model_fp, name }) {
+    const f = this._followSub;
+    if (!f || f.parentFp !== parent_fingerprint || (f.modelFp || null) !== (model_fp || null)
+        || f.name !== name) return;
+    this._followSub = null;
+    if (this._datasets.has(fingerprint)) this._showInMainView(fingerprint);
+    else this._showWhenKnown = fingerprint;
+  }
+
+  /** Show dataset `fp` in the main view at `frame`, or at the same structure
+   * as now where it has it, else its first frame. */
+  _showInMainView(fp, frame = null) {
+    const from = this._currentDatasetFp;
+    const same = from ? sameConfiguration(from, this._currentFrame(), fp, this._datasets) : null;
+    this._currentDatasetFp = fp;
+    this._dropInapplicableModel();
+    this._renderObjects();
+    this._syncAnalysisContext();
+    this._frameOnSnapshot = frame ?? same ?? 0;
+    if (this._activePanel) this._openView();
+  }
+
+  /** The main view's dataset was announced again. A subset whose SUB was
+   * unticked hands the main view back to its parent; one that moved with a
+   * zoom is reopened, on the same structure where it still has it. True when
+   * it moved the main view. */
+  _followMainViewSubset(fp, before, meta) {
+    const frame = this._currentFrame();
+    if (meta.active === false && meta.parent) {
+      this._showInMainView(meta.parent, before.parent_frames ? before.parent_frames[frame] : frame);
+      return true;
+    }
+    if (framesKey(before) === framesKey(meta)) return false;
+    const at = meta.parent_frames ? meta.parent_frames.indexOf(before.parent_frames?.[frame]) : -1;
+    this._showInMainView(fp, at >= 0 ? at : 0);
+    return true;
+  }
+
   /** The datasets the lists show: all but subsets hidden by unticking SUB. */
   _listedDatasets() {
     return new Map([...this._datasets].filter(([, meta]) => meta.active !== false));
@@ -1427,8 +1495,8 @@ export class FFastApp {
       ? sameConfiguration(datasetFp, frame, this._currentDatasetFp, this._datasets) : null;
     if (target == null) {
       this._currentDatasetFp = datasetFp;
-      const fps = this._models.get(modelFp)?.dataset_fingerprints || [];
-      if (modelFp && (!fps.length || fps.includes(datasetFp))) this._currentModelFp = modelFp;
+      if (modelFp && predictionApplies(this._models.get(modelFp), datasetFp, this._datasets))
+        this._currentModelFp = modelFp;
       else this._dropInapplicableModel();
       this._renderObjects();
       this._syncAnalysisContext();

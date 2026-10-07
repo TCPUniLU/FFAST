@@ -7,8 +7,8 @@
  * subset's frame i is its parent's frame `parent_frames[i]`; an atom subset
  * keeps every frame of its parent. Following parents up to the dataset that
  * was loaded gives each frame its configuration: (root dataset, root frame).
- * A prediction is computed for its dataset's frames, so it needs no lineage.
- * Pure functions over the dataset metadata map, so they test without a server.
+ * A prediction made for a dataset applies to its subsets: its values for a
+ * subset are its values for the parent's frames. Pure functions over the dataset metadata map, so they test without a server.
  */
 
 /**
@@ -48,4 +48,23 @@ export function sameConfiguration(fromFp, frame, toFp, datasets) {
     if (have.frame === want.frame) return j;
   }
   return null;
+}
+
+/**
+ * Whether a prediction draws on dataset `fp`: it was made for `fp` or for a
+ * dataset `fp` was cut from. An empty `dataset_fingerprints` means unknown,
+ * which allows it, as the object rail has always read it.
+ * @param {{dataset_fingerprints?: string[]}|undefined} modelMeta
+ * @param {string} fp
+ * @param {Map<string, {parent?: string|null}>} datasets
+ */
+export function predictionApplies(modelMeta, fp, datasets) {
+  const fps = modelMeta?.dataset_fingerprints || [];
+  if (!fps.length) return true;
+  let cur = fp;
+  for (let depth = 0; cur && depth < 64; depth++) {
+    if (fps.includes(cur)) return true;
+    cur = datasets.get(cur)?.parent;
+  }
+  return false;
 }

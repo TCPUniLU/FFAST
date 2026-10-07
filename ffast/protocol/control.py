@@ -126,3 +126,8 @@ SESSION_LOADED = "SESSION_LOADED"
 TAB_SAVED = "TAB_SAVED"
 # Reply to EXPORT_TAB: {name, toml, error}, the tab as a project would write it.
 TAB_EXPORTED = "TAB_EXPORTED"
+# Reply to DECLARE_SUBSET, to the window that sent it: {fingerprint,
+# parent_fingerprint, model_fp, name}, which subset the plot's view made, so
+# the window that ticked SUB can show it in its main view. Every window learns
+# of the subset itself from REMOTE_DATASET_META. Out of REPLY_EVENTS.
+SUBSET_DECLARED = "SUBSET_DECLARED"

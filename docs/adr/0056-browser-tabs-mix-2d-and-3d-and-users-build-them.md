@@ -174,6 +174,18 @@ frames (`ffast/session/subbing.py`, the desktop's rules) and announces the
 subset again whenever its frames change or it is hidden. This replaces the
 browser's earlier drag-a-box subbing. A subset is named after its plot.
 
+Ticking Sub also shows the subset in the main view: the rail selects it, at
+the same structure if it holds it (rule 3), else its first frame. Of several
+series, the one showing the main view's dataset and prediction wins, else the
+first. The tab ticked is pinned to the datasets and predictions it draws, so
+it keeps drawing the full data while you zoom; tabs that follow the rail draw
+the subset, as if it had been clicked there. While the main view shows the
+subset it keeps up as the zoom moves it, staying on the same structure where
+it can. Unticking hands the main view back to the parent, at the same
+structure. The server tells the window that ticked which subset it made
+(`SUBSET_DECLARED`). A prediction made for a dataset applies to its subsets,
+in the rail, in the plots and in the 3D view's force arrows.
+
 ## Alternatives rejected
 
 - **One shared 3D view only (no independent panels).** Cheapest, but it rules out

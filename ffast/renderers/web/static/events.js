@@ -65,5 +65,8 @@ export const IN = Object.freeze({
   // and the TOML for EXPORT_TAB (ADR 0056).
   TAB_SAVED: 'TAB_SAVED',
   TAB_EXPORTED: 'TAB_EXPORTED',
+  // Which subset a DECLARE_SUBSET made, to the window that sent it, so the
+  // window that ticked SUB can show it.
+  SUBSET_DECLARED: 'SUBSET_DECLARED',
   METRIC_RESULT: 'METRIC_RESULT',
 });
