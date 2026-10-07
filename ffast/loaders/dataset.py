@@ -753,6 +753,16 @@ class SubDataset(DatasetLoader):
     def getN(self):
         return len(self.indices)
 
+    @property
+    def molecule_offsets(self):
+        """Where each frame's atoms start in the flat per-atom arrays, for a
+        parent whose structures differ in size: built from the atom counts of
+        the frames this subset holds."""
+        if not self.isVariable:
+            raise AttributeError("molecule_offsets")
+        counts = np.asarray(self.getNAtoms()).reshape(-1).astype(int)
+        return np.concatenate([[0], np.cumsum(counts)])
+
     def getBondMatrix(self, index):
         """The bonds of the parent's frame this frame is. A parent whose
         structures differ in size has no shared ``bondSizes`` to copy."""
