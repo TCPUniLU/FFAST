@@ -13,7 +13,7 @@
 export function askDialog({ title, message, buttons }) {
   return new Promise((resolve) => {
     const modal = document.createElement('div');
-    modal.className = 'warning-modal';
+    modal.className = 'warning-modal ask-dialog';
     modal.setAttribute('role', 'dialog');
     modal.setAttribute('aria-modal', 'true');
     const panel = document.createElement('div');

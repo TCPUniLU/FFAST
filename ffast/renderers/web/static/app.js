@@ -22,6 +22,7 @@ import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
 import { askDialog, textDialog } from './dialogs.js';
+import { TabEditor } from './edit_mode.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
 import { loadLayout, saveLayout } from './layout_state.js';
 import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './quick_styles.js';
@@ -129,6 +130,15 @@ export class FFastApp {
     this._tabOps = new TabOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
     /** The last layout the server sent, hidden tabs included. */
     this._layoutTabs = [];
+    this._pendingShow = null;   // a tab to show once a layout brings it
+    // Edit mode (ADR 0056 rule 15): the only way a tab changes.
+    this._editor = new TabEditor({
+      tabOps: this._tabOps,
+      serverTabs: () => this._layoutTabs,
+      catalog: () => this._metricCatalog,
+      refresh: ({ show } = {}) => this._applyLayout(this._layoutTabs, { show }),
+      setStatus: (text, kind) => this._setStatus(text, kind),
+    });
 
     // ADR 0045 Phase 1: scientific view-command plumbing (mirrors Qt's
     // window._sendViewCommand / _sceneVersion, UI/loupe/window.py:320-349).
@@ -196,16 +206,24 @@ export class FFastApp {
   /** Build the tabs from a layout. Linked 3D panels already drawing move into
    * the new layout's linked cells, keeping their renderer and scene; the rest
    * are given back. The tab on screen stays on screen when it still exists. */
-  _applyLayout(tabs) {
+  _applyLayout(tabs, { show } = {}) {
+    if (tabs !== this._layoutTabs) this._editor.noteLayout(tabs || []);
     this._layoutTabs = tabs || [];
-    const shownName = this._analysis.tab(this._activeTab)?.name;
+    // A tab asked for (`show`) may only arrive with the next layout: a saved
+    // new tab is announced just after the save's answer.
+    const currentName = this._analysis.tab(this._activeTab)?.name;
+    const wanted = show ?? this._pendingShow ?? currentName;
     const old = [...this._panels3d.values()];
     const reusable = old.filter((panel) => panel.linked);
     this._parkChrome();
     this._setActivePanel(null);
     this._panels3d = new Map();
-    // Hidden tabs stay out of the bar; the tab menu offers them again.
-    this._analysis.setLayout(ensureMainView(this._layoutTabs.filter((t) => !t.hidden)));
+    // Hidden tabs stay out of the bar; the tab menu offers them again. A tab
+    // being edited shows its draft.
+    const draft = this._editor.draft;
+    const visible = ensureMainView(this._editor.withDraft(this._layoutTabs)
+      .filter((t) => !t.hidden || t === draft));
+    this._analysis.setLayout(visible);
     for (const { id } of this._analysis.tabList) {
       for (const cell of this._analysis.tab(id).cells3d) {
         if (!isLinked3D(cell.spec) || !reusable.length) continue;
@@ -217,11 +235,19 @@ export class FFastApp {
     }
     for (const panel of old) if (![...this._panels3d.values()].includes(panel)) this._disposePanel(panel);
     const list = this._analysis.tabList;
-    const next = list.find((t) => t.name === shownName) || list.find((t) => t.id === this._mainViewTabId());
+    const found = list.find((t) => t.name === wanted);
+    this._pendingShow = found ? null : (show ?? this._pendingShow ?? null);
+    const next = found || list.find((t) => t.name === currentName)
+      || list.find((t) => t.id === this._mainViewTabId());
     this._activeTab = null;
     // No new snapshot needed: a reused panel still draws the scene, and a
     // new one starts from the main view's kept scene and camera.
     this._selectTab(next.id, { reopen: false });
+    if (draft) {
+      const id = list.find((t) => t.name === draft.name)?.id;
+      this._editor.decorate(this._analysis.tab(id), visible);
+    }
+    this._syncTabButtons();
   }
 
   /** The first tab with a linked 3D panel; there always is one (ADR 0056 rule 6). */
@@ -239,6 +265,7 @@ export class FFastApp {
     const tab = this._analysis.tab(id);
     if (!tab) return;
     this._activeTab = id;
+    queueMicrotask(() => this._syncTabButtons());
     for (const el of document.querySelectorAll('#tabbar .tab'))
       el.classList.toggle('active', el.dataset.tab === id);
     for (const el of document.querySelectorAll('#tabpanels .tabpanel'))
@@ -384,6 +411,15 @@ export class FFastApp {
       document.getElementById('tab-menu-list'),
       () => this._tabMenuActions(),
     );
+    bindMenu(
+      document.getElementById('tab-new-btn'),
+      document.getElementById('tab-new-list'),
+      () => this._newTabActions(),
+    );
+    document.getElementById('tab-edit-btn').addEventListener('click', () => {
+      const name = this._analysis.tab(this._activeTab)?.name;
+      if (!this._editor.editing && !this._whyNoEdit()) this._editor.editTab(name);
+    });
     document.getElementById('hint-dismiss').addEventListener('click', () => this._dismissHint());
     document.getElementById('empty-load-btn').addEventListener('click',
       () => runAction(this._action('load-dataset')));
@@ -471,6 +507,41 @@ export class FFastApp {
         unavailable: needsControl });
     }
     return actions;
+  }
+
+  /** "+" (rule 14): an empty tab, a copy of the tab on screen, or a copy of
+   * any tab. Each opens Tab settings, then Edit mode. */
+  _newTabActions() {
+    const why = () => this._whyNoEdit();
+    const current = this._layoutTabs.find((t) => t.name === this._analysis.tab(this._activeTab)?.name);
+    const actions = [
+      { id: 'tab-new-empty', label: 'Empty tab', run: () => this._editor.newTab(), unavailable: why },
+      { id: 'tab-new-copy', label: 'Copy of current tab', run: () => this._editor.newTab(current),
+        unavailable: () => why() || (current ? '' : 'This tab is not from the server') },
+    ];
+    if (this._layoutTabs.length) actions.push({ separator: true });
+    for (const t of this._layoutTabs) {
+      actions.push({ id: `tab-new-copy:${t.name}`, label: `Copy of ${t.name}`,
+        run: () => this._editor.newTab(t), unavailable: why });
+    }
+    return actions;
+  }
+
+  /** Why tabs cannot be edited now, or ''. */
+  _whyNoEdit() {
+    if (this._editor.editing) return 'Finish editing the tab first (Save or Cancel)';
+    return this._needsControl();
+  }
+
+  /** ✎ and + follow whether this window may edit, and Edit mode. */
+  _syncTabButtons() {
+    const edit = document.getElementById('tab-edit-btn');
+    const spec = this._analysis.tab(this._activeTab)?.spec;
+    const fromServer = this._layoutTabs.some((t) => t.name === spec?.name);
+    const why = this._whyNoEdit() || (fromServer ? '' : 'This tab is not from the server');
+    edit.disabled = !!why;
+    edit.title = why || 'Edit this tab';
+    edit.classList.toggle('active', this._editor.editing);
   }
 
   /** Why tab `name` cannot be hidden: the main view needs a visible place. */
@@ -872,6 +943,7 @@ export class FFastApp {
       document.getElementById('add-dataset-btn').disabled = !canMutate;
       document.getElementById('add-prediction-btn').disabled = !canMutate;
       this._renderObjects();
+      this._syncTabButtons();
       // Fetch the analysis-tab layout (METRIC_CATALOG arrives via connect-replay).
       conn.send(OUT.REQUEST_TAB_LAYOUT, {});
 
@@ -916,6 +988,7 @@ export class FFastApp {
     this._browser.close();
     this._sessionOps.reset();
     this._tabOps.reset();
+    this._editor.end(false);   // a draft cannot be saved without a server
     this._setStatus('Disconnected', '');
     this._syncEmptyState();
   }

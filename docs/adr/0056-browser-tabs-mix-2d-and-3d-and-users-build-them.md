@@ -91,8 +91,9 @@ Browser only. The Qt desktop gets one small change (point 17).
     drag their edges to change spans, and you drag the dividers between columns
     and rows. The tab file gains relative `column_widths` and `row_heights`. Rows
     with set heights share the window's height; a tab without them scrolls as
-    today. Each list has one entry per column or row; one that does not fit
-    the grid is a config error, like any other.
+    today. A list may be longer than the panels reach, for columns or rows
+    left empty, never shorter; a shorter one is a config error, like any
+    other.
 13. **A tab file stores layout and starting settings, never data.** For an
     independent panel it stores linked/independent, the two link ticks, and its
     starting colouring, display, bonds and force arrows. It never stores which
@@ -135,6 +136,21 @@ too. The browser saves, deletes, hides and exports over `SAVE_TAB`,
 `DELETE_TAB`, `HIDE_TAB` and `EXPORT_TAB`; a read-only window may only export.
 Export, Reset to original, Delete, Hide and the hidden tabs to show again are
 in a ⋯ menu at the right end of the tab bar, acting on the tab on screen.
+
+Edit mode looks like this. ✎, + and ⋯ sit at the right end of the tab
+bar. While a tab is edited, an edit bar (+ Add panel, Tab settings…, Cancel,
+Save) takes the place of its controls row, and each panel gets a handle strip
+laid over it, the plots staying live underneath: drag ⠿ to move it, drag the
+corner ◢ to change its span, ⚙ opens it in the builder, ✕ removes it.
+Dropping a panel on another swaps the two; each keeps its size where it fits
+and shrinks where it does not. Panels sharing a scroll strip move and resize
+as one. Dragging the dividers between columns or rows sets `column_widths` or
+`row_heights`; Tab settings has "Rows share the window height", and unticking
+it drops `row_heights` so the tab scrolls again. "+" opens Tab settings
+(name, columns, controls) before the new tab opens in Edit mode, and the tab
+exists only once saved. The builder's panel kinds, their roles and the metric
+shapes each role takes mirror the desktop's panel kinds (`tab_edit.js`
+`KIND_ROLES`; a test keeps them in step).
 
 In a tab file a 3D panel is `kind = "3d"`, with no `metrics`. The built-in
 "3D" tab is `ffast/config/builtin_tabs/00_3d.toml`, first in the bar.

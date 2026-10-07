@@ -56,6 +56,13 @@ def test_a_new_tab_is_one_toml_file_in_the_shared_format(store, tmp_path):
     assert "replaces" not in path.read_text()
 
 
+def test_sizes_are_written_as_a_person_would(store, tmp_path):
+    _sources(store).save({"name": "Sized", "panels": [VIEW], "column_widths": [2.0, 1.5]})
+    data = tomllib.loads((tmp_path / "tabs" / "sized.toml").read_text())
+    assert data["tabs"][0]["column_widths"] == [2, 1.5]
+    assert isinstance(data["tabs"][0]["column_widths"][0], int)
+
+
 def test_new_user_tabs_follow_the_others_in_the_order_they_were_made(store):
     project = [_tab("Mine", TABLE)]
     sources = _sources(store, project=project)

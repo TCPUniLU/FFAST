@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import tomllib
 from pathlib import Path
 
 import ase.io
@@ -1403,6 +1404,186 @@ async def test_web_user_tabs_reach_every_window_and_can_be_reset_hidden_exported
                 text = await page.locator("#text-dialog textarea").input_value()
                 assert text.startswith("[[visualization.tabs]]")
                 assert 'name = "Basic Errors"' in text
+            finally:
+                await browser.close()
+
+
+@contextlib.asynccontextmanager
+async def _tab_server(tmp_path):
+    """A server with only built-in tabs (no project config) and an empty tabs
+    folder; yields (ws_port, web_port, tabs_dir) with a dataset and prediction
+    loaded."""
+    tabs_dir = tmp_path / "tabs"
+    config = tmp_path / "ffast.toml"
+    config.write_text("")
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        await _preload_dataset_and_prediction(ws_port)
+        yield ws_port, web_port, tabs_dir
+
+
+async def _open_app(page, web_port, ws_port):
+    await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+    await expect(page.locator("#status")).to_have_class(re.compile(r"\bconnected\b"))
+    await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
+
+
+_CHROME = ".tabpanel.active .edit-chrome"
+
+
+async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
+    """ADR 0056 rules 11, 12 and 15. ✎ opens Edit mode: remove a panel, add a
+    ready-made 3D panel and a custom one from the builder, drag one onto
+    another to swap them, drag a column divider. Cancel drops all of it and
+    nothing is written; Save writes the tab, which is then marked edited."""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            draft = "() => window.ffastApp._editor.draft?.panels.map((p) => [p.kind, p.title, p.row, p.col])"
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _open_analysis_tab(page, "Gyration")
+                await page.locator("#tab-edit-btn").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_contain_text("Editing Gyration")
+                await expect(page.locator(".tabpanel.active .analysis-controls")).to_be_hidden()
+                await expect(page.locator(_CHROME)).to_have_count(4)
+
+                await page.locator(_CHROME, has_text="Gyradius distribution").locator("[data-edit=remove]").click()
+                await expect(page.locator(_CHROME)).to_have_count(3)
+                await page.locator("[data-edit=add-panel]").click()
+                await page.get_by_role("button", name="3D panel", exact=True).click()
+                await expect(page.locator(_CHROME)).to_have_count(4)
+                await expect(page.locator(".tabpanel.active canvas.view3d")).to_have_count(1)
+
+                await page.locator("[data-edit=add-panel]").click()
+                await page.get_by_role("button", name="Custom panel…").click()
+                await page.locator(".edit-modal select[data-field=kind]").select_option("table")
+                assert "ffast.gyradius" not in await page.locator(
+                    ".edit-modal select[data-role=value]").inner_text()   # not a scalar
+                await page.locator(".edit-modal select[data-role=value]").select_option("ffast.force_component_mae")
+                await page.locator(".edit-modal input[data-field=title]").fill("Force MAE")
+                await page.get_by_role("button", name="Add", exact=True).click()
+                await expect(page.locator(_CHROME)).to_have_count(5)
+
+                # Drag the 3D panel onto the first panel: the two swap.
+                handle = page.locator(_CHROME, has_text="3D panel").locator(".edit-handle")
+                hb = await handle.bounding_box()
+                gb = await page.locator(".tabpanel.active .analysis-grid").bounding_box()
+                await page.mouse.move(hb["x"] + 10, hb["y"] + 5)
+                await page.mouse.down()
+                await page.mouse.move(gb["x"] + 60, gb["y"] + 60, steps=8)
+                await page.mouse.up()
+                await page.wait_for_function(
+                    "() => window.ffastApp._editor.draft.panels.some((p) => p.kind === '3d' && p.row === 0 && p.col === 0)")
+                assert ["timeline", "Total gyration radius", 1, 0] in await page.evaluate(draft)
+
+                divider = await page.locator(".tabpanel.active .edit-divider.col").first.bounding_box()
+                await page.mouse.move(divider["x"] + 4, divider["y"] + 100)
+                await page.mouse.down()
+                await page.mouse.move(divider["x"] + 150, divider["y"] + 100, steps=6)
+                await page.mouse.up()
+                widths = await page.evaluate("() => window.ffastApp._editor.draft.column_widths")
+                assert len(widths) == 2 and widths[0] > widths[1]
+
+                # Cancel: the tab as it was, and nothing written.
+                await page.locator("[data-edit=cancel]").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                await expect(page.locator(".tabpanel.active .analysis-panel[data-title='Gyradius distribution']")).to_have_count(1)
+                assert not list(tabs_dir.glob("*.toml"))
+
+                # Save: written, marked, out of Edit mode.
+                await page.locator("#tab-edit-btn").click()
+                await page.locator(_CHROME, has_text="Gyradius distribution").locator("[data-edit=remove]").click()
+                await page.locator("[data-edit=save]").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                await expect(page.locator("#tabbar .tab.active .tab-mark")).to_have_text("edited")
+                await expect(page.locator(".tabpanel.active .analysis-panel[data-title='Gyradius distribution']")).to_have_count(0)
+                saved = (tabs_dir / "gyration.toml").read_text()
+                assert "Gyradius distribution" not in saved and "Total gyration radius" in saved
+            finally:
+                await browser.close()
+
+
+async def test_web_new_tabs_and_the_main_view_rule(tmp_path):
+    """ADR 0056 rules 6 and 14. The last linked 3D panel cannot be removed;
+    "+" ▸ Empty tab asks the name and columns, then opens the new tab in
+    Edit mode, and it exists once saved."""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            try:
+                await _open_app(page, web_port, ws_port)
+                await page.locator("#tab-edit-btn").click()   # the 3D tab
+                remove = page.locator(_CHROME).locator("[data-edit=remove]")
+                await expect(remove).to_be_disabled()
+                assert await remove.get_attribute("title") == "At least one tab must show the main view"
+                await expect(page.locator("#tab-edit-btn")).to_be_disabled()   # already editing
+                await page.locator("[data-edit=cancel]").click()
+
+                await page.locator("#tab-new-btn").click()
+                await page.locator("#tab-new-list [data-action=tab-new-empty]").click()
+                await page.locator(".edit-modal input[data-field=name]").fill("Basic Errors")
+                await expect(page.get_by_role("button", name="Create")).to_be_disabled()
+                await expect(page.locator(".edit-modal .ctl-hint")).to_have_text(
+                    "A tab named Basic Errors already exists")
+                await page.locator(".edit-modal input[data-field=name]").fill("Fresh")
+                await page.locator(".edit-modal input[data-field=columns]").fill("3")
+                await page.get_by_role("button", name="Create").click()
+                await expect(page.locator("#tabbar .tab.active")).to_have_text("Fresh")
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_contain_text("Editing Fresh")
+                await page.locator("[data-edit=add-panel]").click()
+                await page.get_by_role("button", name="3D panel", exact=True).click()
+                await page.locator("[data-edit=save]").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                await expect(page.locator("#tabbar .tab.active")).to_have_text("Fresh")
+                data = tomllib.loads((tabs_dir / "fresh.toml").read_text())
+                assert data["tabs"][0]["column_widths"] == [1, 1, 1]
+
+                # Now a second tab shows the main view, so the 3D tab's panel can go.
+                await page.locator("#tabbar .tab", has_text="3D").first.click()
+                await page.locator("#tab-edit-btn").click()
+                await expect(page.locator(_CHROME).locator("[data-edit=remove]")).to_be_enabled()
+            finally:
+                await browser.close()
+
+
+async def test_web_edit_mode_warns_when_another_window_saved_the_tab(tmp_path):
+    """ADR 0056 rule 16: Save asks whether to overwrite or discard when the
+    tab was saved in another window meanwhile."""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            other = {"previous_name": "Basic Errors", "tab": {"name": "Basic Errors", "panels": [
+                {"kind": "table", "row": 0, "col": 0, "title": "Theirs",
+                 "metrics": {"value": {"metric": "ffast.force_component_mae"}}}]}}
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _open_analysis_tab(page, "Basic Errors")
+                await page.locator("#tab-edit-btn").click()
+                await page.locator(_CHROME).first.locator("[data-edit=remove]").click()
+                assert (await _tab_request(ws_port, "SAVE_TAB", other))["ok"]
+                await expect(page.locator(".edit-bar .edit-note")).to_have_text(
+                    "Changed in another window since you began.")
+                await page.locator("[data-edit=save]").click()
+                await expect(page.locator(".ask-dialog .warning-modal-message")).to_have_text(
+                    "Basic Errors was changed in another window — overwrite or discard your edits?")
+                await page.get_by_role("button", name="Discard my edits").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                await expect(page.locator(".tabpanel.active .analysis-panel[data-title='Theirs']")).to_have_count(1)
+
+                await page.locator("#tab-edit-btn").click()
+                await page.locator("[data-edit=tab-settings]").click()
+                await page.locator(".edit-modal input[data-field=name]").fill("Mine now")
+                await page.get_by_role("button", name="Apply").click()
+                other["tab"]["panels"][0]["title"] = "Theirs again"
+                assert (await _tab_request(ws_port, "SAVE_TAB", other))["ok"]
+                await page.locator("[data-edit=save]").click()
+                await page.get_by_role("button", name="Overwrite").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                await expect(page.locator("#tabbar .tab.active")).to_contain_text("Mine now")
+                assert 'name = "Mine now"' in (tabs_dir / "basic-errors.toml").read_text()
             finally:
                 await browser.close()
 

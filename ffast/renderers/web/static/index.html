@@ -173,6 +173,59 @@
       letter-spacing: 0; color: var(--hl2); opacity: 0.85;
     }
     .tab .tab-mark.changed { color: #e0a84e; }
+    #tab-edit-btn.active { color: var(--hl2); box-shadow: inset 0 0 0 1px var(--hl2); }
+    /* Edit mode (ADR 0056 rule 15): edit bar, and handles over each panel */
+    .tabpanel.editing .analysis-controls { display: none; }
+    .edit-bar {
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 6px 12px;
+      background: var(--bg2); border-bottom: 1px solid var(--hl1); font-size: 12px;
+    }
+    .edit-bar .spacer { flex: 1; }
+    .edit-bar .edit-note { color: #e0a84e; font-size: 11px; }
+    .edit-bar button.primary { background: var(--hl2); color: var(--text2); }
+    .analysis-grid.editing-grid { position: relative; }
+    .edit-chrome {
+      position: relative; z-index: 6; min-width: 0; min-height: 0;
+      border: 1px dashed var(--hl2); border-radius: 5px; background: rgba(28, 166, 187, 0.07);
+    }
+    .edit-head {
+      display: flex; align-items: center; gap: 4px; padding: 2px 4px;
+      background: rgba(32, 34, 37, 0.92); border-radius: 5px 5px 0 0;
+    }
+    .edit-handle {
+      flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 11px; font-weight: 700; color: var(--text1); cursor: grab; user-select: none;
+      padding: 2px 4px; touch-action: none;
+    }
+    .edit-head button { height: 20px; min-width: 22px; padding: 0 5px; font-size: 11px; }
+    .edit-resize {
+      position: absolute; right: 3px; bottom: 1px; color: var(--hl2); cursor: nwse-resize;
+      user-select: none; font-size: 13px; touch-action: none;
+    }
+    .edit-ghost {
+      z-index: 7; pointer-events: none; border: 2px solid var(--hl2);
+      background: var(--sel); border-radius: 5px;
+    }
+    .edit-divider { position: absolute; z-index: 8; touch-action: none; }
+    .edit-divider.col { width: 8px; cursor: col-resize; }
+    .edit-divider.row { height: 8px; cursor: row-resize; }
+    .edit-divider:hover, .edit-divider.dragging { background: var(--hl1); }
+    .edit-empty { min-height: 200px; }
+    .edit-modal .warning-modal-panel { width: 520px; }
+    .edit-modal-body { padding: 10px 12px; max-height: 65vh; overflow-y: auto; }
+    .edit-field { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12px; }
+    .edit-field > span:first-child { min-width: 70px; color: var(--muted); font-size: 11px; }
+    .edit-field input[type="text"], .edit-field input[type="number"], .edit-field select { flex: 1; height: 26px; }
+    .builder-list { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+    .builder-row { display: flex; gap: 4px; }
+    .builder-row select { flex: 1; }
+    .panel-list { display: flex; flex-direction: column; gap: 2px; }
+    .panel-list-head {
+      margin-top: 8px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--muted);
+    }
+    .panel-choice { text-align: left; height: auto; padding: 5px 8px; background: transparent; }
+    .panel-choice:hover { background: var(--bg4); }
     /* text to copy or download (Export, rule 9) */
     .text-dialog-panel { width: 640px; }
     .text-dialog-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
@@ -843,6 +896,12 @@
         <!-- Actions on the tab on screen (ADR 0056): export, reset, hide,
              and the hidden tabs to show again. -->
         <div id="tab-actions">
+          <button id="tab-edit-btn" title="Edit this tab" disabled>✎</button>
+          <div id="tab-new" class="menu">
+            <button id="tab-new-btn" aria-haspopup="menu" aria-expanded="false"
+                    title="New tab">+</button>
+            <div id="tab-new-list" class="menu-list right hidden" role="menu"></div>
+          </div>
           <div id="tab-menu" class="menu">
             <button id="tab-menu-btn" aria-haspopup="menu" aria-expanded="false"
                     title="Tab actions">⋯</button>

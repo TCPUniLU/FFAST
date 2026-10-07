@@ -55,8 +55,13 @@ def tab_fingerprint(tab: AnalysisTabConfig) -> str:
 
 
 def _authoring(tab: AnalysisTabConfig) -> dict:
-    """The tab as someone would write it: no defaults, no nulls."""
-    return tab.model_dump(mode="json", exclude_defaults=True, exclude_none=True)
+    """The tab as someone would write it: no defaults, no nulls, and whole
+    sizes as whole numbers (``[2, 1]``, not ``[2.0, 1.0]``)."""
+    data = tab.model_dump(mode="json", exclude_defaults=True, exclude_none=True)
+    for key in ("column_widths", "row_heights"):
+        if key in data:
+            data[key] = [int(v) if float(v).is_integer() else v for v in data[key]]
+    return data
 
 
 def _shows_main_view(tab: AnalysisTabConfig) -> bool:

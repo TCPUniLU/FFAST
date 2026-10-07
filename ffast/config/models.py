@@ -160,9 +160,10 @@ class AnalysisTabConfig(BaseModel):
 
     ``column_widths`` and ``row_heights`` (ADR 0056) are relative sizes, one per
     column and one per row: ``[2, 1]`` makes the first column twice as wide.
-    With ``row_heights`` the rows share the window's height; without it rows
-    are at least 300 px and the tab scrolls. The browser reads them; the
-    desktop ignores them."""
+    A list may be longer than the panels reach, for columns or rows left
+    empty, never shorter. With ``row_heights`` the rows share the window's
+    height; without it rows are at least 300 px and the tab scrolls. The
+    browser reads them; the desktop ignores them."""
     model_config = ConfigDict(extra="forbid")
     name: str
     has_data_selector: bool = True
@@ -182,7 +183,7 @@ class AnalysisTabConfig(BaseModel):
         ):
             if sizes is None:
                 continue
-            if len(sizes) != count:
+            if len(sizes) < count:
                 entries = "entry" if len(sizes) == 1 else "entries"
                 raise ValueError(
                     f"{field} has {len(sizes)} {entries}; the tab has {count} {what}")

@@ -319,12 +319,14 @@ def test_tab_sizes_are_relative_and_optional():
 
 
 def test_tab_sizes_cover_every_column_and_row():
-    """A list that does not match the grid is a config error naming the count
-    it needs, like any other config mistake."""
-    with pytest.raises(ValidationError, match="column_widths has 3 entries; the tab has 2 columns"):
-        _sized_tab(column_widths=[1, 1, 1])
+    """A list too short for the grid is a config error naming the count it
+    needs, like any other config mistake; a longer one leaves columns or rows
+    empty (a column count set in the browser survives a save)."""
+    with pytest.raises(ValidationError, match="column_widths has 1 entry; the tab has 2 columns"):
+        _sized_tab(column_widths=[1])
     with pytest.raises(ValidationError, match="row_heights has 1 entry; the tab has 2 rows"):
         _sized_tab(row_heights=[1])
+    assert _sized_tab(column_widths=[1, 1, 1], row_heights=[1, 1, 1]).column_widths == [1, 1, 1]
 
 
 def test_tab_sizes_are_positive():

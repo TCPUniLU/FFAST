@@ -212,6 +212,9 @@ Editing a built-in or project tab in the browser saves a user tab that
 **replaces** it; resetting deletes that user tab and the original returns. Any
 tab can be **hidden** from the tab bar.
 
+A tab changes only in **Edit mode** (✎ in the browser): the edits go to a
+draft, Save writes it and Cancel drops it, so exploring never rewrites a tab.
+
 Don't call it: overriding a tab ("override" is taken by display overrides).
 
 ### 3D panel

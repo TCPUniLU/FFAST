@@ -161,14 +161,15 @@ export class AnalysisManager {
   /**
    * A tab's parts that app.js lays the 3D controls around, and its 3D cells.
    * @returns {null|{id: string, name: string, spec: object, panelEl: HTMLElement,
-   *   bodyEl: HTMLElement, mainEl: HTMLElement,
-   *   cells3d: Array<{spec: object, index: number, el: HTMLElement}>}}
+   *   bodyEl: HTMLElement, mainEl: HTMLElement, gridEl: HTMLElement,
+   *   cells3d: Array<{spec: object, index: number, el: HTMLElement}>,
+   *   slots: Array<{el: HTMLElement, indices: number[]}>}}
    */
   tab(id) {
     const t = this._tabs.find((x) => x.id === id);
     if (!t) return null;
-    const { panelEl, bodyEl, mainEl, cells3d } = t;
-    return { id, name: t.spec.name, spec: t.spec, panelEl, bodyEl, mainEl, cells3d };
+    const { panelEl, bodyEl, mainEl, gridEl, cells3d, slots } = t;
+    return { id, name: t.spec.name, spec: t.spec, panelEl, bodyEl, mainEl, gridEl, cells3d, slots };
   }
 
   /** Update the current selection context and refresh the active tab. */
@@ -292,9 +293,9 @@ export class AnalysisManager {
   _layoutGrid(t) {
     const grid = t.gridEl;
     const panels = t.spec.panels || [];
-    const maxCol = Math.max(1, ...panels.map((p) => p.col + (p.colspan || 1)));
-    const share = (sizes) => sizes.map((size) => `minmax(0, ${size}fr)`).join(' ');
     const widths = t.spec.column_widths, heights = t.spec.row_heights;
+    const maxCol = Math.max(1, widths?.length || 0, ...panels.map((p) => p.col + (p.colspan || 1)));
+    const share = (sizes) => sizes.map((size) => `minmax(0, ${size}fr)`).join(' ');
     grid.style.gridTemplateColumns = widths?.length === maxCol
       ? share(widths) : `repeat(${maxCol}, minmax(0, 1fr))`;
     grid.style.gridTemplateRows = heights?.length ? share(heights) : '';
@@ -327,16 +328,17 @@ export class AnalysisManager {
           el.className = 'analysis-scrollstrip';
           place(el);
           el.style.gridRow = String(spec.row + 1);
-          slot = { el, specs: [] };
+          slot = { el, specs: [], indices: [] };
           strips.set(spec.scroll_group, slot);
           t.slots.push(slot);
         }
         slot.specs.push(spec);
+        slot.indices.push(index);
       } else {
         const el = document.createElement('div');
         el.className = 'grid-slot';
         place(el);
-        t.slots.push({ el, specs: [spec] });
+        t.slots.push({ el, specs: [spec], indices: [index] });
       }
     });
     t.has2d = t.slots.length > 0;

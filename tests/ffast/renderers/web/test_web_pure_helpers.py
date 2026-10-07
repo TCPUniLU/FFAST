@@ -326,6 +326,49 @@ CASES = {
     "fl_unknown_dataset": "fl.sameConfiguration('X', 3, 'P', FL)",
     "fl_frame_out_of_range": "fl.sameConfiguration('S', 9, 'P', FL)",
 
+    # ── te: editing a tab draft (ADR 0056 rules 6, 11, 12, 14) ──────────────
+    # A 2x2 tab: 3D panel at (0,0), table A at (0,1), timeline B at (1,0)
+    # spanning 2 columns.
+    "te_place": "te.place(TE()).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])",
+    "te_move_to_free_cell": (
+        "te.place(te.movePanel(TE(), 1, 2, 1)).map(p => [p.title, p.row, p.col])"),
+    "te_move_swaps": (
+        "te.place(te.movePanel(TE(), 1, 0, 0)).map(p => [p.title, p.row, p.col, p.colspan])"),
+    "te_move_swap_shrinks_to_fit": (
+        "te.place(te.movePanel(TE(), 2, 0, 1)).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])"),
+    "te_resize_grows": (
+        "te.place(te.resizePanel(te.movePanel(TE(), 2, 2, 0), 0, 2, 1))"
+        ".map(p => [p.title, p.rowspan, p.colspan])"),
+    "te_resize_stops_at_a_neighbour": (
+        "te.place(te.resizePanel(TE(), 0, 1, 2)).map(p => [p.title, p.rowspan, p.colspan])"),
+    "te_resize_stays_in_the_columns": (
+        "te.place(te.resizePanel(TE(), 1, 1, 5)).map(p => [p.title, p.colspan])"),
+    "te_add_takes_the_first_free_cell": (
+        "te.place(te.addPanel(te.removePanel(TE(), 1), {kind:'table', title:'C'}))"
+        ".map(p => [p.title, p.row, p.col])"),
+    "te_add_opens_a_row_when_full": (
+        "te.place(te.addPanel(TE(), {kind:'table', title:'C'})).map(p => [p.title, p.row, p.col])"),
+    "te_columns_fewer_moves_panels_down": (
+        "(() => { const t = te.setColumns(TE(), 1);"
+        "  return [t.panels.map(p => [p.title, p.row, p.col, p.colspan]), t.column_widths]; })()"),
+    "te_columns_keep_widths_in_step": (
+        "te.setColumns({...TE(), column_widths: [2, 1]}, 3).column_widths"),
+    "te_rows_keep_heights_in_step": (
+        "te.addPanel({...TE(), row_heights: [3, 1]}, {kind:'table', title:'C'}).row_heights"),
+    "te_remove_drops_empty_rows": (
+        "(() => { const t = te.removePanel({...TE(), row_heights: [3, 1]}, 2);"
+        "  return [t.panels.length, t.row_heights]; })()"),
+    "te_rows_share_the_window": (
+        "[te.setRowsShareWindow(TE(), true).row_heights, te.setRowsShareWindow({...TE(), row_heights:[1,2]}, false).row_heights]"),
+    "te_save_form": (
+        "te.toSaved({...TE(), source:'user', replaces:'X', revision:'r', hidden:false, original_changed:false})"),
+    "te_copy_of": "te.copyOf(TE(), 'Copy of Mixed').name",
+    "te_empty_tab": "te.emptyTab('New')",
+    "te_kinds_offer_metrics_by_shape": (
+        "te.metricsFor('density', 'value', [{id:'a', shape:'(curve_xy, grid)'},"
+        " {id:'b', shape:'N_frames'}]).map(m => m.id)"),
+    "te_kind_roles": "te.KIND_ROLES",
+
     "grad_matches_mapped": (
         "(() => {"
         "  const out = {};"
@@ -366,6 +409,15 @@ def results():
         f"  const rs = await import('{origin}/recent_servers.js');\n"
         f"  const tr = await import('{origin}/tab_rules.js');\n"
         f"  const fl = await import('{origin}/frame_links.js');\n"
+        f"  const te = await import('{origin}/tab_edit.js');\n"
+        "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
+        "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
+        "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
+        "      {kind: 'table', row: 0, col: 1, rowspan: 1, colspan: 1, title: 'A',\n"
+        "       metrics: {value: 'm.a__smooth'}, metric_refs: {value: {metric: 'm.a', transform: 'smooth', params: {}}}},\n"
+        "      {kind: 'timeline', row: 1, col: 0, rowspan: 1, colspan: 2, title: 'B',\n"
+        "       metrics: {y: 'm.b'}, metric_refs: {y: {metric: 'm.b', transform: null, params: {}}}},\n"
+        "    ]});\n"
         "  const FL = new Map(Object.entries({\n"
         "    P: {n: 10}, Q: {n: 10},\n"
         "    S: {n: 3, parent: 'P', parent_frames: [4, 6, 8]},\n"
@@ -762,3 +814,96 @@ def test_unrelated_or_unknown_datasets_share_no_configuration(results):
 
 def test_a_frame_past_the_end_of_a_subset_has_no_configuration(results):
     assert results["fl_frame_out_of_range"] is None
+
+
+# ── tab_edit (ADR 0056 step 6) ──────────────────────────────────────────────
+
+def test_te_panels_keep_their_places(results):
+    assert results["te_place"] == [["V", 0, 0, 1, 1], ["A", 0, 1, 1, 1], ["B", 1, 0, 1, 2]]
+
+
+def test_te_a_panel_moves_to_a_free_cell(results):
+    assert results["te_move_to_free_cell"] == [["V", 0, 0], ["A", 2, 1], ["B", 1, 0]]
+
+
+def test_te_dropping_on_a_panel_swaps_the_two(results):
+    assert results["te_move_swaps"] == [["V", 0, 1, 1], ["A", 0, 0, 1], ["B", 1, 0, 2]]
+
+
+def test_te_a_swapped_panel_shrinks_to_fit(results):
+    """B (two columns wide) dropped on A's cell: B would stick out of the
+    grid, so it narrows; A takes B's old place."""
+    assert results["te_move_swap_shrinks_to_fit"] == [
+        ["V", 0, 0, 1, 1], ["A", 1, 0, 1, 1], ["B", 0, 1, 1, 1]]
+
+
+def test_te_resizing_grows_a_span(results):
+    assert results["te_resize_grows"] == [["V", 2, 1], ["A", 1, 1], ["B", 1, 2]]
+
+
+def test_te_resizing_stops_at_a_neighbour(results):
+    assert results["te_resize_stops_at_a_neighbour"] == [["V", 1, 1], ["A", 1, 1], ["B", 1, 2]]
+
+
+def test_te_resizing_stays_inside_the_columns(results):
+    assert results["te_resize_stays_in_the_columns"] == [["V", 1], ["A", 1], ["B", 2]]
+
+
+def test_te_a_new_panel_takes_the_first_free_cell(results):
+    assert results["te_add_takes_the_first_free_cell"] == [["V", 0, 0], ["B", 1, 0], ["C", 0, 1]]
+
+
+def test_te_a_new_panel_opens_a_row_when_the_grid_is_full(results):
+    assert results["te_add_opens_a_row_when_full"][-1] == ["C", 2, 0]
+
+
+def test_te_fewer_columns_move_the_panels_down(results):
+    panels, widths = results["te_columns_fewer_moves_panels_down"]
+    assert panels == [["V", 0, 0, 1], ["A", 2, 0, 1], ["B", 1, 0, 1]]
+    assert widths is None
+
+
+def test_te_sizes_follow_the_columns_and_rows(results):
+    assert results["te_columns_keep_widths_in_step"] == [2, 1, 1]
+    assert results["te_rows_keep_heights_in_step"] == [3, 1, 1]
+    assert results["te_remove_drops_empty_rows"] == [2, [3]]
+
+
+def test_te_rows_share_the_window_or_scroll(results):
+    assert results["te_rows_share_the_window"] == [[1, 1], None]
+
+
+def test_te_saving_sends_the_authoring_form(results):
+    saved = results["te_save_form"]
+    assert set(saved) == {"name", "controls", "selector", "has_data_selector",
+                          "column_widths", "row_heights", "panels"}
+    assert saved["panels"][1]["metrics"] == {
+        "value": {"metric": "m.a", "transform": "smooth", "params": {}}}
+    assert "metric_refs" not in saved["panels"][1]
+
+
+def test_te_new_tabs_from_scratch_or_a_copy(results):
+    assert results["te_copy_of"] == "Copy of Mixed"
+    assert results["te_empty_tab"]["name"] == "New"
+    assert results["te_empty_tab"]["panels"] == []
+
+
+def test_te_the_builder_offers_metrics_of_the_shape_a_role_takes(results):
+    assert results["te_kinds_offer_metrics_by_shape"] == ["a"]
+
+
+def test_te_kind_roles_match_the_desktop_panel_kinds(results):
+    """The browser's builder and the desktop's panel kinds must agree on the
+    roles each kind binds and the shapes they declare."""
+    pytest.importorskip("PySide6")
+    from ffast.metrics.dims import shape_to_str
+    from UI.panels import PANEL_KINDS
+
+    js = results["te_kind_roles"]
+    for name, kind in PANEL_KINDS.items():
+        assert name in js, name
+        for role in kind.roles:
+            assert role in js[name]["roles"], (name, role)
+        for role, shape in kind.shapes.items():
+            if role in kind.roles:
+                assert js[name]["roles"][role] == [shape_to_str(shape)], (name, role)
