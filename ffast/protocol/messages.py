@@ -41,6 +41,8 @@ class DatasetMeta(BaseModel):
     # subset which parent frame each of its frames is (None: the same frame).
     parent: Optional[str] = None
     parent_frames: Optional[list[int]] = None
+    # False for a subset whose SUB box was unticked: kept, but not listed.
+    active: bool = True
 
 
 class ModelMeta(BaseModel):
@@ -254,24 +256,43 @@ class CreateSubsetRequest(BaseModel):
     indices: list[Union[int, str]]
 
 
+class SubsetView(BaseModel):
+    """What a plot shows, for subbing: its panel kind, the metric each role
+    binds (a list for ``series``), each metric's compute params, and the
+    visible x and y ranges. See ``ffast.session.subbing``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    metrics: dict[str, Union[str, list[str]]] = Field(default_factory=dict)
+    params: dict[str, dict] = Field(default_factory=dict)
+    x: list[float]
+    y: Optional[list[float]] = None
+
+
 class DeclareSubsetRequest(BaseModel):
     """Typed payload for ``DECLARE_SUBSET`` (ADR 0045 Phase 3 subbing).
 
     Where ``CREATE_SUBSET`` filters *atoms within* each frame, this declares a
-    frame-index subset: ``indices`` are parent **configuration** indices (the
-    points a plot box-select covered), materialised server-side into a live
-    ``SubDataset`` via ``env.declareSubDataset``. ``model_fp`` (optional) is the
-    prediction the subbing panel was bound to — part of the SubDataset identity,
-    matching the desktop ``declareSubDataset(parent, model, idx, name)`` call.
-    ``name`` labels the subset (defaults to the originating panel/tab name).
+    frame-index subset, materialised server-side into a live ``SubDataset``
+    via ``env.declareSubDataset``. Its frames are either ``indices``, parent
+    **configuration** indices, or the frames a plot's ``view`` covers: while
+    SUB is ticked on a browser plot, the browser sends the view on every zoom
+    and the subset follows it. ``active=False`` hides the subset (SUB
+    unticked); declaring it again shows it. ``model_fp`` (optional) is the
+    prediction the subbing panel was bound to — part of the SubDataset
+    identity, matching the desktop ``declareSubDataset(parent, model, idx,
+    name)`` call. ``name`` labels the subset (the plot's title).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     parent_fingerprint: str
-    indices: list[int]
+    indices: Optional[list[int]] = None
+    view: Optional[SubsetView] = None
     model_fp: Optional[str] = None
     name: str = "Subset"
+    active: bool = True
 
 
 class RequestSubdatasetArraysRequest(BaseModel):

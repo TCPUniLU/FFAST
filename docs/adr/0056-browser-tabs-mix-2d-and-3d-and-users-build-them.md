@@ -161,6 +161,19 @@ To match configurations (rule 3), each dataset's announcement
 `parent_frames`: frame i of the subset is frame `parent_frames[i]` of the
 parent. An atom subset keeps every frame of its parent.
 
+### Subsets from plots (decided during the step 6 trial)
+
+The browser's **Sub** box works as the desktop's does. Ticking it on a
+timeline, scatter or distribution plot makes a subset of each series the plot
+draws: the configurations inside the plot's visible range. It follows every
+zoom and pan, and unticking hides it. On a distribution the subset is the
+configurations whose value falls in the visible range; on a force scatter,
+the configurations of the points in view. The browser sends the plot's view in
+`DECLARE_SUBSET` (`view`, or `active = false` to hide); the server works out the
+frames (`ffast/session/subbing.py`, the desktop's rules) and announces the
+subset again whenever its frames change or it is hidden. This replaces the
+browser's earlier drag-a-box subbing. A subset is named after its plot.
+
 ## Alternatives rejected
 
 - **One shared 3D view only (no independent panels).** Cheapest, but it rules out

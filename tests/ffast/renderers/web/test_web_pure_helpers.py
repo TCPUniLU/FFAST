@@ -326,6 +326,14 @@ CASES = {
     "fl_unknown_dataset": "fl.sameConfiguration('X', 3, 'P', FL)",
     "fl_frame_out_of_range": "fl.sameConfiguration('S', 9, 'P', FL)",
 
+    # ── an: SUB follows the plot's zoom ─────────────────────────────────────
+    "an_plot_range": (
+        "an.plotRange({_fullLayout: {xaxis: {range: [1.5, 7]}, yaxis: {range: [0, 2]}}})"),
+    "an_plot_range_before_drawing": "an.plotRange({})",
+    "an_frames_key_moves_with_the_frames": (
+        "[an.framesKey({n: 3, parent_frames: [4, 6, 8]}), an.framesKey({n: 3, parent_frames: [4, 6, 9]}),"
+        " an.framesKey({n: 10}), an.framesKey(undefined)]"),
+
     # ── te: editing a tab draft (ADR 0056 rules 6, 11, 12, 14) ──────────────
     # A 2x2 tab: 3D panel at (0,0), table A at (0,1), timeline B at (1,0)
     # spanning 2 columns.
@@ -819,6 +827,18 @@ def test_a_frame_past_the_end_of_a_subset_has_no_configuration(results):
 
 
 # ── tab_edit (ADR 0056 step 6) ──────────────────────────────────────────────
+
+def test_sub_reads_the_visible_ranges(results):
+    assert results["an_plot_range"] == {"x": [1.5, 7], "y": [0, 2]}
+    assert results["an_plot_range_before_drawing"] is None
+
+
+def test_a_tab_drawing_a_subset_redraws_when_its_frames_change(results):
+    """A subset that follows a zoom keeps its name and size but changes its
+    frames; the tabs drawing it must notice."""
+    a, b, plain, missing = results["an_frames_key_moves_with_the_frames"]
+    assert a != b and plain == "10" and missing == ""
+
 
 def test_te_panels_keep_their_places(results):
     assert results["te_place"] == [["V", 0, 0, 1, 1], ["A", 0, 1, 1, 1], ["B", 1, 0, 1, 2]]

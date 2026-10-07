@@ -148,7 +148,7 @@ class ServerSession:
             control.LOAD_MODEL:                 _Route(self._on_load_model, ["path", "model_type"], LoadModelRequest),
             control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint"], DeleteObjectRequest),
             control.CREATE_SUBSET:              _Route(self._on_create_subset, ["parent_fingerprint", "indices"], CreateSubsetRequest),
-            control.DECLARE_SUBSET:             _Route(self._on_declare_subset, ["parent_fingerprint", "indices"], DeclareSubsetRequest),
+            control.DECLARE_SUBSET:             _Route(self._on_declare_subset, ["parent_fingerprint", "?indices"], DeclareSubsetRequest),
             control.REQUEST_SUBDATASET_ARRAYS:  _Route(self._on_request_subdataset_arrays, ["fingerprint"], RequestSubdatasetArraysRequest),
             control.PROBE_DATASET_KEYS:         _Route(self._on_probe_dataset_keys, ["path", "dataset_type"], ProbeDatasetKeysRequest),
             control.PROBE_DATASET_LENGTH:       _Route(self._on_probe_dataset_length, ["path"], ProbeDatasetLengthRequest),
@@ -449,19 +449,23 @@ class ServerSession:
         except Exception as exc:
             logger.warning("CREATE_SUBSET: createAtomFilteredDataset failed: %s", exc)
 
-    async def _on_declare_subset(self, parent_fingerprint, indices, **kwargs) -> None:
-        """Declare a frame-index SubDataset from a plot box-select (subbing).
+    async def _on_declare_subset(self, parent_fingerprint, indices=None, **kwargs) -> None:
+        """Declare, update or hide a frame-index SubDataset (subbing).
 
-        The desktop's ``BasicPlotWidget`` turns a plot viewport/selection into a
-        set of parent **configuration** indices and calls
+        The desktop's ``BasicPlotWidget`` turns a plot viewport into a set of
+        parent **configuration** indices and calls
         ``env.declareSubDataset(parent, model, idx, name)`` in-process (ADR 0021
-        subbing). The browser has no in-process Environment, so it ships the
-        covered indices here; this is the server-side twin of that call. The new
-        (or refreshed) ``SubDataset`` announces itself via ``DATASET_LOADED`` →
-        ``REMOTE_DATASET_META``, so — like ``CREATE_SUBSET`` — nothing is emitted
-        directly, and the subset becomes usable by the 3D view and other tabs
-        (PRD stories 61-62).
+        subbing). The browser has no in-process Environment, so it ships either
+        the ``indices`` or the plot's ``view`` here — while SUB is ticked it
+        sends the view on every zoom, and ``ffast.session.subbing`` works out
+        the frames it covers. ``active=False`` (SUB unticked) hides the subset.
+        The new or changed ``SubDataset`` announces itself via
+        ``REMOTE_DATASET_META`` (server.py), so nothing is emitted directly,
+        and the subset is usable by the 3D view and other tabs (PRD stories
+        61-62).
         """
+        from ffast.loaders.dataset import SubDataset  # ADR 0047 Phase 5c
+
         parent = self.env.datasets.get(parent_fingerprint)
         if parent is None:
             logger.warning("DECLARE_SUBSET: parent %r not found", parent_fingerprint)
@@ -469,14 +473,50 @@ class ServerSession:
         model_fp = kwargs.get("model_fp")
         model = self.env.models.get(model_fp) if model_fp else None
         name = kwargs.get("name") or "Subset"
-        idx = [int(i) for i in (indices or [])]
-        if not idx:
-            logger.warning("DECLARE_SUBSET: empty index set for %r", parent_fingerprint)
+        existing = self.env.datasets.get(SubDataset.getFingerprint(SubDataset, parent, model, name))
+
+        if kwargs.get("active", True) is False:
+            if existing is not None:
+                existing.setActive(False)
             return
+
+        view = kwargs.get("view")
+        if view is not None:
+            try:
+                idx = await asyncio.get_running_loop().run_in_executor(
+                    _metric_compute_pool(), self._frames_in_view, view, parent, model)
+            except Exception as exc:
+                logger.warning("DECLARE_SUBSET: view of %r failed: %s", parent_fingerprint, exc)
+                return
+        else:
+            idx = [int(i) for i in (indices or [])]
+        if not idx:
+            # Zoomed onto no frames: the subset keeps the frames it had.
+            logger.info("DECLARE_SUBSET: no frames for %r", parent_fingerprint)
+            return
+        if (existing is not None and getattr(existing, "active", True)
+                and list(existing.indices) == idx):
+            return   # the same frames: nothing to rebuild or announce
         try:
             self.env.declareSubDataset(parent, model, idx, name)
         except Exception as exc:
             logger.warning("DECLARE_SUBSET: declareSubDataset failed: %s", exc)
+
+    def _frames_in_view(self, view, parent, model) -> list[int]:
+        """The parent frames a plot's view covers, computing the metrics it
+        reads if they are not cached yet (runs in the metric pool)."""
+        from ffast.metrics.registry import default_registry
+        from ffast.session.subbing import frames_in_view
+
+        def value_of(metric_id, params):
+            key = self.env.data.make_metric_cache_key(metric_id, params, model, parent)
+            result = self.env.cache.get(key)
+            if result is None and self.env.data.generateMetric(metric_id, params, model, parent, key):
+                result = self.env.cache.get(key)
+            return None if result is None else result.values
+
+        return frames_in_view(view, n_frames=parent.getN(), value_of=value_of,
+                              registry=default_registry, dataset=parent)
 
     async def _on_request_subdataset_arrays(self, fingerprint, **kwargs) -> None:
         """Serialize SubDataset arrays and push them onto the outbound queue.

@@ -63,8 +63,9 @@ A loaded set of configurations: positions, energies, forces, atomic numbers.
 Identified by a fingerprint, which is an MD5 of the contents. Can be strided at
 load time (`slice_num`).
 
-**SubDataset** is a view onto a parent restricted to some indices, created when
-you select a region of a plot. It is also how a tractable slice of a large remote
+**SubDataset** is a view onto a parent restricted to some indices, created from
+the region a plot shows when you tick its **Sub** box; it follows the plot's
+zoom, and unticking hides it. It is also how a tractable slice of a large remote
 dataset reaches the local viewer. **FrozenSubDataset** is one that has been
 snapshotted and now stands on its own.
 

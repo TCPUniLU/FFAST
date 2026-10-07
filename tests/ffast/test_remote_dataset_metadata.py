@@ -128,7 +128,19 @@ def test_the_desktop_accepts_lineage_in_the_announcement(monkeypatch):
                         lambda self, *a, **k: (_ for _ in ()).throw(RuntimeError("stop")))
     try:
         manager._onRemoteDatasetMeta("subfp", name="s", n=3, is_sub=True,
-                                     parent="parentfp", parent_frames=[3, 5, 8])
+                                     parent="parentfp", parent_frames=[3, 5, 8],
+                                     active=False)
     except RuntimeError as exc:
         assert str(exc) == "stop"   # got past the signature and validation
     assert seen["fp"] == "subfp"
+
+
+def test_a_hidden_subset_says_so():
+    """A subset whose SUB box was unticked is kept but marked inactive, so the
+    browser stops listing it."""
+    sub = SubDataset(_parent(), None, np.array([3, 5]), "Plot")
+    sub.getN = lambda: 2
+    sub.fingerprint = "subfp"
+    assert DatasetMeta.model_validate(sub.toMetaDict()).active is True
+    sub.setActive(False)
+    assert DatasetMeta.model_validate(sub.toMetaDict()).active is False

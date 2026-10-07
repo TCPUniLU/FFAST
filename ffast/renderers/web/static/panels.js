@@ -25,14 +25,14 @@
  * Plotly is the vendored UMD global (`globalThis.Plotly`), loaded by a classic
  * <script> before this module (see index.html / vendor/plotly/README.md).
  *
- * Subbing (PRD 61): a plot renderer records `el._subInfo` describing how a
- * Plotly box-select maps selected points → parent **configuration** indices;
- * analysis.js reads it in the `plotly_selected` handler. `curveSeries` maps each
- * trace back to its series index, so a box-select in a multi-series panel subs
- * the dataset that was actually selected. Per-frame kinds (timeline, scatter
- * over per-frame metrics, overlay_timeline) are subbable; density/grouped/table
- * are not (parity-pragmatic — the desktop's per-atom and reduced-source cases
- * are out of the daily-driver scope).
+ * Point → frame (PRD 63): a plot renderer records `el._subInfo` describing
+ * how a clicked point maps to a **configuration** index; analysis.js reads it
+ * in the `plotly_click` handler. `curveSeries` maps each trace back to its
+ * series index, so a click in a multi-series panel shows the structure of the
+ * dataset that was actually clicked. Per-frame kinds (timeline, scatter over
+ * per-frame metrics, overlay_timeline) carry it. Subbing (PRD 61) needs none
+ * of this: SUB sends the plot's visible range and the server works out the
+ * frames (analysis.js `_wireSub`).
  */
 
 /** @typedef {import('./protocol.js').PanelLayout} PanelLayout */
@@ -84,8 +84,7 @@ function baseLayout() {
     font: { color: '#b9bbc2', size: 10, family: 'system-ui, sans-serif' },
     margin: { l: 48, r: 12, t: 8, b: 36 },
     showlegend: false,
-    // No `dragmode` here on purpose: Plotly.react would otherwise reset the mode
-    // on every refresh, undoing a panel's "Sub" toggle (box-select) each redraw.
+    // No `dragmode`: Plotly's default, a drag zooms, is what SUB follows.
     xaxis: { gridcolor: '#36393f', zerolinecolor: '#494d55', automargin: true },
     yaxis: { gridcolor: '#36393f', zerolinecolor: '#494d55', automargin: true },
     hovermode: 'closest',
@@ -160,11 +159,9 @@ export function buildTimeline(spec, series, ctx) {
   const u = ctx.units || {};
   const traces = [];
   const curveSeries = [];
-  let n = 0;
   (series || []).forEach((s, i) => {
     const y = values1d(s.data.y);
     if (!y.length) return;
-    n = Math.max(n, y.length);
     traces.push({
       x: y.map((_, k) => k), y, type: 'scatter', mode: 'lines',
       line: { color: seriesColor(i), width: 1.5 },
@@ -175,12 +172,7 @@ export function buildTimeline(spec, series, ctx) {
   const layout = withLegend(baseLayout(), traces.length);
   layout.xaxis.title = { text: axisTitle(spec.x_label, u.x) || 'Configuration index' };
   layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) };
-  // x IS the configuration index, so a box-select maps by its x-RANGE (a
-  // lines-only trace reports no selected points, but does report a range).
-  return {
-    traces, layout,
-    subInfo: { perFrame: true, xIsConfigIndex: true, n, curveSeries },
-  };
+  return { traces, layout, subInfo: { perFrame: true, curveSeries } };
 }
 
 export function buildDensity(spec, series, ctx) {
@@ -251,7 +243,6 @@ export function buildOverlayTimeline(spec, series, ctx) {
   const labels = (spec.options && spec.options.series_labels) || [];
   const traces = [];
   const curveSeries = [];
-  let n = 0;
   let color = 0;
   (series || []).forEach((s, si) => {
     const list = s.data.series || [];
@@ -264,7 +255,6 @@ export function buildOverlayTimeline(spec, series, ctx) {
       const peak = arrMax(y);
       if (peak > 0) y = y.map((v) => v / peak);
       y = y.map((v) => Math.abs(v));
-      n = Math.max(n, y.length);
       // `__NAME__` in a configured label is the series slot — the same
       // substitution the single-series build did, now with a name per pair.
       const label = (labels[k] || '').replace('__NAME__', s.name || '');
@@ -279,11 +269,7 @@ export function buildOverlayTimeline(spec, series, ctx) {
   const layout = withLegend(baseLayout(), Math.max(2, traces.length));
   layout.xaxis.title = { text: axisTitle(spec.x_label, null) || 'Configuration index' };
   layout.yaxis.title = { text: axisTitle(spec.y_label, null) };
-  // Overlay series x is the configuration index too → range-based subbing.
-  return {
-    traces, layout,
-    subInfo: { perFrame: true, xIsConfigIndex: true, n, curveSeries },
-  };
+  return { traces, layout, subInfo: { perFrame: true, curveSeries } };
 }
 
 export function buildGroupedDensity(spec, series, ctx) {

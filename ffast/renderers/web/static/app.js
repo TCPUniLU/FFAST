@@ -1036,17 +1036,18 @@ export class FFastApp {
     this._syncSidebarTitle();
     // The analysis tabs offer their own multi-select over the same objects, so
     // they need the full lists, not just the rail's current pick.
-    this._analysis?.setAvailable({ datasets: this._datasets, models: this._models });
+    this._analysis?.setAvailable({ datasets: this._listedDatasets(), models: this._models });
   }
 
   _renderDatasetList() {
     const list = document.getElementById('dataset-list');
     list.innerHTML = '';
-    if (this._datasets.size === 0) {
+    const listed = this._listedDatasets();
+    if (listed.size === 0) {
       list.innerHTML = '<div class="obj-empty">— none loaded —</div>';
       return;
     }
-    for (const [fp, meta] of this._datasets) {
+    for (const [fp, meta] of listed) {
       const row = document.createElement('div');
       row.className = 'obj-row' + (fp === this._currentDatasetFp ? ' selected' : '');
       row.dataset.fp = fp;
@@ -1386,20 +1387,26 @@ export class FFastApp {
     this._setStatus('Extracting subset…', 'connected');
   }
 
-  /** Declare a frame-index SubDataset from an analysis-plot box-select
-   * (ADR 0045 Phase 3 subbing). The server materialises it as a live
-   * SubDataset announced via REMOTE_DATASET_META, so it appears in the object
-   * rail and is usable by the 3D view and other tabs (PRD 61-62).
-   * @param {{parentFp: string, modelFp: string|null, indices: number[], name: string}} o */
+  /** Make, move or hide the subset of a plot with SUB ticked (ADR 0045
+   * Phase 3 subbing). With a `view` the server makes the subset the frames
+   * that view covers, or moves it there; `active: false` hides it. The server
+   * announces the result via REMOTE_DATASET_META, so it appears in the object
+   * rail and is usable by the 3D view and other tabs (PRD 61-62). Given
+   * `indices` instead, the subset is those parent frames.
+   * @param {{parentFp: string, modelFp: string|null, name: string,
+   *   view?: object, indices?: number[], active?: boolean}} o */
   _sendDeclareSubset(o) {
-    if (!this._conn || !o.parentFp || !o.indices.length) return;
-    this._conn.send(OUT.DECLARE_SUBSET, {
-      parent_fingerprint: o.parentFp,
-      indices: o.indices,
-      model_fp: o.modelFp,
-      name: o.name,
-    });
-    this._setStatus(`Sub-selecting ${o.indices.length} structure(s)…`, 'connected');
+    if (!this._conn || !o.parentFp) return;
+    const msg = { parent_fingerprint: o.parentFp, model_fp: o.modelFp, name: o.name };
+    if (o.active === false) msg.active = false;
+    else if (o.indices) msg.indices = o.indices;
+    else msg.view = o.view;
+    this._conn.send(OUT.DECLARE_SUBSET, msg);
+  }
+
+  /** The datasets the lists show: all but subsets hidden by unticking SUB. */
+  _listedDatasets() {
+    return new Map([...this._datasets].filter(([, meta]) => meta.active !== false));
   }
 
   /**

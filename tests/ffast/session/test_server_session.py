@@ -267,8 +267,8 @@ def test_dispatch_create_subset_missing_parent_is_dropped():
 def test_dispatch_declare_subset_materializes_frame_subset():
     """DECLARE_SUBSET turns a covered configuration-index list into a live
     SubDataset via declareSubDataset (parent, model, idx, name)."""
-    parent = _FakeParentDataset([6, 6, 1, 1])
-    model = object()
+    parent = _FakeFrames()
+    model = _FakeModel()
     env = _FakeEnv(datasets={"ds1": parent}, models={"m1": model})
 
     async def scenario():
@@ -285,7 +285,7 @@ def test_dispatch_declare_subset_materializes_frame_subset():
 
 
 def test_dispatch_declare_subset_without_model_uses_none():
-    parent = _FakeParentDataset([1, 1])
+    parent = _FakeFrames()
     env = _FakeEnv(datasets={"ds1": parent})
 
     async def scenario():
@@ -299,7 +299,7 @@ def test_dispatch_declare_subset_without_model_uses_none():
 
 
 def test_dispatch_declare_subset_empty_indices_is_dropped():
-    parent = _FakeParentDataset([1, 1])
+    parent = _FakeFrames()
     env = _FakeEnv(datasets={"ds1": parent})
 
     async def scenario():
@@ -983,3 +983,85 @@ def test_session_tasks_keep_their_desktop_visible_names():
 
     _run(scenario())
     assert env.task_names == ["Saving session", "Loading save"]
+
+
+# ── DECLARE_SUBSET from a plot's view: SUB follows the zoom ─────────────────
+class _FakeFrames:
+    """A parent dataset with a fingerprint and a frame count."""
+
+    def __init__(self, fp="ds1", n=10):
+        self.fingerprint = fp
+        self._n = n
+
+    def getN(self):
+        return self._n
+
+
+class _FakeSub:
+    def __init__(self, indices, active=True):
+        self.indices = indices
+        self.active = active
+
+    def setActive(self, state):
+        self.active = state
+
+
+class _FakeModel:
+    fingerprint = "m1"
+
+
+def _sub_fp(parent, model, name):
+    from ffast.loaders.dataset import SubDataset
+    return SubDataset.getFingerprint(SubDataset, parent, model, name)
+
+
+def _declare(env, **kwargs):
+    async def scenario():
+        await ServerSession(env, asyncio.Queue()).dispatch("DECLARE_SUBSET", [], kwargs)
+    _run(scenario())
+
+
+TIMELINE_VIEW = {"kind": "timeline", "metrics": {"y": "ffast.energy_difference"},
+                 "x": [0.6, 3.2]}
+
+
+def test_declare_subset_from_a_view_covers_the_frames_on_screen():
+    parent, model = _FakeFrames(), _FakeModel()
+    env = _FakeEnv(datasets={"ds1": parent}, models={"m1": model})
+    _declare(env, parent_fingerprint="ds1", model_fp="m1", name="Energy MAE timeline",
+             view=TIMELINE_VIEW)
+    assert env.declare_subset_calls == [(parent, model, [1, 2, 3], "Energy MAE timeline")]
+
+
+def test_a_view_with_the_same_frames_changes_nothing():
+    """A zoom that keeps the same frames does not rebuild the subset (and so
+    does not make every window reload it)."""
+    parent, model = _FakeFrames(), _FakeModel()
+    sub = _FakeSub([1, 2, 3])
+    env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, model, "T"): sub},
+                   models={"m1": model})
+    _declare(env, parent_fingerprint="ds1", model_fp="m1", name="T", view=TIMELINE_VIEW)
+    assert env.declare_subset_calls == []
+
+
+def test_a_view_with_no_frames_keeps_the_last_ones():
+    env = _FakeEnv(datasets={"ds1": _FakeFrames()})
+    _declare(env, parent_fingerprint="ds1", name="T",
+             view={**TIMELINE_VIEW, "x": [40, 50]})
+    assert env.declare_subset_calls == []
+
+
+def test_unticking_sub_hides_the_subset():
+    parent = _FakeFrames()
+    sub = _FakeSub([1, 2, 3])
+    env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, None, "T"): sub})
+    _declare(env, parent_fingerprint="ds1", name="T", active=False)
+    assert sub.active is False and env.declare_subset_calls == []
+
+
+def test_ticking_sub_again_shows_the_hidden_subset():
+    parent = _FakeFrames()
+    sub = _FakeSub([1, 2, 3], active=False)
+    env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, None, "T"): sub})
+    _declare(env, parent_fingerprint="ds1", name="T", view=TIMELINE_VIEW)
+    assert env.declare_subset_calls == [(parent, None, [1, 2, 3], "T")]

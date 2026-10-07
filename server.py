@@ -615,6 +615,10 @@ async def _main(
             logger.warning("REMOTE_DATASET_META error: %s", exc)
 
     env.eventSubscribe("DATASET_LOADED", _on_dataset_loaded_meta)
+    # A subset that follows a plot's zoom changes its frames, and unticking
+    # SUB hides it: announce it again so every window sees the change.
+    env.eventSubscribe("SUBDATASET_INDICES_CHANGED", _on_dataset_loaded_meta)
+    env.eventSubscribe("DATASET_STATE_CHANGED", _on_dataset_loaded_meta)
 
     # Send lightweight model metadata when a ghost model is registered.
     # MODEL_LOADED fires AFTER _loadPredictionsFromKeys + lookForGhosts(),

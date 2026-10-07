@@ -34,6 +34,29 @@ const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions 
 /** control name → the shared compute-param it drives. */
 const CONTROL_PARAM = { energy_shift: 'shifted', smoothing: 'window' };
 
+/** Plot kinds whose view picks out structures, so SUB can make a subset. */
+const SUB_KINDS = new Set(['timeline', 'overlay_timeline', 'scatter', 'density']);
+
+/** Wait this long after the last zoom or pan before moving the subset. */
+const SUB_DELAY_MS = 250;
+
+/** The visible x and y ranges of a Plotly plot, or null before it is drawn. */
+export function plotRange(el) {
+  const layout = el && el._fullLayout;
+  const x = layout?.xaxis?.range, y = layout?.yaxis?.range;
+  if (!x) return null;
+  return { x: x.map(Number), y: y ? y.map(Number) : null };
+}
+
+/** A short string that changes when a dataset's frames change. */
+export function framesKey(meta) {
+  const pf = meta?.parent_frames;
+  if (!pf) return String(meta?.n ?? '');
+  let sum = 0;
+  for (const f of pf) sum += f;
+  return `${pf.length}:${pf[0]}:${pf[pf.length - 1]}:${sum}`;
+}
+
 /**
  * Pair the selected datasets with the selected predictions — one series per
  * drawable combination, in dataset-major order.
@@ -88,7 +111,8 @@ export class AnalysisManager {
    *   tabbar: HTMLElement, tabpanels: HTMLElement,
    *   metricClient?: import('./metrics.js').MetricClient|null,
    *   onSelectTab: (id: string) => void,
-   *   onSub: (o: {parentFp: string, modelFp: string|null, indices: number[], name: string}) => void,
+   *   onSub: (o: {parentFp: string, modelFp: string|null, name: string,
+   *     view?: object, active?: boolean}) => void,
    *   onPointFrame: (o: {datasetFp: string, modelFp: string|null, frame: number}) => void,
    * }} deps
    */
@@ -122,6 +146,8 @@ export class AnalysisManager {
       datasets: datasets || new Map(),
       models: models || new Map(),
     };
+    const active = this._activeTab();
+    const before = active && this._drawnKey(active);
     for (const t of this._tabs) {
       // Drop anything that has since been deleted; an empty list falls back to
       // following the rail rather than showing nothing.
@@ -131,8 +157,9 @@ export class AnalysisManager {
         t.selectedModels = t.selectedModels.filter((fp) => this._available.models.has(fp));
       if (t.seriesSelectorEl) this._renderSeriesSelector(t);
     }
-    const active = this._activeTab();
-    if (active) this._renderTab(active);
+    // A subset following a plot's zoom is announced again on every zoom;
+    // redrawing a tab that does not draw it would reset that plot's zoom.
+    if (active && this._drawnKey(active) !== before) this._renderTab(active);
   }
 
   /** The live connection's metric channel; null while disconnected. */
@@ -194,9 +221,12 @@ export class AnalysisManager {
     if (active && this._drawnKey(active) !== before) this._renderTab(active);
   }
 
-  /** What a tab's plots depend on from the rail: its series and elements. */
+  /** What a tab's plots depend on: its series, the frames of each (a subset
+   * changes them as it follows a zoom), and the elements. */
   _drawnKey(t) {
-    return JSON.stringify([this.seriesRefs(t), this._elementOrder || [], t.selectedElements]);
+    const refs = this.seriesRefs(t);
+    const frames = refs.map((r) => framesKey(this._available.datasets.get(r.datasetFp)));
+    return JSON.stringify([refs, frames, this._elementOrder || [], t.selectedElements]);
   }
 
   /** Called by app when a tab is activated (renders analysis tabs lazily). */
@@ -275,6 +305,8 @@ export class AnalysisManager {
       selectedDatasets: null,
       selectedModels: null,
       seriesSelectorEl: null,
+      // Plots with SUB ticked: panel index → the series it made subsets of.
+      subbing: new Map(),
     };
     this._tabs.push(t);
     this._layoutGrid(t);
@@ -763,80 +795,84 @@ export class AnalysisManager {
     if (spec) this._fetchAndRenderPanel(t, spec, card, this._renderToken);
   }
 
-  /**
-   * Map a Plotly box-select event to parent configuration indices, and to the
-   * series they came from.
-   *
-   * timeline/overlay: x IS the config index, so use the box's x-*range* (a
-   * lines trace reports no points) — a range names no curve, so the sub goes to
-   * the first series. scatter: markers are selectable, so each selected point's
-   * index within its curve *is* its config index, and `curveSeries` says which
-   * series that curve belongs to.
-   * @returns {{indices: number[], seriesIndex: number}}
-   */
-  _selectionToIndices(info, ev) {
-    if (info.xIsConfigIndex && ev.range && ev.range.x) {
-      const [a, b] = ev.range.x;
-      const lo = Math.max(0, Math.ceil(Math.min(a, b)));
-      const hi = Math.min((info.n || 0) - 1, Math.floor(Math.max(a, b)));
-      const out = [];
-      for (let i = lo; i <= hi; i++) out.push(i);
-      return { indices: out, seriesIndex: 0 };
+  // ── SUB: a subset that follows the plot's zoom ─────────────────────────────
+  //
+  // As on the desktop, ticking SUB on a plot makes a subset of each series it
+  // draws: the frames inside the plot's visible range. It follows every zoom
+  // and pan; unticking hides it. The server works out the frames from the
+  // view (ffast/session/subbing.py), so a density plot subs by value and a
+  // force scatter by structure, as the desktop does.
+
+  _wireSub(t, spec, card) {
+    const key = t.spec.panels.indexOf(spec);
+    if (!card.subToggle) {
+      const toggle = document.createElement('label');
+      toggle.className = 'sub-toggle';
+      toggle.title = 'Make a subset of the structures on screen; it follows the zoom';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          t.subbing.set(key, []);
+          this._sendSubViews(t, spec, card);
+        } else {
+          this._hideSubsets(t.subbing.get(key) || [], this._subName(t, spec));
+          t.subbing.delete(key);
+        }
+      });
+      toggle.append(cb, document.createTextNode('Sub'));
+      card.title.appendChild(toggle);
+      card.subToggle = cb;
     }
-    const cfg = new Set();
-    let seriesIndex = 0;
-    let named = false;
-    for (const pt of ev.points || []) {
-      if (info.dataCurveCount != null && pt.curveNumber >= info.dataCurveCount) continue;
-      if (pt.pointIndex != null) cfg.add(pt.pointIndex);
-      if (!named && info.curveSeries) {
-        // A box can straddle series; the first selected point decides whose
-        // subset this is, rather than mixing two datasets into one SubDataset.
-        seriesIndex = info.curveSeries[pt.curveNumber] ?? 0;
-        named = true;
-      }
-    }
-    return { indices: [...cfg].sort((a, b) => a - b), seriesIndex };
+    card.subToggle.checked = t.subbing.has(key);
+
+    const el = card.body;
+    if (el.removeAllListeners) el.removeAllListeners('plotly_relayout');
+    el.on('plotly_relayout', () => {
+      if (!t.subbing.has(key)) return;
+      clearTimeout(card.subTimer);
+      card.subTimer = setTimeout(() => this._sendSubViews(t, spec, card), SUB_DELAY_MS);
+    });
+    // A redrawn plot shows its full range again, so the subsets follow.
+    if (t.subbing.has(key)) this._sendSubViews(t, spec, card);
+  }
+
+  /** A subset is named after the plot it was made in. */
+  _subName(t, spec) {
+    return spec.title || t.spec.name;
+  }
+
+  /** Send the plot's view for each series it draws; hide the subsets of
+   * series it no longer draws. */
+  _sendSubViews(t, spec, card) {
+    const key = t.spec.panels.indexOf(spec);
+    const range = plotRange(card.body);
+    if (!this._onSub || !range || !t.subbing.has(key)) return;
+    const name = this._subName(t, spec);
+    const ids = Object.values(spec.metrics || {}).flat();
+    const view = {
+      kind: spec.kind,
+      metrics: spec.metrics || {},
+      params: Object.fromEntries(ids.map((id) => [id, this._metricParams(t, spec, id)])),
+      ...range,
+    };
+    const series = (card.series || []).map((s) => ({ parentFp: s.datasetFp, modelFp: s.modelFp }));
+    const same = (a, b) => a.parentFp === b.parentFp && a.modelFp === b.modelFp;
+    this._hideSubsets((t.subbing.get(key) || []).filter((old) => !series.some((s) => same(s, old))), name);
+    t.subbing.set(key, series);
+    for (const s of series) this._onSub({ ...s, name, view });
+  }
+
+  _hideSubsets(list, name) {
+    for (const s of list) this._onSub?.({ ...s, name, active: false });
   }
 
   // ── subbing + point→frame (PRD 61-63) ──────────────────────────────────────
   _wirePanelInteractions(t, spec, card) {
     const el = card.body;
     if (!PLOT_KINDS.has(spec.kind) || typeof el.on !== 'function') return;
+    if (SUB_KINDS.has(spec.kind)) this._wireSub(t, spec, card);
     if (!el._subInfo || !el._subInfo.perFrame) return;   // only per-frame kinds
-
-    // A "Sub" toggle (mirrors the desktop subbing checkbox): opt in to putting
-    // the plot in box-select mode so a drag declares a SubDataset instead of
-    // zooming.
-    if (!card.subToggle) {
-      const toggle = document.createElement('label');
-      toggle.className = 'sub-toggle';
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.addEventListener('change', () => {
-        globalThis.Plotly.relayout(card.body, { dragmode: cb.checked ? 'select' : 'zoom' });
-      });
-      toggle.append(cb, document.createTextNode('Sub'));
-      card.title.appendChild(toggle);
-      card.subToggle = cb;
-    }
-
-    // Subbing: box-select → covered configuration indices → live SubDataset.
-    if (el.removeAllListeners) el.removeAllListeners('plotly_selected');
-    el.on('plotly_selected', (ev) => {
-      const info = el._subInfo;
-      if (!ev || !info) return;
-      const { indices, seriesIndex } = this._selectionToIndices(info, ev);
-      const src = (card.series || [])[seriesIndex];
-      if (indices.length && src && this._onSub) {
-        this._onSub({
-          parentFp: src.datasetFp,
-          modelFp: src.modelFp,
-          indices,
-          name: t.spec.name,
-        });
-      }
-    });
 
     // Point → frame: click a per-frame point to show that structure (PRD 63).
     // The click names the clicked curve's data, so the structure is looked up

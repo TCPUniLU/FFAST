@@ -2758,9 +2758,25 @@ async def test_web_analysis_scatter_renders(ffast_web_server):
             await browser.close()
 
 
-async def test_web_analysis_box_select_declares_subset(ffast_web_server):
-    """ADR 0045 Phase 3 gate: enabling a subbable timeline's Sub toggle and
-    box-dragging declares a SubDataset that appears in the object rail."""
+_SUBSETS = """() => [...window.ffastApp._datasets.entries()]
+    .filter(([, m]) => m.is_sub).map(([fp, m]) => ({fp, name: m.name, n: m.n, active: m.active}))"""
+
+
+def _sub_panel(title):
+    return f"#tabpanels .tabpanel.active .analysis-panel[data-title='{title}']"
+
+
+async def _zoom(page, title, x_range):
+    await page.evaluate(
+        """([sel, x]) => Plotly.relayout(document.querySelector(sel + ' .panel-plot'),
+                                         {'xaxis.range': x})""",
+        [_sub_panel(title), x_range])
+
+
+async def test_web_sub_makes_a_subset_that_follows_the_zoom(ffast_web_server):
+    """Ticking SUB on a plot makes a subset of the structures on screen, as on
+    the desktop. Zooming moves it; a density plot subs by value; unticking
+    hides it."""
     ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
 
@@ -2772,29 +2788,36 @@ async def test_web_analysis_box_select_declares_subset(ffast_web_server):
             await expect(page.locator("#status")).to_contain_text("Connected")
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
-            await expect(page.locator("#dataset-list .obj-row")).to_have_count(1)
-
             await _open_analysis_tab(page, "Basic Errors")
             await page.wait_for_function(
                 _PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
 
-            panel = ("#tabpanels .tabpanel.active "
-                     ".analysis-panel[data-title='Energy MAE timeline']")
-            await page.locator(f"{panel} .sub-toggle input").check()
-
-            box = await page.locator(f"{panel} .panel-plot").bounding_box()
-            x0 = box["x"] + box["width"] * 0.25
-            x1 = box["x"] + box["width"] * 0.75
-            y0 = box["y"] + box["height"] * 0.2
-            y1 = box["y"] + box["height"] * 0.8
-            await page.mouse.move(x0, y0)
-            await page.mouse.down()
-            await page.mouse.move(x1, y1, steps=10)
-            await page.mouse.up()
-
-            # The server materialises a SubDataset (REMOTE_DATASET_META) → a
-            # second row appears in the dataset list.
+            await page.locator(f"{_sub_panel('Energy MAE timeline')} .sub-toggle input").check()
             await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
+            [sub] = await page.evaluate(_SUBSETS)
+            assert sub["name"].startswith("Energy MAE timeline")
+
+            await _zoom(page, "Energy MAE timeline", [10, 19.5])
+            await page.wait_for_function(
+                f"() => ({_SUBSETS})().some(s => s.n === 10)", timeout=15000)
+            # The plot keeps its zoom: the subset moving does not redraw it.
+            assert await page.evaluate(
+                """(sel) => document.querySelector(sel + ' .panel-plot')._fullLayout.xaxis.range[0]""",
+                _sub_panel("Energy MAE timeline")) == 10
+
+            await page.wait_for_function(
+                _PANEL_HAS_POINTS, arg="Forces MAE distribution", timeout=25000)
+            await page.locator(f"{_sub_panel('Forces MAE distribution')} .sub-toggle input").check()
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(3, timeout=15000)
+            await _zoom(page, "Forces MAE distribution", [0, 0.02])
+            await page.wait_for_function(
+                f"""() => ({_SUBSETS})().some(s => s.name.startsWith('Forces MAE distribution')
+                                                && s.n > 0 && s.n < 100)""", timeout=15000)
+
+            await page.locator(f"{_sub_panel('Energy MAE timeline')} .sub-toggle input").uncheck()
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
+            hidden = [s for s in await page.evaluate(_SUBSETS) if s["name"].startswith("Energy")]
+            assert hidden[0]["active"] is False
         finally:
             await browser.close()
 
@@ -2885,32 +2908,18 @@ async def test_web_export_subset_writes_extxyz_and_reports_path(ffast_web_server
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
 
-            # Declare a frame-index SubDataset via box-select subbing (same
-            # gesture as the Phase 3 subbing gate) — gives a known, real
-            # structure count to check the exported file against.
+            # Make a frame-index SubDataset with SUB and a zoom (the subbing
+            # gate's gesture) — gives a known, real structure count to check
+            # the exported file against.
             await _open_analysis_tab(page, "Basic Errors")
             await page.wait_for_function(
                 _PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
-            panel = ("#tabpanels .tabpanel.active "
-                     ".analysis-panel[data-title='Energy MAE timeline']")
-            await page.locator(f"{panel} .sub-toggle input").check()
-            box = await page.locator(f"{panel} .panel-plot").bounding_box()
-            x0, x1 = box["x"] + box["width"] * 0.25, box["x"] + box["width"] * 0.75
-            y0, y1 = box["y"] + box["height"] * 0.2, box["y"] + box["height"] * 0.8
-            await page.mouse.move(x0, y0)
-            await page.mouse.down()
-            await page.mouse.move(x1, y1, steps=10)
-            await page.mouse.up()
-            await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
-
-            sub_fp = await page.evaluate(
-                """(parentFp) => [...window.ffastApp._datasets.keys()].find(fp => fp !== parentFp)""",
-                dataset_fp,
-            )
-            n_expected = await page.evaluate(
-                """(fp) => window.ffastApp._datasets.get(fp).n""", sub_fp,
-            )
-            assert n_expected > 0
+            await page.locator(f"{_sub_panel('Energy MAE timeline')} .sub-toggle input").check()
+            await _zoom(page, "Energy MAE timeline", [20, 44])
+            await page.wait_for_function(
+                f"() => ({_SUBSETS})().some(s => s.n === 25)", timeout=15000)
+            [sub] = await page.evaluate(_SUBSETS)
+            sub_fp, n_expected = sub["fp"], sub["n"]
 
             await page.locator(f"#dataset-list .obj-row[data-fp='{sub_fp}']").click()
 

@@ -250,14 +250,16 @@ The workflow FFAST is built around: find something odd in a plot, look at it in
 3D.
 
 1. In an error timeline, zoom to the region you care about.
-2. Click **Sub** on the plot.
-3. A new "Sub: <name>" dataset appears in the rail, containing exactly the
-   configurations in view. It follows further zooming until you freeze it.
+2. Tick **Sub** on the plot.
+3. A new dataset named after the plot appears in the rail, containing exactly
+   the configurations in view. It follows further zooming; untick **Sub** to
+   hide it.
 4. Open it in the 3D view.
 
-The same works from scatter panels by box-selecting outliers. On a remote
-session this is also the mechanism that keeps data on the cluster: only the
-subset you asked for crosses the network.
+The same works on a scatter plot (zoom onto the outliers) and on an error
+distribution (zoom onto a range of errors: the subset is the configurations
+whose error falls in it). On a remote session this is also the mechanism that
+keeps data on the cluster: only the subset you asked for crosses the network.
 
 The Extract Subset pane does the same thing along the other axis, selecting atoms
 rather than configurations, which is how you get "just the active site" out of a
