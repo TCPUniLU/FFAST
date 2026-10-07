@@ -260,7 +260,7 @@ export class FFastApp {
       { id: 'connect', label: 'Connect to Server…', menu: 'file', run: () => this._openConnDialog() },
       // Quick styles (ADR 0055): buttons at the top of the sidebar.
       { id: 'style-force', label: 'Quick style: Force error', short: 'Force error',
-        title: 'Colour atoms by force error and show force arrows, for the selected prediction',
+        title: 'Colour atoms by force error of the selected prediction',
         run: () => {
           const meta = this._models.get(this._currentModelFp);
           this._applyQuickStyle(forceErrorStyle(meta?.name || this._currentModelFp.slice(0, 8)));
@@ -274,7 +274,7 @@ export class FFastApp {
         title: 'White background, orthographic view, no axes',
         run: () => this._applyQuickStyle(PUBLICATION_STYLE) },
       { id: 'style-reset', label: 'Quick style: Reset', short: 'Reset',
-        title: 'Back to the default colouring, arrows, background and projection',
+        title: 'Back to the default colouring, background and projection',
         run: () => this._applyQuickStyle(RESET_STYLE) },
     ];
   }

@@ -579,8 +579,8 @@ async def test_web_force_error_style_waits_for_a_prediction(ffast_web_server):
 
 async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server):
     """ADR 0055 "Quick styles": Force error only sets existing controls —
-    colour by the per-atom force error of the selected prediction, and show
-    that prediction's force arrows."""
+    colour by the per-atom force error of the selected prediction, with the
+    desktop's force_error colour map. Force arrows are left as they are."""
     ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
@@ -596,10 +596,10 @@ async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server
             await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value(
                 "Force Error (per atom)")
             await expect(page.locator(_control("Colour By", "Prediction"))).to_have_value(name)
-            await expect(page.locator(_control("Force Vectors", "Show force vectors", "input"))).to_be_checked()
-            await expect(page.locator(_control("Force Vectors", "Source"))).to_have_value(name)
+            await expect(page.locator(_control("Colour By", "Colormap"))).to_have_value("force_error")
             await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
-            await page.wait_for_function("() => window.ffastApp.renderer._forceGroup !== null")
+            await expect(page.locator(_control("Force Vectors", "Show force vectors", "input"))).not_to_be_checked()
+            assert await page.evaluate("() => window.ffastApp.renderer._forceGroup") is None
         finally:
             await browser.close()
 
@@ -630,7 +630,7 @@ async def test_web_publication_style_and_reset(ffast_web_server):
             await page.locator("#quick-styles button", has_text="Reset").click()
             assert await page.evaluate(state) == {"clear": "#000000", "ortho": False, "gizmo": False}
             await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value("Elements")
-            await expect(page.locator(_control("Force Vectors", "Show force vectors", "input"))).not_to_be_checked()
+            await expect(page.locator(_control("Colour By", "Colormap"))).to_have_value("viridis")
         finally:
             await browser.close()
 

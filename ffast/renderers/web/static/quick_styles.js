@@ -8,13 +8,16 @@
  * Coloring goes before Prediction because Prediction waits for a colouring.
  */
 
-/** @param {string} predictionLabel the prediction's name in the selectors */
+/**
+ * Colour atoms by force error with the desktop's force_error colour map.
+ * Force arrows are left as they are.
+ * @param {string} predictionLabel the prediction's name in the selectors
+ */
 export function forceErrorStyle(predictionLabel) {
   return [
     ['Colour By', 'Coloring', 'Force Error (per atom)'],
+    ['Colour By', 'Colormap', 'force_error'],
     ['Colour By', 'Prediction', predictionLabel],
-    ['Force Vectors', 'Show force vectors', true],
-    ['Force Vectors', 'Source', predictionLabel],
   ];
 }
 
@@ -27,9 +30,8 @@ export const PUBLICATION_STYLE = [
 /** Puts back everything the other styles change. */
 export const RESET_STYLE = [
   ['Colour By', 'Coloring', 'Elements'],
+  ['Colour By', 'Colormap', 'viridis'],
   ['Colour By', 'Prediction', 'Ground Truth'],
-  ['Force Vectors', 'Source', 'Ground Truth'],
-  ['Force Vectors', 'Show force vectors', false],
   ['Camera', 'Background', '#000000'],
   ['Camera', 'Orthographic', false],
   ['Camera', 'Axes gizmo', false],
