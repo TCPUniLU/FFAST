@@ -1,4 +1,4 @@
-Status: Accepted — not yet implemented
+Status: Accepted — not yet implemented. Prototype results added 2026-10-07.
 
 # The browser client gets its own layout; layout state stays in the browser
 
@@ -48,14 +48,28 @@ where they are needed, or wait until there is something for them to act on:
 | Session actions | A **File** menu: Load Dataset…, Load Prediction…, Save Session…, Load Session…, Export Selected Dataset…, Connect to Server…. The rail's `+` buttons stay as shortcuts; the unlabelled `⬇` goes. |
 | 3D sidebar | The eight sections form a list where only one is open at a time. Arming a pick tool opens that tool's section. The whole sidebar can be hidden. On a first visit, Colour By is open. |
 | 3D empty state | Until a dataset is open, the sidebar, pick toolbar and playback strip are hidden, and the viewport shows a Load Dataset… button. Loading a dataset while no view is open opens it. Controls with no data behind them are hidden, for example the Prediction selectors before a prediction is loaded. |
-| Inside sections | Camera's azimuth, elevation and distance fields move behind an "Exact angles" link. Pick radius moves from Display to the pick strip. |
+| Inside sections | Camera's azimuth, elevation and distance fields move behind an "Exact angles" link. The Pick radius control is removed: a click anywhere on an atom's drawn ball picks it, and very small atoms keep a minimum target of a few pixels. |
 | Sidebar search | Typing opens every section with a match and highlights the matching rows. It also finds rows behind "Exact angles". Rows that need missing data are shown greyed out with the reason ("Load a prediction first"). Clearing the search restores the section that was open. |
 | Quick styles | Three buttons that only set existing controls: Force error (disabled until a prediction is loaded), Publication and Reset. They live in the browser only. |
 | Help | A hint bar with numbered next steps, and a "?" on each section and on the tab picker. Input boxes become dark instead of white. |
-| 3D drawing | Smoother spheres and bonds below an atom-count threshold (initially 500), filmic tone mapping, and the pixel ratio capped at 2. The background stays black. |
-| Pick and playback strips | Pick tools show their names next to their icons. FPS and Skip move into a ⚙ pop-up. This one is provisional: try it in the prototype, and move the two boxes back if they are missed. |
+| 3D drawing | Below an atom-count threshold (initially 500, to be set by measuring frame time), structures get a richer look: smoother spheres and bonds, slightly glossier materials, and lights that turn with the camera (a sky light plus key, fill and rim lights), so an atom keeps its shade while you orbit. Above the threshold, today's cheaper look stays. The pixel ratio is capped at 2. No tone mapping: it shifts data colours away from the colour bar. The background stays black. |
+| Pick and playback strips | Pick tools show their names next to their icons. While a tool is armed, the atom under the pointer is highlighted, larger and lighter, so you can see what a click would pick. FPS and Skip move into a ⚙ pop-up; its ⚙ button is drawn larger than the other strip icons. |
 | Analysis tabs | The tab picker appears only when two or more datasets or predictions are loaded. A tab where no panel can draw shows one guide with a button. A tab where some panels can draw shows them, plus one line for the rest. The message says "Load" when nothing is loaded and "Select" when something is loaded but not chosen. Plot cards and table sizes are unchanged. |
 | Keyboard | One action list feeds the File menu, the shortcuts and a Ctrl/Cmd+K command palette. The shortcuts: Space (play/pause), ← → (frame), Esc, Ctrl/Cmd+S (save session), Ctrl/Cmd+O (load session) and `/` (sidebar search). Shortcuts are ignored while typing in a text box. Load Session takes Ctrl/Cmd+O rather than the desktop's Ctrl+L, because browsers use Ctrl+L for the address bar. |
+
+A throwaway prototype of the 3D tab settled five points in the table:
+
+- **Atom look.** The richer lighting was preferred over today's. The threshold
+  keeps large structures fast.
+
+- **Pick radius.** It only limited how far from an atom's *centre* a click
+  could land (12 px). Atoms are usually drawn larger than that, so changing it
+  made no visible difference. Picking by the drawn ball replaces it.
+- **Hover highlight.** Asked for while testing the pick tools. The desktop
+  already has one.
+- **FPS and Skip.** Both layouts were tried; the ⚙ pop-up was kept, with a
+  larger button.
+- **Tone mapping.** Dropped: data colours must match the colour bar.
 
 **3. Layout state lives in browser storage, never in the session file.** This
 covers which section is open, whether the sidebar is hidden, the recent-servers
