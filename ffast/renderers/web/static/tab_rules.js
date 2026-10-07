@@ -23,6 +23,8 @@ export const DEFAULT_3D_TAB = Object.freeze({
   selector: null,
   controls: [],
   panels: [{ kind: KIND_3D, row: 0, col: 0, rowspan: 1, colspan: 1, metrics: {} }],
+  column_widths: null,
+  row_heights: null,
 });
 
 /** @param {{panels?: object[]}} tab */

@@ -91,7 +91,8 @@ Browser only. The Qt desktop gets one small change (point 17).
     drag their edges to change spans, and you drag the dividers between columns
     and rows. The tab file gains relative `column_widths` and `row_heights`. Rows
     with set heights share the window's height; a tab without them scrolls as
-    today.
+    today. Each list has one entry per column or row; one that does not fit
+    the grid is a config error, like any other.
 13. **A tab file stores layout and starting settings, never data.** For an
     independent panel it stores linked/independent, the two link ticks, and its
     starting colouring, display, bonds and force arrows. It never stores which

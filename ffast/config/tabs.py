@@ -104,6 +104,8 @@ def build_tab_layout(tabs, *, registry=None) -> list[dict]:
             "selector": tab.selector,
             "controls": list(tab.controls),
             "panels": [_panel_layout(p, registry=registry) for p in tab.panels],
+            "column_widths": tab.column_widths,
+            "row_heights": tab.row_heights,
         }
         for tab in tabs
     ]

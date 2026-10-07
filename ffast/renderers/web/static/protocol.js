@@ -218,7 +218,7 @@
  * `ffast/config/tabs.py` `build_tab_layout` — every metric role is a *concrete
  * metric id* (or a list, for the overlay `series` role), not an authoring ref.
  * @typedef {Object} PanelLayout
- * @property {string} kind timeline|density|scatter|table|grouped_density|grouped_table|overlay_timeline
+ * @property {string} kind timeline|density|scatter|table|grouped_density|grouped_table|overlay_timeline|3d
  * @property {number} row
  * @property {number} col
  * @property {number} rowspan
@@ -245,6 +245,9 @@
  * @property {string|null} selector 'atomic' → the element-picker tab selector
  * @property {string[]} controls tab-level controls ('energy_shift', …)
  * @property {PanelLayout[]} panels
+ * @property {number[]|null} column_widths relative, one per column (ADR 0056)
+ * @property {number[]|null} row_heights relative, one per row; set → the rows
+ *   share the window's height instead of scrolling
  */
 
 /**

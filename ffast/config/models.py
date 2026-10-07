@@ -156,13 +156,39 @@ class AnalysisTabConfig(BaseModel):
     names a bespoke tab-level data selector from the control registry (e.g. the
     element picker); null uses the default model/dataset selector. ``controls``
     names tab-level control widgets from the registry (e.g. the energy-shift
-    toggle) that drive a shared compute-param across the tab's Panels."""
+    toggle) that drive a shared compute-param across the tab's Panels.
+
+    ``column_widths`` and ``row_heights`` (ADR 0056) are relative sizes, one per
+    column and one per row: ``[2, 1]`` makes the first column twice as wide.
+    With ``row_heights`` the rows share the window's height; without it rows
+    are at least 300 px and the tab scrolls. The browser reads them; the
+    desktop ignores them."""
     model_config = ConfigDict(extra="forbid")
     name: str
     has_data_selector: bool = True
     selector: str | None = None
     controls: list[str] = Field(default_factory=list)
     panels: list[PanelConfig] = Field(default_factory=list)
+    column_widths: list[float] | None = None
+    row_heights: list[float] | None = None
+
+    @model_validator(mode="after")
+    def _sizes_fit_the_grid(self) -> "AnalysisTabConfig":
+        columns = max((p.col + p.colspan for p in self.panels), default=0)
+        rows = max((p.row + p.rowspan for p in self.panels), default=0)
+        for field, sizes, count, what in (
+            ("column_widths", self.column_widths, columns, "columns"),
+            ("row_heights", self.row_heights, rows, "rows"),
+        ):
+            if sizes is None:
+                continue
+            if len(sizes) != count:
+                entries = "entry" if len(sizes) == 1 else "entries"
+                raise ValueError(
+                    f"{field} has {len(sizes)} {entries}; the tab has {count} {what}")
+            if any(size <= 0 for size in sizes):
+                raise ValueError(f"{field} must be positive")
+        return self
 
 
 class VisualizationConfig(BaseModel):

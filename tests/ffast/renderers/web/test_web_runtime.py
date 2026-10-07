@@ -1263,6 +1263,63 @@ async def test_web_a_plot_click_shows_the_clicked_structure(tmp_path):
                 await browser.close()
 
 
+_SIZED_TAB_TOML = """
+[[visualization.tabs]]
+name = "Sized"
+column_widths = [3, 1]
+row_heights = [2, 1]
+
+[[visualization.tabs.panels]]
+kind = "3d"
+row = 0
+col = 0
+rowspan = 2
+
+[[visualization.tabs.panels]]
+kind = "table"
+row = 0
+col = 1
+title = "Top"
+  [visualization.tabs.panels.metrics.value]
+  metric = "ffast.force_component_mae"
+
+[[visualization.tabs.panels]]
+kind = "table"
+row = 1
+col = 1
+title = "Bottom"
+  [visualization.tabs.panels.metrics.value]
+  metric = "ffast.force_component_rmse"
+"""
+
+
+async def test_web_tab_sizes_share_the_window(tmp_path):
+    """ADR 0056 rule 12: column_widths and row_heights are relative; rows
+    with set heights share the window's height instead of scrolling."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_SIZED_TAB_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_analysis_tab(page, "Sized")
+                grid = page.locator(".tabpanel.active .analysis-grid")
+                view = await grid.locator(".panel-3d").bounding_box()
+                top = await grid.locator("[data-title='Top']").bounding_box()
+                bottom = await grid.locator("[data-title='Bottom']").bounding_box()
+                gap = 10
+                assert view["width"] / top["width"] == pytest.approx(3, rel=0.03)
+                assert top["height"] / bottom["height"] == pytest.approx(2, rel=0.03)
+                box = await grid.bounding_box()
+                assert view["height"] == pytest.approx(box["height"] - 2 * gap, abs=2)
+                assert await grid.evaluate("(el) => el.scrollHeight <= el.clientHeight")
+            finally:
+                await browser.close()
+
+
 async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(ffast_web_server):
     """The first time a dataset's view opens, every atom is in view. After
     that the camera is the user's: switching tabs and back keeps it (457dcaa)."""

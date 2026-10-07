@@ -272,15 +272,22 @@ export class AnalysisManager {
   /**
    * Make the grid cells once: honour row/col/span, fold scroll_group members
    * into one horizontal strip at the first member's cell, and leave each 3D
-   * panel an empty cell. A tab with a single cell gives it the whole height
-   * (the built-in "3D" tab); otherwise rows are at least 300 px and the grid
-   * scrolls.
+   * panel an empty cell. Columns share the width, in the tab's
+   * `column_widths` when it has them. With `row_heights` the rows share the
+   * tab's height (ADR 0056 rule 12); a tab with a single cell gives it the
+   * whole height (the built-in "3D" tab); otherwise rows are at least 300 px
+   * and the grid scrolls.
    */
   _layoutGrid(t) {
     const grid = t.gridEl;
     const panels = t.spec.panels || [];
     const maxCol = Math.max(1, ...panels.map((p) => p.col + (p.colspan || 1)));
-    grid.style.gridTemplateColumns = `repeat(${maxCol}, minmax(0, 1fr))`;
+    const share = (sizes) => sizes.map((size) => `minmax(0, ${size}fr)`).join(' ');
+    const widths = t.spec.column_widths, heights = t.spec.row_heights;
+    grid.style.gridTemplateColumns = widths?.length === maxCol
+      ? share(widths) : `repeat(${maxCol}, minmax(0, 1fr))`;
+    grid.style.gridTemplateRows = heights?.length ? share(heights) : '';
+    grid.classList.toggle('sized-rows', !!heights?.length);
 
     const strips = new Map();   // scroll_group → slot
     panels.forEach((spec, index) => {

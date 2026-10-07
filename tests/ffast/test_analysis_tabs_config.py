@@ -301,3 +301,39 @@ def test_compile_project_metrics_fields_before_expr():
     result = compile_project_metrics(project)
     assert "projtest.q" in result.ids and "projtest.absq" in result.ids
     assert result.errors == []
+
+
+# --- column_widths / row_heights (ADR 0056 rule 12) -------------------------- #
+def _sized_tab(**sizes):
+    return AnalysisTabConfig.model_validate({"name": "Sized", **sizes, "panels": [
+        {"kind": "3d", "row": 0, "col": 0, "rowspan": 2},
+        {"kind": "table", "row": 0, "col": 1},
+        {"kind": "table", "row": 1, "col": 1},
+    ]})
+
+
+def test_tab_sizes_are_relative_and_optional():
+    assert _sized_tab().column_widths is None and _sized_tab().row_heights is None
+    tab = _sized_tab(column_widths=[2, 1], row_heights=[3, 1.5])
+    assert tab.column_widths == [2, 1] and tab.row_heights == [3, 1.5]
+
+
+def test_tab_sizes_cover_every_column_and_row():
+    """A list that does not match the grid is a config error naming the count
+    it needs, like any other config mistake."""
+    with pytest.raises(ValidationError, match="column_widths has 3 entries; the tab has 2 columns"):
+        _sized_tab(column_widths=[1, 1, 1])
+    with pytest.raises(ValidationError, match="row_heights has 1 entry; the tab has 2 rows"):
+        _sized_tab(row_heights=[1])
+
+
+def test_tab_sizes_are_positive():
+    with pytest.raises(ValidationError, match="column_widths must be positive"):
+        _sized_tab(column_widths=[1, 0])
+    with pytest.raises(ValidationError, match="row_heights must be positive"):
+        _sized_tab(row_heights=[-1, 1])
+
+
+def test_tab_sizes_reach_the_browser():
+    layout = build_tab_layout([_sized_tab(column_widths=[2, 1])])[0]
+    assert layout["column_widths"] == [2, 1] and layout["row_heights"] is None
