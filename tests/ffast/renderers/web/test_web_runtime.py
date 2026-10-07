@@ -1303,6 +1303,101 @@ async def test_web_small_structures_get_the_richer_look(ffast_web_server):
     assert back == small
 
 
+# Two atoms side by side: a small and a large covalent radius, red and blue,
+# one bond between them. Sizes as the server sends them: radius x Atom size.
+_BALL_AND_STICK_SCENE = """(scale) => ({
+  atoms: {
+    positions: [[0, 0, 0], [1.5, 0, 0], [3.0, 0, 0]],
+    sizes: [0.31 * scale, 0.76 * scale, 1.40 * scale],
+    colors: [[1, 0, 0, 1], [0, 0, 1, 1], [0, 1, 0, 1]],
+  },
+  bonds: { segments: [[0, 0, 0], [1.5, 0, 0]] },
+  camera: { center: [1.5, 0, 0], distance: 12, azimuth: 0, elevation: 0, fov: 60,
+            projection: 'perspective' },
+})"""
+
+_DRAWN_BALLS = """() => {
+  const R = window.ffastApp.renderer, m = R._atomMesh, b = R._bondLines;
+  const M = new m.matrix.constructor(), c = new m.material.color.constructor();
+  const radii = [], bondColors = [];
+  for (let i = 0; i < m.count; i++) {
+    m.getMatrixAt(i, M);
+    radii.push(+Math.hypot(M.elements[0], M.elements[1], M.elements[2]).toFixed(4));
+  }
+  for (let i = 0; i < b.count; i++) {
+    if (b.instanceColor) { b.getColorAt(i, c); bondColors.push('#' + c.getHexString()); }
+  }
+  return { radii, bonds: b.count, bondColors, bondMaterial: '#' + b.material.color.getHexString(),
+           fov: R._perspCamera.fov, exportedFov: R._exportCamera().fov };
+}"""
+
+
+async def test_web_rich_look_draws_chemistry_alive_ball_and_stick(ffast_web_server):
+    """ADR 0055 (revised): below the threshold the browser draws ball-and-stick
+    as the chemistry.alive prototype did — 0.42 x covalent radius kept within
+    0.24-0.55 A, times Atom size; bonds in two halves coloured like their
+    atoms; a 35-degree lens, while the server keeps its own field of view."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await page.evaluate(
+                f"() => window.ffastApp.renderer.applyScene(({_BALL_AND_STICK_SCENE})(1))")
+            full = await page.evaluate(_DRAWN_BALLS)
+
+            # Atom size 0.5: the server halves its sizes; the balls halve too.
+            await page.evaluate(
+                """() => { document.querySelector(".pane[data-pane='Display'] "
+                     + ".ctl-row[data-label='Atom size'] input").value = '0.5'; }""")
+            await page.evaluate(
+                f"() => window.ffastApp.renderer.applyScene(({_BALL_AND_STICK_SCENE})(0.5))")
+            half = await page.evaluate(_DRAWN_BALLS)
+
+            # A chosen Bond colour wins over the two-tone bonds.
+            await page.evaluate("() => window.ffastApp.renderer.setBondStyle(100, '#00ff00', true)")
+            chosen = await page.evaluate(_DRAWN_BALLS)
+        finally:
+            await browser.close()
+
+    assert full["radii"] == [0.24, round(0.42 * 0.76, 4), 0.55]
+    assert half["radii"] == [0.12, round(0.42 * 0.76 * 0.5, 4), 0.275]
+    assert full["bonds"] == 2 and full["bondColors"] == ["#ff0000", "#0000ff"]
+    assert chosen["bonds"] == 1 and chosen["bondMaterial"] == "#00ff00"
+    assert full["fov"] == 35 and full["exportedFov"] == 60
+
+
+async def test_web_large_structures_keep_server_sizes_and_lens(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            limit = await page.evaluate("() => window.ffastApp.renderer.richLookMaxAtoms")
+            drawn = await page.evaluate(
+                f"""(n) => {{
+                  const s = ({_SYNTHETIC_SCENE})(n);
+                  s.atoms.sizes = s.atoms.sizes.map((_, i) => i ? 0.6 : 0.76);
+                  s.camera = {{ center: [0, 0, 0], distance: 20, azimuth: 0, elevation: 0, fov: 60,
+                               projection: 'perspective' }};
+                  const R = window.ffastApp.renderer;
+                  R.applyScene(s);
+                  const M = new R._atomMesh.matrix.constructor();
+                  R._atomMesh.getMatrixAt(0, M);
+                  return {{ r: Math.hypot(M.elements[0], M.elements[1], M.elements[2]),
+                           fov: R._perspCamera.fov, bonds: R._bondLines.count }};
+                }}""",
+                limit + 1,
+            )
+        finally:
+            await browser.close()
+    assert drawn == {"r": pytest.approx(0.76), "fov": 60, "bonds": 1}
+
+
 async def test_web_rich_look_keeps_an_atoms_shade_while_orbiting(ffast_web_server):
     """ADR 0055: the lights turn with the camera, so an atom looks the same
     from every side. Above the threshold the light stays fixed in the world."""

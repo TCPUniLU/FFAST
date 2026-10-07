@@ -35,7 +35,7 @@ function formatBondPairs(pairs) {
 /**
  * @param {HTMLElement} sidebarEl
  * @param {{
- *   onStyle: (width: number, color: string) => void,
+ *   onStyle: (width: number, color: string, colorChosen: boolean) => void,
  *   onApply: (bondType: string, fixedIndices: number[][]) => void,
  *   getDynamicBondPairs: () => number[][],
  * }} callbacks
@@ -44,13 +44,16 @@ export function createBondsPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Bonds');
   sidebarEl.appendChild(el);
 
-  let width = 100, color = '#404040', bondType = 'Dynamic', fixedIndices = [];
+  const DEFAULT_COLOR = '#404040';
+  let width = 100, color = DEFAULT_COLOR, bondType = 'Dynamic', fixedIndices = [];
+  // A colour other than the default replaces the 3D view's two-tone bonds.
+  const style = () => callbacks.onStyle(width, color, color !== DEFAULT_COLOR);
 
   sliderRow(body, 'Bond width', width, { min: 10, max: 100 }, (v) => {
-    width = v; callbacks.onStyle(width, color);
+    width = v; style();
   });
   colorRow(body, 'Bond colour', color, (v) => {
-    color = v; callbacks.onStyle(width, color);
+    color = v; style();
   });
 
   const typeSelect = selectRow(body, 'Bonds Type', ['Fixed', 'Dynamic'], bondType, (v) => {

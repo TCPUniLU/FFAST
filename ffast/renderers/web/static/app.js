@@ -412,7 +412,7 @@ export class FFastApp {
     });
 
     const bonds = createBondsPane(sidebarEl, {
-      onStyle: (width, color) => this._renderer.setBondStyle(width, color),
+      onStyle: (width, color, chosen) => this._renderer.setBondStyle(width, color, chosen),
       onApply: (bondType, fixedIndices) => {
         this._sendSetParameter('ffast.bonds', 'bond_type', bondType);
         this._sendSetParameter('ffast.bonds', 'fixed_indices', bondType === 'Fixed' ? fixedIndices : []);
@@ -451,6 +451,8 @@ export class FFastApp {
     });
 
     this._panes = { colorBy, camera, display, bonds, forces, extract, export: exportPane, align };
+    // The rich look sizes ball-and-stick atoms from the Atom size setting.
+    this._renderer.atomScale = () => display.atomScale();
 
     // One section open at a time; which one, and whether the sidebar is
     // hidden, is browser layout state, never session state (ADR 0055).

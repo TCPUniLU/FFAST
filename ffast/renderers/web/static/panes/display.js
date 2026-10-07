@@ -45,6 +45,10 @@ export function createDisplayPane(sidebarEl, callbacks) {
   const showUnitRow = checkboxRow(body, 'Show unit cell', true, callbacks.onUnitCell);
 
   return {
+    /** The Atom size setting, as the server scales sizes by it. */
+    atomScale() {
+      return parseFloat(atomSizeRow.value) || 1;
+    },
     atomSizeStatus: new Map(), // fp -> number
     atomHidStatus: new Map(),
     highlightAtomStatus: new Map(),

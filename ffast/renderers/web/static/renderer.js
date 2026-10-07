@@ -14,10 +14,15 @@ const HOVER_LIGHTEN = 0.55;
 
 /**
  * Two looks (ADR 0055 "3D drawing"). Structures with fewer atoms than
- * RICH_LOOK_MAX_ATOMS get smoother spheres and bonds, glossier materials and
- * lights that turn with the camera; larger ones keep the cheaper look. Atom
- * sizes are the server's either way (ADR 0052). No tone mapping: it would
- * shift data colours away from the colour bar.
+ * RICH_LOOK_MAX_ATOMS get the chemistry.alive look the prototype settled:
+ * ball-and-stick atoms (BALL_AND_STICK), thin bonds coloured half-and-half
+ * like their atoms, smoother and glossier meshes, lights that turn with the
+ * camera and a 35-degree lens. Larger structures keep the cheaper look, with
+ * atoms at the server's sizes. No tone mapping: it would shift data colours
+ * away from the colour bar.
+ *
+ * The rich look is browser-only presentation: the server still sends
+ * covalent radius x Atom size (ADR 0052) and keeps its own field of view.
  */
 // Measured 2026-10-07 (Apple M3 Pro, pixel ratio 2, a bonded grid of atoms):
 // the rich look takes 1.6 ms a frame at 500 atoms, 2.2 ms at 1000, 3.1 ms at
@@ -31,6 +36,17 @@ const LOOKS = {
            atom: { roughness: 0.35, metalness: 0.25 }, bond: { roughness: 0.5, metalness: 0.2 } },
 };
 const MAX_PIXEL_RATIO = 2;
+/** Rich-look atom radius: 0.42 x covalent radius, kept within 0.24-0.55 A,
+ *  then times the Atom size setting. */
+const BALL_AND_STICK = { factor: 0.42, min: 0.24, max: 0.55 };
+const RICH_FOV = 35;
+/** Bond radius at full Bond width, per look (world units). */
+const BOND_RADIUS = { plain: 0.12, rich: 0.11 };
+
+/** Map key for a position, tolerant of float noise in the last digits. */
+function positionKey(p) {
+  return `${p[0].toFixed(3)},${p[1].toFixed(3)},${p[2].toFixed(3)}`;
+}
 
 /** Scene colours are sRGB, like CSS and the colour bar. Three.js reads bare
  *  RGB numbers as linear and brightens them on output, so name the space. */
@@ -74,8 +90,12 @@ export class MoleculeRenderer {
     this._gizmoScene.add(new THREE.AxesHelper(1));
     this._gizmoCamera = new THREE.OrthographicCamera(-1.5, 1.5, 1.5, -1.5, 0.1, 10);
 
-    this._bondRadius = 0.10;   // world units; set via setBondStyle (issue 06)
+    this._bondWidth = 100;     // Bond width slider, 10..100 (issue 06)
     this._bondColor  = new THREE.Color(0x888888);
+    this._bondColorChosen = false;   // a chosen Bond colour beats two-tone bonds
+    this._serverFov = 60;      // the field of view the server keeps
+    /** Current Atom size setting; the app wires it to the Display section. */
+    this.atomScale = () => 1;
     this._lastBonds  = null;  // cached BondScene, for rebuilding on style change
 
     // Lighting. Plain look: ambient + one light fixed in the world. Rich
@@ -113,6 +133,7 @@ export class MoleculeRenderer {
     this._selectionMaterials = new Map();
     this._cachedAtomPositions = null;  // atoms.positions from last _updateAtoms call
     this._cachedAtomSizes = null;      // atoms.sizes from last _updateAtoms call
+    this._drawnSizes = null;           // radii as drawn (ball-and-stick in the rich look)
     this._cachedAtomIds = null;        // atoms.atom_ids (displayed→scientific, ADR 0015)
     this._hovered = null;              // displayed index under an armed pick tool
     this._scratchObj = new THREE.Object3D();  // per-instance matrix/colour writes
@@ -159,6 +180,18 @@ export class MoleculeRenderer {
     this._cameraLights.visible = rich;
     this._sphereGeo = this._sphereGeos[name];
     this._atomMat = new THREE.MeshStandardMaterial(LOOKS[name].atom);
+    this._perspCamera.fov = rich ? RICH_FOV : this._serverFov;
+    this._perspCamera.updateProjectionMatrix();
+  }
+
+  /** Radius each atom is drawn at: the server's size, or ball-and-stick in the
+   * rich look. The server sends covalent radius x Atom size, so the scale is
+   * divided out before the clamp and put back after it. */
+  _computeDrawnSizes(sizes) {
+    if (this._look !== 'rich') return sizes.map((r) => r || 0.5);
+    const scale = this.atomScale() || 1;
+    const { factor, min, max } = BALL_AND_STICK;
+    return sizes.map((r) => Math.min(max, Math.max(min, factor * (r || 0.5) / scale)) * scale);
   }
 
   _resize() {
@@ -244,10 +277,15 @@ export class MoleculeRenderer {
     this._gizmoEnabled = enabled;
   }
 
-  /** @param {number} width Qt-style 10..100 slider value @param {string} colorHex */
-  setBondStyle(width, colorHex) {
-    this._bondRadius = Math.max(0.01, (width / 100) * 0.12);
+  /**
+   * @param {number} width Qt-style 10..100 slider value @param {string} colorHex
+   * @param {boolean} [chosen] the colour was picked by the person, not the
+   *   default — it then replaces the rich look's two-tone bonds
+   */
+  setBondStyle(width, colorHex, chosen = false) {
+    this._bondWidth = width;
     this._bondColor = new THREE.Color(colorHex);
+    this._bondColorChosen = !!chosen;
     if (this._lastBonds) this._updateBonds(this._lastBonds);
   }
 
@@ -304,6 +342,8 @@ export class MoleculeRenderer {
     //if (c.has('only_forces')) {window.alert("YES")}
     if (c.has('atoms'))      { if (patch.atoms)      this._updateAtoms(patch.atoms, c.has('only_forces'));         else this._clearAtoms(); }
     if (c.has('bonds'))      { if (patch.bonds)       this._updateBonds(patch.bonds);         else this._clearBonds(); }
+    // Two-tone bonds take their atoms' colours, so new atoms repaint them.
+    else if (c.has('atoms') && this._lastBonds && this._twoToneBonds()) this._updateBonds(this._lastBonds);
     if (c.has('forces'))     { if (patch.forces)      this._updateForces(patch.forces, c.has('only_forces'));       else this._clearForces(); }
     if (c.has('unit_cell'))  { if (patch.unit_cell)   this._updateUnitCell(patch.unit_cell);  else this._clearUnitCell(); }
     if (c.has('labels'))     this._updateLabels(patch.labels || null);
@@ -324,6 +364,7 @@ export class MoleculeRenderer {
     }
     this._cachedAtomPositions = atoms.positions;
     this._cachedAtomSizes = atoms.sizes;
+    this._drawnSizes = this._computeDrawnSizes(atoms.sizes);
     this._cachedAtomIds = atoms.atom_ids || null;
 
     // Value-driven coloring (ADR 0016): map color_by.values→RGB client-side;
@@ -355,7 +396,7 @@ export class MoleculeRenderer {
    * larger and lighter. Reads the cached positions, sizes and colours. */
   _drawAtomInstance(mesh, i, hovered) {
     const [x, y, z] = this._cachedAtomPositions[i];
-    const r = (this._cachedAtomSizes[i] || 0.5) * (hovered ? HOVER_SCALE : 1);
+    const r = this._drawnSizes[i] * (hovered ? HOVER_SCALE : 1);
     const d = this._scratchObj;
     d.position.set(x, y, z);
     d.scale.setScalar(r);
@@ -402,30 +443,66 @@ export class MoleculeRenderer {
     if (!segs || segs.length === 0) return;
     const n = Math.floor(segs.length / 2);
 
+    // Rich look: each bond is two halves, each coloured like the atom at its
+    // end (chemistry.alive), unless a Bond colour was chosen. The wire sends
+    // bonds as coordinates, so an end's atom is found by its position.
+    const atomAt = this._twoToneBonds() ? this._atomIndexByPosition() : null;
     const geo = new THREE.CylinderGeometry(1, 1, 1, LOOKS[this._look].bondSides, 1);
-    const mat = new THREE.MeshStandardMaterial({ color: this._bondColor, ...LOOKS[this._look].bond });
-    const mesh = new THREE.InstancedMesh(geo, mat, n);
+    const mat = new THREE.MeshStandardMaterial({
+      color: atomAt ? 0xffffff : this._bondColor, ...LOOKS[this._look].bond });
+    const mesh = new THREE.InstancedMesh(geo, mat, atomAt ? 2 * n : n);
+    const radius = Math.max(0.01, (this._bondWidth / 100) * BOND_RADIUS[this._look]);
     const dummy = new THREE.Object3D();
     const up = new THREE.Vector3(0, 1, 0);
-    const start = new THREE.Vector3(), end = new THREE.Vector3(), dir = new THREE.Vector3();
+    const start = new THREE.Vector3(), end = new THREE.Vector3(), mid = new THREE.Vector3();
+    const dir = new THREE.Vector3(), color = new THREE.Color();
     let count = 0;
+    const place = (from, to, length, atomIndex) => {
+      dummy.position.copy(from).add(to).multiplyScalar(0.5);
+      dummy.quaternion.setFromUnitVectors(up, dir);
+      dummy.scale.set(radius, length, radius);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(count, dummy.matrix);
+      if (atomAt) {
+        const c = atomIndex == null ? null : this._atomColors?.[atomIndex];
+        if (c) sceneColor(c[0], c[1], c[2], color);
+        else color.copy(this._bondColor);
+        mesh.setColorAt(count, color);
+      }
+      count++;
+    };
     for (let i = 0; i < n; i++) {
-      start.set(segs[2 * i][0], segs[2 * i][1], segs[2 * i][2]);
-      end.set(segs[2 * i + 1][0], segs[2 * i + 1][1], segs[2 * i + 1][2]);
+      const a = segs[2 * i], b = segs[2 * i + 1];
+      start.set(a[0], a[1], a[2]);
+      end.set(b[0], b[1], b[2]);
       dir.copy(end).sub(start);
       const length = dir.length();
       if (length < 1e-6) continue;
       dir.normalize();
-      dummy.position.copy(start).add(end).multiplyScalar(0.5);
-      dummy.quaternion.setFromUnitVectors(up, dir);
-      dummy.scale.set(this._bondRadius, length, this._bondRadius);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(count++, dummy.matrix);
+      if (atomAt) {
+        mid.copy(start).add(end).multiplyScalar(0.5);
+        place(start, mid, length / 2, atomAt.get(positionKey(a)));
+        place(mid, end, length / 2, atomAt.get(positionKey(b)));
+      } else {
+        place(start, end, length, null);
+      }
     }
     mesh.count = count;
     mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     this._bondLines = mesh;
     this._scene.add(mesh);
+  }
+
+  _twoToneBonds() {
+    return this._look === 'rich' && !this._bondColorChosen && !!this._cachedAtomPositions;
+  }
+
+  /** Displayed atom index by position, for finding a bond end's atom. */
+  _atomIndexByPosition() {
+    const map = new Map();
+    this._cachedAtomPositions.forEach((p, i) => map.set(positionKey(p), i));
+    return map;
   }
 
   /** @param {import('./protocol.js').ForceScene} forces
@@ -484,6 +561,7 @@ export class MoleculeRenderer {
     }
     this._cachedAtomPositions = null;
     this._cachedAtomSizes = null;
+    this._drawnSizes = null;
     this._cachedAtomIds = null;
   }
   _clearBonds()     { if (this._bondLines)    { this._scene.remove(this._bondLines);    this._bondLines.geometry.dispose();     this._bondLines    = null; } this._lastBonds = null; }
@@ -570,7 +648,7 @@ export class MoleculeRenderer {
       for (let j = 0; j < n; j++) {
         const idx = indices[j];
         const [x, y, z] = this._cachedAtomPositions[idx];
-        const r = (this._cachedAtomSizes?.[idx] || 0.5) * 1.15;
+        const r = (this._drawnSizes?.[idx] || 0.5) * 1.15;
         dummy.position.set(x, y, z);
         dummy.scale.setScalar(r);
         dummy.updateMatrix();
@@ -587,7 +665,8 @@ export class MoleculeRenderer {
     // cam fields: center, distance, azimuth, elevation, fov, projection
     const { center = [0,0,0], distance = 10, azimuth = 0, elevation = 30, fov = 60, projection = 'perspective' } = cam;
     this.setOrthographic(projection === 'orthographic');
-    this._perspCamera.fov = fov;
+    this._serverFov = fov;
+    this._perspCamera.fov = this._look === 'rich' ? RICH_FOV : fov;   // rich lens is browser-only
     this._perspCamera.updateProjectionMatrix();
 
     const phi   = (90 - elevation) * Math.PI / 180;
@@ -616,7 +695,7 @@ export class MoleculeRenderer {
       distance,
       azimuth,
       elevation,
-      fov: this._perspCamera.fov,
+      fov: this._serverFov,
       projection: this._camera === this._orthoCamera ? 'orthographic' : 'perspective',
     };
   }
@@ -684,7 +763,7 @@ export class MoleculeRenderer {
     v.applyMatrix4(cam.projectionMatrix);
     if (v.z < -1 || v.z > 1) return null;   // clipped (behind camera or beyond far)
     // projectionMatrix[5] is 1/tan(fov/2) (perspective) or 2/height (ortho).
-    const radius = this._cachedAtomSizes?.[i] || 0.5;
+    const radius = this._drawnSizes?.[i] || 0.5;
     const pxPerUnit = cam.projectionMatrix.elements[5] * rect.height / 2
       / (cam.isPerspectiveCamera ? depth : 1);
     return {
