@@ -21,6 +21,7 @@ import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
 import { loadLayout, saveLayout } from './layout_state.js';
+import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './quick_styles.js';
 import { bindSidebarSearch, oneSectionOpen } from './sidebar.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 
@@ -189,7 +190,7 @@ export class FFastApp {
     bindMenu(
       document.getElementById('file-menu-btn'),
       document.getElementById('file-menu-list'),
-      this._actions,
+      this._actions.filter((a) => a.menu === 'file'),
     );
     document.getElementById('empty-load-btn').addEventListener('click',
       () => runAction(this._action('load-dataset')));
@@ -210,20 +211,66 @@ export class FFastApp {
       return '';
     };
     return [
-      { id: 'load-dataset', label: 'Load Dataset…',
+      { id: 'load-dataset', label: 'Load Dataset…', menu: 'file',
         run: () => this._browser.open('dataset'), unavailable: needsControl },
-      { id: 'load-prediction', label: 'Load Prediction…',
+      { id: 'load-prediction', label: 'Load Prediction…', menu: 'file',
         run: () => this._browser.open('prediction'),
         unavailable: () => needsControl() || (this._datasets.size ? '' : 'Load a dataset first') },
-      { id: 'save-session', label: 'Save Session…',
+      { id: 'save-session', label: 'Save Session…', menu: 'file',
         run: () => this._sessionOps.saveSession(), unavailable: needsControl },
-      { id: 'load-session', label: 'Load Session…',
+      { id: 'load-session', label: 'Load Session…', menu: 'file',
         run: () => this._sessionOps.loadSession(), unavailable: needsControl },
-      { id: 'export-dataset', label: 'Export Selected Dataset…',
+      { id: 'export-dataset', label: 'Export Selected Dataset…', menu: 'file',
         run: () => this._sessionOps.exportSelectedDataset(),
         unavailable: () => needsControl() || (this._currentDatasetFp ? '' : 'Select a dataset first') },
-      { id: 'connect', label: 'Connect to Server…', run: () => this._openConnDialog() },
+      { id: 'connect', label: 'Connect to Server…', menu: 'file', run: () => this._openConnDialog() },
+      // Quick styles (ADR 0055): buttons at the top of the sidebar.
+      { id: 'style-force', label: 'Quick style: Force error', short: 'Force error',
+        title: 'Colour atoms by force error and show force arrows, for the selected prediction',
+        run: () => {
+          const meta = this._models.get(this._currentModelFp);
+          this._applyQuickStyle(forceErrorStyle(meta?.name || this._currentModelFp.slice(0, 8)));
+          this._sections.open('Colour By');
+        },
+        unavailable: () => {
+          if (!this._models.size) return 'Load a prediction first';
+          return this._currentModelFp ? '' : 'Select a prediction first';
+        } },
+      { id: 'style-publication', label: 'Quick style: Publication', short: 'Publication',
+        title: 'White background, orthographic view, no axes',
+        run: () => this._applyQuickStyle(PUBLICATION_STYLE) },
+      { id: 'style-reset', label: 'Quick style: Reset', short: 'Reset',
+        title: 'Back to the default colouring, arrows, background and projection',
+        run: () => this._applyQuickStyle(RESET_STYLE) },
     ];
+  }
+
+  _applyQuickStyle(steps) {
+    const missed = applyStyle(document.getElementById('loupe-sidebar'), steps);
+    if (missed.length) console.warn('Quick style: could not set', missed);
+  }
+
+  /** The quick-style buttons, drawn from the action list. */
+  _renderQuickStyles() {
+    const box = document.getElementById('quick-styles');
+    if (!box.childElementCount) {
+      const label = document.createElement('span');
+      label.className = 'ctl-label';
+      label.textContent = 'Quick style';
+      box.append(label, ...this._actions.filter((a) => a.short).map((action) => {
+        const btn = document.createElement('button');
+        btn.dataset.action = action.id;
+        btn.textContent = action.short;
+        btn.addEventListener('click', () => runAction(action));
+        return btn;
+      }));
+    }
+    for (const btn of box.querySelectorAll('button')) {
+      const action = this._action(btn.dataset.action);
+      const why = whyUnavailable(action);
+      btn.disabled = !!why;
+      btn.title = why || action.title;
+    }
   }
 
   /** FPS and Skip live in a ⚙ pop-up (ADR 0055); Escape or a click outside closes it. */
@@ -271,7 +318,9 @@ export class FFastApp {
     searchEmpty.id = 'sidebar-search-empty';
     searchEmpty.textContent = 'No setting matches.';
     searchEmpty.hidden = true;
-    sidebarEl.append(search, searchEmpty);
+    const quickStyles = document.createElement('div');
+    quickStyles.id = 'quick-styles';
+    sidebarEl.append(search, quickStyles, searchEmpty);
 
     const colorBy = createColorByPane(sidebarEl, {
       onSourceChange: (source) => this._sendSetParameter('ffast.atom_color', 'source', source),
@@ -348,6 +397,7 @@ export class FFastApp {
       onChange: (title) => saveLayout({ openSection: title }),
     });
     this._sidebarSearch = bindSidebarSearch(search, sidebarEl, this._sections, searchEmpty);
+    this._renderQuickStyles();
     this._setSidebarHidden(layout.sidebarHidden === true, false);
     document.getElementById('sidebar-toggle').addEventListener('click', () =>
       this._setSidebarHidden(!document.getElementById('panel-loupe').classList.contains('sidebar-hidden')));
@@ -596,6 +646,7 @@ export class FFastApp {
   _renderObjects() {
     this._renderDatasetList();
     this._renderModelList();
+    this._renderQuickStyles();
     // The analysis tabs offer their own multi-select over the same objects, so
     // they need the full lists, not just the rail's current pick.
     this._analysis?.setAvailable({ datasets: this._datasets, models: this._models });

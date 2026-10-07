@@ -556,6 +556,85 @@ async def test_web_sidebar_search_explains_rows_that_wait_for_something(ffast_we
             await browser.close()
 
 
+def _control(section, label, tag="select"):
+    return f".pane[data-pane='{section}'] .ctl-row[data-label='{label}'] {tag}"
+
+
+async def test_web_force_error_style_waits_for_a_prediction(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            styles = page.locator("#quick-styles button")
+            await expect(styles).to_have_text(["Force error", "Publication", "Reset"])
+            force = page.locator("#quick-styles button", has_text="Force error")
+            await expect(force).to_be_disabled()
+            await expect(force).to_have_attribute("title", re.compile("Load a prediction first"))
+        finally:
+            await browser.close()
+
+
+async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server):
+    """ADR 0055 "Quick styles": Force error only sets existing controls —
+    colour by the per-atom force error of the selected prediction, and show
+    that prediction's force arrows."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            name = await page.evaluate(f"() => window.ffastApp._models.get('{model_fp}').name")
+
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            assert await _open_sections(page) == ["Colour By"]
+            await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value(
+                "Force Error (per atom)")
+            await expect(page.locator(_control("Colour By", "Prediction"))).to_have_value(name)
+            await expect(page.locator(_control("Force Vectors", "Show force vectors", "input"))).to_be_checked()
+            await expect(page.locator(_control("Force Vectors", "Source"))).to_have_value(name)
+            await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
+            await page.wait_for_function("() => window.ffastApp.renderer._forceGroup !== null")
+        finally:
+            await browser.close()
+
+
+async def test_web_publication_style_and_reset(ffast_web_server):
+    """Publication: white background (view and export), orthographic, no axes.
+    Reset puts back what the quick styles change."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    state = """() => {
+      const R = window.ffastApp.renderer, c = new R._bondColor.constructor();
+      R._renderer.getClearColor(c);
+      return { clear: '#' + c.getHexString(), ortho: R._camera === R._orthoCamera,
+               gizmo: R._gizmoEnabled };
+    }"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_section(page, "Camera")
+            await page.locator(_control("Camera", "Axes gizmo", "input")).check()
+
+            await page.locator("#quick-styles button", has_text="Publication").click()
+            assert await page.evaluate(state) == {"clear": "#ffffff", "ortho": True, "gizmo": False}
+            await expect(page.locator(_control("Export", "Background", "input"))).to_have_value("#ffffff")
+
+            await page.locator("#quick-styles button", has_text="Reset").click()
+            assert await page.evaluate(state) == {"clear": "#000000", "ortho": False, "gizmo": False}
+            await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value("Elements")
+            await expect(page.locator(_control("Force Vectors", "Show force vectors", "input"))).not_to_be_checked()
+        finally:
+            await browser.close()
+
+
 async def test_web_arming_a_pick_tool_opens_its_section(ffast_web_server):
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)
