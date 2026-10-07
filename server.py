@@ -77,6 +77,30 @@ def _setupServerLogger():
     )
 
 
+class _QuietPortProbes(logging.Filter):
+    """Drop websockets' handshake error for a connection that sent nothing.
+
+    The web launcher waits for this server by opening a TCP connection and
+    closing it without a word (``wait_until_ready``). websockets logs that as
+    ``ERROR opening handshake failed`` with a full traceback, which read like
+    a crash in every launch log. A connection that sends a bad request still
+    logs: that one is a real problem.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.getMessage() != "opening handshake failed" or not record.exc_info:
+            return True
+        exc = record.exc_info[1]
+        while exc is not None:
+            if isinstance(exc, EOFError) and "after 0 bytes" in str(exc):
+                return False
+            exc = exc.__cause__
+        return True
+
+
+_QUIET_PORT_PROBES = _QuietPortProbes()
+
+
 async def _auto_snapshot_loop(
     env, job_id: str, interval_minutes: int
 ) -> None:
@@ -321,6 +345,9 @@ async def _serve(
             recovery_window=recovery_window,
             quit_event=quit_event,
         )
+
+    # addFilter ignores a filter it already holds, so repeat _serve calls are fine.
+    logging.getLogger("websockets.server").addFilter(_QUIET_PORT_PROBES)
 
     logger.info("Starting ffast-server on port %d", port)
     async with websockets.serve(
