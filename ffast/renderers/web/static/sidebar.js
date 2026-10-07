@@ -1,8 +1,9 @@
 /**
  * Small DOM helpers for the Loupe settings sidebar (ADR 0045 Phase 1).
  *
- * A "pane" is a collapsible titled section (mirrors Qt's SettingsPane); a
- * "row" is a label + control line inside one. No framework — plain DOM,
+ * A "pane" is a titled section; `oneSectionOpen` makes the sidebar's panes a
+ * list where one is open at a time (ADR 0055). A "row" is a label + control
+ * line inside a pane. No framework — plain DOM,
  * consistent with the zero-build stance.
  */
 
@@ -21,13 +22,42 @@ export function createPane(title) {
   const header = document.createElement('div');
   header.className = 'pane-header';
   header.innerHTML = `<span class="pane-title">${title}</span><span class="pane-chevron">▾</span>`;
-  header.addEventListener('click', () => el.classList.toggle('collapsed'));
 
   const body = document.createElement('div');
   body.className = 'pane-body';
 
   el.append(header, body);
   return { el, body };
+}
+
+/**
+ * Make the panes in `sidebarEl` a list where only one is open at a time
+ * (ADR 0055). Clicking the open section's header closes it, leaving none
+ * open. `onChange` hears every change, for remembering it.
+ * @param {HTMLElement} sidebarEl
+ * @param {{initial?: string|null, onChange?: (title: string|null) => void}} [opts]
+ * @returns {{open: (title: string|null) => void, readonly openTitle: string|null}}
+ */
+export function oneSectionOpen(sidebarEl, { initial = null, onChange = () => {} } = {}) {
+  let current = null;
+  const show = (title) => {
+    current = title;
+    for (const pane of sidebarEl.querySelectorAll(':scope > .pane'))
+      pane.classList.toggle('collapsed', pane.dataset.pane !== title);
+  };
+  const open = (title) => {
+    if (title === current) return;
+    show(title);
+    onChange(title);
+  };
+  sidebarEl.addEventListener('click', (e) => {
+    const header = e.target.closest('.pane-header');
+    if (!header || header.parentElement?.parentElement !== sidebarEl) return;
+    const title = header.parentElement.dataset.pane;
+    open(title === current ? null : title);
+  });
+  show(initial);
+  return { open, get openTitle() { return current; } };
 }
 
 /** Maps a control element to the `.ctl-row` div it was placed in — lets

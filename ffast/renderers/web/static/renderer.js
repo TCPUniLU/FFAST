@@ -140,6 +140,9 @@ export class MoleculeRenderer {
 
     this._resize();
     window.addEventListener('resize', () => this._resize());
+    // The canvas also changes size without the window doing so, e.g. when
+    // the sidebar is hidden or shown.
+    new ResizeObserver(() => this._resize()).observe(canvas);
     this._startLoop();
   }
 

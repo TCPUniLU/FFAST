@@ -414,6 +414,121 @@ async def test_web_dialog_asks_for_a_token_when_the_server_needs_one():
                 await browser.close()
 
 
+# ── 3D sidebar (ADR 0055 "3D sidebar" row) ─────────────────────────────────
+
+_SECTIONS = ["Colour By", "Camera", "Display", "Bonds", "Force Vectors",
+             "Extract Subset", "Export", "Alignment"]
+
+
+async def _open_section(page, title):
+    """Open a sidebar section (one is open at a time, ADR 0055)."""
+    pane = page.locator(f"#loupe-sidebar .pane[data-pane='{title}']")
+    if "collapsed" in (await pane.get_attribute("class") or ""):
+        await pane.locator(".pane-header").click()
+    await expect(pane).not_to_have_class(re.compile(r"\bcollapsed\b"))
+
+
+async def _open_sections(page):
+    return await page.evaluate(
+        """() => [...document.querySelectorAll('#loupe-sidebar .pane')]
+                 .filter((p) => !p.classList.contains('collapsed'))
+                 .map((p) => p.dataset.pane)"""
+    )
+
+
+async def test_web_sidebar_opens_one_section_at_a_time_and_remembers_it(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            names = await page.evaluate(
+                "() => [...document.querySelectorAll('#loupe-sidebar .pane')].map((p) => p.dataset.pane)"
+            )
+            assert names == _SECTIONS
+            assert await _open_sections(page) == ["Colour By"]   # first visit
+
+            await page.locator(".pane[data-pane='Camera'] .pane-header").click()
+            assert await _open_sections(page) == ["Camera"]
+            await page.locator(".pane[data-pane='Camera'] .pane-header").click()
+            assert await _open_sections(page) == []
+
+            await page.locator(".pane[data-pane='Display'] .pane-header").click()
+            await _open_loupe(page, ws_port, web_port, dataset_fp)   # reload
+            assert await _open_sections(page) == ["Display"]
+        finally:
+            await browser.close()
+
+
+async def test_web_arming_a_pick_tool_opens_its_section(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            for tool, section in [("bonds", "Bonds"), ("align", "Alignment"),
+                                  ("forces", "Force Vectors"), ("extract", "Extract Subset")]:
+                await page.locator(f"#pick-toolbar button[data-tool='{tool}']").click()
+                assert await _open_sections(page) == [section]
+            # Info has no section; arming it leaves the sidebar as it is.
+            await page.locator("#pick-toolbar button[data-tool='info']").click()
+            assert await _open_sections(page) == ["Extract Subset"]
+        finally:
+            await browser.close()
+
+
+async def test_web_sidebar_can_be_hidden_and_stays_hidden(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            width = (await page.locator("#canvas").bounding_box())["width"]
+            await page.locator("#sidebar-toggle").click()
+            await expect(page.locator("#loupe-sidebar")).to_be_hidden()
+            await page.wait_for_timeout(200)
+            assert (await page.locator("#canvas").bounding_box())["width"] > width
+
+            await _open_loupe(page, ws_port, web_port, dataset_fp)   # reload
+            await expect(page.locator("#loupe-sidebar")).to_be_hidden()
+            await page.locator("#sidebar-toggle").click()
+            await expect(page.locator("#loupe-sidebar")).to_be_visible()
+        finally:
+            await browser.close()
+
+
+async def test_web_layout_works_when_browser_storage_is_blocked(ffast_web_server):
+    """Private windows and blocked site data make storage throw; the page must
+    still lay itself out, just without remembering anything."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        await page.add_init_script(
+            "Object.defineProperty(window, 'localStorage',"
+            " { get() { throw new DOMException('blocked', 'SecurityError'); } });"
+        )
+        errors = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            assert await _open_sections(page) == ["Colour By"]
+            await page.locator(".pane[data-pane='Bonds'] .pane-header").click()
+            assert await _open_sections(page) == ["Bonds"]
+            await page.locator("#sidebar-toggle").click()
+            await expect(page.locator("#loupe-sidebar")).to_be_hidden()
+        finally:
+            await browser.close()
+        assert not errors, errors
+
+
 # ── 3D empty state (ADR 0055 "3D empty state" row) ──────────────────────────
 
 _LOUPE_CHROME = ("#loupe-sidebar", "#pick-bar", "#loupe-controls")
@@ -518,16 +633,18 @@ async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(ffas
 
 
 _PREDICTION_ROWS = (
-    ".pane[data-pane='Colour By'] .ctl-row[data-label='Prediction']",
-    ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Source']",
+    ("Colour By", ".pane[data-pane='Colour By'] .ctl-row[data-label='Prediction']"),
+    ("Force Vectors", ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Source']"),
 )
 
 
 async def _show_rows_that_offer_a_prediction(page):
     """Both selectors also wait on their own pane: Colour By shows Prediction
     only for a metric colouring, Force Vectors shows Source only with arrows on."""
+    await _open_section(page, "Colour By")
     coloring = page.locator(".pane[data-pane='Colour By'] .ctl-row[data-label='Coloring'] select")
     await coloring.select_option(label="Acceleration Error")
+    await _open_section(page, "Force Vectors")
     await page.locator(
         ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Show force vectors'] input"
     ).check()
@@ -542,7 +659,8 @@ async def test_web_prediction_selectors_wait_for_a_prediction(ffast_web_server):
         try:
             await _open_loupe(page, ws_port, web_port, dataset_fp)
             await _show_rows_that_offer_a_prediction(page)
-            for row in _PREDICTION_ROWS:
+            for section, row in _PREDICTION_ROWS:
+                await _open_section(page, section)
                 await expect(page.locator(row)).to_be_hidden()
         finally:
             await browser.close()
@@ -557,7 +675,8 @@ async def test_web_prediction_selectors_appear_with_a_prediction(ffast_web_serve
         try:
             await _open_loupe(page, ws_port, web_port, dataset_fp)
             await _show_rows_that_offer_a_prediction(page)
-            for row in _PREDICTION_ROWS:
+            for section, row in _PREDICTION_ROWS:
+                await _open_section(page, section)
                 await expect(page.locator(row)).to_be_visible()
         finally:
             await browser.close()
@@ -676,6 +795,7 @@ async def test_web_renderer_draws_prediction_force_arrows(ffast_web_server):
                 re.compile(r"\bhidden\b")
             )
 
+            await _open_section(page, "Force Vectors")
             show_forces = page.locator(
                 ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Show force vectors'] input"
             )
@@ -734,6 +854,7 @@ async def test_web_renderer_draws_the_colours_the_scene_specifies(ffast_web_serv
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
+            await _open_section(page, "Force Vectors")
             await page.locator(
                 ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Show force vectors'] input"
             ).check()
@@ -1000,6 +1121,7 @@ async def test_web_camera_preset_reorients_view(ffast_web_server):
             await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
             await page.wait_for_timeout(300)
 
+            await _open_section(page, "Camera")
             before_png = await page.locator("#canvas").screenshot()
 
             # frameAtoms()'s initial fit-to-view already sits at az=0/el=0
@@ -1362,6 +1484,7 @@ async def test_web_extract_creates_subset_dataset(ffast_web_server):
             await _open_loupe(page, ws_port, web_port, dataset_fp)
             await expect(page.locator("#dataset-list .obj-row")).to_have_count(1)
 
+            await _open_section(page, "Extract Subset")
             indices = page.locator(
                 ".pane[data-pane='Extract Subset'] .ctl-row[data-label='Indices'] input"
             )
@@ -1396,6 +1519,7 @@ async def test_web_alignment_pane_wires_kabsch_and_exclusive_modes(ffast_web_ser
         try:
             await _open_loupe(page, ws_port, web_port, dataset_fp)
 
+            await _open_section(page, "Alignment")
             kabsch = page.locator(
                 ".pane[data-pane='Alignment'] .ctl-row[data-label='Kabsch align'] input"
             )
@@ -1557,6 +1681,7 @@ async def test_web_export_png_opaque_and_transparent_download(ffast_web_server):
         try:
             await _open_loupe(page, ws_port, web_port, dataset_fp)
 
+            await _open_section(page, "Export")
             opaque_btn = page.locator(
                 ".pane[data-pane='Export'] button", has_text="Export PNG (opaque)")
             transparent_btn = page.locator(
@@ -1708,6 +1833,12 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
                 # task finishing first reported itself as the save.
                 await expect(page.locator("#status")).to_contain_text("Saved session", timeout=15000)
                 assert (session_dir / "info.json").exists()
+                # Layout state stays in the browser, never in the session (ADR 0055).
+                saved = "".join(
+                    f.read_text(errors="ignore") for f in session_dir.rglob("*") if f.is_file()
+                    and f.suffix in (".json", ".toml", ".txt")
+                )
+                assert "openSection" not in saved and "sidebarHidden" not in saved
             finally:
                 await browser.close()
 

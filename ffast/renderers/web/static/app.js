@@ -20,6 +20,8 @@ import { IN, OUT } from './events.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
+import { loadLayout, saveLayout } from './layout_state.js';
+import { oneSectionOpen } from './sidebar.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 
 /**
@@ -29,11 +31,12 @@ import { loadRecentServers, rememberServer, saveRecentServers } from './recent_s
  * @type {Object<string,{label:string, icon:string, multiselect:number, cycle?:boolean, rectangle?:boolean}>}
  */
 const PICK_TOOLS = {
+  // `section`: the sidebar section arming the tool opens (ADR 0055).
   info:    { label: 'Info',    icon: '📐', multiselect: 4,     cycle: true },
-  bonds:   { label: 'Bonds',   icon: '🔗', multiselect: 2 },
-  align:   { label: 'Align',   icon: '△', multiselect: 3 },
-  forces:  { label: 'Force',   icon: '➤', multiselect: 10000, rectangle: true },
-  extract: { label: 'Extract', icon: '✂', multiselect: 10000, rectangle: true },
+  bonds:   { label: 'Bonds',   icon: '🔗', multiselect: 2, section: 'Bonds' },
+  align:   { label: 'Align',   icon: '△', multiselect: 3, section: 'Alignment' },
+  forces:  { label: 'Force',   icon: '➤', multiselect: 10000, rectangle: true, section: 'Force Vectors' },
+  extract: { label: 'Extract', icon: '✂', multiselect: 10000, rectangle: true, section: 'Extract Subset' },
 };
 
 export class FFastApp {
@@ -307,6 +310,26 @@ export class FFastApp {
     });
 
     this._panes = { colorBy, camera, display, bonds, forces, extract, export: exportPane, align };
+
+    // One section open at a time; which one, and whether the sidebar is
+    // hidden, is browser layout state, never session state (ADR 0055).
+    const layout = loadLayout();
+    this._sections = oneSectionOpen(sidebarEl, {
+      initial: 'openSection' in layout ? layout.openSection : 'Colour By',
+      onChange: (title) => saveLayout({ openSection: title }),
+    });
+    this._setSidebarHidden(layout.sidebarHidden === true, false);
+    document.getElementById('sidebar-toggle').addEventListener('click', () =>
+      this._setSidebarHidden(!document.getElementById('panel-loupe').classList.contains('sidebar-hidden')));
+  }
+
+  _setSidebarHidden(hidden, remember = true) {
+    document.getElementById('panel-loupe').classList.toggle('sidebar-hidden', hidden);
+    const btn = document.getElementById('sidebar-toggle');
+    btn.setAttribute('aria-pressed', String(hidden));
+    btn.textContent = hidden ? '◂ Settings' : 'Settings ▸';
+    btn.title = hidden ? 'Show the settings sidebar' : 'Hide the settings sidebar';
+    if (remember) saveLayout({ sidebarHidden: hidden });
   }
 
   /** The URL's `port` (from the launcher or `ffast-server --web-port`) names
@@ -797,6 +820,7 @@ export class FFastApp {
       btn.classList.toggle('active', btn.dataset.tool === id);
     if (id) {
       this._pickController.arm({ id, ...PICK_TOOLS[id] });
+      if (PICK_TOOLS[id].section) this._sections.open(PICK_TOOLS[id].section);
       if (id === 'align') this._panes.align.enableAtomAlignMode();
     } else if (this._pickController) {
       this._pickController.disarm();
