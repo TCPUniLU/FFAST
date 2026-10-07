@@ -63,6 +63,9 @@ export class MoleculeRenderer {
     this._unitCellLines = null;
     this._labelSprites = [];           // THREE.Sprite[] for text labels
     this._selectionMeshes = new Map(); // overlay name → THREE.InstancedMesh
+    // overlay name → material, kept across patches: a fresh material makes the
+    // GPU recompile its shader, which froze the page ~100 ms on every pick.
+    this._selectionMaterials = new Map();
     this._cachedAtomPositions = null;  // atoms.positions from last _updateAtoms call
     this._cachedAtomSizes = null;      // atoms.sizes from last _updateAtoms call
     this._cachedAtomIds = null;        // atoms.atom_ids (displayed→scientific, ADR 0015)
@@ -395,7 +398,7 @@ export class MoleculeRenderer {
   _clearSelections() {
     for (const mesh of this._selectionMeshes.values()) {
       this._scene.remove(mesh);
-      mesh.material.dispose();
+      mesh.dispose();   // per-pick instance buffer; the material is reused
     }
     this._selectionMeshes.clear();
   }
@@ -451,13 +454,13 @@ export class MoleculeRenderer {
       if (!indices || indices.length === 0) continue;
       const [cr, cg, cb, ca] = overlay.color || [1, 0, 0, 0.5];
       const n = indices.length;
-      const mat = new THREE.MeshStandardMaterial({
-        color: sceneColor(cr, cg, cb),
-        opacity: ca ?? 0.5,
-        transparent: true,
-        roughness: 0.35,
-        metalness: 0.1,
-      });
+      let mat = this._selectionMaterials.get(overlay.name);
+      if (!mat) {
+        mat = new THREE.MeshStandardMaterial({ transparent: true, roughness: 0.35, metalness: 0.1 });
+        this._selectionMaterials.set(overlay.name, mat);
+      }
+      sceneColor(cr, cg, cb, mat.color);
+      mat.opacity = ca ?? 0.5;
       const mesh = new THREE.InstancedMesh(this._sphereGeo, mat, n);
       const dummy = new THREE.Object3D();
       for (let j = 0; j < n; j++) {

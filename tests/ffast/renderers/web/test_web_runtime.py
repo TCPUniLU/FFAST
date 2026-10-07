@@ -405,6 +405,55 @@ async def test_web_renderer_draws_the_colours_the_scene_specifies(ffast_web_serv
     assert drawn["arrow"] == "e6661a"
 
 
+async def test_web_pick_highlight_does_not_rebuild_a_shader(ffast_web_server):
+    """Each pick sends a selection patch. The overlay used to dispose its
+    material and make a new one every time, so the GPU recompiled the shader
+    program on every pick — a ~115 ms freeze that delayed the next reply.
+    Picking again must reuse the program the first highlight compiled."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(
+                f"http://127.0.0.1:{web_port}/?port={ws_port}",
+                wait_until="networkidle",
+            )
+            await page.locator("#connect-btn").click()
+            await expect(page.locator("#status")).to_contain_text("Connected")
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
+
+            programs = await page.evaluate(
+                """async () => {
+                  const app = window.ffastApp, R = app.renderer;
+                  const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+                  const highlight = async (indices) => {
+                    app._sendSetSelection('picked', 'current_structure', indices);
+                    const deadline = performance.now() + 5000;
+                    while (R._selectionMeshes.get('picked')?.count !== indices.length) {
+                      if (performance.now() > deadline) throw new Error('no highlight for ' + indices);
+                      await new Promise((r) => setTimeout(r, 10));
+                    }
+                    await frame();
+                    return R._renderer.info.programs.map((p) => p.id).sort();
+                  };
+                  const first = await highlight([0]);
+                  await highlight([0, 1]);
+                  const later = await highlight([2, 3, 4]);
+                  return { first, later };
+                }"""
+            )
+        finally:
+            await browser.close()
+
+    assert programs["later"] == programs["first"], (
+        f"picking rebuilt shader programs: {programs['first']} -> {programs['later']}"
+    )
+
+
 async def test_web_color_by_selector_recolors_atoms_and_shows_colorbar(ffast_web_server):
     """ADR 0045 issue 03 / Phase 1 gate: selecting a metric in 'Colour By'
     changes atom instance colours (not baked element colours) and shows a
