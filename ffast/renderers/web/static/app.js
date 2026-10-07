@@ -22,7 +22,7 @@ import { SessionOps } from './session_ops.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
 import { loadLayout, saveLayout } from './layout_state.js';
 import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './quick_styles.js';
-import { bindSidebarSearch, oneSectionOpen } from './sidebar.js';
+import { addSectionHelp, bindSidebarSearch, oneSectionOpen } from './sidebar.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 
 /**
@@ -38,6 +38,39 @@ const PICK_TOOLS = {
   align:   { label: 'Align',   icon: '△', multiselect: 3, section: 'Alignment' },
   forces:  { label: 'Force',   icon: '➤', multiselect: 10000, rectangle: true, section: 'Force Vectors' },
   extract: { label: 'Extract', icon: '✂', multiselect: 10000, rectangle: true, section: 'Extract Subset' },
+};
+
+/** What each sidebar section is for, behind its "?" (ADR 0055). */
+const SECTION_HELP = {
+  'Colour By': 'Colours atoms by element, by how far each atom moved, or by a per-atom '
+    + 'metric such as force error. Any colouring other than Elements shows a colour bar.',
+  'Camera': 'Where you look from. Drag to orbit, scroll to zoom. XY, XZ and YZ snap to an '
+    + 'axis view; "Exact angles" sets the angles by number.',
+  'Display': 'How atoms are drawn. Hide atoms by index (0 1 2) or element (C, -H); '
+    + 'highlight atoms by index.',
+  'Bonds': 'Dynamic bonds follow atom distances in every frame. Fixed bonds use your own '
+    + 'list of pairs; the Bonds pick tool adds or removes a pair.',
+  'Force Vectors': 'Arrows for the force on each atom. Source is the reference data '
+    + '(Ground Truth) or a loaded prediction. The Force pick tool limits the arrows to chosen atoms.',
+  'Extract Subset': 'Makes a new dataset from chosen atoms. Type indices or elements, or arm '
+    + 'the Extract pick tool and click atoms.',
+  'Export': 'Saves the current 3D frame as a PNG, on a background colour or transparent.',
+  'Alignment': 'Rotates every frame onto a reference so the motion you see is internal. Kabsch '
+    + 'aligns the whole structure; 3-atom frame align uses three atoms you pick or type.',
+};
+
+/** Numbered next steps for the hint bar, by situation (ADR 0055). */
+const HINTS = {
+  'no-prediction': [
+    ['Load a prediction: ', 'File ▸ Load Prediction…'],
+    ['Quick style ', 'Force error'],
+    ['Find any setting with the search box', ''],
+  ],
+  'with-prediction': [
+    ['Quick style ', 'Force error', ' shows where the model is wrong'],
+    ['Arm a pick tool and click atoms', ''],
+    ['Find any setting with the search box', ''],
+  ],
 };
 
 export class FFastApp {
@@ -192,6 +225,7 @@ export class FFastApp {
       document.getElementById('file-menu-list'),
       this._actions.filter((a) => a.menu === 'file'),
     );
+    document.getElementById('hint-dismiss').addEventListener('click', () => this._dismissHint());
     document.getElementById('empty-load-btn').addEventListener('click',
       () => runAction(this._action('load-dataset')));
     this._syncEmptyState();
@@ -291,6 +325,34 @@ export class FFastApp {
     });
   }
 
+  /** The hint bar: numbered next steps while a view is open, until dismissed.
+   * Dismissals are browser layout state (ADR 0055). */
+  _syncHint() {
+    const bar = document.getElementById('hint-bar');
+    const key = this._models.size ? 'with-prediction' : 'no-prediction';
+    const dismissed = loadLayout().hintsDismissed || [];
+    const show = this._viewShown && !dismissed.includes(key);
+    bar.classList.toggle('hidden', !show);
+    if (!show || bar.dataset.hint === key) return;
+    bar.dataset.hint = key;
+    const text = document.getElementById('hint-text');
+    text.replaceChildren(...HINTS[key].flatMap(([lead, strong, tail = ''], i) => {
+      const n = document.createElement('span');
+      n.className = 'hint-n';
+      n.textContent = String(i + 1);
+      const b = document.createElement('b');
+      b.textContent = strong;
+      return [n, document.createTextNode(lead), b, document.createTextNode(tail)];
+    }));
+  }
+
+  _dismissHint() {
+    const key = document.getElementById('hint-bar').dataset.hint;
+    const dismissed = loadLayout().hintsDismissed || [];
+    if (key && !dismissed.includes(key)) saveLayout({ hintsDismissed: [...dismissed, key] });
+    document.getElementById('hint-bar').classList.add('hidden');
+  }
+
   _action(id) { return this._actions.find((a) => a.id === id); }
 
   /** Until a view is open the 3D tab shows only a Load Dataset… button (or
@@ -304,6 +366,7 @@ export class FFastApp {
     const btn = document.getElementById('empty-load-btn');
     btn.disabled = !!why;
     document.getElementById('overlay-hint').textContent = why || 'Load a dataset to see it here.';
+    this._syncHint();
   }
 
   // ── sidebar panes (ADR 0045 Phase 1: issues 03-07) ──────────────────────
@@ -397,6 +460,7 @@ export class FFastApp {
       onChange: (title) => saveLayout({ openSection: title }),
     });
     this._sidebarSearch = bindSidebarSearch(search, sidebarEl, this._sections, searchEmpty);
+    addSectionHelp(sidebarEl, SECTION_HELP, this._sections);
     this._renderQuickStyles();
     this._setSidebarHidden(layout.sidebarHidden === true, false);
     document.getElementById('sidebar-toggle').addEventListener('click', () =>
@@ -647,6 +711,7 @@ export class FFastApp {
     this._renderDatasetList();
     this._renderModelList();
     this._renderQuickStyles();
+    this._syncHint();
     // The analysis tabs offer their own multi-select over the same objects, so
     // they need the full lists, not just the rail's current pick.
     this._analysis?.setAvailable({ datasets: this._datasets, models: this._models });

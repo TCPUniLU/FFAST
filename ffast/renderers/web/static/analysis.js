@@ -20,7 +20,12 @@
  *     grouped_* kinds draw (their row order = the dataset's sorted-unique-Z).
  */
 
+import { helpToggle } from './help.js';
 import { renderPanel, PLOT_KINDS, elementSymbol } from './panels.js';
+
+const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
+  + 'Outlined buttons follow the selection in the left list; click one to pin this '
+  + "tab's choice, then click others to add them. The 3D view is not affected.";
 
 /** control name → the shared compute-param it drives. */
 const CONTROL_PARAM = { energy_shift: 'shifted', smoothing: 'window' };
@@ -365,6 +370,12 @@ export class AnalysisManager {
     group('datasets', 'Datasets', t.selectedDatasets, this._tabDatasets(t));
     group('models', 'Predictions', t.selectedModels,
       this._tabModels(t).filter(Boolean));
+    if (!holder.childElementCount) return;
+    const { button, note } = helpToggle(PICKER_HELP, {
+      open: !!t.pickerHelpOpen,
+      onToggle: (open) => { t.pickerHelpOpen = open; },
+    });
+    holder.append(button, note);
   }
 
   _toggleSeries(t, which, fp) {

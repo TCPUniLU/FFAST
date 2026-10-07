@@ -635,6 +635,109 @@ async def test_web_publication_style_and_reset(ffast_web_server):
             await browser.close()
 
 
+async def test_web_every_section_has_a_help_button(ffast_web_server):
+    """ADR 0055 "Help": a "?" on each section shows what it is for."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            for section in _SECTIONS:
+                pane = page.locator(f"#loupe-sidebar .pane[data-pane='{section}']")
+                await pane.locator(".pane-header .help-btn").click()
+                note = pane.locator(".help-text")
+                await expect(note).to_be_visible()
+                assert len((await note.text_content()).strip()) > 20, section
+                assert await _open_sections(page) == [section]
+            # A second click hides it again and leaves the section open.
+            await pane.locator(".pane-header .help-btn").click()
+            await expect(pane.locator(".help-text")).to_be_hidden()
+            assert await _open_sections(page) == [_SECTIONS[-1]]
+        finally:
+            await browser.close()
+
+
+async def test_web_input_boxes_are_dark(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_section(page, "Display")
+            brightness = await page.evaluate(
+                """() => ['Hide atoms', 'Atom size'].map((label) => {
+                  const el = document.querySelector(
+                    `.pane[data-pane='Display'] .ctl-row[data-label='${label}'] input`);
+                  const [r, g, b] = getComputedStyle(el).backgroundColor.match(/\\d+/g).map(Number);
+                  return (r + g + b) / 3;
+                })"""
+            )
+            assert all(v < 80 for v in brightness), brightness
+        finally:
+            await browser.close()
+
+
+async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
+    """ADR 0055 "Help": a hint bar with numbered next steps; dismissing it is
+    remembered in browser storage."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await expect(page.locator("#hint-bar")).to_be_hidden()   # nothing open yet
+
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            hint = page.locator("#hint-bar")
+            await expect(hint).to_be_visible()
+            await expect(hint).to_contain_text("Load a prediction")
+            await expect(hint.locator(".hint-n")).to_have_text(["1", "2", "3"])
+
+            await page.locator("#hint-dismiss").click()
+            await expect(hint).to_be_hidden()
+            await _open_loupe(page, ws_port, web_port, dataset_fp)   # reload
+            await expect(hint).to_be_hidden()
+        finally:
+            await browser.close()
+
+
+async def test_web_hint_bar_changes_once_a_prediction_is_loaded(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp, _model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            hint = page.locator("#hint-bar")
+            await expect(hint).to_contain_text("Force error")
+            await expect(hint).not_to_contain_text("Load a prediction")
+        finally:
+            await browser.close()
+
+
+async def test_web_analysis_tab_picker_has_a_help_button(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp, _model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator("#tabbar .tab").nth(1).click()
+            picker = page.locator(".tabpanel.active [data-control='series-selector']")
+            await picker.locator(".help-btn").click()
+            await expect(picker.locator(".help-text")).to_contain_text("3D view")
+        finally:
+            await browser.close()
+
+
 async def test_web_arming_a_pick_tool_opens_its_section(ffast_web_server):
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)

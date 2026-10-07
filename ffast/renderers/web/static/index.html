@@ -10,6 +10,7 @@
        as the same app: Discord-grey surfaces, muted-grey text, teal accent.
        Layout mirrors the Qt shell: object-list rail beside tabbed main content,
        with the 3D Loupe as one tab among the analysis tabs. */
+:root { color-scheme: dark; }   /* native controls (spinners, pickers) drawn dark */
     :root {
       --bg1: #202225;   /* darkest — app base            (@BGColor1) */
       --bg2: #2f3136;   /* panels, inputs                (@BGColor2) */
@@ -369,6 +370,14 @@
     .ctl-row select, .ctl-row input[type="text"], .ctl-row input[type="number"] {
       max-width: 130px; font-size: 11px; height: 22px; padding: 1px 6px;
     }
+    /* input boxes are dark, not the browser's white (ADR 0055) */
+    input[type="text"], input[type="number"], input[type="search"] {
+      background: var(--bg1); color: var(--text1); border: 1px solid var(--bg3);
+      border-radius: 3px; font-family: var(--font);
+    }
+    input[type="text"]:focus, input[type="number"]:focus, input[type="search"]:focus {
+      outline: none; border-color: var(--hl2);
+    }
     .ctl-row input[type="checkbox"] { accent-color: var(--hl2); width: 14px; height: 14px; }
     .ctl-row input[type="color"] {
       width: 32px; height: 20px; padding: 0; border: 1px solid var(--bg3);
@@ -391,6 +400,29 @@
     }
     #sidebar-search:focus { outline: none; border-color: var(--hl2); }
     #sidebar-search-empty { font-size: 11px; color: var(--muted); padding: 2px 4px; }
+    /* help (ADR 0055) */
+    .help-btn {
+      width: 16px; height: 16px; padding: 0; border-radius: 50%; flex-shrink: 0;
+      font-size: 10px; line-height: 1; background: transparent;
+      box-shadow: inset 0 0 0 1px var(--bg4); color: var(--muted);
+    }
+    .help-btn[aria-expanded="true"] { color: var(--hl2); box-shadow: inset 0 0 0 1px var(--hl2); }
+    .pane-header .help-btn { margin-left: auto; margin-right: 6px; }
+    .help-text { margin: 0 0 4px; font-size: 11px; line-height: 1.45; color: var(--text1); }
+    .help-text[hidden] { display: none; }
+    .ac-series .help-text { flex-basis: 100%; }
+    #hint-bar {
+      position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); max-width: 92%;
+      display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px;
+      background: rgba(47, 49, 54, 0.92); border: 1px solid var(--bg4); border-radius: 6px;
+      font-size: 11px; color: var(--text1);
+    }
+    #hint-bar.hidden { display: none; }
+    #hint-bar b { color: var(--text2); font-weight: 600; }
+    #hint-bar .hint-n { color: var(--hl2); font-weight: 700; margin: 0 4px 0 10px; }
+    #hint-bar .hint-n:first-child { margin-left: 0; }
+    #hint-bar button { height: 20px; padding: 0 6px; background: transparent; }
+    body.loupe-only #hint-bar { display: none; }
     #quick-styles { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
     #quick-styles .ctl-label { font-size: 10px; color: var(--muted); margin-right: 2px; white-space: nowrap; }
     #quick-styles button { flex: 1; padding: 0 4px; font-size: 11px; }
@@ -754,6 +786,11 @@
                 <div class="big">No dataset open</div>
                 <div class="small" id="overlay-hint">Load a dataset to see it here.</div>
                 <button id="empty-load-btn">Load Dataset…</button>
+              </div>
+              <!-- hint bar (ADR 0055): numbered next steps, dismissable -->
+              <div id="hint-bar" class="hidden" role="note">
+                <span id="hint-text"></span>
+                <button id="hint-dismiss" title="Dismiss this hint">✕</button>
               </div>
             </div>
             <div id="loupe-controls">

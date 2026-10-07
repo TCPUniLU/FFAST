@@ -7,6 +7,8 @@
  * consistent with the zero-build stance.
  */
 
+import { helpToggle } from './help.js';
+
 /** @typedef {{min?: number, max?: number, step?: number}} RangeOpts */
 
 /**
@@ -63,6 +65,24 @@ export function oneSectionOpen(sidebarEl, { initial = null, onChange = () => {} 
     /** Put the panes back as the list has them (after a search). */
     restore: () => show(current),
   };
+}
+
+/**
+ * Put a "?" in each section's header that shows what the section is for
+ * (ADR 0055). Showing the note also opens the section.
+ * @param {HTMLElement} sidebarEl @param {Record<string, string>} texts
+ * @param {{open: (title: string) => void}} sections
+ */
+export function addSectionHelp(sidebarEl, texts, sections) {
+  for (const pane of sidebarEl.querySelectorAll(':scope > .pane')) {
+    const text = texts[pane.dataset.pane];
+    if (!text) continue;
+    const { button, note } = helpToggle(text, {
+      onToggle: (open) => { if (open) sections.open(pane.dataset.pane); },
+    });
+    pane.querySelector('.pane-header .pane-chevron').before(button);
+    pane.querySelector('.pane-body').prepend(note);
+  }
 }
 
 /**
