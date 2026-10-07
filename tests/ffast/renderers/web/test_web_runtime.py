@@ -1919,6 +1919,33 @@ async def test_web_pick_radius_control_is_gone(ffast_web_server):
             await browser.close()
 
 
+async def test_web_picking_does_not_resize_the_3d_view(ffast_web_server):
+    """The pick read-out used to wrap the pick bar onto a second line, shrinking
+    the 3D view, so the molecule jumped under the pointer after the first pick
+    and the next click missed its atom."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    size = """() => [document.getElementById('canvas').clientWidth,
+                     document.getElementById('canvas').clientHeight,
+                     document.getElementById('pick-bar').offsetHeight]"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator("#pick-toolbar button[data-tool='info']").click()
+            before = await page.evaluate(size)
+            atom = await _front_atom(page)
+            await page.mouse.click(atom["x"], atom["y"])
+            await expect(page.locator("#pick-strip-count")).to_contain_text("1 picked")
+            await expect(page.locator("#pick-readout")).not_to_have_text("")
+            readout = page.locator("#pick-readout")
+            assert await readout.get_attribute("title") == await readout.text_content()
+            assert await page.evaluate(size) == before
+        finally:
+            await browser.close()
+
+
 async def test_web_extract_creates_subset_dataset(ffast_web_server):
     """ADR 0045 issue 12 gate: typing indices and extracting creates a new
     subset dataset that appears in the dataset list."""

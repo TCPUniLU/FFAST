@@ -1045,7 +1045,9 @@ export class FFastApp {
     strip.classList.remove('hidden');
     document.getElementById('pick-strip-tool').textContent = PICK_TOOLS[this._activeTool].label;
     document.getElementById('pick-strip-count').textContent = `${this._picked.length} picked`;
-    document.getElementById('pick-readout').textContent = this._pickReadout || '';
+    const readout = document.getElementById('pick-readout');
+    readout.textContent = this._pickReadout || '';
+    readout.title = this._pickReadout || '';   // the full text when "…" cuts it
   }
 
   /** Extract-as-subset: ship the raw index/element tokens; the server resolves

@@ -259,7 +259,9 @@
       padding: 4px 10px; background: var(--bg2); border-bottom: 1px solid var(--bg3);
       min-height: 30px;
     }
-    #pick-toolbar { display: flex; gap: 4px; }
+    /* One line, always: a wrapping bar would shrink the 3D view mid-pick and
+       move the molecule under the pointer. A long read-out is cut with "…". */
+    #pick-toolbar { display: flex; gap: 4px; flex-shrink: 0; }
     .pick-tool-btn {
       height: 24px; padding: 0 8px; font-size: 12px; line-height: 1;
       display: inline-flex; align-items: center; gap: 5px;
@@ -272,12 +274,17 @@
     }
     #pick-strip {
       display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text1);
+      flex: 1 1 auto; min-width: 0; white-space: nowrap;
     }
+    #pick-strip > :not(#pick-readout) { flex-shrink: 0; }
     #pick-strip.hidden { display: none; }
     #pick-strip .pick-sep { color: var(--muted); }
     #pick-strip-tool { color: var(--hl2); font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
     #pick-strip-count { color: var(--text1); }
-    #pick-readout { color: var(--text2); font-variant-numeric: tabular-nums; }
+    #pick-readout {
+      color: var(--text2); font-variant-numeric: tabular-nums;
+      min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    }
     #pick-clear { width: 22px; height: 20px; padding: 0; font-size: 11px; }
 
     /* rubber-band box while dragging a rectangle pick tool */
