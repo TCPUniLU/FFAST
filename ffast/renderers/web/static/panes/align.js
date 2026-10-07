@@ -10,7 +10,7 @@
  * the pane exposes setPickedIndices so the tool can fill them.
  */
 
-import { createPane, checkboxRow, textRow, rowElement } from '../sidebar.js';
+import { createPane, checkboxRow, textRow, rowElement, setRowNeeds } from '../sidebar.js';
 
 /** Parse a plain "0 1 2" list into integers only. */
 function parseInts(text) {
@@ -74,8 +74,8 @@ export function createAlignPane(sidebarEl, callbacks) {
   }
 
   function _syncVisibility() {
-    rowElement(heavyInput).style.display = kabsch ? '' : 'none';
-    rowElement(idxInput).style.display = atomAlign ? '' : 'none';
+    setRowNeeds(rowElement(heavyInput), kabsch ? '' : 'Turn on "Kabsch align" first');
+    setRowNeeds(rowElement(idxInput), atomAlign ? '' : 'Turn on "3-atom frame align" first');
     _syncHint();
   }
   _syncVisibility();

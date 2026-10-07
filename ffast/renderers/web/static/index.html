@@ -371,6 +371,28 @@
     .ctl-btn-group { display: flex; gap: 4px; justify-content: center; padding: 2px 0; }
     .ctl-btn-group button { flex: 1; }
     .ctl-row:has(.ctl-textarea) { align-items: flex-start; }
+    /* a row waiting for something (setRowNeeds) — the search still finds it */
+    .ctl-row.needs { display: none; }
+
+    /* sidebar search (ADR 0055) */
+    #sidebar-search {
+      flex: 0 0 auto; width: 100%; font-family: var(--font); font-size: 12px;
+      color: var(--text1); background: var(--bg1); border: 1px solid var(--bg3);
+      border-radius: 4px; padding: 5px 8px;
+    }
+    #sidebar-search:focus { outline: none; border-color: var(--hl2); }
+    #sidebar-search-empty { font-size: 11px; color: var(--muted); padding: 2px 4px; }
+    #sidebar-search-empty[hidden] { display: none; }
+    .searching .ctl-row.search-hit {
+      background: var(--sel); border-radius: 3px; margin: 0 -4px; padding: 0 4px;
+    }
+    .searching .ctl-row.needs.search-hit {
+      display: flex; flex-wrap: wrap; opacity: 0.55; pointer-events: none;
+    }
+    .searching .ctl-row.needs.search-hit::after {
+      content: attr(data-needs); flex-basis: 100%; font-size: 10px; color: var(--muted);
+    }
+    .searching .exact-angles.search-reveal { display: flex; }
     .ctl-textarea {
       flex: 1; min-height: 48px; resize: vertical; font-family: var(--font);
       font-size: 11px; background: var(--bg2); color: var(--text1);

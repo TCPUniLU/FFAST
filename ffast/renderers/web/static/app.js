@@ -21,7 +21,7 @@ import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
 import { loadLayout, saveLayout } from './layout_state.js';
-import { oneSectionOpen } from './sidebar.js';
+import { bindSidebarSearch, oneSectionOpen } from './sidebar.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 
 /**
@@ -243,6 +243,16 @@ export class FFastApp {
   // ── sidebar panes (ADR 0045 Phase 1: issues 03-07) ──────────────────────
   _initSidebarPanes() {
     const sidebarEl = document.getElementById('loupe-sidebar');
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.id = 'sidebar-search';
+    search.placeholder = 'Search settings';
+    search.setAttribute('aria-label', 'Search settings');
+    const searchEmpty = document.createElement('div');
+    searchEmpty.id = 'sidebar-search-empty';
+    searchEmpty.textContent = 'No setting matches.';
+    searchEmpty.hidden = true;
+    sidebarEl.append(search, searchEmpty);
 
     const colorBy = createColorByPane(sidebarEl, {
       onSourceChange: (source) => this._sendSetParameter('ffast.atom_color', 'source', source),
@@ -318,6 +328,7 @@ export class FFastApp {
       initial: 'openSection' in layout ? layout.openSection : 'Colour By',
       onChange: (title) => saveLayout({ openSection: title }),
     });
+    this._sidebarSearch = bindSidebarSearch(search, sidebarEl, this._sections, searchEmpty);
     this._setSidebarHidden(layout.sidebarHidden === true, false);
     document.getElementById('sidebar-toggle').addEventListener('click', () =>
       this._setSidebarHidden(!document.getElementById('panel-loupe').classList.contains('sidebar-hidden')));

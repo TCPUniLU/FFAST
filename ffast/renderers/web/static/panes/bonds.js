@@ -7,7 +7,7 @@
  * BondSelect.selectCallback).
  */
 
-import { createPane, sliderRow, colorRow, selectRow, row, buttonRow, rowElement } from '../sidebar.js';
+import { createPane, sliderRow, colorRow, selectRow, row, buttonRow, rowElement, setRowNeeds } from '../sidebar.js';
 
 /**
  * Parse "0-1, 2-5" / "0 1\n2 5" into [[0,1],[2,5]], skipping malformed pairs.
@@ -97,9 +97,10 @@ export function createBondsPane(sidebarEl, callbacks) {
 
   function _syncVisibility() {
     const show = bondType === 'Fixed';
-    textareaRowEl.style.display = show ? '' : 'none';
+    const needsFixed = show ? '' : 'Set "Bonds Type" to Fixed first';
+    setRowNeeds(textareaRowEl, needsFixed);
     hint.style.display = show && hint.textContent ? '' : 'none';
-    rowElement(fillBtn).style.display = show ? '' : 'none';
+    setRowNeeds(rowElement(fillBtn), needsFixed);
   }
   _syncVisibility();
 

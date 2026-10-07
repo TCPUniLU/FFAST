@@ -491,6 +491,71 @@ async def test_web_camera_exact_angles_wait_behind_a_link(ffast_web_server):
             await browser.close()
 
 
+async def test_web_sidebar_search_opens_matching_sections(ffast_web_server):
+    """ADR 0055 "Sidebar search": typing opens every section with a match and
+    highlights the matching rows, including rows behind "Exact angles";
+    clearing it restores the section that was open."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_section(page, "Display")
+            search = page.locator("#sidebar-search")
+
+            await search.fill("elevation")
+            assert await _open_sections(page) == ["Camera"]
+            row = page.locator(".pane[data-pane='Camera'] .ctl-row[data-label='Elevation (°)']")
+            await expect(row).to_be_visible()
+            await expect(row).to_have_class(re.compile(r"\bsearch-hit\b"))
+
+            # Several sections can match at once.
+            await search.fill("colo")
+            opened = await _open_sections(page)
+            assert {"Colour By", "Bonds"} <= set(opened) and "Camera" not in opened, opened
+
+            await search.fill("zzzz")
+            assert await _open_sections(page) == []
+            await expect(page.locator("#sidebar-search-empty")).to_be_visible()
+
+            await search.fill("")
+            assert await _open_sections(page) == ["Display"]
+            await expect(page.locator("#loupe-sidebar .search-hit")).to_have_count(0)
+            await expect(row).to_be_hidden()   # back behind "Exact angles"
+            await expect(page.locator("#sidebar-search-empty")).to_be_hidden()
+        finally:
+            await browser.close()
+
+
+async def test_web_sidebar_search_explains_rows_that_wait_for_something(ffast_web_server):
+    """A row hidden until something else happens is found too, greyed out,
+    with the reason."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator("#sidebar-search").fill("prediction")
+            row = page.locator(".pane[data-pane='Colour By'] .ctl-row[data-label='Prediction']")
+            await expect(row).to_be_visible()
+            await expect(row).to_have_class(re.compile(r"\bneeds\b"))
+            assert "Load a prediction first" in await row.get_attribute("data-needs")
+
+            await page.locator("#sidebar-search").fill("length")
+            row = page.locator(".pane[data-pane='Force Vectors'] .ctl-row[data-label='Length']")
+            await expect(row).to_be_visible()
+            assert "Show force vectors" in await row.get_attribute("data-needs")
+
+            await page.locator("#sidebar-search").fill("")
+            await expect(row).to_be_hidden()
+        finally:
+            await browser.close()
+
+
 async def test_web_arming_a_pick_tool_opens_its_section(ffast_web_server):
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)

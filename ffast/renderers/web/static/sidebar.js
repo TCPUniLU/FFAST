@@ -57,7 +57,73 @@ export function oneSectionOpen(sidebarEl, { initial = null, onChange = () => {} 
     open(title === current ? null : title);
   });
   show(initial);
-  return { open, get openTitle() { return current; } };
+  return {
+    open,
+    get openTitle() { return current; },
+    /** Put the panes back as the list has them (after a search). */
+    restore: () => show(current),
+  };
+}
+
+/**
+ * Hide a row until something else is true; `reason` says what ("Load a
+ * prediction first"). An empty reason shows the row. The sidebar search still
+ * finds a hidden row and shows it greyed out with its reason (ADR 0055).
+ * @param {HTMLElement} rowEl @param {string} reason
+ */
+export function setRowNeeds(rowEl, reason) {
+  rowEl.classList.toggle('needs', !!reason);
+  if (reason) rowEl.dataset.needs = reason;
+  else delete rowEl.dataset.needs;
+}
+
+/**
+ * Sidebar search (ADR 0055): typing opens every section whose title or rows
+ * match and highlights the matching rows, including rows behind "Exact
+ * angles" and rows waiting for something (shown greyed out with the reason).
+ * Clearing it, or Escape, restores the section that was open.
+ * @param {HTMLInputElement} input @param {HTMLElement} sidebarEl
+ * @param {{restore: () => void}} sections @param {HTMLElement} emptyEl
+ */
+export function bindSidebarSearch(input, sidebarEl, sections, emptyEl) {
+  const rowText = (row) => [
+    row.querySelector('label')?.textContent || '',
+    ...[...row.querySelectorAll('button')].map((b) => b.textContent),
+  ].join(' ').toLowerCase();
+
+  const run = () => {
+    const q = input.value.trim().toLowerCase();
+    for (const el of sidebarEl.querySelectorAll('.search-hit, .search-reveal'))
+      el.classList.remove('search-hit', 'search-reveal');
+    sidebarEl.classList.toggle('searching', !!q);
+    if (!q) {
+      sections.restore();
+      emptyEl.hidden = true;
+      return;
+    }
+    let any = false;
+    for (const pane of sidebarEl.querySelectorAll(':scope > .pane')) {
+      if (pane.style.display === 'none') continue;   // a section that does not apply
+      let hit = pane.dataset.pane.toLowerCase().includes(q);
+      for (const row of pane.querySelectorAll('.ctl-row')) {
+        if (!rowText(row).includes(q)) continue;
+        row.classList.add('search-hit');
+        row.closest('.exact-angles')?.classList.add('search-reveal');
+        hit = true;
+      }
+      pane.classList.toggle('collapsed', !hit);
+      any ||= hit;
+    }
+    emptyEl.hidden = any;
+  };
+  input.addEventListener('input', run);
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    input.value = '';
+    run();
+    input.blur();
+  });
+  return { run };
 }
 
 /** Maps a control element to the `.ctl-row` div it was placed in — lets

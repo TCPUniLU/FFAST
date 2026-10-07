@@ -11,7 +11,7 @@
  * overlay or the object rail's active prediction.
  */
 
-import { createPane, selectRow, row, rowElement } from '../sidebar.js';
+import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.js';
 import { gradientCss } from '../colormap.js';
 
 const COLORMAPS = ['viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'force_error'];
@@ -75,8 +75,9 @@ export function createColorByPane(sidebarEl, callbacks) {
     const isElements = currentLabel === 'Elements';
     // Qt hides Colormap/Prediction until Coloring leaves "Elements" (ADR 0040);
     // Prediction also waits until there is a prediction to choose (ADR 0055).
-    rowElement(colormapSelect).style.display = isElements ? 'none' : '';
-    rowElement(predictionSelect).style.display = isElements || !hasPredictions ? 'none' : '';
+    const needsColouring = isElements ? 'Choose a colouring other than Elements first' : '';
+    setRowNeeds(rowElement(colormapSelect), needsColouring);
+    setRowNeeds(rowElement(predictionSelect), hasPredictions ? needsColouring : 'Load a prediction first');
   }
   _syncVisibility();
 

@@ -5,7 +5,7 @@
  * and the Force pick tool fills the atom set (setPickedIndices).
  */
 
-import { createPane, checkboxRow, selectRow, sliderRow, rowElement } from '../sidebar.js';
+import { createPane, checkboxRow, selectRow, sliderRow, rowElement, setRowNeeds } from '../sidebar.js';
 const ONLY_FORCES_WARNING_KEY = 'ffast.onlyForcesWarning.dismissed';
 
 /*This function is used to make the 'Only show force vectors' warning visible and handle user input*/
@@ -68,8 +68,9 @@ export function createForcesPane(sidebarEl, callbacks) {
 
   function _syncVisibility() {
     const show = state.show;
-    for (const control of [onlyForces, sourceSelect, normalisedInput, lengthInput, filterInput]) rowElement(control).style.display = show ? '' : 'none';
-    if (!hasPredictions) rowElement(sourceSelect).style.display = 'none';
+    const needsShow = show ? '' : 'Turn on "Show force vectors" first';
+    for (const control of [onlyForces, normalisedInput, lengthInput, filterInput]) setRowNeeds(rowElement(control), needsShow);
+    setRowNeeds(rowElement(sourceSelect), hasPredictions ? needsShow : 'Load a prediction first');
   }
   _syncVisibility();
 
