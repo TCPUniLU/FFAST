@@ -1452,6 +1452,7 @@ export class FFastApp {
   /** The server made the subset SUB asked for; show the one the main view
    * follows. */
   _onSubsetDeclared({ fingerprint, parent_fingerprint, model_fp, name }) {
+    this._analysis?.noteSubset({ fingerprint, parent_fingerprint, model_fp, name });
     const f = this._followSub;
     if (!f || f.parentFp !== parent_fingerprint || (f.modelFp || null) !== (model_fp || null)
         || f.name !== name) return;

@@ -341,6 +341,15 @@ CASES = {
         "[an.framesKey({n: 3, parent_frames: [4, 6, 8]}), an.framesKey({n: 3, parent_frames: [4, 6, 9]}),"
         " an.framesKey({n: 10}), an.framesKey(undefined)]"),
 
+    "an_subset_refs": (
+        "an.subsetRefs("
+        " [{datasetFp: 'P', modelFp: 'm', name: 'MACE', datasetName: 'P'},"
+        "  {datasetFp: 'Q', modelFp: 'm', name: 'MACE', datasetName: 'Q'},"
+        "  {datasetFp: 'H', modelFp: null, name: 'H', datasetName: 'H'}],"
+        " new Map([['P|m|Plot', 'S'], ['Q|m|Other', 'T'], ['H||Plot', 'HS']]), 'Plot',"
+        " new Map([['S', {name: 'Plot,P,MACE'}], ['T', {name: 'Other,Q,MACE'}]]))"
+        ".map(r => [r.datasetFp, r.modelFp, r.name, r.datasetName])"),
+
     # ── te: editing a tab draft (ADR 0056 rules 6, 11, 12, 14) ──────────────
     # A 2x2 tab: 3D panel at (0,0), table A at (0,1), timeline B at (1,0)
     # spanning 2 columns.
@@ -852,6 +861,14 @@ def test_a_prediction_applies_to_the_subsets_of_its_dataset(results):
     prediction made for P draws on P's subsets too; an empty list means
     "unknown, allow it", as the object rail has always read it."""
     assert results["fl_prediction_applies"] == [True, True, True, False, True, False]
+
+
+def test_the_other_plots_of_a_subbed_tab_draw_each_series_subset(results):
+    """P's subset made by the plot 'Plot' replaces P; Q has a subset only
+    from another plot, and H's subset is not listed (hidden or not announced
+    yet), so both stay as they are. Legend names do not change."""
+    assert results["an_subset_refs"] == [
+        ["S", "m", "MACE", "Plot,P,MACE"], ["Q", "m", "MACE", "Q"], ["H", None, "H", "H"]]
 
 
 def test_te_panels_keep_their_places(results):

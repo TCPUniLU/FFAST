@@ -49,6 +49,23 @@ export function plotRange(el) {
   return { x: x.map(Number), y: y ? y.map(Number) : null };
 }
 
+/**
+ * The series the other plots of a tab draw while one plot has SUB ticked:
+ * each dataset × prediction pair swapped for the subset that plot made of
+ * it, once that subset is listed. Legend names stay as they were.
+ * @param {Array<{datasetFp: string, modelFp: string|null, name: string, datasetName: string}>} refs
+ * @param {Map<string, string>} subsets `${parentFp}|${modelFp}|${plot}` → subset fingerprint
+ * @param {string} plot the name of the plot with SUB ticked
+ * @param {Map<string, {name?: string}>} datasets the listed datasets
+ */
+export function subsetRefs(refs, subsets, plot, datasets) {
+  return refs.map((r) => {
+    const fp = subsets.get(`${r.datasetFp}|${r.modelFp || ''}|${plot}`);
+    const meta = fp && datasets.get(fp);
+    return meta ? { ...r, datasetFp: fp, datasetName: meta.name || r.datasetName } : r;
+  });
+}
+
 /** A short string that changes when a dataset's frames change. */
 export function framesKey(meta) {
   const pf = meta?.parent_frames;
@@ -134,6 +151,8 @@ export class AnalysisManager {
     /** Everything loaded, for the per-tab selectors: fp → meta. */
     this._available = { datasets: new Map(), models: new Map() };
     this._renderToken = 0;
+    /** Subsets SUB made: `${parentFp}|${modelFp}|${plot}` → fingerprint. */
+    this._subsets = new Map();
   }
 
   /**
@@ -143,12 +162,12 @@ export class AnalysisManager {
    * @param {{datasets: Map<string, object>, models: Map<string, object>}} avail
    */
   setAvailable({ datasets, models }) {
+    const active = this._activeTab();
+    const before = active && this._drawnKeys(active);
     this._available = {
       datasets: datasets || new Map(),
       models: models || new Map(),
     };
-    const active = this._activeTab();
-    const before = active && this._drawnKey(active);
     for (const t of this._tabs) {
       // Drop anything that has since been deleted; an empty list falls back to
       // following the rail rather than showing nothing.
@@ -160,7 +179,15 @@ export class AnalysisManager {
     }
     // A subset following a plot's zoom is announced again on every zoom;
     // redrawing a tab that does not draw it would reset that plot's zoom.
-    if (active && this._drawnKey(active) !== before) this._renderTab(active);
+    this._redrawIfChanged(active, before);
+  }
+
+  /** The server made a subset for a plot with SUB ticked (SUBSET_DECLARED). */
+  noteSubset({ fingerprint, parent_fingerprint, model_fp, name }) {
+    const active = this._activeTab();
+    const before = active && this._drawnKeys(active);
+    this._subsets.set(`${parent_fingerprint}|${model_fp || ''}|${name}`, fingerprint);
+    this._redrawIfChanged(active, before);
   }
 
   /** The live connection's metric channel; null while disconnected. */
@@ -203,7 +230,7 @@ export class AnalysisManager {
   /** Update the current selection context and refresh the active tab. */
   setContext({ datasetFp, modelFp, datasetMeta }) {
     const active = this._activeTab();
-    const before = active && this._drawnKey(active);
+    const before = active && this._drawnKeys(active);
     this._ctx = { datasetFp, modelFp, datasetMeta };
     // Element order for the picker/grouped kinds: sorted unique atomic numbers.
     const zs = (datasetMeta && datasetMeta.elements) || [];
@@ -219,15 +246,61 @@ export class AnalysisManager {
     // A tab with its own datasets and predictions draws the same plots as
     // before; redrawing would only lose the zoom (a plot click can move the
     // rail, ADR 0056 rule 4).
-    if (active && this._drawnKey(active) !== before) this._renderTab(active);
+    this._redrawIfChanged(active, before);
   }
 
   /** What a tab's plots depend on: its series, the frames of each (a subset
    * changes them as it follows a zoom), and the elements. */
   _drawnKey(t) {
+    return this._drawnKeys(t).all;
+  }
+
+  /** What a tab draws: `all` of it, and `subbed`, what its plots other than
+   * the one with SUB ticked draw (the subsets, which move with the zoom). */
+  _drawnKeys(t) {
+    const key = (refs) => JSON.stringify(
+      refs.map((r) => [r.datasetFp, framesKey(this._available.datasets.get(r.datasetFp))]));
     const refs = this.seriesRefs(t);
-    const frames = refs.map((r) => framesKey(this._available.datasets.get(r.datasetFp)));
-    return JSON.stringify([refs, frames, this._elementOrder || [], t.selectedElements]);
+    const all = JSON.stringify([refs, key(refs), this._elementOrder || [], t.selectedElements]);
+    const subbed = this._cardRefs(t, null);
+    const swapped = subbed.some((r, i) => r.datasetFp !== refs[i].datasetFp);
+    return { all, subbed: swapped ? key(subbed) : '' };
+  }
+
+  /** Redraw the active tab if what it draws changed: all of it, or only the
+   * plots other than the one with SUB ticked, so that plot keeps its zoom. */
+  _redrawIfChanged(t, before) {
+    if (!t) return;
+    const now = this._drawnKeys(t);
+    if (now.all !== before.all) this._renderTab(t);
+    else if (now.subbed !== before.subbed) this._refreshSubbed(t);
+  }
+
+  /** The panel index of the plot with SUB ticked in this tab, or null. */
+  _subDriver(t) {
+    const [key] = t.subbing.keys();
+    return key ?? null;
+  }
+
+  /** The series card `spec` draws: the tab's, or, while another plot has SUB
+   * ticked, each series' subset from that plot (null: any other plot). */
+  _cardRefs(t, spec) {
+    const refs = this.seriesRefs(t);
+    const driver = this._subDriver(t);
+    if (driver == null || (spec && t.spec.panels.indexOf(spec) === driver)) return refs;
+    return subsetRefs(refs, this._subsets, this._subName(t, t.spec.panels[driver]),
+      this._available.datasets);
+  }
+
+  /** Redraw in place every card but the one with SUB ticked. */
+  _refreshSubbed(t) {
+    const driver = this._subDriver(t);
+    for (const slot of t.slots) {
+      (slot.cards || []).forEach((card, i) => {
+        if (t.spec.panels.indexOf(slot.specs[i]) !== driver)
+          this._fetchAndRenderPanel(t, slot.specs[i], card, this._renderToken);
+      });
+    }
   }
 
   /** Called by app when a tab is activated (renders analysis tabs lazily). */
@@ -605,6 +678,7 @@ export class AnalysisManager {
     for (const slot of t.slots) {
       const cards = slot.specs.map((spec) => this._buildPanelCard(t, spec, token));
       slot.el.replaceChildren(...cards.map((c) => c.el));
+      slot.cards = cards;
       cards.forEach((card, i) => {
         if (msg) card.body.innerHTML = `<div class="panel-msg">${msg}</div>`;
         else this._fetchAndRenderPanel(t, slot.specs[i], card, token);
@@ -637,7 +711,8 @@ export class AnalysisManager {
   }
 
   async _fetchAndRenderPanel(t, spec, card, token) {
-    const refs = this.seriesRefs(t);
+    const refs = this._cardRefs(t, spec);
+    const seq = card.seq = (card.seq || 0) + 1;
 
     // Assemble the fetch jobs (a role is one id, except `series` = list of ids)
     // and issue them for every series. Requests are keyed per
@@ -654,7 +729,7 @@ export class AnalysisManager {
         modelFp: ref.modelFp,
         params: this._metricParams(t, spec, j.id),
       })))));
-    if (token !== this._renderToken) return;   // superseded
+    if (token !== this._renderToken || seq !== card.seq) return;   // superseded
 
     // A series whose every metric came back empty is dropped rather than drawn
     // as a gap: a prediction that cannot compute this panel should not cost the
@@ -689,6 +764,7 @@ export class AnalysisManager {
     };
     renderPanel(card.body, spec, series, ctx);
     card.series = series;
+    card.el.dataset.datasets = series.map((x) => x.datasetFp).join(' ');
     this._wirePanelInteractions(t, spec, card);
     this._buildPanelParams(t, spec, card);
   }
@@ -809,7 +885,9 @@ export class AnalysisManager {
   //
   // As on the desktop, ticking SUB on a plot makes a subset of each series it
   // draws: the frames inside the plot's visible range. It follows every zoom
-  // and pan; unticking hides it. The server works out the frames from the
+  // and pan; unticking hides it. The tab's other plots and tables draw the
+  // subset instead of the full data and redraw as it moves; the plot with SUB
+  // keeps the full data and its zoom. One plot per tab has SUB at a time. The server works out the frames from the
   // view (ffast/session/subbing.py), so a density plot subs by value and a
   // force scatter by structure, as the desktop does.
 
@@ -822,16 +900,24 @@ export class AnalysisManager {
       const cb = document.createElement('input');
       cb.type = 'checkbox';
       cb.addEventListener('change', () => {
+        const before = this._drawnKeys(t);
+        // One plot per tab has SUB: the tab's other plots draw its subset,
+        // and two plots would keep subsetting each other's.
+        this._untickSub(t);
         if (cb.checked) {
           // The main view moves to the subset; pinning keeps this tab on
           // the data it shows, rather than following the rail to the subset.
           this._pinSeries(t);
           t.subbing.set(key, []);
-          this._sendSubViews(t, spec, card, { tick: true });
-        } else {
-          this._hideSubsets(t.subbing.get(key) || [], this._subName(t, spec));
-          t.subbing.delete(key);
+          t.subTicked = key;
+          // A plot that was drawing another plot's subset first redraws on
+          // the full data; drawn, it sends its view (below).
+          const made = new Set(this._subsets.values());
+          if ((card.series || []).some((x) => made.has(x.datasetFp)))
+            this._fetchAndRenderPanel(t, spec, card, this._renderToken);
+          else this._sendSubViews(t, spec, card);
         }
+        if (this._activeTab() === t) this._redrawIfChanged(t, before);
       });
       toggle.append(cb, document.createTextNode('Sub'));
       card.title.appendChild(toggle);
@@ -850,6 +936,19 @@ export class AnalysisManager {
     if (t.subbing.has(key)) this._sendSubViews(t, spec, card);
   }
 
+  /** Untick SUB on the tab's plot that has it, hiding its subsets. */
+  _untickSub(t) {
+    const key = this._subDriver(t);
+    if (key == null) return;
+    this._hideSubsets(t.subbing.get(key) || [], this._subName(t, t.spec.panels[key]));
+    t.subbing.delete(key);
+    for (const slot of t.slots) {
+      const i = slot.specs.findIndex((sp) => t.spec.panels.indexOf(sp) === key);
+      const toggle = i >= 0 ? slot.cards?.[i]?.subToggle : null;
+      if (toggle) toggle.checked = false;
+    }
+  }
+
   /** A subset is named after the plot it was made in. */
   _subName(t, spec) {
     return spec.title || t.spec.name;
@@ -864,11 +963,14 @@ export class AnalysisManager {
   }
 
   /** Send the plot's view for each series it draws; hide the subsets of
-   * series it no longer draws. `tick`: SUB was just ticked. */
-  _sendSubViews(t, spec, card, { tick = false } = {}) {
+   * series it no longer draws. The first view after SUB is ticked says so,
+   * so the main view moves to the subset. */
+  _sendSubViews(t, spec, card) {
     const key = t.spec.panels.indexOf(spec);
     const range = plotRange(card.body);
     if (!this._onSub || !range || !t.subbing.has(key)) return;
+    const tick = t.subTicked === key;
+    if (tick) t.subTicked = null;
     const name = this._subName(t, spec);
     const ids = Object.values(spec.metrics || {}).flat();
     const view = {

@@ -252,11 +252,12 @@ The workflow FFAST is built around: find something odd in a plot, look at it in
 1. In an error timeline, zoom to the region you care about.
 2. Tick **Sub** on the plot.
 3. A new dataset named after the plot appears in the rail, containing exactly
-   the configurations in view, and the 3D view shows it, coloured and drawn
-   as the full dataset was. It follows further zooming, and so does the 3D
-   view; the plot itself keeps showing the full data.
-4. Untick **Sub** to hide the subset; the 3D view goes back to the full
-   dataset, on the same structure.
+   the configurations in view. The tab's other plots and tables redraw with
+   just those configurations, and the 3D view shows them, coloured and drawn
+   as the full dataset was. All of it follows further zooming; the plot you
+   zoom keeps showing the full data. One plot per tab has **Sub** at a time.
+4. Untick **Sub** to hide the subset; the plots and the 3D view go back to
+   the full dataset, the 3D view on the same structure.
 
 The same works on a scatter plot (zoom onto the outliers) and on an error
 distribution (zoom onto a range of errors: the subset is the configurations

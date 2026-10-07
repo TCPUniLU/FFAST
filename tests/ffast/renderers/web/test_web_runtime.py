@@ -1314,6 +1314,66 @@ async def test_web_a_subset_made_with_sub_shows_in_the_main_view(tmp_path):
                 await browser.close()
 
 
+_DRAWN = """(title) => {
+  const card = document.querySelector(
+    `.tabpanel.active .analysis-panel[data-title="${title}"]`);
+  const plot = card.querySelector('.panel-plot');
+  return {datasets: card.dataset.datasets, points: plot?.data?.[0]?.y?.length ?? null,
+          zoom: plot?._fullLayout?.xaxis?.range?.[0] ?? null};
+}"""
+
+
+async def test_web_sub_replots_the_other_plots_of_its_tab(ffast_web_server):
+    """With SUB ticked on one plot, the tab's other plots and tables draw only
+    the subset, and redraw as the zoom moves it; the plot ticked keeps the
+    full data and its zoom. Ticking SUB on another plot moves it there.
+    Unticking puts the full data back."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            for title in ("Energy MAE timeline", "Forces MAE timeline"):
+                await page.wait_for_function(_PANEL_HAS_POINTS, arg=title, timeout=25000)
+
+            sub = f"{_sub_panel('Energy MAE timeline')} .sub-toggle input"
+            await page.locator(sub).check()
+            await _zoom(page, "Energy MAE timeline", [10, 19.5])
+            await page.wait_for_function(
+                f"() => ({_DRAWN})('Forces MAE timeline').points === 10", timeout=15000)
+            [made] = await page.evaluate(_SUBSETS)
+            assert (await page.evaluate(_DRAWN, "Forces MAE timeline"))["datasets"] == made["fp"]
+            ticked = await page.evaluate(_DRAWN, "Energy MAE timeline")
+            assert ticked == {"datasets": dataset_fp, "points": 100, "zoom": 10}
+
+            await _zoom(page, "Energy MAE timeline", [12, 30])
+            await page.wait_for_function(
+                f"() => ({_DRAWN})('Forces MAE timeline').points === 19", timeout=15000)
+            assert (await page.evaluate(_DRAWN, "Energy MAE timeline"))["zoom"] == 12
+
+            # One SUB per tab: ticking another plot moves it there.
+            other = f"{_sub_panel('Forces MAE timeline')} .sub-toggle input"
+            await page.locator(other).check()
+            await expect(page.locator(sub)).not_to_be_checked()
+            await page.wait_for_function(
+                f"() => ({_DRAWN})('Energy MAE timeline').datasets !== '{dataset_fp}'",
+                timeout=15000)
+
+            await page.locator(other).uncheck()
+            for title in ("Energy MAE timeline", "Forces MAE timeline"):
+                await page.wait_for_function(
+                    f"() => ({_DRAWN})('{title}').points === 100", timeout=15000)
+            assert (await page.evaluate(_DRAWN, "Energy MAE timeline"))["datasets"] == dataset_fp
+        finally:
+            await browser.close()
+
+
 async def test_web_a_subset_opens_looking_like_its_parent(ffast_web_server):
     """A frame subset shown for the first time takes its parent's look, so
     a subset made with SUB is coloured the way its parent was."""
@@ -2400,7 +2460,8 @@ async def test_web_playback_advances_frames_and_stops_on_pause(ffast_web_server)
 async def _open_loupe(page, ws_port, web_port, dataset_fp):
     """Connect, select the dataset, wait for the 3D view to be live."""
     await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
-    await expect(page.locator("#status")).to_contain_text("Connected")
+    # Connected; the text may already have moved on ("Prediction … ready").
+    await expect(page.locator("#status")).to_have_class(re.compile(r"\bconnected\b"))
     dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
     await expect(dataset_row).to_have_count(1)
     await dataset_row.click()
@@ -2849,8 +2910,8 @@ async def _zoom(page, title, x_range):
 
 async def test_web_sub_makes_a_subset_that_follows_the_zoom(ffast_web_server):
     """Ticking SUB on a plot makes a subset of the structures on screen, as on
-    the desktop. Zooming moves it; a density plot subs by value; unticking
-    hides it."""
+    the desktop. Zooming moves it; unticking hides it; a density plot subs by
+    value."""
     ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
 
@@ -2859,7 +2920,6 @@ async def test_web_sub_makes_a_subset_that_follows_the_zoom(ffast_web_server):
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
             await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
-            await expect(page.locator("#status")).to_contain_text("Connected")
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await _open_analysis_tab(page, "Basic Errors")
@@ -2879,19 +2939,19 @@ async def test_web_sub_makes_a_subset_that_follows_the_zoom(ffast_web_server):
                 """(sel) => document.querySelector(sel + ' .panel-plot')._fullLayout.xaxis.range[0]""",
                 _sub_panel("Energy MAE timeline")) == 10
 
+            await page.locator(f"{_sub_panel('Energy MAE timeline')} .sub-toggle input").uncheck()
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(1, timeout=15000)
+            hidden = [s for s in await page.evaluate(_SUBSETS) if s["name"].startswith("Energy")]
+            assert hidden[0]["active"] is False
+
             await page.wait_for_function(
                 _PANEL_HAS_POINTS, arg="Forces MAE distribution", timeout=25000)
             await page.locator(f"{_sub_panel('Forces MAE distribution')} .sub-toggle input").check()
-            await expect(page.locator("#dataset-list .obj-row")).to_have_count(3, timeout=15000)
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
             await _zoom(page, "Forces MAE distribution", [0, 0.02])
             await page.wait_for_function(
                 f"""() => ({_SUBSETS})().some(s => s.name.startsWith('Forces MAE distribution')
                                                 && s.n > 0 && s.n < 100)""", timeout=15000)
-
-            await page.locator(f"{_sub_panel('Energy MAE timeline')} .sub-toggle input").uncheck()
-            await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
-            hidden = [s for s in await page.evaluate(_SUBSETS) if s["name"].startswith("Energy")]
-            assert hidden[0]["active"] is False
         finally:
             await browser.close()
 
