@@ -23,6 +23,7 @@ import { bindMenu, runAction, whyUnavailable } from './actions.js';
 import { loadLayout, saveLayout } from './layout_state.js';
 import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './quick_styles.js';
 import { addSectionHelp, bindSidebarSearch, oneSectionOpen } from './sidebar.js';
+import { makeResizable } from './resizers.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 
 /**
@@ -468,6 +469,17 @@ export class FFastApp {
     addSectionHelp(sidebarEl, SECTION_HELP, this._sections);
     this._renderQuickStyles();
     this._setSidebarHidden(layout.sidebarHidden === true, false);
+    // Draggable edges for the sidebar and the object list; the 3D view keeps
+    // at least 300 px.
+    const loupePanel = document.getElementById('panel-loupe');
+    makeResizable(document.getElementById('sidebar-resize'), sidebarEl, {
+      name: 'sidebar', side: 'right', width: 250, min: 200,
+      max: () => Math.max(200, loupePanel.clientWidth - 300 - 6),
+    });
+    makeResizable(document.getElementById('rail-resize'), document.getElementById('objectbar'), {
+      name: 'rail', side: 'left', width: 220, min: 150,
+      max: () => Math.max(150, Math.min(480, window.innerWidth * 0.4)),
+    });
     document.getElementById('sidebar-toggle').addEventListener('click', () =>
       this._setSidebarHidden(!document.getElementById('panel-loupe').classList.contains('sidebar-hidden')));
   }

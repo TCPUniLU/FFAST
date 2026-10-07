@@ -823,6 +823,59 @@ async def test_web_sidebar_can_be_hidden_and_stays_hidden(ffast_web_server):
             await browser.close()
 
 
+async def _drag(page, selector, dx):
+    box = await page.locator(selector).bounding_box()
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    await page.mouse.move(x, y)
+    await page.mouse.down()
+    await page.mouse.move(x + dx, y, steps=8)
+    await page.mouse.up()
+
+
+async def _width(page, selector):
+    return (await page.locator(selector).bounding_box())["width"]
+
+
+async def test_web_sidebar_and_object_list_widths_are_adjustable(ffast_web_server):
+    """Drag the edge of the Settings sidebar or the Datasets/Predictions list
+    to resize it; the width is remembered in browser storage, double-click
+    restores the default, and arrow keys work on a focused edge."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1300, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            sidebar, rail = await _width(page, "#loupe-sidebar"), await _width(page, "#objectbar")
+            canvas = await _width(page, "#canvas")
+
+            await _drag(page, "#sidebar-resize", -120)   # sidebar is on the right
+            await _drag(page, "#rail-resize", 80)
+            assert await _width(page, "#loupe-sidebar") == pytest.approx(sidebar + 120, abs=3)
+            assert await _width(page, "#objectbar") == pytest.approx(rail + 80, abs=3)
+            assert await _width(page, "#canvas") == pytest.approx(canvas - 200, abs=6)
+
+            await _open_loupe(page, ws_port, web_port, dataset_fp)   # reload
+            assert await _width(page, "#loupe-sidebar") == pytest.approx(sidebar + 120, abs=3)
+            assert await _width(page, "#objectbar") == pytest.approx(rail + 80, abs=3)
+
+            # Limits: the sidebar cannot be dragged away or over the view.
+            await _drag(page, "#sidebar-resize", 600)
+            assert await _width(page, "#loupe-sidebar") >= 200
+            await _drag(page, "#sidebar-resize", -1200)
+            assert await _width(page, "#canvas") >= 300
+
+            await page.locator("#sidebar-resize").dblclick()
+            assert await _width(page, "#loupe-sidebar") == pytest.approx(sidebar, abs=1)
+
+            await page.locator("#sidebar-resize").focus()
+            await page.keyboard.press("ArrowLeft")
+            assert await _width(page, "#loupe-sidebar") == pytest.approx(sidebar + 10, abs=1)
+        finally:
+            await browser.close()
+
+
 async def test_web_layout_works_when_browser_storage_is_blocked(ffast_web_server):
     """Private windows and blocked site data make storage throw; the page must
     still lay itself out, just without remembering anything."""
