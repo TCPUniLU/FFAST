@@ -3,9 +3,10 @@
  */
 
 import { FFastConnection } from './connection.js';
-import { IndependentView, isIndependentViewId, Panel3D, ViewRenderers } from './views3d.js';
-import { ensureMainView, isLinked3D, MAIN_VIEW_RULE, showsMainView, startPair } from './tab_rules.js';
-import { linkedFrame, sameConfiguration, predictionApplies } from './frame_links.js';
+import { isIndependentViewId, Panel3D, ViewRenderers } from './views3d.js';
+import { IndependentPanels, independentKey } from './independent_panels.js';
+import { ensureMainView, isLinked3D, MAIN_VIEW_RULE, showsMainView } from './tab_rules.js';
+import { sameConfiguration, predictionApplies } from './frame_links.js';
 import { infoReadout } from './measure.js';
 import { MetricClient } from './metrics.js';
 import { AnalysisManager, framesKey } from './analysis.js';
@@ -27,16 +28,10 @@ import { TabEditor } from './edit_mode.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
 import { loadLayout, loadMainView, saveLayout, saveMainView } from './layout_state.js';
 import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './quick_styles.js';
-import { cleanStart, DEFAULT_LOOK, startCommands, startFromCurrent } from './start_settings.js';
+import { DEFAULT_LOOK, startCommands, startFromCurrent } from './start_settings.js';
 import { addSectionHelp, bindSidebarSearch, checkboxRow, oneSectionOpen, selectRow } from './sidebar.js';
 import { makeResizable } from './resizers.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
-
-/** An independent 3D panel's key: its tab and its place in the grid, which
- * removing another panel does not change (its index in the list would). */
-function independentKey(tabName, spec) {
-  return `${tabName}#${spec.row},${spec.col}`;
-}
 
 /**
  * The five pick tools (ADR 0045 Phase 2). Each mirrors a Qt AtomSelectionBase
@@ -100,11 +95,36 @@ export class FFastApp {
     this._activePanel = null;
     /** Name of the tab with a linked 3D panel shown last (rule 5). */
     this._recentMainViewTab = null;
-    /** Independent 3D panels' views (ADR 0056 rule 2), by
-     * `${tab name}#${panel index}`; a layout rebuild that keeps a panel keeps
-     * its view, data and settings. */
-    this._independent = new Map();
-    this._independentCount = 0;
+    /** Independent 3D panels' views (ADR 0056 rule 2); a layout rebuild that
+     * keeps a panel keeps its view, data and settings. */
+    this._independent = new IndependentPanels({
+      send: (event, kwargs) => this._conn?.send(event, kwargs),
+      connected: () => !!this._conn,
+      datasets: () => this._datasets,
+      main: () => ({ datasetFp: this._currentDatasetFp, modelFp: this._currentModelFp, frame: this._mainFrame }),
+      mainView: () => this._mainView,
+      sendMainCamera: (cam) => this._sendSetCamera(cam),
+      focused: () => this._focusedView,
+      activeTab: () => this._analysis?.tab(this._activeTab),
+      tabPairs: (tabId) => this._analysis.tabPairs(tabId),
+      pairName: (datasetFp, modelFp) => this._pairName(datasetFp, modelFp),
+      framed: () => this._framedViews,
+      placePanel: (el, panel) => this._panels3d.set(el, panel),
+      atomScale: () => this._panes.display.atomScale(),
+      start: (view) => this._startIndependent(view),
+      retired: (view) => {
+        if (view === this._focusedView) this._switchFocusedView(null);
+        this._dsSettings.delete(view.settingsKey);
+        this._viewForces.delete(view.settingsKey);
+      },
+      chosen: () => { this._syncPanelSection(); this._syncSidebarTitle(); },
+      focusedCamera: (cam) => this._panes?.camera.syncFromCamera(cam),
+      frameShown: (view) => { if (this._playbackView() === view) this._syncPlayback(); },
+      sceneAtoms: (view, atoms) => {
+        if (this._focusedView === view) this._panes.colorBy.setColorBy(atoms.color_by || null);
+        this._trackCameraCOM(atoms.positions, view.renderers);
+      },
+    });
     /** Whose settings the sidebar shows and acts on: the focused independent
      * panel's view, or null for the main view (rule 8). */
     this._focusedView = null;
@@ -257,19 +277,18 @@ export class FFastApp {
     const reusable = old.filter((panel) => panel.linked);
     this._parkChrome();
     // The sidebar keeps showing the focused view across the rebuild; a view
-    // the new layout drops hands it back to the main view (_retireIndependent).
+    // the new layout drops hands it back to the main view (`retired` port).
     this._setActivePanel(null, { keepView: true });
     this._panels3d = new Map();
     const draft = this._editor.draft;
     const visible = this._visibleTabs();
     this._analysis.setLayout(visible);
-    const oldIndependent = this._independent;
-    this._independent = new Map();
+    const oldIndependent = this._independent.startLayout();
     for (const { id } of this._analysis.tabList) {
       const tab = this._analysis.tab(id);
       for (const cell of tab.cells3d) {
         if (!isLinked3D(cell.spec)) {
-          this._keepIndependent(oldIndependent, independentKey(tab.name, cell.spec), cell);
+          this._independent.keep(oldIndependent, independentKey(tab.name, cell.spec), cell);
           continue;
         }
         if (!reusable.length) continue;
@@ -279,7 +298,7 @@ export class FFastApp {
         this._panels3d.set(cell.el, panel);
       }
     }
-    for (const view of oldIndependent.values()) this._retireIndependent(view);
+    this._independent.endLayout(oldIndependent);
     for (const panel of old) if (![...this._panels3d.values()].includes(panel)) this._disposePanel(panel);
     const list = this._analysis.tabList;
     const found = list.find((t) => t.name === wanted);
@@ -313,46 +332,6 @@ export class FFastApp {
     if (!parts) return false;
     this._editor.decorate(parts, this._visibleTabs());
     return true;
-  }
-
-  /** An independent panel in the new layout keeps its view when the old
-   * layout had it in the same place with the same settings; otherwise it
-   * starts again (a saved edit changed it). */
-  _keepIndependent(old, key, cell) {
-    let view = old.get(key);
-    const settings = (spec) => JSON.stringify(
-      [spec.view, spec.link_frame !== false, spec.link_camera !== false, cleanStart(spec.start)]);
-    if (view && settings(view.spec) !== settings(cell.spec)) view = null;
-    if (view) {
-      old.delete(key);
-      view.spec = cell.spec;
-      if (view.panel) {
-        view.panel.spec = cell.spec;
-        view.panel.mount(cell.el);
-        this._panels3d.set(cell.el, view.panel);
-      }
-    } else {
-      view = new IndependentView(key, cell.spec, `ind-${++this._independentCount}`,
-        (v, cam) => this._onIndependentCamera(v, cam));
-      const own = view;
-      own.renderers.atomScale = () => (this._focusedView === own ? this._panes.display.atomScale() : own.atomScale);
-    }
-    this._independent.set(key, view);
-  }
-
-  /** An independent panel the layout dropped: its server view goes. */
-  _retireIndependent(view) {
-    if (view === this._focusedView) this._switchFocusedView(null);
-    clearTimeout(view.cameraThrottle);
-    if (view.isOpen) this._conn?.send(OUT.CLOSE_VIEW, { view_id: view.viewId });
-    this._dsSettings.delete(view.settingsKey);
-    this._viewForces.delete(view.settingsKey);
-  }
-
-  /** The independent views of a tab, in panel order. */
-  _tabIndependents(tab) {
-    return (tab?.cells3d || []).filter((cell) => !isLinked3D(cell.spec))
-      .map((cell) => this._independent.get(independentKey(tab.name, cell.spec))).filter(Boolean);
   }
 
   /** The first tab with a linked 3D panel; there always is one (ADR 0056 rule 6). */
@@ -409,9 +388,9 @@ export class FFastApp {
     // Independent panels choose their data the first time they show (rule 7).
     // Only the tab on screen follows the main view's frame, so a tab shown
     // now catches up.
-    for (const view of this._tabIndependents(tab)) {
-      this._ensureIndependentData(view, tab);
-      if (view.links.frame) this._followMainFrame(view);
+    for (const view of this._independent.forTab(tab)) {
+      this._independent.ensureData(view, tab);
+      if (view.links.frame) this._independent.followMainFrame(view);
       if (view.links.camera && this._mainView.camera)
         view.renderers.setCamera(this._mainView.camera, { keepCenter: true });
     }
@@ -499,38 +478,9 @@ export class FFastApp {
       onCameraChange: (cam) => {
         this._sendSetCamera(cam);
         if (!this._focusedView) this._panes?.camera.syncFromCamera(cam);
-        this._linkCameras(null, cam);
+        this._independent.linkCameras(null, cam);
       },
     });
-  }
-
-  /** An independent panel's camera moved (orbit, zoom, a camera command). */
-  _onIndependentCamera(view, cam) {
-    clearTimeout(view.cameraThrottle);
-    view.cameraThrottle = setTimeout(() => {
-      if (view.isOpen) this._conn?.send(OUT.VIEW_COMMAND, { type: 'SET_CAMERA', view_id: view.viewId, camera: cam });
-    }, 100);
-    if (view === this._focusedView) this._panes?.camera.syncFromCamera(cam);
-    if (view.links.camera && !view.applyingScene) this._linkCameras(view, cam);
-  }
-
-  /** Turn every view whose camera follows the main view to `cam`'s angle and
-   * zoom (ADR 0056 rule 2), each still looking at its own atoms. `source` is
-   * the independent view that moved, or null for the main view. */
-  _linkCameras(source, cam) {
-    if (this._linkingCameras) return;
-    this._linkingCameras = true;
-    try {
-      if (source) {
-        this._mainView.setCamera(cam, { keepCenter: true });
-        if (this._mainView.camera) this._sendSetCamera(this._mainView.camera);
-      }
-      for (const view of this._independent.values()) {
-        if (view !== source && view.links.camera) view.renderers.setCamera(cam, { keepCenter: true });
-      }
-    } finally {
-      this._linkingCameras = false;
-    }
   }
 
   _initUI() {
@@ -988,7 +938,7 @@ export class FFastApp {
       view.datasetFp = fp;
       if (view.modelFp && !predictionApplies(this._models.get(view.modelFp), fp, this._datasets))
         view.modelFp = null;
-      this._openIndependent(view);
+      this._independent.open(view);
       this._panes.extract.setVisible(!(this._datasets.get(fp)?.is_sub));
       this._syncPanelSection();
       this._syncSidebarTitle();
@@ -998,7 +948,7 @@ export class FFastApp {
       if (!view) return;
       const old = view.modelFp;
       view.modelFp = fp || null;
-      this._openIndependent(view);
+      this._independent.open(view);
       this._followPanelPrediction(old, view.modelFp);
       this._syncSidebarTitle();
       this._renderQuickStyles();
@@ -1007,9 +957,9 @@ export class FFastApp {
       const view = owner();
       if (!view) return;
       view.links.frame = on;
-      if (on) this._followMainFrame(view);
+      if (on) this._independent.followMainFrame(view);
       else view.missing = '';
-      this._syncCaption(view);
+      this._independent.syncCaption(view);
       this._syncPlayback();
     });
     this._panelLinkCamera = checkboxRow(box, "Follow main view's camera", true, (on) => {
@@ -1125,90 +1075,8 @@ export class FFastApp {
     view.note = note;
     this._presetIndependent(view);
     if (view === this._focusedView) this._restoreDatasetSettings(view.settingsKey, view.settingsKey);
-    this._syncCaption(view);
+    this._independent.syncCaption(view);
     if (view === this._focusedView) this._syncPanelSection();
-  }
-
-  /** A new independent panel shows the first pair its tab's picker has
-   * selected that no other 3D panel in the tab shows; after that it keeps
-   * its choice (rule 7). */
-  _ensureIndependentData(view, tab) {
-    if (!view.datasetFp) {
-      const shown = [];
-      if (showsMainView(tab.spec) && this._currentDatasetFp)
-        shown.push({ datasetFp: this._currentDatasetFp, modelFp: this._currentModelFp });
-      for (const other of this._tabIndependents(tab))
-        if (other !== view && other.datasetFp) shown.push({ datasetFp: other.datasetFp, modelFp: other.modelFp });
-      const pairs = this._analysis.tabPairs(tab.id).filter((p) => this._datasets.has(p.datasetFp));
-      const pick = startPair(pairs, shown);
-      if (!pick) { this._syncCaption(view); return; }
-      view.datasetFp = pick.datasetFp;
-      view.modelFp = pick.modelFp;
-    }
-    this._openIndependent(view);
-    if (view === this._focusedView) { this._syncPanelSection(); this._syncSidebarTitle(); }
-  }
-
-  /** The tab on screen's independent panels choose data once there is some. */
-  _ensureShownIndependents() {
-    const tab = this._analysis?.tab(this._activeTab);
-    for (const view of this._tabIndependents(tab)) this._ensureIndependentData(view, tab);
-  }
-
-  /** Open (or point) an independent panel's server view at its data. */
-  _openIndependent(view) {
-    if (!this._conn || !view.datasetFp || !this._datasets.has(view.datasetFp)) return;
-    const want = `${view.datasetFp}|${view.modelFp || ''}`;
-    if (view.openedPair === want) return;
-    const datasetChanged = !view.openedPair.startsWith(`${view.datasetFp}|`);
-    view.openedPair = want;
-    this._conn.send(OUT.OPEN_VIEW, {
-      view_id: view.viewId, dataset_ref: view.datasetFp, prediction_ref: view.modelFp,
-    });
-    this._startIndependent(view);
-    if (view.links.frame) this._followMainFrame(view);
-    else if (datasetChanged) this._setIndependentFrame(view, 0);
-    this._syncCaption(view);
-  }
-
-  /** Show frame `frame` in an independent panel. */
-  _setIndependentFrame(view, frame) {
-    view.frame = frame;
-    if (view.isOpen) {
-      this._conn?.send(OUT.VIEW_COMMAND, { type: 'SET_FRAME', view_id: view.viewId, view_version: 0, frame_index: frame });
-    }
-    if (this._playbackView() === view) this._syncPlayback();
-  }
-
-  /** A frame-linked independent panel takes the main view's frame: the same
-   * structure where both are cut from one dataset, else the same number,
-   * else it greys out and says why (rule 3). */
-  _followMainFrame(view) {
-    if (!view.isOpen || !this._currentDatasetFp) return;
-    const linked = linkedFrame(this._currentDatasetFp, this._mainFrame, view.datasetFp, this._datasets);
-    view.missing = linked.missing || '';
-    if ('frame' in linked && linked.frame !== view.frame) this._setIndependentFrame(view, linked.frame);
-    this._syncCaption(view);
-  }
-
-  /** Every frame-linked independent panel follows the main view's frame. */
-  _syncLinkedFrames() {
-    const tab = this._analysis?.tab(this._activeTab);
-    for (const view of this._tabIndependents(tab)) if (view.links.frame) this._followMainFrame(view);
-  }
-
-  /** An independent panel's caption ('aspirin · MACE') and note. */
-  _syncCaption(view) {
-    const panel = view.panel;
-    if (!panel) return;
-    panel.showCaption(view.datasetFp ? this._pairName(view.datasetFp, view.modelFp) : 'No dataset yet', view.note);
-    panel.showNote(view.missing, { dim: true });
-  }
-
-  /** The independent view a scene belongs to, if any. */
-  _independentByViewId(viewId) {
-    for (const view of this._independent.values()) if (view.viewId === viewId) return view;
-    return null;
   }
 
   /** The look a 3D panel has on screen, as its starting-look keys ("Use
@@ -1450,8 +1318,8 @@ export class FFastApp {
         if (view.datasetFp !== fp) continue;
         const at = before?.parent_frames ? before.parent_frames[view.frame ?? 0] : view.frame;
         view.datasetFp = meta.parent;
-        this._openIndependent(view);
-        if (!view.links.frame && at != null) this._setIndependentFrame(view, at);
+        this._independent.open(view);
+        if (!view.links.frame && at != null) this._independent.setFrame(view, at);
       }
     }
     if (before && fp === this._currentDatasetFp && this._followMainViewSubset(fp, before, meta)) return;
@@ -1469,7 +1337,7 @@ export class FFastApp {
     this._renderObjects();
     if (firstSelect) this._syncAnalysisContext();
     if (firstSelect && this._conn && this._activePanel) this._openView();
-    this._ensureShownIndependents();
+    this._independent.ensureShown();
     if (this._focusedView) this._syncPanelSection();
   }
 
@@ -1493,7 +1361,7 @@ export class FFastApp {
     this._panes?.forces.refreshModels();
     this._panes?.colorBy.refreshModels(this._models);
     this._renderObjects();
-    this._ensureShownIndependents();
+    this._independent.ensureShown();
     if (this._focusedView) this._syncPanelSection();
   }
 
@@ -1575,9 +1443,9 @@ export class FFastApp {
       view.datasetFp = target;
       if (view.modelFp && !(target && predictionApplies(this._models.get(view.modelFp), target, this._datasets)))
         view.modelFp = null;
-      if (!target) { this._emptyIndependent(view); continue; }
-      this._openIndependent(view);
-      if (!view.links.frame) this._setIndependentFrame(view, frameIn(view.frame ?? 0));
+      if (!target) { this._independent.empty(view); continue; }
+      this._independent.open(view);
+      if (!view.links.frame) this._independent.setFrame(view, frameIn(view.frame ?? 0));
     }
     if (fp === this._currentDatasetFp) {
       if (target) this._showInMainView(target, frameIn(this._mainFrame));
@@ -1600,7 +1468,7 @@ export class FFastApp {
     for (const view of this._independent.values()) {
       if (view.modelFp !== fp) continue;
       view.modelFp = null;
-      this._openIndependent(view);
+      this._independent.open(view);
     }
     if (this._currentModelFp === fp) this._selectModel(null);
     else this._renderObjects();
@@ -1629,17 +1497,6 @@ export class FFastApp {
     this._syncEmptyState();
   }
 
-  /** An independent panel with nothing left to show: its server view goes,
-   * and it waits for data like a new panel. */
-  _emptyIndependent(view) {
-    if (view.isOpen) this._conn?.send(OUT.CLOSE_VIEW, { view_id: view.viewId });
-    view.openedPair = '';
-    view.started = false;
-    view.frame = null;
-    this._framedViews.delete(view.viewId);
-    view.renderers.clear();
-    this._syncCaption(view);
-  }
 
   // ── object rail: datasets + predictions as selectable rows ──────────────
   _renderObjects() {
@@ -1800,8 +1657,8 @@ export class FFastApp {
     // An independent panel's view is `ind-<n>`; one a layout closed may
     // still answer, and is dropped rather than taken for the main view.
     if (isIndependentViewId(scene.view_id)) {
-      const independent = this._independentByViewId(scene.view_id);
-      if (independent) this._onIndependentSnapshot(independent, scene);
+      const independent = this._independent.byViewId(scene.view_id);
+      if (independent) this._independent.onSnapshot(independent, scene);
       return;
     }
     this._viewVersion = scene.version;
@@ -1828,7 +1685,7 @@ export class FFastApp {
     if (scene.view_id) this._currentViewId = scene.view_id;
     if (Number.isInteger(scene.frame_index)) this._mainFrame = scene.frame_index;
     if (this._getViewDataset(scene)) this._syncPlayback();
-    this._syncLinkedFrames();
+    this._independent.syncLinkedFrames();
     // A plot click that had to open the view first (_onPlotPoint): the
     // snapshot shows the view's old frame, so ask for the clicked one now.
     if (this._frameOnSnapshot != null && scene.view_id === this._currentViewId) {
@@ -1841,7 +1698,7 @@ export class FFastApp {
   /** @param {import('./protocol.js').ScenePatchKwargs} kw */
   _onScenePatch(kw) {
     const changed = kw.changed || [];
-    const view = this._independentByViewId(kw.view_id);
+    const view = this._independent.byViewId(kw.view_id);
     if (isIndependentViewId(kw.view_id) && !view) return;   // a closed panel's
     const renderers = view ? view.renderers : this._mainView;
     if (view) view.version = kw.to_version;
@@ -1855,38 +1712,13 @@ export class FFastApp {
     if (this._playbackView() === view) this._patchPending = false;
   }
 
-  /** An independent panel's view sent its scene. */
-  _onIndependentSnapshot(view, scene) {
-    view.version = scene.version;
-    // The scene's camera (and a first fit) is the panel's own: it must not
-    // turn the main view through the camera link.
-    view.applyingScene = true;
-    try {
-      view.renderers.applyScene(scene);
-      if (!this._framedViews.has(scene.view_id)) {
-        this._framedViews.add(scene.view_id);
-        view.renderers.frameAtoms();
-      }
-    } finally {
-      view.applyingScene = false;
-    }
-    if (view.links.camera && this._mainView.camera)
-      view.renderers.setCamera(this._mainView.camera, { keepCenter: true });
-    if (view.frame == null && Number.isInteger(scene.frame_index)) view.frame = scene.frame_index;
-    if (scene.atoms) {
-      if (this._focusedView === view) this._panes.colorBy.setColorBy(scene.atoms.color_by || null);
-      this._trackCameraCOM(scene.atoms.positions, view.renderers);
-    }
-    if (this._playbackView() === view) this._syncPlayback();
-    this._syncCaption(view);
-  }
 
   /** @param {import('./protocol.js').CommandResultKwargs} kw */
   _onCommandResult(kw) {
     if (!kw?.success) {
       console.warn('VIEW_COMMAND failed:', kw?.error);
       if (typeof kw?.new_version !== 'number') return;
-      const view = this._independentByViewId(kw.view_id);
+      const view = this._independent.byViewId(kw.view_id);
       if (view) view.version = kw.new_version;
       else if (!isIndependentViewId(kw.view_id) && (!kw.view_id || kw.view_id === this._currentViewId))
         this._viewVersion = kw.new_version;
@@ -2148,14 +1980,14 @@ export class FFastApp {
     const showsMain = !!tab && showsMainView(tab.spec);
     const shown = [
       ...(showsMain ? [{ view: null, ds: this._currentDatasetFp, model: this._currentModelFp }] : []),
-      ...this._tabIndependents(tab).filter((v) => v.isOpen)
+      ...this._independent.forTab(tab).filter((v) => v.isOpen)
         .map((v) => ({ view: v, ds: v.datasetFp, model: v.modelFp })),
     ];
     const holds = (c) => c.ds && sameConfiguration(datasetFp, frame, c.ds, this._datasets) != null;
     const chosen = shown.find((c) => c.ds === datasetFp && (c.model || null) === (modelFp || null))
       || shown.find((c) => c.ds === datasetFp) || shown.find(holds);
     if (chosen?.view && !chosen.view.links.frame) {
-      this._setIndependentFrame(chosen.view, sameConfiguration(datasetFp, frame, chosen.view.datasetFp, this._datasets));
+      this._independent.setFrame(chosen.view, sameConfiguration(datasetFp, frame, chosen.view.datasetFp, this._datasets));
       return;
     }
     let target = this._currentDatasetFp
@@ -2307,7 +2139,7 @@ export class FFastApp {
 
   _sendSetFrame(frame) {
     const view = this._playbackView();
-    if (view) this._setIndependentFrame(view, frame);
+    if (view) this._independent.setFrame(view, frame);
     else this._sendMainFrame(frame);
   }
 
@@ -2321,7 +2153,7 @@ export class FFastApp {
       frame_index: frame,
     });
     this._mainFrame = frame;
-    this._syncLinkedFrames();
+    this._independent.syncLinkedFrames();
   }
 
   /** Move the main view to `frame` whatever the playback strip moves (a
