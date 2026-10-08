@@ -1,4 +1,4 @@
-Status: Accepted — not yet implemented. Decided 2026-10-07 in a design interview.
+Status: Accepted — implemented (all 8 steps done 2026-10-08). Decided 2026-10-07 in a design interview.
 
 # Browser tabs mix 2D and 3D panels, and users build their own tabs
 
