@@ -94,6 +94,9 @@ One page rather than a menu bar:
   project tab to the original, hides a tab, and shows hidden ones again.
   Your own tabs are saved on the server's machine, one TOML file per tab in
   `~/.ffast/tabs/` (`ffast-server --tabs-dir` chooses another folder).
+  The desktop client shows only built-in and project tabs. In them a 3D
+  panel appears as a grey "shown in the browser only" box, and a tab made
+  only of 3D panels is left out, since the desktop has its own 3D window.
 - **Right sidebar** (in the 3D view). Collapsible panes, grouped: Display, Bonds
   and Unit Cell under Appearance; Colour By, Force Vectors, Extract Subset and
   Alignment under Analysis; Camera and Export under View.

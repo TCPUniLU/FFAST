@@ -46,7 +46,31 @@ def _panel_spec(panel_cfg, selector_obj):
     return spec
 
 
+def _cell(cfg):
+    """Where a panel sits in the tab's grid: row, col, rowspan, colspan."""
+    return cfg.row, cfg.col, cfg.rowspan, cfg.colspan
+
+
+def _browser_only_box():
+    """The grey box a 3D panel leaves in a desktop tab (ADR 0056 point 17).
+    It is sized as a plot is (UI.Plots), so its place stays as big."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLabel, QSizePolicy
+
+    box = QLabel("3D panel — shown in the browser only")
+    box.setObjectName("browserOnlyPanel")  # style.qss
+    box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    box.setWordWrap(True)
+    box.setMinimumSize(400, 400)
+    grow = QSizePolicy.Policy.MinimumExpanding
+    box.setSizePolicy(grow, grow)
+    return box
+
+
 def build_analysis_tab(UIHandler, env, tab):
+    """Build one tab. A 3D panel is shown in the browser only: the desktop
+    puts a grey box in its place. ``column_widths`` and ``row_heights`` are
+    the browser's and ignored here."""
     from UI.ContentTab import ContentTab
     from UI.Templates import HorizontalContainerScrollArea
     from UI.controls import make_control, make_selector, make_tab_control
@@ -64,6 +88,9 @@ def build_analysis_tab(UIHandler, env, tab):
     panels = []
     scroll_groups = {}  # name -> [first PanelConfig, HorizontalContainerScrollArea]
     for pcfg in tab.panels:
+        if pcfg.kind == PANEL_KIND_3D:
+            ct.addWidget(_browser_only_box(), *_cell(pcfg))
+            continue
         spec = _panel_spec(pcfg, selector_obj)
         panel = make_panel(ct.handler, pcfg.kind, parent=ct, **spec)
         panels.append(panel)
@@ -76,7 +103,7 @@ def build_analysis_tab(UIHandler, env, tab):
                 scroll_groups[pcfg.scroll_group] = entry = [pcfg, scroll]
             entry[1].addContent(panel)
         else:
-            ct.addWidget(panel, pcfg.row, pcfg.col, pcfg.rowspan, pcfg.colspan)
+            ct.addWidget(panel, *_cell(pcfg))
 
         if getattr(ct, "dataSelector", None) is not None:
             ct.addDataSelectionCallback(panel.setModelDatasetDependencies)
@@ -86,8 +113,7 @@ def build_analysis_tab(UIHandler, env, tab):
     # Each horizontal scroll strip sits at its first member's grid slot.
     for first_cfg, scroll in scroll_groups.values():
         scroll.addStretch()
-        ct.addWidget(scroll, first_cfg.row, first_cfg.col,
-                     first_cfg.rowspan, first_cfg.colspan)
+        ct.addWidget(scroll, *_cell(first_cfg))
 
     # Tab-level controls (e.g. the energy-shift toggle shared across panels).
     for cname in tab.controls:
