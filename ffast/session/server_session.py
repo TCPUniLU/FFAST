@@ -327,9 +327,9 @@ class ServerSession:
         from ffast.protocol.rpc import pack
         from ffast.protocol import DatasetMeta, ModelMeta
 
-        # ── datasets ──────────────────────────────────────────────────────────
+        # ── datasets, and the subsets windows made (a hidden one is not listed) ──
         try:
-            datasets = self.env.datasets.all(excludeSubs=True)
+            datasets = self.env.datasets.all()
         except Exception:
             datasets = []
 

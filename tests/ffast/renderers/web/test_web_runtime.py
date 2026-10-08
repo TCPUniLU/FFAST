@@ -1271,6 +1271,48 @@ async def test_web_a_plot_click_shows_the_clicked_structure(tmp_path):
                 await browser.close()
 
 
+async def _replayed_datasets(ws_port: int) -> dict:
+    """The dataset announcements a newly connecting window gets, by fingerprint
+    (replay sends them before the metric catalog)."""
+    ws = await _connect_headless_client(ws_port)
+    seen = {}
+    try:
+        while True:
+            event, args, kwargs = unpack(await asyncio.wait_for(ws.recv(), timeout=30))
+            if event == "REMOTE_DATASET_META":
+                seen[args[0]] = kwargs
+            if event == "METRIC_CATALOG":
+                return seen
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+
+async def test_a_reloaded_page_gets_the_subsets_back(ffast_web_server):
+    """A window that connects (or a page that reloads) is told about the
+    subsets other windows made, not only the loaded datasets; a hidden subset
+    (SUB unticked) stays out."""
+    ws_port, _web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("DECLARE_SUBSET", (dataset_fp, [1, 2, 3]), {"name": "Energy"}))
+        shown = (await _wait_for_event(ws, "SUBSET_DECLARED"))["kwargs"]["fingerprint"]
+        await ws.send(pack("DECLARE_SUBSET", (dataset_fp, [4, 5]), {"name": "Forces"}))
+        hidden = (await _wait_for_event(ws, "SUBSET_DECLARED"))["kwargs"]["fingerprint"]
+        await ws.send(pack("DECLARE_SUBSET", (dataset_fp,), {"name": "Forces", "active": False}))
+        await _wait_for_event(ws, "REMOTE_DATASET_META")
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+    replayed = await _replayed_datasets(ws_port)
+    assert set(replayed) == {dataset_fp, shown}
+    assert hidden not in replayed
+    assert replayed[shown]["is_sub"] and replayed[shown]["parent"] == dataset_fp
+    assert replayed[shown]["parent_frames"] == [1, 2, 3]
+
+
 async def test_web_a_subset_made_with_sub_shows_in_the_main_view(tmp_path):
     """Ticking SUB shows the subset in the main view, which keeps up as the
     zoom moves it, staying on the same structure where it can. The tab ticked
