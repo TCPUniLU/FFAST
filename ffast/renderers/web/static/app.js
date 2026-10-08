@@ -18,6 +18,7 @@ import { createExtractPane } from './panes/extract.js';
 import { createAlignPane } from './panes/align.js';
 import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
+import { Rail } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
@@ -143,6 +144,12 @@ export class FFastApp {
       getCurrentDatasetFp: () => this._currentDatasetFp,
       getDatasetMeta: (fp) => this._datasets.get(fp),
       capturePng: (opts) => this.renderer.capturePng(opts),
+    });
+    this._rail = new Rail({
+      datasetList: document.getElementById('dataset-list'),
+      modelList: document.getElementById('model-list'),
+      onSelectDataset: (fp) => this._selectDataset(fp),
+      onSelectModel: (fp) => this._selectModel(fp),
     });
     // User tabs on the server (ADR 0056): save, delete, hide, export.
     this._tabOps = new TabOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
@@ -1482,56 +1489,18 @@ export class FFastApp {
 
   // ── object rail: datasets + predictions as selectable rows ──────────────
   _renderObjects() {
-    this._renderDatasetList();
-    this._renderModelList();
+    const dsFp = this._currentDatasetFp;
+    this._rail.render({
+      datasets: this._listedDatasets(), models: this._models,
+      datasetFp: dsFp, modelFp: this._currentModelFp,
+      applies: (meta) => !dsFp || predictionApplies(meta, dsFp, this._datasets),
+    });
     this._renderQuickStyles();
     this._syncHint();
     this._syncSidebarTitle();
     // The analysis tabs offer their own multi-select over the same objects, so
     // they need the full lists, not just the rail's current pick.
     this._analysis?.setAvailable({ datasets: this._listedDatasets(), models: this._models });
-  }
-
-  _renderDatasetList() {
-    const list = document.getElementById('dataset-list');
-    list.innerHTML = '';
-    const listed = this._listedDatasets();
-    if (listed.size === 0) {
-      list.innerHTML = '<div class="obj-empty">— none loaded —</div>';
-      return;
-    }
-    for (const [fp, meta] of listed) {
-      const row = document.createElement('div');
-      row.className = 'obj-row' + (fp === this._currentDatasetFp ? ' selected' : '');
-      row.dataset.fp = fp;
-      row.innerHTML =
-        `<span class="name">${meta.name || fp.slice(0,8)}</span>` +
-        `<span class="meta">${meta.n} fr</span>`;
-      row.addEventListener('click', () => this._selectDataset(fp));
-      list.appendChild(row);
-    }
-  }
-
-  _renderModelList() {
-    const list = document.getElementById('model-list');
-    list.innerHTML = '';
-    if (this._models.size === 0) {
-      list.innerHTML = '<div class="obj-empty">— none —</div>';
-      return;
-    }
-    const dsFp = this._currentDatasetFp;
-    for (const [fp, meta] of this._models) {
-      // A prediction applies to the dataset it was computed for and its subsets.
-      const applies = !dsFp || predictionApplies(meta, dsFp, this._datasets);
-      const row = document.createElement('div');
-      row.className = 'obj-row'
-        + (fp === this._currentModelFp ? ' selected' : '')
-        + (applies ? '' : ' disabled');
-      row.dataset.fp = fp;
-      row.innerHTML = `<span class="name">${meta.name || fp.slice(0,8)}</span>`;
-      if (applies) row.addEventListener('click', () => this._selectModel(fp));
-      list.appendChild(row);
-    }
   }
 
   _selectDataset(fp) {
