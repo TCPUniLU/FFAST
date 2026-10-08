@@ -784,7 +784,13 @@ export class FFastApp {
   _openView() {
     if (!this._conn || !this._currentDatasetFp) return;
     const datasetChanged = this._currentDatasetFp !== this._lastOpenedDatasetFp;
-    if (datasetChanged && this._lastOpenedDatasetFp) this._saveDatasetSettings(this._lastOpenedDatasetFp);
+    if (datasetChanged && this._lastOpenedDatasetFp) {
+      this._saveDatasetSettings(this._lastOpenedDatasetFp);
+      const currentDataset = this._currentDatasetFp;
+      this._currentDatasetFp = this._lastOpenedDatasetFp;
+      this._clearPicks();
+      this._currentDatasetFp = currentDataset;
+    }
 
     if (this._datasetsViewId.has(this._currentDatasetFp)) {
       this._currentViewId = `view-${this._datasetsViewId.get(this._currentDatasetFp)}`
@@ -838,8 +844,6 @@ export class FFastApp {
     };
     this._originCenterOfMass = d.originCenterOfMass;
     this._panes.camera.setCOM(d.originCenterOfMass);
-    this._picked = d.pickSettings;
-    this._updatePickStrip();
     document.getElementById('fps-input').value = d.videoFPS;
     document.getElementById('skip-input').value = d.videoSkipFrames;
 
