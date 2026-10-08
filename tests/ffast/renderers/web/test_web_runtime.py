@@ -289,6 +289,63 @@ async def test_web_file_menu_holds_the_session_actions(ffast_web_server):
             await browser.close()
 
 
+async def test_web_prediction_browser_keeps_load_button_inside_dialog(ffast_web_server):
+    """The prediction-only selectors may wrap, but its actions stay reachable."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1024, "height": 768})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _file_menu(page, "Load Prediction…")
+            await expect(page.locator("#fb-modal")).to_be_visible()
+
+            contained = await page.evaluate(
+                """() => {
+                  const panel = document.getElementById('fb-panel').getBoundingClientRect();
+                  const load = document.getElementById('fb-load').getBoundingClientRect();
+                  return load.left >= panel.left && load.right <= panel.right
+                    && load.top >= panel.top && load.bottom <= panel.bottom;
+                }"""
+            )
+            assert contained
+        finally:
+            await browser.close()
+
+
+async def test_web_text_controls_expand_instead_of_clipping(ffast_web_server):
+    """Larger type may wrap controls, but their boxes must grow with it."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 800, "height": 600})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+
+            clipped = await page.evaluate(
+                """() => Array.from(document.querySelectorAll('button'))
+                  .filter((button) => {
+                    const style = getComputedStyle(button);
+                    const box = button.getBoundingClientRect();
+                    return style.display !== 'none' && style.visibility !== 'hidden'
+                      && box.width > 0 && box.height > 0
+                      && (button.scrollHeight > button.clientHeight + 1
+                        || button.scrollWidth > button.clientWidth + 1);
+                  })
+                  .map((button) => button.id || button.textContent.trim())"""
+            )
+            assert clipped == []
+
+            toolbar_fits = await page.locator("#loupe-controls").evaluate(
+                "el => el.scrollHeight <= el.clientHeight + 1"
+            )
+            assert toolbar_fits
+        finally:
+            await browser.close()
+
+
 async def test_web_file_menu_greys_out_server_actions_while_disconnected(ffast_web_server):
     ws_port, web_port = ffast_web_server
     await _wait_for_server_ready(ws_port)

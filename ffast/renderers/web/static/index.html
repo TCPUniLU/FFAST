@@ -37,7 +37,8 @@
 
     body {
       font-family: var(--font);
-      font-size: 13px;
+      /* Web UI type scale: 40% larger than the original compact sizing. */
+      font-size: 18.2px;
       background: var(--bg1);
       color: var(--text1);
       height: 100vh;
@@ -65,16 +66,14 @@
       flex-shrink: 0;
     }
     #topbar h1 {
-      font-size: 13px; font-weight: 700; letter-spacing: 0.06em;
+      font-size: 18.2px; font-weight: 700; letter-spacing: 0.06em;
       color: var(--hl2); margin-right: 6px;
     }
 
     button {
       padding: 4px 10px; border: none; border-radius: 3px;
       background: var(--bg3); color: var(--text1); cursor: pointer;
-      font-family: var(--font); font-size: 12px; height: 24px;
-    }
-    button.height-adjustable {
+      font-family: var(--font); font-size: 16.8px; line-height: 1.2;
       height: auto;
     }
     button:hover { background: var(--bg4); color: var(--text-hover); }
@@ -101,7 +100,7 @@
     #topbar { overflow: visible; }
 
     #status {
-      margin-left: auto; font-size: 11px; color: var(--muted);
+      margin-left: auto; font-size: 15.4px; color: var(--muted);
       background: transparent; height: auto; padding: 3px 8px;
     }
     #status:hover { background: var(--bg3); }
@@ -129,15 +128,16 @@
       padding-bottom: 4px; margin-bottom: 2px; border-bottom: 1px solid var(--bg3);
     }
     .section-title {
-      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      font-size: 14px; font-weight: 700; text-transform: uppercase;
       letter-spacing: 0.08em; color: var(--muted);
     }
     button.mini {
-      width: 22px; height: 20px; padding: 0; font-size: 14px; line-height: 1;
+      width: calc(1em + 6px); height: auto; min-height: calc(1em + 4px);
+      padding: 0; font-size: 19.6px; line-height: 1;
       border-radius: 3px;
     }
     .obj-list { display: flex; flex-direction: column; gap: 2px; }
-    .obj-empty { color: var(--muted); font-size: 11px; padding: 4px 6px; font-style: italic; }
+    .obj-empty { color: var(--muted); font-size: 15.4px; padding: 4px 6px; font-style: italic; }
     .obj-row {
       display: flex; align-items: baseline; gap: 6px;
       padding: 5px 8px; border-radius: 4px; cursor: pointer;
@@ -149,18 +149,7 @@
     .obj-row.disabled:hover { background: transparent; }
     .obj-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text1); }
     .obj-row.selected .name { color: var(--text2); }
-    .obj-row .meta { color: var(--muted); font-size: 10px; flex-shrink: 0; }
-    /* a row's ⋯ menu: faint until the row is pointed at, focused or picked */
-    .obj-menu-btn {
-      align-self: center; flex-shrink: 0; width: 20px; height: 18px; padding: 0;
-      background: transparent; color: var(--muted); font-size: 13px; line-height: 1;
-      border-radius: 3px; opacity: 0;
-    }
-    .obj-row:hover .obj-menu-btn, .obj-row.selected .obj-menu-btn,
-    .obj-menu-btn:focus-visible, .obj-menu-btn[aria-expanded=true] { opacity: 1; }
-    .obj-menu-btn:hover { background: var(--bg4); color: var(--text1); }
-    .obj-row.disabled .obj-menu-btn { cursor: pointer; }
-    .rail-menu { position: fixed; top: 0; left: 0; min-width: 160px; }
+    .obj-row .meta { color: var(--muted); font-size: 14px; flex-shrink: 0; }
 
     /* ── tabbed content ──────────────────────────────────────────────── */
     #content { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg1); }
@@ -174,13 +163,13 @@
     }
     /* tab actions at the right end of the bar (ADR 0056) */
     #tab-actions { display: flex; align-items: center; gap: 4px; padding: 0 6px; flex-shrink: 0; }
-    #tab-actions button { height: 24px; min-width: 28px; padding: 0 8px; font-size: 14px; background: transparent; }
+    #tab-actions button { height: auto; min-width: 28px; padding: 2px 8px; font-size: 19.6px; background: transparent; }
     #tab-actions button:hover { background: var(--bg3); }
     .menu-list.right { left: auto; right: 0; }
     .menu-sep { height: 1px; margin: 4px 6px; background: var(--bg3); }
     /* a user tab that replaces a built-in or project one (rule 10) */
     .tab .tab-mark {
-      margin-left: 6px; font-size: 9px; font-weight: 600; text-transform: none;
+      margin-left: 6px; font-size: 12.6px; font-weight: 600; text-transform: none;
       letter-spacing: 0; color: var(--hl2); opacity: 0.85;
     }
     .tab .tab-mark.changed { color: #e0a84e; }
@@ -189,10 +178,10 @@
     .tabpanel.editing .analysis-controls { display: none; }
     .edit-bar {
       display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 6px 12px;
-      background: var(--bg2); border-bottom: 1px solid var(--hl1); font-size: 12px;
+      background: var(--bg2); border-bottom: 1px solid var(--hl1); font-size: 16.8px;
     }
     .edit-bar .spacer { flex: 1; }
-    .edit-bar .edit-note { color: #e0a84e; font-size: 11px; }
+    .edit-bar .edit-note { color: #e0a84e; font-size: 15.4px; }
     .edit-bar button.primary { background: var(--hl2); color: var(--text2); }
     .analysis-grid.editing-grid { position: relative; }
     .edit-chrome {
@@ -205,13 +194,13 @@
     }
     .edit-handle {
       flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      font-size: 11px; font-weight: 700; color: var(--text1); cursor: grab; user-select: none;
+      font-size: 15.4px; font-weight: 700; color: var(--text1); cursor: grab; user-select: none;
       padding: 2px 4px; touch-action: none;
     }
-    .edit-head button { height: 20px; min-width: 22px; padding: 0 5px; font-size: 11px; }
+    .edit-head button { height: auto; min-width: 22px; padding: 2px 5px; font-size: 15.4px; }
     .edit-resize {
       position: absolute; right: 3px; bottom: 1px; color: var(--hl2); cursor: nwse-resize;
-      user-select: none; font-size: 13px; touch-action: none;
+      user-select: none; font-size: 18.2px; touch-action: none;
     }
     .edit-ghost {
       z-index: 7; pointer-events: none; border: 2px solid var(--hl2);
@@ -224,15 +213,15 @@
     .edit-empty { min-height: 200px; }
     .edit-modal .warning-modal-panel { width: 520px; }
     .edit-modal-body { padding: 10px 12px; max-height: 65vh; overflow-y: auto; }
-    .edit-field { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 12px; }
-    .edit-field > span:first-child { min-width: 70px; color: var(--muted); font-size: 11px; }
-    .edit-field input[type="text"], .edit-field input[type="number"], .edit-field select { flex: 1; height: 26px; }
+    .edit-field { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: 16.8px; }
+    .edit-field > span:first-child { min-width: 70px; color: var(--muted); font-size: 15.4px; }
+    .edit-field input[type="text"], .edit-field input[type="number"], .edit-field select { flex: 1; height: auto; min-height: calc(1.2em + 8px); }
     .builder-list { flex: 1; display: flex; flex-direction: column; gap: 4px; }
     .builder-row { display: flex; gap: 4px; }
     .builder-row select { flex: 1; }
     .panel-list { display: flex; flex-direction: column; gap: 2px; }
     .panel-list-head {
-      margin-top: 8px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+      margin-top: 8px; font-size: 14px; font-weight: 700; text-transform: uppercase;
       letter-spacing: 0.06em; color: var(--muted);
     }
     .panel-choice { text-align: left; height: auto; padding: 5px 8px; background: transparent; }
@@ -242,12 +231,12 @@
     .text-dialog-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
     .text-dialog-body textarea {
       width: 100%; height: 50vh; resize: vertical; font-family: ui-monospace, Menlo, monospace;
-      font-size: 11px; background: var(--bg1); color: var(--text1);
+      font-size: 15.4px; background: var(--bg1); color: var(--text1);
       border: 1px solid var(--bg3); border-radius: 4px; padding: 6px 8px; white-space: pre;
     }
     .tab {
-      padding: 0 16px; height: 30px; display: flex; align-items: center;
-      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+      padding: 5px 16px; height: auto; min-height: 30px; display: flex; align-items: center;
+      font-size: 15.4px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
       color: var(--muted); cursor: pointer; white-space: nowrap;
       border-bottom: 2px solid transparent; user-select: none;
     }
@@ -270,12 +259,12 @@
     }
     .analysis-controls .ac-item { display: flex; align-items: center; gap: 6px; }
     .analysis-controls label {
-      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      font-size: 14px; font-weight: 700; text-transform: uppercase;
       letter-spacing: 0.05em; color: var(--muted);
     }
-    .analysis-controls .ac-empty { color: var(--muted); font-size: 11px; font-style: italic; }
+    .analysis-controls .ac-empty { color: var(--muted); font-size: 15.4px; font-style: italic; }
     .analysis-controls .elem-btn {
-      min-width: 30px; height: 22px; padding: 0 6px; font-size: 11px;
+      min-width: 30px; height: auto; padding: 2px 6px; font-size: 15.4px;
       background: var(--bg3); border-radius: 3px;
     }
     .analysis-controls .elem-btn.active {
@@ -325,11 +314,11 @@
       display: flex; flex-direction: column; overflow: auto; min-width: 0; min-height: 0;
     } /*Changed overflow from hidden to auto to support situations where the whole table doesn't fit entirely inside the allocated space*/
     .analysis-panel .panel-title {
-      font-size: 11px; font-weight: 700; color: var(--text1); padding: 6px 8px 2px;
+      font-size: 15.4px; font-weight: 700; color: var(--text1); padding: 6px 8px 2px;
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
     }
     .analysis-panel .panel-title .sub-toggle {
-      font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+      font-size: 12.6px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
       color: var(--muted); display: flex; align-items: center; gap: 4px; cursor: pointer;
     }
     .analysis-panel .panel-title .sub-toggle input { accent-color: var(--hl2); }
@@ -338,12 +327,12 @@
       display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 8px 6px;
     }
     .analysis-panel .panel-params .pp-item { display: flex; align-items: center; gap: 4px; }
-    .analysis-panel .panel-params label { font-size: 10px; color: var(--muted); }
+    .analysis-panel .panel-params label { font-size: 14px; color: var(--muted); }
     .analysis-panel .panel-params input[type=number],
-    .analysis-panel .panel-params select { height: 20px; font-size: 10px; max-width: 90px; }
+    .analysis-panel .panel-params select { height: auto; min-height: calc(1.2em + 6px); font-size: 14px; max-width: 90px; }
     .analysis-panel .panel-msg {
       flex: 1; display: flex; align-items: center; justify-content: center;
-      color: var(--muted); font-size: 11px; font-style: italic; padding: 16px; text-align: center;
+      color: var(--muted); font-size: 15.4px; font-style: italic; padding: 16px; text-align: center;
     }
     /* scroll_group strip: panels laid side-by-side, horizontally scrolling */
     .analysis-scrollstrip {
@@ -351,7 +340,7 @@
     }
     .analysis-scrollstrip .analysis-panel { flex: 0 0 auto; }
     /* HTML tables for table / grouped_table kinds */
-    table.panel-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    table.panel-table { width: 100%; border-collapse: collapse; font-size: 15.4px; }
     table.panel-table th, table.panel-table td {
       padding: 3px 8px; text-align: right; border-bottom: 1px solid var(--bg3);
       font-variant-numeric: tabular-nums;
@@ -365,23 +354,23 @@
     #pick-bar {
       display: flex; align-items: center; gap: 10px; flex-shrink: 0;
       padding: 4px 10px; background: var(--bg2); border-bottom: 1px solid var(--bg3);
-      min-height: 30px;
+      min-height: 30px; overflow-x: auto;
     }
     /* One line, always: a wrapping bar would shrink the 3D view mid-pick and
        move the molecule under the pointer. A long read-out is cut with "…". */
     #pick-toolbar { display: flex; gap: 4px; flex-shrink: 0; }
     .pick-tool-btn {
-      height: 24px; padding: 0 8px; font-size: 12px; line-height: 1;
+      height: auto; padding: 3px 8px; font-size: 16.8px; line-height: 1.2;
       display: inline-flex; align-items: center; gap: 5px;
       background: var(--bg3); border-radius: 3px;
     }
-    .pick-tool-icon { font-size: 13px; }
+    .pick-tool-icon { font-size: 18.2px; }
     .pick-tool-btn.active {
       background: var(--hl2); color: var(--text2);
       box-shadow: inset 0 0 0 1px var(--hl2);
     }
     #pick-strip {
-      display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text1);
+      display: flex; align-items: center; gap: 8px; font-size: 15.4px; color: var(--text1);
       flex: 1 1 auto; min-width: 0; white-space: nowrap;
     }
     #pick-strip > :not(#pick-readout) { flex-shrink: 0; }
@@ -393,7 +382,7 @@
       color: var(--text2); font-variant-numeric: tabular-nums;
       min-width: 0; overflow: hidden; text-overflow: ellipsis;
     }
-    #pick-clear { width: 22px; height: 20px; padding: 0; font-size: 11px; }
+    #pick-clear { width: calc(1em + 6px); height: auto; padding: 2px; font-size: 15.4px; }
 
     /* rubber-band box while dragging a rectangle pick tool */
     .pick-rect {
@@ -420,13 +409,13 @@
        frame, greying the last one out (ADR 0056 rules 2 and 3). */
     .panel-caption {
       position: absolute; top: 6px; left: 8px; z-index: 2; max-width: calc(100% - 16px);
-      font-size: 11px; color: var(--text1); background: rgba(32, 34, 37, 0.75);
+      font-size: 15.4px; color: var(--text1); background: rgba(32, 34, 37, 0.75);
       padding: 2px 6px; border-radius: 4px; pointer-events: none;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
     .panel-note {
       position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
-      max-width: 80%; text-align: center; font-size: 12px; color: var(--text1);
+      max-width: 80%; text-align: center; font-size: 16.8px; color: var(--text1);
       background: rgba(32, 34, 37, 0.85); padding: 6px 10px; border-radius: 5px; pointer-events: none;
     }
     .panel-caption-note { white-space: normal; color: #e0a84e; margin-top: 2px; }
@@ -437,7 +426,7 @@
       text-align: center; color: #55585f; pointer-events: none;
     }
     #overlay.hidden { display: none; }
-    #empty-load-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: 13px; }
+    #empty-load-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: 18.2px; }
     #content.no-view #loupe-sidebar,
     #content.no-view #pick-bar,
     #content.no-view #loupe-controls,
@@ -455,28 +444,28 @@
     #sidebar-toggle { margin-left: auto; flex-shrink: 0; }
     .link-btn {
       align-self: flex-start; height: auto; padding: 0; background: none;
-      color: var(--hl2); font-size: 11px; text-decoration: underline;
+      color: var(--hl2); font-size: 15.4px; text-decoration: underline;
     }
     .link-btn:hover { background: none; color: var(--text-hover); }
     .exact-angles { display: flex; flex-direction: column; gap: 6px; }
     .exact-angles.hidden { display: none; }
-    #overlay .big { font-size: 18px; font-weight: 300; margin-bottom: 6px; }
-    #overlay .small { font-size: 11px; }
+    #overlay .big { font-size: 25.2px; font-weight: 300; margin-bottom: 6px; }
+    #overlay .small { font-size: 15.4px; }
 
     /* loupe control strip (Playback + View, MVP subset) */
     #loupe-controls {
-      display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 10px; flex-shrink: 0;
       padding: 6px 10px; background: var(--bg2); border-top: 1px solid var(--bg3);
     }
     #loupe-controls .ctl-label {
-      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      font-size: 14px; font-weight: 700; text-transform: uppercase;
       letter-spacing: 0.06em; color: var(--muted);
     }
-    #frame-slider { flex: 1; accent-color: var(--hl2); min-width: 80px; }
-    #frame-label { font-size: 11px; color: var(--muted); min-width: 64px; text-align: right; }
-    #loupe-controls button.icon-btn { width: 26px; padding: 0; font-size: 12px; }
+    #frame-slider { flex: 1 1 80px; accent-color: var(--hl2); min-width: 80px; }
+    #frame-label { font-size: 15.4px; color: var(--muted); min-width: 64px; text-align: right; }
+    #loupe-controls button.icon-btn { width: calc(1em + 10px); padding: 4px; font-size: 16.8px; }
     #playback-settings { position: relative; }
-    #loupe-controls button#playback-gear { width: 30px; height: 28px; font-size: 19px; line-height: 1; }
+    #loupe-controls button#playback-gear { width: calc(1em + 10px); height: auto; font-size: 26.6px; line-height: 1; }
     #playback-pop {
       position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
       z-index: 20; display: grid; grid-template-columns: auto auto; gap: 6px 8px; align-items: center;
@@ -486,7 +475,7 @@
     #playback-pop.hidden { display: none; }
     #loupe-controls input.ctl-number {
       width: 52px; background: var(--bg1); border: 1px solid var(--bg3);
-      border-radius: 3px; color: var(--text1); padding: 2px 4px; font-size: 11px;
+      border-radius: 3px; color: var(--text1); padding: 2px 4px; font-size: 15.4px;
     }
 
     /* ── 3D settings sidebar ─────────────────────────────────────────── */
@@ -499,21 +488,22 @@
     .pane-header {
       display: flex; align-items: center; justify-content: space-between;
       padding: 6px 8px; cursor: pointer; user-select: none;
-      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      font-size: 14px; font-weight: 700; text-transform: uppercase;
       letter-spacing: 0.06em; color: var(--muted);
     }
     .pane-header:hover { color: var(--text-hover); }
-    .pane-chevron { transition: transform 0.15s; font-size: 9px; }
+    .pane-chevron { transition: transform 0.15s; font-size: 12.6px; }
     .pane.collapsed .pane-chevron { transform: rotate(-90deg); }
     .pane.collapsed .pane-body { display: none; }
     .pane-body { display: flex; flex-direction: column; gap: 6px; padding: 2px 8px 8px; }
 
     .ctl-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 22px; }
-    .ctl-row label { font-size: 11px; color: var(--text1); flex-shrink: 1; } /* Changed flex-shrink from 0 to 1, because
+    .ctl-row label { font-size: 15.4px; color: var(--text1); flex-shrink: 1; } /* Changed flex-shrink from 0 to 1, because
     when the scroll bar appears, the side bar is squeezed and some panes rows like "highlight atoms" exceed their designated area.
     Hence making shrinking possible, so everything stays inside the allocated space*/
     .ctl-row select, .ctl-row input[type="text"], .ctl-row input[type="number"] {
-      max-width: 130px; font-size: 11px; height: 22px; padding: 1px 6px;
+      max-width: 130px; font-size: 15.4px; line-height: 1.2;
+      height: auto; min-height: calc(1.2em + 6px); padding: 2px 6px;
     }
     /* input boxes are dark, not the browser's white (ADR 0055) */
     input[type="text"], input[type="number"], input[type="search"] {
@@ -530,7 +520,7 @@
     }
     .ctl-slider-wrap { display: flex; align-items: center; gap: 6px; flex: 1; justify-content: flex-end; }
     .ctl-slider-wrap input[type="range"] { flex: 1; max-width: 90px; accent-color: var(--hl2); }
-    .ctl-slider-value { font-size: 10px; color: var(--muted); min-width: 26px; text-align: right; }
+    .ctl-slider-value { font-size: 14px; color: var(--muted); min-width: 26px; text-align: right; }
     .ctl-btn-group { display: flex; gap: 4px; justify-content: center; padding: 2px 0; }
     .ctl-btn-group button { flex: 1; }
     .ctl-row:has(.ctl-textarea) { align-items: flex-start; }
@@ -539,7 +529,7 @@
 
     /* names the 3D panel the settings act on (ADR 0056 rule 8) */
     #sidebar-title {
-      flex: 0 0 auto; font-size: 11px; font-weight: 700; color: var(--text1);
+      flex: 0 0 auto; font-size: 15.4px; font-weight: 700; color: var(--text1);
       overflow-wrap: anywhere; padding: 0 2px;
     }
     /* the focused independent 3D panel's picker and link ticks (ADR 0056) */
@@ -549,43 +539,43 @@
     }
     .panel-section[hidden] { display: none; }
     .panel-section-title {
-      font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text1);
+      font-size: 14px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text1);
     }
     /* sidebar search (ADR 0055) */
     #sidebar-search {
-      flex: 0 0 auto; width: 100%; font-family: var(--font); font-size: 12px;
+      flex: 0 0 auto; width: 100%; font-family: var(--font); font-size: 16.8px;
       color: var(--text1); background: var(--bg1); border: 1px solid var(--bg3);
       border-radius: 4px; padding: 5px 8px;
     }
     #sidebar-search:focus { outline: none; border-color: var(--hl2); }
-    #sidebar-search-empty { font-size: 11px; color: var(--muted); padding: 2px 4px; }
+    #sidebar-search-empty { font-size: 15.4px; color: var(--muted); padding: 2px 4px; }
     /* help (ADR 0055) */
     .help-btn {
       width: 16px; height: 16px; padding: 0; border-radius: 50%; flex-shrink: 0;
-      font-size: 10px; line-height: 1; background: transparent;
+      font-size: 14px; line-height: 1; background: transparent;
       box-shadow: inset 0 0 0 1px var(--bg4); color: var(--muted);
     }
     .help-btn[aria-expanded="true"] { color: var(--hl2); box-shadow: inset 0 0 0 1px var(--hl2); }
     .pane-header .help-btn { margin-left: auto; margin-right: 6px; }
-    .help-text { margin: 0 0 4px; font-size: 11px; line-height: 1.45; color: var(--text1); }
+    .help-text { margin: 0 0 4px; font-size: 15.4px; line-height: 1.45; color: var(--text1); }
     .help-text[hidden] { display: none; }
     .ac-series .help-text { flex-basis: 100%; }
     #hint-bar {
       position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); max-width: 92%;
       display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px;
       background: rgba(47, 49, 54, 0.92); border: 1px solid var(--bg4); border-radius: 6px;
-      font-size: 11px; color: var(--text1);
+      font-size: 15.4px; color: var(--text1);
     }
     #hint-bar.hidden { display: none; }
     #hint-bar b { color: var(--text2); font-weight: 600; }
     #hint-text { display: flex; flex-wrap: wrap; column-gap: 14px; row-gap: 2px; }
     #hint-bar .hint-step { white-space: nowrap; }
     #hint-bar .hint-n { color: var(--hl2); font-weight: 700; margin-right: 4px; }
-    #hint-bar button { height: 20px; padding: 0 6px; background: transparent; }
+    #hint-bar button { height: auto; padding: 2px 6px; background: transparent; }
     body.loupe-only #hint-bar { display: none; }
-    #quick-styles { flex: 0 0 auto; display: flex; align-items: center; gap: 4px; }
-    #quick-styles .ctl-label { font-size: 10px; color: var(--muted); margin-right: 2px; white-space: nowrap; }
-    #quick-styles button { flex: 1; padding: 0 4px; font-size: 11px; }
+    #quick-styles { flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+    #quick-styles .ctl-label { font-size: 14px; color: var(--muted); margin-right: 2px; white-space: nowrap; }
+    #quick-styles button { flex: 1 1 auto; padding: 3px 4px; font-size: 15.4px; white-space: nowrap; }
     #sidebar-search-empty[hidden] { display: none; }
     .searching .ctl-row.search-hit {
       background: var(--sel); border-radius: 3px; margin: 0 -4px; padding: 0 4px;
@@ -594,15 +584,15 @@
       display: flex; flex-wrap: wrap; opacity: 0.55; pointer-events: none;
     }
     .searching .ctl-row.needs.search-hit::after {
-      content: attr(data-needs); flex-basis: 100%; font-size: 10px; color: var(--muted);
+      content: attr(data-needs); flex-basis: 100%; font-size: 14px; color: var(--muted);
     }
     .searching .exact-angles.search-reveal { display: flex; }
     .ctl-textarea {
       flex: 1; min-height: 48px; resize: vertical; font-family: var(--font);
-      font-size: 11px; background: var(--bg2); color: var(--text1);
+      font-size: 15.4px; background: var(--bg2); color: var(--text1);
       border: 1px solid var(--bg3); border-radius: 3px; padding: 4px 6px;
     }
-    .ctl-hint { font-size: 10px; color: var(--danger); }
+    .ctl-hint { font-size: 14px; color: var(--danger); }
     .ctl-hint.ok { color: var(--success); }
 
     /* colorbar (issue 03): static gradient + vmin/vmax + label */
@@ -613,8 +603,8 @@
     #colorbar-gradient {
       flex: 1; height: 12px; border-radius: 2px; border: 1px solid var(--bg3);
     }
-    #colorbar .cb-min, #colorbar .cb-max { font-size: 9px; color: var(--muted); }
-    #colorbar-label { font-size: 10px; color: var(--text1); text-align: center; }
+    #colorbar .cb-min, #colorbar .cb-max { font-size: 12.6px; color: var(--muted); }
+    #colorbar-label { font-size: 14px; color: var(--text1); text-align: center; }
 
     /* popped-out loupe: chrome hidden, viewport fills the window. The pop-out
        (mode=loupe-live) opens its OWN connection and is a real second
@@ -682,7 +672,7 @@
       border-bottom: 1px solid var(--bg3);
 
       color: var(--hl2);
-      font-size: 12px;
+      font-size: 16.8px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.04em;
@@ -693,7 +683,7 @@
       padding: 14px 12px 8px;
 
       color: var(--text1);
-      font-size: 12px;
+      font-size: 16.8px;
       line-height: 1.45;
     }
 
@@ -706,7 +696,7 @@
       cursor: pointer;
 
       color: var(--text1);
-      font-size: 11px;
+      font-size: 15.4px;
     }
 
     .warning-modal-check input {
@@ -726,18 +716,18 @@
     /* connection dialog (ADR 0055) */
     #conn-body { padding: 12px; display: flex; flex-direction: column; gap: 6px; }
     #conn-body label {
-      font-size: 10px; color: var(--muted); font-weight: 700;
+      font-size: 14px; color: var(--muted); font-weight: 700;
       text-transform: uppercase; letter-spacing: 0.06em;
     }
     #conn-body input[type="text"] {
-      font-family: var(--font); font-size: 12px;
+      font-family: var(--font); font-size: 16.8px;
       color: var(--text1); background: var(--bg1); border: 1px solid var(--bg3);
       border-radius: 4px; padding: 5px 8px; width: 100%;
     }
     #conn-body input[type="text"]:focus { outline: none; border-color: var(--hl2); }
     #conn-body .conn-check {
       display: flex; align-items: center; gap: 7px; margin-top: 4px;
-      text-transform: none; font-weight: 400; font-size: 12px; color: var(--text1);
+      text-transform: none; font-weight: 400; font-size: 16.8px; color: var(--text1);
     }
     #conn-message.hidden, #recent-block.hidden { display: none; }
     #recent-block { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
@@ -762,41 +752,45 @@
       padding: 8px 10px; border-bottom: 1px solid var(--bg3); flex-shrink: 0;
     }
     #fb-header .title {
-      font-size: 12px; font-weight: 700; color: var(--hl2); margin-right: 4px;
+      font-size: 16.8px; font-weight: 700; color: var(--hl2); margin-right: 4px;
       text-transform: uppercase; letter-spacing: 0.04em;
     }
     #fb-path {
-      flex: 1; font-family: var(--font); font-size: 11px;
+      flex: 1; font-family: var(--font); font-size: 15.4px;
       color: var(--text1); background: var(--bg1); border: 1px solid var(--bg3);
       border-radius: 4px; padding: 3px 6px; overflow-x: auto; white-space: nowrap;
     }
     #fb-list { flex: 1; overflow-y: auto; padding: 4px; }
     .fb-row {
       display: flex; align-items: center; gap: 8px;
-      padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px;
+      padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 16.8px;
       user-select: none;
     }
     .fb-row:hover { background: var(--bg3); }
     .fb-row.selected { background: var(--sel); }
     .fb-row .icon { width: 16px; text-align: center; flex-shrink: 0; }
     .fb-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .fb-row .size { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+    .fb-row .size { color: var(--muted); font-size: 14px; flex-shrink: 0; }
     .fb-row.dir .name { color: var(--text1); }
     .fb-row.file .name { color: #9a9ca3; }
-    #fb-error { color: var(--danger); font-size: 11px; padding: 8px 12px; }
+    #fb-error { color: var(--danger); font-size: 15.4px; padding: 8px 12px; }
     #fb-footer {
-      display: flex; align-items: center; gap: 8px;
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
       padding: 8px 10px; border-top: 1px solid var(--bg3); flex-shrink: 0;
     }
+    /* Prediction loading has three labelled selects. Give them their own row
+       so the Cancel/Load actions cannot be pushed outside the modal. */
+    #fb-prediction-fields { flex: 1 1 100%; flex-wrap: wrap; }
     #fb-footer label {
-      font-size: 10px; color: var(--muted); font-weight: 700;
+      font-size: 14px; color: var(--muted); font-weight: 700;
       text-transform: uppercase; letter-spacing: 0.06em;
     }
     #fb-footer .spacer { flex: 1; }
     select {
       background: var(--bg2); border: none; border-bottom: 2px solid var(--hl1);
       border-radius: 4px 4px 0 0; color: var(--hl2); padding: 3px 8px;
-      font-family: var(--font); font-size: 12px; height: 28px;
+      font-family: var(--font); font-size: 16.8px; line-height: 1.2;
+      height: auto; min-height: calc(1.2em + 8px);
     }
     select:focus { outline: none; border-bottom-color: var(--hl2); }
     #fb-type { width: 130px; }
@@ -818,21 +812,21 @@
       padding: 8px 10px; border-bottom: 1px solid var(--bg3);
     }
     #path-header .title {
-      font-size: 12px; font-weight: 700; color: var(--hl2);
+      font-size: 16.8px; font-weight: 700; color: var(--hl2);
       text-transform: uppercase; letter-spacing: 0.04em;
     }
     #path-body { padding: 12px 10px; display: flex; flex-direction: column; gap: 6px; }
     #path-body label {
-      font-size: 10px; color: var(--muted); font-weight: 700;
+      font-size: 14px; color: var(--muted); font-weight: 700;
       text-transform: uppercase; letter-spacing: 0.06em;
     }
     #path-input {
-      font-family: var(--font); font-size: 12px;
+      font-family: var(--font); font-size: 16.8px;
       color: var(--text1); background: var(--bg1); border: 1px solid var(--bg3);
       border-radius: 4px; padding: 5px 8px; width: 100%;
     }
     #path-input:focus { outline: none; border-color: var(--hl2); }
-    #path-error { color: var(--danger); font-size: 11px; }
+    #path-error { color: var(--danger); font-size: 15.4px; }
     #path-footer {
       display: flex; align-items: center; gap: 8px;
       padding: 8px 10px; border-top: 1px solid var(--bg3);

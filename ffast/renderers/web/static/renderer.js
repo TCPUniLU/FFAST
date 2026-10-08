@@ -640,21 +640,22 @@ export class MoleculeRenderer {
 
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
-      ctx.font = 'bold 28px sans-serif';
-      const tw = Math.ceil(ctx.measureText(text).width) + 16;
+      // Keep 3D annotation text aligned with the web UI's 1.4x type scale.
+      ctx.font = 'bold 39.2px sans-serif';
+      const tw = Math.ceil(ctx.measureText(text).width) + 22.4;
       canvas.width = tw;
-      canvas.height = 36;
-      ctx.font = 'bold 28px sans-serif';
+      canvas.height = 50.4;
+      ctx.font = 'bold 39.2px sans-serif';
       ctx.fillStyle = `rgba(${Math.round(rgba[0]*255)},${Math.round(rgba[1]*255)},${Math.round(rgba[2]*255)},${rgba[3] ?? 1})`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(text, tw / 2, 18);
+      ctx.fillText(text, tw / 2, 25.2);
 
       const texture = new THREE.CanvasTexture(canvas);
       const mat = new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true });
       const sprite = new THREE.Sprite(mat);
       sprite.position.set(x, y, z);
-      sprite.scale.set((tw / 36) * 0.5, 0.5, 1);
+      sprite.scale.set((tw / 50.4) * 0.7, 0.7, 1);
       this._scene.add(sprite);
       this._labelSprites.push(sprite);
     }

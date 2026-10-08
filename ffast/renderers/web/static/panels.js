@@ -81,7 +81,7 @@ function baseLayout() {
   return {
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
-    font: { color: '#b9bbc2', size: 10, family: 'system-ui, sans-serif' },
+    font: { color: '#b9bbc2', size: 14, family: 'system-ui, sans-serif' },
     margin: { l: 48, r: 12, t: 8, b: 36 },
     showlegend: false,
     // No `dragmode`: Plotly's default, a drag zooms, is what SUB follows.
@@ -95,7 +95,7 @@ function baseLayout() {
 function withLegend(layout, traceCount) {
   if (traceCount > 1) {
     layout.showlegend = true;
-    layout.legend = { orientation: 'h', y: 1.12, font: { size: 9 } };
+    layout.legend = { orientation: 'h', y: 1.12, font: { size: 12 } };
     layout.margin.t = 22;
   }
   return layout;

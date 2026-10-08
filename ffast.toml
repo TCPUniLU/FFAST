@@ -53,3 +53,18 @@ tooltip = "value_kde transform over the field metric."
   [visualization.tabs.panels.metrics.value]
   metric = "demo.ref_energy_field"
   transform = "value_kde"
+
+[[visualization.tabs]]
+name = "Compare"
+[[visualization.tabs.panels]]
+kind = "3d"
+row = 0
+col = 0
+rowspan = 2
+[[visualization.tabs.panels]]
+kind = "timeline"
+row = 0
+col = 1
+title = "Forces MAE timeline"
+  [visualization.tabs.panels.metrics.y]
+  metric = "ffast.force_mae_per_structure_smoothed"
