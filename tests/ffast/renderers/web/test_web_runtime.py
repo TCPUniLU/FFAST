@@ -1418,6 +1418,53 @@ async def test_web_a_deleted_dataset_or_prediction_leaves_an_independent_panel(t
                 await browser.close()
 
 
+async def _delete_from_rail(page, kind, fp):
+    """Open a rail row's ⋯ menu and choose Delete…; the confirmation dialog."""
+    await page.locator(f"#{kind}-list .obj-row[data-fp='{fp}'] .obj-menu-btn").click()
+    await page.locator(f".rail-menu [data-action='{kind}-delete']").click()
+    return page.locator(".ask-dialog")
+
+
+async def test_web_the_rail_menu_deletes_a_dataset_or_prediction(ffast_web_server):
+    """A rail row's ⋯ menu deletes it after a confirmation naming what goes
+    with it: a prediction's results, a dataset's subsets."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    other_fp = await _load_another_dataset(ws_port, dataset_fp)
+    await _as_another_window(
+        ws_port,
+        ("DECLARE_SUBSET", (dataset_fp, [5, 6, 7]), {"name": "Energy", "wait": "SUBSET_DECLARED"}),
+        ("DECLARE_SUBSET", (dataset_fp, [8, 9]), {"name": "Forces", "wait": "SUBSET_DECLARED"}))
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        rows = page.locator("#dataset-list .obj-row")
+        status = page.locator("#status")
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(rows).to_have_count(4)
+
+            dialog = await _delete_from_rail(page, "model", model_fp)
+            await expect(dialog).to_contain_text("Delete prediction.xyz? Its results on 1 dataset are deleted.")
+            await dialog.locator("button", has_text="Delete").click()
+            await expect(page.locator("#model-list .obj-empty")).to_be_visible(timeout=15000)
+            await expect(status).to_have_text("Deleted prediction.xyz")
+
+            dialog = await _delete_from_rail(page, "dataset", dataset_fp)
+            await expect(dialog).to_contain_text("Delete dataset? Its 2 subsets are deleted too.")
+            await dialog.locator("button", has_text="Cancel").click()
+            await expect(dialog).to_have_count(0)
+            await expect(rows).to_have_count(4)
+
+            dialog = await _delete_from_rail(page, "dataset", dataset_fp)
+            await dialog.locator("button", has_text="Delete").click()
+            await expect(rows).to_have_count(1, timeout=15000)
+            await expect(page.locator("#dataset-list .obj-row.selected")).to_have_attribute("data-fp", other_fp)
+            await expect(status).to_have_text("Deleted dataset")
+        finally:
+            await browser.close()
+
+
 async def test_web_a_reloaded_page_shows_what_its_main_view_showed(ffast_web_server):
     """A reload shows the dataset and prediction the main view showed, a
     subset made with SUB included, not the first dataset in the list."""

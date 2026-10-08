@@ -150,7 +150,14 @@ export class FFastApp {
       modelList: document.getElementById('model-list'),
       onSelectDataset: (fp) => this._selectDataset(fp),
       onSelectModel: (fp) => this._selectModel(fp),
+      rowActions: (kind, fp) => [{
+        id: `${kind}-delete`, label: 'Delete…',
+        run: () => this._deleteObject(kind, fp),
+        unavailable: () => this._needsControl(),
+      }],
     });
+    /** Fingerprints this window asked the server to delete. */
+    this._deleting = new Set();
     // User tabs on the server (ADR 0056): save, delete, hide, export.
     this._tabOps = new TabOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
     /** The last layout the server sent, hidden tabs included. */
@@ -1411,6 +1418,7 @@ export class FFastApp {
     this._frameOnSnapshot = null;
     this._followSub = null;
     this._showWhenKnown = null;
+    this._deleting.clear();
     this._mainFrame = 0;
     this._playing = false;
     this._pendingSessionOp = null;
@@ -1489,6 +1497,58 @@ export class FFastApp {
     if (this._focusedView) this._syncPanelSection();
   }
 
+  /** Delete a dataset or prediction on the server, once confirmed. The
+   * confirmation names what goes with it; the server's announcement of each
+   * deletion then does the rest, in this window as in every other. */
+  async _deleteObject(kind, fp) {
+    const dataset = kind === 'dataset';
+    const meta = (dataset ? this._datasets : this._models).get(fp);
+    if (!meta) return;
+    const name = meta.name || fp.slice(0, 8);
+    const count = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
+    let also;
+    if (dataset) {
+      const cut = [...this._datasets.keys()].filter((other) => other !== fp && this._cutFrom(other, fp)).length;
+      also = cut ? ` Its ${count(cut, 'subset')} ${cut === 1 ? 'is' : 'are'} deleted too.` : '';
+    } else {
+      const on = (meta.dataset_fingerprints || []).filter((d) => this._datasets.has(d)).length;
+      also = on ? ` Its results on ${count(on, 'dataset')} are deleted.` : '';
+    }
+    const answer = await askDialog({
+      title: dataset ? 'Delete dataset' : 'Delete prediction',
+      message: `Delete ${name}?${also}`,
+      buttons: ['Cancel', 'Delete'],
+    });
+    if (answer !== 'Delete' || this._needsControl()) return;
+    this._deleting.add(fp);
+    this._conn.send(OUT.DELETE_OBJECT, { fingerprint: fp });
+  }
+
+  /** Dataset `fp` was cut from `from`, directly or through other subsets. */
+  _cutFrom(fp, from) {
+    let cur = this._datasets.get(fp)?.parent;
+    for (let depth = 0; cur && depth < 64; depth++) {
+      if (cur === from) return true;
+      cur = this._datasets.get(cur)?.parent;
+    }
+    return false;
+  }
+
+  /** How the status line reports deleting `fp` (`meta` its last known
+   * details): asked for here, it or what it was cut from, or elsewhere. */
+  _deletedText(fp, meta) {
+    const name = meta.name || fp.slice(0, 8);
+    let cur = fp;
+    for (let depth = 0; cur && depth < 64; depth++) {
+      if (this._deleting.has(cur)) {
+        if (cur === fp) this._deleting.delete(fp);
+        return `Deleted ${name}`;
+      }
+      cur = cur === fp ? meta.parent : this._datasets.get(cur)?.parent;
+    }
+    return `${name} was deleted in another window`;
+  }
+
   /** A dataset was deleted. The lists drop it, and a view that showed it
    * moves to the nearest thing left: a subset to its parent at the same
    * structure (as unticking SUB does), else the first dataset listed (as on
@@ -1526,7 +1586,7 @@ export class FFastApp {
       this._renderObjects();
     }
     if (this._focusedView) this._syncPanelSection();
-    this._setStatus(`${meta.name || fp.slice(0, 8)} was deleted in another window`, 'connected');
+    this._setStatus(this._deletedText(fp, meta), 'connected');
   }
 
   /** A prediction was deleted. The rail drops it; the views that showed it
@@ -1547,7 +1607,7 @@ export class FFastApp {
     this._panes?.forces.refreshModels();
     this._panes?.colorBy.refreshModels(this._models);
     if (this._focusedView) this._syncPanelSection();
-    this._setStatus(`${meta.name || fp.slice(0, 8)} was deleted in another window`, 'connected');
+    this._setStatus(this._deletedText(fp, meta), 'connected');
   }
 
   /** The main view with nothing left to show: the empty screen. */

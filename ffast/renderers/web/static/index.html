@@ -150,6 +150,17 @@
     .obj-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text1); }
     .obj-row.selected .name { color: var(--text2); }
     .obj-row .meta { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+    /* a row's ⋯ menu: faint until the row is pointed at, focused or picked */
+    .obj-menu-btn {
+      align-self: center; flex-shrink: 0; width: 20px; height: 18px; padding: 0;
+      background: transparent; color: var(--muted); font-size: 13px; line-height: 1;
+      border-radius: 3px; opacity: 0;
+    }
+    .obj-row:hover .obj-menu-btn, .obj-row.selected .obj-menu-btn,
+    .obj-menu-btn:focus-visible, .obj-menu-btn[aria-expanded=true] { opacity: 1; }
+    .obj-menu-btn:hover { background: var(--bg4); color: var(--text1); }
+    .obj-row.disabled .obj-menu-btn { cursor: pointer; }
+    .rail-menu { position: fixed; top: 0; left: 0; min-width: 160px; }
 
     /* ── tabbed content ──────────────────────────────────────────────── */
     #content { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg1); }

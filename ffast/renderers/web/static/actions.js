@@ -36,31 +36,79 @@ export function bindMenu(button, list, actions) {
     button.setAttribute('aria-expanded', 'false');
   };
   const open = () => {
-    const entries = typeof actions === 'function' ? actions() : actions;
-    list.replaceChildren(...entries.map((action) => {
-      if (action.separator) {
-        const line = document.createElement('div');
-        line.setAttribute('role', 'separator');
-        line.className = 'menu-sep';
-        return line;
-      }
-      const item = document.createElement('button');
-      item.setAttribute('role', 'menuitem');
-      item.dataset.action = action.id;
-      item.textContent = action.label;
-      const why = whyUnavailable(action);
-      item.disabled = !!why;
-      if (why) item.title = why;
-      item.addEventListener('click', () => { close(); runAction(action); });
-      return item;
-    }));
+    fillMenu(list, typeof actions === 'function' ? actions() : actions, close);
     list.classList.remove('hidden');
     button.setAttribute('aria-expanded', 'true');
     list.querySelector('[role=menuitem]:not(:disabled)')?.focus();
   };
   button.addEventListener('click', () => (list.classList.contains('hidden') ? open() : close()));
+  bindMenuKeys(list, () => { close(); button.focus(); });
+  document.addEventListener('pointerdown', (e) => {
+    if (!list.contains(e.target) && !button.contains(e.target)) close();
+  });
+  return { open, close };
+}
+
+/**
+ * One drop-down `list` shared by many buttons, for the rows of a list that is
+ * redrawn (binding a menu to each row's button would add a document listener
+ * per row on every redraw). `open(button, actions)` shows it under `button`;
+ * opening it again from the same button closes it.
+ * @param {HTMLElement} list
+ */
+export function sharedMenu(list) {
+  let owner = null;
+  const close = () => {
+    list.classList.add('hidden');
+    owner?.setAttribute('aria-expanded', 'false');
+    owner = null;
+  };
+  /** @param {HTMLElement} button @param {Array<Action|{separator: true}>} actions */
+  const open = (button, actions) => {
+    const again = owner === button;
+    close();
+    if (again) return;
+    owner = button;
+    fillMenu(list, actions, close);
+    const at = button.getBoundingClientRect();
+    list.style.left = `${at.left}px`;
+    list.style.top = `${at.bottom + 4}px`;
+    list.classList.remove('hidden');
+    button.setAttribute('aria-expanded', 'true');
+    list.querySelector('[role=menuitem]:not(:disabled)')?.focus();
+  };
+  bindMenuKeys(list, () => { const back = owner; close(); back?.focus(); });
+  document.addEventListener('pointerdown', (e) => {
+    if (owner && !list.contains(e.target) && !owner.contains(e.target)) close();
+  });
+  return { open, close };
+}
+
+/** Fill a menu `list` with `entries`; choosing an item runs `close` first. */
+function fillMenu(list, entries, close) {
+  list.replaceChildren(...entries.map((action) => {
+    if (action.separator) {
+      const line = document.createElement('div');
+      line.setAttribute('role', 'separator');
+      line.className = 'menu-sep';
+      return line;
+    }
+    const item = document.createElement('button');
+    item.setAttribute('role', 'menuitem');
+    item.dataset.action = action.id;
+    item.textContent = action.label;
+    const why = whyUnavailable(action);
+    item.disabled = !!why;
+    if (why) item.title = why;
+    item.addEventListener('click', () => { close(); runAction(action); });
+    return item;
+  }));
+}
+
+/** Escape closes a menu (`escape`), the arrow keys move between its items. */
+function bindMenuKeys(list, escape) {
   list.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { close(); button.focus(); }
+    if (e.key === 'Escape') escape();
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       const items = [...list.querySelectorAll('[role=menuitem]:not(:disabled)')];
@@ -69,8 +117,4 @@ export function bindMenu(button, list, actions) {
       items[(next + items.length) % items.length]?.focus();
     }
   });
-  document.addEventListener('pointerdown', (e) => {
-    if (!list.contains(e.target) && !button.contains(e.target)) close();
-  });
-  return { open, close };
 }
