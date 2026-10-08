@@ -89,14 +89,20 @@ Browser only. The Qt desktop gets one small change (point 17).
     server is later work.
 12. **Arranging is by dragging.** In Edit mode you drag panels to move them and
     drag their edges to change spans, and you drag the dividers between columns
-    and rows. The tab file gains relative `column_widths` and `row_heights`. Rows
-    with set heights share the window's height; a tab without them scrolls as
-    today. A list may be longer than the panels reach, for columns or rows
-    left empty, never shorter; a shorter one is a config error, like any
-    other. Columns share the window's width but are never narrower than
-    400 px, the desktop's smallest plot; when they do not fit, the tab
-    scrolls sideways, as it scrolls down for rows (decided during the step 6
-    trial). A single column still fits a narrow window.
+    and rows. The tab file gains `column_widths` and `row_heights`. A set
+    size is kept as it is, never shared out: a column width of 1 is 400 px,
+    the desktop's smallest plot and the narrowest a column gets; a row height
+    of 1 is 300 px, a row without a set height. Dragging a divider changes
+    only the column or row before it, the ones after it move along, and a
+    tab they do not fit scrolls down or sideways. A list may be longer than
+    the panels reach, for columns or rows left empty, never shorter; a
+    shorter one is a config error, like any other. A tab without set sizes
+    shares the window's width among its columns, none narrower than 400 px,
+    and scrolls down as today; a single column still fits a narrow window. A
+    new tab, or a new column count, gets widths that fill the window at that
+    moment. (The 400 px minimum was decided during the step 6 trial; the
+    sizes kept as set during the step 7 trial, where rows sharing the
+    window's height squeezed a five-row tab into one screen.)
 13. **A tab file stores layout and starting settings, never data.** For an
     independent panel it stores linked/independent, the two link ticks, and its
     starting colouring, display, bonds and force arrows. It never stores which
@@ -149,8 +155,7 @@ Dropping a panel on another swaps the two; each keeps its size where it fits
 and shrinks where it does not. Growing a panel over others moves them down,
 each to the first free place at or below its row, keeping its size. Panels sharing a scroll strip move and resize
 as one. Dragging the dividers between columns or rows sets `column_widths` or
-`row_heights`; Tab settings has "Rows share the window height", and unticking
-it drops `row_heights` so the tab scrolls again. "+" opens Tab settings
+`row_heights`; a row can be dragged down to 80 px, room for a table. "+" opens Tab settings
 (name, columns, controls) before the new tab opens in Edit mode, and the tab
 exists only once saved. The builder's panel kinds, their roles and the metric
 shapes each role takes mirror the desktop's panel kinds (`tab_edit.js`

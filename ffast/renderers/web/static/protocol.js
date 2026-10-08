@@ -245,9 +245,8 @@
  * @property {string|null} selector 'atomic' → the element-picker tab selector
  * @property {string[]} controls tab-level controls ('energy_shift', …)
  * @property {PanelLayout[]} panels
- * @property {number[]|null} column_widths relative, one per column (ADR 0056)
- * @property {number[]|null} row_heights relative, one per row; set → the rows
- *   share the window's height instead of scrolling
+ * @property {number[]|null} column_widths one per column, 1 = 400 px (ADR 0056)
+ * @property {number[]|null} row_heights one per row, 1 = 300 px
  */
 
 /**

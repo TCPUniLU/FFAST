@@ -1685,10 +1685,10 @@ title = "Bottom"
 """
 
 
-async def test_web_tab_sizes_share_the_window(tmp_path):
-    """ADR 0056 rule 12: column_widths and row_heights are relative; rows
-    with set heights share the window's height instead of scrolling. (A
-    window wide enough that the narrow column is above its 400 px minimum.)"""
+async def test_web_tab_sizes_are_kept_as_set(tmp_path):
+    """ADR 0056 rule 12 (changed in the step 7 trial): a set size is kept as
+    it is, never shared out. A column width of 1 is 400 px and a row height
+    of 1 is 300 px; a tab they do not fit scrolls."""
     config = tmp_path / "ffast.toml"
     config.write_text(_SIZED_TAB_TOML)
     async with _spawn_server("--config", str(config)) as (ws_port, web_port):
@@ -1704,11 +1704,12 @@ async def test_web_tab_sizes_share_the_window(tmp_path):
                 top = await grid.locator("[data-title='Top']").bounding_box()
                 bottom = await grid.locator("[data-title='Bottom']").bounding_box()
                 gap = 10
-                assert view["width"] / top["width"] == pytest.approx(3, rel=0.03)
-                assert top["height"] / bottom["height"] == pytest.approx(2, rel=0.03)
-                box = await grid.bounding_box()
-                assert view["height"] == pytest.approx(box["height"] - 2 * gap, abs=2)
-                assert await grid.evaluate("(el) => el.scrollHeight <= el.clientHeight")
+                assert view["width"] == pytest.approx(1200, abs=2)
+                assert top["width"] == pytest.approx(400, abs=2)
+                assert top["height"] == pytest.approx(600, abs=2)
+                assert bottom["height"] == pytest.approx(300, abs=2)
+                assert view["height"] == pytest.approx(900 + gap, abs=2)
+                assert await grid.evaluate("(el) => el.scrollHeight > el.clientHeight")
             finally:
                 await browser.close()
 
@@ -1860,7 +1861,7 @@ _CHROME = ".tabpanel.active .edit-chrome"
 async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
     """ADR 0056 rules 11, 12 and 15. ✎ opens Edit mode: remove a panel, add a
     ready-made 3D panel and a custom one from the builder, drag one onto
-    another to swap them, drag a column divider. Cancel drops all of it and
+    another to swap them, drag a column and a row divider. Cancel drops all of it and
     nothing is written; Save writes the tab, which is then marked edited."""
     async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
         async with async_playwright() as p:
@@ -1904,6 +1905,13 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
                     "() => window.ffastApp._editor.draft.panels.some((p) => p.kind === '3d' && p.row === 0 && p.col === 0)")
                 assert ["timeline", "Total gyration radius", 1, 0] in await page.evaluate(draft)
 
+                # A divider changes only the track before it; the next one
+                # keeps its size and the tab scrolls instead of squeezing.
+                grid = page.locator(".tabpanel.active .analysis-grid")
+                track = "(el, [axis, i]) => parseFloat(getComputedStyle(el)[axis].split(' ')[i])"
+                right = await grid.evaluate(track, ["gridTemplateColumns", 1])
+                # One after each column, the last too, so every column can change.
+                await expect(page.locator(".tabpanel.active .edit-divider.col")).to_have_count(2)
                 divider = await page.locator(".tabpanel.active .edit-divider.col").first.bounding_box()
                 await page.mouse.move(divider["x"] + 4, divider["y"] + 100)
                 await page.mouse.down()
@@ -1911,6 +1919,20 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
                 await page.mouse.up()
                 widths = await page.evaluate("() => window.ffastApp._editor.draft.column_widths")
                 assert len(widths) == 2 and widths[0] > widths[1]
+                assert widths[1] * 400 == pytest.approx(right, abs=2)
+                assert await grid.evaluate(track, ["gridTemplateColumns", 1]) == pytest.approx(right, abs=2)
+
+                below = await grid.evaluate(track, ["gridTemplateRows", 1])
+                divider = await page.locator(".tabpanel.active .edit-divider.row").first.bounding_box()
+                await page.mouse.move(divider["x"] + 300, divider["y"] + 4)
+                await page.mouse.down()
+                await page.mouse.move(divider["x"] + 300, divider["y"] + 154, steps=6)
+                await page.mouse.up()
+                heights = await page.evaluate("() => window.ffastApp._editor.draft.row_heights")
+                assert heights[0] > 1.4
+                assert heights[1] * 300 == pytest.approx(below, abs=2)
+                assert await grid.evaluate(track, ["gridTemplateRows", 1]) == pytest.approx(below, abs=2)
+                assert await grid.evaluate("(el) => el.scrollHeight > el.clientHeight")
 
                 # Cancel: the tab as it was, and nothing written.
                 await page.locator("[data-edit=cancel]").click()
@@ -1955,7 +1977,8 @@ async def test_web_new_tabs_and_the_main_view_rule(tmp_path):
                 await expect(page.locator(".edit-modal .ctl-hint")).to_have_text(
                     "A tab named Basic Errors already exists")
                 await page.locator(".edit-modal input[data-field=name]").fill("Fresh")
-                await page.locator(".edit-modal input[data-field=columns]").fill("3")
+                await page.locator(".edit-modal input[data-field=columns]").fill("2")
+                space = await page.evaluate("() => document.querySelector('#tabpanels').clientWidth - 20")
                 await page.get_by_role("button", name="Create").click()
                 await expect(page.locator("#tabbar .tab.active")).to_have_text("Fresh")
                 await expect(page.locator(".tabpanel.active .edit-bar")).to_contain_text("Editing Fresh")
@@ -1965,7 +1988,10 @@ async def test_web_new_tabs_and_the_main_view_rule(tmp_path):
                 await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
                 await expect(page.locator("#tabbar .tab.active")).to_have_text("Fresh")
                 data = tomllib.loads((tabs_dir / "fresh.toml").read_text())
-                assert data["tabs"][0]["column_widths"] == [1, 1, 1]
+                # The new columns fill the window as it was when the tab was made.
+                widths = data["tabs"][0]["column_widths"]
+                assert len(widths) == 2 and widths[0] == widths[1] > 1
+                assert 2 * widths[0] * 400 + 10 == pytest.approx(space, abs=8)
 
                 # Now a second tab shows the main view, so the 3D tab's panel can go.
                 await page.locator("#tabbar .tab", has_text="3D").first.click()

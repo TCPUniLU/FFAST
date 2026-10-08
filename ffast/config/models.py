@@ -196,13 +196,13 @@ class AnalysisTabConfig(BaseModel):
     names tab-level control widgets from the registry (e.g. the energy-shift
     toggle) that drive a shared compute-param across the tab's Panels.
 
-    ``column_widths`` and ``row_heights`` (ADR 0056) are relative sizes, one per
-    column and one per row: ``[2, 1]`` makes the first column twice as wide.
-    A list may be longer than the panels reach, for columns or rows left
-    empty, never shorter. With ``row_heights`` the rows share the window's
-    height; without it rows are at least 300 px and the tab scrolls. Columns
-    are at least 400 px; when they do not fit, the tab scrolls sideways. The
-    browser reads them; the desktop ignores them."""
+    ``column_widths`` and ``row_heights`` (ADR 0056) are sizes kept as set, one
+    per column and one per row: a width of 1 is 400 px and a height of 1 is
+    300 px, so ``[2, 1]`` makes columns 800 and 400 px wide. A list may be
+    longer than the panels reach, for columns or rows left empty, never
+    shorter. Without them columns share the window's width, none narrower
+    than 400 px, and rows are at least 300 px. The tab scrolls what does not
+    fit. The browser reads them; the desktop ignores them."""
     model_config = ConfigDict(extra="forbid")
     name: str
     has_data_selector: bool = True

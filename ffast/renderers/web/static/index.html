@@ -304,9 +304,6 @@
     }
     /* A tab with one cell gives it the whole height. */
     .analysis-grid.fill { grid-template-rows: minmax(0, 1fr); align-content: stretch; }
-    /* Rows with set heights (row_heights, ADR 0056) share the tab's height;
-       the sizes themselves are set inline by analysis.js. */
-    .analysis-grid.sized-rows { align-content: stretch; }
     /* ...and a 3D panel alone is the whole tab, edge to edge (the "3D" tab). */
     .analysis-grid.fill:has(> .panel-3d:not([data-title])) { padding: 0; }
     .analysis-grid.fill > .panel-3d:not([data-title]) { border: 0; border-radius: 0; }

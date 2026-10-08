@@ -433,12 +433,22 @@ CASES = {
     "te_remove_drops_empty_rows": (
         "(() => { const t = te.removePanel({...TE(), row_heights: [3, 1]}, 2);"
         "  return [t.panels.length, t.row_heights]; })()"),
-    "te_rows_share_the_window": (
-        "[te.setRowsShareWindow(TE(), true).row_heights, te.setRowsShareWindow({...TE(), row_heights:[1,2]}, false).row_heights]"),
+    "te_sizes_are_pixels": (
+        "[te.COLUMN_PX, te.ROW_PX, te.sizeTemplate([1.5, 1], te.COLUMN_PX), te.sizeTemplate([0.5, 2], te.ROW_PX)]"),
+    "te_sizes_of_pixels": "te.sizesOf([620, 400, 133.333], 400)",
+    "te_drag_changes_one_track": (
+        "[te.dragTrack([500, 400, 400], 1, 120, 400), te.dragTrack([500, 400], 1, -300, 400),"
+        " te.dragTrack([300, 300, 300], 2, -250, 80)]"),
+    "te_fit_widths": "[te.fitWidths(2, 1180), te.fitWidths(4, 1180), te.fitWidths(1, 1300)]",
+    "te_columns_refit_when_the_count_changes": (
+        "[te.setColumns({...TE(), column_widths: [2, 1]}, 3, 1300).column_widths,"
+        " te.setColumns({...TE(), column_widths: [2, 1]}, 2, 1300).column_widths,"
+        " te.setColumns(TE(), 2, 1300).column_widths]"),
     "te_save_form": (
         "te.toSaved({...TE(), source:'user', replaces:'X', revision:'r', hidden:false, original_changed:false})"),
     "te_copy_of": "te.copyOf(TE(), 'Copy of Mixed').name",
     "te_empty_tab": "te.emptyTab('New')",
+    "te_empty_tab_fits": "te.emptyTab('New', [1.46, 1.46]).column_widths",
     "te_kinds_offer_metrics_by_shape": (
         "te.metricsFor('density', 'value', [{id:'a', shape:'(curve_xy, grid)'},"
         " {id:'b', shape:'N_frames'}]).map(m => m.id)"),
@@ -1069,8 +1079,25 @@ def test_te_sizes_follow_the_columns_and_rows(results):
     assert results["te_remove_drops_empty_rows"] == [2, [3]]
 
 
-def test_te_rows_share_the_window_or_scroll(results):
-    assert results["te_rows_share_the_window"] == [[1, 1], None]
+def test_te_a_size_of_1_is_400_px_wide_or_300_px_high(results):
+    """Dragged sizes are kept as they are, never shared out (step 7 trial)."""
+    assert results["te_sizes_are_pixels"] == [400, 300, "600px 400px", "150px 600px"]
+    assert results["te_sizes_of_pixels"] == [1.55, 1, 0.33]
+
+
+def test_te_a_divider_changes_only_the_track_before_it(results):
+    grown, floored, row = results["te_drag_changes_one_track"]
+    assert grown == [620, 400, 400]
+    assert floored == [400, 400]
+    assert row == [300, 80, 300]
+
+
+def test_te_new_columns_fill_the_window_when_made(results):
+    assert results["te_fit_widths"] == [[1.46, 1.46], [1, 1, 1, 1], [3.25]]
+    refit, same, unchanged = results["te_columns_refit_when_the_count_changes"]
+    assert refit == [1.06, 1.06, 1.06]
+    assert same == [2, 1]
+    assert unchanged is None      # the panels reach 2 columns: still sharing
 
 
 def test_te_saving_sends_the_authoring_form(results):
@@ -1086,6 +1113,8 @@ def test_te_new_tabs_from_scratch_or_a_copy(results):
     assert results["te_copy_of"] == "Copy of Mixed"
     assert results["te_empty_tab"]["name"] == "New"
     assert results["te_empty_tab"]["panels"] == []
+    assert results["te_empty_tab"]["column_widths"] == [1, 1]
+    assert results["te_empty_tab_fits"] == [1.46, 1.46]
 
 
 def test_te_the_builder_offers_metrics_of_the_shape_a_role_takes(results):

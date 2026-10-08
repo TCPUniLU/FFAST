@@ -18,15 +18,15 @@
 
 import { askDialog } from './dialogs.js';
 import {
-  KIND_ROLES, addPanel, copyOf, emptyTab, metricsFor, movePanel, new3DPanel,
-  removePanel, replacePanel, resizePanel, rowsOf, columnsOf, setColumns,
-  setPanelStart, setPanelView, setRowsShareWindow, toSaved,
+  COLUMN_PX, KIND_ROLES, ROW_PX, addPanel, columnsOf, copyOf, dragTrack, emptyTab,
+  fitWidths, metricsFor, movePanel, new3DPanel, removePanel, replacePanel,
+  resizePanel, rowsOf, setColumns, setPanelStart, setPanelView, sizesOf, toSaved,
 } from './tab_edit.js';
 import { KIND_3D, whyPanelStays } from './tab_rules.js';
 import { cleanStart } from './start_settings.js';
 
-/** A column's minimum width, as index.html's --col-min. */
-const COL_MIN_PX = 400;
+/** The shortest a dragged row gets: room for a table's header and a line. */
+const ROW_MIN_PX = 80;
 
 export class TabEditor {
   /**
@@ -71,7 +71,7 @@ export class TabEditor {
     const names = this._deps.serverTabs().map((t) => t.name);
     let name = from ? `Copy of ${from.name}` : 'New tab';
     for (let n = 2; names.includes(name); n++) name = from ? `Copy of ${from.name} (${n})` : `New tab ${n}`;
-    const draft = from ? copyOf(from, name) : emptyTab(name);
+    const draft = from ? copyOf(from, name) : emptyTab(name, fitWidths(2, this._columnSpace(false)));
     const settled = await this._tabSettings(draft, { title: 'New tab', ok: 'Create' });
     if (settled) this._begin(settled, null, null);
   }
@@ -297,7 +297,8 @@ export class TabEditor {
     });
   }
 
-  /** Dividers between columns and between rows; dragging one sets sizes. */
+  /** A divider after each column and each row, the last ones too;
+   * dragging one sets the size of the column or row before it. */
   _dividers(grid) {
     if (!this._draft || !grid.isConnected) return;
     const t = tracks(grid);
@@ -306,7 +307,8 @@ export class TabEditor {
       const d = document.createElement('div');
       d.className = `edit-divider ${axis}`;
       d.dataset.index = String(k);
-      d.title = axis === 'col' ? 'Drag to change the column widths' : 'Drag to change the row heights';
+      d.title = axis === 'col' ? 'Drag to change the width of the column on the left'
+        : 'Drag to change the height of the row above';
       const at = (sizes, gap, pad) => pad + sizes.slice(0, k).reduce((a, b) => a + b, 0) + gap * (k - 0.5);
       if (axis === 'col') {
         d.style.left = `${at(t.cols, t.gapC, t.padL) - 4}px`;
@@ -320,8 +322,8 @@ export class TabEditor {
       this._dragDivider(grid, d, axis, k);
       grid.appendChild(d);
     };
-    for (let k = 1; k < Math.min(columns, t.cols.length); k++) make('col', k);
-    for (let k = 1; k < Math.min(rows, t.rows.length); k++) make('row', k);
+    for (let k = 1; k <= Math.min(columns, t.cols.length); k++) make('col', k);
+    for (let k = 1; k <= Math.min(rows, t.rows.length); k++) make('row', k);
   }
 
   _dragDivider(grid, divider, axis, k) {
@@ -333,32 +335,32 @@ export class TabEditor {
       const t = tracks(grid);
       const sizes = (axis === 'col' ? t.cols : t.rows).slice();
       const start = axis === 'col' ? e.clientX : e.clientY;
-      const pair = sizes[k - 1] + sizes[k];
-      // A column stops at its minimum width (index.html --col-min).
-      const min = axis === 'col' ? Math.min(COL_MIN_PX, pair / 2) : Math.min(80, pair / 3);
+      // Only the track before the divider changes; the ones after move
+      // along, with their dividers, and the tab scrolls when it outgrows
+      // the window (rule 12).
+      const min = axis === 'col' ? COLUMN_PX : ROW_MIN_PX;
+      const later = [...grid.querySelectorAll(`.edit-divider.${axis}`)]
+        .filter((d) => Number(d.dataset.index) >= k)
+        .map((d) => [d, parseFloat(axis === 'col' ? d.style.left : d.style.top)]);
       let next = sizes;
       const move = (ev) => {
-        const delta = (axis === 'col' ? ev.clientX : ev.clientY) - start;
-        const a = Math.max(min, Math.min(pair - min, sizes[k - 1] + delta));
-        next = sizes.slice();
-        next[k - 1] = a;
-        next[k] = pair - a;
-        const floor = axis === 'col' ? 'var(--col-min)' : '0';
-        const template = next.map((px) => `minmax(${floor}, ${px}fr)`).join(' ');
+        next = dragTrack(sizes, k, (axis === 'col' ? ev.clientX : ev.clientY) - start, min);
+        const template = next.map((px) => `${px}px`).join(' ');
         if (axis === 'col') grid.style.gridTemplateColumns = template;
         else grid.style.gridTemplateRows = template;
+        const shift = next[k - 1] - sizes[k - 1];
+        for (const [d, at] of later) d.style[axis === 'col' ? 'left' : 'top'] = `${at + shift}px`;
       };
       const up = () => {
         divider.removeEventListener('pointermove', move);
         divider.removeEventListener('pointerup', up);
         divider.classList.remove('dragging');
-        const smallest = Math.min(...next);
-        const relative = next.map((px) => Math.round((px / smallest) * 100) / 100);
         if (axis === 'col') {
-          this.change({ ...this._draft, column_widths: relative.slice(0, columnsOf(this._draft)) });
+          const widths = sizesOf(next, COLUMN_PX).slice(0, columnsOf(this._draft));
+          this.change({ ...this._draft, column_widths: widths });
         } else {
-          // Rows with set heights share the window (rule 12).
-          this.change({ ...this._draft, row_heights: relative.slice(0, Math.max(1, rowsOf(this._draft))) });
+          const heights = sizesOf(next, ROW_PX).slice(0, Math.max(1, rowsOf(this._draft)));
+          this.change({ ...this._draft, row_heights: heights });
         }
       };
       divider.addEventListener('pointermove', move);
@@ -549,8 +551,19 @@ export class TabEditor {
     return view.value === 'independent' ? setPanelStart(next, index, start) : next;
   }
 
-  /** Tab settings (rule 14): name, column count, the tab controls, and
-   * whether the rows share the window's height. */
+  /** Pixels the columns of a tab have: the tab being edited's grid, or for
+   * a new tab the whole tab area. */
+  _columnSpace(editing) {
+    const grid = editing && document.querySelector('.tabpanel.active .analysis-grid');
+    if (grid) {
+      const cs = getComputedStyle(grid);
+      return grid.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    }
+    return (document.getElementById('tabpanels')?.clientWidth || 0) - 20;   // the grid's padding
+  }
+
+  /** Tab settings (rule 14): name, column count and the tab controls. A new
+   * column count fills the window (step 7 trial). */
   async _tabSettings(draft, { title, ok }) {
     const body = document.createElement('div');
     body.className = 'tab-settings';
@@ -561,10 +574,9 @@ export class TabEditor {
     columns.dataset.field = 'columns';
     const [shiftRow, shift] = checkField('Energy shift', (draft.controls || []).includes('energy_shift'), 'energy_shift');
     const [elemRow, elems] = checkField('Element picker', draft.selector === 'atomic', 'element_picker');
-    const [fitRow, fit] = checkField('Rows share the window height', !!draft.row_heights, 'rows_share');
     const why = document.createElement('div');
     why.className = 'ctl-hint';
-    body.append(field('Name', name), field('Columns', columns), shiftRow, elemRow, fitRow, why);
+    body.append(field('Name', name), field('Columns', columns), shiftRow, elemRow, why);
     // The tab being edited may keep its own name; every other name is taken.
     const own = draft === this._draft ? this._previous : null;
     const taken = this._deps.serverTabs().map((t) => t.name).filter((n) => n !== own);
@@ -579,11 +591,11 @@ export class TabEditor {
     name.addEventListener('input', validate);
     validate();
     if ((await answer) !== ok) return null;
-    let next = setColumns({ ...draft, name: name.value.trim() }, Number(columns.value) || 1);
+    const next = setColumns({ ...draft, name: name.value.trim() }, Number(columns.value) || 1,
+      this._columnSpace(draft === this._draft));
     const controls = (next.controls || []).filter((c) => c !== 'energy_shift');
-    next = { ...next, controls: shift.checked ? [...controls, 'energy_shift'] : controls,
+    return { ...next, controls: shift.checked ? [...controls, 'energy_shift'] : controls,
       selector: elems.checked ? 'atomic' : (next.selector === 'atomic' ? null : next.selector) };
-    return setRowsShareWindow(next, fit.checked);
   }
 }
 

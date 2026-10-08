@@ -26,6 +26,7 @@
 import { helpToggle } from './help.js';
 import { renderPanel, PLOT_KINDS, elementSymbol } from './panels.js';
 import { KIND_3D } from './tab_rules.js';
+import { COLUMN_PX, ROW_PX, sizeTemplate } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
 
 const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
@@ -390,25 +391,23 @@ export class AnalysisManager {
   /**
    * Make the grid cells once: honour row/col/span, fold scroll_group members
    * into one horizontal strip at the first member's cell, and leave each 3D
-   * panel an empty cell. Columns share the width, in the tab's
-   * `column_widths` when it has them. With `row_heights` the rows share the
-   * tab's height (ADR 0056 rule 12); a tab with a single cell gives it the
-   * whole height (the built-in "3D" tab); otherwise rows are at least 300 px
-   * and the grid scrolls. Columns are at least 400 px; when they do not fit,
-   * the grid scrolls sideways.
+   * panel an empty cell. A tab's `column_widths` and `row_heights` are
+   * kept as set, 1 being 400 px wide or 300 px high (ADR 0056 rule 12).
+   * Without them columns share the width, at least 400 px each; a tab with a
+   * single cell gives it the whole height (the built-in "3D" tab); otherwise
+   * rows are at least 300 px. The grid scrolls what does not fit.
    */
   _layoutGrid(t) {
     const grid = t.gridEl;
     const panels = t.spec.panels || [];
     const widths = t.spec.column_widths, heights = t.spec.row_heights;
     const maxCol = Math.max(1, widths?.length || 0, ...panels.map((p) => p.col + (p.colspan || 1)));
-    // Columns keep a minimum width (--col-min, index.html) and the tab
-    // scrolls sideways when they do not fit; sized rows share the height.
-    const share = (sizes, min) => sizes.map((size) => `minmax(${min}, ${size}fr)`).join(' ');
+    // Set sizes are kept as they are; columns without them share the width
+    // but keep a minimum (--col-min, index.html). Either way the tab
+    // scrolls when they do not fit.
     grid.style.gridTemplateColumns = widths?.length === maxCol
-      ? share(widths, 'var(--col-min)') : `repeat(${maxCol}, minmax(var(--col-min), 1fr))`;
-    grid.style.gridTemplateRows = heights?.length ? share(heights, '0') : '';
-    grid.classList.toggle('sized-rows', !!heights?.length);
+      ? sizeTemplate(widths, COLUMN_PX) : `repeat(${maxCol}, minmax(var(--col-min), 1fr))`;
+    grid.style.gridTemplateRows = heights?.length ? sizeTemplate(heights, ROW_PX) : '';
 
     const strips = new Map();   // scroll_group → slot
     panels.forEach((spec, index) => {

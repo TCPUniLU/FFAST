@@ -7,7 +7,9 @@
  * The grid: a panel sits at (row, col) and spans rowspan x colspan cells.
  * Panels sharing a `scroll_group` form one strip that moves and resizes as a
  * unit. A tab has as many columns as its panels reach or its `column_widths`
- * list, whichever is more (a column may be empty); rows likewise.
+ * list, whichever is more (a column may be empty); rows likewise. A set size
+ * is kept as it is, never shared out: a column width of 1 is 400 px, a row
+ * height of 1 is 300 px, and a tab that does not fit scrolls.
  */
 
 import { KIND_3D } from './tab_rules.js';
@@ -35,6 +37,39 @@ export function metricsFor(kind, role, catalog) {
 
 const clone = (x) => structuredClone(x);
 const span = (p, key) => p[key] || 1;
+
+/** Pixels a column width of 1 stands for: the desktop's smallest plot,
+ * and the narrowest a column gets. */
+export const COLUMN_PX = 400;
+/** Pixels a row height of 1 stands for: a row of a tab without set heights. */
+export const ROW_PX = 300;
+
+const GAP_PX = 10;   // between grid cells (index.html .analysis-grid)
+
+/** The CSS track list for set sizes. */
+export function sizeTemplate(sizes, unit) {
+  return sizes.map((size) => `${size * unit}px`).join(' ');
+}
+
+/** Pixel sizes as set sizes, to two decimals. */
+export function sizesOf(px, unit) {
+  return px.map((v) => Math.round((v / unit) * 100) / 100);
+}
+
+/** Track sizes after dragging divider `k` (between tracks k-1 and k) by
+ * `delta` px: only the track before it changes, never below `min`; the
+ * tracks after it move along. */
+export function dragTrack(sizes, k, delta, min) {
+  const next = sizes.slice();
+  next[k - 1] = Math.max(min, sizes[k - 1] + delta);
+  return next;
+}
+
+/** Widths for `n` columns that fill `px` pixels, never under 1. */
+export function fitWidths(n, px) {
+  const each = (px - GAP_PX * (n - 1)) / n / COLUMN_PX;
+  return Array(n).fill(Math.max(1, Math.floor(each * 100) / 100));
+}
 
 /** Number of columns: what the panels reach, or `column_widths`, if more. */
 export function columnsOf(tab) {
@@ -200,8 +235,9 @@ export function removePanel(tab, index) {
 }
 
 /** Set the number of columns. Panels in columns that go move down to the
- * first free cells; spans are clipped. */
-export function setColumns(tab, columns) {
+ * first free cells; spans are clipped. Given the pixels the columns have
+ * (`fitPx`), a new count gets widths that fill them. */
+export function setColumns(tab, columns, fitPx = null) {
   const n = Math.max(1, Math.floor(columns));
   const next = clone(tab);
   const panels = next.panels = place(next);
@@ -223,7 +259,9 @@ export function setColumns(tab, columns) {
     unit.forEach((i) => pending.delete(i));
   }
   const used = Math.max(0, ...panels.map((p) => p.col + p.colspan));
-  if (next.column_widths) {
+  if (fitPx != null && n !== columnsOf(tab)) {
+    next.column_widths = fitWidths(n, fitPx);
+  } else if (next.column_widths) {
     const widths = next.column_widths.slice(0, n);
     while (widths.length < n) widths.push(1);
     next.column_widths = widths;
@@ -233,18 +271,11 @@ export function setColumns(tab, columns) {
   return syncRows(next);
 }
 
-/** Rows with set heights share the window; without, the tab scrolls. */
-export function setRowsShareWindow(tab, share) {
-  const next = clone(tab);
-  next.row_heights = share ? (next.row_heights || Array(Math.max(1, rowsOf(next))).fill(1)) : null;
-  return next;
-}
-
-/** A new tab with nothing in it. */
-export function emptyTab(name, columns = 2) {
+/** A new tab with nothing in it; `widths` keeps its columns while empty. */
+export function emptyTab(name, widths = [1, 1]) {
   return {
     name, has_data_selector: true, selector: null, controls: [], panels: [],
-    column_widths: Array(columns).fill(1), row_heights: null,
+    column_widths: [...widths], row_heights: null,
   };
 }
 
