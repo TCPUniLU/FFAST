@@ -201,8 +201,8 @@ export class FFastApp {
     this._originCenterOfMass = true;
     this._forcesState = { show: false, modelKey: null, length: 10, normalised: true, filterEnabled: false, atomIndices: [] };
     this._dsSettings = new Map();  // dataset fp → restorable per-dataset settings
-    // Force-arrow length, normalising, "only forces" and the filter: the main
-    // view keeps one set ('main'), each independent panel its own.
+    // Force-arrow length, normalising, "only forces" and the filter: each
+    // dataset in the main view keeps its own set, each independent panel its own.
     this._viewForces = new Map();
     this._playing = false;
     this._patchPending = false;
@@ -1020,7 +1020,7 @@ export class FFastApp {
     this._clearPicks();   // picks name atoms of the view left
     const old = this._focusedView;
     if (old) {
-      this._saveDatasetSettings(old.settingsKey, old.settingsKey);
+      this._saveDatasetSettings(old.settingsKey);
       old.atomScale = this._panes.display.atomScale();
     } else if (this._lastOpenedDatasetFp) {
       this._saveDatasetSettings(this._lastOpenedDatasetFp);
@@ -1029,7 +1029,7 @@ export class FFastApp {
     this._focusedView = owner;
     if (owner) {
       if (!this._dsSettings.has(owner.settingsKey)) this._presetIndependent(owner);
-      this._restoreDatasetSettings(owner.settingsKey, owner.settingsKey);
+      this._restoreDatasetSettings(owner.settingsKey);
     } else if (this._lastOpenedDatasetFp) {
       this._restoreDatasetSettings(this._lastOpenedDatasetFp);
     }
@@ -1070,7 +1070,7 @@ export class FFastApp {
     if (bondStyle) view.renderers.setBondStyle(...bondStyle);
     view.note = note;
     this._presetIndependent(view);
-    if (view === this._focusedView) this._restoreDatasetSettings(view.settingsKey, view.settingsKey);
+    if (view === this._focusedView) this._restoreDatasetSettings(view.settingsKey);
     this._independent.syncCaption(view);
     if (view === this._focusedView) this._syncPanelSection();
   }
@@ -1081,18 +1081,17 @@ export class FFastApp {
   _currentStart(tabName, panel) {
     const view = this._independent.get(independentKey(tabName, panel)) || null;
     const owner = this._focusedView;
-    if (owner) this._saveDatasetSettings(owner.settingsKey, owner.settingsKey);
+    if (owner) this._saveDatasetSettings(owner.settingsKey);
     else if (this._lastOpenedDatasetFp) this._saveDatasetSettings(this._lastOpenedDatasetFp);
     const key = view ? view.settingsKey : this._lastOpenedDatasetFp;
-    const viewKey = view ? view.settingsKey : 'main';
     const forces = this._dsSettings.get(key) || {};
     const colour = this._panes.colorBy.lookOf(key);
-    const bonds = this._panes.bonds.lookOf(viewKey);
+    const bonds = this._panes.bonds.lookOf(key);
     return startFromCurrent({
       source: colour.source, colormap: colour.colormap,
       atomSize: this._panes.display.lookOf(key).atomSize,
       bondWidth: bonds.width, bondColour: bonds.colour,
-      forces: { show: !!forces.showForceVectors, ...this._forceExtras(viewKey) },
+      forces: { show: !!forces.showForceVectors, ...this._forceExtras(key) },
     });
   }
 
@@ -1559,8 +1558,15 @@ export class FFastApp {
     // While the sidebar shows an independent panel it holds that panel's
     // settings; the main view's are swapped in when it is focused again.
     const sidebarIsMain = !this._focusedView;
-    if (datasetChanged && this._lastOpenedDatasetFp && sidebarIsMain)
+    if (datasetChanged && this._lastOpenedDatasetFp && sidebarIsMain) {
       this._saveDatasetSettings(this._lastOpenedDatasetFp);
+      // Picked atom ids are dataset-specific. Clear them before OPEN_VIEW,
+      // while selection commands still go to the view being left.
+      const currentDataset = this._currentDatasetFp;
+      this._currentDatasetFp = this._lastOpenedDatasetFp;
+      this._clearPicks();
+      this._currentDatasetFp = currentDataset;
+    }
 
     let startFrom = null;
     if (this._datasetsViewId.has(this._currentDatasetFp)) {
@@ -1588,10 +1594,7 @@ export class FFastApp {
 
     if (datasetChanged) {
       this._lastOpenedDatasetFp = this._currentDatasetFp;
-      if (sidebarIsMain) {
-        this._restoreDatasetSettings(this._currentDatasetFp);
-        this._clearPicks();   // picked atom ids are dataset-specific
-      }
+      if (sidebarIsMain) this._restoreDatasetSettings(this._currentDatasetFp);
     }
     // The Extract Subset pane is meaningless for datasets that are already
     // subsets (Qt's AtomFilterPaneHiding).
@@ -1600,12 +1603,10 @@ export class FFastApp {
 
   // ── per-dataset settings (issues 04/07/08): Qt's Settings.markAsPerDataset,
   // reimplemented as a plain map since the web client has no such mechanism.
-  // Bond/display/colour settings are intentionally NOT persisted here — Qt
-  // doesn't mark those per-dataset either (they're global settings there too).
-  // The main view keeps one bond look and one set of force-arrow extras
-  // (`viewKey` 'main'); an independent panel keeps all its settings under its
-  // `settingsKey` (ADR 0056).
-  _saveDatasetSettings(fp, viewKey = 'main') {
+  // In the main view each dataset keeps its own colouring, display, bonds and
+  // force arrows; an independent panel keeps all its settings under its
+  // `settingsKey` (ADR 0056), passed here as `fp`.
+  _saveDatasetSettings(fp) {
     const f = this._forcesState;
     this._dsSettings.set(fp, {
       originCenterOfMass: this._originCenterOfMass,
@@ -1613,18 +1614,21 @@ export class FFastApp {
       forceVectorsModelKey: f.modelKey,
       videoFPS: this._videoFPS(),
       videoSkipFrames: this._videoSkipFrames(),
+      pickSettings: this._picked,
     });
-    this._viewForces.set(viewKey, { length: f.length, normalised: f.normalised,
+    this._viewForces.set(fp, { length: f.length, normalised: f.normalised,
       onlyForces: !!f.onlyForces, filterEnabled: !!f.filterEnabled, atomIndices: [...(f.atomIndices || [])] });
     this._panes.colorBy.saveState(fp);
     this._panes.camera.saveState(fp);
     this._panes.display.saveState(fp);
-    this._panes.bonds.saveState(viewKey);
+    this._panes.bonds.saveState(fp);
+    this._panes.extract.saveState(fp);
   }
 
-  /** A view's force-arrow extras; today's defaults for one not seen yet. */
-  _forceExtras(viewKey) {
-    return this._viewForces.get(viewKey) || { length: DEFAULT_LOOK.forces.length,
+  /** A dataset's or panel's force-arrow extras; today's defaults for one not
+   * seen yet. */
+  _forceExtras(key) {
+    return this._viewForces.get(key) || { length: DEFAULT_LOOK.forces.length,
       normalised: DEFAULT_LOOK.forces.normalised, onlyForces: false, filterEnabled: false, atomIndices: [] };
   }
 
@@ -1635,19 +1639,14 @@ export class FFastApp {
     return meta?.parent && meta.parent_frames ? meta.parent : null;
   }
 
-  _restoreDatasetSettings(fp, viewKey = 'main') {
+  _restoreDatasetSettings(fp) {
     const parent = this._lookParentOf(fp);
     if (!this._dsSettings.has(fp) && parent && this._dsSettings.has(parent)) fp = parent;
     const d = this._dsSettings.get(fp) || {
       originCenterOfMass: true, showForceVectors: false, forceVectorsModelKey: null,
-      videoFPS: 30, videoSkipFrames: 0,
+      videoFPS: 30, videoSkipFrames: 0, pickSettings: [],
     };
-    // The main view's extras stay as they are until it has saved some.
-    const extras = this._viewForces.get(viewKey) || (viewKey === 'main'
-      ? { length: this._forcesState.length, normalised: this._forcesState.normalised,
-          onlyForces: !!this._forcesState.onlyForces, filterEnabled: !!this._forcesState.filterEnabled,
-          atomIndices: this._forcesState.atomIndices || [] }
-      : this._forceExtras(viewKey));
+    const extras = this._forceExtras(fp);
     this._originCenterOfMass = d.originCenterOfMass;
     this._panes.camera.setCOM(d.originCenterOfMass);
     document.getElementById('fps-input').value = d.videoFPS;
@@ -1660,7 +1659,8 @@ export class FFastApp {
     this._panes.colorBy.loadState(fp);
     this._panes.camera.loadState(fp);
     this._panes.display.loadState(fp);
-    this._panes.bonds.loadState(viewKey);
+    this._panes.bonds.loadState(fp);
+    this._panes.extract.loadState(fp);
   }
 
 
@@ -1869,6 +1869,7 @@ export class FFastApp {
     this._pickReadout = '';
     this._sendSetSelection('picked', 'current_structure', []);
     this._updatePickStrip();
+    this._panes.extract.clearInput(this._currentDatasetFp);
   }
 
   _updatePickStrip() {

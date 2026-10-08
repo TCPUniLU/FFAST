@@ -107,8 +107,8 @@ export function createBondsPane(sidebarEl, callbacks) {
   }
   _syncVisibility();
 
-  /** Bond look per view (ADR 0056): the main view keeps one, each
-   * independent 3D panel its own. */
+  /** Bond look per dataset in the main view, and per independent 3D panel
+   * (ADR 0056). */
   const saved = new Map();   // key -> {width, color, bondType, fixedIndices}
   return {
     saveState(key) {
