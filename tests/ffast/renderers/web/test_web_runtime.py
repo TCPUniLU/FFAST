@@ -1313,6 +1313,111 @@ async def test_a_reloaded_page_gets_the_subsets_back(ffast_web_server):
     assert replayed[shown]["parent_frames"] == [1, 2, 3]
 
 
+async def _as_another_window(ws_port: int, *messages) -> list[dict]:
+    """Send `(event, args, kwargs)` messages as a second window would, and
+    return the reply each waits for (`wait` in kwargs names it), or None."""
+    ws = await _connect_headless_client(ws_port)
+    replies = []
+    try:
+        for event, args, kwargs in messages:
+            wait = kwargs.pop("wait", None)
+            await ws.send(pack(event, args, kwargs))
+            replies.append(await _wait_for_event(ws, wait) if wait else None)
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+    return replies
+
+
+async def _load_another_dataset(ws_port: int, known_fp: str) -> str:
+    """Load prediction.xyz as a second dataset; its fingerprint."""
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("LOAD_DATASET", (str(PREDICTION_PATH), "ase (auto)"), {}))
+        fp = known_fp   # the connect replay announces the first one again
+        while fp == known_fp:
+            fp = (await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30))["args"][0]
+        return fp
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+
+async def test_web_a_dataset_deleted_elsewhere_moves_the_main_view_to_what_is_left(ffast_web_server):
+    """A deleted subset hands the main view to its parent at the same
+    structure, a deleted dataset to the first one left, the last one to the
+    empty screen; the list drops each and the status line says so."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    other_fp = await _load_another_dataset(ws_port, dataset_fp)
+    [made] = await _as_another_window(ws_port, ("DECLARE_SUBSET", (dataset_fp, [5, 6, 7]),
+                                                {"name": "Energy", "wait": "SUBSET_DECLARED"}))
+    subset_fp = made["kwargs"]["fingerprint"]
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        selected = page.locator("#dataset-list .obj-row.selected")
+        label = page.locator("#frame-label")
+        try:
+            await _open_loupe(page, ws_port, web_port, subset_fp)
+            await page.evaluate("window.ffastApp._setFrame(1)")      # parent frame 6
+            await expect(label).to_have_text("1 / 2")
+
+            await _as_another_window(ws_port, ("DELETE_OBJECT", (subset_fp,), {}))
+            await expect(selected).to_have_attribute("data-fp", dataset_fp, timeout=15000)
+            await expect(label).to_have_text("6 / 99", timeout=15000)
+            await expect(page.locator(f"#dataset-list .obj-row[data-fp='{subset_fp}']")).to_have_count(0)
+            await expect(page.locator("#status")).to_contain_text("was deleted in another window")
+
+            await _as_another_window(ws_port, ("DELETE_OBJECT", (dataset_fp,), {}))
+            await expect(selected).to_have_attribute("data-fp", other_fp, timeout=15000)
+            await expect(label).to_have_text("0 / 99", timeout=15000)
+
+            await _as_another_window(ws_port, ("DELETE_OBJECT", (other_fp,), {}))
+            await expect(page.locator("#dataset-list .obj-empty")).to_be_visible(timeout=15000)
+            await expect(page.locator("#overlay")).not_to_have_class(re.compile(r"\bhidden\b"))
+        finally:
+            await browser.close()
+
+
+async def test_web_a_deleted_dataset_or_prediction_leaves_an_independent_panel(tmp_path):
+    """An independent panel on a deleted dataset moves as the main view does;
+    a deleted prediction leaves the rail, and the views that showed it keep
+    their dataset without it."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+        other_fp = await _load_another_dataset(ws_port, dataset_fp)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            view = _INDEPENDENT
+            try:
+                await _open_compare(page, ws_port, web_port, dataset_fp)
+                await _focus_3d(page, 1)
+                await page.locator(_panel_control("Dataset")).select_option(other_fp)
+                await page.wait_for_function(f"() => {view}.datasetFp === '{other_fp}'")
+
+                await _as_another_window(ws_port, ("DELETE_OBJECT", (other_fp,), {}))
+                await page.wait_for_function(f"() => {view}.datasetFp === '{dataset_fp}'", timeout=15000)
+                await expect(page.locator(_panel_control("Dataset"))).to_have_value(dataset_fp)
+
+                await page.locator(_panel_control("Prediction")).select_option(model_fp)
+                await page.wait_for_function(f"() => {view}.modelFp === '{model_fp}'")
+                await expect(page.locator("#model-list .obj-row.selected")).to_have_attribute("data-fp", model_fp)
+
+                await _as_another_window(ws_port, ("DELETE_OBJECT", (model_fp,), {}))
+                await expect(page.locator("#model-list .obj-empty")).to_be_visible(timeout=15000)
+                await page.wait_for_function(
+                    f"() => window.ffastApp._currentModelFp === null && {view}.modelFp === null")
+                await expect(page.locator("#dataset-list .obj-row.selected")).to_have_attribute("data-fp", dataset_fp)
+                await expect(page.locator("#status")).to_contain_text("was deleted in another window")
+            finally:
+                await browser.close()
+
+
 async def test_web_a_reloaded_page_shows_what_its_main_view_showed(ffast_web_server):
     """A reload shows the dataset and prediction the main view showed, a
     subset made with SUB included, not the first dataset in the list."""

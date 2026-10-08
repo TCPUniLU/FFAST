@@ -1328,6 +1328,8 @@ export class FFastApp {
 
       conn.on(IN.REMOTE_DATASET_META, (kw, args) => this._onDatasetMeta(args[0], kw));
       conn.on(IN.REMOTE_MODEL_META,   (kw, args) => this._onModelMeta(args[0], kw));
+      conn.on(IN.DATASET_DELETED,     (kw, args) => this._onDatasetDeleted(args[0]));
+      conn.on(IN.MODEL_DELETED,       (kw, args) => this._onModelDeleted(args[0]));
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
       conn.on(IN.TASK_PROGRESS, (kw) => console.debug('TASK_PROGRESS', kw));
@@ -1485,6 +1487,98 @@ export class FFastApp {
     this._renderObjects();
     this._ensureShownIndependents();
     if (this._focusedView) this._syncPanelSection();
+  }
+
+  /** A dataset was deleted. The lists drop it, and a view that showed it
+   * moves to the nearest thing left: a subset to its parent at the same
+   * structure (as unticking SUB does), else the first dataset listed (as on
+   * start-up), else nothing. Whatever was cut from it is deleted too, each
+   * announced before it. */
+  _onDatasetDeleted(fp) {
+    const meta = this._datasets.get(fp);
+    if (!meta) return;
+    this._datasets.delete(fp);
+    this._dsSettings.delete(fp);
+    if (this._showWhenKnown === fp) this._showWhenKnown = null;
+    const n = this._datasetsViewId.get(fp);
+    if (n != null) {   // its main-view view on the server goes with it
+      this._datasetsViewId.delete(fp);
+      this._framedViews.delete(`view-${n}`);
+      this._conn?.send(OUT.CLOSE_VIEW, { view_id: `view-${n}` });
+    }
+    const parent = meta.parent && this._datasets.has(meta.parent) ? meta.parent : null;
+    const target = parent ?? [...this._listedDatasets().keys()][0] ?? null;
+    const frameIn = (frame) => (parent && meta.parent_frames ? meta.parent_frames[frame] : parent ? frame : 0) ?? 0;
+
+    for (const view of this._independent.values()) {
+      if (view.datasetFp !== fp) continue;
+      view.datasetFp = target;
+      if (view.modelFp && !(target && predictionApplies(this._models.get(view.modelFp), target, this._datasets)))
+        view.modelFp = null;
+      if (!target) { this._emptyIndependent(view); continue; }
+      this._openIndependent(view);
+      if (!view.links.frame) this._setIndependentFrame(view, frameIn(view.frame ?? 0));
+    }
+    if (fp === this._currentDatasetFp) {
+      if (target) this._showInMainView(target, frameIn(this._mainFrame));
+      else this._emptyMainView();
+    } else {
+      this._renderObjects();
+    }
+    if (this._focusedView) this._syncPanelSection();
+    this._setStatus(`${meta.name || fp.slice(0, 8)} was deleted in another window`, 'connected');
+  }
+
+  /** A prediction was deleted. The rail drops it; the views that showed it
+   * keep their dataset, without it. */
+  _onModelDeleted(fp) {
+    const meta = this._models.get(fp);
+    if (!meta) return;
+    this._models.delete(fp);
+    // Colouring and force arrows that used it, in the view the sidebar shows.
+    this._followPanelPrediction(fp, null);
+    for (const view of this._independent.values()) {
+      if (view.modelFp !== fp) continue;
+      view.modelFp = null;
+      this._openIndependent(view);
+    }
+    if (this._currentModelFp === fp) this._selectModel(null);
+    else this._renderObjects();
+    this._panes?.forces.refreshModels();
+    this._panes?.colorBy.refreshModels(this._models);
+    if (this._focusedView) this._syncPanelSection();
+    this._setStatus(`${meta.name || fp.slice(0, 8)} was deleted in another window`, 'connected');
+  }
+
+  /** The main view with nothing left to show: the empty screen. */
+  _emptyMainView() {
+    this._currentDatasetFp = null;
+    this._currentModelFp = null;
+    this._currentViewId = null;
+    this._lastOpenedDatasetFp = null;
+    this._openedModelFp = null;
+    this._frameOnSnapshot = null;
+    this._mainFrame = 0;
+    this._playing = false;
+    this._viewShown = false;
+    this._mainView.clear();
+    this._renderObjects();
+    this._syncAnalysisContext();
+    document.getElementById('reset-camera-btn').disabled = true;
+    for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = true;
+    this._syncEmptyState();
+  }
+
+  /** An independent panel with nothing left to show: its server view goes,
+   * and it waits for data like a new panel. */
+  _emptyIndependent(view) {
+    if (view.isOpen) this._conn?.send(OUT.CLOSE_VIEW, { view_id: view.viewId });
+    view.openedPair = '';
+    view.started = false;
+    view.frame = null;
+    this._framedViews.delete(view.viewId);
+    view.renderers.clear();
+    this._syncCaption(view);
   }
 
   // ── object rail: datasets + predictions as selectable rows ──────────────
