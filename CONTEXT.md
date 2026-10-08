@@ -66,8 +66,12 @@ load time (`slice_num`).
 **SubDataset** is a view onto a parent restricted to some indices, created from
 the region a plot shows when you tick its **Sub** box; it follows the plot's
 zoom, and unticking hides it. It is also how a tractable slice of a large remote
-dataset reaches the local viewer. **FrozenSubDataset** is one that has been
-snapshotted and now stands on its own.
+dataset reaches the local viewer. **FrozenSubDataset** is one whose frames are
+fixed: it no longer follows the zoom, but still reads them through its parent.
+An **atom subset** (`AtomFilteredDataset`) keeps every frame but only some of
+its atoms. Deleting a dataset deletes everything cut from it (subsets, frozen
+subsets, atom subsets); to keep some of its frames, export them to a file and
+load that.
 
 ### Model, GhostModel
 
