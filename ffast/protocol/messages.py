@@ -43,6 +43,8 @@ class DatasetMeta(BaseModel):
     parent_frames: Optional[list[int]] = None
     # False for a subset whose SUB box was unticked: kept, but not listed.
     active: bool = True
+    # A frozen subset: its frames are fixed, it no longer follows the zoom.
+    frozen: bool = False
 
 
 class ModelMeta(BaseModel):
@@ -235,6 +237,14 @@ class LoadModelRequest(BaseModel):
 
 class DeleteObjectRequest(BaseModel):
     """Typed payload for ``DELETE_OBJECT``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+
+
+class FreezeSubsetRequest(BaseModel):
+    """Typed payload for ``FREEZE_SUBSET``: the live subset to freeze."""
 
     model_config = ConfigDict(extra="forbid")
 

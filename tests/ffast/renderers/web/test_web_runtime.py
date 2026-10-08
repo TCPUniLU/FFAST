@@ -1313,6 +1313,35 @@ async def test_a_reloaded_page_gets_the_subsets_back(ffast_web_server):
     assert replayed[shown]["parent_frames"] == [1, 2, 3]
 
 
+async def test_freezing_a_subset_keeps_its_frames_while_the_live_one_moves(ffast_web_server):
+    """FREEZE_SUBSET (the desktop's freeze) makes a frozen subset of a live
+    one's frames, announced to every window and marked frozen; the live
+    subset still moves with its plot, the frozen one does not."""
+    ws_port, _web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("DECLARE_SUBSET", (dataset_fp, [1, 2, 3]), {"name": "Energy"}))
+        live = (await _wait_for_event(ws, "SUBSET_DECLARED"))["kwargs"]["fingerprint"]
+        await ws.send(pack("FREEZE_SUBSET", (live,), {}))
+        while True:
+            meta = await _wait_for_event(ws, "REMOTE_DATASET_META")
+            if meta["kwargs"].get("frozen"):
+                break
+        frozen = meta["args"][0]
+        await ws.send(pack("DECLARE_SUBSET", (dataset_fp, [4, 5]), {"name": "Energy"}))
+        await _wait_for_event(ws, "SUBSET_DECLARED")
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+    replayed = await _replayed_datasets(ws_port)
+    assert frozen != live
+    assert replayed[frozen]["frozen"] and replayed[frozen]["parent"] == dataset_fp
+    assert replayed[frozen]["parent_frames"] == [1, 2, 3]
+    assert not replayed[live]["frozen"] and replayed[live]["parent_frames"] == [4, 5]
+
+
 async def _as_another_window(ws_port: int, *messages) -> list[dict]:
     """Send `(event, args, kwargs)` messages as a second window would, and
     return the reply each waits for (`wait` in kwargs names it), or None."""
@@ -1461,6 +1490,40 @@ async def test_web_the_rail_menu_deletes_a_dataset_or_prediction(ffast_web_serve
             await expect(rows).to_have_count(1, timeout=15000)
             await expect(page.locator("#dataset-list .obj-row.selected")).to_have_attribute("data-fp", other_fp)
             await expect(status).to_have_text("Deleted dataset")
+        finally:
+            await browser.close()
+
+
+async def test_web_the_rail_menu_freezes_a_live_subset(ffast_web_server):
+    """A live SUB subset's ⋯ menu offers Freeze, not Delete (unticking SUB
+    is how it goes, as on the desktop). Freezing adds a frozen subset of the
+    same frames, tagged so in the list, which can be deleted."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    [made] = await _as_another_window(ws_port, ("DECLARE_SUBSET", (dataset_fp, [5, 6, 7]),
+                                                {"name": "Energy", "wait": "SUBSET_DECLARED"}))
+    live = made["kwargs"]["fingerprint"]
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        rows = page.locator("#dataset-list .obj-row")
+        menu = page.locator(".rail-menu")
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(rows).to_have_count(2)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{live}'] .obj-menu-btn").click()
+            await expect(menu.locator("[data-action='dataset-freeze']")).to_be_visible()
+            await expect(menu.locator("[data-action='dataset-delete']")).to_have_count(0)
+            await menu.locator("[data-action='dataset-freeze']").click()
+
+            frozen = page.locator("#dataset-list .obj-row", has_text="frozen")
+            await expect(frozen).to_have_count(1, timeout=15000)
+            await expect(frozen).to_contain_text("frozen · 3 fr")
+            await expect(page.locator("#status")).to_contain_text("Froze")
+            dialog = await _delete_from_rail(page, "dataset", await frozen.get_attribute("data-fp"))
+            await dialog.locator("button", has_text="Delete").click()
+            await expect(rows).to_have_count(2, timeout=15000)
+            await expect(page.locator(f"#dataset-list .obj-row[data-fp='{live}']")).to_have_count(1)
         finally:
             await browser.close()
 

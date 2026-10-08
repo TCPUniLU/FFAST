@@ -135,7 +135,7 @@ class ServerSession:
         # parameter.
         from ffast.protocol.messages import (
             CloseViewRequest, CreateSubsetRequest, DeclareSubsetRequest,
-            DeleteObjectRequest, DeleteTabRequest,
+            DeleteObjectRequest, DeleteTabRequest, FreezeSubsetRequest,
             EmptyRequest, ExportSubsetRequest, ExportTabRequest, HideTabRequest,
             ListDirRequest,
             LoadDatasetRequest, LoadModelRequest,
@@ -148,6 +148,7 @@ class ServerSession:
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
             control.LOAD_MODEL:                 _Route(self._on_load_model, ["path", "model_type"], LoadModelRequest),
             control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint"], DeleteObjectRequest),
+            control.FREEZE_SUBSET:              _Route(self._on_freeze_subset, ["fingerprint"], FreezeSubsetRequest),
             control.CREATE_SUBSET:              _Route(self._on_create_subset, ["parent_fingerprint", "indices"], CreateSubsetRequest),
             control.DECLARE_SUBSET:             _Route(self._on_declare_subset, ["parent_fingerprint", "?indices"], DeclareSubsetRequest),
             control.REQUEST_SUBDATASET_ARRAYS:  _Route(self._on_request_subdataset_arrays, ["fingerprint"], RequestSubdatasetArraysRequest),
@@ -431,6 +432,12 @@ class ServerSession:
 
     async def _on_delete_object(self, fingerprint, **kwargs) -> None:
         self.env.deleteObject(fingerprint)
+
+    async def _on_freeze_subset(self, fingerprint, **kwargs) -> None:
+        """Freeze a live subset's frames as a frozen subset, as the desktop's
+        freeze button does. The frozen subset announces itself to every
+        window like any new dataset; the live one carries on with its plot."""
+        self.env.freezeSubDataset(fingerprint)
 
     async def _on_create_subset(self, parent_fingerprint, indices, **kwargs) -> None:
         """Extract an atom-filtered subset dataset (ADR 0045 issue 12).

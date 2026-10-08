@@ -494,6 +494,7 @@ class ConnectionManager:
         parent=None,
         parent_frames=None,
         active=True,
+        frozen=False,
     ):
         """Create a local CachedRemoteDataset proxy when the server loads a dataset.
 
@@ -524,6 +525,7 @@ class ConnectionManager:
                 variable=variable, elements=elements, offsets=offsets,
                 path=path, source_type=source_type,
                 parent=parent, parent_frames=parent_frames, active=active,
+                frozen=frozen,
             )
         except ValidationError as exc:
             logger.warning(

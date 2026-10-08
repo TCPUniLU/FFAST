@@ -1,8 +1,9 @@
 /**
  * The object rail (ADR 0055): the datasets and predictions the server holds,
- * one row each. Clicking a row picks it for the main view; its ⋯ opens the
- * row's menu (Delete…). What either does is the app's (the ports); the rail
- * only draws the lists.
+ * one row each, a frozen subset tagged so. Clicking a row picks it for the
+ * main view; its ⋯ opens the row's menu (Delete…, or Freeze for a live
+ * subset). What either does is the app's (the ports); the rail only draws
+ * the lists.
  */
 
 import { sharedMenu } from './actions.js';
@@ -67,7 +68,7 @@ export class Rail {
       row.dataset.fp = fp;
       row.innerHTML =
         `<span class="name">${meta.name || fp.slice(0,8)}</span>` +
-        `<span class="meta">${meta.n} fr</span>`;
+        `<span class="meta">${meta.frozen ? 'frozen · ' : ''}${meta.n} fr</span>`;
       row.appendChild(this._menuButton('dataset', fp));
       row.addEventListener('click', () => this._ports.onSelectDataset(fp));
       list.appendChild(row);

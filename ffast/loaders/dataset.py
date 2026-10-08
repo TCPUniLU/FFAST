@@ -255,6 +255,7 @@ class DatasetLoader(EventClass):
             "source_type": getattr(type(self), "datasetName", None),
             **self.lineageMeta(),
             "active": bool(getattr(self, "active", True)),
+            "frozen": bool(getattr(self, "frozen", False)),
         }
 
     def lineageMeta(self) -> dict:
@@ -398,6 +399,7 @@ class VariableDatasetLoader(EventClass):
             "parent": None,
             "parent_frames": None,
             "active": bool(getattr(self, "active", True)),
+            "frozen": False,
         }
 
     def to_transfer_arrays(self) -> dict:

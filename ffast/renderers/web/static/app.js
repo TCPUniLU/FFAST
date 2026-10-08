@@ -170,11 +170,7 @@ export class FFastApp {
       modelList: document.getElementById('model-list'),
       onSelectDataset: (fp) => this._selectDataset(fp),
       onSelectModel: (fp) => this._selectModel(fp),
-      rowActions: (kind, fp) => [{
-        id: `${kind}-delete`, label: 'Delete…',
-        run: () => this._deleteObject(kind, fp),
-        unavailable: () => this._needsControl(),
-      }],
+      rowActions: (kind, fp) => this._railRowActions(kind, fp),
     });
     /** Fingerprints this window asked the server to delete. */
     this._deleting = new Set();
@@ -1363,6 +1359,24 @@ export class FFastApp {
     this._renderObjects();
     this._independent.ensureShown();
     if (this._focusedView) this._syncPanelSection();
+  }
+
+  /** A rail row's ⋯ menu. A live SUB subset belongs to its plot: it can be
+   * frozen but not deleted (unticking SUB hides it), as on the desktop. */
+  _railRowActions(kind, fp) {
+    const meta = kind === 'dataset' ? this._datasets.get(fp) : null;
+    const why = () => this._needsControl();
+    if (meta?.parent_frames && !meta.frozen)
+      return [{ id: 'dataset-freeze', label: 'Freeze', run: () => this._freezeSubset(fp), unavailable: why }];
+    return [{ id: `${kind}-delete`, label: 'Delete…', run: () => this._deleteObject(kind, fp), unavailable: why }];
+  }
+
+  /** Keep a live subset's frames as a frozen subset; the live one carries on
+   * following its plot. The server announces the frozen one to every window. */
+  _freezeSubset(fp) {
+    if (this._needsControl()) return;
+    this._conn.send(OUT.FREEZE_SUBSET, { fingerprint: fp });
+    this._setStatus(`Froze ${this._datasets.get(fp)?.name || fp.slice(0, 8)}`, 'connected');
   }
 
   /** Delete a dataset or prediction on the server, once confirmed. The
