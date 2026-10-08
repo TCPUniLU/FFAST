@@ -241,7 +241,12 @@ export class AnalysisManager {
     const before = active && this._drawnKeys(active);
     this._ctx = { datasetFp, modelFp, datasetMeta };
     // Element order for the picker/grouped kinds: sorted unique atomic numbers.
-    const zs = (datasetMeta && datasetMeta.elements) || [];
+    // A frame subset offers its parent's, so the picker (and the plots) stay
+    // put as the zoom moves the subset over structures of other make-up.
+    let source = datasetMeta;
+    while (source?.parent && source.parent_frames && this._available.datasets.has(source.parent))
+      source = this._available.datasets.get(source.parent);
+    const zs = (source && source.elements) || [];
     this._elementOrder = [...new Set(zs.map(Number))].sort((a, b) => a - b);
     for (const t of this._tabs) {
       // Prune element selection to the new dataset's elements.

@@ -857,9 +857,10 @@ class SubDataset(DatasetLoader):
                 # Get elements for specific molecule in subdataset
                 parent_idx = self.indices[index]
                 return self.parent.getElements(parent_idx)
-            else:
-                # Return all elements (z_flat) from parent
-                return self.parent.getElements()
+            # The elements of the structures this subset holds, one after
+            # another, matching its positions and molecule_offsets.
+            return np.concatenate([self.parent.getElements(int(i))
+                                   for i in np.asarray(self.indices).reshape(-1)])
         else:
             # Uniform parent
             return self.parent.z
@@ -868,7 +869,18 @@ class SubDataset(DatasetLoader):
         return self.parent.getLattice()
 
     def getElementsName(self):
+        if self.isVariable:
+            return [zIntToZStr[x] for x in self.getElements()]
         return self.parent.getElementsName()
+
+    def toMetaDict(self) -> dict:
+        """As a dataset's; a subset of structures of different sizes says so
+        and sends where each of its structures' atoms start."""
+        meta = super().toMetaDict()
+        if self.isVariable:
+            meta["variable"] = True
+            meta["offsets"] = np.asarray(self.molecule_offsets).astype(int).tolist()
+        return meta
 
     def getInfo(self):
         model = "None"
