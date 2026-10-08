@@ -1622,10 +1622,13 @@ async def test_web_sub_replots_the_other_plots_of_its_tab(ffast_web_server):
                 timeout=15000)
 
             await page.locator(other).uncheck()
+            # The Forces plot is not zoomed, so its subset has all 100 frames:
+            # 100 points alone do not tell the full data from it.
             for title in ("Energy MAE timeline", "Forces MAE timeline"):
                 await page.wait_for_function(
-                    f"() => ({_DRAWN})('{title}').points === 100", timeout=15000)
-            assert (await page.evaluate(_DRAWN, "Energy MAE timeline"))["datasets"] == dataset_fp
+                    f"""() => {{ const d = ({_DRAWN})('{title}');
+                                 return d.points === 100 && d.datasets === '{dataset_fp}'; }}""",
+                    timeout=15000)
         finally:
             await browser.close()
 
