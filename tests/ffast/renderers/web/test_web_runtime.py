@@ -1313,6 +1313,68 @@ async def test_a_reloaded_page_gets_the_subsets_back(ffast_web_server):
     assert replayed[shown]["parent_frames"] == [1, 2, 3]
 
 
+async def test_web_a_reloaded_page_shows_what_its_main_view_showed(ffast_web_server):
+    """A reload shows the dataset and prediction the main view showed, a
+    subset made with SUB included, not the first dataset in the list."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        selected = page.locator("#dataset-list .obj-row.selected")
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+            await page.locator(f"{_sub_panel('Energy MAE timeline')} .sub-toggle input").check()
+            await _zoom(page, "Energy MAE timeline", [10, 19.5])
+            await page.wait_for_function(f"() => ({_SUBSETS})().some(s => s.n === 10)", timeout=15000)
+            [made] = await page.evaluate(_SUBSETS)
+            await expect(selected).to_have_attribute("data-fp", made["fp"])
+
+            await page.reload(wait_until="networkidle")
+            await expect(selected).to_have_attribute("data-fp", made["fp"], timeout=15000)
+            await expect(page.locator("#model-list .obj-row.selected")).to_have_attribute("data-fp", model_fp)
+        finally:
+            await browser.close()
+
+
+async def test_web_a_reloaded_page_keeps_a_main_view_without_prediction(ffast_web_server):
+    """A main view showing a dataset the prediction does not apply to comes
+    back without it; replay does not pick the prediction up on the way, while
+    the first dataset it applies to passes by."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("LOAD_DATASET", (str(PREDICTION_PATH), "ase (auto)"), {}))
+        other_fp = dataset_fp   # the connect replay announces the first one again
+        while other_fp == dataset_fp:
+            other_fp = (await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30))["args"][0]
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        selected = page.locator("#dataset-list .obj-row.selected")
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(page.locator("#model-list .obj-row.selected")).to_have_attribute("data-fp", model_fp)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{other_fp}']").click()
+            await expect(selected).to_have_attribute("data-fp", other_fp)
+            await expect(page.locator("#model-list .obj-row.selected")).to_have_count(0)
+
+            await page.reload(wait_until="networkidle")
+            await expect(selected).to_have_attribute("data-fp", other_fp, timeout=15000)
+            await expect(page.locator("#model-list .obj-row.selected")).to_have_count(0)
+        finally:
+            await browser.close()
+
+
 async def test_web_a_subset_made_with_sub_shows_in_the_main_view(tmp_path):
     """Ticking SUB shows the subset in the main view, which keeps up as the
     zoom moves it, staying on the same structure where it can. The tab ticked

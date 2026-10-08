@@ -24,7 +24,7 @@ import { TabOps } from './tab_ops.js';
 import { askDialog, textDialog } from './dialogs.js';
 import { TabEditor } from './edit_mode.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
-import { loadLayout, saveLayout } from './layout_state.js';
+import { loadLayout, loadMainView, saveLayout, saveMainView } from './layout_state.js';
 import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './quick_styles.js';
 import { cleanStart, DEFAULT_LOOK, startCommands, startFromCurrent } from './start_settings.js';
 import { addSectionHelp, bindSidebarSearch, checkboxRow, oneSectionOpen, selectRow } from './sidebar.js';
@@ -190,7 +190,10 @@ export class FFastApp {
     // ?mode=loupe-live this instance auto-connects, hides the chrome
     // (body.loupe-only), and
     // selects the same dataset/prediction the opener had open — but as its
-    // OWN connection, with its own view, driving its own frame/camera.
+    // OWN connection, with its own view, driving its own frame/camera. A
+    // reloaded page settles the same way on what its main view showed. Both
+    // hold only while the connection's replay lasts; `_autoModelFp` '' means
+    // "no prediction", null "whichever applies".
     this._autoDatasetFp = null;
     this._autoModelFp = null;
 
@@ -1241,6 +1244,12 @@ export class FFastApp {
       document.body.classList.add('loupe-only');
       this._autoDatasetFp = p.get('ds') || null;
       this._autoModelFp = p.get('pred') || null;
+    } else {
+      const shown = loadMainView();
+      if (shown) {
+        this._autoDatasetFp = shown.datasetFp;
+        this._autoModelFp = shown.modelFp || '';
+      }
     }
     if (port) this._connect();
     else this._openConnDialog();
@@ -1455,7 +1464,7 @@ export class FFastApp {
     // dataset and refresh the view so its force overlay appears. A live
     // pop-out with a requested prediction (ADR 0044 Phase 4) only settles on
     // that one, so replay order among several candidates doesn't matter.
-    const wantsSpecificModel = this._autoModelFp && fp !== this._autoModelFp;
+    const wantsSpecificModel = this._autoModelFp !== null && fp !== this._autoModelFp;
     if (!wantsSpecificModel && this._currentDatasetFp &&
         (meta?.dataset_fingerprints || []).length
         && predictionApplies(meta, this._currentDatasetFp, this._datasets)) {
@@ -2052,6 +2061,10 @@ export class FFastApp {
   /** Push the current dataset/prediction selection into the analysis manager
    * so its active tab refetches against it (metric channel scope). */
   _syncAnalysisContext() {
+    // The rail's choice is what a reload shows again; while replay settles on
+    // what a reload showed, the first dataset it passes is not.
+    if (this._autoDatasetFp === null && this._currentDatasetFp)
+      saveMainView(this._currentDatasetFp, this._currentModelFp);
     if (!this._analysis) return;
     const meta = this._currentDatasetFp
       ? this._datasets.get(this._currentDatasetFp) : null;
@@ -2067,6 +2080,13 @@ export class FFastApp {
 
   /** @param {import('./protocol.js').MetricCatalogKwargs} kw */
   _onMetricCatalog(kw) {
+    // Replay sends the catalog after every dataset and prediction, so a
+    // pop-out's or reload's target that has not come by now is gone; and a
+    // subset announced again later must not pull the main view back to it.
+    if (this._autoDatasetFp !== null || this._autoModelFp !== null) {
+      this._autoDatasetFp = this._autoModelFp = null;
+      if (this._currentDatasetFp) saveMainView(this._currentDatasetFp, this._currentModelFp);
+    }
     this._metricCatalog = kw.metrics || [];
     this._panes.colorBy.setMetricCatalog(this._metricCatalog);
     this._analysis?.setMetricCatalog(this._metricCatalog);

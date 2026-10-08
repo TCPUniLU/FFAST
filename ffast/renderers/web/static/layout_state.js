@@ -29,3 +29,26 @@ export function saveLayout(patch) {
     // Blocked storage: nothing is remembered, nothing breaks.
   }
 }
+
+// What this page's main view shows, so a reload shows it again. It is kept in
+// sessionStorage: it survives a reload of this browser tab, and no other tab
+// or window sees it.
+const MAIN_VIEW_KEY = 'ffast.mainView';
+
+/** @returns {{datasetFp: string, modelFp: string|null}|null} */
+export function loadMainView() {
+  try {
+    const v = JSON.parse(window.sessionStorage.getItem(MAIN_VIEW_KEY) || 'null');
+    return v && typeof v.datasetFp === 'string' ? { datasetFp: v.datasetFp, modelFp: v.modelFp || null } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveMainView(datasetFp, modelFp) {
+  try {
+    window.sessionStorage.setItem(MAIN_VIEW_KEY, JSON.stringify({ datasetFp, modelFp: modelFp || null }));
+  } catch {
+    // Blocked storage: a reload shows the first dataset, as with no memory.
+  }
+}
