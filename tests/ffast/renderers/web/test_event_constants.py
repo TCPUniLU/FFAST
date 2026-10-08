@@ -99,6 +99,21 @@ def test_session_acks_are_declared_both_sides(out_events, in_events):
     assert control.SESSION_LOADED in in_events.values()
 
 
+def test_every_event_the_web_client_uses_is_declared(out_events, in_events):
+    """`OUT.FOO` / `IN.FOO` with no FOO in events.js is `undefined` at run time:
+    the message goes out nameless, or the handler waits for a name never sent
+    (a dropped independent panel's CLOSE_VIEW never reached the server)."""
+    static = EVENTS_JS.parent
+    declared = {"OUT": set(out_events), "IN": set(in_events)}
+    offenders = []
+    for js in sorted(static.glob("*.js")) + sorted(static.glob("panes/*.js")):
+        for i, line in enumerate(js.read_text().splitlines(), 1):
+            for side, name in re.findall(r"\b(OUT|IN)\.([A-Z_]+)\b", line):
+                if name not in declared[side]:
+                    offenders.append(f"{js.relative_to(static)}:{i}: {side}.{name}")
+    assert not offenders, "events used but not declared in events.js:\n" + "\n".join(offenders)
+
+
 def test_no_bare_event_strings_left_in_the_web_client():
     """`.on('FOO')` / `.send('FOO')` must go through the constants."""
     static = EVENTS_JS.parent
