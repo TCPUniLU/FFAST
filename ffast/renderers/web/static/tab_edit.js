@@ -271,6 +271,28 @@ export function setColumns(tab, columns, fitPx = null) {
   return syncRows(next);
 }
 
+/** JSON with object keys sorted, so equal drafts compare equal however
+ * they were built. */
+function canonical(x) {
+  return JSON.stringify(x, (_, v) => (v && typeof v === 'object' && !Array.isArray(v)
+    ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+    : v));
+}
+
+/** True when `after` differs from `before` only in where panels sit and how
+ * big panels, columns and rows are, every 3D panel keeping its top-left
+ * cell (an independent panel is known by its cell). Edit mode then moves the
+ * cells in place, and the plots keep drawing. */
+export function onlyPlacesChanged(before, after) {
+  if (!before || !after || (before.panels || []).length !== (after.panels || []).length) return false;
+  const content = ({ column_widths, row_heights, panels, ...tab }) => ({
+    ...tab, panels: (panels || []).map(({ row, col, rowspan, colspan, ...panel }) => panel),
+  });
+  if (canonical(content(before)) !== canonical(content(after))) return false;
+  return before.panels.every((p, i) => p.kind !== KIND_3D
+    || (p.row === after.panels[i].row && p.col === after.panels[i].col));
+}
+
 /** A new tab with nothing in it; `widths` keeps its columns while empty. */
 export function emptyTab(name, widths = [1, 1]) {
   return {

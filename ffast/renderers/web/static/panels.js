@@ -486,6 +486,56 @@ export function renderPanel(el, spec, series, ctx) {
     el._subInfo = null;
     return;
   }
+  el.querySelectorAll('.main-svg').forEach((svg) => { svg.style.transform = ''; });   // see followSize
+  const start = performance.now();
   Plotly().react(el, built.traces, built.layout, PLOT_CONFIG);
+  el._drawMs = performance.now() - start;
   el._subInfo = built.subInfo;
+  followSize(el);
+}
+
+/** A plot that takes longer than this to draw is stretched while its size
+ * changes, and drawn again once the size settles. */
+const SLOW_DRAW_MS = 30;
+const SETTLE_MS = 150;
+
+/**
+ * Keep a plot the size of its element as that changes: the window, the 3D
+ * sidebar, or a divider being dragged in Edit mode. `responsive` follows
+ * only the window, and Plotly's own resize waits 100 ms after the last
+ * change, so a plot would jump when the drag stops. Instead a plot is drawn
+ * again every frame while its size changes; one too slow for that (a big
+ * scatter) is stretched meanwhile and drawn once the size settles.
+ */
+function followSize(el) {
+  if (el._sizeObserver) return;
+  let frame = 0, settle = 0;
+  const svgs = () => el.querySelectorAll('.main-svg');
+  const redraw = () => {
+    svgs().forEach((svg) => { svg.style.transform = ''; });
+    const start = performance.now();
+    Plotly().relayout(el, { autosize: true })
+      .then(() => { el._drawMs = performance.now() - start; })
+      .catch(() => {});   // hidden or replaced meanwhile
+  };
+  el._sizeObserver = new ResizeObserver(() => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(() => {
+      const layout = el._fullLayout;
+      if (!layout || !el.isConnected || !el.clientWidth || !el.clientHeight) return;
+      const sx = el.clientWidth / layout.width, sy = el.clientHeight / layout.height;
+      if (Math.abs(sx - 1) * layout.width < 1 && Math.abs(sy - 1) * layout.height < 1) return;
+      clearTimeout(settle);
+      if ((el._drawMs || 0) < SLOW_DRAW_MS) {
+        redraw();
+        return;
+      }
+      svgs().forEach((svg) => {
+        svg.style.transformOrigin = '0 0';
+        svg.style.transform = `scale(${sx}, ${sy})`;
+      });
+      settle = setTimeout(redraw, SETTLE_MS);
+    });
+  });
+  el._sizeObserver.observe(el);
 }

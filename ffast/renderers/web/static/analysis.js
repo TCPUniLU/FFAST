@@ -124,6 +124,13 @@ export function pairSeries(datasets, models) {
   return out;
 }
 
+/** Put a grid cell where its panel sits; a scroll strip is one row high. */
+function placeCell(el, spec) {
+  el.style.gridColumn = `${spec.col + 1} / span ${spec.colspan || 1}`;
+  el.style.gridRow = el.classList.contains('analysis-scrollstrip')
+    ? String(spec.row + 1) : `${spec.row + 1} / span ${spec.rowspan || 1}`;
+}
+
 export class AnalysisManager {
   /**
    * @param {{
@@ -400,20 +407,12 @@ export class AnalysisManager {
   _layoutGrid(t) {
     const grid = t.gridEl;
     const panels = t.spec.panels || [];
-    const widths = t.spec.column_widths, heights = t.spec.row_heights;
-    const maxCol = Math.max(1, widths?.length || 0, ...panels.map((p) => p.col + (p.colspan || 1)));
-    // Set sizes are kept as they are; columns without them share the width
-    // but keep a minimum (--col-min, index.html). Either way the tab
-    // scrolls when they do not fit.
-    grid.style.gridTemplateColumns = widths?.length === maxCol
-      ? sizeTemplate(widths, COLUMN_PX) : `repeat(${maxCol}, minmax(var(--col-min), 1fr))`;
-    grid.style.gridTemplateRows = heights?.length ? sizeTemplate(heights, ROW_PX) : '';
+    this._sizeGrid(t);
 
     const strips = new Map();   // scroll_group → slot
     panels.forEach((spec, index) => {
       const place = (el) => {
-        el.style.gridColumn = `${spec.col + 1} / span ${spec.colspan || 1}`;
-        el.style.gridRow = `${spec.row + 1} / span ${spec.rowspan || 1}`;
+        placeCell(el, spec);
         grid.appendChild(el);
       };
       if (spec.kind === KIND_3D) {
@@ -435,7 +434,6 @@ export class AnalysisManager {
           const el = document.createElement('div');
           el.className = 'analysis-scrollstrip';
           place(el);
-          el.style.gridRow = String(spec.row + 1);
           slot = { el, specs: [], indices: [] };
           strips.set(spec.scroll_group, slot);
           t.slots.push(slot);
@@ -453,6 +451,42 @@ export class AnalysisManager {
     grid.classList.toggle('fill', grid.childElementCount === 1);
     // With several 3D panels, the focused one is outlined (ADR 0056 rule 8).
     grid.classList.toggle('multi3d', t.cells3d.length > 1);
+  }
+
+  /** The grid's column and row sizes, from the tab's spec. Set sizes are
+   * kept as they are; columns without them share the width but keep a
+   * minimum (--col-min, index.html). Either way the tab scrolls when they
+   * do not fit. */
+  _sizeGrid(t) {
+    const panels = t.spec.panels || [];
+    const widths = t.spec.column_widths, heights = t.spec.row_heights;
+    const maxCol = Math.max(1, widths?.length || 0, ...panels.map((p) => p.col + (p.colspan || 1)));
+    t.gridEl.style.gridTemplateColumns = widths?.length === maxCol
+      ? sizeTemplate(widths, COLUMN_PX) : `repeat(${maxCol}, minmax(var(--col-min), 1fr))`;
+    t.gridEl.style.gridTemplateRows = heights?.length ? sizeTemplate(heights, ROW_PX) : '';
+  }
+
+  /**
+   * Edit mode moved or resized panels of tab `spec.name` and changed nothing
+   * else (tab_edit.onlyPlacesChanged): move its cells in place, so the plots
+   * keep drawing and follow their cells instead of being drawn again. The
+   * cards and their handlers know the panels by object, so the new places
+   * are copied onto the panels the tab has.
+   * @returns {ReturnType<AnalysisManager['tab']>} the tab's parts, or null
+   */
+  placeCells(spec) {
+    const t = this._tabs.find((x) => x.spec.name === spec.name);
+    if (!t || t.spec.panels.length !== spec.panels.length) return null;
+    t.spec.panels.forEach((panel, i) => {
+      const { row, col, rowspan, colspan } = spec.panels[i];
+      Object.assign(panel, { row, col, rowspan, colspan });
+    });
+    t.spec.column_widths = spec.column_widths;
+    t.spec.row_heights = spec.row_heights;
+    this._sizeGrid(t);
+    for (const slot of t.slots) placeCell(slot.el, slot.specs[0]);
+    for (const cell of t.cells3d) placeCell(cell.el, cell.spec);
+    return this.tab(t.id);
   }
 
   _buildControls(t) {

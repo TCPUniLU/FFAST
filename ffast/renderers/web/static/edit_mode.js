@@ -19,7 +19,7 @@
 import { askDialog } from './dialogs.js';
 import {
   COLUMN_PX, KIND_ROLES, ROW_PX, addPanel, columnsOf, copyOf, dragTrack, emptyTab,
-  fitWidths, metricsFor, movePanel, new3DPanel, removePanel, replacePanel,
+  fitWidths, metricsFor, movePanel, new3DPanel, onlyPlacesChanged, removePanel, replacePanel,
   resizePanel, rowsOf, setColumns, setPanelStart, setPanelView, sizesOf, toSaved,
 } from './tab_edit.js';
 import { KIND_3D, whyPanelStays } from './tab_rules.js';
@@ -35,6 +35,7 @@ export class TabEditor {
    *   serverTabs: () => object[],          // the server's layout, hidden tabs too
    *   catalog: () => object[],             // METRIC_CATALOG entries
    *   refresh: (o: {show?: string}) => void,   // draw the layout (with the draft)
+   *   place: (draft: object) => boolean,   // move the draft's cells in place; false: refresh
    *   setStatus: (text: string, kind: string) => void,
    *   currentStart: (tabName: string, panel: object) => object,  // a 3D panel's look on screen
    * }} deps
@@ -85,11 +86,14 @@ export class TabEditor {
     this._deps.refresh({ show: draft.name });
   }
 
-  /** Replace the draft and redraw it. */
+  /** Replace the draft and redraw it. Moving or resizing keeps the plots:
+   * their cells move in place. */
   change(next) {
     if (!next || next === this._draft) return;
+    const before = this._draft;
     this._draft = next;
     this._error = '';
+    if (onlyPlacesChanged(before, next) && this._deps.place(next)) return;
     this._deps.refresh({ show: next.name });
   }
 

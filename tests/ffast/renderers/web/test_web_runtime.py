@@ -1953,6 +1953,56 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
                 await browser.close()
 
 
+async def test_web_edit_mode_plots_follow_their_cells_while_dragging(tmp_path):
+    """Step 7 trial: a plot changes size with its cell as a divider is
+    dragged, not in one jump when it is let go, and moving or resizing panels
+    keeps the plots drawn instead of drawing them again."""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            plot = ".tabpanel.active .analysis-panel[data-title='Energy MAE distribution'] .js-plotly-plot"
+            sizes = f"""() => {{ const el = document.querySelector("{plot}");
+                const svg = el.querySelector('.main-svg');
+                return [el.clientWidth, svg.getBoundingClientRect().width, el.dataset.mark || null]; }}"""
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _open_analysis_tab(page, "Basic Errors")
+                await page.wait_for_function(f"() => document.querySelector(\"{plot} .main-svg\")")
+                await page.locator("#tab-edit-btn").click()
+                await page.evaluate(f"() => {{ document.querySelector(\"{plot}\").dataset.mark = 'kept'; }}")
+
+                divider = await page.locator(".tabpanel.active .edit-divider.col").first.bounding_box()
+                await page.mouse.move(divider["x"] + 4, divider["y"] + 100)
+                await page.mouse.down()
+                await page.mouse.move(divider["x"] - 250, divider["y"] + 100, steps=6)
+                # Still dragging: the plot has already followed its cell,
+                # down to the narrowest a column gets.
+                await page.wait_for_function(
+                    f"() => {{ const [cell, drawn] = ({sizes})(); return Math.abs(cell - drawn) < 3; }}")
+                cell, _, _ = await page.evaluate(sizes)
+                assert cell == pytest.approx(400 - 2, abs=4)
+                await page.mouse.up()
+                await page.wait_for_function("() => window.ffastApp._editor.draft.column_widths")
+                assert (await page.evaluate(sizes))[2] == "kept"   # not drawn again
+
+                # Growing a panel over two columns moves cells in place too.
+                corner = page.locator(_CHROME, has_text="Energy MAE distribution").locator(".edit-resize")
+                cb = await corner.bounding_box()
+                gb = await page.locator(".tabpanel.active .analysis-grid").bounding_box()
+                await page.mouse.move(cb["x"] + 4, cb["y"] + 4)
+                await page.mouse.down()
+                await page.mouse.move(gb["x"] + gb["width"] - 40, cb["y"] + 4, steps=6)
+                await page.mouse.up()
+                await page.wait_for_function(
+                    "() => window.ffastApp._editor.draft.panels.find((p) => p.title === 'Energy MAE distribution').colspan === 2")
+                await page.wait_for_function(
+                    f"() => {{ const [cell, drawn] = ({sizes})(); return cell > 700 && Math.abs(cell - drawn) < 3; }}")
+                assert (await page.evaluate(sizes))[2] == "kept"
+            finally:
+                await browser.close()
+
+
 async def test_web_new_tabs_and_the_main_view_rule(tmp_path):
     """ADR 0056 rules 6 and 14. The last linked 3D panel cannot be removed;
     "+" ▸ Empty tab asks the name and columns, then opens the new tab in

@@ -447,6 +447,14 @@ CASES = {
     "te_save_form": (
         "te.toSaved({...TE(), source:'user', replaces:'X', revision:'r', hidden:false, original_changed:false})"),
     "te_copy_of": "te.copyOf(TE(), 'Copy of Mixed').name",
+    "te_only_places_changed": (
+        "[te.onlyPlacesChanged(TE(), {...TE(), column_widths: [2, 1], row_heights: [1, 0.5]}),"
+        " te.onlyPlacesChanged(TE(), te.resizePanel(TE(), 1, 2, 1)),"
+        " te.onlyPlacesChanged(TE(), te.resizePanel(TE(), 0, 2, 1)),"
+        " te.onlyPlacesChanged(TE(), te.movePanel(TE(), 0, 0, 1)),"
+        " te.onlyPlacesChanged(TE(), te.removePanel(TE(), 1)),"
+        " te.onlyPlacesChanged(TE(), {...TE(), name: 'Other'}),"
+        " te.onlyPlacesChanged(TE(), te.replacePanel(TE(), 1, {...TE().panels[1], title: 'Z'}))]"),
     "te_empty_tab": "te.emptyTab('New')",
     "te_empty_tab_fits": "te.emptyTab('New', [1.46, 1.46]).column_widths",
     "te_kinds_offer_metrics_by_shape": (
@@ -1090,6 +1098,15 @@ def test_te_a_divider_changes_only_the_track_before_it(results):
     assert grown == [620, 400, 400]
     assert floored == [400, 400]
     assert row == [300, 80, 300]
+
+
+def test_te_moving_and_resizing_change_only_places(results):
+    """Edit mode then moves the cells in place and the plots keep drawing;
+    a 3D panel that moves is a different independent panel, so not that."""
+    sizes, grow_2d, grow_3d, move_3d, removed, renamed, retitled = results["te_only_places_changed"]
+    assert sizes and grow_2d and grow_3d
+    assert not move_3d
+    assert not (removed or renamed or retitled)
 
 
 def test_te_new_columns_fill_the_window_when_made(results):

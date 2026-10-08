@@ -155,6 +155,7 @@ export class FFastApp {
       serverTabs: () => this._layoutTabs,
       catalog: () => this._metricCatalog,
       refresh: ({ show } = {}) => this._applyLayout(this._layoutTabs, { show }),
+      place: (draft) => this._placeDraft(draft),
       setStatus: (text, kind) => this._setStatus(text, kind),
       currentStart: (tabName, panel) => this._currentStart(tabName, panel),
     });
@@ -242,11 +243,8 @@ export class FFastApp {
     // the new layout drops hands it back to the main view (_retireIndependent).
     this._setActivePanel(null, { keepView: true });
     this._panels3d = new Map();
-    // Hidden tabs stay out of the bar; the tab menu offers them again. A tab
-    // being edited shows its draft.
     const draft = this._editor.draft;
-    const visible = ensureMainView(this._editor.withDraft(this._layoutTabs)
-      .filter((t) => !t.hidden || t === draft));
+    const visible = this._visibleTabs();
     this._analysis.setLayout(visible);
     const oldIndependent = this._independent;
     this._independent = new Map();
@@ -280,6 +278,24 @@ export class FFastApp {
       this._editor.decorate(this._analysis.tab(id), visible);
     }
     this._syncTabButtons();
+  }
+
+  /** The tabs in the bar. Hidden tabs stay out; the tab menu offers them
+   * again. A tab being edited shows its draft. */
+  _visibleTabs() {
+    const draft = this._editor.draft;
+    return ensureMainView(this._editor.withDraft(this._layoutTabs)
+      .filter((t) => !t.hidden || t === draft));
+  }
+
+  /** Edit mode moved or resized panels and changed nothing else: the tab
+   * moves its cells in place, so plots and 3D views keep drawing. False
+   * when the tab is not on screen and must be built. */
+  _placeDraft(draft) {
+    const parts = this._analysis.placeCells(draft);
+    if (!parts) return false;
+    this._editor.decorate(parts, this._visibleTabs());
+    return true;
   }
 
   /** An independent panel in the new layout keeps its view when the old
