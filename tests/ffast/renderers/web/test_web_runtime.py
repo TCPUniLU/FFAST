@@ -1696,6 +1696,42 @@ async def test_web_sub_replots_the_other_plots_of_its_tab(ffast_web_server):
             await browser.close()
 
 
+async def test_web_a_reloaded_page_keeps_sub_and_zoom(ffast_web_server):
+    """A reload brings a tab back as it was: SUB ticked on the same plot,
+    the tab still drawing the full data there, each plot's zoom, and the
+    subset still following the zoom."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    sub = f"{_sub_panel('Energy MAE timeline')} .sub-toggle input"
+    drawn = lambda title, test: f"() => {{ const d = ({_DRAWN})('{title}'); return {test}; }}"
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+            await page.locator(sub).check()
+            await _zoom(page, "Energy MAE timeline", [10, 19.5])
+            await page.wait_for_function(drawn("Forces MAE timeline", "d.points === 10"), timeout=15000)
+
+            await page.reload(wait_until="networkidle")
+            await _open_analysis_tab(page, "Basic Errors")
+            await expect(page.locator(sub)).to_be_checked(timeout=15000)
+            await page.wait_for_function(drawn(
+                "Energy MAE timeline", f"d.zoom === 10 && d.points === 100 && d.datasets === '{dataset_fp}'"),
+                timeout=25000)
+            await page.wait_for_function(drawn("Forces MAE timeline", "d.points === 10"), timeout=15000)
+
+            await _zoom(page, "Energy MAE timeline", [12, 30])
+            await page.wait_for_function(drawn("Forces MAE timeline", "d.points === 19"), timeout=15000)
+        finally:
+            await browser.close()
+
+
 async def test_web_a_subset_opens_looking_like_its_parent(ffast_web_server):
     """A frame subset shown for the first time takes its parent's look, so
     a subset made with SUB is coloured the way its parent was."""

@@ -28,6 +28,7 @@ import { renderPanel, PLOT_KINDS, elementSymbol } from './panels.js';
 import { KIND_3D } from './tab_rules.js';
 import { COLUMN_PX, ROW_PX, sizeTemplate } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
+import { loadTabState, saveTabState } from './layout_state.js';
 
 const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
   + 'Outlined buttons follow the selection in the left list; click one to pin this '
@@ -38,6 +39,17 @@ const CONTROL_PARAM = { energy_shift: 'shifted', smoothing: 'window' };
 
 /** Plot kinds whose view picks out structures, so SUB can make a subset. */
 const SUB_KINDS = new Set(['timeline', 'overlay_timeline', 'scatter', 'density']);
+
+/** A panel's name in a tab's kept state (a reload): what it is and where,
+ * so an edit that changes or moves it does not hand it another's zoom. */
+function panelKey(spec) {
+  return `${spec.kind}|${spec.title || ''}|${spec.row ?? ''},${spec.col ?? ''}`;
+}
+
+/** The data a plot draws; a kept zoom applies only to the same data. */
+function seriesKey(series) {
+  return (series || []).map((s) => `${s.datasetFp}|${s.modelFp || ''}`).join(' ');
+}
 
 /** Wait this long after the last zoom or pan before moving the subset. */
 const SUB_DELAY_MS = 250;
@@ -179,10 +191,12 @@ export class AnalysisManager {
     for (const t of this._tabs) {
       // Drop anything that has since been deleted; an empty list falls back to
       // following the rail rather than showing nothing.
+      const before = `${t.selectedDatasets?.length}|${t.selectedModels?.length}`;
       if (t.selectedDatasets)
         t.selectedDatasets = t.selectedDatasets.filter((fp) => this._available.datasets.has(fp));
       if (t.selectedModels)
         t.selectedModels = t.selectedModels.filter((fp) => this._available.models.has(fp));
+      if (`${t.selectedDatasets?.length}|${t.selectedModels?.length}` !== before) this._keep(t);
       if (t.seriesSelectorEl) this._renderSeriesSelector(t);
     }
     // A subset following a plot's zoom is announced again on every zoom;
@@ -394,10 +408,71 @@ export class AnalysisManager {
       seriesSelectorEl: null,
       // Plots with SUB ticked: panel index → the series it made subsets of.
       subbing: new Map(),
+      // Zoomed plots: panelKey → {x, y, series}, kept for a reload.
+      zoom: {},
     };
+    this._restoreTab(t);
     this._tabs.push(t);
     this._layoutGrid(t);
     this._buildControls(t);
+  }
+
+  /** Bring a tab back as it was being explored before a reload (or a layout
+   * rebuild): its own datasets and predictions, the plot with SUB ticked —
+   * which goes on following the zoom, without moving the main view — and
+   * each plot's zoom (applied as the plots are drawn, `_applyZoom`). */
+  _restoreTab(t) {
+    const kept = loadTabState(t.spec.name);
+    if (!kept) return;
+    const known = (list, have) => {
+      const left = (list || []).filter((fp) => have.has(fp));
+      return left.length ? left : null;
+    };
+    t.selectedDatasets = known(kept.datasets, this._available.datasets);
+    t.selectedModels = known(kept.models, this._available.models);
+    t.zoom = { ...(kept.zoom || {}) };
+    const sub = t.spec.panels.findIndex((sp) => panelKey(sp) === kept.sub);
+    if (sub >= 0 && t.selectedDatasets) t.subbing.set(sub, []);
+  }
+
+  /** Keep how a tab is being explored, for a reload (`_restoreTab`). */
+  _keep(t) {
+    const driver = this._subDriver(t);
+    saveTabState(t.spec.name, {
+      datasets: t.selectedDatasets, models: t.selectedModels,
+      sub: driver == null ? null : panelKey(t.spec.panels[driver]),
+      zoom: t.zoom,
+    });
+  }
+
+  /** Note a plot's zoom, or that it shows everything, for a reload. */
+  _noteZoom(t, spec, card) {
+    const layout = card.body._fullLayout;
+    if (!layout?.xaxis) return;
+    const key = panelKey(spec);
+    const before = JSON.stringify(t.zoom[key] ?? null);
+    const range = (axis) => (!axis || axis.autorange ? null : axis.range.map(Number));
+    const x = range(layout.xaxis), y = range(layout.yaxis);
+    if (!x && !y) delete t.zoom[key];
+    else t.zoom[key] = { x, y, series: seriesKey(card.series) };
+    if (JSON.stringify(t.zoom[key] ?? null) !== before) this._keep(t);
+  }
+
+  /** A plot just drawn takes the zoom it had on the same data; a zoom kept
+   * for other data is dropped. */
+  async _applyZoom(t, spec, card) {
+    const key = panelKey(spec);
+    const zoom = t.zoom[key];
+    if (!zoom) return;
+    if (zoom.series !== seriesKey(card.series)) {
+      delete t.zoom[key];
+      this._keep(t);
+      return;
+    }
+    const update = {};
+    if (zoom.x) update['xaxis.range'] = zoom.x;
+    if (zoom.y) update['yaxis.range'] = zoom.y;
+    await globalThis.Plotly.relayout(card.body, update);
   }
 
   /**
@@ -683,6 +758,7 @@ export class AnalysisManager {
     // Datasets cannot all be off — a panel with no dataset has nothing to say.
     if (which === 'datasets' && !list.length) list = [...this._tabDatasets(t)];
     t[key] = list;
+    this._keep(t);
     this._renderSeriesSelector(t);
     this._renderTab(t);
   }
@@ -814,6 +890,11 @@ export class AnalysisManager {
     renderPanel(card.body, spec, series, ctx);
     card.series = series;
     card.el.dataset.datasets = series.map((x) => x.datasetFp).join(' ');
+    if (PLOT_KINDS.has(spec.kind)) {
+      // Before SUB is wired: it sends the zoom this plot shows.
+      await this._applyZoom(t, spec, card);
+      if (token !== this._renderToken || seq !== card.seq) return;   // superseded
+    }
     this._wirePanelInteractions(t, spec, card);
     this._buildPanelParams(t, spec, card);
   }
@@ -966,6 +1047,7 @@ export class AnalysisManager {
             this._fetchAndRenderPanel(t, spec, card, this._renderToken);
           else this._sendSubViews(t, spec, card);
         }
+        this._keep(t);
         if (this._activeTab() === t) this._redrawIfChanged(t, before);
       });
       toggle.append(cb, document.createTextNode('Sub'));
@@ -974,8 +1056,7 @@ export class AnalysisManager {
     }
     card.subToggle.checked = t.subbing.has(key);
 
-    const el = card.body;
-    if (el.removeAllListeners) el.removeAllListeners('plotly_relayout');
+    const el = card.body;   // its relayout listeners were cleared by the caller
     el.on('plotly_relayout', () => {
       if (!t.subbing.has(key)) return;
       clearTimeout(card.subTimer);
@@ -1043,6 +1124,8 @@ export class AnalysisManager {
   _wirePanelInteractions(t, spec, card) {
     const el = card.body;
     if (!PLOT_KINDS.has(spec.kind) || typeof el.on !== 'function') return;
+    if (el.removeAllListeners) el.removeAllListeners('plotly_relayout');
+    el.on('plotly_relayout', () => this._noteZoom(t, spec, card));
     if (SUB_KINDS.has(spec.kind)) this._wireSub(t, spec, card);
     if (!el._subInfo || !el._subInfo.perFrame) return;   // only per-frame kinds
 

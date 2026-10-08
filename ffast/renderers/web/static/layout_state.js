@@ -52,3 +52,32 @@ export function saveMainView(datasetFp, modelFp) {
     // Blocked storage: a reload shows the first dataset, as with no memory.
   }
 }
+
+// How each tab is being explored — its own datasets and predictions, the
+// plot with SUB ticked, each plot's zoom — so a reload of this browser tab
+// brings it back. sessionStorage too, by tab name; never in a tab file.
+const TABS_KEY = 'ffast.tabs';
+
+function loadTabs() {
+  try {
+    const v = JSON.parse(window.sessionStorage.getItem(TABS_KEY) || '{}');
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+
+/** @returns {{datasets?: string[]|null, models?: string[]|null, sub?: string|null,
+ *   zoom?: Object<string, {x: number[], y: number[]|null, series: string}>}|null} */
+export function loadTabState(name) {
+  const v = loadTabs()[name];
+  return v && typeof v === 'object' ? v : null;
+}
+
+export function saveTabState(name, state) {
+  try {
+    window.sessionStorage.setItem(TABS_KEY, JSON.stringify({ ...loadTabs(), [name]: state }));
+  } catch {
+    // Blocked storage: a reload starts the tab afresh.
+  }
+}
