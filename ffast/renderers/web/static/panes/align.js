@@ -81,6 +81,11 @@ export function createAlignPane(sidebarEl, callbacks) {
   _syncVisibility();
 
   return {
+    kabschStatus: new Map(),
+    heavyOnlyStatus: new Map(),
+    atomAlignStatus: new Map(),
+    idxInputStatus: new Map(),
+    indicesStatus: new Map(),
     /** Fill the reference-atom box from the Align pick tool (scientific ids). */
     setPickedIndices(ids) {
       indices = (ids || []).slice(0, 3);
@@ -100,6 +105,29 @@ export function createAlignPane(sidebarEl, callbacks) {
     /** Commit the current 3-atom reference set (called when the tool has 3). */
     applyAtomAlign() {
       if (atomAlign) callbacks.onAtomAlign(atomAlign, indices);
+    },
+
+    saveState(fp) {
+      this.kabschStatus.set(fp, kabschInput.checked);
+      this.heavyOnlyStatus.set(fp, heavyInput.checked);
+      this.atomAlignStatus.set(fp, atomAlignInput.checked);
+      this.idxInputStatus.set(fp, idxInput.value);
+      this.indicesStatus.set(fp, indices);
+    },
+
+    loadState(fp) {
+      kabschInput.checked = this.kabschStatus.get(fp) ?? false;
+      heavyInput.checked = this.heavyOnlyStatus.get(fp) ?? true;
+      atomAlignInput.checked = this.atomAlignStatus.get(fp) ?? false;
+      idxInput.value = this.idxInputStatus.get(fp) || '';
+
+      kabsch = kabschInput.checked;
+      heavyOnly = heavyInput.checked;
+      atomAlign = atomAlignInput.checked;
+      indices = this.indicesStatus.get(fp) || [];
+
+      _syncVisibility();
+      _syncHint();
     },
   };
 }
