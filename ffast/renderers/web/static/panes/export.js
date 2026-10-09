@@ -32,10 +32,19 @@ export function createExportPane(sidebarEl, callbacks) {
   }).title = 'Download a PNG with a transparent background';
 
   return {
+    bgStatus: new Map(),
     /** Reflect the live viewport background into the picker (keeps parity with
      * the Camera pane's background control). */
     setBackground(hex) {
       if (hex) bg.value = hex;
+    },
+
+    saveState(fp) {
+      this.bgStatus.set(fp, bg.value);
+    },
+
+    loadState(fp) {
+      bg.value = this.bgStatus.get(fp) || '#000000';
     },
   };
 }

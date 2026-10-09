@@ -1623,6 +1623,7 @@ export class FFastApp {
     this._panes.display.saveState(fp);
     this._panes.bonds.saveState(fp);
     this._panes.extract.saveState(fp);
+    this._panes.export.saveState(fp);
   }
 
   /** A dataset's or panel's force-arrow extras; today's defaults for one not
@@ -1661,6 +1662,7 @@ export class FFastApp {
     this._panes.display.loadState(fp);
     this._panes.bonds.loadState(fp);
     this._panes.extract.loadState(fp);
+    this._panes.export.loadState(fp);
   }
 
 
