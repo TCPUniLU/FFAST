@@ -39,6 +39,7 @@ export function createColorByPane(sidebarEl, callbacks) {
 
   const coloringSelect = selectRow(body, 'Coloring', ['Elements', 'Displacement'], 'Elements', (label) => {
     currentLabel = label;
+    missingNote.hidden = true;
     _syncVisibility();
     callbacks.onSourceChange(labelToSource.get(label) || 'element');
     _rebuildParamControls();
@@ -55,6 +56,12 @@ export function createColorByPane(sidebarEl, callbacks) {
   const paramContainer = document.createElement('div');
   paramContainer.className = 'metric-params';
   body.appendChild(paramContainer);
+
+  // Said when the metric the atoms were coloured by has gone (ADR 0057 rule 15).
+  const missingNote = document.createElement('div');
+  missingNote.className = 'colorby-missing';
+  missingNote.hidden = true;
+  body.appendChild(missingNote);
 
   // ── colourbar: static gradient + vmin/vmax + label ──────────────────────
   const colorbar = document.createElement('div');
@@ -138,6 +145,7 @@ export function createColorByPane(sidebarEl, callbacks) {
     /** @param {Array<{id:string,label?:string,shape:string,parameters?:object}>} entries */
     setMetricCatalog(entries) {
       metricsById = new Map(entries.map((e) => [e.id, e]));
+      const wasMetric = labelToMetricId.get(currentLabel);
       // Rebuilt from the catalog each time, so a metric that was renamed or
       // deleted (user metrics change while the app runs, ADR 0057) leaves the list.
       for (const label of labelToMetricId.keys()) labelToSource.delete(label);
@@ -158,7 +166,14 @@ export function createColorByPane(sidebarEl, callbacks) {
       // Keep the choice if it is still there; otherwise the select has already
       // fallen back to its first option, so say so.
       if ([...coloringSelect.options].some((o) => o.value === currentLabel)) coloringSelect.value = currentLabel;
-      else { coloringSelect.value = currentLabel = 'Elements'; _syncVisibility(); }
+      else {
+        coloringSelect.value = currentLabel = 'Elements';
+        _syncVisibility();
+        if (wasMetric) {
+          missingNote.textContent = `${wasMetric} is not on this server; showing element colours.`;
+          missingNote.hidden = false;
+        }
+      }
       _rebuildParamControls();
     },
 
@@ -169,6 +184,7 @@ export function createColorByPane(sidebarEl, callbacks) {
       const label = [...labelToMetricId].find(([, m]) => m === id)?.[0];
       if (!label) return false;
       coloringSelect.value = currentLabel = label;
+      missingNote.hidden = true;
       _syncVisibility();
       callbacks.onSourceChange(`metric:${id}`);
       _rebuildParamControls();

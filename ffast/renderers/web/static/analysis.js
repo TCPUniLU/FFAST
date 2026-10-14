@@ -230,6 +230,13 @@ export class AnalysisManager {
     (tabs || []).forEach((spec, i) => this._buildTab(spec, i));
   }
 
+  /** True when a panel's metric could not be resolved by the server (a
+   * transform of a metric it lacks): the layout must come again once the
+   * metric does (ADR 0057 rule 15). */
+  hasUnresolvedPanels() {
+    return this._tabs.some((t) => (t.spec.panels || []).some((p) => (p.unresolved || []).length));
+  }
+
   /** @returns {Array<{id: string, name: string}>} the tabs, in bar order */
   get tabList() {
     return this._tabs.map((t) => ({ id: t.id, name: t.spec.name }));
@@ -847,6 +854,23 @@ export class AnalysisManager {
     for (const [role, val] of Object.entries(spec.metrics || {})) {
       if (Array.isArray(val)) val.forEach((id, k) => jobs.push({ role, id, k }));
       else jobs.push({ role, id: val });
+    }
+    // A metric this server does not have: say so here, where it is used
+    // (ADR 0057 rule 15), instead of leaving an empty plot.
+    const missing = [...new Set([
+      ...(spec.unresolved || []),
+      ...jobs.flatMap((j) => (this._catalog.has(j.id) ? [] : [j.id])),
+    ])];
+    if (missing.length) {
+      card.body.className = '';
+      const msg = document.createElement('div');
+      msg.className = 'panel-msg';
+      msg.textContent = `${missing.length === 1 ? 'Metric' : 'Metrics'} ${missing.join(', ')} ` +
+        `${missing.length === 1 ? 'is' : 'are'} not on this server.`;
+      card.body.replaceChildren(msg);
+      card.params.innerHTML = '';
+      card.series = null;
+      return;
     }
     const perSeries = await Promise.all(refs.map((ref) =>
       Promise.all(jobs.map((j) => this._metrics.request(j.id, {

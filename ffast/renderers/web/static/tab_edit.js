@@ -345,7 +345,7 @@ export function toSaved(tab) {
     controls: [...(tab.controls || [])],
     column_widths: tab.column_widths ?? null,
     row_heights: tab.row_heights ?? null,
-    panels: (tab.panels || []).map(({ metric_refs, metrics, ...panel }) => ({
+    panels: (tab.panels || []).map(({ metric_refs, metrics, unresolved, ...panel }) => ({
       ...panel,
       metrics: metric_refs ?? Object.fromEntries(Object.entries(metrics || {}).map(
         ([role, id]) => [role, Array.isArray(id) ? id.map((m) => ({ metric: m })) : { metric: id }])),

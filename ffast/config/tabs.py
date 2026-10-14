@@ -78,11 +78,25 @@ def _panel_layout(panel, *, registry=None) -> dict:
     """
     d = panel.model_dump()
     resolved: dict = {}
+    unresolved: list[str] = []
+
+    def resolve(ref):
+        # A ref the compiler cannot resolve (its metric is not on this server)
+        # must not take the tab down: the panel keeps the raw id and the
+        # browser says which metric is missing (ADR 0057 rule 15).
+        try:
+            return resolve_ref(ref, registry=registry)
+        except Exception:
+            if ref.metric not in unresolved:
+                unresolved.append(ref.metric)
+            return ref.metric
+
     for role, val in panel.metrics.items():
         if isinstance(val, list):
-            resolved[role] = [resolve_ref(r, registry=registry) for r in val]
+            resolved[role] = [resolve(r) for r in val]
         else:
-            resolved[role] = resolve_ref(val, registry=registry)
+            resolved[role] = resolve(val)
+    d["unresolved"] = unresolved
     # The authoring form too, so a tab built or edited in the browser saves
     # what a person would write (ADR 0056), not the compiled ids.
     d["metric_refs"] = d["metrics"]

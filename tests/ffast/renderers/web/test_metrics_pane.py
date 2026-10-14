@@ -14,6 +14,7 @@ from ffast.protocol.rpc import pack
 
 from .test_web_runtime import (
     _connect_headless_client,
+    _open_analysis_tab,
     _open_app,
     _preload_dataset_and_prediction,
     _spawn_server,
@@ -293,3 +294,26 @@ async def test_a_session_carries_its_formulas_to_another_server(tmp_path):
             assert (metrics_c / "user.double_e.2.toml").exists()
         finally:
             await ws.close()
+
+
+async def test_a_panel_says_which_metric_is_missing(tmp_path):
+    """ADR 0057 rule 15: a tab file naming a metric this server lacks still shows,
+    and its panel says what is missing instead of staying empty."""
+    tabs_dir = tmp_path / "tabs"
+    tabs_dir.mkdir(parents=True)
+    (tabs_dir / "gone.toml").write_text(
+        '[[tabs]]\nname = "Gone"\n[[tabs.panels]]\nkind = "table"\nrow = 0\ncol = 0\n'
+        'title = "G"\n[tabs.panels.metrics.value]\nmetric = "mine.gone"\n')
+    cm, _ = await _server(tmp_path)
+    async with cm as (ws_port, web_port):
+        await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 900})
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _open_analysis_tab(page, "Gone")
+                await expect(page.locator(".tabpanel.active .grid-slot .panel-msg")).to_have_text(
+                    "Metric mine.gone is not on this server.")
+            finally:
+                await browser.close()

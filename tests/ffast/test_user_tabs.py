@@ -228,3 +228,17 @@ def test_making_the_last_linked_panel_independent_is_refused(store):
     with pytest.raises(TabError, match="At least one tab must show the main view"):
         _sources(store).save({"name": "3D", "panels": [{**VIEW, "view": "independent"}]},
                              previous_name="3D")
+
+
+# ── a missing metric is reported where it was used (ADR 0057 rule 15) ───────
+
+def test_a_panel_with_a_missing_metric_does_not_take_its_tab_down():
+    from ffast.config.tabs import tab_layout
+    gone = {"kind": "timeline", "row": 0, "col": 1, "title": "Gone",
+            "metrics": {"y": {"metric": "mine.not_here", "transform": "smooth"}}}
+    layout = tab_layout(_tab("Mixed", SMOOTH, gone))
+    good, broken = layout["panels"]
+    assert good["unresolved"] == []
+    assert good["metrics"]["y"] == "ffast.gyradius__smooth"
+    assert broken["unresolved"] == ["mine.not_here"]
+    assert broken["metrics"]["y"] == "mine.not_here"

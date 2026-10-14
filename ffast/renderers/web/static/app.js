@@ -2102,6 +2102,7 @@ export class FFastApp {
    * coloured by a metric asks for its colours again. */
   _onMetricsUpdated() {
     this._conn?.send(OUT.REQUEST_METRIC_CATALOG, {});
+    if (this._analysis?.hasUnresolvedPanels()) this._conn?.send(OUT.REQUEST_TAB_LAYOUT, {});
     this._metricOps.requestList();
     this._panes.colorBy.recolour();
   }
