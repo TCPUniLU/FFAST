@@ -482,7 +482,7 @@ the file is listed as "Hidden"; duplicate it under a new id, or delete it.
 User metrics belong to the server: the desktop client and `ffast-cli` do not load
 them, so a command gives the same numbers on every machine. Export a metric to
 the project first if a script needs it. A saved session carries the formulas of
-the user metrics its tabs and views use, and loading it on a server that lacks
+all your user metrics, and loading it on a server that lacks
 them asks "Add them?". If the server has the same id with a different formula,
 the session's one is added as `<id>.2` and the server's is left alone.
 

@@ -239,13 +239,12 @@ metrics (rule 11).
   has no plot (it shows only the main view), or there is none.
 - **Sessions store no use of a metric.** A session is `info.json` and the
   array cache (datasets and predictions); views, tabs and colourings are not in
-  it. So "the user metrics it uses" is taken to be the ones something outside
-  the metrics uses *now* (a tab's panel, an open view's colouring — the lookup
-  behind delete-while-used, rule 7) plus the user metrics those are built on,
-  written to `user_metrics.toml` in the session folder. Rule 16's "everything
-  that used `<id>` uses `<id>.2`" has nothing stored to re-point today; the
-  session's formulas that build on a renamed one are re-pointed. If sessions
-  ever store views or tabs, they should be re-pointed there too.
+  it, so "the user metrics it uses" has no stored answer. Decided 2026-10-14:
+  a saved session carries **every** user metric that compiled, in
+  `user_metrics.toml` in the session folder. Rule 16's "everything that used
+  `<id>` uses `<id>.2`" has nothing stored to re-point today; the session's
+  formulas that build on a renamed one are re-pointed. If sessions ever store
+  views or tabs, narrow this to the metrics they use and re-point there too.
 - **The Colour By list is rebuilt from the catalog** each time, not appended
   to: a renamed or deleted user metric used to stay in it.
 - **A transform of a user metric in a tab** (a density of it, say) still needs

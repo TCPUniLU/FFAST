@@ -281,16 +281,15 @@ def _persistence(env):
     return SessionPersistence(env)
 
 
-def test_saving_a_session_writes_the_formulas_it_uses(env, tmp_path):
+def test_saving_a_session_writes_the_user_metrics(env, tmp_path):
     _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
-    env.user_metrics.usage_providers.append(lambda mid: ["tab Mine, panel 1"])
     session = tmp_path / "session"
     _persistence(env).save(str(session))
     assert (session / "info.json").exists()
     assert [(c.id, c.expr) for c in read_formulas(session / SESSION_FILE)] == [("t57.double", "2 * f")]
 
 
-def test_a_session_that_uses_no_user_metric_has_no_formulas_file(env, tmp_path):
+def test_a_session_saved_with_no_user_metrics_has_no_formulas_file(env, tmp_path):
     session = tmp_path / "session"
     session.mkdir()
     (session / SESSION_FILE).write_text("# left from an earlier save\n")

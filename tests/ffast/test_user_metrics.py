@@ -288,16 +288,14 @@ def _cfg(id, expr="2 * e", **vars_):
     return ExprMetricConfig(id=id, expr=expr, vars=vars_ or {"e": "base.ref_e"})
 
 
-def test_a_session_carries_only_the_metrics_something_uses_and_what_they_build_on(um):
+def test_a_session_carries_every_user_metric_that_compiled(um, tmp_path):
     um.save(metric(id="user.base", expr="e"))
     um.save({"id": "user.top", "expr": "b * 2", "vars": {"b": "user.base"}})
-    um.save(metric(id="user.idle", expr="e + 1"))
-    um.usage_providers.append(lambda mid: ["tab Mine, panel 1"] if mid == "user.top" else [])
+    UserMetricStore(tmp_path / "metrics").write(ExprMetricConfig(id="user.hidden", expr="e", vars={"e": "base.ref_e"}))
     assert [c.id for c in um.session_formulas()] == ["user.base", "user.top"]
 
 
-def test_a_session_with_nothing_in_use_carries_nothing(um):
-    um.save(metric())
+def test_a_server_without_user_metrics_gives_a_session_nothing(um):
     assert um.session_formulas() == []
 
 

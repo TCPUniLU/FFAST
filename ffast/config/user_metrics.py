@@ -394,21 +394,11 @@ class UserMetrics:
 
     # ── sessions (rules 15, 16) ─────────────────────────────────────────────
     def session_formulas(self) -> list[ExprMetricConfig]:
-        """The formulas a saved session carries: the user metrics something
-        outside the metrics uses (a tab's panel, a view's colouring — what
-        refuses a delete, rule 7), and the user metrics those are built on."""
-        todo = [i for i, e in self._entries.items()
-                if e.status == "ok" and any(p(i) for p in self.usage_providers)]
-        found: set[str] = set()
-        while todo:
-            mid = todo.pop()
-            if mid in found:
-                continue
-            found.add(mid)
-            fn = self.registry.get(mid)[1]
-            todo += [r for r in getattr(fn, "var_refs", {}).values()
-                     if r in self._entries and self._entries[r].status == "ok"]
-        return [self._entries[i].cfg for i in sorted(found)]
+        """The formulas a saved session carries: every user metric that
+        compiled, so the session opens the same on another server. (A session
+        stores no use of a metric — no views or tabs — so there is nothing
+        narrower to carry; see the ADR's "Found while building".)"""
+        return [e.cfg for _i, e in sorted(self._entries.items()) if e.status == "ok"]
 
     @_locked
     def plan_session(self, formulas: list[ExprMetricConfig]) -> SessionPlan:
