@@ -378,3 +378,55 @@ def test_a_clash_is_offered_and_added_as_dot_2(env, tmp_path):
 
 def test_adding_session_metrics_is_controlling_only():
     assert control.ADD_SESSION_METRICS in control.MUTATING_CLIENT_EVENTS
+
+
+# ── "Used by" stays current (rule 7) ────────────────────────────────────────
+class _ColourView:
+    """A view whose colouring a command changes."""
+    def __init__(self):
+        self.parameters = {"ffast.atom_color": {"source": "element"}}
+        self.state = self
+
+    def apply_command(self, cmd):
+        from ffast.visualization.view import CommandResult
+        self.parameters = {"ffast.atom_color": {"source": cmd.value}}
+        return CommandResult(success=True, new_version=1)
+
+
+def _dispatch_with_view(env, event, kwargs):
+    broadcasts = []
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue(), broadcast=broadcasts.append)
+        s.views["v"] = _ColourView()
+        await s.dispatch(event, [], kwargs)
+
+    asyncio.run(scenario())
+    return [unpack(b) for b in broadcasts]
+
+
+def test_changing_a_colouring_sends_the_list_again(env):
+    set_colour = {"type": "SET_PARAMETER", "view_id": "v", "view_version": 0,
+                  "stage_id": "ffast.atom_color", "parameter": "source", "value": "metric:t57.double"}
+    sent = _dispatch_with_view(env, control.VIEW_COMMAND, set_colour)
+    assert [e for e, _, _ in sent] == [control.USER_METRICS]
+    same = _dispatch_with_view(env, control.VIEW_COMMAND, {**set_colour, "value": "element"})
+    assert same == []   # the source did not change
+
+
+def test_closing_a_view_sends_the_list_again(env):
+    sent = _dispatch_with_view(env, control.CLOSE_VIEW, {"view_id": "v"})
+    assert [e for e, _, _ in sent] == [control.USER_METRICS]
+
+
+def test_a_tab_change_sends_the_list_again(env):
+    class _Sources:
+        def layout(self):
+            return []
+
+        def set_hidden(self, name, hidden):
+            return None
+
+    env.tab_sources = _Sources()
+    _, everyone = _dispatch(env, control.HIDE_TAB, {"name": "Basic", "hidden": True})
+    assert [e for e, _, _ in everyone] == [control.TAB_LAYOUT, control.USER_METRICS]

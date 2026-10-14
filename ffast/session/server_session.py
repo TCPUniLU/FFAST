@@ -948,6 +948,17 @@ class ServerSession:
     async def _on_close_view(self, view_id, **kwargs) -> None:
         self.views.pop(view_id, None)
         logger.info("CLOSE_VIEW: view_id=%r", view_id)
+        self._tell_metric_users()
+
+    def _colour_source(self, view) -> str | None:
+        return view.state.parameters.get("ffast.atom_color", {}).get("source")
+
+    def _tell_metric_users(self) -> None:
+        """Every window's Metrics pane lists who uses each metric; send it again
+        after something that can change the answer (a colouring, a tab), so
+        Delete is neither blocked nor allowed on old news (ADR 0057 rule 7)."""
+        if getattr(self.env, "user_metrics", None) is not None:
+            self._broadcast(self._user_metrics_message())
 
     async def _on_view_command(self, **kwargs) -> None:
         """Apply a ViewCommand and send COMMAND_RESULT plus an optional SCENE_PATCH."""
@@ -968,7 +979,10 @@ class ServerSession:
             logger.warning("VIEW_COMMAND for unknown view_id=%r", cmd.view_id)
             return
 
+        before = self._colour_source(view)
         result = view.apply_command(cmd)
+        if self._colour_source(view) != before:
+            self._tell_metric_users()
 
         # Rebuild scene components that changed. build_scene is synchronous and
         # may block while the worker-process executor communicates with its
@@ -1254,6 +1268,7 @@ class ServerSession:
         if error is None:
             logger.info("Tab %s: %r; sending the layout to every window", action, name)
             self._broadcast(self._tab_layout_message())
+            self._tell_metric_users()
 
     async def _on_export_tab(self, name, **kwargs) -> None:
         from ffast.config.user_tabs import TabError
