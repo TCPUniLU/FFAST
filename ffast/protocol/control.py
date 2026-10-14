@@ -58,6 +58,9 @@ REQUEST_METRIC_INPUTS = "REQUEST_METRIC_INPUTS"
 CHECK_METRIC = "CHECK_METRIC"
 TRY_METRIC = "TRY_METRIC"
 CANCEL_TRY_METRIC = "CANCEL_TRY_METRIC"
+# Answer "Add them?" after a session load offered the user metrics it carries
+# that this server lacks (rule 15).
+ADD_SESSION_METRICS = "ADD_SESSION_METRICS"
 
 CLIENT_TO_SERVER = frozenset(
     {
@@ -70,6 +73,7 @@ CLIENT_TO_SERVER = frozenset(
         SAVE_TAB, DELETE_TAB, HIDE_TAB, EXPORT_TAB,
         REQUEST_USER_METRICS, SAVE_USER_METRIC, DELETE_USER_METRIC, EXPORT_USER_METRIC,
         REQUEST_METRIC_INPUTS, CHECK_METRIC, TRY_METRIC, CANCEL_TRY_METRIC,
+        ADD_SESSION_METRICS,
     }
 )
 
@@ -83,6 +87,7 @@ MUTATING_CLIENT_EVENTS = frozenset(
         LOAD_DATASET, LOAD_MODEL, DELETE_OBJECT, CREATE_SUBSET, DECLARE_SUBSET,
         FREEZE_SUBSET, LOAD_PREDICTION, VIEW_COMMAND, SAVE_SESSION, LOAD_SESSION, EXPORT_SUBSET,
         SAVE_TAB, DELETE_TAB, HIDE_TAB, SAVE_USER_METRIC, DELETE_USER_METRIC,
+        ADD_SESSION_METRICS,
     }
 )
 
@@ -160,6 +165,11 @@ METRIC_INPUTS = "METRIC_INPUTS"
 # {try_id, ok, error, cancelled, shape, count, bad_count, min, mean, max,
 # bad_frames, histogram}; while it runs the window gets TASK_PROGRESS
 # ([try_id], {message, progress}). Both to the window that asked only.
+# Sent after SESSION_LOADED, to the window that loaded, when the session carries
+# user metrics the server lacks (or has under another formula): {offer_id,
+# metrics: [{id, label, expr, clash_with}]}. The window asks "Add them?" and
+# answers with ADD_SESSION_METRICS {offer_id}; No sends nothing.
+SESSION_METRICS = "SESSION_METRICS"
 METRIC_CHECKED = "METRIC_CHECKED"
 METRIC_TRIED = "METRIC_TRIED"
 # Reply to DECLARE_SUBSET, to the window that sent it: {fingerprint,

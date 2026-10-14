@@ -23,7 +23,9 @@ import { Rail } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
+import { metricPanel, plotTarget, toSaved } from './tab_edit.js';
 import { MetricOps } from './metric_ops.js';
+import { sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
 import { askDialog, textDialog } from './dialogs.js';
 import { TabEditor } from './edit_mode.js';
@@ -820,6 +822,8 @@ export class FFastApp {
       ops: this._metricOps,
       getContext: () => ({ datasetFp: this._currentDatasetFp, modelFp: this._currentModelFp }),
       onGoToFrame: (frame) => this._setFrame(frame),
+      onColourAtoms: (id) => this._colourAtomsBy(id),
+      onPlot: (id) => this._plotMetric(id),
     });
 
     const camera = createCameraPane(sidebarEl, {
@@ -1246,6 +1250,7 @@ export class FFastApp {
       // completion (ADR 0050).
       conn.on(IN.SESSION_SAVED,  (kw) => this._sessionOps.onSessionResult('save', kw));
       conn.on(IN.SESSION_LOADED, (kw) => this._sessionOps.onSessionResult('load', kw));
+      conn.on(IN.SESSION_METRICS, (kw) => this._offerSessionMetrics(kw));
 
       await conn.connect();
 
@@ -2058,6 +2063,41 @@ export class FFastApp {
 
   /** Push the current dataset/prediction selection into the analysis manager
    * so its active tab refetches against it (metric channel scope). */
+  /** A loaded session carries user metrics this server lacks: ask once. No
+   * sends nothing, so the session behaves as if it had carried nothing. */
+  async _offerSessionMetrics({ offer_id, metrics }) {
+    const answer = await askDialog({
+      ...sessionMetricsQuestion(metrics || []), buttons: ['No', 'Add them'] });
+    if (answer !== 'Add them') return;
+    const r = await this._metricOps.addSessionMetrics(offer_id);
+    this._setStatus(r.ok ? 'Added the session\'s metrics' : (r.error || 'Could not add the metrics'),
+      r.ok ? 'connected' : 'error');
+  }
+
+  /** "Colour atoms by this" (ADR 0057 rule 13): the main view's colouring. */
+  _colourAtomsBy(id) {
+    if (!this._currentDatasetFp) { this._setStatus('Select a dataset to colour', 'error'); return; }
+    const why = this._needsControl();
+    if (why) { this._setStatus(why, 'error'); return; }
+    if (!this._panes.colorBy.chooseMetric(id))
+      this._setStatus(`${id} has no value per atom here`, 'error');
+  }
+
+  /** "Plot it" (rule 13): a panel for a per-structure metric, in the tab on
+   * screen or in the "My metrics" tab; saved like any tab edit. */
+  async _plotMetric(id) {
+    const why = this._whyNoEdit();
+    if (why) { this._setStatus(why, 'error'); return; }
+    const metric = this._metricCatalog.find((m) => m.id === id);
+    if (!metric) return;
+    const current = this._layoutTabs.find((t) => t.name === this._analysis.tab(this._activeTab)?.name);
+    const { tab, previous } = plotTarget(current, this._layoutTabs, metricPanel(metric));
+    this._pendingShow = tab.name;      // the layout that follows the save shows it
+    const r = await this._tabOps.save(toSaved(tab), previous);
+    if (!r.ok) this._pendingShow = null;
+    this._reportTab(r);
+  }
+
   /** A user metric was added, changed or removed (ADR 0057). The catalog and
    * the list come again; the plots re-fetch when the catalog lands; a view
    * coloured by a metric asks for its colours again. */

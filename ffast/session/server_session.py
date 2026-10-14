@@ -149,6 +149,8 @@ class ServerSession:
         # Running Tries of this connection (ADR 0057 rule 12): try_id → (stop
         # flag, task). The task is held here so it is not garbage-collected.
         self._tries: dict = {}
+        # Offers made after a session load, waiting for "Add them?" (rule 15)
+        self._session_offers: dict = {}
 
         # event → (handler, ordered arg-name list, request model). Built once;
         # the table IS the documented RPC surface. "?name" marks an optional
@@ -165,7 +167,7 @@ class ServerSession:
             RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
-            CancelTryMetricRequest,
+            CancelTryMetricRequest, AddSessionMetricsRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -201,6 +203,7 @@ class ServerSession:
             control.CHECK_METRIC:               _Route(self._on_check_metric, ["metric", "?check_id"], CheckMetricRequest),
             control.TRY_METRIC:                 _Route(self._on_try_metric, ["metric", "try_id", "?dataset_fp", "?model_fp"], TryMetricRequest),
             control.CANCEL_TRY_METRIC:          _Route(self._on_cancel_try_metric, ["try_id"], CancelTryMetricRequest),
+            control.ADD_SESSION_METRICS:        _Route(self._on_add_session_metrics, ["offer_id"], AddSessionMetricsRequest),
             control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
         }
 
@@ -1066,6 +1069,8 @@ class ServerSession:
                 self._ack_from_thread(loop, event, False, path, error=str(exc))
                 raise
             self._ack_from_thread(loop, event, True, path)
+            if not saving:
+                self._offer_session_metrics(loop, path)
 
         self.env.newTask(
             _work,
@@ -1450,3 +1455,40 @@ class ServerSession:
             cfg.expr, dict(cfg.vars), um.registry_without(cfg.id), resolve, n_atoms,
             on_progress=progress, cancelled=cancelled)
         return result.to_dict()
+
+    # ── user metrics a session carries (ADR 0057 rules 15, 16) ──────────────
+
+    def _offer_session_metrics(self, loop, path) -> None:
+        """After a session load: if it carries user metrics this server lacks
+        (or has under another formula), ask the window that loaded whether to add
+        them. Runs on the task's worker thread. Declining is just not answering:
+        the session then behaves as if it had carried nothing."""
+        import os
+
+        from ffast.config.user_metrics import SESSION_FILE, read_formulas
+        from ffast.protocol.rpc import pack
+
+        um = getattr(self.env, "user_metrics", None)
+        if um is None:
+            return
+        try:
+            plan = um.plan_session(read_formulas(os.path.join(path, SESSION_FILE)))
+        except Exception as exc:
+            logger.warning("Session metrics of %r unreadable: %s", path, exc)
+            return
+        if not plan:
+            return
+        offer_id = f"offer-{len(self._session_offers) + 1}-{id(plan)}"
+        self._session_offers = {offer_id: plan}      # only the latest offer stays open
+        data = pack(control.SESSION_METRICS, [], {"offer_id": offer_id, "metrics": plan.describe()})
+        loop.call_soon_threadsafe(self._emit_or_drop, data, "SESSION_METRICS")
+
+    async def _on_add_session_metrics(self, offer_id, **kwargs) -> None:
+        plan = self._session_offers.pop(offer_id, None)
+        if plan is None:
+            from ffast.protocol.rpc import pack
+            await self._emit(pack(control.USER_METRIC_SAVED, [], {
+                "ok": False, "action": "add-session", "id": None,
+                "error": "That offer is no longer open; load the session again", "conflict": False}))
+            return
+        await self._change_metrics("add-session", None, lambda um: um.add_session(plan))

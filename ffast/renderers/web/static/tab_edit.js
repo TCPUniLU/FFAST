@@ -352,3 +352,37 @@ export function toSaved(tab) {
     })),
   };
 }
+
+/** The tab "Plot it" falls back to (ADR 0057 rule 13). */
+export const MY_METRICS_TAB = 'My metrics';
+
+/** The panel "Plot it" adds for a per-structure metric: the default kind for
+ * that shape, a timeline of the metric. An ordinary panel, edited like any other. */
+export function metricPanel(metric) {
+  return {
+    kind: 'timeline', title: metric.label || metric.id,
+    metrics: { y: metric.id },
+    metric_refs: { y: { metric: metric.id, transform: null, params: {} } },
+  };
+}
+
+/**
+ * Where "Plot it" puts a panel (rule 13): the tab on screen, unless it has no
+ * room for a plot — a tab that only shows the main view, or none from the
+ * server — and then the "My metrics" user tab, which is made when missing. A
+ * new "My metrics" tab also holds the main view, because the Metrics pane
+ * lives in the 3D controls and they only show in a tab with a 3D panel: the
+ * plot and the pane that edits its metric stay side by side.
+ * Returns the tab to save and the tab it was edited from (null: a new tab).
+ * @param {object|null} current the tab on screen, as the server described it
+ * @param {object[]} tabs every tab the server sent
+ * @param {object} panel what to add
+ */
+export function plotTarget(current, tabs, panel) {
+  const hasRoom = current && (current.panels || []).some((p) => p.kind !== KIND_3D);
+  if (hasRoom) return { tab: addPanel(current, panel), previous: current.name };
+  const mine = (tabs || []).find((t) => t.name === MY_METRICS_TAB);
+  if (mine) return { tab: addPanel(mine, panel), previous: mine.name };
+  const fresh = addPanel(emptyTab(MY_METRICS_TAB), new3DPanel());
+  return { tab: addPanel(fresh, panel), previous: null };
+}

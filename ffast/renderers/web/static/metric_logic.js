@@ -270,3 +270,20 @@ export function variableNameProblem(name, otherNames = []) {
   if (otherNames.includes(name)) return `${name} is already a variable`;
   return '';
 }
+
+/**
+ * The question after a session load offered metrics (rule 15). Clashes — the
+ * server has that id with another formula — say how the session's is kept.
+ * @param {Array<{id: string, clash_with: string|null}>} metrics
+ * @returns {{title: string, message: string}}
+ */
+export function sessionMetricsQuestion(metrics) {
+  const n = metrics.length;
+  const lines = metrics.map((m) => (m.clash_with
+    ? `• ${m.id} — the server has a different ${m.clash_with}; the session's is kept as ${m.id}`
+    : `• ${m.id}`));
+  return {
+    title: 'Metrics in this session',
+    message: `This session uses ${n} metric${n === 1 ? '' : 's'} this server doesn't have:\n${lines.join('\n')}\n\nAdd them?`,
+  };
+}

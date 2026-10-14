@@ -276,3 +276,104 @@ def test_registry_dependents_are_transitive(registry):
     compile_expr_metric("a.two", "e + 1", {"e": "a.one"}, registry=registry)
     assert registry.dependents_of("base.ref_e") == ["a.one", "a.two"]
     assert registry.direct_dependents_of("base.ref_e") == ["a.one"]
+
+
+# ── sessions carry formulas (rules 15, 16) ──────────────────────────────────
+from ffast.config.user_metrics import (  # noqa: E402
+    SESSION_FILE, SessionPlan, formulas_toml, read_formulas,
+)
+
+
+def _cfg(id, expr="2 * e", **vars_):
+    return ExprMetricConfig(id=id, expr=expr, vars=vars_ or {"e": "base.ref_e"})
+
+
+def test_a_session_carries_only_the_metrics_something_uses_and_what_they_build_on(um):
+    um.save(metric(id="user.base", expr="e"))
+    um.save({"id": "user.top", "expr": "b * 2", "vars": {"b": "user.base"}})
+    um.save(metric(id="user.idle", expr="e + 1"))
+    um.usage_providers.append(lambda mid: ["tab Mine, panel 1"] if mid == "user.top" else [])
+    assert [c.id for c in um.session_formulas()] == ["user.base", "user.top"]
+
+
+def test_a_session_with_nothing_in_use_carries_nothing(um):
+    um.save(metric())
+    assert um.session_formulas() == []
+
+
+def test_the_formulas_file_round_trips_in_the_project_format(tmp_path):
+    cfgs = [_cfg("user.a", label="A", unit="energy"), _cfg("user.b", "e + 1")]
+    path = tmp_path / SESSION_FILE
+    path.write_text(formulas_toml(cfgs))
+    assert path.read_text().count("\n[[metrics.expr]]\n") == 2
+    assert read_formulas(path) == cfgs
+    assert read_formulas(tmp_path / "missing.toml") == []
+
+
+def test_a_metric_the_server_lacks_is_added_as_it_is(um):
+    plan = um.plan_session([_cfg("user.new")])
+    assert [c.id for c in plan.add] == ["user.new"] and plan.renamed == {}
+    um.add_session(plan)
+    assert um.get("user.new").expr == "2 * e"
+
+
+def test_an_identical_formula_adds_nothing(um):
+    um.save(metric(id="user.same"))
+    assert not um.plan_session([_cfg("user.same")])
+
+
+def test_a_clash_keeps_both_the_session_version_as_id_dot_2(um, registry):
+    um.save(metric(id="user.x", expr="3 * e"))
+    plan = um.plan_session([_cfg("user.x", "2 * e")])
+    assert plan.renamed == {"user.x": "user.x.2"}
+    assert [(c.id, c.expr) for c in plan.add] == [("user.x.2", "2 * e")]
+    assert plan.describe()[0]["clash_with"] == "user.x"
+    um.add_session(plan)
+    assert registry.get("user.x")[1].expr == "3 * e"            # the server's is untouched
+    assert registry.get("user.x.2")[1].expr == "2 * e"
+
+
+def test_the_next_free_number_is_used(um):
+    um.save(metric(id="user.x", expr="3 * e"))
+    um.save(metric(id="user.x.2", expr="4 * e"))
+    assert um.plan_session([_cfg("user.x", "2 * e")]).renamed == {"user.x": "user.x.3"}
+
+
+def test_a_clash_with_a_built_in_or_project_metric_is_also_kept_as_dot_2(um):
+    plan = um.plan_session([_cfg("base.ref_e", "2 * e")])
+    assert plan.renamed == {"base.ref_e": "base.ref_e.2"}
+
+
+def test_the_sessions_own_formulas_follow_a_renamed_one(um, registry):
+    um.save(metric(id="user.base", expr="3 * e"))
+    plan = um.plan_session([
+        _cfg("user.base", "2 * e"),
+        ExprMetricConfig(id="user.top", expr="b + 1", vars={"b": "user.base"}),
+    ])
+    assert plan.renamed["user.base"] == "user.base.2"
+    top = next(c for c in plan.add if c.id == "user.top")
+    assert dict(top.vars) == {"b": "user.base.2"}               # built on the session's version
+    um.add_session(plan)
+    assert registry.get("user.top")[0].inputs["b"] == "user.base.2"
+
+
+def test_a_formula_built_on_one_that_clashed_is_itself_a_clash_if_the_server_has_it(um):
+    um.save(metric(id="user.base", expr="3 * e"))
+    um.save({"id": "user.top", "expr": "b + 1", "vars": {"b": "user.base"}})
+    plan = um.plan_session([
+        _cfg("user.base", "2 * e"),
+        ExprMetricConfig(id="user.top", expr="b + 1", vars={"b": "user.base"}),
+    ])
+    # user.top is textually the same, but it would now sit on user.base.2: a different metric
+    assert plan.renamed == {"user.base": "user.base.2", "user.top": "user.top.2"}
+
+
+def test_add_session_orders_formulas_that_build_on_each_other(um):
+    top = ExprMetricConfig(id="user.top", expr="b + 1", vars={"b": "user.base"})
+    plan = um.plan_session([top, _cfg("user.base")])           # dependent listed first
+    um.add_session(plan)
+    assert um.get("user.top") and um.get("user.base")
+
+
+def test_an_empty_plan_is_false(um):
+    assert not SessionPlan()

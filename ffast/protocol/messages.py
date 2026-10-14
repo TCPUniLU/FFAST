@@ -484,6 +484,15 @@ class RequestMetricInputsRequest(BaseModel):
     model_fp: Optional[str] = None
 
 
+class AddSessionMetricsRequest(BaseModel):
+    """Typed payload for ``ADD_SESSION_METRICS``: yes to the offer
+    ``SESSION_METRICS`` made (ADR 0057 rule 15)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    offer_id: str
+
+
 class CheckMetricRequest(BaseModel):
     """Typed payload for ``CHECK_METRIC`` (ADR 0057 rule 11). ``check_id`` is
     echoed in the reply so the editor can ignore an answer to a stale edit."""

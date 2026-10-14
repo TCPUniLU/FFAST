@@ -47,6 +47,7 @@ export const OUT = Object.freeze({
   CHECK_METRIC: 'CHECK_METRIC',
   TRY_METRIC: 'TRY_METRIC',
   CANCEL_TRY_METRIC: 'CANCEL_TRY_METRIC',
+  ADD_SESSION_METRICS: 'ADD_SESSION_METRICS',
   GRACEFUL_DISCONNECT: 'GRACEFUL_DISCONNECT',
 });
 
@@ -89,6 +90,8 @@ export const IN = Object.freeze({
   METRIC_INPUTS: 'METRIC_INPUTS',
   METRIC_CHECKED: 'METRIC_CHECKED',
   METRIC_TRIED: 'METRIC_TRIED',
+  // After a session load: user metrics it carries that this server lacks.
+  SESSION_METRICS: 'SESSION_METRICS',
   // Which subset a DECLARE_SUBSET made, to the window that sent it, so the
   // window that ticked SUB can show it.
   SUBSET_DECLARED: 'SUBSET_DECLARED',

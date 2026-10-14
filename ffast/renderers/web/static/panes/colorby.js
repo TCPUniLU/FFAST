@@ -138,6 +138,12 @@ export function createColorByPane(sidebarEl, callbacks) {
     /** @param {Array<{id:string,label?:string,shape:string,parameters?:object}>} entries */
     setMetricCatalog(entries) {
       metricsById = new Map(entries.map((e) => [e.id, e]));
+      // Rebuilt from the catalog each time, so a metric that was renamed or
+      // deleted (user metrics change while the app runs, ADR 0057) leaves the list.
+      for (const label of labelToMetricId.keys()) labelToSource.delete(label);
+      labelToMetricId.clear();
+      for (const opt of [...coloringSelect.options])
+        if (!['Elements', 'Displacement'].includes(opt.value)) opt.remove();
       for (const entry of entries) {
         if (!COLORABLE_SHAPES.has(entry.shape)) continue;
         const label = entry.label || entry.id;
@@ -149,7 +155,24 @@ export function createColorByPane(sidebarEl, callbacks) {
         opt.textContent = label;
         coloringSelect.appendChild(opt);
       }
+      // Keep the choice if it is still there; otherwise the select has already
+      // fallen back to its first option, so say so.
+      if ([...coloringSelect.options].some((o) => o.value === currentLabel)) coloringSelect.value = currentLabel;
+      else { coloringSelect.value = currentLabel = 'Elements'; _syncVisibility(); }
       _rebuildParamControls();
+    },
+
+    /** Colour the atoms by metric `id` (the Metrics pane's shortcut, ADR 0057
+     * rule 13): the same as picking it in the Coloring list.
+     * @returns {boolean} false when the metric has no value per atom here */
+    chooseMetric(id) {
+      const label = [...labelToMetricId].find(([, m]) => m === id)?.[0];
+      if (!label) return false;
+      coloringSelect.value = currentLabel = label;
+      _syncVisibility();
+      callbacks.onSourceChange(`metric:${id}`);
+      _rebuildParamControls();
+      return true;
     },
 
     /** @param {import('../protocol.js').AtomColorBy|null} colorBy */

@@ -27,6 +27,7 @@ METRIC = {"id": "user.double_e", "label": "Double energy", "unit": "energy",
 
 
 async def _server(tmp_path):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     metrics_dir = tmp_path / "metrics"
     config = tmp_path / "ffast.toml"
     config.write_text("")
@@ -169,3 +170,126 @@ async def test_the_pane_checks_fixes_tries_and_saves_a_formula(tmp_path):
                 assert not (metrics_dir / "user.e_per_atom.toml").exists()
             finally:
                 await browser.close()
+
+
+async def _save_in_pane(pane, metric_id, before, ref_button, after):
+    """New metric: id, text typed, an input clicked into the formula, more text; Save."""
+    await pane.get_by_role("button", name="New metric").click()
+    await pane.get_by_label("Metric id").fill(metric_id)
+    formula = pane.get_by_label("Formula")
+    await formula.fill(before)
+    await pane.locator(f".mx-input[data-ref='{ref_button}']").click()
+    await formula.press_sequentially(after)
+    await expect(pane.locator(".mx-check.good")).to_be_visible()
+    await pane.get_by_role("button", name="Save", exact=True).click()
+    await expect(pane.locator(f".mx-item[data-id='{metric_id}']")).to_be_visible()
+
+
+async def test_the_shortcuts_colour_the_atoms_and_plot_the_metric(tmp_path):
+    cm, _ = await _server(tmp_path)
+    async with cm as (ws_port, web_port):
+        await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 900})
+            try:
+                await _open_app(page, web_port, ws_port)
+                pane = await _open_metrics_pane(page)
+
+                # per atom: Colour atoms by this -> the Colour By list and the colour bar follow
+                await _save_in_pane(pane, "user.force_len", "norm(", "reference.forces", ")")
+                await expect(pane.get_by_role("button", name="Plot it")).to_have_count(0)
+                await expect(pane.locator(".mx-check")).to_contain_text("per atom")
+                await pane.get_by_role("button", name="Colour atoms by this").click()
+                coloring = page.locator(".pane[data-pane='Colour By'] .ctl-row[data-label='Coloring'] select")
+                await expect(coloring).to_have_value("user.force_len")
+                bar_max = page.locator("#colorbar .cb-max")
+                await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
+                before = float(await bar_max.inner_text())
+
+                # editing the metric recolours the atoms: the colour bar's top doubles
+                await pane.get_by_label("Formula").fill("2 * " + (await pane.get_by_label("Formula").input_value()))
+                await pane.get_by_role("button", name="Save", exact=True).click()
+                await expect(pane.locator(".mx-message")).to_contain_text("Saved")
+                await page.wait_for_function(
+                    "(before) => parseFloat(document.querySelector('#colorbar .cb-max').textContent) > before * 1.5",
+                    arg=before)
+                assert float(await bar_max.inner_text()) == pytest.approx(2 * before, rel=0.02)
+
+                # per structure: Plot it -> a "My metrics" tab (the 3D tab has no plot)
+                await _save_in_pane(pane, "user.double_e", "", "reference.energies", " * 2")
+                await expect(pane.locator(".mx-check")).to_contain_text("per structure")
+                await pane.get_by_role("button", name="Plot it").click()
+                await expect(page.locator("#tabbar .tab", has_text="My metrics")).to_have_count(1)
+                await expect(page.locator("#tabbar .tab.active")).to_have_text(re.compile("My metrics"))
+                spec = await page.evaluate(
+                    "() => window.ffastApp._layoutTabs.find((t) => t.name === 'My metrics').panels"
+                    ".map((p) => [p.kind, p.metrics.y ?? null])")
+                assert spec == [["3d", None], ["timeline", "user.double_e"]]
+                # ... and the next one joins it, since it has a plot now
+                pane = await _open_metrics_pane(page)
+                await pane.locator(".mx-item[data-id='user.double_e']").click()
+                await pane.get_by_role("button", name="Plot it").click()
+                await page.wait_for_function(
+                    "() => window.ffastApp._layoutTabs.find((t) => t.name === 'My metrics').panels.length === 3")
+            finally:
+                await browser.close()
+
+
+async def test_a_session_carries_its_formulas_to_another_server(tmp_path):
+    """Rules 15 and 16 end to end: server A saves a session whose tab plots a
+    user metric; server B, which lacks it, is offered it on load and adds it;
+    server C, which has the id under another formula, keeps both as <id>.2."""
+    session = tmp_path / "session"
+    tab = {"name": "Mine", "panels": [{"kind": "timeline", "row": 0, "col": 0, "title": "Doubled",
+                                       "metrics": {"y": {"metric": "user.double_e"}}}]}
+
+    cm, _ = await _server(tmp_path / "a")
+    async with cm as (ws_port, _web_port):
+        await _preload_dataset_and_prediction(ws_port)
+        ws = await _connect_headless_client(ws_port)
+        try:
+            await ws.send(pack("SAVE_USER_METRIC", (), {"metric": METRIC}))
+            assert (await _wait_for_event(ws, "USER_METRIC_SAVED"))["kwargs"]["ok"]
+            await ws.send(pack("SAVE_TAB", (), {"tab": tab}))
+            assert (await _wait_for_event(ws, "TAB_SAVED"))["kwargs"]["ok"]
+            await ws.send(pack("SAVE_SESSION", (), {"path": str(session)}))
+            assert (await _wait_for_event(ws, "SESSION_SAVED"))["kwargs"]["ok"]
+        finally:
+            await ws.close()
+    carried = tomllib.loads((session / "user_metrics.toml").read_text())["metrics"]["expr"]
+    assert [(m["id"], m["expr"]) for m in carried] == [("user.double_e", "2 * e")]
+
+    cm, metrics_b = await _server(tmp_path / "b")
+    async with cm as (ws_port, _web_port):
+        ws = await _connect_headless_client(ws_port)
+        try:
+            await ws.send(pack("LOAD_SESSION", (), {"path": str(session)}))
+            assert (await _wait_for_event(ws, "SESSION_LOADED", timeout=60))["kwargs"]["ok"]
+            offer = (await _wait_for_event(ws, "SESSION_METRICS"))["kwargs"]
+            assert [(m["id"], m["clash_with"]) for m in offer["metrics"]] == [("user.double_e", None)]
+            await ws.send(pack("ADD_SESSION_METRICS", (), {"offer_id": offer["offer_id"]}))
+            assert (await _wait_for_event(ws, "USER_METRIC_SAVED"))["kwargs"]["ok"]
+            assert (metrics_b / "user.double_e.toml").exists()
+        finally:
+            await ws.close()
+
+    cm, metrics_c = await _server(tmp_path / "c")
+    metrics_c.mkdir(parents=True)
+    (metrics_c / "user.double_e.toml").write_text(
+        '[[metrics.expr]]\nid = "user.double_e"\nexpr = "7 * e"\n\n  [metrics.expr.vars]\n  e = "reference.energies"\n')
+    async with cm as (ws_port, _web_port):
+        ws = await _connect_headless_client(ws_port)
+        try:
+            await ws.send(pack("LOAD_SESSION", (), {"path": str(session)}))
+            assert (await _wait_for_event(ws, "SESSION_LOADED", timeout=60))["kwargs"]["ok"]
+            offer = (await _wait_for_event(ws, "SESSION_METRICS"))["kwargs"]
+            assert [(m["id"], m["clash_with"]) for m in offer["metrics"]] == [
+                ("user.double_e.2", "user.double_e")]
+            await ws.send(pack("ADD_SESSION_METRICS", (), {"offer_id": offer["offer_id"]}))
+            assert (await _wait_for_event(ws, "USER_METRIC_SAVED"))["kwargs"]["ok"]
+            kept = tomllib.loads((metrics_c / "user.double_e.toml").read_text())["metrics"]["expr"][0]
+            assert kept["expr"] == "7 * e"                                    # the server's, untouched
+            assert (metrics_c / "user.double_e.2.toml").exists()
+        finally:
+            await ws.close()

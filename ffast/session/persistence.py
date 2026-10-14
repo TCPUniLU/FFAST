@@ -137,6 +137,24 @@ class SessionPersistence:
         with open(infoFile, "w") as f:
             json.dump(info, f, indent=4)
 
+        ## SAVE USER METRICS (ADR 0057 rule 15): the formulas of the user
+        # metrics this session uses, so it can be opened on another server.
+        self.save_user_metrics(path)
+
+    def save_user_metrics(self, path):
+        """Write the session's user-metric formulas next to ``info.json``, or
+        remove a file left by an earlier save when there are none now."""
+        from ffast.config.user_metrics import SESSION_FILE, formulas_toml
+
+        file = os.path.join(path, SESSION_FILE)
+        um = getattr(self._env, "user_metrics", None)
+        formulas = um.session_formulas() if um is not None else []
+        if formulas:
+            with open(file, "w") as f:
+                f.write(formulas_toml(formulas))
+        elif os.path.exists(file):
+            os.remove(file)
+
     def taskLoad(self, path):
         """Queue restoration of a previously saved session."""
         self.newTask(

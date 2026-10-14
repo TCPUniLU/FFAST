@@ -100,6 +100,29 @@ CASES = {
         " ml.tryHeadline({ok: true, count: 1, bad_count: 0}), ml.tryHeadline({ok: false, error: 'boom'}),"
         " ml.tryHeadline({ok: true, cancelled: true})]"),
 
+    # ── Plot it (rule 13) ───────────────────────────────────────────────────
+    "plot_panel": "te.metricPanel({id: 'user.a', label: 'A'})",
+    "plot_into_a_plots_tab": (
+        "(() => { const t = {name: 'Basic', panels: [{kind: 'table', row: 0, col: 0}], column_widths: null, row_heights: null};"
+        "  const r = te.plotTarget(t, [t], te.metricPanel({id: 'user.a', label: 'A'}));"
+        "  return [r.previous, r.tab.name, r.tab.panels.map(p => [p.kind, p.title, p.row, p.col])]; })()"),
+    "plot_from_the_3d_tab_makes_my_metrics": (
+        "(() => { const t = {name: '3D', panels: [{kind: '3d', row: 0, col: 0}]};"
+        "  const r = te.plotTarget(t, [t], te.metricPanel({id: 'user.a', label: 'A'}));"
+        "  return [r.previous, r.tab.name, r.tab.panels.map(p => [p.kind, p.title, p.row, p.col])]; })()"),
+    "plot_with_no_tab_makes_my_metrics": (
+        "(() => { const r = te.plotTarget(null, [], te.metricPanel({id: 'user.a', label: 'A'}));"
+        "  return [r.previous, r.tab.name, r.tab.panels.map(p => p.kind)]; })()"),
+    "plot_reuses_an_existing_my_metrics": (
+        "(() => { const mine = {name: 'My metrics', panels: [{kind: 'timeline', title: 'B', row: 0, col: 0, metrics: {}}]};"
+        "  const r = te.plotTarget({name: '3D', panels: [{kind: '3d'}]}, [mine], te.metricPanel({id: 'user.a', label: 'A'}));"
+        "  return [r.previous, r.tab.panels.map(p => [p.title, p.row, p.col])]; })()"),
+
+    # ── the question after a session load (rule 15) ─────────────────────────
+    "session_question_one": "ml.sessionMetricsQuestion([{id: 'user.a', clash_with: null}])",
+    "session_question_clash": (
+        "ml.sessionMetricsQuestion([{id: 'user.a', clash_with: null}, {id: 'user.b.2', clash_with: 'user.b'}]).message"),
+
     # ── the list by origin ──────────────────────────────────────────────────
     "group_metrics": (
         "(() => { const g = ml.groupMetrics("
@@ -124,6 +147,7 @@ def results():
     script = (
         "async () => {\n"
         f"  const ml = await import('{origin}/metric_logic.js');\n"
+        f"  const te = await import('{origin}/tab_edit.js');\n"
         "  const out = {};\n"
         + "".join(f"  out[{json.dumps(n)}] = {e};\n" for n, e in CASES.items())
         + "  return out;\n}"
@@ -300,3 +324,38 @@ def test_the_list_is_grouped_by_origin_with_user_entries_from_the_user_list(resu
     assert g["project"] == [["proj.p", "P", "ok", None]]
     # the derived transform is left out; sorted by label, the hidden file by its id
     assert g["user"] == [["user.u", "Mine", "ok", "rev1"], ["user.h", "user.h", "hidden", None]]
+
+
+# ── Plot it ─────────────────────────────────────────────────────────────────
+def test_plot_it_adds_a_timeline_of_the_metric(results):
+    panel = results["plot_panel"]
+    assert (panel["kind"], panel["title"], panel["metrics"]) == ("timeline", "A", {"y": "user.a"})
+    assert panel["metric_refs"] == {"y": {"metric": "user.a", "transform": None, "params": {}}}
+
+
+def test_plot_it_goes_to_the_tab_on_screen_when_it_has_a_plot(results):
+    assert results["plot_into_a_plots_tab"] == ["Basic", "Basic", [["table", None, 0, 0], ["timeline", "A", 1, 0]]]
+
+
+def test_plot_it_makes_my_metrics_when_the_tab_only_shows_the_main_view_or_none_is_on_screen(results):
+    # a new My metrics tab holds the main view too, so the pane stays beside the plot
+    assert results["plot_from_the_3d_tab_makes_my_metrics"] == [
+        None, "My metrics", [["3d", None, 0, 0], ["timeline", "A", 0, 1]]]
+    assert results["plot_with_no_tab_makes_my_metrics"] == [None, "My metrics", ["3d", "timeline"]]
+
+
+def test_plot_it_adds_to_my_metrics_when_it_exists(results):
+    assert results["plot_reuses_an_existing_my_metrics"] == ["My metrics", [["B", 0, 0], ["A", 1, 0]]]
+
+
+# ── sessions ────────────────────────────────────────────────────────────────
+def test_the_session_question_counts_the_metrics(results):
+    q = results["session_question_one"]
+    assert q["title"] == "Metrics in this session"
+    assert q["message"] == "This session uses 1 metric this server doesn't have:\n• user.a\n\nAdd them?"
+
+
+def test_the_session_question_says_how_a_clash_is_kept(results):
+    assert results["session_question_clash"] == (
+        "This session uses 2 metrics this server doesn't have:\n• user.a\n"
+        "• user.b.2 — the server has a different user.b; the session's is kept as user.b.2\n\nAdd them?")

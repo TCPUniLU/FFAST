@@ -17,10 +17,12 @@ Server only: the desktop client and ``ffast-cli`` never load these (rule 14).
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import logging
 import re
+import threading
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -42,6 +44,15 @@ _ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$")
 _HEADER = (
     "# A metric saved by FFAST (ADR 0057). Same format as a project's\n"
     "# [[metrics.expr]]: paste it into ffast.toml, or use Export.\n"
+)
+
+
+SESSION_FILE = "user_metrics.toml"
+
+_SESSION_HEADER = (
+    "# Formulas of the user metrics this session uses (ADR 0057 rule 15), in the\n"
+    "# [[metrics.expr]] format. Loading the session offers to add the ones the\n"
+    "# server lacks; a formula cannot run code, so carrying it is safe.\n"
 )
 
 
@@ -137,6 +148,15 @@ class _Entry:
     message: str = ""
 
 
+def _locked(method):
+    """Run a changing method holding the object's lock."""
+    @functools.wraps(method)
+    def run(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return run
+
+
 class UserMetrics:
     """The user metrics of one server, registered into ``registry``.
 
@@ -156,6 +176,8 @@ class UserMetrics:
         self.baseline: set[str] = set()
         self.usage_providers: list[Callable[[str], list[str]]] = []
         self._entries: dict[str, _Entry] = {}
+        # Changes run on worker threads, one per window that asked: take turns.
+        self._lock = threading.RLock()
 
     # ── start-up ────────────────────────────────────────────────────────────
     def load(self) -> list[tuple[str, str]]:
@@ -265,6 +287,7 @@ class UserMetrics:
         return {"ok": True, "error": None, "shape": shape_to_str(shape)}
 
     # ── changing ────────────────────────────────────────────────────────────
+    @_locked
     def save(self, data: dict, previous_id: str | None = None,
              base_revision: str | None = None, overwrite: bool = False) -> Change:
         """Create a metric (``previous_id`` None) or edit one, keeping its id
@@ -349,6 +372,7 @@ class UserMetrics:
                     f"This change would give {dep} another shape "
                     f"({shape_to_str(schema.shape)} → {shape_to_str(shape)})")
 
+    @_locked
     def delete(self, id: str) -> Change:
         """Delete a user metric. Refused while anything uses it (rule 7); the
         message lists the users."""
@@ -373,12 +397,134 @@ class UserMetrics:
         del self._entries[id]
         return Change(id, {id, *derived})
 
+    # ── sessions (rules 15, 16) ─────────────────────────────────────────────
+    def session_formulas(self) -> list[ExprMetricConfig]:
+        """The formulas a saved session carries: the user metrics something
+        outside the metrics uses (a tab's panel, a view's colouring — what
+        refuses a delete, rule 7), and the user metrics those are built on."""
+        todo = [i for i, e in self._entries.items()
+                if e.status == "ok" and any(p(i) for p in self.usage_providers)]
+        found: set[str] = set()
+        while todo:
+            mid = todo.pop()
+            if mid in found:
+                continue
+            found.add(mid)
+            fn = self.registry.get(mid)[1]
+            todo += [r for r in getattr(fn, "var_refs", {}).values()
+                     if r in self._entries and self._entries[r].status == "ok"]
+        return [self._entries[i].cfg for i in sorted(found)]
+
+    @_locked
+    def plan_session(self, formulas: list[ExprMetricConfig]) -> SessionPlan:
+        """What loading a session with these formulas would add. A formula this
+        server already has (same id, same formula) adds nothing. One whose id
+        the server has with a different formula is a clash: it is added as
+        ``<id>.2`` (the next free number), and the session's other formulas
+        built on it are pointed at that. The server's own metric is untouched."""
+        renamed: dict[str, str] = {}
+        planned: set[str] = set()
+
+        def remapped(cfg):
+            vars_ = {n: renamed.get(r, r) for n, r in cfg.vars.items()}
+            return cfg.model_copy(update={"vars": vars_, "id": renamed.get(cfg.id, cfg.id)})
+
+        def taken(id_):
+            return self.registry.has(id_) or id_ in self._entries or id_ in planned
+
+        def same_as_server(cfg):
+            have = self._entries.get(cfg.id)
+            return have is not None and have.status == "ok" and have.cfg.expr == cfg.expr \
+                and dict(have.cfg.vars) == dict(cfg.vars)
+
+        changed = True
+        while changed:
+            changed = False
+            for cfg in formulas:
+                if cfg.id in renamed:
+                    continue
+                r = remapped(cfg)
+                if taken(r.id) and not same_as_server(r):
+                    n = 2
+                    while taken(f"{cfg.id}.{n}"):
+                        n += 1
+                    renamed[cfg.id] = f"{cfg.id}.{n}"
+                    planned.add(renamed[cfg.id])
+                    changed = True
+        plan = SessionPlan(renamed=renamed)
+        for cfg in formulas:
+            r = remapped(cfg)
+            if r.id in planned or not taken(r.id):
+                plan.add.append(r)
+        return plan
+
+    @_locked
+    def add_session(self, plan: SessionPlan) -> Change:
+        """Save what ``plan_session`` found. The formulas may build on each
+        other, so add in rounds until a round adds nothing."""
+        pending = list(plan.add)
+        affected: set[str] = set()
+        last: Exception | None = None
+        while pending:
+            added = []
+            for cfg in pending:
+                try:
+                    change = self.save(cfg.model_dump(mode="json"))
+                except MetricError as exc:
+                    last = exc
+                    continue
+                affected |= change.affected
+                added.append(cfg)
+            if not added:
+                raise MetricError(f"Could not add {pending[0].id}: {last}")
+            pending = [c for c in pending if c not in added]
+        return Change(plan.add[0].id, affected)
+
     def export(self, id: str) -> str:
         """The metric as TOML to paste into a project's ffast.toml."""
         entry = self._entries.get(id)
         if entry is None:
             raise MetricError(f"No user metric {id}")
         return _toml(entry.cfg)
+
+
+def formulas_toml(cfgs: list[ExprMetricConfig]) -> str:
+    """Formulas as one TOML text, an ``[[metrics.expr]]`` entry each."""
+    return _SESSION_HEADER + "".join("\n" + _toml(c) for c in cfgs)
+
+
+def read_formulas(path: Path | str) -> list[ExprMetricConfig]:
+    """The formulas in a session's file; empty if there is none or it is unreadable."""
+    try:
+        data = tomllib.loads(Path(path).read_text())
+        return [ExprMetricConfig.model_validate(e) for e in (data.get("metrics") or {}).get("expr") or []]
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError, ValidationError) as exc:
+        logger.warning("Session formulas %s unreadable: %s", path, exc)
+        return []
+
+
+@dataclass
+class SessionPlan:
+    """What loading a session would add (rule 16).
+
+    ``add`` are the formulas to save, in the order given, each under the id it
+    will have; ``renamed`` maps the session's id to the new one for every clash
+    (the server has that id with a different formula), so the session's own
+    formulas built on it are pointed at the new id. An identical formula is not
+    in ``add``."""
+    add: list[ExprMetricConfig] = field(default_factory=list)
+    renamed: dict[str, str] = field(default_factory=dict)
+
+    def __bool__(self) -> bool:
+        return bool(self.add)
+
+    def describe(self) -> list[dict]:
+        """For the question put to the user: each metric, and the id it would get."""
+        back = {new: old for old, new in self.renamed.items()}
+        return [{"id": c.id, "label": c.label, "expr": c.expr,
+                 "clash_with": back.get(c.id)} for c in self.add]
 
 
 class _Without:

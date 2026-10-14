@@ -263,3 +263,119 @@ def test_cancel_stops_a_running_try_cleanly(env):
 def test_check_try_and_cancel_are_open_to_viewers():
     for event in (control.CHECK_METRIC, control.TRY_METRIC, control.CANCEL_TRY_METRIC):
         assert event in control.CLIENT_TO_SERVER and event not in control.MUTATING_CLIENT_EVENTS
+
+
+# ── sessions carry formulas (rules 15, 16) ──────────────────────────────────
+from types import SimpleNamespace  # noqa: E402
+
+from ffast.cache.store import DataCache  # noqa: E402
+from ffast.config.user_metrics import SESSION_FILE, read_formulas  # noqa: E402
+from ffast.session.persistence import SessionPersistence  # noqa: E402
+
+
+def _persistence(env):
+    env.cache = DataCache()
+    env.datasets = SimpleNamespace(all=lambda **kw: [])
+    env.models = SimpleNamespace(all=lambda **kw: [])
+    env.objects = SimpleNamespace(snapshot=lambda: {})
+    return SessionPersistence(env)
+
+
+def test_saving_a_session_writes_the_formulas_it_uses(env, tmp_path):
+    _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
+    env.user_metrics.usage_providers.append(lambda mid: ["tab Mine, panel 1"])
+    session = tmp_path / "session"
+    _persistence(env).save(str(session))
+    assert (session / "info.json").exists()
+    assert [(c.id, c.expr) for c in read_formulas(session / SESSION_FILE)] == [("t57.double", "2 * f")]
+
+
+def test_a_session_that_uses_no_user_metric_has_no_formulas_file(env, tmp_path):
+    session = tmp_path / "session"
+    session.mkdir()
+    (session / SESSION_FILE).write_text("# left from an earlier save\n")
+    _persistence(env).save(str(session))
+    assert not (session / SESSION_FILE).exists()
+
+
+def _write_session(path, *cfgs):
+    from ffast.config.user_metrics import formulas_toml
+    path.mkdir()
+    (path / SESSION_FILE).write_text(formulas_toml(list(cfgs)))
+
+
+def _offer(env, session):
+    """Run the offer the way a load's worker thread does; return what the window gets."""
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        loop = asyncio.get_running_loop()
+        await asyncio.to_thread(s._offer_session_metrics, loop, str(session))
+        await asyncio.sleep(0)
+        out = []
+        while not s.outbound.empty():
+            out.append(unpack(s.outbound.get_nowait()))
+        return s, out
+    return asyncio.run(scenario())
+
+
+def test_loading_offers_the_metrics_the_server_lacks(env, tmp_path):
+    from ffast.config.models import ExprMetricConfig
+    _write_session(tmp_path / "s", ExprMetricConfig(**METRIC))
+    _, out = _offer(env, tmp_path / "s")
+    [(event, _, kwargs)] = out
+    assert event == control.SESSION_METRICS
+    assert kwargs["metrics"] == [{"id": "t57.double", "label": "", "expr": "2 * f", "clash_with": None}]
+
+
+def test_loading_offers_nothing_when_the_server_has_them_all(env, tmp_path):
+    from ffast.config.models import ExprMetricConfig
+    _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
+    _write_session(tmp_path / "s", ExprMetricConfig(**METRIC))
+    _, out = _offer(env, tmp_path / "s")
+    assert out == []
+
+
+def test_loading_a_session_without_the_file_offers_nothing(env, tmp_path):
+    (tmp_path / "s").mkdir()
+    assert _offer(env, tmp_path / "s")[1] == []
+
+
+def test_yes_adds_them_and_tells_every_window(env, tmp_path):
+    from ffast.config.models import ExprMetricConfig
+    _write_session(tmp_path / "s", ExprMetricConfig(**METRIC))
+    broadcasts, answers = [], []
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue(), broadcast=broadcasts.append)
+        await asyncio.to_thread(s._offer_session_metrics, asyncio.get_running_loop(), str(tmp_path / "s"))
+        await asyncio.sleep(0)
+        offer = unpack(s.outbound.get_nowait())[2]["offer_id"]
+        await s.dispatch(control.ADD_SESSION_METRICS, [], {"offer_id": offer})
+        while not s.outbound.empty():
+            answers.append(unpack(s.outbound.get_nowait()))
+        # the same offer cannot be taken twice
+        await s.dispatch(control.ADD_SESSION_METRICS, [], {"offer_id": offer})
+        answers.append(unpack(s.outbound.get_nowait()))
+
+    asyncio.run(scenario())
+    assert answers[0][2]["ok"] and answers[0][2]["action"] == "add-session"
+    assert [unpack(b)[0] for b in broadcasts] == [control.METRICS_UPDATED, control.USER_METRICS]
+    assert default_registry.has("t57.double")
+    assert answers[1][2]["ok"] is False and "no longer open" in answers[1][2]["error"]
+
+
+def test_a_clash_is_offered_and_added_as_dot_2(env, tmp_path):
+    from ffast.config.models import ExprMetricConfig
+    _dispatch(env, control.SAVE_USER_METRIC, {"metric": {**METRIC, "expr": "5 * f"}})
+    _write_session(tmp_path / "s", ExprMetricConfig(**METRIC))
+    s, out = _offer(env, tmp_path / "s")
+    [(_, _, kwargs)] = out
+    assert [(m["id"], m["clash_with"]) for m in kwargs["metrics"]] == [("t57.double.2", "t57.double")]
+    s_plan = next(iter(s._session_offers.values()))
+    env.user_metrics.add_session(s_plan)
+    assert default_registry.get("t57.double")[1].expr == "5 * f"
+    assert default_registry.get("t57.double.2")[1].expr == "2 * f"
+
+
+def test_adding_session_metrics_is_controlling_only():
+    assert control.ADD_SESSION_METRICS in control.MUTATING_CLIENT_EVENTS

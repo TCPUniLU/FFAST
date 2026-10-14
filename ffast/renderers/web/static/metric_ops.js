@@ -42,6 +42,11 @@ export class MetricOps {
 
   remove(id) { return this._ask(this._saved, OUT.DELETE_USER_METRIC, { id }); }
 
+  /** Yes to the offer a session load made (rule 15); answers like a save. */
+  addSessionMetrics(offerId) {
+    return this._ask(this._saved, OUT.ADD_SESSION_METRICS, { offer_id: offerId });
+  }
+
   /** @returns {Promise<{id: string, toml: string|null, error: string|null}>} */
   exportToml(id) { return this._ask(this._exported, OUT.EXPORT_USER_METRIC, { id }); }
 
