@@ -52,7 +52,8 @@ metrics (rule 11).
    (ADR 0056 rule 9). **Export to project** copies it into the project's
    `ffast.toml` unchanged, the same way user tabs are exported.
 3. **The id is typed in full,** with `user.` pre-filled; `mylab.e_per_atom` is
-   allowed. A taken id is refused. If a project or built-in metric later takes
+   allowed. The id must contain a dot, as every formula metric id does (ADR
+   0042). A taken id is refused. If a project or built-in metric later takes
    the same id, that one wins at start-up and the user metric is listed as
    "Hidden: the project defines `<id>`", to rename or delete. Export keeps the
    id, so tabs keep working.
@@ -71,6 +72,9 @@ metrics (rule 11).
    the pane says "Changed in another window" and offers **Reload** (drop my
    edits) or **Overwrite** (save mine anyway, one click, no second prompt). A
    browser with unsaved edits is told as soon as `METRICS_UPDATED` arrives.
+   Editing a metric another window deleted is also a conflict ("Deleted in
+   another window"): **Discard** drops the edits, **Save anyway** makes the
+   metric again under the same id.
 7. **Delete is refused while anything uses the metric.** The pane lists the
    users: tab and panel, other metrics, and the main view's colouring. The same
    lookup gives the pane a "Used by" line for every metric.
@@ -98,7 +102,9 @@ metrics (rule 11).
 12. **Try computes without saving,** on all frames of the selected dataset and
     prediction, in chunks of frames so it can report progress (`TASK_PROGRESS`)
     and stop cleanly on **Cancel**. Chunking gives the same answer because a
-    formula is element-wise. It shows min / mean / max, the count of bad values
+    formula is element-wise. Cancel is answered at once and checked between
+    chunks; an input already computing on the worker finishes in the background
+    and stays cached, so it is never killed. It shows min / mean / max, the count of bad values
     and the first bad frames (clickable), and a small histogram. Nothing is
     registered; other browsers see nothing. Save computes as any metric does.
 13. **One shortcut by result shape.** Per atom: **Colour atoms by this** sets the
@@ -127,7 +133,8 @@ metrics (rule 11).
     formula, the session's version is added as `<id>.2` (the next free number)
     and, inside this opened session, everything that used `<id>` uses `<id>.2`.
     The server's metric is untouched. An identical formula is not a clash and
-    adds nothing.
+    adds nothing. Only the formula (`expr` and `vars`) is compared: `label` and
+    `unit` are display text, so when the formulas match the server's are kept.
 
 ### The formula language grows first
 
@@ -252,6 +259,31 @@ metrics (rule 11).
 - **A transform of a user metric in a tab** (a density of it, say) still needs
   a metric compiled on the running server, which ADR 0056 rule 11 left as later
   work; "Plot it" uses a plain timeline for that reason.
+- **The version in rule 6 is a hash of the metric's content,** not a counter. A
+  save conflicts only when the file differs from what the editor started from; a
+  file reverted to that content is not a conflict, because there is nothing
+  newer to lose. It also catches a hand edit of the file and survives restarts.
+- **A worker is never killed for a metric change.** One task at a time runs on
+  the worker (threads shared one pipe and discarded each other's replies); a
+  change marks the worker stale and the next task replaces it. The outer result
+  cache key carries a hash of the formula, and of every formula it is built on,
+  so no result computed before an edit can be read or written back after it.
+- **A missing metric is reported where it was used.** A panel whose metric is
+  not on the server says so inside the panel (a transform of a missing metric no
+  longer drops the whole tab); Colour By says when the metric it coloured by has
+  gone. The panel gives no link to the Metrics pane, because a tab without a 3D
+  panel has no sidebar to open it in.
+- **Try's histogram is filled by a second sweep** once the range is known, so
+  memory stays one chunk. The one-pass path (a result with no frame axis) is not
+  cancellable: measured at 0.68 s for 60 million values, more than any dataset
+  here holds.
+- **"Used by" is sent again** after a colouring changes, a view closes, or a tab
+  is saved, deleted or hidden, so Delete is neither blocked nor allowed on old
+  news.
+- **Also built, not asked for above:** Delete needs a second click; an edit that
+  would break a formula built on the metric is refused, like rule 7 for delete;
+  `--metrics-dir` points a server at another folder; hidden tabs count as users
+  of a metric.
 - **Colouring usage covers every open connection's views,** and tab usage
   counts hidden tabs, so showing a hidden tab again never finds its metric gone.
 
