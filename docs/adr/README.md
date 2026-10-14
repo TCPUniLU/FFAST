@@ -47,6 +47,7 @@ things came up.
 - [0022](0022-incremental-keyed-panel-refresh.md) Refresh by diffing series instead of clear-and-rebuild
 - [0023](0023-dataset-fields-key-in-ref.md) Any extxyz key becomes a metric, no Python
 - [0042](0042-expression-metrics.md) Element-wise algebra over metrics, in the config file
+- [0057](0057-user-metrics-defined-live-in-a-metrics-pane.md) Users define formula metrics while the app runs, in a Metrics pane (proposed)
 - [0035](0035-metric-execution-context.md) Resolve metric inputs once instead of three times
 - [0046](0046-finish-metric-execution-context.md) Finishing that: one seam, one injected executor
 - [0036](0036-datawatcher-configure-once.md) DataWatcher configures once (proposed)
