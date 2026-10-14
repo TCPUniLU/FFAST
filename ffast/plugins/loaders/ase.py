@@ -39,7 +39,7 @@ def loadData(env):
             """
             for i in range(20):
                 temp_atoms_list = []
-                for j in np.random.choice(len(atoms_list), size=3, replace=False):
+                for j in np.random.choice(len(atoms_list), size=min(3, len(atoms_list)), replace=False):
                     temp_atoms_list.append(atoms_list[j].get_chemical_formula())
                 if len(set(temp_atoms_list)) != 1:
                     return False

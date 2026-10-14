@@ -568,7 +568,7 @@ class LoadingCoordinator:
                     slice_num=slice_num
                 )
             except Exception as e:
-                logger.error(f"Failed to load dataset {path} in method 'loadDataset'")
+                logger.exception(f"Failed to load dataset {path} in method 'loadDataset'")
                 return None
         else:
             result = loaderClass(path)
