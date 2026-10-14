@@ -58,7 +58,7 @@ from ffast.metrics.registry import default_registry
 
 # Bump when the whitelist (functions / operators / constants) changes, so every
 # Expression Metric's cache identity invalidates (rides implementation_source).
-_WHITELIST_VERSION = "1"
+_WHITELIST_VERSION = "2"
 
 # Element-wise (shape-preserving) numpy functions only — no reducers. minimum/
 # maximum/clip/where are element-wise, not the reducing min/max (Decision 6).
@@ -75,6 +75,20 @@ _FUNCS = {
     "sign": np.sign,
 }
 _CONSTS = {"pi": np.pi}
+
+# Part-axis functions (ADR 0057 rule 17). They read or collapse the trailing
+# *part axes* of an input (a vector's xyz, a stress's 3x3 / Voigt), so they are
+# handled by the shape-aware walk below, not by the plain ``_FUNCS`` table.
+_PART_FUNCS = {"norm", "x", "y", "z"}
+_XYZ_INDEX = {"x": 0, "y": 1, "z": 2}
+
+_CMPOPS = {
+    ast.Gt: lambda a, b: a > b,
+    ast.Lt: lambda a, b: a < b,
+    ast.GtE: lambda a, b: a >= b,
+    ast.LtE: lambda a, b: a <= b,
+    ast.Eq: lambda a, b: a == b,
+}
 
 _BINOPS = {
     ast.Add: lambda a, b: a + b,
@@ -106,17 +120,34 @@ _RAW_REF_SHAPE = {
 }
 
 
+# Part dims → (size of each part axis). A shape ends in at most one part dim;
+# the array carries one trailing axis per entry here.
+_PART_AXES = {
+    dims.xyz: (3,),
+    dims.voigt: (6,),
+    dims.tensor_3x3: (3, 3),
+}
+
+
+def _part_axes(shape) -> tuple:
+    """Sizes of the trailing part axes of ``shape`` (``()`` if it has none)."""
+    last = _as_tuple(shape)[-1]
+    return _PART_AXES.get(last, ())
+
+
 # --------------------------------------------------------------------------- #
 # AST validation
 # --------------------------------------------------------------------------- #
 def parse_and_validate(expr: str) -> ast.Expression:
     """Parse ``expr`` in eval mode and reject anything outside the whitelist.
 
-    Permits only ``Expression``, ``BinOp`` (+ - * / **), ``UnaryOp`` (unary -/+),
-    numeric ``Constant``, ``Name`` (bound vars / ``n_atoms`` / ``pi``), and
-    ``Call`` to a whitelisted function. Attribute access, subscripts,
-    comprehensions, boolean/comparison operators, lambdas, etc. raise
-    ``ValueError`` with a precise message (errors at config-load, ADR 0042).
+    Permits only ``Expression``, ``BinOp`` (+ - * / **), ``UnaryOp`` (unary -),
+    a single comparison (> < >= <= ==), numeric ``Constant``, ``Name`` (bound
+    vars / ``n_atoms`` / ``pi``), a ``Subscript`` by whole-number literals (a
+    position over the part axes, ``F[2]``, ``S[0,1]``), and ``Call`` to a
+    whitelisted function. Attribute access, comprehensions, boolean operators,
+    lambdas, etc. raise ``ValueError`` with a precise message (errors at
+    config-load, ADR 0042 / 0057).
     """
     try:
         tree = ast.parse(expr, mode="eval")
@@ -128,7 +159,7 @@ def parse_and_validate(expr: str) -> ast.Expression:
             continue
         # Operator marker nodes (ast.Add / ast.USub / ...) are children of a
         # BinOp/UnaryOp already validated below; skip them here.
-        if isinstance(node, (ast.operator, ast.unaryop)):
+        if isinstance(node, (ast.operator, ast.unaryop, ast.cmpop)):
             continue
         if isinstance(node, ast.BoolOp):
             raise ValueError(
@@ -136,10 +167,22 @@ def parse_and_validate(expr: str) -> ast.Expression:
                 f"(permitted: + - * / **)"
             )
         if isinstance(node, ast.Compare):
-            raise ValueError(
-                f"expr {expr!r}: comparison operator is not allowed "
-                f"(permitted: + - * / **)"
-            )
+            if len(node.ops) != 1:
+                raise ValueError(
+                    f"expr {expr!r}: chained comparison is not allowed "
+                    f"(write one comparison per where(...))"
+                )
+            if type(node.ops[0]) not in _CMPOPS:
+                raise ValueError(
+                    f"expr {expr!r}: comparison '{type(node.ops[0]).__name__}' is "
+                    f"not allowed (permitted: > < >= <= ==)"
+                )
+            continue
+        if isinstance(node, ast.Subscript):
+            _positions(node, expr)  # raises on anything but whole-number literals
+            continue
+        if isinstance(node, ast.Tuple):
+            continue  # only reachable as a Subscript slice; checked above
         if isinstance(node, ast.BinOp):
             if type(node.op) not in _BINOPS:
                 raise ValueError(
@@ -168,10 +211,10 @@ def parse_and_validate(expr: str) -> ast.Expression:
         if isinstance(node, ast.Call):
             if not isinstance(node.func, ast.Name):
                 raise ValueError(f"expr {expr!r}: only direct function calls are allowed")
-            if node.func.id not in _FUNCS:
+            if node.func.id not in _FUNCS and node.func.id not in _PART_FUNCS:
                 raise ValueError(
                     f"expr {expr!r}: function '{node.func.id}' is not allowed "
-                    f"(permitted: {', '.join(sorted(_FUNCS))})"
+                    f"(permitted: {', '.join(sorted(set(_FUNCS) | _PART_FUNCS))})"
                 )
             if node.keywords:
                 raise ValueError(
@@ -181,19 +224,37 @@ def parse_and_validate(expr: str) -> ast.Expression:
             continue
         raise ValueError(
             f"expr {expr!r}: {type(node).__name__} is not allowed "
-            f"(no attribute access, subscripts, comprehensions, or lambdas)"
+            f"(no attribute access, comprehensions, or lambdas)"
         )
     return tree
 
 
+def _positions(node: ast.Subscript, expr: str) -> tuple[int, ...]:
+    """The whole-number literals of a position ``F[2]`` / ``S[0,1]``."""
+    sl = node.slice
+    items = sl.elts if isinstance(sl, ast.Tuple) else [sl]
+    out = []
+    for it in items:
+        if (not isinstance(it, ast.Constant) or isinstance(it.value, bool)
+                or not isinstance(it.value, int) or it.value < 0):
+            raise ValueError(
+                f"expr {expr!r}: a position must be whole-number literals "
+                f"such as F[2] or S[0,1] (no negatives, slices or names)"
+            )
+        out.append(it.value)
+    return tuple(out)
+
+
 def _value_names(tree: ast.Expression) -> set[str]:
-    """Names referenced as *values* (excludes function-call names)."""
-    call_funcs = {
-        n.func.id for n in ast.walk(tree)
+    """Names referenced as *values* (excludes the name of a called function)."""
+    func_nodes = {
+        id(n.func) for n in ast.walk(tree)
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
     }
-    names = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
-    return names - call_funcs
+    return {
+        n.id for n in ast.walk(tree)
+        if isinstance(n, ast.Name) and id(n) not in func_nodes
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -230,6 +291,85 @@ def _resolve_ref_shape(ref: str, registry):
     )
 
 
+def _combine(shapes: list, expr: str):
+    """Element-wise combination: scalars broadcast, every other shape must match."""
+    non_scalar = [tuple(sh) for sh in shapes if not _is_scalar_shape(sh)]
+    distinct = set(non_scalar)
+    if len(distinct) > 1:
+        detail = " vs ".join(dims.shape_to_str(sh) for sh in sorted(distinct, key=str))
+        raise ValueError(
+            f"expr {expr!r}: operands have different Metric Shapes ({detail}); an "
+            f"Expression Metric is element-wise, so all non-scalar operands must "
+            f"share one shape"
+        )
+    return non_scalar[0] if non_scalar else (dims.scalar,)
+
+
+def infer_shape(tree: ast.Expression, var_shapes: dict, expr: str = "") -> tuple:
+    """Output Metric Shape of a validated expr, given each variable's shape.
+
+    Walks the tree: scalars broadcast, other operands must share one shape,
+    ``norm`` / ``x`` / ``y`` / ``z`` / positions consume the trailing part axes.
+    Raises ``ValueError`` for a shape mismatch, a part function on an input with
+    no such part, or an out-of-range position.
+    """
+    def go(node):
+        if isinstance(node, ast.Expression):
+            return go(node.body)
+        if isinstance(node, ast.Constant):
+            return (dims.scalar,)
+        if isinstance(node, ast.Name):
+            return (dims.scalar,) if node.id in _CONSTS else tuple(var_shapes[node.id])
+        if isinstance(node, ast.UnaryOp):
+            return go(node.operand)
+        if isinstance(node, ast.BinOp):
+            return _combine([go(node.left), go(node.right)], expr)
+        if isinstance(node, ast.Compare):
+            return _combine([go(node.left), go(node.comparators[0])], expr)
+        if isinstance(node, ast.Subscript):
+            inner = go(node.value)
+            sizes = _part_axes(inner)
+            pos = _positions(node, expr)
+            if not sizes:
+                raise ValueError(
+                    f"expr {expr!r}: a position needs an input with part axes "
+                    f"(vector, 3x3, Voigt); this one is {dims.shape_to_str(inner)}"
+                )
+            if len(pos) != len(sizes):
+                raise ValueError(
+                    f"expr {expr!r}: this input needs {len(sizes)} position "
+                    f"number(s), got {len(pos)}"
+                )
+            if any(p >= n for p, n in zip(pos, sizes)):
+                raise ValueError(
+                    f"expr {expr!r}: position {list(pos)} is out of range for "
+                    f"axes of size {list(sizes)}"
+                )
+            return inner[:-1] or (dims.scalar,)
+        if isinstance(node, ast.Call):
+            name = node.func.id
+            shapes = [go(a) for a in node.args]
+            if name in _PART_FUNCS:
+                if len(shapes) != 1:
+                    raise ValueError(f"expr {expr!r}: {name}(...) takes one argument")
+                sh = shapes[0]
+                if name == "norm" and not _part_axes(sh):
+                    raise ValueError(
+                        f"expr {expr!r}: norm needs an input with part axes "
+                        f"(vector, 3x3, Voigt); this one is {dims.shape_to_str(sh)}"
+                    )
+                if name != "norm" and sh[-1] != dims.xyz:
+                    raise ValueError(
+                        f"expr {expr!r}: {name}(...) needs a vector input "
+                        f"(shape ending in xyz); this one is {dims.shape_to_str(sh)}"
+                    )
+                return sh[:-1] or (dims.scalar,)
+            return _combine(shapes, expr)
+        raise ValueError(f"expr {expr!r}: cannot infer a shape for {type(node).__name__}")
+
+    return go(tree)
+
+
 # --------------------------------------------------------------------------- #
 # Picklable evaluator
 # --------------------------------------------------------------------------- #
@@ -246,10 +386,14 @@ class _ExprFn:
     AST is compiled once (cached by string) and evaluated over those arrays.
     """
 
-    def __init__(self, expr: str, var_refs: dict[str, str]) -> None:
+    def __init__(self, expr: str, var_refs: dict[str, str],
+                 var_parts: dict[str, int] | None = None) -> None:
         self.expr = expr
         # sorted for a stable implementation_source regardless of dict order
         self.var_refs = dict(sorted(var_refs.items()))
+        # name → number of trailing part axes (vector 1, Voigt 1, 3x3 2); the
+        # compiler fills it from the input shapes. Absent = no part axes.
+        self.var_parts = dict(var_parts or {})
 
     def _tree(self) -> ast.Expression:
         tree = _AST_CACHE.get(self.expr)
@@ -259,28 +403,47 @@ class _ExprFn:
         return tree
 
     def _eval(self, node, ns):
+        """Returns ``(value, k)``: the array and its count of trailing part axes."""
         if isinstance(node, ast.Expression):
             return self._eval(node.body, ns)
         if isinstance(node, ast.Constant):
-            return node.value
+            return node.value, 0
         if isinstance(node, ast.Name):
             if node.id in _CONSTS:
-                return _CONSTS[node.id]
-            return ns[node.id]
+                return _CONSTS[node.id], 0
+            return ns[node.id], self.var_parts.get(node.id, 0)
         if isinstance(node, ast.BinOp):
-            return _BINOPS[type(node.op)](self._eval(node.left, ns), self._eval(node.right, ns))
+            (a, ka), (b, kb) = self._eval(node.left, ns), self._eval(node.right, ns)
+            return _BINOPS[type(node.op)](a, b), max(ka, kb)
         if isinstance(node, ast.UnaryOp):
-            return _UNARYOPS[type(node.op)](self._eval(node.operand, ns))
+            a, k = self._eval(node.operand, ns)
+            return _UNARYOPS[type(node.op)](a), k
+        if isinstance(node, ast.Compare):
+            (a, ka), (b, kb) = self._eval(node.left, ns), self._eval(node.comparators[0], ns)
+            return _CMPOPS[type(node.ops[0])](a, b), max(ka, kb)
+        if isinstance(node, ast.Subscript):
+            a, k = self._eval(node.value, ns)
+            pos = _positions(node, self.expr)
+            return np.asarray(a)[(..., *pos)], 0
         if isinstance(node, ast.Call):
-            args = [self._eval(a, ns) for a in node.args]
-            return _FUNCS[node.func.id](*args)
+            name = node.func.id
+            evald = [self._eval(a, ns) for a in node.args]
+            if name == "norm":
+                a, k = evald[0]
+                arr = np.asarray(a, dtype=float)
+                return np.sqrt(np.sum(arr * arr, axis=tuple(range(-k, 0)))), 0
+            if name in _XYZ_INDEX:
+                return np.asarray(evald[0][0])[..., _XYZ_INDEX[name]], 0
+            return _FUNCS[name](*[v for v, _ in evald]), max((k for _, k in evald), default=0)
         raise ValueError(f"expr {self.expr!r}: cannot evaluate {type(node).__name__}")
 
     def __call__(self, /, **kwargs):
         # ``self`` is positional-only so an Expression Variable legitimately named
         # ``self`` (bound via ``fn(**resolved_inputs)``) cannot collide with it.
-        out = self._eval(self._tree(), kwargs)
+        out, _k = self._eval(self._tree(), kwargs)
         arr = np.asarray(out)
+        if arr.dtype == bool:
+            arr = arr.astype(float)  # a bare comparison yields 1.0 / 0.0
         if not np.all(np.isfinite(arr)):
             # Decision 7: a Metric never returns silent inf/nan. Raising here
             # surfaces as a Metric Failure naming this metric (per the executor).
@@ -302,26 +465,20 @@ class _ExprFn:
 # --------------------------------------------------------------------------- #
 # Compiler
 # --------------------------------------------------------------------------- #
-def compile_expr_metric(id, expr, vars, *, label="", unit="", registry=None) -> str:
-    """Compile one ``[[metrics.expr]]`` entry → a registered Metric id. Idempotent.
+def analyze_expr(expr, vars, *, registry=None, id="<expr>"):
+    """Check an expr against its vars without registering anything.
 
-    ``vars`` maps each Expression Variable to a Metric Input ref (raw ref,
-    Dataset Field, or metric id). ``n_atoms`` is auto-provided when referenced;
-    a ``vars`` key named ``n_atoms`` raises (Decision 4). The output Metric Shape
-    is the shared shape of the non-scalar variables actually used, or scalar when
-    every used variable is scalar (Decisions 2, 3).
+    Returns ``(inputs, output_shape, var_parts)``: the name→ref map to register,
+    the output Metric Shape, and each variable's count of trailing part axes.
+    Raises ``ValueError`` for any error ``compile_expr_metric`` would raise on the
+    formula itself. Touches no data (ADR 0057 rule 11).
     """
     registry = registry if registry is not None else default_registry
-    if "." not in id:
-        raise ValueError(f"expr metric id '{id}' must be namespaced (contain a dot)")
     if "n_atoms" in vars:
         raise ValueError(
             f"expr metric '{id}': 'n_atoms' is a reserved Expression Variable "
             f"(auto-provided per-structure atom count) — rename the vars entry"
         )
-    if registry.has(id):
-        return id  # idempotent: same compile pass runs on server/client/headless
-
     tree = parse_and_validate(expr)
     used = _value_names(tree) - set(_CONSTS)
     unknown = used - set(vars) - RESERVED_VARS
@@ -340,20 +497,37 @@ def compile_expr_metric(id, expr, vars, *, label="", unit="", registry=None) -> 
         inputs[name] = ref
         shapes[name] = _resolve_ref_shape(ref, registry)
 
-    # Same-shape check over the non-scalar variables; scalars broadcast.
-    non_scalar = {n: sh for n, sh in shapes.items() if not _is_scalar_shape(sh)}
-    distinct = {tuple(sh) for sh in non_scalar.values()}
-    if len(distinct) > 1:
-        detail = ", ".join(
-            f"{n} → {dims.shape_to_str(sh)}" for n, sh in sorted(non_scalar.items())
-        )
-        raise ValueError(
-            f"expr metric '{id}': variables resolve to different Metric Shapes "
-            f"({detail}); an Expression Metric is element-wise, so all non-scalar "
-            f"variables must share one shape"
-        )
-    output_shape = next(iter(non_scalar.values())) if non_scalar else (dims.scalar,)
+    try:
+        output_shape = infer_shape(tree, shapes, expr)
+    except ValueError as e:
+        raise ValueError(f"expr metric '{id}': {e}") from e
+    var_parts = {n: len(_part_axes(sh)) for n, sh in shapes.items() if _part_axes(sh)}
+    return inputs, output_shape, var_parts
 
+
+def compile_expr_metric(id, expr, vars, *, label="", unit="", registry=None) -> str:
+    """Compile one ``[[metrics.expr]]`` entry → a registered Metric id. Idempotent.
+
+    ``vars`` maps each Expression Variable to a Metric Input ref (raw ref,
+    Dataset Field, or metric id). ``n_atoms`` is auto-provided when referenced;
+    a ``vars`` key named ``n_atoms`` raises (Decision 4). The output Metric Shape
+    comes from ``infer_shape``: the shared shape of the non-scalar operands
+    (scalars broadcast), less any part axes ``norm`` / ``x`` / positions consume
+    (Decisions 2, 3; ADR 0057 rule 17).
+    """
+    registry = registry if registry is not None else default_registry
+    if "." not in id:
+        raise ValueError(f"expr metric id '{id}' must be namespaced (contain a dot)")
+    if "n_atoms" in vars:
+        raise ValueError(
+            f"expr metric '{id}': 'n_atoms' is a reserved Expression Variable "
+            f"(auto-provided per-structure atom count) — rename the vars entry"
+        )
+    if registry.has(id):
+        return id  # idempotent: same compile pass runs on server/client/headless
+
+    inputs, output_shape, var_parts = analyze_expr(
+        expr, vars, registry=registry, id=id)
     decorator = registry.metric(
         id=id,
         label=label or id,
@@ -361,7 +535,7 @@ def compile_expr_metric(id, expr, vars, *, label="", unit="", registry=None) -> 
         shape=output_shape,
         unit=unit or units.dimensionless,
     )
-    decorator(_ExprFn(expr, inputs))
+    decorator(_ExprFn(expr, inputs, var_parts))
     return id
 
 

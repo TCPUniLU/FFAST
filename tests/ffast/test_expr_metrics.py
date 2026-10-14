@@ -57,10 +57,14 @@ def test_parse_accepts_whitelist():
 
 @pytest.mark.parametrize("expr,frag", [
     ("a.foo", "attribute"),
-    ("a[0]", "subscript"),
+    ("a[-1]", "position"),
+    ("a[0:2]", "position"),
+    ("a[b]", "position"),
     ("[x for x in a]", "comprehension"),
     ("a and b", "operator"),
-    ("a > b", "operator"),
+    ("a < b < c", "chained"),
+    ("a != b", "comparison"),
+    ("a is b", "comparison"),
     ("floor(a)", "function"),
     ("lambda x: x", "lambda"),
     ("+a", "unary"),  # Decision 6: only unary - is permitted, not unary +

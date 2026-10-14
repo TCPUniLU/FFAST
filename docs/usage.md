@@ -396,6 +396,49 @@ unit  = "dimensionless"
 per frame, `atoms` keys give one per atom. `ffast-cli dataset keys <file>` lists
 what a given file offers. There is a working `ffast.toml` at the repo root.
 
+### Formula metrics
+
+A formula metric is arithmetic over named inputs, with no Python:
+
+```toml
+[[metrics.expr]]
+id    = "mylab.force_error"
+label = "Force error per atom"
+unit  = "force"
+expr  = "norm(pred_F - ref_F)"
+
+  [metrics.expr.vars]
+  pred_F = "prediction.forces"
+  ref_F  = "reference.forces"
+```
+
+Each name in `expr` is bound in `vars` to an input: a metric id, a dataset
+field, or a raw reference such as `reference.forces`. `n_atoms` is always
+available (atoms per structure). The formula works element by element, so it
+never totals over atoms or frames.
+
+What a formula may use:
+
+- Arithmetic `+ - * / **`, unary `-`, the constant `pi`.
+- Functions `abs sqrt exp log log10 sign clip where minimum maximum`.
+- Comparisons `> < >= <= ==`, mostly inside `where(...)`:
+  `where(abs(err) > 1, err, 0)`. A comparison gives 1 or 0.
+- `norm(v)`: the length of a vector, taken over all its parts. For forces,
+  `norm(pred_F - ref_F)` is the force error per atom.
+- Named parts of a vector: `x(F)`, `y(F)`, `z(F)`.
+- Positions: `F[2]` is the third part of a vector. Write whole numbers only,
+  starting at 0. Use a position when no name covers the part you want.
+
+Any bad number (infinity, not-a-number) makes the whole metric fail on that
+dataset, for example a division by zero.
+
+**The position trap.** A position counts parts in the layout FFAST holds, not
+the layout of your file. A vector has three parts, so `F[2]` is z. A stress
+given in the six-number Voigt layout (xx, yy, zz, yz, xz, xy) has `S[1]` = yy,
+while the same stress as a 3×3 table has `S[0,1]` = xy. The same position can
+mean different things for inputs of different layout. Prefer the names
+(`x(F)`) whenever one exists.
+
 ### Panels and tabs
 
 A tab is a grid of panels; a panel binds metrics to axes. Panel kinds available:
