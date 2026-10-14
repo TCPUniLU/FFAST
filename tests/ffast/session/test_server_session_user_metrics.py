@@ -430,3 +430,34 @@ def test_a_tab_change_sends_the_list_again(env):
     env.tab_sources = _Sources()
     _, everyone = _dispatch(env, control.HIDE_TAB, {"name": "Basic", "hidden": True})
     assert [e for e, _, _ in everyone] == [control.TAB_LAYOUT, control.USER_METRICS]
+
+
+def test_cancel_answers_at_once_while_an_input_is_still_computing(env):
+    """ADR 0057 rule 12: an input already computing finishes in the background."""
+    import threading
+    _try_env(env)
+    release, started = threading.Event(), threading.Event()
+
+    class _SlowResolver(_Resolver):
+        def resolve(self, ref, model=None, dataset=None):
+            started.set()
+            release.wait(10)
+            return super().resolve(ref, model, dataset)
+
+    env.data.inputResolver = _SlowResolver()
+    trial = {"id": "t57.try", "expr": "e", "vars": {"e": "reference.energies"}}
+    answered_while_blocked = []
+
+    async def steps(s):
+        await s.dispatch(control.TRY_METRIC, [], {"metric": trial, "try_id": "t5", "dataset_fp": "ds1"})
+        task = s._tries["t5"][1]
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        await s.dispatch(control.CANCEL_TRY_METRIC, [], {"try_id": "t5"})
+        await asyncio.wait_for(task, 5)
+        answered_while_blocked.append(not release.is_set())
+        release.set()
+
+    tried = _run_session(env, steps)[-1][2]
+    assert answered_while_blocked == [True]
+    assert tried["ok"] is True and tried["cancelled"] is True

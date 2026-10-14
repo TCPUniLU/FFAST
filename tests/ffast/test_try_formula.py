@@ -117,3 +117,22 @@ def test_an_unavailable_input_is_named(registry):
 def test_a_formula_error_is_a_try_error(registry):
     with pytest.raises(TryError, match="valid expression"):
         try_formula("e +", {"e": "b.e"}, registry, lambda ref: ENERGY, N_ATOMS)
+
+
+def test_the_histogram_is_the_same_without_keeping_the_values(registry):
+    values = np.arange(1.0, 9.0) ** 2
+    r = try_formula("q ** 2", {"q": "b.q"}, registry, _resolve, N_ATOMS, chunk_frames=1)
+    counts, edges = np.histogram(values, bins=20)
+    assert r.histogram == {"edges": edges.tolist(), "counts": counts.tolist()}
+
+
+def test_cancel_in_the_histogram_sweep_is_reported(registry):
+    calls = {"n": 0}
+
+    def cancelled():
+        calls["n"] += 1
+        return calls["n"] > 5      # past the 4 chunks of the first sweep
+
+    r = try_formula("e", {"e": "b.e"}, registry, lambda ref: ENERGY, N_ATOMS,
+                    chunk_frames=1, cancelled=cancelled)
+    assert r.cancelled is True and r.histogram is None

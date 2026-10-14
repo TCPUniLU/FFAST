@@ -1,7 +1,8 @@
 """Try a formula on a whole dataset without saving it (ADR 0057 rule 12).
 
 Evaluates the formula over every frame, in chunks of frames so a long run can
-report progress and stop cleanly when cancelled. Chunking gives the same answer
+report progress and stop cleanly when cancelled. Two sweeps: the first finds the
+statistics, the second fills the histogram, so no result is held whole. Chunking gives the same answer
 as one pass because a formula is element-wise. Nothing is registered and
 nothing is cached: this is a look at the numbers, so that bad values (infinity,
 not-a-number) are found *before* saving, where they would fail the metric.
@@ -92,16 +93,16 @@ def try_formula(expr: str, variables: dict[str, str], registry,
     chunkable = leads <= {dims.N_frames, dims.N_atoms} and out_lead in (dims.N_frames, dims.N_atoms)
 
     result = TryResult(shape=shape_to_str(out_shape))
-    finite_parts: list[np.ndarray] = []
     total = 0
     bad_total = 0
+    n_finite = 0
     bad_frames: list[int] = []
     sums = 0.0
     lo, hi = None, None
 
     def take(out, frame0):
         """Fold one chunk's output into the running statistics."""
-        nonlocal total, bad_total, sums, lo, hi
+        nonlocal total, bad_total, n_finite, sums, lo, hi
         arr = np.asarray(out, dtype=float)
         flat_axes = tuple(range(1, arr.ndim))
         bad_elem = ~np.isfinite(arr)
@@ -111,7 +112,7 @@ def try_formula(expr: str, variables: dict[str, str], registry,
         bad_total += int(bad_elem.sum())
         good = arr[~bad_elem]
         if good.size:
-            finite_parts.append(good)
+            n_finite += good.size
             sums += float(good.sum())
             lo = float(good.min()) if lo is None else min(lo, float(good.min()))
             hi = float(good.max()) if hi is None else max(hi, float(good.max()))
@@ -126,20 +127,20 @@ def try_formula(expr: str, variables: dict[str, str], registry,
                 if f not in bad_frames and len(bad_frames) < MAX_BAD_FRAMES:
                     bad_frames.append(f)
 
-    atom_offsets_base = 0
-    if not chunkable:
-        # No frame axis to cut along (a scalar, or per-element result): one pass.
-        if cancelled():
-            result.cancelled = True
-            return result
-        take(fn.evaluate(**full), 0)
-        if on_progress:
-            on_progress(n_frames, n_frames)
-    else:
+    def sweep(visit, progress=None) -> bool:
+        """Evaluate every chunk and hand its output to ``visit(out, frame0, atom0)``.
+        False when cancelled."""
+        if not chunkable:
+            # No frame axis to cut along (a scalar, or per-element result): one pass.
+            if cancelled():
+                return False
+            visit(fn.evaluate(**full), 0, 0)
+            if progress:
+                progress(n_frames, n_frames)
+            return True
         for f0 in range(0, n_frames, chunk_frames):
             if cancelled():
-                result.cancelled = True
-                return result
+                return False
             f1 = min(n_frames, f0 + chunk_frames)
             a0, a1 = int(atom_offsets[f0]), int(atom_offsets[f1])
             kwargs = {}
@@ -151,18 +152,39 @@ def try_formula(expr: str, variables: dict[str, str], registry,
                     kwargs[name] = arr[a0:a1]
                 else:
                     kwargs[name] = arr           # scalar: the same in every chunk
-            atom_offsets_base = a0
-            take(fn.evaluate(**kwargs), f0)
-            if on_progress:
-                on_progress(f1, n_frames)
+            visit(fn.evaluate(**kwargs), f0, a0)
+            if progress:
+                progress(f1, n_frames)
+        return True
+
+    def first_pass(out, f0, a0):
+        nonlocal atom_offsets_base
+        atom_offsets_base = a0
+        take(out, f0)
+
+    atom_offsets_base = 0
+    if not sweep(first_pass, on_progress):
+        result.cancelled = True
+        return result
 
     result.count = total
     result.bad_count = bad_total
     result.bad_frames = bad_frames
-    if finite_parts:
-        values = np.concatenate([p.ravel() for p in finite_parts])
+    if n_finite:
         result.min, result.max = lo, hi
-        result.mean = sums / values.size
-        counts, edges = np.histogram(values, bins=BINS)
+        result.mean = sums / n_finite
+        # The values are not kept: a second sweep fills the bins once the range is
+        # known, so memory stays one chunk however large the result is.
+        counts = np.zeros(BINS, dtype=np.int64)
+        edges = np.histogram_bin_edges([lo, hi], bins=BINS)
+
+        def count(out, f0, a0):
+            arr = np.asarray(out, dtype=float)
+            good = arr[np.isfinite(arr)]
+            counts[:] += np.histogram(good, bins=edges)[0]
+
+        if not sweep(count):
+            result.cancelled = True
+            return result
         result.histogram = {"edges": edges.tolist(), "counts": counts.tolist()}
     return result

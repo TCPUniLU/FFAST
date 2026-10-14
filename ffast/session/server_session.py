@@ -1393,22 +1393,24 @@ class ServerSession:
         CANCEL_TRY_METRIC from the same window can be heard while it runs."""
         import threading
         stop = threading.Event()
-        task = asyncio.create_task(self._run_try(metric, try_id, dataset_fp, model_fp, stop))
-        self._tries[try_id] = (stop, task)
+        cancelled = asyncio.Event()
+        task = asyncio.create_task(self._run_try(metric, try_id, dataset_fp, model_fp, stop, cancelled))
+        self._tries[try_id] = (stop, task, cancelled)
         task.add_done_callback(lambda _t: self._tries.pop(try_id, None))
 
     async def _on_cancel_try_metric(self, try_id, **kwargs) -> None:
         running = self._tries.get(try_id)
         if running is not None:
             running[0].set()
+            running[2].set()
 
     def cancel_tries(self) -> None:
         """Stop every Try of this connection (it has gone away)."""
-        for stop, _task in list(self._tries.values()):
+        for stop, _task, _cancelled in list(self._tries.values()):
             stop.set()
 
-    async def _run_try(self, metric, try_id, dataset_fp, model_fp, stop) -> None:
-        from ffast.metrics.try_formula import TryError, try_formula
+    async def _run_try(self, metric, try_id, dataset_fp, model_fp, stop, cancelled) -> None:
+        from ffast.metrics.try_formula import TryError, TryResult, try_formula
         from ffast.protocol.rpc import pack
         loop = asyncio.get_running_loop()
 
@@ -1419,9 +1421,19 @@ class ServerSession:
             loop.call_soon_threadsafe(self._emit_or_drop, data, "TASK_PROGRESS")
 
         try:
-            stats = await asyncio.to_thread(
-                self._try_blocking, metric, dataset_fp, model_fp, progress, stop.is_set)
-            out = {"ok": True, "error": None, **stats}
+            work = asyncio.ensure_future(asyncio.to_thread(
+                self._try_blocking, metric, dataset_fp, model_fp, progress, stop.is_set))
+            heard = asyncio.ensure_future(cancelled.wait())
+            await asyncio.wait({work, heard}, return_when=asyncio.FIRST_COMPLETED)
+            heard.cancel()
+            if not work.done():
+                # Answer Cancel at once. The thread may still be computing an
+                # input (a metric on the worker); it finishes in the background,
+                # the result stays in the cache, and it then sees the stop and exits.
+                work.add_done_callback(lambda f: f.cancelled() or f.exception())
+                out = {"ok": True, "error": None, **TryResult(cancelled=True).to_dict()}
+            else:
+                out = {"ok": True, "error": None, **work.result()}
         except TryError as exc:
             out = {"ok": False, "error": str(exc)}
         except Exception as exc:
