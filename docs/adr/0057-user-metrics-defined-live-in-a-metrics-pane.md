@@ -1,4 +1,4 @@
-Status: Proposed — decided 2026-10-14 in a design interview; not built yet.
+Status: Accepted — implemented (all 7 steps done 2026-10-14). Decided 2026-10-14 in a design interview.
 
 # Users define new metrics while the app runs, as formulas, in a Metrics pane
 
@@ -227,6 +227,32 @@ metrics (rule 11).
 - **Tab saves ignore their version stamp.** `revision` is sent to the browser but
   never checked on save. The rule 6 check could be applied to tabs too, as its
   own fix.
+
+## Found while building
+
+- **A hidden file cannot be edited.** A user file whose id a project or
+  built-in metric holds is listed "Hidden"; saving it would have replaced the
+  winner. It can be duplicated under a new id or deleted (rule 3).
+- **The sidebar only exists in a tab with a 3D panel,** so the Metrics pane
+  does too. A new "My metrics" tab made by **Plot it** therefore holds a linked
+  3D panel beside the plot, and "no room" (rule 13) means: the tab on screen
+  has no plot (it shows only the main view), or there is none.
+- **Sessions store no use of a metric.** A session is `info.json` and the
+  array cache (datasets and predictions); views, tabs and colourings are not in
+  it. So "the user metrics it uses" is taken to be the ones something outside
+  the metrics uses *now* (a tab's panel, an open view's colouring — the lookup
+  behind delete-while-used, rule 7) plus the user metrics those are built on,
+  written to `user_metrics.toml` in the session folder. Rule 16's "everything
+  that used `<id>` uses `<id>.2`" has nothing stored to re-point today; the
+  session's formulas that build on a renamed one are re-pointed. If sessions
+  ever store views or tabs, they should be re-pointed there too.
+- **The Colour By list is rebuilt from the catalog** each time, not appended
+  to: a renamed or deleted user metric used to stay in it.
+- **A transform of a user metric in a tab** (a density of it, say) still needs
+  a metric compiled on the running server, which ADR 0056 rule 11 left as later
+  work; "Plot it" uses a plain timeline for that reason.
+- **Colouring usage covers every open connection's views,** and tab usage
+  counts hidden tabs, so showing a hidden tab again never finds its metric gone.
 
 ## Build order
 

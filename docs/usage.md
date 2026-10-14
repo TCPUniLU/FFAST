@@ -439,6 +439,53 @@ while the same stress as a 3×3 table has `S[0,1]` = xy. The same position can
 mean different things for inputs of different layout. Prefer the names
 (`x(F)`) whenever one exists.
 
+### Your own metrics in the browser
+
+The **Metrics** section of the settings sidebar, next to Colour By, lists every
+metric by where it comes from (built-in, project, user) and lets you write your
+own as formulas, while the app runs. It needs a tab with a 3D panel, because the
+sidebar belongs to the 3D controls.
+
+1. **New metric.** The id starts with `user.`; you may type any dotted id, such
+   as `mylab.e_per_atom`. A taken id is refused.
+2. **Write the formula.** Click an input in the list (Reference, Prediction, File
+   keys, Metrics) to put its short name in the formula and add it to the
+   variables. Typing offers the same names. A name with no input is shown in red
+   ("`ref_E` is not an input"), with a **Fix** button when exactly one input fits.
+   The line under the formula says what the result is: per structure (can be
+   plotted), per atom (can colour atoms) or one number.
+3. **Try** computes the formula on every frame of the selected dataset and
+   prediction without saving it. It shows the smallest, average and largest
+   value, a histogram, and the first frames with bad values (infinity,
+   not-a-number); click a frame number to go to it. **Cancel** stops it. A bad
+   value fails the whole metric once it is saved, so try first.
+4. **Save** keeps the metric on the server, in `~/.ffast/metrics/`, one TOML file
+   each in the same format as `[[metrics.expr]]`. Every window connected to that
+   server sees it, and open plots and a colouring by that metric recompute. If
+   another window changed it meanwhile, the pane says "Changed in another window"
+   and offers **Reload** (drop your edits) or **Overwrite**.
+
+Only user metrics can be edited. A built-in or project formula metric shows its
+formula and offers **Duplicate**, which starts a user copy under a new id.
+**Delete** is refused while anything uses the metric: the pane lists the tabs,
+other metrics and the colouring that do. **Export** shows the TOML to paste into a
+project's `ffast.toml`.
+
+For a per-atom metric, **Colour atoms by this** sets the main view's colouring.
+For a per-structure metric, **Plot it** adds a timeline to the tab on screen, or
+to a "My metrics" tab (made for you, with the main view beside the plot) when the
+tab on screen only shows the main view.
+
+If a project or built-in metric has the same id as a user file, that one wins and
+the file is listed as "Hidden"; duplicate it under a new id, or delete it.
+
+User metrics belong to the server: the desktop client and `ffast-cli` do not load
+them, so a command gives the same numbers on every machine. Export a metric to
+the project first if a script needs it. A saved session carries the formulas of
+the user metrics its tabs and views use, and loading it on a server that lacks
+them asks "Add them?". If the server has the same id with a different formula,
+the session's one is added as `<id>.2` and the server's is left alone.
+
 ### Panels and tabs
 
 A tab is a grid of panels; a panel binds metrics to axes. Panel kinds available:

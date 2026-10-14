@@ -167,7 +167,7 @@ Where a metric's definition comes from. **Built-in** ships with FFAST.
 `[[metrics.expr]]` entry). **User** is an Expression metric defined in the
 browser and kept by the app on the server machine, one file per metric. Only
 user metrics can be edited or deleted in the app; a user metric never replaces a
-built-in or project metric with the same ID (ADR 0057, proposed, not built yet).
+built-in or project metric with the same ID (ADR 0057).
 
 Don't call it: a custom metric (every non-built-in metric is custom), a live
 metric.
@@ -175,7 +175,7 @@ metric.
 ### Metrics pane
 
 The browser side pane where user metrics are written, tried, saved, deleted and
-exported, beside the views they affect (ADR 0057, proposed, not built yet).
+exported, beside the views they affect (ADR 0057).
 
 Don't call it: the metric window, the metric editor dialog.
 
@@ -184,7 +184,7 @@ Don't call it: the metric window, the metric editor dialog.
 Computing a formula in the Metrics pane for the selected dataset and prediction
 without registering it. Shows a summary and the bad frames; no other view or
 browser sees it. Distinct from **Save**, which registers the metric and updates
-every view (ADR 0057, proposed, not built yet).
+every view (ADR 0057).
 
 Don't call it: preview (that suggests the views change), dry run.
 
