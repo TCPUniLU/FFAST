@@ -472,9 +472,9 @@ other metrics and the colouring that do. **Export** shows the TOML to paste into
 project's `ffast.toml`.
 
 For a per-atom metric, **Colour atoms by this** sets the main view's colouring.
-For a per-structure metric, **Plot it** adds a timeline to the tab on screen, or
-to a "My metrics" tab (made for you, with the main view beside the plot) when the
-tab on screen only shows the main view.
+For a per-structure metric, **Plot it** adds a timeline to the "My metrics" tab
+(made for you, with the main view beside the plot, so the pane stays in reach).
+It never changes a built-in or project tab.
 
 If a project or built-in metric has the same id as a user file, that one wins and
 the file is listed as "Hidden"; duplicate it under a new id, or delete it.

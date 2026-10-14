@@ -102,20 +102,13 @@ CASES = {
 
     # ── Plot it (rule 13) ───────────────────────────────────────────────────
     "plot_panel": "te.metricPanel({id: 'user.a', label: 'A'})",
-    "plot_into_a_plots_tab": (
-        "(() => { const t = {name: 'Basic', panels: [{kind: 'table', row: 0, col: 0}], column_widths: null, row_heights: null};"
-        "  const r = te.plotTarget(t, [t], te.metricPanel({id: 'user.a', label: 'A'}));"
+    "plot_makes_my_metrics_with_the_main_view": (
+        "(() => { const r = te.plotTarget([{name: 'Basic', panels: [{kind: 'table', row: 0, col: 0}]}],"
+        " te.metricPanel({id: 'user.a', label: 'A'}));"
         "  return [r.previous, r.tab.name, r.tab.panels.map(p => [p.kind, p.title, p.row, p.col])]; })()"),
-    "plot_from_the_3d_tab_makes_my_metrics": (
-        "(() => { const t = {name: '3D', panels: [{kind: '3d', row: 0, col: 0}]};"
-        "  const r = te.plotTarget(t, [t], te.metricPanel({id: 'user.a', label: 'A'}));"
-        "  return [r.previous, r.tab.name, r.tab.panels.map(p => [p.kind, p.title, p.row, p.col])]; })()"),
-    "plot_with_no_tab_makes_my_metrics": (
-        "(() => { const r = te.plotTarget(null, [], te.metricPanel({id: 'user.a', label: 'A'}));"
-        "  return [r.previous, r.tab.name, r.tab.panels.map(p => p.kind)]; })()"),
     "plot_reuses_an_existing_my_metrics": (
         "(() => { const mine = {name: 'My metrics', panels: [{kind: 'timeline', title: 'B', row: 0, col: 0, metrics: {}}]};"
-        "  const r = te.plotTarget({name: '3D', panels: [{kind: '3d'}]}, [mine], te.metricPanel({id: 'user.a', label: 'A'}));"
+        "  const r = te.plotTarget([{name: '3D', panels: [{kind: '3d'}]}, mine], te.metricPanel({id: 'user.a', label: 'A'}));"
         "  return [r.previous, r.tab.panels.map(p => [p.title, p.row, p.col])]; })()"),
 
     # ── the question after a session load (rule 15) ─────────────────────────
@@ -333,15 +326,10 @@ def test_plot_it_adds_a_timeline_of_the_metric(results):
     assert panel["metric_refs"] == {"y": {"metric": "user.a", "transform": None, "params": {}}}
 
 
-def test_plot_it_goes_to_the_tab_on_screen_when_it_has_a_plot(results):
-    assert results["plot_into_a_plots_tab"] == ["Basic", "Basic", [["table", None, 0, 0], ["timeline", "A", 1, 0]]]
-
-
-def test_plot_it_makes_my_metrics_when_the_tab_only_shows_the_main_view_or_none_is_on_screen(results):
+def test_plot_it_always_makes_or_uses_my_metrics_never_another_tab(results):
     # a new My metrics tab holds the main view too, so the pane stays beside the plot
-    assert results["plot_from_the_3d_tab_makes_my_metrics"] == [
+    assert results["plot_makes_my_metrics_with_the_main_view"] == [
         None, "My metrics", [["3d", None, 0, 0], ["timeline", "A", 0, 1]]]
-    assert results["plot_with_no_tab_makes_my_metrics"] == [None, "My metrics", ["3d", "timeline"]]
 
 
 def test_plot_it_adds_to_my_metrics_when_it_exists(results):

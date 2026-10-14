@@ -2083,15 +2083,14 @@ export class FFastApp {
       this._setStatus(`${id} has no value per atom here`, 'error');
   }
 
-  /** "Plot it" (rule 13): a panel for a per-structure metric, in the tab on
-   * screen or in the "My metrics" tab; saved like any tab edit. */
+  /** "Plot it" (rule 13): a panel for a per-structure metric, in the "My
+   * metrics" tab; saved like any tab edit. */
   async _plotMetric(id) {
     const why = this._whyNoEdit();
     if (why) { this._setStatus(why, 'error'); return; }
     const metric = this._metricCatalog.find((m) => m.id === id);
     if (!metric) return;
-    const current = this._layoutTabs.find((t) => t.name === this._analysis.tab(this._activeTab)?.name);
-    const { tab, previous } = plotTarget(current, this._layoutTabs, metricPanel(metric));
+    const { tab, previous } = plotTarget(this._layoutTabs, metricPanel(metric));
     this._pendingShow = tab.name;      // the layout that follows the save shows it
     const r = await this._tabOps.save(toSaved(tab), previous);
     if (!r.ok) this._pendingShow = null;

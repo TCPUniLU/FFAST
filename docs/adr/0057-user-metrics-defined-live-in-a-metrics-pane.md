@@ -233,10 +233,12 @@ metrics (rule 11).
 - **A hidden file cannot be edited.** A user file whose id a project or
   built-in metric holds is listed "Hidden"; saving it would have replaced the
   winner. It can be duplicated under a new id or deleted (rule 3).
-- **The sidebar only exists in a tab with a 3D panel,** so the Metrics pane
-  does too. A new "My metrics" tab made by **Plot it** therefore holds a linked
-  3D panel beside the plot, and "no room" (rule 13) means: the tab on screen
-  has no plot (it shows only the main view), or there is none.
+- **"No room" (rule 13) is dropped: Plot it always uses "My metrics".** A tab
+  has no size limit, so "no room" had no meaning. Decided 2026-10-14: the
+  shortcut always adds to the "My metrics" user tab, made when missing, so it is
+  predictable and never edits a built-in or project tab. The sidebar, and so the
+  Metrics pane, only exists in a tab with a 3D panel; a new "My metrics" tab
+  therefore holds a linked 3D panel beside the plot.
 - **Sessions store no use of a metric.** A session is `info.json` and the
   array cache (datasets and predictions); views, tabs and colourings are not in
   it, so "the user metrics it uses" has no stored answer. Decided 2026-10-14:
