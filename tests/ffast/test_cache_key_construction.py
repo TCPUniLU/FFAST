@@ -90,3 +90,47 @@ def test_make_metric_key_transform_id_with_underscores_round_trips():
     )
     assert key == "ffast.force_mae__kde__p1a2b3c4__M__D"
     assert CacheKey.parse(key).dtype == "ffast.force_mae__kde__p1a2b3c4"
+
+
+# ── formula identity in the key (ADR 0057 rule 5) ─────────────────────────────
+
+def _formula_registry(monkeypatch):
+    from ffast.metrics.expr import compile_expr_metric
+    from ffast.metrics.registry import MetricRegistry
+    import sys
+    registry_module = sys.modules["ffast.metrics.registry"]
+
+    reg = MetricRegistry()
+    reg.metric(id="t.base", inputs={"x": "ref.x"}, shape="scalar", unit="energy")(lambda x: x)
+    monkeypatch.setattr(registry_module, "default_registry", reg)
+    return reg, compile_expr_metric
+
+
+def _key(mid):
+    return DataService.make_metric_cache_key(SimpleNamespace(), mid, {}, _obj("M"), _obj("D"))
+
+
+def test_formula_metric_key_changes_when_the_formula_is_edited(monkeypatch):
+    reg, compile_ = _formula_registry(monkeypatch)
+    compile_("lab.a", "x * 2", {"x": "t.base"}, registry=reg)
+    before = _key("lab.a")
+    reg.unregister("lab.a")
+    compile_("lab.a", "x * 3", {"x": "t.base"}, registry=reg)
+    assert _key("lab.a") != before
+    assert _key("lab.a").startswith("lab.a__f")
+
+
+def test_formula_built_on_a_formula_changes_when_the_lower_one_does(monkeypatch):
+    reg, compile_ = _formula_registry(monkeypatch)
+    compile_("lab.a", "x * 2", {"x": "t.base"}, registry=reg)
+    compile_("lab.b", "a + 1", {"a": "lab.a"}, registry=reg)
+    before = _key("lab.b")
+    reg.unregister("lab.a")
+    compile_("lab.a", "x * 3", {"x": "t.base"}, registry=reg)
+    assert _key("lab.b") != before
+
+
+def test_builtin_style_metric_key_is_unchanged(monkeypatch):
+    _formula_registry(monkeypatch)
+    assert _key("t.base") == "t.base__M__D"
+

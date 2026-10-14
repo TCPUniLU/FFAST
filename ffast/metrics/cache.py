@@ -26,6 +26,31 @@ def function_hash(fn: Callable) -> str:
     return hashlib.sha256(src.encode()).hexdigest()[:16]
 
 
+def formula_token(registry, metric_id: str) -> str | None:
+    """Short identity of the formulas behind a metric, or None when it has none.
+
+    Formula metrics (user, project, transform) describe themselves by
+    ``implementation_source``; a built-in's code cannot change while the server
+    runs. A formula built on other formulas takes theirs in too, so editing one
+    changes the token of everything above it (ADR 0057 rule 5).
+    """
+    parts: dict[str, str] = {}
+
+    def walk(mid: str) -> None:
+        if mid in parts or not registry.has(mid):
+            return
+        schema, fn = registry.get(mid)
+        parts[mid] = function_hash(fn) if hasattr(fn, "implementation_source") else ""
+        for ref in schema.inputs.values():
+            walk(ref)
+
+    walk(metric_id)
+    seen = [f"{m}:{h}" for m, h in sorted(parts.items()) if h]
+    if not seen:
+        return None
+    return hashlib.sha256("|".join(seen).encode()).hexdigest()[:8]
+
+
 def _value_fingerprint(v: Any) -> str:
     if hasattr(v, "__array__"):
         return _array_fingerprint(np.asarray(v))

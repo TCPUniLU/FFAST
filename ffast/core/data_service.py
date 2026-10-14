@@ -26,6 +26,17 @@ import logging
 logger = logging.getLogger("FFAST")
 
 
+def _formula_token(metric_id):
+    """The formula identity of a metric for its cache key, or None (see
+    ``ffast.metrics.cache.formula_token``)."""
+    from ffast.metrics.cache import formula_token
+    from ffast.metrics.registry import default_registry
+    try:
+        return formula_token(default_registry, metric_id)
+    except Exception:
+        return None
+
+
 class DataService:
     """Cache-key resolution, data generation, and in-process metrics (ADR 0020)."""
 
@@ -205,12 +216,18 @@ class DataService:
         from ffast.cache import CacheKey
 
         identity = metric_id
+        token = _formula_token(metric_id)
+        if token:
+            # A formula metric can be edited on a running server (ADR 0057 rule 5):
+            # its formula is part of the identity, so an edit is a different key
+            # and no old result can be read or written back under the new one.
+            identity = f"{metric_id}__f{token}"
         if params:
             import hashlib, json
             params_hash = hashlib.md5(
                 json.dumps(params, sort_keys=True).encode()
             ).hexdigest()[:8]
-            identity = f"{metric_id}__p{params_hash}"
+            identity = f"{identity}__p{params_hash}"
 
         model_fp = model.fingerprint if model is not None else None
         dataset_fp = dataset.fingerprint if dataset is not None else None
@@ -229,7 +246,7 @@ class DataService:
             ck = key if isinstance(key, CacheKey) else CacheKey.try_parse(key)
             if ck is None:
                 return False
-            return ck.dtype in ids or any(ck.dtype.startswith(f"{m}__p") for m in ids)
+            return ck.dtype in ids or any(ck.dtype.startswith((f"{m}__p", f"{m}__f")) for m in ids)
 
         return self.cache.invalidate(stale)
 
