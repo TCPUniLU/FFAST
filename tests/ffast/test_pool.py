@@ -38,6 +38,11 @@ def _pool_slow(x):
     return x
 
 
+def _pool_nap(x):
+    time.sleep(1.5)
+    return x
+
+
 def _pool_raise_error(x):
     raise ValueError("intentional test failure")
 
@@ -69,6 +74,7 @@ def registry():
     reg.metric(id="test.double",      inputs={"x":   "ref.x"},         shape="scalar", unit="energy")(_pool_double)
     reg.metric(id="test.sum_arr",     inputs={"arr": "ref.arr"},        shape="scalar", unit="energy")(_pool_sum_arr)
     reg.metric(id="test.slow",        inputs={"x":   "ref.x"},         shape="scalar", unit="energy")(_pool_slow)
+    reg.metric(id="test.nap",         inputs={"x":   "ref.x"},         shape="scalar", unit="energy")(_pool_nap)
     reg.metric(id="test.raise_error", inputs={"x":   "ref.x"},         shape="scalar", unit="energy")(_pool_raise_error)
     reg.metric(id="test.crash",       inputs={"x":   "ref.x"},         shape="scalar", unit="energy")(_pool_crash)
     reg.metric(id="test.dep_inner",   inputs={"x":   "ref.x"},         shape="scalar", unit="energy")(_pool_dep_inner)
@@ -412,3 +418,43 @@ def test_refresh_registry_makes_a_new_metric_known_to_the_worker(registry, execu
     executor.refresh_registry()
     result = executor.run("test.triple", FlatInputSource({"x": 2.0}), {})
     assert isinstance(result, MetricResult) and np.isclose(result.values, 6.0)
+
+
+def test_refresh_registry_does_not_fail_a_running_metric(registry, executor):
+    """ADR 0057 rule 5: a metric change must not kill work already running."""
+    import threading
+    out = {}
+    t = threading.Thread(target=lambda: out.setdefault(
+        "r", executor.run("test.nap", FlatInputSource({"x": 4.0}), {})))
+    t.start()
+    time.sleep(0.7)  # the nap is running on the worker
+    registry.metric(id="test.triple", inputs={"x": "ref.x"}, shape="scalar",
+                    unit="energy")(_pool_triple)
+    executor.refresh_registry()
+    t.join(timeout=20)
+    assert isinstance(out["r"], MetricResult) and np.isclose(out["r"].values, 4.0)
+    # and the next run sees the new metric
+    after = executor.run("test.triple", FlatInputSource({"x": 2.0}), {})
+    assert isinstance(after, MetricResult) and np.isclose(after.values, 6.0)
+
+
+def test_concurrent_runs_each_get_their_own_answer(registry):
+    """Two threads share one worker pipe; a reply must reach the thread that asked."""
+    import threading
+    exc = WorkerProcessExecutor(registry, PoolPolicy(max_runtime_s=20.0))
+    results = {}
+
+    def go(i):
+        results[i] = exc.run("test.double", FlatInputSource({"x": float(i)}), {})
+
+    try:
+        threads = [threading.Thread(target=go, args=(i,)) for i in range(1, 7)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+    finally:
+        exc.shutdown()
+    for i in range(1, 7):
+        assert isinstance(results[i], MetricResult), results[i]
+        assert np.isclose(results[i].values, 2.0 * i)

@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import pickle
+import threading
 import time
 import traceback as tb
 from dataclasses import dataclass
@@ -246,6 +247,10 @@ class WorkerProcessExecutor(MetricExecutor):
         self._registry_bytes = pickle.dumps(registry)
         self._worker: _Worker | None = None
         self._task_counter = 0
+        # One task at a time on the worker: threads (metric pool, scene builds)
+        # share a single pipe, and a thread discards replies it did not ask for.
+        self._lock = threading.RLock()
+        self._stale = False
 
     def _spawn_worker(self) -> _Worker:
         parent_conn, child_conn = mp.Pipe(duplex=True)
@@ -262,15 +267,20 @@ class WorkerProcessExecutor(MetricExecutor):
         """Give workers the current metric table (ADR 0057 rule 5).
 
         The table is copied once per worker at spawn, so a metric registered or
-        edited later is unknown to a running one. Take a new copy and retire the
-        current worker; the next ``run`` spawns one that has it.
+        edited later is unknown to a running one. Take a new copy and mark the
+        worker stale; the next task replaces it before it runs. A task already
+        running is never killed.
         """
         self._registry_bytes = pickle.dumps(self._registry)
-        if self._worker is not None:
-            self._worker.terminate()
-            self._worker = None
+        self._stale = True
 
     def _get_worker(self) -> _Worker:
+        """The worker for the next task. Caller holds ``self._lock``."""
+        if self._stale:
+            self._stale = False
+            if self._worker is not None:
+                self._worker.terminate()
+                self._worker = None
         if self._worker is None or not self._worker.alive:
             self._worker = self._spawn_worker()
         return self._worker
@@ -338,78 +348,83 @@ class WorkerProcessExecutor(MetricExecutor):
             else self._policy.max_runtime_s
         )
 
-        self._task_counter += 1
-        task_id = self._task_counter
+        with self._lock:
+            self._task_counter += 1
+            task_id = self._task_counter
 
-        worker = self._get_worker()
+            worker = self._get_worker()
 
-        # Wait for the worker to finish booting BEFORE arming the deadline, so a
-        # slow cold-start (common under load) can't falsely time out a fast metric.
-        if not self._await_ready(worker):
-            worker.terminate()
-            self._worker = None
-            return MetricFailure(
-                metric_id=id,
-                traceback=(
-                    f"Worker failed to start within "
-                    f"{self._policy.spawn_timeout_s:.1f}s"
-                ),
-                parameters=parameters,
-            )
+            # Wait for the worker to finish booting BEFORE arming the deadline, so a
+            # slow cold-start (common under load) can't falsely time out a fast metric.
+            if not self._await_ready(worker):
+                worker.terminate()
+                self._worker = None
+                return MetricFailure(
+                    metric_id=id,
+                    traceback=(
+                        f"Worker failed to start within "
+                        f"{self._policy.spawn_timeout_s:.1f}s"
+                    ),
+                    parameters=parameters,
+                )
 
-        packed_inputs, shm_list = _pack_inputs(resolved, self._policy.shm_threshold_bytes)
+            packed_inputs, shm_list = _pack_inputs(resolved, self._policy.shm_threshold_bytes)
 
-        try:
-            worker.conn.send({
-                "task_id": task_id,
-                "metric_id": id,
-                "packed_inputs": packed_inputs,
-                "compute_params": compute_params,
-            })
+            try:
+                worker.conn.send({
+                    "task_id": task_id,
+                    "metric_id": id,
+                    "packed_inputs": packed_inputs,
+                    "compute_params": compute_params,
+                })
 
-            deadline = time.monotonic() + effective_timeout
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    worker.terminate()
-                    self._worker = None
-                    return MetricFailure(
-                        metric_id=id,
-                        traceback=(
-                            f"Metric exceeded hard time limit "
-                            f"({effective_timeout:.1f}s)"
-                        ),
-                        parameters=parameters,
-                    )
-
-                if not worker.conn.poll(min(remaining, 1.0)):
-                    continue
-
-                msg = worker.conn.recv()
-                if msg["task_id"] == task_id:
-                    worker.task_count += 1
-                    if worker.task_count >= self._policy.max_tasks_per_worker:
+                deadline = time.monotonic() + effective_timeout
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        worker.terminate()
                         self._worker = None
-                    return msg["value"]
+                        return MetricFailure(
+                            metric_id=id,
+                            traceback=(
+                                f"Metric exceeded hard time limit "
+                                f"({effective_timeout:.1f}s)"
+                            ),
+                            parameters=parameters,
+                        )
 
-        except (BrokenPipeError, EOFError, OSError):
-            worker.terminate()
-            self._worker = None
-            return MetricFailure(
-                metric_id=id,
-                traceback="Worker process died unexpectedly",
-                parameters=parameters,
-            )
-        finally:
-            for shm in shm_list:
-                try:
-                    shm.close()
-                    shm.unlink()
-                except Exception:
-                    pass
+                    if not worker.conn.poll(min(remaining, 1.0)):
+                        continue
+
+                    msg = worker.conn.recv()
+                    if msg["task_id"] == task_id:
+                        worker.task_count += 1
+                        if worker.task_count >= self._policy.max_tasks_per_worker:
+                            self._worker = None
+                        return msg["value"]
+
+            except (BrokenPipeError, EOFError, OSError):
+                worker.terminate()
+                self._worker = None
+                return MetricFailure(
+                    metric_id=id,
+                    traceback="Worker process died unexpectedly",
+                    parameters=parameters,
+                )
+            finally:
+                for shm in shm_list:
+                    try:
+                        shm.close()
+                        shm.unlink()
+                    except Exception:
+                        pass
 
     def shutdown(self) -> None:
         """Gracefully stop the worker: cooperative sentinel then forced terminate."""
+        with self._lock:
+            self._shutdown_locked()
+
+    def _shutdown_locked(self) -> None:
         if self._worker is not None:
             try:
                 self._worker.conn.send(None)
