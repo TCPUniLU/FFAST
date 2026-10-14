@@ -54,6 +54,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
   let saved = null;           // the user entry the draft was loaded from
   let check = { ok: null, error: '', shape: null };   // the server's last word
   let conflict = false;       // the server's copy changed under unsaved edits
+  let conflictText = '';      // what the server said: changed, or deleted, in another window
   let message = { text: '', error: false };
   let tryResult = null;
   let tryProgress = null;
@@ -377,12 +378,13 @@ export function createMetricsPane(sidebarEl, callbacks) {
     conflictEl.replaceChildren();
     conflictEl.hidden = !conflict;
     if (!conflict) return;
-    conflictEl.append(el('span', '', 'Changed in another window'));
-    const reload = el('button', '', 'Reload');
-    reload.title = 'Drop my edits and show the saved version';
+    const deleted = conflictText.startsWith('Deleted');
+    conflictEl.append(el('span', '', deleted ? 'Deleted in another window' : 'Changed in another window'));
+    const reload = el('button', '', deleted ? 'Discard' : 'Reload');
+    reload.title = deleted ? 'Drop my edits' : 'Drop my edits and show the saved version';
     reload.addEventListener('click', reloadFromServer);
-    const over = el('button', 'mx-primary', 'Overwrite');
-    over.title = 'Save my version over the other window\'s';
+    const over = el('button', 'mx-primary', deleted ? 'Save anyway' : 'Overwrite');
+    over.title = deleted ? 'Make the metric again from my edits' : 'Save my version over the other window\'s';
     over.addEventListener('click', () => save(true));
     conflictEl.append(reload, over);
   }
@@ -579,6 +581,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
       selectById(r.id);
     } else if (r.conflict) {
       conflict = true;
+      conflictText = r.error || '';
       renderConflict();
       renderButtons();
     } else {
@@ -600,6 +603,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
   function reloadFromServer() {
     const latest = findEntry(selected.id);
     if (latest) select(latest);
+    else { selected = null; draft = null; saved = null; conflict = false; renderEditor(); }
   }
 
   async function runTry() {
@@ -672,7 +676,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
         } else selected = null;
       } else {
         const moved = saved && latest.revision && latest.revision !== saved.revision;
-        if (moved && draft && isDirty(draft, saved)) { conflict = true; }
+        if (moved && draft && isDirty(draft, saved)) { conflict = true; conflictText = ''; }
         else if (moved) { selected = latest; saved = latest; draft = toDraft(latest); scheduleCheck(true); }
         else { selected = latest; if (latest.origin === 'user') saved = latest; }
       }

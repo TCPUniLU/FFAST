@@ -310,7 +310,13 @@ class UserMetrics:
             if cfg.id != previous_id:
                 raise MetricError("An edit keeps the metric's id; use Duplicate to make a copy")
             if current is None:
-                raise self._not_editable(previous_id)
+                if self.registry.has(previous_id):
+                    raise self._not_editable(previous_id)
+                # Another window deleted it while this one edited (rule 6):
+                # a conflict, and "save anyway" makes it again under the same id.
+                if not overwrite:
+                    raise MetricConflict("Deleted in another window")
+                return self._register(cfg, None)
             if current.status == "hidden":
                 raise MetricError(f"{current.message}; Duplicate it under a new id, or delete it")
             if (not overwrite and base_revision is not None

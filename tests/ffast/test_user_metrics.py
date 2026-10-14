@@ -186,6 +186,16 @@ def test_a_stale_save_is_refused_unless_overwriting(um):
     assert um.get("user.double").expr == "4 * e"
 
 
+def test_editing_a_metric_deleted_elsewhere_is_a_conflict_that_save_anyway_resolves(um):
+    um.save(metric())
+    first = metric_revision(ExprMetricConfig(**metric()))
+    um.delete("user.double")
+    with pytest.raises(MetricConflict, match="Deleted in another window"):
+        um.save(metric(expr="3 * e"), previous_id="user.double", base_revision=first)
+    um.save(metric(expr="3 * e"), previous_id="user.double", base_revision=first, overwrite=True)
+    assert um.get("user.double").expr == "3 * e"
+
+
 def test_entries_carry_the_revision_the_editor_sends_back(um):
     um.save(metric())
     [entry] = um.entries()
