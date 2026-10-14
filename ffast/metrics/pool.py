@@ -258,6 +258,18 @@ class WorkerProcessExecutor(MetricExecutor):
         child_conn.close()  # Parent only uses the parent end
         return _Worker(conn=parent_conn, process=process)
 
+    def refresh_registry(self) -> None:
+        """Give workers the current metric table (ADR 0057 rule 5).
+
+        The table is copied once per worker at spawn, so a metric registered or
+        edited later is unknown to a running one. Take a new copy and retire the
+        current worker; the next ``run`` spawns one that has it.
+        """
+        self._registry_bytes = pickle.dumps(self._registry)
+        if self._worker is not None:
+            self._worker.terminate()
+            self._worker = None
+
     def _get_worker(self) -> _Worker:
         if self._worker is None or not self._worker.alive:
             self._worker = self._spawn_worker()

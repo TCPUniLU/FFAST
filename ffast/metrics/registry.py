@@ -81,6 +81,47 @@ class MetricRegistry:
     def has(self, id: str) -> bool:
         return id in self._metrics
 
+    # -- changing the table on a running server (ADR 0057 rule 5) -------------
+    # The table is frozen at start-up, then user metrics are added, replaced and
+    # removed while it runs. Callers re-run ``freeze()`` afterwards and tell the
+    # worker pool (``refresh_registry``) and the result cache.
+
+    def unregister(self, id: str) -> tuple[MetricSchema, Callable]:
+        """Remove a metric; returns what was removed so a caller can restore it."""
+        if id not in self._metrics:
+            raise KeyError(f"Metric with id '{id}' is not registered")
+        return self._metrics.pop(id)
+
+    def restore(self, id: str, entry: tuple[MetricSchema, Callable]) -> None:
+        """Put back an entry taken out by ``unregister`` (rollback of a failed edit)."""
+        self._metrics[id] = entry
+
+    def dependents_of(self, id: str) -> list[str]:
+        """Every metric built on ``id``, directly or through others (sorted).
+
+        Found by walking the metrics' declared inputs, so it is right before
+        and after ``freeze()`` and includes Transform Metrics.
+        """
+        direct: dict[str, set[str]] = {}
+        for mid, (schema, _fn) in self._metrics.items():
+            for ref in schema.inputs.values():
+                direct.setdefault(ref, set()).add(mid)
+        found: set[str] = set()
+        todo = [id]
+        while todo:
+            for dep in direct.get(todo.pop(), ()):
+                if dep not in found and dep != id:
+                    found.add(dep)
+                    todo.append(dep)
+        return sorted(found)
+
+    def direct_dependents_of(self, id: str) -> list[str]:
+        """The metrics that name ``id`` as one of their inputs (sorted)."""
+        return sorted(
+            mid for mid, (schema, _fn) in self._metrics.items()
+            if id in schema.inputs.values()
+        )
+
     def list_metrics(self) -> list[str]:
         return list(self._metrics.keys())
 

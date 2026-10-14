@@ -26,18 +26,28 @@ def _param_to_dict(p) -> dict:
     }
 
 
-def build_metric_catalog(registry) -> list[dict]:
+def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
     """Catalog of every registered metric as plain dicts.
 
     Each entry: ``{id, label, shape, unit, parameters}`` where ``shape`` is the
     string form (e.g. ``"N_atoms"``, ``"N_elements"``, ``"scalar"``) and
     ``parameters`` maps name → flattened ParameterSchema. Clients filter by
     ``shape`` for their use (atom coloring keeps ``N_atoms`` / ``N_elements``).
+
+    With ``user_metrics`` (ADR 0057) each entry also says where the metric
+    comes from, its formula if it is an Expression Metric, and who uses it.
     """
+    from ffast.metrics.expr import _ExprFn
     catalog = []
     for mid in sorted(registry.list_metrics()):
-        schema, _ = registry.get(mid)
+        schema, fn = registry.get(mid)
+        is_formula = isinstance(fn, _ExprFn)
         catalog.append({
+            "origin": user_metrics.origin(mid) if user_metrics is not None else "built-in",
+            "expr": fn.expr if is_formula else None,
+            "vars": ({n: r for n, r in fn.var_refs.items() if n != "n_atoms"}
+                     if is_formula else None),
+            "used_by": user_metrics.used_by(mid) if user_metrics is not None else [],
             "id": mid,
             "label": schema.label or mid,
             "shape": shape_to_str(schema.shape),

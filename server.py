@@ -507,6 +507,29 @@ def _build_tab_sources(config_arg: str | None, tabs_dir: str | None = None):
     return sources
 
 
+def _build_user_metrics(builtin_ids, metrics_dir: str | None = None):
+    """The user metrics: formulas saved by the browser, one TOML file each in
+    ``metrics_dir`` (default ``~/.ffast/metrics``) on this machine (ADR 0057).
+
+    Registered after the project's metrics, so an id the project (or a built-in)
+    already holds wins and the user file is listed as hidden. ``builtin_ids`` is
+    the registry as it was before the project's metrics, to label the origin of
+    each. Fail-soft: a file that does not compile is logged and stays listed
+    with its reason; the rest load. Must run before the tabs are built (a user
+    tab may plot a user metric) and before the freeze.
+    """
+    from ffast.config.user_metrics import DEFAULT_DIR, UserMetrics, UserMetricStore
+
+    store = UserMetricStore(metrics_dir or DEFAULT_DIR)
+    user_metrics = UserMetrics(store, builtin_ids=builtin_ids)
+    for metric_id, msg in user_metrics.load():
+        logger.error("User metric %r does not compile and is left out: %s", metric_id, msg)
+    for file, msg in store.errors:
+        logger.error("User metric file %s skipped: %s", store.root / file, msg)
+    logger.info("User metrics folder: %s", store.root)
+    return user_metrics
+
+
 def _validate_metric_registry() -> None:
     """Freeze the metric graph at startup (Metric DX decision M1 / H2).
 
@@ -547,6 +570,7 @@ async def _main(
     config: str | None = None,
     host: str = "0.0.0.0",
     tabs_dir: str | None = None,
+    metrics_dir: str | None = None,
 ):
     """Bootstrap env, wire RPC subscriptions, run server + event loop."""
     from ffast.core.environment import HeadlessEnvironment
@@ -560,6 +584,9 @@ async def _main(
     # Register external Trusted Metric Modules from project config (ADR 0011) so
     # they appear in METRIC_CATALOG and can be computed. Done before any client
     # connects / first metric runs, so the worker pool pickles the full registry.
+    import ffast.metrics.builtin  # noqa: F401 — register the built-ins first
+    from ffast.metrics.registry import default_registry as _registry
+    builtin_ids = set(_registry.list_metrics())
     _load_project_metric_modules(config)
 
     # Compile the project's declarative metrics (Dataset Fields, Expression
@@ -572,7 +599,18 @@ async def _main(
     # user tabs, with the user tabs' metrics compiled now — before the freeze.
     # Kept on the Environment so each per-connection ServerSession serves the
     # layout from REQUEST_TAB_LAYOUT and changes it on SAVE_TAB and friends.
+    env.user_metrics = _build_user_metrics(builtin_ids, metrics_dir)
     env.tab_sources = _build_tab_sources(config, tabs_dir)
+
+    # Who uses a metric, for "Used by" and for refusing to delete one in use
+    # (ADR 0057 rule 7): the tabs' panels, and any open view's colouring.
+    import weakref
+    from ffast.session.server_session import view_colouring_users
+    env.view_sessions = weakref.WeakSet()
+    env.user_metrics.usage_providers += [
+        env.tab_sources.metric_users,
+        lambda metric_id: view_colouring_users(env, metric_id),
+    ]
 
     # Validate the full metric graph once, after builtins + external modules are
     # registered. Refuses to start on unknown refs, cycles, or legacy shapes.
@@ -751,6 +789,14 @@ def cli():
              "(default: ~/.ffast/tabs on this machine).",
     )
     parser.add_argument(
+        "--metrics-dir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Folder of the browser's user metrics, one TOML file per metric "
+             "(default: ~/.ffast/metrics on this machine).",
+    )
+    parser.add_argument(
         "--host",
         type=str,
         default="0.0.0.0",
@@ -779,6 +825,7 @@ def cli():
             config=args.config,
             host=args.host,
             tabs_dir=args.tabs_dir,
+            metrics_dir=args.metrics_dir,
         ))
     except KeyboardInterrupt:
         logger.info("Interrupted — shutting down")

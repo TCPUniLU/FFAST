@@ -93,6 +93,13 @@ class MetricCatalogEntry(BaseModel):
     shape: str
     unit: Optional[str] = None
     parameters: dict[str, MetricParameter] = Field(default_factory=dict)
+    # ADR 0057: where the metric comes from ("built-in" | "project" | "user"),
+    # its formula when it is one (so a read-only metric can be duplicated), and
+    # who uses it (the pane's "Used by" line).
+    origin: str = "built-in"
+    expr: Optional[str] = None
+    vars: Optional[dict[str, str]] = None
+    used_by: list[str] = Field(default_factory=list)
 
 
 class MetricCatalog(BaseModel):
@@ -434,6 +441,37 @@ class ExportTabRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str
+
+
+class SaveUserMetricRequest(BaseModel):
+    """Typed payload for ``SAVE_USER_METRIC`` (ADR 0057). ``metric`` is the
+    metric in the authoring form of a ``[[metrics.expr]]`` entry. ``previous_id``
+    is set when editing (the id cannot change); ``base_revision`` is the version
+    the editor started from, checked against the server's copy unless
+    ``overwrite`` is set."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    metric: dict
+    previous_id: Optional[str] = None
+    base_revision: Optional[str] = None
+    overwrite: Optional[bool] = None
+
+
+class DeleteUserMetricRequest(BaseModel):
+    """Typed payload for ``DELETE_USER_METRIC``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+
+
+class ExportUserMetricRequest(BaseModel):
+    """Typed payload for ``EXPORT_USER_METRIC``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
 
 
 class SaveSessionRequest(BaseModel):

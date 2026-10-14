@@ -388,3 +388,27 @@ def test_compiled_transform_metric_runs_in_worker():
         executor.shutdown()
     assert isinstance(result, MetricResult), getattr(result, "traceback", result)
     assert np.isclose(result.values, 2.0)  # mean(|-1|,|2|,|-3|) = 2.0
+
+
+# ── Refreshing the metric table (ADR 0057 rule 5) ────────────────────────────
+
+def _pool_triple(x):
+    return x * 3
+
+
+def test_refresh_registry_gives_the_worker_a_replaced_metric(registry, executor):
+    assert np.isclose(executor.run("test.double", FlatInputSource({"x": 3.0}), {}).values, 6.0)
+    registry.unregister("test.double")
+    registry.metric(id="test.double", inputs={"x": "ref.x"}, shape="scalar",
+                    unit="energy")(_pool_triple)
+    executor.refresh_registry()
+    assert np.isclose(executor.run("test.double", FlatInputSource({"x": 3.0}), {}).values, 9.0)
+
+
+def test_refresh_registry_makes_a_new_metric_known_to_the_worker(registry, executor):
+    executor.run("test.double", FlatInputSource({"x": 1.0}), {})  # worker is up
+    registry.metric(id="test.triple", inputs={"x": "ref.x"}, shape="scalar",
+                    unit="energy")(_pool_triple)
+    executor.refresh_registry()
+    result = executor.run("test.triple", FlatInputSource({"x": 2.0}), {})
+    assert isinstance(result, MetricResult) and np.isclose(result.values, 6.0)

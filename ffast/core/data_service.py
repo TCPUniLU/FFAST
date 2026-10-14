@@ -216,6 +216,23 @@ class DataService:
         dataset_fp = dataset.fingerprint if dataset is not None else None
         return CacheKey(identity, model_fp, dataset_fp).format()
 
+    def invalidate_metrics(self, metric_ids) -> list[str]:
+        """Drop cached results of these metrics, whatever their model, dataset
+        and compute parameters (ADR 0057 rule 5). The cache key holds the metric
+        id, not its formula, so an edited metric would otherwise keep serving
+        its old numbers. Returns the deleted keys."""
+        from ffast.cache import CacheKey
+
+        ids = set(metric_ids)
+
+        def stale(key) -> bool:
+            ck = key if isinstance(key, CacheKey) else CacheKey.try_parse(key)
+            if ck is None:
+                return False
+            return ck.dtype in ids or any(ck.dtype.startswith(f"{m}__p") for m in ids)
+
+        return self.cache.invalidate(stale)
+
     @property
     def inputResolver(self):
         """Lazily-built resolver mapping metric input refs to dataset arrays."""

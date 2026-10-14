@@ -112,6 +112,18 @@ class _PredictionView:
         self.forces = forces
 
 
+def view_colouring_users(env, metric_id: str) -> list[str]:
+    """"a view's colouring" when any open view of any connection colours its
+    atoms by ``metric_id`` (the lookup behind delete-while-used, ADR 0057)."""
+    target = f"metric:{metric_id}"
+    for session in list(getattr(env, "view_sessions", ())):
+        for view in list(session.views.values()):
+            params = view.state.parameters.get("ffast.atom_color", {})
+            if params.get("source") == target:
+                return ["the main view's colouring"]
+    return []
+
+
 class ServerSession:
     """Owns Visualization Views, dispatches client events, replays state.
 
@@ -129,6 +141,11 @@ class ServerSession:
         # Sends packed bytes to every connection (the hub, ADR 0044); a
         # session on its own, as in a test, has only itself to tell.
         self._broadcast = broadcast or (lambda data: self._emit_or_drop(data, "broadcast"))
+        # Lets the server ask every open view who colours by a metric (ADR 0057
+        # rule 7). A WeakSet, so a closed connection's session drops out.
+        sessions = getattr(env, "view_sessions", None)
+        if sessions is not None:
+            sessions.add(self)
 
         # event → (handler, ordered arg-name list, request model). Built once;
         # the table IS the documented RPC surface. "?name" marks an optional
@@ -143,6 +160,7 @@ class ServerSession:
             ProbeDatasetKeysRequest, ProbeDatasetLengthRequest,
             RequestMetricRequest, RequestPredictionArraysRequest,
             RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
+            DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -171,6 +189,10 @@ class ServerSession:
             control.DELETE_TAB:                 _Route(self._on_delete_tab, ["name"], DeleteTabRequest),
             control.HIDE_TAB:                   _Route(self._on_hide_tab, ["name", "hidden"], HideTabRequest),
             control.EXPORT_TAB:                 _Route(self._on_export_tab, ["name"], ExportTabRequest),
+            control.REQUEST_USER_METRICS:       _Route(self._on_request_user_metrics, [], EmptyRequest),
+            control.SAVE_USER_METRIC:           _Route(self._on_save_user_metric, ["metric", "?previous_id", "?base_revision", "?overwrite"], SaveUserMetricRequest),
+            control.DELETE_USER_METRIC:         _Route(self._on_delete_user_metric, ["id"], DeleteUserMetricRequest),
+            control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -392,7 +414,8 @@ class ServerSession:
             from ffast.metrics.catalog import build_metric_catalog
             from ffast.metrics.registry import _default_registry
             from ffast.protocol import MetricCatalog
-            catalog = build_metric_catalog(_default_registry)
+            catalog = build_metric_catalog(
+                _default_registry, getattr(self.env, "user_metrics", None))
             data = pack(control.METRIC_CATALOG, [], MetricCatalog(metrics=catalog).model_dump())
             self._emit_or_drop(data, "METRIC_CATALOG")
             logger.info("State replay: METRIC_CATALOG queued (%d metrics)", len(catalog))
@@ -1230,3 +1253,78 @@ class ServerSession:
         except TabError as exc:
             error = str(exc)
         await self._emit(pack(control.TAB_EXPORTED, [], {"name": name, "toml": toml, "error": error}))
+
+    # ── user metrics (ADR 0057) ─────────────────────────────────────────────
+
+    def _user_metrics_message(self):
+        from ffast.protocol.rpc import pack
+        um = getattr(self.env, "user_metrics", None)
+        return pack(control.USER_METRICS, [], {"metrics": um.entries() if um else []})
+
+    async def _on_request_user_metrics(self, **kwargs) -> None:
+        await self._emit(self._user_metrics_message())
+
+    async def _on_save_user_metric(self, metric, previous_id=None, base_revision=None,
+                                   overwrite=False, **kwargs) -> None:
+        await self._change_metrics(
+            "save", metric.get("id"),
+            lambda um: um.save(metric, previous_id, base_revision, bool(overwrite)))
+
+    async def _on_delete_user_metric(self, id, **kwargs) -> None:
+        await self._change_metrics("delete", id, lambda um: um.delete(id))
+
+    async def _change_metrics(self, action: str, id, change) -> None:
+        """Apply a metric change, answer this window with USER_METRIC_SAVED,
+        then tell every window (METRICS_UPDATED, then the new list) — in that
+        order, so the window that saved hears its own outcome first.
+
+        Before anyone is told, results cached under the changed metrics are
+        dropped and the worker pool gets the new metric table (rule 5), so
+        what the windows then ask for is computed from the new formula."""
+        from ffast.config.user_metrics import MetricConflict, MetricError
+        from ffast.protocol.rpc import pack
+        um = getattr(self.env, "user_metrics", None)
+        error, conflict, change_result = None, False, None
+        try:
+            if um is None:
+                raise MetricError("This server keeps no user metrics")
+            change_result = await asyncio.to_thread(change, um)
+            if change_result.id:
+                id = change_result.id
+            await asyncio.to_thread(self._apply_metric_change, change_result.affected)
+        except MetricConflict as exc:
+            error, conflict = str(exc), True
+        except MetricError as exc:
+            error = str(exc)
+        except Exception as exc:
+            logger.warning("User metric %s of %r failed: %s", action, id, exc)
+            error = f"Could not {action} the metric: {exc}"
+        await self._emit(pack(control.USER_METRIC_SAVED, [], {
+            "ok": error is None, "action": action, "id": id,
+            "error": error, "conflict": conflict}))
+        if error is None:
+            logger.info("User metric %s: %r; telling every window", action, id)
+            self._broadcast(pack(control.METRICS_UPDATED, [], {}))
+            self._broadcast(self._user_metrics_message())
+
+    def _apply_metric_change(self, affected) -> None:
+        """Drop cached results of the changed metrics and refresh the workers."""
+        data = getattr(self.env, "data", None)
+        if data is None:
+            return
+        dropped = data.invalidate_metrics(affected)
+        data.metricExecutor.refresh_registry()
+        logger.info("Metrics %s changed: %d cached result(s) dropped", sorted(affected), len(dropped))
+
+    async def _on_export_user_metric(self, id, **kwargs) -> None:
+        from ffast.config.user_metrics import MetricError
+        from ffast.protocol.rpc import pack
+        um = getattr(self.env, "user_metrics", None)
+        toml = error = None
+        try:
+            if um is None:
+                raise MetricError("This server keeps no user metrics")
+            toml = um.export(id)
+        except MetricError as exc:
+            error = str(exc)
+        await self._emit(pack(control.USER_METRIC_EXPORTED, [], {"id": id, "toml": toml, "error": error}))

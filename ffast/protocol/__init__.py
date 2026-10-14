@@ -43,6 +43,9 @@ from ffast.protocol.messages import (
     RequestSubdatasetArraysRequest,
     SaveSessionRequest,
     SaveTabRequest,
+    SaveUserMetricRequest,
+    DeleteUserMetricRequest,
+    ExportUserMetricRequest,
     TabLayout,
 )
 
@@ -76,6 +79,9 @@ __all__ = [
     "LoadSessionRequest",
     "ExportSubsetRequest",
     "SaveTabRequest",
+    "SaveUserMetricRequest",
+    "DeleteUserMetricRequest",
+    "ExportUserMetricRequest",
     "DeleteTabRequest",
     "HideTabRequest",
     "ExportTabRequest",

@@ -45,6 +45,12 @@ SAVE_TAB = "SAVE_TAB"
 DELETE_TAB = "DELETE_TAB"
 HIDE_TAB = "HIDE_TAB"
 EXPORT_TAB = "EXPORT_TAB"
+# User metrics (ADR 0057): list them, save one (a new one, or an edit that keeps
+# the id), delete one, export one as TOML.
+REQUEST_USER_METRICS = "REQUEST_USER_METRICS"
+SAVE_USER_METRIC = "SAVE_USER_METRIC"
+DELETE_USER_METRIC = "DELETE_USER_METRIC"
+EXPORT_USER_METRIC = "EXPORT_USER_METRIC"
 
 CLIENT_TO_SERVER = frozenset(
     {
@@ -55,6 +61,7 @@ CLIENT_TO_SERVER = frozenset(
         REQUEST_STATE_SYNC, SAVE_SESSION, LOAD_SESSION, REQUEST_METRIC,
         REQUEST_METRIC_CATALOG, REQUEST_TAB_LAYOUT, EXPORT_SUBSET,
         SAVE_TAB, DELETE_TAB, HIDE_TAB, EXPORT_TAB,
+        REQUEST_USER_METRICS, SAVE_USER_METRIC, DELETE_USER_METRIC, EXPORT_USER_METRIC,
     }
 )
 
@@ -67,7 +74,7 @@ MUTATING_CLIENT_EVENTS = frozenset(
     {
         LOAD_DATASET, LOAD_MODEL, DELETE_OBJECT, CREATE_SUBSET, DECLARE_SUBSET,
         FREEZE_SUBSET, LOAD_PREDICTION, VIEW_COMMAND, SAVE_SESSION, LOAD_SESSION, EXPORT_SUBSET,
-        SAVE_TAB, DELETE_TAB, HIDE_TAB,
+        SAVE_TAB, DELETE_TAB, HIDE_TAB, SAVE_USER_METRIC, DELETE_USER_METRIC,
     }
 )
 
@@ -128,6 +135,16 @@ SESSION_LOADED = "SESSION_LOADED"
 TAB_SAVED = "TAB_SAVED"
 # Reply to EXPORT_TAB: {name, toml, error}, the tab as a project would write it.
 TAB_EXPORTED = "TAB_EXPORTED"
+# User metrics (ADR 0057). USER_METRICS is the whole list, sent to the window
+# that asked and, after any change, to every window. USER_METRIC_SAVED is the
+# outcome of SAVE_USER_METRIC / DELETE_USER_METRIC to the window that sent it:
+# {ok, action, id, error, conflict} (conflict: the server's copy is newer, the
+# pane offers Reload / Overwrite). USER_METRIC_EXPORTED answers
+# EXPORT_USER_METRIC with {id, toml, error}. One-shot announcements, out of
+# REPLY_EVENTS, like the tab ones.
+USER_METRICS = "USER_METRICS"
+USER_METRIC_SAVED = "USER_METRIC_SAVED"
+USER_METRIC_EXPORTED = "USER_METRIC_EXPORTED"
 # Reply to DECLARE_SUBSET, to the window that sent it: {fingerprint,
 # parent_fingerprint, model_fp, name}, which subset the plot's view made, so
 # the window that ticked SUB can show it in its main view. Every window learns

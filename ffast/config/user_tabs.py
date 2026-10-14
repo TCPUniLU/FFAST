@@ -271,6 +271,22 @@ class TabSources:
             out.append(d)
         return out
 
+    def metric_users(self, metric_id: str) -> list[str]:
+        """Where tabs use a metric: "tab Basic, panel MAE" for each panel that
+        binds it (as a plotted metric, or as a 3D panel's starting colouring).
+        Hidden tabs count: showing one again must find its metric there."""
+        users = []
+        for e in self.entries():
+            for i, panel in enumerate(e.tab.panels, 1):
+                refs = [r.metric for role in panel.metrics.values()
+                        for r in (role if isinstance(role, list) else [role])]
+                start = getattr(panel, "start", None)
+                if start is not None and start.colour_by:
+                    refs.append(start.colour_by.removeprefix("metric:"))
+                if metric_id in refs:
+                    users.append(f"tab {e.tab.name}, panel {panel.title or i}")
+        return users
+
     def export(self, name: str) -> str:
         """The tab as TOML to paste into a project's ffast.toml."""
         entry = self._entry(name)

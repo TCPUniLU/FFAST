@@ -73,3 +73,18 @@ def test_invalidate_still_sees_string_keys():
     dead = c.invalidate(lambda k: CacheKey.parse(k).matches_model("M"))
     assert dead == ["forces__M__D"]
     assert "forces__OTHER__D" in c
+
+
+def test_invalidate_metrics_drops_a_metric_whatever_its_model_dataset_and_params():
+    """ADR 0057 rule 5: the outer key holds the metric id, not its formula."""
+    from types import SimpleNamespace
+
+    from ffast.core.data_service import DataService
+
+    cache = DataCache()
+    for key in ("user.m__mod__ds", "user.m__p1a2b3c4__mod__ds", "user.m__nil__ds2",
+                "user.m2__mod__ds", "forces__mod__ds"):
+        cache[key] = object()
+    dropped = DataService.invalidate_metrics(SimpleNamespace(cache=cache), {"user.m"})
+    assert sorted(dropped) == ["user.m__mod__ds", "user.m__nil__ds2", "user.m__p1a2b3c4__mod__ds"]
+    assert sorted(cache.keys()) == ["forces__mod__ds", "user.m2__mod__ds"]

@@ -126,6 +126,9 @@ async def _spawn_server(*extra_args: str):
     tabs_dir = tempfile.mkdtemp(prefix="ffast-tabs-")
     if "--tabs-dir" not in extra_args:
         extra_args = (*extra_args, "--tabs-dir", tabs_dir)
+    metrics_dir = tempfile.mkdtemp(prefix="ffast-metrics-")
+    if "--metrics-dir" not in extra_args:
+        extra_args = (*extra_args, "--metrics-dir", metrics_dir)
     proc = subprocess.Popen(
         [
             sys.executable,
@@ -157,6 +160,7 @@ async def _spawn_server(*extra_args: str):
             tail = out.decode(errors="replace").splitlines()[-60:]
             print("[server log]\n" + "\n".join(tail))
         shutil.rmtree(tabs_dir, ignore_errors=True)
+        shutil.rmtree(metrics_dir, ignore_errors=True)
 
 
 @pytest.fixture
