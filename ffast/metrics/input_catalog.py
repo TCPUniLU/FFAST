@@ -16,8 +16,6 @@ import re
 
 from ffast.metrics.dims import shape_to_str
 
-GROUPS = ("Reference", "Prediction", "File keys", "Metrics")
-
 # (ref suffix, short name part, label, shape). Only the continuous raw inputs an
 # Expression Metric accepts (ffast.metrics.expr._RAW_REF_SHAPE).
 _RAW = (

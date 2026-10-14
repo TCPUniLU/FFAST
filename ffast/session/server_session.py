@@ -1464,6 +1464,7 @@ class ServerSession:
         them. Runs on the task's worker thread. Declining is just not answering:
         the session then behaves as if it had carried nothing."""
         import os
+        import uuid
 
         from ffast.config.user_metrics import SESSION_FILE, read_formulas
         from ffast.protocol.rpc import pack
@@ -1478,7 +1479,7 @@ class ServerSession:
             return
         if not plan:
             return
-        offer_id = f"offer-{len(self._session_offers) + 1}-{id(plan)}"
+        offer_id = f"offer-{uuid.uuid4().hex[:12]}"
         self._session_offers = {offer_id: plan}      # only the latest offer stays open
         data = pack(control.SESSION_METRICS, [], {"offer_id": offer_id, "metrics": plan.describe()})
         loop.call_soon_threadsafe(self._emit_or_drop, data, "SESSION_METRICS")

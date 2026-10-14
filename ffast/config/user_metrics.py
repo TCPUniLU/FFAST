@@ -319,11 +319,6 @@ class UserMetrics:
 
         return self._register(cfg, current)
 
-    def add_if_missing(self, cfg: ExprMetricConfig) -> Change:
-        """Save a metric that came with a session (rule 15): refused if the id
-        exists, like any new metric."""
-        return self.save(cfg.model_dump(mode="json"))
-
     def _not_editable(self, id: str) -> MetricError:
         if self.registry.has(id):
             return MetricError(f"{id} is a {self.origin(id)} metric; use Duplicate to make your own copy")
