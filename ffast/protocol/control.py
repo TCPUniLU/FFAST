@@ -53,6 +53,11 @@ DELETE_USER_METRIC = "DELETE_USER_METRIC"
 EXPORT_USER_METRIC = "EXPORT_USER_METRIC"
 # What a formula can use for a dataset and prediction (rule 10).
 REQUEST_METRIC_INPUTS = "REQUEST_METRIC_INPUTS"
+# Check a formula as it is typed (touches no data), try it on a whole dataset
+# without saving, and stop a try (rules 11, 12).
+CHECK_METRIC = "CHECK_METRIC"
+TRY_METRIC = "TRY_METRIC"
+CANCEL_TRY_METRIC = "CANCEL_TRY_METRIC"
 
 CLIENT_TO_SERVER = frozenset(
     {
@@ -64,7 +69,7 @@ CLIENT_TO_SERVER = frozenset(
         REQUEST_METRIC_CATALOG, REQUEST_TAB_LAYOUT, EXPORT_SUBSET,
         SAVE_TAB, DELETE_TAB, HIDE_TAB, EXPORT_TAB,
         REQUEST_USER_METRICS, SAVE_USER_METRIC, DELETE_USER_METRIC, EXPORT_USER_METRIC,
-        REQUEST_METRIC_INPUTS,
+        REQUEST_METRIC_INPUTS, CHECK_METRIC, TRY_METRIC, CANCEL_TRY_METRIC,
     }
 )
 
@@ -151,6 +156,12 @@ USER_METRIC_EXPORTED = "USER_METRIC_EXPORTED"
 # Reply to REQUEST_METRIC_INPUTS: {dataset_fp, model_fp, inputs: [{ref, group,
 # name, label, shape, only, origin}]}, to the window that asked.
 METRIC_INPUTS = "METRIC_INPUTS"
+# Reply to CHECK_METRIC: {check_id, ok, error, shape}. Reply to TRY_METRIC:
+# {try_id, ok, error, cancelled, shape, count, bad_count, min, mean, max,
+# bad_frames, histogram}; while it runs the window gets TASK_PROGRESS
+# ([try_id], {message, progress}). Both to the window that asked only.
+METRIC_CHECKED = "METRIC_CHECKED"
+METRIC_TRIED = "METRIC_TRIED"
 # Reply to DECLARE_SUBSET, to the window that sent it: {fingerprint,
 # parent_fingerprint, model_fp, name}, which subset the plot's view made, so
 # the window that ticked SUB can show it in its main view. Every window learns

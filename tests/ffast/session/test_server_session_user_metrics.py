@@ -154,3 +154,112 @@ def test_a_views_colouring_counts_as_a_user_of_the_metric():
     env.view_sessions = [s]
     assert view_colouring_users(env, "t57.double") == ["the main view's colouring"]
     assert view_colouring_users(env, "other.metric") == []
+
+
+# ── check as you type, and Try (rules 11, 12) ───────────────────────────────
+import numpy as np  # noqa: E402
+
+
+class _Resolver:
+    """Stands in for the DataService input resolver: 4 frames, 8 atoms."""
+    ENERGY = np.array([1.0, 2.0, 3.0, 4.0])
+
+    def resolve(self, ref, model=None, dataset=None):
+        if ref == "n_atoms":
+            return np.array([2, 3, 1, 2])
+        return {"reference.energies": self.ENERGY}.get(ref)
+
+
+def _try_env(env):
+    env.datasets = {"ds1": object()}
+    env.models = {}
+    env.data.inputResolver = _Resolver()
+    return env
+
+
+def _run_session(env, steps):
+    """Run `steps(session)` in one event loop; return everything this window got."""
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await steps(s)
+        out = []
+        while not s.outbound.empty():
+            out.append(unpack(s.outbound.get_nowait()))
+        return out
+    return asyncio.run(scenario())
+
+
+def test_check_replies_with_the_shape_and_echoes_the_check_id(env):
+    own, everyone = _dispatch(env, control.CHECK_METRIC, {
+        "metric": {"id": "t57.c", "expr": "2 * f", "vars": {"f": "ffast.force_component_mae"}},
+        "check_id": "7"})
+    assert own == [(control.METRIC_CHECKED, [], {"check_id": "7", "ok": True, "error": None, "shape": "scalar"})]
+    assert everyone == []
+
+
+def test_check_reports_an_error_and_registers_nothing(env):
+    own, _ = _dispatch(env, control.CHECK_METRIC, {
+        "metric": {"id": "t57.c", "expr": "2 *", "vars": {}}, "check_id": "8"})
+    assert own[0][2]["ok"] is False and "valid expression" in own[0][2]["error"]
+    assert not default_registry.has("t57.c")
+
+
+def test_try_replies_with_statistics_and_progress_to_this_window_only(env):
+    _try_env(env)
+    trial = {"id": "t57.try", "expr": "e * 10", "vars": {"e": "reference.energies"}}
+
+    async def steps(s):
+        await s.dispatch(control.TRY_METRIC, [], {"metric": trial, "try_id": "t1", "dataset_fp": "ds1"})
+        await s._tries["t1"][1]
+
+    got = _run_session(env, steps)
+    events = [e for e, _, _ in got]
+    assert events[-1] == control.METRIC_TRIED and "TASK_PROGRESS" in events
+    tried = got[-1][2]
+    assert (tried["ok"], tried["try_id"], tried["min"], tried["max"], tried["bad_count"]) == (
+        True, "t1", 10.0, 40.0, 0)
+    assert not default_registry.has("t57.try")           # nothing is registered
+    assert env.data.invalidated == [] and env.data.refreshed == 0
+
+
+def test_try_without_a_dataset_says_so(env):
+    _try_env(env)
+
+    async def steps(s):
+        await s.dispatch(control.TRY_METRIC, [], {
+            "metric": {"id": "t57.try", "expr": "e", "vars": {"e": "reference.energies"}}, "try_id": "t2"})
+        await s._tries["t2"][1]
+
+    [(event, _, kwargs)] = _run_session(env, steps)
+    assert event == control.METRIC_TRIED and kwargs["ok"] is False
+    assert "Select a dataset" in kwargs["error"]
+
+
+def test_try_finds_the_bad_frames(env):
+    _try_env(env)
+    trial = {"id": "t57.try", "expr": "1 / (e - 3)", "vars": {"e": "reference.energies"}}
+
+    async def steps(s):
+        await s.dispatch(control.TRY_METRIC, [], {"metric": trial, "try_id": "t3", "dataset_fp": "ds1"})
+        await s._tries["t3"][1]
+
+    tried = _run_session(env, steps)[-1][2]
+    assert tried["ok"] and tried["bad_count"] == 1 and tried["bad_frames"] == [2]
+
+
+def test_cancel_stops_a_running_try_cleanly(env):
+    _try_env(env)
+    trial = {"id": "t57.try", "expr": "e", "vars": {"e": "reference.energies"}}
+
+    async def steps(s):
+        await s.dispatch(control.TRY_METRIC, [], {"metric": trial, "try_id": "t4", "dataset_fp": "ds1"})
+        await s.dispatch(control.CANCEL_TRY_METRIC, [], {"try_id": "t4"})
+        await s._tries["t4"][1]
+
+    tried = _run_session(env, steps)[-1][2]
+    assert tried["ok"] is True and tried["cancelled"] is True
+
+
+def test_check_try_and_cancel_are_open_to_viewers():
+    for event in (control.CHECK_METRIC, control.TRY_METRIC, control.CANCEL_TRY_METRIC):
+        assert event in control.CLIENT_TO_SERVER and event not in control.MUTATING_CLIENT_EVENTS

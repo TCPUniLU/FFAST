@@ -146,6 +146,9 @@ class ServerSession:
         sessions = getattr(env, "view_sessions", None)
         if sessions is not None:
             sessions.add(self)
+        # Running Tries of this connection (ADR 0057 rule 12): try_id → (stop
+        # flag, task). The task is held here so it is not garbage-collected.
+        self._tries: dict = {}
 
         # event → (handler, ordered arg-name list, request model). Built once;
         # the table IS the documented RPC surface. "?name" marks an optional
@@ -161,7 +164,8 @@ class ServerSession:
             RequestMetricRequest, RequestPredictionArraysRequest,
             RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
-            RequestMetricInputsRequest,
+            RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
+            CancelTryMetricRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -194,6 +198,9 @@ class ServerSession:
             control.SAVE_USER_METRIC:           _Route(self._on_save_user_metric, ["metric", "?previous_id", "?base_revision", "?overwrite"], SaveUserMetricRequest),
             control.DELETE_USER_METRIC:         _Route(self._on_delete_user_metric, ["id"], DeleteUserMetricRequest),
             control.REQUEST_METRIC_INPUTS:      _Route(self._on_request_metric_inputs, ["?dataset_fp", "?model_fp"], RequestMetricInputsRequest),
+            control.CHECK_METRIC:               _Route(self._on_check_metric, ["metric", "?check_id"], CheckMetricRequest),
+            control.TRY_METRIC:                 _Route(self._on_try_metric, ["metric", "try_id", "?dataset_fp", "?model_fp"], TryMetricRequest),
+            control.CANCEL_TRY_METRIC:          _Route(self._on_cancel_try_metric, ["try_id"], CancelTryMetricRequest),
             control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
         }
 
@@ -1346,3 +1353,100 @@ class ServerSession:
             getattr(self.env, "user_metrics", None))
         await self._emit(pack(control.METRIC_INPUTS, [], {
             "dataset_fp": dataset_fp, "model_fp": model_fp, "inputs": inputs}))
+
+    # ── check and try a formula (ADR 0057 rules 11, 12) ─────────────────────
+
+    async def _on_check_metric(self, metric, check_id=None, **kwargs) -> None:
+        """Reply with METRIC_CHECKED: the formula's error or result shape.
+        Touches no data and changes nothing, so it runs on every keystroke."""
+        from ffast.config.user_metrics import MetricError
+        from ffast.protocol.rpc import pack
+        um = getattr(self.env, "user_metrics", None)
+        if um is None:
+            out = {"ok": False, "error": "This server keeps no user metrics", "shape": None}
+        else:
+            out = um.check(metric)
+        await self._emit(pack(control.METRIC_CHECKED, [], {"check_id": check_id, **out}))
+
+    async def _on_try_metric(self, metric, try_id, dataset_fp=None, model_fp=None, **kwargs) -> None:
+        """Start a Try and return at once: it runs as its own task so a
+        CANCEL_TRY_METRIC from the same window can be heard while it runs."""
+        import threading
+        stop = threading.Event()
+        task = asyncio.create_task(self._run_try(metric, try_id, dataset_fp, model_fp, stop))
+        self._tries[try_id] = (stop, task)
+        task.add_done_callback(lambda _t: self._tries.pop(try_id, None))
+
+    async def _on_cancel_try_metric(self, try_id, **kwargs) -> None:
+        running = self._tries.get(try_id)
+        if running is not None:
+            running[0].set()
+
+    def cancel_tries(self) -> None:
+        """Stop every Try of this connection (it has gone away)."""
+        for stop, _task in list(self._tries.values()):
+            stop.set()
+
+    async def _run_try(self, metric, try_id, dataset_fp, model_fp, stop) -> None:
+        from ffast.metrics.try_formula import TryError, try_formula
+        from ffast.protocol.rpc import pack
+        loop = asyncio.get_running_loop()
+
+        def progress(done, total):
+            data = pack("TASK_PROGRESS", [try_id], {
+                "message": f"Trying the formula: {done} of {total} frames",
+                "progress": done / total if total else 1.0, "error": False})
+            loop.call_soon_threadsafe(self._emit_or_drop, data, "TASK_PROGRESS")
+
+        try:
+            stats = await asyncio.to_thread(
+                self._try_blocking, metric, dataset_fp, model_fp, progress, stop.is_set)
+            out = {"ok": True, "error": None, **stats}
+        except TryError as exc:
+            out = {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            logger.warning("TRY_METRIC %s failed: %s", try_id, exc)
+            out = {"ok": False, "error": f"Could not try the formula: {exc}"}
+        out.setdefault("cancelled", False)
+        await self._emit(pack(control.METRIC_TRIED, [], {"try_id": try_id, **out}))
+
+    def _try_blocking(self, metric, dataset_fp, model_fp, progress, cancelled) -> dict:
+        """The Try itself, on a worker thread: resolve the inputs for the
+        selected dataset and prediction, evaluate in chunks."""
+        from pydantic import ValidationError
+
+        from ffast.config.models import ExprMetricConfig
+        from ffast.metrics.input_resolver import _ResolverSource
+        from ffast.metrics.models import MetricResult
+        from ffast.metrics.registry import default_registry
+        from ffast.metrics.try_formula import TryError, try_formula
+
+        um = getattr(self.env, "user_metrics", None)
+        if um is None:
+            raise TryError("This server keeps no user metrics")
+        try:
+            cfg = ExprMetricConfig.model_validate(metric)
+        except ValidationError as exc:
+            raise TryError(str(exc.errors()[0].get("msg", exc)).removeprefix("Value error, ")) from None
+        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
+        model = self.env.models.get(model_fp) if model_fp else None
+        if dataset is None:
+            raise TryError("Select a dataset to try the formula on")
+        data = self.env.data
+        resolver = data.inputResolver
+
+        def resolve(ref):
+            if default_registry.has(ref):
+                result = data.metricExecutor.run(ref, _ResolverSource(resolver, model, dataset), {})
+                if isinstance(result, MetricResult):
+                    return result.values
+                raise TryError(f"{ref} could not be computed here")
+            return resolver.resolve(ref, model=model, dataset=dataset)
+
+        n_atoms = resolver.resolve("n_atoms", dataset=dataset)
+        if n_atoms is None:
+            raise TryError("The dataset's atom counts are not available")
+        result = try_formula(
+            cfg.expr, dict(cfg.vars), um.registry_without(cfg.id), resolve, n_atoms,
+            on_progress=progress, cancelled=cancelled)
+        return result.to_dict()

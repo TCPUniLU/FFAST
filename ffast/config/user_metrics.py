@@ -242,6 +242,11 @@ class UserMetrics:
         entry = self._entries.get(id)
         return entry.cfg if entry is not None else None
 
+    def registry_without(self, id: str):
+        """The registry as a formula named ``id`` should see it: without its own
+        old entry, so it cannot depend on itself."""
+        return _Without(self.registry, id)
+
     def check(self, data: dict) -> dict:
         """Validate a formula without changing anything (rule 11): returns
         ``{ok, error, shape}``. Touches no data."""
@@ -254,8 +259,7 @@ class UserMetrics:
             # Editing: the metric's own old entry must not be seen as a
             # dependency of itself, so look through a copy without it.
             _inputs, shape, _parts = analyze_expr(
-                cfg.expr, dict(cfg.vars), registry=_Without(self.registry, cfg.id),
-                id=cfg.id)
+                cfg.expr, dict(cfg.vars), registry=self.registry_without(cfg.id), id=cfg.id)
         except ValueError as exc:
             return {"ok": False, "error": str(exc), "shape": None}
         return {"ok": True, "error": None, "shape": shape_to_str(shape)}

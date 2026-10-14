@@ -264,6 +264,11 @@ def _as_tuple(shape):
     return shape if isinstance(shape, tuple) else (shape,)
 
 
+def resolve_ref_shape(ref: str, registry) -> tuple:
+    """The Metric Shape an input ref has (see ``_resolve_ref_shape``)."""
+    return _resolve_ref_shape(ref, registry)
+
+
 def _is_scalar_shape(shape) -> bool:
     return _as_tuple(shape) == (dims.scalar,)
 
@@ -437,13 +442,18 @@ class _ExprFn:
             return _FUNCS[name](*[v for v, _ in evald]), max((k for _, k in evald), default=0)
         raise ValueError(f"expr {self.expr!r}: cannot evaluate {type(node).__name__}")
 
+    def evaluate(self, /, **kwargs):
+        """The formula over these inputs, bad values left in (a bare comparison
+        gives 1.0 / 0.0). ``Try`` counts the bad values; a metric run rejects
+        them in ``__call__``."""
+        out, _k = self._eval(self._tree(), kwargs)
+        arr = np.asarray(out)
+        return arr.astype(float) if arr.dtype == bool else arr
+
     def __call__(self, /, **kwargs):
         # ``self`` is positional-only so an Expression Variable legitimately named
         # ``self`` (bound via ``fn(**resolved_inputs)``) cannot collide with it.
-        out, _k = self._eval(self._tree(), kwargs)
-        arr = np.asarray(out)
-        if arr.dtype == bool:
-            arr = arr.astype(float)  # a bare comparison yields 1.0 / 0.0
+        arr = self.evaluate(**kwargs)
         if not np.all(np.isfinite(arr)):
             # Decision 7: a Metric never returns silent inf/nan. Raising here
             # surfaces as a Metric Failure naming this metric (per the executor).

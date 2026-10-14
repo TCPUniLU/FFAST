@@ -484,6 +484,36 @@ class RequestMetricInputsRequest(BaseModel):
     model_fp: Optional[str] = None
 
 
+class CheckMetricRequest(BaseModel):
+    """Typed payload for ``CHECK_METRIC`` (ADR 0057 rule 11). ``check_id`` is
+    echoed in the reply so the editor can ignore an answer to a stale edit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    metric: dict
+    check_id: Optional[str] = None
+
+
+class TryMetricRequest(BaseModel):
+    """Typed payload for ``TRY_METRIC`` (rule 12): compute the formula over all
+    frames of this dataset and prediction, without saving."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    metric: dict
+    try_id: str
+    dataset_fp: Optional[str] = None
+    model_fp: Optional[str] = None
+
+
+class CancelTryMetricRequest(BaseModel):
+    """Typed payload for ``CANCEL_TRY_METRIC``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    try_id: str
+
+
 class SaveSessionRequest(BaseModel):
     """Typed payload for ``SAVE_SESSION``."""
 
