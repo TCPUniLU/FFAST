@@ -474,6 +474,16 @@ class ExportUserMetricRequest(BaseModel):
     id: str
 
 
+class RequestMetricInputsRequest(BaseModel):
+    """Typed payload for ``REQUEST_METRIC_INPUTS`` (ADR 0057 rule 10): the
+    dataset and prediction whose inputs the Metrics pane lists."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_fp: Optional[str] = None
+    model_fp: Optional[str] = None
+
+
 class SaveSessionRequest(BaseModel):
     """Typed payload for ``SAVE_SESSION``."""
 

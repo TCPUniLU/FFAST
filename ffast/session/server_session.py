@@ -161,6 +161,7 @@ class ServerSession:
             RequestMetricRequest, RequestPredictionArraysRequest,
             RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
+            RequestMetricInputsRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -192,6 +193,7 @@ class ServerSession:
             control.REQUEST_USER_METRICS:       _Route(self._on_request_user_metrics, [], EmptyRequest),
             control.SAVE_USER_METRIC:           _Route(self._on_save_user_metric, ["metric", "?previous_id", "?base_revision", "?overwrite"], SaveUserMetricRequest),
             control.DELETE_USER_METRIC:         _Route(self._on_delete_user_metric, ["id"], DeleteUserMetricRequest),
+            control.REQUEST_METRIC_INPUTS:      _Route(self._on_request_metric_inputs, ["?dataset_fp", "?model_fp"], RequestMetricInputsRequest),
             control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
         }
 
@@ -1328,3 +1330,19 @@ class ServerSession:
         except MetricError as exc:
             error = str(exc)
         await self._emit(pack(control.USER_METRIC_EXPORTED, [], {"id": id, "toml": toml, "error": error}))
+
+    async def _on_request_metric_inputs(self, dataset_fp=None, model_fp=None, **kwargs) -> None:
+        """Reply with METRIC_INPUTS: what a formula can use for this dataset
+        and prediction, extra file keys included (rule 10)."""
+        from ffast.metrics.input_catalog import build_input_catalog
+        from ffast.metrics.registry import default_registry
+        from ffast.protocol.rpc import pack
+        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
+        model = self.env.models.get(model_fp) if model_fp else None
+        data = getattr(self.env, "data", None)
+        inputs = await asyncio.to_thread(
+            build_input_catalog, default_registry, dataset, model,
+            getattr(data, "predictionFields", None),
+            getattr(self.env, "user_metrics", None))
+        await self._emit(pack(control.METRIC_INPUTS, [], {
+            "dataset_fp": dataset_fp, "model_fp": model_fp, "inputs": inputs}))

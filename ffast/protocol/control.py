@@ -51,6 +51,8 @@ REQUEST_USER_METRICS = "REQUEST_USER_METRICS"
 SAVE_USER_METRIC = "SAVE_USER_METRIC"
 DELETE_USER_METRIC = "DELETE_USER_METRIC"
 EXPORT_USER_METRIC = "EXPORT_USER_METRIC"
+# What a formula can use for a dataset and prediction (rule 10).
+REQUEST_METRIC_INPUTS = "REQUEST_METRIC_INPUTS"
 
 CLIENT_TO_SERVER = frozenset(
     {
@@ -62,6 +64,7 @@ CLIENT_TO_SERVER = frozenset(
         REQUEST_METRIC_CATALOG, REQUEST_TAB_LAYOUT, EXPORT_SUBSET,
         SAVE_TAB, DELETE_TAB, HIDE_TAB, EXPORT_TAB,
         REQUEST_USER_METRICS, SAVE_USER_METRIC, DELETE_USER_METRIC, EXPORT_USER_METRIC,
+        REQUEST_METRIC_INPUTS,
     }
 )
 
@@ -145,6 +148,9 @@ TAB_EXPORTED = "TAB_EXPORTED"
 USER_METRICS = "USER_METRICS"
 USER_METRIC_SAVED = "USER_METRIC_SAVED"
 USER_METRIC_EXPORTED = "USER_METRIC_EXPORTED"
+# Reply to REQUEST_METRIC_INPUTS: {dataset_fp, model_fp, inputs: [{ref, group,
+# name, label, shape, only, origin}]}, to the window that asked.
+METRIC_INPUTS = "METRIC_INPUTS"
 # Reply to DECLARE_SUBSET, to the window that sent it: {fingerprint,
 # parent_fingerprint, model_fp, name}, which subset the plot's view made, so
 # the window that ticked SUB can show it in its main view. Every window learns
