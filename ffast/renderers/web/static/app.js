@@ -23,6 +23,8 @@ import { Rail } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
+import { MetricOps } from './metric_ops.js';
+import { createMetricsPane } from './panes/metrics.js';
 import { askDialog, textDialog } from './dialogs.js';
 import { TabEditor } from './edit_mode.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
@@ -52,6 +54,9 @@ const PICK_TOOLS = {
 const SECTION_HELP = {
   'Colour By': 'Colours atoms by element, by how far each atom moved, or by a per-atom '
     + 'metric such as force error. Any colouring other than Elements shows a colour bar.',
+  'Metrics': 'Your own metrics, as formulas over named inputs, such as norm(pred_F - ref_F). '
+    + 'Click an input to put it in the formula. Try computes on the whole dataset without saving; '
+    + 'Save keeps the metric on the server for every window.',
   'Camera': 'Where you look from. Drag to orbit, scroll to zoom. XY, XZ and YZ snap to an '
     + 'axis view; "Exact angles" sets the angles by number.',
   'Display': 'How atoms are drawn. Hide atoms by index (0 1 2) or element (C, -H); '
@@ -176,6 +181,8 @@ export class FFastApp {
     this._deleting = new Set();
     // User tabs on the server (ADR 0056): save, delete, hide, export.
     this._tabOps = new TabOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
+    // User metrics on the server (ADR 0057): the Metrics pane's wire.
+    this._metricOps = new MetricOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
     /** The last layout the server sent, hidden tabs included. */
     this._layoutTabs = [];
     this._pendingShow = null;   // a tab to show once a layout brings it
@@ -809,6 +816,12 @@ export class FFastApp {
       onMetricParam: (key, value) => this._sendSetParameter('ffast.atom_color', key, value),
     });
 
+    const metricsPane = createMetricsPane(sidebarEl, {
+      ops: this._metricOps,
+      getContext: () => ({ datasetFp: this._currentDatasetFp, modelFp: this._currentModelFp }),
+      onGoToFrame: (frame) => this._setFrame(frame),
+    });
+
     const camera = createCameraPane(sidebarEl, {
       onOrtho: (enabled) => this.renderer?.setOrthographic(enabled),
       onPreset: (az, el) => this.renderer?.setCameraAngles({ azimuth: az, elevation: el }),
@@ -867,7 +880,7 @@ export class FFastApp {
       },
     });
 
-    this._panes = { colorBy, camera, display, bonds, forces, extract, export: exportPane, align };
+    this._panes = { colorBy, metrics: metricsPane, camera, display, bonds, forces, extract, export: exportPane, align };
     // The rich look sizes ball-and-stick atoms from the Atom size setting: the
     // sidebar's for the view it shows, the one kept for the other views.
     this._mainAtomScale = 1;
@@ -1195,6 +1208,13 @@ export class FFastApp {
       conn.on(IN.TAB_LAYOUT, (kw) => this._applyLayout(kw.tabs || []));
       conn.on(IN.TAB_SAVED, (kw) => this._tabOps.onSaved(kw));
       conn.on(IN.TAB_EXPORTED, (kw) => this._tabOps.onExported(kw));
+      // User metrics (ADR 0057)
+      conn.on(IN.USER_METRICS, (kw) => this._panes.metrics.setUserMetrics(kw.metrics));
+      conn.on(IN.USER_METRIC_SAVED, (kw) => this._metricOps.onSaved(kw));
+      conn.on(IN.USER_METRIC_EXPORTED, (kw) => this._metricOps.onExported(kw));
+      conn.on(IN.METRIC_CHECKED, (kw) => this._metricOps.onChecked(kw));
+      conn.on(IN.METRIC_INPUTS, (kw) => this._metricOps.onInputsReply(kw));
+      conn.on(IN.METRIC_TRIED, (kw) => this._metricOps.onTried(kw));
 
       conn.on(IN.REMOTE_DATASET_META, (kw, args) => this._onDatasetMeta(args[0], kw));
       conn.on(IN.REMOTE_MODEL_META,   (kw, args) => this._onModelMeta(args[0], kw));
@@ -1202,7 +1222,7 @@ export class FFastApp {
       conn.on(IN.MODEL_DELETED,       (kw, args) => this._onModelDeleted(args[0]));
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
-      conn.on(IN.TASK_PROGRESS, (kw) => console.debug('TASK_PROGRESS', kw));
+      conn.on(IN.TASK_PROGRESS, (kw, args) => { this._metricOps.onProgress(kw, args); console.debug('TASK_PROGRESS', kw); });
       // No per-task correlation id travels back to the browser today (Qt's
       // equivalent is a generic "Tasks" sidebar list, out of scope here), so
       // a pending save/load session is resolved by the next TASK_DONE/FAILED
@@ -1218,7 +1238,7 @@ export class FFastApp {
       conn.on(IN.COMMAND_RESULT, (kw) => this._onCommandResult(kw));
       conn.on(IN.DIR_LISTING,    (kw) => this._browser.onDirListing(kw));
       conn.on(IN.METRIC_CATALOG, (kw) => this._onMetricCatalog(kw));
-      conn.on(IN.METRICS_UPDATED, () => this._conn?.send(OUT.REQUEST_METRIC_CATALOG, {}));
+      conn.on(IN.METRICS_UPDATED, () => this._onMetricsUpdated());
       conn.on(IN.SUBSET_EXPORTED, (kw) => this._sessionOps.onSubsetExported(kw));
       conn.on(IN.SUBSET_DECLARED, (kw) => this._onSubsetDeclared(kw));
       // Session outcomes are named events now, not a guess from the next
@@ -1252,6 +1272,8 @@ export class FFastApp {
       this._syncTabButtons();
       // Fetch the analysis-tab layout (METRIC_CATALOG arrives via connect-replay).
       conn.send(OUT.REQUEST_TAB_LAYOUT, {});
+      this._metricOps.requestList();
+      this._panes.metrics.contextChanged();
 
     } catch (err) {
       this._conn = null;   // handshake failed — undo the early assignment above
@@ -1298,6 +1320,8 @@ export class FFastApp {
     this._browser.close();
     this._sessionOps.reset();
     this._tabOps.reset();
+    this._metricOps.reset();
+    this._panes.metrics.disconnected();
     this._editor.end(false);   // a draft cannot be saved without a server
     this._setStatus('Disconnected', '');
     this._syncEmptyState();
@@ -2034,7 +2058,17 @@ export class FFastApp {
 
   /** Push the current dataset/prediction selection into the analysis manager
    * so its active tab refetches against it (metric channel scope). */
+  /** A user metric was added, changed or removed (ADR 0057). The catalog and
+   * the list come again; the plots re-fetch when the catalog lands; a view
+   * coloured by a metric asks for its colours again. */
+  _onMetricsUpdated() {
+    this._conn?.send(OUT.REQUEST_METRIC_CATALOG, {});
+    this._metricOps.requestList();
+    this._panes.colorBy.recolour();
+  }
+
   _syncAnalysisContext() {
+    this._panes?.metrics?.contextChanged();
     // The rail's choice is what a reload shows again; while replay settles on
     // what a reload showed, the first dataset it passes is not.
     if (this._autoDatasetFp === null && this._currentDatasetFp)
@@ -2063,6 +2097,7 @@ export class FFastApp {
     }
     this._metricCatalog = kw.metrics || [];
     this._panes.colorBy.setMetricCatalog(this._metricCatalog);
+    this._panes.metrics.setCatalog(this._metricCatalog);
     this._analysis?.setMetricCatalog(this._metricCatalog);
     for (const view of this._independent.values()) this._startIndependent(view);
   }

@@ -606,6 +606,66 @@
     #colorbar .cb-min, #colorbar .cb-max { font-size: 12.6px; color: var(--muted); }
     #colorbar-label { font-size: 14px; color: var(--text1); text-align: center; }
 
+    /* Metrics pane (ADR 0057): list by origin, editor, inputs, Try */
+    .mx-toolbar { display: flex; gap: 6px; align-items: center; }
+    .mx-toolbar input[type="search"] { flex: 1; min-width: 0; font-size: 15.4px; padding: 2px 6px; }
+    .mx-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+    .mx-group-title, .mx-subhead {
+      font-size: 12.6px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--muted); padding: 4px 2px 2px;
+    }
+    .mx-empty { font-size: 14px; color: var(--muted); padding: 2px; }
+    .mx-item, .mx-input, .mx-suggest-item {
+      display: flex; align-items: baseline; gap: 6px; width: 100%; text-align: left;
+      background: transparent; border: 0; border-radius: 3px; padding: 2px 6px;
+      color: var(--text1); font-size: 15.4px; cursor: pointer;
+    }
+    .mx-item:hover, .mx-input:hover, .mx-suggest-item:hover, .mx-suggest-item.selected { background: var(--bg4); color: var(--text2); }
+    .mx-item.selected { background: var(--sel); color: var(--text2); }
+    .mx-item-label, .mx-input-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mx-item-id, .mx-input-ref { flex: 1; min-width: 0; font-size: 12.6px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mx-badge { font-size: 11.2px; padding: 0 5px; border-radius: 8px; background: var(--bg3); color: var(--text1); white-space: nowrap; }
+    .mx-badge.bad { background: var(--danger); color: var(--text2); }
+    .mx-editor { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--bg3); padding-top: 6px; }
+    .mx-editor[hidden], .mx-editor [hidden] { display: none; }
+    .mx-heading { font-size: 16.8px; font-weight: 700; color: var(--text2); overflow-wrap: anywhere; }
+    .mx-notice { font-size: 14px; color: var(--muted); line-height: 1.4; }
+    .mx-fields { display: flex; flex-direction: column; gap: 4px; }
+    .mx-field { display: flex; align-items: center; gap: 8px; font-size: 15.4px; color: var(--text1); }
+    .mx-field span { width: 42px; flex: none; }
+    .mx-field input { flex: 1; min-width: 0; font-size: 15.4px; padding: 2px 6px; }
+    .mx-field input[readonly] { opacity: 0.7; }
+    .mx-formula {
+      width: 100%; resize: vertical; background: var(--bg1); color: var(--text2);
+      border: 1px solid var(--bg3); border-radius: 3px; padding: 4px 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15.4px;
+    }
+    .mx-formula:focus { outline: none; border-color: var(--hl2); }
+    .mx-suggest { display: flex; flex-direction: column; background: var(--bg2); border: 1px solid var(--bg4); border-radius: 3px; }
+    .mx-vars { display: flex; flex-direction: column; gap: 3px; }
+    .mx-var { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+    .mx-var input { width: 90px; flex: none; font-size: 14px; padding: 1px 5px; }
+    .mx-var.unused { opacity: 0.5; }
+    .mx-var-ref { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mx-var-arrow { color: var(--muted); }
+    .mx-var-remove { padding: 0 6px; line-height: 1.2; }
+    .mx-check-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .mx-check { font-size: 14px; color: var(--muted); overflow-wrap: anywhere; }
+    .mx-check.bad, .mx-message.bad, .mx-try-head.bad { color: var(--danger); }
+    .mx-check.good, .mx-try-head.good { color: var(--success); }
+    .mx-inputs { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; }
+    .mx-actions, .mx-shortcuts, .mx-conflict { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .mx-actions button.active, .mx-primary { border-color: var(--hl2); }
+    .mx-conflict { font-size: 14px; color: var(--text2); background: var(--bg2); border-radius: 4px; padding: 4px 6px; }
+    .mx-try { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+    .mx-try progress { width: 100%; accent-color: var(--hl2); }
+    .mx-try-stats { display: flex; gap: 10px; flex-wrap: wrap; color: var(--text1); }
+    .mx-try-note, .mx-try-bad, .mx-usedby { font-size: 14px; color: var(--muted); }
+    .mx-link { background: transparent; border: 0; padding: 0 2px; color: var(--hl2); text-decoration: underline; cursor: pointer; font-size: 14px; }
+    .mx-histogram { width: 100%; height: 40px; fill: var(--hl1); }
+    .mx-message { font-size: 14px; color: var(--text1); }
+    .mx-export-text { width: 100%; background: var(--bg1); color: var(--text1); border: 1px solid var(--bg3); border-radius: 3px; font-family: ui-monospace, Menlo, monospace; font-size: 13px; }
+
     /* popped-out loupe: chrome hidden, viewport fills the window. The pop-out
        (mode=loupe-live) opens its OWN connection and is a real second
        controller (ADR 0044 Phase 4). The socket-less BroadcastChannel

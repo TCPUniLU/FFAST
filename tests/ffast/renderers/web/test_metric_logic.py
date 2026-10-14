@@ -1,0 +1,302 @@
+"""The Metrics pane's decisions, as pure functions (ADR 0057).
+
+``metric_logic.js`` has no DOM and no socket, so each rule is evaluated here
+directly in one browser launch, the way test_web_pure_helpers.py does for the
+other helpers: a static file server gives an http origin for the ES module, and
+every case runs in one batch.
+"""
+from __future__ import annotations
+
+import asyncio
+import functools
+import http.server
+import json
+import threading
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.integration
+
+STATIC_DIR = (
+    Path(__file__).resolve().parents[4] / "ffast" / "renderers" / "web" / "static"
+)
+
+INPUTS = (
+    "[{ref:'reference.energies',name:'ref_E',label:'Energy',group:'Reference',only:null},"
+    " {ref:'prediction.energies',name:'pred_E',label:'Energy',group:'Prediction',only:null},"
+    " {ref:'reference.positions',name:'ref_R',label:'Positions',group:'Reference',only:'reference'},"
+    " {ref:'reference.info.REF_energy',name:'ref_REF_energy',label:'REF_energy',group:'File keys',only:null},"
+    " {ref:'ffast.force_mae',name:'force_mae',label:'Force MAE',group:'Metrics',only:null}]"
+)
+
+CASES = {
+    # ── which names a formula uses ──────────────────────────────────────────
+    "names_skip_functions": "ml.valueNames('norm(pred_F - ref_F) / n_atoms')",
+    "names_x_call_is_not_a_value": "ml.valueNames('x(F) + y(F)')",
+    "names_a_variable_called_x": "ml.valueNames('x + 1')",
+    "names_numbers_with_exponents": "ml.valueNames('a * 1e5 + 2e-3')",
+    "undefined_ignores_constants": "ml.undefinedNames('pi * a + n_atoms', ['a'])",
+    "undefined_lists_unknown": "ml.undefinedNames('a + b + c', ['a'])",
+
+    # ── Fix ─────────────────────────────────────────────────────────────────
+    "fix_by_short_name": f"ml.fixFor('ref_E', {INPUTS})?.ref",
+    "fix_ignores_case": f"ml.fixFor('REF_e', {INPUTS})?.ref",
+    "fix_by_label_when_unique": f"ml.fixFor('Positions', {INPUTS})?.ref",
+    "fix_none_when_several_match": f"ml.fixFor('energies', {INPUTS})",
+    "fix_none_when_nothing_matches": f"ml.fixFor('nope', {INPUTS})",
+
+    # ── editing the text ────────────────────────────────────────────────────
+    "unique_name": "[ml.uniqueName('a', []), ml.uniqueName('a', ['a']), ml.uniqueName('a', ['a', 'a_2'])]",
+    "insert_replaces_selection": "ml.insertAt('abc + d', 0, 3, 'pred_E')",
+    "insert_at_caret": "ml.insertAt('a + ', 4, 4, 'b')",
+    "complete_replaces_the_typed_part": "ml.completeAt('2 * pre', 7, 'pred_E')",
+    "rename_changes_values_only": "ml.renameVariable('x(F) + F * x', 'x', 'k')",
+    "rename_whole_names_only": "ml.renameVariable('ab + a + abc', 'a', 'q')",
+    "variable_name_problems": (
+        "['1a', 'pi', 'a b', 'ok', 'dup'].map(n => ml.variableNameProblem(n, ['dup']))"),
+
+    # ── suggestions while typing ────────────────────────────────────────────
+    "suggest_nothing_without_a_prefix": f"ml.suggestions('2 * ', 4, [], {INPUTS})",
+    "suggest_vars_then_inputs_then_functions": (
+        f"ml.suggestions('pre', 3, ['pred_F'], {INPUTS}).map(s => [s.text, s.kind])"),
+    "suggest_functions": f"ml.suggestions('no', 2, [], {INPUTS}).map(s => [s.text, s.kind])",
+    "suggest_skips_what_is_typed": f"ml.suggestions('norm', 4, [], {INPUTS}).map(s => s.text)",
+    "suggest_input_carries_its_ref": f"ml.suggestions('ref_', 4, [], {INPUTS}).map(s => [s.text, s.ref])",
+
+    # ── the inputs list ─────────────────────────────────────────────────────
+    "groups_in_order": f"ml.groupInputs({INPUTS}).map(g => [g.group, g.items.length])",
+    "groups_filtered": f"ml.groupInputs({INPUTS}, 'energies').map(g => [g.group, g.items.map(i => i.ref)])",
+    "groups_filter_matches_ref": f"ml.groupInputs({INPUTS}, 'info.ref_').map(g => g.group)",
+    "side_marks": f"{INPUTS}.map(ml.sideMark)",
+
+    # ── ids ─────────────────────────────────────────────────────────────────
+    "id_problems": (
+        "['', 'user.', 'nodot', 'user.a b', 'user.ok', 'mylab.e_per_atom', 'user.taken']"
+        ".map(i => ml.idProblem(i, ['user.taken']))"),
+
+    # ── what saves ──────────────────────────────────────────────────────────
+    "payload_drops_unused_vars": (
+        "ml.toPayload({id: 'user.a', label: '', unit: '', expr: 'a + 1',"
+        " vars: [{name: 'a', ref: 'r.a'}, {name: 'b', ref: 'r.b'}]})"),
+    "draft_round_trip": (
+        "ml.toPayload(ml.toDraft({id: 'user.a', label: 'L', unit: 'u', expr: 'a', vars: {a: 'r.a'}}))"),
+    "dirty_same": (
+        "ml.isDirty(ml.toDraft({id: 'user.a', label: 'L', unit: 'u', expr: 'a', vars: {a: 'r.a'}}),"
+        " {id: 'user.a', label: 'L', unit: 'u', expr: 'a', vars: {a: 'r.a'}})"),
+    "dirty_after_edit": (
+        "ml.isDirty({id: 'user.a', label: 'L', unit: 'u', expr: 'a * 2', vars: [{name: 'a', ref: 'r.a'}]},"
+        " {id: 'user.a', label: 'L', unit: 'u', expr: 'a', vars: {a: 'r.a'}})"),
+    "dirty_new_empty_and_filled": (
+        "[ml.isDirty({id: 'user.', label: '', unit: '', expr: '', vars: []}, null),"
+        " ml.isDirty({id: 'user.', label: '', unit: '', expr: 'a', vars: []}, null)]"),
+
+    # ── shortcuts and words ─────────────────────────────────────────────────
+    "shortcuts": "['N_atoms', 'N_frames', 'scalar', '(N_atoms, xyz)', null].map(ml.shortcutFor)",
+    "shape_hints": "['N_frames', 'N_atoms', 'scalar'].map(ml.shapeHint)",
+    "stats_format": "[ml.formatStat(null), ml.formatStat(NaN), ml.formatStat(0), ml.formatStat(12.3456789), ml.formatStat(1234567), ml.formatStat(0.00012)]",
+    "try_headlines": (
+        "[ml.tryHeadline({ok: true, count: 4, bad_count: 0}), ml.tryHeadline({ok: true, count: 4, bad_count: 1}),"
+        " ml.tryHeadline({ok: true, count: 1, bad_count: 0}), ml.tryHeadline({ok: false, error: 'boom'}),"
+        " ml.tryHeadline({ok: true, cancelled: true})]"),
+
+    # ── the list by origin ──────────────────────────────────────────────────
+    "group_metrics": (
+        "(() => { const g = ml.groupMetrics("
+        "  [{id: 'ffast.b', label: 'B', origin: 'built-in', shape: 'N_frames'},"
+        "   {id: 'proj.p', label: 'P', origin: 'project', shape: 'N_atoms', expr: 'x', vars: {x: 'r'}},"
+        "   {id: 'user.u', label: '', origin: 'user', shape: 'N_frames'},"
+        "   {id: 'user.u__kde__p1', label: 'derived', origin: 'user', shape: 'x'}],"
+        "  [{id: 'user.u', label: 'Mine', expr: 'a', vars: {a: 'r'}, status: 'ok', revision: 'rev1', shape: 'N_frames', used_by: []},"
+        "   {id: 'user.h', label: '', expr: 'a', vars: {}, status: 'hidden', message: 'Hidden: x'}]);"
+        "  return Object.fromEntries(Object.entries(g).map(([k, v]) => [k, v.map(m => [m.id, m.label, m.status, m.revision])])); })()"),
+}
+
+
+@pytest.fixture(scope="module")
+def results():
+    playwright_api = pytest.importorskip("playwright.async_api")
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(STATIC_DIR))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    script = (
+        "async () => {\n"
+        f"  const ml = await import('{origin}/metric_logic.js');\n"
+        "  const out = {};\n"
+        + "".join(f"  out[{json.dumps(n)}] = {e};\n" for n, e in CASES.items())
+        + "  return out;\n}"
+    )
+
+    async def _collect():
+        async with playwright_api.async_playwright() as p:
+            browser = await p.chromium.launch()
+            page = await browser.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda exc: errors.append(str(exc)))
+            await page.goto(f"{origin}/events.js")
+            await page.set_content("<!doctype html><title>helpers</title>")
+            try:
+                out = await page.evaluate(script)
+            finally:
+                await browser.close()
+            assert not errors, f"page errors: {errors}"
+            return out
+
+    try:
+        yield asyncio.run(_collect())
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+# ── names ───────────────────────────────────────────────────────────────────
+def test_a_function_name_is_not_a_value(results):
+    assert results["names_skip_functions"] == ["pred_F", "ref_F", "n_atoms"]
+
+
+def test_x_of_F_uses_F_not_x(results):
+    assert results["names_x_call_is_not_a_value"] == ["F"]
+
+
+def test_a_variable_may_be_called_x(results):
+    assert results["names_a_variable_called_x"] == ["x"]
+
+
+def test_the_e_of_an_exponent_is_not_a_name(results):
+    assert results["names_numbers_with_exponents"] == ["a"]
+
+
+def test_pi_and_n_atoms_need_no_variable(results):
+    assert results["undefined_ignores_constants"] == []
+    assert results["undefined_lists_unknown"] == ["b", "c"]
+
+
+# ── Fix ─────────────────────────────────────────────────────────────────────
+def test_fix_finds_the_input_a_short_name_means(results):
+    assert results["fix_by_short_name"] == "reference.energies"
+    assert results["fix_ignores_case"] == "reference.energies"
+
+
+def test_fix_falls_back_to_a_unique_label(results):
+    assert results["fix_by_label_when_unique"] == "reference.positions"
+
+
+def test_fix_is_offered_only_when_exactly_one_input_matches(results):
+    assert results["fix_none_when_several_match"] is None     # energies: reference and prediction
+    assert results["fix_none_when_nothing_matches"] is None
+
+
+# ── editing ─────────────────────────────────────────────────────────────────
+def test_unique_name_numbers_from_two(results):
+    assert results["unique_name"] == ["a", "a_2", "a_3"]
+
+
+def test_insert_replaces_the_selection_and_moves_the_caret_after_it(results):
+    assert results["insert_replaces_selection"] == {"text": "pred_E + d", "caret": 6}
+    assert results["insert_at_caret"] == {"text": "a + b", "caret": 5}
+
+
+def test_completing_replaces_only_the_typed_part(results):
+    assert results["complete_replaces_the_typed_part"] == {"text": "2 * pred_E", "caret": 10}
+
+
+def test_renaming_changes_values_not_function_calls(results):
+    assert results["rename_changes_values_only"] == "x(F) + F * k"
+    assert results["rename_whole_names_only"] == "ab + q + abc"
+
+
+def test_variable_names_must_be_clean_and_new(results):
+    assert results["variable_name_problems"] == [
+        "A name is letters, digits and underscores, not starting with a digit",
+        "pi is built in",
+        "A name is letters, digits and underscores, not starting with a digit",
+        "", "dup is already a variable"]
+
+
+# ── suggestions ─────────────────────────────────────────────────────────────
+def test_nothing_is_suggested_without_a_typed_prefix(results):
+    assert results["suggest_nothing_without_a_prefix"] == []
+
+
+def test_suggestions_run_variables_then_inputs_then_functions(results):
+    # "pre" matches the variable pred_F and the input pred_E; no function starts with it
+    assert results["suggest_vars_then_inputs_then_functions"] == [["pred_F", "variable"], ["pred_E", "input"]]
+    assert results["suggest_functions"] == [["norm", "function"]]
+
+
+def test_a_name_already_typed_in_full_is_not_suggested_back(results):
+    assert results["suggest_skips_what_is_typed"] == []
+
+
+def test_an_input_suggestion_carries_the_ref_to_bind(results):
+    assert results["suggest_input_carries_its_ref"] == [
+        ["ref_E", "reference.energies"], ["ref_R", "reference.positions"],
+        ["ref_REF_energy", "reference.info.REF_energy"]]
+
+
+# ── inputs list ─────────────────────────────────────────────────────────────
+def test_inputs_are_grouped_in_the_documented_order(results):
+    assert results["groups_in_order"] == [["Reference", 2], ["Prediction", 1], ["File keys", 1], ["Metrics", 1]]
+
+
+def test_the_search_matches_ref_name_and_label(results):
+    assert results["groups_filtered"] == [
+        ["Reference", ["reference.energies"]], ["Prediction", ["prediction.energies"]]]
+    assert results["groups_filter_matches_ref"] == ["File keys"]
+
+
+def test_one_sided_inputs_are_marked(results):
+    assert results["side_marks"] == ["", "", "reference only", "", ""]
+
+
+# ── ids ─────────────────────────────────────────────────────────────────────
+def test_id_problems_are_named(results):
+    problems = results["id_problems"]
+    assert problems[0].startswith("Type an id") and problems[1].startswith("Type an id")
+    assert problems[2].startswith("An id is letters") and problems[3].startswith("An id is letters")
+    assert problems[4] == "" and problems[5] == ""
+    assert problems[6] == "The id user.taken is already taken"
+
+
+# ── payload and dirtiness ───────────────────────────────────────────────────
+def test_unused_variables_are_not_saved(results):
+    assert results["payload_drops_unused_vars"] == {
+        "id": "user.a", "expr": "a + 1", "vars": {"a": "r.a"}, "label": "", "unit": ""}
+
+
+def test_a_loaded_metric_is_not_dirty_until_edited(results):
+    assert results["draft_round_trip"]["vars"] == {"a": "r.a"}
+    assert results["dirty_same"] is False
+    assert results["dirty_after_edit"] is True
+    assert results["dirty_new_empty_and_filled"] == [False, True]
+
+
+# ── shortcuts, words ────────────────────────────────────────────────────────
+def test_the_shortcut_follows_the_result_shape(results):
+    assert results["shortcuts"] == ["colour", "plot", None, None, None]
+
+
+def test_the_check_says_where_a_result_can_go(results):
+    assert results["shape_hints"] == [
+        "per structure → can be plotted", "per atom → can colour atoms", "one number for the dataset"]
+
+
+def test_numbers_are_short(results):
+    assert results["stats_format"] == ["—", "—", "0", "12.3457", "1.235e+6", "1.200e-4"]
+
+
+def test_a_try_opens_with_one_plain_line(results):
+    assert results["try_headlines"] == [
+        "4 values, all good", "1 bad value of 4 — saving would fail the metric",
+        "1 value, all good", "boom", "Stopped"]
+
+
+def test_the_list_is_grouped_by_origin_with_user_entries_from_the_user_list(results):
+    g = results["group_metrics"]
+    assert g["built-in"] == [["ffast.b", "B", "ok", None]]
+    assert g["project"] == [["proj.p", "P", "ok", None]]
+    # the derived transform is left out; sorted by label, the hidden file by its id
+    assert g["user"] == [["user.u", "Mine", "ok", "rev1"], ["user.h", "user.h", "hidden", None]]

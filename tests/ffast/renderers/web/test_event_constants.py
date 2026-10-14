@@ -82,6 +82,8 @@ def test_inbound_events_are_things_the_server_sends(in_events):
         control.METRIC_CATALOG, control.METRICS_UPDATED, control.TAB_LAYOUT,
         control.SUBSET_EXPORTED, control.SESSION_SAVED, control.SESSION_LOADED,
         control.TAB_SAVED, control.TAB_EXPORTED, control.SUBSET_DECLARED,
+        control.USER_METRICS, control.USER_METRIC_SAVED, control.USER_METRIC_EXPORTED,
+        control.METRIC_INPUTS, control.METRIC_CHECKED, control.METRIC_TRIED,
     }
     known = set(SERVER_TO_CLIENT) | set(control.REPLY_EVENTS) | announcements
     unknown = sorted(set(in_events.values()) - known)

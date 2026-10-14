@@ -162,6 +162,14 @@ export function createColorByPane(sidebarEl, callbacks) {
       cbLabel.textContent = colorBy.label + (colorBy.unit ? ` (${colorBy.unit})` : '');
     },
 
+    /** Ask for the colours again when they come from a metric: the metric may
+     * have been edited (ADR 0057), and the view keeps the old colours until
+     * told. Sends the same source, which rebuilds the scene. */
+    recolour() {
+      const source = labelToSource.get(currentLabel);
+      if (source && source.startsWith('metric:')) callbacks.onSourceChange(source);
+    },
+
     /** Store a look for `key` without showing it (an independent 3D panel's
      * starting look, ADR 0056): a colour source ("element", "displacement",
      * "metric:<id>"), a colour map and the prediction metric colours use. */

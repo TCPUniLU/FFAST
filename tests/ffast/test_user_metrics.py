@@ -93,6 +93,18 @@ def test_a_project_metric_wins_and_the_user_file_is_listed_hidden(tmp_path, regi
     assert registry.get("base.ref_e")[0].label != "x"  # the project's stays
 
 
+def test_a_hidden_file_cannot_be_edited_and_the_project_metric_is_untouched(tmp_path, registry):
+    UserMetricStore(tmp_path / "metrics").write(ExprMetricConfig(**metric(id="base.ref_e")))
+    m = UserMetrics(UserMetricStore(tmp_path / "metrics"), registry)
+    m.load()
+    before = registry.get("base.ref_e")
+    with pytest.raises(MetricError, match="the project defines base.ref_e"):
+        m.save(metric(id="base.ref_e", expr="3 * e"), previous_id="base.ref_e")
+    assert registry.get("base.ref_e") is before
+    m.delete("base.ref_e")                       # deleting the hidden file is allowed
+    assert registry.get("base.ref_e") is before and m.entries() == []
+
+
 def test_a_file_that_does_not_compile_stays_listed_with_the_reason(tmp_path, registry):
     UserMetricStore(tmp_path / "metrics").write(
         ExprMetricConfig(id="user.bad", expr="e + q", vars={"e": "base.ref_e", "q": "base.atom_q"}))
