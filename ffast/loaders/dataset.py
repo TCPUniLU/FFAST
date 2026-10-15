@@ -1069,7 +1069,7 @@ class AtomFilteredDataset(DatasetLoader):
     def getChemicalFormula(self):
         return self.chem
 
-    def getElements(self):
+    def getElements(self, index=None):
         return self.z
 
     def getLattice(self):

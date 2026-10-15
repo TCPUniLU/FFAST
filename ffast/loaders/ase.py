@@ -266,7 +266,7 @@ class aseDatasetLoader(DatasetLoader):
 
         return np.array(R)
 
-    def getElements(self):
+    def getElements(self, index=None):
         return self.z
 
     def getFrameField(self, key, indices=None):
