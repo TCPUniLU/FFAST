@@ -867,8 +867,11 @@ class SubDataset(DatasetLoader):
             # Uniform parent
             return self.parent.z
 
-    def getLattice(self):
-        return self.parent.getLattice()
+    def getLattice(self, indices=None):
+        idx = self.indices
+        if indices is not None:
+            idx = idx[indices]
+        return self.parent.getLattice(idx)
 
     def getElementsName(self):
         if self.isVariable:
@@ -1072,8 +1075,8 @@ class AtomFilteredDataset(DatasetLoader):
     def getElements(self, index=None):
         return self.z
 
-    def getLattice(self):
-        return self.parent.getLattice()
+    def getLattice(self, indices=None):
+        return self.parent.getLattice(indices=indices)
 
     def getElementsName(self):
         return [zIntToZStr[x] for x in self.getElements()]

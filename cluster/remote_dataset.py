@@ -368,7 +368,7 @@ class CachedRemoteDataset(DatasetLoader):
             ("Variable", "yes" if self.isVariable else "no"),
         ]
 
-    def getLattice(self):
+    def getLattice(self, indices=None):
         return None
 
     def isDependentOn(self, fp):

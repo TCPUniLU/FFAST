@@ -12,6 +12,7 @@ from ase import Atoms
 import numpy as np
 from ffast.loaders.ase import aseDatasetLoader
 from ffast.loaders.dataset import AtomFilteredDataset 
+from ffast.loaders.dataset import SubDataset
 
 
 def _uniform():
@@ -30,3 +31,24 @@ def test_atom_subset_answers_elements_for_one_frame():
     dataset = _uniform()
     subset = AtomFilteredDataset(dataset, np.array([0, 2]))
     np.testing.assert_array_equal(subset.getElements(0), [1, 8])
+
+
+def _periodic():
+    frames = [Atoms("H2O", positions=[[0, 0, 0], [0, 0, 1], [1, 0, 0]],
+                    cell=[i + 1, i + 1, i + 1], pbc=True) for i in range(10)]
+    dataset = aseDatasetLoader("periodic.xyz", atomsList=frames)
+    dataset.initialise()
+    return dataset
+
+
+def test_frame_subset_answers_the_cell_of_its_own_frame():
+    parent = _periodic()
+    subset = SubDataset(parent, None, np.array([3, 7]), "Subset")
+    subset.initialise()
+    np.testing.assert_array_equal(subset.getLattice(1), np.eye(3) * 8)
+
+
+def test_atom_subset_answers_the_cell_of_one_frame():
+    parent = _periodic()
+    subset = AtomFilteredDataset(parent, np.array([0, 2]))
+    np.testing.assert_array_equal(subset.getLattice(4), np.eye(3) * 5)

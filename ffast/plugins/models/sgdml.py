@@ -165,7 +165,7 @@ class sGDMLDatasetLoader(DatasetLoader):
     def getElements(self):
         return self.z
 
-    def getLattice(self):
+    def getLattice(self, indices=None):
         return self.lattice
 
     @staticmethod
