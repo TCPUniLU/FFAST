@@ -865,7 +865,7 @@ class SubDataset(DatasetLoader):
                                    for i in np.asarray(self.indices).reshape(-1)])
         else:
             # Uniform parent
-            return self.parent.z
+            return self.parent.getElements()
 
     def getLattice(self, indices=None):
         idx = self.indices

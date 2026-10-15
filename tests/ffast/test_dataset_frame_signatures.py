@@ -1,12 +1,19 @@
 """
-Every dataset answers "which elements are in frame i?" with a frame number.
+Every dataset kind answers per-frame questions the same way, whatever its parent.
 
-Regression: the uniform ASE loader's ``getElements()`` and the atom subset's
-``getElements()`` took no frame number, while variable datasets and frame
-subsets did. Extract calls ``parent.getElements(0)``, so on a dataset whose
-structures all have the same atoms it failed with ``TypeError`` and created
-no subset; the server only logged a warning. The browser Extract test missed
-it because its example file holds structures of different sizes.
+Regressions, each hidden by a caller that caught the error and logged it:
+
+- Elements: the uniform ASE loader's ``getElements()`` and the atom subset's
+  took no frame number, while variable datasets and frame subsets did.
+  Extract calls ``parent.getElements(0)``, so on a dataset whose structures
+  all have the same atoms it created no subset. The browser Extract test
+  missed it because its example file holds structures of different sizes.
+- Unit cell: both subset kinds' ``getLattice()`` took no frame number, so the
+  scene builder's ``getLattice(i)`` failed and a subset never showed the cell.
+  A frame subset also answered with all of its parent's frames, not its own.
+- Subset of a subset: a frame subset of a uniform parent read the parent's
+  ``z`` attribute, which a frame subset does not have, instead of asking
+  ``getElements()``.
 """
 from ase import Atoms
 import numpy as np
@@ -52,3 +59,12 @@ def test_atom_subset_answers_the_cell_of_one_frame():
     parent = _periodic()
     subset = AtomFilteredDataset(parent, np.array([0, 2]))
     np.testing.assert_array_equal(subset.getLattice(4), np.eye(3) * 5)
+
+
+def test_subset_of_a_subset_of_a_uniform_dataset_answers_elements():
+    dataset = _uniform()
+    subset = SubDataset(dataset, None, np.array([2, 4, 6]),subName="Subset")
+    subset.initialise()
+    subset_of_subset = SubDataset(subset, None, np.array([0,2]), subName="SubSubset")
+    subset_of_subset.initialise()
+    np.testing.assert_array_equal(subset_of_subset.getElements(1), [1, 1, 8])
