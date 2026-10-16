@@ -43,10 +43,19 @@ and atom numbers in the other.
 
 ### 1. One storage form
 
-Every file dataset stores per-atom arrays flat, with offsets saying where each
-structure's atoms start. A uniform file is the case where every structure has
-the same size: offsets `0, n, 2n, ...`. One loader class replaces
-`aseDatasetLoader` and `VariableASEDatasetLoader`, and `isVariable` goes away.
+Every file dataset describes its structures the same way: offsets saying where
+each structure's atoms start in one flat run of atoms. A uniform file is the
+case where every structure has the same size: offsets `0, n, 2n, ...`. One
+loader class replaces `aseDatasetLoader` and `VariableASEDatasetLoader`, and
+`isVariable` goes away.
+
+Only the offsets are held in memory. Coordinates, forces, energies and elements
+are read from the file per frame, through `AtomsList`
+(`ffast/core/data_types.py`), which keeps one chunk of a large file in memory
+at a time. The uniform loader works this way today, so files of several GB keep
+working; the variable loader, which today reads the whole file into memory,
+moves to it. Flat arrays covering all frames are built only when a caller asks
+for all frames.
 
 - Per-frame calls keep their names and take a frame number on every kind:
   `getElements(i)`, `getCoordinates(i)`, `getLattice(i)`.
@@ -82,9 +91,13 @@ A file dataset's fingerprint is the key of its saved session entry and of its
 saved prediction caches, so it stays byte-identical. Today the uniform formula
 hashes one structure's elements and the variable one hashes all of them; the
 single loader keeps the uniform formula when every structure has the same
-chemical formula, and the variable formula otherwise. That is the rule that
-picks the loader today (`_isUniformAtomsList`, sampling included), so the
-single loader calls the same function. A file whose frames share a formula but
+chemical formula, and the variable formula otherwise. Two checks apply that rule
+today: opening a dataset compares randomly chosen frames
+(`check_homogeneity` in `ffast/plugins/loaders/ase.py`), loading predictions a
+fixed sample (`_isUniformAtomsList` in `loading_coordinator.py`). The single
+loader uses the fixed one. A large file that the random check classifies
+differently from run to run has no stable fingerprint today, so there is none to
+keep. A file whose frames share a formula but
 list their atoms in a different order keeps its fingerprint; its elements,
 wrong today because frame 0's are used for every frame, become right.
 
@@ -153,10 +166,12 @@ One commit each, so each can be reverted alone.
    variable parent, against every per-frame question, plus a test that every
    file dataset's fingerprint is unchanged. The expected failures in
    `test_subset_known_gaps.py` turn green as the steps land.
-2. The uniform loader stores flat arrays and offsets internally; fingerprints
-   unchanged.
-3. The two ASE loaders become one; `loading_coordinator.py:388` picks it always.
-   Missing data is absent, not zeros.
+2. The uniform loader gets the variable loader's offsets (`molecule_offsets`)
+   and answers `getNAtoms(i)` for one frame; fingerprints unchanged.
+3. The two ASE loaders become one, reading per frame through `AtomsList`; both
+   `check_homogeneity` and `loading_coordinator.py:388` pick it always. Missing
+   data is absent, not zeros. Measure per-frame reads on a variable file before
+   and after, since they move from memory to the file.
 4. The "all frames" methods, and the ten callers moved to them one at a time.
 5. One view replaces the three derived classes. Qt subsets break here.
 6. The caller branches on `isVariable` are deleted.
