@@ -82,7 +82,11 @@ A file dataset's fingerprint is the key of its saved session entry and of its
 saved prediction caches, so it stays byte-identical. Today the uniform formula
 hashes one structure's elements and the variable one hashes all of them; the
 single loader keeps the uniform formula when every structure has the same
-elements in the same order, and the variable formula otherwise.
+chemical formula, and the variable formula otherwise. That is the rule that
+picks the loader today (`_isUniformAtomsList`, sampling included), so the
+single loader calls the same function. A file whose frames share a formula but
+list their atoms in a different order keeps its fingerprint; its elements,
+wrong today because frame 0's are used for every frame, become right.
 
 A view keeps the three formulas in use today, chosen by its state: a live subset
 hashes parent, model and name (so the same subset is refreshed as the zoom
