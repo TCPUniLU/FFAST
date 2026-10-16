@@ -161,6 +161,12 @@ def q_coordinates(ds, truth):
         np.testing.assert_allclose(ds.getCoordinates(i), truth.coordinates(i))
 
 
+def q_n_atoms(ds, truth):
+    for i in range(truth.n_frames()):
+        assert ds.getNAtoms(i) == truth.n_atoms(i)
+
+
+
 def q_bond_matrix_shape(ds, truth):
     for i in range(truth.n_frames()):
         n = truth.n_atoms(i)
@@ -173,6 +179,7 @@ QUESTIONS = {
     "lattice": q_lattice,
     "coordinates": q_coordinates,
     "bond_matrix_shape": q_bond_matrix_shape,
+    "n_atoms": q_n_atoms,
 }
 
 
@@ -182,6 +189,8 @@ _ONE_FRAME_ELEMENTS = (AssertionError, "atom subset uses frame 0's elements for 
                        "frame (deliberate today; the single view changes it)")
 _MASK_TOO_BIG = (IndexError, "undecided: an atom subset asks for an atom that a "
                              "smaller structure (H2) does not have")
+_NO_FRAME_ARG = (TypeError, "atom subset's getNAtoms() takes no frame number (step 5)")
+
 
 
 KNOWN_GAPS = {
@@ -197,6 +206,12 @@ KNOWN_GAPS = {
     ("variable", "atom-subset", "coordinates"): _MASK_TOO_BIG,
     ("variable", "atom-subset-of-subset", "coordinates"): _MASK_TOO_BIG,
     ("variable", "subset-of-atom-subset", "coordinates"): _MASK_TOO_BIG,
+    ("uniform", "atom-subset", "n_atoms"): _NO_FRAME_ARG,
+    ("uniform", "atom-subset-of-subset", "n_atoms"): _NO_FRAME_ARG,
+    ("variable", "atom-subset", "n_atoms"): _NO_FRAME_ARG,
+    ("variable", "atom-subset-of-subset", "n_atoms"): _NO_FRAME_ARG,
+    ("variable", "subset-of-atom-subset", "n_atoms"): _MASK_TOO_BIG,
+
 }
 
 

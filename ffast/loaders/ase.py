@@ -126,6 +126,9 @@ class aseDatasetLoader(DatasetLoader):
         exAtoms = self.atomsList[0]  # assumes all the same molecule!!
 
         self.nAtoms = len(exAtoms)
+        # Where each frame's atoms start, as in VariableDatasetLoader: every 
+        # frame has nAtoms atoms, so the offsets are 0, n, 2n, ...
+        self.molecule_offsets = np.arange(self.N + 1) * self.nAtoms
         self.z = exAtoms.get_atomic_numbers()
 
         if hasattr(exAtoms, "cell"):
@@ -166,8 +169,10 @@ class aseDatasetLoader(DatasetLoader):
     def getN(self):
         return self.N
 
-    def getNAtoms(self):
-        return self.nAtoms
+    def getNAtoms(self, index=None):
+        if index is None:
+            return self.nAtoms
+        return int(self.molecule_offsets[index + 1] - self.molecule_offsets[index])
 
     def getChemicalFormula(self):
         return self.chem
