@@ -90,7 +90,10 @@ size behave this way today.
   goes the copying of `bondSizes` into subsets, and the bonds bug above.
 - Missing energies or forces are absent, never filled with zeros. This is what
   the uniform loader does today; the variable loader fills in zeros and so
-  claims forces it does not have.
+  claims forces it does not have. Asking for an absent result raises
+  `RuntimeError`, as the uniform loader's ASE frames do, and callers already
+  catch it. If any frame lacks a result, the file has none: a partly filled
+  file is not guessed at.
 
 ### 2. One view for everything cut from a dataset
 
@@ -127,8 +130,8 @@ atoms. Saved sessions do not store subsets (`getAllDatasets(excludeSubs=True)`),
 but open windows hold these fingerprints, and the Qt client computes one
 directly (`UI/Plots.py:736`).
 
-**Not reversible:** a variable file that has no forces gets a new fingerprint,
-because zeros are no longer hashed in. Its saved sessions and caches stop
+**Not reversible:** a variable file that has no forces or no energies gets a new
+fingerprint, because zeros are no longer hashed in. Its saved sessions and caches stop
 matching. ADR 0008 already declines to migrate sessions.
 
 ### 4. sGDML datasets join
@@ -172,7 +175,7 @@ installed (3d8a7a4), so this breaks real use, not just a test.
 
 - Qt subsets of a remote dataset, until GitHub issue #22 is done.
 - The pre-computed bond-size matrix (about 5%, measured).
-- Fingerprints of variable files without forces (see section 3).
+- Fingerprints of variable files without forces or energies (see section 3).
 - Instant frame reads on variable files: 1 µs becomes 60 µs, and on files over
   300,000 frames a jump to a distant frame re-reads the file (measured, section 1).
 - The 11 checks that ask "is this cut from another dataset?" (registry, data
