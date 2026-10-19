@@ -55,7 +55,26 @@ are read from the file per frame, through `AtomsList`
 at a time. The uniform loader works this way today, so files of several GB keep
 working; the variable loader, which today reads the whole file into memory,
 moves to it. Flat arrays covering all frames are built only when a caller asks
-for all frames.
+for all frames, and then kept: rebuilding them costs one file read per frame.
+
+Measured on 2026-10-16 (`docs/research/bench_frames.py`, a variable extxyz file of 5000
+frames of 10 to 60 atoms, 18.5 MB, with energies and forces; two runs agreed
+within 10%):
+
+| | held in memory | one frame, in order | one frame, random |
+|---|---|---|---|
+| variable loader today | 44 MB | 1 µs | 1 µs |
+| read per frame, file in one chunk | 33 MB | 60 µs | 59 µs |
+| read per frame, 500-frame chunks | – | 245 µs | 87,000 µs |
+
+A frame read is 60 times slower but stays far below one screen refresh
+(16,700 µs at 60 Hz). Memory falls only 25%, because the variable loader keeps
+the file twice today: as `AtomsList`'s ASE objects and as flat arrays.
+`AtomsList` holds 300,000 frames per chunk (its docstring says atoms; the code
+counts frames), so a smaller file is fully in memory either way. Only a larger
+file reads one chunk at a time, and then a jump to a distant frame re-reads the
+file from the start: 87 ms here, more on a larger file. Uniform files of that
+size behave this way today.
 
 - Per-frame calls keep their names and take a frame number on every kind:
   `getElements(i)`, `getCoordinates(i)`, `getLattice(i)`.
@@ -154,6 +173,8 @@ installed (3d8a7a4), so this breaks real use, not just a test.
 - Qt subsets of a remote dataset, until GitHub issue #22 is done.
 - The pre-computed bond-size matrix (about 5%, measured).
 - Fingerprints of variable files without forces (see section 3).
+- Instant frame reads on variable files: 1 µs becomes 60 µs, and on files over
+  300,000 frames a jump to a distant frame re-reads the file (measured, section 1).
 - The 11 checks that ask "is this cut from another dataset?" (registry, data
   service, data types, freeze, server session) stay. That is a different
   question from the one this decision removes.
@@ -172,7 +193,10 @@ One commit each, so each can be reverted alone.
    `check_homogeneity` and `loading_coordinator.py:388` pick it always. Missing
    data is absent, not zeros. Measure per-frame reads on a variable file before
    and after, since they move from memory to the file.
-4. The "all frames" methods, and the ten callers moved to them one at a time.
+4. The "all frames" methods, built once and kept, and the ten callers moved to
+   them one at a time. First count how often each caller asks for all frames:
+   without the kept copy, every call reads the whole file (0.3 s for 5000
+   frames, about a minute for a million).
 5. One view replaces the three derived classes. Qt subsets break here.
 6. The caller branches on `isVariable` are deleted.
 7. sGDML fills the same storage.
