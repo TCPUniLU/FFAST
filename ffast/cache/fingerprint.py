@@ -28,6 +28,10 @@ def md5FromArraysAndStrings(*args):
             else:
                 # Regular list - try to convert to array
                 d = np.array(arg).ravel()
+        elif isinstance(arg, bytes):
+            d = arg
+        else:
+            raise TypeError(f"md5FromArraysAndStrings cannot hash {type(arg).__name__}: {arg!r}")
 
         fp.update(hashlib.md5(d).digest())
 
