@@ -422,6 +422,9 @@ class _FakeDataset:
     def getEnergies(self):
         return self._E
 
+    def getN(self):
+        return len(self._E)
+
     def getName(self):
         return self._name
 

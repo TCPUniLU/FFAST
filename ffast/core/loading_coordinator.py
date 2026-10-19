@@ -69,6 +69,15 @@ def _isUniformAtomsList(atomsList, sampleSize=60):
     return True
 
 
+def _resultOrNone(read):
+    """``read()``, or ``None`` when the file has no such result (ADR 0058)."""
+    try:
+        return read()
+    except (PropertyNotImplementedError, RuntimeError):
+        return None
+
+
+
 class LoadingCoordinator:
     """Owns dataset/model/prediction load routing, implementations, and ghosts (ADR 0034)."""
 
@@ -399,32 +408,23 @@ class LoadingCoordinator:
 
     @staticmethod
     def _predictionMatchesDataset(E, dataset, name):
-        """Check a prediction's energies line up with the dataset's, frame for frame.
+        """Check a prediction has one energy per dataset frame.
 
-        Handles both dataset flavours: a variable dataset returns a list of
-        per-frame scalars (compare lengths), a uniform one a numpy array
-        (compare shapes).  The array-shape branch on its own — all the
-        standalone-prediction-file path used to do — raises ``AttributeError``
-        against a variable dataset.
+        Counts frames with ``getN()``, which every dataset answers, rather than
+        reading the dataset's own energies, which a file of bare geometries
+        does not have (ADR 0058: absent, not zeros).
         """
         if E is None:
             return True
 
-        dataset_E = dataset.getEnergies()
-        if isinstance(E, list) or isinstance(dataset_E, list):
-            if len(E) != len(dataset_E):
-                logger.error(
-                    f"Shape mismatch for prediction '{name}'. "
-                    f"Expected {len(dataset_E)} molecules, got {len(E)}."
-                )
-                return False
-        elif hasattr(E, "shape") and hasattr(dataset_E, "shape"):
-            if E.shape != dataset_E.shape:
-                logger.error(
-                    f"Shape mismatch for prediction '{name}'. "
-                    f"Expected {dataset_E.shape}, got {E.shape}."
-                )
-                return False
+        n_predicted = np.asarray(E).reshape(-1).size
+        n_frames = dataset.getN()
+        if n_predicted != n_frames:
+            logger.error(
+                f"Frame count mismatch for prediction '{name}'. "
+                f"Expected {n_frames} frames, got {n_predicted}."
+            )
+            return False
         return True
 
     def _ingestPrediction(self, dataset, E, F, *, path, name, fingerprint,
@@ -658,9 +658,14 @@ class LoadingCoordinator:
                     uniform=is_uniform,
                 )
 
-                E = temp_loader.getEnergies()
-                F = temp_loader.getForces()
-                ghost_fp = md5FromArraysAndStrings(E, F, model_name)
+                E = _resultOrNone(temp_loader.getEnergies)
+                F = _resultOrNone(temp_loader.getForces)
+                if E is None and F is None:
+                    logger.warning(f"Prediction '{model_name}' has neither energies nor forces; skipped.")
+                    continue
+                available = [x for x in (E, F) if x is not None]
+                ghost_fp = md5FromArraysAndStrings(*available, model_name)
+
 
                 if not self._ingestPrediction(
                     dataset, E, F, path=path, name=model_name,
