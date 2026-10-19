@@ -3,6 +3,7 @@ import logging
 import numpy as np
 from ffast.loaders.dataset import DatasetLoader, VariableDatasetLoader
 import ase.io
+from ase.calculators.calculator import PropertyNotImplementedError
 from collections.abc import Iterable
 
 # The discoverable plugin (loadData/SmartASELoader, registered under the
@@ -346,6 +347,8 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         # Build flat arrays
         R_list, F_list, E_list, z_list = [], [], [], []
         offsets = [0]
+        forces_missing = energies_missing = False
+
 
         # Detect force and energy keys from first frame
         force_keys = self._detectForceKeys()
@@ -386,7 +389,8 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
                 # Use calculator
                 try:
                     F_list.append(atoms.get_forces())
-                except:
+                except (PropertyNotImplementedError, RuntimeError):
+                    forces_missing = True
                     # If forces not available, use zeros
                     F_list.append(np.zeros((n_atoms, 3)))
 
@@ -398,7 +402,8 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
                 # Use calculator
                 try:
                     E_list.append(atoms.get_potential_energy())
-                except:
+                except (PropertyNotImplementedError, RuntimeError):
+                    energies_missing = True
                     # If energy not available, use zero
                     E_list.append(0.0)
 
@@ -407,8 +412,8 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
 
         # Convert to flat arrays
         self.R_flat = np.vstack(R_list)
-        self.F_flat = np.vstack(F_list)
-        self.E = np.array(E_list)
+        self.F_flat = None if forces_missing else np.vstack(F_list)
+        self.E = None if energies_missing else np.array(E_list)
         self.z_flat = np.concatenate(z_list)
         self.molecule_offsets = np.array(offsets)
 

@@ -479,6 +479,8 @@ class VariableDatasetLoader(EventClass):
 
     def getEnergies(self, indices=None):
         """Get energies for molecule(s)."""
+        if self.E is None:
+            raise RuntimeError("Energies are not available for this dataset.")
         if indices is None:
             return self.E
         else:
@@ -492,6 +494,8 @@ class VariableDatasetLoader(EventClass):
             Single molecule: ndarray (n_atoms_i, 3)
             Multiple molecules: list of ndarrays
         """
+        if self.F_flat is None:
+            raise RuntimeError("Forces are not available for this dataset.")
         if indices is None:
             indices = np.arange(self.N)
         elif not isinstance(indices, np.ndarray) and not hasattr(indices, '__iter__'):
@@ -569,7 +573,9 @@ class VariableDatasetLoader(EventClass):
     def getFingerprint(self):
         """Generate fingerprint from all data."""
         # Use all flat arrays for fingerprint
-        fp = md5FromArraysAndStrings(self.z_flat, self.R_flat, self.E, self.F_flat)
+        arrays = (self.z_flat, self.R_flat, self.E, self.F_flat)
+        fp = md5FromArraysAndStrings(*(i for i in arrays if i is not None))
+
         return fp
 
     def getKey(self):
