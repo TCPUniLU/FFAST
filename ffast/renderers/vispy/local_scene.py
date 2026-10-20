@@ -119,19 +119,10 @@ def _prediction_forces_from_difference(dataset: Any, diff_entry: Any):
     if diff is None:
         return None
     diff = np.asarray(diff, dtype=np.float64)
-    ref_forces = dataset.getForces()
-    if getattr(dataset, "isVariable", False) and isinstance(ref_forces, list):
-        ref_flat = np.concatenate(ref_forces, axis=0)
-        pred_flat = ref_flat + diff
-        offsets = np.array([0] + [f.shape[0] for f in ref_forces]).cumsum()
-        return [pred_flat[offsets[i]:offsets[i + 1]] for i in range(len(ref_forces))]
-
-    ref = np.asarray(ref_forces, dtype=np.float64)
-    if diff.shape == ref.shape:
-        return ref + diff
-    n_frames, n_atoms, _ = ref.shape
-    pred = ref.reshape(n_frames * n_atoms, 3) + diff
-    return pred.reshape(n_frames, n_atoms, 3)
+    ref_flat = np.asarray(dataset.getAllForces(), dtype=np.float64)
+    pred_flat = ref_flat + diff.reshape(ref_flat.shape)
+    offsets = dataset.getOffsets()
+    return [pred_flat[offsets[i]:offsets[i + 1]] for i in range(len(offsets) - 1)]
 
 
 def _force_frame(forces: Any, idx: int):
