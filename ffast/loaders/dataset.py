@@ -42,6 +42,35 @@ def isOneFrame(indices):
     return indices is not None and not hasattr(indices, "__iter__")
 
 
+def stackFrames(flat, offsets):
+    """Flat per-atom values as ``(frames, atoms, ...)`` when every structure
+    has the same size. Raises ``ValueError`` when sizes differ, since no single
+    3D array holds them."""
+    counts = np.diff(np.asarray(offsets))
+    if counts.size == 0 or (counts != counts[0]).any():
+        raise ValueError("structures differ in size, so they cannot be stacked into one array")
+    flat = np.asarray(flat)
+    return flat.reshape(counts.size, int(counts[0]), *flat.shape[1:])
+
+
+def _readOnly(array):
+    """A view that refuses writes. All-frames arrays are kept and shared, so
+    a caller that changed one in place would change it for everyone."""
+    view = np.asarray(array).view()
+    view.flags.writeable = False
+    return view
+
+
+def _flatAtoms(values):
+    """Per-atom values of all frames as one ``(atoms, ...)`` array, from either
+    shape the old all-frames calls answer in: a list of per-frame arrays or one
+    ``(frames, atoms, ...)`` array."""
+    if isinstance(values, list):
+        return np.concatenate([np.asarray(v) for v in values], axis=0)
+    values = np.asarray(values)
+    return values.reshape(-1, *values.shape[2:])
+
+
 class DatasetLoader(EventClass):
     """
     Base class for any dataset. Contains all dataset-agnostic methods.
@@ -226,6 +255,47 @@ class DatasetLoader(EventClass):
     def isUniform(self):
         """Check if this dataset has uniform molecular structures."""
         return not self.isVariable
+
+    # All frames (ADR 0058, decision B). One meaning on every kind: flat arrays
+    # with one row per atom, frame after frame, and offsets saying where each
+    # frame's atoms start. The arrays are read-only and may be shared. These
+    # defaults translate the older kind-shaped calls; loaders that hold the
+    # flat arrays answer directly.
+
+    def getOffsets(self):
+        """Where each frame's atoms start in the flat arrays: ``(frames + 1,)``."""
+        counts = np.atleast_1d(np.asarray(self.getNAtoms())).astype(np.int64)
+        if counts.size == 1:
+            counts = np.full(self.getN(), counts[0], dtype=np.int64)
+        return _readOnly(np.concatenate([[0], np.cumsum(counts)]))
+
+    def getAllElements(self):
+        """Every atom's element, frame after frame: ``(atoms,)``."""
+        z = np.asarray(self.getElements()).reshape(-1)
+        offsets = self.getOffsets()
+        if len(z) != offsets[-1]:
+            z = np.tile(z, len(offsets) - 1)  # one structure's elements, shared by all
+        return _readOnly(z)
+
+    def getAllCoordinates(self):
+        """Every atom's position, frame after frame: ``(atoms, 3)``."""
+        return _readOnly(_flatAtoms(self.getCoordinates()))
+
+    def getAllForces(self):
+        """Every atom's force: ``(atoms, 3)``. Raises ``RuntimeError`` when the
+        dataset has none."""
+        forces = self.getForces()
+        if forces is None:
+            raise RuntimeError("Forces are not available for this dataset.")
+        return _readOnly(_flatAtoms(forces))
+
+    def getAllEnergies(self):
+        """One energy per frame: ``(frames,)``. Raises ``RuntimeError`` when the
+        dataset has none."""
+        energies = self.getEnergies()
+        if energies is None:
+            raise RuntimeError("Energies are not available for this dataset.")
+        return _readOnly(energies)
 
     def hasForces(self):
         """Whether the dataset has forces. This default asks for all of them;
@@ -414,6 +484,25 @@ class VariableDatasetLoader(DatasetLoader):
         except Exception:
             arrays["E"] = None
         return arrays
+
+    def getOffsets(self):
+        return _readOnly(self.molecule_offsets)
+
+    def getAllElements(self):
+        return _readOnly(self.z_flat)
+
+    def getAllCoordinates(self):
+        return _readOnly(self.R_flat)
+
+    def getAllForces(self):
+        if self.F_flat is None:
+            raise RuntimeError("Forces are not available for this dataset.")
+        return _readOnly(self.F_flat)
+
+    def getAllEnergies(self):
+        if self.E is None:
+            raise RuntimeError("Energies are not available for this dataset.")
+        return _readOnly(self.E)
 
     def getNAtoms(self, index=None):
         """

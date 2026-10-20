@@ -1,0 +1,124 @@
+"""
+The all-frames methods mean the same on every kind of dataset (ADR 0058, step 4).
+
+Flat arrays with one row per atom, frame after frame, plus offsets saying where
+each frame's atoms start. Every kind is checked against its own per-frame
+answers, which is what the flat arrays must add up to.
+"""
+import numpy as np
+import pytest
+from ase import Atoms
+from ase.calculators.singlepoint import SinglePointCalculator
+
+from ffast.loaders.ase import aseDatasetLoader
+from ffast.loaders.dataset import AtomFilteredDataset, SubDataset, stackFrames
+
+UNIFORM = ["H2O"] * 4
+VARIABLE = ["H2O", "CH4", "NH3", "C2H6"]
+
+
+def _ase(formulas, forces=True, energies=True):
+    rng = np.random.default_rng(3)
+    frames = []
+    for formula in formulas:
+        atoms = Atoms(formula, positions=rng.normal(size=(len(Atoms(formula)), 3)))
+        results = {}
+        if energies:
+            results["energy"] = float(rng.normal())
+        if forces:
+            results["forces"] = rng.normal(size=(len(atoms), 3))
+        if results:
+            atoms.calc = SinglePointCalculator(atoms, **results)
+        frames.append(atoms)
+    dataset = aseDatasetLoader("x.xyz", atomsList=frames)
+    dataset.initialise()
+    dataset.loaded = True
+    return dataset
+
+
+def _frame_subset(parent, frames=(3, 0)):
+    sub = SubDataset(parent, None, np.array(frames), "Subset")
+    sub.initialise()
+    return sub
+
+
+def _atom_subset(parent):
+    sub = AtomFilteredDataset(parent, np.array([0, 2]))
+    sub.initialise()
+    return sub
+
+
+KINDS = {
+    "uniform file": lambda: _ase(UNIFORM),
+    "variable file": lambda: _ase(VARIABLE),
+    "frame subset of uniform": lambda: _frame_subset(_ase(UNIFORM)),
+    "frame subset of variable": lambda: _frame_subset(_ase(VARIABLE)),
+    "atom subset of uniform": lambda: _atom_subset(_ase(UNIFORM)),
+    "atom subset of variable": lambda: _atom_subset(_ase(VARIABLE)),
+    "subset of a subset": lambda: _frame_subset(_frame_subset(_ase(VARIABLE)), frames=(1, 0)),
+}
+
+
+@pytest.fixture(params=KINDS)
+def dataset(request):
+    return KINDS[request.param]()
+
+
+def _per_frame(dataset, name):
+    return np.concatenate([np.asarray(getattr(dataset, name)(i)) for i in range(dataset.getN())])
+
+
+def test_offsets_add_up_to_each_frames_atom_count(dataset):
+    offsets = dataset.getOffsets()
+    assert offsets[0] == 0 and len(offsets) == dataset.getN() + 1
+    for i in range(dataset.getN()):
+        assert offsets[i + 1] - offsets[i] == len(dataset.getElements(i))
+
+
+def test_flat_arrays_are_the_frames_one_after_another(dataset):
+    assert np.array_equal(dataset.getAllCoordinates(), _per_frame(dataset, "getCoordinates"))
+    assert np.array_equal(dataset.getAllForces(), _per_frame(dataset, "getForces"))
+    assert np.array_equal(dataset.getAllElements(), _per_frame(dataset, "getElements"))
+    assert dataset.getAllEnergies().shape == (dataset.getN(),)
+    assert dataset.getAllCoordinates().shape == (dataset.getOffsets()[-1], 3)
+
+
+def test_flat_arrays_refuse_writes(dataset):
+    for array in (dataset.getAllCoordinates(), dataset.getAllForces(),
+                  dataset.getAllElements(), dataset.getAllEnergies(), dataset.getOffsets()):
+        with pytest.raises(ValueError):
+            array[0] = 0
+
+
+def test_a_file_keeps_its_flat_arrays_instead_of_reading_the_file_again():
+    dataset = _ase(VARIABLE)
+    first, second = dataset.getAllCoordinates(), dataset.getAllCoordinates()
+    assert np.shares_memory(first, second)
+
+
+def test_stacking_needs_every_structure_the_same_size():
+    same = _ase(UNIFORM)
+    stacked = stackFrames(same.getAllCoordinates(), same.getOffsets())
+    assert stacked.shape == (4, 3, 3)
+    assert np.array_equal(stacked[2], same.getCoordinates(2))
+
+    differ = _ase(VARIABLE)
+    with pytest.raises(ValueError, match="differ in size"):
+        stackFrames(differ.getAllCoordinates(), differ.getOffsets())
+
+
+def test_stacking_works_on_an_atom_subset_of_a_variable_file():
+    sub = _atom_subset(_ase(VARIABLE))
+    assert stackFrames(sub.getAllForces(), sub.getOffsets()).shape == (4, 2, 3)
+
+
+@pytest.mark.parametrize("formulas", [UNIFORM, VARIABLE])
+def test_missing_results_raise_instead_of_being_filled_in(formulas):
+    dataset = _ase(formulas, forces=False, energies=False)
+    with pytest.raises(RuntimeError):
+        dataset.getAllForces()
+    with pytest.raises(RuntimeError):
+        dataset.getAllEnergies()
+    sub = _frame_subset(dataset)
+    with pytest.raises(RuntimeError):
+        sub.getAllForces()
