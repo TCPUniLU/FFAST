@@ -37,9 +37,6 @@ export class View {
   /** Its server view is open. */
   get isOpen() { return !!this.openedPair; }
 
-  /** What the sidebar's per-view stores key this view by: its dataset. */
-  get settingsKey() { return this.datasetFp; }
-
   /** It is a main view (`view-<n>`), not an independent panel's. */
   get isMain() { return this.viewId.startsWith('view-'); }
 

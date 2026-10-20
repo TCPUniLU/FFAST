@@ -122,7 +122,6 @@ export class FFastApp {
       start: (view) => this._startIndependent(view),
       retired: (view) => {
         if (view === this._focusedIndependent) this._switchFocusedView(null);
-        this._paneSaved.delete(view.settingsKey);
       },
       chosen: () => { this._syncPanelSection(); this._syncSidebarTitle(); },
       focusedCamera: (cam) => this._panes?.camera.syncFromCamera(cam),
@@ -196,9 +195,6 @@ export class FFastApp {
     // created on connect (they need the live connection).
     this._metricClient = null;
     this._analysis = null;
-    /** Keys (`View.settingsKey`) the panes have saved a look under, until
-     * the panes show a view's settings directly (ADR 0060 step 4). */
-    this._paneSaved = new Set();
     this._playing = false;
     this._patchPending = false;
 
@@ -1027,22 +1023,17 @@ export class FFastApp {
   }
 
   /** The sidebar now shows and acts on `owner`'s view (null: the main view).
-   * The view left keeps its settings; each view's own server view and
-   * renderers already hold its look, so this only swaps what the sidebar shows. */
+   * The view left keeps its settings (the panes wrote every change into them);
+   * each view's own server view and renderers already hold its look, so this
+   * only swaps what the sidebar shows. */
   _switchFocusedView(owner) {
     this._clearPicks();   // picks name atoms of the view left
-    const old = this._focusedIndependent;
-    if (old) {
-      this._saveDatasetSettings(old);
-    } else if (this._main.current) {
-      this._saveDatasetSettings(this._main.current);
-    }
     this._focusedIndependent = owner;
     if (owner) {
       if (!owner.settings) this._presetIndependent(owner);
-      this._restoreDatasetSettings(owner);
+      this._showSettings(owner);
     } else if (this._main.current) {
-      this._restoreDatasetSettings(this._main.current);
+      this._showSettings(this._main.current);
     }
     this._panes.extract.setVisible(canExtractFrom(this._datasets.get(this._focusedDatasetFp())));
     this._syncPanelSection();
@@ -1056,10 +1047,6 @@ export class FFastApp {
   _presetIndependent(view) {
     const ctx = { modelFp: view.modelFp, catalog: this._metricCatalog };
     view.settings = startSettings(view.spec.start, ctx);
-    const { settings } = startCommands(view.spec.start, ctx);
-    const key = view.settingsKey;
-    this._panes.colorBy.presetState(key, settings);
-    this._paneSaved.add(key);
   }
 
   /** Give an independent panel's new view its starting look (rule 13), once
@@ -1073,7 +1060,7 @@ export class FFastApp {
     if (bondStyle) view.renderers.setBondStyle(...bondStyle);
     view.note = note;
     this._presetIndependent(view);
-    if (view === this._focusedIndependent) this._restoreDatasetSettings(view);
+    if (view === this._focusedIndependent) this._showSettings(view);
     this._independent.syncCaption(view);
     if (view === this._focusedIndependent) this._syncPanelSection();
   }
@@ -1083,13 +1070,10 @@ export class FFastApp {
    * linked one's the main view's. */
   _currentStart(tabName, panel) {
     const view = this._independent.get(independentKey(tabName, panel)) || this._main.current;
-    if (this._focused()) this._saveDatasetSettings(this._focused());
-    const key = view?.settingsKey;
     const forces = view?.settings?.forces || defaultSettings().forces;
-    const colour = this._panes.colorBy.lookOf(key);
     const own = view?.settings || defaultSettings();
     return startFromCurrent({
-      source: colour.source, colormap: colour.colormap,
+      source: own.colorBy.source, colormap: own.colorBy.colormap,
       atomSize: own.display.atomSize,
       bondWidth: own.bonds.width, bondColour: own.bonds.color,
       forces: { show: !!forces.show, length: forces.length, normalised: forces.normalised },
@@ -1447,7 +1431,6 @@ export class FFastApp {
     const meta = this._datasets.get(fp);
     if (!meta) return;
     this._datasets.delete(fp);
-    this._paneSaved.delete(fp);
     if (this._showWhenKnown === fp) this._showWhenKnown = null;
     const mainFrame = this._main.current?.frame ?? 0;
     const gone = this._main.drop(fp);
@@ -1565,7 +1548,6 @@ export class FFastApp {
     // settings; the main view's are swapped in when it is focused again.
     const sidebarIsMain = !this._focusedIndependent;
     if (datasetChanged && old && sidebarIsMain) {
-      this._saveDatasetSettings(old);
       // Picked atom ids are dataset-specific: the view being left clears them.
       this._clearPicks(old);
     }
@@ -1593,21 +1575,14 @@ export class FFastApp {
     if (!this._playbackView()) this._frameCount = this._datasets.get(this._currentDatasetFp)?.n || this._frameCount;
     document.getElementById('popout-btn').disabled = false;
 
-    if (datasetChanged && sidebarIsMain) this._restoreDatasetSettings(view);
+    if (datasetChanged && sidebarIsMain) this._showSettings(view);
     // Extract only where it makes a fixed dataset (Qt's AtomFilterPaneHiding).
     if (sidebarIsMain) this._panes.extract.setVisible(canExtractFrom(this._datasets.get(this._currentDatasetFp)));
   }
 
-  // ── per-dataset settings (issues 04/07/08): Qt's Settings.markAsPerDataset,
-  // reimplemented as a plain map since the web client has no such mechanism.
-  // In the main view each dataset keeps its own colouring, display, bonds and
-  // force arrows; an independent panel keeps all its settings under its
-  // `settingsKey` (ADR 0056), passed here as `fp`.
-  _saveDatasetSettings(view) {
-    const key = view.settingsKey;
-    this._paneSaved.add(key);
-    this._panes.colorBy.saveState(key);
-  }
+  // ── per-view settings (ADR 0060): each view carries its sidebar settings
+  // (`view.settings`); the panes write every change into the shown view's and
+  // show another's when the focus moves, so nothing is saved on leaving.
 
   /** The dataset a frame subset takes its look from until it has its own:
    * its parent. Not an atom subset, whose atoms are numbered differently. */
@@ -1617,17 +1592,14 @@ export class FFastApp {
   }
 
   /** Show `view`'s settings in the sidebar. */
-  _restoreDatasetSettings(view) {
-    let key = view.settingsKey;
-    const parent = view.isMain ? this._lookParentOf(view.datasetFp) : null;
-    if (!this._paneSaved.has(key) && parent && this._paneSaved.has(parent)) key = parent;
+  _showSettings(view) {
     const s = view.settings;
     this._panes.camera.setCOM(s.view.originCenterOfMass);
     document.getElementById('fps-input').value = s.view.videoFPS;
     document.getElementById('skip-input').value = s.view.videoSkipFrames;
     this._panes.forces.setState(s.forces.show, s.forces.modelKey, s.forces);
     this._applyForceVectorsState(s.forces);
-    this._panes.colorBy.loadState(key);
+    this._panes.colorBy.show(s.colorBy);
     // The camera pane's handlers reach the renderers; the Export background
     // is its own setting, not the camera's.
     this._showingSettings = true;
@@ -2099,8 +2071,8 @@ export class FFastApp {
 
   /** Send TOGGLE_FEATURE("forces", ...) plus its SET_PARAMETERs together —
    * the Force Vectors pane always re-sends all four as one logical action
-   * (mirrors Qt's onApplyForceVectors), so the callback and the per-dataset
-   * restore path (`_restoreDatasetSettings`) share this one seam.
+   * (mirrors Qt's onApplyForceVectors), so the callback and the per-view
+   * show path (`_showSettings`) share this one seam.
    * @param {{show: boolean, onlyForces, modelKey: string|null, length: number, normalised: boolean}} state
    */
   _applyForceVectorsState(state) {

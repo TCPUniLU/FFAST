@@ -32,7 +32,6 @@ CASES = {
                        " return [s.settings === p.settings, p.settings.display.atomSize, s.settings.colorBy.source, a.settings.colorBy.source, a.settings.display.atomSize]; })()",
     "subset_no_parent_view": "(() => { const m = new vw.MainViews({renderers: null, parentOf: () => 'P'});"
                              " return m.ensure('S').settings.colorBy.source; })()",
-    "main_settings_key": "(() => { const m = new vw.MainViews({renderers: null}); return m.ensure('A').settingsKey; })()",
     "start_default": "vs.startSettings(null, {modelFp: 'M', catalog: []})",
     "start_look": "vs.startSettings({colour_by: 'force_error', colormap: 'plasma', atom_size: 2, bond_width: 50,"
                   " bond_colour: '#ff0000', force_arrows: true, force_length: 20, force_normalised: false},"
@@ -120,10 +119,6 @@ def test_a_frame_subset_starts_from_its_parents_settings_an_atom_subset_does_not
 
 def test_a_subset_whose_parent_has_no_view_starts_from_the_defaults(results):
     assert results["subset_no_parent_view"] == "element"
-
-
-def test_a_main_views_settings_key_is_its_dataset(results):
-    assert results["main_settings_key"] == "A"
 
 
 def test_an_unset_start_is_the_defaults(results):

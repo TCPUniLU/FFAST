@@ -260,7 +260,4 @@ export class IndependentView extends View {
     this.note = '';          // why its starting colour metric was not used
     this.missing = '';       // why it shows no frame (rule 3)
   }
-
-  /** Its settings in the sidebar's per-view store. */
-  get settingsKey() { return `ind:${this.key}`; }
 }

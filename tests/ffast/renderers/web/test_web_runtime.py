@@ -4062,3 +4062,63 @@ async def test_web_a_late_snapshot_of_a_main_view_no_longer_shown_is_not_drawn(t
                 assert result == {"drawn": True, "version": 999, "current": b_fp}
             finally:
                 await browser.close()
+
+
+_SET_CONTROL = """([selector, value]) => {
+  const input = document.querySelector(selector);
+  input.value = value;
+  input.dispatchEvent(new Event(input.type === 'range' ? 'input' : 'change', { bubbles: true }));
+}"""
+
+
+async def test_web_each_dataset_keeps_its_own_colouring_and_atom_size(tmp_path):
+    """ADR 0060 step 4: colour A by displacement with atom size 2, look at B,
+    come back: A shows both again, and B never took them."""
+    async with _spawn_server() as (ws_port, web_port):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            coloring = page.locator(_control("Colour By", "Coloring"))
+            atom_size = page.locator(_control("Display", "Atom size", "input"))
+            try:
+                a_fp, b_fp = await _open_two_datasets(page, tmp_path, ws_port, web_port)
+                await coloring.select_option("Displacement")
+                await page.evaluate(_SET_CONTROL, [_control("Display", "Atom size", "input"), "2"])
+
+                await page.locator(f"#dataset-list .obj-row[data-fp='{b_fp}']").click()
+                await page.wait_for_function(
+                    "(fp) => window.ffastApp._main.current.datasetFp === fp", arg=b_fp)
+                await expect(coloring).to_have_value("Elements")
+                await expect(atom_size).to_have_value("1")
+
+                await page.locator(f"#dataset-list .obj-row[data-fp='{a_fp}']").click()
+                await page.wait_for_function(
+                    "(fp) => window.ffastApp._main.current.datasetFp === fp", arg=a_fp)
+                await expect(coloring).to_have_value("Displacement")
+                await expect(atom_size).to_have_value("2")
+            finally:
+                await browser.close()
+
+
+async def test_web_an_independent_panels_bond_width_is_not_the_main_views(tmp_path):
+    """ADR 0060 step 4: change the independent panel's bond width, focus the
+    main view: its width is unchanged; the panel keeps its own."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp, _model_fp = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            width = page.locator(_control("Bonds", "Bond width", "input"))
+            try:
+                await _open_compare(page, ws_port, web_port, dataset_fp)
+                await _focus_3d(page, 1)
+                await page.evaluate(_SET_CONTROL, [_control("Bonds", "Bond width", "input"), "50"])
+                await expect(width).to_have_value("50")
+                await _focus_3d(page, 0)
+                await expect(width).to_have_value("100")
+                await _focus_3d(page, 1)
+                await expect(width).to_have_value("50")
+            finally:
+                await browser.close()

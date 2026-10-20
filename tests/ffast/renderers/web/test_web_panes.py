@@ -124,6 +124,51 @@ CASES = {
       const s = {kabsch: false, heavyOnly: true, atomAlign: false, idxInput: '', indices: []};
       const t = {kabsch: false, heavyOnly: true, atomAlign: false, idxInput: '', indices: []};
       pane.show(s); pane.show(t); fire(ctl(host, 'Kabsch align'), true); return [s, t]; })()""",
+    # ── colour by ───────────────────────────────────────────────────────────
+    "color_show": """(() => { const {pane, host, calls} = mk(cb, 'createColorByPane');
+      pane.setMetricCatalog(CAT); pane.refreshModels(new Map([['fp1', {name: 'MACE'}]]));
+      pane.show({source: 'metric:m.a', prediction: 'fp1', colormap: 'plasma', norm: 'None'});
+      return {controls: ['Coloring', 'Prediction', 'Colormap'].map((l) => val(ctl(host, l))), calls}; })()""",
+    "color_write": """(() => { const {pane, host, calls} = mk(cb, 'createColorByPane');
+      pane.setMetricCatalog(CAT); pane.refreshModels(new Map([['fp1', {name: 'MACE'}]]));
+      const s = {source: 'element', prediction: null, colormap: 'viridis', norm: 'None'}; pane.show(s);
+      fire(ctl(host, 'Coloring'), 'A metric'); const source = s.source;
+      fire(ctl(host, 'Prediction'), 'MACE'); fire(ctl(host, 'Colormap'), 'inferno');
+      fire(ctl(host, 'Coloring'), 'Displacement');
+      return {source, s, calls}; })()""",
+    "color_catalog_late": """(() => { const {pane, host} = mk(cb, 'createColorByPane');
+      const s = {source: 'metric:m.a', prediction: null, colormap: 'viridis', norm: 'None'}; pane.show(s);
+      const before = [val(ctl(host, 'Coloring')), s.source];
+      pane.setMetricCatalog(CAT);
+      return {before, after: [val(ctl(host, 'Coloring')), s.source]}; })()""",
+    "color_metric_gone": """(() => { const {pane, host} = mk(cb, 'createColorByPane');
+      pane.setMetricCatalog(CAT);
+      const s = {source: 'metric:m.a', prediction: null, colormap: 'viridis', norm: 'None'}; pane.show(s);
+      pane.setMetricCatalog([]);
+      return {coloring: val(ctl(host, 'Coloring')), source: s.source,
+              note: host.querySelector('.colorby-missing').textContent}; })()""",
+    "color_choose_metric": """(() => { const {pane, host, calls} = mk(cb, 'createColorByPane');
+      pane.setMetricCatalog(CAT);
+      const s = {source: 'element', prediction: null, colormap: 'viridis', norm: 'None'}; pane.show(s);
+      const ok = pane.chooseMetric('m.a'); const missing = pane.chooseMetric('zzz');
+      return {ok, missing, source: s.source, coloring: val(ctl(host, 'Coloring')), calls}; })()""",
+    "color_prediction_helpers": """(() => { const {pane, host} = mk(cb, 'createColorByPane');
+      pane.refreshModels(new Map([['fp1', {name: 'MACE'}]]));
+      const s = {source: 'element', prediction: null, colormap: 'viridis', norm: 'None'}; pane.show(s);
+      pane.setPrediction('fp1'); const set = [s.prediction, pane.predictionOf(), val(ctl(host, 'Prediction'))];
+      pane.refreshModels(new Map()); const gone = [s.prediction, pane.predictionOf(), val(ctl(host, 'Prediction'))];
+      return {set, gone}; })()""",
+    "color_norm": """(() => { const {pane, host, calls} = mk(cb, 'createColorByPane');
+      pane.setMetricCatalog(CAT);
+      const s = {source: 'metric:m.a', prediction: null, colormap: 'viridis', norm: 'log'}; pane.show(s);
+      const shown = val(ctl(host, 'norm')); fire(ctl(host, 'norm'), 'None');
+      const t = {source: 'metric:m.a', prediction: null, colormap: 'viridis', norm: 'None'}; pane.show(t);
+      fire(ctl(host, 'norm'), 'log');
+      return {shown, s, t, calls: calls.filter((c) => c[0] === 'onMetricParam')}; })()""",
+    "color_isolated": """(() => { const {pane, host} = mk(cb, 'createColorByPane');
+      const s = {source: 'element', prediction: null, colormap: 'viridis', norm: 'None'};
+      const t = {source: 'displacement', prediction: null, colormap: 'hot', norm: 'None'};
+      pane.show(s); pane.show(t); fire(ctl(host, 'Colormap'), 'bwr'); return [s, t]; })()""",
 }
 
 
@@ -146,6 +191,9 @@ def results():
         f"  const ep = await import('{origin}/panes/extract.js');\n"
         f"  const bp = await import('{origin}/panes/bonds.js');\n"
         f"  const ap = await import('{origin}/panes/align.js');\n"
+        f"  const cb = await import('{origin}/panes/colorby.js');\n"
+        "  const CAT = [{id: 'm.a', label: 'A metric', shape: 'N_atoms',\n"
+        "    parameters: {norm: {type: 'choice', choices: ['None', 'log'], default: 'None'}}}];\n"
         + PRELUDE
         + "  const out = {};\n"
         + "".join(
@@ -295,3 +343,57 @@ def test_align_forgets_a_partial_pick_set_when_shown(results):
 def test_align_changes_after_a_new_show_leave_the_old_settings_alone(results):
     s, t = results["align_isolated"]
     assert s["kabsch"] is False and t["kabsch"] is True
+
+
+# ── colour by ───────────────────────────────────────────────────────────────
+
+def test_color_by_shows_its_settings_without_sending_anything(results):
+    r = results["color_show"]
+    assert r["controls"] == ["A metric", "MACE", "plasma"]
+    assert r["calls"] == []
+
+
+def test_color_by_writes_every_change_into_its_settings(results):
+    r = results["color_write"]
+    assert r["source"] == "metric:m.a"
+    assert r["s"] == {"source": "displacement", "prediction": "fp1", "colormap": "inferno", "norm": "None"}
+    assert [c[0] for c in r["calls"]] == [
+        "onSourceChange", "onPredictionChange", "onColormapChange", "onSourceChange"]
+
+
+def test_color_by_keeps_a_metric_source_until_the_catalog_arrives(results):
+    r = results["color_catalog_late"]
+    assert r["before"] == ["Elements", "metric:m.a"]
+    assert r["after"] == ["A metric", "metric:m.a"]
+
+
+def test_color_by_falls_back_to_elements_and_says_so_when_the_metric_is_gone(results):
+    r = results["color_metric_gone"]
+    assert r["coloring"] == "Elements" and r["source"] == "element"
+    assert "m.a is not on this server" in r["note"]
+
+
+def test_choosing_a_metric_writes_the_source(results):
+    r = results["color_choose_metric"]
+    assert r["ok"] is True and r["missing"] is False
+    assert r["source"] == "metric:m.a" and r["coloring"] == "A metric"
+    assert [c[:2] for c in r["calls"]] == [["onSourceChange", "metric:m.a"]]
+
+
+def test_the_prediction_follows_the_settings_and_goes_back_to_ground_truth(results):
+    r = results["color_prediction_helpers"]
+    assert r["set"] == ["fp1", "fp1", "MACE"]
+    assert r["gone"] == ["fp1", None, "Ground Truth"]
+
+
+def test_color_by_keeps_the_norm_of_a_metric_in_the_settings(results):
+    r = results["color_norm"]
+    assert r["shown"] == "log"
+    assert r["s"]["norm"] == "None"
+    assert r["t"]["norm"] == "log"
+    assert r["calls"] == [["onMetricParam", "norm", "None"], ["onMetricParam", "norm", "log"]]
+
+
+def test_color_by_changes_after_a_new_show_leave_the_old_settings_alone(results):
+    s, t = results["color_isolated"]
+    assert s["colormap"] == "viridis" and t["colormap"] == "bwr"
