@@ -159,8 +159,8 @@ class sGDMLDatasetLoader(DatasetLoader):
         else:
             return self.F[indices]
 
-    def getElements(self):
-        return self.z
+    def getElements(self, index=None):
+        return self.z  # every frame of an sGDML file has the same elements
 
     def getLattice(self, indices=None):
         return self.lattice

@@ -177,3 +177,20 @@ def test_a_calculator_model_predicts_every_frame_of_a_file():
 
     E, F = model.predict(dataset)
     assert np.shape(E) == (4,) and np.shape(F) == (4, 3, 3)
+
+
+def test_the_3d_view_draws_a_dataset_built_from_an_sgdml_file(tmp_path):
+    from ffast.plugins.models.sgdml import sGDMLDatasetLoader
+    from ffast.visualization.scene_builder import build_scene
+    from ffast.visualization.models import VisualizationState
+
+    rng = np.random.default_rng(0)
+    path = tmp_path / "d.npz"
+    np.savez(path, R=rng.normal(size=(5, 3, 3)), E=rng.normal(size=(5, 1)),
+             F=rng.normal(size=(5, 3, 3)), z=np.array([1, 1, 8]))
+    dataset = sGDMLDatasetLoader(str(path))
+
+    assert dataset.getElements(2).tolist() == [1, 1, 8]
+    scene = build_scene(VisualizationState(view_id="v", dataset_ref="fp", structure_index=2),
+                        get_dataset=lambda fp: dataset)
+    assert scene.atoms is not None and len(scene.atoms.positions) == 3
