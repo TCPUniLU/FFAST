@@ -88,6 +88,9 @@ class ContentTab(ExpandingScrollArea):
 class DatasetModelSelector(Widget, EventChildClass):
 
     quiet = False
+    # A zoom moves a selected subset and drops its results; once it has been
+    # still this long, reselect it so the plots load its new data.
+    SUBSET_SETTLE_MS = 500
 
     def __init__(self, handler, hasModels=True, hasDatasets=True, **kwargs):
         self.handler = handler
@@ -125,6 +128,18 @@ class DatasetModelSelector(Widget, EventChildClass):
             self.eventSubscribe(
                 "DATASET_STATE_CHANGED", self.updateDatasetsList
             )
+
+            self._subsetMoved = QtCore.QTimer(self)
+            self._subsetMoved.setSingleShot(True)
+            self._subsetMoved.setInterval(self.SUBSET_SETTLE_MS)
+            self._subsetMoved.timeout.connect(self.update)
+            self.eventSubscribe("SUBDATASET_INDICES_CHANGED", self.onSubsetMoved)
+
+    def onSubsetMoved(self, key):
+        """Wait for a selected subset to stop moving, then reload (restarts the wait)."""
+        _, datasetKeys = self.getSelectedKeys()
+        if key in datasetKeys:
+            self._subsetMoved.start()
 
     def updateModelsList(self, key):
         if not self.hasModels:
