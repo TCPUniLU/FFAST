@@ -667,7 +667,7 @@ import pytest
 
 ase = pytest.importorskip("ase")
 from ase import Atoms
-from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader
+from ffast.loaders.ase import aseDatasetLoader
 
 
 def _frame(symbols, *, energy, seed=0.0):
@@ -775,15 +775,15 @@ def test_loadPrepredictedDataset_uniform_file_end_to_end(tmp_path):
 def test_loadPrepredictedDataset_variable_file_end_to_end(tmp_path):
     """A variable-sized prediction file loads through the real variable loader.
 
-    Frames of differing composition, so ``_aseLoaderFor`` must route to
-    ``VariableASEDatasetLoader`` and its ``getForces()`` (a list of per-frame
-    arrays, unlike the uniform loader's stacked ndarray) must survive ingest.
+    Frames of differing composition, so the loader is variable and its
+    ``getForces()`` (a list of per-frame arrays, unlike a uniform dataset's
+    stacked ndarray) must survive ingest.
     """
     frames = [_frame("CH4", energy=-1.0), _frame("C2H6", energy=-2.0),
               _frame("CH4", energy=-3.0, seed=2.0)]
     path = _write(tmp_path, frames, name="var.extxyz")
 
-    reference = VariableASEDatasetLoader(
+    reference = aseDatasetLoader(
         path, atomsList=frames,
         selected_energy_key="ref_energy", selected_force_key="ref_forces")
     ds = _FakeDataset(reference.getEnergies())

@@ -115,7 +115,7 @@ def test_frame_with_reordered_atoms_reports_its_own_elements():
 def test_frame_by_frame_fingerprint_matches_the_array_formula(energies, forces):
     """The variable loader hashes one frame at a time (ADR 0058, decision B).
     The array formula it replaced is the oracle, for every mix of results."""
-    from ffast.loaders.ase import VariableASEDatasetLoader
+    from ffast.loaders.ase import aseDatasetLoader
     from ffast.loaders.dataset import VariableDatasetLoader
     rng = np.random.default_rng(3)
     frames = [Atoms(s, positions=rng.normal(size=(n, 3))) for s, n in [("H2O", 3), ("CH4", 5), ("H2", 2)]]
@@ -127,5 +127,5 @@ def test_frame_by_frame_fingerprint_matches_the_array_formula(energies, forces):
             results["forces"] = rng.normal(size=(len(atoms), 3))
         if results:
             atoms.calc = SinglePointCalculator(atoms, **results)
-    dataset = VariableASEDatasetLoader("v.xyz", atomsList=frames)
+    dataset = aseDatasetLoader("v.xyz", atomsList=frames)
     assert dataset.getFingerprint() == VariableDatasetLoader.getFingerprint(dataset)

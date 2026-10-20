@@ -1135,14 +1135,10 @@ class ServerSession:
             # .xyz too → extxyz so energies/forces survive (plain xyz drops them).
             fmt = "extxyz" if ext in (".xyz", ".extxyz", "") else None
 
-        # Uniform vs variable picks the serializer, exactly as the desktop
-        # SideBar export does. A SubDataset forwards its parent's isVariable;
-        # an AtomFilteredDataset is atom-filtering, always the uniform path.
-        from ffast.loaders.ase import (
-            VariableASEDatasetLoader, aseDatasetLoader,
-        )
-        is_variable = bool(getattr(dataset, "isVariable", False))
-        saver = VariableASEDatasetLoader if is_variable else aseDatasetLoader
+        # One saver; it writes uniform or variable by the dataset's own
+        # isVariable. A SubDataset forwards its parent's isVariable; an
+        # AtomFilteredDataset is atom-filtering, always the uniform path.
+        from ffast.loaders.ase import aseDatasetLoader as saver
 
         try:
             parent = os.path.dirname(resolved)

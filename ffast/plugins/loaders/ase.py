@@ -12,7 +12,7 @@ import ase.io
 from ase.io.trajectory import Trajectory
 
 from ffast.core.data_types import AtomsList
-from ffast.loaders.ase import VariableASEDatasetLoader
+from ffast.loaders.ase import aseDatasetLoader
 
 logger = logging.getLogger("FFAST")
 
@@ -55,7 +55,7 @@ def loadData(env):
             if show_dialog and (selected_energy_key is None or selected_force_key is None):
                 # A temporary loader on the first frame, just to list the energy
                 # and force keys (read from frame 0) and show the dialog.
-                temp_loader = VariableASEDatasetLoader(path, atomsList=[atomsList[0]])
+                temp_loader = aseDatasetLoader(path, atomsList=[atomsList[0]])
 
                 # Check if multiple keys exist
                 energy_keys = temp_loader.EneregyKeys()
@@ -75,7 +75,7 @@ def loadData(env):
 
             # One loader for every ASE file; it decides uniform or variable from
             # the frames itself, by the fixed-sample rule (ADR 0058).
-            loader = VariableASEDatasetLoader(
+            loader = aseDatasetLoader(
                 path,
                 atomsList=atomsList,
                 selected_energy_key=selected_energy_key,

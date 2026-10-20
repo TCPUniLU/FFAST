@@ -9,7 +9,7 @@ import pytest
 from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
 
-from ffast.loaders.ase import VariableASEDatasetLoader
+from ffast.loaders.ase import aseDatasetLoader
 from ffast.loaders.dataset import VariableDatasetLoader
 
 
@@ -19,7 +19,7 @@ def _variable():
     for atoms in frames:
         atoms.calc = SinglePointCalculator(
             atoms, energy=float(rng.normal()), forces=rng.normal(size=(len(atoms), 3)))
-    return VariableASEDatasetLoader("v.xyz", atomsList=frames)
+    return aseDatasetLoader("v.xyz", atomsList=frames)
 
 
 @pytest.mark.parametrize("ask", ["getCoordinates", "getElements", "getForces", "getEnergies"])

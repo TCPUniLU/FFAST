@@ -348,9 +348,9 @@ class LoadingCoordinator:
     def _aseLoaderFor(path, atomsList, *, energy_key=None, force_key=None):
         """Build the ASE loader for ``atomsList``. There is one; it decides
         uniform or variable from the frames itself (ADR 0058)."""
-        from ffast.loaders.ase import VariableASEDatasetLoader
+        from ffast.loaders.ase import aseDatasetLoader
 
-        loader = VariableASEDatasetLoader(
+        loader = aseDatasetLoader(
             path,
             atomsList=atomsList,
             selected_energy_key=energy_key,

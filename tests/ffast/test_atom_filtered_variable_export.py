@@ -23,10 +23,7 @@ from ase import Atoms  # noqa: E402
 from ase.calculators.singlepoint import SinglePointCalculator  # noqa: E402
 
 from ffast.loaders.dataset import AtomFilteredDataset  # noqa: E402
-from ffast.loaders.ase import (  # noqa: E402
-    VariableASEDatasetLoader,
-    aseDatasetLoader,
-)
+from ffast.loaders.ase import aseDatasetLoader  # noqa: E402
 
 
 def _variable_parent():
@@ -47,7 +44,7 @@ def _variable_parent():
     )
     frames.extend([f0, f1])
 
-    parent = VariableASEDatasetLoader("mem-variable.extxyz", atomsList=frames)
+    parent = aseDatasetLoader("mem-variable.extxyz", atomsList=frames)
     parent.initialise()
     return parent
 

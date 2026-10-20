@@ -15,6 +15,7 @@ import os
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
 from ffast.cache import CacheKey, PredictionArrayKey
 from ffast.metrics.models import MetricResult
@@ -750,15 +751,16 @@ def test_dispatch_export_subset_missing_dataset_emits_error():
     assert "not found" in kwargs["error"]
 
 
-def test_dispatch_export_subset_uniform_dataset_uses_ase_saver(tmp_path):
-    """A non-variable dataset (plain or AtomFilteredDataset) routes to the
-    uniform ``aseDatasetLoader.saveDataset`` and reports getN() structures."""
-    ds = _FakeExportDataset(n=5, is_variable=False)
+@pytest.mark.parametrize("is_variable, n", [(False, 5), (True, 2)], ids=["uniform", "variable"])
+def test_dispatch_export_subset_uses_the_one_ase_saver(tmp_path, is_variable, n):
+    """Uniform and variable datasets (plain, SubDataset or AtomFilteredDataset)
+    go to the one ``aseDatasetLoader.saveDataset``, which writes by the
+    dataset's own isVariable, and the reply reports getN() structures."""
+    ds = _FakeExportDataset(n=n, is_variable=is_variable)
     env = _FakeEnv(datasets={"ds1": ds})
     target = tmp_path / "out.extxyz"
 
-    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as uniform, \
-         patch("ffast.loaders.ase.VariableASEDatasetLoader.saveDataset") as variable:
+    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as saver:
 
         async def scenario():
             s = ServerSession(env, asyncio.Queue())
@@ -768,32 +770,8 @@ def test_dispatch_export_subset_uniform_dataset_uses_ase_saver(tmp_path):
         event, _args, kwargs = unpack(_run(scenario()))
 
     assert event == control.SUBSET_EXPORTED
-    assert kwargs == {"ok": True, "path": str(target), "error": None, "n": 5}
-    uniform.assert_called_once_with(ds, str(target), "extxyz")
-    variable.assert_not_called()
-
-
-def test_dispatch_export_subset_variable_dataset_uses_variable_saver(tmp_path):
-    """A variable dataset (a SubDataset forwarding isVariable from a variable
-    parent, or a loaded variable dataset) routes to the variable saver."""
-    ds = _FakeExportDataset(n=2, is_variable=True)
-    env = _FakeEnv(datasets={"ds1": ds})
-    target = tmp_path / "out.extxyz"
-
-    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as uniform, \
-         patch("ffast.loaders.ase.VariableASEDatasetLoader.saveDataset") as variable:
-
-        async def scenario():
-            s = ServerSession(env, asyncio.Queue())
-            await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": str(target)})
-            return s.outbound.get_nowait()
-
-        event, _args, kwargs = unpack(_run(scenario()))
-
-    assert event == control.SUBSET_EXPORTED
-    assert kwargs == {"ok": True, "path": str(target), "error": None, "n": 2}
-    variable.assert_called_once_with(ds, str(target), "extxyz")
-    uniform.assert_not_called()
+    assert kwargs == {"ok": True, "path": str(target), "error": None, "n": n}
+    saver.assert_called_once_with(ds, str(target), "extxyz")
 
 
 def test_dispatch_export_subset_expands_user_and_relative_path(tmp_path, monkeypatch):

@@ -339,7 +339,7 @@ class VariableDatasetLoader(DatasetLoader):
         # To be set by subclasses. R_flat (total_atoms, 3), F_flat
         # (total_atoms, 3) or None, E (N,) or None and z_flat (total_atoms,)
         # are not preset: a subclass may provide them as attributes or as
-        # properties built on request (VariableASEDatasetLoader).
+        # properties built on request (ffast.loaders.ase.aseDatasetLoader).
         self.molecule_offsets = None  # (N+1,)
         self.N = None               # Number of molecules
 
