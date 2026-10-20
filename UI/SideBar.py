@@ -12,6 +12,7 @@ from UI.Templates import (
 )
 from config.uiConfig import configStyleSheet
 from utils import rgbToHex
+from client.object_info import describe
 from ffast.core.events import EventChildClass
 
 
@@ -195,23 +196,16 @@ class DatasetModelItem(ObjectListItem, EventChildClass):
                 if not dataset.isDependentOn(obj):
                     return
 
-        dataset = self.handler.env.datasets.get(self.id)
-        if dataset is not None:
-            self.setName(dataset.getDisplayName())
-            self.setInfoLabel(dataset.datasetName)
-
-            info = dataset.getBaseInfo() + dataset.getInfo()
-            self.infoWidget.setInfo(*info)
-
-        else:
-            model = self.handler.env.models.get(self.id)
-            if model is None:
+        obj = self.handler.env.datasets.get(self.id)
+        if obj is None:
+            obj = self.handler.env.models.get(self.id)
+            if obj is None:
                 return
-            self.setName(model.getDisplayName())
-            self.setInfoLabel(model.modelName)
-
-            info = model.getInfo()
-            self.infoWidget.setInfo(*info)
+        # The same description as the top panel's hover text (client/object_info.py).
+        title, kind, info = describe(obj)
+        self.setName(title)
+        self.setInfoLabel(kind)
+        self.infoWidget.setInfo(*info)
 
     def deleteObject(self):
         self.handler.env.deleteObject(self.id)

@@ -71,6 +71,23 @@ def _flatAtoms(values):
     return values.reshape(-1, *values.shape[2:])
 
 
+def frameRanges(frames, limit=8):
+    """Frame numbers as a person reads them: runs of consecutive frames as
+    ``a-b``, in the given order, e.g. ``3, 5, 7-9``. Past ``limit`` runs the
+    rest is cut, with the count."""
+    frames = [int(f) for f in np.asarray(frames).reshape(-1)]
+    runs = []
+    for f in frames:
+        if runs and f == runs[-1][1] + 1:
+            runs[-1][1] = f
+        else:
+            runs.append([f, f])
+    text = [str(a) if a == b else f"{a}-{b}" for a, b in runs[:limit]]
+    if len(runs) > limit:
+        return ", ".join(text) + f", … ({len(frames)} frames)"
+    return ", ".join(text)
+
+
 class DatasetLoader(EventClass):
     """
     Base class for any dataset. Contains all dataset-agnostic methods.
@@ -993,12 +1010,15 @@ class DatasetView(DatasetLoader):
             return [
                 ("Parent", self.parent.getDisplayName()),
                 ("Viewed Elements", ",".join(set(self.getElementsName()))),
+                ("Atoms", ", ".join(str(a) for a in self._atomIdx())),
             ]
         model = "None" if self.model is None else self.model.getDisplayName()
+        frames = self._frameIdx()
         return [
             ("Parent", self.parent.getDisplayName()),
             ("Model", model),
             ("Plots", self.subName),
+            ("Frames", f"{frameRanges(frames)} ({len(frames)} of {self.parent.getN()})"),
         ]
 
     def toMetaDict(self) -> dict:

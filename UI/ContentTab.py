@@ -7,6 +7,7 @@ from UI.Templates import (
 from PySide6 import QtCore, QtGui, QtWidgets
 from config.uiConfig import configStyleSheet
 from utils import rgbToHex
+from client.object_info import tooltipHtml
 import logging
 from ffast.core.events import EventChildClass
 from PySide6.QtWidgets import QSizePolicy
@@ -31,6 +32,16 @@ class DatasetModelLabel(ListCheckButton, EventChildClass):
 
     def getLabel(self):
         return self.env.getModelOrDataset(self.key).getDisplayName()
+
+    def event(self, e):
+        # Built on each hover, so a subset that follows the zoom shows its
+        # frames as they are now.
+        if e.type() == QtCore.QEvent.ToolTip:
+            obj = self.env.getModelOrDataset(self.key)
+            if obj is not None:
+                QtWidgets.QToolTip.showText(e.globalPos(), tooltipHtml(obj), self)
+                return True
+        return super().event(e)
 
     def onDatasetModelChanged(self, key):
         if key != self.key:
