@@ -117,7 +117,8 @@ chemical formula, and the variable formula otherwise. Two checks apply that rule
 today: opening a dataset compares randomly chosen frames
 (`check_homogeneity` in `ffast/plugins/loaders/ase.py`), loading predictions a
 fixed sample (`_isUniformAtomsList` in `loading_coordinator.py`). The single
-loader uses the fixed one. A large file that the random check classifies
+loader uses the fixed one (now `isUniformAtomsList` in `ffast/loaders/ase.py`,
+the only check). A large file that the random check classifies
 differently from run to run has no stable fingerprint today, so there is none to
 keep. A file whose frames share a formula but
 list their atoms in a different order keeps its fingerprint; its elements,
@@ -192,10 +193,18 @@ One commit each, so each can be reverted alone.
    `test_subset_known_gaps.py` turn green as the steps land.
 2. The uniform loader gets the variable loader's offsets (`molecule_offsets`)
    and answers `getNAtoms(i)` for one frame; fingerprints unchanged.
-3. The two ASE loaders become one, reading per frame through `AtomsList`; both
-   `check_homogeneity` and `loading_coordinator.py:388` pick it always. Missing
-   data is absent, not zeros. Measure per-frame reads on a variable file before
-   and after, since they move from memory to the file.
+3. The two ASE loaders become one, reading per frame through `AtomsList`.
+   Missing data is absent, not zeros. Measure per-frame reads on a variable
+   file before and after, since they move from memory to the file.
+   As built (aa91652..b1f61a1), in this order: missing results absent; the
+   variable loader fingerprints, then reads, frame by frame, joining all-frames
+   arrays only on request (44 MB held became 34 MB, 1 µs per frame became
+   60 µs); `VariableDatasetLoader` inherits `DatasetLoader`; one fixed rule
+   (`isUniformAtomsList`) for datasets and predictions, the random check
+   deleted; that loader learns uniform data, checked against the old uniform
+   loader question by question; both choosers use it; the old class is
+   deleted and the survivor is `aseDatasetLoader`. Each kind keeps its old
+   all-frames shape until step 4 (`tests/ffast/test_ase_loader_shapes.py`).
 4. The "all frames" methods, built once and kept, and the ten callers moved to
    them one at a time. First count how often each caller asks for all frames:
    without the kept copy, every call reads the whole file (0.3 s for 5000
