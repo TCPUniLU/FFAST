@@ -90,7 +90,6 @@ things came up.
 - [0028](0028-cluster-server-auto-bootstrap.md) The server installs itself on the cluster on first connect
 - [0024](0024-cluster-session-reconnect-lifecycle.md) Reconnecting to a job that is still running
 - [0030](0030-server-side-live-inference.md) Inference runs server-side, the client holds a ghost model
-- [0059](0059-server-ships-as-one-cpu-container-image.md) One CPU container image: Docker on laptops and VMs, Apptainer on clusters (proposed)
 
 ## Environment structure
 
