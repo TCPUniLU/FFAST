@@ -18,6 +18,7 @@
 import { MoleculeRenderer } from './renderer.js';
 import { PickController } from './picking.js';
 import { isLinked3D } from './tab_rules.js';
+import { View } from './views.js';
 
 /** One 3D panel: its viewport element, canvas and, once shown, renderer. */
 export class Panel3D {
@@ -238,7 +239,7 @@ export class ViewRenderers {
  * so its choice of data stays (rule 7); it is keyed by tab name and panel
  * index.
  */
-export class IndependentView {
+export class IndependentView extends View {
   /**
    * @param {string} key `${tab name}#${panel index}`
    * @param {object} spec the panel's entry in the tab layout
@@ -246,28 +247,20 @@ export class IndependentView {
    * @param {(view: IndependentView, cam: object) => void} onCameraChange
    */
   constructor(key, spec, viewId, onCameraChange) {
+    super({ viewId });
     this.key = key;
     this.spec = spec;
-    this.viewId = viewId;
     /** @type {Panel3D|null} */
     this.panel = null;
     this.renderers = new ViewRenderers({ onCameraChange: (cam) => onCameraChange(this, cam) });
-    this.datasetFp = null;
-    this.modelFp = null;
-    this.version = 0;
     this.frame = null;
     this.links = { frame: spec.link_frame !== false, camera: spec.link_camera !== false };
-    this.openedPair = '';    // the `dataset|prediction` its view was opened on, '' before
     this.applyingScene = false;   // a scene of its own is being drawn
     this.started = false;    // its starting look has been sent
     this.note = '';          // why its starting colour metric was not used
     this.missing = '';       // why it shows no frame (rule 3)
     this.atomScale = 1;      // its Atom size while the sidebar shows another view
-    this.cameraThrottle = null;
   }
-
-  /** Its server view is open. */
-  get isOpen() { return !!this.openedPair; }
 
   /** Its settings in the sidebar's per-view store. */
   get settingsKey() { return `ind:${this.key}`; }
