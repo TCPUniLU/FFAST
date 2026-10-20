@@ -1,7 +1,7 @@
 import numpy as np
 
 from cluster.remote_dataset import CachedRemoteDataset
-from ffast.loaders.dataset import DatasetLoader, DatasetView, VariableDatasetLoader
+from ffast.loaders.dataset import DatasetLoader, DatasetView, FlatDatasetLoader
 from ffast.protocol import DatasetMeta
 
 
@@ -21,7 +21,7 @@ class _UniformDataset(DatasetLoader):
         return np.array([8, 1, 1])
 
 
-class _VariableDataset(VariableDatasetLoader):
+class _VariableDataset(FlatDatasetLoader):
     datasetName = "fake variable"
 
     def getForces(self):

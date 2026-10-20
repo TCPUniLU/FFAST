@@ -11,7 +11,7 @@ windows also said every structure had the same size.
 import numpy as np
 import pytest
 
-from ffast.loaders.dataset import DatasetView, VariableDatasetLoader
+from ffast.loaders.dataset import DatasetView, FlatDatasetLoader
 from ffast.metrics.builtin.structure_metrics import gyradius
 from ffast.metrics.input_resolver import InputResolver
 
@@ -19,7 +19,7 @@ COUNTS = [3, 1, 2, 5]
 FRAMES = [3, 0]
 
 
-class _Variable(VariableDatasetLoader):
+class _Variable(FlatDatasetLoader):
     def __init__(self):
         super().__init__("variable.xyz")
         rng = np.random.default_rng(0)

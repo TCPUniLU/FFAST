@@ -3,7 +3,7 @@ import hashlib
 import logging
 import numpy as np
 from ffast.cache.fingerprint import md5FromParts
-from ffast.loaders.dataset import DatasetLoader, VariableDatasetLoader, isOneFrame
+from ffast.loaders.dataset import FlatDatasetLoader, isOneFrame
 import ase.io
 from ase.calculators.calculator import PropertyNotImplementedError
 
@@ -144,7 +144,7 @@ def available_field_keys(atomsList):
     return sorted(frame_keys), sorted(atom_keys)
 
 
-class aseDatasetLoader(VariableDatasetLoader):
+class aseDatasetLoader(FlatDatasetLoader):
     """The one loader for ASE-readable files (ADR 0058, step 3).
 
     Uniform (every frame the same atoms in the same order) or variable is
@@ -304,7 +304,7 @@ class aseDatasetLoader(VariableDatasetLoader):
             parts.append(f_hash)
         return md5FromParts(parts)
 
-    # All frames: the joined arrays VariableDatasetLoader reads, built on the
+    # All frames: the joined arrays FlatDatasetLoader reads, built on the
     # first request and kept, since rebuilding them reads the whole file
     # (ADR 0058, decision B).
 
@@ -344,85 +344,25 @@ class aseDatasetLoader(VariableDatasetLoader):
         return self._joinedArrays
 
     # One frame is read from the file (ADR 0058, decision B); all or several
-    # frames come from the joined arrays above, in the shape of the kind.
-
-    def _uniformFrames(self, flat, indices):
-        """A uniform dataset's joined per-atom array as (frames, atoms, 3),
-        for all frames or the selected ones. A copy, as the uniform loader
-        always returned a fresh array: callers may change it in place."""
-        frames = flat.reshape(self.N, -1, *flat.shape[1:])
-        if indices is None:
-            return frames.copy()
-        return frames[np.asarray(indices)]
-
-    def getNAtoms(self, index=None):
-        if index is None and not self.isVariable:
-            # Uniform: callers expect one count, shared by all frames.
-            return int(self.molecule_offsets[1] - self.molecule_offsets[0])
-        return super().getNAtoms(index)
-
-    def getChemicalFormula(self):
-        if self.isVariable:
-            return super().getChemicalFormula()  # "Variable (2-8 atoms)"
-        return self.zToChemicalFormula(self.getElements())
-
-    # Reporting: uniform data is described as DatasetLoader describes it,
-    # variable data as VariableDatasetLoader does, until the last callers
-    # that depend on each kind's shape move (ADR 0058, step 6).
-
-    def initialise(self):
-        if self.isVariable:
-            return super().initialise()      # no shared bond-size table
-        return DatasetLoader.initialise(self)  # bond sizes from the shared elements
-
-    def toMetaDict(self) -> dict:
-        if self.isVariable:
-            return super().toMetaDict()
-        return DatasetLoader.toMetaDict(self)
-
-    def to_transfer_arrays(self) -> dict:
-        if self.isVariable:
-            return super().to_transfer_arrays()
-        return DatasetLoader.to_transfer_arrays(self)
-
-    def getBaseInfo(self):
-        if self.isVariable:
-            return super().getBaseInfo()
-        return DatasetLoader.getBaseInfo(self)
-
-    def getPDist(self, indices=None):
-        if self.isVariable:
-            return super().getPDist(indices)
-        return DatasetLoader.getPDist(self, indices)
-
-    def getBondMatrix(self, index):
-        if self.isVariable:
-            return super().getBondMatrix(index)
-        return DatasetLoader.getBondMatrix(self, index)
+    # frames come from the joined arrays above, in the shape of the kind
+    # (FlatDatasetLoader).
 
     def getCoordinates(self, indices=None):
         if isOneFrame(indices):
             return self.atomsList[indices].get_positions()
-        if self.isVariable:
-            return super().getCoordinates(indices)
-        return self._uniformFrames(self.R_flat, indices)
+        return super().getCoordinates(indices)
 
     def getElements(self, index=None):
         if isOneFrame(index):
             return self.atomsList[index].get_atomic_numbers()
-        if self.isVariable:
-            return super().getElements(index)
-        # Uniform: callers expect one structure's elements, shared by all.
-        return self.atomsList[0].get_atomic_numbers()
+        return super().getElements(index)
 
     def getForces(self, indices=None):
         if not self._has_forces:
             raise RuntimeError("Forces are not available for this dataset.")
         if isOneFrame(indices):
             return self._readForces(self.atomsList[indices])
-        if self.isVariable:
-            return super().getForces(indices)
-        return self._uniformFrames(self.F_flat, indices)
+        return super().getForces(indices)
 
     def getEnergies(self, indices=None):
         if isOneFrame(indices):

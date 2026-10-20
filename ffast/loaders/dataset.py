@@ -396,7 +396,7 @@ class DatasetLoader(EventClass):
 
         See Also
         --------
-        VariableDatasetLoader.to_transfer_arrays : override for variable datasets.
+        FlatDatasetLoader.to_transfer_arrays : override for variable datasets.
         """
         arrays: dict = {
             "n": np.array([self.getN()]),
@@ -420,20 +420,30 @@ class DatasetLoader(EventClass):
         return arrays
 
 
-class VariableDatasetLoader(DatasetLoader):
+class FlatDatasetLoader(DatasetLoader):
     """
-    Base class for datasets with variable-sized molecules.
-    Uses flat arrays with offsets for efficient storage and access.
+    The one storage form for file datasets (ADR 0058, decision 1).
+
+    Every structure's atoms sit in one flat run, and offsets say where each
+    structure starts. A uniform dataset is the case where every structure
+    lists the same atoms in the same order.
 
     Data structure:
         R_flat: (total_atoms, 3)        - All positions concatenated
         F_flat: (total_atoms, 3)        - All forces concatenated
-        E: (N,)                         - Energies (unchanged from uniform)
+        E: (N,)                         - Energies
         z_flat: (total_atoms,)          - Atomic numbers concatenated
         molecule_offsets: (N+1,)        - Start indices [0, n1, n1+n2, ..., total]
 
-    Identity, naming, colour and events come from DatasetLoader; only what
-    differs for variable-sized molecules is defined here.
+    ``isVariable`` is a fact about the data, set by the subclass that reads
+    it. Two things still depend on it (ADR 0058 step 6): the shape of the
+    older no-argument calls, which serve the wire to the Qt proxy and the
+    cached predictions, and the capability checks of models that need the
+    same atoms in every frame. Uniform data answers those calls as
+    (frames, atoms, ...) arrays and one structure's elements, variable data
+    as per-frame lists and every atom's elements.
+
+    Identity, naming, colour and events come from DatasetLoader.
     """
 
     isVariable = True
@@ -463,6 +473,8 @@ class VariableDatasetLoader(DatasetLoader):
         -------
         dict with keys: name, n, has_forces, is_sub, variable, elements, offsets
         """
+        if not self.isVariable:
+            return DatasetLoader.toMetaDict(self)
         has_forces = self.hasForces()
         # Stage 4c: carry cheap flat elements + molecule offsets so the client
         # proxy serves labels / atom-filter / scatter sub-indexing without
@@ -496,7 +508,8 @@ class VariableDatasetLoader(DatasetLoader):
         """Serialize geometry arrays for SubDataset transfer over the RPC channel.
 
         Returns a dict ready to be passed to ``ffast.protocol.rpc.pack_arrays``.
-        Uses the flat array format (R_flat, offsets, F_flat, z_flat).
+        Variable data uses the flat array format (R_flat, offsets, F_flat,
+        z_flat); uniform data the stacked one of DatasetLoader.
 
         Keys always present: ``n``, ``variable``, ``R_flat``, ``offsets``.
         Optional keys (None when unavailable): ``F_flat``, ``z_flat``, ``E``.
@@ -505,6 +518,8 @@ class VariableDatasetLoader(DatasetLoader):
         --------
         DatasetLoader.to_transfer_arrays : base implementation for uniform datasets.
         """
+        if not self.isVariable:
+            return DatasetLoader.to_transfer_arrays(self)
         arrays: dict = {
             "n": np.array([self.getN()]),
             "variable": np.array([1]),
@@ -545,12 +560,16 @@ class VariableDatasetLoader(DatasetLoader):
         Return atom count(s).
 
         Args:
-            index: If None, returns array of all counts. If int, returns count for that molecule.
+            index: If int, the count for that molecule. If None, one count on
+                uniform data, shared by all frames, and an array of every
+                frame's count on variable data.
 
         Returns:
             int or ndarray: Atom count(s)
         """
         if index is None:
+            if not self.isVariable:
+                return int(self.molecule_offsets[1] - self.molecule_offsets[0])
             return np.diff(self.molecule_offsets)
         else:
             return int(self.molecule_offsets[index+1] - self.molecule_offsets[index])
@@ -558,6 +577,23 @@ class VariableDatasetLoader(DatasetLoader):
     def getN(self):
         """Return number of molecules/configurations."""
         return self.N
+
+    def _frame(self, flat, index):
+        """One frame's rows of a flat per-atom array."""
+        return flat[self.molecule_offsets[index]:self.molecule_offsets[index + 1]]
+
+    def _frames(self, flat, indices):
+        """Several frames (all when None) of a flat per-atom array, in the
+        kind's shape: (frames, atoms, ...) on uniform data, a fresh array
+        callers may change in place; a list of per-frame arrays otherwise."""
+        if not self.isVariable:
+            frames = flat.reshape(self.N, -1, *flat.shape[1:])
+            if indices is None:
+                return frames.copy()
+            return frames[np.asarray(indices)]
+        if indices is None:
+            indices = range(self.N)
+        return [self._frame(flat, idx) for idx in indices]
 
     def getCoordinates(self, indices=None):
         """
@@ -568,23 +604,11 @@ class VariableDatasetLoader(DatasetLoader):
 
         Returns:
             Single molecule: ndarray (n_atoms_i, 3)
-            Multiple molecules: list of ndarrays
+            Multiple molecules: see _frames
         """
-        if indices is None:
-            indices = np.arange(self.N)
-        elif isOneFrame(indices):
-            # Single molecule - return array directly
-            start = self.molecule_offsets[indices]
-            end = self.molecule_offsets[indices+1]
-            return self.R_flat[start:end]
-
-        # Multiple molecules - return list
-        result = []
-        for idx in indices:
-            start = self.molecule_offsets[idx]
-            end = self.molecule_offsets[idx+1]
-            result.append(self.R_flat[start:end])
-        return result
+        if isOneFrame(indices):
+            return self._frame(self.R_flat, indices)
+        return self._frames(self.R_flat, indices)
 
     def getEnergies(self, indices=None):
         """Get energies for molecule(s)."""
@@ -601,42 +625,31 @@ class VariableDatasetLoader(DatasetLoader):
 
         Returns:
             Single molecule: ndarray (n_atoms_i, 3)
-            Multiple molecules: list of ndarrays
+            Multiple molecules: see _frames
         """
         if self.F_flat is None:
             raise RuntimeError("Forces are not available for this dataset.")
-        if indices is None:
-            indices = np.arange(self.N)
-        elif isOneFrame(indices):
-            # Single molecule
-            start = self.molecule_offsets[indices]
-            end = self.molecule_offsets[indices+1]
-            return self.F_flat[start:end]
-
-        # Multiple molecules
-        result = []
-        for idx in indices:
-            start = self.molecule_offsets[idx]
-            end = self.molecule_offsets[idx+1]
-            result.append(self.F_flat[start:end])
-        return result
+        if isOneFrame(indices):
+            return self._frame(self.F_flat, indices)
+        return self._frames(self.F_flat, indices)
 
     def getElements(self, index=None):
         """
         Get atomic numbers.
 
         Args:
-            index: If None, returns z_flat (all atoms). If int, returns z for that molecule.
+            index: If int, z for that molecule. If None, one structure's
+                elements on uniform data, shared by all frames, and z_flat
+                (every atom) on variable data.
 
         Returns:
             ndarray: Atomic numbers
         """
         if index is None:
+            if not self.isVariable:
+                return self.getElements(0)
             return self.z_flat
-        else:
-            start = self.molecule_offsets[index]
-            end = self.molecule_offsets[index+1]
-            return self.z_flat[start:end]
+        return self._frame(self.z_flat, index)
 
     # ── Dataset Fields (ADR 0023) — default no fields; ASE subclass overrides ──
     def getFrameField(self, key, indices=None):
@@ -649,7 +662,9 @@ class VariableDatasetLoader(DatasetLoader):
         return [], []
 
     def getChemicalFormula(self):
-        """Get chemical formula showing atom range."""
+        """The formula on uniform data, the range of atom counts otherwise."""
+        if not self.isVariable:
+            return self.zToChemicalFormula(self.getElements())
         atom_counts = self.getNAtoms()
         return f"Variable ({atom_counts.min()}-{atom_counts.max()} atoms)"
 
@@ -663,6 +678,9 @@ class VariableDatasetLoader(DatasetLoader):
 
     def initialise(self):
         """Initialize dataset after loading."""
+        if not self.isVariable:
+            return DatasetLoader.initialise(self)  # bond sizes from the shared elements
+
         self.fingerprint = self.getFingerprint()
 
         name = removeExtension(os.path.basename(self.path))
@@ -674,6 +692,8 @@ class VariableDatasetLoader(DatasetLoader):
 
     def getPDist(self, indices=None):
         """Get pairwise distances - handle variable sizes."""
+        if not self.isVariable:
+            return DatasetLoader.getPDist(self, indices)
         coords = self.getCoordinates(indices=indices)
 
         if isinstance(coords, list):
@@ -693,6 +713,8 @@ class VariableDatasetLoader(DatasetLoader):
                 return None
 
     def getBaseInfo(self):
+        if not self.isVariable:
+            return DatasetLoader.getBaseInfo(self)
         atom_counts = self.getNAtoms()
         return [
             ("N. conf.", f"{self.getN()}"),
@@ -702,6 +724,8 @@ class VariableDatasetLoader(DatasetLoader):
 
     def getBondMatrix(self, index):
         """Get bond matrix for a specific molecule."""
+        if not self.isVariable:
+            return DatasetLoader.getBondMatrix(self, index)
         r = self.getCoordinates(index)
         z = self.getElements(index)
         from ffast.config.user import getConfig  # ADR 0047: lazy (userConfig deferred)
@@ -949,7 +973,7 @@ class DatasetView(DatasetLoader):
         if self.atoms is None:
             return self.parent.getPDist(indices=self._parentIndex(indices))
         if self.isVariable:
-            return VariableDatasetLoader.getPDist(self, indices)
+            return FlatDatasetLoader.getPDist(self, indices)
         return super().getPDist(indices)
 
     def getFrameField(self, key, indices=None):
@@ -1014,7 +1038,7 @@ class DatasetView(DatasetLoader):
 
     def getBaseInfo(self):
         if self.isVariable:
-            return VariableDatasetLoader.getBaseInfo(self)
+            return FlatDatasetLoader.getBaseInfo(self)
         return super().getBaseInfo()
 
     def getInfo(self):

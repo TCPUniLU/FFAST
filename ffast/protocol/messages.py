@@ -18,7 +18,7 @@ class DatasetMeta(BaseModel):
     The server announces each loaded dataset to connected renderer clients
     without transferring coordinate arrays (Stage 4c lazy proxy). This is the
     single typed contract for that payload — it mirrors the dict returned by
-    ``DatasetLoader.toMetaDict`` / ``VariableDatasetLoader.toMetaDict`` so the
+    ``DatasetLoader.toMetaDict`` / ``FlatDatasetLoader.toMetaDict`` so the
     wire shape is identical, while ``extra="forbid"`` makes any future drift in
     those producers a loud validation error instead of a silently untyped dict.
 

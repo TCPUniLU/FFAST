@@ -13,7 +13,7 @@ from ffast.protocol import (
 
 
 # Representative payloads exactly as DatasetLoader.toMetaDict (uniform) and
-# VariableDatasetLoader.toMetaDict (variable) emit them — see
+# FlatDatasetLoader.toMetaDict (variable) emit them — see
 # datasetLoaders/loader.py:208 and :332.
 UNIFORM = {
     "name": "aspirin", "n": 100, "has_forces": True, "is_sub": False,

@@ -2,7 +2,7 @@
 A variable dataset reads one frame from the file (ADR 0058, decision B).
 
 The answers must equal what slicing the joined arrays gave before:
-VariableDatasetLoader's own methods are the oracle, frame by frame.
+FlatDatasetLoader's own methods are the oracle, frame by frame.
 """
 import numpy as np
 import pytest
@@ -10,7 +10,7 @@ from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
 
 from ffast.loaders.ase import aseDatasetLoader
-from ffast.loaders.dataset import VariableDatasetLoader
+from ffast.loaders.dataset import FlatDatasetLoader
 
 
 def _variable():
@@ -27,7 +27,7 @@ def test_one_frame_read_from_the_file_equals_the_array_slice(ask):
     dataset = _variable()
     for i in range(dataset.getN()):
         from_file = getattr(dataset, ask)(i)
-        from_arrays = getattr(VariableDatasetLoader, ask)(dataset, i)
+        from_arrays = getattr(FlatDatasetLoader, ask)(dataset, i)
         np.testing.assert_array_equal(from_file, from_arrays)
 
 

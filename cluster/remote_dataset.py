@@ -266,7 +266,7 @@ class CachedRemoteDataset(DatasetLoader):
                 # single molecule
                 s, e = self._offsets[indices], self._offsets[indices + 1]
                 return self._R_flat[s:e]
-            # multiple molecules → list (same as VariableDatasetLoader)
+            # multiple molecules → list (same as FlatDatasetLoader)
             result = []
             for idx in indices:
                 s, e = self._offsets[idx], self._offsets[idx + 1]
@@ -380,7 +380,7 @@ class CachedRemoteDataset(DatasetLoader):
 
         if self.isVariable:
             # Variable: compute per-molecule bonds dynamically (same as
-            # VariableDatasetLoader) because molecule sizes differ
+            # FlatDatasetLoader) because molecule sizes differ
             if self._R_flat is None or self._offsets is None:
                 return np.zeros((1, 1), dtype=bool)
             from ffast.chemistry import covalentBonds
