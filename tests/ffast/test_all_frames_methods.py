@@ -5,6 +5,9 @@ Flat arrays with one row per atom, frame after frame, plus offsets saying where
 each frame's atoms start. Every kind is checked against its own per-frame
 answers, which is what the flat arrays must add up to.
 """
+import os
+import tempfile
+
 import numpy as np
 import pytest
 from ase import Atoms
@@ -48,8 +51,27 @@ def _atom_subset(parent):
     return sub
 
 
+def _sgdml(forces=True, energies=True):
+    from ffast.plugins.models.sgdml import sGDMLDatasetLoader
+
+    rng = np.random.default_rng(3)
+    arrays = {"R": rng.normal(size=(4, 3, 3)), "z": np.array([1, 1, 8])}
+    if energies:
+        arrays["E"] = rng.normal(size=(4, 1))
+    if forces:
+        arrays["F"] = rng.normal(size=(4, 3, 3))
+    path = os.path.join(tempfile.mkdtemp(), "d.npz")
+    np.savez(path, **arrays)
+    dataset = sGDMLDatasetLoader(path)
+    dataset.initialise()
+    dataset.loaded = True
+    return dataset
+
+
 KINDS = {
     "uniform file": lambda: _ase(UNIFORM),
+    "sGDML file": lambda: _sgdml(),
+    "frame subset of sGDML": lambda: _frame_subset(_sgdml()),
     "variable file": lambda: _ase(VARIABLE),
     "frame subset of uniform": lambda: _frame_subset(_ase(UNIFORM)),
     "frame subset of variable": lambda: _frame_subset(_ase(VARIABLE)),
@@ -122,6 +144,15 @@ def test_missing_results_raise_instead_of_being_filled_in(formulas):
     sub = _frame_subset(dataset)
     with pytest.raises(RuntimeError):
         sub.getAllForces()
+
+
+def test_an_sgdml_file_lacking_results_has_none():
+    dataset = _sgdml(forces=False, energies=False)
+    assert not dataset.hasForces()
+    with pytest.raises(RuntimeError):
+        dataset.getAllForces()
+    with pytest.raises(RuntimeError):
+        dataset.getAllEnergies()
 
 
 def test_each_frame_answers_its_own_elements_even_when_atoms_are_listed_in_another_order():

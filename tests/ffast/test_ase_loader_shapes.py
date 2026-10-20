@@ -55,3 +55,26 @@ def test_variable_data_answers_all_frames_as_lists():
     assert dataset.getChemicalFormula() == "Variable (2-5 atoms)"
     assert dataset.toMetaDict()["variable"] is True
     assert dataset.to_transfer_arrays()["R_flat"].shape == (10, 3)
+
+
+def test_an_sgdml_file_answers_all_frames_as_uniform_data(tmp_path):
+    """The sGDML loader fills the same flat storage (ADR 0058 step 7), so it
+    answers the older calls as uniform ASE data does."""
+    from ffast.plugins.models.sgdml import sGDMLDatasetLoader
+
+    rng = np.random.default_rng(9)
+    path = tmp_path / "d.npz"
+    np.savez(path, R=rng.normal(size=(5, 3, 3)), E=rng.normal(size=(5, 1)),
+             F=rng.normal(size=(5, 3, 3)), z=np.array([1, 1, 8]))
+    dataset = sGDMLDatasetLoader(str(path))
+    dataset.initialise()
+    assert dataset.isVariable is False
+
+    for answer in (dataset.getCoordinates(), dataset.getForces()):
+        assert type(answer) is np.ndarray and answer.shape == (5, 3, 3)
+    assert dataset.getCoordinates([3, 0]).shape == (2, 3, 3)
+    assert dataset.getElements().tolist() == [1, 1, 8]
+    assert dataset.getNAtoms() == 3 and type(dataset.getNAtoms()) is int
+    assert dataset.getChemicalFormula() == "H2O"
+    assert dataset.toMetaDict()["variable"] is False
+    assert dataset.to_transfer_arrays()["R"].shape == (5, 3, 3)

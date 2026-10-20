@@ -1,7 +1,7 @@
 from ffast.loaders.model import ModelLoader, uniformFrames
 import numpy as np
 from ffast.cache.fingerprint import md5FromArraysAndStrings
-from ffast.loaders.dataset import DatasetLoader
+from ffast.loaders.dataset import FlatDatasetLoader
 
 
 class sGDMLModelLoader(ModelLoader):
@@ -109,55 +109,55 @@ class sGDMLModelLoader(ModelLoader):
         ]
 
 
-class sGDMLDatasetLoader(DatasetLoader):
+class sGDMLDatasetLoader(FlatDatasetLoader):
+    """An sGDML ``.npz`` file, in the flat storage every file dataset uses
+    (ADR 0058, step 7). Every frame holds the same atoms in the same order,
+    so the data is uniform and the file's (frames, atoms, 3) arrays are read
+    as flat rows without copying."""
+
     datasetName = "sGDML"
     datasetFileExtension = "*.npz"
+    isVariable = False
 
     def __init__(self, path, *args, **kwargs):
         super().__init__(path)
         self.data = np.load(path, allow_pickle=True)
-        self.chem = self.zToChemicalFormula(self.data["z"])
 
         data = {key.lower(): value for key, value in self.data.items()}
 
-        self.R = data["r"]
-        self.E = data["e"]
-        self.F = data["f"]
-        self.z = data["z"]
-        self.N = self.R.shape[0]
-        self.nAtoms = self.R.shape[1]
+        R = np.asarray(data["r"])
+        self.N, nAtoms = R.shape[0], R.shape[1]
+        self.z = np.asarray(data["z"])
+        self.R_flat = R.reshape(-1, 3)
+        self.molecule_offsets = np.arange(self.N + 1) * nAtoms
+        # Missing results are absent, never zeros (ADR 0058, decision 1).
+        self.E = np.asarray(data["e"]).reshape(-1) if "e" in data else None
+        self.F_flat = np.asarray(data["f"]).reshape(-1, 3) if "f" in data else None
+        self._z_flat = None
 
         if "lattice" in data:
             self.lattice = data["lattice"]
         else:
             self.lattice = None
 
-    def getN(self):
-        return self.N
+        self.chem = self.zToChemicalFormula(self.z)
 
-    def getNAtoms(self):
-        return self.nAtoms
+    @property
+    def z_flat(self):
+        """Every atom's element, frame after frame, built on request: the
+        file holds one structure's elements."""
+        if self._z_flat is None:
+            self._z_flat = np.tile(self.z, self.N)
+        return self._z_flat
+
+    def getFingerprint(self):
+        """The formula of a uniform file, unchanged (ADR 0058, section 3):
+        one structure's elements, then positions, energies, forces."""
+        arrays = (self.z, self.R_flat, self.E, self.F_flat)
+        return md5FromArraysAndStrings(*(a for a in arrays if a is not None))
 
     def getChemicalFormula(self):
         return self.chem
-
-    def getCoordinates(self, indices=None):
-        if indices is None:
-            return self.R
-        else:
-            return self.R[indices]
-
-    def getEnergies(self, indices=None):
-        if indices is None:
-            return self.E.reshape(-1)
-        else:
-            return self.E[indices].reshape(-1)
-
-    def getForces(self, indices=None):
-        if indices is None:
-            return self.F
-        else:
-            return self.F[indices]
 
     def getElements(self, index=None):
         return self.z  # every frame of an sGDML file has the same elements
