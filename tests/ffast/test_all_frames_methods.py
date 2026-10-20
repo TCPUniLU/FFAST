@@ -290,3 +290,25 @@ def test_export_writes_every_frame_with_the_results_it_has(tmp_path, formulas, r
         if results:      # extxyz keeps 8 decimals
             np.testing.assert_allclose(frame.get_forces(), dataset.getForces(i), atol=1e-6)
             assert np.isclose(frame.get_potential_energy(), dataset.getEnergies(i), atol=1e-6)
+
+
+@pytest.mark.parametrize("kind", ["uniform file", "sGDML file", "frame subset of uniform",
+                                  "atom subset of uniform"])
+def test_a_dataset_with_the_same_atoms_in_every_frame_saves_as_sgdml(kind, tmp_path):
+    from ffast.plugins.models.sgdml import sGDMLDatasetLoader
+
+    dataset = KINDS[kind]()
+    path = str(tmp_path / "out.npz")
+    sGDMLDatasetLoader.saveDataset(dataset, path)
+    saved = sGDMLDatasetLoader(path)
+    assert np.array_equal(saved.getAllCoordinates(), dataset.getAllCoordinates())
+    assert np.array_equal(saved.getAllForces(), dataset.getAllForces())
+    assert np.array_equal(saved.getAllElements(), dataset.getAllElements())
+    assert np.array_equal(saved.getAllEnergies(), dataset.getAllEnergies())
+
+
+def test_a_dataset_whose_structures_differ_is_not_saved_as_sgdml(tmp_path):
+    from ffast.plugins.models.sgdml import sGDMLDatasetLoader
+
+    with pytest.raises(ValueError, match="same atoms in the same order"):
+        sGDMLDatasetLoader.saveDataset(KINDS["variable file"](), str(tmp_path / "out.npz"))

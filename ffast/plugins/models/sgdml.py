@@ -1,7 +1,7 @@
 from ffast.loaders.model import ModelLoader, uniformFrames
 import numpy as np
 from ffast.cache.fingerprint import md5FromArraysAndStrings
-from ffast.loaders.dataset import FlatDatasetLoader
+from ffast.loaders.dataset import FlatDatasetLoader, stackFrames
 
 
 class sGDMLModelLoader(ModelLoader):
@@ -167,11 +167,19 @@ class sGDMLDatasetLoader(FlatDatasetLoader):
 
     @staticmethod
     def saveDataset(dataset, path, format=None, taskID=None):
+        """Write any dataset whose frames hold the same atoms in the same
+        order, which an sGDML file requires; others are refused."""
+        if dataset.isVariable:
+            raise ValueError(
+                "An sGDML file needs the same atoms in the same order in every "
+                "structure, and this dataset's structures differ."
+            )
+        offsets = dataset.getOffsets()
         data = {
-            "R": dataset.getCoordinates(),
-            "E": dataset.getEnergies(),
-            "F": dataset.getForces(),
-            "z": dataset.getElements(),
+            "R": stackFrames(dataset.getAllCoordinates(), offsets),
+            "E": np.array(dataset.getAllEnergies()),
+            "F": stackFrames(dataset.getAllForces(), offsets),
+            "z": np.array(dataset.getAllElements()[:offsets[1]]),
             "lattice": dataset.getLattice(),  # not yet used at all
             "name": path,
         }
