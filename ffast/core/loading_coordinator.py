@@ -26,6 +26,7 @@ from ase.io.trajectory import Trajectory
 from ffast.core.data_types import AtomsList
 from ffast.protocol import control
 from ffast.loaders.ghost import GhostModelLoader
+from ffast.loaders.dataset import framesShaped
 from ffast.cache.fingerprint import md5FromArraysAndStrings
 
 logger = logging.getLogger("FFAST")
@@ -232,7 +233,7 @@ class LoadingCoordinator:
             )
 
             try:
-                E = aseObject.getEnergies()
+                E = np.array(aseObject.getAllEnergies())
             except (PropertyNotImplementedError, RuntimeError):
                 logger.warning(
                     "Energy not available in prediction file. "
@@ -240,7 +241,8 @@ class LoadingCoordinator:
                 )
                 E = None
             try:
-                F = aseObject.getForces()
+                F = framesShaped(aseObject.getAllForces(), aseObject.getOffsets(),
+                                 aseObject.isVariable)
             except (PropertyNotImplementedError, RuntimeError):
                 logger.warning(
                     "Forces not available in prediction file. "

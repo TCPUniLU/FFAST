@@ -194,3 +194,27 @@ def test_the_3d_view_draws_a_dataset_built_from_an_sgdml_file(tmp_path):
     scene = build_scene(VisualizationState(view_id="v", dataset_ref="fp", structure_index=2),
                         get_dataset=lambda fp: dataset)
     assert scene.atoms is not None and len(scene.atoms.positions) == 3
+
+
+def test_predictions_are_shaped_for_reading_one_frame_at_a_time():
+    from ffast.loaders.dataset import framesShaped
+
+    flat = np.arange(12, dtype=float).reshape(6, 2)
+    stacked = framesShaped(flat, [0, 3, 6], variable=False)
+    assert stacked.shape == (2, 3, 2) and stacked.flags.writeable
+    listed = framesShaped(flat, [0, 1, 6], variable=True)
+    assert [len(f) for f in listed] == [1, 5]
+    assert np.array_equal(np.concatenate(listed), flat)
+
+
+@pytest.mark.parametrize("kind", ["uniform file", "variable file", "frame subset of variable"])
+def test_the_zero_model_predicts_zeros_in_the_cached_shape(kind):
+    from ffast.loaders.zero import ZeroModelLoader
+
+    dataset = KINDS[kind]()
+    energies, forces = ZeroModelLoader.predict(None, dataset)
+    assert energies.shape == (dataset.getN(),)
+    for i in range(dataset.getN()):
+        assert np.shape(forces[i]) == np.shape(dataset.getForces(i))
+        assert not np.any(forces[i])
+    assert isinstance(forces, list) is bool(dataset.isVariable)

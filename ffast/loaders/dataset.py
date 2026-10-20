@@ -53,6 +53,18 @@ def stackFrames(flat, offsets):
     return flat.reshape(counts.size, int(counts[0]), *flat.shape[1:])
 
 
+def framesShaped(flat, offsets, variable):
+    """Flat per-atom values in the shape cached predictions keep, which are
+    read one frame at a time: ``(frames, atoms, ...)`` for a uniform dataset,
+    a list of per-frame arrays for a variable one. A fresh copy: the cache
+    owns it."""
+    flat = np.array(flat)
+    if not variable:
+        return stackFrames(flat, offsets)
+    offsets = np.asarray(offsets, dtype=np.intp)
+    return [flat[offsets[i]:offsets[i + 1]] for i in range(offsets.size - 1)]
+
+
 def _readOnly(array):
     """A view that refuses writes. All-frames arrays are kept and shared, so
     a caller that changed one in place would change it for everyone."""
