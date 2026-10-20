@@ -106,12 +106,13 @@ class ModelLoaderACE(ModelLoader):
         from ase import Atoms
 
         R, z = uniformFrames(dataset, indices)
-        lattice = dataset.getLattice()
+        frames = np.arange(len(R)) if indices is None else np.asarray(indices)
 
         E, F = [], []
         for i in range(len(R)):
             r = R[i]
-            if lattice is not None:
+            lattice = dataset.getLattice(int(frames[i]))   # this frame's own cell
+            if lattice is not None and np.any(lattice):   # a molecule's cell is all zeros
                 atoms = Atoms(
                     numbers=z, positions=r, cell=lattice, pbc=[True] * 3
                 )

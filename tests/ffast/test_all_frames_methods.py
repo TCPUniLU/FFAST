@@ -172,11 +172,13 @@ def test_a_calculator_model_predicts_every_frame_of_a_file():
 
     model = ModelLoaderACE.__new__(ModelLoaderACE)
     model.calculator = EMT()
-    dataset = _ase(UNIFORM)
-    dataset.lattice = None
+    dataset = _ase(UNIFORM)       # molecules: every frame's cell is all zeros
 
     E, F = model.predict(dataset)
     assert np.shape(E) == (4,) and np.shape(F) == (4, 3, 3)
+    molecule = Atoms(dataset.getElements(1), positions=dataset.getCoordinates(1))
+    molecule.calc = EMT()
+    assert np.isclose(E[1], molecule.get_potential_energy())
 
 
 def test_the_3d_view_draws_a_dataset_built_from_an_sgdml_file(tmp_path):
@@ -218,3 +220,23 @@ def test_the_zero_model_predicts_zeros_in_the_cached_shape(kind):
         assert np.shape(forces[i]) == np.shape(dataset.getForces(i))
         assert not np.any(forces[i])
     assert isinstance(forces, list) is bool(dataset.isVariable)
+
+
+def test_a_calculator_model_uses_each_frames_own_cell():
+    from ase.calculators.emt import EMT
+    from ffast.loaders.model import ModelLoaderACE
+
+    frames = [Atoms("Cu2", positions=[[0, 0, 0], [1.8, 0, 0]], cell=[3.6 + 0.1 * i] * 3, pbc=True)
+              for i in range(3)]
+    dataset = aseDatasetLoader("cu.xyz", atomsList=frames)
+    model = ModelLoaderACE.__new__(ModelLoaderACE)
+    model.calculator = EMT()
+
+    E, F = model.predict(dataset)
+    for i, atoms in enumerate(frames):
+        atoms = atoms.copy()
+        atoms.calc = EMT()
+        assert np.isclose(E[i], atoms.get_potential_energy())
+
+    E1, _ = model.predict(dataset, indices=[2])
+    assert np.isclose(E1[0], E[2])
