@@ -2,6 +2,7 @@ import logging
 import os
 import time
 import ase.io
+import numpy as np
 from collections import UserList
 from ffast.core.events import EventClass
 
@@ -82,6 +83,9 @@ class AtomFilteredEntity(DataEntity):
 
     def get(self, key=None):
         d = self.parent.get(key=key)
+        # Variable datasets (list of per-frame arrays): the same atoms of each frame
+        if isinstance(d, list):
+            return [np.asarray(frame)[self.indices] for frame in d]
         if len(d.shape) == 1:
             return d[self.indices]
         else:
