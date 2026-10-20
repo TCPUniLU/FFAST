@@ -401,6 +401,8 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         self.R_flat = np.vstack(R_list)
         self.F_flat = None if forces_missing else np.vstack(F_list)
         self.E = None if energies_missing else np.array(E_list)
+        self._has_forces = not forces_missing
+        self._has_energies = not energies_missing
         self.z_flat = np.concatenate(z_list)
         self.molecule_offsets = np.array(offsets)
 
@@ -464,6 +466,33 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         if not forces_missing:
             parts.append(f_hash)
         return md5FromParts(parts)
+
+    # One frame is read from the file (ADR 0058, decision B); all or several
+    # frames still come from the joined arrays of VariableDatasetLoader.
+
+    def getCoordinates(self, indices=None):
+        if isOneFrame(indices):
+            return self.atomsList[indices].get_positions()
+        return super().getCoordinates(indices)
+
+    def getElements(self, index=None):
+        if isOneFrame(index):
+            return self.atomsList[index].get_atomic_numbers()
+        return super().getElements(index)
+
+    def getForces(self, indices=None):
+        if isOneFrame(indices):
+            if not self._has_forces:
+                raise RuntimeError("Forces are not available for this dataset.")
+            return self._readForces(self.atomsList[indices])
+        return super().getForces(indices)
+
+    def getEnergies(self, indices=None):
+        if isOneFrame(indices):
+            if not self._has_energies:
+                raise RuntimeError("Energies are not available for this dataset.")
+            return self._readEnergy(self.atomsList[indices])
+        return super().getEnergies(indices)
 
     def _detectForceKeys(self):
         """Detect force keys in the first atoms object."""
