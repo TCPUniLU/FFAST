@@ -37,7 +37,6 @@ export function independentKey(tabName, spec) {
  *   activeTab: () => object|null,
  *   tabPairs: (tabId: string) => Array<{datasetFp: string, modelFp: string|null}>,
  *   pairName: (datasetFp: string, modelFp: string|null) => string,
- *   framed: () => Set<string>,
  *   placePanel: (el: HTMLElement, panel: object) => void,
  *   atomScale: () => number,
  *   start: (view: IndependentView) => void,
@@ -47,8 +46,7 @@ export function independentKey(tabName, spec) {
  *   frameShown: (view: IndependentView) => void,
  *   sceneAtoms: (view: IndependentView, atoms: object) => void,
  * }} IndependentPorts
- * `framed`: view ids whose first snapshot fitted the atoms (shared with the
- * main view). `start`: give a newly opened view its starting look.
+ * `start`: give a newly opened view its starting look.
  * `retired`: a layout dropped the view (the sidebar lets go of it). `chosen`:
  * the focused view's data changed. `focusedCamera`: the focused view's camera
  * moved. `frameShown`: a view was set to a frame. `sceneAtoms`: a view's
@@ -179,22 +177,21 @@ export class IndependentPanels {
     view.openedPair = '';
     view.started = false;
     view.frame = null;
-    this._ports.framed().delete(view.viewId);
+    view.framed = false;
     view.renderers.clear();
     this.syncCaption(view);
   }
 
   /** An independent panel's view sent its scene. */
   onSnapshot(view, scene) {
-    const framed = this._ports.framed();
     view.version = scene.version;
     // The scene's camera (and a first fit) is the panel's own: it must not
     // turn the main view through the camera link.
     view.applyingScene = true;
     try {
       view.renderers.applyScene(scene);
-      if (!framed.has(scene.view_id)) {
-        framed.add(scene.view_id);
+      if (!view.framed) {
+        view.framed = true;
         view.renderers.frameAtoms();
       }
     } finally {

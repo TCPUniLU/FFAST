@@ -1953,7 +1953,7 @@ async def test_web_an_independent_panel_follows_the_main_frame_or_says_it_cannot
                 await page.locator(_panel_control("Follow main view's frame", "input")).uncheck()
                 await page.locator("#next-frame-btn").click()
                 await page.wait_for_function(f"() => {_INDEPENDENT}.frame === 11")
-                assert await page.evaluate("window.ffastApp._mainFrame") == 10
+                assert await page.evaluate("window.ffastApp._main.current.frame") == 10
                 await _focus_3d(page, 0)
                 await page.evaluate("window.ffastApp._setFrame(20)")
                 await page.wait_for_timeout(300)
@@ -2028,7 +2028,7 @@ async def test_web_a_plot_click_moves_the_independent_panel_showing_the_data(tmp
                 await page.evaluate(_CLICK_POINT, ["Energy", name, 7])
                 await page.wait_for_function(f"() => {view}.frame === 7")
                 await expect(page.locator("#tabbar .tab.active")).to_have_text("Compare")
-                assert await page.evaluate("window.ffastApp._mainFrame") == 0
+                assert await page.evaluate("window.ffastApp._main.current.frame") == 0
             finally:
                 await browser.close()
 
@@ -3626,10 +3626,10 @@ async def test_web_alignment_pane_wires_kabsch_and_exclusive_modes(ffast_web_ser
 
             # Heavy-only is contextual on Kabsch (hidden until enabled).
             await expect(heavy_row).to_be_hidden()
-            v0 = await page.evaluate("() => window.ffastApp._viewVersion")
+            v0 = await page.evaluate("() => window.ffastApp._main.current.version")
             await kabsch.check()
             await expect(heavy_row).to_be_visible()
-            v1 = await page.evaluate("() => window.ffastApp._viewVersion")
+            v1 = await page.evaluate("() => window.ffastApp._main.current.version")
             assert v1 > v0, "checking Kabsch should issue a VIEW_COMMAND"
 
             # Enabling 3-atom mode auto-disables Kabsch (mutually exclusive).
@@ -3969,5 +3969,95 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
                 # DatasetLoader.initialise() names an object from its path
                 # basename with the extension stripped (utils.removeExtension).
                 assert restored_meta["name"] == "dataset"
+            finally:
+                await browser.close()
+
+
+_RECORD_SENDS = """() => {
+  const conn = window.ffastApp._conn;
+  const send = conn.send.bind(conn);
+  window.__sent = [];
+  conn.send = (event, kwargs, args) => { window.__sent.push([event, kwargs]); return send(event, kwargs, args); };
+}"""
+
+
+async def _open_two_datasets(page, tmp_path, ws_port, web_port):
+    """Connect with the example dataset (A) and a second one (B) on the server;
+    A is shown. Returns the fingerprints (A, B)."""
+    second = tmp_path / "second.xyz"
+    ase.io.write(second, ase.io.read(DATASET_PATH, index=":30"), format="extxyz")
+    dataset_fp = await _preload_dataset(ws_port)
+    (other,) = await _load_more(
+        ws_port, {dataset_fp}, ("LOAD_DATASET", (str(second), "ase (auto)"), {}))
+    await _open_loupe(page, ws_port, web_port, dataset_fp)
+    return dataset_fp, other["args"][0]
+
+
+async def test_web_going_back_to_a_dataset_reuses_its_view_and_clears_picks_in_the_view_left(tmp_path):
+    """ADR 0060 step 2: A → B → A opens A's own server view again, and the
+    command that clears A's picks names A's view and goes out before B opens."""
+    async with _spawn_server() as (ws_port, web_port):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            try:
+                a_fp, b_fp = await _open_two_datasets(page, tmp_path, ws_port, web_port)
+                a_view = await page.evaluate("() => window.ffastApp._main.current.viewId")
+                await page.evaluate(_RECORD_SENDS)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{b_fp}']").click()
+                await page.wait_for_function(
+                    "(fp) => window.ffastApp._main.current.datasetFp === fp", arg=b_fp)
+                b_view = await page.evaluate("() => window.ffastApp._main.current.viewId")
+                await page.locator(f"#dataset-list .obj-row[data-fp='{a_fp}']").click()
+                await page.wait_for_function(
+                    "(fp) => window.ffastApp._main.current.datasetFp === fp", arg=a_fp)
+                sent = await page.evaluate("() => window.__sent")
+                assert b_view != a_view
+                opens = [kw["view_id"] for event, kw in sent if event == "OPEN_VIEW"]
+                assert opens == [b_view, a_view]
+                first_open = next(i for i, (event, _) in enumerate(sent) if event == "OPEN_VIEW")
+                clears = [i for i, (event, kw) in enumerate(sent)
+                          if event == "VIEW_COMMAND" and kw.get("type") == "SET_SELECTION"
+                          and kw["view_id"] == a_view and kw["indices"] == []]
+                assert clears and clears[0] < first_open
+            finally:
+                await browser.close()
+
+
+async def test_web_a_late_snapshot_of_a_main_view_no_longer_shown_is_not_drawn(tmp_path):
+    """ADR 0060 step 2: A's answer arriving while B is shown updates A's
+    version and leaves B on screen."""
+    async with _spawn_server() as (ws_port, web_port):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            try:
+                a_fp, b_fp = await _open_two_datasets(page, tmp_path, ws_port, web_port)
+                await page.evaluate("""() => {
+                  const app = window.ffastApp;
+                  const original = app._onSceneSnapshot.bind(app);
+                  window.__snapshots = [];
+                  app._onSceneSnapshot = (kw) => { window.__snapshots.push(kw); return original(kw); };
+                }""")
+                await page.locator(f"#dataset-list .obj-row[data-fp='{b_fp}']").click()
+                await page.wait_for_function(
+                    "(fp) => window.ffastApp._main.current.datasetFp === fp && window.__snapshots.length >= 1",
+                    arg=b_fp)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{a_fp}']").click()
+                await page.wait_for_function("() => window.__snapshots.length >= 2")
+                await page.locator(f"#dataset-list .obj-row[data-fp='{b_fp}']").click()
+                await page.wait_for_function(
+                    "(fp) => window.ffastApp._main.current.datasetFp === fp && window.__snapshots.length >= 3",
+                    arg=b_fp)
+                result = await page.evaluate("""(aFp) => {
+                  const app = window.ffastApp;
+                  const a = app._main.get(aFp);
+                  const late = window.__snapshots.find((kw) => kw.scene.view_id === a.viewId);
+                  const before = app._mainView.scene;
+                  app._onSceneSnapshot({ ...late, scene: { ...late.scene, version: 999 } });
+                  return { drawn: app._mainView.scene === before, version: a.version,
+                           current: app._main.current.datasetFp };
+                }""", a_fp)
+                assert result == {"drawn": True, "version": 999, "current": b_fp}
             finally:
                 await browser.close()
