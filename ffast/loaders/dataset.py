@@ -966,6 +966,11 @@ class DatasetView(DatasetLoader):
             counts = np.diff(np.asarray(self.getOffsets()))
             if counts.size == 0:
                 return "0 atoms"
+            if self.atoms is not None:
+                # Same atoms in every frame: name them when their elements agree.
+                z = np.asarray(self.getAllElements()).reshape(counts.size, -1)
+                if (z == z[0]).all():
+                    return self.zToChemicalFormula(z[0])
             return f"Variable ({counts.min()}-{counts.max()} atoms)"
         if self.atoms is None:
             return self.parent.getChemicalFormula()
