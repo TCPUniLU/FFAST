@@ -204,11 +204,33 @@ One commit each, so each can be reverted alone.
    deleted; that loader learns uniform data, checked against the old uniform
    loader question by question; both choosers use it; the old class is
    deleted and the survivor is `aseDatasetLoader`. Each kind keeps its old
-   all-frames shape until step 4 (`tests/ffast/test_ase_loader_shapes.py`).
+   all-frames shape until its last callers move (`tests/ffast/test_ase_loader_shapes.py`).
 4. The "all frames" methods, built once and kept, and the ten callers moved to
    them one at a time. First count how often each caller asks for all frames:
    without the kept copy, every call reads the whole file (0.3 s for 5000
    frames, about a minute for a million).
+   As built (1d8e504..b9cb4cd): `getOffsets`, `getAllElements`,
+   `getAllCoordinates`, `getAllForces`, `getAllEnergies` on every dataset, and
+   `stackFrames` (raises `ValueError` when sizes differ). They return read-only
+   arrays, because they are shared. A file holds them after the first request
+   (5000 variable frames: 0.6 s once, under 1 µs after; rebuilding one array
+   from frames already in memory costs 6 ms). Every other kind translates its
+   older answer, and goes when step 5 replaces the views. The count found 19
+   call sites in 11 files outside the loaders and the Qt client, not ten. Moved: the scene
+   builder (one frame's elements), the metric resolver (energies, atom counts),
+   per-atom scatter subsets, displacement colouring (which now says why it
+   falls back on a variable file), the force arrows from a difference, and the
+   four models, through `uniformFrames` (`ffast/loaders/model.py`). Not moved,
+   because the answer's shape is part of a contract downstream:
+   - the resolver's `reference.forces`, `.positions`, `.elements` and `.masses`:
+     metrics such as `force_mae_per_element` take 3D forces and one structure's
+     elements on uniform data, and `offsets` is `None` there to say so. Flat
+     arrays would change what the metrics receive;
+   - the prediction load (`loading_coordinator.py`), the zero model and the
+     exports, which store or write each kind's own shape;
+   - the Qt client (GitHub issue #22).
+   Each is a decision about a contract, not a rename. Step 6 cannot delete the
+   `isVariable` branches until they are made.
 5. One view replaces the three derived classes. Qt subsets break here.
 6. The caller branches on `isVariable` are deleted.
 7. sGDML fills the same storage.

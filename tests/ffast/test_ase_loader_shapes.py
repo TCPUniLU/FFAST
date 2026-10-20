@@ -1,10 +1,11 @@
 """
 The one ASE loader keeps each kind's old shape for all-frames answers.
 
-ADR 0058 step 3 merged the uniform and variable ASE loaders; until step 4
-gives callers one meaning per call, about ten callers still branch on
-``isVariable`` and expect these shapes. Step 4 changes them on purpose, and
-this test with them. (While both classes existed, the merged one was checked
+ADR 0058 step 3 merged the uniform and variable ASE loaders. Step 4 added
+the getAll* methods (tests/ffast/test_all_frames_methods.py), but callers of
+the older no-argument calls remain (the metric resolver's forces, positions
+and elements, the prediction cache, exports, the Qt client), and they expect
+these shapes. This test goes when the last of them moves (step 6). (While both classes existed, the merged one was checked
 against the old uniform loader question by question: commits 66c23de..79930eb.)
 """
 import numpy as np

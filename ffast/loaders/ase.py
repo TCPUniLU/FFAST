@@ -151,8 +151,10 @@ class aseDatasetLoader(VariableDatasetLoader):
     Uniform (every frame the same molecule) or variable is decided from the
     frames by isUniformAtomsList and kept in ``isVariable``. One frame is read
     from the file on request; all-frames arrays are joined on the first
-    request and kept. Until step 4, all-frames answers keep each kind's old
-    shape: (frames, atoms, ...) arrays for uniform data, lists for variable.
+    request and kept. The getAll* methods answer the same way on both kinds;
+    the older no-argument calls keep each kind's shape until their last
+    callers move (ADR 0058, steps 4 and 6): (frames, atoms, ...) arrays for
+    uniform data, lists for variable.
     """
 
     datasetName = "ase"
@@ -224,9 +226,9 @@ class aseDatasetLoader(VariableDatasetLoader):
         self._has_energies = not energies_missing
 
         # Uniform or variable is decided by the data, by the same rule that
-        # chose this loader (isUniformAtomsList). Until step 4 moves callers to
-        # one meaning per call, the two kinds answer all-frames questions in
-        # different shapes: uniform as (frames, atoms, ...) arrays, variable as
+        # chose this loader (isUniformAtomsList). Until the last callers of the
+        # older no-argument calls move (ADR 0058, steps 4 and 6), the two kinds
+        # answer them in different shapes: uniform as (frames, atoms, ...) arrays, variable as
         # lists of per-frame arrays.
         self.isVariable = not isUniformAtomsList(self.atomsList)
 
@@ -356,8 +358,8 @@ class aseDatasetLoader(VariableDatasetLoader):
         return self.zToChemicalFormula(self.getElements())
 
     # Reporting: uniform data is described as DatasetLoader describes it,
-    # variable data as VariableDatasetLoader does, until step 4 gives callers
-    # one meaning per call.
+    # variable data as VariableDatasetLoader does, until the last callers
+    # that depend on each kind's shape move (ADR 0058, step 6).
 
     def initialise(self):
         if self.isVariable:
