@@ -4,10 +4,12 @@
  * and fixed-indices drive the server's ffast.bonds stage. The Bonds pick tool
  * (#10) edits the fixed set via toggleBondPair — two picks toggle a canonical
  * pair, seeding from the current dynamic bonds when the set is empty (Qt's
- * BondSelect.selectCallback).
+ * BondSelect.selectCallback). The pane shows one view's `bonds` settings
+ * (`show`) and writes each change into them.
  */
 
 import { createPane, sliderRow, colorRow, selectRow, row, buttonRow, rowElement, setRowNeeds, setSliderValue } from '../sidebar.js';
+import { defaultSettings } from '../view_settings.js';
 
 /**
  * Parse "0-1, 2-5" / "0 1\n2 5" into [[0,1],[2,5]], skipping malformed pairs.
@@ -44,33 +46,34 @@ export function createBondsPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Bonds');
   sidebarEl.appendChild(el);
 
-  const DEFAULT_COLOR = '#404040';
-  let width = 100, color = DEFAULT_COLOR, bondType = 'Dynamic', fixedIndices = [];
+  const state = { current: defaultSettings().bonds };   // the shown view's settings
+  const DEFAULT_COLOR = state.current.color;
   // A colour other than the default replaces the 3D view's two-tone bonds.
-  const style = () => callbacks.onStyle(width, color, color !== DEFAULT_COLOR);
+  const style = () => callbacks.onStyle(state.current.width, state.current.color, state.current.color !== DEFAULT_COLOR);
 
-  const widthInput = sliderRow(body, 'Bond width', width, { min: 10, max: 100 }, (v) => {
-    width = v; style();
+  const widthInput = sliderRow(body, 'Bond width', state.current.width, { min: 10, max: 100 }, (v) => {
+    state.current.width = v; style();
   });
-  const colorInput = colorRow(body, 'Bond colour', color, (v) => {
-    color = v; style();
+  const colorInput = colorRow(body, 'Bond colour', state.current.color, (v) => {
+    state.current.color = v; style();
   });
 
-  const typeSelect = selectRow(body, 'Bonds Type', ['Fixed', 'Dynamic'], bondType, (v) => {
-    bondType = v;
+  const typeSelect = selectRow(body, 'Bonds Type', ['Fixed', 'Dynamic'], state.current.bondType, (v) => {
+    state.current.bondType = v;
     _syncVisibility();
-    callbacks.onApply(bondType, fixedIndices);
+    _apply();
   });
+  const _apply = () => callbacks.onApply(state.current.bondType, state.current.fixedIndices);
 
   const textarea = document.createElement('textarea');
   textarea.className = 'ctl-textarea';
   textarea.placeholder = 'One "a-b" pair per line';
   textarea.addEventListener('change', () => {
     const { pairs, rejected } = parseBondPairs(textarea.value);
-    fixedIndices = pairs;
-    textarea.value = formatBondPairs(fixedIndices);
+    state.current.fixedIndices = pairs;
+    textarea.value = formatBondPairs(pairs);
     _showHint(rejected);
-    callbacks.onApply(bondType, fixedIndices);
+    _apply();
   });
   const textareaRowEl = row(body, 'Bond indices', textarea);
 
@@ -80,26 +83,27 @@ export function createBondsPane(sidebarEl, callbacks) {
   body.appendChild(hint);
 
   function _showHint(rejected) {
+    const n = state.current.fixedIndices.length;
     if (rejected > 0) {
       hint.textContent = `${rejected} invalid pair${rejected === 1 ? '' : 's'} ignored (expected "a-b")`;
       hint.classList.remove('ok');
     } else {
-      hint.textContent = `${fixedIndices.length} bond pair${fixedIndices.length === 1 ? '' : 's'}`;
+      hint.textContent = `${n} bond pair${n === 1 ? '' : 's'}`;
       hint.classList.add('ok');
     }
     hint.style.display = '';
   }
 
   const fillBtn = buttonRow(body, '', 'Fill from dynamic', () => {
-    fixedIndices = callbacks.getDynamicBondPairs();
-    textarea.value = formatBondPairs(fixedIndices);
+    state.current.fixedIndices = callbacks.getDynamicBondPairs();
+    textarea.value = formatBondPairs(state.current.fixedIndices);
     _showHint(0);
-    callbacks.onApply(bondType, fixedIndices);
+    _apply();
   });
   fillBtn.title = 'Fill the bond index list from the current pairwise-distance bonds';
 
   function _syncVisibility() {
-    const show = bondType === 'Fixed';
+    const show = state.current.bondType === 'Fixed';
     const needsFixed = show ? '' : 'Set "Bonds Type" to Fixed first';
     setRowNeeds(textareaRowEl, needsFixed);
     hint.style.display = show && hint.textContent ? '' : 'none';
@@ -107,37 +111,18 @@ export function createBondsPane(sidebarEl, callbacks) {
   }
   _syncVisibility();
 
-  /** Bond look per dataset in the main view, and per independent 3D panel
-   * (ADR 0056). */
-  const saved = new Map();   // key -> {width, color, bondType, fixedIndices}
   return {
-    saveState(key) {
-      saved.set(key, { width, color, bondType, fixedIndices: [...fixedIndices] });
-    },
-
-    /** Show `key`'s bond look and draw it; its bond type is the view's own,
-     * already on the server, so nothing is sent. */
-    loadState(key) {
-      const s = saved.get(key) || { width: 100, color: DEFAULT_COLOR, bondType: 'Dynamic', fixedIndices: [] };
-      ({ width, color, bondType } = s);
-      fixedIndices = [...s.fixedIndices];
-      setSliderValue(widthInput, width);
-      colorInput.value = color;
-      typeSelect.value = bondType;
-      textarea.value = formatBondPairs(fixedIndices);
+    /** Show a view's `bonds` settings and draw them; later changes are written
+     * into them. Its bond type is the view's own, already on the server, so
+     * nothing is sent. */
+    show(settings) {
+      state.current = settings;
+      setSliderValue(widthInput, settings.width);
+      colorInput.value = settings.color;
+      typeSelect.value = settings.bondType;
+      textarea.value = formatBondPairs(settings.fixedIndices);
       _syncVisibility();
       style();
-    },
-
-    /** Store a bond look for `key` without showing it (ADR 0056 start). */
-    presetState(key, { width: w = 100, colour = DEFAULT_COLOR } = {}) {
-      saved.set(key, { width: w, color: colour, bondType: 'Dynamic', fixedIndices: [] });
-    },
-
-    /** The bond width and colour stored for `key`. */
-    lookOf(key) {
-      const s = saved.get(key);
-      return { width: s?.width ?? 100, colour: s?.color ?? DEFAULT_COLOR };
     },
 
     /**
@@ -148,18 +133,19 @@ export function createBondsPane(sidebarEl, callbacks) {
      */
     toggleBondPair(a, b) {
       if (a === b) return;
-      if (fixedIndices.length === 0) fixedIndices = callbacks.getDynamicBondPairs();
+      const s = state.current;
+      if (s.fixedIndices.length === 0) s.fixedIndices = callbacks.getDynamicBondPairs();
       const key = ([x, y]) => (x < y ? `${x}-${y}` : `${y}-${x}`);
       const target = key([a, b]);
-      const idx = fixedIndices.findIndex((p) => key(p) === target);
-      if (idx >= 0) fixedIndices.splice(idx, 1);
-      else fixedIndices.push(a < b ? [a, b] : [b, a]);
-      bondType = 'Fixed';
+      const idx = s.fixedIndices.findIndex((p) => key(p) === target);
+      if (idx >= 0) s.fixedIndices.splice(idx, 1);
+      else s.fixedIndices.push(a < b ? [a, b] : [b, a]);
+      s.bondType = 'Fixed';
       typeSelect.value = 'Fixed';
       _syncVisibility();
-      textarea.value = formatBondPairs(fixedIndices);
+      textarea.value = formatBondPairs(s.fixedIndices);
       _showHint(0);
-      callbacks.onApply(bondType, fixedIndices);
+      _apply();
     },
   };
 }

@@ -119,7 +119,6 @@ export class FFastApp {
       tabPairs: (tabId) => this._analysis.tabPairs(tabId),
       pairName: (datasetFp, modelFp) => this._pairName(datasetFp, modelFp),
       placePanel: (el, panel) => this._panels3d.set(el, panel),
-      atomScale: () => this._panes.display.atomScale(),
       start: (view) => this._startIndependent(view),
       retired: (view) => {
         if (view === this._focusedIndependent) this._switchFocusedView(null);
@@ -830,7 +829,7 @@ export class FFastApp {
       onGizmo: (enabled) => this._focusedRenderers().setGizmoEnabled(enabled),
       onBackground: (hex) => {
         this._focusedRenderers().setBackgroundColor(hex);
-        this._panes?.export.setBackground(hex);   // keep the Export bg in step
+        if (!this._showingSettings) this._panes?.export.setBackground(hex);   // keep the Export bg in step
       },
     });
 
@@ -882,10 +881,9 @@ export class FFastApp {
     });
 
     this._panes = { colorBy, metrics: metricsPane, camera, display, bonds, forces, extract, export: exportPane, align };
-    // The rich look sizes ball-and-stick atoms from the Atom size setting: the
-    // sidebar's for the view it shows, the one kept for the other views.
-    this._mainAtomScale = 1;
-    this._mainView.atomScale = () => (this._focusedIndependent ? this._mainAtomScale : display.atomScale());
+    // The rich look sizes ball-and-stick atoms from the Atom size setting of
+    // the view it draws.
+    this._mainView.atomScale = () => (this._main.current?.settings.display.atomSize ?? display.atomScale()) || 1;
     this._initPanelSection(sidebarEl, title);
 
     // One section open at a time; which one, and whether the sidebar is
@@ -1036,10 +1034,8 @@ export class FFastApp {
     const old = this._focusedIndependent;
     if (old) {
       this._saveDatasetSettings(old);
-      old.atomScale = this._panes.display.atomScale();
     } else if (this._main.current) {
       this._saveDatasetSettings(this._main.current);
-      this._mainAtomScale = this._panes.display.atomScale();
     }
     this._focusedIndependent = owner;
     if (owner) {
@@ -1063,10 +1059,7 @@ export class FFastApp {
     const { settings } = startCommands(view.spec.start, ctx);
     const key = view.settingsKey;
     this._panes.colorBy.presetState(key, settings);
-    this._panes.display.presetState(key, settings);
-    this._panes.bonds.presetState(key, { width: settings.bondWidth, colour: settings.bondColour });
     this._paneSaved.add(key);
-    view.atomScale = settings.atomSize;
   }
 
   /** Give an independent panel's new view its starting look (rule 13), once
@@ -1094,11 +1087,11 @@ export class FFastApp {
     const key = view?.settingsKey;
     const forces = view?.settings?.forces || defaultSettings().forces;
     const colour = this._panes.colorBy.lookOf(key);
-    const bonds = this._panes.bonds.lookOf(key);
+    const own = view?.settings || defaultSettings();
     return startFromCurrent({
       source: colour.source, colormap: colour.colormap,
-      atomSize: this._panes.display.lookOf(key).atomSize,
-      bondWidth: bonds.width, bondColour: bonds.colour,
+      atomSize: own.display.atomSize,
+      bondWidth: own.bonds.width, bondColour: own.bonds.color,
       forces: { show: !!forces.show, length: forces.length, normalised: forces.normalised },
     });
   }
@@ -1614,12 +1607,6 @@ export class FFastApp {
     const key = view.settingsKey;
     this._paneSaved.add(key);
     this._panes.colorBy.saveState(key);
-    this._panes.camera.saveState(key);
-    this._panes.display.saveState(key);
-    this._panes.bonds.saveState(key);
-    this._panes.extract.saveState(key);
-    this._panes.export.saveState(key);
-    this._panes.align.saveState(key);
   }
 
   /** The dataset a frame subset takes its look from until it has its own:
@@ -1641,12 +1628,19 @@ export class FFastApp {
     this._panes.forces.setState(s.forces.show, s.forces.modelKey, s.forces);
     this._applyForceVectorsState(s.forces);
     this._panes.colorBy.loadState(key);
-    this._panes.camera.loadState(key);
-    this._panes.display.loadState(key);
-    this._panes.bonds.loadState(key);
-    this._panes.extract.loadState(key);
-    this._panes.export.loadState(key);
-    this._panes.align.loadState(key);
+    // The camera pane's handlers reach the renderers; the Export background
+    // is its own setting, not the camera's.
+    this._showingSettings = true;
+    try {
+      this._panes.camera.show(s.camera);
+    } finally {
+      this._showingSettings = false;
+    }
+    this._panes.display.show(s.display);
+    this._panes.bonds.show(s.bonds);
+    this._panes.extract.show(s.extract);
+    this._panes.export.show(s.export);
+    this._panes.align.show(s.align);
   }
 
 
@@ -1862,7 +1856,7 @@ export class FFastApp {
     this._pickReadout = '';
     this._sendSetSelection('picked', 'current_structure', [], view);
     this._updatePickStrip();
-    this._panes.extract.clearInput(view?.datasetFp ?? this._currentDatasetFp);
+    this._panes.extract.clearInput();
   }
 
   _updatePickStrip() {

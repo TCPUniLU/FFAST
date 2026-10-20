@@ -39,7 +39,6 @@ export function independentKey(tabName, spec) {
  *   tabPairs: (tabId: string) => Array<{datasetFp: string, modelFp: string|null}>,
  *   pairName: (datasetFp: string, modelFp: string|null) => string,
  *   placePanel: (el: HTMLElement, panel: object) => void,
- *   atomScale: () => number,
  *   start: (view: IndependentView) => void,
  *   retired: (view: IndependentView) => void,
  *   chosen: (view: IndependentView) => void,
@@ -108,7 +107,7 @@ export class IndependentPanels {
       view = new IndependentView(key, cell.spec, `ind-${++this._count}`,
         (v, cam) => this._onCamera(v, cam));
       const own = view;
-      own.renderers.atomScale = () => (this._ports.focused() === own ? this._ports.atomScale() : own.atomScale);
+      own.renderers.atomScale = () => own.settings?.display.atomSize || 1;
     }
     this._views.set(key, view);
   }

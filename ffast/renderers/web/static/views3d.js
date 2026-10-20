@@ -259,7 +259,6 @@ export class IndependentView extends View {
     this.started = false;    // its starting look has been sent
     this.note = '';          // why its starting colour metric was not used
     this.missing = '';       // why it shows no frame (rule 3)
-    this.atomScale = 1;      // its Atom size while the sidebar shows another view
   }
 
   /** Its settings in the sidebar's per-view store. */

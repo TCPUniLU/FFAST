@@ -2,10 +2,12 @@
  * Camera pane (ADR 0045 issue 04): presets, projection, manual angle entry,
  * COM tracking, axis gizmo, background colour. Mirrors modules/loupe/loupeCamera.py.
  * The exact azimuth/elevation/distance fields sit behind an "Exact angles"
- * link (ADR 0055): dragging and the presets cover most uses.
+ * link (ADR 0055): dragging and the presets cover most uses. The pane shows one
+ * view's `camera` settings (`show`) and writes each change into them.
  */
 
 import { createPane, checkboxRow, numberRow, colorRow, buttonGroup } from '../sidebar.js';
+import { defaultSettings } from '../view_settings.js';
 
 /**
  * @param {HTMLElement} sidebarEl
@@ -22,9 +24,11 @@ export function createCameraPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Camera');
   sidebarEl.appendChild(el);
 
+  let state = defaultSettings().camera;   // the shown view's settings
+
   const comInput = checkboxRow(body, 'Origin COM', true, callbacks.onCOM);
-  const orthInput = checkboxRow(body, 'Orthographic', false, callbacks.onOrtho);
-  const gizInput = checkboxRow(body, 'Axes gizmo', false, callbacks.onGizmo);
+  const orthInput = checkboxRow(body, 'Orthographic', false, (v) => { state.ortho = v; callbacks.onOrtho(v); });
+  const gizInput = checkboxRow(body, 'Axes gizmo', false, (v) => { state.gizmo = v; callbacks.onGizmo(v); });
 
   const exactLink = document.createElement('button');
   exactLink.className = 'link-btn';
@@ -54,12 +58,9 @@ export function createCameraPane(sidebarEl, callbacks) {
     { text: 'YZ', title: 'Side view (az 90°, el 0°)', onClick: () => callbacks.onPreset(90, 0) },
   ]);
 
-  const backgroundRow = colorRow(body, 'Background', '#000000', callbacks.onBackground);
+  const backgroundRow = colorRow(body, 'Background', '#000000', (hex) => { state.background = hex; callbacks.onBackground(hex); });
 
   return {
-    orthStatus: new Map(), // fp -> true/false;
-    gizStatus: new Map(), // fp -> true/fasle;
-    backgroundStatus: new Map(), //fp -> hex string;
     /** Reflect the renderer's live camera into the manual fields (no events fired). */
     syncFromCamera(cam) {
       azInput.value = cam.azimuth.toFixed(1);
@@ -73,22 +74,16 @@ export function createCameraPane(sidebarEl, callbacks) {
       comInput.checked = enabled;
     },
 
-    saveState(fp) {
-      this.orthStatus.set(fp, orthInput.checked);
-      this.gizStatus.set(fp, gizInput.checked);
-      this.backgroundStatus.set(fp, backgroundRow.value);
-    },
-
-    loadState(fp) {
-      orthInput.checked = this.orthStatus.get(fp) || false;
-      gizInput.checked = this.gizStatus.get(fp) || false;
-      backgroundRow.value = this.backgroundStatus.get(fp) || '#000000';
-
-      const randomEvent = new Event('change');
-      const randomInputEvent = new Event('input');
-      orthInput.dispatchEvent(randomEvent);
-      gizInput.dispatchEvent(randomEvent);
-      backgroundRow.dispatchEvent(randomInputEvent);
+    /** Show a view's `camera` settings and give them to the shared renderers
+     * (the controls' own handlers fire). Later changes are written into them. */
+    show(settings) {
+      state = settings;
+      orthInput.checked = settings.ortho;
+      gizInput.checked = settings.gizmo;
+      backgroundRow.value = settings.background;
+      orthInput.dispatchEvent(new Event('change'));
+      gizInput.dispatchEvent(new Event('change'));
+      backgroundRow.dispatchEvent(new Event('input'));
     },
   };
 }

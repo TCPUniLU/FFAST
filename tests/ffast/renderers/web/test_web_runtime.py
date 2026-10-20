@@ -2962,8 +2962,9 @@ async def test_web_rich_look_draws_chemistry_alive_ball_and_stick(ffast_web_serv
 
             # Atom size 0.5: the server halves its sizes; the balls halve too.
             await page.evaluate(
-                """() => { document.querySelector(".pane[data-pane='Display'] "
-                     + ".ctl-row[data-label='Atom size'] input").value = '0.5'; }""")
+                """() => { const input = document.querySelector(".pane[data-pane='Display'] "
+                     + ".ctl-row[data-label='Atom size'] input");
+                   input.value = '0.5'; input.dispatchEvent(new Event('change')); }""")
             await page.evaluate(
                 f"() => window.ffastApp.renderer.applyScene(({_BALL_AND_STICK_SCENE})(0.5))")
             half = await page.evaluate(_DRAWN_BALLS)

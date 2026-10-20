@@ -6,10 +6,12 @@
  * server-side (CREATE_SUBSET → _resolve_filter_indices), so the box ships the
  * raw tokens. The Extract pick tool fills the box by picking atoms. The pane
  * shows only where canExtractFrom allows it (parity with Qt's
- * AtomFilterPaneHiding).
+ * AtomFilterPaneHiding). The pane shows one view's `extract` settings (`show`)
+ * and writes into them.
  */
 
 import { createPane, textRow, buttonRow } from '../sidebar.js';
+import { defaultSettings } from '../view_settings.js';
 
 /** Whether Extract may cut an atom subset from a dataset (its REMOTE_DATASET_META):
  * a whole dataset or a frozen subset, whose frames stay put. Not a live subset,
@@ -35,7 +37,8 @@ export function createExtractPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Extract Subset');
   sidebarEl.appendChild(el);
 
-  const indices = textRow(body, 'Indices', '', () => {});
+  let state = defaultSettings().extract;   // the shown view's settings
+  const indices = textRow(body, 'Indices', '', (text) => { state.indices = text; });
   indices.placeholder = 'e.g. 0 1 2  or  C  -H';
 
   const hint = document.createElement('div');
@@ -59,10 +62,9 @@ export function createExtractPane(sidebarEl, callbacks) {
   extractBtn.title = 'Create a new atom-filtered dataset from these indices';
 
   return {
-    indicesStatus: new Map(),
     /** Reflect the current picked atom-id set into the box (pick tool fill). */
     setPickedIndices(ids) {
-      indices.value = (ids || []).join(' ');
+      indices.value = state.indices = (ids || []).join(' ');
     },
     /** Current box tokens (integers + element symbols). */
     getTokens() {
@@ -73,17 +75,14 @@ export function createExtractPane(sidebarEl, callbacks) {
       el.style.display = visible ? '' : 'none';
     },
 
-    saveState(fp) {
-      this.indicesStatus.set(fp, indices.value);
+    /** Show a view's `extract` settings; later changes are written into them. */
+    show(settings) {
+      state = settings;
+      indices.value = settings.indices;
     },
 
-    loadState(fp) {
-      indices.value = this.indicesStatus.get(fp) || '';
+    clearInput() {
+      indices.value = state.indices = '';
     },
-
-    clearInput(fp) {
-      this.indicesStatus.set(fp, '');
-      indices.value = '';
-    }
   };
 }
