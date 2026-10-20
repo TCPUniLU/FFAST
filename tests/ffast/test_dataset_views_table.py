@@ -216,5 +216,8 @@ def test_an_atom_subset_naming_an_atom_some_structure_lacks_is_refused():
     structures = _variable_atoms()
     parent = LoadingCoordinator._aseLoaderFor("variable.xyz", atomsList=structures)
     parent.initialise()
-    with pytest.raises(ValueError, match="atom 2 is missing from 1 of 6 structures"):
+    with pytest.raises(ValueError, match=(
+            r"^Atom 2 is missing from 1 of 6 structures\.\n\n"
+            r"Every structure must have the atoms you extract\. "
+            r"The smallest has 2 atoms, numbered 0 to 1\.$")):
         DatasetView.atomSubset(parent, np.array([0, 2]))

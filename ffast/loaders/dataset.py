@@ -819,9 +819,12 @@ class DatasetView(DatasetLoader):
         highest = int(np.max(atoms)) if np.size(atoms) else -1
         if counts.size and highest >= int(counts.min()):
             short = int(np.sum(counts <= highest))
+            smallest = int(counts.min())
+            size = (f"has {smallest} atoms, numbered 0 to {smallest - 1}" if smallest
+                    else "has no atoms")
             raise ValueError(
-                f"atom {highest} is missing from {short} of {counts.size} structures; "
-                "an atom subset must name atoms that every structure has")
+                f"Atom {highest} is missing from {short} of {counts.size} structures.\n\n"
+                f"Every structure must have the atoms you extract. The smallest {size}.")
 
     def _parentFrames(self):
         """Every parent frame this view holds, in the view's order."""

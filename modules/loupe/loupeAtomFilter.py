@@ -142,7 +142,14 @@ def addSettingsPane(UIHandler, loupe):
         if (idxs is None) or len(idxs) == 0:
             return
 
-        UIHandler.env.createAtomFilteredDataset(dataset, idxs)
+        # ADR 0058: an atom subset naming an atom some structure lacks is
+        # refused; say so instead of leaving only a console traceback.
+        try:
+            UIHandler.env.createAtomFilteredDataset(dataset, idxs)
+        except ValueError as exc:
+            from PySide6.QtWidgets import QMessageBox
+
+            QMessageBox.warning(UIHandler.window, "Cannot extract subset", str(exc))
 
     createButton = PushButton("Extract as Subset Dataset")
     createButton.setToolTip(
