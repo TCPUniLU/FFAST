@@ -141,14 +141,10 @@ def _metric_is_per_atom(metric_id):
 
 
 def _flat_to_config(flat_indices, dataset):
-    """Map flat force-component indices → configuration indices: variable datasets
-    use molecule_offsetsx3, uniform datasets divide by components-per-config."""
-    flat_indices = np.asarray(flat_indices)
-    if getattr(dataset, "isVariable", False):
-        offsets = np.asarray(dataset.molecule_offsets) * 3  # 3 components / atom
-        return np.unique(np.searchsorted(offsets[1:], flat_indices, side="right"))
-    n_atoms = dataset.getNAtoms()
-    return np.unique(flat_indices // (n_atoms * 3))
+    """Map flat force-component indices → configuration indices through the
+    dataset's offsets, on every kind (ADR 0058 step 6), as browser SUB does."""
+    from ffast.session.subbing import flat_to_frames
+    return flat_to_frames(flat_indices, offsets=dataset.getOffsets())
 
 
 # --------------------------------------------------------------------------- #
