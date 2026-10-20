@@ -1,5 +1,6 @@
 import numpy as np
 from ffast.metrics import metric, dims, inputs as I, units
+from ffast.metrics.segments import segmentMeans
 
 
 @metric(
@@ -76,6 +77,7 @@ def accel_mae(accel_difference, *, norm="l2"):
     id="ffast.accel_rmse",
     label="Acceleration RMSE (per frame)",
     inputs={"accel_mae": "ffast.accel_mae"},
+    optional_inputs=["offsets"],
     shape=(dims.N_frames,),
     unit=units.acceleration,
     tests=[
@@ -91,7 +93,9 @@ def accel_mae(accel_difference, *, norm="l2"):
         }
     ],
 )
-def accel_rmse(accel_mae):
+def accel_rmse(accel_mae, offsets=None):
+    if offsets is not None:
+        return np.sqrt(segmentMeans(np.ravel(accel_mae) ** 2, offsets))
     return np.sqrt(np.mean(accel_mae ** 2, axis=-1))
 
 

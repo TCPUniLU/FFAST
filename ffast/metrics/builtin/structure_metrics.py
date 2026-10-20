@@ -14,6 +14,7 @@ import numpy as np
 
 from ffast.chemistry import geometry
 from ffast.metrics import metric, dims, inputs as I, units
+from ffast.metrics.segments import segmentSums
 
 
 @metric(
@@ -69,18 +70,12 @@ def gyradius(positions, elements, offsets=None):
         return np.sqrt(s2 @ w)                         # (N,)
 
     if offsets is not None:
-        offs = np.asarray(offsets)
-        out = np.empty(len(offs) - 1, dtype=np.float64)
-        for i in range(len(offs) - 1):
-            r = R[offs[i]:offs[i + 1]]
-            zi = z[offs[i]:offs[i + 1]]
-            sw = np.sum(zi)
-            if sw == 0:
-                raise ValueError("gyradius: total atomic-number weight is zero")
-            com = np.sum(zi[:, None] * r, axis=0) / sw
-            s2 = np.sum((r - com) ** 2, axis=1)
-            out[i] = np.sqrt(np.sum(zi * s2) / sw)
-        return out
+        sw = segmentSums(z, offsets)
+        if np.any(sw == 0):
+            raise ValueError("gyradius: total atomic-number weight is zero")
+        com = segmentSums(z[:, None] * R, offsets) / sw[:, None]
+        s2 = np.sum((R - np.repeat(com, np.diff(np.asarray(offsets)), axis=0)) ** 2, axis=1)
+        return np.sqrt(segmentSums(z * s2, offsets) / sw)
 
     # single structure (n_atoms, 3) → scalar
     sw = np.sum(z)

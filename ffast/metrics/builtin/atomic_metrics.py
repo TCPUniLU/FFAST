@@ -2,6 +2,7 @@ import numpy as np
 from jaxtyping import Float
 
 from ffast.metrics import metric, units, inputs as I
+from ffast.metrics.segments import segmentSums
 from ffast.metrics.signature import Ref
 from ffast.metrics.transforms import _abs_kde
 
@@ -20,15 +21,12 @@ def _per_structure_element_mae(force_difference, elements, offsets, z_target):
     fd = np.asarray(force_difference)
     el = np.asarray(elements)
     if offsets is not None:
-        offs = np.asarray(offsets, dtype=np.intp)
-        out = []
-        for i in range(len(offs) - 1):
-            seg = fd[offs[i]:offs[i + 1]]
-            zseg = el[offs[i]:offs[i + 1]]
-            sel = zseg == z_target
-            if np.any(sel):
-                out.append(np.mean(np.abs(seg[sel])))
-        return np.asarray(out, dtype=np.float64)
+        # Frames without the element are left out, as before.
+        sel = (el == z_target).astype(np.float64)
+        abs_sum = segmentSums(np.abs(fd).sum(axis=1) * sel, offsets)
+        count = segmentSums(sel, offsets)
+        has = count > 0
+        return abs_sum[has] / (count[has] * fd.shape[1])
     if fd.ndim == 2:
         fd = fd[np.newaxis]
     sel = el == z_target
