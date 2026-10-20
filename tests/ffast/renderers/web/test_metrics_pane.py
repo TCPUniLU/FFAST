@@ -7,15 +7,24 @@ in a browser: check as you type, Fix, Try, Save, and a second window seeing it.
 import re
 import tomllib
 
+import ase.io
 import pytest
 from playwright.async_api import async_playwright, expect
 
 from ffast.protocol.rpc import pack
 
 from .test_web_runtime import (
+    _COMPARE_TOML,
+    _INDEPENDENT,
+    _RECORD_SENDS,
+    DATASET_PATH,
     _connect_headless_client,
+    _focus_3d,
+    _load_more,
     _open_analysis_tab,
     _open_app,
+    _open_compare,
+    _panel_control,
     _preload_dataset_and_prediction,
     _spawn_server,
     _wait_for_event,
@@ -315,5 +324,67 @@ async def test_a_panel_says_which_metric_is_missing(tmp_path):
                 await _open_analysis_tab(page, "Gone")
                 await expect(page.locator(".tabpanel.active .grid-slot .panel-msg")).to_have_text(
                     "Metric mine.gone is not on this server.")
+            finally:
+                await browser.close()
+
+
+async def test_the_pane_acts_on_the_focused_view_not_the_rails_dataset(tmp_path):
+    """ADR 0060 step 5: the rail is on A, an independent panel showing B is
+    focused. Try runs on B and says so; Colour atoms colours the panel's view;
+    a bad-frame link moves the panel (whose frame is its own), not the main view."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML)
+    second = tmp_path / "second.xyz"
+    ase.io.write(second, ase.io.read(DATASET_PATH, index=":30"), format="extxyz")
+    metrics_dir = tmp_path / "metrics"
+    cm = _spawn_server("--metrics-dir", str(metrics_dir), "--tabs-dir", str(tmp_path / "tabs"),
+                       "--config", str(config))
+    async with cm as (ws_port, web_port):
+        a_fp, _model_fp = await _preload_dataset_and_prediction(ws_port)
+        (other,) = await _load_more(
+            ws_port, {a_fp}, ("LOAD_DATASET", (str(second), "ase (auto)"), {}))
+        b_fp, b_name = other["args"][0], other["kwargs"]["name"]
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 900})
+            try:
+                await _open_compare(page, ws_port, web_port, a_fp)
+                await _focus_3d(page, 1)
+                await page.locator(_panel_control("Dataset")).select_option(b_fp)
+                await page.wait_for_function(f"(fp) => {_INDEPENDENT}.datasetFp === fp", arg=b_fp)
+                assert await page.evaluate("() => window.ffastApp._currentDatasetFp") == a_fp
+                await page.evaluate(_RECORD_SENDS)
+
+                pane = await _open_metrics_pane(page)
+                await _save_in_pane(pane, "user.force_len", "norm(", "reference.forces", ")")
+                await pane.get_by_role("button", name="Try", exact=True).click()
+                await expect(pane.locator(".mx-try-head")).to_contain_text(f"— on {b_name}")
+                sent = await page.evaluate("() => window.__sent")
+                tries = [kw for event, kw in sent if event == "TRY_METRIC"]
+                assert [kw["dataset_fp"] for kw in tries] == [b_fp]
+
+                await pane.get_by_role("button", name="Colour atoms by this").click()
+                await page.wait_for_function(
+                    """() => window.__sent.some(([event, kw]) => event === 'VIEW_COMMAND'
+                       && kw.type === 'SET_PARAMETER' && kw.parameter === 'source'
+                       && kw.value === 'metric:user.force_len')""")
+                sent = await page.evaluate("() => window.__sent")
+                colours = [kw["view_id"] for event, kw in sent
+                           if event == "VIEW_COMMAND" and kw.get("parameter") == "source"
+                           and kw.get("value") == "metric:user.force_len"]
+                assert colours and all(view_id.startswith("ind-") for view_id in colours)
+
+                # a bad-frame link moves the panel, whose frame is its own
+                await page.locator(_panel_control("Follow main view's frame", "input")).uncheck()
+                await pane.get_by_role("button", name="New metric").click()
+                await pane.get_by_label("Metric id").fill("user.bad")
+                await pane.get_by_label("Formula").fill("1 / (ref_E - ref_E)")
+                await pane.get_by_role("button", name=re.compile("^Fix")).click()
+                await pane.get_by_role("button", name="Try", exact=True).click()
+                link = pane.locator(".mx-try-bad .mx-link", has_text=re.compile("^1$"))
+                await expect(link).to_have_count(1)
+                await link.click()
+                await page.wait_for_function(f"() => {_INDEPENDENT}.frame === 1")
+                assert await page.evaluate("() => window.ffastApp._main.current.frame") == 0
             finally:
                 await browser.close()

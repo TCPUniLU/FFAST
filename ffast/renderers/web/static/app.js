@@ -123,7 +123,7 @@ export class FFastApp {
       retired: (view) => {
         if (view === this._focusedIndependent) this._switchFocusedView(null);
       },
-      chosen: () => { this._syncPanelSection(); this._syncSidebarTitle(); },
+      chosen: () => { this._syncPanelSection(); this._syncSidebarTitle(); this._panes?.metrics.contextChanged(); },
       focusedCamera: (cam) => this._panes?.camera.syncFromCamera(cam),
       frameShown: (view) => { if (this._playbackView() === view) this._syncPlayback(); },
       sceneAtoms: (view, atoms) => {
@@ -811,8 +811,10 @@ export class FFastApp {
 
     const metricsPane = createMetricsPane(sidebarEl, {
       ops: this._metricOps,
-      getContext: () => ({ datasetFp: this._currentDatasetFp, modelFp: this._currentModelFp }),
-      onGoToFrame: (frame) => this._setFrame(frame),
+      // The pane acts on the view the sidebar acts on (ADR 0060 section 3).
+      getContext: () => ({ datasetFp: this._focusedDatasetFp(), modelFp: this._focusedModelFp() }),
+      nameOf: ({ datasetFp, modelFp }) => this._pairName(datasetFp, modelFp),
+      onGoToFrame: (frame, { datasetFp, modelFp }) => this._onPlotPoint({ datasetFp, modelFp, frame }),
       onColourAtoms: (id) => this._colourAtomsBy(id),
       onPlot: (id) => this._plotMetric(id),
     });
@@ -1040,6 +1042,7 @@ export class FFastApp {
     this._syncSidebarTitle();
     this._syncPlayback();
     this._renderQuickStyles();
+    this._panes.metrics.contextChanged();   // its inputs are those of the view now shown
   }
 
   /** Give an independent panel its starting look as its settings, so the
@@ -2003,7 +2006,7 @@ export class FFastApp {
 
   /** "Colour atoms by this" (ADR 0057 rule 13): the main view's colouring. */
   _colourAtomsBy(id) {
-    if (!this._currentDatasetFp) { this._setStatus('Select a dataset to colour', 'error'); return; }
+    if (!this._focusedDatasetFp()) { this._setStatus('Select a dataset to colour', 'error'); return; }
     const why = this._needsControl();
     if (why) { this._setStatus(why, 'error'); return; }
     if (!this._panes.colorBy.chooseMetric(id))

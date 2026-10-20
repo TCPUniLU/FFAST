@@ -34,7 +34,8 @@ function el(tag, cls = '', text = '') {
  * @param {{
  *   ops: import('../metric_ops.js').MetricOps,
  *   getContext: () => {datasetFp: string|null, modelFp: string|null},
- *   onGoToFrame?: (frame: number) => void,
+ *   nameOf?: (context: {datasetFp: string|null, modelFp: string|null}) => string,
+ *   onGoToFrame?: (frame: number, context: {datasetFp: string|null, modelFp: string|null}) => void,
  *   onColourAtoms?: (metricId: string) => void,
  *   onPlot?: (metricId: string) => void,
  * }} callbacks
@@ -58,6 +59,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
   let message = { text: '', error: false };
   let tryResult = null;
   let tryProgress = null;
+  let tryContext = null;   // the data the shown Try ran on
   let exported = null;
   let filter = '';
   let deleteArmed = false;
@@ -401,7 +403,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
     }
     if (!tryResult) return;
     const r = tryResult;
-    tryEl.append(el('div', r.ok && !r.bad_count ? 'mx-try-head good' : 'mx-try-head bad', tryHeadline(r)));
+    tryEl.append(el('div', r.ok && !r.bad_count ? 'mx-try-head good' : 'mx-try-head bad', tryHeadline(r, callbacks.nameOf?.(tryContext) ?? '')));
     if (!r.ok || r.cancelled) return;
     const stats = el('div', 'mx-try-stats');
     for (const [k, v] of [['min', r.min], ['mean', r.mean], ['max', r.max]])
@@ -414,7 +416,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
         const a = el('button', 'mx-link', String(f));
         a.type = 'button';
         a.title = `Show frame ${f}`;
-        a.addEventListener('click', () => callbacks.onGoToFrame?.(f));
+        a.addEventListener('click', () => callbacks.onGoToFrame?.(f, tryContext));
         words.append(a, document.createTextNode(' '));
       }
       if (r.bad_count > r.bad_frames.length) words.append(document.createTextNode('…'));
@@ -610,6 +612,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
     if (ops.trying) { ops.cancelTry(); return; }
     const { datasetFp, modelFp } = context();
     if (!datasetFp) { setMessage('Select a dataset to try the formula on', true); return; }
+    tryContext = { datasetFp, modelFp };
     tryResult = null;
     tryProgress = { progress: 0, message: 'Starting…' };
     setMessage('');

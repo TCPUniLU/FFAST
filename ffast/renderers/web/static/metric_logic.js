@@ -209,12 +209,14 @@ export function formatStat(value) {
   return String(Number(value.toPrecision(6)));
 }
 
-/** The one line a finished Try opens with. */
-export function tryHeadline(r) {
+/** The one line a finished Try opens with; `name` is the data it ran on
+ * ('aspirin · MACE'), which stays true when the focus moves to another view. */
+export function tryHeadline(r, name = '') {
   if (r.cancelled) return 'Stopped';
   if (!r.ok) return r.error || 'Could not try the formula';
-  if (r.bad_count) return `${r.bad_count} bad value${r.bad_count === 1 ? '' : 's'} of ${r.count} — saving would fail the metric`;
-  return `${r.count} value${r.count === 1 ? '' : 's'}, all good`;
+  const on = name ? ` — on ${name}` : '';
+  if (r.bad_count) return `${r.bad_count} bad value${r.bad_count === 1 ? '' : 's'} of ${r.count} — saving would fail the metric${on}`;
+  return `${r.count} value${r.count === 1 ? '' : 's'}, all good${on}`;
 }
 
 /**
