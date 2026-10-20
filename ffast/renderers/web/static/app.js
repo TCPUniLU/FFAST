@@ -15,7 +15,7 @@ import { createCameraPane } from './panes/camera.js';
 import { createDisplayPane } from './panes/display.js';
 import { createBondsPane } from './panes/bonds.js';
 import { createForcesPane } from './panes/forces.js';
-import { createExtractPane } from './panes/extract.js';
+import { createExtractPane, canExtractFrom } from './panes/extract.js';
 import { createAlignPane } from './panes/align.js';
 import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
@@ -952,7 +952,7 @@ export class FFastApp {
       if (view.modelFp && !predictionApplies(this._models.get(view.modelFp), fp, this._datasets))
         view.modelFp = null;
       this._independent.open(view);
-      this._panes.extract.setVisible(!(this._datasets.get(fp)?.is_sub));
+      this._panes.extract.setVisible(canExtractFrom(this._datasets.get(fp)));
       this._syncPanelSection();
       this._syncSidebarTitle();
     });
@@ -1050,7 +1050,7 @@ export class FFastApp {
     } else if (this._lastOpenedDatasetFp) {
       this._restoreDatasetSettings(this._lastOpenedDatasetFp);
     }
-    this._panes.extract.setVisible(!(this._datasets.get(this._focusedDatasetFp())?.is_sub));
+    this._panes.extract.setVisible(canExtractFrom(this._datasets.get(this._focusedDatasetFp())));
     this._syncPanelSection();
     this._syncSidebarTitle();
     this._syncPlayback();
@@ -1625,9 +1625,8 @@ export class FFastApp {
       this._lastOpenedDatasetFp = this._currentDatasetFp;
       if (sidebarIsMain) this._restoreDatasetSettings(this._currentDatasetFp);
     }
-    // The Extract Subset pane is meaningless for datasets that are already
-    // subsets (Qt's AtomFilterPaneHiding).
-    if (sidebarIsMain) this._panes.extract.setVisible(!(this._datasets.get(this._currentDatasetFp)?.is_sub));
+    // Extract only where it makes a fixed dataset (Qt's AtomFilterPaneHiding).
+    if (sidebarIsMain) this._panes.extract.setVisible(canExtractFrom(this._datasets.get(this._currentDatasetFp)));
   }
 
   // ── per-dataset settings (issues 04/07/08): Qt's Settings.markAsPerDataset,

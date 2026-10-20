@@ -5,11 +5,19 @@
  * element-symbol tokens ("C" include, "-H" exclude). Tokens are resolved
  * server-side (CREATE_SUBSET → _resolve_filter_indices), so the box ships the
  * raw tokens. The Extract pick tool fills the box by picking atoms. The pane
- * auto-hides for datasets that are already subsets (parity with Qt's
+ * shows only where canExtractFrom allows it (parity with Qt's
  * AtomFilterPaneHiding).
  */
 
 import { createPane, textRow, buttonRow } from '../sidebar.js';
+
+/** Whether Extract may cut an atom subset from a dataset (its REMOTE_DATASET_META):
+ * a whole dataset or a frozen subset, whose frames stay put. Not a live subset,
+ * which changes with the zoom, nor an atom subset, which chose its atoms. Same
+ * rule as the desktop's DatasetLoader.canExtractAtoms. */
+export function canExtractFrom(meta) {
+  return !meta?.is_sub || !!meta.frozen;
+}
 
 /** Split "0 1 C -H" into ints (incl. "-3") and element-symbol strings. */
 export function parseExtractTokens(text) {

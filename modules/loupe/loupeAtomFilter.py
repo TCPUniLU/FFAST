@@ -42,9 +42,7 @@ class AtomFilterPaneHiding(CanvasProperty):
         loupe = self.canvas.loupe
         dataset = loupe.getSelectedDataset()
 
-        loupe.setSettingsPaneVisibility(
-            "EXTRACT SUBSET", not dataset.isSubDataset
-        )
+        loupe.setSettingsPaneVisibility("EXTRACT SUBSET", dataset.canExtractAtoms)
 
 
 def addSetting(UIHandler, loupe):

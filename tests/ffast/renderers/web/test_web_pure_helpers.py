@@ -462,6 +462,11 @@ CASES = {
         " {id:'b', shape:'N_frames'}]).map(m => m.id)"),
     "te_kind_roles": "te.KIND_ROLES",
 
+    # ── ex.canExtractFrom: the desktop's DatasetLoader.canExtractAtoms ──────
+    "ex_can_extract": (
+        "[ex.canExtractFrom({is_sub: false}), ex.canExtractFrom({is_sub: true, frozen: true}),"
+        " ex.canExtractFrom({is_sub: true, frozen: false}), ex.canExtractFrom(undefined)]"),
+
     "grad_matches_mapped": (
         "(() => {"
         "  const out = {};"
@@ -504,6 +509,7 @@ def results():
         f"  const fl = await import('{origin}/frame_links.js');\n"
         f"  const te = await import('{origin}/tab_edit.js');\n"
         f"  const ss = await import('{origin}/start_settings.js');\n"
+        f"  const ex = await import('{origin}/panes/extract.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -1136,6 +1142,11 @@ def test_te_new_tabs_from_scratch_or_a_copy(results):
 
 def test_te_the_builder_offers_metrics_of_the_shape_a_role_takes(results):
     assert results["te_kinds_offer_metrics_by_shape"] == ["a"]
+
+
+def test_ex_extract_is_offered_for_whole_datasets_and_frozen_subsets(results):
+    # A live subset changes with the zoom; an atom subset already chose its atoms.
+    assert results["ex_can_extract"] == [True, True, False, True]
 
 
 def test_te_kind_roles_match_the_desktop_panel_kinds(results):

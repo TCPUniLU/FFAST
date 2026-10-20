@@ -86,6 +86,13 @@ class DatasetLoader(EventClass):
     frozen = False
     isVariable = False  # Flag for uniform (False) vs variable-sized (True) datasets
 
+    @property
+    def canExtractAtoms(self):
+        """Whether Extract may cut an atom subset from this dataset: a whole
+        dataset or a frozen subset, whose frames stay put. Not a live subset,
+        which changes with the zoom, nor an atom subset, which chose its atoms."""
+        return not self.isSubDataset or self.frozen
+
     def __init__(self, path):
         self.path = path
 
