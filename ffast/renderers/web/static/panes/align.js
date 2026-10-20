@@ -119,12 +119,17 @@ export function createAlignPane(sidebarEl, callbacks) {
       kabschInput.checked = this.kabschStatus.get(fp) ?? false;
       heavyInput.checked = this.heavyOnlyStatus.get(fp) ?? true;
       atomAlignInput.checked = this.atomAlignStatus.get(fp) ?? false;
-      idxInput.value = this.idxInputStatus.get(fp) || '';
 
+      idxInput.value = this.idxInputStatus.get(fp) || '';
+      indices = this.indicesStatus.get(fp) || [];
+
+      if (indices.length !== 3) { //no need for reloading the selections since each new view deletes the picks
+        idxInput.value = '';
+        indices = [];
+      }
       kabsch = kabschInput.checked;
       heavyOnly = heavyInput.checked;
       atomAlign = atomAlignInput.checked;
-      indices = this.indicesStatus.get(fp) || [];
 
       _syncVisibility();
       _syncHint();
