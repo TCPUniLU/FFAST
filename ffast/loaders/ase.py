@@ -19,15 +19,14 @@ _RESERVED_ARRAY_KEYS = {"positions", "numbers", "momenta"}
 
 
 def isUniformAtomsList(atomsList, sampleSize=60):
-    """Decide whether every frame in ``atomsList`` is the same molecule.
+    """Decide whether every frame in ``atomsList`` has the same chemical formula.
 
-    The one rule that sets :class:`aseDatasetLoader`'s ``isVariable``, for
-    datasets and predictions alike. Uniform data shares one element list (its
-    fingerprint hashes frame 0's elements, its all-frames answers are stacked
-    arrays), so "uniform" means same *composition*: comparing atom counts
-    alone would accept frames that share a count but not their elements.
-    Hence chemical formulas, which also keep the fingerprints files had before
-    the two ASE loaders merged (ADR 0058, decision A).
+    The rule that chooses :class:`aseDatasetLoader`'s fingerprint formula, for
+    datasets and predictions alike: frame 0's elements only when the formulas
+    agree, every frame's otherwise. It keeps the fingerprints files had before
+    the two ASE loaders merged (ADR 0058, decision A). It no longer sets
+    ``isVariable``, which asks for the same atoms in the same order in every
+    frame (ADR 0058 step 6).
 
     Full scans are avoided: ``atomsList`` is routinely a lazy ``AtomsList`` /
     ``Trajectory`` where materialising every frame costs a re-read of the whole
@@ -148,8 +147,8 @@ def available_field_keys(atomsList):
 class aseDatasetLoader(VariableDatasetLoader):
     """The one loader for ASE-readable files (ADR 0058, step 3).
 
-    Uniform (every frame the same molecule) or variable is decided from the
-    frames by isUniformAtomsList and kept in ``isVariable``. One frame is read
+    Uniform (every frame the same atoms in the same order) or variable is
+    decided from the frames and kept in ``isVariable``. One frame is read
     from the file on request; all-frames arrays are joined on the first
     request and kept. The getAll* methods answer the same way on both kinds;
     the older no-argument calls keep each kind's shape until their last
@@ -211,12 +210,20 @@ class aseDatasetLoader(VariableDatasetLoader):
             self._force_key = force_keys[0] if force_keys else None
 
         # Only what one frame cannot tell is kept: where each frame's atoms
-        # start, and whether every frame has forces and energies (ADR 0058,
-        # decision B). Positions and forces are read per frame or joined later.
+        # start, whether every frame has forces and energies (ADR 0058,
+        # decision B), and whether every frame lists the same atoms in the same
+        # order. Positions and forces are read per frame or joined later.
         counts = []
         forces_missing = energies_missing = False
+        first, same_atoms = None, True
         for atoms in self.atomsList:
             counts.append(len(atoms))
+            if same_atoms:
+                numbers = atoms.get_atomic_numbers()
+                if first is None:
+                    first = numbers
+                elif not np.array_equal(numbers, first):
+                    same_atoms = False
             if not forces_missing and self._readForces(atoms) is None:
                 forces_missing = True
             if not energies_missing and self._readEnergy(atoms) is None:
@@ -225,12 +232,14 @@ class aseDatasetLoader(VariableDatasetLoader):
         self._has_forces = not forces_missing
         self._has_energies = not energies_missing
 
-        # Uniform or variable is decided by the data, by the same rule that
-        # chose this loader (isUniformAtomsList). Until the last callers of the
-        # older no-argument calls move (ADR 0058, steps 4 and 6), the two kinds
-        # answer them in different shapes: uniform as (frames, atoms, ...) arrays, variable as
-        # lists of per-frame arrays.
-        self.isVariable = not isUniformAtomsList(self.atomsList)
+        # Uniform means every frame lists the same atoms in the same order
+        # (decided 2026-10-20, ADR 0058 step 6). It sets the shape of cached
+        # predictions and of what the Qt proxy receives: (frames, atoms, ...)
+        # arrays and one element list, or per-frame lists. The fingerprint
+        # keeps its own rule, isUniformAtomsList, so saved sessions and caches
+        # still match (ADR 0058 section 3).
+        self.isVariable = not same_atoms
+        self._fingerprintOneFrameOfElements = isUniformAtomsList(self.atomsList)
 
         # Store lattice info if present
         if hasattr(self.atomsList[0], "cell"):
@@ -272,7 +281,7 @@ class aseDatasetLoader(VariableDatasetLoader):
         forces_missing = energies_missing = False
 
         for i, atoms in enumerate(self.atomsList):
-            if self.isVariable or i == 0:
+            if i == 0 or not self._fingerprintOneFrameOfElements:
                 z_hash.update(np.ascontiguousarray(atoms.get_atomic_numbers()))
             r_hash.update(np.ascontiguousarray(atoms.get_positions()))
             if not forces_missing:
