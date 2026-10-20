@@ -41,6 +41,9 @@ class _Dataset:
     def getForces(self, indices=None):
         return self._f
 
+    def getAllEnergies(self):
+        return self._e
+
     def getElements(self, index=None):
         return np.array([6, 1], dtype=np.int64)
 

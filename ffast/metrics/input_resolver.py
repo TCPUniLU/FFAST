@@ -111,7 +111,7 @@ class InputResolver:
         """Map one symbolic ref to a full-dataset array, or ``None`` if unavailable."""
         try:
             if ref == "reference.energies":
-                return _flatten(dataset.getEnergies())
+                return dataset.getAllEnergies()
             if ref == "reference.forces":
                 return _flatten(dataset.getForces())
             if ref == "reference.positions":
@@ -192,15 +192,13 @@ class InputResolver:
     def _n_atoms(self, dataset):
         """Per-structure atom count (the reserved Expression Variable, ADR 0042).
 
-        Variable datasets: ``np.diff(molecule_offsets)``. Uniform datasets: the
-        constant per-frame count repeated over all frames — a ``(N_frames,)``
-        array so per-atom normalisation lines up with per-structure quantities.
+        ``np.diff`` of the dataset's offsets: one count per frame, whether or
+        not the frames differ in size, so per-atom normalisation lines up with
+        per-structure quantities.
         """
         if dataset is None:
             return None
-        if getattr(dataset, "isVariable", False):
-            return np.diff(np.asarray(dataset.molecule_offsets))
-        return np.full(int(dataset.getN()), int(dataset.getNAtoms()), dtype=np.int64)
+        return np.diff(np.asarray(dataset.getOffsets()))
 
     # ── metric input assembly ──────────────────────────────────────────────
 

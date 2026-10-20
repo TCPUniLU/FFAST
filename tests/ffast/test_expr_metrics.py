@@ -306,11 +306,8 @@ def test_resolver_n_atoms_uniform():
     from ffast.metrics.input_resolver import InputResolver
 
     class _Uniform:
-        isVariable = False
-        def getN(self):
-            return 4
-        def getNAtoms(self):
-            return 3
+        def getOffsets(self):
+            return np.array([0, 3, 6, 9, 12])
 
     out = InputResolver(env=None).resolve("n_atoms", dataset=_Uniform())
     np.testing.assert_array_equal(out, [3, 3, 3, 3])
@@ -320,8 +317,8 @@ def test_resolver_n_atoms_variable():
     from ffast.metrics.input_resolver import InputResolver
 
     class _Variable:
-        isVariable = True
-        molecule_offsets = np.array([0, 2, 5, 6])
+        def getOffsets(self):
+            return np.array([0, 2, 5, 6])
 
     out = InputResolver(env=None).resolve("n_atoms", dataset=_Variable())
     np.testing.assert_array_equal(out, [2, 3, 1])  # np.diff(offsets)
