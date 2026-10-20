@@ -122,3 +122,11 @@ def test_missing_results_raise_instead_of_being_filled_in(formulas):
     sub = _frame_subset(dataset)
     with pytest.raises(RuntimeError):
         sub.getAllForces()
+
+
+def test_each_frame_answers_its_own_elements_even_when_atoms_are_listed_in_another_order():
+    frames = [Atoms("H2O", positions=np.zeros((3, 3))), Atoms("OH2", positions=np.zeros((3, 3)))]
+    dataset = aseDatasetLoader("x.xyz", atomsList=frames)
+    assert dataset.getElements(0).tolist() == [1, 1, 8]
+    assert dataset.getElements(1).tolist() == [8, 1, 1]
+    assert dataset.getAllElements().tolist() == [1, 1, 8, 8, 1, 1]

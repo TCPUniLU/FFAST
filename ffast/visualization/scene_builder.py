@@ -111,11 +111,7 @@ def build_scene(
 
     # Elements
     try:
-        is_variable = getattr(ds, "isVariable", False)
-        if is_variable:
-            z = np.asarray(ds.getElements(idx), dtype=np.int64)
-        else:
-            z = np.asarray(ds.getElements(), dtype=np.int64)
+        z = np.asarray(ds.getElements(idx), dtype=np.int64)
     except Exception as exc:
         logger.warning("scene_builder: getElements failed: %s", exc)
         logger.warning("As a result, 'Only show forces' option may not work properly.")
