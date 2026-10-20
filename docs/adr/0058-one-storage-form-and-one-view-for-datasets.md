@@ -232,5 +232,25 @@ One commit each, so each can be reverted alone.
    Each is a decision about a contract, not a rename. Step 6 cannot delete the
    `isVariable` branches until they are made.
 5. One view replaces the three derived classes. Qt subsets break here.
+   As built: `DatasetView` (`ffast/loaders/dataset.py`) holds a parent, a
+   frame map (`frames`) and an atom mask (`atoms`), plus `live` for a subset
+   that follows a zoom. `DatasetView.subset`, `.frozenSubset` and
+   `.atomSubset` make the three states. Their fingerprint formulas are static
+   methods, so callers ask for a fingerprint without building a view, and the
+   golden fingerprints are unchanged. `indices`, which held frames in one class
+   and atoms in the other, is gone: the data layer reads `frames` or `atoms`.
+   Decided 2026-10-20: an atom subset that names an atom some structure lacks
+   is refused at creation, since atoms are picked on frame 0. The check reads
+   only the offsets. Each frame of an atom subset now has its own elements, and
+   a view follows its parent's kind, so an atom subset of a variable file
+   exports frame by frame (it wrote frame 0's elements into every frame
+   before). Bonds of an atom subset are the parent frame's bonds between its
+   atoms. All 17 expected failures from step 1 pass;
+   `test_subset_known_gaps.py` is gone, its cases now asserted in
+   `test_dataset_frame_signatures.py`. The table's atom mask is `[0, 1]`,
+   which every test structure has. Qt: a subset and an atom subset over the
+   Qt client's proxy (`CachedRemoteDataset`), uniform and variable, answer
+   every per-frame and all-frames question in a script; the desktop GUI was
+   not tried. Issue #22 may need less than expected.
 6. The caller branches on `isVariable` are deleted.
 7. sGDML fills the same storage.

@@ -63,15 +63,16 @@ A loaded set of configurations: positions, energies, forces, atomic numbers.
 Identified by a fingerprint, which is an MD5 of the contents. Can be strided at
 load time (`slice_num`).
 
-**SubDataset** is a view onto a parent restricted to some indices, created from
-the region a plot shows when you tick its **Sub** box; it follows the plot's
-zoom, and unticking hides it. It is also how a tractable slice of a large remote
-dataset reaches the local viewer. **FrozenSubDataset** is one whose frames are
-fixed: it no longer follows the zoom, but still reads them through its parent.
-An **atom subset** (`AtomFilteredDataset`) keeps every frame but only some of
-its atoms. Deleting a dataset deletes everything cut from it (subsets, frozen
-subsets, atom subsets); to keep some of its frames, export them to a file and
-load that.
+Everything cut from a dataset is one class, `DatasetView`: a parent, a frame
+map and an atom mask (ADR 0058). A **subset** is a view restricted to some
+frames, created from the region a plot shows when you tick its **Sub** box; it
+follows the plot's zoom, and unticking hides it. It is also how a tractable
+slice of a large remote dataset reaches the local viewer. A **frozen subset**
+keeps its frames: it no longer follows the zoom, but still reads them through
+its parent. An **atom subset** keeps every frame but only some of its atoms;
+it is refused when a structure lacks one of those atoms. A view of a view is
+a subset of a subset. Deleting a dataset deletes everything cut from it; to
+keep some of its frames, export them to a file and load that.
 
 ### Model, GhostModel
 
