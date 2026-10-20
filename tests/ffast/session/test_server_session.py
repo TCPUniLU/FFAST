@@ -299,6 +299,19 @@ def test_dispatch_declare_subset_without_model_uses_none():
     assert mdl is None and idx == [0, 1] and name == "Subset"
 
 
+def test_dispatch_declare_subset_with_an_unknown_model_is_dropped():
+    """A model only the window holds (the zero model) is not swapped for no
+    model: that subset would have another fingerprint than the window's."""
+    env = _FakeEnv(datasets={"ds1": _FakeFrames()})
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("DECLARE_SUBSET", ["ds1", [0, 1]], {"model_fp": "zero"})
+
+    _run(scenario())
+    assert env.declare_subset_calls == []
+
+
 def test_dispatch_declare_subset_empty_indices_is_dropped():
     parent = _FakeFrames()
     env = _FakeEnv(datasets={"ds1": parent})

@@ -103,6 +103,28 @@ class ConnectionManager:
             return None, None
         return self.serverConnection, self._event_loop
 
+    def tellServer(self, event, *args, **kwargs):
+        """Repeat a change this window made on the server, so the server's
+        views (the 3D view) know the same objects. Thread-safe; returns the
+        send's future. No-op without a live session, which is always so on
+        the server's own Environment.
+
+        On the loop's own thread the send starts at once, as the 3D view's
+        own sends do, so messages leave in the order they were made: a zoom's
+        new frames before the scene request that follows them.
+        """
+        session, loop = self.active_session()
+        if session is None:
+            return None
+        coro = session.push_event(event, *args, **kwargs)
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            return loop.create_task(coro)
+        return asyncio.run_coroutine_threadsafe(coro, loop)
+
     # ── local-server push ─────────────────────────────────────────────────
     def _sync_to_local_server(self, event, *args, **kwargs):
         """Thread-safe push to the managed local server.

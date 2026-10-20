@@ -529,6 +529,11 @@ class ServerSession:
             return
         model_fp = kwargs.get("model_fp")
         model = self.env.models.get(model_fp) if model_fp else None
+        if model_fp and model is None:
+            # A model only the window holds (the zero model): a subset without
+            # it would have another fingerprint than the window's.
+            logger.warning("DECLARE_SUBSET: model %r not found", model_fp)
+            return
         name = kwargs.get("name") or "Subset"
         existing = self.env.datasets.get(DatasetView.subsetFingerprint(parent, model, name))
 

@@ -111,7 +111,8 @@ def test_subset_of_a_variable_parent_packs_its_arrays():
 def _freeze(view):
     added = []
     env = types.SimpleNamespace(datasets=types.SimpleNamespace(
-        get=lambda fp: view if fp == "x" else None, add=added.append))
+        get=lambda fp: view if fp == "x" else None, add=added.append),
+        remote=types.SimpleNamespace(tellServer=lambda *a, **k: None))
     Environment.freezeSubDataset(env, "x")
     return added
 

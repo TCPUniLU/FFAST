@@ -235,6 +235,19 @@ class Environment(EventClass):
         """Create or refresh a logical subset view over a parent dataset."""
         from ffast.loaders.dataset import DatasetView  # ADR 0047 Phase 5c
 
+        # The server builds the same subset, so its 3D view can draw it. Told
+        # first: moving the subset below makes the 3D view ask the server for
+        # it, and the server must have the new frames by then. With no frames
+        # the server keeps the ones it had, so there is nothing to say.
+        if idx is not None and len(idx):
+            self.remote.tellServer(
+                control.DECLARE_SUBSET,
+                parent_fingerprint=parent.fingerprint,
+                indices=[int(i) for i in idx],
+                model_fp=None if model is None else model.fingerprint,
+                name=subName,
+            )
+
         # check if already exists
         fp = DatasetView.subsetFingerprint(parent, model, subName)
         sub = self.datasets.get(fp)
@@ -272,10 +285,13 @@ class Environment(EventClass):
         )
         sub.initialise()
         self.datasets.add(sub)
+        self.remote.tellServer(control.FREEZE_SUBSET, fingerprint=fingerprint)
 
     def createAtomFilteredDataset(self, dataset, idxs):
         """Build a per-atom filtered dataset view for atom-level analyses."""
         from ffast.loaders.dataset import DatasetView  # ADR 0047 Phase 5c
+        # Sorted, as the server sorts them: the same atoms, the same fingerprint.
+        idxs = sorted(int(i) for i in idxs)
         fp = DatasetView.atomSubsetFingerprint(dataset, idxs)
         sub = self.datasets.get(fp)
 
@@ -285,6 +301,9 @@ class Environment(EventClass):
         sub = DatasetView.atomSubset(dataset, idxs)
         sub.initialise()
         self.datasets.add(sub)
+        self.remote.tellServer(
+            control.CREATE_SUBSET, parent_fingerprint=dataset.fingerprint, indices=idxs
+        )
 
     #############
     ## OBJECTS (MODELS & DATASETS)
