@@ -83,3 +83,22 @@ def test_kinds_without_frames_cannot_make_a_subset():
     with pytest.raises(ValueError, match="table"):
         frames_in_view({"kind": "table", "metrics": {}, "x": [0, 1]}, n_frames=4,
                        value_of=lambda *_: None, registry=default_registry)
+
+
+@pytest.mark.parametrize("formulas, box, expected", [
+    (["H2O"] * 4, [10, 20], [1, 2]),                   # 9 components per frame
+    (["H2O", "CH4", "NH3", "C2H6"], [20, 30], [1, 2]),  # 9, 15, 12, 24: frames start at 0, 9, 24, 36, 60
+    (["H2O", "CH4", "NH3", "C2H6"], [36, 36], [3]),     # a component on a frame's first row
+])
+def test_a_per_atom_scatter_maps_force_components_to_frames_on_any_dataset(formulas, box, expected):
+    from ase import Atoms
+    from ffast.loaders.ase import aseDatasetLoader
+
+    frames = [Atoms(f, positions=np.zeros((len(Atoms(f)), 3))) for f in formulas]
+    dataset = aseDatasetLoader("x.xyz", atomsList=frames)
+    components = np.arange(int(dataset.getOffsets()[-1]) * 3, dtype=float)
+
+    view = {"kind": "scatter", "metrics": {"x": "ffast.accel_difference", "y": "ffast.accel_difference"},
+            "x": box, "y": box}
+    assert frames_in_view(view, n_frames=len(frames), value_of=lambda *_: components,
+                          registry=default_registry, dataset=dataset) == expected

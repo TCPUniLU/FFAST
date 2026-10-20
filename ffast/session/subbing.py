@@ -112,9 +112,7 @@ def frames_in_view(view: dict, *, n_frames: int, value_of, registry, dataset=Non
             return []
         flat = points_in_box(xs, ys, x_range, y_range)
         if _per_atom(registry, metrics["x"]):
-            if getattr(dataset, "isVariable", False):
-                return flat_to_frames(flat, offsets=dataset.molecule_offsets).tolist()
-            return flat_to_frames(flat, n_atoms=dataset.getNAtoms()).tolist()
+            return flat_to_frames(flat, offsets=dataset.getOffsets()).tolist()
         return np.unique(flat).tolist()
 
     if kind == "density":
