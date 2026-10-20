@@ -430,6 +430,13 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         self._has_forces = not forces_missing
         self._has_energies = not energies_missing
 
+        # Uniform or variable is decided by the data, by the same rule that
+        # chose this loader (isUniformAtomsList). Until step 4 moves callers to
+        # one meaning per call, the two kinds answer all-frames questions in
+        # different shapes: uniform as (frames, atoms, ...) arrays, variable as
+        # lists of per-frame arrays.
+        self.isVariable = not isUniformAtomsList(self.atomsList)
+
         # Store lattice info if present
         if hasattr(self.atomsList[0], "cell"):
             self.lattice = [atoms.get_cell() for atoms in self.atomsList]
@@ -531,24 +538,40 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         return self._joinedArrays
 
     # One frame is read from the file (ADR 0058, decision B); all or several
-    # frames come from the joined arrays above.
+    # frames come from the joined arrays above, in the shape of the kind.
+
+    def _uniformFrames(self, flat, indices):
+        """A uniform dataset's joined per-atom array as (frames, atoms, 3),
+        for all frames or the selected ones. A copy, as the uniform loader
+        always returned a fresh array: callers may change it in place."""
+        frames = flat.reshape(self.N, -1, *flat.shape[1:])
+        if indices is None:
+            return frames.copy()
+        return frames[np.asarray(indices)]
 
     def getCoordinates(self, indices=None):
         if isOneFrame(indices):
             return self.atomsList[indices].get_positions()
-        return super().getCoordinates(indices)
+        if self.isVariable:
+            return super().getCoordinates(indices)
+        return self._uniformFrames(self.R_flat, indices)
 
     def getElements(self, index=None):
         if isOneFrame(index):
             return self.atomsList[index].get_atomic_numbers()
-        return super().getElements(index)
+        if self.isVariable:
+            return super().getElements(index)
+        # Uniform: callers expect one structure's elements, shared by all.
+        return self.atomsList[0].get_atomic_numbers()
 
     def getForces(self, indices=None):
+        if not self._has_forces:
+            raise RuntimeError("Forces are not available for this dataset.")
         if isOneFrame(indices):
-            if not self._has_forces:
-                raise RuntimeError("Forces are not available for this dataset.")
             return self._readForces(self.atomsList[indices])
-        return super().getForces(indices)
+        if self.isVariable:
+            return super().getForces(indices)
+        return self._uniformFrames(self.F_flat, indices)
 
     def getEnergies(self, indices=None):
         if isOneFrame(indices):
@@ -605,7 +628,7 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         return read_frame_field(self.atomsList, key, indices=indices)
 
     def getAtomField(self, key, indices=None):
-        return read_atom_field(self.atomsList, key, variable=True, indices=indices)
+        return read_atom_field(self.atomsList, key, variable=self.isVariable, indices=indices)
 
     def availableFieldKeys(self):
         return available_field_keys(self.atomsList)
