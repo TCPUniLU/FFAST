@@ -102,9 +102,10 @@ def test_frozen_subset_fingerprint_depends_on_its_frames():
     b = _initialised(FrozenSubDataset(parent, None, np.array([1, 2, 4]), "S"))
     assert a.fingerprint != b.fingerprint
 
-@pytest.mark.xfail(raises=AssertionError, strict=True,
-                   reason="the uniform loader uses frame 0's elements for every frame")
 def test_frame_with_reordered_atoms_reports_its_own_elements():
+    """The old uniform loader gave frame 0's elements for every frame; the
+    merged loader reads each frame's own (ADR 0058 step 3). The fingerprint
+    above is unchanged: it still hashes frame 0's elements (decision A)."""
     dataset = _initialised(_same_formula_different_order())
     np.testing.assert_array_equal(dataset.getElements(1), [8, 1, 1])
 

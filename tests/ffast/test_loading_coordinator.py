@@ -716,7 +716,7 @@ def test_aseLoaderFor_picks_uniform_for_identical_frames():
     frames = [_frame("CH4", energy=-1.0, seed=i) for i in range(4)]
     loader = LoadingCoordinator._aseLoaderFor(
         "mem.extxyz", frames, energy_key="ref_energy", force_key="ref_forces")
-    assert isinstance(loader, aseDatasetLoader)
+    assert loader.isVariable is False
     assert loader.getEnergies().shape == (4,)
 
 
@@ -724,7 +724,7 @@ def test_aseLoaderFor_picks_variable_for_differing_atom_counts():
     frames = [_frame("CH4", energy=-1.0), _frame("C2H6", energy=-2.0)]
     loader = LoadingCoordinator._aseLoaderFor(
         "mem.extxyz", frames, energy_key="ref_energy", force_key="ref_forces")
-    assert isinstance(loader, VariableASEDatasetLoader)
+    assert loader.isVariable is True
 
 
 def test_aseLoaderFor_picks_variable_for_same_count_different_elements():
@@ -737,7 +737,7 @@ def test_aseLoaderFor_picks_variable_for_same_count_different_elements():
     frames = [_frame("CH4", energy=-1.0), _frame("SiH4", energy=-2.0)]
     loader = LoadingCoordinator._aseLoaderFor(
         "mem.extxyz", frames, energy_key="ref_energy", force_key="ref_forces")
-    assert isinstance(loader, VariableASEDatasetLoader)
+    assert loader.isVariable is True
 
 
 def test_aseLoaderFor_handles_a_two_frame_file():
@@ -745,7 +745,7 @@ def test_aseLoaderFor_handles_a_two_frame_file():
     frames = [_frame("CH4", energy=-1.0, seed=i) for i in range(2)]
     loader = LoadingCoordinator._aseLoaderFor(
         "mem.extxyz", frames, energy_key="ref_energy", force_key="ref_forces")
-    assert isinstance(loader, aseDatasetLoader)
+    assert loader.isVariable is False
     assert loader.getEnergies().shape == (2,)
 
 

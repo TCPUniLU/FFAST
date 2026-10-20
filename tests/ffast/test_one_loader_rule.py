@@ -13,7 +13,7 @@ import ase.io
 import numpy as np
 from ase import Atoms
 
-from ffast.loaders.ase import aseDatasetLoader, isUniformAtomsList
+from ffast.loaders.ase import isUniformAtomsList
 from ffast.plugins.loaders.ase import loadData
 
 N_FRAMES = 100
@@ -41,4 +41,4 @@ def test_dataset_opening_classifies_a_file_as_the_shared_rule_does_every_time(tm
 
     for _ in range(20):
         dataset, _ = open_dataset(str(path), show_dialog=False)
-        assert isinstance(dataset, aseDatasetLoader) == expected_uniform
+        assert dataset.isVariable is (not expected_uniform)

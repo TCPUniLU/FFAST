@@ -12,7 +12,7 @@ import ase.io
 from ase.io.trajectory import Trajectory
 
 from ffast.core.data_types import AtomsList
-from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader, isUniformAtomsList
+from ffast.loaders.ase import VariableASEDatasetLoader
 
 logger = logging.getLogger("FFAST")
 
@@ -51,16 +51,11 @@ def loadData(env):
             else:
                 atomsList = ase.io.read(path, index=slice(0, None, slice_num))
 
-            # Uniform or variable: the same fixed-sample rule predictions use, so
-            # a file is classified the same way on every load (ADR 0058).
-            fixed_or_variable = isUniformAtomsList(atomsList)
             # Handle key selection first (if dialog needed)
             if show_dialog and (selected_energy_key is None or selected_force_key is None):
-                # Create temporary loader just to detect keys and show dialog
-                if fixed_or_variable:
-                    temp_loader = aseDatasetLoader(path, atomsList=atomsList)
-                else:
-                    temp_loader = VariableASEDatasetLoader(path, atomsList=atomsList)
+                # A temporary loader on the first frame, just to list the energy
+                # and force keys (read from frame 0) and show the dialog.
+                temp_loader = VariableASEDatasetLoader(path, atomsList=[atomsList[0]])
 
                 # Check if multiple keys exist
                 energy_keys = temp_loader.EneregyKeys()
@@ -78,27 +73,18 @@ def loadData(env):
                     selected_force_key = selection['force_ref']
                     prediction_keys = selection['predictions']
 
-            # Create loader with selected keys passed to constructor
-            if fixed_or_variable:
-                # Uniform dataset
-                logger.info(f"Loading uniform ASE dataset: {len(atomsList)} molecules, {len(atomsList[0])} atoms each")
-                loader = aseDatasetLoader(
-                    path,
-                    atomsList=atomsList,
-                    selected_energy_key=selected_energy_key,
-                    selected_force_key=selected_force_key
-                )
-            else:
-                # Variable dataset
-                logger.info(
-                    f"Loading variable ASE dataset: {len(atomsList)} molecules.")
-                loader = VariableASEDatasetLoader(
-                    path,
-                    atomsList=atomsList,
-                    selected_energy_key=selected_energy_key,
-                    selected_force_key=selected_force_key
-                )
-
+            # One loader for every ASE file; it decides uniform or variable from
+            # the frames itself, by the fixed-sample rule (ADR 0058).
+            loader = VariableASEDatasetLoader(
+                path,
+                atomsList=atomsList,
+                selected_energy_key=selected_energy_key,
+                selected_force_key=selected_force_key
+            )
+            logger.info(
+                "Loading %s ASE dataset: %d molecules",
+                "variable" if loader.isVariable else "uniform", len(atomsList),
+            )
             return loader, prediction_keys or []
 
     env.initialiseDatasetType(SmartASELoader())

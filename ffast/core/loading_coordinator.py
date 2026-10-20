@@ -345,28 +345,22 @@ class LoadingCoordinator:
     #############
 
     @staticmethod
-    def _aseLoaderFor(path, atomsList, *, energy_key=None, force_key=None, uniform=None):
-        """Build the ASE loader flavour ``atomsList``'s homogeneity calls for.
+    def _aseLoaderFor(path, atomsList, *, energy_key=None, force_key=None):
+        """Build the ASE loader for ``atomsList``. There is one; it decides
+        uniform or variable from the frames itself (ADR 0058)."""
+        from ffast.loaders.ase import VariableASEDatasetLoader
 
-        ``uniform`` lets a caller reuse an already-made decision — it is
-        loop-invariant when several prediction columns are read off one
-        ``atomsList``, and deciding it walks a sample of the frames.
-        """
-        from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader, isUniformAtomsList
-
-        if uniform is None:
-            uniform = isUniformAtomsList(atomsList)
-        loaderClass = aseDatasetLoader if uniform else VariableASEDatasetLoader
-        logger.info(
-            "Loading prediction as %s ASE dataset: %d molecules",
-            "uniform" if uniform else "variable", len(atomsList),
-        )
-        return loaderClass(
+        loader = VariableASEDatasetLoader(
             path,
             atomsList=atomsList,
             selected_energy_key=energy_key,
             selected_force_key=force_key,
         )
+        logger.info(
+            "Loading prediction as %s ASE dataset: %d molecules",
+            "variable" if loader.isVariable else "uniform", len(atomsList),
+        )
+        return loader
 
     @staticmethod
     def _predictionMatchesDataset(E, dataset, name):
@@ -609,16 +603,11 @@ class LoadingCoordinator:
             import ase.io
             atomsList = ase.io.read(path, index=":")
 
-        # Loop-invariant: every column is read off this one atomsList.
-        from ffast.loaders.ase import isUniformAtomsList
-        is_uniform = isUniformAtomsList(atomsList)
-
         for energy_key, force_key, model_name in prediction_keys:
             try:
                 temp_loader = self._aseLoaderFor(
                     path, atomsList,
                     energy_key=energy_key, force_key=force_key,
-                    uniform=is_uniform,
                 )
 
                 E = _resultOrNone(temp_loader.getEnergies)
