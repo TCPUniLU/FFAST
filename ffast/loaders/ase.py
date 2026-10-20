@@ -487,7 +487,8 @@ class aseDatasetLoader(VariableDatasetLoader):
     @staticmethod
     def saveDataset(dataset, path, format=None, taskID=None):
         """Save any dataset (file, subset or atom subset) to an ASE format,
-        uniform or variable by the dataset's own ``isVariable``."""
+        frame by frame with each frame's own elements, writing the energies
+        and forces it has (ADR 0058 step 6)."""
         from ase import Atoms
         from ase.calculators.calculator import Calculator
 
@@ -495,29 +496,25 @@ class aseDatasetLoader(VariableDatasetLoader):
             def __init__(self):
                 pass
 
+        has_forces = dataset.hasForces()
+        try:
+            has_energies = dataset.getN() > 0 and dataset.getEnergies(0) is not None
+        except RuntimeError:
+            has_energies = False
+
         atoms = []
-        if not dataset.isVariable:
-            # One element list shared by every frame.
-            R, F = dataset.getCoordinates(), dataset.getForces()
-            E, zStr = dataset.getEnergies(), dataset.getElementsName()
-            for i in range(R.shape[0]):
-                atom = Atoms(positions=R[i], symbols=zStr)
-                atom.calc = FakeCalc()
-                atom.calc.results = {"forces": F[i], "energy": E[i]}
-                atoms.append(atom)
-            ase.io.write(path, atoms, format=format)
-            return
-
         for i in range(dataset.getN()):
-            r = dataset.getCoordinates(i)  # (n_atoms_i, 3)
-            f = dataset.getForces(i)  # (n_atoms_i, 3)
-            e = dataset.getEnergies(i)  # scalar
-            z = dataset.getElements(i)  # (n_atoms_i,)
-            zStr = [dataset.zIntToZStr[x] for x in z]
-
-            atom = Atoms(positions=r, symbols=zStr)
-            atom.calc = FakeCalc()
-            atom.calc.results = {"forces": f, "energy": e}
+            z = dataset.getElements(i)
+            atom = Atoms(positions=dataset.getCoordinates(i),
+                         symbols=[dataset.zIntToZStr[x] for x in z])
+            results = {}
+            if has_forces:
+                results["forces"] = dataset.getForces(i)
+            if has_energies:
+                results["energy"] = dataset.getEnergies(i)
+            if results:
+                atom.calc = FakeCalc()
+                atom.calc.results = results
             atoms.append(atom)
 
         ase.io.write(path, atoms, format=format)

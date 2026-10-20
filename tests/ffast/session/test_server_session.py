@@ -738,8 +738,7 @@ def test_open_view_snapshot_exception_degrades_to_bare_scene():
 
 class _FakeExportDataset:
     """Stands in for whatever dataset object EXPORT_SUBSET resolves — the
-    handler only reads ``isVariable`` (routing) and ``getN()`` (reported
-    count); the actual write goes through the mocked ASE loader static
+    handler only reads ``getN()`` (reported count); the actual write goes through the mocked ASE loader static
     methods below, so this fake never needs real coordinate arrays."""
 
     def __init__(self, n=3, is_variable=False):
@@ -767,8 +766,8 @@ def test_dispatch_export_subset_missing_dataset_emits_error():
 @pytest.mark.parametrize("is_variable, n", [(False, 5), (True, 2)], ids=["uniform", "variable"])
 def test_dispatch_export_subset_uses_the_one_ase_saver(tmp_path, is_variable, n):
     """Uniform and variable datasets (plain, SubDataset or AtomFilteredDataset)
-    go to the one ``aseDatasetLoader.saveDataset``, which writes by the
-    dataset's own isVariable, and the reply reports getN() structures."""
+    go to the one ``aseDatasetLoader.saveDataset``, which writes frame by
+    frame, and the reply reports getN() structures."""
     ds = _FakeExportDataset(n=n, is_variable=is_variable)
     env = _FakeEnv(datasets={"ds1": ds})
     target = tmp_path / "out.extxyz"

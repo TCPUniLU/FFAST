@@ -1140,9 +1140,7 @@ class ServerSession:
             # .xyz too → extxyz so energies/forces survive (plain xyz drops them).
             fmt = "extxyz" if ext in (".xyz", ".extxyz", "") else None
 
-        # One saver; it writes uniform or variable by the dataset's own
-        # isVariable. A view (subset or atom subset) forwards its parent's, so
-        # an atom subset of a variable file is written frame by frame.
+        # One saver, frame by frame, each frame with its own elements.
         from ffast.loaders.ase import aseDatasetLoader as saver
 
         try:

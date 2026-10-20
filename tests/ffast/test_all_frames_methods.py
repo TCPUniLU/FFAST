@@ -240,3 +240,22 @@ def test_a_calculator_model_uses_each_frames_own_cell():
 
     E1, _ = model.predict(dataset, indices=[2])
     assert np.isclose(E1[0], E[2])
+
+
+@pytest.mark.parametrize("formulas", [UNIFORM, VARIABLE])
+@pytest.mark.parametrize("results", [True, False])
+def test_export_writes_every_frame_with_the_results_it_has(tmp_path, formulas, results):
+    import ase.io
+
+    dataset = _ase(formulas, forces=results, energies=results)
+    out = tmp_path / "out.extxyz"
+    aseDatasetLoader.saveDataset(dataset, str(out), "extxyz")
+
+    back = ase.io.read(str(out), index=":")
+    assert len(back) == dataset.getN()
+    for i, frame in enumerate(back):
+        assert frame.get_atomic_numbers().tolist() == dataset.getElements(i).tolist()
+        np.testing.assert_allclose(frame.get_positions(), dataset.getCoordinates(i), atol=1e-6)
+        if results:      # extxyz keeps 8 decimals
+            np.testing.assert_allclose(frame.get_forces(), dataset.getForces(i), atol=1e-6)
+            assert np.isclose(frame.get_potential_energy(), dataset.getEnergies(i), atol=1e-6)
