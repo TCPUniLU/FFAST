@@ -250,8 +250,36 @@ One commit each, so each can be reverted alone.
    `test_dataset_frame_signatures.py`. The table's atom mask is `[0, 1]`,
    which every test structure has. Qt: a subset and an atom subset over the
    Qt client's proxy (`CachedRemoteDataset`), uniform and variable, answer
-   every per-frame and all-frames question in a script; the desktop GUI was
-   not tried. Issue #22 may need less than expected.
+   every per-frame and all-frames question in a script. Issue #22 may need
+   less than expected.
+   Desktop GUI tried 2026-10-20 (`examples/data/dataset.xyz`, 100 structures
+   of 4 to 50 atoms, with `prediction.xyz`, local server). The view held up;
+   what broke was around it, mostly older than this step, and each is fixed
+   in its own commit:
+   - A desktop subset drew a black 3D view: the desktop made SUB, Freeze and
+     Extract only in its own window, and the 3D view asks the server to draw
+     by fingerprint. They now make the same subset on the server too
+     (d0791b6); the window ignores the server's announcement of a dataset it
+     already holds, so nothing appears twice.
+   - Extract's refusal showed only a console traceback; it is now a warning
+     box with a plain sentence (3c5aca2).
+   - An atom subset of a variable file was labelled "Variable (2-2 atoms)";
+     it shows its formula when every frame has the same elements (ffe6c75).
+   - Predicted forces of an atom subset of a variable file failed
+     (`AtomFilteredEntity` read `.shape` off the per-frame list), so its 2D
+     plots stayed empty (a150683).
+   - A plot draws every active dataset, so SUB made a subset of its own SUB,
+     which a zoom then gave frames it no longer had. SUB skips live subsets
+     (0be0667). A frozen copy is still drawn and still gets a SUB on the
+     next zoom; left as it is for now.
+   - After a zoom the 2D plots waited for Load, then took about 3 s: the
+     desktop started one waiting task per 0.1 s turn, one task per metric,
+     while the server computed the ~34 results in about 40 ms. Plots now
+     reload a moved subset after 0.5 s still (bf51725), and every waiting
+     task starts each turn (4183a82).
+   - Extract is now offered on a frozen subset, on both clients (1060598).
+   Still issue #22's scope: the proxy keeps both storage forms and branches
+   on its own `isVariable`.
 6. The caller branches on `isVariable` are deleted.
    Decided 2026-10-20: **metrics receive flat arrays on every kind.** Per-atom
    inputs are `(atoms, ...)` with one row per atom, frame after frame;
