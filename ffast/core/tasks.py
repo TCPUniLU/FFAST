@@ -224,14 +224,12 @@ class TaskManager(EventClass):
         self.taskQueue.put((args, kwargs))
 
     async def handleTaskQueue(self):
+        # Every waiting task, not one per turn: a turn lasts 0.1 s, and a
+        # plot's metric requests are one task each.
         q = self.taskQueue
-
-        if q.empty():
-            return
-
-        args, kwargs = q.get()
-
-        self.newTask(*args, **kwargs)
+        while not q.empty():
+            args, kwargs = q.get()
+            self.newTask(*args, **kwargs)
 
     async def setTaskProgress(
         self,
