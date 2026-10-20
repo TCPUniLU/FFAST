@@ -85,6 +85,22 @@ def _flatten(value):
     return np.asarray(value)
 
 
+def _flatPerAtom(value, axes):
+    """Per-atom values of all frames as one ``(atoms, ...)`` array (ADR 0058
+    step 6). Predictions and atom fields are kept in each kind's shape: a list
+    of per-frame arrays, or ``(frames, atoms, ...)``. ``axes`` is how many axes
+    one atom's value has (1 for a force, 0 for a scalar field); an array with
+    two more still has its frame axis."""
+    if isinstance(value, list):
+        return _flatten(value)
+    if value is None:
+        return None
+    value = np.asarray(value)
+    if value.ndim == axes + 2:
+        return value.reshape(-1, *value.shape[2:])
+    return value
+
+
 class _ResolverSource(InputSource):
     """Metric Execution Context input source backed by an ``InputResolver``.
 
@@ -112,12 +128,14 @@ class InputResolver:
         try:
             if ref == "reference.energies":
                 return dataset.getAllEnergies()
+            # Per-atom inputs are flat on every kind: one row per atom, frame
+            # after frame, with offsets saying where each frame starts.
             if ref == "reference.forces":
-                return _flatten(dataset.getForces())
+                return dataset.getAllForces()
             if ref == "reference.positions":
-                return _flatten(dataset.getCoordinates())
+                return dataset.getAllCoordinates()
             if ref == "reference.elements":
-                return np.asarray(dataset.getElements())
+                return dataset.getAllElements()
             if ref == "reference.masses":
                 return self._masses(dataset)
             if ref in _PREDICTION_REFS:
@@ -125,6 +143,8 @@ class InputResolver:
                 entity = self.env.getData(dt_key, model=model, dataset=dataset)
                 if entity is None:
                     return None
+                if field == "forces":
+                    return _flatPerAtom(entity.get(field), axes=1)
                 return _flatten(entity.get(field))
             if ref == "offsets":
                 return self._offsets(dataset)
@@ -136,7 +156,7 @@ class InputResolver:
                 side, kind, key = parsed
                 if side == "reference":
                     if kind == "atoms":
-                        return _flatten(dataset.getAtomField(key))
+                        return _flatPerAtom(dataset.getAtomField(key), axes=0)
                     return _flatten(dataset.getFrameField(key))
                 return self._prediction_field(model, dataset, kind, key)
             # stress / selection not sourced yet — treated as optional/None
@@ -165,7 +185,8 @@ class InputResolver:
         while ds is not None:
             by_kind = store.get((model_fp, getattr(ds, "fingerprint", None)))
             if by_kind is not None:
-                return _flatten(by_kind.get(kind, {}).get(key))
+                value = by_kind.get(kind, {}).get(key)
+                return _flatPerAtom(value, axes=0) if kind == "atoms" else _flatten(value)
             ds = getattr(ds, "parent", None)
         return None
 
@@ -178,16 +199,14 @@ class InputResolver:
         # Fall back to standard atomic masses from the elements (Z).
         try:
             from ase.data import atomic_masses
-            z = np.asarray(dataset.getElements(), dtype=int)
+            z = np.asarray(dataset.getAllElements(), dtype=int)
             return np.asarray(atomic_masses[z], dtype=np.float64)
         except Exception as exc:
             logger.warning("InputResolver: reference.masses unavailable: %s", exc)
             return None
 
     def _offsets(self, dataset):
-        if getattr(dataset, "isVariable", False):
-            return np.asarray(dataset.molecule_offsets)
-        return None
+        return np.asarray(dataset.getOffsets())
 
     def _n_atoms(self, dataset):
         """Per-structure atom count (the reserved Expression Variable, ADR 0042).

@@ -96,3 +96,34 @@ def test_a_metric_gives_the_same_numbers_on_flat_inputs(metric_id):
     assert not isinstance(today, MetricFailure), today
     assert not isinstance(flat, MetricFailure), flat
     np.testing.assert_allclose(np.ravel(flat.values), np.ravel(today.values), rtol=1e-10, atol=1e-12)
+
+
+def test_the_resolver_hands_a_uniform_file_and_its_prediction_flat():
+    """A uniform file and its prediction, cached as (frames, atoms, 3), both
+    reach metrics as one row per atom, with every atom's elements and masses
+    and the offsets (ADR 0058 step 6b)."""
+    import types
+    from ase import Atoms
+    from ase.calculators.singlepoint import SinglePointCalculator
+    from ffast.loaders.ase import aseDatasetLoader
+    from ffast.metrics.input_resolver import InputResolver
+
+    rng = np.random.default_rng(1)
+    frames = []
+    for _ in range(3):
+        atoms = Atoms("H2O", positions=rng.normal(size=(3, 3)))
+        atoms.calc = SinglePointCalculator(atoms, energy=0.0, forces=rng.normal(size=(3, 3)))
+        frames.append(atoms)
+    dataset = aseDatasetLoader("u.xyz", atomsList=frames)
+    predicted = rng.normal(size=(3, 3, 3))
+    entity = types.SimpleNamespace(get=lambda field: predicted)
+    resolver = InputResolver(types.SimpleNamespace(getData=lambda *a, **k: entity))
+
+    def resolve(ref):
+        return resolver.resolve(ref, model=object(), dataset=dataset)
+
+    assert resolve("reference.forces").shape == (9, 3)
+    np.testing.assert_array_equal(resolve("prediction.forces"), predicted.reshape(-1, 3))
+    assert resolve("reference.elements").tolist() == [1, 1, 8] * 3
+    assert resolve("reference.masses").shape == (9,)
+    assert resolve("offsets").tolist() == [0, 3, 6, 9]

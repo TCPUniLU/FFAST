@@ -61,6 +61,9 @@ def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state,
     """
     if ref == "frame.positions":
         return raw_positions
+    if ref == "offsets":
+        # One frame: its atoms start at 0 (ADR 0058 step 6, flat inputs).
+        return np.array([0, len(raw_positions)])
     if ref in ("frame.elements", "reference.elements"):
         return z
     if ref == "reference.forces":

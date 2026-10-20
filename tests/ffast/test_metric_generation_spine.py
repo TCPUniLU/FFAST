@@ -44,6 +44,15 @@ class _Dataset:
     def getAllEnergies(self):
         return self._e
 
+    def getAllForces(self):
+        return self._f.reshape(-1, 3)
+
+    def getAllElements(self):
+        return np.array([6, 1], dtype=np.int64)
+
+    def getOffsets(self):
+        return np.array([0, len(self._f.reshape(-1, 3))])
+
     def getElements(self, index=None):
         return np.array([6, 1], dtype=np.int64)
 
@@ -122,7 +131,8 @@ def test_resolve_reference_refs():
         r.resolve("reference.forces", dataset=ds), [[1.0, 0, 0], [0, 0, 0]]
     )
     assert r.resolve("reference.stress", dataset=ds) is None
-    assert r.resolve("offsets", dataset=ds) is None  # uniform dataset
+    # Offsets on every kind (ADR 0058 step 6): here one frame of two atoms.
+    np.testing.assert_array_equal(r.resolve("offsets", dataset=ds), [0, 2])
 
 
 def test_resolve_prediction_requires_generated_data():

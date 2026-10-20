@@ -211,7 +211,9 @@ def test_resolver_reference_fields():
     from ffast.metrics.input_resolver import InputResolver
     r = InputResolver(_FakeEnv())
     ds, m = _FakeDS(), _FakeModel()
-    assert r.resolve("reference.atoms.charges", model=m, dataset=ds).shape == (2, 2)
+    # Flat on every kind (ADR 0058 step 6): one value per atom, frame after frame.
+    np.testing.assert_allclose(r.resolve("reference.atoms.charges", model=m, dataset=ds),
+                               [0.1, -0.1, 0.2, -0.2])
     np.testing.assert_allclose(r.resolve("reference.info.temperature", model=m, dataset=ds), [300.0, 310.0])
     assert r.resolve("reference.atoms.nope", model=m, dataset=ds) is None
 
@@ -221,7 +223,7 @@ def test_resolver_prediction_field():
     env = _FakeEnv({("m1", "ds1"): {"atoms": {"q": np.array([[1.0, 2.0], [3.0, 4.0]])}, "info": {}}})
     r = InputResolver(env)
     ds, m = _FakeDS(), _FakeModel()
-    assert r.resolve("prediction.atoms.q", model=m, dataset=ds).shape == (2, 2)
+    np.testing.assert_allclose(r.resolve("prediction.atoms.q", model=m, dataset=ds), [1.0, 2.0, 3.0, 4.0])
     assert r.resolve("prediction.atoms.absent", model=m, dataset=ds) is None
     assert r.resolve("prediction.info.t", model=m, dataset=ds) is None  # empty store kind
 
@@ -237,7 +239,7 @@ def test_resolver_prediction_field_walks_to_parent():
 
     r = InputResolver(env)
     out = r.resolve("prediction.atoms.q", model=_FakeModel(), dataset=_Sub())
-    np.testing.assert_allclose(out, [[5.0], [6.0]])
+    np.testing.assert_allclose(out, [5.0, 6.0])
 
 
 def test_metric_needs_prediction_counts_prediction_fields():

@@ -136,3 +136,34 @@ def test_cancel_in_the_histogram_sweep_is_reported(registry):
     r = try_formula("e", {"e": "b.e"}, registry, lambda ref: ENERGY, N_ATOMS,
                     chunk_frames=1, cancelled=cancelled)
     assert r.cancelled is True and r.histogram is None
+
+
+def test_a_uniform_file_names_the_frame_with_a_bad_force(registry):
+    """The server hands per-atom inputs flat on every kind (ADR 0058 step 6),
+    which is how chunks are cut: by atom offsets. A uniform file used to arrive
+    as (frames, atoms, 3), so chunks cut the frame axis by atom numbers and the
+    bad frame was misnamed."""
+    from ase import Atoms
+    from ase.calculators.singlepoint import SinglePointCalculator
+    from ffast.loaders.ase import aseDatasetLoader
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.input_resolver import InputResolver, _ResolverSource
+
+    frames = []
+    for i in range(6):
+        atoms = Atoms("H2O", positions=np.zeros((3, 3)))
+        forces = np.ones((3, 3))
+        if i == 4:
+            forces[1, 0] = np.nan
+        atoms.calc = SinglePointCalculator(atoms, forces=forces)
+        frames.append(atoms)
+    dataset = aseDatasetLoader("u.xyz", atomsList=frames)
+    resolver = InputResolver(env=None)
+    executor = InProcessExecutor(registry)
+
+    def resolve(ref):
+        return executor.run(ref, _ResolverSource(resolver, None, dataset), {}).values
+
+    r = try_formula("f * 2", {"f": "b.f"}, registry, resolve,
+                    resolver.resolve("n_atoms", dataset=dataset), chunk_frames=2)
+    assert r.bad_frames == [4]
