@@ -8,6 +8,8 @@
  * the user comes back to that dataset.
  */
 
+import { copySettings, defaultSettings } from './view_settings.js';
+
 export class View {
   /**
    * @param {object} init
@@ -35,6 +37,9 @@ export class View {
   /** Its server view is open. */
   get isOpen() { return !!this.openedPair; }
 
+  /** What the sidebar's per-view stores key this view by: its dataset. */
+  get settingsKey() { return this.datasetFp; }
+
   /** It is a main view (`view-<n>`), not an independent panel's. */
   get isMain() { return this.viewId.startsWith('view-'); }
 
@@ -49,9 +54,15 @@ export class View {
 }
 
 export class MainViews {
-  /** @param {{renderers: object}} init the one ViewRenderers all linked panels share */
-  constructor({ renderers }) {
+  /**
+   * @param {object} init
+   * @param {object} init.renderers the one ViewRenderers all linked panels share
+   * @param {(datasetFp: string) => string|null} [init.parentOf] the dataset a
+   *   frame subset takes its look from until it has its own, else null
+   */
+  constructor({ renderers, parentOf = () => null }) {
     this._renderers = renderers;
+    this._parentOf = parentOf;
     this._byDataset = new Map();
     this._count = 0;             // never goes back: a dataset loaded again is a new server view
     this._current = null;
@@ -63,11 +74,17 @@ export class MainViews {
   /** Make `view` the current one (null: none). */
   point(view) { this._current = view; }
 
-  /** The View of `datasetFp`, made on first use as `view-<n>`. */
+  /** The View of `datasetFp`, made on first use as `view-<n>`; a frame
+   * subset's starts from a copy of its parent's settings. */
   ensure(datasetFp) {
     let view = this._byDataset.get(datasetFp);
     if (!view) {
-      view = new View({ viewId: `view-${this._count++}`, datasetFp, renderers: this._renderers });
+      const parent = this._parentOf(datasetFp);
+      const parentSettings = parent ? this._byDataset.get(parent)?.settings : null;
+      view = new View({
+        viewId: `view-${this._count++}`, datasetFp, renderers: this._renderers,
+        settings: parentSettings ? copySettings(parentSettings) : defaultSettings(),
+      });
       this._byDataset.set(datasetFp, view);
     }
     return view;

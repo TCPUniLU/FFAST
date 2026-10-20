@@ -5,6 +5,7 @@
 import { FFastConnection } from './connection.js';
 import { Panel3D, ViewRenderers } from './views3d.js';
 import { MainViews } from './views.js';
+import { defaultSettings, startSettings } from './view_settings.js';
 import { IndependentPanels, independentKey } from './independent_panels.js';
 import { ensureMainView, isLinked3D, MAIN_VIEW_RULE, showsMainView } from './tab_rules.js';
 import { sameConfiguration, predictionApplies } from './frame_links.js';
@@ -122,8 +123,7 @@ export class FFastApp {
       start: (view) => this._startIndependent(view),
       retired: (view) => {
         if (view === this._focusedIndependent) this._switchFocusedView(null);
-        this._dsSettings.delete(view.settingsKey);
-        this._viewForces.delete(view.settingsKey);
+        this._paneSaved.delete(view.settingsKey);
       },
       chosen: () => { this._syncPanelSection(); this._syncSidebarTitle(); },
       focusedCamera: (cam) => this._panes?.camera.syncFromCamera(cam),
@@ -197,12 +197,9 @@ export class FFastApp {
     // created on connect (they need the live connection).
     this._metricClient = null;
     this._analysis = null;
-    this._originCenterOfMass = true;
-    this._forcesState = { show: false, modelKey: null, length: 10, normalised: true, filterEnabled: false, atomIndices: [] };
-    this._dsSettings = new Map();  // dataset fp → restorable per-dataset settings
-    // Force-arrow length, normalising, "only forces" and the filter: each
-    // dataset in the main view keeps its own set, each independent panel its own.
-    this._viewForces = new Map();
+    /** Keys (`View.settingsKey`) the panes have saved a look under, until
+     * the panes show a view's settings directly (ADR 0060 step 4). */
+    this._paneSaved = new Set();
     this._playing = false;
     this._patchPending = false;
 
@@ -477,7 +474,7 @@ export class FFastApp {
       },
     });
     /** The main view's views: one per dataset, the current one is what it shows now. */
-    this._main = new MainViews({ renderers: this._mainView });
+    this._main = new MainViews({ renderers: this._mainView, parentOf: (fp) => this._lookParentOf(fp) });
   }
 
   _initUI() {
@@ -729,6 +726,13 @@ export class FFastApp {
       if (open) document.getElementById('fps-input').focus();
     };
     gear.addEventListener('click', () => show(pop.classList.contains('hidden')));
+    // The focused view keeps the frame rate and skip it was given.
+    for (const id of ['fps-input', 'skip-input']) {
+      document.getElementById(id).addEventListener('change', () => {
+        const view = this._focused()?.settings?.view;
+        if (view) Object.assign(view, { videoFPS: this._videoFPS(), videoSkipFrames: this._videoSkipFrames() });
+      });
+    }
     pop.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { show(false); gear.focus(); }
     });
@@ -822,7 +826,7 @@ export class FFastApp {
       onOrtho: (enabled) => this.renderer?.setOrthographic(enabled),
       onPreset: (az, el) => this.renderer?.setCameraAngles({ azimuth: az, elevation: el }),
       onManual: (az, el, dist) => this.renderer?.setCameraAngles({ azimuth: az, elevation: el, distance: dist }),
-      onCOM: (enabled) => { this._originCenterOfMass = enabled; },
+      onCOM: (enabled) => { const s = this._focused()?.settings; if (s) s.view.originCenterOfMass = enabled; },
       onGizmo: (enabled) => this._focusedRenderers().setGizmoEnabled(enabled),
       onBackground: (hex) => {
         this._focusedRenderers().setBackgroundColor(hex);
@@ -848,7 +852,8 @@ export class FFastApp {
 
     const forces = createForcesPane(sidebarEl, {
       onApply: (state) => {
-        this._forcesState = state;
+        const forces = this._focused()?.settings?.forces;
+        if (forces) Object.assign(forces, state);
         this._applyForceVectorsState(state);
       },
       getModels: () => this._models,
@@ -988,10 +993,11 @@ export class FFastApp {
       this._panes.colorBy.setPrediction(now);
       this._sendSetParameter('ffast.atom_color', 'prediction_ref', now);
     }
-    if (this._forcesState.modelKey === old) {
-      this._forcesState = { ...this._forcesState, modelKey: now };
-      this._panes.forces.setState(this._forcesState.show, now, this._forcesState);
-      this._applyForceVectorsState(this._forcesState);
+    const forces = this._focused()?.settings?.forces;
+    if (forces?.modelKey === old) {
+      forces.modelKey = now;
+      this._panes.forces.setState(forces.show, now, forces);
+      this._applyForceVectorsState(forces);
     }
   }
 
@@ -1029,18 +1035,18 @@ export class FFastApp {
     this._clearPicks();   // picks name atoms of the view left
     const old = this._focusedIndependent;
     if (old) {
-      this._saveDatasetSettings(old.settingsKey);
+      this._saveDatasetSettings(old);
       old.atomScale = this._panes.display.atomScale();
     } else if (this._main.current) {
-      this._saveDatasetSettings(this._main.current.datasetFp);
+      this._saveDatasetSettings(this._main.current);
       this._mainAtomScale = this._panes.display.atomScale();
     }
     this._focusedIndependent = owner;
     if (owner) {
-      if (!this._dsSettings.has(owner.settingsKey)) this._presetIndependent(owner);
-      this._restoreDatasetSettings(owner.settingsKey);
+      if (!owner.settings) this._presetIndependent(owner);
+      this._restoreDatasetSettings(owner);
     } else if (this._main.current) {
-      this._restoreDatasetSettings(this._main.current.datasetFp);
+      this._restoreDatasetSettings(this._main.current);
     }
     this._panes.extract.setVisible(canExtractFrom(this._datasets.get(this._focusedDatasetFp())));
     this._syncPanelSection();
@@ -1049,22 +1055,17 @@ export class FFastApp {
     this._renderQuickStyles();
   }
 
-  /** Store an independent panel's starting look as its sidebar settings, so
-   * the sidebar shows it the first time the panel is focused. */
+  /** Give an independent panel its starting look as its settings, so the
+   * sidebar shows it the first time the panel is focused. */
   _presetIndependent(view) {
-    const { settings } = startCommands(view.spec.start, { modelFp: view.modelFp, catalog: this._metricCatalog });
+    const ctx = { modelFp: view.modelFp, catalog: this._metricCatalog };
+    view.settings = startSettings(view.spec.start, ctx);
+    const { settings } = startCommands(view.spec.start, ctx);
     const key = view.settingsKey;
-    this._dsSettings.set(key, {
-      originCenterOfMass: true,
-      showForceVectors: settings.forces.show,
-      forceVectorsModelKey: settings.forces.show ? view.modelFp : null,
-      videoFPS: 30, videoSkipFrames: 0,
-    });
-    this._viewForces.set(key, { length: settings.forces.length, normalised: settings.forces.normalised,
-      onlyForces: false, filterEnabled: false, atomIndices: [] });
     this._panes.colorBy.presetState(key, settings);
     this._panes.display.presetState(key, settings);
     this._panes.bonds.presetState(key, { width: settings.bondWidth, colour: settings.bondColour });
+    this._paneSaved.add(key);
     view.atomScale = settings.atomSize;
   }
 
@@ -1079,7 +1080,7 @@ export class FFastApp {
     if (bondStyle) view.renderers.setBondStyle(...bondStyle);
     view.note = note;
     this._presetIndependent(view);
-    if (view === this._focusedIndependent) this._restoreDatasetSettings(view.settingsKey);
+    if (view === this._focusedIndependent) this._restoreDatasetSettings(view);
     this._independent.syncCaption(view);
     if (view === this._focusedIndependent) this._syncPanelSection();
   }
@@ -1088,19 +1089,17 @@ export class FFastApp {
    * current 3D settings as start", rule 15): an independent panel's own, a
    * linked one's the main view's. */
   _currentStart(tabName, panel) {
-    const view = this._independent.get(independentKey(tabName, panel)) || null;
-    const owner = this._focusedIndependent;
-    if (owner) this._saveDatasetSettings(owner.settingsKey);
-    else if (this._main.current) this._saveDatasetSettings(this._main.current.datasetFp);
-    const key = view ? view.settingsKey : this._main.current?.datasetFp;
-    const forces = this._dsSettings.get(key) || {};
+    const view = this._independent.get(independentKey(tabName, panel)) || this._main.current;
+    if (this._focused()) this._saveDatasetSettings(this._focused());
+    const key = view?.settingsKey;
+    const forces = view?.settings?.forces || defaultSettings().forces;
     const colour = this._panes.colorBy.lookOf(key);
     const bonds = this._panes.bonds.lookOf(key);
     return startFromCurrent({
       source: colour.source, colormap: colour.colormap,
       atomSize: this._panes.display.lookOf(key).atomSize,
       bondWidth: bonds.width, bondColour: bonds.colour,
-      forces: { show: !!forces.showForceVectors, ...this._forceExtras(key) },
+      forces: { show: !!forces.show, length: forces.length, normalised: forces.normalised },
     });
   }
 
@@ -1455,7 +1454,7 @@ export class FFastApp {
     const meta = this._datasets.get(fp);
     if (!meta) return;
     this._datasets.delete(fp);
-    this._dsSettings.delete(fp);
+    this._paneSaved.delete(fp);
     if (this._showWhenKnown === fp) this._showWhenKnown = null;
     const mainFrame = this._main.current?.frame ?? 0;
     const gone = this._main.drop(fp);
@@ -1573,7 +1572,7 @@ export class FFastApp {
     // settings; the main view's are swapped in when it is focused again.
     const sidebarIsMain = !this._focusedIndependent;
     if (datasetChanged && old && sidebarIsMain) {
-      this._saveDatasetSettings(old.datasetFp);
+      this._saveDatasetSettings(old);
       // Picked atom ids are dataset-specific: the view being left clears them.
       this._clearPicks(old);
     }
@@ -1601,7 +1600,7 @@ export class FFastApp {
     if (!this._playbackView()) this._frameCount = this._datasets.get(this._currentDatasetFp)?.n || this._frameCount;
     document.getElementById('popout-btn').disabled = false;
 
-    if (datasetChanged && sidebarIsMain) this._restoreDatasetSettings(this._currentDatasetFp);
+    if (datasetChanged && sidebarIsMain) this._restoreDatasetSettings(view);
     // Extract only where it makes a fixed dataset (Qt's AtomFilterPaneHiding).
     if (sidebarIsMain) this._panes.extract.setVisible(canExtractFrom(this._datasets.get(this._currentDatasetFp)));
   }
@@ -1611,32 +1610,16 @@ export class FFastApp {
   // In the main view each dataset keeps its own colouring, display, bonds and
   // force arrows; an independent panel keeps all its settings under its
   // `settingsKey` (ADR 0056), passed here as `fp`.
-  _saveDatasetSettings(fp) {
-    const f = this._forcesState;
-    this._dsSettings.set(fp, {
-      originCenterOfMass: this._originCenterOfMass,
-      showForceVectors: f.show,
-      forceVectorsModelKey: f.modelKey,
-      videoFPS: this._videoFPS(),
-      videoSkipFrames: this._videoSkipFrames(),
-      pickSettings: this._picked,
-    });
-    this._viewForces.set(fp, { length: f.length, normalised: f.normalised,
-      onlyForces: !!f.onlyForces, filterEnabled: !!f.filterEnabled, atomIndices: [...(f.atomIndices || [])] });
-    this._panes.colorBy.saveState(fp);
-    this._panes.camera.saveState(fp);
-    this._panes.display.saveState(fp);
-    this._panes.bonds.saveState(fp);
-    this._panes.extract.saveState(fp);
-    this._panes.export.saveState(fp);
-    this._panes.align.saveState(fp);
-  }
-
-  /** A dataset's or panel's force-arrow extras; today's defaults for one not
-   * seen yet. */
-  _forceExtras(key) {
-    return this._viewForces.get(key) || { length: DEFAULT_LOOK.forces.length,
-      normalised: DEFAULT_LOOK.forces.normalised, onlyForces: false, filterEnabled: false, atomIndices: [] };
+  _saveDatasetSettings(view) {
+    const key = view.settingsKey;
+    this._paneSaved.add(key);
+    this._panes.colorBy.saveState(key);
+    this._panes.camera.saveState(key);
+    this._panes.display.saveState(key);
+    this._panes.bonds.saveState(key);
+    this._panes.extract.saveState(key);
+    this._panes.export.saveState(key);
+    this._panes.align.saveState(key);
   }
 
   /** The dataset a frame subset takes its look from until it has its own:
@@ -1646,30 +1629,24 @@ export class FFastApp {
     return meta?.parent && meta.parent_frames ? meta.parent : null;
   }
 
-  _restoreDatasetSettings(fp) {
-    const parent = this._lookParentOf(fp);
-    if (!this._dsSettings.has(fp) && parent && this._dsSettings.has(parent)) fp = parent;
-    const d = this._dsSettings.get(fp) || {
-      originCenterOfMass: true, showForceVectors: false, forceVectorsModelKey: null,
-      videoFPS: 30, videoSkipFrames: 0, pickSettings: [],
-    };
-    const extras = this._forceExtras(fp);
-    this._originCenterOfMass = d.originCenterOfMass;
-    this._panes.camera.setCOM(d.originCenterOfMass);
-    document.getElementById('fps-input').value = d.videoFPS;
-    document.getElementById('skip-input').value = d.videoSkipFrames;
-
-    this._forcesState = { ...this._forcesState, show: d.showForceVectors, modelKey: d.forceVectorsModelKey,
-      ...extras, atomIndices: [...extras.atomIndices] };
-    this._panes.forces.setState(d.showForceVectors, d.forceVectorsModelKey, extras);
-    this._applyForceVectorsState(this._forcesState);
-    this._panes.colorBy.loadState(fp);
-    this._panes.camera.loadState(fp);
-    this._panes.display.loadState(fp);
-    this._panes.bonds.loadState(fp);
-    this._panes.extract.loadState(fp);
-    this._panes.export.loadState(fp);
-    this._panes.align.loadState(fp);
+  /** Show `view`'s settings in the sidebar. */
+  _restoreDatasetSettings(view) {
+    let key = view.settingsKey;
+    const parent = view.isMain ? this._lookParentOf(view.datasetFp) : null;
+    if (!this._paneSaved.has(key) && parent && this._paneSaved.has(parent)) key = parent;
+    const s = view.settings;
+    this._panes.camera.setCOM(s.view.originCenterOfMass);
+    document.getElementById('fps-input').value = s.view.videoFPS;
+    document.getElementById('skip-input').value = s.view.videoSkipFrames;
+    this._panes.forces.setState(s.forces.show, s.forces.modelKey, s.forces);
+    this._applyForceVectorsState(s.forces);
+    this._panes.colorBy.loadState(key);
+    this._panes.camera.loadState(key);
+    this._panes.display.loadState(key);
+    this._panes.bonds.loadState(key);
+    this._panes.extract.loadState(key);
+    this._panes.export.loadState(key);
+    this._panes.align.loadState(key);
   }
 
 
@@ -2148,10 +2125,7 @@ export class FFastApp {
    * centroid as frames advance, preserving azimuth/elevation/distance. */
   _trackCameraCOM(positions, view) {
     if (!positions || positions.length === 0 || !view) return;
-    const key = view.isMain ? view.datasetFp : view.settingsKey;
-    const on = this._isFocused(view)
-      ? this._originCenterOfMass : (this._dsSettings.get(key)?.originCenterOfMass ?? true);
-    if (!on) return;
+    if (!(view.settings?.view.originCenterOfMass ?? true)) return;
     const n = positions.length;
     const sum = [0, 0, 0];
     for (const [x, y, z] of positions) { sum[0] += x; sum[1] += y; sum[2] += z; }
