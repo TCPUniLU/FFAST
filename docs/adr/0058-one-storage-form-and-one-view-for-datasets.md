@@ -253,4 +253,44 @@ One commit each, so each can be reverted alone.
    every per-frame and all-frames question in a script; the desktop GUI was
    not tried. Issue #22 may need less than expected.
 6. The caller branches on `isVariable` are deleted.
+   Decided 2026-10-20: **metrics receive flat arrays on every kind.** Per-atom
+   inputs are `(atoms, ...)` with one row per atom, frame after frame;
+   `elements` and `masses` are per atom; `offsets` is always given. Read on
+   2026-10-20, before building: no plot, table, browser or subbing code breaks,
+   because every consumer outside the metrics package flattens a per-atom
+   result first, and joining frames gives the same order as flattening
+   `(frames, atoms, k)`. What changes is inside the metrics: the uniform-only
+   branches (`offsets is None`, `ndim == 3`) in `force_rmse`,
+   `force_mae_per_structure`, `force_net_residual`, `gyradius` and the
+   per-element metrics, and the acceleration family. `accel_difference` adds a
+   frame axis to flat input, so `accel_mae` and `accel_rmse` come out as one
+   row; that is already wrong on variable data today. "Try a formula"
+   (`try_formula.py`) cuts per-atom inputs by atom offsets, so today it is
+   wrong on uniform data; flat inputs fix it. Prediction caches stay as they
+   are on disk: the resolver flattens predictions when it reads them.
+   Planned, one commit each:
+   a. The metrics take flat input with offsets and give the same numbers as
+      today on uniform data, checked on both forms before the switch.
+      Per-structure sums use `np.add.reduceat` (one numpy call per segment
+      list), because a Python loop over frames is slow on large uniform files.
+      Measure it on 100,000 frames.
+   b. The resolver sends `getAll*`, per-atom elements and masses, and
+      `getOffsets()` on every kind, and flattens predictions and atom fields.
+      The colouring path (`color_values.py`) gives `offsets` `[0, n]` for its
+      one frame. The embedded `tests=` move to flat inputs.
+      `ffast-cli metrics run --json` nests per-atom values one level less: an
+      external change.
+   c. The metrics' 3D branches are deleted. `accel_mae` and `accel_rmse` work
+      per frame through offsets. `accel_mae_per_atom` (no tab uses it) means
+      each atom of each frame; say so or drop it.
+   d. The remaining callers of the old no-argument calls move to `getAll*`:
+      prediction load, zero model, exports (always frame by frame), loader
+      reporting. Then the old no-argument shapes and
+      `test_ase_loader_shapes.py` go, and the `isVariable` branches in callers
+      with them (sGDML's own check, cluster errors, the imported prediction
+      offsets, the arrays routing, log lines).
+   e. The Qt client's two: `UI/panels.py` `_flat_to_config` and
+      `UI/loupe/canvas.py` move to offsets and one-frame calls. The proxy's own
+      branches stay for issue #22. The wire keeps a `variable` flag computed
+      from the offsets, for the proxy.
 7. sGDML fills the same storage.
