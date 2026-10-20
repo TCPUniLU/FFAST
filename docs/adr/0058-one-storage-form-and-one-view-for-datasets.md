@@ -1,5 +1,7 @@
-Status: Proposed. Decided 2026-10-16, after architecture review problem 1
-(`docs/research/architecture-review-2026-10-14/01-dataset-kinds.md`).
+Status: Accepted — implemented (all 7 steps done 2026-10-20). Decided
+2026-10-16, after architecture review problem 1
+(`docs/research/architecture-review-2026-10-14/01-dataset-kinds.md`). What the
+Qt client's proxy still keeps is GitHub issue #22.
 
 # One storage form for datasets, one view for everything cut from them
 
@@ -364,3 +366,28 @@ One commit each, so each can be reverted alone.
    then. External change: `ffast-cli metrics run --json` nests per-atom
    values one level less on uniform data.
 7. sGDML fills the same storage.
+   As built (1fae894..2194199), 2026-10-20, one commit each:
+   - An sGDML file's fingerprint pinned as a literal first, from the code as
+     it stood (1fae894). It still matches.
+   - `VariableDatasetLoader` is now `FlatDatasetLoader`, and answers both
+     kinds: the uniform-or-variable branches the ASE loader carried moved up
+     into it (97a33d4). The ASE loader keeps only what reading a file adds.
+     No answer changed.
+   - Bond sizes are computed per structure on every kind, as section 1
+     decided; the uniform bond table built from frame 0 is gone (8b4ede8).
+   - `sGDMLDatasetLoader` inherits `FlatDatasetLoader` (4e6627f). The file's
+     `(frames, atoms, 3)` arrays are read as flat rows without copying,
+     offsets are `0, n, 2n, ...`, and `isVariable` is False. A file without
+     energies or forces loads with them absent; it failed with `KeyError`
+     before. One frame's energy is a number, as on every other kind, not a
+     one-element array.
+   - Export to sGDML reads the all-frames arrays (2194199). On a dataset
+     whose structures differ it used to write lists that no sGDML reader
+     opens; it now refuses with a plain sentence.
+   **What stays, for issue #22.** `DatasetLoader`'s `getAll*` and
+   `getOffsets` defaults, which translate the older no-argument calls, now
+   serve only the Qt proxy (`CachedRemoteDataset`), which inherits them. The
+   older no-argument calls stay too: they shape what the proxy receives
+   (`toMetaDict`, `to_transfer_arrays`) and are pinned by
+   `test_ase_loader_shapes.py`. The proxy keeps its own bond table and its
+   own `isVariable` branches. All of it goes with issue #22.

@@ -1,12 +1,13 @@
 """
-The one ASE loader keeps each kind's old shape for all-frames answers.
+The flat-storage loaders keep each kind's old shape for all-frames answers.
 
 ADR 0058 step 3 merged the uniform and variable ASE loaders. Step 4 added
 the getAll* methods (tests/ffast/test_all_frames_methods.py) and step 6 moved
 the metrics, prediction loading and export to them. The older no-argument
-calls still serve the wire to the Qt proxy and the getAll* defaults the sGDML
-dataset and the proxy rely on, and those expect these shapes. This test goes
-with ADR 0058 step 7 and issue #22. (While both classes existed, the merged
+calls still serve the wire to the Qt proxy and the getAll* defaults the proxy
+relies on, and those expect these shapes. Since step 7 the shapes come from
+FlatDatasetLoader, so an sGDML file answers as uniform ASE data does. This
+test goes with issue #22. (While both classes existed, the merged
 one was checked against the old uniform loader question by question: commits
 66c23de..79930eb.)
 """

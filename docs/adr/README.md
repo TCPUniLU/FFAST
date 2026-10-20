@@ -46,7 +46,7 @@ things came up.
 - [0021](0021-client-side-2d-panels-with-transform-metrics.md) Panels, panel kinds, reductions as transform metrics
 - [0022](0022-incremental-keyed-panel-refresh.md) Refresh by diffing series instead of clear-and-rebuild
 - [0023](0023-dataset-fields-key-in-ref.md) Any extxyz key becomes a metric, no Python
-- [0058](0058-one-storage-form-and-one-view-for-datasets.md) One storage form for every dataset, one view for every subset (proposed; breaks Qt subsets until GitHub issue #22)
+- [0058](0058-one-storage-form-and-one-view-for-datasets.md) One storage form for every dataset, one view for every subset (the Qt client's proxy is GitHub issue #22)
 - [0042](0042-expression-metrics.md) Element-wise algebra over metrics, in the config file
 - [0057](0057-user-metrics-defined-live-in-a-metrics-pane.md) Users define formula metrics while the app runs, in a Metrics pane
 - [0035](0035-metric-execution-context.md) Resolve metric inputs once instead of three times
