@@ -712,22 +712,13 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
 
     def getValidSubDatasets(self, asFingerprint=False):
         subs = []
-        env = self.env
 
-        # datasetKeys = self.dataWatcher.getDatasetDependencies()
-        # modelKeys = self.dataWatcher.getModelDependencies()
-
-        # for datasetKey in datasetKeys:
-        #     dataset = env.datasets.get(datasetKey)
-
-        #     # dont do subdatasets of subdatasets
-        #     if dataset.isSubDataset and not dataset.isAtomFiltered:
-        #         continue
-
-        #     for modelKey in modelKeys:
-        #         model = env.models.get(modelKey)
         for de in self.getWatchedData():
             dataset, model = de["dataset"], de["model"]
+            # Not of a live subset (this plot's own SUB among them): it changes
+            # with the zoom, so frames worked out against it go stale.
+            if getattr(dataset, "live", False):
+                continue
             idx = self.getDatasetSubIndices(dataset, model)
             if (idx is None) or (len(idx) == 0):
                 idx = None
