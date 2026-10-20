@@ -26,6 +26,9 @@ class _VariableDataset(VariableDatasetLoader):
     def getForces(self):
         return [np.zeros((2, 3)), np.zeros((3, 3))]
 
+    def hasForces(self):
+        return True
+
 
 def _make_uniform():
     dataset = _UniformDataset.__new__(_UniformDataset)

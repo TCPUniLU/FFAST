@@ -353,17 +353,20 @@ class VariableDatasetLoader(EventClass):
 
         GLOBAL_DATASETS_COUNTER += 1
 
-        # To be set by subclasses:
-        self.R_flat = None          # (total_atoms, 3)
-        self.F_flat = None          # (total_atoms, 3)
-        self.E = None               # (N,)
-        self.z_flat = None          # (total_atoms,)
+        # To be set by subclasses. R_flat (total_atoms, 3), F_flat
+        # (total_atoms, 3) or None, E (N,) or None and z_flat (total_atoms,)
+        # are not preset: a subclass may provide them as attributes or as
+        # properties built on request (VariableASEDatasetLoader).
         self.molecule_offsets = None  # (N+1,)
         self.N = None               # Number of molecules
 
     def isUniform(self):
         """Check if this dataset has uniform molecular structures."""
         return False
+
+    def hasForces(self):
+        """Whether every frame has forces, without reading them all."""
+        return self.F_flat is not None
 
     def toMetaDict(self) -> dict:
         """Return lightweight metadata for RPC transfer (REMOTE_DATASET_META).
@@ -375,12 +378,7 @@ class VariableDatasetLoader(EventClass):
         -------
         dict with keys: name, n, has_forces, is_sub, variable, elements, offsets
         """
-        has_forces = False
-        try:
-            self.getForces()
-            has_forces = True
-        except Exception:
-            pass
+        has_forces = self.hasForces()
         # Stage 4c: carry cheap flat elements + molecule offsets so the client
         # proxy serves labels / atom-filter / scatter sub-indexing without
         # fetching the big R_flat/F_flat arrays.

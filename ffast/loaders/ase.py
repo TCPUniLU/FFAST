@@ -345,11 +345,9 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         self.selected_energy_key = selected_energy_key
         self.selected_force_key = selected_force_key
 
-        # Build flat arrays
-        R_list, F_list, E_list, z_list = [], [], [], []
-        offsets = [0]
-        forces_missing = energies_missing = False
-
+        # Joined arrays of all frames, built on the first request (see _joined)
+        self._z_flat = None
+        self._joinedArrays = None
 
         # Detect force and energy keys from first frame
         force_keys = self._detectForceKeys()
@@ -378,33 +376,20 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         else:
             self._force_key = force_keys[0] if force_keys else None
 
+        # Only what one frame cannot tell is kept: where each frame's atoms
+        # start, and whether every frame has forces and energies (ADR 0058,
+        # decision B). Positions and forces are read per frame or joined later.
+        counts = []
+        forces_missing = energies_missing = False
         for atoms in self.atomsList:
-            n_atoms = len(atoms)
-            R_list.append(atoms.get_positions())
-
-            forces = self._readForces(atoms)
-            if forces is None:
+            counts.append(len(atoms))
+            if not forces_missing and self._readForces(atoms) is None:
                 forces_missing = True
-            else:
-                F_list.append(forces)
-
-            energy = self._readEnergy(atoms)
-            if energy is None:
+            if not energies_missing and self._readEnergy(atoms) is None:
                 energies_missing = True
-            else:
-                E_list.append(energy)
-
-            z_list.append(atoms.get_atomic_numbers())
-            offsets.append(offsets[-1] + n_atoms)
-
-        # Convert to flat arrays
-        self.R_flat = np.vstack(R_list)
-        self.F_flat = None if forces_missing else np.vstack(F_list)
-        self.E = None if energies_missing else np.array(E_list)
+        self.molecule_offsets = np.concatenate([[0], np.cumsum(counts)]).astype(int)
         self._has_forces = not forces_missing
         self._has_energies = not energies_missing
-        self.z_flat = np.concatenate(z_list)
-        self.molecule_offsets = np.array(offsets)
 
         # Store lattice info if present
         if hasattr(self.atomsList[0], "cell"):
@@ -467,8 +452,47 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
             parts.append(f_hash)
         return md5FromParts(parts)
 
+    # All frames: the joined arrays VariableDatasetLoader reads, built on the
+    # first request and kept, since rebuilding them reads the whole file
+    # (ADR 0058, decision B).
+
+    def hasForces(self):
+        return self._has_forces
+
+    @property
+    def z_flat(self):
+        """Every atom's element, frame after frame. One small number per
+        atom, and every dataset summary sends it, so it is joined apart from
+        the large positions and forces."""
+        if self._z_flat is None:
+            self._z_flat = np.concatenate([atoms.get_atomic_numbers() for atoms in self.atomsList])
+        return self._z_flat
+
+    @property
+    def R_flat(self):
+        return self._joined()[0]
+
+    @property
+    def F_flat(self):
+        return self._joined()[1]
+
+    @property
+    def E(self):
+        return self._joined()[2]
+
+    def _joined(self):
+        """Positions, forces (None if absent) and energies (None if absent)
+        of all frames, read once on the first request."""
+        if self._joinedArrays is None:
+            frames = self.atomsList
+            R = np.vstack([atoms.get_positions() for atoms in frames])
+            F = np.vstack([self._readForces(atoms) for atoms in frames]) if self._has_forces else None
+            E = np.array([self._readEnergy(atoms) for atoms in frames]) if self._has_energies else None
+            self._joinedArrays = (R, F, E)
+        return self._joinedArrays
+
     # One frame is read from the file (ADR 0058, decision B); all or several
-    # frames still come from the joined arrays of VariableDatasetLoader.
+    # frames come from the joined arrays above.
 
     def getCoordinates(self, indices=None):
         if isOneFrame(indices):
