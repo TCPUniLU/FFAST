@@ -1,4 +1,4 @@
-from ffast.loaders.model import ModelLoader
+from ffast.loaders.model import ModelLoader, uniformFrames
 import numpy as np
 from ffast.cache.fingerprint import md5FromArraysAndStrings
 from ffast.loaders.dataset import DatasetLoader
@@ -55,10 +55,7 @@ class sGDMLModelLoader(ModelLoader):
                 "This dataset contains variable-sized molecules (different number of atoms per configuration)."
             )
 
-        if indices is None:
-            R = dataset.getCoordinates()
-        else:
-            R = dataset.getCoordinates(indices=indices)
+        R, _ = uniformFrames(dataset, indices)
 
         E, F = [], []
         nBatches = len(R) // batchSize + 1

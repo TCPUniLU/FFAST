@@ -130,3 +130,50 @@ def test_each_frame_answers_its_own_elements_even_when_atoms_are_listed_in_anoth
     assert dataset.getElements(0).tolist() == [1, 1, 8]
     assert dataset.getElements(1).tolist() == [8, 1, 1]
     assert dataset.getAllElements().tolist() == [1, 1, 8, 8, 1, 1]
+
+
+def test_models_get_one_3d_array_and_one_structures_elements():
+    from ffast.loaders.model import uniformFrames
+
+    dataset = _ase(UNIFORM)
+    R, z = uniformFrames(dataset)
+    assert R.shape == (4, 3, 3) and z.tolist() == [1, 1, 8]
+    assert np.array_equal(R[2], dataset.getCoordinates(2))
+
+    R, z = uniformFrames(dataset, indices=[3, 1])
+    assert np.array_equal(R, dataset.getCoordinates([3, 1]))
+
+
+def test_models_refuse_structures_of_different_sizes():
+    from ffast.loaders.model import uniformFrames
+
+    with pytest.raises(ValueError, match="differ in size"):
+        uniformFrames(_ase(VARIABLE))
+
+
+def test_models_accept_a_dataset_built_from_an_sgdml_file(tmp_path):
+    from ffast.loaders.model import uniformFrames
+    from ffast.plugins.models.sgdml import sGDMLDatasetLoader
+
+    rng = np.random.default_rng(0)
+    path = tmp_path / "d.npz"
+    np.savez(path, R=rng.normal(size=(5, 3, 3)), E=rng.normal(size=(5, 1)),
+             F=rng.normal(size=(5, 3, 3)), z=np.array([1, 1, 8]))
+    dataset = sGDMLDatasetLoader(str(path))
+
+    R, z = uniformFrames(dataset, indices=[4, 0])
+    assert np.array_equal(R, dataset.getCoordinates([4, 0])) and z.tolist() == [1, 1, 8]
+    assert dataset.getAllEnergies().shape == (5,)
+
+
+def test_a_calculator_model_predicts_every_frame_of_a_file():
+    from ase.calculators.emt import EMT
+    from ffast.loaders.model import ModelLoaderACE
+
+    model = ModelLoaderACE.__new__(ModelLoaderACE)
+    model.calculator = EMT()
+    dataset = _ase(UNIFORM)
+    dataset.lattice = None
+
+    E, F = model.predict(dataset)
+    assert np.shape(E) == (4,) and np.shape(F) == (4, 3, 3)
