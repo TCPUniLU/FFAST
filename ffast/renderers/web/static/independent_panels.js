@@ -32,6 +32,7 @@ export function independentKey(tabName, spec) {
  *   datasets: () => Map<string, object>,
  *   main: () => {datasetFp: string|null, modelFp: string|null, frame: number},
  *   mainView: () => import('./views3d.js').ViewRenderers,
+ *   sendCamera: (view: IndependentView, cam: object) => void,
  *   sendMainCamera: (cam: object) => void,
  *   focused: () => IndependentView|null,
  *   activeTab: () => object|null,
@@ -245,10 +246,7 @@ export class IndependentPanels {
 
   /** An independent panel's camera moved (orbit, zoom, a camera command). */
   _onCamera(view, cam) {
-    clearTimeout(view.cameraThrottle);
-    view.cameraThrottle = setTimeout(() => {
-      if (view.isOpen) this._ports.send(OUT.VIEW_COMMAND, { type: 'SET_CAMERA', view_id: view.viewId, camera: cam });
-    }, 100);
+    this._ports.sendCamera(view, cam);
     if (view === this._ports.focused()) this._ports.focusedCamera(cam);
     if (view.links.camera && !view.applyingScene) this.linkCameras(view, cam);
   }

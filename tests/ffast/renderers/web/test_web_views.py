@@ -36,6 +36,11 @@ CASES = {
     "command_unopened": "new vw.View({viewId: 'view-0'}).command({a: 1})",
     "command_versions": "(() => { const v = new vw.View({viewId: 'view-0'}); v.openedPair = 'A|';"
                         " return [v.command({a: 1}), v.command({b: 2}), v.version]; })()",
+    "command_two_views": "(() => { const sent = []; const conn = {send: (e, kw) => sent.push([e, kw])};"
+                         " const a = new vw.View({viewId: 'view-0'}); const b = new vw.View({viewId: 'ind-1'});"
+                         " a.openedPair = 'A|'; b.openedPair = 'B|';"
+                         " for (const v of [a, b, a, a, b]) conn.send('VIEW_COMMAND', v.command({type: 'X'}));"
+                         " return sent.map(([, kw]) => [kw.view_id, kw.view_version]); })()",
     "by_view_id": "(() => { const m = new vw.MainViews({renderers: R}); m.ensure('A'); const b = m.ensure('B');"
                   " return [m.byViewId('view-1') === b, m.byViewId('ind-3'), m.byViewId('nope')]; })()",
     "drop_returns_view": "(() => { const m = new vw.MainViews({renderers: R}); const a = m.ensure('A');"
@@ -142,6 +147,11 @@ def test_command_stamps_and_advances_the_version(results):
     assert first == {"view_id": "view-0", "view_version": 0, "a": 1}
     assert second == {"view_id": "view-0", "view_version": 1, "b": 2}
     assert version == 2
+
+
+def test_a_version_is_stamped_per_view_and_only_by_command(results):
+    assert results["command_two_views"] == [
+        ["view-0", 0], ["ind-1", 0], ["view-0", 1], ["view-0", 2], ["ind-1", 1]]
 
 
 def test_by_view_id_finds_main_views_only(results):

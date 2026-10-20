@@ -265,9 +265,3 @@ export class IndependentView extends View {
   /** Its settings in the sidebar's per-view store. */
   get settingsKey() { return `ind:${this.key}`; }
 }
-
-/** An independent panel's server view id (`ind-<n>`); the main view's are
- * `view-<n>`. */
-export function isIndependentViewId(viewId) {
-  return typeof viewId === 'string' && viewId.startsWith('ind-');
-}
