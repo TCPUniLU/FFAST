@@ -240,11 +240,13 @@ class CodeTextEdit(QtWidgets.QTextEdit):
 
     def getValue(self):
         t = self.toPlainText()
+        if not t.strip():
+            return None  # nothing entered: not an error
         code = None
         try:
             code = ast.literal_eval(t)
-        except (TypeError, MemoryError, SyntaxError, ValueError):
-            logger.exception("Input cannot be evaluated")
+        except (TypeError, MemoryError, SyntaxError, ValueError) as exc:
+            logger.warning("Input cannot be evaluated: %r (%s)", t, exc)
 
         return code
 
