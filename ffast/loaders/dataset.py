@@ -231,12 +231,6 @@ class DatasetLoader(EventClass):
         name = removeExtension(os.path.basename(self.path))
         self.setName(name)
 
-        z = self.getElements()
-        from ffast.config.user import getConfig  # ADR 0047: lazy (userConfig deferred)
-        self.bondSizes = covalentBonds[z][:, z] * getConfig(
-            "loupeBondsLenience"
-        )
-
     def getPDist(self, indices=None):
         R = self.getCoordinates(indices=indices)
         return toDistance(R)
@@ -273,10 +267,14 @@ class DatasetLoader(EventClass):
         self.eventPush("OBJECT_COLOR_CHANGED", self.fingerprint)
 
     def getBondMatrix(self, index):
+        """Which atoms of one structure are bonded. Bond sizes come from that
+        structure's own elements, on every kind (ADR 0058, decision 1)."""
         r = self.getCoordinates(index)
+        z = self.getElements(index)
+        from ffast.config.user import getConfig  # ADR 0047: lazy (userConfig deferred)
+        bondSizes = covalentBonds[z][:, z] * getConfig("loupeBondsLenience")
         d = distance_matrix(r, r)
-
-        return d < self.bondSizes
+        return d < bondSizes
 
     def getBondIndices(self, index):
         idxs = np.argwhere(self.getBondMatrix(index))
@@ -676,20 +674,6 @@ class FlatDatasetLoader(DatasetLoader):
 
         return fp
 
-    def initialise(self):
-        """Initialize dataset after loading."""
-        if not self.isVariable:
-            return DatasetLoader.initialise(self)  # bond sizes from the shared elements
-
-        self.fingerprint = self.getFingerprint()
-
-        name = removeExtension(os.path.basename(self.path))
-        self.setName(name)
-
-        # Note: bondSizes cannot be precomputed for variable datasets
-        # Each molecule will need its own bond matrix
-        self.bondSizes = None
-
     def getPDist(self, indices=None):
         """Get pairwise distances - handle variable sizes."""
         if not self.isVariable:
@@ -721,17 +705,6 @@ class FlatDatasetLoader(DatasetLoader):
             ("N. atoms", f"{atom_counts.min()}-{atom_counts.max()}"),
             ("Chem. form.", self.getChemicalFormula()),
         ]
-
-    def getBondMatrix(self, index):
-        """Get bond matrix for a specific molecule."""
-        if not self.isVariable:
-            return DatasetLoader.getBondMatrix(self, index)
-        r = self.getCoordinates(index)
-        z = self.getElements(index)
-        from ffast.config.user import getConfig  # ADR 0047: lazy (userConfig deferred)
-        bondSizes = covalentBonds[z][:, z] * getConfig("loupeBondsLenience")
-        d = distance_matrix(r, r)
-        return d < bondSizes
 
 
 class DatasetView(DatasetLoader):

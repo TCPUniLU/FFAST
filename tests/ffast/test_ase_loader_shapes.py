@@ -40,7 +40,6 @@ def test_uniform_data_answers_all_frames_as_stacked_arrays():
     assert dataset.getElements().tolist() == [1, 1, 8]          # one structure's
     assert dataset.getNAtoms() == 3 and type(dataset.getNAtoms()) is int
     assert dataset.getChemicalFormula() == "H2O"
-    assert dataset.bondSizes.shape == (3, 3)                      # shared bond table
     assert dataset.toMetaDict()["variable"] is False
     assert dataset.to_transfer_arrays()["R"].shape == (5, 3, 3)
 
@@ -54,6 +53,5 @@ def test_variable_data_answers_all_frames_as_lists():
     assert len(dataset.getElements()) == 10                       # every atom's
     assert dataset.getNAtoms().tolist() == [3, 5, 2]
     assert dataset.getChemicalFormula() == "Variable (2-5 atoms)"
-    assert dataset.bondSizes is None                              # per structure
     assert dataset.toMetaDict()["variable"] is True
     assert dataset.to_transfer_arrays()["R_flat"].shape == (10, 3)

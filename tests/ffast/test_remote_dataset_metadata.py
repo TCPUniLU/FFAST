@@ -94,7 +94,6 @@ def _parent():
     parent = _make_uniform()
     parent.fingerprint = "parentfp"
     parent.loaded = True
-    parent.bondSizes = None
     parent.getName = lambda: "water"
     return parent
 
