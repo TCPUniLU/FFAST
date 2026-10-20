@@ -1,6 +1,6 @@
 import numpy as np
 from ffast.metrics import metric, dims, inputs as I, units
-from ffast.metrics.segments import segmentMeans
+from ffast.metrics.segments import framesOrOne, segmentMeans, stackedOrNone
 
 
 @metric(
@@ -15,31 +15,29 @@ from ffast.metrics.segments import segmentMeans
     tests=[
         {
             "inputs": {
-                "reference": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
-                "predicted": [[[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]]],
+                "reference": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]],
                 "masses": [1.0, 2.0],
             },
             "parameters": {},
-            "expected": [[[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]]],
+            "expected": [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]],
             "atol": 1e-10,
         }
     ],
 )
 def accel_difference(force_difference, masses):
     fd = np.asarray(force_difference)
-    if fd.ndim == 2:
-        fd = fd[np.newaxis]
     m = np.asarray(masses, dtype=np.float64)
     if np.any(m == 0.0):
         raise ValueError("accel_difference: zero-mass atom(s) make acceleration undefined")
-    return fd / m[np.newaxis, :, np.newaxis]
+    return fd / m[:, np.newaxis]
 
 
 @metric(
     id="ffast.accel_mae",
-    label="Acceleration MAE (per frame)",
+    label="Acceleration MAE (per atom)",
     inputs={"accel_difference": "ffast.accel_difference"},
-    shape=(dims.N_frames, dims.N_atoms),
+    shape=(dims.N_atoms,),
     unit=units.acceleration,
     parameters={
         "norm": {"type": "choice", "choices": ["l1", "l2"], "default": "l2", "role": "compute"},
@@ -47,22 +45,22 @@ def accel_difference(force_difference, masses):
     tests=[
         {
             "inputs": {
-                "reference": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
-                "predicted": [[[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]]],
+                "reference": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]],
                 "masses": [1.0, 2.0],
             },
             "parameters": {"norm": "l2"},
-            "expected": [[5.0, 0.0]],
+            "expected": [5.0, 0.0],
             "atol": 1e-6,
         },
         {
             "inputs": {
-                "reference": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
-                "predicted": [[[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]]],
+                "reference": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]],
                 "masses": [1.0, 2.0],
             },
             "parameters": {"norm": "l1"},
-            "expected": [[7.0 / 3.0, 0.0]],
+            "expected": [7.0 / 3.0, 0.0],
             "atol": 1e-6,
         },
     ],
@@ -83,8 +81,8 @@ def accel_mae(accel_difference, *, norm="l2"):
     tests=[
         {
             "inputs": {
-                "reference": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
-                "predicted": [[[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]]],
+                "reference": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]],
                 "masses": [1.0, 2.0],
             },
             "parameters": {},
@@ -94,9 +92,8 @@ def accel_mae(accel_difference, *, norm="l2"):
     ],
 )
 def accel_rmse(accel_mae, offsets=None):
-    if offsets is not None:
-        return np.sqrt(segmentMeans(np.ravel(accel_mae) ** 2, offsets))
-    return np.sqrt(np.mean(accel_mae ** 2, axis=-1))
+    accel_mae = np.asarray(accel_mae)
+    return np.sqrt(segmentMeans(accel_mae ** 2, framesOrOne(offsets, accel_mae)))
 
 
 @metric(
@@ -108,8 +105,8 @@ def accel_rmse(accel_mae, offsets=None):
     tests=[
         {
             "inputs": {
-                "reference": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
-                "predicted": [[[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]]],
+                "reference": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]],
                 "masses": [1.0, 2.0],
             },
             "parameters": {},
@@ -131,8 +128,8 @@ def accel_mae_global(accel_mae):
     tests=[
         {
             "inputs": {
-                "reference": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
-                "predicted": [[[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]]],
+                "reference": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]],
                 "masses": [1.0, 2.0],
             },
             "parameters": {},
@@ -148,15 +145,21 @@ def accel_rmse_global(accel_mae):
 @metric(
     id="ffast.accel_mae_per_atom",
     label="Acceleration Error",
-    description="Per-atom mean absolute acceleration error (force error divided by mass).",
+    description=(
+        "Per-atom mean absolute acceleration error (force error divided by "
+        "mass). When every structure has the same atoms, each atom's error is "
+        "averaged over the structures; otherwise atom i of one structure is not "
+        "atom i of another, and every atom of every structure keeps its own."
+    ),
     inputs={"accel_mae": "ffast.accel_mae"},
+    optional_inputs=["offsets"],
     shape=(dims.N_atoms,),
     unit=units.acceleration,
     tests=[
         {
             "inputs": {
-                "reference": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
-                "predicted": [[[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]]],
+                "reference": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]],
                 "masses": [1.0, 2.0],
             },
             "parameters": {},
@@ -165,11 +168,10 @@ def accel_rmse_global(accel_mae):
         }
     ],
 )
-def accel_mae_per_atom(accel_mae):
+def accel_mae_per_atom(accel_mae, offsets=None):
     am = np.asarray(accel_mae)
-    if am.ndim == 1:
-        am = am[np.newaxis]
-    return np.mean(am, axis=0)
+    stacked = stackedOrNone(am, framesOrOne(offsets, am))
+    return am if stacked is None else stacked.mean(axis=0)
 
 
 @metric(
@@ -184,8 +186,8 @@ def accel_mae_per_atom(accel_mae):
     tests=[
         {
             "inputs": {
-                "reference": [[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]],
-                "predicted": [[[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]]],
+                "reference": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]],
                 "masses": [1.0, 2.0],
                 "elements": [1, 6],
             },
@@ -197,11 +199,9 @@ def accel_mae_per_atom(accel_mae):
 )
 def accel_mae_per_element(accel_mae, elements):
     am = np.asarray(accel_mae)
-    if am.ndim == 1:
-        am = am[np.newaxis]
     el = np.asarray(elements)
     unique_z = np.unique(el)
     result = np.empty(len(unique_z), dtype=np.float64)
     for i, z in enumerate(unique_z):
-        result[i] = np.mean(am[:, el == z])
+        result[i] = np.mean(am[el == z])
     return result

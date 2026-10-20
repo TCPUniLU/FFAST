@@ -2,7 +2,7 @@ import numpy as np
 from jaxtyping import Float
 
 from ffast.metrics import metric, units, inputs as I
-from ffast.metrics.segments import segmentSums
+from ffast.metrics.segments import framesOrOne, segmentSums
 from ffast.metrics.signature import Ref
 from ffast.metrics.transforms import _abs_kde
 
@@ -12,28 +12,18 @@ METRIC_NAMESPACE = "ffast"
 
 
 def _per_structure_element_mae(force_difference, elements, offsets, z_target):
-    """Per-structure MAE over atoms of element ``z_target`` (uniform or variable).
-
-    Array form of the reducer that used to live in ``UI/panels.py`` (so it can run
-    server-side inside a Metric). Uniform: ``fd`` is (n_struct, n_atoms, 3) and
-    ``elements`` is (n_atoms,). Variable: ``fd`` is flat (n_tot, 3) with
-    ``offsets`` and ``elements`` is the flat per-atom z."""
+    """Per-structure MAE over atoms of element ``z_target``. ``fd`` is flat
+    (atoms, 3), ``elements`` is every atom's z, ``offsets`` says where each
+    structure starts (ADR 0058 step 6). Structures without the element are
+    left out."""
     fd = np.asarray(force_difference)
     el = np.asarray(elements)
-    if offsets is not None:
-        # Frames without the element are left out, as before.
-        sel = (el == z_target).astype(np.float64)
-        abs_sum = segmentSums(np.abs(fd).sum(axis=1) * sel, offsets)
-        count = segmentSums(sel, offsets)
-        has = count > 0
-        return abs_sum[has] / (count[has] * fd.shape[1])
-    if fd.ndim == 2:
-        fd = fd[np.newaxis]
-    sel = el == z_target
-    if not np.any(sel):
-        return np.asarray([], dtype=np.float64)
-    d = fd[:, sel, :].reshape(fd.shape[0], -1)
-    return np.mean(np.abs(d), axis=1)
+    offsets = framesOrOne(offsets, fd)
+    sel = (el == z_target).astype(np.float64)
+    abs_sum = segmentSums(np.abs(fd).sum(axis=1) * sel, offsets)
+    count = segmentSums(sel, offsets)
+    has = count > 0
+    return abs_sum[has] / (count[has] * fd.shape[1])
 
 
 @metric(
@@ -42,8 +32,8 @@ def _per_structure_element_mae(force_difference, elements, offsets, z_target):
     tests=[
         {
             "inputs": {
-                "reference": [[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]],
-                "predicted": [[[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]]],
+                "reference": [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+                "predicted": [[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
                 "elements": [1, 6],
             },
             "parameters": {},
@@ -57,13 +47,11 @@ def force_mae_per_element(
     elements: Ref[I.reference_elements],
 ) -> Float[np.ndarray, "N_elements"]:
     fd = np.asarray(force_difference)
-    if fd.ndim == 2:
-        fd = fd[np.newaxis]
     el = np.asarray(elements)
     unique_z = np.unique(el)
     result = np.empty(len(unique_z), dtype=np.float64)
     for i, z in enumerate(unique_z):
-        result[i] = np.mean(np.abs(fd[:, el == z, :]))
+        result[i] = np.mean(np.abs(fd[el == z]))
     return result
 
 
@@ -73,8 +61,8 @@ def force_mae_per_element(
     tests=[
         {
             "inputs": {
-                "reference": [[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]],
-                "predicted": [[[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]]],
+                "reference": [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+                "predicted": [[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
                 "elements": [1, 6],
             },
             "parameters": {},
@@ -88,13 +76,11 @@ def force_rmse_per_element(
     elements: Ref[I.reference_elements],
 ) -> Float[np.ndarray, "N_elements"]:
     fd = np.asarray(force_difference)
-    if fd.ndim == 2:
-        fd = fd[np.newaxis]
     el = np.asarray(elements)
     unique_z = np.unique(el)
     result = np.empty(len(unique_z), dtype=np.float64)
     for i, z in enumerate(unique_z):
-        result[i] = np.sqrt(np.mean(fd[:, el == z, :] ** 2))
+        result[i] = np.sqrt(np.mean(fd[el == z] ** 2))
     return result
 
 

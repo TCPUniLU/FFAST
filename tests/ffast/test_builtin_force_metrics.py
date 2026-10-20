@@ -43,17 +43,17 @@ def test_force_mae_l1():
 
 
 def test_force_rmse_shape_and_value():
-    # per-atom errors: shape (1, 2)
-    per_atom = np.array([[0.0, np.sqrt(3)]])
+    # one structure of two atoms: no offsets
+    per_atom = np.array([0.0, np.sqrt(3)])
     result = force_rmse(per_atom)
     assert result.shape == (1,)
     assert np.isclose(result[0], np.sqrt(np.mean([0.0, 3.0])))
 
 
-def test_force_mae_per_structure_uniform():
-    # uniform (N_frames, M) per-atom errors -> mean over atoms per frame
-    per_atom = np.array([[0.0, 2.0], [1.0, 3.0]])
-    result = force_mae_per_structure(per_atom)
+def test_force_mae_per_structure_same_sized_structures():
+    # two structures of two atoms, flat -> mean over atoms per structure
+    per_atom = np.array([0.0, 2.0, 1.0, 3.0])
+    result = force_mae_per_structure(per_atom, offsets=np.array([0, 2, 4]))
     assert result.shape == (2,)
     assert np.allclose(result, [1.0, 2.0])
 

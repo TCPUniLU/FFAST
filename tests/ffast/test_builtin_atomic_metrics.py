@@ -1,3 +1,5 @@
+"""Per-element force metrics on flat inputs: one row per atom, frame after
+frame, every atom's element, and offsets (ADR 0058 step 6)."""
 import numpy as np
 import ffast.metrics.builtin.force_metrics  # noqa: F401 — register force_difference dependency
 import ffast.metrics.builtin.transform_metrics  # noqa: F401 — registers the aggregate density
@@ -30,7 +32,7 @@ def test_builtin_registry():
 def test_force_mae_per_element_values():
     # 1 structure, 2 atoms (H=1, C=6), 3 force components
     # force_difference = [[1,0,0],[0,0,0]]
-    fd = np.array([[[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]])
+    fd = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
     el = np.array([1, 6])
     result = force_mae_per_element(fd, el)
     assert result.shape == (2,)
@@ -39,7 +41,7 @@ def test_force_mae_per_element_values():
 
 
 def test_force_rmse_per_element_values():
-    fd = np.array([[[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]]])
+    fd = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
     el = np.array([1, 6])
     result = force_rmse_per_element(fd, el)
     assert result.shape == (2,)
@@ -47,23 +49,10 @@ def test_force_rmse_per_element_values():
     assert np.isclose(result[1], 0.0)                   # C
 
 
-def test_force_mae_per_element_2d_input():
-    # single structure without explicit N dimension
-    fd = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
-    el = np.array([1, 6])
-    result = force_mae_per_element(fd, el)
-    assert result.shape == (2,)
-    assert np.isclose(result[0], 1.0 / 3.0)
-
-
 def test_force_mae_per_element_multi_structure():
     # 3 structures, same 2 atoms, H always has diff [1,0,0]
-    fd = np.array([
-        [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-        [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-        [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-    ])
-    el = np.array([1, 6])
+    fd = np.tile([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]], (3, 1))
+    el = np.tile([1, 6], 3)
     result = force_mae_per_element(fd, el)
     assert np.isclose(result[0], 1.0 / 3.0)
     assert np.isclose(result[1], 0.0)
@@ -71,7 +60,7 @@ def test_force_mae_per_element_multi_structure():
 
 def test_per_element_sorted_by_z():
     # elements in reverse order — result must still be sorted by Z
-    fd = np.array([[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]])
+    fd = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
     el = np.array([6, 1])  # C first, then H
     result_mae = force_mae_per_element(fd, el)
     result_rmse = force_rmse_per_element(fd, el)
@@ -87,7 +76,7 @@ def test_per_element_sorted_by_z():
 def test_force_mae_per_element_single_atom_single_element():
     # A one-atom structure with a single element: the mean over that element's
     # components is |1|+|0|+|0| averaged over 3 -> 1/3.
-    fd = np.array([[[1.0, 0.0, 0.0]]])   # (1 frame, 1 atom, 3)
+    fd = np.array([[1.0, 0.0, 0.0]])   # (1 atom, 3)
     el = np.array([1])
     result = force_mae_per_element(fd, el)
     assert result.shape == (1,)
@@ -96,7 +85,7 @@ def test_force_mae_per_element_single_atom_single_element():
 
 def test_force_mae_per_element_propagates_nan():
     # A NaN in the H atom's force diff makes H's mean NaN; C stays clean.
-    fd = np.array([[[np.nan, 0.0, 0.0], [0.0, 0.0, 0.0]]])
+    fd = np.array([[np.nan, 0.0, 0.0], [0.0, 0.0, 0.0]])
     el = np.array([1, 6])
     result = force_mae_per_element(fd, el)
     assert np.isnan(result[0])   # H
@@ -104,7 +93,7 @@ def test_force_mae_per_element_propagates_nan():
 
 
 def test_force_rmse_per_element_propagates_nan():
-    fd = np.array([[[np.nan, 0.0, 0.0], [0.0, 0.0, 0.0]]])
+    fd = np.array([[np.nan, 0.0, 0.0], [0.0, 0.0, 0.0]])
     el = np.array([1, 6])
     result = force_rmse_per_element(fd, el)
     assert np.isnan(result[0])   # H
@@ -115,8 +104,8 @@ def test_executor_resolves_dependency():
     r = _registry_with_builtins()
     executor = InProcessExecutor(r)
     inputs = {
-        "reference": np.array([[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]]),
-        "predicted": np.array([[[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]]]),
+        "reference": np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]),
+        "predicted": np.array([[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]]),
         "elements": np.array([1, 6]),
     }
     result = executor.run("ffast.force_mae_per_element", FlatInputSource(inputs), {})
@@ -127,12 +116,12 @@ def test_executor_resolves_dependency():
 
 # --- per-element distribution (KDE) for the grouped_density Panel ------------- #
 
-def test_per_element_kde_shape_uniform():
+def test_per_element_kde_shape_same_sized_structures():
     # 3 structures, 4 atoms (z = H,H,C,O → 3 unique elements)
     rng = np.random.default_rng(0)
-    fd = rng.normal(size=(3, 4, 3))
-    el = np.array([1, 1, 6, 8])
-    out = force_mae_per_structure_per_element_kde(fd, el)
+    fd = rng.normal(size=(12, 3))
+    el = np.tile([1, 1, 6, 8], 3)
+    out = force_mae_per_structure_per_element_kde(fd, el, offsets=[0, 4, 8, 12])
     assert out.shape == (3, 2, 200)  # (N_elements, curve_xy, grid)
 
 
@@ -149,11 +138,11 @@ def test_per_element_kde_independent_ranges():
     # Each element gets its OWN x-range (no shared-grid padding): a low-error
     # element's curve must not stretch to a high-error element's max.
     # 4 structures, atom 0 = H (large errors), atom 1 = C (tiny errors).
-    fd = np.zeros((4, 2, 3))
-    fd[:, 0, 0] = [3.0, 4.0, 5.0, 6.0]    # H force-diff x-component
-    fd[:, 1, 0] = [0.01, 0.02, 0.03, 0.04]  # C force-diff x-component
-    el = np.array([1, 6])  # order = [1, 6] → row 0 = H, row 1 = C
-    out = force_mae_per_structure_per_element_kde(fd, el)
+    fd = np.zeros((8, 3))
+    fd[0::2, 0] = [3.0, 4.0, 5.0, 6.0]    # H force-diff x-component
+    fd[1::2, 0] = [0.01, 0.02, 0.03, 0.04]  # C force-diff x-component
+    el = np.tile([1, 6], 4)  # order = [1, 6] → row 0 = H, row 1 = C
+    out = force_mae_per_structure_per_element_kde(fd, el, offsets=[0, 2, 4, 6, 8])
     assert out[0, 0].max() > out[1, 0].max() * 10  # H range ≫ C range
 
 
@@ -163,11 +152,12 @@ def test_per_element_kde_through_executor():
     r = _registry_with_builtins()
     executor = InProcessExecutor(r)
     inputs = {
-        "reference": np.array([[[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
-                               [[1.5, 0.0, 0.0], [2.0, 0.0, 0.0]]]),
-        "predicted": np.array([[[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
-                               [[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]]]),
-        "elements": np.array([1, 6]),
+        "reference": np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0],
+                               [1.5, 0.0, 0.0], [2.0, 0.0, 0.0]]),
+        "predicted": np.array([[2.0, 0.0, 0.0], [2.0, 0.0, 0.0],
+                               [2.0, 0.0, 0.0], [2.0, 0.0, 0.0]]),
+        "elements": np.array([1, 6, 1, 6]),
+        "offsets": np.array([0, 2, 4]),
     }
     result = executor.run("ffast.force_mae_per_structure_per_element_kde", FlatInputSource(inputs), {})
     assert result.shape == "(N_elements, curve_xy, grid)"

@@ -4,7 +4,7 @@ import numpy as np
 from jaxtyping import Float
 
 from ffast.metrics import metric, units, inputs as I
-from ffast.metrics.segments import segmentMeans, segmentSums
+from ffast.metrics.segments import framesOrOne, segmentMeans, segmentSums
 from ffast.metrics.signature import Ref
 
 # id = METRIC_NAMESPACE + "." + function name (inputs/shape/params inferred from
@@ -128,9 +128,8 @@ def force_rmse(
     force_mae: Ref["ffast.force_mae"],
     offsets=None,
 ) -> Float[np.ndarray, "N_frames"]:
-    if offsets is not None:
-        return np.sqrt(segmentMeans(np.asarray(force_mae) ** 2, offsets))
-    return np.sqrt(np.mean(force_mae ** 2, axis=-1))
+    force_mae = np.asarray(force_mae)
+    return np.sqrt(segmentMeans(force_mae ** 2, framesOrOne(offsets, force_mae)))
 
 
 @metric(
@@ -155,9 +154,7 @@ def force_mae_per_structure(
     force_mae: Ref["ffast.force_mae"],
     offsets=None,
 ) -> Float[np.ndarray, "N_frames"]:
-    if offsets is not None:
-        return segmentMeans(force_mae, offsets)
-    return np.mean(force_mae, axis=-1)
+    return segmentMeans(force_mae, framesOrOne(offsets, force_mae))
 
 
 @metric(
@@ -261,10 +258,7 @@ def force_net_residual(
     force_difference: Ref["ffast.force_difference"],
     offsets=None,
 ) -> Float[np.ndarray, "N_frames xyz"]:
-    if offsets is not None:
-        return segmentSums(force_difference, offsets)
-    # uniform: (N_frames, N_atoms, 3) — sum over the atoms axis
-    return np.asarray(force_difference).sum(axis=-2)
+    return segmentSums(force_difference, framesOrOne(offsets, force_difference))
 
 
 @metric(

@@ -234,6 +234,15 @@ def test_metrics_test_reports_ok(tmp_path, capsys):
     assert "ffast.accel_mae[0]" in out
 
 
+def test_every_builtin_metric_passes_its_own_tests(tmp_path, capsys):
+    """The examples written into each @metric must hold. Nothing else runs them
+    all, and ADR 0058 step 6 changed what metrics receive."""
+    config_file = tmp_path / "ffast.toml"
+    config_file.write_text("")
+    main(["metrics", "test", "--config", str(config_file)])   # exits 1 on any FAIL
+    assert "FAIL" not in capsys.readouterr().out
+
+
 def test_metrics_test_unknown_exits_1(tmp_path, capsys):
     config_file = tmp_path / "ffast.toml"
     config_file.write_text("")

@@ -1,14 +1,18 @@
 """
-Every built-in metric gives the same numbers on flat inputs as on today's
-uniform inputs (ADR 0058, step 6a).
+Every built-in metric gives, on flat inputs, the numbers it gave on uniform
+inputs before ADR 0058 step 6.
 
-Today a uniform dataset hands metrics 3D per-atom arrays, one structure's
-elements and masses, and no offsets. Step 6 hands every dataset flat arrays
-(one row per atom, frame after frame), every atom's elements and masses, and
-offsets. Before the switch, each metric must agree on both forms. Joining
-frames gives the same order as flattening (frames, atoms, ...), so results
-are compared flattened.
+Until step 6 a uniform dataset handed metrics 3D per-atom arrays, one
+structure's elements and masses, and no offsets. Now every dataset hands flat
+arrays (one row per atom, frame after frame), every atom's elements and
+masses, and offsets. The numbers the metrics gave on the old form were saved
+before their 3D code was deleted (data/metrics_on_uniform_before_flat.npz,
+written at commit d7fb84f from ``_uniform()`` below). Joining frames gives the
+same order as flattening (frames, atoms, ...), so results are compared
+flattened.
 """
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -73,10 +77,7 @@ def _leaves(metric_id, seen=None):
 AVAILABLE = set(_uniform()) | {"offsets"}
 METRICS = sorted(m for m in default_registry.list_metrics() if _leaves(m) <= AVAILABLE)
 
-# Metrics whose meaning changes on flat inputs, decided in step 6c.
-CHANGES_MEANING = {
-    "ffast.accel_mae_per_atom": "mean over frames per atom; on flat inputs, each atom of each frame",
-}
+BEFORE = np.load(Path(__file__).parent / "data" / "metrics_on_uniform_before_flat.npz")
 
 
 def test_the_comparison_covers_the_force_and_structure_metrics():
@@ -85,17 +86,32 @@ def test_the_comparison_covers_the_force_and_structure_metrics():
         assert metric in METRICS
 
 
+def test_every_metric_compared_has_its_saved_numbers():
+    assert set(METRICS) == set(BEFORE.files)
+
+
 @pytest.mark.parametrize("metric_id", METRICS)
 def test_a_metric_gives_the_same_numbers_on_flat_inputs(metric_id):
-    if metric_id in CHANGES_MEANING:
-        pytest.skip(CHANGES_MEANING[metric_id])
-    executor = InProcessExecutor(default_registry)
-    uniform = _uniform()
-    today = executor.run(metric_id, _ByRef(uniform), {})
-    flat = executor.run(metric_id, _ByRef(_flat(uniform)), {})
-    assert not isinstance(today, MetricFailure), today
+    flat = InProcessExecutor(default_registry).run(metric_id, _ByRef(_flat(_uniform())), {})
     assert not isinstance(flat, MetricFailure), flat
-    np.testing.assert_allclose(np.ravel(flat.values), np.ravel(today.values), rtol=1e-10, atol=1e-12)
+    np.testing.assert_allclose(np.ravel(flat.values), BEFORE[metric_id], rtol=1e-10, atol=1e-12)
+
+
+def test_acceleration_per_atom_keeps_every_atom_when_structures_differ_in_size():
+    """Atom i of one structure is not atom i of another, so nothing is
+    averaged: as the metric gave on variable files before step 6."""
+    rng = np.random.default_rng(3)
+    values = {
+        "reference.forces": rng.normal(size=(7, 3)),
+        "prediction.forces": rng.normal(size=(7, 3)),
+        "reference.masses": np.ones(7),
+        "offsets": np.array([0, 3, 7]),
+    }
+    executor = InProcessExecutor(default_registry)
+    per_atom = executor.run("ffast.accel_mae_per_atom", _ByRef(values), {})
+    accel = executor.run("ffast.accel_mae", _ByRef(values), {})
+    np.testing.assert_allclose(per_atom.values, accel.values)
+    assert per_atom.values.shape == (7,)
 
 
 def test_the_resolver_hands_a_uniform_file_and_its_prediction_flat():

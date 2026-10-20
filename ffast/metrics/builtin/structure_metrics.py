@@ -34,13 +34,14 @@ from ffast.metrics.segments import segmentSums
             "atol": 1e-10,
         },
         {
-            # uniform: 2 frames × 2 atoms; second frame at ±2 → Rg = 1, 2
+            # 2 frames × 2 atoms, flat; second frame at ±2 → Rg = 1, 2
             "inputs": {
                 "positions": [
-                    [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]],
-                    [[2.0, 0.0, 0.0], [-2.0, 0.0, 0.0]],
+                    [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.0], [-2.0, 0.0, 0.0],
                 ],
-                "elements": [1, 1],
+                "elements": [1, 1, 1, 1],
+                "offsets": [0, 2, 4],
             },
             "expected": [1.0, 2.0],
             "atol": 1e-10,
@@ -50,31 +51,19 @@ from ffast.metrics.segments import segmentSums
 def gyradius(positions, elements, offsets=None):
     """Atomic-number-weighted radius of gyration per structure.
 
-    Accepts three input shapes (matching what the InputResolver supplies):
-    - uniform trajectory ``positions (N, M, 3)`` + ``elements (M,)`` → ``(N,)``;
-    - variable dataset ``positions (total, 3)`` + ``elements (total,)`` plus
-      ``offsets`` (molecule boundaries) → ``(N,)``;
-    - a single structure ``positions (n, 3)`` (no offsets) → scalar.
+    Positions are flat ``(atoms, 3)`` and elements every atom's z, as the
+    InputResolver supplies them (ADR 0058 step 6): with ``offsets`` → ``(N,)``,
+    one radius per structure; without, one structure → a scalar.
     """
     R = np.asarray(positions, dtype=np.float64)
     z = np.asarray(elements, dtype=np.float64)
-
-    if R.ndim == 3:
-        # (N, M, 3) uniform; z is (M,)
-        total_z = np.sum(z)
-        if total_z == 0:
-            raise ValueError("gyradius: total atomic-number weight is zero")
-        w = z / total_z
-        com = np.einsum("a,nax->nx", w, R)            # (N, 3) weighted COM
-        s2 = np.sum((R - com[:, None, :]) ** 2, axis=2)  # (N, M)
-        return np.sqrt(s2 @ w)                         # (N,)
 
     if offsets is not None:
         sw = segmentSums(z, offsets)
         if np.any(sw == 0):
             raise ValueError("gyradius: total atomic-number weight is zero")
         com = segmentSums(z[:, None] * R, offsets) / sw[:, None]
-        s2 = np.sum((R - np.repeat(com, np.diff(np.asarray(offsets)), axis=0)) ** 2, axis=1)
+        s2 = np.sum((R - np.repeat(com, np.diff(np.asarray(offsets, dtype=np.intp)), axis=0)) ** 2, axis=1)
         return np.sqrt(segmentSums(z * s2, offsets) / sw)
 
     # single structure (n_atoms, 3) → scalar

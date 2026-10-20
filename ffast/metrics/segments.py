@@ -37,3 +37,21 @@ def segmentMeans(values, offsets) -> np.ndarray:
     with np.errstate(invalid="ignore", divide="ignore"):
         return sums / counts.reshape(shape)
 
+
+
+def framesOrOne(offsets, rows) -> np.ndarray:
+    """The offsets, or one frame holding every row when there are none (a
+    single structure, as the colouring path and the metrics' own tests give)."""
+    if offsets is None:
+        return np.array([0, len(rows)], dtype=np.intp)
+    return np.asarray(offsets, dtype=np.intp)
+
+
+def stackedOrNone(values, offsets):
+    """``(frames, atoms, ...)`` when every frame has the same number of rows,
+    else None: atom i of one frame is then not atom i of another."""
+    values = np.asarray(values)
+    counts = np.diff(np.asarray(offsets, dtype=np.intp))
+    if counts.size == 0 or (counts != counts[0]).any():
+        return None
+    return values[:int(np.asarray(offsets)[-1])].reshape(counts.size, int(counts[0]), *values.shape[1:])
