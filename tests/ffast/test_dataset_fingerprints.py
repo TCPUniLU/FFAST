@@ -129,3 +129,14 @@ def test_frame_by_frame_fingerprint_matches_the_array_formula(energies, forces):
             atoms.calc = SinglePointCalculator(atoms, **results)
     dataset = aseDatasetLoader("v.xyz", atomsList=frames)
     assert dataset.getFingerprint() == VariableDatasetLoader.getFingerprint(dataset)
+
+
+def test_sgdml_file_fingerprint_is_unchanged(tmp_path):
+    """Computed before the sGDML loader moved to the flat storage (ADR 0058
+    step 7)."""
+    from ffast.plugins.models.sgdml import sGDMLDatasetLoader
+    rng = np.random.default_rng(7)
+    path = tmp_path / "s.npz"
+    np.savez(path, R=rng.normal(size=(4, 3, 3)), E=rng.normal(size=(4, 1)),
+             F=rng.normal(size=(4, 3, 3)), z=np.array([1, 1, 8]))
+    assert _initialised(sGDMLDatasetLoader(str(path))).fingerprint == "29b040d2ebc03b301645cd968f995526"
