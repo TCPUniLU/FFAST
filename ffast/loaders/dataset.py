@@ -35,6 +35,13 @@ def toDistance(R):
     return y
 
 
+def isOneFrame(indices):
+    """True when ``indices`` names one frame (a plain number), not all frames
+    (None) or several (a list or array). Every numpy array has ``__iter__``,
+    so an array of any shape counts as several."""
+    return indices is not None and not hasattr(indices, "__iter__")
+
+
 class DatasetLoader(EventClass):
     """
     Base class for any dataset. Contains all dataset-agnostic methods.
@@ -463,7 +470,7 @@ class VariableDatasetLoader(EventClass):
         """
         if indices is None:
             indices = np.arange(self.N)
-        elif not isinstance(indices, np.ndarray) and not hasattr(indices, '__iter__'):
+        elif isOneFrame(indices):
             # Single molecule - return array directly
             start = self.molecule_offsets[indices]
             end = self.molecule_offsets[indices+1]
@@ -498,7 +505,7 @@ class VariableDatasetLoader(EventClass):
             raise RuntimeError("Forces are not available for this dataset.")
         if indices is None:
             indices = np.arange(self.N)
-        elif not isinstance(indices, np.ndarray) and not hasattr(indices, '__iter__'):
+        elif isOneFrame(indices):
             # Single molecule
             start = self.molecule_offsets[indices]
             end = self.molecule_offsets[indices+1]

@@ -3,10 +3,9 @@ import hashlib
 import logging
 import numpy as np
 from ffast.cache.fingerprint import md5FromParts
-from ffast.loaders.dataset import DatasetLoader, VariableDatasetLoader
+from ffast.loaders.dataset import DatasetLoader, VariableDatasetLoader, isOneFrame
 import ase.io
 from ase.calculators.calculator import PropertyNotImplementedError
-from collections.abc import Iterable
 
 # The discoverable plugin (loadData/SmartASELoader, registered under the
 # "ase (auto)" datasetName) lives in ffast.plugins.loaders.ase (ADR 0048); this
@@ -27,7 +26,7 @@ def _atoms_subset(atomsList, indices):
     """
     if indices is None:
         return [atomsList[i] for i in range(len(atomsList))], False
-    if not isinstance(indices, np.ndarray) and not hasattr(indices, "__iter__"):
+    if isOneFrame(indices):
         return [atomsList[indices]], True
     return [atomsList[i] for i in indices], False
 
@@ -184,7 +183,7 @@ class aseDatasetLoader(DatasetLoader):
         # probably should just do it once at the start and save it as np arrays?
         if indices is None:
             indices = np.arange(self.N)
-        elif not isinstance(indices, Iterable):
+        elif isOneFrame(indices):
             return self.atomsList[indices].get_positions()
 
         R = []
@@ -214,7 +213,7 @@ class aseDatasetLoader(DatasetLoader):
         if use_calculator:
             if indices is None:
                 indices = np.arange(self.N)
-            elif not isinstance(indices, Iterable):
+            elif isOneFrame(indices):
                 return self.atomsList[indices].get_potential_energy()
 
             R = []
@@ -225,7 +224,7 @@ class aseDatasetLoader(DatasetLoader):
             logger.info(f"Using energy key '{selected_key}' from {keys}")
             if indices is None:
                 indices = np.arange(self.N)
-            elif not isinstance(indices, Iterable):
+            elif isOneFrame(indices):
                 return self.atomsList[indices].info[selected_key]
 
             R = []
@@ -254,7 +253,7 @@ class aseDatasetLoader(DatasetLoader):
         if use_calculator:
             if indices is None:
                 indices = np.arange(self.N)
-            elif not isinstance(indices, Iterable):
+            elif isOneFrame(indices):
                 return self.atomsList[indices].get_forces()
 
             R = []
@@ -265,7 +264,7 @@ class aseDatasetLoader(DatasetLoader):
             logger.info(f"Using force key '{selected_key}' from {keys}")
             if indices is None:
                 indices = np.arange(self.N)
-            elif not isinstance(indices, Iterable):
+            elif isOneFrame(indices):
                 return self.atomsList[indices].arrays[selected_key]
 
             R = []
@@ -290,7 +289,7 @@ class aseDatasetLoader(DatasetLoader):
         """Return the unit cell/lattice for specified frame(s)."""
         if indices is None:
             indices = np.arange(self.N)
-        elif not isinstance(indices, Iterable):
+        elif isOneFrame(indices):
             return self.atomsList[indices].get_cell()
 
         R = []
@@ -497,7 +496,7 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
 
         if indices is None:
             return np.array(self.lattice)
-        elif not isinstance(indices, Iterable):
+        elif isOneFrame(indices):
             return self.lattice[indices]
 
         return np.array([self.lattice[i] for i in indices])
