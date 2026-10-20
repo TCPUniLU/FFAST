@@ -10,6 +10,7 @@ from UI.Templates import (
     ProgressBar,
     customFileDialog,
 )
+from UI.Templates.display import showFullTextOnHover
 from config.uiConfig import configStyleSheet
 from utils import rgbToHex
 from client.object_info import describe
@@ -72,6 +73,7 @@ class DatasetModelItem(ObjectListItem, EventChildClass):
         self.labelLayout.setSpacing(4)
         self.titleLabel = LineEdit("?", parent=self)
         self.titleLabel.setDisabled(True)
+        showFullTextOnHover(self.titleLabel)
         # self.titleLabel = QtWidgets.QLabel("?", parent=self)
 
         self.titleLabel.setObjectName("titleLabel")
