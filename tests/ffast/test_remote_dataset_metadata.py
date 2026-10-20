@@ -1,9 +1,7 @@
 import numpy as np
 
 from cluster.remote_dataset import CachedRemoteDataset
-from ffast.loaders.dataset import (
-    AtomFilteredDataset, DatasetLoader, SubDataset, VariableDatasetLoader,
-)
+from ffast.loaders.dataset import DatasetLoader, DatasetView, VariableDatasetLoader
 from ffast.protocol import DatasetMeta
 
 
@@ -12,6 +10,9 @@ class _UniformDataset(DatasetLoader):
 
     def getN(self):
         return 2
+
+    def getNAtoms(self, index=None):
+        return 3
 
     def getForces(self):
         return np.zeros((2, 3, 3))
@@ -104,7 +105,7 @@ def test_a_loaded_dataset_has_no_parent():
 
 
 def test_a_frame_subset_names_its_parent_and_parent_frames():
-    sub = SubDataset(_parent(), None, np.array([3, 5, 8]), "picked")
+    sub = DatasetView.subset(_parent(), None, np.array([3, 5, 8]), "picked")
     sub.getN = lambda: 3
     meta = DatasetMeta.model_validate(sub.toMetaDict())
     assert meta.parent == "parentfp"
@@ -113,7 +114,7 @@ def test_a_frame_subset_names_its_parent_and_parent_frames():
 
 def test_an_atom_subset_shares_every_frame_with_its_parent():
     """Its indices are atoms, not frames: frame i is the parent's frame i."""
-    sub = AtomFilteredDataset(_parent(), np.array([0, 2]))
+    sub = DatasetView.atomSubset(_parent(), np.array([0, 2]))
     meta = DatasetMeta.model_validate(sub.toMetaDict())
     assert meta.parent == "parentfp"
     assert meta.parent_frames is None
@@ -141,7 +142,7 @@ def test_the_desktop_accepts_lineage_in_the_announcement(monkeypatch):
 def test_a_hidden_subset_says_so():
     """A subset whose SUB box was unticked is kept but marked inactive, so the
     browser stops listing it."""
-    sub = SubDataset(_parent(), None, np.array([3, 5]), "Plot")
+    sub = DatasetView.subset(_parent(), None, np.array([3, 5]), "Plot")
     sub.getN = lambda: 2
     sub.fingerprint = "subfp"
     assert DatasetMeta.model_validate(sub.toMetaDict()).active is True

@@ -15,7 +15,7 @@ import pytest
 from ase import Atoms
 
 from ffast.core.loading_coordinator import LoadingCoordinator
-from ffast.loaders.dataset import AtomFilteredDataset, FrozenSubDataset, SubDataset
+from ffast.loaders.dataset import DatasetView
 
 
 # ---- the data: same positions for both parent kinds' truth ---------------
@@ -86,21 +86,21 @@ def _view_none(parent, truth):
 
 def _view_frames(parent, truth):
     frames = np.array([3, 0, 2])
-    view = SubDataset(parent, None, frames, "Subset")
+    view = DatasetView.subset(parent, None, frames, "Subset")
     view.initialise()
     return view, truth.cut_frames(frames)
 
 
 def _view_frozen(parent, truth):
     frames = np.array([3, 0, 2])
-    view = FrozenSubDataset(parent, None, frames, "Frozen")
+    view = DatasetView.frozenSubset(parent, None, frames, "Frozen")
     view.initialise()
     return view, truth.cut_frames(frames)
 
 
 def _view_atoms(parent, truth):
-    atoms = np.array([0, 2])
-    view = AtomFilteredDataset(parent, atoms)
+    atoms = np.array([0, 1])
+    view = DatasetView.atomSubset(parent, atoms)
     view.initialise()
     return view, truth.cut_atoms(atoms)
 
@@ -108,15 +108,15 @@ def _view_atoms(parent, truth):
 def _view_frames_of_frames(parent, truth):
     inner, inner_truth = _view_frames(parent, truth)
     frames = np.array([2, 0])
-    view = SubDataset(inner, None, frames, "SubSubset")
+    view = DatasetView.subset(inner, None, frames, "SubSubset")
     view.initialise()
     return view, inner_truth.cut_frames(frames)
 
 
 def _view_atoms_of_frames(parent, truth):
     inner, inner_truth = _view_frames(parent, truth)
-    atoms = np.array([0, 2])
-    view = AtomFilteredDataset(inner, atoms)
+    atoms = np.array([0, 1])
+    view = DatasetView.atomSubset(inner, atoms)
     view.initialise()
     return view, inner_truth.cut_atoms(atoms)
 
@@ -124,7 +124,7 @@ def _view_atoms_of_frames(parent, truth):
 def _view_frames_of_atoms(parent, truth):
     inner, inner_truth = _view_atoms(parent, truth)
     frames = np.array([1, 2])
-    view = SubDataset(inner, None, frames, "Subset")
+    view = DatasetView.subset(inner, None, frames, "Subset")
     view.initialise()
     return view, inner_truth.cut_frames(frames)
 
@@ -184,35 +184,9 @@ QUESTIONS = {
 
 
 # ---- known gaps: (parent, view, question) -> (error type, why) -----------
-_NO_BONDS = (TypeError, "atom subset of a variable parent has no bond sizes")
-_ONE_FRAME_ELEMENTS = (AssertionError, "atom subset uses frame 0's elements for every "
-                       "frame (deliberate today; the single view changes it)")
-_MASK_TOO_BIG = (IndexError, "undecided: an atom subset asks for an atom that a "
-                             "smaller structure (H2) does not have")
-_NO_FRAME_ARG = (TypeError, "atom subset's getNAtoms() takes no frame number (step 5)")
-
-
-
-KNOWN_GAPS = {
-    ("variable", "atom-subset", "bond_matrix_shape"): _NO_BONDS,
-    ("variable", "atom-subset-of-subset", "bond_matrix_shape"): _NO_BONDS,
-    ("variable", "subset-of-atom-subset", "bond_matrix_shape"): _NO_BONDS,
-    ("variable", "atom-subset", "elements"): _ONE_FRAME_ELEMENTS,
-    ("variable", "atom-subset-of-subset", "elements"): _ONE_FRAME_ELEMENTS,
-    ("variable", "subset-of-atom-subset", "elements"): _ONE_FRAME_ELEMENTS,
-    ("variable", "atom-subset", "coordinates"): _ONE_FRAME_ELEMENTS,
-    ("variable", "atom-subset-of-subset", "coordinates"): _ONE_FRAME_ELEMENTS,
-    ("variable", "subset-of-atom-subset", "coordinates"): _ONE_FRAME_ELEMENTS,
-    ("variable", "atom-subset", "coordinates"): _MASK_TOO_BIG,
-    ("variable", "atom-subset-of-subset", "coordinates"): _MASK_TOO_BIG,
-    ("variable", "subset-of-atom-subset", "coordinates"): _MASK_TOO_BIG,
-    ("uniform", "atom-subset", "n_atoms"): _NO_FRAME_ARG,
-    ("uniform", "atom-subset-of-subset", "n_atoms"): _NO_FRAME_ARG,
-    ("variable", "atom-subset", "n_atoms"): _NO_FRAME_ARG,
-    ("variable", "atom-subset-of-subset", "n_atoms"): _NO_FRAME_ARG,
-    ("variable", "subset-of-atom-subset", "n_atoms"): _MASK_TOO_BIG,
-
-}
+# None since ADR 0058 step 5: one view answers every question on every parent.
+# Strict mode still turns a newly broken cell red.
+KNOWN_GAPS = {}
 
 
 def _cases():
@@ -233,3 +207,14 @@ def test_view_answers_per_frame_question(parent_kind, view_kind, question):
     parent.initialise()
     dataset, truth = VIEWS[view_kind](parent, Truth(structures))
     QUESTIONS[question](dataset, truth)
+
+
+def test_an_atom_subset_naming_an_atom_some_structure_lacks_is_refused():
+    """Atoms are picked on frame 0; a smaller structure (H2) may not have
+    them. Such a subset is refused when made, so it never holds a frame it
+    cannot answer (ADR 0058 step 5)."""
+    structures = _variable_atoms()
+    parent = LoadingCoordinator._aseLoaderFor("variable.xyz", atomsList=structures)
+    parent.initialise()
+    with pytest.raises(ValueError, match="atom 2 is missing from 1 of 6 structures"):
+        DatasetView.atomSubset(parent, np.array([0, 2]))

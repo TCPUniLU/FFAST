@@ -170,7 +170,7 @@ class DataService:
                     )
                     if data is not None:
                         return data.getAtomFilteredEntity(
-                            indices=dataset.indices
+                            indices=dataset.atoms
                         )
 
                 if dataType.atomConstant:
@@ -183,7 +183,7 @@ class DataService:
                     dataTypeKey, model=model, dataset=dataset.parent
                 )
                 if data is not None:
-                    return data.getSubEntity(indices=dataset.indices)
+                    return data.getSubEntity(indices=dataset.frames)
 
         return self.cache.get(cacheKey, None)
 

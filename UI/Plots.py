@@ -11,7 +11,7 @@ import logging
 from client.dataWatcher import DataWatcher
 from client import display_overrides
 import numpy as np
-from ffast.loaders.dataset import SubDataset
+from ffast.loaders.dataset import DatasetView
 from ffast.config.user import getConfig
 from UI import plot_profiler
 
@@ -733,9 +733,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
                 idx = None
 
             if asFingerprint:
-                fp = SubDataset.getFingerprint(
-                    SubDataset, dataset, model, self.name
-                )
+                fp = DatasetView.subsetFingerprint(dataset, model, self.name)
                 subs.append(fp)
             else:
                 subs.append((dataset, model, idx))

@@ -233,15 +233,15 @@ class Environment(EventClass):
 
     def declareSubDataset(self, parent, model, idx, subName):
         """Create or refresh a logical subset view over a parent dataset."""
-        from ffast.loaders.dataset import SubDataset  # ADR 0047 Phase 5c
+        from ffast.loaders.dataset import DatasetView  # ADR 0047 Phase 5c
 
         # check if already exists
-        fp = SubDataset.getFingerprint(SubDataset, parent, model, subName)
+        fp = DatasetView.subsetFingerprint(parent, model, subName)
         sub = self.datasets.get(fp)
 
         # if doesnt exist yet
         if sub is None:  # and (idx is not None):
-            sub = SubDataset(parent, model, idx, subName)
+            sub = DatasetView.subset(parent, model, idx, subName)
             sub.initialise()
             self.datasets.add(sub)
         # elif sub is None:
@@ -253,40 +253,36 @@ class Environment(EventClass):
             sub.setActive(True)
 
     def freezeSubDataset(self, fingerprint):
-        """Persist the current subdataset selection as its own frozen dataset object."""
-        from ffast.loaders.dataset import FrozenSubDataset  # ADR 0047 Phase 5c
+        """Keep a live subset's current frames as a frozen subset of their own.
+        Only a subset that follows a zoom can be frozen; anything else is left
+        alone."""
+        from ffast.loaders.dataset import DatasetView  # ADR 0047 Phase 5c
         dataset = self.datasets.get(fingerprint)
-        if (dataset is None) or (not dataset.isSubDataset):
+        if not getattr(dataset, "live", False):
             return
 
-        fp = FrozenSubDataset.getFingerprint(
-            FrozenSubDataset,
-            parent=dataset.parent,
-            model=dataset.modelDep,
-            indices=dataset.indices,
-            subName=dataset.subName,
+        fp = DatasetView.frozenFingerprint(
+            dataset.parent, dataset.model, dataset.subName, dataset.frames
         )
         if self.datasets.get(fp) is not None:
             return
 
-        sub = FrozenSubDataset(
-            dataset.parent, dataset.modelDep, dataset.indices, dataset.subName
+        sub = DatasetView.frozenSubset(
+            dataset.parent, dataset.model, dataset.frames, dataset.subName
         )
         sub.initialise()
         self.datasets.add(sub)
 
     def createAtomFilteredDataset(self, dataset, idxs):
         """Build a per-atom filtered dataset view for atom-level analyses."""
-        from ffast.loaders.dataset import AtomFilteredDataset  # ADR 0047 Phase 5c
-        fp = AtomFilteredDataset.getFingerprint(
-            AtomFilteredDataset, dataset, idxs
-        )
+        from ffast.loaders.dataset import DatasetView  # ADR 0047 Phase 5c
+        fp = DatasetView.atomSubsetFingerprint(dataset, idxs)
         sub = self.datasets.get(fp)
 
         if sub is not None:
             return
 
-        sub = AtomFilteredDataset(dataset, idxs)
+        sub = DatasetView.atomSubset(dataset, idxs)
         sub.initialise()
         self.datasets.add(sub)
 

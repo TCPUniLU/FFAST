@@ -11,7 +11,7 @@ windows also said every structure had the same size.
 import numpy as np
 import pytest
 
-from ffast.loaders.dataset import SubDataset, VariableDatasetLoader
+from ffast.loaders.dataset import DatasetView, VariableDatasetLoader
 from ffast.metrics.builtin.structure_metrics import gyradius
 from ffast.metrics.input_resolver import InputResolver
 
@@ -42,7 +42,7 @@ def parent():
 
 @pytest.fixture
 def sub(parent):
-    s = SubDataset(parent, None, np.array(FRAMES), "Subset")
+    s = DatasetView.subset(parent, None, np.array(FRAMES), "Subset")
     s.initialise()
     return s
 

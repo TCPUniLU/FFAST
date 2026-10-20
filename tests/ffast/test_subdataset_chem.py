@@ -1,79 +1,58 @@
-"""SubDataset.getChemicalFormula must delegate, never read ``parent.chem``.
+"""A subset's chemical formula comes from its parent's, never from ``parent.chem``.
 
-Regression: ``chem`` is set only on AtomFilteredDataset, but every parent type
-(remote proxy, uniform, variable, nested sub) implements ``getChemicalFormula``.
-Reading ``self.parent.chem`` crashed with ``AttributeError: '<X>' object has no
-attribute 'chem'`` for remote / sub-of-sub parents, which aborted the sub's
-SideBar item construction — so toggling subbing off could not hide it and the
-sub-dataset "did not disappear". The method is exercised unbound (duck-typed
-self) to avoid the heavy SubDataset constructor.
+Regression: ``chem`` was set only on atom subsets, but every parent type
+(remote proxy, uniform, variable, nested subset) implements
+``getChemicalFormula``. Reading ``self.parent.chem`` crashed with
+``AttributeError: '<X>' object has no attribute 'chem'`` for remote and
+subset-of-subset parents, which aborted the subset's SideBar item, so toggling
+subbing off could not hide it.
 """
 import types
 
 import numpy as np
 import pytest
 
-from ffast.loaders.dataset import SubDataset
+from ffast.loaders.dataset import DatasetView
 
 
-class _UniformRemoteParent:
-    """Like RemoteDataset: implements getChemicalFormula, has NO `chem` attr."""
-    isVariable = False
-
-    def getChemicalFormula(self):
-        return "C9H8O4"
-
-
-def _formula_for_parent(parent):
-    return SubDataset.getChemicalFormula(types.SimpleNamespace(parent=parent))
-
-
-def test_uniform_parent_delegates_instead_of_reading_chem():
-    assert _formula_for_parent(_UniformRemoteParent()) == "C9H8O4"
+def _parent(variable=False, offsets=None, formula=None):
+    """Like the remote proxy: answers getChemicalFormula, has no ``chem``."""
+    parent = types.SimpleNamespace(loaded=True, fingerprint="P", isVariable=variable,
+                                   getName=lambda: "parent")
+    if formula is not None:
+        parent.getChemicalFormula = formula
+    if offsets is not None:
+        parent.getOffsets = lambda: np.asarray(offsets)
+    return parent
 
 
-def test_nested_sub_parent_recurses_to_root():
-    inner = _UniformRemoteParent()
-    sub_parent = types.SimpleNamespace(parent=inner, isVariable=False)
-    sub_parent.getChemicalFormula = lambda: SubDataset.getChemicalFormula(sub_parent)
-    assert _formula_for_parent(sub_parent) == "C9H8O4"
+def _subset(parent, frames=(0, 1)):
+    return DatasetView.subset(parent, None, np.array(frames), "Subset")
 
 
-def test_variable_parent_branch_unchanged():
-    fake = types.SimpleNamespace(
-        parent=types.SimpleNamespace(isVariable=True),
-        getNAtoms=lambda: np.array([21, 21, 21]),
-    )
-    assert SubDataset.getChemicalFormula(fake) == "Variable (21-21 atoms)"
+def test_a_uniform_parents_formula_is_used():
+    assert _subset(_parent(formula=lambda: "C9H8O4")).getChemicalFormula() == "C9H8O4"
 
 
-def test_variable_parent_scalar_count_returns_n_atoms():
-    # Non-ndarray getNAtoms hits the `{count} atoms` else-branch — covers a
-    # zero-atom / scalar-count variable parent.
-    fake = types.SimpleNamespace(
-        parent=types.SimpleNamespace(isVariable=True),
-        getNAtoms=lambda: 0,
-    )
-    assert SubDataset.getChemicalFormula(fake) == "0 atoms"
+def test_a_subset_of_a_subset_reaches_the_file():
+    inner = _subset(_parent(formula=lambda: "C9H8O4"))
+    inner.fingerprint = "INNER"
+    assert _subset(inner, frames=[1]).getChemicalFormula() == "C9H8O4"
 
 
-def test_variable_parent_zero_atom_array_formats_range():
-    fake = types.SimpleNamespace(
-        parent=types.SimpleNamespace(isVariable=True),
-        getNAtoms=lambda: np.array([0]),
-    )
-    assert SubDataset.getChemicalFormula(fake) == "Variable (0-0 atoms)"
+def test_below_a_variable_parent_the_range_of_sizes_is_shown():
+    parent = _parent(variable=True, offsets=[0, 21, 42, 63])
+    assert _subset(parent, frames=[0, 2]).getChemicalFormula() == "Variable (21-21 atoms)"
 
 
-def test_parent_formula_error_propagates_not_masked():
-    # Delegation means a parent whose own getChemicalFormula raises propagates
-    # that error — it is NOT swallowed, and crucially it is the parent's error,
-    # not the old AttributeError from reading `parent.chem`.
-    class _RaisingParent:
-        isVariable = False
+def test_a_structure_without_atoms_shows_a_range_from_zero():
+    parent = _parent(variable=True, offsets=[0, 0, 3])
+    assert _subset(parent, frames=[0]).getChemicalFormula() == "Variable (0-0 atoms)"
 
-        def getChemicalFormula(self):
-            raise RuntimeError("parent boom")
+
+def test_the_parents_own_error_is_not_masked():
+    def boom():
+        raise RuntimeError("parent boom")
 
     with pytest.raises(RuntimeError, match="parent boom"):
-        _formula_for_parent(_RaisingParent())
+        _subset(_parent(formula=boom)).getChemicalFormula()

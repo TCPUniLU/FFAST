@@ -304,7 +304,7 @@ class ServerSession:
                     and getattr(dataset, "parent", None) is not None):
                 parent = self.get_prediction(dataset.parent.fingerprint, model_fp)
                 if parent is not None:
-                    frames = [int(i) for i in np.asarray(dataset.indices).ravel()]
+                    frames = [int(i) for i in np.asarray(dataset.frames).ravel()]
                     forces = parent.forces
                     # Structures of different sizes come as a list of arrays.
                     if isinstance(forces, list):
@@ -520,7 +520,7 @@ class ServerSession:
         other tabs (PRD stories 61-62). The window that sent this is told which
         subset it made (``SUBSET_DECLARED``), so it can show it.
         """
-        from ffast.loaders.dataset import SubDataset  # ADR 0047 Phase 5c
+        from ffast.loaders.dataset import DatasetView  # ADR 0047 Phase 5c
         from ffast.protocol.rpc import pack
 
         parent = self.env.datasets.get(parent_fingerprint)
@@ -530,7 +530,7 @@ class ServerSession:
         model_fp = kwargs.get("model_fp")
         model = self.env.models.get(model_fp) if model_fp else None
         name = kwargs.get("name") or "Subset"
-        existing = self.env.datasets.get(SubDataset.getFingerprint(SubDataset, parent, model, name))
+        existing = self.env.datasets.get(DatasetView.subsetFingerprint(parent, model, name))
 
         if kwargs.get("active", True) is False:
             if existing is not None:
@@ -552,7 +552,7 @@ class ServerSession:
             logger.info("DECLARE_SUBSET: no frames for %r", parent_fingerprint)
             return
         unchanged = (existing is not None and getattr(existing, "active", True)
-                     and list(existing.indices) == idx)
+                     and list(existing.frames) == idx)
         if not unchanged:   # the same frames: nothing to rebuild or announce
             try:
                 self.env.declareSubDataset(parent, model, idx, name)
@@ -560,7 +560,7 @@ class ServerSession:
                 logger.warning("DECLARE_SUBSET: declareSubDataset failed: %s", exc)
                 return
         await self._emit(pack(control.SUBSET_DECLARED, [], {
-            "fingerprint": SubDataset.getFingerprint(SubDataset, parent, model, name),
+            "fingerprint": DatasetView.subsetFingerprint(parent, model, name),
             "parent_fingerprint": parent_fingerprint, "model_fp": model_fp, "name": name,
         }))
 
@@ -1136,8 +1136,8 @@ class ServerSession:
             fmt = "extxyz" if ext in (".xyz", ".extxyz", "") else None
 
         # One saver; it writes uniform or variable by the dataset's own
-        # isVariable. A SubDataset forwards its parent's isVariable; an
-        # AtomFilteredDataset is atom-filtering, always the uniform path.
+        # isVariable. A view (subset or atom subset) forwards its parent's, so
+        # an atom subset of a variable file is written frame by frame.
         from ffast.loaders.ase import aseDatasetLoader as saver
 
         try:

@@ -11,7 +11,7 @@ from ase import Atoms
 from ase.calculators.singlepoint import SinglePointCalculator
 
 from ffast.loaders.ase import aseDatasetLoader
-from ffast.loaders.dataset import AtomFilteredDataset, SubDataset, stackFrames
+from ffast.loaders.dataset import DatasetView, stackFrames
 
 UNIFORM = ["H2O"] * 4
 VARIABLE = ["H2O", "CH4", "NH3", "C2H6"]
@@ -37,13 +37,13 @@ def _ase(formulas, forces=True, energies=True):
 
 
 def _frame_subset(parent, frames=(3, 0)):
-    sub = SubDataset(parent, None, np.array(frames), "Subset")
+    sub = DatasetView.subset(parent, None, np.array(frames), "Subset")
     sub.initialise()
     return sub
 
 
 def _atom_subset(parent):
-    sub = AtomFilteredDataset(parent, np.array([0, 2]))
+    sub = DatasetView.atomSubset(parent, np.array([0, 2]))
     sub.initialise()
     return sub
 

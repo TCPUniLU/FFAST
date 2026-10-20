@@ -979,8 +979,8 @@ class _FakeFrames:
 
 
 class _FakeSub:
-    def __init__(self, indices, active=True):
-        self.indices = indices
+    def __init__(self, frames, active=True):
+        self.frames = frames
         self.active = active
 
     def setActive(self, state):
@@ -992,8 +992,8 @@ class _FakeModel:
 
 
 def _sub_fp(parent, model, name):
-    from ffast.loaders.dataset import SubDataset
-    return SubDataset.getFingerprint(SubDataset, parent, model, name)
+    from ffast.loaders.dataset import DatasetView
+    return DatasetView.subsetFingerprint(parent, model, name)
 
 
 def _declare(env, **kwargs):
@@ -1089,9 +1089,9 @@ class _FakeFrameSubset:
     isSubDataset = True
     isAtomFiltered = False
 
-    def __init__(self, parent, indices):
+    def __init__(self, parent, frames):
         self.parent = parent
-        self.indices = indices
+        self.frames = frames
 
 
 def test_a_frame_subset_draws_its_parents_predicted_forces():
