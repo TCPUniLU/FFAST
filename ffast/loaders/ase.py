@@ -18,6 +18,45 @@ logger = logging.getLogger("FFAST")
 _RESERVED_ARRAY_KEYS = {"positions", "numbers", "momenta"}
 
 
+def isUniformAtomsList(atomsList, sampleSize=60):
+    """Decide whether every frame in ``atomsList`` is the same molecule.
+
+    The one rule that picks the ASE loader flavour, for datasets and
+    predictions alike (ADR 0058, decision A). The uniform
+    :class:`aseDatasetLoader` reads frame 0's atom count *and* atomic numbers
+    and applies them to every frame, so "uniform" has to mean same
+    *composition* — comparing atom counts alone would accept frames that share
+    a count but not their elements, and silently stamp frame 0's ``z`` onto all
+    of them.  Hence chemical formulas.
+
+    Full scans are avoided: ``atomsList`` is routinely a lazy ``AtomsList`` /
+    ``Trajectory`` where materialising every frame costs a re-read of the whole
+    file.  Lists at or below ``sampleSize`` are checked exhaustively; larger
+    ones on an evenly-spaced sample that always includes the first and last
+    frame.  The spacing is deterministic on purpose — a random sample can
+    classify the same file differently between runs, which changes the loader
+    class and therefore the dataset's identity.
+    """
+    n = len(atomsList)
+    if n < 2:
+        return True
+
+    if n <= sampleSize:
+        indices = range(n)
+    else:
+        step = (n - 1) / (sampleSize - 1)
+        indices = sorted({int(round(i * step)) for i in range(sampleSize)} | {0, n - 1})
+
+    reference = None
+    for i in indices:
+        formula = atomsList[i].get_chemical_formula()
+        if reference is None:
+            reference = formula
+        elif formula != reference:
+            return False
+    return True
+
+
 def _atoms_subset(atomsList, indices):
     """Resolve a frame-index selector to (list_of_atoms, is_scalar).
 

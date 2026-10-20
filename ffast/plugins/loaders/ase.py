@@ -8,12 +8,11 @@ export); this module only holds the smart auto-detecting entry point that
 ``ffast.core.plugin_discovery`` calls.
 """
 import logging
-import numpy as np
 import ase.io
 from ase.io.trajectory import Trajectory
 
 from ffast.core.data_types import AtomsList
-from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader
+from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader, isUniformAtomsList
 
 logger = logging.getLogger("FFAST")
 
@@ -25,26 +24,6 @@ def loadData(env):
         datasetName = "ase (auto)"
         datasetFileExtension = "*"
         saveFormats = ["db", "xyz", "extxyz", "traj", "vasp", "dftb"]
-
-        def check_homogeneity(self, atoms_list):
-            """
-            Assume there are only two molecular structures in the world, then in a variable dataset the probability that
-            two random drawn molecules are the same would be 1/2. Therefore, the probability that 3 random drawn
-            molecules are the same would be 1/8. If we do this random comparison 20 times then the probability that at
-            every random selection, all of the molecules are the same would be (1/8)^20 ~ 0. That's how this method
-            guess with almost certainty whether a dataset is variable or fixed without iterating through the whole
-            dataset.
-            :param atoms_list: the dataset.
-            :return: whether the dataset is homogeneous or not.
-            """
-            for i in range(20):
-                temp_atoms_list = []
-                for j in np.random.choice(len(atoms_list), size=min(3, len(atoms_list)), replace=False):
-                    temp_atoms_list.append(atoms_list[j].get_chemical_formula())
-                if len(set(temp_atoms_list)) != 1:
-                    return False
-
-            return True
 
         def __call__(self, path: str, selected_energy_key=None, selected_force_key=None,
                      prediction_keys=None, show_dialog=True, slice_num=0):
@@ -72,10 +51,9 @@ def loadData(env):
             else:
                 atomsList = ase.io.read(path, index=slice(0, None, slice_num))
 
-            # atom_counts = [len(atoms) for atoms in atomsList] --> inefficient for large datasets because it
-            # literally creates a copy of the entire dataset on RAM, just to check whether the dataset is variable or
-            # fixed. Instead, the following probabilistic method:
-            fixed_or_variable = self.check_homogeneity(atomsList)
+            # Uniform or variable: the same fixed-sample rule predictions use, so
+            # a file is classified the same way on every load (ADR 0058).
+            fixed_or_variable = isUniformAtomsList(atomsList)
             # Handle key selection first (if dialog needed)
             if show_dialog and (selected_energy_key is None or selected_force_key is None):
                 # Create temporary loader just to detect keys and show dialog

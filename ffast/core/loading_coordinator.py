@@ -31,44 +31,6 @@ from ffast.cache.fingerprint import md5FromArraysAndStrings
 logger = logging.getLogger("FFAST")
 
 
-def _isUniformAtomsList(atomsList, sampleSize=60):
-    """Decide whether every frame in ``atomsList`` is the same molecule.
-
-    Picks which ASE loader flavour a prediction needs.  The uniform
-    :class:`aseDatasetLoader` reads frame 0's atom count *and* atomic numbers
-    and applies them to every frame, so "uniform" has to mean same
-    *composition* — comparing atom counts alone would accept frames that share
-    a count but not their elements, and silently stamp frame 0's ``z`` onto all
-    of them.  Hence chemical formulas.
-
-    Full scans are avoided: ``atomsList`` is routinely a lazy ``AtomsList`` /
-    ``Trajectory`` where materialising every frame costs a re-read of the whole
-    file.  Lists at or below ``sampleSize`` are checked exhaustively; larger
-    ones on an evenly-spaced sample that always includes the first and last
-    frame.  The spacing is deterministic on purpose — a random sample can
-    classify the same file differently between runs, which changes the loader
-    class and therefore the dataset's identity.
-    """
-    n = len(atomsList)
-    if n < 2:
-        return True
-
-    if n <= sampleSize:
-        indices = range(n)
-    else:
-        step = (n - 1) / (sampleSize - 1)
-        indices = sorted({int(round(i * step)) for i in range(sampleSize)} | {0, n - 1})
-
-    reference = None
-    for i in indices:
-        formula = atomsList[i].get_chemical_formula()
-        if reference is None:
-            reference = formula
-        elif formula != reference:
-            return False
-    return True
-
-
 def _resultOrNone(read):
     """``read()``, or ``None`` when the file has no such result (ADR 0058)."""
     try:
@@ -390,10 +352,10 @@ class LoadingCoordinator:
         loop-invariant when several prediction columns are read off one
         ``atomsList``, and deciding it walks a sample of the frames.
         """
-        from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader
+        from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader, isUniformAtomsList
 
         if uniform is None:
-            uniform = _isUniformAtomsList(atomsList)
+            uniform = isUniformAtomsList(atomsList)
         loaderClass = aseDatasetLoader if uniform else VariableASEDatasetLoader
         logger.info(
             "Loading prediction as %s ASE dataset: %d molecules",
@@ -648,7 +610,8 @@ class LoadingCoordinator:
             atomsList = ase.io.read(path, index=":")
 
         # Loop-invariant: every column is read off this one atomsList.
-        is_uniform = _isUniformAtomsList(atomsList)
+        from ffast.loaders.ase import isUniformAtomsList
+        is_uniform = isUniformAtomsList(atomsList)
 
         for energy_key, force_key, model_name in prediction_keys:
             try:

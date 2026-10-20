@@ -14,10 +14,8 @@ import types
 import numpy as np
 
 from ffast.core.connection_manager import ConnectionManager
-from ffast.core.loading_coordinator import (
-    LoadingCoordinator,
-    _isUniformAtomsList,
-)
+from ffast.core.loading_coordinator import LoadingCoordinator
+from ffast.loaders.ase import isUniformAtomsList
 from ffast.protocol import control
 
 
@@ -381,14 +379,14 @@ class _LazyAtomsList:
 
 
 def test_isUniform_trivial_lists_are_uniform():
-    assert _isUniformAtomsList(_LazyAtomsList([])) is True
-    assert _isUniformAtomsList(_LazyAtomsList(["CH4"])) is True
+    assert isUniformAtomsList(_LazyAtomsList([])) is True
+    assert isUniformAtomsList(_LazyAtomsList(["CH4"])) is True
 
 
 def test_isUniform_two_frames_does_not_raise():
     """The replaced check sampled 3 random frames and raised below 3 frames."""
-    assert _isUniformAtomsList(_LazyAtomsList(["CH4", "CH4"])) is True
-    assert _isUniformAtomsList(_LazyAtomsList(["CH4", "NH3"])) is False
+    assert isUniformAtomsList(_LazyAtomsList(["CH4", "CH4"])) is True
+    assert isUniformAtomsList(_LazyAtomsList(["CH4", "NH3"])) is False
 
 
 def test_isUniform_same_atom_count_different_elements_is_variable():
@@ -397,18 +395,18 @@ def test_isUniform_same_atom_count_different_elements_is_variable():
     ``CH4`` and ``SiH4`` are both 5 atoms, so the replaced
     ``len(set(atom_counts)) == 1`` check accepted them into the uniform loader.
     """
-    assert _isUniformAtomsList(_LazyAtomsList(["CH4", "SiH4"])) is False
+    assert isUniformAtomsList(_LazyAtomsList(["CH4", "SiH4"])) is False
 
 
 def test_isUniform_samples_large_lists_without_full_materialisation():
     frames = _LazyAtomsList(["CH4"] * 5000)
-    assert _isUniformAtomsList(frames) is True
+    assert isUniformAtomsList(frames) is True
     assert frames.reads <= 61, "sampled check should not walk every frame"
 
 
 def test_isUniform_sample_always_includes_the_last_frame():
     frames = _LazyAtomsList(["CH4"] * 4999 + ["NH3"])
-    assert _isUniformAtomsList(frames) is False
+    assert isUniformAtomsList(frames) is False
 
 
 # ── shape validation ────────────────────────────────────────────────────────
