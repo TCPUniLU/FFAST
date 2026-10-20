@@ -11,7 +11,12 @@ from ffast.metrics.models import MetricResult
 
 
 def _array_fingerprint(arr: np.ndarray) -> str:
-    return hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()[:16]
+    # Shape and type too: (frames, atoms, 3) and its flat (atoms, 3) copy hold
+    # the same bytes but give a metric different answers.
+    arr = np.ascontiguousarray(arr)
+    digest = hashlib.sha256(f"{arr.dtype.str}{arr.shape}".encode())
+    digest.update(arr.tobytes())
+    return digest.hexdigest()[:16]
 
 
 def function_hash(fn: Callable) -> str:

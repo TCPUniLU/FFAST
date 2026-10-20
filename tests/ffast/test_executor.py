@@ -68,6 +68,19 @@ def test_result_is_cached(registry_with_force_mae):
     assert result1 is result2  # same object from cache
 
 
+def test_the_same_numbers_in_another_shape_are_another_input(registry_with_force_mae):
+    """A frame axis or none: the same bytes, a different answer. The cache must
+    not hand the 3D result to a flat input (ADR 0058 step 6)."""
+    executor = InProcessExecutor(registry_with_force_mae)
+    diff = np.arange(18, dtype=float).reshape(2, 3, 3)
+
+    stacked = executor.run("test.force_mae", source=FlatInputSource({"force_difference": diff}), parameters={"norm": "l2"})
+    flat = executor.run("test.force_mae", source=FlatInputSource({"force_difference": diff.reshape(-1, 3)}), parameters={"norm": "l2"})
+
+    assert stacked.values.shape == (2, 3)
+    assert flat.values.shape == (6,)
+
+
 def test_cache_miss_on_different_compute_param(registry_with_force_mae):
     from ffast.metrics.cache import MetricCache
     cache = MetricCache()
