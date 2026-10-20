@@ -443,9 +443,7 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         else:
             self.lattice = None
 
-        # Chemical formula: show range
-        atom_counts = self.getNAtoms()
-        self.chem = f"Variable ({atom_counts.min()}-{atom_counts.max()} atoms)"
+        self.chem = self.getChemicalFormula()
 
     def _readForces(self, atoms):
         """One frame's forces, or None when the frame has none."""
@@ -466,17 +464,21 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
             return None
 
     def getFingerprint(self):
-        """The variable formula, md5 of (z_flat, R_flat, E, F_flat) as
-        VariableDatasetLoader.getFingerprint computes it, read one frame at a
+        """md5 of (elements, positions, energies, forces), read one frame at a
         time so all frames are never held at once (ADR 0058, decision B).
         Same recipe and result as md5FromArraysAndStrings (see md5FromParts).
+
+        The two formulas in use before the loaders merged are kept, so saved
+        sessions and caches still match (ADR 0058 section 3): a variable
+        dataset hashes every frame's elements, a uniform one only frame 0's.
         """
         z_hash, r_hash, f_hash = hashlib.md5(), hashlib.md5(), hashlib.md5()
         energies = []
         forces_missing = energies_missing = False
 
-        for atoms in self.atomsList:
-            z_hash.update(np.ascontiguousarray(atoms.get_atomic_numbers()))
+        for i, atoms in enumerate(self.atomsList):
+            if self.isVariable or i == 0:
+                z_hash.update(np.ascontiguousarray(atoms.get_atomic_numbers()))
             r_hash.update(np.ascontiguousarray(atoms.get_positions()))
             if not forces_missing:
                 forces = self._readForces(atoms)
@@ -548,6 +550,17 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         if indices is None:
             return frames.copy()
         return frames[np.asarray(indices)]
+
+    def getNAtoms(self, index=None):
+        if index is None and not self.isVariable:
+            # Uniform: callers expect one count, shared by all frames.
+            return int(self.molecule_offsets[1] - self.molecule_offsets[0])
+        return super().getNAtoms(index)
+
+    def getChemicalFormula(self):
+        if self.isVariable:
+            return super().getChemicalFormula()  # "Variable (2-8 atoms)"
+        return self.zToChemicalFormula(self.getElements())
 
     def getCoordinates(self, indices=None):
         if isOneFrame(indices):

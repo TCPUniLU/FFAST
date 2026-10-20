@@ -339,10 +339,6 @@ class VariableDatasetLoader(DatasetLoader):
         self.molecule_offsets = None  # (N+1,)
         self.N = None               # Number of molecules
 
-    def isUniform(self):
-        """Check if this dataset has uniform molecular structures."""
-        return False
-
     def hasForces(self):
         """Whether every frame has forces, without reading them all."""
         return self.F_flat is not None
@@ -513,10 +509,6 @@ class VariableDatasetLoader(DatasetLoader):
             end = self.molecule_offsets[index+1]
             return self.z_flat[start:end]
 
-    def getElementsName(self):
-        """Get element names for all atoms."""
-        return [zIntToZStr[x] for x in self.z_flat]
-
     # ── Dataset Fields (ADR 0023) — default no fields; ASE subclass overrides ──
     def getFrameField(self, key, indices=None):
         return None
@@ -526,28 +518,6 @@ class VariableDatasetLoader(DatasetLoader):
 
     def availableFieldKeys(self):
         return [], []
-
-    def zToChemicalFormula(self, z):
-        """Convert atomic numbers to chemical formula."""
-        z = [zIntToZStr[x] for x in z]
-        c = Counter(z)
-        s = ""
-
-        if "C" in c:
-            s += f'C{c["C"]}'
-
-        if "H" in c:
-            s += f'H{c["H"]}'
-
-        for atom, n in sorted(c.items()):
-            if atom == "H" or atom == "C":
-                continue
-
-            if n < 2:
-                n = ""
-            s += f"{atom}{n}"
-
-        return s
 
     def getChemicalFormula(self):
         """Get chemical formula showing atom range."""
@@ -592,12 +562,6 @@ class VariableDatasetLoader(DatasetLoader):
                 return pdist(coords)
             else:
                 return None
-
-    def getDisplayName(self):
-        tag = ""
-        if self.isSubDataset:
-            tag = "*"
-        return f"{tag}{self.getName()}"
 
     def getBaseInfo(self):
         atom_counts = self.getNAtoms()

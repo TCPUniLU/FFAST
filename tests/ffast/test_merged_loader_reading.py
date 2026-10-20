@@ -59,6 +59,15 @@ QUESTIONS = {
     "atom field, all": lambda d: d.getAtomField("charges"),
     "atom field, several": lambda d: d.getAtomField("charges", [3, 0]),
     "field keys": lambda d: d.availableFieldKeys(),
+    # identity
+    "frame count": lambda d: d.getN(),
+    "atom count, all": lambda d: d.getNAtoms(),
+    "atom count, one": lambda d: d.getNAtoms(2),
+    "chemical formula": lambda d: d.getChemicalFormula(),
+    "chem attribute": lambda d: d.chem,
+    "element names": lambda d: d.getElementsName(),
+    "is uniform": lambda d: d.isUniform(),
+    "fingerprint": lambda d: d.getFingerprint(),
 }
 
 
@@ -83,7 +92,9 @@ def test_uniform_data_reads_as_the_uniform_loader_read_it(data, question):
         assert got is expected
     elif expected is None or got is None:
         assert got is expected
-    elif isinstance(expected, tuple):
+    elif isinstance(expected, (tuple, str, bool, int, float)) or (
+            isinstance(expected, list) and expected and isinstance(expected[0], str)):
+        assert type(got) is type(expected)
         assert got == expected
     else:
         # Same type, not only same numbers: callers tell a list of frames
