@@ -28,6 +28,12 @@ class _FakeDataset:
             return self._pos
         return self._pos[index]
 
+    def getAllCoordinates(self):
+        return self._pos.reshape(-1, 3)
+
+    def getOffsets(self):
+        return np.arange(self._n_frames + 1) * self._n
+
     def getElements(self, index=None):
         return self._z
 
@@ -220,3 +226,35 @@ def test_resolve_color_displacement_returns_per_atom_rms():
     assert values.shape == (3,)
     assert values[0] == pytest.approx(1.0)         # sqrt(mean([1,1,1]**2)) = 1
     assert values[1] == 0.0 and values[2] == 0.0   # stationary atoms
+
+
+def _file_dataset(formulas):
+    from ase import Atoms
+    from ffast.loaders.ase import aseDatasetLoader
+
+    rng = np.random.default_rng(5)
+    frames = [Atoms(f, positions=rng.normal(size=(len(Atoms(f)), 3))) for f in formulas]
+    return aseDatasetLoader("x.xyz", atomsList=frames)
+
+
+def test_displacement_colours_a_file_whose_structures_have_the_same_size():
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    ds = _file_dataset(["H2O"] * 3)
+    state = VisualizationState(view_id="v1")
+    state.parameters["ffast.atom_color"] = {"source": "displacement"}
+
+    values, label, _ = resolve_atom_color_values(
+        state, ds, 0, ds.getCoordinates(0), ds.getElements(0), None)
+    assert label == "displacement" and values.shape == (3,)
+
+
+def test_displacement_falls_back_to_element_colours_when_structures_differ_in_size():
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    ds = _file_dataset(["H2O", "CH4"])
+    state = VisualizationState(view_id="v1")
+    state.parameters["ffast.atom_color"] = {"source": "displacement"}
+
+    assert resolve_atom_color_values(
+        state, ds, 0, ds.getCoordinates(0), ds.getElements(0), None) is None

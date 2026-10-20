@@ -737,6 +737,12 @@ class _FakeColorDataset(_FakeDataset):
     def getCoordinates(self, indices=None):
         return self._R if indices is None else self._R[indices]
 
+    def getAllCoordinates(self):
+        return self._R.reshape(-1, 3)
+
+    def getOffsets(self):
+        return np.arange(len(self._R) + 1) * self._R.shape[1]
+
     def getForces(self, indices=None):
         # reference forces, distinct per frame
         F = np.stack([

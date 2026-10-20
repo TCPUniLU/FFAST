@@ -22,6 +22,7 @@ import logging
 
 import numpy as np
 
+from ffast.loaders.dataset import stackFrames
 from ffast.metrics.execution import InputSource
 
 logger = logging.getLogger(__name__)
@@ -126,12 +127,19 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
     try:
         if source == "displacement":
             from ffast.visualization.stages.builtin.color_stages import displacement_stats
-            traj = np.asarray(ds.getCoordinates(), dtype=np.float64)
-            if traj.ndim != 3 or traj.shape[1] != len(raw_positions):
+            try:
+                traj = np.asarray(stackFrames(ds.getAllCoordinates(), ds.getOffsets()),
+                                  dtype=np.float64)
+            except ValueError:
+                logger.warning(
+                    "atom-color: displacement unavailable — structures differ in size; "
+                    "falling back to element colors")
+                return None
+            if traj.shape[1] != len(raw_positions):
                 logger.warning(
                     "atom-color: displacement unavailable — coordinates shape %s is "
                     "not (frames, %d atoms, 3); falling back to element colors",
-                    getattr(traj, "shape", None), len(raw_positions),
+                    traj.shape, len(raw_positions),
                 )
                 return None
             d_total, _ = displacement_stats(traj)
