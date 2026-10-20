@@ -23,6 +23,15 @@ logger = logging.getLogger(__name__)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
+class _StaticHTTPServer(http.server.ThreadingHTTPServer):
+    """
+    A wrapper class for the _SilentStaticHandler that handles multiple concurrent requests from the web browser.
+    Having a single threaded server might block some requests from the web browser, resulting in the error 'net::CONNECTION_REFUSED'.
+    Now, with Threading http, server does not crash in cases such as reloading the page, or starting the web application.
+    """
+    request_queue_size = 128
+    daemon_threads = True
+
 
 class _SilentStaticHandler(http.server.SimpleHTTPRequestHandler):
     """SimpleHTTPRequestHandler that suppresses per-request access logs.
@@ -54,7 +63,8 @@ def start_static_server(port: int, host: str = "0.0.0.0") -> http.server.HTTPSer
     callers can shut it down explicitly (the daemon thread dies with the
     process regardless).
     """
-    httpd = http.server.HTTPServer((host, port), _SilentStaticHandler)
+    #httpd = http.server.HTTPServer((host, port), _SilentStaticHandler)
+    httpd = _StaticHTTPServer((host, port), _SilentStaticHandler)
     thread = threading.Thread(target=httpd.serve_forever, daemon=True, name=f"ffast-web-{port}")
     thread.start()
     logger.info("Web renderer serving at http://%s:%d (static dir: %s)", host, port, STATIC_DIR)
