@@ -1,6 +1,8 @@
 import os
+import hashlib
 import logging
 import numpy as np
+from ffast.cache.fingerprint import md5FromParts
 from ffast.loaders.dataset import DatasetLoader, VariableDatasetLoader
 import ase.io
 from ase.calculators.calculator import PropertyNotImplementedError
@@ -360,52 +362,38 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         # - Specific key string means use that key from arrays/info
         # - None or not set means use first available key (legacy behavior)
         if self.selected_energy_key == "":
-            selected_energy_key = None  # Use calculator
+            self._energy_key = None  # Use calculator
         elif self.selected_energy_key == "energy":
-            selected_energy_key = None  # Standard ASE key, use calculator
+            self._energy_key = None  # Standard ASE key, use calculator
         elif self.selected_energy_key:
-            selected_energy_key = self.selected_energy_key
+            self._energy_key = self.selected_energy_key
         else:
-            selected_energy_key = energy_keys[0] if energy_keys else None
+            self._energy_key = energy_keys[0] if energy_keys else None
 
         if self.selected_force_key == "":
-            selected_force_key = None  # Use calculator
+            self._force_key = None  # Use calculator
         elif self.selected_force_key == "forces":
-            selected_force_key = None  # Standard ASE key, use calculator
+            self._force_key = None  # Standard ASE key, use calculator
         elif self.selected_force_key:
-            selected_force_key = self.selected_force_key
+            self._force_key = self.selected_force_key
         else:
-            selected_force_key = force_keys[0] if force_keys else None
+            self._force_key = force_keys[0] if force_keys else None
 
         for atoms in self.atomsList:
             n_atoms = len(atoms)
             R_list.append(atoms.get_positions())
 
-            # Handle forces
-            if selected_force_key:
-                # Use specific key from arrays
-                F_list.append(atoms.arrays[selected_force_key])
+            forces = self._readForces(atoms)
+            if forces is None:
+                forces_missing = True
             else:
-                # Use calculator
-                try:
-                    F_list.append(atoms.get_forces())
-                except (PropertyNotImplementedError, RuntimeError):
-                    forces_missing = True
-                    # If forces not available, use zeros
-                    F_list.append(np.zeros((n_atoms, 3)))
+                F_list.append(forces)
 
-            # Handle energies
-            if selected_energy_key:
-                # Use specific key from info
-                E_list.append(atoms.info[selected_energy_key])
+            energy = self._readEnergy(atoms)
+            if energy is None:
+                energies_missing = True
             else:
-                # Use calculator
-                try:
-                    E_list.append(atoms.get_potential_energy())
-                except (PropertyNotImplementedError, RuntimeError):
-                    energies_missing = True
-                    # If energy not available, use zero
-                    E_list.append(0.0)
+                E_list.append(energy)
 
             z_list.append(atoms.get_atomic_numbers())
             offsets.append(offsets[-1] + n_atoms)
@@ -426,6 +414,57 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         # Chemical formula: show range
         atom_counts = self.getNAtoms()
         self.chem = f"Variable ({atom_counts.min()}-{atom_counts.max()} atoms)"
+
+    def _readForces(self, atoms):
+        """One frame's forces, or None when the frame has none."""
+        if self._force_key:
+            return atoms.arrays[self._force_key]
+        try:
+            return atoms.get_forces()
+        except (PropertyNotImplementedError, RuntimeError):
+            return None
+
+    def _readEnergy(self, atoms):
+        """One frame's energy, or None when the frame has none."""
+        if self._energy_key:
+            return atoms.info[self._energy_key]
+        try:
+            return atoms.get_potential_energy()
+        except (PropertyNotImplementedError, RuntimeError):
+            return None
+
+    def getFingerprint(self):
+        """The variable formula, md5 of (z_flat, R_flat, E, F_flat) as
+        VariableDatasetLoader.getFingerprint computes it, read one frame at a
+        time so all frames are never held at once (ADR 0058, decision B).
+        Same recipe and result as md5FromArraysAndStrings (see md5FromParts).
+        """
+        z_hash, r_hash, f_hash = hashlib.md5(), hashlib.md5(), hashlib.md5()
+        energies = []
+        forces_missing = energies_missing = False
+
+        for atoms in self.atomsList:
+            z_hash.update(np.ascontiguousarray(atoms.get_atomic_numbers()))
+            r_hash.update(np.ascontiguousarray(atoms.get_positions()))
+            if not forces_missing:
+                forces = self._readForces(atoms)
+                if forces is None:
+                    forces_missing = True
+                else:
+                    f_hash.update(np.ascontiguousarray(forces))
+            if not energies_missing:
+                energy = self._readEnergy(atoms)
+                if energy is None:
+                    energies_missing = True
+                else:
+                    energies.append(energy)
+
+        parts = [z_hash, r_hash]
+        if not energies_missing:
+            parts.append(hashlib.md5(np.array(energies)))
+        if not forces_missing:
+            parts.append(f_hash)
+        return md5FromParts(parts)
 
     def _detectForceKeys(self):
         """Detect force keys in the first atoms object."""

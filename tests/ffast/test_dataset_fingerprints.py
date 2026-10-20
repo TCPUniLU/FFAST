@@ -107,3 +107,24 @@ def test_frozen_subset_fingerprint_depends_on_its_frames():
 def test_frame_with_reordered_atoms_reports_its_own_elements():
     dataset = _initialised(_same_formula_different_order())
     np.testing.assert_array_equal(dataset.getElements(1), [8, 1, 1])
+
+
+@pytest.mark.parametrize("energies, forces", [(True, True), (True, False), (False, True), (False, False)],
+                         ids=["both", "energies only", "forces only", "neither"])
+def test_frame_by_frame_fingerprint_matches_the_array_formula(energies, forces):
+    """The variable loader hashes one frame at a time (ADR 0058, decision B).
+    The array formula it replaced is the oracle, for every mix of results."""
+    from ffast.loaders.ase import VariableASEDatasetLoader
+    from ffast.loaders.dataset import VariableDatasetLoader
+    rng = np.random.default_rng(3)
+    frames = [Atoms(s, positions=rng.normal(size=(n, 3))) for s, n in [("H2O", 3), ("CH4", 5), ("H2", 2)]]
+    for atoms in frames:
+        results = {}
+        if energies:
+            results["energy"] = float(rng.normal())
+        if forces:
+            results["forces"] = rng.normal(size=(len(atoms), 3))
+        if results:
+            atoms.calc = SinglePointCalculator(atoms, **results)
+    dataset = VariableASEDatasetLoader("v.xyz", atomsList=frames)
+    assert dataset.getFingerprint() == VariableDatasetLoader.getFingerprint(dataset)
