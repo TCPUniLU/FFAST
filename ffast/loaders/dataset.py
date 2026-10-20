@@ -310,7 +310,7 @@ class DatasetLoader(EventClass):
         return arrays
 
 
-class VariableDatasetLoader(EventClass):
+class VariableDatasetLoader(DatasetLoader):
     """
     Base class for datasets with variable-sized molecules.
     Uses flat arrays with offsets for efficient storage and access.
@@ -321,37 +321,16 @@ class VariableDatasetLoader(EventClass):
         E: (N,)                         - Energies (unchanged from uniform)
         z_flat: (total_atoms,)          - Atomic numbers concatenated
         molecule_offsets: (N+1,)        - Start indices [0, n1, n1+n2, ..., total]
+
+    Identity, naming, colour and events come from DatasetLoader; only what
+    differs for variable-sized molecules is defined here.
     """
 
     isVariable = True
-    isSubDataset = False
-    isAtomFiltered = False
-    isGhost = False
-    frozen = False
-    loadeeType = "dataset"
-
-    zIntToZStr = zIntToZStr
-    zStrToZInt = zStrToZInt
-
     datasetName = "Variable Dataset"
-    datasetFileExtension = "*"
-    saveFormats = [None]
-
-    name = "?"
-    loaded = False
-    active = True
 
     def __init__(self, path):
-        self.path = path
-
-        global GLOBAL_DATASETS_COUNTER
-
-        from ffast.config.user import getConfig  # ADR 0047: lazy (userConfig deferred)
-        colors = getConfig("datasetColors")
-        nColors = len(colors)
-        self.color = hexToRGB(colors[GLOBAL_DATASETS_COUNTER % nColors])
-
-        GLOBAL_DATASETS_COUNTER += 1
+        super().__init__(path)
 
         # To be set by subclasses. R_flat (total_atoms, 3), F_flat
         # (total_atoms, 3) or None, E (N,) or None and z_flat (total_atoms,)
@@ -583,19 +562,6 @@ class VariableDatasetLoader(EventClass):
 
         return fp
 
-    def getKey(self):
-        return self.getFingerprint()
-
-    def setName(self, name):
-        if name == "":
-            return self.setName(self.name)
-        self.name = name
-        if self.loaded:
-            self.eventPush("OBJECT_NAME_CHANGED", self.fingerprint)
-
-    def getName(self):
-        return self.name
-
     def initialise(self):
         """Initialize dataset after loading."""
         self.fingerprint = self.getFingerprint()
@@ -633,15 +599,6 @@ class VariableDatasetLoader(EventClass):
             tag = "*"
         return f"{tag}{self.getName()}"
 
-    def setActive(self, state):
-        if self.active == state:
-            return
-        self.active = state
-        self.eventPush("DATASET_STATE_CHANGED", self.fingerprint)
-
-    def onDelete(self):
-        pass
-
     def getBaseInfo(self):
         atom_counts = self.getNAtoms()
         return [
@@ -653,10 +610,6 @@ class VariableDatasetLoader(EventClass):
     def getInfo(self):
         # To be overwritten by specific dataset types
         return []
-
-    def setColor(self, r, g, b):
-        self.color = [r, g, b]
-        self.eventPush("OBJECT_COLOR_CHANGED", self.fingerprint)
 
     def getBondMatrix(self, index):
         """Get bond matrix for a specific molecule."""
@@ -672,10 +625,6 @@ class VariableDatasetLoader(EventClass):
         idxs = np.argwhere(self.getBondMatrix(index))
         _, idxs = cleanBondIdxsArray(idxs)
         return idxs
-
-    def isDependentOn(self, fp):
-        # base datasets cant depend on other things, thats for subdatasets
-        return False
 
 
 class SubDataset(DatasetLoader):
