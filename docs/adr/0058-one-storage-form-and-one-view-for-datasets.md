@@ -321,4 +321,46 @@ One commit each, so each can be reverted alone.
       `UI/loupe/canvas.py` move to offsets and one-frame calls. The proxy's own
       branches stay for issue #22. The wire keeps a `variable` flag computed
       from the offsets, for the proxy.
+   As built (3c35684..3a8697a), 2026-10-20:
+   - The metric cache told inputs apart by their bytes only, so a 3D array
+     and its flat copy shared a result; it now hashes shape and type too
+     (3c35684).
+   - a: per-frame sums use `np.add.reduceat` (`ffast/metrics/segments.py`).
+     On 100,000 uniform frames of 20 atoms, per-structure force error went
+     from 221 ms to 2 ms through offsets (the 3D path took 2.6 ms); gyradius
+     from 1.1 s to 0.15 s (3D: 0.05 s).
+   - b: the switch. "Try a formula" named frame 1 for a bad force in frame 4
+     of a uniform file; it now names frame 4.
+   - c: no offsets now means one structure. Every metric gives, on flat
+     inputs, the numbers it gave on uniform inputs before step 6, saved at
+     d7fb84f (`tests/ffast/data/metrics_on_uniform_before_flat.npz`).
+     `accel_mae` is declared per atom, its real shape, and labelled so; the
+     browser's colour picker therefore offers it. Decided:
+     `accel_mae_per_atom` averages over structures when they all have the same
+     size and keeps every atom otherwise, as each kind got before. A test now
+     runs every metric's embedded examples (one still fed 3D input).
+   - d: decided, **uniform means the same atoms in the same order in every
+     frame**, read from every frame in the pass that already counts atoms. A
+     file whose frames are HOH then OHH, or with a different frame that the
+     60-frame sample skips, is now variable. Fingerprints keep their own rule
+     (`isUniformAtomsList`) and do not change. Prediction loading and the zero
+     model build cached predictions through `framesShaped`. Found and fixed on
+     the way: calculator models passed every frame's cell as one cell, so any
+     periodic file failed (4cb39b1); export failed on any dataset without
+     forces or energies, and now writes frame by frame with the results it
+     has (e37f064).
+   - e: the desktop's per-atom scatter subset and Loupe's atom count.
+   **What stays, and why.** Two things still need to know whether a dataset
+   is uniform, so `isVariable` stays as that one fact, read from the data:
+   the shape of cached predictions, which are read one frame at a time (a
+   `(frames, atoms, 3)` array or a list of frames), and what the Qt proxy
+   receives (one element list shared by all frames, or every frame's own).
+   Two capability checks also keep asking it, correctly: sGDML predicts only
+   on the same atoms in the same order, and cluster errors likewise. The older
+   no-argument all-frames calls are not deleted, against the plan: they serve
+   the wire to the Qt proxy (`toMetaDict`, `to_transfer_arrays`), and the
+   `getAll*` defaults that the sGDML dataset and the Qt proxy rely on. They
+   go with step 7 and issue #22; `test_ase_loader_shapes.py` pins them until
+   then. External change: `ffast-cli metrics run --json` nests per-atom
+   values one level less on uniform data.
 7. sGDML fills the same storage.

@@ -2,11 +2,13 @@
 The one ASE loader keeps each kind's old shape for all-frames answers.
 
 ADR 0058 step 3 merged the uniform and variable ASE loaders. Step 4 added
-the getAll* methods (tests/ffast/test_all_frames_methods.py), but callers of
-the older no-argument calls remain (the metric resolver's forces, positions
-and elements, the prediction cache, exports, the Qt client), and they expect
-these shapes. This test goes when the last of them moves (step 6). (While both classes existed, the merged one was checked
-against the old uniform loader question by question: commits 66c23de..79930eb.)
+the getAll* methods (tests/ffast/test_all_frames_methods.py) and step 6 moved
+the metrics, prediction loading and export to them. The older no-argument
+calls still serve the wire to the Qt proxy and the getAll* defaults the sGDML
+dataset and the proxy rely on, and those expect these shapes. This test goes
+with ADR 0058 step 7 and issue #22. (While both classes existed, the merged
+one was checked against the old uniform loader question by question: commits
+66c23de..79930eb.)
 """
 import numpy as np
 from ase import Atoms
