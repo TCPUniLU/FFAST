@@ -68,6 +68,16 @@ QUESTIONS = {
     "element names": lambda d: d.getElementsName(),
     "is uniform": lambda d: d.isUniform(),
     "fingerprint": lambda d: d.getFingerprint(),
+    # reporting
+    "bond sizes": lambda d: d.bondSizes,
+    "bond matrix": lambda d: d.getBondMatrix(2),
+    "bond indices": lambda d: d.getBondIndices(2),
+    "distances, all": lambda d: d.getPDist(),
+    "distances, one": lambda d: d.getPDist(2),
+    "info panel": lambda d: d.getBaseInfo(),
+    # The loader's own name differs until the old class is deleted (step 3c).
+    "summary": lambda d: {k: v for k, v in d.toMetaDict().items() if k != "source_type"},
+    "browser transfer": lambda d: d.to_transfer_arrays(),
 }
 
 
@@ -79,26 +89,37 @@ def _answer(dataset, question):
         return RuntimeError
 
 
-@pytest.mark.parametrize("question", list(QUESTIONS))
-@pytest.mark.parametrize("data", list(DATA))
-def test_uniform_data_reads_as_the_uniform_loader_read_it(data, question):
-    make, read = DATA[data]
-    old = aseDatasetLoader("u.xyz", atomsList=_frames(**make), **read)
-    new = VariableASEDatasetLoader("u.xyz", atomsList=_frames(**make), **read)
-
-    assert new.isVariable is False
-    expected, got = _answer(old, question), _answer(new, question)
-    if expected is RuntimeError or got is RuntimeError:
+def _assert_same(got, expected):
+    """Equal in value, shape and type, walking into dicts and sequences."""
+    if expected is RuntimeError or expected is None or got is RuntimeError or got is None:
         assert got is expected
-    elif expected is None or got is None:
-        assert got is expected
-    elif isinstance(expected, (tuple, str, bool, int, float)) or (
-            isinstance(expected, list) and expected and isinstance(expected[0], str)):
+    elif isinstance(expected, dict):
+        assert type(got) is dict and got.keys() == expected.keys()
+        for key in expected:
+            _assert_same(got[key], expected[key])
+    elif isinstance(expected, (str, bool, int, float)):
         assert type(got) is type(expected)
         assert got == expected
+    elif isinstance(expected, (tuple, list)) and not (expected and isinstance(expected[0], np.ndarray)):
+        assert type(got) is type(expected) and len(got) == len(expected)
+        for g, e in zip(got, expected):
+            _assert_same(g, e)
     else:
         # Same type, not only same numbers: callers tell a list of frames
         # from one (frames, atoms, 3) array with isinstance(..., list).
         assert type(got) is type(expected)
         assert np.shape(got) == np.shape(expected)
         np.testing.assert_allclose(np.asarray(got, dtype=float), np.asarray(expected, dtype=float))
+
+
+@pytest.mark.parametrize("question", list(QUESTIONS))
+@pytest.mark.parametrize("data", list(DATA))
+def test_uniform_data_reads_as_the_uniform_loader_read_it(data, question):
+    make, read = DATA[data]
+    old = aseDatasetLoader("u.xyz", atomsList=_frames(**make), **read)
+    new = VariableASEDatasetLoader("u.xyz", atomsList=_frames(**make), **read)
+    old.initialise()
+    new.initialise()
+
+    assert new.isVariable is False
+    _assert_same(_answer(new, question), _answer(old, question))

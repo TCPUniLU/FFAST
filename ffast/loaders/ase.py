@@ -562,6 +562,40 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
             return super().getChemicalFormula()  # "Variable (2-8 atoms)"
         return self.zToChemicalFormula(self.getElements())
 
+    # Reporting: uniform data is described as DatasetLoader describes it,
+    # variable data as VariableDatasetLoader does, until step 4 gives callers
+    # one meaning per call.
+
+    def initialise(self):
+        if self.isVariable:
+            return super().initialise()      # no shared bond-size table
+        return DatasetLoader.initialise(self)  # bond sizes from the shared elements
+
+    def toMetaDict(self) -> dict:
+        if self.isVariable:
+            return super().toMetaDict()
+        return DatasetLoader.toMetaDict(self)
+
+    def to_transfer_arrays(self) -> dict:
+        if self.isVariable:
+            return super().to_transfer_arrays()
+        return DatasetLoader.to_transfer_arrays(self)
+
+    def getBaseInfo(self):
+        if self.isVariable:
+            return super().getBaseInfo()
+        return DatasetLoader.getBaseInfo(self)
+
+    def getPDist(self, indices=None):
+        if self.isVariable:
+            return super().getPDist(indices)
+        return DatasetLoader.getPDist(self, indices)
+
+    def getBondMatrix(self, index):
+        if self.isVariable:
+            return super().getBondMatrix(index)
+        return DatasetLoader.getBondMatrix(self, index)
+
     def getCoordinates(self, indices=None):
         if isOneFrame(indices):
             return self.atomsList[indices].get_positions()

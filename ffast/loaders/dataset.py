@@ -227,6 +227,15 @@ class DatasetLoader(EventClass):
         """Check if this dataset has uniform molecular structures."""
         return not self.isVariable
 
+    def hasForces(self):
+        """Whether the dataset has forces. This default asks for all of them;
+        a loader that knows without reading them overrides it."""
+        try:
+            self.getForces()
+            return True
+        except Exception:
+            return False
+
     def toMetaDict(self) -> dict:
         """Return lightweight metadata for RPC transfer (REMOTE_DATASET_META).
 
@@ -237,12 +246,7 @@ class DatasetLoader(EventClass):
         -------
         dict with keys: name, n, has_forces, is_sub, variable, elements, offsets
         """
-        has_forces = False
-        try:
-            self.getForces()
-            has_forces = True
-        except Exception:
-            pass
+        has_forces = self.hasForces()
         # Stage 4c: carry cheap per-atom elements so the client proxy serves
         # element labels / atom-filter without fetching the big R/F arrays.
         elements = None
@@ -571,10 +575,6 @@ class VariableDatasetLoader(DatasetLoader):
             ("Chem. form.", self.getChemicalFormula()),
         ]
 
-    def getInfo(self):
-        # To be overwritten by specific dataset types
-        return []
-
     def getBondMatrix(self, index):
         """Get bond matrix for a specific molecule."""
         r = self.getCoordinates(index)
@@ -583,12 +583,6 @@ class VariableDatasetLoader(DatasetLoader):
         bondSizes = covalentBonds[z][:, z] * getConfig("loupeBondsLenience")
         d = distance_matrix(r, r)
         return d < bondSizes
-
-    def getBondIndices(self, index):
-        """Get bond indices for a specific molecule."""
-        idxs = np.argwhere(self.getBondMatrix(index))
-        _, idxs = cleanBondIdxsArray(idxs)
-        return idxs
 
 
 class SubDataset(DatasetLoader):
