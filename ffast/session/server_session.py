@@ -1,10 +1,11 @@
 """ServerSession: the live, server-scoped core of a running ``ffast-server``.
 
-One ``ServerSession`` exists per server process. It owns the open Visualization
-Views and the server→client outbound queue, dispatches the controlling client's
-Control messages to the Environment through a built-once event→handler table,
-and replays current state to a client on connect or reconnect. It holds a
-reference to the Environment rather than owning it.
+One ``ServerSession`` exists per client connection (ADR 0044). It owns that
+connection's open Visualization Views and its server→client outbound queue,
+dispatches the client's Control messages to the Environment through a
+built-once event→handler table, and replays current state to the client on
+connect or reconnect. Every session holds a reference to the one shared
+Environment rather than owning it.
 
 Connection lifecycle — handshake, Client Role gating, recovery window, the
 receive/send loops — stays in ``server.py``; this object assumes ``dispatch`` is

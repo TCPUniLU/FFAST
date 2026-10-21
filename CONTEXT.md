@@ -387,11 +387,12 @@ A saved snapshot of an Environment: datasets, models, cache, metadata, written a
 
 ### Server session
 
-The live object on a running `ffast-server` representing the controlling
-session. It owns the open views and the outbound queue, dispatches control
-messages through a handler table built once, and replays current state to a
-client on connect or reconnect. One per server process; several clients may
-attach but only the controlling one drives it.
+The live object on a running `ffast-server` representing one client connection
+(ADR 0044). It owns that connection's open views and outbound queue, dispatches
+its control messages through a handler table built once, and replays current
+state to it on connect or reconnect. One per connection; all of them share the
+server's one Environment. A reconnecting client gets a new session, so it gets
+the shared state again but none of its old views.
 
 ### Server connection
 
