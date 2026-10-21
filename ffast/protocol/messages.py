@@ -45,6 +45,10 @@ class DatasetMeta(BaseModel):
     active: bool = True
     # A frozen subset: its frames are fixed, it no longer follows the zoom.
     frozen: bool = False
+    # The units the user gave this dataset's numbers, {"energy": "eV", ...}.
+    # Only a loaded dataset carries them; a view cut from it reads its root's
+    # (follow ``parent``), so a unit change announces one dataset, not each view.
+    units: dict[str, str] = Field(default_factory=dict)
 
 
 class ModelMeta(BaseModel):
@@ -256,6 +260,18 @@ class FreezeSubsetRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     fingerprint: str
+
+
+class SetDatasetUnitRequest(BaseModel):
+    """Typed payload for ``SET_DATASET_UNIT``: name the unit of one dimension of
+    a dataset's numbers (an empty unit removes it). A subset's fingerprint sets
+    the unit of the dataset it was cut from."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+    dimension: str
+    unit: str
 
 
 class CreateSubsetRequest(BaseModel):

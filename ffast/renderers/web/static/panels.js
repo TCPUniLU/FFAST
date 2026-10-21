@@ -131,6 +131,27 @@ export function axisTitle(label, unit) {
   return String(label);
 }
 
+/**
+ * The metric role whose unit a click on `target` names: a table header marked
+ * by `unitAttr`, or a Plotly axis title, through the axes → roles map its
+ * builder returned (`unitAxes`). null for anything else.
+ * @param {Element} target
+ * @param {{x?: string, y?: string}|null} unitAxes
+ */
+export function unitRoleAt(target, unitAxes) {
+  const th = target?.closest?.('th[data-unit-role]');
+  if (th) return th.dataset.unitRole;
+  const title = target?.closest?.('.g-xtitle, .g-ytitle');
+  if (!title || !unitAxes) return null;
+  return unitAxes[title.classList.contains('g-xtitle') ? 'x' : 'y'] || null;
+}
+
+/** ` data-unit-role="role"` on a table header whose unit the user can name
+ * (ctx.unitDims, from the metric's dimension), or nothing. */
+function unitAttr(ctx, role) {
+  return ctx && ctx.unitDims && ctx.unitDims[role] ? ` data-unit-role="${role}"` : '';
+}
+
 /** A 1-D metric result as a plain number array (or []). */
 function values1d(res) {
   return res && res.nd ? res.nd.values : [];
@@ -172,7 +193,7 @@ export function buildTimeline(spec, series, ctx) {
   const layout = withLegend(baseLayout(), traces.length);
   layout.xaxis.title = { text: axisTitle(spec.x_label, u.x) || 'Configuration index' };
   layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) };
-  return { traces, layout, subInfo: { perFrame: true, curveSeries } };
+  return { traces, layout, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
 }
 
 export function buildDensity(spec, series, ctx) {
@@ -194,7 +215,7 @@ export function buildDensity(spec, series, ctx) {
   const layout = withLegend(baseLayout(), traces.length);
   layout.xaxis.title = { text: axisTitle(spec.x_label, u.value) };
   layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) || 'Density' };
-  return { traces, layout, subInfo: null };
+  return { traces, layout, subInfo: null, unitAxes: { x: 'value', y: 'y' } };
 }
 
 export function buildScatter(spec, series, ctx) {
@@ -236,6 +257,7 @@ export function buildScatter(spec, series, ctx) {
     subInfo: ctx.perFrame
       ? { perFrame: true, dataCurveCount, curveSeries }
       : null,
+    unitAxes: { x: 'x', y: 'y' },
   };
 }
 
@@ -322,7 +344,7 @@ export function buildGroupedDensity(spec, series, ctx) {
   const u = ctx.units || {};
   layout.xaxis.title = { text: axisTitle(spec.x_label, u.value) };
   layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) || 'Density' };
-  return { traces, layout, subInfo: null };
+  return { traces, layout, subInfo: null, unitAxes: { x: 'value', y: 'y' } };
 }
 
 // ── table-kind builders (pure, return HTML) ─────────────────────────────────
@@ -394,7 +416,7 @@ export function buildTable(spec, series, ctx) {
   }
 
   const unit = (ctx && ctx.units && ctx.units.value) || '';
-  const head = `<thead><tr><th>${esc(withUnit(spec.title || 'Value', unit))}</th>`
+  const head = `<thead><tr><th${unitAttr(ctx, 'value')}>${esc(withUnit(spec.title || 'Value', unit))}</th>`
     + cols.map((c) => `<th>${esc(c.label)}</th>`).join('') + '</tr></thead>';
   const body = '<tbody>' + rows.map((r) =>
     `<tr><td>${esc(r.label)}</td>` + cols.map((c) => {
@@ -433,7 +455,8 @@ export function buildGroupedTable(spec, series, ctx) {
   if (selected.length > 1) {
     const s = list[0];
     const shown = selected.filter((z) => z === 'All' || order.includes(z));
-    const head = `<thead><tr><th>Element</th><th>${esc(mae)}</th><th>${esc(rmse)}</th></tr></thead>`;
+    const head = `<thead><tr><th>Element</th><th${unitAttr(ctx, 'mae')}>${esc(mae)}</th>`
+      + `<th${unitAttr(ctx, 'rmse')}>${esc(rmse)}</th></tr></thead>`;
     const body = '<tbody>' + shown.map((z) =>
       `<tr><td>${z === 'All' ? 'All' : esc(elementSymbol(z))}</td>`
       + `<td>${cell(s, z, 'mae', 'mae_all')}</td>`
@@ -445,8 +468,8 @@ export function buildGroupedTable(spec, series, ctx) {
   // gives no clue which element the error belongs to.
   const z = selected[0] ?? 'All';
   const label = z === 'All' ? 'All' : elementSymbol(z);
-  const head = `<thead><tr><th>Object</th><th>${esc(label)} ${esc(mae)}</th>`
-    + `<th>${esc(label)} ${esc(rmse)}</th></tr></thead>`;
+  const head = `<thead><tr><th>Object</th><th${unitAttr(ctx, 'mae')}>${esc(label)} ${esc(mae)}</th>`
+    + `<th${unitAttr(ctx, 'rmse')}>${esc(label)} ${esc(rmse)}</th></tr></thead>`;
   const body = '<tbody>' + list.map((s) =>
     `<tr><td>${esc(s.name || 'Reference')}</td>`
     + `<td>${cell(s, z, 'mae', 'mae_all')}</td>`
@@ -503,8 +526,10 @@ export function renderPanel(el, spec, series, ctx) {
   if (built.html !== undefined) {
     el.innerHTML = built.html;
     el._subInfo = null;
+    el._unitAxes = null;
     return;
   }
+  el._unitAxes = built.unitAxes || null;
   el.querySelectorAll('.main-svg').forEach((svg) => { svg.style.transform = ''; });   // see followSize
   const start = performance.now();
   Plotly().react(el, built.traces, built.layout, PLOT_CONFIG);

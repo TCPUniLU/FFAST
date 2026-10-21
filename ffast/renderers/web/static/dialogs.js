@@ -42,6 +42,50 @@ export function askDialog({ title, message, buttons }) {
 }
 
 /**
+ * Ask for the unit of a dataset's energies or forces, in a small box at the
+ * click. Enter keeps what is typed (empty: no unit), Escape or a click
+ * elsewhere keeps the old one.
+ * @param {{x: number, y: number, dimension: string, value: string}} o
+ * @returns {Promise<string|null>} the unit, or null when cancelled
+ */
+export function unitPopover({ x, y, dimension, value }) {
+  document.getElementById('unit-popover')?.remove();
+  return new Promise((resolve) => {
+    const box = document.createElement('div');
+    box.id = 'unit-popover';
+    box.setAttribute('role', 'dialog');
+    box.style.left = `${Math.max(8, Math.min(x, window.innerWidth - 220))}px`;
+    box.style.top = `${Math.max(8, Math.min(y + 8, window.innerHeight - 80))}px`;
+    const label = document.createElement('label');
+    label.textContent = `Unit of ${dimension}`;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = value || '';
+    input.placeholder = dimension === 'force' ? 'eV/Å' : 'eV';
+    input.spellcheck = false;
+    label.appendChild(input);
+    box.appendChild(label);
+    let done = false;
+    const finish = (answer) => {
+      if (done) return;
+      done = true;
+      document.removeEventListener('pointerdown', outside, true);
+      box.remove();
+      resolve(answer);
+    };
+    const outside = (e) => { if (!box.contains(e.target)) finish(null); };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(input.value.trim()); }
+      else if (e.key === 'Escape') { e.preventDefault(); finish(null); }
+    });
+    document.addEventListener('pointerdown', outside, true);
+    document.body.appendChild(box);
+    input.focus();
+    input.select();
+  });
+}
+
+/**
  * Show text to copy or save as a file (Export, ADR 0056 rule 9).
  * @param {{title: string, text: string, filename: string, note?: string}} o
  */

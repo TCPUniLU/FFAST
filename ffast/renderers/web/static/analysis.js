@@ -24,7 +24,9 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, elementSymbol } from './panels.js';
+import { renderPanel, PLOT_KINDS, elementSymbol, unitRoleAt } from './panels.js';
+import { datasetUnits, editableDimension, resolveUnit } from './units.js';
+import { unitPopover } from './dialogs.js';
 import { KIND_3D } from './tab_rules.js';
 import { COLUMN_PX, ROW_PX, sizeTemplate } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
@@ -152,6 +154,7 @@ export class AnalysisManager {
    *   onSub: (o: {name: string, series: Array<{parentFp: string, modelFp: string|null}>,
    *     view?: object, active?: boolean, tick?: boolean}) => void,
    *   onPointFrame: (o: {datasetFp: string, modelFp: string|null, frame: number}) => void,
+   *   onSetUnit?: (o: {datasetFp: string, dimension: string, unit: string}) => void,
    * }} deps
    */
   constructor(deps) {
@@ -161,6 +164,7 @@ export class AnalysisManager {
     this._onSelectTab = deps.onSelectTab;
     this._onSub = deps.onSub;
     this._onPointFrame = deps.onPointFrame;
+    this._onSetUnit = deps.onSetUnit;
 
     /** @type {Map<string, object>} id → catalog entry */
     this._catalog = new Map();
@@ -295,7 +299,8 @@ export class AnalysisManager {
     const key = (refs) => JSON.stringify(
       refs.map((r) => [r.datasetFp, framesKey(this._available.datasets.get(r.datasetFp))]));
     const refs = this.seriesRefs(t);
-    const all = JSON.stringify([refs, key(refs), this._elementOrder || [], t.selectedElements]);
+    const units = refs.map((r) => datasetUnits(r.datasetFp, this._available.datasets));
+    const all = JSON.stringify([refs, key(refs), this._elementOrder || [], t.selectedElements, units]);
     const subbed = this._cardRefs(t, null);
     const swapped = subbed.some((r, i) => r.datasetFp !== refs[i].datasetFp);
     return { all, subbed: swapped ? key(subbed) : '' };
@@ -839,7 +844,26 @@ export class AnalysisManager {
     params.className = 'panel-params';
     el.appendChild(params);
 
-    return { el, title, body, params };
+    const card = { el, title, body, params };
+    body.addEventListener('click', (e) => this._onUnitClick(card, e));
+    return card;
+  }
+
+  /** A click on a "[unit]" (or a unit) in an axis title or a table header
+   * names the unit of that dimension for the datasets the panel shows. */
+  async _onUnitClick(card, e) {
+    const role = unitRoleAt(e.target, card.body._unitAxes);
+    const dimension = role && card.unitDims && card.unitDims[role];
+    if (!dimension || !this._onSetUnit) return;
+    const fps = [...new Set((card.series || []).map((s) => s.datasetFp).filter(Boolean))];
+    if (!fps.length) return;
+    e.stopPropagation();
+    const unit = await unitPopover({
+      x: e.clientX, y: e.clientY, dimension,
+      value: datasetUnits(fps[0], this._available.datasets)[dimension] || '',
+    });
+    if (unit === null) return;
+    for (const datasetFp of fps) this._onSetUnit({ datasetFp, dimension, unit });
   }
 
   async _fetchAndRenderPanel(t, spec, card, token) {
@@ -906,13 +930,19 @@ export class AnalysisManager {
     card.body.className = PLOT_KINDS.has(spec.kind) ? 'panel-plot' : '';
 
     const ctx = {
-      units: this._panelUnits(spec),
+      units: this._panelUnits(spec, series),
+      unitDims: this._panelUnitDims(spec),
       perFrame: this._isPerFrameScatter(spec),
       elementOrder: this._elementOrder || [],
       selectedElements: t.selectedElements,
     };
     renderPanel(card.body, spec, series, ctx);
     card.series = series;
+    card.unitDims = ctx.unitDims;
+    // Which axis titles name a unit the user can set (index.html makes those clickable).
+    const axes = card.body._unitAxes || {};
+    card.body.toggleAttribute('data-unit-x', !!ctx.unitDims[axes.x]);
+    card.body.toggleAttribute('data-unit-y', !!ctx.unitDims[axes.y]);
     card.el.dataset.datasets = series.map((x) => x.datasetFp).join(' ');
     if (PLOT_KINDS.has(spec.kind)) {
       // Before SUB is wired: it sends the zoom this plot shows.
@@ -938,15 +968,32 @@ export class AnalysisManager {
     return out;
   }
 
-  /** Per-role units (x, y, value, mae, …), taken from the bound metrics' catalog units. */
-  _panelUnits(spec) {
-    const units = {};
-    for (const [role, id] of Object.entries(spec.metrics || {})) {
+  /** The catalog entry of the (first) metric bound to each role. */
+  _roleEntries(spec) {
+    return Object.entries(spec.metrics || {}).map(([role, id]) => {
       const first = Array.isArray(id) ? id[0] : id;
-      const entry = first && this._catalog.get(first);
-      units[role] = entry ? entry.unit || '' : '';
-    }
+      return [role, first && this._catalog.get(first)];
+    });
+  }
+
+  /** Per-role units to print (x, y, value, mae, …): an energy or force in the
+   * unit the first series' dataset has, "[unit]" while it has none. */
+  _panelUnits(spec, series) {
+    const dsUnits = datasetUnits(series?.[0]?.datasetFp, this._available.datasets);
+    const units = {};
+    for (const [role, entry] of this._roleEntries(spec))
+      units[role] = entry ? resolveUnit(entry.unit, dsUnits) : '';
     return units;
+  }
+
+  /** Per-role dimension whose unit the user can name, for the roles that have one. */
+  _panelUnitDims(spec) {
+    const dims = {};
+    for (const [role, entry] of this._roleEntries(spec)) {
+      const dim = entry && editableDimension(entry.unit);
+      if (dim) dims[role] = dim;
+    }
+    return dims;
   }
 
   /** A scatter panel is subbable only when its x metric is per-frame. */
