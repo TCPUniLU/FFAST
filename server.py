@@ -252,7 +252,14 @@ async def _handler(
     hub.register(outbound)
 
     # ── handshake ─────────────────────────────────────────────────────────
-    role = await _do_hello_handshake(websocket, addr, token_hash)
+    try:
+        role = await _do_hello_handshake(websocket, addr, token_hash)
+    except BaseException:
+        # The client went away mid-handshake: leave the hub and the window
+        # feed, which holds its sessions until they close (ADR 0062).
+        hub.deregister(outbound)
+        session.close()
+        raise
 
     # ── state replay ──────────────────────────────────────────────────────
     session.replay()
@@ -305,8 +312,10 @@ async def _handler(
         except asyncio.CancelledError:
             pass
 
-        session.close()
+        # Leave the hub first, so the session's last "Used by" goes only to
+        # the windows still open (ADR 0062).
         hub.deregister(outbound)
+        session.close()
         # The role is this connection's own local — there is no registry to ask
         # (ADR 0051); the hub owns liveness and reports what is left.
         logger.info(
