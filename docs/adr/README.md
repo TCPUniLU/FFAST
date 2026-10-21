@@ -27,6 +27,7 @@ things came up.
 - [0032](0032-inbound-event-router-client-handler-table.md) One handler table for server-to-client messages
 - [0033](0033-complete-typed-control-messages.md) Finish typing the control messages
 - [0031](0031-result-buffers-and-zstd-codec-deferred.md) Result buffers and zstd stay dormant, and why that is right
+- [0062](0062-the-server-pushes-each-window-its-shared-state.md) The server pushes each window its shared state, from one window feed (built)
 
 ## The headless core
 
