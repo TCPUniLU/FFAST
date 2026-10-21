@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import tomllib
 from dataclasses import dataclass, field
@@ -85,13 +86,26 @@ class UserTab:
 
 
 class UserTabStore:
-    """The tab files and ``state.json`` in one folder. Reads on demand, so a
-    file copied in by hand appears at the next layout; writes at once."""
+    """The tab files and ``state.json`` in one folder. Writes at once. Reads
+    keep the parsed tabs until the folder changes (ADR 0062), so a file copied
+    in by hand still appears at the next layout."""
 
     def __init__(self, root: Path | str = DEFAULT_DIR) -> None:
         self.root = Path(root).expanduser()
         #: (file, message) for each tab file that could not be read
         self.errors: list[tuple[str, str]] = []
+        # (folder signature, tabs, errors) of the last read, or None
+        self._kept: tuple | None = None
+
+    def _signature(self) -> tuple:
+        """Name, mtime and size of each ``*.toml`` file and of ``state.json``."""
+        sig = []
+        with os.scandir(self.root) as entries:
+            for entry in entries:
+                if entry.name.endswith(".toml") or entry.name == STATE_FILE:
+                    st = entry.stat()
+                    sig.append((entry.name, st.st_mtime_ns, st.st_size))
+        return tuple(sorted(sig))
 
     # ── state.json ──────────────────────────────────────────────────────────
     def _state(self) -> dict:
@@ -109,6 +123,7 @@ class UserTabStore:
         }
 
     def _write_state(self, state: dict) -> None:
+        self._kept = None
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / STATE_FILE).write_text(json.dumps(state, indent=2) + "\n")
 
@@ -127,7 +142,12 @@ class UserTabStore:
         """Every readable tab file, in the order the tabs were made."""
         self.errors = []
         if not self.root.is_dir():
+            self._kept = None
             return []
+        signature = self._signature()
+        if self._kept is not None and self._kept[0] == signature:
+            self.errors = list(self._kept[2])
+            return list(self._kept[1])
         state = self._state()
         found: dict[str, UserTab] = {}
         for path in sorted(self.root.glob("*.toml")):
@@ -142,7 +162,9 @@ class UserTabStore:
             found[path.name].original = record.get("original")
         order = [f for f in state["order"] if f in found]
         order += [f for f in found if f not in order]   # copied in by hand
-        return [found[f] for f in order]
+        tabs = [found[f] for f in order]
+        self._kept = (signature, tabs, list(self.errors))
+        return list(tabs)
 
     @staticmethod
     def _read(path: Path) -> AnalysisTabConfig:
@@ -158,6 +180,7 @@ class UserTabStore:
               replaces: str | None = None, original: str | None = None) -> str:
         """Write `tab` to `file` (a new file named after the tab if None) and
         record what it replaces. Returns the file name."""
+        self._kept = None
         self.root.mkdir(parents=True, exist_ok=True)
         if file is None:
             file = f"{_slug(tab.name)}.toml"
@@ -178,6 +201,7 @@ class UserTabStore:
         return file
 
     def delete(self, file: str, name: str) -> None:
+        self._kept = None
         (self.root / file).unlink(missing_ok=True)
         state = self._state()
         state["replaces"].pop(file, None)
