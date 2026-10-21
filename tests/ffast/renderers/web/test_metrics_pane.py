@@ -388,3 +388,36 @@ async def test_the_pane_acts_on_the_focused_view_not_the_rails_dataset(tmp_path)
                 assert await page.evaluate("() => window.ffastApp._main.current.frame") == 0
             finally:
                 await browser.close()
+
+
+async def test_editing_a_metric_recolours_every_view_coloured_by_it(tmp_path):
+    """ADR 0060 step 6: the main view and an independent panel are both
+    coloured by one user metric; saving a new formula sends both the source
+    again, not only the focused one."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML)
+    cm = _spawn_server("--metrics-dir", str(tmp_path / "metrics"), "--tabs-dir", str(tmp_path / "tabs"),
+                       "--config", str(config))
+    async with cm as (ws_port, web_port):
+        dataset_fp, _model_fp = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 900})
+            try:
+                await _open_compare(page, ws_port, web_port, dataset_fp)
+                pane = await _open_metrics_pane(page)
+                await _save_in_pane(pane, "user.force_len", "norm(", "reference.forces", ")")
+                for index in (0, 1):
+                    await _focus_3d(page, index)
+                    await pane.get_by_role("button", name="Colour atoms by this").click()
+                await page.evaluate(_RECORD_SENDS)
+
+                await pane.get_by_label("Formula").fill("2 * " + (await pane.get_by_label("Formula").input_value()))
+                await pane.get_by_role("button", name="Save", exact=True).click()
+                await page.wait_for_function(
+                    """() => new Set(window.__sent
+                         .filter(([event, kw]) => event === 'VIEW_COMMAND' && kw.parameter === 'source'
+                                 && kw.value === 'metric:user.force_len')
+                         .map(([, kw]) => kw.view_id.split('-')[0])).size === 2""")
+            finally:
+                await browser.close()

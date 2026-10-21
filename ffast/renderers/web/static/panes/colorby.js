@@ -223,14 +223,6 @@ export function createColorByPane(sidebarEl, callbacks) {
       cbLabel.textContent = colorBy.label + (colorBy.unit ? ` (${colorBy.unit})` : '');
     },
 
-    /** Ask for the colours again when they come from a metric: the metric may
-     * have been edited (ADR 0057), and the view keeps the old colours until
-     * told. Sends the same source, which rebuilds the scene. */
-    recolour() {
-      const source = labelToSource.get(currentLabel);
-      if (source && source.startsWith('metric:')) callbacks.onSourceChange(source);
-    },
-
     /** The prediction metric colours use now, or null (ground truth). */
     predictionOf() {
       return keyByLabel.size && [...keyByLabel.values()].includes(state.prediction) ? state.prediction : null;

@@ -2028,13 +2028,19 @@ export class FFastApp {
   }
 
   /** A user metric was added, changed or removed (ADR 0057). The catalog and
-   * the list come again; the plots re-fetch when the catalog lands; a view
-   * coloured by a metric asks for its colours again. */
+   * the list come again; the plots re-fetch when the catalog lands; every
+   * view coloured by a metric asks for its colours again. */
   _onMetricsUpdated() {
     this._conn?.send(OUT.REQUEST_METRIC_CATALOG, {});
     if (this._analysis?.hasUnresolvedPanels()) this._conn?.send(OUT.REQUEST_TAB_LAYOUT, {});
     this._metricOps.requestList();
-    this._panes.colorBy.recolour();
+    // The metric may have been edited, and a view keeps its old colours until
+    // told: the same source again rebuilds its scene.
+    for (const view of [...this._main.all(), ...this._independent.values()]) {
+      const source = view.settings?.colorBy.source;
+      if (view.isOpen && source?.startsWith('metric:'))
+        this._sendViewCommand({ type: 'SET_PARAMETER', stage_id: 'ffast.atom_color', parameter: 'source', value: source }, view);
+    }
   }
 
   _syncAnalysisContext() {

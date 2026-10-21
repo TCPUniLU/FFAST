@@ -90,6 +90,9 @@ export class MainViews {
   /** The View of `datasetFp`, or undefined. */
   get(datasetFp) { return this._byDataset.get(datasetFp); }
 
+  /** Every main View made so far. */
+  all() { return [...this._byDataset.values()]; }
+
   /** The main View with this server id, or null. */
   byViewId(viewId) {
     for (const view of this._byDataset.values()) if (view.viewId === viewId) return view;
