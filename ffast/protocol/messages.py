@@ -562,7 +562,7 @@ class ExportSubsetRequest(BaseModel):
 
 class EmptyRequest(BaseModel):
     """Typed payload for Control messages that carry no fields at all
-    (``REQUEST_STATE_SYNC``, ``REQUEST_METRIC_CATALOG``) — ``extra="forbid"``
+    (``REQUEST_METRIC_CATALOG``, ``REQUEST_TAB_LAYOUT``) — ``extra="forbid"``
     still catches an unexpected stray kwarg."""
 
     model_config = ConfigDict(extra="forbid")

@@ -426,16 +426,6 @@ def test_replay_empty_env_enqueues_only_metric_catalog():
     assert s.outbound.empty()   # no datasets, no models, no open views
 
 
-def test_request_state_sync_triggers_replay():
-    async def scenario():
-        s = ServerSession(_FakeEnv(), asyncio.Queue())
-        await s.dispatch("REQUEST_STATE_SYNC", [], {})
-        return s.outbound.get_nowait()
-
-    event, _args, _kwargs = unpack(_run(scenario()))
-    assert event == "METRIC_CATALOG"
-
-
 # ── _on_request_metric ────────────────────────────────────────────────────────
 
 def test_request_metric_cache_hit_returns_result_without_computing():

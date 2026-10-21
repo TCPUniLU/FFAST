@@ -636,7 +636,7 @@ class ConnectionManager:
     def _onMetricCatalog(self, metrics=None):
         """Store the server's metric catalog (ADR 0016) and notify listeners.
 
-        Sent on connect / state-sync. Clients (e.g. the Loupe ATOMS pane) build
+        Sent on connect. Clients (e.g. the Loupe ATOMS pane) build
         their metric controls from this, keyed by metric id.
         """
         from ffast.protocol import MetricCatalog

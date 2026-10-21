@@ -185,7 +185,6 @@ class ServerSession:
             control.OPEN_VIEW:                  _Route(self._on_open_view, [], OpenViewRequest),
             control.CLOSE_VIEW:                 _Route(self._on_close_view, ["view_id"], CloseViewRequest),
             control.VIEW_COMMAND:               _Route(self._on_view_command, []),
-            control.REQUEST_STATE_SYNC:         _Route(self._on_request_state_sync, [], EmptyRequest),
             control.SAVE_SESSION:               _Route(self._on_save_session, ["path"], SaveSessionRequest),
             control.LOAD_SESSION:               _Route(self._on_load_session, ["path"], LoadSessionRequest),
             control.REQUEST_METRIC:             _Route(self._on_request_metric, ["metric_id", "request_id"], RequestMetricRequest),
@@ -276,7 +275,7 @@ class ServerSession:
 
     def _emit_or_drop(self, data, what: str) -> None:
         """Enqueue a state-replay message; drop with a warning if the queue is
-        full (replay is best-effort — a reconnect or REQUEST_STATE_SYNC retries)."""
+        full (replay is best-effort — a reconnect retries)."""
         try:
             self.outbound.put_nowait(data)
         except asyncio.QueueFull:
@@ -346,16 +345,11 @@ class ServerSession:
     # ── state replay ──────────────────────────────────────────────────────────
 
     def replay(self) -> None:
-        """Push the current server state to a (re)connecting client.
-
-        The degenerate (one-shot full push) case of the sync protocol: dataset
-        and model metadata, the Metric Catalog, and a snapshot of every open
-        view. Future incremental sync would replace this with delta events.
-        """
+        """Push the current server state to a (re)connecting client: dataset
+        and model metadata, and the Metric Catalog. A new connection has a new
+        session with no views yet, so there are no views to send."""
         self._replay_state()
         self._replay_metric_catalog()
-        if self.views:
-            self._replay_views()
 
     def _replay_state(self) -> None:
         """Enqueue REMOTE_DATASET_META + REMOTE_MODEL_META for all objects."""
@@ -433,24 +427,6 @@ class ServerSession:
             logger.info("State replay: METRIC_CATALOG queued (%d metrics)", len(catalog))
         except Exception as exc:
             logger.warning("State replay: METRIC_CATALOG error: %s", exc)
-
-    def _replay_views(self) -> None:
-        """Send a SCENE_SNAPSHOT for each open view on reconnect."""
-        from ffast.protocol.rpc import pack
-
-        for view in self.views.values():
-            try:
-                snapshot = view.snapshot(
-                    get_dataset=self.env.datasets.get,
-                    get_prediction=self.get_prediction,
-                    get_forces=self.get_forces,
-                    executor=self.env.data.metricExecutor,
-                )
-                data = pack(control.SCENE_SNAPSHOT, [], snapshot.model_dump())
-                self._emit_or_drop(data, f"SCENE_SNAPSHOT view={view.state.view_id!r}")
-                logger.debug("State replay: SCENE_SNAPSHOT queued for view=%r", view.state.view_id)
-            except Exception as exc:
-                logger.warning("State replay: SCENE_SNAPSHOT error for view=%r: %s", view.state.view_id, exc)
 
     # ── handlers ────────────────────────────────────────────────────────────
 
@@ -1036,13 +1012,6 @@ class ServerSession:
             "VIEW_COMMAND %s → success=%s new_version=%d",
             kwargs.get("type", "?"), result.success, result.new_version,
         )
-
-    async def _on_request_state_sync(self, **kwargs) -> None:
-        # Client explicitly requests a full state replay (e.g. after reconnect).
-        # The server also replays state automatically on every new connection
-        # (see server._handler), so this is a fallback for explicit re-sync.
-        logger.info("REQUEST_STATE_SYNC received — replaying state to client")
-        self.replay()
 
     async def _on_save_session(self, path, **kwargs) -> None:
         # Stage 5: save runs on the server, which owns the real datasets +

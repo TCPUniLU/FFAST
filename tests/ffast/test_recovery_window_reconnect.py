@@ -87,6 +87,18 @@ async def _connect_with_token(port: int, token: str | None):
     return ws, ack
 
 
+async def _dataset_replayed_to_new_connection(port: int, token: str) -> str:
+    """Open one more connection and return the dataset its connect replay
+    announces: proof the server is alive and still holds the dataset. The
+    others stay connected, so closing this one arms no recovery window."""
+    ws, _ack = await _connect_with_token(port, token)
+    try:
+        replay = await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=10)
+        return replay["args"][0]
+    finally:
+        await ws.close()
+
+
 @pytest.fixture
 def token():
     return SessionToken.generate()
@@ -156,9 +168,7 @@ async def test_reconnect_within_window_is_readmitted_as_controller_with_replay(
         # The server is demonstrably still alive well past where a 5s window
         # with no reconnect would have shut it down.
         await asyncio.sleep(5)
-        await ws2.send(pack("REQUEST_STATE_SYNC", (), {}))
-        sync_replay = await _wait_for_event(ws2, "REMOTE_DATASET_META", timeout=10)
-        assert sync_replay["args"][0] == dataset_fp
+        assert await _dataset_replayed_to_new_connection(port, token.plaintext) == dataset_fp
     finally:
         await ws2.send(pack("GRACEFUL_DISCONNECT", (), {}))
         await ws2.close()
@@ -188,9 +198,7 @@ async def test_second_client_disconnecting_does_not_arm_recovery_while_first_rem
         # have expired and shut the server down.
         await asyncio.sleep(6)
 
-        await ws1.send(pack("REQUEST_STATE_SYNC", (), {}))
-        replay = await _wait_for_event(ws1, "REMOTE_DATASET_META", timeout=10)
-        assert replay["args"][0] == dataset_fp
+        assert await _dataset_replayed_to_new_connection(port, token.plaintext) == dataset_fp
     finally:
         await ws1.send(pack("GRACEFUL_DISCONNECT", (), {}))
         await ws1.close()
