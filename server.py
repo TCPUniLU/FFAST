@@ -305,7 +305,7 @@ async def _handler(
         except asyncio.CancelledError:
             pass
 
-        session.cancel_tries()
+        session.close()
         hub.deregister(outbound)
         # The role is this connection's own local — there is no registry to ask
         # (ADR 0051); the hub owns liveness and reports what is left.

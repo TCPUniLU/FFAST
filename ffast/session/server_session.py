@@ -793,6 +793,7 @@ class ServerSession:
 
         #print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 
+        copied_metric = False
         view_id = kwargs.get("view_id") or str(uuid.uuid4())
         #print(view_id)
         dataset_ref = kwargs.get("dataset_ref") or None
@@ -808,6 +809,7 @@ class ServerSession:
                 view.state.parameters = copy.deepcopy(like.state.parameters)
                 view.state.enabled_features = list(like.state.enabled_features)
                 view.state.camera = like.state.camera.model_copy()
+                copied_metric = (self._colour_source(view) or "").startswith("metric:")
         else:
             view = self.views[view_id]
         #print('only_forces' in view.state.enabled_features)
@@ -841,6 +843,9 @@ class ServerSession:
             "OPEN_VIEW: view_id=%r dataset_ref=%r prediction_ref=%r scene_version=%d",
             view_id, dataset_ref, view.state.prediction_ref, view.version,
         )
+        if copied_metric:
+            # The copied colouring is one more view coloured by a metric.
+            self.feed.changed(control.METRIC_USERS)
 
     async def _on_close_view(self, view_id, **kwargs) -> None:
         self.views.pop(view_id, None)
@@ -1287,6 +1292,17 @@ class ServerSession:
         if running is not None:
             running[0].set()
             running[2].set()
+
+    def close(self) -> None:
+        """The window has gone: stop its Tries, drop its views, and leave the
+        feed, so its colourings stop counting as users of a metric (ADR 0062)."""
+        self.cancel_tries()
+        coloured = any((self._colour_source(v) or "").startswith("metric:")
+                       for v in self.views.values())
+        self.views.clear()
+        self.feed.detach(self)
+        if coloured:
+            self.feed.changed(control.METRIC_USERS)
 
     def cancel_tries(self) -> None:
         """Stop every Try of this connection (it has gone away)."""

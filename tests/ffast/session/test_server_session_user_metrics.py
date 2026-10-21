@@ -575,3 +575,57 @@ def test_a_metric_save_sends_the_pieces_and_inputs_only_to_a_window_that_asked(e
     events = [unpack(b)[0] for b in broadcasts]
     assert events == [control.METRICS_UPDATED, control.METRIC_CATALOG, control.TAB_LAYOUT,
                       control.USER_METRICS, control.METRIC_USERS]
+
+
+# ── a copied or closed colouring updates "Used by" (ADR 0062) ───────────────
+def _coloured_view(source):
+    from ffast.visualization.view import VisualizationView
+    view = VisualizationView("v")
+    view.state.parameters = {"ffast.atom_color": {"source": source}}
+    return view
+
+
+def test_opening_a_view_from_a_metric_coloured_one_tells_every_window(env):
+    broadcasts = []
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue(), broadcast=broadcasts.append)
+        s.views["src"] = _coloured_view("metric:t57.double")
+        await s.dispatch(control.OPEN_VIEW, [], {"view_id": "copy", "start_from": "src"})
+
+    asyncio.run(scenario())
+    assert control.METRIC_USERS in [unpack(b)[0] for b in broadcasts]
+
+
+def test_opening_a_view_from_an_element_coloured_one_says_nothing(env):
+    broadcasts = []
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue(), broadcast=broadcasts.append)
+        s.views["src"] = _coloured_view("element")
+        await s.dispatch(control.OPEN_VIEW, [], {"view_id": "copy", "start_from": "src"})
+
+    asyncio.run(scenario())
+    assert broadcasts == []
+
+
+def test_a_closed_window_stops_counting_as_a_user(env):
+    from ffast.session.window_feed import WindowFeed
+    _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
+    broadcasts = []
+    feed = WindowFeed(env, broadcasts.append)
+    env.window_feed = feed
+    env.user_metrics.usage_providers.append(feed.view_colouring_users)
+    gone = ServerSession(env, asyncio.Queue())
+    stays = ServerSession(env, asyncio.Queue())
+    gone.views["v"] = _coloured_view("metric:t57.double")
+    assert env.user_metrics.used_by("t57.double") == ["the main view's colouring"]
+    feed.changed(control.METRIC_USERS)          # what the windows now hold
+    broadcasts.clear()
+
+    gone.close()
+
+    assert gone not in feed.sessions and stays in feed.sessions
+    assert env.user_metrics.used_by("t57.double") == []   # a Delete is allowed
+    [(event, _, kwargs)] = [unpack(b) for b in broadcasts]
+    assert event == control.METRIC_USERS and "t57.double" not in kwargs["users"]

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import weakref
 
 from ffast.protocol import control
 
@@ -26,14 +25,19 @@ class WindowFeed:
         # attribute is read with ``getattr(env, name, None)``.
         self.env = env
         self._broadcast = broadcast
-        # Sessions of the open windows. A WeakSet for now (ADR 0062 step 6).
-        self.sessions: weakref.WeakSet = weakref.WeakSet()
+        # Sessions of the open windows. A session leaves it when its window
+        # closes (``ServerSession.close``), so a closed window's views stop
+        # counting as users at once.
+        self.sessions: set = set()
         # Event name → the bytes last broadcast for it, so a piece is sent
         # again only when it changed (decision 4). The replay does not count.
         self._last: dict[str, bytes] = {}
 
     def attach(self, session) -> None:
         self.sessions.add(session)
+
+    def detach(self, session) -> None:
+        self.sessions.discard(session)
 
     # ── "Used by": views coloured by a metric ───────────────────────────────
 
