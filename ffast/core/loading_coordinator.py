@@ -309,11 +309,13 @@ class LoadingCoordinator:
         # method means no server was available, so there is nothing to mirror to.
 
     def _extractPredictionFields(self, aseObject, modelKey, dataset):
-        """Eagerly extract the declared prediction Dataset Fields (ADR 0023).
+        """Eagerly extract the prediction Dataset Fields (ADR 0023, ADR 0061).
 
-        The prediction's ASE loader is discarded once E/F are pulled, so any
-        prediction.{info,atoms}.<key> a registered metric declares must be read
-        now and stashed in ``DataService.predictionFields`` keyed by
+        The prediction's ASE loader is discarded once E/F are pulled, so every
+        prediction.{info,atoms}.<key> a registered metric declares, plus every
+        numeric scalar the file itself holds (``availableFieldKeys``: one number
+        per frame or per atom), must be read now, so a metric saved later over a
+        new field finds it. They are stashed in ``DataService.predictionFields`` keyed by
         ``(modelKey, dataset_fp)`` (modelKey == the GhostModel fingerprint, so
         the resolver finds it from the model object). Strict per-field: an
         unavailable key just stays absent (resolves to None later).
@@ -321,9 +323,12 @@ class LoadingCoordinator:
         try:
             from ffast.metrics.fields import declared_field_keys
             wanted = declared_field_keys("prediction")
+            frame_keys, atom_keys = aseObject.availableFieldKeys()
         except Exception:
             logger.exception("Prediction fields: failed to read declared keys")
             return
+        wanted = {"info": set(wanted["info"]) | set(frame_keys),
+                  "atoms": set(wanted["atoms"]) | set(atom_keys)}
         if not wanted["info"] and not wanted["atoms"]:
             return
         store = {"info": {}, "atoms": {}}
