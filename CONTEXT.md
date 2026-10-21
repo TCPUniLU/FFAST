@@ -280,9 +280,10 @@ Don't call it: the selected panel ("selection" already means picked atoms).
 
 ### Main view
 
-The one visualization view the rail drives. Linked 3D panels show it. At least
-one linked 3D panel always exists in some tab, so the main view always has a
-place to appear.
+The one visualization view the rail drives; on the server, one view per
+dataset, reused when the user comes back to that dataset. Linked 3D panels show
+it. At least one linked 3D panel always exists in some tab, so the main view
+always has a place to appear.
 
 ### Series
 

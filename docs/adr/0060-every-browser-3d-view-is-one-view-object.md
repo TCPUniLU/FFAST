@@ -1,4 +1,4 @@
-Status: Proposed. Decided 2026-10-20, after architecture review problem 2
+Status: Accepted, built 2026-10-21 (see "As built" at the end). Decided 2026-10-20, after architecture review problem 2
 (`docs/research/architecture-review-2026-10-14/02-main-view-object.md`, whose
 "Decided" section records the five answers).
 
@@ -478,3 +478,24 @@ colour last.
   view per dataset, reused when the user comes back to it".
 - This ADR's status and "as built" notes; the brief's status; the row in
   `docs/adr/README.md`.
+
+## As built (2026-10-21)
+
+All seven steps are built, one commit each except as noted.
+
+- **Step 4 commits.** 4a is its own commit; the display, camera, export,
+  extract, bonds and align panes (4b-4g) went in one commit, and the colour
+  pane with the switch (4h-4i) in another, because the app side of each pane
+  was too tangled to split into working states. Each pane has unit tests in
+  `test_web_panes.py`.
+- **Rail versus open view.** `_focusedDatasetFp()` / `_focusedModelFp()` still
+  answer the rail's choice for the main view, not `main.current`. They differ
+  only while no 3D panel is shown, and the Metrics pane and the sidebar title
+  rely on the rail's answer there. Step 3 therefore did not remove them.
+- **Try's headline** adds ` — on <name>` only for a finished Try (all good or
+  bad values), not for an error or a stop.
+- **Export background.** Showing a view's camera settings no longer copies the
+  camera's background into the Export pane; each keeps its own value.
+- **Tests.** The browser suite was run in four parallel shards of the same
+  tests (about 4 minutes) instead of one 8-minute run.
+
