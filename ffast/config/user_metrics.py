@@ -359,8 +359,19 @@ class UserMetrics:
         return Change(id, {id, *registry.dependents_of(id)})
 
     def _check_dependents(self, id: str, expr_fn, analyze_expr) -> None:
+        from ffast.metrics.transforms import _TransformFn
         for dep in self.registry.direct_dependents_of(id):
             schema, fn = self.registry.get(dep)
+            if isinstance(fn, _TransformFn):
+                # A transform that says shape = "inherit" copied its source's
+                # shape when it was registered (ADR 0061). An inherited unit is
+                # not checked: a stale unit only changes an axis label.
+                new = self.registry.get(id)[0].shape
+                if fn.transform.shape == "inherit" and tuple(new) != tuple(schema.shape):
+                    raise MetricError(
+                        f"This change would give {dep} another shape "
+                        f"({shape_to_str(schema.shape)} → {shape_to_str(new)})")
+                continue
             if not isinstance(fn, expr_fn):
                 continue
             refs = {n: r for n, r in fn.var_refs.items() if n != "n_atoms"}
