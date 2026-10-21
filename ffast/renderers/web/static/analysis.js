@@ -938,15 +938,15 @@ export class AnalysisManager {
     return out;
   }
 
-  /** Per-axis units, taken from the bound metrics' catalog units. */
+  /** Per-role units (x, y, value, mae, …), taken from the bound metrics' catalog units. */
   _panelUnits(spec) {
-    const unitOf = (role) => {
-      const id = spec.metrics && spec.metrics[role];
+    const units = {};
+    for (const [role, id] of Object.entries(spec.metrics || {})) {
       const first = Array.isArray(id) ? id[0] : id;
       const entry = first && this._catalog.get(first);
-      return entry ? entry.unit || '' : '';
-    };
-    return { x: unitOf('x'), y: unitOf('y'), value: unitOf('value') };
+      units[role] = entry ? entry.unit || '' : '';
+    }
+    return units;
   }
 
   /** A scatter panel is subbable only when its x metric is per-frame. */

@@ -35,6 +35,8 @@
  * frames (analysis.js `_wireSub`).
  */
 
+import { withUnit } from './units.js';
+
 /** @typedef {import('./protocol.js').PanelLayout} PanelLayout */
 /** @typedef {import('./metrics.js').MetricResult} MetricResult */
 
@@ -120,14 +122,12 @@ function arrMax(a) { let m = -Infinity; for (let i = 0; i < a.length; i++) if (a
  * text. The desktop resolves the `unitKey` (e.g. "energyUnit") through the user
  * config; the browser has no such config, so it appends the bound metric's own
  * catalog unit (`unit`) when the label declares a unit slot — pragmatic-parity
- * units without a second config source.
+ * units without a second config source. A catalog unit that is only a dimension
+ * ("energy") is not printed (units.js).
  */
-function axisTitle(label, unit) {
+export function axisTitle(label, unit) {
   if (label == null) return '';
-  if (Array.isArray(label)) {
-    const [text] = label;
-    return unit ? `${text} (${unit})` : text;
-  }
+  if (Array.isArray(label)) return withUnit(label[0], unit);
   return String(label);
 }
 
@@ -378,7 +378,8 @@ export function buildTable(spec, series, ctx) {
     cellOf.set(`${rKey}|${cKey}`, scalarOf(s.data.value));
   }
 
-  const head = `<thead><tr><th>${esc(spec.title || 'Value')}</th>`
+  const unit = (ctx && ctx.units && ctx.units.value) || '';
+  const head = `<thead><tr><th>${esc(withUnit(spec.title || 'Value', unit))}</th>`
     + cols.map((c) => `<th>${esc(c.label)}</th>`).join('') + '</tr></thead>';
   const body = '<tbody>' + rows.map((r) =>
     `<tr><td>${esc(r.label)}</td>` + cols.map((c) => {
@@ -401,6 +402,9 @@ export function buildTable(spec, series, ctx) {
 export function buildGroupedTable(spec, series, ctx) {
   const order = ctx.elementOrder || [];
   const selected = ctx.selectedElements || [];
+  const u = ctx.units || {};
+  const mae = withUnit('MAE', u.mae);
+  const rmse = withUnit('RMSE', u.rmse);
   const list = series || [];
   if (!list.length) return '<div class="panel-msg">No data for this selection.</div>';
 
@@ -414,7 +418,7 @@ export function buildGroupedTable(spec, series, ctx) {
   if (selected.length > 1) {
     const s = list[0];
     const shown = selected.filter((z) => z === 'All' || order.includes(z));
-    const head = '<thead><tr><th>Element</th><th>MAE</th><th>RMSE</th></tr></thead>';
+    const head = `<thead><tr><th>Element</th><th>${esc(mae)}</th><th>${esc(rmse)}</th></tr></thead>`;
     const body = '<tbody>' + shown.map((z) =>
       `<tr><td>${z === 'All' ? 'All' : esc(elementSymbol(z))}</td>`
       + `<td>${cell(s, z, 'mae', 'mae_all')}</td>`
@@ -426,8 +430,8 @@ export function buildGroupedTable(spec, series, ctx) {
   // gives no clue which element the error belongs to.
   const z = selected[0] ?? 'All';
   const label = z === 'All' ? 'All' : elementSymbol(z);
-  const head = `<thead><tr><th>Object</th><th>${esc(label)} MAE</th>`
-    + `<th>${esc(label)} RMSE</th></tr></thead>`;
+  const head = `<thead><tr><th>Object</th><th>${esc(label)} ${esc(mae)}</th>`
+    + `<th>${esc(label)} ${esc(rmse)}</th></tr></thead>`;
   const body = '<tbody>' + list.map((s) =>
     `<tr><td>${esc(s.name || 'Reference')}</td>`
     + `<td>${cell(s, z, 'mae', 'mae_all')}</td>`

@@ -20,6 +20,7 @@ import { COLORABLE_SHAPES } from '../start_settings.js';
 import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.js';
 import { gradientCss } from '../colormap.js';
 import { defaultSettings } from '../view_settings.js';
+import { withUnit } from '../units.js';
 
 const COLORMAPS = ['viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'force_error'];
 // Shared with an independent panel's starting look (start_settings.js).
@@ -220,7 +221,7 @@ export function createColorByPane(sidebarEl, callbacks) {
       cbGradient.style.background = `linear-gradient(to right, ${gradientCss(colorBy.colormap)})`;
       cbMin.textContent = colorBy.vmin.toPrecision(3);
       cbMax.textContent = colorBy.vmax.toPrecision(3);
-      cbLabel.textContent = colorBy.label + (colorBy.unit ? ` (${colorBy.unit})` : '');
+      cbLabel.textContent = withUnit(colorBy.label, colorBy.unit);
     },
 
     /** The prediction metric colours use now, or null (ground truth). */

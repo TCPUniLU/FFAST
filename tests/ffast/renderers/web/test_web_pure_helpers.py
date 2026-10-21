@@ -277,6 +277,32 @@ CASES = {
     "recent_servers_cap": (
         "rs.rememberServer(['a','b','c','d','e'], 'f')"
     ),
+    # a built-in metric declares a dimension ("energy"), not a unit
+    "units_dimension_tags": "[...un.DIMENSIONS].sort()",
+    "axis_title_units": (
+        "[pn.axisTitle(['Energy MAE', 'energyUnit'], 'energy'),"
+        " pn.axisTitle(['Energy MAE', 'energyUnit'], 'meV'),"
+        " pn.axisTitle(['Energy MAE', 'energyUnit'], ''),"
+        " pn.axisTitle('Density', 'meV'), pn.axisTitle(null, 'meV')]"
+    ),
+    "table_headers_carry_units": (
+        "(() => {"
+        "  const heads = (html) => [...new DOMParser().parseFromString(html, 'text/html')"
+        "    .querySelectorAll('thead th')].map(e => e.textContent);"
+        "  const one = [{datasetFp:'d1', datasetName:'aspirin', modelFp:'m1', modelName:'MACE',"
+        "     data:{value: {nd: {values: [1], shape: [1]}}}}];"
+        "  const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const grouped = [{name:'MACE', data:{mae: a([0.1]), rmse: a([0.5])}}];"
+        "  return {"
+        "    table: heads(pn.buildPanel({kind:'table', title:'Energy MAE'}, one,"
+        "      {units: {value: 'meV'}}).html),"
+        "    tableDim: heads(pn.buildPanel({kind:'table', title:'Energy MAE'}, one,"
+        "      {units: {value: 'energy'}}).html),"
+        "    grouped: heads(pn.buildPanel({kind:'grouped_table'}, grouped,"
+        "      {elementOrder:[6], selectedElements:[6], units: {mae: 'meV/Å', rmse: 'force'}}).html),"
+        "  };"
+        "})()"
+    ),
     "panel_unknown_kind_is_null": "pn.buildPanel({kind:'nope'}, [], {})",
     # ADR 0055 rule 4: decimals, but a non-zero value never prints as zero
     "table_value_format": (
@@ -510,6 +536,7 @@ def results():
         f"  const te = await import('{origin}/tab_edit.js');\n"
         f"  const ss = await import('{origin}/start_settings.js');\n"
         f"  const ex = await import('{origin}/panes/extract.js');\n"
+        f"  const un = await import('{origin}/units.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -796,6 +823,29 @@ def test_recent_servers_move_a_reconnected_server_to_the_front(results):
 
 def test_recent_servers_keep_five(results):
     assert results["recent_servers_cap"] == ["f", "a", "b", "c", "d"]
+
+
+def test_js_dimension_tags_match_the_metric_units_module(results):
+    """units.js hides exactly the dimension tags ffast/metrics/units.py defines."""
+    from ffast.metrics import units
+
+    tags = sorted(v for k, v in vars(units).items()
+                  if not k.startswith("_") and isinstance(v, str))
+    assert results["units_dimension_tags"] == tags
+
+
+def test_axis_title_prints_a_unit_but_not_a_dimension(results):
+    """"Energy MAE (energy)" named the dimension where the unit belongs."""
+    assert results["axis_title_units"] == [
+        "Energy MAE", "Energy MAE (meV)", "Energy MAE", "Density", "",
+    ]
+
+
+def test_table_headers_carry_a_declared_unit(results):
+    r = results["table_headers_carry_units"]
+    assert r["table"] == ["Energy MAE (meV)", "aspirin"]
+    assert r["tableDim"] == ["Energy MAE", "aspirin"]
+    assert r["grouped"] == ["Object", "C MAE (meV/Å)", "C RMSE"]
 
 
 def test_table_value_never_prints_a_non_zero_value_as_zero(results):
