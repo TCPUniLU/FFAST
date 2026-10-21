@@ -411,6 +411,14 @@ class DataService:
             return _CHANGED
         if isinstance(result, MetricResult):
             self.cache[key] = result
+            # A change that lands between the check above and this store has
+            # already dropped old results, so take this one back too.
+            if default_registry.revision != revision:
+                try:
+                    del self.cache[key]
+                except KeyError:
+                    pass
+                return _CHANGED
             self.eventPush("DATA_UPDATED", key)
             logger.info("Metric %s computed and cached (%s)", metric_id, key)
             return key

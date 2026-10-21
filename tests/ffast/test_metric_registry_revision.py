@@ -128,6 +128,32 @@ def test_a_given_key_and_a_change_during_the_run_stores_nothing(make):
     assert data.cache == {}
 
 
+class _CacheChangedOnFirstStore(dict):
+    """A cache whose first store is overtaken by a metric save, standing in for
+    a change that lands after the run but before its result is stored."""
+
+    def __init__(self):
+        super().__init__()
+        self.stores = 0
+
+    def __setitem__(self, key, value):
+        super().__setitem__(key, value)
+        self.stores += 1
+        if self.stores == 1:
+            _touch()
+
+
+def test_a_change_between_the_run_and_the_store_leaves_nothing_behind(make):
+    events = _Events()
+    cache = _CacheChangedOnFirstStore()
+    data = DataService(cache=cache, models={}, datasets={}, tm=None, events=events,
+                       executor=_ChangingExecutor([1.0, 2.0]))
+    key = data.generateMetric("ffast.energy_reference", {}, None, _Dataset())
+    assert float(cache[key].values) == 2.0
+    assert len(cache) == 1                           # the overtaken result was taken back
+    assert events.pushed == [("DATA_UPDATED", key)]  # and never announced
+
+
 def test_an_unchanged_run_stores_and_returns_the_key(make):
     data, events = make(_ChangingExecutor([5.0]))
     key = data.generateMetric("ffast.energy_reference", {}, None, _Dataset())
