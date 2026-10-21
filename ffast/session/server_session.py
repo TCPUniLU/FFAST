@@ -578,8 +578,9 @@ class ServerSession:
         def value_of(metric_id, params):
             key = self.env.data.make_metric_cache_key(metric_id, params, model, parent)
             result = self.env.cache.get(key)
-            if result is None and self.env.data.generateMetric(metric_id, params, model, parent, key):
-                result = self.env.cache.get(key)
+            if result is None:
+                made = self.env.data.generateMetric(metric_id, params, model, parent)
+                result = self.env.cache.get(made) if made else None
             return None if result is None else result.values
 
         return frames_in_view(view, n_frames=parent.getN(), value_of=value_of,

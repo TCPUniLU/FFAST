@@ -13,6 +13,10 @@ class MetricRegistry:
     def __init__(self) -> None:
         self._metrics: dict[str, tuple[MetricSchema, Callable]] = {}
         self._graph = MetricGraph()
+        # Goes up by one every time the table changes (ADR 0061). A caller that
+        # read it before a run and sees another value after knows the formulas
+        # may have changed under it, and throws the run away.
+        self.revision = 0
 
     def metric(
         self,
@@ -65,6 +69,7 @@ class MetricRegistry:
                 raise ValueError(f"Metric with id '{mid}' is already registered")
             decl = MetricSchema.model_validate(spec)
             self._metrics[mid] = (decl, fn)
+            self.revision += 1
             return fn
 
         # bare @metric          -> func is the function
@@ -90,11 +95,14 @@ class MetricRegistry:
         """Remove a metric; returns what was removed so a caller can restore it."""
         if id not in self._metrics:
             raise KeyError(f"Metric with id '{id}' is not registered")
-        return self._metrics.pop(id)
+        entry = self._metrics.pop(id)
+        self.revision += 1
+        return entry
 
     def restore(self, id: str, entry: tuple[MetricSchema, Callable]) -> None:
         """Put back an entry taken out by ``unregister`` (rollback of a failed edit)."""
         self._metrics[id] = entry
+        self.revision += 1
 
     def dependents_of(self, id: str) -> list[str]:
         """Every metric built on ``id``, directly or through others (sorted).

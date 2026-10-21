@@ -37,6 +37,9 @@ def _formula_token(metric_id):
         return None
 
 
+_CHANGED = object()   # a run overlapped a metric-table change (ADR 0061)
+
+
 class DataService:
     """Cache-key resolution, data generation, and in-process metrics (ADR 0020)."""
 
@@ -310,16 +313,38 @@ class DataService:
     def generateMetric(self, metric_id, params, model, dataset, key=None, taskID=None):
         """Compute one metric in-process, cache the MetricResult, fire DATA_UPDATED.
 
-        Returns True on success.  If a required model prediction is not cached
-        yet, queues the prediction DataType(s) and returns False; the metric is
-        recomputed the next time its dependencies are refreshed (real-model
-        on-demand prediction retry is wired in a later milestone — ghost/remote
-        predictions are already transferred, so they compute immediately).
-        """
-        from ffast.metrics.models import MetricResult
+        Returns the cache key the result was stored under, or None. If a
+        required model prediction is not cached yet, queues the prediction
+        DataType(s) and returns None; the metric is recomputed the next time its
+        dependencies are refreshed (real-model on-demand prediction retry is
+        wired in a later milestone — ghost/remote predictions are already
+        transferred, so they compute immediately).
 
-        if key is None:
-            key = self.make_metric_cache_key(metric_id, params, model, dataset)
+        Without a ``key`` the key is built here. If the metric table changed
+        while the run was in flight (ADR 0061), the outcome is thrown away and
+        the run starts again under a fresh key, up to 3 times. A caller-given
+        key is never re-built: the run is dropped and None returned.
+        """
+        from ffast.metrics.registry import default_registry
+
+        given_key = key
+        for _attempt in range(3):
+            revision = default_registry.revision
+            key = given_key or self.make_metric_cache_key(metric_id, params, model, dataset)
+            outcome = self._generate_metric_once(metric_id, params, model, dataset, key,
+                                                 revision)
+            if outcome is not _CHANGED:
+                return outcome
+            if given_key is not None:
+                return None
+            logger.info("Metric %s changed while computing; computing again", metric_id)
+        logger.warning("Metric %s kept changing while computing; gave up", metric_id)
+        return None
+
+    def _generate_metric_once(self, metric_id, params, model, dataset, key, revision):
+        """One attempt of ``generateMetric``: the stored key, None, or ``_CHANGED``."""
+        from ffast.metrics.models import MetricResult
+        from ffast.metrics.registry import default_registry
 
         # 4a server-owned metrics: prefer server-side computation (the server
         # holds the full arrays + ghost/remote predictions and runs the same
@@ -327,7 +352,7 @@ class DataService:
         # server or the server can't source it (e.g. a real client-only model).
         if self._source.available:
             if self._source.fetch_metric_result(metric_id, params, model, dataset, key):
-                return True
+                return key
 
         # Resolve required predictions before computing.
         missing = self.inputResolver.missing_prediction_keys(
@@ -353,7 +378,7 @@ class DataService:
                 if not self._source.fetch_prediction_arrays(
                     pred_dataset.fingerprint, model.fingerprint
                 ):
-                    return False
+                    return None
                 missing = self.inputResolver.missing_prediction_keys(
                     metric_id, model=model, dataset=dataset
                 )
@@ -362,7 +387,7 @@ class DataService:
                         "Metric %s: predictions still missing after server "
                         "fetch: %s", metric_id, missing,
                     )
-                    return False
+                    return None
                 # fall through to compute
             else:
                 # Real client-loaded model (no server): predict in-process.
@@ -375,20 +400,22 @@ class DataService:
                     "Metric %s deferred: missing predictions %s",
                     metric_id, missing,
                 )
-                return False
+                return None
 
         from ffast.metrics.input_resolver import _ResolverSource
 
         source = _ResolverSource(self.inputResolver, model, dataset)
         result = self.metricExecutor.run(metric_id, source, params or {})
+        if default_registry.revision != revision:
+            return _CHANGED
         if isinstance(result, MetricResult):
             self.cache[key] = result
             self.eventPush("DATA_UPDATED", key)
             logger.info("Metric %s computed and cached (%s)", metric_id, key)
-            return True
+            return key
 
         logger.error("Metric %s failed: %r", metric_id, result)
-        return False
+        return None
 
     def getCacheKey(self, dataTypeKey, model=None, dataset=None):
         """Build the canonical cache key for one datatype/model/dataset triple."""
