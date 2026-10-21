@@ -21,6 +21,7 @@ import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.
 import { gradientCss } from '../colormap.js';
 import { defaultSettings } from '../view_settings.js';
 import { withUnit } from '../units.js';
+import { formatSignificant } from '../panels.js';
 
 const COLORMAPS = ['viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'force_error'];
 // Shared with an independent panel's starting look (start_settings.js).
@@ -219,8 +220,8 @@ export function createColorByPane(sidebarEl, callbacks) {
       if (!colorBy) { colorbar.classList.add('hidden'); return; }
       colorbar.classList.remove('hidden');
       cbGradient.style.background = `linear-gradient(to right, ${gradientCss(colorBy.colormap)})`;
-      cbMin.textContent = colorBy.vmin.toPrecision(3);
-      cbMax.textContent = colorBy.vmax.toPrecision(3);
+      cbMin.textContent = formatSignificant(colorBy.vmin);
+      cbMax.textContent = formatSignificant(colorBy.vmax);
       cbLabel.textContent = withUnit(colorBy.label, colorBy.unit);
     },
 

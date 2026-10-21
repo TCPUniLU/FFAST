@@ -328,12 +328,27 @@ export function buildGroupedDensity(spec, series, ctx) {
 // ── table-kind builders (pure, return HTML) ─────────────────────────────────
 
 /**
+ * `v` with `digits` significant digits in plain notation, never scientific
+ * (`0.000921`, `0.0908`, `12.3`, `1235`). The desktop's `format_significant`
+ * matches.
+ */
+export function formatSignificant(v, digits = 3) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(n);
+  if (n === 0) return n.toFixed(digits - 1);
+  return n.toFixed(Math.max(0, digits - 1 - Math.floor(Math.log10(Math.abs(n)))));
+}
+
+/**
  * A table cell: `precision` decimal places, but never a false zero — a
  * non-zero value that would round to zero shows three significant digits
- * (`0.00213`, not `0.00`). The desktop's `format_table_value` matches (ADR 0055).
+ * (`0.00213`, not `0.00`). With `precision` unset the cell shows three
+ * significant digits throughout, so an error of 0.0134 is not cut to 0.01.
+ * The desktop's `format_table_value` matches (ADR 0055).
  */
-export function formatTableValue(v, precision = 2) {
+export function formatTableValue(v, precision = null) {
   if (v == null || Number.isNaN(v)) return '—';
+  if (precision == null) return formatSignificant(v);
   const n = Number(v);
   const text = n.toFixed(precision);
   return n !== 0 && Number(text) === 0 ? n.toPrecision(3) : text;
