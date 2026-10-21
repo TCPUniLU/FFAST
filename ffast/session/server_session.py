@@ -1336,12 +1336,11 @@ class ServerSession:
             self._broadcast(self._user_metrics_message())
 
     def _apply_metric_change(self, affected) -> None:
-        """Drop cached results of the changed metrics and refresh the workers."""
+        """Drop cached results of the changed metrics."""
         data = getattr(self.env, "data", None)
         if data is None:
             return
         dropped = data.invalidate_metrics(affected)
-        data.metricExecutor.refresh_registry()
         logger.info("Metrics %s changed: %d cached result(s) dropped", sorted(affected), len(dropped))
 
     async def _on_export_user_metric(self, id, **kwargs) -> None:

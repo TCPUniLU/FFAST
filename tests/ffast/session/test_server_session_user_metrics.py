@@ -22,13 +22,6 @@ METRIC = {"id": "t57.double", "expr": "2 * f", "vars": {"f": "ffast.force_compon
 class _Data:
     def __init__(self):
         self.invalidated = []
-        self.refreshed = 0
-        outer = self
-
-        class _Exec:
-            def refresh_registry(self):
-                outer.refreshed += 1
-        self.metricExecutor = _Exec()
 
     def invalidate_metrics(self, ids):
         self.invalidated.append(set(ids))
@@ -80,14 +73,13 @@ def test_a_change_drops_cached_results_and_refreshes_the_workers(env):
     _dispatch(env, control.SAVE_USER_METRIC, {
         "metric": {**METRIC, "expr": "3 * f"}, "previous_id": "t57.double", "overwrite": True})
     assert env.data.invalidated == [{"t57.double"}, {"t57.double"}]
-    assert env.data.refreshed == 2
 
 
 def test_a_refused_change_says_why_and_tells_nobody(env):
     own, everyone = _dispatch(env, control.SAVE_USER_METRIC,
                               {"metric": {**METRIC, "id": "ffast.force_component_mae"}})
     assert own[0][2]["ok"] is False and "already taken" in own[0][2]["error"]
-    assert everyone == [] and env.data.refreshed == 0
+    assert everyone == []
 
 
 def test_a_stale_save_is_flagged_as_a_conflict(env):
@@ -219,7 +211,7 @@ def test_try_replies_with_statistics_and_progress_to_this_window_only(env):
     assert (tried["ok"], tried["try_id"], tried["min"], tried["max"], tried["bad_count"]) == (
         True, "t1", 10.0, 40.0, 0)
     assert not default_registry.has("t57.try")           # nothing is registered
-    assert env.data.invalidated == [] and env.data.refreshed == 0
+    assert env.data.invalidated == []
 
 
 def test_try_without_a_dataset_says_so(env):

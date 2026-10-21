@@ -15,7 +15,7 @@ Worker lifecycle
   terminates the worker process and returns a MetricFailure.
   effective_timeout = min(schema.hints.max_runtime_s, policy.max_runtime_s)
   when the metric declares a hint; otherwise policy.max_runtime_s.
-- A freshly-spawned worker signals readiness (after import + registry unpickle)
+- A freshly-spawned worker signals readiness (after import)
   via the _READY sentinel; the parent consumes it before arming the deadline,
   so worker cold-start (bounded separately by policy.spawn_timeout_s) is never
   charged to a metric's runtime.
@@ -35,7 +35,6 @@ Dependency resolution
 from __future__ import annotations
 
 import multiprocessing as mp
-import pickle
 import threading
 import time
 import traceback as tb
@@ -62,14 +61,14 @@ class PoolPolicy:
     max_runtime_s: float = 300.0
     grace_period_s: float = 5.0
     shm_threshold_bytes: int = 1_048_576  # arrays >= 1 MiB use SharedMemory
-    # Budget for a fresh worker to boot (interpreter start + imports + registry
-    # unpickle) and reach its recv loop. Cold-start is NOT a metric's runtime,
+    # Budget for a fresh worker to boot (interpreter start + imports)
+    # and reach its recv loop. Cold-start is NOT a metric's runtime,
     # so it is bounded separately and excluded from max_runtime_s.
     spawn_timeout_s: float = 30.0
 
 
-# Sentinel a freshly-booted worker sends once it has unpickled the registry and
-# is about to block on recv — see _await_ready.
+# Sentinel a freshly-booted worker sends once it is
+# about to block on recv — see _await_ready.
 _READY = "__worker_ready__"
 
 
@@ -125,24 +124,23 @@ def _unpack_inputs(packed: dict[str, Any]) -> tuple[dict[str, Any], list[SharedM
 
 def _worker_main(
     conn: "mp.connection.Connection",
-    registry_bytes: bytes,
     policy: PoolPolicy,
 ) -> None:
     """Entry point for each worker subprocess.
 
-    Receives pre-resolved inputs and pre-computed compute_params from the
-    parent — no dependency resolution or parameter filtering needed here.
+    Receives the function to run, pre-resolved inputs and pre-computed
+    compute_params from the parent — no registry, no dependency resolution or
+    parameter filtering needed here (ADR 0061).
 
     Runs until:
     - parent sends the shutdown sentinel (None msg);
     - pipe is closed (EOFError);
     - max_tasks_per_worker reached (clean self-exit).
     """
-    registry: MetricRegistry = pickle.loads(registry_bytes)
     task_count = 0
 
     # Announce readiness: the parent's per-metric deadline only starts once it
-    # has consumed this, so interpreter boot + imports + unpickle above don't
+    # has consumed this, so interpreter boot + imports above don't
     # eat into a metric's hard time limit.
     conn.send(_READY)
 
@@ -163,8 +161,7 @@ def _worker_main(
 
             inputs, shm_list = _unpack_inputs(packed_inputs)
             try:
-                _, fn = registry.get(metric_id)
-                value = fn(**inputs, **compute_params)
+                value = msg["fn"](**inputs, **compute_params)
                 conn.send({"task_id": task_id, "value": value})
             except Exception:
                 conn.send({
@@ -244,43 +241,25 @@ class WorkerProcessExecutor(MetricExecutor):
         self._registry = registry
         self._policy = policy or PoolPolicy()
         self._cache = cache if cache is not None else MetricCache()
-        self._registry_bytes = pickle.dumps(registry)
         self._worker: _Worker | None = None
         self._task_counter = 0
         # One task at a time on the worker: threads (metric pool, scene builds)
         # share a single pipe, and a thread discards replies it did not ask for.
         self._lock = threading.RLock()
-        self._stale = False
 
     def _spawn_worker(self) -> _Worker:
         parent_conn, child_conn = mp.Pipe(duplex=True)
         process = mp.Process(
             target=_worker_main,
-            args=(child_conn, self._registry_bytes, self._policy),
+            args=(child_conn, self._policy),
             daemon=True,
         )
         process.start()
         child_conn.close()  # Parent only uses the parent end
         return _Worker(conn=parent_conn, process=process)
 
-    def refresh_registry(self) -> None:
-        """Give workers the current metric table (ADR 0057 rule 5).
-
-        The table is copied once per worker at spawn, so a metric registered or
-        edited later is unknown to a running one. Take a new copy and mark the
-        worker stale; the next task replaces it before it runs. A task already
-        running is never killed.
-        """
-        self._registry_bytes = pickle.dumps(self._registry)
-        self._stale = True
-
     def _get_worker(self) -> _Worker:
         """The worker for the next task. Caller holds ``self._lock``."""
-        if self._stale:
-            self._stale = False
-            if self._worker is not None:
-                self._worker.terminate()
-                self._worker = None
         if self._worker is None or not self._worker.alive:
             self._worker = self._spawn_worker()
         return self._worker
@@ -288,7 +267,7 @@ class WorkerProcessExecutor(MetricExecutor):
     def _await_ready(self, worker: _Worker) -> bool:
         """Block until a freshly-spawned worker has booted and is in its recv
         loop. Returns False if it never signals ready within spawn_timeout_s
-        (slow boot under load, or a crash during import/unpickle).
+        (slow boot under load, or a crash during import).
 
         Consuming the readiness sentinel here — before the per-metric deadline
         starts — keeps worker cold-start out of the metric's hard time limit.
@@ -320,7 +299,7 @@ class WorkerProcessExecutor(MetricExecutor):
             self._registry,
             self._cache,
             lambda mid, schema, fn, kwargs, cparams: self._ship_to_worker(
-                mid, schema, kwargs, cparams, parameters
+                mid, schema, fn, kwargs, cparams, parameters
             ),
         )
         return results[id]
@@ -329,6 +308,7 @@ class WorkerProcessExecutor(MetricExecutor):
         self,
         id: str,
         schema: Any,
+        fn: Any,
         resolved: dict[str, Any],
         compute_params: dict[str, Any],
         parameters: dict[str, Any],
@@ -374,6 +354,7 @@ class WorkerProcessExecutor(MetricExecutor):
                 worker.conn.send({
                     "task_id": task_id,
                     "metric_id": id,
+                    "fn": fn,
                     "packed_inputs": packed_inputs,
                     "compute_params": compute_params,
                 })

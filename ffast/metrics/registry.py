@@ -84,7 +84,7 @@ class MetricRegistry:
     # -- changing the table on a running server (ADR 0057 rule 5) -------------
     # The table is frozen at start-up, then user metrics are added, replaced and
     # removed while it runs. Callers re-run ``freeze()`` afterwards and tell the
-    # worker pool (``refresh_registry``) and the result cache.
+    # result cache.
 
     def unregister(self, id: str) -> tuple[MetricSchema, Callable]:
         """Remove a metric; returns what was removed so a caller can restore it."""
