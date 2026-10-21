@@ -123,10 +123,11 @@ class TestMetricCatalog:
                 self.sent.append(data)
 
         out = _Out()
-        # _replay_metric_catalog is env-independent (reads the global registry).
-        ServerSession(None, out)._replay_metric_catalog()
+        # The catalog is env-independent (reads the global registry).
+        ServerSession(None, out).replay()
         assert out.sent, "no METRIC_CATALOG enqueued"
-        event, _, kwargs = unpack(out.sent[-1])
+        event, _, kwargs = next(
+            m for m in map(unpack, out.sent) if m[0] == "METRIC_CATALOG")
         assert event == "METRIC_CATALOG"
         ids = {m["id"] for m in kwargs["metrics"]}
         assert "ffast.force_mae" in ids

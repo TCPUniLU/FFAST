@@ -14,7 +14,8 @@ from ffast.config.user_metrics import UserMetricStore, UserMetrics
 from ffast.metrics.registry import default_registry
 from ffast.protocol import control
 from ffast.protocol.rpc import unpack
-from ffast.session.server_session import ServerSession, view_colouring_users
+from ffast.session.server_session import ServerSession
+from ffast.session.window_feed import WindowFeed
 
 METRIC = {"id": "t57.double", "expr": "2 * f", "vars": {"f": "ffast.force_component_mae"}}
 
@@ -30,6 +31,11 @@ class _Data:
 
 class _Env:
     pass
+
+
+class _Datasets:
+    def get(self, fp):
+        return None
 
 
 @pytest.fixture
@@ -63,8 +69,10 @@ def test_saving_answers_the_window_then_tells_every_window(env):
     own, everyone = _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
     assert [(e, k) for e, _, k in own] == [(control.USER_METRIC_SAVED, {
         "ok": True, "action": "save", "id": "t57.double", "error": None, "conflict": False})]
-    assert [e for e, _, _ in everyone] == [control.METRICS_UPDATED, control.USER_METRICS]
-    [entry] = everyone[1][2]["metrics"]
+    assert [e for e, _, _ in everyone] == [
+        control.METRICS_UPDATED, control.METRIC_CATALOG, control.TAB_LAYOUT,
+        control.USER_METRICS, control.METRIC_USERS]
+    [entry] = next(k for e, _, k in everyone if e == control.USER_METRICS)["metrics"]
     assert (entry["id"], entry["status"], entry["shape"]) == ("t57.double", "ok", "scalar")
 
 
@@ -153,7 +161,7 @@ def test_the_catalog_says_where_each_metric_comes_from(env):
     assert cat["t57.double"]["origin"] == "user"
     assert cat["t57.double"]["expr"] == "2 * f"
     assert cat["ffast.force_component_mae"]["origin"] == "built-in"
-    assert cat["ffast.force_component_mae"]["used_by"] == ["metric t57.double"]
+    assert "used_by" not in cat["ffast.force_component_mae"]
 
 
 def test_user_metric_changes_are_controlling_only():
@@ -170,9 +178,8 @@ def test_a_views_colouring_counts_as_a_user_of_the_metric():
     env = _Env()
     s = ServerSession(env, asyncio.Queue())
     s.views["v"] = _View()
-    env.view_sessions = [s]
-    assert view_colouring_users(env, "t57.double") == ["the main view's colouring"]
-    assert view_colouring_users(env, "other.metric") == []
+    assert s.feed.view_colouring_users("t57.double") == ["the main view's colouring"]
+    assert s.feed.view_colouring_users("other.metric") == []
 
 
 # ── check as you type, and Try (rules 11, 12) ───────────────────────────────
@@ -377,7 +384,9 @@ def test_yes_adds_them_and_tells_every_window(env, tmp_path):
 
     asyncio.run(scenario())
     assert answers[0][2]["ok"] and answers[0][2]["action"] == "add-session"
-    assert [unpack(b)[0] for b in broadcasts] == [control.METRICS_UPDATED, control.USER_METRICS]
+    assert [unpack(b)[0] for b in broadcasts] == [
+        control.METRICS_UPDATED, control.METRIC_CATALOG, control.TAB_LAYOUT,
+        control.USER_METRICS, control.METRIC_USERS]
     assert default_registry.has("t57.double")
     assert answers[1][2]["ok"] is False and "no longer open" in answers[1][2]["error"]
 
@@ -424,21 +433,21 @@ def _dispatch_with_view(env, event, kwargs):
     return [unpack(b) for b in broadcasts]
 
 
-def test_changing_a_colouring_sends_the_list_again(env):
+def test_changing_a_colouring_sends_who_uses_what_again(env):
     set_colour = {"type": "SET_PARAMETER", "view_id": "v", "view_version": 0,
                   "stage_id": "ffast.atom_color", "parameter": "source", "value": "metric:t57.double"}
     sent = _dispatch_with_view(env, control.VIEW_COMMAND, set_colour)
-    assert [e for e, _, _ in sent] == [control.USER_METRICS]
+    assert [e for e, _, _ in sent] == [control.METRIC_USERS]
     same = _dispatch_with_view(env, control.VIEW_COMMAND, {**set_colour, "value": "element"})
     assert same == []   # the source did not change
 
 
-def test_closing_a_view_sends_the_list_again(env):
+def test_closing_a_view_sends_who_uses_what_again(env):
     sent = _dispatch_with_view(env, control.CLOSE_VIEW, {"view_id": "v"})
-    assert [e for e, _, _ in sent] == [control.USER_METRICS]
+    assert [e for e, _, _ in sent] == [control.METRIC_USERS]
 
 
-def test_a_tab_change_sends_the_list_again(env):
+def test_a_tab_change_sends_who_uses_what_again(env):
     class _Sources:
         def layout(self):
             return []
@@ -448,7 +457,8 @@ def test_a_tab_change_sends_the_list_again(env):
 
     env.tab_sources = _Sources()
     _, everyone = _dispatch(env, control.HIDE_TAB, {"name": "Basic", "hidden": True})
-    assert [e for e, _, _ in everyone] == [control.TAB_LAYOUT, control.USER_METRICS]
+    assert [e for e, _, _ in everyone] == [
+        control.METRIC_CATALOG, control.TAB_LAYOUT, control.METRIC_USERS]
 
 
 def test_cancel_answers_at_once_while_an_input_is_still_computing(env):
@@ -531,3 +541,91 @@ def test_a_formula_metrics_result_is_stored_under_the_servers_key_not_the_reques
         "metric": {**formula, "expr": "3 * e"}, "previous_id": "t57.energy2", "overwrite": True})
     second = request("m2")
     assert len(second) == 1 and "__f" in second[0] and second != first
+
+
+def test_the_replay_ends_with_who_uses_what(env):
+    _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
+    out = asyncio.Queue()
+    ServerSession(env, out).replay()
+    sent = [unpack(out.get_nowait()) for _ in range(out.qsize())]
+    event, _, kwargs = sent[-1]
+    assert event == control.METRIC_USERS
+    assert kwargs["users"]["ffast.force_component_mae"] == ["metric t57.double"]
+    assert "t57.double" not in kwargs["users"]   # nobody uses it
+
+
+def test_a_metric_save_sends_the_pieces_and_inputs_only_to_a_window_that_asked(env):
+    broadcasts = []
+
+    async def scenario():
+        feed = WindowFeed(env, broadcasts.append)
+        env.window_feed = feed
+        asker = ServerSession(env, asyncio.Queue(), broadcast=broadcasts.append)
+        other = ServerSession(env, asyncio.Queue(), broadcast=broadcasts.append)
+        env.datasets, env.models = _Datasets(), {}
+        await asker.dispatch(control.REQUEST_METRIC_INPUTS, [], {"dataset_fp": "ds1"})
+        asker.outbound.get_nowait()                    # the answer to the request
+        await asker.dispatch(control.SAVE_USER_METRIC, [], {"metric": METRIC})
+        got = lambda s: [unpack(s.outbound.get_nowait())[0] for _ in range(s.outbound.qsize())]
+        return got(asker), got(other)
+
+    asker, other = asyncio.run(scenario())
+    assert asker == [control.USER_METRIC_SAVED, control.METRIC_INPUTS]
+    assert other == []
+    events = [unpack(b)[0] for b in broadcasts]
+    assert events == [control.METRICS_UPDATED, control.METRIC_CATALOG, control.TAB_LAYOUT,
+                      control.USER_METRICS, control.METRIC_USERS]
+
+
+# ── a copied or closed colouring updates "Used by" (ADR 0062) ───────────────
+def _coloured_view(source):
+    from ffast.visualization.view import VisualizationView
+    view = VisualizationView("v")
+    view.state.parameters = {"ffast.atom_color": {"source": source}}
+    return view
+
+
+def test_opening_a_view_from_a_metric_coloured_one_tells_every_window(env):
+    broadcasts = []
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue(), broadcast=broadcasts.append)
+        s.views["src"] = _coloured_view("metric:t57.double")
+        await s.dispatch(control.OPEN_VIEW, [], {"view_id": "copy", "start_from": "src"})
+
+    asyncio.run(scenario())
+    assert control.METRIC_USERS in [unpack(b)[0] for b in broadcasts]
+
+
+def test_opening_a_view_from_an_element_coloured_one_says_nothing(env):
+    broadcasts = []
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue(), broadcast=broadcasts.append)
+        s.views["src"] = _coloured_view("element")
+        await s.dispatch(control.OPEN_VIEW, [], {"view_id": "copy", "start_from": "src"})
+
+    asyncio.run(scenario())
+    assert broadcasts == []
+
+
+def test_a_closed_window_stops_counting_as_a_user(env):
+    from ffast.session.window_feed import WindowFeed
+    _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
+    broadcasts = []
+    feed = WindowFeed(env, broadcasts.append)
+    env.window_feed = feed
+    env.user_metrics.usage_providers.append(feed.view_colouring_users)
+    gone = ServerSession(env, asyncio.Queue())
+    stays = ServerSession(env, asyncio.Queue())
+    gone.views["v"] = _coloured_view("metric:t57.double")
+    assert env.user_metrics.used_by("t57.double") == ["the main view's colouring"]
+    feed.changed(control.METRIC_USERS)          # what the windows now hold
+    broadcasts.clear()
+
+    gone.close()
+
+    assert gone not in feed.sessions and stays in feed.sessions
+    assert env.user_metrics.used_by("t57.double") == []   # a Delete is allowed
+    [(event, _, kwargs)] = [unpack(b) for b in broadcasts]
+    assert event == control.METRIC_USERS and "t57.double" not in kwargs["users"]

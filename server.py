@@ -252,7 +252,14 @@ async def _handler(
     hub.register(outbound)
 
     # ── handshake ─────────────────────────────────────────────────────────
-    role = await _do_hello_handshake(websocket, addr, token_hash)
+    try:
+        role = await _do_hello_handshake(websocket, addr, token_hash)
+    except BaseException:
+        # The client went away mid-handshake: leave the hub and the window
+        # feed, which holds its sessions until they close (ADR 0062).
+        hub.deregister(outbound)
+        session.close()
+        raise
 
     # ── state replay ──────────────────────────────────────────────────────
     session.replay()
@@ -305,8 +312,10 @@ async def _handler(
         except asyncio.CancelledError:
             pass
 
-        session.cancel_tries()
+        # Leave the hub first, so the session's last "Used by" goes only to
+        # the windows still open (ADR 0062).
         hub.deregister(outbound)
+        session.close()
         # The role is this connection's own local — there is no registry to ask
         # (ADR 0051); the hub owns liveness and reports what is left.
         logger.info(
@@ -603,16 +612,6 @@ async def _main(
     env.user_metrics = _build_user_metrics(builtin_ids, metrics_dir)
     env.tab_sources = _build_tab_sources(config, tabs_dir)
 
-    # Who uses a metric, for "Used by" and for refusing to delete one in use
-    # (ADR 0057 rule 7): the tabs' panels, and any open view's colouring.
-    import weakref
-    from ffast.session.server_session import view_colouring_users
-    env.view_sessions = weakref.WeakSet()
-    env.user_metrics.usage_providers += [
-        env.tab_sources.metric_users,
-        lambda metric_id: view_colouring_users(env, metric_id),
-    ]
-
     # Validate the full metric graph once, after builtins + external modules are
     # registered. Refuses to start on unknown refs, cycles, or legacy shapes.
     _validate_metric_registry()
@@ -621,8 +620,18 @@ async def _main(
     # 0044). Per-connection replies stay on each connection's own queue; these
     # Environment-level signals fan out through the hub. One global
     # eventSubscribe (the bus has no unsubscribe), pointed at the hub.
-    from ffast.session import ConnectionHub
+    from ffast.session import ConnectionHub, WindowFeed
     hub = ConnectionHub()
+
+    # What every window holds, built in one place (ADR 0062).
+    env.window_feed = WindowFeed(env, hub.broadcast)
+
+    # Who uses a metric, for "Used by" and for refusing to delete one in use
+    # (ADR 0057 rule 7): the tabs' panels, and any open view's colouring.
+    env.user_metrics.usage_providers += [
+        env.tab_sources.metric_users,
+        env.window_feed.view_colouring_users,
+    ]
 
     for evt in SERVER_TO_CLIENT:
 
@@ -638,18 +647,14 @@ async def _main(
     # This lets the client create a RemoteDatasetProxy for Loupe without
     # transferring the full arrays.
     def _on_dataset_loaded_meta(fingerprint):
-        from ffast.protocol import DatasetMeta
         dataset = env.datasets.get(fingerprint)
         if dataset is None:
             return
         try:
-            data = pack(
-                control.REMOTE_DATASET_META,
-                (fingerprint,),
-                DatasetMeta.model_validate(dataset.toMetaDict()).model_dump(),
-            )
-            hub.broadcast(data)
-            logger.debug("REMOTE_DATASET_META sent for %r", fingerprint)
+            data = env.window_feed.dataset_meta(dataset)
+            if data is not None:
+                hub.broadcast(data)
+                logger.debug("REMOTE_DATASET_META sent for %r", fingerprint)
         except Exception as exc:
             logger.warning("REMOTE_DATASET_META error: %s", exc)
 
@@ -663,34 +668,14 @@ async def _main(
     # MODEL_LOADED fires AFTER _loadPredictionsFromKeys + lookForGhosts(),
     # so prediction arrays are already in env.cache at this point.
     def _on_model_loaded_meta(model_fp):
-        from ffast.protocol import ModelMeta
         model = env.models.get(model_fp)
         if model is None:
             return
         # Stage 2: real server-side models are metaed too (not just ghosts) — the
         # client holds a proxy and the server generates predictions on demand.
         try:
-            name = getattr(model, "name", None) or model_fp[:8]
-
-            # Find which dataset fingerprints this model has predictions for
-            dataset_fps = []
-            from ffast.cache import CacheKey
-            for cache_key in list(env.cache.keys()):
-                ck = CacheKey.try_parse(cache_key)
-                if ck is not None and ck.matches_model(model_fp) and ck.dataset_fp:
-                    if ck.dataset_fp not in dataset_fps:
-                        dataset_fps.append(ck.dataset_fp)
-
-            data = pack(
-                control.REMOTE_MODEL_META,
-                (model_fp,),
-                ModelMeta(name=name, dataset_fingerprints=dataset_fps).model_dump(),
-            )
-            hub.broadcast(data)
-            logger.info(
-                "REMOTE_MODEL_META sent: model=%r name=%r datasets=%r",
-                model_fp[:8], name, dataset_fps,
-            )
+            hub.broadcast(env.window_feed.model_meta(model_fp, model))
+            logger.info("REMOTE_MODEL_META sent: model=%r", model_fp[:8])
         except Exception as exc:
             logger.warning("REMOTE_MODEL_META error: %s", exc)
 

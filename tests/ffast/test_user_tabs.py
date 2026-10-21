@@ -242,3 +242,66 @@ def test_a_panel_with_a_missing_metric_does_not_take_its_tab_down():
     assert good["metrics"]["y"] == "ffast.gyradius__smooth"
     assert broken["unresolved"] == ["mine.not_here"]
     assert broken["metrics"]["y"] == "mine.not_here"
+
+
+# ── tabs are kept until the folder changes (ADR 0062 decision 5) ─────────────
+
+@pytest.fixture
+def reads(monkeypatch):
+    """How many tab files the store parsed."""
+    calls = []
+    original = UserTabStore._read
+
+    def counting(path):
+        calls.append(path.name)
+        return original(path)
+
+    monkeypatch.setattr(UserTabStore, "_read", staticmethod(counting))
+    return calls
+
+
+def test_an_unchanged_folder_is_parsed_once(store, reads):
+    store.write(_tab("One", TABLE))
+    store.write(_tab("Two", TABLE))
+    store.tabs()
+    reads.clear()
+    first, second = store.tabs(), store.tabs()
+    assert reads == []
+    assert [t.tab.name for t in second] == ["One", "Two"]
+    assert first is not second   # a caller can't change the kept list
+
+
+def test_errors_are_kept_with_the_tabs(store, reads):
+    store.root.mkdir(parents=True)
+    (store.root / "broken.toml").write_text("not a tab")
+    store.tabs()
+    store.errors = []
+    store.tabs()
+    assert [f for f, _ in store.errors] == ["broken.toml"]
+
+
+def test_a_tab_file_copied_in_by_hand_appears_at_the_next_call(store, tmp_path, reads):
+    store.write(_tab("One", TABLE))
+    assert len(store.tabs()) == 1
+    src = store.root / "one.toml"
+    (store.root / "copy.toml").write_text(src.read_text().replace("One", "Copy"))
+    assert [t.tab.name for t in store.tabs()] == ["One", "Copy"]
+
+
+def test_a_file_edited_by_hand_is_read_again(store, reads):
+    store.write(_tab("One", TABLE))
+    store.tabs()
+    path = store.root / "one.toml"
+    path.write_text(path.read_text().replace("MAE", "Mean error"))
+    assert store.tabs()[0].tab.panels[0].title == "Mean error"
+
+
+def test_write_delete_and_hide_are_seen_at_the_next_call(store):
+    file = store.write(_tab("One", TABLE))
+    assert [t.tab.name for t in store.tabs()] == ["One"]
+    store.write(_tab("Two", TABLE))
+    assert [t.tab.name for t in store.tabs()] == ["One", "Two"]
+    store.set_hidden("One", True)
+    assert store.hidden == ["One"]
+    store.delete(file, "One")
+    assert [t.tab.name for t in store.tabs()] == ["Two"]

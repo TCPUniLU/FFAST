@@ -35,7 +35,8 @@ def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
     ``shape`` for their use (atom coloring keeps ``N_atoms`` / ``N_elements``).
 
     With ``user_metrics`` (ADR 0057) each entry also says where the metric
-    comes from, its formula if it is an Expression Metric, and who uses it.
+    comes from and its formula if it is an Expression Metric. Who uses it is a
+    message of its own (``METRIC_USERS``, ADR 0062).
     """
     from ffast.metrics.expr import _ExprFn
     catalog = []
@@ -47,7 +48,6 @@ def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
             "expr": fn.expr if is_formula else None,
             "vars": ({n: r for n, r in fn.var_refs.items() if n != "n_atoms"}
                      if is_formula else None),
-            "used_by": user_metrics.used_by(mid) if user_metrics is not None else [],
             "id": mid,
             "label": schema.label or mid,
             "shape": shape_to_str(schema.shape),

@@ -48,6 +48,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
   // ── state ────────────────────────────────────────────────────────────────
   let catalog = [];
   let userMetrics = [];
+  let metricUsers = {};       // METRIC_USERS: metric id → who uses it
   let inputs = [];
   let selected = null;        // the list entry being shown, or null
   let isNew = false;          // a metric not saved yet (New, or Duplicate)
@@ -147,7 +148,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
   // ── list ─────────────────────────────────────────────────────────────────
   function renderList() {
     listEl.replaceChildren();
-    const groups = groupMetrics(catalog, userMetrics);
+    const groups = groupMetrics(catalog, userMetrics, metricUsers);
     for (const origin of ['user', 'project', 'built-in']) {
       const items = groups[origin].filter((m) =>
         !filter || `${m.id} ${m.label}`.toLowerCase().includes(filter));
@@ -598,7 +599,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
     if (entry) { const keep = message; select(entry); setMessage(keep.text, keep.error); pendingSelect = null; }
   }
   function findEntry(id) {
-    const groups = groupMetrics(catalog, userMetrics);
+    const groups = groupMetrics(catalog, userMetrics, metricUsers);
     return Object.values(groups).flat().find((m) => m.id === id) || null;
   }
 
@@ -694,6 +695,8 @@ export function createMetricsPane(sidebarEl, callbacks) {
     setCatalog(entries) { catalog = entries || []; refresh(); },
     /** USER_METRICS entries. */
     setUserMetrics(entries) { userMetrics = entries || []; refresh(); },
+    /** METRIC_USERS map (the "Used by" lines). */
+    setMetricUsers(map) { metricUsers = map || {}; refresh(); },
     /** The dataset and prediction selected in the object list changed. */
     contextChanged() {
       const { datasetFp, modelFp } = context();
@@ -702,7 +705,7 @@ export function createMetricsPane(sidebarEl, callbacks) {
       if (!editor.hidden) { renderInputs(); renderCheck(); }
     },
     /** A disconnect: nothing the pane holds is current. */
-    disconnected() { inputs = []; userMetrics = []; catalog = []; selected = null; isNew = false; draft = null; refresh(); },
+    disconnected() { inputs = []; userMetrics = []; metricUsers = {}; catalog = []; selected = null; isNew = false; draft = null; refresh(); },
   };
 }
 

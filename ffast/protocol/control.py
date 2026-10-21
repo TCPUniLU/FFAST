@@ -118,9 +118,12 @@ REMOTE_MODEL_META = "REMOTE_MODEL_META"
 SCENE_SNAPSHOT = "SCENE_SNAPSHOT"
 SCENE_PATCH = "SCENE_PATCH"
 COMMAND_RESULT = "COMMAND_RESULT"
+# Pushed to a window on connect and to every window after a change (ADR 0062);
+# also the answer to REQUEST_METRIC_CATALOG, which only the asker gets.
 METRIC_CATALOG = "METRIC_CATALOG"
 METRICS_UPDATED = "METRICS_UPDATED"
-# Reply to REQUEST_TAB_LAYOUT (ADR 0045 Phase 3). Like METRIC_CATALOG it is a
+# Pushed on connect and after a tab change (ADR 0062); also the answer to
+# REQUEST_TAB_LAYOUT (ADR 0045 Phase 3). Like METRIC_CATALOG it is a
 # dedicated announcement, not a correlated reply channel — only the web client
 # asks for it, and it carries the whole layout in one shot, so it stays out of
 # REPLY_EVENTS (no cluster.connection correlator entry).
@@ -147,14 +150,19 @@ SESSION_LOADED = "SESSION_LOADED"
 TAB_SAVED = "TAB_SAVED"
 # Reply to EXPORT_TAB: {name, toml, error}, the tab as a project would write it.
 TAB_EXPORTED = "TAB_EXPORTED"
-# User metrics (ADR 0057). USER_METRICS is the whole list, sent to the window
-# that asked and, after any change, to every window. USER_METRIC_SAVED is the
+# User metrics (ADR 0057). USER_METRICS is the whole list, pushed on connect and,
+# after any change, to every window (ADR 0062); REQUEST_USER_METRICS still
+# answers the asker alone. USER_METRIC_SAVED is the
 # outcome of SAVE_USER_METRIC / DELETE_USER_METRIC to the window that sent it:
 # {ok, action, id, error, conflict} (conflict: the server's copy is newer, the
 # pane offers Reload / Overwrite). USER_METRIC_EXPORTED answers
 # EXPORT_USER_METRIC with {id, toml, error}. One-shot announcements, out of
 # REPLY_EVENTS, like the tab ones.
 USER_METRICS = "USER_METRICS"
+# Who uses each metric ("Used by"): {users: {metric_id: ["tab Basic, panel MAE",
+# ...]}}, only metrics with a user. A piece of its own, so a colouring click
+# does not make every window redraw its plots, as a new catalog would.
+METRIC_USERS = "METRIC_USERS"
 USER_METRIC_SAVED = "USER_METRIC_SAVED"
 USER_METRIC_EXPORTED = "USER_METRIC_EXPORTED"
 # Reply to REQUEST_METRIC_INPUTS: {dataset_fp, model_fp, inputs: [{ref, group,

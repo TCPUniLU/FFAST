@@ -390,9 +390,18 @@ A saved snapshot of an Environment: datasets, models, cache, metadata, written a
 The live object on a running `ffast-server` representing one client connection
 (ADR 0044). It owns that connection's open views and outbound queue, dispatches
 its control messages through a handler table built once, and replays current
-state to it on connect or reconnect. One per connection; all of them share the
+state to it on connect or reconnect (the replay comes from the window feed). One per connection; all of them share the
 server's one Environment. A reconnecting client gets a new session, so it gets
 the shared state again but none of its old views.
+
+### Window feed
+
+The one server-side owner of what every window holds (ADR 0062). It builds each
+shared piece (dataset and model announcements, metric catalog, tab layout,
+user-metrics list, "Used by"), replays them on connect, and sends a piece again
+to every window after a change, only if it changed. It also lists the open
+windows' sessions, which "Used by" reads to find views coloured by a metric.
+One per server.
 
 ### Server connection
 

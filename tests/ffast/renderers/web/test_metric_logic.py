@@ -131,6 +131,14 @@ CASES = {
         "  [{id: 'user.u', label: 'Mine', expr: 'a', vars: {a: 'r'}, status: 'ok', revision: 'rev1', shape: 'N_frames', used_by: []},"
         "   {id: 'user.h', label: '', expr: 'a', vars: {}, status: 'hidden', message: 'Hidden: x'}]);"
         "  return Object.fromEntries(Object.entries(g).map(([k, v]) => [k, v.map(m => [m.id, m.label, m.status, m.revision])])); })()"),
+    "group_metrics_used_by": (
+        "(() => { const g = ml.groupMetrics("
+        "  [{id: 'ffast.b', label: 'B', origin: 'built-in', shape: 'N_frames'},"
+        "   {id: 'ffast.c', label: 'C', origin: 'built-in', shape: 'N_frames'},"
+        "   {id: 'user.u', label: 'Mine', origin: 'user', shape: 'N_frames'}],"
+        "  [{id: 'user.u', label: 'Mine', status: 'ok', shape: 'N_frames'}],"
+        "  {'ffast.b': ['tab Basic, panel MAE'], 'user.u': ['metric user.v']});"
+        "  return Object.fromEntries([...g['built-in'], ...g.user].map(m => [m.id, m.used_by])); })()"),
 }
 
 
@@ -329,6 +337,11 @@ def test_the_list_is_grouped_by_origin_with_user_entries_from_the_user_list(resu
     assert g["project"] == [["proj.p", "P", "ok", None]]
     # the derived transform is left out; sorted by label, the hidden file by its id
     assert g["user"] == [["user.u", "Mine", "ok", "rev1"], ["user.h", "user.h", "hidden", None]]
+
+
+def test_used_by_comes_from_the_users_map(results):
+    assert results["group_metrics_used_by"] == {
+        "ffast.b": ["tab Basic, panel MAE"], "ffast.c": [], "user.u": ["metric user.v"]}
 
 
 # ── Plot it ─────────────────────────────────────────────────────────────────

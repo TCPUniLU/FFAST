@@ -4122,3 +4122,38 @@ async def test_web_an_independent_panels_bond_width_is_not_the_main_views(tmp_pa
                 await expect(width).to_have_value("50")
             finally:
                 await browser.close()
+
+
+async def test_web_the_page_does_not_ask_for_what_the_server_pushes(ffast_web_server):
+    """ADR 0062: the catalog, tab layout and user-metrics list arrive with the
+    connect replay and after each change; the page sends no request for them."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    sent = []
+
+    def record(payload):
+        if isinstance(payload, bytes):   # text frames are "ping"
+            sent.append(unpack(payload)[0])
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        page.on("websocket", lambda ws: ws.on("framesent", record))
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await expect(page.locator("#tabbar .tab", has_text="Basic Errors")).to_have_count(1)
+
+            other = await _connect_headless_client(ws_port)
+            try:
+                metric = {"id": "user.pushed", "expr": "2 * e", "vars": {"e": "reference.energies"}}
+                await other.send(pack("SAVE_USER_METRIC", (), {"metric": metric}))
+                await _wait_for_event(other, "USER_METRIC_SAVED")
+            finally:
+                await other.close()
+            await expect(page.locator(".mx-item", has_text="user.pushed")).to_have_count(1)
+        finally:
+            await browser.close()
+    assert sent, "the page sent nothing at all"
+    for event in ("REQUEST_TAB_LAYOUT", "REQUEST_USER_METRICS", "REQUEST_METRIC_CATALOG"):
+        assert event not in sent

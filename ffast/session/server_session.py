@@ -36,6 +36,7 @@ import numpy as np
 from pydantic import BaseModel, ValidationError
 
 from ffast.protocol import control
+from ffast.session.window_feed import WindowFeed
 
 logger = logging.getLogger("FFAST")
 
@@ -113,18 +114,6 @@ class _PredictionView:
         self.forces = forces
 
 
-def view_colouring_users(env, metric_id: str) -> list[str]:
-    """"a view's colouring" when any open view of any connection colours its
-    atoms by ``metric_id`` (the lookup behind delete-while-used, ADR 0057)."""
-    target = f"metric:{metric_id}"
-    for session in list(getattr(env, "view_sessions", ())):
-        for view in list(session.views.values()):
-            params = view.state.parameters.get("ffast.atom_color", {})
-            if params.get("source") == target:
-                return ["the main view's colouring"]
-    return []
-
-
 class ServerSession:
     """Owns Visualization Views, dispatches client events, replays state.
 
@@ -142,11 +131,12 @@ class ServerSession:
         # Sends packed bytes to every connection (the hub, ADR 0044); a
         # session on its own, as in a test, has only itself to tell.
         self._broadcast = broadcast or (lambda data: self._emit_or_drop(data, "broadcast"))
-        # Lets the server ask every open view who colours by a metric (ADR 0057
-        # rule 7). A WeakSet, so a closed connection's session drops out.
-        sessions = getattr(env, "view_sessions", None)
-        if sessions is not None:
-            sessions.add(self)
+        # The one owner of what every window holds (ADR 0062). A session on its
+        # own, as in a test, gets a feed of its own.
+        self.feed = getattr(env, "window_feed", None) or WindowFeed(env, self._broadcast)
+        self.feed.attach(self)
+        # The (dataset_fp, model_fp) this window last asked METRIC_INPUTS for
+        self._inputs_for: tuple | None = None
         # Running Tries of this connection (ADR 0057 rule 12): try_id → (stop
         # flag, task). The task is held here so it is not garbage-collected.
         self._tries: dict = {}
@@ -346,88 +336,12 @@ class ServerSession:
     # ── state replay ──────────────────────────────────────────────────────────
 
     def replay(self) -> None:
-        """Push the current server state to a (re)connecting client: dataset
-        and model metadata, and the Metric Catalog. A new connection has a new
-        session with no views yet, so there are no views to send."""
-        self._replay_state()
-        self._replay_metric_catalog()
-
-    def _replay_state(self) -> None:
-        """Enqueue REMOTE_DATASET_META + REMOTE_MODEL_META for all objects."""
-        from ffast.protocol.rpc import pack
-        from ffast.protocol import DatasetMeta, ModelMeta
-
-        # ── datasets, and the subsets windows made (a hidden one is not listed) ──
-        try:
-            datasets = self.env.datasets.all()
-        except Exception:
-            datasets = []
-
-        for dataset in datasets:
-            fingerprint = getattr(dataset, "fingerprint", None)
-            if fingerprint is None:
-                continue
-            try:
-                data = pack(
-                    control.REMOTE_DATASET_META,
-                    (fingerprint,),
-                    DatasetMeta.model_validate(dataset.toMetaDict()).model_dump(),
-                )
-                self._emit_or_drop(data, f"dataset {fingerprint!r}")
-                logger.info(
-                    "State replay: REMOTE_DATASET_META queued for %r", fingerprint
-                )
-            except Exception as exc:
-                logger.warning(
-                    "State replay: dataset %r error: %s", fingerprint, exc
-                )
-
-        # ── models (ghost predictions + real server-side models, Stage 2) ───────
-        for model_fp, model in list(self.env.models.items()):
-            try:
-                name = getattr(model, "name", None) or model_fp[:8]
-                dataset_fps = []
-                from ffast.cache import CacheKey
-                for cache_key in list(self.env.cache.keys()):
-                    ck = CacheKey.try_parse(cache_key)
-                    if ck is not None and ck.matches_model(model_fp) and ck.dataset_fp:
-                        if ck.dataset_fp not in dataset_fps:
-                            dataset_fps.append(ck.dataset_fp)
-                data = pack(
-                    control.REMOTE_MODEL_META,
-                    (model_fp,),
-                    ModelMeta(name=name, dataset_fingerprints=dataset_fps).model_dump(),
-                )
-                self._emit_or_drop(data, f"model {model_fp[:8]!r}")
-                logger.info(
-                    "State replay: REMOTE_MODEL_META queued for model=%r name=%r",
-                    model_fp[:8], name,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "State replay: model %r error: %s", model_fp[:8], exc
-                )
-
-    def _replay_metric_catalog(self) -> None:
-        """Enqueue METRIC_CATALOG so the client builds metric controls from the
-        server's registry (ADR 0016) rather than its own local one.
-
-        Ensures the built-in metrics are registered first. (External Trusted
-        Metric Modules appear here too once the server loads them from config.)
-        """
-        from ffast.protocol.rpc import pack
-        try:
-            import ffast.metrics.builtin  # noqa: F401 — register built-in metrics
-            from ffast.metrics.catalog import build_metric_catalog
-            from ffast.metrics.registry import _default_registry
-            from ffast.protocol import MetricCatalog
-            catalog = build_metric_catalog(
-                _default_registry, getattr(self.env, "user_metrics", None))
-            data = pack(control.METRIC_CATALOG, [], MetricCatalog(metrics=catalog).model_dump())
-            self._emit_or_drop(data, "METRIC_CATALOG")
-            logger.info("State replay: METRIC_CATALOG queued (%d metrics)", len(catalog))
-        except Exception as exc:
-            logger.warning("State replay: METRIC_CATALOG error: %s", exc)
+        """Push the current server state to a (re)connecting client: what the
+        window feed holds for a new window. A new connection has a new session
+        with no views yet, so there are no views to send."""
+        for data, label in self.feed.replay():
+            self._emit_or_drop(data, label)
+            logger.info("State replay: %s queued", label)
 
     # ── handlers ────────────────────────────────────────────────────────────
 
@@ -879,6 +793,7 @@ class ServerSession:
 
         #print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
 
+        copied_metric = False
         view_id = kwargs.get("view_id") or str(uuid.uuid4())
         #print(view_id)
         dataset_ref = kwargs.get("dataset_ref") or None
@@ -894,6 +809,7 @@ class ServerSession:
                 view.state.parameters = copy.deepcopy(like.state.parameters)
                 view.state.enabled_features = list(like.state.enabled_features)
                 view.state.camera = like.state.camera.model_copy()
+                copied_metric = (self._colour_source(view) or "").startswith("metric:")
         else:
             view = self.views[view_id]
         #print('only_forces' in view.state.enabled_features)
@@ -927,21 +843,17 @@ class ServerSession:
             "OPEN_VIEW: view_id=%r dataset_ref=%r prediction_ref=%r scene_version=%d",
             view_id, dataset_ref, view.state.prediction_ref, view.version,
         )
+        if copied_metric:
+            # The copied colouring is one more view coloured by a metric.
+            self.feed.changed(control.METRIC_USERS)
 
     async def _on_close_view(self, view_id, **kwargs) -> None:
         self.views.pop(view_id, None)
         logger.info("CLOSE_VIEW: view_id=%r", view_id)
-        self._tell_metric_users()
+        self.feed.changed(control.METRIC_USERS)
 
     def _colour_source(self, view) -> str | None:
         return view.state.parameters.get("ffast.atom_color", {}).get("source")
-
-    def _tell_metric_users(self) -> None:
-        """Every window's Metrics pane lists who uses each metric; send it again
-        after something that can change the answer (a colouring, a tab), so
-        Delete is neither blocked nor allowed on old news (ADR 0057 rule 7)."""
-        if getattr(self.env, "user_metrics", None) is not None:
-            self._broadcast(self._user_metrics_message())
 
     async def _on_view_command(self, **kwargs) -> None:
         """Apply a ViewCommand and send COMMAND_RESULT plus an optional SCENE_PATCH."""
@@ -965,7 +877,9 @@ class ServerSession:
         before = self._colour_source(view)
         result = view.apply_command(cmd)
         if self._colour_source(view) != before:
-            self._tell_metric_users()
+            # Who uses a metric can change, so Delete is neither blocked nor
+            # allowed on old news (ADR 0057 rule 7).
+            self.feed.changed(control.METRIC_USERS)
 
         # Rebuild scene components that changed. build_scene is synchronous and
         # may block while the worker-process executor communicates with its
@@ -1172,34 +1086,21 @@ class ServerSession:
         )
 
     async def _on_request_metric_catalog(self, **kwargs) -> None:
-        self._replay_metric_catalog()
+        try:
+            await self._emit(self.feed.metric_catalog())
+        except Exception as exc:
+            logger.warning("METRIC_CATALOG error: %s", exc)
 
     async def _on_request_tab_layout(self, **kwargs) -> None:
         """Reply with TAB_LAYOUT: the merged tab layout (ADR 0045 Phase 3,
         ADR 0056). Mirrors ``_on_request_metric_catalog`` — a dedicated
-        announcement, not a correlated reply. See ``_tab_layout_message``."""
+        announcement, not a correlated reply. See ``WindowFeed.tab_layout``."""
         try:
-            data = self._tab_layout_message()
+            data = self.feed.tab_layout()
             await self._emit(data)
             logger.info("TAB_LAYOUT queued")
         except Exception as exc:
             logger.warning("TAB_LAYOUT error: %s", exc)
-
-    def _tab_layout_message(self):
-        """TAB_LAYOUT, packed. The server's tab sources (built-in, project and
-        user tabs, ADR 0056) when it has them; else a layout cached at startup;
-        else the bundled tabs."""
-        from ffast.protocol import TabLayout
-        from ffast.protocol.rpc import pack
-        sources = getattr(self.env, "tab_sources", None)
-        if sources is not None:
-            tabs = sources.layout()
-        else:
-            tabs = getattr(self.env, "analysis_tab_layout", None)
-            if tabs is None:
-                from ffast.config.tabs import build_tab_layout, merge_tabs
-                tabs = build_tab_layout(merge_tabs())
-        return pack(control.TAB_LAYOUT, [], TabLayout(tabs=tabs).model_dump())
 
     # ── user tabs (ADR 0056) ────────────────────────────────────────────────
 
@@ -1237,8 +1138,7 @@ class ServerSession:
             "ok": error is None, "action": action, "name": name, "error": error}))
         if error is None:
             logger.info("Tab %s: %r; sending the layout to every window", action, name)
-            self._broadcast(self._tab_layout_message())
-            self._tell_metric_users()
+            self.feed.changed(control.METRIC_CATALOG, control.TAB_LAYOUT, control.METRIC_USERS)
 
     async def _on_export_tab(self, name, **kwargs) -> None:
         from ffast.config.user_tabs import TabError
@@ -1255,13 +1155,8 @@ class ServerSession:
 
     # ── user metrics (ADR 0057) ─────────────────────────────────────────────
 
-    def _user_metrics_message(self):
-        from ffast.protocol.rpc import pack
-        um = getattr(self.env, "user_metrics", None)
-        return pack(control.USER_METRICS, [], {"metrics": um.entries() if um else []})
-
     async def _on_request_user_metrics(self, **kwargs) -> None:
-        await self._emit(self._user_metrics_message())
+        await self._emit(self.feed.user_metrics())
 
     async def _on_save_user_metric(self, metric, previous_id=None, base_revision=None,
                                    overwrite=False, **kwargs) -> None:
@@ -1306,7 +1201,9 @@ class ServerSession:
         if error is None:
             logger.info("User metric %s: %r; telling every window", action, id)
             self._broadcast(pack(control.METRICS_UPDATED, [], {}))
-            self._broadcast(self._user_metrics_message())
+            self.feed.changed(control.METRIC_CATALOG, control.TAB_LAYOUT,
+                              control.USER_METRICS, control.METRIC_USERS)
+            await self.feed.resend_inputs()
 
     def _change_and_invalidate(self, um, change):
         """Run the metric change, then drop the results of what it affected."""
@@ -1336,8 +1233,19 @@ class ServerSession:
         await self._emit(pack(control.USER_METRIC_EXPORTED, [], {"id": id, "toml": toml, "error": error}))
 
     async def _on_request_metric_inputs(self, dataset_fp=None, model_fp=None, **kwargs) -> None:
-        """Reply with METRIC_INPUTS: what a formula can use for this dataset
-        and prediction, extra file keys included (rule 10)."""
+        """Reply with METRIC_INPUTS, and remember the pair: it is the dataset
+        and prediction this window is looking at, so after a metric change the
+        window is sent a fresh list for it (ADR 0062)."""
+        self._inputs_for = (dataset_fp, model_fp)
+        await self.send_inputs()
+
+    async def send_inputs(self, drop_if_full: bool = False) -> None:
+        """METRIC_INPUTS for the pair this window last asked about: what a
+        formula can use for that dataset and prediction, extra file keys
+        included (rule 10). Does nothing for a window that never asked."""
+        if self._inputs_for is None:
+            return
+        dataset_fp, model_fp = self._inputs_for
         from ffast.metrics.input_catalog import build_input_catalog
         from ffast.metrics.registry import default_registry
         from ffast.protocol.rpc import pack
@@ -1348,8 +1256,12 @@ class ServerSession:
             build_input_catalog, default_registry, dataset, model,
             getattr(data, "predictionFields", None),
             getattr(self.env, "user_metrics", None))
-        await self._emit(pack(control.METRIC_INPUTS, [], {
-            "dataset_fp": dataset_fp, "model_fp": model_fp, "inputs": inputs}))
+        message = pack(control.METRIC_INPUTS, [], {
+            "dataset_fp": dataset_fp, "model_fp": model_fp, "inputs": inputs})
+        if drop_if_full:
+            self._emit_or_drop(message, "METRIC_INPUTS")
+        else:
+            await self._emit(message)
 
     # ── check and try a formula (ADR 0057 rules 11, 12) ─────────────────────
 
@@ -1380,6 +1292,17 @@ class ServerSession:
         if running is not None:
             running[0].set()
             running[2].set()
+
+    def close(self) -> None:
+        """The window has gone: stop its Tries, drop its views, and leave the
+        feed, so its colourings stop counting as users of a metric (ADR 0062)."""
+        self.cancel_tries()
+        coloured = any((self._colour_source(v) or "").startswith("metric:")
+                       for v in self.views.values())
+        self.views.clear()
+        self.feed.detach(self)
+        if coloured:
+            self.feed.changed(control.METRIC_USERS)
 
     def cancel_tries(self) -> None:
         """Stop every Try of this connection (it has gone away)."""
