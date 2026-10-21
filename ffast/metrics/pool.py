@@ -35,6 +35,7 @@ Dependency resolution
 from __future__ import annotations
 
 import multiprocessing as mp
+import pickle
 import threading
 import time
 import traceback as tb
@@ -351,13 +352,22 @@ class WorkerProcessExecutor(MetricExecutor):
             packed_inputs, shm_list = _pack_inputs(resolved, self._policy.shm_threshold_bytes)
 
             try:
-                worker.conn.send({
-                    "task_id": task_id,
-                    "metric_id": id,
-                    "fn": fn,
-                    "packed_inputs": packed_inputs,
-                    "compute_params": compute_params,
-                })
+                try:
+                    worker.conn.send({
+                        "task_id": task_id,
+                        "metric_id": id,
+                        "fn": fn,
+                        "packed_inputs": packed_inputs,
+                        "compute_params": compute_params,
+                    })
+                except (pickle.PicklingError, AttributeError, TypeError) as exc:
+                    # Pickling happens before anything is written, so the pipe
+                    # is still clean and the worker keeps serving (ADR 0061).
+                    return MetricFailure(
+                        metric_id=id,
+                        traceback=f"The metric's task cannot be sent to the worker: {exc!r}",
+                        parameters=parameters,
+                    )
 
                 deadline = time.monotonic() + effective_timeout
                 while True:

@@ -435,6 +435,18 @@ def test_replacing_a_metric_does_not_fail_a_running_task(registry, executor):
     assert isinstance(after, MetricResult) and np.isclose(after.values, 6.0)
 
 
+def test_a_function_that_cannot_be_sent_fails_that_metric_only(registry, executor):
+    """ADR 0061: each task carries its function, so one that cannot be pickled
+    is that metric's failure, not an exception, and the worker keeps serving."""
+    registry.metric(id="test.unsendable", inputs={"x": "ref.x"}, shape="scalar",
+                    unit="energy")(lambda x: x)
+    bad = executor.run("test.unsendable", FlatInputSource({"x": 1.0}), {})
+    assert isinstance(bad, MetricFailure)
+    assert "cannot be sent to the worker" in bad.traceback
+    good = executor.run("test.double", FlatInputSource({"x": 3.0}), {})
+    assert isinstance(good, MetricResult) and np.isclose(good.values, 6.0)
+
+
 def test_concurrent_runs_each_get_their_own_answer(registry):
     """Two threads share one worker pipe; a reply must reach the thread that asked."""
     import threading
