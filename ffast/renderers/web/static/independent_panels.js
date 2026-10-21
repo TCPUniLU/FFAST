@@ -32,14 +32,13 @@ export function independentKey(tabName, spec) {
  *   datasets: () => Map<string, object>,
  *   main: () => {datasetFp: string|null, modelFp: string|null, frame: number},
  *   mainView: () => import('./views3d.js').ViewRenderers,
+ *   sendCamera: (view: IndependentView, cam: object) => void,
  *   sendMainCamera: (cam: object) => void,
  *   focused: () => IndependentView|null,
  *   activeTab: () => object|null,
  *   tabPairs: (tabId: string) => Array<{datasetFp: string, modelFp: string|null}>,
  *   pairName: (datasetFp: string, modelFp: string|null) => string,
- *   framed: () => Set<string>,
  *   placePanel: (el: HTMLElement, panel: object) => void,
- *   atomScale: () => number,
  *   start: (view: IndependentView) => void,
  *   retired: (view: IndependentView) => void,
  *   chosen: (view: IndependentView) => void,
@@ -47,8 +46,7 @@ export function independentKey(tabName, spec) {
  *   frameShown: (view: IndependentView) => void,
  *   sceneAtoms: (view: IndependentView, atoms: object) => void,
  * }} IndependentPorts
- * `framed`: view ids whose first snapshot fitted the atoms (shared with the
- * main view). `start`: give a newly opened view its starting look.
+ * `start`: give a newly opened view its starting look.
  * `retired`: a layout dropped the view (the sidebar lets go of it). `chosen`:
  * the focused view's data changed. `focusedCamera`: the focused view's camera
  * moved. `frameShown`: a view was set to a frame. `sceneAtoms`: a view's
@@ -109,7 +107,7 @@ export class IndependentPanels {
       view = new IndependentView(key, cell.spec, `ind-${++this._count}`,
         (v, cam) => this._onCamera(v, cam));
       const own = view;
-      own.renderers.atomScale = () => (this._ports.focused() === own ? this._ports.atomScale() : own.atomScale);
+      own.renderers.atomScale = () => own.settings?.display.atomSize || 1;
     }
     this._views.set(key, view);
   }
@@ -179,22 +177,21 @@ export class IndependentPanels {
     view.openedPair = '';
     view.started = false;
     view.frame = null;
-    this._ports.framed().delete(view.viewId);
+    view.framed = false;
     view.renderers.clear();
     this.syncCaption(view);
   }
 
   /** An independent panel's view sent its scene. */
   onSnapshot(view, scene) {
-    const framed = this._ports.framed();
     view.version = scene.version;
     // The scene's camera (and a first fit) is the panel's own: it must not
     // turn the main view through the camera link.
     view.applyingScene = true;
     try {
       view.renderers.applyScene(scene);
-      if (!framed.has(scene.view_id)) {
-        framed.add(scene.view_id);
+      if (!view.framed) {
+        view.framed = true;
         view.renderers.frameAtoms();
       }
     } finally {
@@ -248,10 +245,7 @@ export class IndependentPanels {
 
   /** An independent panel's camera moved (orbit, zoom, a camera command). */
   _onCamera(view, cam) {
-    clearTimeout(view.cameraThrottle);
-    view.cameraThrottle = setTimeout(() => {
-      if (view.isOpen) this._ports.send(OUT.VIEW_COMMAND, { type: 'SET_CAMERA', view_id: view.viewId, camera: cam });
-    }, 100);
+    this._ports.sendCamera(view, cam);
     if (view === this._ports.focused()) this._ports.focusedCamera(cam);
     if (view.links.camera && !view.applyingScene) this.linkCameras(view, cam);
   }

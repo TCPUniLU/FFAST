@@ -2,10 +2,12 @@
  * Display + Unit Cell pane (ADR 0045 issue 05). Mirrors the DISPLAY schema in
  * modules/loupe/loupeViewSettings.py. Hide-atoms/highlight token specs are
  * resolved server-side (ffast.atom_filter / SET_SELECTION); the client just
- * tokenizes text into ints or element-symbol strings.
+ * tokenizes text into ints or element-symbol strings. The pane shows one
+ * view's `display` settings (`show`) and writes each change into them.
  */
 
 import { createPane, numberRow, textRow, checkboxRow } from '../sidebar.js';
+import { defaultSettings } from '../view_settings.js';
 
 /** Tokenize "0 1 2", "C", "-H" into ints/strings — integers (incl. "-3") stay
  * ints; everything else (incl. "-H") stays a string. Server resolves both. */
@@ -39,44 +41,39 @@ export function createDisplayPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Display');
   sidebarEl.appendChild(el);
 
-  const atomSizeRow= numberRow(body, 'Atom size', 1.0, { min: 0.1, max: 10, step: 0.1 }, callbacks.onAtomSize);
-  const atomHideRow=textRow(body, 'Hide atoms', '', (text) => callbacks.onHideAtoms(parseFilterTokens(text)));
-  const highlightAtomRow = textRow(body, 'Highlight atoms', '', (text) => callbacks.onHighlight(parseIndexList(text)));
-  const showUnitRow = checkboxRow(body, 'Show unit cell', true, callbacks.onUnitCell);
+  let state = defaultSettings().display;   // the shown view's settings
+
+  const atomSizeRow = numberRow(body, 'Atom size', 1.0, { min: 0.1, max: 10, step: 0.1 }, (v) => {
+    state.atomSize = v || 1;
+    callbacks.onAtomSize(v);
+  });
+  const atomHideRow = textRow(body, 'Hide atoms', '', (text) => {
+    state.hide = text;
+    callbacks.onHideAtoms(parseFilterTokens(text));
+  });
+  const highlightAtomRow = textRow(body, 'Highlight atoms', '', (text) => {
+    state.highlight = text;
+    callbacks.onHighlight(parseIndexList(text));
+  });
+  const showUnitRow = checkboxRow(body, 'Show unit cell', true, (v) => {
+    state.unitCell = v;
+    callbacks.onUnitCell(v);
+  });
 
   return {
     /** The Atom size setting, as the server scales sizes by it. */
     atomScale() {
-      return parseFloat(atomSizeRow.value) || 1;
-    },
-    atomSizeStatus: new Map(), // fp -> number
-    atomHidStatus: new Map(),
-    highlightAtomStatus: new Map(),
-    showUnitStatus: new Map(),
-
-    saveState(fp) {
-      this.atomSizeStatus.set(fp, atomSizeRow.value);
-      this.atomHidStatus.set(fp, atomHideRow.value);
-      this.highlightAtomStatus.set(fp, highlightAtomRow.value);
-      this.showUnitStatus.set(fp, showUnitRow.checked);
+      return state.atomSize || 1;
     },
 
-    /** Store an Atom size for `key` without showing it (ADR 0056 start). */
-    presetState(key, { atomSize = 1 } = {}) {
-      this.atomSizeStatus.set(key, String(atomSize));
+    /** Show a view's `display` settings; later changes are written into them.
+     * Nothing is sent: the view's own server state already holds its look. */
+    show(settings) {
+      state = settings;
+      atomSizeRow.value = String(settings.atomSize);
+      atomHideRow.value = settings.hide;
+      highlightAtomRow.value = settings.highlight;
+      showUnitRow.checked = settings.unitCell;
     },
-
-    /** The Atom size stored for `key`. */
-    lookOf(key) {
-      return { atomSize: parseFloat(this.atomSizeStatus.get(key)) || 1 };
-    },
-
-    loadState(fp) {
-      atomSizeRow.value = this.atomSizeStatus.get(fp) || '1.0';
-      atomHideRow.value = this.atomHidStatus.get(fp) || '';
-      highlightAtomRow.value = this.highlightAtomStatus.get(fp) || '';
-      showUnitRow.checked = this.showUnitStatus.get(fp) ?? true;
-    },
-
   };
 }

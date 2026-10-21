@@ -9,11 +9,17 @@
  * the same "Option B" pattern `ffast.force_arrows` already uses — so colouring
  * by one model's error can coexist with a different model driving the force
  * overlay or the object rail's active prediction.
+ *
+ * The pane shows one view's `colorBy` settings (`show`) and writes each change
+ * into them. The settings hold the source (`element`, `displacement`,
+ * `metric:<id>`) and the prediction's fingerprint, not the labels the drop-downs
+ * show: labels depend on the metric catalog and the loaded predictions.
  */
 
 import { COLORABLE_SHAPES } from '../start_settings.js';
 import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.js';
 import { gradientCss } from '../colormap.js';
+import { defaultSettings } from '../view_settings.js';
 
 const COLORMAPS = ['viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'force_error'];
 // Shared with an independent panel's starting look (start_settings.js).
@@ -34,22 +40,31 @@ export function createColorByPane(sidebarEl, callbacks) {
   const labelToSource = new Map([['Elements', 'element'], ['Displacement', 'displacement']]);
   const labelToMetricId = new Map();
   let metricsById = new Map();   // id -> catalog entry
-  let currentLabel = 'Elements';
+  let currentLabel = 'Elements'; // the Coloring label on show
   let keyByLabel = new Map();    // prediction combo label -> model fingerprint
+  let state = defaultSettings().colorBy;   // the shown view's settings
+
+  /** The Coloring label of a source, or undefined (a metric the catalog lacks). */
+  const labelOfSource = (source) => [...labelToSource].find(([, src]) => src === source)?.[0];
+  /** The prediction combo label of a fingerprint (Ground Truth for none or unknown). */
+  const labelOfPrediction = (fp) => [...keyByLabel].find(([, key]) => key === fp)?.[0] || 'Ground Truth';
 
   const coloringSelect = selectRow(body, 'Coloring', ['Elements', 'Displacement'], 'Elements', (label) => {
     currentLabel = label;
+    state.source = labelToSource.get(label) || 'element';
     missingNote.hidden = true;
     _syncVisibility();
-    callbacks.onSourceChange(labelToSource.get(label) || 'element');
+    callbacks.onSourceChange(state.source);
     _rebuildParamControls();
   });
 
   const predictionSelect = selectRow(body, 'Prediction', ['Ground Truth'], 'Ground Truth', (label) => {
-    callbacks.onPredictionChange(label === 'Ground Truth' ? null : keyByLabel.get(label) ?? null);
+    state.prediction = label === 'Ground Truth' ? null : keyByLabel.get(label) ?? null;
+    callbacks.onPredictionChange(state.prediction);
   });
 
   const colormapSelect = selectRow(body, 'Colormap', COLORMAPS, 'viridis', (cm) => {
+    state.colormap = cm;
     callbacks.onColormapChange(cm);
   });
 
@@ -89,14 +104,24 @@ export function createColorByPane(sidebarEl, callbacks) {
   }
   _syncVisibility();
 
-  function _rebuildParamControls() {
+  /** Build the shown metric's parameter controls. A new colouring starts from
+   * the parameters' defaults; showing a view puts back its norm (`restore`). */
+  function _rebuildParamControls({ restore = false } = {}) {
     paramContainer.innerHTML = '';
     const mid = labelToMetricId.get(currentLabel);
-    if (mid == null) return;
-    const params = metricsById.get(mid)?.parameters || {};
+    if (mid != null) _buildParamControls(metricsById.get(mid)?.parameters || {});
+    const norm = paramContainer.querySelector(".ctl-row[data-label='norm'] select");
+    if (!restore) state.norm = norm?.value ?? 'None';
+    else if (norm && state.norm !== 'None') norm.value = state.norm;
+  }
+
+  function _buildParamControls(params) {
     for (const [key, param] of Object.entries(params)) {
       if (param.type === 'choice') {
-        selectRow(paramContainer, key, param.choices || [], param.default, (v) => callbacks.onMetricParam(key, v));
+        selectRow(paramContainer, key, param.choices || [], param.default, (v) => {
+          if (key === 'norm') state.norm = v;
+          callbacks.onMetricParam(key, v);
+        });
       } else if (param.type === 'float') {
         const input = document.createElement('input');
         input.type = 'number';
@@ -117,14 +142,8 @@ export function createColorByPane(sidebarEl, callbacks) {
   }
 
   return {
-    /** The variables used to store the state of this whole element used for saving and loading the state when different datasets are chosen. */
-    colorState: new Map(), // fp -> string value
-    predictionState: new Map(), // fp -> string value
-    colormapState: new Map(), // fp -> string value
-    normState: new Map(), // fp -> string or Null
     /** Refresh the Prediction combo from the currently loaded models. */
     refreshModels(models) {
-      const prevLabel = predictionSelect.value;
       predictionSelect.innerHTML = '';
       keyByLabel = new Map();
       const gt = document.createElement('option');
@@ -137,7 +156,7 @@ export function createColorByPane(sidebarEl, callbacks) {
         opt.value = opt.textContent = label;
         predictionSelect.appendChild(opt);
       }
-      if ([...predictionSelect.options].some((o) => o.value === prevLabel)) predictionSelect.value = prevLabel;
+      predictionSelect.value = labelOfPrediction(state.prediction);
       hasPredictions = models.size > 0;
       _syncVisibility();
     },
@@ -163,11 +182,13 @@ export function createColorByPane(sidebarEl, callbacks) {
         opt.textContent = label;
         coloringSelect.appendChild(opt);
       }
-      // Keep the choice if it is still there; otherwise the select has already
-      // fallen back to its first option, so say so.
-      if ([...coloringSelect.options].some((o) => o.value === currentLabel)) coloringSelect.value = currentLabel;
+      // Keep the choice if it is still there; otherwise fall back to the
+      // elements and say so.
+      const label = labelOfSource(state.source);
+      if (label) coloringSelect.value = currentLabel = label;
       else {
         coloringSelect.value = currentLabel = 'Elements';
+        if (state.source.startsWith('metric:')) state.source = 'element';
         _syncVisibility();
         if (wasMetric) {
           missingNote.textContent = `${wasMetric} is not on this server; showing element colours.`;
@@ -184,9 +205,10 @@ export function createColorByPane(sidebarEl, callbacks) {
       const label = [...labelToMetricId].find(([, m]) => m === id)?.[0];
       if (!label) return false;
       coloringSelect.value = currentLabel = label;
+      state.source = `metric:${id}`;
       missingNote.hidden = true;
       _syncVisibility();
-      callbacks.onSourceChange(`metric:${id}`);
+      callbacks.onSourceChange(state.source);
       _rebuildParamControls();
       return true;
     },
@@ -201,91 +223,28 @@ export function createColorByPane(sidebarEl, callbacks) {
       cbLabel.textContent = colorBy.label + (colorBy.unit ? ` (${colorBy.unit})` : '');
     },
 
-    /** Ask for the colours again when they come from a metric: the metric may
-     * have been edited (ADR 0057), and the view keeps the old colours until
-     * told. Sends the same source, which rebuilds the scene. */
-    recolour() {
-      const source = labelToSource.get(currentLabel);
-      if (source && source.startsWith('metric:')) callbacks.onSourceChange(source);
-    },
-
-    /** Store a look for `key` without showing it (an independent 3D panel's
-     * starting look, ADR 0056): a colour source ("element", "displacement",
-     * "metric:<id>"), a colour map and the prediction metric colours use. */
-    presetState(key, { source = 'element', colormap = 'viridis', prediction = null } = {}) {
-      this.colorState.set(key, [...labelToSource].find(([, s]) => s === source)?.[0] || 'Elements');
-      this.colormapState.set(key, colormap);
-      this.predictionState.set(key,
-        [...keyByLabel].find(([, fp]) => fp === prediction)?.[0] || 'Ground Truth');
-      this.normState.set(key, 'None');
-    },
-
     /** The prediction metric colours use now, or null (ground truth). */
     predictionOf() {
-      return keyByLabel.get(predictionSelect.value) ?? null;
+      return keyByLabel.size && [...keyByLabel.values()].includes(state.prediction) ? state.prediction : null;
     },
 
-    /** Show `fp` as the colouring prediction without sending it. */
+    /** Use `fp` as the colouring prediction without sending it. */
     setPrediction(fp) {
-      predictionSelect.value = [...keyByLabel].find(([, k]) => k === fp)?.[0] || 'Ground Truth';
+      state.prediction = fp ?? null;
+      predictionSelect.value = labelOfPrediction(state.prediction);
     },
 
-    /** The colour source and map stored for `key`. */
-    lookOf(key) {
-      return {
-        source: labelToSource.get(this.colorState.get(key)) || 'element',
-        colormap: this.colormapState.get(key) || 'viridis',
-      };
-    },
-
-    /**
-     *
-     * @param {string} fp
-     */
-    saveState(fp) {
-      this.colorState.set(fp, coloringSelect.value);
-      this.colormapState.set(fp, colormapSelect.value);
-      this.predictionState.set(fp, predictionSelect.value);
-      const norm_row = [...document.getElementById('loupe-sidebar').querySelectorAll('.ctl-row')].find(
-          (row) => row.querySelector('label')?.textContent.trim() === 'norm'
-      ) ?? null;
-      if (norm_row !== null) {
-        const norm_value = norm_row.querySelector('select')?.value;
-        this.normState.set(fp, norm_value ?? 'None');
-        //console.log('stored: ', norm_value ?? 'None');
-      } else {
-        this.normState.set(fp, 'None');
-        //console.log('stored: ', 'None');
-      }
-    },
-
-    /**
-     *
-     * @param {string} fp
-     */
-    loadState(fp) {
-      coloringSelect.value = this.colorState.get(fp) || 'Elements';
-      //console.log('color select state:', coloringSelect.value);
-      currentLabel = coloringSelect.value;
-      predictionSelect.value = this.predictionState.get(fp) || 'Ground Truth';
-      //console.log('predictions state: ', predictionSelect.value);
-      colormapSelect.value = this.colormapState.get(fp) || 'viridis';
-      //console.log('colormap select: ', colormapSelect.value);
-
+    /** Show a view's `colorBy` settings; later changes are written into them.
+     * A metric the catalog does not (yet) list shows as Elements, and the
+     * settings keep it for when the catalog arrives. Nothing is sent. */
+    show(settings) {
+      state = settings;
+      const label = labelOfSource(settings.source);
+      coloringSelect.value = currentLabel = label || 'Elements';
+      predictionSelect.value = labelOfPrediction(settings.prediction);
+      colormapSelect.value = settings.colormap;
       _syncVisibility();
-      _rebuildParamControls();
-
-      const normValue = this.normState.get(fp) || 'None';
-      //console.log('retrieved: ', normValue);
-
-      const normRow = [...document.getElementById('loupe-sidebar').querySelectorAll('.ctl-row')].find(
-          (row) => row.querySelector('label')?.textContent.trim() === 'norm'
-      )?.querySelector('select') ?? null;
-      if (normValue !== 'None') { //
-        if (normRow !== null) {
-          normRow.value = normValue;
-        }
-      }
-    }
+      _rebuildParamControls({ restore: true });
+    },
   };
 }

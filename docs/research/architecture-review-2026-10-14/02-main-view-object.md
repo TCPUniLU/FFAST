@@ -1,6 +1,6 @@
 # 2. The browser's main 3D view is not an object
 
-**Status:** decided 2026-10-20 as ADR 0060 (proposed), not built · **Strength:** strong · **Dependencies:** browser JavaScript,
+**Status:** decided 2026-10-20 as ADR 0060, built 2026-10-21 · **Strength:** strong · **Dependencies:** browser JavaScript,
 in-process; tests can use a fake connection
 
 ## In one sentence

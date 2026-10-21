@@ -99,6 +99,11 @@ CASES = {
         "[ml.tryHeadline({ok: true, count: 4, bad_count: 0}), ml.tryHeadline({ok: true, count: 4, bad_count: 1}),"
         " ml.tryHeadline({ok: true, count: 1, bad_count: 0}), ml.tryHeadline({ok: false, error: 'boom'}),"
         " ml.tryHeadline({ok: true, cancelled: true})]"),
+    "try_headlines_named": (
+        "[ml.tryHeadline({ok: true, count: 12, bad_count: 0}, 'aspirin · MACE'),"
+        " ml.tryHeadline({ok: true, count: 4, bad_count: 1}, 'aspirin'),"
+        " ml.tryHeadline({ok: false, error: 'boom'}, 'aspirin'), ml.tryHeadline({ok: true, cancelled: true}, 'aspirin'),"
+        " ml.tryHeadline({ok: true, count: 1, bad_count: 0}, '')]"),
 
     # ── Plot it (rule 13) ───────────────────────────────────────────────────
     "plot_panel": "te.metricPanel({id: 'user.a', label: 'A'})",
@@ -309,6 +314,13 @@ def test_a_try_opens_with_one_plain_line(results):
     assert results["try_headlines"] == [
         "4 values, all good", "1 bad value of 4 — saving would fail the metric",
         "1 value, all good", "boom", "Stopped"]
+
+
+def test_a_try_names_the_data_it_ran_on(results):
+    assert results["try_headlines_named"] == [
+        "12 values, all good — on aspirin · MACE",
+        "1 bad value of 4 — saving would fail the metric — on aspirin",
+        "boom", "Stopped", "1 value, all good"]
 
 
 def test_the_list_is_grouped_by_origin_with_user_entries_from_the_user_list(results):
