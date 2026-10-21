@@ -24,17 +24,64 @@ class _Model:
     name = "mace"
 
 
+class _Users:
+    """Just enough of UserMetrics for the feed."""
+    def __init__(self):
+        self.items = []
+
+    def entries(self):
+        return list(self.items)
+
+    def used_by(self, mid):
+        return []
+
+
 class _Env:
     datasets = _Datasets()
     models = {"mfp12345678": _Model()}
     cache = {}
 
 
-def test_replay_is_datasets_then_models_then_catalog_then_who_uses_what():
+def test_replay_order():
     feed = WindowFeed(_Env(), lambda data: None)
     events = [unpack(data)[0] for data, _label in feed.replay()]
     assert events == [control.REMOTE_DATASET_META, control.REMOTE_MODEL_META,
-                      control.METRIC_CATALOG, control.METRIC_USERS]
+                      control.METRIC_CATALOG, control.TAB_LAYOUT,
+                      control.USER_METRICS, control.METRIC_USERS]
+
+
+def test_a_piece_is_broadcast_once_until_it_changes():
+    sent = []
+    env = _Env()
+    env.user_metrics = _Users()
+    feed = WindowFeed(env, sent.append)
+    feed.changed(control.USER_METRICS)
+    feed.changed(control.USER_METRICS)
+    assert [unpack(b)[0] for b in sent] == [control.USER_METRICS]
+    env.user_metrics.items.append({"id": "x"})
+    feed.changed(control.USER_METRICS)
+    assert [unpack(b)[0] for b in sent] == [control.USER_METRICS] * 2
+
+
+def test_changed_sends_in_replay_order_and_skips_what_did_not_change():
+    sent = []
+    env = _Env()
+    env.user_metrics = _Users()
+    feed = WindowFeed(env, sent.append)
+    feed.changed(control.METRIC_USERS, control.USER_METRICS, control.TAB_LAYOUT)
+    assert [unpack(b)[0] for b in sent] == [
+        control.TAB_LAYOUT, control.USER_METRICS, control.METRIC_USERS]
+    sent.clear()
+    feed.changed(control.TAB_LAYOUT, control.USER_METRICS, control.METRIC_USERS)
+    assert sent == []
+
+
+def test_the_replay_does_not_count_as_a_broadcast():
+    sent = []
+    feed = WindowFeed(_Env(), sent.append)
+    feed.replay()
+    feed.changed(control.METRIC_CATALOG)
+    assert [unpack(b)[0] for b in sent] == [control.METRIC_CATALOG]
 
 
 def test_a_feed_with_no_user_metrics_has_no_users():

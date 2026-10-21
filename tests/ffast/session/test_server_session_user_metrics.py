@@ -15,6 +15,7 @@ from ffast.metrics.registry import default_registry
 from ffast.protocol import control
 from ffast.protocol.rpc import unpack
 from ffast.session.server_session import ServerSession
+from ffast.session.window_feed import WindowFeed
 
 METRIC = {"id": "t57.double", "expr": "2 * f", "vars": {"f": "ffast.force_component_mae"}}
 
@@ -30,6 +31,11 @@ class _Data:
 
 class _Env:
     pass
+
+
+class _Datasets:
+    def get(self, fp):
+        return None
 
 
 @pytest.fixture
@@ -64,8 +70,9 @@ def test_saving_answers_the_window_then_tells_every_window(env):
     assert [(e, k) for e, _, k in own] == [(control.USER_METRIC_SAVED, {
         "ok": True, "action": "save", "id": "t57.double", "error": None, "conflict": False})]
     assert [e for e, _, _ in everyone] == [
-        control.METRICS_UPDATED, control.USER_METRICS, control.METRIC_USERS]
-    [entry] = everyone[1][2]["metrics"]
+        control.METRICS_UPDATED, control.METRIC_CATALOG, control.TAB_LAYOUT,
+        control.USER_METRICS, control.METRIC_USERS]
+    [entry] = next(k for e, _, k in everyone if e == control.USER_METRICS)["metrics"]
     assert (entry["id"], entry["status"], entry["shape"]) == ("t57.double", "ok", "scalar")
 
 
@@ -378,7 +385,8 @@ def test_yes_adds_them_and_tells_every_window(env, tmp_path):
     asyncio.run(scenario())
     assert answers[0][2]["ok"] and answers[0][2]["action"] == "add-session"
     assert [unpack(b)[0] for b in broadcasts] == [
-        control.METRICS_UPDATED, control.USER_METRICS, control.METRIC_USERS]
+        control.METRICS_UPDATED, control.METRIC_CATALOG, control.TAB_LAYOUT,
+        control.USER_METRICS, control.METRIC_USERS]
     assert default_registry.has("t57.double")
     assert answers[1][2]["ok"] is False and "no longer open" in answers[1][2]["error"]
 
@@ -449,7 +457,8 @@ def test_a_tab_change_sends_who_uses_what_again(env):
 
     env.tab_sources = _Sources()
     _, everyone = _dispatch(env, control.HIDE_TAB, {"name": "Basic", "hidden": True})
-    assert [e for e, _, _ in everyone] == [control.TAB_LAYOUT, control.METRIC_USERS]
+    assert [e for e, _, _ in everyone] == [
+        control.METRIC_CATALOG, control.TAB_LAYOUT, control.METRIC_USERS]
 
 
 def test_cancel_answers_at_once_while_an_input_is_still_computing(env):
@@ -545,7 +554,24 @@ def test_the_replay_ends_with_who_uses_what(env):
     assert "t57.double" not in kwargs["users"]   # nobody uses it
 
 
-def test_a_metric_save_sends_the_list_and_who_uses_what(env):
-    _, everyone = _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
-    assert [e for e, _, _ in everyone] == [
-        control.METRICS_UPDATED, control.USER_METRICS, control.METRIC_USERS]
+def test_a_metric_save_sends_the_pieces_and_inputs_only_to_a_window_that_asked(env):
+    broadcasts = []
+
+    async def scenario():
+        feed = WindowFeed(env, broadcasts.append)
+        env.window_feed = feed
+        asker = ServerSession(env, asyncio.Queue(), broadcast=broadcasts.append)
+        other = ServerSession(env, asyncio.Queue(), broadcast=broadcasts.append)
+        env.datasets, env.models = _Datasets(), {}
+        await asker.dispatch(control.REQUEST_METRIC_INPUTS, [], {"dataset_fp": "ds1"})
+        asker.outbound.get_nowait()                    # the answer to the request
+        await asker.dispatch(control.SAVE_USER_METRIC, [], {"metric": METRIC})
+        got = lambda s: [unpack(s.outbound.get_nowait())[0] for _ in range(s.outbound.qsize())]
+        return got(asker), got(other)
+
+    asker, other = asyncio.run(scenario())
+    assert asker == [control.USER_METRIC_SAVED, control.METRIC_INPUTS]
+    assert other == []
+    events = [unpack(b)[0] for b in broadcasts]
+    assert events == [control.METRICS_UPDATED, control.METRIC_CATALOG, control.TAB_LAYOUT,
+                      control.USER_METRICS, control.METRIC_USERS]

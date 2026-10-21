@@ -11,6 +11,7 @@ messages themselves. There is one feed per server (``env.window_feed``).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import weakref
 
@@ -27,6 +28,9 @@ class WindowFeed:
         self._broadcast = broadcast
         # Sessions of the open windows. A WeakSet for now (ADR 0062 step 6).
         self.sessions: weakref.WeakSet = weakref.WeakSet()
+        # Event name → the bytes last broadcast for it, so a piece is sent
+        # again only when it changed (decision 4). The replay does not count.
+        self._last: dict[str, bytes] = {}
 
     def attach(self, session) -> None:
         self.sessions.add(session)
@@ -131,6 +135,47 @@ class WindowFeed:
                     users[mid] = found
         return pack(control.METRIC_USERS, [], {"users": users})
 
+    # ── sending again after a change ────────────────────────────────────────
+
+    # The shared pieces that follow the datasets and models, in replay order.
+    _PIECES = (control.METRIC_CATALOG, control.TAB_LAYOUT,
+               control.USER_METRICS, control.METRIC_USERS)
+
+    def _build(self, name: str) -> bytes:
+        return {
+            control.METRIC_CATALOG: self.metric_catalog,
+            control.TAB_LAYOUT: self.tab_layout,
+            control.USER_METRICS: self.user_metrics,
+            control.METRIC_USERS: self.metric_users,
+        }[name]()
+
+    def changed(self, *pieces: str) -> None:
+        """Rebuild each named piece and broadcast it, in replay order, if its
+        bytes differ from the bytes last broadcast for it. Runs only on the
+        server's event loop."""
+        for name in self._PIECES:
+            if name not in pieces:
+                continue
+            try:
+                data = self._build(name)
+            except Exception as exc:
+                logger.warning("Window feed: %s could not be built: %s", name, exc)
+                continue
+            if self._last.get(name) == data:
+                continue
+            self._last[name] = data
+            self._broadcast(data)
+
+    async def resend_inputs(self) -> None:
+        """Send each window its own METRIC_INPUTS again (the metrics a formula
+        can use have changed). A window that never asked gets nothing."""
+        sessions = list(self.sessions)
+        results = await asyncio.gather(
+            *(s.send_inputs(drop_if_full=True) for s in sessions), return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.warning("Window feed: METRIC_INPUTS not sent: %s", result)
+
     # ── replay ──────────────────────────────────────────────────────────────
 
     def replay(self) -> list[tuple[bytes, str]]:
@@ -171,9 +216,10 @@ class WindowFeed:
         except Exception as exc:
             logger.warning("State replay: METRIC_CATALOG error: %s", exc)
 
-        # ── who uses each metric ────────────────────────────────────────────
-        try:
-            out.append((self.metric_users(), "METRIC_USERS"))
-        except Exception as exc:
-            logger.warning("State replay: METRIC_USERS error: %s", exc)
+        # ── the rest of the shared pieces ───────────────────────────────────
+        for name in self._PIECES[1:]:
+            try:
+                out.append((self._build(name), name))
+            except Exception as exc:
+                logger.warning("State replay: %s error: %s", name, exc)
         return out

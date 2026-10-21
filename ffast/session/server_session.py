@@ -135,6 +135,8 @@ class ServerSession:
         # own, as in a test, gets a feed of its own.
         self.feed = getattr(env, "window_feed", None) or WindowFeed(env, self._broadcast)
         self.feed.attach(self)
+        # The (dataset_fp, model_fp) this window last asked METRIC_INPUTS for
+        self._inputs_for: tuple | None = None
         # Running Tries of this connection (ADR 0057 rule 12): try_id → (stop
         # flag, task). The task is held here so it is not garbage-collected.
         self._tries: dict = {}
@@ -843,17 +845,10 @@ class ServerSession:
     async def _on_close_view(self, view_id, **kwargs) -> None:
         self.views.pop(view_id, None)
         logger.info("CLOSE_VIEW: view_id=%r", view_id)
-        self._tell_metric_users()
+        self.feed.changed(control.METRIC_USERS)
 
     def _colour_source(self, view) -> str | None:
         return view.state.parameters.get("ffast.atom_color", {}).get("source")
-
-    def _tell_metric_users(self) -> None:
-        """Every window's Metrics pane lists who uses each metric; send it again
-        after something that can change the answer (a colouring, a tab), so
-        Delete is neither blocked nor allowed on old news (ADR 0057 rule 7)."""
-        if getattr(self.env, "user_metrics", None) is not None:
-            self._broadcast(self.feed.metric_users())
 
     async def _on_view_command(self, **kwargs) -> None:
         """Apply a ViewCommand and send COMMAND_RESULT plus an optional SCENE_PATCH."""
@@ -877,7 +872,9 @@ class ServerSession:
         before = self._colour_source(view)
         result = view.apply_command(cmd)
         if self._colour_source(view) != before:
-            self._tell_metric_users()
+            # Who uses a metric can change, so Delete is neither blocked nor
+            # allowed on old news (ADR 0057 rule 7).
+            self.feed.changed(control.METRIC_USERS)
 
         # Rebuild scene components that changed. build_scene is synchronous and
         # may block while the worker-process executor communicates with its
@@ -1136,8 +1133,7 @@ class ServerSession:
             "ok": error is None, "action": action, "name": name, "error": error}))
         if error is None:
             logger.info("Tab %s: %r; sending the layout to every window", action, name)
-            self._broadcast(self.feed.tab_layout())
-            self._tell_metric_users()
+            self.feed.changed(control.METRIC_CATALOG, control.TAB_LAYOUT, control.METRIC_USERS)
 
     async def _on_export_tab(self, name, **kwargs) -> None:
         from ffast.config.user_tabs import TabError
@@ -1200,9 +1196,9 @@ class ServerSession:
         if error is None:
             logger.info("User metric %s: %r; telling every window", action, id)
             self._broadcast(pack(control.METRICS_UPDATED, [], {}))
-            self._broadcast(self.feed.user_metrics())
-            # A save can change which metrics use another.
-            self._broadcast(self.feed.metric_users())
+            self.feed.changed(control.METRIC_CATALOG, control.TAB_LAYOUT,
+                              control.USER_METRICS, control.METRIC_USERS)
+            await self.feed.resend_inputs()
 
     def _change_and_invalidate(self, um, change):
         """Run the metric change, then drop the results of what it affected."""
@@ -1232,8 +1228,19 @@ class ServerSession:
         await self._emit(pack(control.USER_METRIC_EXPORTED, [], {"id": id, "toml": toml, "error": error}))
 
     async def _on_request_metric_inputs(self, dataset_fp=None, model_fp=None, **kwargs) -> None:
-        """Reply with METRIC_INPUTS: what a formula can use for this dataset
-        and prediction, extra file keys included (rule 10)."""
+        """Reply with METRIC_INPUTS, and remember the pair: it is the dataset
+        and prediction this window is looking at, so after a metric change the
+        window is sent a fresh list for it (ADR 0062)."""
+        self._inputs_for = (dataset_fp, model_fp)
+        await self.send_inputs()
+
+    async def send_inputs(self, drop_if_full: bool = False) -> None:
+        """METRIC_INPUTS for the pair this window last asked about: what a
+        formula can use for that dataset and prediction, extra file keys
+        included (rule 10). Does nothing for a window that never asked."""
+        if self._inputs_for is None:
+            return
+        dataset_fp, model_fp = self._inputs_for
         from ffast.metrics.input_catalog import build_input_catalog
         from ffast.metrics.registry import default_registry
         from ffast.protocol.rpc import pack
@@ -1244,8 +1251,12 @@ class ServerSession:
             build_input_catalog, default_registry, dataset, model,
             getattr(data, "predictionFields", None),
             getattr(self.env, "user_metrics", None))
-        await self._emit(pack(control.METRIC_INPUTS, [], {
-            "dataset_fp": dataset_fp, "model_fp": model_fp, "inputs": inputs}))
+        message = pack(control.METRIC_INPUTS, [], {
+            "dataset_fp": dataset_fp, "model_fp": model_fp, "inputs": inputs})
+        if drop_if_full:
+            self._emit_or_drop(message, "METRIC_INPUTS")
+        else:
+            await self._emit(message)
 
     # ── check and try a formula (ADR 0057 rules 11, 12) ─────────────────────
 

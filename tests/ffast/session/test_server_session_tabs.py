@@ -52,19 +52,24 @@ def _dispatch(env, event, kwargs):
     return own, [unpack(b) for b in broadcasts]
 
 
+def _layout(everyone):
+    """The TAB_LAYOUT among the broadcasts."""
+    return next(k for e, _, k in everyone if e == control.TAB_LAYOUT)
+
+
 def test_saving_a_tab_answers_the_window_then_tells_every_window(env):
     own, everyone = _dispatch(env, control.SAVE_TAB, {"tab": {"name": "Mine", "panels": [TABLE]}})
     assert [(e, k) for e, _, k in own] == [
         (control.TAB_SAVED, {"ok": True, "action": "save", "name": "Mine", "error": None})]
-    [(event, _, kwargs)] = everyone
-    assert event == control.TAB_LAYOUT
-    assert [t["name"] for t in kwargs["tabs"]] == ["3D", "Basic", "Mine"]
+    assert [e for e, _, _ in everyone] == [
+        control.METRIC_CATALOG, control.TAB_LAYOUT, control.METRIC_USERS]
+    assert [t["name"] for t in _layout(everyone)["tabs"]] == ["3D", "Basic", "Mine"]
 
 
 def test_editing_a_built_in_tab_replaces_it_for_every_window(env):
     _, everyone = _dispatch(env, control.SAVE_TAB, {
         "tab": {"name": "Basic", "panels": [TABLE, {**TABLE, "row": 1}]}, "previous_name": "Basic"})
-    basic = everyone[0][2]["tabs"][1]
+    basic = _layout(everyone)["tabs"][1]
     assert (basic["source"], basic["replaces"], len(basic["panels"])) == ("user", "Basic", 2)
 
 
@@ -79,12 +84,12 @@ def test_reset_hide_and_show(env):
     _dispatch(env, control.SAVE_TAB, {"tab": {"name": "Basic", "panels": [TABLE]},
                                       "previous_name": "Basic"})
     own, everyone = _dispatch(env, control.DELETE_TAB, {"name": "Basic"})
-    assert own[0][2]["ok"] and everyone[0][2]["tabs"][1]["source"] == "built-in"
+    assert own[0][2]["ok"] and _layout(everyone)["tabs"][1]["source"] == "built-in"
 
     own, everyone = _dispatch(env, control.HIDE_TAB, {"name": "Basic", "hidden": True})
-    assert own[0][2]["action"] == "hide" and everyone[0][2]["tabs"][1]["hidden"] is True
+    assert own[0][2]["action"] == "hide" and _layout(everyone)["tabs"][1]["hidden"] is True
     own, everyone = _dispatch(env, control.HIDE_TAB, {"name": "Basic", "hidden": False})
-    assert own[0][2]["action"] == "show" and everyone[0][2]["tabs"][1]["hidden"] is False
+    assert own[0][2]["action"] == "show" and _layout(everyone)["tabs"][1]["hidden"] is False
 
     own, _ = _dispatch(env, control.HIDE_TAB, {"name": "3D", "hidden": True})
     assert own[0][2]["error"] == "At least one tab must show the main view"
