@@ -230,13 +230,6 @@ export class AnalysisManager {
     (tabs || []).forEach((spec, i) => this._buildTab(spec, i));
   }
 
-  /** True when a panel's metric could not be resolved by the server (a
-   * transform of a metric it lacks): the layout must come again once the
-   * metric does (ADR 0057 rule 15). */
-  hasUnresolvedPanels() {
-    return this._tabs.some((t) => (t.spec.panels || []).some((p) => (p.unresolved || []).length));
-  }
-
   /** @returns {Array<{id: string, name: string}>} the tabs, in bar order */
   get tabList() {
     return this._tabs.map((t) => ({ id: t.id, name: t.spec.name }));

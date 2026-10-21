@@ -28,8 +28,6 @@ export class MetricOps {
     this.onInputs = () => {};
   }
 
-  requestList() { this._send(OUT.REQUEST_USER_METRICS, {}); }
-
   /** Save a new metric (`previousId` null) or an edit that keeps the id.
    * `baseRevision` is the version the editor started from; `overwrite` saves
    * over a newer one.

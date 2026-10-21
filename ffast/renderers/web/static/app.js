@@ -1247,9 +1247,9 @@ export class FFastApp {
       document.getElementById('add-prediction-btn').disabled = !canMutate;
       this._renderObjects();
       this._syncTabButtons();
-      // Fetch the analysis-tab layout (METRIC_CATALOG arrives via connect-replay).
-      conn.send(OUT.REQUEST_TAB_LAYOUT, {});
-      this._metricOps.requestList();
+      // The catalog, tab layout and metric lists come with the connect replay
+      // (ADR 0062); only the inputs list is asked for, since it depends on
+      // what this window has selected.
       this._panes.metrics.contextChanged();
 
     } catch (err) {
@@ -2028,14 +2028,12 @@ export class FFastApp {
     this._reportTab(r);
   }
 
-  /** A user metric was added, changed or removed (ADR 0057). The catalog and
-   * the list come again; the plots re-fetch when the catalog lands; every
-   * view coloured by a metric asks for its colours again. */
+  /** A user metric was added, changed or removed (ADR 0057). The server pushes
+   * the catalog, layout and lists that changed (ADR 0062); this forgets
+   * requests in flight and has every view coloured by a metric ask for its
+   * colours again. */
   _onMetricsUpdated() {
     this._metricClient?.forgetInFlight();
-    this._conn?.send(OUT.REQUEST_METRIC_CATALOG, {});
-    if (this._analysis?.hasUnresolvedPanels()) this._conn?.send(OUT.REQUEST_TAB_LAYOUT, {});
-    this._metricOps.requestList();
     // The metric may have been edited, and a view keeps its old colours until
     // told: the same source again rebuilds its scene.
     for (const view of [...this._main.all(), ...this._independent.values()]) {
