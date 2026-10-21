@@ -1051,7 +1051,7 @@ class ConnectionManager:
         try:
             fut = _asyncio.run_coroutine_threadsafe(
                 session.request_metric(
-                    metric_id, params, model_fp, dataset_fp, key
+                    metric_id, params, model_fp, dataset_fp
                 ),
                 loop,
             )

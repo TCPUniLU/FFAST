@@ -188,7 +188,7 @@ class ServerSession:
             control.REQUEST_STATE_SYNC:         _Route(self._on_request_state_sync, [], EmptyRequest),
             control.SAVE_SESSION:               _Route(self._on_save_session, ["path"], SaveSessionRequest),
             control.LOAD_SESSION:               _Route(self._on_load_session, ["path"], LoadSessionRequest),
-            control.REQUEST_METRIC:             _Route(self._on_request_metric, ["metric_id", "?key"], RequestMetricRequest),
+            control.REQUEST_METRIC:             _Route(self._on_request_metric, ["metric_id", "request_id"], RequestMetricRequest),
             control.REQUEST_METRIC_CATALOG:     _Route(self._on_request_metric_catalog, [], EmptyRequest),
             control.REQUEST_TAB_LAYOUT:         _Route(self._on_request_tab_layout, [], EmptyRequest),
             control.EXPORT_SUBSET:              _Route(self._on_export_subset, ["fingerprint", "path"], ExportSubsetRequest),
@@ -1156,7 +1156,7 @@ class ServerSession:
             logger.warning("EXPORT_SUBSET: write failed for %r: %s", resolved, exc)
             await _reply(False, resolved, error=str(exc))
 
-    async def _on_request_metric(self, metric_id, key=None, **kwargs) -> None:
+    async def _on_request_metric(self, metric_id, request_id, **kwargs) -> None:
         """Compute a metric server-side and reply with METRIC_RESULT (Stage 4a).
 
         Reuses the same in-process metric spine the client has — the server owns
@@ -1173,9 +1173,9 @@ class ServerSession:
 
         model = self.env.models.get(model_fp) if model_fp else None
         dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
-        if key is None:
-            key = self.env.data.make_metric_cache_key(metric_id, params, model, dataset)
-
+        # The server alone names the stored result; ``request_id`` is only the
+        # label the reply carries back (ADR 0061).
+        key = self.env.data.make_metric_cache_key(metric_id, params, model, dataset)
         result = self.env.cache.get(key)
 
         # A model-dependent metric whose model isn't on the server (a real,
@@ -1185,20 +1185,20 @@ class ServerSession:
         if result is None and server_can_compute:
             try:
                 loop = asyncio.get_running_loop()
-                ok = await loop.run_in_executor(
+                made = await loop.run_in_executor(
                     _metric_compute_pool(),
-                    self.env.data.generateMetric, metric_id, params, model, dataset, key,
+                    self.env.data.generateMetric, metric_id, params, model, dataset,
                 )
             except Exception as exc:
                 logger.error("REQUEST_METRIC compute failed %s: %s", metric_id, exc)
-                ok = False
-            result = self.env.cache.get(key) if ok else None
+                made = None
+            result = self.env.cache.get(made) if made else None
 
-        data = pack_metric_result(key, metric_id, result is not None, result)
+        data = pack_metric_result(request_id, metric_id, result is not None, result)
         await self._emit(data)
         logger.info(
-            "METRIC_RESULT queued: metric=%r ok=%s key=%r",
-            metric_id, result is not None, key,
+            "METRIC_RESULT queued: metric=%r ok=%s request_id=%r",
+            metric_id, result is not None, request_id,
         )
 
     async def _on_request_metric_catalog(self, **kwargs) -> None:

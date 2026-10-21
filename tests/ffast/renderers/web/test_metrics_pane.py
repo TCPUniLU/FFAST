@@ -46,7 +46,7 @@ async def _server(tmp_path):
 
 
 async def _request_values(ws, dataset_fp, metric_id):
-    await ws.send(pack("REQUEST_METRIC", (), {"metric_id": metric_id, "dataset_fp": dataset_fp}))
+    await ws.send(pack("REQUEST_METRIC", (), {"metric_id": metric_id, "request_id": "t1", "dataset_fp": dataset_fp}))
     reply = await _wait_for_event(ws, "METRIC_RESULT", timeout=30)
     assert reply["kwargs"]["ok"], reply["kwargs"]
     return reply["kwargs"]["values"]
