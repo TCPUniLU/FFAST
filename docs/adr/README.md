@@ -49,6 +49,7 @@ things came up.
 - [0058](0058-one-storage-form-and-one-view-for-datasets.md) One storage form for every dataset, one view for every subset (the Qt client's proxy is GitHub issue #22)
 - [0042](0042-expression-metrics.md) Element-wise algebra over metrics, in the config file
 - [0057](0057-user-metrics-defined-live-in-a-metrics-pane.md) Users define formula metrics while the app runs, in a Metrics pane
+- [0061](0061-only-the-server-names-metric-results.md) Only the server names metric results, and a metric change cannot mix formulas (built)
 - [0035](0035-metric-execution-context.md) Resolve metric inputs once instead of three times
 - [0046](0046-finish-metric-execution-context.md) Finishing that: one seam, one injected executor
 - [0036](0036-datawatcher-configure-once.md) DataWatcher configures once (proposed)
