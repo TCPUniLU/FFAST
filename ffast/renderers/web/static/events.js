@@ -85,6 +85,8 @@ export const IN = Object.freeze({
   // ({ok, action, id, error, conflict}), a metric as TOML, what a formula can
   // use for a dataset, the check of a formula as typed, the result of a Try.
   USER_METRICS: 'USER_METRICS',
+  // Who uses each metric, {users: {metric_id: [text]}} (ADR 0062).
+  METRIC_USERS: 'METRIC_USERS',
   USER_METRIC_SAVED: 'USER_METRIC_SAVED',
   USER_METRIC_EXPORTED: 'USER_METRIC_EXPORTED',
   METRIC_INPUTS: 'METRIC_INPUTS',

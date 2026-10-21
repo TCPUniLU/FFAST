@@ -63,7 +63,8 @@ def test_saving_answers_the_window_then_tells_every_window(env):
     own, everyone = _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
     assert [(e, k) for e, _, k in own] == [(control.USER_METRIC_SAVED, {
         "ok": True, "action": "save", "id": "t57.double", "error": None, "conflict": False})]
-    assert [e for e, _, _ in everyone] == [control.METRICS_UPDATED, control.USER_METRICS]
+    assert [e for e, _, _ in everyone] == [
+        control.METRICS_UPDATED, control.USER_METRICS, control.METRIC_USERS]
     [entry] = everyone[1][2]["metrics"]
     assert (entry["id"], entry["status"], entry["shape"]) == ("t57.double", "ok", "scalar")
 
@@ -153,7 +154,7 @@ def test_the_catalog_says_where_each_metric_comes_from(env):
     assert cat["t57.double"]["origin"] == "user"
     assert cat["t57.double"]["expr"] == "2 * f"
     assert cat["ffast.force_component_mae"]["origin"] == "built-in"
-    assert cat["ffast.force_component_mae"]["used_by"] == ["metric t57.double"]
+    assert "used_by" not in cat["ffast.force_component_mae"]
 
 
 def test_user_metric_changes_are_controlling_only():
@@ -376,7 +377,8 @@ def test_yes_adds_them_and_tells_every_window(env, tmp_path):
 
     asyncio.run(scenario())
     assert answers[0][2]["ok"] and answers[0][2]["action"] == "add-session"
-    assert [unpack(b)[0] for b in broadcasts] == [control.METRICS_UPDATED, control.USER_METRICS]
+    assert [unpack(b)[0] for b in broadcasts] == [
+        control.METRICS_UPDATED, control.USER_METRICS, control.METRIC_USERS]
     assert default_registry.has("t57.double")
     assert answers[1][2]["ok"] is False and "no longer open" in answers[1][2]["error"]
 
@@ -423,21 +425,21 @@ def _dispatch_with_view(env, event, kwargs):
     return [unpack(b) for b in broadcasts]
 
 
-def test_changing_a_colouring_sends_the_list_again(env):
+def test_changing_a_colouring_sends_who_uses_what_again(env):
     set_colour = {"type": "SET_PARAMETER", "view_id": "v", "view_version": 0,
                   "stage_id": "ffast.atom_color", "parameter": "source", "value": "metric:t57.double"}
     sent = _dispatch_with_view(env, control.VIEW_COMMAND, set_colour)
-    assert [e for e, _, _ in sent] == [control.USER_METRICS]
+    assert [e for e, _, _ in sent] == [control.METRIC_USERS]
     same = _dispatch_with_view(env, control.VIEW_COMMAND, {**set_colour, "value": "element"})
     assert same == []   # the source did not change
 
 
-def test_closing_a_view_sends_the_list_again(env):
+def test_closing_a_view_sends_who_uses_what_again(env):
     sent = _dispatch_with_view(env, control.CLOSE_VIEW, {"view_id": "v"})
-    assert [e for e, _, _ in sent] == [control.USER_METRICS]
+    assert [e for e, _, _ in sent] == [control.METRIC_USERS]
 
 
-def test_a_tab_change_sends_the_list_again(env):
+def test_a_tab_change_sends_who_uses_what_again(env):
     class _Sources:
         def layout(self):
             return []
@@ -447,7 +449,7 @@ def test_a_tab_change_sends_the_list_again(env):
 
     env.tab_sources = _Sources()
     _, everyone = _dispatch(env, control.HIDE_TAB, {"name": "Basic", "hidden": True})
-    assert [e for e, _, _ in everyone] == [control.TAB_LAYOUT, control.USER_METRICS]
+    assert [e for e, _, _ in everyone] == [control.TAB_LAYOUT, control.METRIC_USERS]
 
 
 def test_cancel_answers_at_once_while_an_input_is_still_computing(env):
@@ -530,3 +532,20 @@ def test_a_formula_metrics_result_is_stored_under_the_servers_key_not_the_reques
         "metric": {**formula, "expr": "3 * e"}, "previous_id": "t57.energy2", "overwrite": True})
     second = request("m2")
     assert len(second) == 1 and "__f" in second[0] and second != first
+
+
+def test_the_replay_ends_with_who_uses_what(env):
+    _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
+    out = asyncio.Queue()
+    ServerSession(env, out).replay()
+    sent = [unpack(out.get_nowait()) for _ in range(out.qsize())]
+    event, _, kwargs = sent[-1]
+    assert event == control.METRIC_USERS
+    assert kwargs["users"]["ffast.force_component_mae"] == ["metric t57.double"]
+    assert "t57.double" not in kwargs["users"]   # nobody uses it
+
+
+def test_a_metric_save_sends_the_list_and_who_uses_what(env):
+    _, everyone = _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
+    assert [e for e, _, _ in everyone] == [
+        control.METRICS_UPDATED, control.USER_METRICS, control.METRIC_USERS]

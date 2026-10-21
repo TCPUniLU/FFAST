@@ -191,6 +191,13 @@
  */
 
 /**
+ * METRIC_USERS kwargs: who uses each metric, for the Metrics pane's "Used by"
+ * (ADR 0062). Only metrics with a user are listed.
+ * @typedef {Object} MetricUsersKwargs
+ * @property {Object<string, string[]>} users  metric id → "tab Basic, panel MAE", …
+ */
+
+/**
  * One wire ndarray (ffast/protocol/rpc.py `_encode_array`): raw `tobytes()`
  * bytes reinterpreted client-side by ndarray.js `decodeNdarray`.
  * @typedef {Object} WireNdarray

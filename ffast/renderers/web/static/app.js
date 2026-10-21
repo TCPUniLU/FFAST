@@ -1185,6 +1185,7 @@ export class FFastApp {
       conn.on(IN.TAB_EXPORTED, (kw) => this._tabOps.onExported(kw));
       // User metrics (ADR 0057)
       conn.on(IN.USER_METRICS, (kw) => this._panes.metrics.setUserMetrics(kw.metrics));
+      conn.on(IN.METRIC_USERS, (kw) => this._panes.metrics.setMetricUsers(kw.users));
       conn.on(IN.USER_METRIC_SAVED, (kw) => this._metricOps.onSaved(kw));
       conn.on(IN.USER_METRIC_EXPORTED, (kw) => this._metricOps.onExported(kw));
       conn.on(IN.METRIC_CHECKED, (kw) => this._metricOps.onChecked(kw));

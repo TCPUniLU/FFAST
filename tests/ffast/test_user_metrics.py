@@ -251,12 +251,12 @@ def test_delete_is_refused_while_a_provider_reports_a_user(um):
     um.delete("user.double")
 
 
-def test_used_by_lists_every_user_for_the_pane(um):
+def test_used_by_names_the_users_and_entries_do_not_carry_it(um):
     um.save(metric())
     um.save({"id": "user.quad", "expr": "x * 2", "vars": {"x": "user.double"}})
-    entries = {e["id"]: e for e in um.entries()}
-    assert entries["user.double"]["used_by"] == ["metric user.quad"]
-    assert entries["user.quad"]["used_by"] == []
+    assert all("used_by" not in e for e in um.entries())
+    assert um.used_by("user.double") == ["metric user.quad"]
+    assert um.used_by("user.quad") == []
 
 
 def test_delete_also_drops_derived_transform_metrics(um, registry):

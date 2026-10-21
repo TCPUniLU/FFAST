@@ -417,12 +417,13 @@ def test_dispatch_list_dir_enqueues_listing(tmp_path):
 
 # ── replay ─────────────────────────────────────────────────────────────────────
 
-def test_replay_empty_env_enqueues_only_metric_catalog():
+def test_replay_empty_env_enqueues_only_the_catalog_and_who_uses_what():
     # replay() is synchronous and uses put_nowait, so no loop needed.
     s = ServerSession(_FakeEnv(), asyncio.Queue())
     s.replay()
-    event, _args, _kwargs = unpack(s.outbound.get_nowait())
-    assert event == "METRIC_CATALOG"
+    assert unpack(s.outbound.get_nowait())[0] == "METRIC_CATALOG"
+    event, _args, kwargs = unpack(s.outbound.get_nowait())
+    assert (event, kwargs) == ("METRIC_USERS", {"users": {}})
     assert s.outbound.empty()   # no datasets, no models, no open views
 
 

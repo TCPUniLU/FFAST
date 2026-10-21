@@ -155,6 +155,10 @@ TAB_EXPORTED = "TAB_EXPORTED"
 # EXPORT_USER_METRIC with {id, toml, error}. One-shot announcements, out of
 # REPLY_EVENTS, like the tab ones.
 USER_METRICS = "USER_METRICS"
+# Who uses each metric ("Used by"): {users: {metric_id: ["tab Basic, panel MAE",
+# ...]}}, only metrics with a user. A piece of its own, so a colouring click
+# does not make every window redraw its plots, as a new catalog would.
+METRIC_USERS = "METRIC_USERS"
 USER_METRIC_SAVED = "USER_METRIC_SAVED"
 USER_METRIC_EXPORTED = "USER_METRIC_EXPORTED"
 # Reply to REQUEST_METRIC_INPUTS: {dataset_fp, model_fp, inputs: [{ref, group,

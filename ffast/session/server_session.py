@@ -853,7 +853,7 @@ class ServerSession:
         after something that can change the answer (a colouring, a tab), so
         Delete is neither blocked nor allowed on old news (ADR 0057 rule 7)."""
         if getattr(self.env, "user_metrics", None) is not None:
-            self._broadcast(self.feed.user_metrics())
+            self._broadcast(self.feed.metric_users())
 
     async def _on_view_command(self, **kwargs) -> None:
         """Apply a ViewCommand and send COMMAND_RESULT plus an optional SCENE_PATCH."""
@@ -1201,6 +1201,8 @@ class ServerSession:
             logger.info("User metric %s: %r; telling every window", action, id)
             self._broadcast(pack(control.METRICS_UPDATED, [], {}))
             self._broadcast(self.feed.user_metrics())
+            # A save can change which metrics use another.
+            self._broadcast(self.feed.metric_users())
 
     def _change_and_invalidate(self, um, change):
         """Run the metric change, then drop the results of what it affected."""

@@ -94,12 +94,10 @@ class MetricCatalogEntry(BaseModel):
     unit: Optional[str] = None
     parameters: dict[str, MetricParameter] = Field(default_factory=dict)
     # ADR 0057: where the metric comes from ("built-in" | "project" | "user"),
-    # its formula when it is one (so a read-only metric can be duplicated), and
-    # who uses it (the pane's "Used by" line).
+    # and its formula when it is one (so a read-only metric can be duplicated).
     origin: str = "built-in"
     expr: Optional[str] = None
     vars: Optional[dict[str, str]] = None
-    used_by: list[str] = Field(default_factory=list)
 
 
 class MetricCatalog(BaseModel):

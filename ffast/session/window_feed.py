@@ -113,6 +113,24 @@ class WindowFeed:
         um = getattr(self.env, "user_metrics", None)
         return pack(control.USER_METRICS, [], {"metrics": um.entries() if um else []})
 
+    def metric_users(self) -> bytes:
+        """METRIC_USERS: who uses each metric, for the Metrics pane's "Used by".
+        Covers every registered metric whose id has no ``__`` (the derived
+        transform metrics follow their tab) and every user-metric entry; keys
+        are sorted and only metrics with a user are listed."""
+        from ffast.metrics.registry import default_registry
+        from ffast.protocol.rpc import pack
+        um = getattr(self.env, "user_metrics", None)
+        users: dict[str, list[str]] = {}
+        if um is not None:
+            ids = {m for m in default_registry.list_metrics() if "__" not in m}
+            ids |= {e["id"] for e in um.entries()}
+            for mid in sorted(ids):
+                found = um.used_by(mid)
+                if found:
+                    users[mid] = found
+        return pack(control.METRIC_USERS, [], {"users": users})
+
     # ── replay ──────────────────────────────────────────────────────────────
 
     def replay(self) -> list[tuple[bytes, str]]:
@@ -152,4 +170,10 @@ class WindowFeed:
             out.append((self.metric_catalog(), "METRIC_CATALOG"))
         except Exception as exc:
             logger.warning("State replay: METRIC_CATALOG error: %s", exc)
+
+        # ── who uses each metric ────────────────────────────────────────────
+        try:
+            out.append((self.metric_users(), "METRIC_USERS"))
+        except Exception as exc:
+            logger.warning("State replay: METRIC_USERS error: %s", exc)
         return out

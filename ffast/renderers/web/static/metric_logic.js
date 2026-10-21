@@ -223,13 +223,15 @@ export function tryHeadline(r, name = '') {
  * Metrics grouped for the list: built-in, project, then user. User entries come
  * from the user list (which also holds hidden and broken ones); everything else
  * from the catalog.
+ * `users` (METRIC_USERS) says who uses each metric; `used_by` is `[]` for a metric it omits.
  * @param {Array<object>} catalog @param {Array<object>} userMetrics
+ * @param {Object<string, string[]>} [users]
  */
-export function groupMetrics(catalog, userMetrics) {
+export function groupMetrics(catalog, userMetrics, users = {}) {
   const entry = (m, origin, extra = {}) => ({
     id: m.id, label: m.label || m.id, origin, shape: m.shape ?? null, expr: m.expr ?? null,
-    vars: m.vars ?? null, unit: m.unit ?? '', used_by: m.used_by ?? [], status: 'ok', message: '',
-    revision: null, ...extra,
+    vars: m.vars ?? null, unit: m.unit ?? '', status: 'ok', message: '',
+    revision: null, ...extra, used_by: users[m.id] ?? [],
   });
   const byId = new Map(userMetrics.map((u) => [u.id, u]));
   const out = { 'built-in': [], project: [], user: [] };

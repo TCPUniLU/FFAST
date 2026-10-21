@@ -126,7 +126,7 @@ class TestMetricCatalog:
         # The catalog is env-independent (reads the global registry).
         ServerSession(None, out).replay()
         assert out.sent, "no METRIC_CATALOG enqueued"
-        event, _, kwargs = unpack(out.sent[-1])
+        event, _, kwargs = unpack(out.sent[-2])   # METRIC_USERS follows it
         assert event == "METRIC_CATALOG"
         ids = {m["id"] for m in kwargs["metrics"]}
         assert "ffast.force_mae" in ids

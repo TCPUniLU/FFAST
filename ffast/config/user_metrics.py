@@ -252,11 +252,10 @@ class UserMetrics:
                 "id": e.cfg.id, "label": e.cfg.label, "unit": e.cfg.unit,
                 "expr": e.cfg.expr, "vars": dict(e.cfg.vars),
                 "status": e.status, "message": e.message,
-                "revision": metric_revision(e.cfg), "shape": None, "used_by": [],
+                "revision": metric_revision(e.cfg), "shape": None,
             }
             if e.status == "ok" and self.registry.has(e.cfg.id):
                 d["shape"] = shape_to_str(self.registry.get(e.cfg.id)[0].shape)
-                d["used_by"] = self.used_by(e.cfg.id)
             out.append(d)
         return out
 

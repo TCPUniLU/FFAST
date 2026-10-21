@@ -30,11 +30,16 @@ class _Env:
     cache = {}
 
 
-def test_replay_is_datasets_then_models_then_catalog():
+def test_replay_is_datasets_then_models_then_catalog_then_who_uses_what():
     feed = WindowFeed(_Env(), lambda data: None)
     events = [unpack(data)[0] for data, _label in feed.replay()]
     assert events == [control.REMOTE_DATASET_META, control.REMOTE_MODEL_META,
-                      control.METRIC_CATALOG]
+                      control.METRIC_CATALOG, control.METRIC_USERS]
+
+
+def test_a_feed_with_no_user_metrics_has_no_users():
+    _, _, kwargs = unpack(WindowFeed(None, lambda data: None).metric_users())
+    assert kwargs == {"users": {}}
 
 
 def test_dataset_meta_is_the_same_bytes_the_replay_holds():
