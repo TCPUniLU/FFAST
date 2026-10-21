@@ -68,11 +68,38 @@ def test_saving_answers_the_window_then_tells_every_window(env):
     assert (entry["id"], entry["status"], entry["shape"]) == ("t57.double", "ok", "scalar")
 
 
-def test_a_change_drops_cached_results_and_refreshes_the_workers(env):
+def test_a_change_drops_cached_results(env):
     _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
     _dispatch(env, control.SAVE_USER_METRIC, {
         "metric": {**METRIC, "expr": "3 * f"}, "previous_id": "t57.double", "overwrite": True})
     assert env.data.invalidated == [{"t57.double"}, {"t57.double"}]
+
+
+def test_the_change_and_the_invalidation_run_in_one_thread_call(env, monkeypatch):
+    """ADR 0061 decision 4: no other task can run between the change and the drop."""
+    import threading
+    calls, idents = [], {}
+    real_to_thread = asyncio.to_thread
+
+    async def counting(fn, *a, **kw):
+        calls.append(fn)
+        return await real_to_thread(fn, *a, **kw)
+
+    monkeypatch.setattr(asyncio, "to_thread", counting)
+    real_save, real_invalidate = env.user_metrics.save, env.data.invalidate_metrics
+
+    def save(*a, **kw):
+        idents["change"] = threading.get_ident()
+        return real_save(*a, **kw)
+
+    def invalidate(ids):
+        idents["invalidate"] = threading.get_ident()
+        return real_invalidate(ids)
+
+    env.user_metrics.save, env.data.invalidate_metrics = save, invalidate
+    _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
+    assert len(calls) == 1
+    assert idents["change"] == idents["invalidate"]
 
 
 def test_a_refused_change_says_why_and_tells_nobody(env):

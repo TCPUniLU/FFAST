@@ -1308,8 +1308,9 @@ class ServerSession:
         order, so the window that saved hears its own outcome first.
 
         Before anyone is told, results cached under the changed metrics are
-        dropped and the worker pool gets the new metric table (rule 5), so
-        what the windows then ask for is computed from the new formula."""
+        dropped (rule 5). Correctness does not depend on it: the formula is in
+        the cache key and a run that overlapped the change is discarded
+        (ADR 0061), so dropping only frees memory."""
         from ffast.config.user_metrics import MetricConflict, MetricError
         from ffast.protocol.rpc import pack
         um = getattr(self.env, "user_metrics", None)
@@ -1317,10 +1318,11 @@ class ServerSession:
         try:
             if um is None:
                 raise MetricError("This server keeps no user metrics")
-            change_result = await asyncio.to_thread(change, um)
+            # One thread call, so no other task runs between the change and the
+            # drop of old results (ADR 0061).
+            change_result = await asyncio.to_thread(self._change_and_invalidate, um, change)
             if change_result.id:
                 id = change_result.id
-            await asyncio.to_thread(self._apply_metric_change, change_result.affected)
         except MetricConflict as exc:
             error, conflict = str(exc), True
         except MetricError as exc:
@@ -1335,6 +1337,12 @@ class ServerSession:
             logger.info("User metric %s: %r; telling every window", action, id)
             self._broadcast(pack(control.METRICS_UPDATED, [], {}))
             self._broadcast(self._user_metrics_message())
+
+    def _change_and_invalidate(self, um, change):
+        """Run the metric change, then drop the results of what it affected."""
+        result = change(um)
+        self._apply_metric_change(result.affected)
+        return result
 
     def _apply_metric_change(self, affected) -> None:
         """Drop cached results of the changed metrics."""

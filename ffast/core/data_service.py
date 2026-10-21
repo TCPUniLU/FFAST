@@ -238,9 +238,10 @@ class DataService:
 
     def invalidate_metrics(self, metric_ids) -> list[str]:
         """Drop cached results of these metrics, whatever their model, dataset
-        and compute parameters (ADR 0057 rule 5). The cache key holds the metric
-        id, not its formula, so an edited metric would otherwise keep serving
-        its old numbers. Returns the deleted keys."""
+        and compute parameters (ADR 0057 rule 5). Only frees memory: a formula
+        metric's cache key holds a hash of its formula, so an edited metric is a
+        different key, and a run that overlapped the edit is discarded in
+        ``generateMetric`` (ADR 0061). Returns the deleted keys."""
         from ffast.cache import CacheKey
 
         ids = set(metric_ids)
