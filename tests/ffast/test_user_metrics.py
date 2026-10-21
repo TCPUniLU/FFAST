@@ -166,6 +166,29 @@ def test_an_edit_that_would_change_a_dependents_shape_is_refused(um, registry):
     assert registry.get("user.double")[0].shape == (dims.N_frames,)
 
 
+def test_an_edit_that_would_change_an_inheriting_transforms_shape_is_refused(um, registry, tmp_path):
+    """ADR 0061 decision 7: a transform that takes its source's shape would keep
+    the old one, so the edit is refused, the same as for a formula dependent."""
+    from ffast.metrics.transforms import compile_transform
+    um.save(metric())
+    tid = compile_transform("user.double", "abs", registry=registry)     # shape "inherit"
+    before = (tmp_path / "metrics" / "user.double.toml").read_text()
+    with pytest.raises(MetricError, match="another shape") as exc:
+        um.save({"id": "user.double", "expr": "q", "vars": {"q": "base.atom_q"}},
+                previous_id="user.double")
+    assert tid in str(exc.value)
+    assert registry.get("user.double")[0].shape == (dims.N_frames,)
+    assert registry.get("user.double")[1].expr == "2 * e"
+    assert (tmp_path / "metrics" / "user.double.toml").read_text() == before
+
+
+def test_an_edit_that_keeps_the_shape_is_fine_for_a_transform(um, registry):
+    from ffast.metrics.transforms import compile_transform
+    um.save(metric())
+    compile_transform("user.double", "abs", registry=registry)
+    um.save(metric(expr="3 * e"), previous_id="user.double")
+
+
 def test_a_cycle_is_refused(um, registry):
     um.save(metric())
     um.save({"id": "user.quad", "expr": "x * 2", "vars": {"x": "user.double"}})

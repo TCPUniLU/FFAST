@@ -156,9 +156,9 @@ def test_cached_dependency_is_not_shipped_to_worker(registry):
         shipped: list[str] = []
         original = executor._ship_to_worker
 
-        def recording(id, schema, resolved, compute_params, parameters):
+        def recording(id, schema, fn, resolved, compute_params, parameters):
             shipped.append(id)
-            return original(id, schema, resolved, compute_params, parameters)
+            return original(id, schema, fn, resolved, compute_params, parameters)
 
         executor._ship_to_worker = recording
 
@@ -396,31 +396,29 @@ def test_compiled_transform_metric_runs_in_worker():
     assert np.isclose(result.values, 2.0)  # mean(|-1|,|2|,|-3|) = 2.0
 
 
-# ── Refreshing the metric table (ADR 0057 rule 5) ────────────────────────────
+# ── A metric change reaches the worker with no refresh (ADR 0057 rule 5, ADR 0061) ──
 
 def _pool_triple(x):
     return x * 3
 
 
-def test_refresh_registry_gives_the_worker_a_replaced_metric(registry, executor):
+def test_a_replaced_metric_runs_in_its_new_form_on_a_running_worker(registry, executor):
     assert np.isclose(executor.run("test.double", FlatInputSource({"x": 3.0}), {}).values, 6.0)
     registry.unregister("test.double")
     registry.metric(id="test.double", inputs={"x": "ref.x"}, shape="scalar",
                     unit="energy")(_pool_triple)
-    executor.refresh_registry()
     assert np.isclose(executor.run("test.double", FlatInputSource({"x": 3.0}), {}).values, 9.0)
 
 
-def test_refresh_registry_makes_a_new_metric_known_to_the_worker(registry, executor):
+def test_a_new_metric_runs_on_a_running_worker(registry, executor):
     executor.run("test.double", FlatInputSource({"x": 1.0}), {})  # worker is up
     registry.metric(id="test.triple", inputs={"x": "ref.x"}, shape="scalar",
                     unit="energy")(_pool_triple)
-    executor.refresh_registry()
     result = executor.run("test.triple", FlatInputSource({"x": 2.0}), {})
     assert isinstance(result, MetricResult) and np.isclose(result.values, 6.0)
 
 
-def test_refresh_registry_does_not_fail_a_running_metric(registry, executor):
+def test_replacing_a_metric_does_not_fail_a_running_task(registry, executor):
     """ADR 0057 rule 5: a metric change must not kill work already running."""
     import threading
     out = {}
@@ -430,12 +428,23 @@ def test_refresh_registry_does_not_fail_a_running_metric(registry, executor):
     time.sleep(0.7)  # the nap is running on the worker
     registry.metric(id="test.triple", inputs={"x": "ref.x"}, shape="scalar",
                     unit="energy")(_pool_triple)
-    executor.refresh_registry()
     t.join(timeout=20)
     assert isinstance(out["r"], MetricResult) and np.isclose(out["r"].values, 4.0)
     # and the next run sees the new metric
     after = executor.run("test.triple", FlatInputSource({"x": 2.0}), {})
     assert isinstance(after, MetricResult) and np.isclose(after.values, 6.0)
+
+
+def test_a_function_that_cannot_be_sent_fails_that_metric_only(registry, executor):
+    """ADR 0061: each task carries its function, so one that cannot be pickled
+    is that metric's failure, not an exception, and the worker keeps serving."""
+    registry.metric(id="test.unsendable", inputs={"x": "ref.x"}, shape="scalar",
+                    unit="energy")(lambda x: x)
+    bad = executor.run("test.unsendable", FlatInputSource({"x": 1.0}), {})
+    assert isinstance(bad, MetricFailure)
+    assert "cannot be sent to the worker" in bad.traceback
+    good = executor.run("test.double", FlatInputSource({"x": 3.0}), {})
+    assert isinstance(good, MetricResult) and np.isclose(good.values, 6.0)
 
 
 def test_concurrent_runs_each_get_their_own_answer(registry):

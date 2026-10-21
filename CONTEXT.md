@@ -462,6 +462,12 @@ before is opaque identity. Each fingerprint slot is validated, so a malformed ke
 fails immediately instead of decoding into the wrong entry, which is what used to
 happen. Compute parameters fold into the identity token, never a separate field.
 
+Only the server builds the key of a metric result (`DataService.make_metric_cache_key`),
+and for a formula metric the identity carries a hash of the formula (`__f<token>`),
+so an edit gives a new key. It no longer crosses the RPC boundary: `REQUEST_METRIC`
+carries an opaque `request_id` and the reply (`METRIC_RESULT`) echoes it, so a
+client cannot name or overwrite a stored result (ADR 0061).
+
 ### Cluster terms
 
 **ClusterBackend** is the scheduler interface; `SlurmBackend` is the only

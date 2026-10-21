@@ -201,7 +201,7 @@
  */
 
 /**
- * METRIC_RESULT: `args = [key, metric_id]`, kwargs = this
+ * METRIC_RESULT: `args = [request_id, metric_id]`, kwargs = this
  * (ffast/protocol/messages.py `MetricResultMessage`). `ok:false` means the
  * server can't compute it (a client-only model); `values` is absent then.
  * @typedef {Object} MetricResultKwargs

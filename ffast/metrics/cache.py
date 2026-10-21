@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -70,9 +72,22 @@ class CacheKey:
     input_fingerprints: frozenset
 
 
+DEFAULT_MAX_BYTES = 1 << 30   # 1 GiB; change here, there is no setting (ADR 0061)
+
+
 class MetricCache:
-    def __init__(self) -> None:
-        self._store: dict[CacheKey, MetricResult] = {}
+    """Computed metric results, bounded by the memory their arrays hold.
+
+    Least recently used entries are dropped first when a new one would take the
+    total past ``max_bytes``. Several threads share one cache, so every access
+    holds a lock.
+    """
+
+    def __init__(self, max_bytes: int = DEFAULT_MAX_BYTES) -> None:
+        self._max_bytes = max_bytes
+        self._store: OrderedDict[CacheKey, tuple[MetricResult, int]] = OrderedDict()
+        self._total = 0
+        self._lock = threading.Lock()
 
     def make_key(
         self,
@@ -93,10 +108,28 @@ class MetricCache:
         )
 
     def get(self, key: CacheKey) -> MetricResult | None:
-        return self._store.get(key)
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                return None
+            self._store.move_to_end(key)
+            return entry[0]
 
     def put(self, key: CacheKey, result: MetricResult) -> None:
-        self._store[key] = result
+        size = int(np.asarray(result.values).nbytes)
+        with self._lock:
+            old = self._store.pop(key, None)
+            if old is not None:
+                self._total -= old[1]
+            if size > self._max_bytes:
+                return
+            self._store[key] = (result, size)
+            self._total += size
+            while self._total > self._max_bytes:
+                _, (_, dropped) = self._store.popitem(last=False)
+                self._total -= dropped
 
     def clear(self) -> None:
-        self._store.clear()
+        with self._lock:
+            self._store.clear()
+            self._total = 0

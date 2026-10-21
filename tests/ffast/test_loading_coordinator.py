@@ -595,6 +595,10 @@ class _StubPredictionLoader:
     def getAtomField(self, key, indices=None):
         return self._fields.get(("atoms", key))
 
+    def availableFieldKeys(self):
+        return (sorted(k for kind, k in self._fields if kind == "info"),
+                sorted(k for kind, k in self._fields if kind == "atoms"))
+
 
 def test_loadPredictionsFromKeys_now_extracts_adr0023_prediction_fields(monkeypatch):
     """In-file prediction columns used to skip ADR 0023 field extraction entirely.
@@ -635,6 +639,29 @@ def test_loadPredictionsFromKeys_now_extracts_adr0023_prediction_fields(monkeypa
     assert set(store["info"]) == {"dipole"}
     assert set(store["atoms"]) == {"charge"}
     assert env.objects.registered[ghost_fp]["name"] == "my-model"
+
+
+def test_prediction_fields_no_metric_declares_are_extracted_too(monkeypatch):
+    """ADR 0061 decision 5: a metric saved later over a new prediction field must
+    find it, so every numeric scalar the file holds is kept at load."""
+    monkeypatch.setattr(
+        "ffast.metrics.fields.declared_field_keys",
+        lambda side, registry=None: {"info": set(), "atoms": set()},
+    )
+    loader = _StubPredictionLoader(
+        E=np.array([1.0, 2.0]), F=np.ones((2, 3, 3)),
+        fields={("info", "dipole"): np.array([0.1, 0.2]),
+                ("atoms", "charge"): np.zeros((2, 3))},
+    )
+    monkeypatch.setattr(LoadingCoordinator, "_aseLoaderFor", staticmethod(lambda *a, **k: loader))
+    env = _ingest_env()
+    coord = LoadingCoordinator(env)
+    coord._loadPredictionsFromKeys(
+        _FakeDataset(np.zeros((2,)), fingerprint="ds-fp"), "/data.xyz",
+        [("E_pred", "F_pred", "my-model")], atomsList=_LazyAtomsList(["CH4", "CH4"]),
+    )
+    [(_, store)] = env.data.predictionFields.items()
+    assert set(store["info"]) == {"dipole"} and set(store["atoms"]) == {"charge"}
 
 
 def test_loadPredictionsFromKeys_skips_a_mismatched_column_and_keeps_going():

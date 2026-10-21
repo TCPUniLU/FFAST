@@ -122,12 +122,14 @@ class _FakeData:
         # Format-valid CacheKey string (identity__model__dataset).
         return f"{metric_id}__nil__nil"
 
-    def generateMetric(self, metric_id, params, model, dataset, key):
+    def generateMetric(self, metric_id, params, model, dataset, key=None):
+        assert key is None, "the server builds the key itself (ADR 0061)"
+        key = f"{metric_id}__f1234abcd__nil__nil"   # as a user metric's key is: has the formula hash
         self.generate_metric_calls.append((metric_id, key))
         self._cache._entries[key] = _make_metric_result(
             metric_id=metric_id, values=np.array([3.0])
         )
-        return True
+        return key
 
     def generateData(self, dt_key, model, dataset):
         self.generate_data_calls.append(dt_key)
@@ -439,20 +441,21 @@ def test_request_state_sync_triggers_replay():
 def test_request_metric_cache_hit_returns_result_without_computing():
     """A cached MetricResult is served straight back as an ok=True
     METRIC_RESULT — the compute path (env.data) is never touched."""
-    key = "ffast.force_mae__nil__ds1"
+    key = "ffast.force_mae__nil__nil"          # what the server's own key builder gives
     result = _make_metric_result(values=np.array([1.5, 2.5]))
-    env = _FakeEnv(datasets={"ds1": object()}, cache={key: result})  # data=None
+    env = _FakeEnv(datasets={"ds1": object()}, cache={key: result})
+    env.data = _FakeData(env.cache)
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
         await s.dispatch(
-            "REQUEST_METRIC", ["ffast.force_mae", key], {"dataset_fp": "ds1"}
+            "REQUEST_METRIC", ["ffast.force_mae", "m1"], {"dataset_fp": "ds1"}
         )
         return s.outbound.get_nowait()
 
     event, args, kwargs = unpack(_run(scenario()))
     assert event == control.METRIC_RESULT
-    assert args == [key, "ffast.force_mae"]        # (key, metric_id) positional
+    assert args == ["m1", "ffast.force_mae"]       # (request_id, metric_id) positional
     recovered = unpack_metric_result(kwargs)
     assert recovered is not None
     assert recovered.metric_id == "ffast.force_mae"
@@ -462,43 +465,43 @@ def test_request_metric_cache_hit_returns_result_without_computing():
 def test_request_metric_missing_model_signals_client_fallback():
     """A model-dependent metric whose model isn't on the server replies ok=False
     (server_can_compute=False), so the client falls back to in-process compute."""
-    key = "ffast.energy_mae__realmodel__ds1"
     env = _FakeEnv(datasets={"ds1": object()}, cache={})   # empty cache, no models
+    env.data = _FakeData(env.cache)
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
         await s.dispatch(
-            "REQUEST_METRIC", ["ffast.energy_mae", key],
+            "REQUEST_METRIC", ["ffast.energy_mae", "m2"],
             {"model_fp": "realmodel", "dataset_fp": "ds1"},
         )
         return s.outbound.get_nowait()
 
     event, args, kwargs = unpack(_run(scenario()))
     assert event == control.METRIC_RESULT
-    assert args == [key, "ffast.energy_mae"]
+    assert args == ["m2", "ffast.energy_mae"]
     assert kwargs["ok"] is False
     assert unpack_metric_result(kwargs) is None
 
 
-def test_request_metric_computes_on_cache_miss_and_derives_key():
-    """No key + cache miss: the handler derives the key via
-    make_metric_cache_key, computes through env.data.generateMetric, and returns
-    the freshly cached result."""
+def test_request_metric_computes_on_cache_miss_and_replies_with_request_id():
+    """Cache miss: the handler looks the key up through make_metric_cache_key,
+    computes through env.data.generateMetric (which builds and returns the key it
+    stored under), and replies with the request id, not the key (ADR 0061)."""
     env = _FakeEnv(datasets={"ds1": object()}, cache={})
     env.data = _FakeData(env.cache)
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
-        # No positional key → the ?key slot resolves to None.
-        await s.dispatch("REQUEST_METRIC", ["ffast.force_rmse"], {"dataset_fp": "ds1"})
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_rmse", "m3"], {"dataset_fp": "ds1"})
         return s.outbound.get_nowait()
 
     event, args, kwargs = unpack(_run(scenario()))
-    expected_key = "ffast.force_rmse__nil__nil"    # from make_metric_cache_key
+    stored_key = "ffast.force_rmse__f1234abcd__nil__nil"   # carries the formula hash
     assert event == control.METRIC_RESULT
-    assert args == [expected_key, "ffast.force_rmse"]
+    assert args == ["m3", "ffast.force_rmse"]
     assert env.data.make_key_calls, "make_metric_cache_key should be used"
-    assert env.data.generate_metric_calls == [("ffast.force_rmse", expected_key)]
+    assert env.data.generate_metric_calls == [("ffast.force_rmse", stored_key)]
+    assert list(env.cache._entries) == [stored_key]   # nothing stored under the request id
     recovered = unpack_metric_result(kwargs)
     assert recovered is not None
     assert recovered.metric_id == "ffast.force_rmse"
@@ -1154,3 +1157,30 @@ def test_a_new_view_can_start_from_another_views_look():
         assert s.views["sub"].state.parameters == {"ffast.bonds": {"style": "lines"}}
 
     _run(scenario())
+
+
+def test_request_metric_with_a_key_is_rejected():
+    """ADR 0061: the wire has no `key`; a client that still sends one is dropped."""
+    env = _FakeEnv(datasets={"ds1": object()}, cache={})
+    env.data = _FakeData(env.cache)
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_rmse", "m4"],
+                         {"dataset_fp": "ds1", "key": "ffast.force_rmse__nil__nil"})
+        return s.outbound.empty()
+
+    assert _run(scenario())
+    assert env.data.generate_metric_calls == []
+
+
+def test_request_metric_without_a_request_id_is_dropped():
+    env = _FakeEnv(datasets={"ds1": object()}, cache={})
+    env.data = _FakeData(env.cache)
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_rmse"], {"dataset_fp": "ds1"})
+        return s.outbound.empty()
+
+    assert _run(scenario())

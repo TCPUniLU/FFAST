@@ -2031,6 +2031,7 @@ export class FFastApp {
    * the list come again; the plots re-fetch when the catalog lands; every
    * view coloured by a metric asks for its colours again. */
   _onMetricsUpdated() {
+    this._metricClient?.forgetInFlight();
     this._conn?.send(OUT.REQUEST_METRIC_CATALOG, {});
     if (this._analysis?.hasUnresolvedPanels()) this._conn?.send(OUT.REQUEST_TAB_LAYOUT, {});
     this._metricOps.requestList();

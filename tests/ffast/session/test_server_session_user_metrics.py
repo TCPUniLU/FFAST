@@ -22,13 +22,6 @@ METRIC = {"id": "t57.double", "expr": "2 * f", "vars": {"f": "ffast.force_compon
 class _Data:
     def __init__(self):
         self.invalidated = []
-        self.refreshed = 0
-        outer = self
-
-        class _Exec:
-            def refresh_registry(self):
-                outer.refreshed += 1
-        self.metricExecutor = _Exec()
 
     def invalidate_metrics(self, ids):
         self.invalidated.append(set(ids))
@@ -75,19 +68,45 @@ def test_saving_answers_the_window_then_tells_every_window(env):
     assert (entry["id"], entry["status"], entry["shape"]) == ("t57.double", "ok", "scalar")
 
 
-def test_a_change_drops_cached_results_and_refreshes_the_workers(env):
+def test_a_change_drops_cached_results(env):
     _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
     _dispatch(env, control.SAVE_USER_METRIC, {
         "metric": {**METRIC, "expr": "3 * f"}, "previous_id": "t57.double", "overwrite": True})
     assert env.data.invalidated == [{"t57.double"}, {"t57.double"}]
-    assert env.data.refreshed == 2
+
+
+def test_the_change_and_the_invalidation_run_in_one_thread_call(env, monkeypatch):
+    """ADR 0061 decision 4: no other task can run between the change and the drop."""
+    import threading
+    calls, idents = [], {}
+    real_to_thread = asyncio.to_thread
+
+    async def counting(fn, *a, **kw):
+        calls.append(fn)
+        return await real_to_thread(fn, *a, **kw)
+
+    monkeypatch.setattr(asyncio, "to_thread", counting)
+    real_save, real_invalidate = env.user_metrics.save, env.data.invalidate_metrics
+
+    def save(*a, **kw):
+        idents["change"] = threading.get_ident()
+        return real_save(*a, **kw)
+
+    def invalidate(ids):
+        idents["invalidate"] = threading.get_ident()
+        return real_invalidate(ids)
+
+    env.user_metrics.save, env.data.invalidate_metrics = save, invalidate
+    _dispatch(env, control.SAVE_USER_METRIC, {"metric": METRIC})
+    assert len(calls) == 1
+    assert idents["change"] == idents["invalidate"]
 
 
 def test_a_refused_change_says_why_and_tells_nobody(env):
     own, everyone = _dispatch(env, control.SAVE_USER_METRIC,
                               {"metric": {**METRIC, "id": "ffast.force_component_mae"}})
     assert own[0][2]["ok"] is False and "already taken" in own[0][2]["error"]
-    assert everyone == [] and env.data.refreshed == 0
+    assert everyone == []
 
 
 def test_a_stale_save_is_flagged_as_a_conflict(env):
@@ -219,7 +238,7 @@ def test_try_replies_with_statistics_and_progress_to_this_window_only(env):
     assert (tried["ok"], tried["try_id"], tried["min"], tried["max"], tried["bad_count"]) == (
         True, "t1", 10.0, 40.0, 0)
     assert not default_registry.has("t57.try")           # nothing is registered
-    assert env.data.invalidated == [] and env.data.refreshed == 0
+    assert env.data.invalidated == []
 
 
 def test_try_without_a_dataset_says_so(env):
@@ -461,3 +480,54 @@ def test_cancel_answers_at_once_while_an_input_is_still_computing(env):
     tried = _run_session(env, steps)[-1][2]
     assert answered_while_blocked == [True]
     assert tried["ok"] is True and tried["cancelled"] is True
+
+
+# ── REQUEST_METRIC for a formula metric (ADR 0061) ──────────────────────────
+class _Lookup:
+    def get(self, fp):
+        return None
+
+
+class _ResultExecutor:
+    """Stands in for the worker pool: every run gives one result."""
+
+    def run(self, id, source, parameters):
+        import numpy as np
+        from ffast.metrics.models import MetricResult
+        return MetricResult(
+            metric_id=id, shape="scalar", dtype="float64", unit="energy",
+            compute_parameters={}, implementation_hash="h", checksum="c",
+            values=np.array(1.0))
+
+
+class _Events:
+    def eventPush(self, *args, **kwargs):
+        pass
+
+
+def test_a_formula_metrics_result_is_stored_under_the_servers_key_not_the_request_id(env):
+    from ffast.cache.store import DataCache
+    from ffast.core.data_service import DataService
+    env.data = DataService(cache=DataCache(), models={}, datasets={}, tm=None, events=_Events(),
+                           executor=_ResultExecutor())
+    env.cache = env.data.cache
+    env.models, env.datasets = _Lookup(), _Lookup()
+    formula = {"id": "t57.energy2", "expr": "2 * e", "vars": {"e": "reference.energies"}}
+    _dispatch(env, control.SAVE_USER_METRIC, {"metric": formula})
+
+    def request(request_id):
+        own, _ = _dispatch(env, control.REQUEST_METRIC,
+                           {"metric_id": "t57.energy2", "request_id": request_id})
+        [(event, args, kwargs)] = own
+        assert event == control.METRIC_RESULT and args == [request_id, "t57.energy2"]
+        assert kwargs["ok"] is True
+        return [str(k) for k in env.cache.keys()]
+
+    first = request("m1")
+    assert len(first) == 1 and "__f" in first[0] and "m1" not in first[0]
+
+    # editing the formula gives a new key; the old result is dropped, not reused
+    _dispatch(env, control.SAVE_USER_METRIC, {
+        "metric": {**formula, "expr": "3 * e"}, "previous_id": "t57.energy2", "overwrite": True})
+    second = request("m2")
+    assert len(second) == 1 and "__f" in second[0] and second != first

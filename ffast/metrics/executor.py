@@ -20,11 +20,6 @@ class MetricExecutor(ABC):
     def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
         ...
 
-    def refresh_registry(self) -> None:
-        """Pick up metrics registered, replaced or removed since the last call
-        (ADR 0057 rule 5). An executor that reads the live registry has nothing
-        to do; the worker pool, which copied the table, overrides this."""
-
 
 class InProcessExecutor(MetricExecutor):
     """Runs metrics directly in the calling process.

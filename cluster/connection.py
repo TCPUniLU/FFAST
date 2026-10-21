@@ -471,7 +471,7 @@ class ServerConnection:
         )
 
     async def request_metric(
-        self, metric_id, params, model_fp, dataset_fp, key, timeout: float = 120.0
+        self, metric_id, params, model_fp, dataset_fp, timeout: float = 120.0
     ):
         """Ask the server to compute a metric and return its MetricResult (4a).
 
@@ -480,11 +480,16 @@ class ServerConnection:
         with ``METRIC_RESULT``.  Returns the reconstructed ``MetricResult`` or
         ``None`` when the server couldn't compute it (e.g. a real client-only
         model), in which case the caller falls back to in-process computation.
+
+        The reply is matched by a fresh ``request_id``; the server builds the
+        cache key itself and it never crosses the wire (ADR 0061).
         """
+        import uuid
+        request_id = uuid.uuid4().hex
         return await self._pending.request(
-            control.METRIC_RESULT, key,
+            control.METRIC_RESULT, request_id,
             lambda: self.push_event(
-                control.REQUEST_METRIC, metric_id, key,
+                control.REQUEST_METRIC, metric_id, request_id,
                 params=params or {}, model_fp=model_fp, dataset_fp=dataset_fp,
             ),
             timeout=timeout,

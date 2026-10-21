@@ -400,7 +400,9 @@ class RequestMetricRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metric_id: str
-    key: Optional[str] = None
+    # Opaque label the reply echoes. The server never parses it and never stores
+    # anything under it; it builds the cache key itself (ADR 0061).
+    request_id: str
     params: Optional[dict[str, Any]] = None
     model_fp: Optional[str] = None
     dataset_fp: Optional[str] = None
