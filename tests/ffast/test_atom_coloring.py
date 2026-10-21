@@ -123,8 +123,8 @@ class TestMetricCatalog:
                 self.sent.append(data)
 
         out = _Out()
-        # _replay_metric_catalog is env-independent (reads the global registry).
-        ServerSession(None, out)._replay_metric_catalog()
+        # The catalog is env-independent (reads the global registry).
+        ServerSession(None, out).replay()
         assert out.sent, "no METRIC_CATALOG enqueued"
         event, _, kwargs = unpack(out.sent[-1])
         assert event == "METRIC_CATALOG"

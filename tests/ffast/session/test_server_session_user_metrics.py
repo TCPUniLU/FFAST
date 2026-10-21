@@ -14,7 +14,7 @@ from ffast.config.user_metrics import UserMetricStore, UserMetrics
 from ffast.metrics.registry import default_registry
 from ffast.protocol import control
 from ffast.protocol.rpc import unpack
-from ffast.session.server_session import ServerSession, view_colouring_users
+from ffast.session.server_session import ServerSession
 
 METRIC = {"id": "t57.double", "expr": "2 * f", "vars": {"f": "ffast.force_component_mae"}}
 
@@ -170,9 +170,8 @@ def test_a_views_colouring_counts_as_a_user_of_the_metric():
     env = _Env()
     s = ServerSession(env, asyncio.Queue())
     s.views["v"] = _View()
-    env.view_sessions = [s]
-    assert view_colouring_users(env, "t57.double") == ["the main view's colouring"]
-    assert view_colouring_users(env, "other.metric") == []
+    assert s.feed.view_colouring_users("t57.double") == ["the main view's colouring"]
+    assert s.feed.view_colouring_users("other.metric") == []
 
 
 # ── check as you type, and Try (rules 11, 12) ───────────────────────────────
