@@ -180,6 +180,10 @@ function seriesWith(series, role) {
 
 // ── plot-kind builders (pure) ───────────────────────────────────────────────
 
+/** The y axis runs to this multiple of the highest value, so the tallest peak's
+ * label (turned on its side, about 100 px) fits inside the plot. */
+export const PEAK_HEADROOM = 2;
+
 /**
  * One Plotly annotation per peak: a short tick and a label turned on its side,
  * "73 · 0.442 eV/Å". Clicking one opens that frame; one already opened is dimmed
@@ -237,7 +241,7 @@ export function buildTimeline(spec, series, ctx) {
         (frame) => !!seen && seen.has(visitedKey(s.datasetFp, s.modelFp, frame)));
       let lo = 0, hi = -Infinity;
       for (const v of traces[0].y) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-      if (hi > 0) layout.yaxis.range = [lo, hi * 1.45];   // headroom for the labels
+      if (hi > 0) layout.yaxis.range = [lo, hi * PEAK_HEADROOM];   // room for the labels
     }
   }
   return { traces, layout, peaks, peakUnit: u.y, peaksEligible: traces.length === 1, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };

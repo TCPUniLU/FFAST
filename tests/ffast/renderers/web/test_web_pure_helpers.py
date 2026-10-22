@@ -773,7 +773,7 @@ def test_a_one_series_timeline_is_labelled_and_given_headroom(results):
     # the two spikes lead; the flat rest fills the other labels (a level
     # stretch is a peak under the ADR's rule)
     assert count == 5 and 22 in frames and 73 in frames
-    assert y_range == [0, 5 * 1.45]
+    assert y_range == [0, 5 * 2]
 
 
 def test_a_timeline_with_peaks_switched_off_has_no_labels_but_stays_switchable(results):
