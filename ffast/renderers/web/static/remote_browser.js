@@ -14,6 +14,7 @@
 
 import { OUT } from './events.js';
 import { icon as drawIcon } from './icons.js';
+import { trapFocus } from './dialogs.js';
 
 /** Join a server-side directory and an entry name. Posix separators: the paths
  *  come from the server, so they are formatted in its convention, not the
@@ -100,6 +101,16 @@ export class RemoteBrowser {
     $('fb-modal').addEventListener('click', (e) => {
       if (e.target.id === 'fb-modal') this.close();
     });
+    $('fb-modal').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') this.close();
+    });
+    // The path can be typed: Enter goes there.
+    $('fb-path').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const path = $('fb-path').value.trim();
+      if (path) this._navigate(path);
+    });
   }
 
   /** @param {'dataset'|'prediction'} mode */
@@ -111,6 +122,8 @@ export class RemoteBrowser {
     $('fb-prediction-fields').style.display = isPred ? 'inline-flex' : 'none';
     if (isPred) this._populatePredictionTargets();
     $('fb-modal').classList.remove('hidden');
+    this._untrap ||= trapFocus($('fb-modal'));
+    this._focusFirstRow = true;   // once the listing arrives (_render)
     this._selected = null;
     $('fb-load').disabled = true;
     // null path → server starts at its home directory
@@ -118,6 +131,8 @@ export class RemoteBrowser {
   }
 
   close() {
+    this._untrap?.();
+    this._untrap = null;
     $('fb-modal').classList.add('hidden');
   }
 
@@ -214,6 +229,10 @@ export class RemoteBrowser {
         size.textContent = formatSize(e.size);
         row.append(size);
       }
+      row.tabIndex = 0;
+      row.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); row.click(); }
+      });
       if (e.is_dir) {
         row.addEventListener('click', () => this._navigate(joinPath(this._path, e.name)));
       } else {
@@ -224,6 +243,11 @@ export class RemoteBrowser {
         });
       }
       list.appendChild(row);
+    }
+    // A fresh dialog opens with the first row focused, so the keyboard can pick.
+    if (this._focusFirstRow) {
+      this._focusFirstRow = false;
+      list.querySelector('.fb-row')?.focus();
     }
   }
 

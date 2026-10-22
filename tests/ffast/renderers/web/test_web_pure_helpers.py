@@ -86,6 +86,19 @@ CASES = {
     # ── cm.gradientCss — the colourbar derives from the atoms' LUT (ADR 0052) ──
     "grad_viridis": "cm.gradientCss('viridis')",
     "grad_unknown": "cm.gradientCss('not_a_colormap')",
+    "trap_focus": (
+        "(() => { const m = document.createElement('div');"
+        " m.innerHTML = '<button id=a>a</button><button id=b>b</button><button id=c disabled>c</button>';"
+        " document.body.appendChild(m);"
+        " const key = (el, shift) => el.dispatchEvent(new KeyboardEvent('keydown',"
+        "   {key: 'Tab', shiftKey: shift, bubbles: true, cancelable: true}));"
+        " const off = di.trapFocus(m);"
+        " const a = m.querySelector('#a'), b = m.querySelector('#b');"
+        " b.focus(); key(b, false); const forward = document.activeElement.id;"
+        " a.focus(); key(a, true); const backward = document.activeElement.id;"
+        " a.focus(); const inside = key(a, false);"
+        " off(); b.focus(); key(b, false); const released = document.activeElement.id;"
+        " m.remove(); return [forward, backward, inside, released]; })()"),
     "ap_densities": "ap.DENSITIES",
     "ap_density_names": "['large', 'compact', 'nope', undefined, '__proto__'].map(ap.densityName)",
     "grad_cividis_first": "cm.gradientCss('cividis').split(', ')[0]",
@@ -669,6 +682,7 @@ def results():
         f"  const fg = await import('{origin}/figure.js');\n"
         f"  const qs = await import('{origin}/quick_styles.js');\n"
         f"  const ap = await import('{origin}/appearance.js');\n"
+        f"  const di = await import('{origin}/dialogs.js');\n"
         f"  const pk = await import('{origin}/peaks.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
@@ -762,6 +776,14 @@ def test_a_nan_value_is_never_a_peak(results):
 
 def test_a_rising_line_has_one_peak_at_its_end(results):
     assert results["peaks_fewer_than_n"] == [9]
+
+
+def test_trap_focus_wraps_tab_inside_the_modal_and_lets_go_when_removed(results):
+    forward, backward, inside, released = results["trap_focus"]
+    assert forward == "a"      # Tab from the last enabled button goes to the first
+    assert backward == "b"     # Shift+Tab from the first goes to the last enabled one
+    assert inside is True      # Tab between the two is left to the browser
+    assert released == "b"     # the trap is gone: nothing moves focus now
 
 
 def test_density_scales_are_one_one_fifteen_and_one_four(results):

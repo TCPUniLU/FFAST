@@ -3,14 +3,41 @@
  * the browser's own confirm() blocks the page and cannot be styled.
  */
 
+const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), '
+  + 'textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * Keep Tab and Shift+Tab inside `modal` (ADR 0063). Returns a function that
+ * removes the trap; a modal that is taken out of the page needs no call.
+ * @param {HTMLElement} modal
+ * @returns {() => void}
+ */
+export function trapFocus(modal) {
+  const onKey = (e) => {
+    if (e.key !== 'Tab') return;
+    const items = [...modal.querySelectorAll(FOCUSABLE)].filter((el) => el.getClientRects().length);
+    if (!items.length) { e.preventDefault(); return; }
+    const first = items[0], last = items[items.length - 1];
+    const at = document.activeElement;
+    if (!modal.contains(at) || (e.shiftKey && at === first) || (!e.shiftKey && at === last)) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    }
+  };
+  modal.addEventListener('keydown', onKey);
+  return () => modal.removeEventListener('keydown', onKey);
+}
+
 /**
  * Ask a question; resolves with the label of the chosen button, or null when
  * the dialog is dismissed (Escape).
- * @param {{title: string, message: string, buttons: string[]}} o the last
- *   button is the default, focused one
+ * @param {{title: string, message: string, buttons: string[], danger?: string}} o
+ *   the last button is the default, focused one, unless `danger` names a
+ *   button (one that deletes something): that one is outlined in red and focus
+ *   goes to the first button that is not it.
  * @returns {Promise<string|null>}
  */
-export function askDialog({ title, message, buttons }) {
+export function askDialog({ title, message, buttons, danger = '' }) {
   return new Promise((resolve) => {
     const modal = document.createElement('div');
     modal.className = 'warning-modal ask-dialog';
@@ -30,14 +57,16 @@ export function askDialog({ title, message, buttons }) {
     for (const label of buttons) {
       const btn = document.createElement('button');
       btn.textContent = label;
+      if (label === danger) btn.classList.add('danger');
       btn.addEventListener('click', () => done(label));
       foot.appendChild(btn);
     }
     modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') done(null); });
+    trapFocus(modal);
     panel.append(head, text, foot);
     modal.appendChild(panel);
     document.body.appendChild(modal);
-    foot.lastElementChild?.focus();
+    (danger ? [...foot.children].find((b) => !b.classList.contains('danger')) : foot.lastElementChild)?.focus();
   });
 }
 
@@ -143,6 +172,7 @@ export function textDialog({ title, text, filename, note = '' }) {
   done.addEventListener('click', close);
   foot.append(copy, save, spacer, done);
   modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  trapFocus(modal);
   panel.append(head, body, foot);
   modal.appendChild(panel);
   document.body.appendChild(modal);

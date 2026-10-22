@@ -896,6 +896,10 @@
     .warning-modal-footer button {
       min-width: 72px;
     }
+    /* the button that deletes something (askDialog `danger`, ADR 0063) */
+    .warning-modal-footer button.danger {
+      background: transparent; color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger);
+    }
     #fb-modal.hidden { display: none; }
     #fb-panel {
       width: 640px; max-width: 92vw; height: 70vh; max-height: 600px;
@@ -1085,7 +1089,7 @@
          (analysis.js), the built-in "3D" tab included (ADR 0056) -->
     <div id="content" class="no-view">
       <div id="tabbar-row">
-        <div id="tabbar"></div>
+        <div id="tabbar" role="tablist"></div>
         <!-- Actions on the tab on screen (ADR 0056): export, reset, hide,
              and the hidden tabs to show again. -->
         <div id="tab-actions">
@@ -1162,13 +1166,13 @@
   </div>
 
   <!-- ── remote filesystem browser ─────────────────────────────────────── -->
-  <div id="fb-modal" class="hidden">
+  <div id="fb-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="fb-title">
     <div id="fb-panel">
       <div id="fb-header">
         <span class="title" id="fb-title">Load Remote Dataset</span>
         <button id="fb-up" title="Parent directory"></button>
         <button id="fb-home" title="Home"></button>
-        <input id="fb-path" type="text" readonly value="">
+        <input id="fb-path" type="text" aria-label="Path" spellcheck="false" value="">
       </div>
       <div id="fb-error" style="display:none"></div>
       <div id="fb-list"></div>

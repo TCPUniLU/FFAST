@@ -828,6 +828,135 @@ async def test_web_journal_page_whitens_the_figure_area_and_density_scales_the_t
             await browser.close()
 
 
+async def test_web_tabs_rail_rows_and_section_headers_work_from_the_keyboard(ffast_web_server):
+    """ADR 0063: Tab reaches the tab strip, the arrow keys move along it, Enter
+    presses a rail row, and a section header unfolds on Enter."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    other_fp = await _load_another_dataset(ws_port, dataset_fp)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(page.locator("#tabbar")).to_have_attribute("role", "tablist")
+            tabs = page.locator("#tabbar .tab")
+            assert await tabs.evaluate_all("els => els.filter((e) => e.tabIndex === 0).length") == 1
+
+            await page.locator("#file-menu-btn").focus()
+            for _ in range(40):
+                await page.keyboard.press("Tab")
+                if await page.evaluate("() => document.activeElement.classList.contains('tab')"):
+                    break
+            else:
+                raise AssertionError("Tab never reached a tab")
+            current = await page.evaluate("() => document.activeElement.textContent")
+            await page.keyboard.press("ArrowRight")
+            selected = page.locator("#tabbar .tab[aria-selected=true]")
+            await expect(selected).to_have_count(1)
+            assert await selected.inner_text() != current
+            await expect(selected).to_be_focused()
+            await page.keyboard.press("Home")
+            await expect(page.locator("#tabbar .tab").first).to_have_attribute("aria-selected", "true")
+            await page.keyboard.press("End")
+            await expect(page.locator("#tabbar .tab").last).to_have_attribute("aria-selected", "true")
+
+            await page.locator("#tabbar .tab", has_text="3D").click()
+            row = page.locator(f"#dataset-list .obj-row[data-fp='{other_fp}']")
+            await expect(row).to_have_attribute("role", "button")
+            await expect(row).to_have_attribute("aria-pressed", "false")
+            await row.focus()
+            await page.keyboard.press("Enter")
+            await expect(row).to_have_class(re.compile(r"\bselected\b"))
+            await expect(row).to_have_attribute("aria-pressed", "true")
+
+            header = page.locator(".pane[data-pane='Camera'] .pane-header")
+            await expect(header).to_have_attribute("aria-expanded", "false")
+            await header.focus()
+            await page.keyboard.press("Enter")
+            await expect(header).to_have_attribute("aria-expanded", "true")
+        finally:
+            await browser.close()
+
+
+async def test_web_a_delete_dialog_starts_on_cancel_and_keeps_focus_inside(ffast_web_server):
+    """ADR 0063: the dialog that deletes focuses the safe button, outlines Delete,
+    keeps Tab inside, and closes on Escape."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            dialog = await _delete_from_rail(page, "dataset", dataset_fp)
+            await expect(dialog).to_be_visible()
+            await expect(dialog.locator("button:focus")).to_have_text("Cancel")
+            await expect(dialog.get_by_role("button", name="Delete")).to_have_class(re.compile(r"\bdanger\b"))
+            for _ in range(5):
+                await page.keyboard.press("Tab")
+                assert await page.evaluate("() => !!document.activeElement.closest('.ask-dialog')")
+            await page.keyboard.press("Escape")
+            await expect(dialog).to_have_count(0)
+        finally:
+            await browser.close()
+
+
+async def test_web_the_file_browser_closes_on_escape_and_opens_with_a_row_focused(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator("#add-dataset-btn").click()
+            modal = page.locator("#fb-modal")
+            await expect(modal).not_to_have_class(re.compile(r"\bhidden\b"))
+            await expect(modal).to_have_attribute("role", "dialog")
+            await expect(modal).to_have_attribute("aria-modal", "true")
+            await expect(page.locator("#fb-list .fb-row").first).to_be_focused()
+            await expect(page.locator("#fb-path")).to_be_editable()
+            await page.keyboard.press("Escape")
+            await expect(modal).to_have_class(re.compile(r"\bhidden\b"))
+        finally:
+            await browser.close()
+
+
+async def test_web_four_shortcuts_step_frames_search_and_keep_out_of_inputs(ffast_web_server):
+    """ADR 0063: ←/→ step a frame, / focuses the settings search; neither fires
+    while typing in an input."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            label = page.locator("#frame-label")
+            await expect(label).to_have_text("0 / 99", timeout=15000)
+            await page.evaluate("() => document.activeElement.blur()")
+            await page.keyboard.press("ArrowRight")
+            await expect(label).to_have_text("1 / 99")
+            await page.keyboard.press("ArrowLeft")
+            await expect(label).to_have_text("0 / 99")
+
+            await page.keyboard.press("/")
+            await expect(page.locator("#sidebar-search")).to_be_focused()
+            await page.keyboard.type("a/")   # typing: the slash is text, and ArrowRight moves the caret
+            await expect(page.locator("#sidebar-search")).to_have_value("a/")
+            await page.keyboard.press("ArrowLeft")
+            await expect(label).to_have_text("0 / 99")
+
+            await page.locator("#sidebar-toggle").click()   # hide the sidebar...
+            await page.evaluate("() => document.activeElement.blur()")
+            await page.keyboard.press("/")                    # ...and / brings it back
+            await expect(page.locator("#content")).not_to_have_class(re.compile(r"\bsidebar-hidden\b"))
+            await expect(page.locator("#sidebar-search")).to_be_focused()
+        finally:
+            await browser.close()
+
+
 async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
     """ADR 0055 "Help": a hint bar with numbered next steps; dismissing it is
     remembered in browser storage."""

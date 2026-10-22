@@ -374,6 +374,9 @@ export class AnalysisManager {
     tabEl.className = 'tab';
     tabEl.textContent = spec.name;
     tabEl.dataset.tab = id;
+    tabEl.setAttribute('role', 'tab');
+    tabEl.setAttribute('aria-selected', 'false');
+    tabEl.tabIndex = -1;   // app.js makes the tab on screen the one tab stop
     // An edited copy of a built-in or project tab says so (ADR 0056 rule 10),
     // and says when the original has changed since.
     if (spec.source === 'user' && spec.replaces) {
@@ -386,6 +389,17 @@ export class AnalysisManager {
       tabEl.appendChild(mark);
     }
     tabEl.addEventListener('click', () => this._onSelectTab(id));
+    // Left and Right move to the next tab and open it; Home and End go to the ends.
+    tabEl.addEventListener('keydown', (e) => {
+      const tabs = [...this._tabbar.querySelectorAll('.tab')];
+      const here = tabs.indexOf(tabEl);
+      const to = { ArrowRight: here + 1, ArrowLeft: here - 1, Home: 0, End: tabs.length - 1 }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      const next = tabs[(to + tabs.length) % tabs.length];
+      this._onSelectTab(next.dataset.tab);
+      next.focus();
+    });
     this._tabbar.appendChild(tabEl);
 
     // .tabpanel > controls row + body; the body holds the main column (pick

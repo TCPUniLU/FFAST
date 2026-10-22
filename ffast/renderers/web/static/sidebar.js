@@ -24,6 +24,9 @@ export function createPane(title) {
 
   const header = document.createElement('div');
   header.className = 'pane-header';
+  header.setAttribute('role', 'button');
+  header.tabIndex = 0;
+  header.setAttribute('aria-expanded', 'true');
   header.innerHTML = `<span class="pane-title">${title}</span><span class="pane-chevron">${icon('chevron-down')}</span>`;
 
   const body = document.createElement('div');
@@ -45,8 +48,11 @@ export function oneSectionOpen(sidebarEl, { initial = null, onChange = () => {} 
   let current = null;
   const show = (title) => {
     current = title;
-    for (const pane of sidebarEl.querySelectorAll(':scope > .pane'))
-      pane.classList.toggle('collapsed', pane.dataset.pane !== title);
+    for (const pane of sidebarEl.querySelectorAll(':scope > .pane')) {
+      const collapsed = pane.dataset.pane !== title;
+      pane.classList.toggle('collapsed', collapsed);
+      pane.querySelector(':scope > .pane-header')?.setAttribute('aria-expanded', String(!collapsed));
+    }
   };
   const open = (title) => {
     if (title === current) return;
@@ -58,6 +64,13 @@ export function oneSectionOpen(sidebarEl, { initial = null, onChange = () => {} 
     if (!header || header.parentElement?.parentElement !== sidebarEl) return;
     const title = header.parentElement.dataset.pane;
     open(title === current ? null : title);
+  });
+  // Enter or Space on a focused header folds or unfolds it, as a click does.
+  sidebarEl.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    if (!e.target.classList?.contains('pane-header') || e.target.parentElement?.parentElement !== sidebarEl) return;
+    e.preventDefault();
+    e.target.click();
   });
   show(initial);
   return {

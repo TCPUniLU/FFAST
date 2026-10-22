@@ -29,7 +29,7 @@ import { metricPanel, plotTarget, toSaved } from './tab_edit.js';
 import { MetricOps } from './metric_ops.js';
 import { sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
-import { askDialog, textDialog } from './dialogs.js';
+import { askDialog, textDialog, trapFocus } from './dialogs.js';
 import { applyStaticIcons, icon } from './icons.js';
 import { initAppearance } from './appearance.js';
 import { datasetUnits } from './units.js';
@@ -65,7 +65,8 @@ const SECTION_HELP = {
     + 'Click an input to put it in the formula. Try computes on the whole dataset without saving; '
     + 'Save keeps the metric on the server for every window.',
   'Camera': 'Where you look from. Drag to orbit, scroll to zoom. XY, XZ and YZ snap to an '
-    + 'axis view; "Exact angles" sets the angles by number.',
+    + 'axis view; "Exact angles" sets the angles by number. '
+    + 'Keys: ←/→ frame, Space play, Esc puts down a pick tool, / search.',
   'Display': 'How atoms are drawn. Hide atoms by index (0 1 2) or element (C, -H); '
     + 'highlight atoms by index.',
   'Bonds': 'Dynamic bonds follow atom distances in every frame. Fixed bonds use your own '
@@ -343,8 +344,12 @@ export class FFastApp {
     if (!tab) return;
     this._activeTab = id;
     queueMicrotask(() => this._syncTabButtons());
-    for (const el of document.querySelectorAll('#tabbar .tab'))
-      el.classList.toggle('active', el.dataset.tab === id);
+    for (const el of document.querySelectorAll('#tabbar .tab')) {
+      const on = el.dataset.tab === id;
+      el.classList.toggle('active', on);
+      el.setAttribute('aria-selected', String(on));
+      el.tabIndex = on ? 0 : -1;   // one tab stop; the arrow keys move along the tabs
+    }
     for (const el of document.querySelectorAll('#tabpanels .tabpanel'))
       el.classList.toggle('active', el.id === `panel-${id}`);
 
@@ -509,6 +514,7 @@ export class FFastApp {
     // Playback (issue 08): prev/next/play-pause + FPS/skip, response-synced.
     document.getElementById('prev-frame-btn').addEventListener('click', () => this._stepFrame(-1));
     document.getElementById('next-frame-btn').addEventListener('click', () => this._stepFrame(1));
+    this._initShortcuts();
     document.getElementById('play-pause-btn').addEventListener('click', () => this._togglePlayback());
     this._bindPlaybackPop();
 
@@ -675,6 +681,7 @@ export class FFastApp {
         ? `Reset ${name} to the original? Your edited version is deleted.`
         : `Delete ${name}? Its file on the server is deleted.`,
       buttons: ['Cancel', reset ? 'Reset' : 'Delete'],
+      danger: reset ? '' : 'Delete',
     });
     if (answer === 'Reset' || answer === 'Delete')
       this._reportTab(await this._tabOps.remove(name), reset ? 'Reset' : 'Deleted');
@@ -1147,11 +1154,14 @@ export class FFastApp {
     msg.classList.toggle('hidden', !message);
     this._renderRecentServers();
     document.getElementById('conn-dialog').classList.remove('hidden');
+    this._connUntrap ||= trapFocus(document.getElementById('conn-dialog'));
     const focus = message && /token/i.test(message) ? 'token-input' : 'ws-url';
     document.getElementById(focus).focus();
   }
 
   _closeConnDialog() {
+    this._connUntrap?.();
+    this._connUntrap = null;
     document.getElementById('conn-dialog').classList.add('hidden');
   }
 
@@ -1423,6 +1433,7 @@ export class FFastApp {
       title: dataset ? 'Delete dataset' : 'Delete prediction',
       message: `Delete ${name}?${also}`,
       buttons: ['Cancel', 'Delete'],
+      danger: 'Delete',
     });
     if (answer !== 'Delete' || this._needsControl()) return;
     this._deleting.add(fp);
@@ -2243,6 +2254,32 @@ export class FFastApp {
   _stepFrame(direction) {
     if (this._playing) this._togglePlayback();  // manual stepping stops playback
     this._setFrame(this._currentFrame() + direction * (1 + this._videoSkipFrames()));
+  }
+
+  /** Four shortcuts (ADR 0063): ←/→ step a frame, Space plays or pauses, Esc
+   * puts down the armed pick tool, / searches the settings. They are ignored
+   * while typing, while a dialog is open, and on a control that uses the key. */
+  _initShortcuts() {
+    document.addEventListener('keydown', (e) => {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target;
+      if (el.closest?.('input, textarea, select, [contenteditable]')) return;
+      if (document.querySelector('.warning-modal:not(.hidden), #fb-modal:not(.hidden), #path-modal:not(.hidden), #unit-popover')) return;
+      const click = (id) => { e.preventDefault(); document.getElementById(id).click(); };
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        if (el.closest?.('[role=tab], [role=radio], [role=menuitem]')) return;
+        click(e.key === 'ArrowLeft' ? 'prev-frame-btn' : 'next-frame-btn');
+      } else if (e.key === ' ') {
+        if (el.closest?.('button, a, [role=button], [role=tab], [role=radio], [role=menuitem]')) return;
+        click('play-pause-btn');
+      } else if (e.key === 'Escape') {
+        if (this._activeTool) this._setActiveTool(null);
+      } else if (e.key === '/') {
+        e.preventDefault();
+        if (document.getElementById('content').classList.contains('sidebar-hidden')) this._setSidebarHidden(false);
+        document.getElementById('sidebar-search').focus();
+      }
+    });
   }
 
   _togglePlayback() {

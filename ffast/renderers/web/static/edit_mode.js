@@ -16,7 +16,7 @@
  * overwrite it or discard these edits (rule 16).
  */
 
-import { askDialog } from './dialogs.js';
+import { askDialog, trapFocus } from './dialogs.js';
 import {
   COLUMN_PX, KIND_ROLES, ROW_PX, addPanel, columnsOf, copyOf, dragTrack, emptyTab,
   fitWidths, metricsFor, movePanel, new3DPanel, onlyPlacesChanged, removePanel, replacePanel,
@@ -668,6 +668,7 @@ function modal(title, body, labels) {
     return b;
   });
   el.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
+  trapFocus(el);
   panel.append(head, content, foot);
   el.appendChild(panel);
   document.body.appendChild(el);

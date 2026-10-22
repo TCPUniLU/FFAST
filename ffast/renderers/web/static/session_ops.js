@@ -15,6 +15,7 @@
  */
 
 import { OUT } from './events.js';
+import { trapFocus } from './dialogs.js';
 
 /**
  * Status line for a finished session operation.
@@ -77,6 +78,8 @@ export class SessionOps {
     });
     $('path-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this._confirmPathModal();
+    });
+    $('path-modal').addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this._closePathModal();
     });
   }
@@ -159,11 +162,14 @@ export class SessionOps {
     const input = $('path-input');
     input.value = defaultValue;
     $('path-modal').classList.remove('hidden');
+    this._untrap ||= trapFocus($('path-modal'));
     input.focus();
     input.select();
   }
 
   _closePathModal() {
+    this._untrap?.();
+    this._untrap = null;
     $('path-modal').classList.add('hidden');
     this._onConfirm = null;
   }
