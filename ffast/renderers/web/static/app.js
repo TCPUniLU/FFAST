@@ -31,6 +31,7 @@ import { sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
 import { askDialog, textDialog } from './dialogs.js';
 import { applyStaticIcons, icon } from './icons.js';
+import { initAppearance } from './appearance.js';
 import { datasetUnits } from './units.js';
 import { TabEditor } from './edit_mode.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
@@ -95,6 +96,7 @@ const HINTS = {
 export class FFastApp {
   constructor() {
     applyStaticIcons();
+    initAppearance(() => this._analysis?.rerenderAll());
     this._conn = null;
     // The main view (ADR 0056): the one visualization view the rail drives,
     // drawn by every linked 3D panel. Its renderers come and go with the

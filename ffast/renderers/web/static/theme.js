@@ -16,10 +16,10 @@ const DARK = {
 };
 
 /** The font size, in px, that `--fs-plot` resolves to (it is a calc()). */
-function plotFontPx() {
+function plotFontPx(host) {
   const probe = document.createElement('span');
   probe.style.cssText = 'position:absolute;visibility:hidden;font-size:var(--fs-plot)';
-  document.documentElement.appendChild(probe);
+  host.appendChild(probe);
   const px = parseFloat(getComputedStyle(probe).fontSize);
   probe.remove();
   return Number.isFinite(px) && px > 0 ? px : DARK.fsPlot;
@@ -28,7 +28,10 @@ function plotFontPx() {
 /** Colours, font and series list for Plotly, as a plain object. */
 export function plotTheme() {
   if (typeof document === 'undefined') return { ...DARK, series: [...DARK.series] };
-  const css = getComputedStyle(document.documentElement);
+  // Journal page redefines the tokens on the figure area, not on the whole
+  // page, so they are read where the plots are.
+  const host = document.querySelector('.analysis-grid') || document.documentElement;
+  const css = getComputedStyle(host);
   const get = (name, fallback) => css.getPropertyValue(name).trim() || fallback;
   const series = get('--series', '').split(',').map(c => c.trim()).filter(Boolean);
   return {
@@ -36,7 +39,7 @@ export function plotTheme() {
     line: get('--line', DARK.line),
     ink2: get('--ink-2', DARK.ink2),
     ink3: get('--ink-3', DARK.ink3),
-    fsPlot: plotFontPx(),
+    fsPlot: plotFontPx(host),
     font: get('--font', DARK.font),
     peak: get('--peak', DARK.peak),
     peakInk: get('--peak-ink', DARK.peakInk),

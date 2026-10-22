@@ -86,6 +86,8 @@ CASES = {
     # ── cm.gradientCss — the colourbar derives from the atoms' LUT (ADR 0052) ──
     "grad_viridis": "cm.gradientCss('viridis')",
     "grad_unknown": "cm.gradientCss('not_a_colormap')",
+    "ap_densities": "ap.DENSITIES",
+    "ap_density_names": "['large', 'compact', 'nope', undefined, '__proto__'].map(ap.densityName)",
     "grad_cividis_first": "cm.gradientCss('cividis').split(', ')[0]",
     "qs_force_error_colormap": "qs.forceErrorStyle('MACE').find(s => s[1] === 'Colormap')",
     # Every colormap the colour-by pane offers must produce a bar.
@@ -666,6 +668,7 @@ def results():
         f"  const ic = await import('{origin}/icons.js');\n"
         f"  const fg = await import('{origin}/figure.js');\n"
         f"  const qs = await import('{origin}/quick_styles.js');\n"
+        f"  const ap = await import('{origin}/appearance.js');\n"
         f"  const pk = await import('{origin}/peaks.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
@@ -759,6 +762,14 @@ def test_a_nan_value_is_never_a_peak(results):
 
 def test_a_rising_line_has_one_peak_at_its_end(results):
     assert results["peaks_fewer_than_n"] == [9]
+
+
+def test_density_scales_are_one_one_fifteen_and_one_four(results):
+    assert results["ap_densities"] == {"compact": 1, "comfortable": 1.15, "large": 1.4}
+
+
+def test_an_unknown_density_name_means_compact(results):
+    assert results["ap_density_names"] == ["large", "compact", "compact", "compact", "compact"]
 
 
 def test_cividis_bar_starts_at_its_first_stop_and_the_force_error_style_uses_it(results):

@@ -778,6 +778,56 @@ async def test_web_input_boxes_are_dark(ffast_web_server):
             await browser.close()
 
 
+async def test_web_journal_page_whitens_the_figure_area_and_density_scales_the_type(ffast_web_server):
+    """ADR 0063: Journal page turns the panels white and leaves the rail dark;
+    Large is today's 18.2 px body; both survive a reload."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    background = "(el) => getComputedStyle(el).backgroundColor"
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+
+        async def open_basic_errors():
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+
+        try:
+            await open_basic_errors()
+            panel = page.locator(".tabpanel.active .analysis-panel").first
+            rail = page.locator("#objectbar")
+            assert await panel.evaluate(background) != "rgb(255, 255, 255)"
+            await expect(page.locator("body")).to_have_css("font-size", "13px")
+
+            await page.get_by_role("radio", name="Journal page").click()
+            await expect(page.get_by_role("radio", name="Journal page")).to_have_attribute("aria-checked", "true")
+            assert await panel.evaluate(background) == "rgb(255, 255, 255)"
+            assert await rail.evaluate(background) != "rgb(255, 255, 255)"
+            assert await page.locator("#topbar").evaluate(background) != "rgb(255, 255, 255)"
+            # the plots were drawn again with the Journal series colour
+            line = await page.evaluate(
+                "() => document.querySelector('.tabpanel.active .analysis-panel[data-title=\"Forces MAE timeline\"] .panel-plot').data[0].line.color")
+            assert line == "#0072b2", line
+
+            await page.locator("#density").select_option("large")
+            await expect(page.locator("body")).to_have_css("font-size", "18.2px")
+
+            await open_basic_errors()   # a reload
+            assert await page.locator(".tabpanel.active .analysis-panel").first.evaluate(background) == "rgb(255, 255, 255)"
+            await expect(page.locator("body")).to_have_css("font-size", "18.2px")
+            await expect(page.locator("#density")).to_have_value("large")
+            assert await page.locator("#objectbar").evaluate(background) != "rgb(255, 255, 255)"
+
+            await page.get_by_role("radio", name="Screen").click()
+            assert await page.locator(".tabpanel.active .analysis-panel").first.evaluate(background) != "rgb(255, 255, 255)"
+        finally:
+            await browser.close()
+
+
 async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
     """ADR 0055 "Help": a hint bar with numbered next steps; dismissing it is
     remembered in browser storage."""

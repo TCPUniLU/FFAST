@@ -339,6 +339,14 @@ export class AnalysisManager {
     }
   }
 
+  /** Draw the plots again, after Journal page or Density changed the tokens
+   * they read. Only the tab on screen is drawn; the others are drawn when
+   * `activate` shows them. */
+  rerenderAll() {
+    const t = this._tabs.find((x) => x.id === this._activeId);
+    if (t) this._renderTab(t);
+  }
+
   /** Called by app when a tab is activated (renders analysis tabs lazily). */
   activate(id) {
     this._activeId = id;

@@ -61,6 +61,24 @@
       --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
     }
 
+    /* Journal page (ADR 0063): the figure area becomes a white printed figure by
+       redefining the tokens there. The rail, top bar and sidebar stay dark, so
+       the tokens are not changed on :root (the sidebar sits inside #tabpanels).
+       The old names are written again, as :root resolved them to the dark values. */
+    body.journal .analysis-grid {
+      color-scheme: light;
+      --ground: #ffffff; --surface: #ffffff; --surface-2: #f3f4f6; --surface-3: #e6e8eb;
+      --line: #cfd4da; --ink: #111418; --ink-2: #2b3036; --ink-3: #59616c;
+      --accent: #0072b2; --accent-ink: #ffffff; --sel: rgba(0, 114, 178, 0.12);
+      --peak: #d55e00; --peak-ink: #a84600; --median: #00795a; --warn: #9a6a00; --danger: #c0392b;
+      --series: #0072b2, #e69f00, #009e73, #b8a900, #cc79a7, #d55e00, #56b4e9, #59616c;
+      --bg1: var(--ground); --bg2: var(--surface); --bg3: var(--line); --bg4: var(--surface-3);
+      --bg5: var(--surface-3); --text: var(--ink-2); --text1: var(--ink-2); --text2: var(--ink);
+      --text-hover: var(--ink); --hl1: var(--line); --hl2: var(--accent); --muted: var(--ink-3);
+      --success: var(--accent);
+      background: var(--ground); color: var(--ink-2);
+    }
+
     /* drawn icons (icons.js): one stroke, the text colour */
     .icon { width: 1.1em; height: 1.1em; vertical-align: -0.15em; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -133,8 +151,14 @@
     .menu-list [role=menuitem]:disabled { box-shadow: none; }
     #topbar { overflow: visible; }
 
+    #view-mode { margin-left: auto; display: flex; }
+    #view-mode [role=radio] { border-radius: 0; }
+    #view-mode [role=radio]:first-child { border-radius: 3px 0 0 3px; }
+    #view-mode [role=radio]:last-child { border-radius: 0 3px 3px 0; }
+    #view-mode [role=radio][aria-checked=true] { background: var(--accent); color: var(--accent-ink); }
+    #density { min-width: 0; }
     #status {
-      margin-left: auto; font-size: var(--fs-s); color: var(--muted);
+      margin-left: 0; font-size: var(--fs-s); color: var(--muted);
       background: transparent; height: auto; padding: 3px 8px;
     }
     #status:hover { background: var(--bg3); }
@@ -983,6 +1007,16 @@
       <button id="file-menu-btn" aria-haspopup="menu" aria-expanded="false">File</button>
       <div id="file-menu-list" class="menu-list hidden" role="menu"></div>
     </div>
+    <!-- How the figure area looks (ADR 0063): Screen or Journal page, and Density. -->
+    <div id="view-mode" role="radiogroup" aria-label="View mode">
+      <button type="button" role="radio" aria-checked="true" data-mode="screen">Screen</button>
+      <button type="button" role="radio" aria-checked="false" data-mode="journal">Journal page</button>
+    </div>
+    <select id="density" aria-label="Density">
+      <option value="compact">Compact</option>
+      <option value="comfortable">Comfortable</option>
+      <option value="large">Large</option>
+    </select>
     <!-- The connection status; clicking it opens the connection dialog (ADR 0055). -->
     <button id="status" type="button" title="Connection…">Disconnected</button>
   </div>
