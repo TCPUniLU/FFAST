@@ -404,6 +404,15 @@ export class FFastApp {
     const byId = (x) => document.getElementById(x);
     byId('chrome3d').append(byId('pick-bar'), byId('loupe-controls'), byId('sidebar-resize'),
       byId('loupe-sidebar'), byId('overlay'), byId('hint-bar'));
+    this._attachLegend();
+  }
+
+  /** The colour legend belongs to the focused 3D panel's viewport; with no 3D
+   * panel on screen it is parked with the other 3D chrome. */
+  _attachLegend() {
+    const legend = this._panes?.colorBy.legend;
+    if (!legend) return;
+    (this._activePanel ? this._activePanel.viewport : document.getElementById('chrome3d')).append(legend);
   }
 
   /** Point the 3D controls at `panel`: an armed pick tool moves to it, and so
@@ -413,6 +422,7 @@ export class FFastApp {
     this._activePanel?.pick?.disarm();
     this._activePanel?.viewport.parentElement?.classList.remove('focused');
     this._activePanel = panel;
+    this._attachLegend();
     const view = panel?.independent || null;
     if (!keepView && view !== this._focusedIndependent) this._switchFocusedView(view);
     this._syncSidebarTitle();
@@ -885,6 +895,7 @@ export class FFastApp {
     });
 
     this._panes = { colorBy, metrics: metricsPane, camera, display, bonds, forces, extract, export: exportPane, align };
+    this._attachLegend();
     // The rich look sizes ball-and-stick atoms from the Atom size setting of
     // the view it draws.
     this._mainView.atomScale = () => (this._main.current?.settings.display.atomSize ?? display.atomScale()) || 1;

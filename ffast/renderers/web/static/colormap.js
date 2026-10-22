@@ -28,6 +28,13 @@ const COLORMAP_STOPS = {
     [0.1, 0.1, 0.9], [0.1, 0.9, 0.1], [0.9, 0.9, 0.1],
     [0.5, 0.1, 0.1], [0.9, 0.1, 0.1],
   ],
+  // Blue-grey to yellow: readable with any colour vision and in greyscale
+  // (matplotlib's cividis at 9 even stops). The Force error quick style uses it.
+  cividis: [
+    [0.000, 0.135, 0.305], [0.103, 0.220, 0.436], [0.264, 0.308, 0.423],
+    [0.381, 0.395, 0.436], [0.489, 0.485, 0.471], [0.609, 0.580, 0.464],
+    [0.736, 0.681, 0.424], [0.871, 0.790, 0.343], [0.996, 0.909, 0.218],
+  ],
   // Compact approximations of the remaining server colormaps
   // (ffast/visualization/stages/builtin/color_stages.py `_COLORMAPS`) — same
   // "public approximation, not pixel-identical" status as viridis/plasma above.

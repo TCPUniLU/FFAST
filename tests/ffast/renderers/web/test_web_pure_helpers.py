@@ -86,9 +86,11 @@ CASES = {
     # ── cm.gradientCss — the colourbar derives from the atoms' LUT (ADR 0052) ──
     "grad_viridis": "cm.gradientCss('viridis')",
     "grad_unknown": "cm.gradientCss('not_a_colormap')",
+    "grad_cividis_first": "cm.gradientCss('cividis').split(', ')[0]",
+    "qs_force_error_colormap": "qs.forceErrorStyle('MACE').find(s => s[1] === 'Colormap')",
     # Every colormap the colour-by pane offers must produce a bar.
     "grad_all_offered": (
-        "['viridis','inferno','plasma','coolwarm','hot','bwr','force_error']"
+        "['cividis','viridis','inferno','plasma','coolwarm','hot','bwr','force_error']"
         ".map(n => cm.gradientCss(n).split(', ').length)"
     ),
     # The bar's stops, sampled through mapColorBy at the same fractions. Equal
@@ -627,7 +629,7 @@ CASES = {
     "grad_matches_mapped": (
         "(() => {"
         "  const out = {};"
-        "  for (const n of ['viridis','coolwarm','force_error','hot']) {"
+        "  for (const n of ['viridis','coolwarm','force_error','hot','cividis']) {"
         "    const bar = cm.gradientCss(n).split(', ');"
         "    const k = bar.length;"
         "    const values = Array.from({length: k}, (_, i) => i / (k - 1));"
@@ -663,6 +665,7 @@ def results():
         f"  const th = await import('{origin}/theme.js');\n"
         f"  const ic = await import('{origin}/icons.js');\n"
         f"  const fg = await import('{origin}/figure.js');\n"
+        f"  const qs = await import('{origin}/quick_styles.js');\n"
         f"  const pk = await import('{origin}/peaks.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
@@ -756,6 +759,11 @@ def test_a_nan_value_is_never_a_peak(results):
 
 def test_a_rising_line_has_one_peak_at_its_end(results):
     assert results["peaks_fewer_than_n"] == [9]
+
+
+def test_cividis_bar_starts_at_its_first_stop_and_the_force_error_style_uses_it(results):
+    assert results["grad_cividis_first"] == "#00224e"
+    assert results["qs_force_error_colormap"] == ["Colour By", "Colormap", "cividis"]
 
 
 def test_a_peak_label_has_frame_value_unit_and_a_tick_when_visited(results):
@@ -992,7 +1000,7 @@ def test_the_colourbar_matches_the_colours_the_atoms_get(results):
     like. Deriving the bar from the same stops makes that impossible.
     """
     assert results["grad_matches_mapped"] == {
-        "viridis": True, "coolwarm": True, "force_error": True, "hot": True,
+        "viridis": True, "coolwarm": True, "force_error": True, "hot": True, "cividis": True,
     }
 
 

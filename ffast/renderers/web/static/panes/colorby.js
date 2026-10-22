@@ -24,7 +24,7 @@ import { editableDimension, resolveUnit, withUnit } from '../units.js';
 import { unitPopover } from '../dialogs.js';
 import { formatSignificant } from '../panels.js';
 
-const COLORMAPS = ['viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'force_error'];
+const COLORMAPS = ['cividis', 'viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'force_error'];
 // Shared with an independent panel's starting look (start_settings.js).
 
 /**
@@ -96,7 +96,12 @@ export function createColorByPane(sidebarEl, callbacks) {
   colorbar.append(cbMin, cbGradient, cbMax);
   const cbLabel = document.createElement('div');
   cbLabel.id = 'colorbar-label';
-  body.append(colorbar, cbLabel);
+  // The legend lives on the 3D view, bottom left, not in this section: app.js
+  // puts it into the focused panel's viewport (ADR 0063).
+  const legend = document.createElement('div');
+  legend.id = 'legend3d';
+  legend.className = 'legend3d';
+  legend.append(cbLabel, colorbar);
   let shownColorBy = null;   // the colouring the colourbar shows, for its label
   const _renderLabel = () => {
     if (!shownColorBy) return;
@@ -164,6 +169,9 @@ export function createColorByPane(sidebarEl, callbacks) {
   }
 
   return {
+    /** The colour legend (label above the colour bar), for the 3D view. */
+    legend,
+
     /** Refresh the Prediction combo from the currently loaded models. */
     refreshModels(models) {
       predictionSelect.innerHTML = '';

@@ -9,14 +9,15 @@
  */
 
 /**
- * Colour atoms by force error with the desktop's force_error colour map.
+ * Colour atoms by force error with the cividis colour map, which reads without
+ * telling hues apart. (The force_error map stays in the list for old sessions.)
  * Force arrows are left as they are.
  * @param {string} predictionLabel the prediction's name in the selectors
  */
 export function forceErrorStyle(predictionLabel) {
   return [
     ['Colour By', 'Coloring', 'Force Error (per atom)'],
-    ['Colour By', 'Colormap', 'force_error'],
+    ['Colour By', 'Colormap', 'cividis'],
     ['Colour By', 'Prediction', predictionLabel],
   ];
 }
