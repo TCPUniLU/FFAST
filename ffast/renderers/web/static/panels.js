@@ -180,28 +180,49 @@ function seriesWith(series, role) {
 
 // ── plot-kind builders (pure) ───────────────────────────────────────────────
 
-/** The y axis runs to this multiple of the highest value, so the tallest peak's
- * label (turned on its side, about 100 px) fits inside the plot. */
-export const PEAK_HEADROOM = 2;
+/** Length of a peak's tick, in px. */
+const PEAK_TICK = 18;
+
+/** A peak label's text, "73 · 0.442 eV/Å" (and " ✓" once its frame was opened). */
+function peakText({ frame, value }, unit, seen) {
+  const shown = displayUnit(unit);
+  return `${frame} · ${formatSignificant(value)}${shown ? ` ${shown}` : ''}${seen ? ' ✓' : ''}`;
+}
+
+/** How long a label is when turned on its side, in px (digits are about 0.6 em wide). */
+function labelPx(text, fontPx) {
+  return Math.ceil(text.length * 0.6 * fontPx);
+}
+
+/**
+ * The top margin that holds the longest peak label above the plot, whether or
+ * not its frame was opened (the tick takes two characters more).
+ */
+export function peakMarginTop(peaks, unit) {
+  const fontPx = plotTheme().fsPlot;
+  const longest = Math.max(0, ...peaks.map((p) => labelPx(`${peakText(p, unit, true)}`, fontPx)));
+  return PEAK_TICK + longest + 8;
+}
 
 /**
  * One Plotly annotation per peak: a short tick and a label turned on its side,
  * "73 · 0.442 eV/Å". Clicking one opens that frame; one already opened is dimmed
- * and ticked. `isVisited(frame)` says which.
+ * and ticked. `isVisited(frame)` says which. Plotly centres a turned label on
+ * the far end of its arrow, so that end is moved up by half the label's length:
+ * the label then stands on a tick of PEAK_TICK px.
  */
 export function peakAnnotations(peaks, unit, isVisited = () => false) {
   const t = plotTheme();
-  const shown = displayUnit(unit);
-  return peaks.map(({ frame, value }) => {
-    const seen = isVisited(frame);
+  return peaks.map((peak) => {
+    const seen = isVisited(peak.frame);
+    const text = peakText(peak, unit, seen);
     return {
-      x: frame, y: value,
-      text: `${frame} · ${formatSignificant(value)}${shown ? ` ${shown}` : ''}${seen ? ' ✓' : ''}`,
+      x: peak.frame, y: peak.value, text,
       textangle: -90, showarrow: true, arrowhead: 0, arrowwidth: 1, arrowcolor: t.peak,
-      ax: 0, ay: -18, yanchor: 'bottom',
+      ax: 0, ay: -(PEAK_TICK + labelPx(text, t.fsPlot) / 2),
       font: { color: t.peakInk, size: t.fsPlot },
       opacity: seen ? 0.55 : 1,
-      captureevents: true, hovertext: `Open frame ${frame} in 3D`,
+      captureevents: true, hovertext: `Open frame ${peak.frame} in 3D`,
     };
   });
 }
@@ -232,6 +253,7 @@ export function buildTimeline(spec, series, ctx) {
   layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) };
   // With one series, its five worst frames are labelled; several would overlap.
   let peaks = [];
+  let extraHeight = 0;
   if (traces.length === 1 && ctx.peaks !== false) {
     peaks = pickPeaks(traces[0].y);
     if (peaks.length) {
@@ -239,12 +261,17 @@ export function buildTimeline(spec, series, ctx) {
       const seen = ctx.visited;
       layout.annotations = peakAnnotations(peaks, u.y,
         (frame) => !!seen && seen.has(visitedKey(s.datasetFp, s.modelFp, frame)));
+      // The labels stand above the plot, in the top margin, whatever the plot's size.
+      layout.margin.t = peakMarginTop(peaks, u.y);
+      // Plotly would count each label's far end in the axis range and flatten
+      // the curve, so the range is set from the data alone.
       let lo = 0, hi = -Infinity;
       for (const v of traces[0].y) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-      if (hi > 0) layout.yaxis.range = [lo, hi * PEAK_HEADROOM];   // room for the labels
+      if (hi > lo) layout.yaxis.range = [lo, hi * 1.04];
+      extraHeight = layout.margin.t - 8;   // and the plot grows by as much, so the curve keeps its size
     }
   }
-  return { traces, layout, peaks, peakUnit: u.y, peaksEligible: traces.length === 1, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
+  return { traces, layout, peaks, extraHeight, peakUnit: u.y, peaksEligible: traces.length === 1, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
 }
 
 export function buildDensity(spec, series, ctx) {
@@ -581,9 +608,14 @@ export function renderPanel(el, spec, series, ctx) {
     el._figureInfo = null;
     el._peaks = null;
     el._peaksEligible = false;
+    el._extraHeight = 0;
+    el.style.minHeight = '';
     return;
   }
   el._unitAxes = built.unitAxes || null;
+  // A labelled timeline is taller than the 180 px every plot has (index.html).
+  el._extraHeight = built.extraHeight || 0;
+  el.style.minHeight = built.extraHeight ? `calc(180px + ${built.extraHeight}px)` : '';
   el._peaks = built.peaks || null;
   el._peaksEligible = !!built.peaksEligible;
   el._peakUnit = built.peakUnit;

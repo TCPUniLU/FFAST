@@ -949,6 +949,9 @@ export class AnalysisManager {
     ])];
     if (missing.length) {
       card.body.className = '';
+      card.body._extraHeight = 0;
+      card.body.style.minHeight = '';
+      this._syncRowMin(t);
       const msg = document.createElement('div');
       msg.className = 'panel-msg';
       msg.textContent = `${missing.length === 1 ? 'Metric' : 'Metrics'} ${missing.join(', ')} ` +
@@ -983,6 +986,9 @@ export class AnalysisManager {
 
     if (!series.length) {
       card.body.className = '';
+      card.body._extraHeight = 0;
+      card.body.style.minHeight = '';
+      this._syncRowMin(t);
       const anyModel = refs.some((r) => r.modelFp);
       card.body.innerHTML =
         `<div class="panel-msg">${anyModel ? 'No data for this selection.'
@@ -1017,8 +1023,20 @@ export class AnalysisManager {
     }
     this._wirePanelInteractions(t, spec, card);
     this._wirePeaksToggle(t, spec, card);
+    this._syncRowMin(t);
     this._buildPanelParams(t, spec, card);
     this._showCaption(card, spec);
+  }
+
+  /** Rows are 300 px at least; a tab with labelled timelines makes them taller
+   * by what the labels take, so every plot keeps its usual size. */
+  _syncRowMin(t) {
+    let extra = 0;
+    for (const slot of t.slots) {
+      for (const card of slot.cards || []) extra = Math.max(extra, card.body._extraHeight || 0);
+    }
+    if (extra) t.gridEl.style.setProperty('--row-min', `${300 + extra}px`);
+    else t.gridEl.style.removeProperty('--row-min');
   }
 
   /** The "Peaks" checkbox of a one-series timeline: its peak labels on or off. */

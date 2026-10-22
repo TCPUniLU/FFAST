@@ -580,13 +580,13 @@ CASES = {
         "(() => { const y = new Array(100).fill(0); y[22] = 3; y[73] = 5;"
         " const b = pn.buildTimeline({x_label: null, y_label: ['Force MAE', 'u']},"
         "   [{datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}}], {units: {y: 'eV'}});"
-        " return [b.layout.annotations.length, b.layout.yaxis.range, b.peaks.map(p => p.frame)]; })()"),
+        " return [b.layout.annotations.length, b.layout.yaxis.range, b.peaks.map(p => p.frame), b.layout.margin.t, b.extraHeight]; })()"),
     "peaks_timeline_switched_off": (
         "(() => { const y = new Array(100).fill(0); y[22] = 3;"
         " const s = {datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}};"
         " const b = pn.buildTimeline({y_label: ['F', 'u']}, [s], {units: {}, peaks: false});"
-        " return [b.layout.annotations === undefined, b.layout.yaxis.range === undefined,"
-        "   b.peaks.length, b.peaksEligible]; })()"),
+        " return [b.layout.annotations === undefined, b.layout.margin.t,"
+        "   b.peaks.length, b.peaksEligible, b.extraHeight]; })()"),
     "peaks_timeline_two_series": (
         "(() => { const y = new Array(100).fill(0); y[22] = 3;"
         " const s = {datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}};"
@@ -768,16 +768,18 @@ def test_a_peak_label_prints_a_real_unit_and_no_bare_dimension(results):
     assert results["peaks_annotation_no_unit"] == ["5 · 0.100"]
 
 
-def test_a_one_series_timeline_is_labelled_and_given_headroom(results):
-    count, y_range, frames = results["peaks_timeline_one_series"]
+def test_a_one_series_timeline_is_labelled_and_given_a_top_margin_for_the_labels(results):
+    count, y_range, frames, margin_top, extra = results["peaks_timeline_one_series"]
     # the two spikes lead; the flat rest fills the other labels (a level
     # stretch is a peak under the ADR's rule)
     assert count == 5 and 22 in frames and 73 in frames
-    assert y_range == [0, 5 * 2]
+    assert y_range == [0, 5 * 1.04]   # from the data alone, not the labels
+    assert margin_top > 8 + 18   # room for the tick and the longest label
+    assert extra == margin_top - 8   # the plot grows by what the labels take
 
 
 def test_a_timeline_with_peaks_switched_off_has_no_labels_but_stays_switchable(results):
-    assert results["peaks_timeline_switched_off"] == [True, True, 0, True]
+    assert results["peaks_timeline_switched_off"] == [True, 8, 0, True, 0]
 
 
 def test_a_timeline_of_several_series_is_not_labelled(results):
