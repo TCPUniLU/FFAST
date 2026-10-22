@@ -36,6 +36,7 @@
  */
 
 import { withUnit } from './units.js';
+import { plotTheme, hexAlpha } from './theme.js';
 
 /** @typedef {import('./protocol.js').PanelLayout} PanelLayout */
 /** @typedef {import('./metrics.js').MetricResult} MetricResult */
@@ -68,27 +69,29 @@ export function elementSymbol(z) {
   return ELEMENTS[z] || `Z${z}`;
 }
 
-// Distinct series/element colours (teal-anchored, colour-blind-friendly-ish).
-const SERIES_COLORS = [
-  '#1ca6bb', '#e0863a', '#7ac74f', '#c85bdb', '#d9534f', '#f0c33c',
-  '#9b7ede', '#4e9ad6', '#e0679a', '#6fbf8e',
-];
-
+// Series and element colours: the page's `--series` list (theme.js).
 export function seriesColor(i) {
-  return SERIES_COLORS[i % SERIES_COLORS.length];
+  const { series } = plotTheme();
+  return series[i % series.length];
 }
 
-// Shared dark Plotly theme, matching the app palette (index.html tokens).
-function baseLayout() {
+// The Plotly theme: the page's tokens, read when a panel is drawn (theme.js).
+export function baseLayout() {
+  const t = plotTheme();
+  const axis = () => ({
+    gridcolor: t.line, zerolinecolor: t.line, linecolor: t.line,
+    tickfont: { color: t.ink3 }, title: { font: { color: t.ink2 } },
+    automargin: true,
+  });
   return {
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
-    font: { color: '#b9bbc2', size: 14, family: 'system-ui, sans-serif' },
+    font: { color: t.ink2, size: t.fsPlot, family: t.font },
     margin: { l: 48, r: 12, t: 8, b: 36 },
     showlegend: false,
     // No `dragmode`: Plotly's default, a drag zooms, is what SUB follows.
-    xaxis: { gridcolor: '#36393f', zerolinecolor: '#494d55', automargin: true },
-    yaxis: { gridcolor: '#36393f', zerolinecolor: '#494d55', automargin: true },
+    xaxis: axis(),
+    yaxis: axis(),
     hovermode: 'closest',
   };
 }
@@ -191,8 +194,8 @@ export function buildTimeline(spec, series, ctx) {
     curveSeries.push(i);
   });
   const layout = withLegend(baseLayout(), traces.length);
-  layout.xaxis.title = { text: axisTitle(spec.x_label, u.x) || 'Configuration index' };
-  layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) };
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.x) || 'Configuration index' };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) };
   return { traces, layout, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
 }
 
@@ -207,14 +210,14 @@ export function buildDensity(spec, series, ctx) {
     return {
       x: row(s.data.value, 0), y: row(s.data.value, 1),
       type: 'scatter', mode: 'lines',
-      ...(fill ? { fill: 'tozeroy', fillcolor: 'rgba(28,166,187,0.15)' } : {}),
+      ...(fill ? { fill: 'tozeroy', fillcolor: hexAlpha(seriesColor(0), 0.15) } : {}),
       line: { color: seriesColor(i), width: 1.5 },
       name: s.name || '',
     };
   });
   const layout = withLegend(baseLayout(), traces.length);
-  layout.xaxis.title = { text: axisTitle(spec.x_label, u.value) };
-  layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) || 'Density' };
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.value) };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) || 'Density' };
   return { traces, layout, subInfo: null, unitAxes: { x: 'value', y: 'y' } };
 }
 
@@ -243,13 +246,13 @@ export function buildScatter(spec, series, ctx) {
   if (spec.diagonal && dataCurveCount && Number.isFinite(lo)) {
     traces.push({
       x: [lo, hi], y: [lo, hi], type: 'scatter', mode: 'lines',
-      line: { color: '#8a8d94', width: 1, dash: 'dash' },
+      line: { color: plotTheme().ink3, width: 1, dash: 'dash' },
       hoverinfo: 'skip', showlegend: false,
     });
   }
   const layout = withLegend(baseLayout(), dataCurveCount);
-  layout.xaxis.title = { text: axisTitle(spec.x_label, u.x) };
-  layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) };
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.x) };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) };
   // Subbable only when the x metric is per-frame: within any one curve the
   // point index *is* the configuration index, whichever series it belongs to.
   return {
@@ -289,8 +292,8 @@ export function buildOverlayTimeline(spec, series, ctx) {
     });
   });
   const layout = withLegend(baseLayout(), Math.max(2, traces.length));
-  layout.xaxis.title = { text: axisTitle(spec.x_label, null) || 'Configuration index' };
-  layout.yaxis.title = { text: axisTitle(spec.y_label, null) };
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, null) || 'Configuration index' };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, null) };
   return { traces, layout, subInfo: { perFrame: true, curveSeries } };
 }
 
@@ -317,7 +320,7 @@ export function buildGroupedDensity(spec, series, ctx) {
       traces.push({
         x: row(s.data.aggregate, 0), y: row(s.data.aggregate, 1),
         type: 'scatter', mode: 'lines', name: `All${suffix(s.name)}`,
-        line: { color: multiElement ? '#b9bbc2' : seriesColor(si), width: 1.5 },
+        line: { color: multiElement ? plotTheme().ink2 : seriesColor(si), width: 1.5 },
       });
       curveSeries.push(si);
     }
@@ -342,8 +345,8 @@ export function buildGroupedDensity(spec, series, ctx) {
   });
   const layout = withLegend(baseLayout(), Math.max(2, traces.length));
   const u = ctx.units || {};
-  layout.xaxis.title = { text: axisTitle(spec.x_label, u.value) };
-  layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) || 'Density' };
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.value) };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) || 'Density' };
   return { traces, layout, subInfo: null, unitAxes: { x: 'value', y: 'y' } };
 }
 

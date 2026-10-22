@@ -547,6 +547,13 @@ CASES = {
         "[ex.canExtractFrom({is_sub: false}), ex.canExtractFrom({is_sub: true, frozen: true}),"
         " ex.canExtractFrom({is_sub: true, frozen: false}), ex.canExtractFrom(undefined)]"),
 
+    # ── theme.plotTheme: no document here, so the dark constants ────────────
+    "theme_series_count": "th.plotTheme().series.length",
+    "theme_line": "th.plotTheme().line",
+    "theme_grid_follows_line": "pn.baseLayout().xaxis.gridcolor === th.plotTheme().line",
+    "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
+    "theme_hex_alpha": "th.hexAlpha('#56b4e9', 0.15)",
+
     "grad_matches_mapped": (
         "(() => {"
         "  const out = {};"
@@ -583,6 +590,7 @@ def results():
         f"  const so = await import('{origin}/session_ops.js');\n"
         f"  const cm = await import('{origin}/colormap.js');\n"
         f"  const pn = await import('{origin}/panels.js');\n"
+        f"  const th = await import('{origin}/theme.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
         f"  const tr = await import('{origin}/tab_rules.js');\n"
@@ -635,6 +643,25 @@ def results():
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+# ── theme.plotTheme (ADR 0063) ───────────────────────────────────────────────
+
+def test_plot_theme_without_a_page_gives_eight_series_and_the_dark_line(results):
+    assert results["theme_series_count"] == 8
+    assert results["theme_line"] == "#3a4047"
+
+
+def test_base_layout_grid_colour_is_the_theme_line(results):
+    assert results["theme_grid_follows_line"] is True
+
+
+def test_series_colours_wrap_around_the_theme_list(results):
+    assert results["theme_series_color_wraps"] is True
+
+
+def test_hex_alpha_builds_an_rgba(results):
+    assert results["theme_hex_alpha"] == "rgba(86, 180, 233, 0.15)"
 
 
 # ── remote_browser.joinPath ─────────────────────────────────────────────────
