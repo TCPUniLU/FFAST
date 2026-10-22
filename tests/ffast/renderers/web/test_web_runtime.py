@@ -2535,7 +2535,10 @@ async def test_web_user_tabs_reach_every_window_and_can_be_reset_hidden_exported
                 await expect(gyration.locator(".tab-mark")).to_have_text("edited")
                 await gyration.click()
                 await _tab_menu(page, "Reset to original…")
-                await page.get_by_role("button", name="Reset").click()
+                dialog = page.locator(".ask-dialog")
+                await expect(dialog.locator("button:focus")).to_have_text("Cancel")
+                await expect(dialog.get_by_role("button", name="Confirm")).to_have_class(re.compile(r"\bdanger\b"))
+                await dialog.get_by_role("button", name="Confirm").click()
                 await expect(gyration.locator(".tab-mark")).to_have_count(0)
                 await expect(page.locator(".tabpanel.active .analysis-panel[data-kind='overlay_timeline']")).not_to_have_count(0)
 

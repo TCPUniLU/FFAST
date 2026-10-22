@@ -675,15 +675,16 @@ export class FFastApp {
 
   async _removeTab(name, how) {
     const reset = how === 'reset';
+    const yes = reset ? 'Confirm' : 'Delete';   // the red button; focus starts on Cancel
     const answer = await askDialog({
       title: reset ? 'Reset to original' : 'Delete tab',
       message: reset
         ? `Reset ${name} to the original? Your edited version is deleted.`
         : `Delete ${name}? Its file on the server is deleted.`,
-      buttons: ['Cancel', reset ? 'Reset' : 'Delete'],
-      danger: reset ? '' : 'Delete',
+      buttons: ['Cancel', yes],
+      danger: yes,
     });
-    if (answer === 'Reset' || answer === 'Delete')
+    if (answer === yes)
       this._reportTab(await this._tabOps.remove(name), reset ? 'Reset' : 'Deleted');
   }
 

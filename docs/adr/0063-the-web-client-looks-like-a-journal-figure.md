@@ -565,8 +565,10 @@ differed from the steps, and what was added:
   Only the tab on screen is drawn again when a setting changes (`rerenderAll`);
   other tabs are drawn when shown. The colour legend and the panel letter inside a
   3D panel turn white with the grid; the viewport itself does not change.
-- **Step 8.** Only Delete dialogs pass `danger`; the Reset dialog still focuses its
-  last button. Esc closes the path prompt from any control in it.
+- **Step 8.** The ADR names only the Delete callers for `danger`. The "Reset to
+  original" tab dialog deletes the user's edited copy too, so it also passes it: its
+  buttons are Cancel and Confirm (not Reset), Confirm is red and focus starts on
+  Cancel. Esc closes the path prompt from any control in it.
 - **Step 9.** The "ready" status replaces a finished Loading, Connecting or
   Connected, or an earlier "ready", but never a result such as "Loaded session from
   …", which the server's dataset messages can follow. After connecting, the last
