@@ -158,13 +158,14 @@ class ServerSession:
             RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
-            CancelTryMetricRequest, AddSessionMetricsRequest,
+            CancelTryMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
             control.LOAD_MODEL:                 _Route(self._on_load_model, ["path", "model_type"], LoadModelRequest),
             control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint"], DeleteObjectRequest),
             control.FREEZE_SUBSET:              _Route(self._on_freeze_subset, ["fingerprint"], FreezeSubsetRequest),
+            control.SET_DATASET_UNIT:           _Route(self._on_set_dataset_unit, ["fingerprint", "dimension", "unit"], SetDatasetUnitRequest),
             control.CREATE_SUBSET:              _Route(self._on_create_subset, ["parent_fingerprint", "indices"], CreateSubsetRequest),
             control.DECLARE_SUBSET:             _Route(self._on_declare_subset, ["parent_fingerprint", "?indices"], DeclareSubsetRequest),
             control.REQUEST_SUBDATASET_ARRAYS:  _Route(self._on_request_subdataset_arrays, ["fingerprint"], RequestSubdatasetArraysRequest),
@@ -364,6 +365,19 @@ class ServerSession:
         freeze button does. The frozen subset announces itself to every
         window like any new dataset; the live one carries on with its plot."""
         self.env.freezeSubDataset(fingerprint)
+
+    async def _on_set_dataset_unit(self, fingerprint, dimension, unit, **kwargs) -> None:
+        """Name the unit of a dataset's energies or forces. The dataset (the
+        one a subset was cut from) announces itself again to every window
+        through ``DATASET_STATE_CHANGED`` → ``REMOTE_DATASET_META``."""
+        dataset = self.env.datasets.get(fingerprint)
+        if dataset is None:
+            logger.warning("SET_DATASET_UNIT: dataset %r not found", fingerprint)
+            return
+        try:
+            dataset.setUnit(dimension, unit)
+        except ValueError as exc:
+            logger.warning("SET_DATASET_UNIT: %s", exc)
 
     async def _on_create_subset(self, parent_fingerprint, indices, **kwargs) -> None:
         """Extract an atom-filtered subset dataset (ADR 0045 issue 12).

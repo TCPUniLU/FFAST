@@ -114,6 +114,8 @@ class SessionPersistence:
                 obj_info["ase_energy_key"] = o.selected_energy_key
             if hasattr(o, 'selected_force_key') and o.selected_force_key:
                 obj_info["ase_force_key"] = o.selected_force_key
+            if o.getUnits():
+                obj_info["units"] = o.getUnits()
 
             info["objects"][o.fingerprint] = obj_info
 
@@ -225,6 +227,11 @@ class SessionPersistence:
                         selected_force_key=ase_force_key,
                         prediction_keys=prediction_keys or None,
                     )
+                    # The units the user named; the same file gives the same
+                    # fingerprint, so the loaded dataset is found by it.
+                    loaded = self._env.datasets.get(fingerprint)
+                    if loaded is not None and obj_info.get("units"):
+                        loaded.setUnits(obj_info["units"])
                     logger.info(
                         "Session restore: loaded %s (%s)", obj_name, dataset_type,
                     )

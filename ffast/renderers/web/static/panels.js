@@ -35,6 +35,8 @@
  * frames (analysis.js `_wireSub`).
  */
 
+import { withUnit } from './units.js';
+
 /** @typedef {import('./protocol.js').PanelLayout} PanelLayout */
 /** @typedef {import('./metrics.js').MetricResult} MetricResult */
 
@@ -120,15 +122,34 @@ function arrMax(a) { let m = -Infinity; for (let i = 0; i < a.length; i++) if (a
  * text. The desktop resolves the `unitKey` (e.g. "energyUnit") through the user
  * config; the browser has no such config, so it appends the bound metric's own
  * catalog unit (`unit`) when the label declares a unit slot — pragmatic-parity
- * units without a second config source.
+ * units without a second config source. A catalog unit that is only a dimension
+ * ("energy") is not printed (units.js).
  */
-function axisTitle(label, unit) {
+export function axisTitle(label, unit) {
   if (label == null) return '';
-  if (Array.isArray(label)) {
-    const [text] = label;
-    return unit ? `${text} (${unit})` : text;
-  }
+  if (Array.isArray(label)) return withUnit(label[0], unit);
   return String(label);
+}
+
+/**
+ * The metric role whose unit a click on `target` names: a table header marked
+ * by `unitAttr`, or a Plotly axis title, through the axes → roles map its
+ * builder returned (`unitAxes`). null for anything else.
+ * @param {Element} target
+ * @param {{x?: string, y?: string}|null} unitAxes
+ */
+export function unitRoleAt(target, unitAxes) {
+  const th = target?.closest?.('th[data-unit-role]');
+  if (th) return th.dataset.unitRole;
+  const title = target?.closest?.('.g-xtitle, .g-ytitle');
+  if (!title || !unitAxes) return null;
+  return unitAxes[title.classList.contains('g-xtitle') ? 'x' : 'y'] || null;
+}
+
+/** ` data-unit-role="role"` on a table header whose unit the user can name
+ * (ctx.unitDims, from the metric's dimension), or nothing. */
+function unitAttr(ctx, role) {
+  return ctx && ctx.unitDims && ctx.unitDims[role] ? ` data-unit-role="${role}"` : '';
 }
 
 /** A 1-D metric result as a plain number array (or []). */
@@ -172,7 +193,7 @@ export function buildTimeline(spec, series, ctx) {
   const layout = withLegend(baseLayout(), traces.length);
   layout.xaxis.title = { text: axisTitle(spec.x_label, u.x) || 'Configuration index' };
   layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) };
-  return { traces, layout, subInfo: { perFrame: true, curveSeries } };
+  return { traces, layout, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
 }
 
 export function buildDensity(spec, series, ctx) {
@@ -194,7 +215,7 @@ export function buildDensity(spec, series, ctx) {
   const layout = withLegend(baseLayout(), traces.length);
   layout.xaxis.title = { text: axisTitle(spec.x_label, u.value) };
   layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) || 'Density' };
-  return { traces, layout, subInfo: null };
+  return { traces, layout, subInfo: null, unitAxes: { x: 'value', y: 'y' } };
 }
 
 export function buildScatter(spec, series, ctx) {
@@ -236,6 +257,7 @@ export function buildScatter(spec, series, ctx) {
     subInfo: ctx.perFrame
       ? { perFrame: true, dataCurveCount, curveSeries }
       : null,
+    unitAxes: { x: 'x', y: 'y' },
   };
 }
 
@@ -322,18 +344,33 @@ export function buildGroupedDensity(spec, series, ctx) {
   const u = ctx.units || {};
   layout.xaxis.title = { text: axisTitle(spec.x_label, u.value) };
   layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) || 'Density' };
-  return { traces, layout, subInfo: null };
+  return { traces, layout, subInfo: null, unitAxes: { x: 'value', y: 'y' } };
 }
 
 // ── table-kind builders (pure, return HTML) ─────────────────────────────────
 
 /**
+ * `v` with `digits` significant digits in plain notation, never scientific
+ * (`0.000921`, `0.0908`, `12.3`, `1235`). The desktop's `format_significant`
+ * matches.
+ */
+export function formatSignificant(v, digits = 3) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(n);
+  if (n === 0) return n.toFixed(digits - 1);
+  return n.toFixed(Math.max(0, digits - 1 - Math.floor(Math.log10(Math.abs(n)))));
+}
+
+/**
  * A table cell: `precision` decimal places, but never a false zero — a
  * non-zero value that would round to zero shows three significant digits
- * (`0.00213`, not `0.00`). The desktop's `format_table_value` matches (ADR 0055).
+ * (`0.00213`, not `0.00`). With `precision` unset the cell shows three
+ * significant digits throughout, so an error of 0.0134 is not cut to 0.01.
+ * The desktop's `format_table_value` matches (ADR 0055).
  */
-export function formatTableValue(v, precision = 2) {
+export function formatTableValue(v, precision = null) {
   if (v == null || Number.isNaN(v)) return '—';
+  if (precision == null) return formatSignificant(v);
   const n = Number(v);
   const text = n.toFixed(precision);
   return n !== 0 && Number(text) === 0 ? n.toPrecision(3) : text;
@@ -378,7 +415,8 @@ export function buildTable(spec, series, ctx) {
     cellOf.set(`${rKey}|${cKey}`, scalarOf(s.data.value));
   }
 
-  const head = `<thead><tr><th>${esc(spec.title || 'Value')}</th>`
+  const unit = (ctx && ctx.units && ctx.units.value) || '';
+  const head = `<thead><tr><th${unitAttr(ctx, 'value')}>${esc(withUnit(spec.title || 'Value', unit))}</th>`
     + cols.map((c) => `<th>${esc(c.label)}</th>`).join('') + '</tr></thead>';
   const body = '<tbody>' + rows.map((r) =>
     `<tr><td>${esc(r.label)}</td>` + cols.map((c) => {
@@ -401,6 +439,9 @@ export function buildTable(spec, series, ctx) {
 export function buildGroupedTable(spec, series, ctx) {
   const order = ctx.elementOrder || [];
   const selected = ctx.selectedElements || [];
+  const u = ctx.units || {};
+  const mae = withUnit('MAE', u.mae);
+  const rmse = withUnit('RMSE', u.rmse);
   const list = series || [];
   if (!list.length) return '<div class="panel-msg">No data for this selection.</div>';
 
@@ -414,7 +455,8 @@ export function buildGroupedTable(spec, series, ctx) {
   if (selected.length > 1) {
     const s = list[0];
     const shown = selected.filter((z) => z === 'All' || order.includes(z));
-    const head = '<thead><tr><th>Element</th><th>MAE</th><th>RMSE</th></tr></thead>';
+    const head = `<thead><tr><th>Element</th><th${unitAttr(ctx, 'mae')}>${esc(mae)}</th>`
+      + `<th${unitAttr(ctx, 'rmse')}>${esc(rmse)}</th></tr></thead>`;
     const body = '<tbody>' + shown.map((z) =>
       `<tr><td>${z === 'All' ? 'All' : esc(elementSymbol(z))}</td>`
       + `<td>${cell(s, z, 'mae', 'mae_all')}</td>`
@@ -426,8 +468,8 @@ export function buildGroupedTable(spec, series, ctx) {
   // gives no clue which element the error belongs to.
   const z = selected[0] ?? 'All';
   const label = z === 'All' ? 'All' : elementSymbol(z);
-  const head = `<thead><tr><th>Object</th><th>${esc(label)} MAE</th>`
-    + `<th>${esc(label)} RMSE</th></tr></thead>`;
+  const head = `<thead><tr><th>Object</th><th${unitAttr(ctx, 'mae')}>${esc(label)} ${esc(mae)}</th>`
+    + `<th${unitAttr(ctx, 'rmse')}>${esc(label)} ${esc(rmse)}</th></tr></thead>`;
   const body = '<tbody>' + list.map((s) =>
     `<tr><td>${esc(s.name || 'Reference')}</td>`
     + `<td>${cell(s, z, 'mae', 'mae_all')}</td>`
@@ -484,8 +526,10 @@ export function renderPanel(el, spec, series, ctx) {
   if (built.html !== undefined) {
     el.innerHTML = built.html;
     el._subInfo = null;
+    el._unitAxes = null;
     return;
   }
+  el._unitAxes = built.unitAxes || null;
   el.querySelectorAll('.main-svg').forEach((svg) => { svg.style.transform = ''; });   // see followSize
   const start = performance.now();
   Plotly().react(el, built.traces, built.layout, PLOT_CONFIG);

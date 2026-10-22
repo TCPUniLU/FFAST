@@ -22,6 +22,7 @@ Phase-1 scope: the engine + four kinds + the catalog + the Python
   **TOML** schema (Phase 5). This module takes already-named metric IDs.
 """
 import logging
+import math
 
 import numpy as np
 from PySide6 import QtCore, QtWidgets
@@ -43,13 +44,28 @@ def _metric_value(env, metric_id, model, dataset, params=None):
     return None if result is None else result.values
 
 
-def format_table_value(v, precision=2):
+def format_significant(v, digits=3):
+    """``v`` with ``digits`` significant digits in plain notation, never
+    scientific (``0.000921``, ``0.0908``, ``12.3``, ``1235``)."""
+    v = float(v)
+    if not math.isfinite(v):
+        return str(v)
+    if v == 0:
+        return f"{v:.{digits - 1}f}"
+    decimals = max(0, digits - 1 - math.floor(math.log10(abs(v))))
+    return f"{v:.{decimals}f}"
+
+
+def format_table_value(v, precision=None):
     """A table cell: ``precision`` decimal places, but never a false zero.
 
     A non-zero value that would round to zero shows three significant digits
-    instead (``0.00213``, not ``0.00``). The browser's ``formatTableValue``
-    follows the same rule (ADR 0055).
+    instead (``0.00213``, not ``0.00``). With ``precision`` unset the cell shows
+    three significant digits throughout, so an error of 0.0134 is not cut to
+    0.01. The browser's ``formatTableValue`` follows the same rule (ADR 0055).
     """
+    if precision is None:
+        return format_significant(v)
     v = float(v)
     text = f"{v:.{precision}f}"
     if v != 0 and float(text) == 0:
@@ -616,7 +632,7 @@ class TableKind(PanelKind):
         v = _metric_value(panel.env, mid, model, dataset, params)
         if v is None:
             return ""
-        return format_table_value(v, panel._spec.get("precision", 2))
+        return format_table_value(v, panel._spec.get("precision"))
 
 
 # --------------------------------------------------------------------------- #
@@ -788,7 +804,7 @@ class GroupedTableKind(TableKind):
             if mid is None:
                 return ""
             v = _metric_value(env, mid, model, dataset)
-            return "" if v is None else format_table_value(v, spec.get("precision", 2))
+            return "" if v is None else format_table_value(v, spec.get("precision"))
 
         mid = spec["mae"] if j == 0 else spec["rmse"]
         vals = _metric_value(env, mid, model, dataset)
@@ -798,7 +814,7 @@ class GroupedTableKind(TableKind):
         zi = infos[atom]["index"]
         if zi not in order:
             return ""
-        return format_table_value(vals[order.index(zi)], spec.get("precision", 2))
+        return format_table_value(vals[order.index(zi)], spec.get("precision"))
 
 
 class OverlayTimelineKind(PanelKind):

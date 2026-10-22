@@ -20,6 +20,9 @@ import { COLORABLE_SHAPES } from '../start_settings.js';
 import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.js';
 import { gradientCss } from '../colormap.js';
 import { defaultSettings } from '../view_settings.js';
+import { editableDimension, resolveUnit, withUnit } from '../units.js';
+import { unitPopover } from '../dialogs.js';
+import { formatSignificant } from '../panels.js';
 
 const COLORMAPS = ['viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'force_error'];
 // Shared with an independent panel's starting look (start_settings.js).
@@ -31,7 +34,9 @@ const COLORMAPS = ['viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'fo
  *   onPredictionChange: (modelKey: string|null) => void,
  *   onColormapChange: (colormap: string) => void,
  *   onMetricParam: (key: string, value: any) => void,
- * }} callbacks
+ *   unitsOf?: () => Object<string, string>,
+ *   onSetUnit?: (dimension: string, unit: string) => void,
+ * }} callbacks unitsOf: the units of the shown view's dataset; onSetUnit: name one
  */
 export function createColorByPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Colour By');
@@ -92,6 +97,23 @@ export function createColorByPane(sidebarEl, callbacks) {
   const cbLabel = document.createElement('div');
   cbLabel.id = 'colorbar-label';
   body.append(colorbar, cbLabel);
+  let shownColorBy = null;   // the colouring the colourbar shows, for its label
+  const _renderLabel = () => {
+    if (!shownColorBy) return;
+    const units = callbacks.unitsOf?.() || {};
+    cbLabel.textContent = withUnit(shownColorBy.label, resolveUnit(shownColorBy.unit, units));
+    cbLabel.classList.toggle('unit-editable', !!editableDimension(shownColorBy.unit));
+  };
+  // Clicking the label names the unit of an energy or force colouring.
+  cbLabel.addEventListener('click', async (e) => {
+    const dimension = shownColorBy && editableDimension(shownColorBy.unit);
+    if (!dimension || !callbacks.onSetUnit) return;
+    const unit = await unitPopover({
+      x: e.clientX, y: e.clientY, dimension,
+      value: (callbacks.unitsOf?.() || {})[dimension] || '',
+    });
+    if (unit !== null) callbacks.onSetUnit(dimension, unit);
+  });
 
   let hasPredictions = false;
   function _syncVisibility() {
@@ -218,10 +240,14 @@ export function createColorByPane(sidebarEl, callbacks) {
       if (!colorBy) { colorbar.classList.add('hidden'); return; }
       colorbar.classList.remove('hidden');
       cbGradient.style.background = `linear-gradient(to right, ${gradientCss(colorBy.colormap)})`;
-      cbMin.textContent = colorBy.vmin.toPrecision(3);
-      cbMax.textContent = colorBy.vmax.toPrecision(3);
-      cbLabel.textContent = colorBy.label + (colorBy.unit ? ` (${colorBy.unit})` : '');
+      cbMin.textContent = formatSignificant(colorBy.vmin);
+      cbMax.textContent = formatSignificant(colorBy.vmax);
+      shownColorBy = colorBy;
+      _renderLabel();
     },
+
+    /** The shown dataset's units changed (or another view is shown). */
+    refreshUnits() { _renderLabel(); },
 
     /** The prediction metric colours use now, or null (ground truth). */
     predictionOf() {

@@ -277,6 +277,86 @@ CASES = {
     "recent_servers_cap": (
         "rs.rememberServer(['a','b','c','d','e'], 'f')"
     ),
+    # a built-in metric declares a dimension ("energy"), not a unit
+    "units_dimension_tags": "[...un.DIMENSIONS].sort()",
+    "axis_title_units": (
+        "[pn.axisTitle(['Energy MAE', 'energyUnit'], 'energy'),"
+        " pn.axisTitle(['Energy MAE', 'energyUnit'], 'meV'),"
+        " pn.axisTitle(['Energy MAE', 'energyUnit'], ''),"
+        " pn.axisTitle('Density', 'meV'), pn.axisTitle(null, 'meV')]"
+    ),
+    "table_headers_carry_units": (
+        "(() => {"
+        "  const heads = (html) => [...new DOMParser().parseFromString(html, 'text/html')"
+        "    .querySelectorAll('thead th')].map(e => e.textContent);"
+        "  const one = [{datasetFp:'d1', datasetName:'aspirin', modelFp:'m1', modelName:'MACE',"
+        "     data:{value: {nd: {values: [1], shape: [1]}}}}];"
+        "  const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const grouped = [{name:'MACE', data:{mae: a([0.1]), rmse: a([0.5])}}];"
+        "  return {"
+        "    table: heads(pn.buildPanel({kind:'table', title:'Energy MAE'}, one,"
+        "      {units: {value: 'meV'}}).html),"
+        "    tableDim: heads(pn.buildPanel({kind:'table', title:'Energy MAE'}, one,"
+        "      {units: {value: 'energy'}}).html),"
+        "    grouped: heads(pn.buildPanel({kind:'grouped_table'}, grouped,"
+        "      {elementOrder:[6], selectedElements:[6], units: {mae: 'meV/Å', rmse: 'force'}}).html),"
+        "  };"
+        "})()"
+    ),
+    # an energy or force shows the dataset's unit, "[unit]" until the user names it
+    "unit_resolution": (
+        "[un.resolveUnit('energy', {}), un.resolveUnit('energy', {energy: 'eV'}),"
+        " un.resolveUnit('force', {energy: 'eV'}), un.resolveUnit('meV', {}),"
+        " un.resolveUnit('length', {}), un.resolveUnit('energy', undefined),"
+        " un.withUnit('Energy MAE', un.resolveUnit('energy', {})),"
+        " un.withUnit('Energy MAE', un.resolveUnit('energy', {energy: 'kcal/mol'})),"
+        " un.editableDimension(' force '), un.editableDimension('length')]"
+    ),
+    "dataset_units_follow_the_root": (
+        "(() => { const m = new Map([['d1', {units: {energy: 'eV'}}], ['s1', {parent: 'd1', units: {}}],"
+        "  ['s2', {parent: 's1'}], ['c1', {parent: 'c2'}], ['c2', {parent: 'c1', units: {force: 'x'}}]]);"
+        "  return [un.datasetUnits('s2', m), un.datasetUnits('d1', m), un.datasetUnits('nope', m),"
+        "    un.datasetUnits(undefined, m), un.datasetUnits('c1', m)]; })()"
+    ),
+    "unit_headers_are_marked": (
+        "(() => {"
+        "  const doc = (html) => new DOMParser().parseFromString(html, 'text/html');"
+        "  const heads = (html) => [...doc(html).querySelectorAll('thead th')]"
+        "    .map(e => [e.textContent, e.dataset.unitRole || null]);"
+        "  const one = [{datasetFp:'d1', datasetName:'aspirin', modelFp:'m1', modelName:'MACE',"
+        "     data:{value: {nd: {values: [1], shape: [1]}}}}];"
+        "  const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const grouped = [{name:'MACE', data:{mae: a([0.1]), rmse: a([0.5])}}];"
+        "  return {"
+        "    table: heads(pn.buildPanel({kind:'table', title:'Energy MAE'}, one,"
+        "      {units: {value: '[unit]'}, unitDims: {value: 'energy'}}).html),"
+        "    grouped: heads(pn.buildPanel({kind:'grouped_table'}, grouped,"
+        "      {elementOrder:[6], selectedElements:[6], units: {mae: 'eV/Å', rmse: '[unit]'},"
+        "       unitDims: {mae: 'force', rmse: 'force'}}).html),"
+        "    plain: heads(pn.buildPanel({kind:'table', title:'Gyration'}, one, {units: {value: ''}}).html),"
+        "  };"
+        "})()"
+    ),
+    "unit_role_at": (
+        "(() => {"
+        "  const box = document.createElement('div');"
+        "  box.innerHTML = '<table><tr><th data-unit-role=\"mae\"><b>MAE</b></th><th>x</th></tr></table>'"
+        "    + '<svg><g class=\"g-xtitle\"><text>E</text></g><g class=\"g-ytitle\"><text>F</text></g></svg>';"
+        "  const axes = {x: 'value', y: 'y'};"
+        "  return [pn.unitRoleAt(box.querySelector('b'), axes), pn.unitRoleAt(box.querySelectorAll('th')[1], axes),"
+        "    pn.unitRoleAt(box.querySelector('.g-xtitle text'), axes),"
+        "    pn.unitRoleAt(box.querySelector('.g-ytitle text'), axes),"
+        "    pn.unitRoleAt(box.querySelector('.g-xtitle text'), null)];"
+        "})()"
+    ),
+    "plot_unit_axes": (
+        "(() => { const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const s = [{name: 'm', data: {y: a([1, 2]), x: a([1, 2])}}];"
+        "  return [pn.buildPanel({kind: 'timeline'}, s, {}).unitAxes,"
+        "    pn.buildPanel({kind: 'scatter'}, s, {}).unitAxes,"
+        "    pn.buildPanel({kind: 'timeline', y_label: ['Energy MAE', 'energyUnit']}, s,"
+        "      {units: {y: '[unit]'}}).layout.yaxis.title.text]; })()"
+    ),
     "panel_unknown_kind_is_null": "pn.buildPanel({kind:'nope'}, [], {})",
     # ADR 0055 rule 4: decimals, but a non-zero value never prints as zero
     "table_value_format": (
@@ -510,6 +590,7 @@ def results():
         f"  const te = await import('{origin}/tab_edit.js');\n"
         f"  const ss = await import('{origin}/start_settings.js');\n"
         f"  const ex = await import('{origin}/panes/extract.js');\n"
+        f"  const un = await import('{origin}/units.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -796,6 +877,59 @@ def test_recent_servers_move_a_reconnected_server_to_the_front(results):
 
 def test_recent_servers_keep_five(results):
     assert results["recent_servers_cap"] == ["f", "a", "b", "c", "d"]
+
+
+def test_js_dimension_tags_match_the_metric_units_module(results):
+    """units.js hides exactly the dimension tags ffast/metrics/units.py defines."""
+    from ffast.metrics import units
+
+    tags = sorted(v for k, v in vars(units).items()
+                  if not k.startswith("_") and isinstance(v, str))
+    assert results["units_dimension_tags"] == tags
+
+
+def test_axis_title_prints_a_unit_but_not_a_dimension(results):
+    """"Energy MAE (energy)" named the dimension where the unit belongs."""
+    assert results["axis_title_units"] == [
+        "Energy MAE", "Energy MAE (meV)", "Energy MAE", "Density", "",
+    ]
+
+
+def test_table_headers_carry_a_declared_unit(results):
+    r = results["table_headers_carry_units"]
+    assert r["table"] == ["Energy MAE (meV)", "aspirin"]
+    assert r["tableDim"] == ["Energy MAE", "aspirin"]
+    assert r["grouped"] == ["Object", "C MAE (meV/Å)", "C RMSE"]
+
+
+def test_an_energy_or_force_shows_the_datasets_unit_or_unit_placeholder(results):
+    assert results["unit_resolution"] == [
+        "[unit]", "eV", "[unit]", "meV", "", "[unit]",
+        "Energy MAE [unit]", "Energy MAE (kcal/mol)", "force", None,
+    ]
+
+
+def test_a_subset_shows_the_units_of_the_dataset_it_was_cut_from(results):
+    assert results["dataset_units_follow_the_root"] == [
+        {"energy": "eV"}, {"energy": "eV"}, {}, {}, {"force": "x"},
+    ]
+
+
+def test_table_headers_whose_unit_can_be_named_are_marked(results):
+    r = results["unit_headers_are_marked"]
+    assert r["table"] == [["Energy MAE [unit]", "value"], ["aspirin", None]]
+    assert r["grouped"] == [["Object", None], ["C MAE (eV/Å)", "mae"], ["C RMSE [unit]", "rmse"]]
+    assert r["plain"] == [["Gyration", None], ["aspirin", None]]
+
+
+def test_a_click_finds_the_role_of_a_header_or_axis_title(results):
+    assert results["unit_role_at"] == ["mae", None, "value", "y", None]
+
+
+def test_plots_say_which_role_each_axis_shows(results):
+    timeline, scatter, title = results["plot_unit_axes"]
+    assert timeline == {"x": "x", "y": "y"} and scatter == {"x": "x", "y": "y"}
+    assert title == "Energy MAE [unit]"
 
 
 def test_table_value_never_prints_a_non_zero_value_as_zero(results):

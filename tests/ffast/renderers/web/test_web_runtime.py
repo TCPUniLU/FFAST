@@ -676,6 +676,28 @@ async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server
             await browser.close()
 
 
+async def test_web_the_colourbar_names_the_unit_of_a_force_colouring(ffast_web_server):
+    """The colourbar of a force colouring says "[unit]" until it is clicked and
+    named; the unit is the dataset's, so the server announces it back."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        label = page.locator("#colorbar-label")
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            await expect(label).to_have_text(re.compile(r"\[unit\]$"), timeout=15000)
+            await label.click()
+            await page.locator("#unit-popover input").fill("eV/Å")
+            await page.locator("#unit-popover input").press("Enter")
+            await expect(label).to_have_text(re.compile(r"\(eV/Å\)$"), timeout=15000)
+        finally:
+            await browser.close()
+
+
 async def test_web_publication_style_and_reset(ffast_web_server):
     """Publication: white background (view and export), orthographic, no axes.
     Reset puts back what the quick styles change."""
@@ -1615,6 +1637,46 @@ async def test_web_a_reloaded_page_shows_what_its_main_view_showed(ffast_web_ser
             await expect(page.locator("#model-list .obj-row.selected")).to_have_attribute("data-fp", model_fp)
         finally:
             await browser.close()
+
+
+_AXIS_TITLE = """([title, axis]) => document.querySelector(
+  `#tabpanels .tabpanel.active .analysis-panel[data-title="${title}"] .g-${axis}title text`)?.textContent"""
+
+
+async def test_web_a_unit_named_on_one_plot_shows_on_every_plot_and_window(ffast_web_server):
+    """No dataset file says whether its energies are eV: an energy axis shows
+    "[unit]", clicking it names the unit, and then every energy label of that
+    dataset shows it, forces still waiting. The server keeps it for every window."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1400, "height": 900})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+            assert await page.evaluate(_AXIS_TITLE, ["Energy MAE timeline", "y"]) == "Energy MAE [unit]"
+
+            await page.locator('.tabpanel.active .analysis-panel[data-title="Energy MAE timeline"] .g-ytitle text').click()
+            await page.locator("#unit-popover input").fill("eV")
+            await page.locator("#unit-popover input").press("Enter")
+            await expect(page.locator("#unit-popover")).to_have_count(0)
+
+            await page.wait_for_function(
+                f"() => ({_AXIS_TITLE})(['Energy MAE timeline', 'y']) === 'Energy MAE (eV)'", timeout=15000)
+            await expect(page.locator(
+                '.tabpanel.active .analysis-panel[data-title="Energy MAE"] th[data-unit-role]'
+            )).to_have_text("Energy MAE (eV)", timeout=15000)
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            assert await page.evaluate(_AXIS_TITLE, ["Forces MAE timeline", "y"]) == "Forces MAE [unit]"
+        finally:
+            await browser.close()
+
+    replayed = await _replayed_datasets(ws_port)
+    assert replayed[dataset_fp]["units"] == {"energy": "eV"}
 
 
 async def test_web_a_reloaded_page_keeps_a_main_view_without_prediction(ffast_web_server):

@@ -30,6 +30,7 @@ import { MetricOps } from './metric_ops.js';
 import { sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
 import { askDialog, textDialog } from './dialogs.js';
+import { datasetUnits } from './units.js';
 import { TabEditor } from './edit_mode.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
 import { loadLayout, loadMainView, saveLayout, saveMainView } from './layout_state.js';
@@ -246,6 +247,7 @@ export class FFastApp {
       onSelectTab: (id) => this._selectTab(id),
       onSub: (o) => this._onSub(o),
       onPointFrame: (o) => this._onPlotPoint(o),
+      onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
     });
     this._applyLayout([]);
   }
@@ -807,6 +809,8 @@ export class FFastApp {
       onPredictionChange: (modelKey) => this._sendSetParameter('ffast.atom_color', 'prediction_ref', modelKey),
       onColormapChange: (cm) => this._sendSetParameter('ffast.atom_color', 'colormap', cm),
       onMetricParam: (key, value) => this._sendSetParameter('ffast.atom_color', key, value),
+      unitsOf: () => datasetUnits(this._focusedDatasetFp(), this._datasets),
+      onSetUnit: (dimension, unit) => this._setDatasetUnit(this._focusedDatasetFp(), dimension, unit),
     });
 
     const metricsPane = createMetricsPane(sidebarEl, {
@@ -1302,6 +1306,7 @@ export class FFastApp {
   _onDatasetMeta(fp, meta) {
     const before = this._datasets.get(fp);
     this._datasets.set(fp, meta);
+    this._panes?.colorBy.refreshUnits();
     // An independent panel on a subset whose Sub was unticked goes to its
     // parent, at the same structure, as the main view does.
     if (meta.active === false && meta.parent) {
@@ -1364,6 +1369,15 @@ export class FFastApp {
     if (meta?.parent_frames && !meta.frozen)
       return [{ id: 'dataset-freeze', label: 'Freeze', run: () => this._freezeSubset(fp), unavailable: why }];
     return [{ id: `${kind}-delete`, label: 'Delete…', run: () => this._deleteObject(kind, fp), unavailable: why }];
+  }
+
+  /** Name the unit of a dataset's energies or forces (a subset names its
+   * dataset's). The server announces the dataset again to every window. */
+  _setDatasetUnit(fp, dimension, unit) {
+    if (!fp) return;
+    const why = this._needsControl();
+    if (why) { this._setStatus(why, 'error'); return; }
+    this._conn.send(OUT.SET_DATASET_UNIT, { fingerprint: fp, dimension, unit });
   }
 
   /** Keep a live subset's frames as a frozen subset; the live one carries on

@@ -349,6 +349,17 @@
     table.panel-table th:first-child, table.panel-table td:first-child {
       text-align: left; color: var(--text1);
     }
+    /* A unit the user names: click an axis title, an error table header or
+       the colourbar label (units.js). Plotly makes its titles click-through. */
+    .panel-plot[data-unit-x] .g-xtitle text,
+    .panel-plot[data-unit-y] .g-ytitle text { pointer-events: all !important; cursor: pointer; }
+    table.panel-table th[data-unit-role], #colorbar-label.unit-editable { cursor: pointer; }
+    #unit-popover {
+      position: fixed; z-index: 1000; padding: 8px 10px;
+      background: var(--bg2); border: 1px solid var(--bg3); border-radius: 6px;
+    }
+    #unit-popover label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
+    #unit-popover input { width: 180px; }
 
     /* ── pick toolbar + contextual strip (issue 10) ──────────────────── */
     #pick-bar {

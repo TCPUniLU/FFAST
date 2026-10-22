@@ -164,7 +164,7 @@ class PanelConfig(BaseModel):
     x_label: AxisLabel = None
     y_label: AxisLabel = None
     diagonal: bool = False
-    precision: int = 2
+    precision: int | None = None   # table decimals; unset = 3 significant digits
     hidden_params: list[str] = Field(default_factory=list)
     controls: list[str] = Field(default_factory=list)
     scroll_group: str | None = None
