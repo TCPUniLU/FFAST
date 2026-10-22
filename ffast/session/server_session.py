@@ -352,7 +352,9 @@ class ServerSession:
             kwargs["prediction_keys"] = [
                 tuple(k) for k in kwargs["prediction_keys"]
             ]
-        self.env.taskLoadDataset(path, dataset_type, **kwargs)
+        self.env.taskLoadDataset(
+            path, dataset_type, on_error=self._load_failed("dataset", path), **kwargs
+        )
 
     async def _on_load_model(self, path, model_type, **kwargs) -> None:
         self.env.taskLoadModel(path, model_type)
@@ -729,7 +731,30 @@ class ServerSession:
             path, dataset_fp,
             selected_energy_key=selected_energy_key,
             selected_force_key=selected_force_key,
+            on_error=self._load_failed("prediction", path),
         )
+
+    def _load_failed(self, kind: str, path: str):
+        """An ``on_error`` callback that tells this window its load failed.
+
+        A failed load task only pushes ``TASK_FAILED`` with a task id, which the
+        window cannot tie to its request, so its status stayed on "Loading…".
+        The callback runs in the task's worker thread, hence the hand-back to
+        this session's loop.
+        """
+        loop = asyncio.get_running_loop()
+
+        def report(exc):
+            from ffast.protocol.rpc import pack
+
+            logger.warning("Loading %s %r failed: %s", kind, path, exc)
+            data = pack(
+                control.LOAD_FAILED, (),
+                {"kind": kind, "path": path, "error": str(exc)},
+            )
+            loop.call_soon_threadsafe(self._emit_or_drop, data, "load failed")
+
+        return report
 
     async def _on_request_prediction_arrays(self, dataset_fp, model_fp, **kwargs) -> None:
         """Pack only cached prediction arrays for (dataset_fp, model_fp) and push.

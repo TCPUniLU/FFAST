@@ -146,6 +146,11 @@ SUBSET_EXPORTED = "SUBSET_EXPORTED"
 # generic broadcast loop).
 SESSION_SAVED = "SESSION_SAVED"
 SESSION_LOADED = "SESSION_LOADED"
+# A LOAD_DATASET / LOAD_PREDICTION that raised: {kind, path, error}, to the
+# window that asked. The load runs in a task whose TASK_FAILED carries only a
+# task id, so without this the window's "Loading…" never ended. One-shot
+# announcement, out of REPLY_EVENTS.
+LOAD_FAILED = "LOAD_FAILED"
 # Outcome of SAVE_TAB / DELETE_TAB / HIDE_TAB (ADR 0056): {ok, action, name,
 # error}, to the window that asked. On success the new layout then goes to
 # every window as TAB_LAYOUT through the hub. Same shape and reasoning as

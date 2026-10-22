@@ -396,6 +396,35 @@ def test_dispatch_load_dataset_restores_prediction_key_tuples():
     assert kwargs["slice_num"] == 3
 
 
+class _FailingLoadEnv(_FakeEnv):
+    """A load that raises, as a non-dataset file does inside the load task."""
+
+    def taskLoadDataset(self, path, dataset_type, on_error=None, **kwargs):
+        on_error(IndexError("list index out of range"))
+
+    def taskLoadPrepredictedDataset(self, path, dataset_fp, on_error=None, **kwargs):
+        on_error(ValueError("no forces"))
+
+
+@pytest.mark.parametrize("event, args, kind", [
+    ("LOAD_DATASET", ["/x/README.md", "ase"], "dataset"),
+    ("LOAD_PREDICTION", ["/x/pred.xyz", "abcdef123456"], "prediction"),
+])
+def test_a_failed_load_tells_the_window_which_file_and_why(event, args, kind):
+    async def scenario():
+        s = ServerSession(_FailingLoadEnv(), asyncio.Queue())
+        await s.dispatch(event, args, {})
+        return await _drain(s)
+
+    messages = _run(scenario())
+
+    name, _, kwargs = messages[0]
+    assert name == control.LOAD_FAILED
+    assert kwargs["kind"] == kind
+    assert kwargs["path"] == args[0]
+    assert kwargs["error"] in ("list index out of range", "no forces")
+
+
 # ── handler enqueue, end-to-end through dispatch ──────────────────────────────
 
 def test_dispatch_list_dir_enqueues_listing(tmp_path):

@@ -1253,6 +1253,11 @@ export class FFastApp {
       conn.on(IN.SESSION_SAVED,  (kw) => this._sessionOps.onSessionResult('save', kw));
       conn.on(IN.SESSION_LOADED, (kw) => this._sessionOps.onSessionResult('load', kw));
       conn.on(IN.SESSION_METRICS, (kw) => this._offerSessionMetrics(kw));
+      // A load that raised: end the "Loading <file>…" status with the reason.
+      conn.on(IN.LOAD_FAILED, (kw) => {
+        const name = String(kw.path || '').split(/[\\/]/).pop();
+        this._setStatus(`Could not load ${name}: ${kw.error}`, 'error');
+      });
 
       await conn.connect();
 

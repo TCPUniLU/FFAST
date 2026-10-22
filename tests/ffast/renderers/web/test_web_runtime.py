@@ -293,6 +293,29 @@ async def test_web_file_menu_holds_the_session_actions(ffast_web_server):
             await browser.close()
 
 
+async def test_web_a_dataset_that_cannot_be_loaded_says_so_in_the_status(ffast_web_server):
+    """ADR 0063 follow-up: a text file loaded as a dataset used to leave
+    "Loading README.md…" up for good; the status now names the file and why."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            await page.locator("#fb-path").fill(str(REPO_ROOT))
+            await page.locator("#fb-path").press("Enter")
+            await page.locator("#fb-list .fb-row", has_text="README.md").click()
+            await page.locator("#fb-load").click()
+            status = page.locator("#status")
+            await expect(status).to_contain_text("Could not load README.md", timeout=30000)
+            await expect(status).to_have_class(re.compile(r"\berror\b"))
+        finally:
+            await browser.close()
+
+
 async def test_web_prediction_browser_keeps_load_button_inside_dialog(ffast_web_server):
     """The prediction-only selectors may wrap, but its actions stay reachable."""
     ws_port, web_port = ffast_web_server
