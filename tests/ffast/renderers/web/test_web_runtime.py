@@ -4449,6 +4449,27 @@ async def test_web_loading_a_session_that_does_not_exist_shows_an_error(ffast_we
             await browser.close()
 
 
+async def test_web_loading_a_prediction_the_server_already_holds_ends_the_loading_status(ffast_web_server):
+    """ADR 0063 follow-up: the server announces nothing for a prediction it
+    already holds, so "Loading prediction…" used to stay up for good."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, _ = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _file_menu(page, "Load Prediction…")
+            await page.locator("#fb-path").fill(str(PREDICTION_PATH.parent))
+            await page.locator("#fb-path").press("Enter")
+            await page.locator("#fb-list .fb-row", has_text="prediction.xyz").click()
+            await page.locator("#fb-load").click()
+            await expect(page.locator("#status")).to_have_text(
+                '"prediction.xyz" is already loaded', timeout=15000)
+        finally:
+            await browser.close()
+
+
 _RECORD_SENDS = """() => {
   const conn = window.ffastApp._conn;
   const send = conn.send.bind(conn);

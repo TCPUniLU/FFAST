@@ -1235,7 +1235,7 @@ export class FFastApp {
       // to arrive — good enough for a single-user session (ADR 0044: shared
       // workspace, not multi-tenant) and gives issue 21 a real completion
       // signal instead of the previous silent console.debug-only handling.
-      conn.on(IN.TASK_DONE,    (kw) => console.debug('TASK_DONE', kw));
+      conn.on(IN.TASK_DONE,    (kw) => { console.debug('TASK_DONE', kw); this._browser.onTaskDone(); });
       conn.on(IN.TASK_FAILED,  (kw) => console.warn('TASK_FAILED', kw));
       conn.on(IN.DATASET_LOADED, () => {});
       conn.on(IN.MODEL_LOADED,   () => {});
@@ -1256,6 +1256,7 @@ export class FFastApp {
       // A load that raised: end the "Loading <file>…" status with the reason.
       conn.on(IN.LOAD_FAILED, (kw) => {
         const name = String(kw.path || '').split(/[\\/]/).pop();
+        this._browser.predictionSettled();
         this._setStatus(`Could not load ${name}: ${kw.error}`, 'error');
       });
 
@@ -1391,6 +1392,7 @@ export class FFastApp {
         (meta?.dataset_fingerprints || []).length
         && predictionApplies(meta, this._currentDatasetFp, this._datasets)) {
       this._currentModelFp = fp;
+      this._browser.predictionSettled();
       this._setStatus(`Prediction "${meta.name || fp.slice(0,8)}" ready`, 'connected');
       if (this._activePanel) this._openView();
       this._syncAnalysisContext();
