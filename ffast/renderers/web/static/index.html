@@ -338,11 +338,30 @@
     .grid-slot { display: flex; min-width: 0; min-height: 0; }
     .grid-slot > .analysis-panel { flex: 1 1 auto; }
     .analysis-panel {
-      background: var(--bg2); border: 1px solid var(--bg3); border-radius: 5px;
+      background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
       display: flex; flex-direction: column; overflow: auto; min-width: 0; min-height: 0;
     } /*Changed overflow from hidden to auto to support situations where the whole table doesn't fit entirely inside the allocated space*/
+    /* panel letter and caption (ADR 0063, figure.js) */
+    .panel-letter {
+      font: 700 var(--letter) Georgia, "Times New Roman", serif;
+      color: var(--ink); margin-right: 8px;
+    }
+    .analysis-panel .panel-title > span:not(.panel-letter):not(.sub-toggle) { flex: 1; min-width: 0; }
+    .viewport > .panel-letter {
+      position: absolute; top: 6px; left: 8px; z-index: 3; margin: 0;
+      padding: 0 6px; border-radius: 4px; pointer-events: none;
+      background: color-mix(in srgb, var(--ground) 70%, transparent);
+    }
+    .viewport:has(> .panel-letter) .panel-caption { left: 40px; max-width: calc(100% - 48px); }
+    .panel-caption-line {
+      font-size: var(--fs-s); color: var(--ink-3); padding: 6px 12px 8px;
+      border-top: 1px solid var(--line);
+    }
+    .panel-caption-line[hidden] { display: none; }
+    .panel-caption-line b { font-family: Georgia, "Times New Roman", serif; color: var(--ink); }
+    .panel-caption-line .unit-editable { cursor: pointer; text-decoration: underline dotted; }
     .analysis-panel .panel-title {
-      font-size: var(--fs-s); font-weight: 700; color: var(--text1); padding: 6px 8px 2px;
+      font-size: var(--fs-m); font-weight: 600; color: var(--ink); padding: 10px 12px 4px;
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
     }
     .analysis-panel .panel-title .sub-toggle {

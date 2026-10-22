@@ -554,6 +554,31 @@ CASES = {
     "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
     "theme_hex_alpha": "th.hexAlpha('#56b4e9', 0.15)",
 
+    # ── figure.js: panel letters and captions (ADR 0063) ────────────────────
+    "fig_letters_2x2": (
+        "[...fg.panelLetters([{index: 0, row: 1, col: 1}, {index: 1, row: 0, col: 1},"
+        " {index: 2, row: 1, col: 0}, {index: 3, row: 0, col: 0}])]"),
+    "fig_letters_tie_by_index": (
+        "[...fg.panelLetters([{index: 1, row: 0, col: 0}, {index: 0, row: 0, col: 0}])]"),
+    "fig_letters_27": (
+        "(() => { const m = fg.panelLetters(Array.from({length: 27}, (_, i) => ({index: i, row: i, col: 0})));"
+        " return [m.get(0), m.get(25), m.get(26)]; })()"),
+    "fig_cap_timeline_peaks": (
+        "fg.caption('timeline', {yTitle: 'Forces MAE [unit]', nSeries: 1, peaks: [{frame: 41}, {frame: 22}, {frame: 58}]})"),
+    "fig_cap_timeline_no_peaks": "fg.caption('timeline', {yTitle: 'Energy MAE', nSeries: 1, peaks: []})",
+    "fig_cap_timeline_series": "fg.caption('timeline', {yTitle: 'Energy MAE', nSeries: 3})",
+    "fig_cap_overlay_series": "fg.caption('overlay_timeline', {yTitle: 'Force', nSeries: 2})",
+    "fig_cap_density": "fg.caption('density', {xTitle: 'Energy MAE [unit]'})",
+    "fig_cap_grouped_density": "fg.caption('grouped_density', {xTitle: 'Distance'})",
+    "fig_cap_scatter": "fg.caption('scatter', {xTitle: 'Reference E', yTitle: 'Predicted E'})",
+    "fig_cap_untitled": (
+        "[fg.caption('timeline', {yTitle: ''}), fg.caption('density', {xTitle: ''}),"
+        " fg.caption('scatter', {xTitle: 'x', yTitle: ''})]"),
+    "fig_cap_none": "['table', 'grouped_table', '3d'].map(k => fg.caption(k, {yTitle: 'x'}))",
+    "fig_segments": (
+        "fg.captionSegments('Predicted E [unit] against Reference E [unit].',"
+        " {xTitle: 'Reference E [unit]', yTitle: 'Predicted E [unit]'})"),
+
     # ── icons.icon (ADR 0063) ───────────────────────────────────────────────
     "icon_plus": "ic.icon('plus')",
     "icon_every_name": "ic.ICON_NAMES.map(n => [n, ic.icon(n).startsWith('<svg') && ic.icon(n).includes('aria-hidden=\"true\"')])",
@@ -598,6 +623,7 @@ def results():
         f"  const pn = await import('{origin}/panels.js');\n"
         f"  const th = await import('{origin}/theme.js');\n"
         f"  const ic = await import('{origin}/icons.js');\n"
+        f"  const fg = await import('{origin}/figure.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
         f"  const tr = await import('{origin}/tab_rules.js');\n"
@@ -665,6 +691,57 @@ def test_base_layout_grid_colour_is_the_theme_line(results):
 
 def test_series_colours_wrap_around_the_theme_list(results):
     assert results["theme_series_color_wraps"] is True
+
+
+# ── figure.js: panel letters and captions (ADR 0063) ─────────────────────────
+
+def test_letters_follow_screen_position_not_file_order(results):
+    # Panels 3, 1, 2, 0 are top-left, top-right, bottom-left, bottom-right.
+    assert results["fig_letters_2x2"] == [[3, "a"], [1, "b"], [2, "c"], [0, "d"]]
+
+
+def test_letters_break_a_tie_by_file_order(results):
+    assert results["fig_letters_tie_by_index"] == [[0, "a"], [1, "b"]]
+
+
+def test_letters_run_past_z_into_aa(results):
+    assert results["fig_letters_27"] == ["a", "z", "aa"]
+
+
+def test_a_one_series_timeline_caption_lists_its_peak_frames_in_order(results):
+    assert results["fig_cap_timeline_peaks"] == (
+        "Forces MAE [unit]. Top 3 peaks: frames 22, 41, 58.")
+
+
+def test_a_timeline_caption_without_peaks_is_one_sentence(results):
+    assert results["fig_cap_timeline_no_peaks"] == "Energy MAE."
+
+
+def test_several_series_captions_count_the_series(results):
+    assert results["fig_cap_timeline_series"] == "Energy MAE, 3 series."
+    assert results["fig_cap_overlay_series"] == "Force, 2 series."
+
+
+def test_distribution_and_scatter_captions(results):
+    assert results["fig_cap_density"] == "Distribution of Energy MAE [unit]."
+    assert results["fig_cap_grouped_density"] == "Distribution of Distance."
+    assert results["fig_cap_scatter"] == "Predicted E against Reference E."
+
+
+def test_a_panel_whose_axis_has_no_title_has_no_caption(results):
+    assert results["fig_cap_untitled"] == ["", "", ""]
+
+
+def test_tables_and_3d_panels_have_no_caption(results):
+    assert results["fig_cap_none"] == ["", "", ""]
+
+
+def test_caption_segments_mark_each_unit_with_its_axis(results):
+    assert results["fig_segments"] == [
+        {"text": "Predicted E "}, {"text": "[unit]", "axis": "y"},
+        {"text": " against Reference E "}, {"text": "[unit]", "axis": "x"},
+        {"text": "."},
+    ]
 
 
 # ── icons.icon (ADR 0063) ────────────────────────────────────────────────────

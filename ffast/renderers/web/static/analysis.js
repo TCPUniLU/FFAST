@@ -25,6 +25,7 @@
 
 import { helpToggle } from './help.js';
 import { renderPanel, PLOT_KINDS, elementSymbol, unitRoleAt } from './panels.js';
+import { panelLetters, caption, captionSegments } from './figure.js';
 import { datasetUnits, editableDimension, resolveUnit } from './units.js';
 import { unitPopover } from './dialogs.js';
 import { KIND_3D } from './tab_rules.js';
@@ -493,6 +494,7 @@ export class AnalysisManager {
     const grid = t.gridEl;
     const panels = t.spec.panels || [];
     this._sizeGrid(t);
+    t.letters = this._lettersOf(panels);
 
     const strips = new Map();   // scroll_group → slot
     panels.forEach((spec, index) => {
@@ -511,8 +513,13 @@ export class AnalysisManager {
           title.textContent = spec.title;
           el.appendChild(title);
         }
+        // Its letter sits in the viewport, top left; Panel3D.mount moves it there.
+        const letterEl = document.createElement('span');
+        letterEl.className = 'panel-letter';
+        letterEl.textContent = t.letters.get(index) || '';
+        el.appendChild(letterEl);
         place(el);
-        t.cells3d.push({ spec, index, el });
+        t.cells3d.push({ spec, index, el, letterEl });
       } else if (spec.scroll_group) {
         let slot = strips.get(spec.scroll_group);
         if (!slot) {
@@ -536,6 +543,24 @@ export class AnalysisManager {
     grid.classList.toggle('fill', grid.childElementCount === 1);
     // With several 3D panels, the focused one is outlined (ADR 0056 rule 8).
     grid.classList.toggle('multi3d', t.cells3d.length > 1);
+  }
+
+  /** Letters for a tab's panels, by screen position (figure.js). */
+  _lettersOf(panels) {
+    return panelLetters(panels.map((p, index) => ({ index, row: p.row, col: p.col })));
+  }
+
+  /** Give every panel the letter its place now calls for. */
+  _applyLetters(t) {
+    t.letters = this._lettersOf(t.spec.panels || []);
+    for (const slot of t.slots) {
+      (slot.cards || []).forEach((card, i) => {
+        card.letter = t.letters.get(slot.indices[i]) || '';
+        card.letterEl.textContent = card.letter;
+        card.captionLetter.textContent = card.letter;
+      });
+    }
+    for (const cell of t.cells3d) cell.letterEl.textContent = t.letters.get(cell.index) || '';
   }
 
   /** The grid's column and row sizes, from the tab's spec. Set sizes are
@@ -571,6 +596,7 @@ export class AnalysisManager {
     this._sizeGrid(t);
     for (const slot of t.slots) placeCell(slot.el, slot.specs[0]);
     for (const cell of t.cells3d) placeCell(cell.el, cell.spec);
+    this._applyLetters(t);
     return this.tab(t.id);
   }
 
@@ -806,7 +832,8 @@ export class AnalysisManager {
     if (whole) return;
 
     for (const slot of t.slots) {
-      const cards = slot.specs.map((spec) => this._buildPanelCard(t, spec, token));
+      const cards = slot.specs.map((spec, i) =>
+        this._buildPanelCard(t, spec, token, t.letters.get(slot.indices[i]) || ''));
       slot.el.replaceChildren(...cards.map((c) => c.el));
       slot.cards = cards;
       cards.forEach((card, i) => {
@@ -816,7 +843,7 @@ export class AnalysisManager {
     }
   }
 
-  _buildPanelCard(t, spec, token) {
+  _buildPanelCard(t, spec, token, letter = '') {
     const el = document.createElement('div');
     el.className = 'analysis-panel';
     el.dataset.kind = spec.kind;
@@ -824,7 +851,12 @@ export class AnalysisManager {
 
     const title = document.createElement('div');
     title.className = 'panel-title';
-    title.innerHTML = `<span>${spec.title || ''}</span>`;
+    const letterEl = document.createElement('span');
+    letterEl.className = 'panel-letter';
+    letterEl.textContent = letter;
+    const name = document.createElement('span');
+    name.innerHTML = spec.title || '';
+    title.append(letterEl, name);
     if (spec.tooltip) title.title = spec.tooltip;
     el.appendChild(title);
 
@@ -837,9 +869,40 @@ export class AnalysisManager {
     params.className = 'panel-params';
     el.appendChild(params);
 
-    const card = { el, title, body, params };
+    // The caption under the figure: its letter, then one line (figure.js).
+    const captionEl = document.createElement('div');
+    captionEl.className = 'panel-caption-line';
+    captionEl.hidden = true;
+    const captionLetter = document.createElement('b');
+    captionLetter.textContent = letter;
+    const captionText = document.createElement('span');
+    captionEl.append(captionLetter, ' | ', captionText);
+    el.appendChild(captionEl);
+
+    const card = { el, title, body, params, letter, letterEl, captionEl, captionLetter, captionText };
     body.addEventListener('click', (e) => this._onUnitClick(card, e));
+    captionEl.addEventListener('click', (e) => this._onUnitClick(card, e));
     return card;
+  }
+
+  /** Write the caption line of a drawn panel; a "[unit]" in it that names an
+   * energy or force unit is clickable, like the axis title it repeats. */
+  _showCaption(card, spec) {
+    const info = card.body._figureInfo;
+    const text = info ? caption(spec.kind, info) : '';
+    card.captionEl.hidden = !text;
+    if (!text) { card.captionText.replaceChildren(); return; }
+    const axes = card.body._unitAxes || {};
+    const nodes = captionSegments(text, info).map((seg) => {
+      const role = seg.axis && axes[seg.axis];
+      if (!role || !(card.unitDims || {})[role]) return document.createTextNode(seg.text);
+      const span = document.createElement('span');
+      span.className = 'unit-editable';
+      span.dataset.unitRole = role;
+      span.textContent = seg.text;
+      return span;
+    });
+    card.captionText.replaceChildren(...nodes);
   }
 
   /** A click on a "[unit]" (or a unit) in an axis title or a table header
@@ -885,6 +948,7 @@ export class AnalysisManager {
       msg.textContent = `${missing.length === 1 ? 'Metric' : 'Metrics'} ${missing.join(', ')} ` +
         `${missing.length === 1 ? 'is' : 'are'} not on this server.`;
       card.body.replaceChildren(msg);
+      card.captionEl.hidden = true;
       card.params.innerHTML = '';
       card.series = null;
       return;
@@ -917,6 +981,7 @@ export class AnalysisManager {
       card.body.innerHTML =
         `<div class="panel-msg">${anyModel ? 'No data for this selection.'
           : 'Select a prediction to compute this panel.'}</div>`;
+      card.captionEl.hidden = true;
       card.params.innerHTML = '';
       return;
     }
@@ -944,6 +1009,7 @@ export class AnalysisManager {
     }
     this._wirePanelInteractions(t, spec, card);
     this._buildPanelParams(t, spec, card);
+    this._showCaption(card, spec);
   }
 
   /** Compute-param values to send for one metric of a panel. */

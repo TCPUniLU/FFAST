@@ -3750,6 +3750,40 @@ async def test_web_analysis_scatter_renders(ffast_web_server):
             await browser.close()
 
 
+async def test_web_every_analysis_panel_has_a_letter_and_the_first_is_a(ffast_web_server):
+    """ADR 0063: panels are lettered in screen reading order, and a plot says
+    in one line under it what it shows."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(
+                _PANEL_HAS_POINTS, arg="Energy Scatter", timeout=25000)
+            panels = page.locator(".tabpanel.active .analysis-panel")
+            letters = page.locator(".tabpanel.active .analysis-panel .panel-letter")
+            count = await panels.count()
+            assert count > 1
+            await expect(letters).to_have_count(count)
+            assert (await letters.first.inner_text()) == "a"
+            texts = await letters.all_inner_texts()
+            assert texts == sorted(texts, key=lambda t: (len(t), t)), texts
+            # A plotted panel's caption starts with the same letter.
+            line = page.locator(".tabpanel.active .panel-caption-line:not([hidden])").first
+            await expect(line).to_be_visible()
+            assert (await line.locator("b").inner_text()) in texts
+        finally:
+            await browser.close()
+
+
 _SUBSETS = """() => [...window.ffastApp._datasets.entries()]
     .filter(([, m]) => m.is_sub).map(([fp, m]) => ({fp, name: m.name, n: m.n, active: m.active}))"""
 

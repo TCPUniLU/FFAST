@@ -142,8 +142,8 @@ export function axisTitle(label, unit) {
  * @param {{x?: string, y?: string}|null} unitAxes
  */
 export function unitRoleAt(target, unitAxes) {
-  const th = target?.closest?.('th[data-unit-role]');
-  if (th) return th.dataset.unitRole;
+  const named = target?.closest?.('[data-unit-role]');
+  if (named) return named.dataset.unitRole;
   const title = target?.closest?.('.g-xtitle, .g-ytitle');
   if (!title || !unitAxes) return null;
   return unitAxes[title.classList.contains('g-xtitle') ? 'x' : 'y'] || null;
@@ -530,9 +530,16 @@ export function renderPanel(el, spec, series, ctx) {
     el.innerHTML = built.html;
     el._subInfo = null;
     el._unitAxes = null;
+    el._figureInfo = null;
     return;
   }
   el._unitAxes = built.unitAxes || null;
+  el._figureInfo = {
+    xTitle: built.layout.xaxis?.title?.text || '',
+    yTitle: built.layout.yaxis?.title?.text || '',
+    nSeries: built.traces.filter((t) => t.showlegend !== false).length,
+    peaks: built.peaks || [],
+  };
   el.querySelectorAll('.main-svg').forEach((svg) => { svg.style.transform = ''; });   // see followSize
   const start = performance.now();
   Plotly().react(el, built.traces, built.layout, PLOT_CONFIG);
