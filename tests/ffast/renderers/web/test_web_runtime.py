@@ -3784,6 +3784,42 @@ async def test_web_every_analysis_panel_has_a_letter_and_the_first_is_a(ffast_we
             await browser.close()
 
 
+async def test_web_a_timeline_labels_its_five_worst_frames_and_a_label_opens_one(ffast_web_server):
+    """ADR 0063: a one-series timeline marks its 5 highest peaks, and clicking a
+    label opens that frame, as clicking the curve does; the frame stays marked."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            labels = page.locator(_sub_panel("Forces MAE timeline") + " .panel-plot .annotation")
+            await expect(labels).to_have_count(5)
+            texts = await labels.evaluate_all("els => els.map((e) => e.textContent)")   # SVG has no innerText
+            frames = [int(t.split(" · ")[0]) for t in texts]
+            assert frames == sorted(frames) and len(set(frames)) == 5, texts
+
+            target = frames[-1]
+            await labels.nth(4).click()
+            await expect(page.locator("#frame-label")).to_have_text(f"{target} / 99")
+            # Opening a frame moves to the 3D view; back on the tab, the label is ticked.
+            await _open_analysis_tab(page, "Basic Errors")
+            done = await page.locator(
+                _sub_panel("Forces MAE timeline") + " .panel-plot .annotation"
+            ).evaluate_all("els => els.map((e) => e.textContent)")
+            assert done[4].endswith("✓") and not any(t.endswith("✓") for t in done[:4]), done
+        finally:
+            await browser.close()
+
+
 _SUBSETS = """() => [...window.ffastApp._datasets.entries()]
     .filter(([, m]) => m.is_sub).map(([fp, m]) => ({fp, name: m.name, n: m.n, active: m.active}))"""
 

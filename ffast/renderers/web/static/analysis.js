@@ -24,7 +24,8 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, elementSymbol, unitRoleAt } from './panels.js';
+import { renderPanel, PLOT_KINDS, elementSymbol, unitRoleAt, refreshPeaks } from './panels.js';
+import { visitedKey } from './peaks.js';
 import { panelLetters, caption, captionSegments } from './figure.js';
 import { datasetUnits, editableDimension, resolveUnit } from './units.js';
 import { unitPopover } from './dialogs.js';
@@ -164,7 +165,9 @@ export class AnalysisManager {
     this._metrics = deps.metricClient;
     this._onSelectTab = deps.onSelectTab;
     this._onSub = deps.onSub;
-    this._onPointFrame = deps.onPointFrame;
+    this._openFrame = deps.onPointFrame;
+    /** Frames the user opened from a plot, "dataset|model|frame"; kept for the page's life. */
+    this._visited = new Set();
     this._onSetUnit = deps.onSetUnit;
 
     /** @type {Map<string, object>} id → catalog entry */
@@ -993,6 +996,7 @@ export class AnalysisManager {
       perFrame: this._isPerFrameScatter(spec),
       elementOrder: this._elementOrder || [],
       selectedElements: t.selectedElements,
+      visited: this._visited,
     };
     renderPanel(card.body, spec, series, ctx);
     card.series = series;
@@ -1010,6 +1014,22 @@ export class AnalysisManager {
     this._wirePanelInteractions(t, spec, card);
     this._buildPanelParams(t, spec, card);
     this._showCaption(card, spec);
+  }
+
+  /** A plot point or a peak label opened a frame: remember it and dim its
+   * label in every timeline of that dataset and model on the tab on screen. */
+  _onPointFrame(o) {
+    this._visited.add(visitedKey(o.datasetFp, o.modelFp, o.frame));
+    // The tab the click was made on, before opening the frame moves to the 3D view.
+    const t = this._tabs.find((x) => x.id === this._activeId);
+    for (const slot of (t && t.slots) || []) {
+      for (const card of slot.cards || []) {
+        const s = (card.series || [])[(card.body._subInfo?.curveSeries || [])[0]];
+        if (!s || s.datasetFp !== o.datasetFp || s.modelFp !== o.modelFp) continue;
+        refreshPeaks(card.body, (frame) => this._visited.has(visitedKey(s.datasetFp, s.modelFp, frame)));
+      }
+    }
+    this._openFrame?.(o);
   }
 
   /** Compute-param values to send for one metric of a panel. */
@@ -1269,8 +1289,17 @@ export class AnalysisManager {
       if (!pt || !info) return;
       if (info.dataCurveCount != null && pt.curveNumber >= info.dataCurveCount) return;
       const src = (card.series || [])[(info.curveSeries || [])[pt.curveNumber] ?? 0];
-      if (pt.pointIndex != null && src && this._onPointFrame)
+      if (pt.pointIndex != null && src)
         this._onPointFrame({ datasetFp: src.datasetFp, modelFp: src.modelFp, frame: pt.pointIndex });
     });
+    // A peak label opens its frame, as a click on the curve does.
+    if (el._peaks && el._peaks.length) {
+      if (el.removeAllListeners) el.removeAllListeners('plotly_clickannotation');
+      el.on('plotly_clickannotation', (ev) => {
+        const peak = el._peaks[ev.index];
+        const src = (card.series || [])[(el._subInfo.curveSeries || [])[0] ?? 0];
+        if (peak && src) this._onPointFrame({ datasetFp: src.datasetFp, modelFp: src.modelFp, frame: peak.frame });
+      });
+    }
   }
 }

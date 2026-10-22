@@ -35,7 +35,8 @@
  * frames (analysis.js `_wireSub`).
  */
 
-import { withUnit } from './units.js';
+import { withUnit, displayUnit } from './units.js';
+import { pickPeaks, visitedKey } from './peaks.js';
 import { plotTheme, hexAlpha } from './theme.js';
 
 /** @typedef {import('./protocol.js').PanelLayout} PanelLayout */
@@ -179,6 +180,35 @@ function seriesWith(series, role) {
 
 // ── plot-kind builders (pure) ───────────────────────────────────────────────
 
+/**
+ * One Plotly annotation per peak: a short tick and a label turned on its side,
+ * "73 · 0.442 eV/Å". Clicking one opens that frame; one already opened is dimmed
+ * and ticked. `isVisited(frame)` says which.
+ */
+export function peakAnnotations(peaks, unit, isVisited = () => false) {
+  const t = plotTheme();
+  const shown = displayUnit(unit);
+  return peaks.map(({ frame, value }) => {
+    const seen = isVisited(frame);
+    return {
+      x: frame, y: value,
+      text: `${frame} · ${formatSignificant(value)}${shown ? ` ${shown}` : ''}${seen ? ' ✓' : ''}`,
+      textangle: -90, showarrow: true, arrowhead: 0, arrowwidth: 1, arrowcolor: t.peak,
+      ax: 0, ay: -18, yanchor: 'bottom',
+      font: { color: t.peakInk, size: t.fsPlot },
+      opacity: seen ? 0.55 : 1,
+      captureevents: true, hovertext: `Open frame ${frame} in 3D`,
+    };
+  });
+}
+
+/** Draw the peak labels of a drawn timeline again (a frame was opened). */
+export function refreshPeaks(el, isVisited) {
+  if (!el._peaks || !el._peaks.length) return;
+  Plotly().relayout(el, { annotations: peakAnnotations(el._peaks, el._peakUnit, isVisited) })
+    .catch(() => {});   // hidden or replaced meanwhile
+}
+
 export function buildTimeline(spec, series, ctx) {
   const u = ctx.units || {};
   const traces = [];
@@ -196,7 +226,21 @@ export function buildTimeline(spec, series, ctx) {
   const layout = withLegend(baseLayout(), traces.length);
   layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.x) || 'Configuration index' };
   layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) };
-  return { traces, layout, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
+  // With one series, its five worst frames are labelled; several would overlap.
+  let peaks = [];
+  if (traces.length === 1) {
+    peaks = pickPeaks(traces[0].y);
+    if (peaks.length) {
+      const s = series[curveSeries[0]];
+      const seen = ctx.visited;
+      layout.annotations = peakAnnotations(peaks, u.y,
+        (frame) => !!seen && seen.has(visitedKey(s.datasetFp, s.modelFp, frame)));
+      let lo = 0, hi = -Infinity;
+      for (const v of traces[0].y) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      if (hi > 0) layout.yaxis.range = [lo, hi * 1.45];   // headroom for the labels
+    }
+  }
+  return { traces, layout, peaks, peakUnit: u.y, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
 }
 
 export function buildDensity(spec, series, ctx) {
@@ -531,9 +575,12 @@ export function renderPanel(el, spec, series, ctx) {
     el._subInfo = null;
     el._unitAxes = null;
     el._figureInfo = null;
+    el._peaks = null;
     return;
   }
   el._unitAxes = built.unitAxes || null;
+  el._peaks = built.peaks || null;
+  el._peakUnit = built.peakUnit;
   el._figureInfo = {
     xTitle: built.layout.xaxis?.title?.text || '',
     yTitle: built.layout.yaxis?.title?.text || '',

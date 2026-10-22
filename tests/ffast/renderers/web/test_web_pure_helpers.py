@@ -554,6 +554,39 @@ CASES = {
     "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
     "theme_hex_alpha": "th.hexAlpha('#56b4e9', 0.15)",
 
+    # ── peaks.pickPeaks (ADR 0063) ──────────────────────────────────────────
+    "peaks_five_spikes": (
+        "(() => { const y = new Array(100).fill(0);"
+        " [[22, 3], [41, 2], [58, 2.5], [73, 5], [86, 4]].forEach(([i, v]) => { y[i] = v; });"
+        " return pk.pickPeaks(y); })()"),
+    "peaks_adjacent": (
+        "(() => { const y = new Array(100).fill(0);"
+        " y[73] = 5; y[74] = 4; y[22] = 3; y[41] = 2; y[58] = 2.5;"
+        " return pk.pickPeaks(y).map(p => p.frame); })()"),
+    "peaks_short": "pk.pickPeaks([0, 1, 0, 5, 0, 1, 0, 2, 0])",
+    "peaks_nan": (
+        "(() => { const y = new Array(100).fill(0); y[30] = NaN; y[31] = 1; y[60] = 2;"
+        " return pk.pickPeaks(y, 2).map(p => p.frame); })()"),
+    "peaks_fewer_than_n": (
+        "(() => { const y = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]; return pk.pickPeaks(y).map(p => p.frame); })()"),
+    "peaks_annotation": (
+        "pn.peakAnnotations([{frame: 73, value: 0.4421}], '[unit]', (f) => f === 73)"
+        ".map(a => [a.text, a.textangle, a.opacity, a.hovertext, a.captureevents])"),
+    "peaks_annotation_unit": (
+        "pn.peakAnnotations([{frame: 5, value: 0.1}], 'eV/Å').map(a => a.text)"),
+    "peaks_annotation_no_unit": (
+        "pn.peakAnnotations([{frame: 5, value: 0.1}], 'energy').map(a => a.text)"),
+    "peaks_timeline_one_series": (
+        "(() => { const y = new Array(100).fill(0); y[22] = 3; y[73] = 5;"
+        " const b = pn.buildTimeline({x_label: null, y_label: ['Force MAE', 'u']},"
+        "   [{datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}}], {units: {y: 'eV'}});"
+        " return [b.layout.annotations.length, b.layout.yaxis.range, b.peaks.map(p => p.frame)]; })()"),
+    "peaks_timeline_two_series": (
+        "(() => { const y = new Array(100).fill(0); y[22] = 3;"
+        " const s = {datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}};"
+        " const b = pn.buildTimeline({y_label: ['F', 'u']}, [s, s], {units: {}});"
+        " return [b.layout.annotations === undefined, b.peaks.length]; })()"),
+
     # ── figure.js: panel letters and captions (ADR 0063) ────────────────────
     "fig_letters_2x2": (
         "[...fg.panelLetters([{index: 0, row: 1, col: 1}, {index: 1, row: 0, col: 1},"
@@ -624,6 +657,7 @@ def results():
         f"  const th = await import('{origin}/theme.js');\n"
         f"  const ic = await import('{origin}/icons.js');\n"
         f"  const fg = await import('{origin}/figure.js');\n"
+        f"  const pk = await import('{origin}/peaks.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
         f"  const tr = await import('{origin}/tab_rules.js');\n"
@@ -691,6 +725,53 @@ def test_base_layout_grid_colour_is_the_theme_line(results):
 
 def test_series_colours_wrap_around_the_theme_list(results):
     assert results["theme_series_color_wraps"] is True
+
+
+# ── peaks.pickPeaks and the labels (ADR 0063) ────────────────────────────────
+
+def test_five_spikes_on_a_flat_line_are_the_five_peaks(results):
+    frames = [p["frame"] for p in results["peaks_five_spikes"]]
+    assert frames == [22, 41, 58, 73, 86]
+    assert results["peaks_five_spikes"][3] == {"frame": 73, "value": 5}
+
+
+def test_adjacent_spikes_give_one_peak(results):
+    frames = results["peaks_adjacent"]
+    assert 73 in frames and 74 not in frames
+
+
+def test_fewer_than_ten_frames_have_no_peaks(results):
+    assert results["peaks_short"] == []
+
+
+def test_a_nan_value_is_never_a_peak(results):
+    assert results["peaks_nan"] == [31, 60]
+
+
+def test_a_rising_line_has_one_peak_at_its_end(results):
+    assert results["peaks_fewer_than_n"] == [9]
+
+
+def test_a_peak_label_has_frame_value_unit_and_a_tick_when_visited(results):
+    assert results["peaks_annotation"] == [
+        ["73 · 0.442 [unit] ✓", -90, 0.55, "Open frame 73 in 3D", True]]
+
+
+def test_a_peak_label_prints_a_real_unit_and_no_bare_dimension(results):
+    assert results["peaks_annotation_unit"] == ["5 · 0.100 eV/Å"]
+    assert results["peaks_annotation_no_unit"] == ["5 · 0.100"]
+
+
+def test_a_one_series_timeline_is_labelled_and_given_headroom(results):
+    count, y_range, frames = results["peaks_timeline_one_series"]
+    # the two spikes lead; the flat rest fills the other labels (a level
+    # stretch is a peak under the ADR's rule)
+    assert count == 5 and 22 in frames and 73 in frames
+    assert y_range == [0, 5 * 1.45]
+
+
+def test_a_timeline_of_several_series_is_not_labelled(results):
+    assert results["peaks_timeline_two_series"] == [True, 0]
 
 
 # ── figure.js: panel letters and captions (ADR 0063) ─────────────────────────
