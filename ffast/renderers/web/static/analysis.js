@@ -419,6 +419,7 @@ export class AnalysisManager {
       subbing: new Map(),
       // Zoomed plots: panelKey → {x, y, series}, kept for a reload.
       zoom: {},
+      peaksOff: new Set(),   // timelines (panelKey) whose peak labels are switched off
     };
     this._restoreTab(t);
     this._tabs.push(t);
@@ -440,6 +441,7 @@ export class AnalysisManager {
     t.selectedDatasets = known(kept.datasets, this._available.datasets);
     t.selectedModels = known(kept.models, this._available.models);
     t.zoom = { ...(kept.zoom || {}) };
+    t.peaksOff = new Set(kept.peaksOff || []);
     const sub = t.spec.panels.findIndex((sp) => panelKey(sp) === kept.sub);
     if (sub >= 0 && t.selectedDatasets) t.subbing.set(sub, []);
   }
@@ -451,6 +453,7 @@ export class AnalysisManager {
       datasets: t.selectedDatasets, models: t.selectedModels,
       sub: driver == null ? null : panelKey(t.spec.panels[driver]),
       zoom: t.zoom,
+      peaksOff: [...t.peaksOff],
     });
   }
 
@@ -997,6 +1000,7 @@ export class AnalysisManager {
       elementOrder: this._elementOrder || [],
       selectedElements: t.selectedElements,
       visited: this._visited,
+      peaks: !t.peaksOff.has(panelKey(spec)),
     };
     renderPanel(card.body, spec, series, ctx);
     card.series = series;
@@ -1012,8 +1016,34 @@ export class AnalysisManager {
       if (token !== this._renderToken || seq !== card.seq) return;   // superseded
     }
     this._wirePanelInteractions(t, spec, card);
+    this._wirePeaksToggle(t, spec, card);
     this._buildPanelParams(t, spec, card);
     this._showCaption(card, spec);
+  }
+
+  /** The "Peaks" checkbox of a one-series timeline: its peak labels on or off. */
+  _wirePeaksToggle(t, spec, card) {
+    if (spec.kind !== 'timeline') return;
+    const key = panelKey(spec);
+    if (!card.peaksToggle) {
+      const toggle = document.createElement('label');
+      toggle.className = 'peaks-toggle';
+      toggle.title = 'Label the five highest peaks';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.addEventListener('change', () => {
+        if (cb.checked) t.peaksOff.delete(key); else t.peaksOff.add(key);
+        this._keep(t);
+        this._fetchAndRenderPanel(t, spec, card, this._renderToken);
+      });
+      toggle.append(cb, document.createTextNode('Peaks'));
+      card.title.insertBefore(toggle, card.title.querySelector('.sub-toggle'));
+      card.peaksToggle = cb;
+      card.peaksLabel = toggle;
+    }
+    // Several series are never labelled, so there is nothing to switch.
+    card.peaksLabel.hidden = !card.body._peaksEligible;
+    card.peaksToggle.checked = !t.peaksOff.has(key);
   }
 
   /** A plot point or a peak label opened a frame: remember it and dim its

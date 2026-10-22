@@ -3820,6 +3820,52 @@ async def test_web_a_timeline_labels_its_five_worst_frames_and_a_label_opens_one
             await browser.close()
 
 
+async def test_web_a_timelines_peak_labels_switch_off_and_on(ffast_web_server):
+    """Each one-series timeline has a Peaks checkbox that hides its labels, and
+    the caption's peak sentence with them; the choice survives a reload."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            panel = _sub_panel("Forces MAE timeline")
+            labels = page.locator(panel + " .panel-plot .annotation")
+            peaks = page.locator(panel + " .peaks-toggle input")
+            caption = page.locator(panel + " .panel-caption-line")
+            await expect(labels).to_have_count(5)
+            await expect(peaks).to_be_checked()
+            await expect(caption).to_contain_text("Top 5 peaks")
+            # a distribution has nothing to label, so no switch
+            await expect(page.locator(_sub_panel("Forces MAE distribution") + " .peaks-toggle")).to_have_count(0)
+
+            await peaks.uncheck()
+            await expect(labels).to_have_count(0)
+            await expect(caption).not_to_contain_text("peaks")
+
+            await page.reload(wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            await expect(peaks).not_to_be_checked()
+            await expect(labels).to_have_count(0)
+
+            await peaks.check()
+            await expect(labels).to_have_count(5)
+        finally:
+            await browser.close()
+
+
 _SUBSETS = """() => [...window.ffastApp._datasets.entries()]
     .filter(([, m]) => m.is_sub).map(([fp, m]) => ({fp, name: m.name, n: m.n, active: m.active}))"""
 

@@ -364,10 +364,13 @@
       font-size: var(--fs-m); font-weight: 600; color: var(--ink); padding: 10px 12px 4px;
       display: flex; align-items: center; justify-content: space-between; gap: 8px;
     }
-    .analysis-panel .panel-title .sub-toggle {
+    .analysis-panel .panel-title .sub-toggle,
+    .analysis-panel .panel-title .peaks-toggle {
       font-size: var(--fs-xs); font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 4px; cursor: pointer;
     }
-    .analysis-panel .panel-title .sub-toggle input { accent-color: var(--hl2); }
+    .analysis-panel .panel-title .peaks-toggle[hidden] { display: none; }
+    .analysis-panel .panel-title .sub-toggle input,
+    .analysis-panel .panel-title .peaks-toggle input { accent-color: var(--hl2); }
     .analysis-panel .panel-plot { flex: 1; min-height: 180px; }
     .analysis-panel .panel-params {
       display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 8px 6px;

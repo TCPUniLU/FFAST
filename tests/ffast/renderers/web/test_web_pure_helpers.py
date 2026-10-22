@@ -581,6 +581,12 @@ CASES = {
         " const b = pn.buildTimeline({x_label: null, y_label: ['Force MAE', 'u']},"
         "   [{datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}}], {units: {y: 'eV'}});"
         " return [b.layout.annotations.length, b.layout.yaxis.range, b.peaks.map(p => p.frame)]; })()"),
+    "peaks_timeline_switched_off": (
+        "(() => { const y = new Array(100).fill(0); y[22] = 3;"
+        " const s = {datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}};"
+        " const b = pn.buildTimeline({y_label: ['F', 'u']}, [s], {units: {}, peaks: false});"
+        " return [b.layout.annotations === undefined, b.layout.yaxis.range === undefined,"
+        "   b.peaks.length, b.peaksEligible]; })()"),
     "peaks_timeline_two_series": (
         "(() => { const y = new Array(100).fill(0); y[22] = 3;"
         " const s = {datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}};"
@@ -768,6 +774,10 @@ def test_a_one_series_timeline_is_labelled_and_given_headroom(results):
     # stretch is a peak under the ADR's rule)
     assert count == 5 and 22 in frames and 73 in frames
     assert y_range == [0, 5 * 1.45]
+
+
+def test_a_timeline_with_peaks_switched_off_has_no_labels_but_stays_switchable(results):
+    assert results["peaks_timeline_switched_off"] == [True, True, 0, True]
 
 
 def test_a_timeline_of_several_series_is_not_labelled(results):

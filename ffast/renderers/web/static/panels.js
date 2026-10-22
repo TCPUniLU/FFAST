@@ -228,7 +228,7 @@ export function buildTimeline(spec, series, ctx) {
   layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) };
   // With one series, its five worst frames are labelled; several would overlap.
   let peaks = [];
-  if (traces.length === 1) {
+  if (traces.length === 1 && ctx.peaks !== false) {
     peaks = pickPeaks(traces[0].y);
     if (peaks.length) {
       const s = series[curveSeries[0]];
@@ -240,7 +240,7 @@ export function buildTimeline(spec, series, ctx) {
       if (hi > 0) layout.yaxis.range = [lo, hi * 1.45];   // headroom for the labels
     }
   }
-  return { traces, layout, peaks, peakUnit: u.y, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
+  return { traces, layout, peaks, peakUnit: u.y, peaksEligible: traces.length === 1, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
 }
 
 export function buildDensity(spec, series, ctx) {
@@ -576,10 +576,12 @@ export function renderPanel(el, spec, series, ctx) {
     el._unitAxes = null;
     el._figureInfo = null;
     el._peaks = null;
+    el._peaksEligible = false;
     return;
   }
   el._unitAxes = built.unitAxes || null;
   el._peaks = built.peaks || null;
+  el._peaksEligible = !!built.peaksEligible;
   el._peakUnit = built.peakUnit;
   el._figureInfo = {
     xTitle: built.layout.xaxis?.title?.text || '',
