@@ -21,7 +21,7 @@ import { createExtractPane, canExtractFrom } from './panes/extract.js';
 import { createAlignPane } from './panes/align.js';
 import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
-import { Rail } from './rail.js';
+import { Rail, framesText } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
@@ -84,7 +84,7 @@ const SECTION_HELP = {
 const HINTS = {
   'no-prediction': [
     ['Load a prediction: ', 'File ▸ Load Prediction…'],
-    ['Quick style ', 'Force error'],
+    ['Arm a pick tool and click atoms', ''],
     ['Find any setting with the search box', ''],
   ],
   'with-prediction': [
@@ -1202,6 +1202,7 @@ export class FFastApp {
       // if this._conn were still null then, _openView()'s guard would bail
       // and the view would never open.
       this._conn = conn;
+      this._readyStatus = null;
 
       // Metric channel (ADR 0045 Phase 3). The metric client registers the
       // METRIC_RESULT handler; build it before connect so buffered
@@ -1254,7 +1255,9 @@ export class FFastApp {
 
       await conn.connect();
 
-      this._setStatus(`Connected (${conn.role})`, 'connected');
+      // The server replays its datasets while connecting; the last one's "ready"
+      // stays. The role is in the button's title.
+      this._setStatus(this._readyStatus || 'Connected', 'connected');
       document.getElementById('disconnect-btn').disabled = false;
       saveRecentServers(rememberServer(loadRecentServers(), wsUrl));   // never the token
       this._syncEmptyState();
@@ -1330,6 +1333,14 @@ export class FFastApp {
   _onDatasetMeta(fp, meta) {
     const before = this._datasets.get(fp);
     this._datasets.set(fp, meta);
+    if (!before && !meta.is_sub) {
+      this._readyStatus = `Dataset "${meta.name || fp.slice(0, 8)}" ready · ${framesText(meta.n)}`;
+      // It replaces a "Loading…" that is over, not a result the user should
+      // still read, such as "Loaded session from …", which can arrive first.
+      const shown = document.getElementById('status').textContent;
+      if (/^(Loading|Connect|Dataset ".*" ready|Prediction ".*" ready)/.test(shown))
+        this._setStatus(this._readyStatus, 'connected');
+    }
     this._panes?.colorBy.refreshUnits();
     // An independent panel on a subset whose Sub was unticked goes to its
     // parent, at the same structure, as the main view does.
@@ -2366,5 +2377,6 @@ export class FFastApp {
     const el = document.getElementById('status');
     el.textContent = text;
     el.className = cls;
+    el.title = this._conn?.role ? `Connection… (${this._conn.role})` : 'Connection…';
   }
 }

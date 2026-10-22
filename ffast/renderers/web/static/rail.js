@@ -61,7 +61,7 @@ export class Rail {
     const list = this._ports.datasetList;
     list.innerHTML = '';
     if (datasets.size === 0) {
-      list.innerHTML = '<div class="obj-empty">— none loaded —</div>';
+      list.innerHTML = '<div class="obj-empty">None loaded</div>';
       return;
     }
     for (const [fp, meta] of datasets) {
@@ -70,7 +70,7 @@ export class Rail {
       row.dataset.fp = fp;
       row.innerHTML =
         `<span class="name">${meta.name || fp.slice(0,8)}</span>` +
-        `<span class="meta">${meta.frozen ? 'frozen · ' : ''}${meta.n} fr</span>`;
+        `<span class="meta">${meta.frozen ? 'frozen · ' : ''}${framesText(meta.n)}</span>`;
       row.appendChild(this._menuButton('dataset', fp));
       row.addEventListener('click', () => this._ports.onSelectDataset(fp));
       makeRowKeyboardOperable(row, fp === datasetFp);
@@ -82,7 +82,7 @@ export class Rail {
     const list = this._ports.modelList;
     list.innerHTML = '';
     if (models.size === 0) {
-      list.innerHTML = '<div class="obj-empty">— none —</div>';
+      list.innerHTML = '<div class="obj-empty">None loaded</div>';
       return;
     }
     for (const [fp, meta] of models) {
@@ -119,4 +119,9 @@ function makeRowKeyboardOperable(row, selected, disabled = false) {
     e.preventDefault();
     row.click();
   });
+}
+
+/** "100 frames", or "1 frame". */
+export function framesText(n) {
+  return `${n} frame${n === 1 ? '' : 's'}`;
 }

@@ -480,7 +480,8 @@ async def test_web_dialog_asks_for_a_token_when_the_server_needs_one():
 
                 await page.locator("#token-input").fill(token)
                 await page.locator("#connect-btn").click()
-                await expect(page.locator("#status")).to_contain_text("Connected (CONTROLLING)")
+                await expect(page.locator("#status")).to_have_text("Connected")
+                await expect(page.locator("#status")).to_have_attribute("title", re.compile("CONTROLLING"))
                 await expect(dialog).to_be_hidden()
             finally:
                 await browser.close()
@@ -957,6 +958,28 @@ async def test_web_four_shortcuts_step_frames_search_and_keep_out_of_inputs(ffas
             await browser.close()
 
 
+async def test_web_status_says_when_a_dataset_is_ready_and_the_rail_spells_frames_out(ffast_web_server):
+    """ADR 0063: a loaded dataset is announced ("ready"), the status says only
+    "Connected" with the role in the button's title, empty rail lists read
+    "None loaded", and a dataset's length is "100 frames"."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            status = page.locator("#status")
+            await expect(status).to_contain_text("ready")
+            await expect(status).to_contain_text("100 frames")
+            await expect(status).to_have_attribute("title", re.compile("CONTROLLING"))
+            await expect(page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}'] .meta")).to_have_text("100 frames")
+            await expect(page.locator("#model-list .obj-empty")).to_have_text("None loaded")
+        finally:
+            await browser.close()
+
+
 async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
     """ADR 0055 "Help": a hint bar with numbered next steps; dismissing it is
     remembered in browser storage."""
@@ -973,6 +996,8 @@ async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
             hint = page.locator("#hint-bar")
             await expect(hint).to_be_visible()
             await expect(hint).to_contain_text("Load a prediction")
+            await expect(hint).to_contain_text("Arm a pick tool and click atoms")
+            await expect(hint).not_to_contain_text("Force error")   # that button is disabled until a prediction loads
             await expect(hint.locator(".hint-n")).to_have_text(["1", "2", "3"])
             # A step never breaks across lines; the bar wraps between steps.
             lines = await page.evaluate(
@@ -1783,7 +1808,7 @@ async def test_web_the_rail_menu_freezes_a_live_subset(ffast_web_server):
 
             frozen = page.locator("#dataset-list .obj-row", has_text="frozen")
             await expect(frozen).to_have_count(1, timeout=15000)
-            await expect(frozen).to_contain_text("frozen · 3 fr")
+            await expect(frozen).to_contain_text("frozen · 3 frames")
             await expect(page.locator("#status")).to_contain_text("Froze")
             dialog = await _delete_from_rail(page, "dataset", await frozen.get_attribute("data-fp"))
             await dialog.locator("button", has_text="Delete").click()
