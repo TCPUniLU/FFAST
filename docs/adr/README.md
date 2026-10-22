@@ -87,6 +87,7 @@ things came up.
 - [0055](0055-browser-client-gets-its-own-layout.md) Its own layout instead of a copy of the desktop; layout state stays out of sessions
 - [0056](0056-browser-tabs-mix-2d-and-3d-and-users-build-them.md) Tabs mix plots and 3D panels; users build, edit and save their own tabs
 - [0060](0060-every-browser-3d-view-is-one-view-object.md) Every 3D view in the browser is one view object, carrying its own sidebar settings (accepted)
+- [0063](0063-the-web-client-looks-like-a-journal-figure.md) The web client looks like a journal figure: panel letters and captions, labelled peaks, one set of tokens (built)
 
 ## Running on a cluster
 
