@@ -61,6 +61,8 @@
       --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
     }
 
+    /* drawn icons (icons.js): one stroke, the text colour */
+    .icon { width: 1.1em; height: 1.1em; vertical-align: -0.15em; }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
@@ -526,7 +528,7 @@
       font-size: var(--fs-s); font-weight: 600; color: var(--muted);
     }
     .pane-header:hover { color: var(--text-hover); }
-    .pane-chevron { transition: transform 0.15s; font-size: var(--fs-xs); }
+    .pane-chevron { display: inline-flex; transition: transform 0.15s; font-size: var(--fs-xs); }
     .pane.collapsed .pane-chevron { transform: rotate(-90deg); }
     .pane.collapsed .pane-body { display: none; }
     .pane-body { display: flex; flex-direction: column; gap: 6px; padding: 2px 8px 8px; }
@@ -585,11 +587,12 @@
     #sidebar-search-empty { font-size: var(--fs-s); color: var(--muted); padding: 2px 4px; }
     /* help (ADR 0055) */
     .help-btn {
-      width: 16px; height: 16px; padding: 0; border-radius: 50%; flex-shrink: 0;
-      font-size: var(--fs-s); line-height: 1; background: transparent;
-      box-shadow: inset 0 0 0 1px var(--bg4); color: var(--muted);
+      width: 18px; height: 18px; padding: 0; border-radius: 50%; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      line-height: 1; background: transparent; color: var(--ink-3);
     }
-    .help-btn[aria-expanded="true"] { color: var(--hl2); box-shadow: inset 0 0 0 1px var(--hl2); }
+    .help-btn .icon { width: 16px; height: 16px; vertical-align: 0; }
+    .help-btn[aria-expanded="true"] { color: var(--accent); }
     .pane-header .help-btn { margin-left: auto; margin-right: 6px; }
     .help-text { margin: 0 0 4px; font-size: var(--fs-s); line-height: 1.45; color: var(--text1); }
     .help-text[hidden] { display: none; }
@@ -860,7 +863,7 @@
     }
     .fb-row:hover { background: var(--bg3); }
     .fb-row.selected { background: var(--sel); }
-    .fb-row .icon { width: 16px; text-align: center; flex-shrink: 0; }
+    .fb-row .fb-icon { width: 16px; text-align: center; flex-shrink: 0; }
     .fb-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .fb-row .size { color: var(--muted); font-size: var(--fs-s); flex-shrink: 0; }
     .fb-row.dir .name { color: var(--text1); }
@@ -989,7 +992,7 @@
           <!-- Subset export (ADR 0045 issue 20): writes the SELECTED dataset
                row — a pick-derived AtomFilteredDataset, a plot-derived
                SubDataset, or any loaded dataset — to extxyz server-side. -->
-          <button id="add-dataset-btn" class="mini" title="Load dataset" disabled>+</button>
+          <button id="add-dataset-btn" class="mini" title="Load dataset" disabled></button>
         </div>
         <div id="dataset-list" class="obj-list">
           <div class="obj-empty">— none loaded —</div>
@@ -999,7 +1002,7 @@
       <div class="obj-group">
         <div class="obj-head">
           <span class="section-title">Predictions</span>
-          <button id="add-prediction-btn" class="mini" title="Load prediction" disabled>+</button>
+          <button id="add-prediction-btn" class="mini" title="Load prediction" disabled></button>
         </div>
         <div id="model-list" class="obj-list">
           <div class="obj-empty">— none —</div>
@@ -1016,15 +1019,15 @@
         <!-- Actions on the tab on screen (ADR 0056): export, reset, hide,
              and the hidden tabs to show again. -->
         <div id="tab-actions">
-          <button id="tab-edit-btn" title="Edit this tab" disabled>✎</button>
+          <button id="tab-edit-btn" title="Edit this tab" disabled></button>
           <div id="tab-new" class="menu">
             <button id="tab-new-btn" aria-haspopup="menu" aria-expanded="false"
-                    title="New tab">+</button>
+                    title="New tab"></button>
             <div id="tab-new-list" class="menu-list right hidden" role="menu"></div>
           </div>
           <div id="tab-menu" class="menu">
             <button id="tab-menu-btn" aria-haspopup="menu" aria-expanded="false"
-                    title="Tab actions">⋯</button>
+                    title="Tab actions"></button>
             <div id="tab-menu-list" class="menu-list right hidden" role="menu"></div>
           </div>
         </div>
@@ -1047,9 +1050,9 @@
         <span class="pick-sep">·</span>
         <span id="pick-strip-count"></span>
         <span id="pick-readout"></span>
-        <button id="pick-clear" title="Clear picks">✕</button>
+        <button id="pick-clear" title="Clear picks"></button>
       </div>
-      <button id="sidebar-toggle" aria-pressed="false" title="Hide the settings sidebar">Settings ▸</button>
+      <button id="sidebar-toggle" aria-pressed="false" title="Hide the settings sidebar"></button>
     </div>
     <!-- Empty state (ADR 0055): until a view is open, the viewport offers
          Load Dataset… and the 3D controls stay hidden. -->
@@ -1061,19 +1064,19 @@
     <!-- hint bar (ADR 0055): numbered next steps, dismissable -->
     <div id="hint-bar" class="hidden" role="note">
       <span id="hint-text"></span>
-      <button id="hint-dismiss" title="Dismiss this hint">✕</button>
+      <button id="hint-dismiss" title="Dismiss this hint"></button>
     </div>
     <div id="loupe-controls">
-      <button id="prev-frame-btn" class="icon-btn" title="Previous frame" disabled>◀</button>
-      <button id="play-pause-btn" class="icon-btn" title="Play/Pause" disabled>▶</button>
-      <button id="next-frame-btn" class="icon-btn" title="Next frame" disabled>▶|</button>
+      <button id="prev-frame-btn" class="icon-btn" title="Previous frame" disabled></button>
+      <button id="play-pause-btn" class="icon-btn" title="Play/Pause" disabled></button>
+      <button id="next-frame-btn" class="icon-btn" title="Next frame" disabled></button>
       <span class="ctl-label">Frame</span>
       <input id="frame-slider" type="range" min="0" max="0" value="0" step="1" disabled>
       <span id="frame-label">0 / 0</span>
-      <!-- FPS and Skip wait in a ⚙ pop-up (ADR 0055) -->
+      <!-- FPS and Skip wait in a gear pop-up (ADR 0055) -->
       <div id="playback-settings">
         <button id="playback-gear" class="icon-btn" aria-haspopup="dialog" aria-expanded="false"
-                title="Playback settings (FPS, Skip)">⚙</button>
+                title="Playback settings (FPS, Skip)"></button>
         <div id="playback-pop" class="hidden" role="dialog" aria-label="Playback settings">
           <label class="ctl-label" for="fps-input">FPS</label>
           <input id="fps-input" class="ctl-number" type="number" min="1" max="5000" value="30">
@@ -1082,7 +1085,7 @@
         </div>
       </div>
       <button id="reset-camera-btn" disabled>Reset Camera</button>
-      <button id="popout-btn" title="Open this 3D view in a new browser tab" disabled>⧉ New Tab</button>
+      <button id="popout-btn" title="Open this 3D view in a new browser tab" disabled></button>
     </div>
     <div id="sidebar-resize" class="resize-handle"></div>
     <div id="loupe-sidebar"></div>
@@ -1093,8 +1096,8 @@
     <div id="fb-panel">
       <div id="fb-header">
         <span class="title" id="fb-title">Load Remote Dataset</span>
-        <button id="fb-up" title="Parent directory">↑</button>
-        <button id="fb-home" title="Home">⌂</button>
+        <button id="fb-up" title="Parent directory"></button>
+        <button id="fb-home" title="Home"></button>
         <input id="fb-path" type="text" readonly value="">
       </div>
       <div id="fb-error" style="display:none"></div>

@@ -24,6 +24,7 @@ import {
 } from './tab_edit.js';
 import { KIND_3D, whyPanelStays } from './tab_rules.js';
 import { cleanStart } from './start_settings.js';
+import { icon } from './icons.js';
 
 /** The shortest a dragged row gets: room for a table's header and a line. */
 const ROW_MIN_PX = 80;
@@ -228,7 +229,7 @@ export class TabEditor {
     handle.textContent = `⠿ ${label}`;
     head.appendChild(handle);
     if (unit.indices.length === 1 && first.kind !== KIND_3D) {
-      const gear = button('⚙', async () => {
+      const gear = iconButton('gear', 'Open in the builder', async () => {
         const panel = await this._builder(first);
         if (panel) this.change(replacePanel(this._draft, unit.indices[0], panel));
       });
@@ -237,7 +238,7 @@ export class TabEditor {
       head.appendChild(gear);
     }
     if (unit.indices.length === 1 && first.kind === KIND_3D) {
-      const gear = button('⚙', async () => {
+      const gear = iconButton('gear', 'Linked or independent, links and starting look', async () => {
         const next = await this._panel3d(unit.indices[0], visibleTabs, tabIndex);
         if (next) this.change(next);
       });
@@ -246,7 +247,7 @@ export class TabEditor {
       head.appendChild(gear);
     }
     const why = unit.indices.map((i) => whyPanelStays(visibleTabs, tabIndex, i)).find(Boolean) || '';
-    const remove = button('✕', () => {
+    const remove = iconButton('close', 'Remove', () => {
       let next = this._draft;
       for (const i of [...unit.indices].sort((a, b) => b - a)) next = removePanel(next, i);
       this.change(next);
@@ -451,7 +452,7 @@ export class TabEditor {
           const addRow = (value) => {
             const row = document.createElement('div');
             row.className = 'builder-row';
-            row.append(metricSelect(role, value), button('✕', () => { row.remove(); sync(); }));
+            row.append(metricSelect(role, value), iconButton('close', 'Remove this series', () => { row.remove(); sync(); }));
             list.insertBefore(row, more);
           };
           const more = button('+ Add a series', () => { addRow(''); sync(); });
@@ -610,6 +611,14 @@ function button(text, onClick) {
   b.type = 'button';
   b.textContent = text;
   b.addEventListener('click', onClick);
+  return b;
+}
+
+/** A button drawn as an icon, named for screen readers by `label`. */
+function iconButton(name, label, onClick) {
+  const b = button('', onClick);
+  b.innerHTML = icon(name);
+  b.setAttribute('aria-label', label);
   return b;
 }
 

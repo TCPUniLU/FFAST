@@ -554,6 +554,12 @@ CASES = {
     "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
     "theme_hex_alpha": "th.hexAlpha('#56b4e9', 0.15)",
 
+    # ── icons.icon (ADR 0063) ───────────────────────────────────────────────
+    "icon_plus": "ic.icon('plus')",
+    "icon_every_name": "ic.ICON_NAMES.map(n => [n, ic.icon(n).startsWith('<svg') && ic.icon(n).includes('aria-hidden=\"true\"')])",
+    "icon_names": "ic.ICON_NAMES",
+    "icon_unknown": "ic.icon('no-such-icon')",
+
     "grad_matches_mapped": (
         "(() => {"
         "  const out = {};"
@@ -591,6 +597,7 @@ def results():
         f"  const cm = await import('{origin}/colormap.js');\n"
         f"  const pn = await import('{origin}/panels.js');\n"
         f"  const th = await import('{origin}/theme.js');\n"
+        f"  const ic = await import('{origin}/icons.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
         f"  const tr = await import('{origin}/tab_rules.js');\n"
@@ -658,6 +665,30 @@ def test_base_layout_grid_colour_is_the_theme_line(results):
 
 def test_series_colours_wrap_around_the_theme_list(results):
     assert results["theme_series_color_wraps"] is True
+
+
+# ── icons.icon (ADR 0063) ────────────────────────────────────────────────────
+
+ICON_NAMES = [
+    "pencil", "plus", "more", "play", "pause", "step-back", "step-forward", "gear",
+    "close", "new-window", "chevron-right", "chevron-down", "folder", "file",
+    "arrow-up", "home", "info", "bond", "align", "force", "scissors", "sliders",
+    "help", "check",
+]
+
+
+def test_icon_plus_is_a_hidden_inline_svg(results):
+    assert results["icon_plus"].startswith("<svg")
+    assert 'aria-hidden="true"' in results["icon_plus"]
+
+
+def test_every_listed_icon_name_draws(results):
+    assert sorted(results["icon_names"]) == sorted(ICON_NAMES)
+    assert all(ok for _, ok in results["icon_every_name"])
+
+
+def test_an_unknown_icon_name_draws_nothing(results):
+    assert results["icon_unknown"] == ""
 
 
 def test_hex_alpha_builds_an_rgba(results):

@@ -11,6 +11,7 @@
  */
 
 import { createPane } from '../sidebar.js';
+import { icon } from '../icons.js';
 import {
   ID_PREFIX, completeAt, fixFor, formatStat, groupInputs, groupMetrics,
   idProblem, insertAt, isDirty, renameVariable, shapeHint, shortcutFor, sideMark,
@@ -271,9 +272,13 @@ export function createMetricsPane(sidebarEl, callbacks) {
       name.addEventListener('change', () => renameVar(i, name.value.trim(), name));
       const ref = el('span', 'mx-var-ref', v.ref);
       ref.title = v.ref;
-      r.append(name, el('span', 'mx-var-arrow', '→'), ref);
+      const arrow = el('span', 'mx-var-arrow');
+      arrow.innerHTML = icon('chevron-right');
+      r.append(name, arrow, ref);
       if (!readOnly()) {
-        const rm = el('button', 'mx-var-remove', '×');
+        const rm = el('button', 'mx-var-remove');
+        rm.innerHTML = icon('close');
+        rm.setAttribute('aria-label', 'Remove this variable');
         rm.title = 'Remove this variable';
         rm.type = 'button';
         rm.addEventListener('click', () => { draft.vars.splice(i, 1); changed(); });

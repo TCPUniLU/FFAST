@@ -7,6 +7,7 @@
  */
 
 import { sharedMenu } from './actions.js';
+import { icon } from './icons.js';
 
 /**
  * @typedef {{
@@ -31,8 +32,9 @@ export class Rail {
   _menuButton(kind, fp) {
     const btn = document.createElement('button');
     btn.className = 'obj-menu-btn';
-    btn.textContent = '⋯';
+    btn.innerHTML = icon('more');
     btn.title = 'More';
+    btn.setAttribute('aria-label', 'More');
     btn.setAttribute('aria-haspopup', 'menu');
     btn.setAttribute('aria-expanded', 'false');
     btn.addEventListener('click', (e) => {

@@ -4,6 +4,8 @@
  * the analysis tab picker.
  */
 
+import { icon } from './icons.js';
+
 /**
  * @param {string} text
  * @param {{open?: boolean, onToggle?: (open: boolean) => void}} [opts]
@@ -13,8 +15,9 @@ export function helpToggle(text, { open = false, onToggle = () => {} } = {}) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'help-btn';
-  button.textContent = '?';
+  button.innerHTML = icon('help');
   button.title = 'What is this?';
+  button.setAttribute('aria-label', 'What is this?');
   const note = document.createElement('p');
   note.className = 'help-text';
   note.textContent = text;

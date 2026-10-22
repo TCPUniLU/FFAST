@@ -13,6 +13,7 @@
  */
 
 import { OUT } from './events.js';
+import { icon as drawIcon } from './icons.js';
 
 /** Join a server-side directory and an entry name. Posix separators: the paths
  *  come from the server, so they are formatted in its convention, not the
@@ -201,8 +202,8 @@ export class RemoteBrowser {
       const row = document.createElement('div');
       row.className = `fb-row ${e.is_dir ? 'dir' : 'file'}`;
       const icon = document.createElement('span');
-      icon.className = 'icon';
-      icon.textContent = e.is_dir ? '📁' : '📄';
+      icon.className = 'fb-icon';
+      icon.innerHTML = drawIcon(e.is_dir ? 'folder' : 'file');
       const name = document.createElement('span');
       name.className = 'name';
       name.textContent = e.name;

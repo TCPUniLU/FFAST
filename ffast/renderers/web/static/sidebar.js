@@ -8,6 +8,7 @@
  */
 
 import { helpToggle } from './help.js';
+import { icon } from './icons.js';
 
 /** @typedef {{min?: number, max?: number, step?: number}} RangeOpts */
 
@@ -23,7 +24,7 @@ export function createPane(title) {
 
   const header = document.createElement('div');
   header.className = 'pane-header';
-  header.innerHTML = `<span class="pane-title">${title}</span><span class="pane-chevron">▾</span>`;
+  header.innerHTML = `<span class="pane-title">${title}</span><span class="pane-chevron">${icon('chevron-down')}</span>`;
 
   const body = document.createElement('div');
   body.className = 'pane-body';

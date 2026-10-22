@@ -30,6 +30,7 @@ import { MetricOps } from './metric_ops.js';
 import { sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
 import { askDialog, textDialog } from './dialogs.js';
+import { applyStaticIcons, icon } from './icons.js';
 import { datasetUnits } from './units.js';
 import { TabEditor } from './edit_mode.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
@@ -48,11 +49,11 @@ import { loadRecentServers, rememberServer, saveRecentServers } from './recent_s
  */
 const PICK_TOOLS = {
   // `section`: the sidebar section arming the tool opens (ADR 0055).
-  info:    { label: 'Info',    icon: '📐', multiselect: 4,     cycle: true },
-  bonds:   { label: 'Bonds',   icon: '🔗', multiselect: 2, section: 'Bonds' },
-  align:   { label: 'Align',   icon: '△', multiselect: 3, section: 'Alignment' },
-  forces:  { label: 'Force',   icon: '➤', multiselect: 10000, rectangle: true, section: 'Force Vectors' },
-  extract: { label: 'Extract', icon: '✂', multiselect: 10000, rectangle: true, section: 'Extract Subset' },
+  info:    { label: 'Info',    icon: 'info', multiselect: 4,     cycle: true },
+  bonds:   { label: 'Bonds',   icon: 'bond', multiselect: 2, section: 'Bonds' },
+  align:   { label: 'Align',   icon: 'align', multiselect: 3, section: 'Alignment' },
+  forces:  { label: 'Force',   icon: 'force', multiselect: 10000, rectangle: true, section: 'Force Vectors' },
+  extract: { label: 'Extract', icon: 'scissors', multiselect: 10000, rectangle: true, section: 'Extract Subset' },
 };
 
 /** What each sidebar section is for, behind its "?" (ADR 0055). */
@@ -93,6 +94,7 @@ const HINTS = {
 
 export class FFastApp {
   constructor() {
+    applyStaticIcons();
     this._conn = null;
     // The main view (ADR 0056): the one visualization view the rail drives,
     // drawn by every linked 3D panel. Its renderers come and go with the
@@ -918,7 +920,6 @@ export class FFastApp {
     document.getElementById('content').classList.toggle('sidebar-hidden', hidden);
     const btn = document.getElementById('sidebar-toggle');
     btn.setAttribute('aria-pressed', String(hidden));
-    btn.textContent = hidden ? '◂ Settings' : 'Settings ▸';
     btn.title = hidden ? 'Show the settings sidebar' : 'Hide the settings sidebar';
     if (remember) saveLayout({ sidebarHidden: hidden });
   }
@@ -1761,10 +1762,10 @@ export class FFastApp {
       const btn = document.createElement('button');
       btn.className = 'pick-tool-btn';
       btn.dataset.tool = id;
-      const icon = document.createElement('span');
-      icon.className = 'pick-tool-icon';
-      icon.textContent = t.icon;
-      btn.append(icon, t.label);
+      const glyph = document.createElement('span');
+      glyph.className = 'pick-tool-icon';
+      glyph.innerHTML = icon(t.icon);
+      btn.append(glyph, t.label);
       btn.title = `${t.label} pick tool`;
       btn.addEventListener('click', () => this._setActiveTool(this._activeTool === id ? null : id));
       toolbar.appendChild(btn);
@@ -2233,7 +2234,7 @@ export class FFastApp {
 
   _togglePlayback() {
     this._playing = !this._playing;
-    document.getElementById('play-pause-btn').textContent = this._playing ? '⏸' : '▶';
+    document.getElementById('play-pause-btn').innerHTML = icon(this._playing ? 'pause' : 'play');
     if (this._playing) this._playLoop();
   }
 
