@@ -18,8 +18,18 @@ function letterAt(n) {
  * @returns {Map<number, string>} panel index → letter
  */
 export function panelLetters(cells) {
+  return new Map([...readingOrder(cells)].map(([index, rank]) => [index, letterAt(rank)]));
+}
+
+/**
+ * Each panel's place in reading order: by row, then column, then the panel's
+ * place in the tab file. A narrow grid stacks its panels in this order.
+ * @param {Array<{index: number, row: number, col: number}>} cells
+ * @returns {Map<number, number>} panel index → 0, 1, 2…
+ */
+export function readingOrder(cells) {
   const order = [...cells].sort((a, b) => (a.row - b.row) || (a.col - b.col) || (a.index - b.index));
-  return new Map(order.map((cell, n) => [cell.index, letterAt(n)]));
+  return new Map(order.map((cell, rank) => [cell.index, rank]));
 }
 
 /**

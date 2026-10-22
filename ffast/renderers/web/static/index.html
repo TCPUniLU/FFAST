@@ -217,6 +217,10 @@
       display: flex; align-items: stretch; flex: 1; min-width: 0;
       overflow-x: auto;
     }
+    /* more tabs than fit: the right edge fades (analysis.js sets the class) */
+    #tabbar.overflowing {
+      mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
+    }
     /* tab actions at the right end of the bar (ADR 0056) */
     #tab-actions { display: flex; align-items: center; gap: 4px; padding: 0 6px; flex-shrink: 0; }
     #tab-actions button { height: auto; min-width: 28px; padding: 2px 8px; font-size: var(--fs-l); background: transparent; }
@@ -348,13 +352,16 @@
       /* Columns are never narrower than the desktop's smallest plot; when
          they do not fit, the tab scrolls sideways, as it scrolls down for
          rows. A single column still fits a narrow window. */
-      --col-min: min(400px, 100%);
+      --col-min: min(360px, 100%);
       flex: 1; overflow: auto; padding: 10px; min-height: 0;
       display: grid; gap: 10px; align-content: start;
       grid-template-columns: repeat(2, minmax(var(--col-min), 1fr));
       /* --row-min grows by what a labelled timeline's peak labels take (analysis.js) */
       grid-auto-rows: minmax(var(--row-min, 300px), auto);
     }
+    /* Too narrow for two columns: one column, panels in reading order (analysis.js
+       sets the order); the placements the panels carry are ignored. */
+    .analysis-grid.narrow > * { grid-column: auto !important; grid-row: auto !important; }
     /* A tab with one cell gives it the whole height. */
     .analysis-grid.fill { grid-template-rows: minmax(0, 1fr); align-content: stretch; }
     /* ...and a 3D panel alone is the whole tab, edge to edge (the "3D" tab). */
@@ -526,7 +533,7 @@
     }
     .resize-handle:hover, .resize-handle:focus-visible { background: var(--hl1); outline: none; }
     body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
-    #sidebar-toggle { margin-left: auto; flex-shrink: 0; }
+    #sidebar-toggle { margin-left: auto; flex-shrink: 0; white-space: nowrap; }
     .link-btn {
       align-self: flex-start; height: auto; padding: 0; background: none;
       color: var(--hl2); font-size: var(--fs-s); text-decoration: underline;

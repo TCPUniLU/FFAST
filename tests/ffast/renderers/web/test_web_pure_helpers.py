@@ -630,6 +630,8 @@ CASES = {
     "fig_cap_untitled": (
         "[fg.caption('timeline', {yTitle: ''}), fg.caption('density', {xTitle: ''}),"
         " fg.caption('scatter', {xTitle: 'x', yTitle: ''})]"),
+    "fig_order": (
+        "[...fg.readingOrder([{index: 0, row: 1, col: 0}, {index: 1, row: 0, col: 1}, {index: 2, row: 0, col: 0}])]"),
     "fig_cap_none": "['table', 'grouped_table', '3d'].map(k => fg.caption(k, {yTitle: 'x'}))",
     "fig_segments": (
         "fg.captionSegments('Predicted E [unit] against Reference E [unit].',"
@@ -832,6 +834,10 @@ def test_a_timeline_of_several_series_is_not_labelled(results):
 def test_letters_follow_screen_position_not_file_order(results):
     # Panels 3, 1, 2, 0 are top-left, top-right, bottom-left, bottom-right.
     assert results["fig_letters_2x2"] == [[3, "a"], [1, "b"], [2, "c"], [0, "d"]]
+
+
+def test_reading_order_ranks_panels_by_row_then_column(results):
+    assert results["fig_order"] == [[2, 0], [1, 1], [0, 2]]
 
 
 def test_letters_break_a_tie_by_file_order(results):

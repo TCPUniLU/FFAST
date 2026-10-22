@@ -26,13 +26,17 @@
 import { helpToggle } from './help.js';
 import { renderPanel, PLOT_KINDS, elementSymbol, unitRoleAt, refreshPeaks } from './panels.js';
 import { visitedKey } from './peaks.js';
-import { panelLetters, caption, captionSegments } from './figure.js';
+import { panelLetters, readingOrder, caption, captionSegments } from './figure.js';
 import { datasetUnits, editableDimension, resolveUnit } from './units.js';
 import { unitPopover } from './dialogs.js';
 import { KIND_3D } from './tab_rules.js';
 import { COLUMN_PX, ROW_PX, sizeTemplate } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState } from './layout_state.js';
+
+/** The smallest a plot column gets, and the gap between cells, in px (--col-min and the grid gap in index.html). */
+const COLUMN_MIN = 360;
+const GRID_GAP = 10;
 
 const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
   + 'Outlined buttons follow the selection in the left list; click one to pin this '
@@ -161,6 +165,7 @@ export class AnalysisManager {
    */
   constructor(deps) {
     this._tabbar = deps.tabbar;
+    new ResizeObserver(() => this._syncTabbarFade()).observe(this._tabbar);
     this._tabpanels = deps.tabpanels;
     this._metrics = deps.metricClient;
     this._onSelectTab = deps.onSelectTab;
@@ -236,6 +241,7 @@ export class AnalysisManager {
   setLayout(tabs) {
     this.clear();
     (tabs || []).forEach((spec, i) => this._buildTab(spec, i));
+    this._syncTabbarFade();
   }
 
   /** @returns {Array<{id: string, name: string}>} the tabs, in bar order */
@@ -443,6 +449,11 @@ export class AnalysisManager {
       zoom: {},
       peaksOff: new Set(),   // timelines (panelKey) whose peak labels are switched off
     };
+    new ResizeObserver(() => {
+      const before = t.narrow;
+      this._sizeGrid(t);
+      if (t.narrow !== before) this._applyOrder(t);
+    }).observe(gridEl);
     this._restoreTab(t);
     this._tabs.push(t);
     this._layoutGrid(t);
@@ -568,6 +579,7 @@ export class AnalysisManager {
       }
     });
     t.has2d = t.slots.length > 0;
+    this._applyOrder(t);
     grid.classList.toggle('fill', grid.childElementCount === 1);
     // With several 3D panels, the focused one is outlined (ADR 0056 rule 8).
     grid.classList.toggle('multi3d', t.cells3d.length > 1);
@@ -589,6 +601,7 @@ export class AnalysisManager {
       });
     }
     for (const cell of t.cells3d) cell.letterEl.textContent = t.letters.get(cell.index) || '';
+    this._applyOrder(t);
   }
 
   /** The grid's column and row sizes, from the tab's spec. Set sizes are
@@ -599,9 +612,28 @@ export class AnalysisManager {
     const panels = t.spec.panels || [];
     const widths = t.spec.column_widths, heights = t.spec.row_heights;
     const maxCol = Math.max(1, widths?.length || 0, ...panels.map((p) => p.col + (p.colspan || 1)));
-    t.gridEl.style.gridTemplateColumns = widths?.length === maxCol
-      ? sizeTemplate(widths, COLUMN_PX) : `repeat(${maxCol}, minmax(var(--col-min), 1fr))`;
-    t.gridEl.style.gridTemplateRows = heights?.length ? sizeTemplate(heights, ROW_PX) : '';
+    const fixed = widths?.length === maxCol;
+    // A grid too narrow for two columns of the smallest plot stacks its panels
+    // in one column, in reading order, instead of scrolling sideways. Sizes the
+    // tab sets are kept as they are. An unmeasured (hidden) grid keeps its state.
+    const width = t.gridEl.clientWidth;
+    if (width) t.narrow = !fixed && maxCol > 1 && width < 2 * COLUMN_MIN + GRID_GAP;
+    t.gridEl.classList.toggle('narrow', !!t.narrow);
+    t.gridEl.style.gridTemplateColumns = t.narrow ? 'minmax(0, 1fr)'
+      : fixed ? sizeTemplate(widths, COLUMN_PX) : `repeat(${maxCol}, minmax(var(--col-min), 1fr))`;
+    t.gridEl.style.gridTemplateRows = heights?.length && !t.narrow ? sizeTemplate(heights, ROW_PX) : '';
+  }
+
+  /** Stack order for a narrow grid: reading order, whatever the file order is. */
+  _applyOrder(t) {
+    const rank = readingOrder((t.spec.panels || []).map((p, index) => ({ index, row: p.row, col: p.col })));
+    for (const slot of t.slots) slot.el.style.order = String(rank.get(slot.indices[0]) ?? 0);
+    for (const cell of t.cells3d) cell.el.style.order = String(rank.get(cell.index) ?? 0);
+  }
+
+  /** Fade the tab strip's right edge while it holds more tabs than fit. */
+  _syncTabbarFade() {
+    this._tabbar.classList.toggle('overflowing', this._tabbar.scrollWidth > this._tabbar.clientWidth + 1);
   }
 
   /**

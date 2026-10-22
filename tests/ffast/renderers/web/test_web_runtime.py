@@ -980,6 +980,48 @@ async def test_web_status_says_when_a_dataset_is_ready_and_the_rail_spells_frame
             await browser.close()
 
 
+async def test_web_a_narrow_window_stacks_the_plots_instead_of_scrolling_sideways(ffast_web_server):
+    """ADR 0063: at 1024 px two plot columns fit and nothing scrolls sideways;
+    narrower, the grid is one column; wide again, two. (The ADR names 1024 px
+    for one column, but its own rule, two 360 px columns, fits there.)"""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1024, "height": 768})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            grid = page.locator(".tabpanel.active .analysis-grid")
+            tracks = "(g) => getComputedStyle(g).gridTemplateColumns.split(' ').length"
+            scrolls = "(g) => g.scrollWidth > g.clientWidth + 1"
+
+            assert await grid.evaluate(tracks) == 2
+            assert not await grid.evaluate(scrolls)
+
+            await page.set_viewport_size({"width": 900, "height": 768})
+            await expect(grid).to_have_class(re.compile(r"\bnarrow\b"))
+            assert await grid.evaluate(tracks) == 1
+            assert not await grid.evaluate(scrolls)
+            # one column, in reading order: no panel above the one before
+            tops = await page.evaluate(
+                "() => [...document.querySelectorAll('.tabpanel.active .analysis-grid .analysis-panel')]"
+                ".map((el) => el.getBoundingClientRect().top)")
+            assert tops == sorted(tops), tops   # (panels of one scroll strip share a top)
+            letters = await page.locator(".tabpanel.active .analysis-panel .panel-letter").all_inner_texts()
+            assert letters == sorted(letters, key=lambda t: (len(t), t)), letters
+
+            await page.set_viewport_size({"width": 1200, "height": 768})
+            await expect(grid).not_to_have_class(re.compile(r"\bnarrow\b"))
+            assert await grid.evaluate(tracks) == 2
+        finally:
+            await browser.close()
+
+
 async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
     """ADR 0055 "Help": a hint bar with numbered next steps; dismissing it is
     remembered in browser storage."""
@@ -2415,9 +2457,9 @@ title = "T{col}"
 
 
 async def test_web_columns_keep_a_minimum_width_and_the_tab_scrolls_sideways(tmp_path):
-    """Columns are never narrower than 400 px (the desktop's smallest plot);
-    when they do not fit, the tab scrolls sideways, as it scrolls down for
-    rows. Columns that fit share the window as before."""
+    """Columns are never narrower than 360 px (400 before ADR 0063); when they
+    do not fit, the tab scrolls sideways, as it scrolls down for rows. Columns
+    that fit share the window as before."""
     config = tmp_path / "ffast.toml"
     config.write_text(_WIDE_TAB_TOML)
     async with _spawn_server("--config", str(config)) as (ws_port, web_port):
@@ -2432,7 +2474,7 @@ async def test_web_columns_keep_a_minimum_width_and_the_tab_scrolls_sideways(tmp
                 await expect(grid.locator(".analysis-panel")).to_have_count(4)
                 widths = [(await grid.locator(f"[data-title='T{c}']").bounding_box())["width"]
                           for c in range(4)]
-                assert min(widths) >= 400 - 1
+                assert min(widths) >= 360 - 1
                 assert await grid.evaluate("(el) => el.scrollWidth > el.clientWidth")
                 assert await page.evaluate(
                     "() => document.documentElement.scrollWidth <= window.innerWidth")
