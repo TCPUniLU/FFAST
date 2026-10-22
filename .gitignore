@@ -182,3 +182,6 @@ docs/legacy-thinning-plan.md
 # iCloud Drive duplicates ("build 2/", "server 2.py")
 * 2
 * 2.*
+
+# Impeccable design-tool working files (critiques, sketches, briefs); local only
+.impeccable/
