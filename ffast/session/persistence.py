@@ -169,13 +169,14 @@ class SessionPersistence:
 
     def load(self, path, taskID=None):
         """Rebuild datasets, ghost models, and cached entities from a saved session."""
-        # LOAD INFO (names etc)
+        # LOAD INFO (names etc). ``save`` always writes it, so a folder without
+        # it is not a saved session — say so rather than load nothing quietly.
         infoFile = os.path.join(path, "info.json")
-        info = None
-        if os.path.exists(infoFile):
-            with open(infoFile, "r") as f:
-                info = json.load(f)
-            self.loadInfo(info)
+        if not os.path.exists(infoFile):
+            raise FileNotFoundError(f"No saved session at {path}")
+        with open(infoFile, "r") as f:
+            info = json.load(f)
+        self.loadInfo(info)
 
         ## LOAD DATASETS AND MODELS FROM INFO
         if info is not None and "objects" in info:

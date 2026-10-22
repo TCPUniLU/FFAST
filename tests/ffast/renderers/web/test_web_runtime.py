@@ -4427,6 +4427,28 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
                 await browser.close()
 
 
+async def test_web_loading_a_session_that_does_not_exist_shows_an_error(ffast_web_server):
+    """ADR 0063 follow-up: a missing session folder used to report "Loaded session"."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Session…")
+            await page.locator("#path-input").fill("/nonexistent/x")
+            await page.locator("#path-ok").click()
+            status = page.locator("#status")
+            await expect(status).to_contain_text("Session load failed", timeout=15000)
+            await expect(status).to_contain_text("No saved session at /nonexistent/x")
+            await expect(status).to_have_class(re.compile(r"\berror\b"))
+            await expect(status).not_to_contain_text("Loaded session")
+        finally:
+            await browser.close()
+
+
 _RECORD_SENDS = """() => {
   const conn = window.ffastApp._conn;
   const send = conn.send.bind(conn);
