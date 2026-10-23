@@ -102,6 +102,11 @@ class MetricCatalogEntry(BaseModel):
     origin: str = "built-in"
     expr: Optional[str] = None
     vars: Optional[dict[str, str]] = None
+    # A Python metric's code, and the formula that computes exactly the same
+    # when there is one (what Duplicate starts from; ADR 0057 amendment).
+    source: Optional[str] = None
+    equivalent_expr: Optional[str] = None
+    equivalent_vars: Optional[dict[str, str]] = None
 
 
 class MetricCatalog(BaseModel):

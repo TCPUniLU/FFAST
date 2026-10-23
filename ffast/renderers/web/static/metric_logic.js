@@ -177,6 +177,23 @@ export function toDraft(metric) {
   };
 }
 
+/**
+ * The draft a Duplicate of `metric` starts from, its id still to choose. A
+ * formula metric copies its formula; a Python metric its exact formula when it
+ * has one (`equivalent_expr`, ffast/metrics/builtin/equivalents.py), or else a
+ * formula that takes the metric itself as its input, named after the metric.
+ */
+export function duplicateDraft(metric) {
+  if (metric.expr != null) return toDraft(metric);
+  const base = { id: metric.id, label: metric.label || '', unit: metric.unit || '' };
+  if (metric.equivalent_expr)
+    return toDraft({ ...base, expr: metric.equivalent_expr, vars: metric.equivalent_vars });
+  let name = metric.id.split('.').pop().replace(/[^A-Za-z0-9_]/g, '_');
+  if (!/^[A-Za-z_]/.test(name) || FORMULA_FUNCTIONS.includes(name) || FORMULA_CONSTANTS.includes(name))
+    name = `m_${name}`;
+  return toDraft({ ...base, expr: name, vars: { [name]: metric.id } });
+}
+
 /** Whether a draft differs from what was loaded (what Save and the unsaved mark follow). */
 export function isDirty(draft, saved) {
   if (!saved) return !!(draft.expr || draft.vars.length || draft.label || draft.unit);
@@ -231,6 +248,8 @@ export function groupMetrics(catalog, userMetrics, users = {}) {
   const entry = (m, origin, extra = {}) => ({
     id: m.id, label: m.label || m.id, origin, shape: m.shape ?? null, expr: m.expr ?? null,
     vars: m.vars ?? null, unit: m.unit ?? '', status: 'ok', message: '',
+    source: m.source ?? null, equivalent_expr: m.equivalent_expr ?? null,
+    equivalent_vars: m.equivalent_vars ?? null,
     revision: null, ...extra, used_by: users[m.id] ?? [],
   });
   const byId = new Map(userMetrics.map((u) => [u.id, u]));

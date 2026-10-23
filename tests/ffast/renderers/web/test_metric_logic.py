@@ -33,6 +33,11 @@ INPUTS = (
 CASES = {
     # ── which names a formula uses ──────────────────────────────────────────
     "names_skip_functions": "ml.valueNames('norm(pred_F - ref_F) / n_atoms')",
+    "dup_formula": "ml.duplicateDraft({id: 'p.e', label: 'E', unit: 'energy', expr: '2 * e', vars: {e: 'reference.energies'}})",
+    "dup_equivalent": ("ml.duplicateDraft({id: 'ffast.force_mae', label: 'Force MAE', unit: 'force', expr: null,"
+                       " equivalent_expr: 'norm(pred_F - ref_F)', equivalent_vars: {pred_F: 'prediction.forces', ref_F: 'reference.forces'}})"),
+    "dup_wrapper": "ml.duplicateDraft({id: 'ffast.force_mae_per_structure', label: 'MAE', unit: 'force', expr: null})",
+    "dup_wrapper_not_a_function": "ml.duplicateDraft({id: 'my.x', label: '', unit: '', expr: null}).expr",
     "names_x_call_is_not_a_value": "ml.valueNames('x(F) + y(F)')",
     "names_a_variable_called_x": "ml.valueNames('x + 1')",
     "names_numbers_with_exponents": "ml.valueNames('a * 1e5 + 2e-3')",
@@ -372,3 +377,22 @@ def test_the_session_question_says_how_a_clash_is_kept(results):
     assert results["session_question_clash"] == (
         "This session uses 2 metrics this server doesn't have:\n• user.a\n"
         "• user.b.2 — the server has a different user.b; the session's is kept as user.b.2\n\nAdd them?")
+
+
+def test_duplicating_a_formula_metric_copies_its_formula(results):
+    assert results["dup_formula"] == {"id": "p.e", "label": "E", "unit": "energy", "expr": "2 * e",
+                                      "vars": [{"name": "e", "ref": "reference.energies"}]}
+
+
+def test_duplicating_a_python_metric_with_an_exact_formula_copies_that_formula(results):
+    d = results["dup_equivalent"]
+    assert d["expr"] == "norm(pred_F - ref_F)" and d["unit"] == "force"
+    assert d["vars"] == [{"name": "pred_F", "ref": "prediction.forces"},
+                         {"name": "ref_F", "ref": "reference.forces"}]
+
+
+def test_duplicating_any_other_python_metric_takes_it_as_the_input(results):
+    d = results["dup_wrapper"]
+    assert d["expr"] == "force_mae_per_structure"
+    assert d["vars"] == [{"name": "force_mae_per_structure", "ref": "ffast.force_mae_per_structure"}]
+    assert results["dup_wrapper_not_a_function"] == "m_x"   # x(F) is a function

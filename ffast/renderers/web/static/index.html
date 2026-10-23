@@ -604,6 +604,15 @@
     .md-context select { flex: 1 1 0; min-width: 0; }
     .md-body { display: flex; flex-direction: column; gap: 6px; }
     #metrics-drawer .mx-list { max-height: 40vh; }
+    .mx-source { font-size: var(--fs-s); color: var(--text1); }
+    .mx-source[hidden] { display: none; }
+    .mx-source summary { cursor: pointer; color: var(--muted); }
+    .mx-source-copy { margin-top: 4px; font-size: var(--fs-xs); padding: 1px 6px; }
+    .mx-source-code {
+      margin: 4px 0 0; padding: 6px; max-height: 260px; overflow: auto; white-space: pre;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: var(--fs-xs);
+      background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; user-select: text;
+    }
 
     /* ── 3D settings sidebar ─────────────────────────────────────────── */
     #loupe-sidebar {

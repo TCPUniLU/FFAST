@@ -12,7 +12,7 @@
 
 import { icon } from '../icons.js';
 import {
-  ID_PREFIX, completeAt, fixFor, formatStat, groupInputs, groupMetrics,
+  ID_PREFIX, completeAt, duplicateDraft, fixFor, formatStat, groupInputs, groupMetrics,
   idProblem, insertAt, isDirty, renameVariable, shapeHint, shortcutFor, sideMark,
   suggestions, toDraft, toPayload, tryHeadline, undefinedNames, uniqueName, valueNames,
   variableNameProblem,
@@ -84,6 +84,22 @@ export function createMetricsPane(body, callbacks) {
   // editor parts (built once, filled by `renderEditor`)
   const heading = el('div', 'mx-heading');
   const notice = el('div', 'mx-notice');
+  // A Python metric's code, read only (the server sends it in the catalog).
+  const sourceBox = el('details', 'mx-source');
+  const sourceSummary = el('summary', '', 'Python code');
+  const sourceCopy = el('button', 'mx-source-copy', 'Copy');
+  sourceCopy.type = 'button';
+  const sourceCode = el('pre', 'mx-source-code');
+  sourceBox.append(sourceSummary, sourceCode, sourceCopy);
+  sourceCopy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(sourceCode.textContent);
+      sourceCopy.textContent = 'Copied';
+    } catch {
+      // No clipboard here (an insecure page): select the code to copy by hand.
+      window.getSelection()?.selectAllChildren(sourceCode);
+    }
+  });
   const idInput = el('input'); idInput.type = 'text'; idInput.setAttribute('aria-label', 'Metric id');
   const labelInput = el('input'); labelInput.type = 'text'; labelInput.setAttribute('aria-label', 'Label');
   const unitInput = el('input'); unitInput.type = 'text'; unitInput.setAttribute('aria-label', 'Unit');
@@ -122,7 +138,7 @@ export function createMetricsPane(body, callbacks) {
   const usedByEl = el('div', 'mx-usedby');
   const messageEl = el('div', 'mx-message');
   const exportEl = el('div', 'mx-export');
-  editor.append(heading, notice, fieldRows, formula, suggest, varsEl, checkRow,
+  editor.append(heading, notice, sourceBox, fieldRows, formula, suggest, varsEl, checkRow,
     el('div', 'mx-subhead', 'Inputs'), inputSearch, inputsEl,
     actions, shortcutsEl, conflictEl, tryEl, usedByEl, messageEl, exportEl);
 
@@ -196,8 +212,8 @@ export function createMetricsPane(body, callbacks) {
   }
 
   function duplicate() {
-    if (!selected || selected.expr == null) return;
-    const base = toDraft(selected);
+    if (!selected) return;
+    const base = duplicateDraft(selected);
     const tail = selected.id.split('.').pop();
     let id = `${ID_PREFIX}${tail}_copy`;
     for (let n = 2; takenIds().includes(id); n++) id = `${ID_PREFIX}${tail}_copy${n}`;
@@ -226,9 +242,19 @@ export function createMetricsPane(body, callbacks) {
     notice.textContent = '';
     if (!isNew && selected.status === 'hidden') notice.textContent = selected.message;
     else if (!isNew && selected.status === 'error') notice.textContent = `Does not compile: ${selected.message}`;
-    else if (ro && selected.expr == null) notice.textContent = 'A Python metric: it has no formula to edit or copy.';
+    else if (ro && selected.expr == null && selected.equivalent_expr)
+      notice.textContent = 'A Python metric: read only. Duplicate makes a formula that computes the same, for you to edit.';
+    else if (ro && selected.expr == null)
+      notice.textContent = 'A Python metric: it averages, totals or smooths, which a formula cannot do yet. '
+        + 'Duplicate makes a formula that takes this metric as its input, for you to change.';
     else if (ro) notice.textContent = `A ${ORIGIN_TITLES[selected.origin].toLowerCase()} metric: read only. Duplicate makes a copy you can edit.`;
     notice.hidden = !notice.textContent;
+    const source = !isNew && selected?.expr == null ? selected?.source : null;
+    sourceBox.hidden = !source;
+    if (source && sourceCode.textContent !== source) {
+      sourceCode.textContent = source;
+      sourceCopy.textContent = 'Copy';
+    }
 
     fieldRows.hidden = !draft;
     formula.hidden = !draft;
@@ -346,10 +372,10 @@ export function createMetricsPane(body, callbacks) {
   function renderButtons() {
     const ro = readOnly();
     const user = !isNew && selected?.origin === 'user';
-    const formulaMetric = !isNew && selected?.expr != null;
     tryBtn.hidden = !draft || ro;
     saveBtn.hidden = !draft || ro || (selected?.status === 'hidden');
-    dupBtn.hidden = !formulaMetric;
+    // a user file in error or hidden still has its formula to copy
+    dupBtn.hidden = isNew || !selected || (selected.expr == null && selected.status !== 'ok');
     delBtn.hidden = !user;
     exportBtn.hidden = !user || selected.status !== 'ok';
     tryBtn.textContent = ops.trying ? 'Cancel' : 'Try';
