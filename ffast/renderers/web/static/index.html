@@ -708,34 +708,54 @@
     .ctl-hint.ok { color: var(--success); }
 
     /* colorbar (issue 03): static gradient + vmin/vmax + label */
+    /* The bar fills the legend's height, so a taller legend is a thicker bar. */
     #colorbar {
-      display: flex; align-items: center; gap: 6px; padding: 4px 2px;
+      display: flex; align-items: stretch; gap: 6px; padding: 4px 2px;
+      flex: 1 1 auto; min-height: 0;
     }
     #colorbar.hidden { display: none; }
     #colorbar-gradient {
-      flex: 1; height: 12px; border-radius: 2px; border: 1px solid var(--bg3);
+      flex: 1; min-height: 12px; border-radius: 2px; border: 1px solid var(--bg3);
     }
-    #colorbar .cb-min, #colorbar .cb-max { font-size: var(--fs-xs); color: var(--muted); }
+    #colorbar .cb-min, #colorbar .cb-max {
+      align-self: center; line-height: 12px; font-size: var(--fs-xs); color: var(--muted);
+      cursor: text; white-space: nowrap;
+    }
+    #colorbar :is(.cb-min, .cb-max):hover { color: var(--ink-2); }
+    #colorbar .cb-limit-input {
+      width: 8ch; font: inherit; color: var(--ink-2); background: var(--surface-2);
+      border: 1px solid var(--line); border-radius: 3px; padding: 1px 3px;
+    }
     #colorbar-label { font-size: var(--fs-s); color: var(--text1); text-align: center; }
-    /* the colour legend sits on the 3D view, bottom left (ADR 0063) */
+    /* the colour legend sits on the 3D view, bottom left (ADR 0063); its grip
+       (colorby.js) sets --legend-w and --legend-h */
     .legend3d {
-      position: absolute; left: 12px; bottom: 12px; z-index: 3; width: 240px;
+      position: absolute; left: 12px; bottom: 12px; z-index: 3;
+      width: var(--legend-w, 240px); height: var(--legend-h, auto);
+      max-width: calc(100% - 24px); max-height: calc(100% - 24px);
+      display: flex; flex-direction: column; box-sizing: border-box; overflow: hidden;
       padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
       background: color-mix(in srgb, var(--surface) 88%, transparent);
       font-size: var(--fs-s); color: var(--ink-2);
     }
     .legend3d:has(#colorbar.hidden) { display: none; }
+    .legend-grip {
+      position: absolute; top: 0; right: 0; width: 14px; height: 14px;
+      cursor: nesw-resize; touch-action: none; opacity: 0;
+      background: linear-gradient(45deg, transparent 45%, var(--ink-3) 45% 55%, transparent 55%);
+    }
+    .legend3d:hover .legend-grip { opacity: 0.8; }
     /* with the legend showing, the hint bar keeps clear of it */
     .viewport:has(> .legend3d #colorbar:not(.hidden)) > #hint-bar {
-      left: 264px; right: 12px; transform: none; margin-inline: auto;
-      width: fit-content; max-width: calc(100% - 276px);
+      left: calc(var(--legend-w, 240px) + 24px); right: 12px; transform: none; margin-inline: auto;
+      width: fit-content; max-width: calc(100% - var(--legend-w, 240px) - 36px);
     }
     /* A narrow view has no room beside the legend for a step (they never
        wrap), so the bar goes above the legend (~56 px tall), full width. */
     .viewport { container-type: inline-size; }
     @container (width < 700px) {
       .viewport:has(> .legend3d #colorbar:not(.hidden)) > #hint-bar {
-        left: 12px; bottom: 80px; max-width: calc(100% - 24px);
+        left: 12px; bottom: calc(var(--legend-h, 56px) + 24px); max-width: calc(100% - 24px);
       }
     }
     /* Narrower still, a step may wrap rather than be cut off. */

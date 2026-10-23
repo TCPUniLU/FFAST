@@ -102,6 +102,7 @@ CASES = {
     "ap_densities": "ap.DENSITIES",
     "ap_density_names": "['large', 'compact', 'nope', undefined, '__proto__'].map(ap.densityName)",
     "grad_cividis_first": "cm.gradientCss('cividis').split(', ')[0]",
+    "pn_scientific": "[0.01234, -4500, 0, 1, NaN].map(v => pn.formatScientific(v))",
     "qs_force_error_colormap": "qs.forceErrorStyle('MACE').find(s => s[1] === 'Colormap')",
     # Every colormap the colour-by pane offers must produce a bar.
     "grad_all_offered": (
@@ -1636,3 +1637,7 @@ def test_te_kind_roles_match_the_desktop_panel_kinds(results):
         for role, shape in kind.shapes.items():
             if role in kind.roles:
                 assert js[name]["roles"][role] == [shape_to_str(shape)], (name, role)
+
+
+def test_the_colour_legend_limits_are_in_scientific_notation(results):
+    assert results["pn_scientific"] == ["1.23e-2", "-4.50e3", "0", "1.00e0", "NaN"]

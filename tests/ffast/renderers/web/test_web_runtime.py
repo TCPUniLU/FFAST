@@ -1021,6 +1021,59 @@ async def test_web_journal_page_draws_the_3d_view_on_white_in_this_browser_only(
             await browser.close()
 
 
+async def test_web_colour_legend_limits_are_typed_and_the_legend_resizes(ffast_web_server):
+    """The 3D colour legend prints its limits in scientific notation; a limit
+    clicked and typed sets the range, an empty one is automatic again; the
+    corner grip makes the legend bigger and a double click gives back the
+    default size."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            legend, cb_min, cb_max = page.locator("#legend3d"), page.locator(".cb-min"), page.locator(".cb-max")
+            await expect(legend).to_be_visible()
+            await expect(cb_max).to_have_text(re.compile(r"^-?\d\.\d\de-?\d+$|^0$"))
+            auto_max = await cb_max.inner_text()
+
+            await cb_max.click()
+            await page.keyboard.type("5")
+            await page.keyboard.press("Enter")
+            await expect(cb_max).to_have_text("5.00e0")
+            await cb_max.click()
+            await page.keyboard.press("Backspace")
+            await page.keyboard.press("Enter")
+            await expect(cb_max).to_have_text(auto_max)
+
+            grip = page.locator("#legend3d .legend-grip")
+            before = await legend.bounding_box()
+            await legend.hover()
+            g = await grip.bounding_box()
+            await page.mouse.move(g["x"] + 7, g["y"] + 7)
+            await page.mouse.down()
+            await page.mouse.move(g["x"] + 107, g["y"] - 53, steps=5)
+            await page.mouse.up()
+            after = await legend.bounding_box()
+            assert after["width"] == pytest.approx(before["width"] + 100, abs=2)
+            assert after["height"] == pytest.approx(before["height"] + 60, abs=2)
+            assert after["y"] + after["height"] == pytest.approx(before["y"] + before["height"], abs=1)
+            gradient = await page.locator("#colorbar-gradient").bounding_box()
+            assert gradient["height"] > 40   # the bar grows with the legend
+            stored = await page.evaluate("() => JSON.parse(localStorage.getItem('ffast.layout')).legend")
+            assert stored["w"] == round(after["width"])
+
+            await grip.dblclick()
+            reset = await legend.bounding_box()
+            assert reset["width"] == pytest.approx(before["width"], abs=1)
+            assert reset["height"] == pytest.approx(before["height"], abs=1)
+        finally:
+            await browser.close()
+
+
 async def test_web_journal_page_drops_the_cards_the_pick_bar_and_the_hint_bar(ffast_web_server):
     """ADR 0063 follow-up: Journal page draws no card round a panel and hides
     the 3D pick bar and the hint bar; the panel titles stay. Screen brings

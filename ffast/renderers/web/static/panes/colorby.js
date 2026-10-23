@@ -22,10 +22,68 @@ import { gradientCss } from '../colormap.js';
 import { defaultSettings } from '../view_settings.js';
 import { editableDimension, resolveUnit, withUnit } from '../units.js';
 import { unitPopover } from '../dialogs.js';
-import { formatSignificant } from '../panels.js';
+import { formatScientific } from '../panels.js';
+import { loadLayout, saveLayout } from '../layout_state.js';
 
 const COLORMAPS = ['cividis', 'viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'force_error'];
 // Shared with an independent panel's starting look (start_settings.js).
+
+const LEGEND_MIN = { w: 160, h: 48 };
+
+/** Size the legend (`null`: its default size). The size is a page-wide CSS
+ * variable, so the hint bar keeps clear of it, and it is this browser's own
+ * choice (layout_state.js), not a view setting. */
+function setLegendSize(size) {
+  const root = document.documentElement.style;
+  if (size) {
+    root.setProperty('--legend-w', `${size.w}px`);
+    root.setProperty('--legend-h', `${size.h}px`);
+  } else {
+    root.removeProperty('--legend-w');
+    root.removeProperty('--legend-h');
+  }
+}
+
+/** The corner grip that resizes the legend: the legend sits in the bottom left
+ * corner, so it grows up and to the right. A double click gives back the
+ * default size. */
+function legendGrip() {
+  const stored = loadLayout().legend;
+  if (stored && Number.isFinite(stored.w) && Number.isFinite(stored.h)) setLegendSize(stored);
+  const grip = document.createElement('div');
+  grip.className = 'legend-grip';
+  grip.title = 'Drag to resize; double-click for the default size';
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const legend = grip.parentElement;
+    const box = legend.getBoundingClientRect();
+    const room = legend.parentElement?.getBoundingClientRect();
+    const start = { x: e.clientX, y: e.clientY, w: box.width, h: box.height };
+    let size = null;
+    const move = (ev) => {
+      const maxW = room ? room.width - 24 : Infinity;
+      const maxH = room ? room.height - 24 : Infinity;
+      size = {
+        w: Math.round(Math.min(maxW, Math.max(LEGEND_MIN.w, start.w + ev.clientX - start.x))),
+        h: Math.round(Math.min(maxH, Math.max(LEGEND_MIN.h, start.h - (ev.clientY - start.y)))),
+      };
+      setLegendSize(size);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      if (size) saveLayout({ legend: size });
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+  grip.addEventListener('dblclick', () => {
+    setLegendSize(null);
+    saveLayout({ legend: null });
+  });
+  return grip;
+}
 
 /**
  * @param {HTMLElement} sidebarEl
@@ -34,6 +92,7 @@ const COLORMAPS = ['cividis', 'viridis', 'inferno', 'plasma', 'coolwarm', 'hot',
  *   onPredictionChange: (modelKey: string|null) => void,
  *   onColormapChange: (colormap: string) => void,
  *   onMetricParam: (key: string, value: any) => void,
+ *   onLimit?: (key: 'vmin'|'vmax', value: number|null) => void,
  *   unitsOf?: () => Object<string, string>,
  *   onSetUnit?: (dimension: string, unit: string) => void,
  * }} callbacks unitsOf: the units of the shown view's dataset; onSetUnit: name one
@@ -59,6 +118,7 @@ export function createColorByPane(sidebarEl, callbacks) {
     state.source = labelToSource.get(label) || 'element';
     missingNote.hidden = true;
     _syncVisibility();
+    clearLimits();
     callbacks.onSourceChange(state.source);
     _rebuildParamControls();
   });
@@ -101,7 +161,59 @@ export function createColorByPane(sidebarEl, callbacks) {
   const legend = document.createElement('div');
   legend.id = 'legend3d';
   legend.className = 'legend3d';
-  legend.append(cbLabel, colorbar);
+  legend.append(cbLabel, colorbar, legendGrip());
+  editableLimit(cbMin, 'vmin');
+  editableLimit(cbMax, 'vmax');
+
+  /** Click a limit to type it; an empty box makes it automatic again. */
+  function editableLimit(span, key) {
+    span.tabIndex = 0;
+    span.setAttribute('role', 'button');
+    span.title = 'Click to set; leave empty for automatic';
+    const edit = () => {
+      if (span.querySelector('input')) return;
+      const shown = span.textContent;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'cb-limit-input';
+      input.value = state[key] ?? '';
+      input.placeholder = shown;
+      input.setAttribute('aria-label', key === 'vmin' ? 'Lowest colour value' : 'Highest colour value');
+      span.replaceChildren(input);
+      input.focus();
+      input.select();
+      let done = false;
+      const finish = (commit) => {
+        if (done) return;
+        done = true;
+        span.textContent = shown;
+        if (!commit) return;
+        const text = input.value.trim();
+        const value = text === '' ? null : Number(text);
+        if (value !== null && !Number.isFinite(value)) return;
+        if (value === (state[key] ?? null)) return;
+        state[key] = value;
+        callbacks.onLimit?.(key, value);
+      };
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') finish(true);
+        else if (e.key === 'Escape') finish(false);
+        e.stopPropagation();
+      });
+      input.addEventListener('blur', () => finish(true));
+    };
+    span.addEventListener('click', edit);
+    span.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); edit(); } });
+  }
+
+  /** A new colouring starts from the automatic range. */
+  function clearLimits() {
+    for (const key of ['vmin', 'vmax']) {
+      if (state[key] == null) continue;
+      state[key] = null;
+      callbacks.onLimit?.(key, null);
+    }
+  }
   let shownColorBy = null;   // the colouring the colourbar shows, for its label
   const _renderLabel = () => {
     if (!shownColorBy) return;
@@ -238,6 +350,7 @@ export function createColorByPane(sidebarEl, callbacks) {
       state.source = `metric:${id}`;
       missingNote.hidden = true;
       _syncVisibility();
+      clearLimits();
       callbacks.onSourceChange(state.source);
       _rebuildParamControls();
       return true;
@@ -248,8 +361,8 @@ export function createColorByPane(sidebarEl, callbacks) {
       if (!colorBy) { colorbar.classList.add('hidden'); return; }
       colorbar.classList.remove('hidden');
       cbGradient.style.background = `linear-gradient(to right, ${gradientCss(colorBy.colormap)})`;
-      cbMin.textContent = formatSignificant(colorBy.vmin);
-      cbMax.textContent = formatSignificant(colorBy.vmax);
+      if (!cbMin.querySelector('input')) cbMin.textContent = formatScientific(colorBy.vmin);
+      if (!cbMax.querySelector('input')) cbMax.textContent = formatScientific(colorBy.vmax);
       shownColorBy = colorBy;
       _renderLabel();
     },

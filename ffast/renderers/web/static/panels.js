@@ -444,6 +444,15 @@ export function formatSignificant(v, digits = 3) {
   return n.toFixed(Math.max(0, digits - 1 - Math.floor(Math.log10(Math.abs(n)))));
 }
 
+/** `v` in scientific notation with `digits` significant digits: `1.23e-2`,
+ * `-4.50e3`, and `0` for zero (the colour legend's limits). */
+export function formatScientific(v, digits = 3) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(n);
+  if (n === 0) return '0';
+  return n.toExponential(digits - 1).replace('e+', 'e');
+}
+
 /**
  * A table cell: `precision` decimal places, but never a false zero — a
  * non-zero value that would round to zero shows three significant digits

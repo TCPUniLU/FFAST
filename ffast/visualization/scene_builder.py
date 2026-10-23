@@ -176,10 +176,12 @@ def build_scene(
         finite = color_values[np.isfinite(color_values)]
         auto_lo = float(np.min(finite)) if finite.size else 0.0
         auto_hi = float(np.max(finite)) if finite.size else 1.0
+        # A limit the user cleared (None) is automatic again.
+        lo, hi = cparams.get("vmin"), cparams.get("vmax")
         color_meta = {
             "colormap": cparams.get("colormap", "viridis"),
-            "vmin": float(cparams.get("vmin", auto_lo)),
-            "vmax": float(cparams.get("vmax", auto_hi)),
+            "vmin": float(auto_lo if lo is None else lo),
+            "vmax": float(auto_hi if hi is None else hi),
             "label": _clabel,
             "unit": _cunit,
         }

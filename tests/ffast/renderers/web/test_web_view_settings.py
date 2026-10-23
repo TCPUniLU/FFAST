@@ -86,7 +86,8 @@ def results():
 
 def test_defaults_are_todays_defaults(results):
     assert results["defaults"] == {
-        "colorBy": {"source": "element", "prediction": None, "colormap": "viridis", "norm": "None"},
+        "colorBy": {"source": "element", "prediction": None, "colormap": "viridis", "norm": "None",
+                    "vmin": None, "vmax": None},
         "camera": {"ortho": False, "gizmo": False, "background": "#000000"},
         "display": {"atomSize": 1, "hide": "", "highlight": "", "unitCell": True},
         "bonds": {"width": 100, "color": "#404040", "bondType": "Dynamic", "fixedIndices": []},
@@ -129,7 +130,8 @@ def test_an_unset_start_is_the_defaults(results):
 
 def test_a_start_look_fills_every_section_it_names(results):
     s = results["start_look"]
-    assert s["colorBy"] == {"source": "metric:force_error", "prediction": "M", "colormap": "plasma", "norm": "None"}
+    assert s["colorBy"] == {"source": "metric:force_error", "prediction": "M", "colormap": "plasma", "norm": "None",
+                          "vmin": None, "vmax": None}
     assert s["display"]["atomSize"] == 2
     assert s["bonds"]["width"] == 50 and s["bonds"]["color"] == "#ff0000"
     assert s["forces"]["show"] is True and s["forces"]["modelKey"] == "M"

@@ -800,6 +800,21 @@ class TestBuildSceneColorBy:
         assert scene.atoms.color_by.vmin == 0.0
         assert scene.atoms.color_by.vmax == 10.0
 
+    def test_a_cleared_limit_is_automatic_again(self, ds):
+        auto = build_scene(VisualizationState(
+            view_id="v1", dataset_ref="fp",
+            parameters={"ffast.atom_color": {"source": "displacement"}},
+        ), get_dataset=lambda fp: ds).atoms.color_by
+        state = VisualizationState(
+            view_id="v1", dataset_ref="fp",
+            parameters={"ffast.atom_color": {
+                "source": "displacement", "vmin": None, "vmax": 10.0,
+            }},
+        )
+        scene = build_scene(state, get_dataset=lambda fp: ds)
+        assert scene.atoms.color_by.vmin == auto.vmin
+        assert scene.atoms.color_by.vmax == 10.0
+
     def test_metric_source_force_mae(self, ds):
         from ffast.metrics.executor import InProcessExecutor
         from ffast.metrics.registry import default_registry

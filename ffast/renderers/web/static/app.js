@@ -831,6 +831,7 @@ export class FFastApp {
       onPredictionChange: (modelKey) => this._sendSetParameter('ffast.atom_color', 'prediction_ref', modelKey),
       onColormapChange: (cm) => this._sendSetParameter('ffast.atom_color', 'colormap', cm),
       onMetricParam: (key, value) => this._sendSetParameter('ffast.atom_color', key, value),
+      onLimit: (key, value) => this._sendSetParameter('ffast.atom_color', key, value),
       unitsOf: () => datasetUnits(this._focusedDatasetFp(), this._datasets),
       onSetUnit: (dimension, unit) => this._setDatasetUnit(this._focusedDatasetFp(), dimension, unit),
     });
