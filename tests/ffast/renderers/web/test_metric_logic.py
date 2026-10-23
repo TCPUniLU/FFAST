@@ -131,6 +131,8 @@ CASES = {
 
     # ── Plot it (rule 13) ───────────────────────────────────────────────────
     "plot_panel": "te.metricPanel({id: 'user.a', label: 'A'})",
+    "plot_panel_per_element": "te.metricPanel({id: 'user.e', label: 'E', shape: 'N_elements'})",
+    "per_element_plots": "ml.shortcutFor('N_elements')",
     "plot_makes_my_metrics_with_the_main_view": (
         "(() => { const r = te.plotTarget([{name: 'Basic', panels: [{kind: 'table', row: 0, col: 0}]}],"
         " te.metricPanel({id: 'user.a', label: 'A'}));"
@@ -390,6 +392,12 @@ def test_plot_it_adds_a_timeline_of_the_metric(results):
     assert panel["metric_refs"] == {"y": {"metric": "user.a", "transform": None, "params": {}}}
 
 
+def test_a_per_element_metric_plots_as_bars(results):
+    panel = results["plot_panel_per_element"]
+    assert (panel["kind"], panel["title"], panel["metrics"]) == ("bars", "E", {"value": "user.e"})
+    assert results["per_element_plots"] == "plot"
+
+
 def test_plot_it_always_makes_or_uses_my_metrics_never_another_tab(results):
     # a new My metrics tab holds the main view too, so the pane stays beside the plot
     assert results["plot_makes_my_metrics_with_the_main_view"] == [
@@ -435,4 +443,4 @@ def test_duplicating_any_other_python_metric_takes_it_as_the_input(results):
 def test_a_formula_colouring_refuses_says_why_and_offers_no_colour_shortcut(results):
     assert results["colour_refused"] == [
         "per atom → by=all can't be used for colouring yet: colouring sees one frame",
-        None, "colour", "per element"]
+        None, "colour", "per element → can be plotted as bars"]

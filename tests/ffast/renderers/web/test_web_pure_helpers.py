@@ -664,6 +664,7 @@ CASES = {
     "fig_cap_density": "fg.caption('density', {xTitle: 'Energy MAE [unit]'})",
     "fig_cap_grouped_density": "fg.caption('grouped_density', {xTitle: 'Distance'})",
     "fig_cap_scatter": "fg.caption('scatter', {xTitle: 'Reference E', yTitle: 'Predicted E'})",
+    "fig_cap_bars": "fg.caption('bars', {yTitle: 'Force error [unit]'})",
     "fig_cap_untitled": (
         "[fg.caption('timeline', {yTitle: ''}), fg.caption('density', {xTitle: ''}),"
         " fg.caption('scatter', {xTitle: 'x', yTitle: ''})]"),
@@ -699,6 +700,8 @@ CASES = {
         "      value: nd([0, 1, 2, 0.1, N, 0.3, 0, 1, 2, 0.5, 0.2, N], [2, 2, 3]),"
         "      aggregate: nd([0, 1, 2, N, 0.1, 0.2], [2, 3])})],"
         "      {elementOrder: [1, 6], selectedElements: ['All', 1, 6]}],"
+        "    bars: [{}, [ser({value: nd([0.1, N, 0.3])}), ser({value: nd([0.2, N, N])})],"
+        "      {elementOrder: [1, 6, 8], selectedElements: ['All']}],"
         "    table: [{}, [ser({value: nd([N])})], {}],"
         "    grouped_table: [{}, [ser({mae: nd([0.1, N]), rmse: nd([N, 0.2]),"
         "      mae_all: nd([N]), rmse_all: nd([0.3])})],"
@@ -707,7 +710,8 @@ CASES = {
         "  const gapsIn = (series) => series.reduce((n, s) => n + Object.values(s.data)"
         "    .flatMap(v => Array.isArray(v) ? v : [v])"
         "    .reduce((k, r) => k + r.nd.values.filter(x => !Number.isFinite(x)).length, 0), 0);"
-        "  const notNumbers = (a) => Array.from(a || []).filter(x => !Number.isFinite(x)).length;"
+        "  const notNumbers = (a) => Array.from(a || []).filter(x => x == null"
+        "    || (typeof x === 'number' && !Number.isFinite(x))).length;"
         "  const out = {};"
         "  const kinds = [...Object.keys(pn.PLOT_BUILDERS), ...Object.keys(pn.TABLE_BUILDERS)];"
         "  for (const kind of kinds) {"
@@ -725,6 +729,7 @@ CASES = {
         "      r.peaksAtGaps = (b.peaks || []).filter(p => !Number.isFinite(p.value)).length;"
         "      const range = b.layout.yaxis && b.layout.yaxis.range;"
         "      r.rangeFinite = !range || range.every(Number.isFinite);"
+        "      r.noValueLabels = (b.layout.annotations || []).filter(a => a.text === 'no value').map(a => a.x);"
         "    }"
         "    out[kind] = r;"
         "  }"
@@ -992,6 +997,10 @@ def test_a_timeline_caption_without_peaks_is_one_sentence(results):
 def test_several_series_captions_count_the_series(results):
     assert results["fig_cap_timeline_series"] == "Energy MAE, 3 series."
     assert results["fig_cap_overlay_series"] == "Force, 2 series."
+
+
+def test_a_bars_caption_names_the_per_element_quantity(results):
+    assert results["fig_cap_bars"] == "Force error [unit] per element."
 
 
 def test_distribution_and_scatter_captions(results):
@@ -1286,6 +1295,8 @@ def test_every_panel_kind_shows_a_gap_as_a_gap_never_a_number(results):
         assert r["shown"] == r["gaps"], kind
         assert not r.get("textNaN"), kind
         assert r.get("peaksAtGaps", 0) == 0 and r.get("rangeFinite", True), kind
+    # bars: carbon has no value in either series, so it is labelled, not drawn at 0
+    assert results["no_value_panels"]["bars"]["noValueLabels"] == ["C"]
 
 
 def test_an_atom_with_no_value_is_grey_in_every_colour_map(results):
@@ -1724,6 +1735,7 @@ def test_te_kind_roles_match_the_desktop_panel_kinds(results):
     from UI.panels import PANEL_KINDS
 
     js = results["te_kind_roles"]
+    assert set(js) == set(PANEL_KINDS)          # no kind on one client only
     for name, kind in PANEL_KINDS.items():
         assert name in js, name
         for role in kind.roles:

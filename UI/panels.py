@@ -706,6 +706,45 @@ class GroupedDensityKind(PanelKind):
                 panel.plot(c[0], c[1], autoColor=data, autoLabel=data)
 
 
+class BarsKind(PanelKind):
+    """One value per element as bars (ADR 0064 amendment): a group per element
+    in order of atomic number (``_element_order``), a bar per series. The tab's
+    element picker, when it has one, chooses the groups. An element with no
+    value (NaN) gets no bar; when no series has one, its label says so. The
+    browser's ``buildBars`` (panels.js) draws the same."""
+
+    name = "bars"
+    roles = ("value",)
+    shapes = {"value": dims.N_elements}
+    x_default = "Element"
+
+    def draw(self, panel, data, spec):
+        pass  # every series at once, in draw_overlay: each needs its offset
+
+    def draw_overlay(self, panel, data_list, spec):
+        from ase.data import chemical_symbols
+        drawn = [d for d in data_list if d["dataEntry"].get(spec["value"]) is not None]
+        if not drawn:
+            return
+        order = [int(z) for z in _element_order(drawn[0]["dataset"])]
+        selector = spec.get("selector_obj")
+        atom_types = selector.getSelectedAtomInfo() if selector else {"All": {}}
+        picked = {info["index"] for name, info in atom_types.items() if name != "All"}
+        shown = order if "All" in atom_types or not picked else [z for z in order if z in picked]
+        width = 0.8 / len(drawn)
+        values = []
+        for i, data in enumerate(drawn):
+            v = np.asarray(data["dataEntry"][spec["value"]].values, dtype=float).ravel()
+            y = np.array([v[order.index(z)] if order.index(z) < v.size else np.nan for z in shown])
+            values.append(y)
+            x = np.arange(len(shown)) + (i - (len(drawn) - 1) / 2) * width
+            has = np.isfinite(y)
+            panel.plot(x[has], y[has], bars=True, width=width, autoColor=data, autoLabel=data)
+        labels = [chemical_symbols[z] + ("\n(no value)" if all(np.isnan(y[k]) for y in values) else "")
+                  for k, z in enumerate(shown)]
+        panel.setXTicks(list(range(len(shown))), labels)
+
+
 class GroupedTableKind(TableKind):
     """Per-group MAE/RMSE table driven by the element picker. Columns bind two
     per-group metrics (roles ``mae``/``rmse``, shape ``(N_groups,)``); optional
@@ -875,7 +914,7 @@ def register_panel_kind(kind):
 
 
 for _kind in (TimelineKind(), DensityKind(), ScatterKind(), TableKind(),
-              GroupedDensityKind(), GroupedTableKind(), OverlayTimelineKind()):
+              GroupedDensityKind(), GroupedTableKind(), OverlayTimelineKind(), BarsKind()):
     register_panel_kind(_kind)
 
 

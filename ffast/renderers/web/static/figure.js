@@ -55,6 +55,9 @@ export function caption(kind, info = {}) {
     case 'grouped_density':
       if (!xTitle) return '';
       return `Distribution of ${xTitle}.`;
+    case 'bars':
+      if (!yTitle) return '';
+      return `${yTitle} per element.`;
     case 'scatter':
       if (!xTitle || !yTitle) return '';
       return `${yTitle} against ${xTitle}.`;

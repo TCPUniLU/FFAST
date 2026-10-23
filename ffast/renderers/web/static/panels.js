@@ -430,6 +430,41 @@ export function buildGroupedDensity(spec, series, ctx) {
   return { traces, layout, subInfo: null, unitAxes: { x: 'value', y: 'y' } };
 }
 
+/**
+ * One value per element as bars (ADR 0064 amendment): a group per element in
+ * order of atomic number, a bar per series in its colour. The element picker,
+ * when the tab has one, chooses the groups. An element with no value (NaN) gets
+ * no bar, and "no value" when no series has one, never a bar at 0.
+ */
+export function buildBars(spec, series, ctx) {
+  const u = ctx.units || {};
+  const order = ctx.elementOrder || [];
+  const selected = ctx.selectedElements || ['All'];
+  const shown = selected.includes('All') ? order : order.filter((z) => selected.includes(z));
+  const labels = shown.map(elementSymbol);
+  const traces = [];
+  const curveSeries = [];
+  (series || []).forEach((s, i) => {
+    const v = values1d(s.data.value);
+    if (!v.length) return;
+    traces.push({
+      x: labels, y: shown.map((z) => v[order.indexOf(z)] ?? NaN), type: 'bar',
+      marker: { color: seriesColor(i) }, name: s.name || '',
+    });
+    curveSeries.push(i);
+  });
+  const layout = withLegend(baseLayout(), traces.length);
+  layout.barmode = 'group';
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, null) || 'Element' };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.value) };
+  const t = plotTheme();
+  layout.annotations = labels
+    .filter((_, k) => traces.length && traces.every((tr) => !Number.isFinite(tr.y[k])))
+    .map((label) => ({ x: label, y: 0, yanchor: 'bottom', text: 'no value', showarrow: false,
+      font: { color: t.ink3, size: t.fsPlot } }));
+  return { traces, layout, subInfo: null, unitAxes: { y: 'value' } };
+}
+
 // ── table-kind builders (pure, return HTML) ─────────────────────────────────
 
 /**
@@ -577,6 +612,7 @@ export const PLOT_BUILDERS = {
   scatter: buildScatter,
   overlay_timeline: buildOverlayTimeline,
   grouped_density: buildGroupedDensity,
+  bars: buildBars,
 };
 
 export const TABLE_BUILDERS = {

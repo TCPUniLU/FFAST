@@ -27,6 +27,7 @@ export const KIND_ROLES = Object.freeze({
   overlay_timeline: { label: 'Overlay timeline', roles: { series: ['N_frames'] }, list: ['series'] },
   grouped_density: { label: 'Density per element', roles: { value: ['(N_elements, curve_xy, grid)'] } },
   grouped_table: { label: 'Table per element', roles: { mae: ['N_elements'], rmse: ['N_elements'] } },
+  bars: { label: 'Bars per element', roles: { value: ['N_elements'] } },
 });
 
 /** Catalog entries a role of a kind can take, by shape. */
@@ -356,9 +357,17 @@ export function toSaved(tab) {
 /** The tab "Plot it" falls back to (ADR 0057 rule 13). */
 export const MY_METRICS_TAB = 'My metrics';
 
-/** The panel "Plot it" adds for a per-structure metric: the default kind for
- * that shape, a timeline of the metric. An ordinary panel, edited like any other. */
+/** The panel "Plot it" adds: the default kind for the metric's shape, a
+ * timeline for a per-structure metric and bars for a per-element one (ADR 0064
+ * amendment). An ordinary panel, edited like any other. */
 export function metricPanel(metric) {
+  if (metric.shape === 'N_elements') {
+    return {
+      kind: 'bars', title: metric.label || metric.id,
+      metrics: { value: metric.id },
+      metric_refs: { value: { metric: metric.id, transform: null, params: {} } },
+    };
+  }
   return {
     kind: 'timeline', title: metric.label || metric.id,
     metrics: { y: metric.id },

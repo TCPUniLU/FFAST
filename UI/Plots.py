@@ -1034,7 +1034,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self._visitedKeys = set()
         self.plotItems = []
 
-    def _seriesKey(self, scatter, autoColor):
+    def _seriesKey(self, scatter, autoColor, kind=None):
         """Stable identity for a drawn Series across refreshes (ADR 0022).
 
         Content-based: (dataset_fp, model_fp, kind) plus a sub-index that
@@ -1042,7 +1042,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         draws (the y=x overlay) get a "__static__" base. Same draw order each
         refresh → same key → the item is matched and updated in place.
         """
-        kind = "scatter" if scatter else "line"
+        kind = kind or ("scatter" if scatter else "line")
         if isinstance(autoColor, dict):
             ds = autoColor.get("dataset")
             m = autoColor.get("model")
@@ -1079,11 +1079,14 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         autoLabel=None,
         label=None,
         ignoreBounds=False,
+        bars=False,
+        width=0.8,
         **kwargs,
     ):
+        # bars=True draws y as bars of ``width`` centred on x (ADR 0064 amendment).
         self.plotItem.disableAutoRange()
-        kind = "scatter" if scatter else "line"
-        key = self._seriesKey(scatter, autoColor)
+        kind = "bars" if bars else "scatter" if scatter else "line"
+        key = self._seriesKey(scatter, autoColor, kind)
         self._visitedKeys.add(key)
         self._visitOrder.append(key)
 
@@ -1117,12 +1120,17 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
             c.setAlpha(255)
             brush = pyqtgraph.mkBrush(c)
 
-        sig = self._dataSignature(x, y) + (repr(color), symbol, bool(ignoreBounds))
+        if bars:
+            brush = pyqtgraph.mkBrush(color)
+        sig = self._dataSignature(x, y) + (repr(color), symbol, bool(ignoreBounds), width)
 
         prev = self._series.get(key)
         if prev is not None and prev["kind"] == kind:
             item = prev["item"]
-            if prev["sig"] != sig:
+            if prev["sig"] != sig and bars:
+                item.setOpts(x=x, height=y, width=width, brush=brush)
+                self._changedThisRefresh = True
+            elif prev["sig"] != sig:
                 # Same Series, changed data/style → update in place (no teardown).
                 item.setData(x, y)
                 if scatter:
@@ -1135,7 +1143,9 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         else:
             if prev is not None:  # kind flipped at this key → replace the item
                 self.plotWidget.removeItem(prev["item"])
-            if scatter:
+            if bars:
+                item = pyqtgraph.BarGraphItem(x=x, height=y, width=width, brush=brush, pen=None)
+            elif scatter:
                 item = pyqtgraph.ScatterPlotItem(
                     x, y, brush=brush, pen=None, size=5, symbol=symbol,
                     antialias=False,

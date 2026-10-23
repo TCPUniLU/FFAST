@@ -529,8 +529,8 @@ project's `ffast.toml`.
 
 For a per-atom metric, **Colour atoms by this** sets the colouring of the 3D view
 the settings sidebar acts on. For a per-structure metric, **Plot it** adds a
-timeline to the "My metrics" tab (made for you, with the main view beside the
-plot). It never changes a built-in or project tab. Any saved metric can also be
+timeline, and for a per-element one a bars panel, to the "My metrics" tab (made
+for you, with the main view beside the plot). It never changes a built-in or project tab. Any saved metric can also be
 put into a panel of any tab with the tab editor.
 
 If a project or built-in metric has the same id as a user file, that one wins and
@@ -547,7 +547,8 @@ the session's one is added as `<id>.2` and the server's is left alone.
 
 A tab is a grid of panels; a panel binds metrics to axes. Panel kinds available:
 `timeline`, `density`, `scatter`, `table`, `overlay_timeline`, `grouped_density`,
-`grouped_table`.
+`grouped_table`, and `bars` (one per-element metric, `value`, as a group of
+bars per element; an element with no value has no bar and says so).
 
 ```toml
 [[visualization.tabs]]

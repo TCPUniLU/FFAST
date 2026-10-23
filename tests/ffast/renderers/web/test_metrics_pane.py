@@ -509,9 +509,10 @@ async def test_every_python_metric_shows_its_code_and_duplicates_as_a_formula(tm
                 await browser.close()
 
 
-async def test_an_h_only_formula_is_tried_saved_and_plotted_with_a_gap(tmp_path):
+async def test_h_only_and_per_element_formulas_are_tried_saved_and_plotted(tmp_path):
     """ADR 0064 step 6: by=structure with where=element("H"). The example
-    data has one structure without hydrogen (C6Cl3F3): it has no value."""
+    data has one structure without hydrogen (C6Cl3F3): it has no value. A
+    per-element formula plots as bars (the amendment)."""
     import ase.io as aio
     no_h = [i for i, a in enumerate(aio.read(DATASET_PATH, index=":")) if "H" not in a.symbols]
     assert len(no_h) == 1
@@ -556,5 +557,23 @@ async def test_an_h_only_formula_is_tried_saved_and_plotted_with_a_gap(tmp_path)
                     "  if (!el) return null;"
                     "  return Array.from(el.data[0].y).flatMap((v, i) => Number.isFinite(v) ? [] : [i]); }")
                 assert await gaps.json_value() == no_h
+
+                # per element: Plot it adds bars, one per element (ADR 0064 amendment)
+                pane = await _open_metrics_pane(page)
+                await pane.get_by_role("button", name="New metric").click()
+                await pane.get_by_label("Metric id").fill("user.f_by_element")
+                await pane.get_by_label("Formula").fill("mean(norm(pred_F - ref_F), by=element)")
+                for _ in range(2):
+                    await pane.get_by_role("button", name=re.compile("^Fix")).click()
+                await expect(pane.locator(".mx-check")).to_contain_text("per element")
+                await pane.get_by_role("button", name="Save", exact=True).click()
+                await expect(pane.locator(".mx-item[data-id='user.f_by_element']")).to_be_visible()
+                await pane.get_by_role("button", name="Plot it").click()
+                n_elements = len({z for a in aio.read(DATASET_PATH, index=":") for z in a.numbers})
+                bars = await page.wait_for_function(
+                    "() => { const el = [...document.querySelectorAll('.tabpanel.active .js-plotly-plot')]"
+                    "  .find((d) => d.data && d.data.length && d.data[0].type === 'bar');"
+                    "  return el ? [el.data[0].x.length, el.data[0].y.filter(Number.isFinite).length] : null; }")
+                assert await bars.json_value() == [n_elements, n_elements]
             finally:
                 await browser.close()
