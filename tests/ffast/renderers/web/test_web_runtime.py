@@ -4490,6 +4490,32 @@ async def _open_two_datasets(page, tmp_path, ws_port, web_port):
     return dataset_fp, other["args"][0]
 
 
+async def test_web_a_prediction_for_a_dataset_not_on_screen_says_it_loaded(tmp_path):
+    """A new prediction for another dataset is not the "already loaded" case:
+    it ends its "Loading…" status as loaded, though it is not shown."""
+    async with _spawn_server() as (ws_port, web_port):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            try:
+                a_fp, b_fp = await _open_two_datasets(page, tmp_path, ws_port, web_port)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{b_fp}']").click()
+                await page.wait_for_function(
+                    "(fp) => window.ffastApp._main.current.datasetFp === fp", arg=b_fp)
+                await _file_menu(page, "Load Prediction…")
+                await page.locator("#fb-path").fill(str(PREDICTION_PATH.parent))
+                await page.locator("#fb-path").press("Enter")
+                await page.locator("#fb-list .fb-row", has_text="prediction.xyz").click()
+                await page.locator("#fb-target-ds").select_option(a_fp)
+                await page.locator("#fb-target-ds").dispatch_event("change")
+                await expect(page.locator("#fb-force-key")).to_have_value("MACE_forces")
+                await page.locator("#fb-load").click()
+                await expect(page.locator("#status")).to_have_text(
+                    'Prediction "prediction.xyz" loaded', timeout=15000)
+            finally:
+                await browser.close()
+
+
 async def test_web_going_back_to_a_dataset_reuses_its_view_and_clears_picks_in_the_view_left(tmp_path):
     """ADR 0060 step 2: A → B → A opens A's own server view again, and the
     command that clears A's picks names A's view and goes out before B opens."""

@@ -78,7 +78,7 @@ export const IN = Object.freeze({
   // Replaced guessing from TASK_DONE, which names no operation (ADR 0050).
   SESSION_SAVED: 'SESSION_SAVED',
   SESSION_LOADED: 'SESSION_LOADED',
-  // A dataset or prediction load that raised, {kind, path, error}.
+  // A dataset or prediction load that failed, {kind, path, error}.
   LOAD_FAILED: 'LOAD_FAILED',
   // Outcome of SAVE_TAB / DELETE_TAB / HIDE_TAB, {ok, action, name, error},
   // and the TOML for EXPORT_TAB (ADR 0056).

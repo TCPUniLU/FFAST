@@ -1253,7 +1253,7 @@ export class FFastApp {
       conn.on(IN.SESSION_SAVED,  (kw) => this._sessionOps.onSessionResult('save', kw));
       conn.on(IN.SESSION_LOADED, (kw) => this._sessionOps.onSessionResult('load', kw));
       conn.on(IN.SESSION_METRICS, (kw) => this._offerSessionMetrics(kw));
-      // A load that raised: end the "Loading <file>…" status with the reason.
+      // A load that failed: end the "Loading <file>…" status with the reason.
       conn.on(IN.LOAD_FAILED, (kw) => {
         const name = String(kw.path || '').split(/[\\/]/).pop();
         this._browser.predictionSettled();
@@ -1382,6 +1382,9 @@ export class FFastApp {
   _onModelMeta(fp, meta) {
     // meta = {name, dataset_fingerprints}. Fired on connect-replay and after
     // a LOAD_PREDICTION completes (the ghost model registers its forces cache).
+    // A model new to this window ends a pending prediction load, wherever it
+    // applies; only a duplicate announces nothing (RemoteBrowser.onTaskDone).
+    const loaded = !this._models.has(fp) && this._browser.predictionSettled();
     this._models.set(fp, meta || {});
     // Auto-select a freshly loaded prediction that applies to the current
     // dataset and refresh the view so its force overlay appears. A live
@@ -1392,10 +1395,11 @@ export class FFastApp {
         (meta?.dataset_fingerprints || []).length
         && predictionApplies(meta, this._currentDatasetFp, this._datasets)) {
       this._currentModelFp = fp;
-      this._browser.predictionSettled();
       this._setStatus(`Prediction "${meta.name || fp.slice(0,8)}" ready`, 'connected');
       if (this._activePanel) this._openView();
       this._syncAnalysisContext();
+    } else if (loaded) {
+      this._setStatus(`Prediction "${meta?.name || fp.slice(0,8)}" loaded`, 'connected');
     }
     this._panes?.forces.refreshModels();
     this._panes?.colorBy.refreshModels(this._models);

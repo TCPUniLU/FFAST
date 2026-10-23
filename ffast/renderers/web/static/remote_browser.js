@@ -278,9 +278,13 @@ export class RemoteBrowser {
     });
   }
 
-  /** A model arrived or the load failed: the "Loading prediction…" status has
-   * been replaced, so a later task end must not touch it. */
-  predictionSettled() { this._pendingPrediction = null; }
+  /** A model arrived or the load failed: the "Loading prediction…" status is
+   * replaced, so a later task end must not touch it. True if one was pending. */
+  predictionSettled() {
+    const pending = this._pendingPrediction !== null;
+    this._pendingPrediction = null;
+    return pending;
+  }
 
   /** A task ended. A prediction already held announces nothing new, so a task
    * that ends while one is still pending is that duplicate: end its status. */
