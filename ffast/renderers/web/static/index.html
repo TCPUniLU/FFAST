@@ -709,6 +709,18 @@
       left: 264px; right: 12px; transform: none; margin-inline: auto;
       width: fit-content; max-width: calc(100% - 276px);
     }
+    /* A narrow view has no room beside the legend for a step (they never
+       wrap), so the bar goes above the legend (~56 px tall), full width. */
+    .viewport { container-type: inline-size; }
+    @container (width < 700px) {
+      .viewport:has(> .legend3d #colorbar:not(.hidden)) > #hint-bar {
+        left: 12px; bottom: 80px; max-width: calc(100% - 24px);
+      }
+    }
+    /* Narrower still, a step may wrap rather than be cut off. */
+    @container (width < 420px) {
+      #hint-bar .hint-step { white-space: normal; }
+    }
 
     /* Metrics pane (ADR 0057): list by origin, editor, inputs, Try */
     .mx-toolbar { display: flex; gap: 6px; align-items: center; }

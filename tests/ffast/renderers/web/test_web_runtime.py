@@ -727,6 +727,17 @@ async def test_web_the_hint_bar_keeps_clear_of_the_colour_legend(ffast_web_serve
             apart = (a["x"] + a["width"] <= b["x"] or b["x"] + b["width"] <= a["x"]
                      or a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"])
             assert apart, (a, b)
+            # Beside the legend there is no room for a step at this width, so
+            # the bar goes above it: all of it, and its ×, inside the 3D view.
+            view = await page.locator(".viewport:has(> #hint-bar)").bounding_box()
+            close = await page.locator("#hint-dismiss").bounding_box()
+            for box in (b, close):
+                assert view["x"] <= box["x"] and box["x"] + box["width"] <= view["x"] + view["width"], (view, box)
+            clipped = await page.evaluate(
+                "() => [...document.querySelectorAll('#hint-bar .hint-step')]"
+                ".some((el) => el.getBoundingClientRect().right > document.getElementById('hint-bar').getBoundingClientRect().right)"
+            )
+            assert not clipped
         finally:
             await browser.close()
 
