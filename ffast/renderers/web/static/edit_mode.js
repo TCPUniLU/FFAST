@@ -16,7 +16,7 @@
  * overwrite it or discard these edits (rule 16).
  */
 
-import { askDialog } from './dialogs.js';
+import { askDialog, labelBy, trapFocus } from './dialogs.js';
 import {
   COLUMN_PX, KIND_ROLES, ROW_PX, addPanel, columnsOf, copyOf, dragTrack, emptyTab,
   fitWidths, metricsFor, movePanel, new3DPanel, onlyPlacesChanged, removePanel, replacePanel,
@@ -24,6 +24,7 @@ import {
 } from './tab_edit.js';
 import { KIND_3D, whyPanelStays } from './tab_rules.js';
 import { cleanStart } from './start_settings.js';
+import { icon } from './icons.js';
 
 /** The shortest a dragged row gets: room for a table's header and a line. */
 const ROW_MIN_PX = 80;
@@ -119,7 +120,9 @@ export class TabEditor {
       const answer = await askDialog({
         title: 'Changed in another window',
         message: `${this._previous} was changed in another window — overwrite or discard your edits?`,
-        buttons: ['Discard my edits', 'Overwrite'],
+        // Cancel (or Esc) keeps editing; focus starts on it, not on Overwrite.
+        buttons: ['Cancel', 'Discard my edits', 'Overwrite'],
+        danger: 'Overwrite',
       });
       if (answer === 'Discard my edits') { this.end(); return; }
       if (answer !== 'Overwrite') return;
@@ -127,7 +130,8 @@ export class TabEditor {
       const answer = await askDialog({
         title: 'Deleted in another window',
         message: `${this._previous} was deleted in another window — save your edits as a new tab, or discard them?`,
-        buttons: ['Discard my edits', 'Save as a new tab'],
+        buttons: ['Cancel', 'Discard my edits', 'Save as a new tab'],
+        danger: 'Discard my edits',
       });
       if (answer === 'Discard my edits') { this.end(); return; }
       if (answer !== 'Save as a new tab') return;
@@ -228,7 +232,7 @@ export class TabEditor {
     handle.textContent = `⠿ ${label}`;
     head.appendChild(handle);
     if (unit.indices.length === 1 && first.kind !== KIND_3D) {
-      const gear = button('⚙', async () => {
+      const gear = iconButton('gear', 'Open in the builder', async () => {
         const panel = await this._builder(first);
         if (panel) this.change(replacePanel(this._draft, unit.indices[0], panel));
       });
@@ -237,7 +241,7 @@ export class TabEditor {
       head.appendChild(gear);
     }
     if (unit.indices.length === 1 && first.kind === KIND_3D) {
-      const gear = button('⚙', async () => {
+      const gear = iconButton('gear', 'Linked or independent, links and starting look', async () => {
         const next = await this._panel3d(unit.indices[0], visibleTabs, tabIndex);
         if (next) this.change(next);
       });
@@ -246,7 +250,7 @@ export class TabEditor {
       head.appendChild(gear);
     }
     const why = unit.indices.map((i) => whyPanelStays(visibleTabs, tabIndex, i)).find(Boolean) || '';
-    const remove = button('✕', () => {
+    const remove = iconButton('close', 'Remove', () => {
       let next = this._draft;
       for (const i of [...unit.indices].sort((a, b) => b - a)) next = removePanel(next, i);
       this.change(next);
@@ -349,9 +353,9 @@ export class TabEditor {
       let next = sizes;
       const move = (ev) => {
         next = dragTrack(sizes, k, (axis === 'col' ? ev.clientX : ev.clientY) - start, min);
-        const template = next.map((px) => `${px}px`).join(' ');
-        if (axis === 'col') grid.style.gridTemplateColumns = template;
-        else grid.style.gridTemplateRows = template;
+        // A row height is a minimum, as analysis.js sets it (peak labels grow a row).
+        if (axis === 'col') grid.style.gridTemplateColumns = next.map((px) => `${px}px`).join(' ');
+        else grid.style.gridTemplateRows = next.map((px) => `minmax(${px}px, auto)`).join(' ');
         const shift = next[k - 1] - sizes[k - 1];
         for (const [d, at] of later) d.style[axis === 'col' ? 'left' : 'top'] = `${at + shift}px`;
       };
@@ -363,7 +367,14 @@ export class TabEditor {
           const widths = sizesOf(next, COLUMN_PX).slice(0, columnsOf(this._draft));
           this.change({ ...this._draft, column_widths: widths });
         } else {
-          const heights = sizesOf(next, ROW_PX).slice(0, Math.max(1, rowsOf(this._draft)));
+          // Rows are read as drawn, and a row with peak labels is drawn taller
+          // than its set height by their room (analysis.js _sizeRows): the
+          // dragged row is saved without it, the others keep their set height.
+          const set = this._draft.row_heights || [];
+          const room = grid._rowExtra || [];
+          const drawn = next.map((px, i) => px - (room[i] || 0));
+          const heights = sizesOf(drawn, ROW_PX).slice(0, Math.max(1, rowsOf(this._draft)))
+            .map((h, i) => (i !== k - 1 && set[i] != null ? set[i] : h));
           this.change({ ...this._draft, row_heights: heights });
         }
       };
@@ -451,7 +462,7 @@ export class TabEditor {
           const addRow = (value) => {
             const row = document.createElement('div');
             row.className = 'builder-row';
-            row.append(metricSelect(role, value), button('✕', () => { row.remove(); sync(); }));
+            row.append(metricSelect(role, value), iconButton('close', 'Remove this series', () => { row.remove(); sync(); }));
             list.insertBefore(row, more);
           };
           const more = button('+ Add a series', () => { addRow(''); sync(); });
@@ -613,6 +624,14 @@ function button(text, onClick) {
   return b;
 }
 
+/** A button drawn as an icon, named for screen readers by `label`. */
+function iconButton(name, label, onClick) {
+  const b = button('', onClick);
+  b.innerHTML = icon(name);
+  b.setAttribute('aria-label', label);
+  return b;
+}
+
 /** A labelled checkbox for a dialog: [its row, the box]. */
 function checkField(label, checked, key) {
   const box = Object.assign(document.createElement('input'), { type: 'checkbox', checked });
@@ -644,14 +663,16 @@ function modal(title, body, labels) {
   const head = document.createElement('div');
   head.className = 'warning-modal-title';
   head.textContent = title;
+  labelBy(el, head);
   const content = document.createElement('div');
   content.className = 'edit-modal-body';
   content.appendChild(body);
   const foot = document.createElement('div');
   foot.className = 'warning-modal-footer';
   let close;
+  let untrap = () => {};
   const answer = new Promise((resolve) => {
-    close = (label) => { el.remove(); resolve(label); };
+    close = (label) => { el.remove(); untrap(); resolve(label); };
   });
   const buttons = labels.map((label) => {
     const b = button(label, () => close(label));
@@ -659,6 +680,7 @@ function modal(title, body, labels) {
     return b;
   });
   el.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
+  untrap = trapFocus(el);
   panel.append(head, content, foot);
   el.appendChild(panel);
   document.body.appendChild(el);

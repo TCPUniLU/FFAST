@@ -86,9 +86,26 @@ CASES = {
     # ── cm.gradientCss — the colourbar derives from the atoms' LUT (ADR 0052) ──
     "grad_viridis": "cm.gradientCss('viridis')",
     "grad_unknown": "cm.gradientCss('not_a_colormap')",
+    "trap_focus": (
+        "(() => { const m = document.createElement('div');"
+        " m.innerHTML = '<button id=a>a</button><button id=b>b</button><button id=c disabled>c</button>';"
+        " document.body.appendChild(m);"
+        " const key = (el, shift) => el.dispatchEvent(new KeyboardEvent('keydown',"
+        "   {key: 'Tab', shiftKey: shift, bubbles: true, cancelable: true}));"
+        " const off = di.trapFocus(m);"
+        " const a = m.querySelector('#a'), b = m.querySelector('#b');"
+        " b.focus(); key(b, false); const forward = document.activeElement.id;"
+        " a.focus(); key(a, true); const backward = document.activeElement.id;"
+        " a.focus(); const inside = key(a, false);"
+        " off(); b.focus(); key(b, false); const released = document.activeElement.id;"
+        " m.remove(); return [forward, backward, inside, released]; })()"),
+    "ap_densities": "ap.DENSITIES",
+    "ap_density_names": "['large', 'compact', 'nope', undefined, '__proto__'].map(ap.densityName)",
+    "grad_cividis_first": "cm.gradientCss('cividis').split(', ')[0]",
+    "qs_force_error_colormap": "qs.forceErrorStyle('MACE').find(s => s[1] === 'Colormap')",
     # Every colormap the colour-by pane offers must produce a bar.
     "grad_all_offered": (
-        "['viridis','inferno','plasma','coolwarm','hot','bwr','force_error']"
+        "['cividis','viridis','inferno','plasma','coolwarm','hot','bwr','force_error']"
         ".map(n => cm.gradientCss(n).split(', ').length)"
     ),
     # The bar's stops, sampled through mapColorBy at the same fractions. Equal
@@ -276,6 +293,86 @@ CASES = {
     ),
     "recent_servers_cap": (
         "rs.rememberServer(['a','b','c','d','e'], 'f')"
+    ),
+    # a built-in metric declares a dimension ("energy"), not a unit
+    "units_dimension_tags": "[...un.DIMENSIONS].sort()",
+    "axis_title_units": (
+        "[pn.axisTitle(['Energy MAE', 'energyUnit'], 'energy'),"
+        " pn.axisTitle(['Energy MAE', 'energyUnit'], 'meV'),"
+        " pn.axisTitle(['Energy MAE', 'energyUnit'], ''),"
+        " pn.axisTitle('Density', 'meV'), pn.axisTitle(null, 'meV')]"
+    ),
+    "table_headers_carry_units": (
+        "(() => {"
+        "  const heads = (html) => [...new DOMParser().parseFromString(html, 'text/html')"
+        "    .querySelectorAll('thead th')].map(e => e.textContent);"
+        "  const one = [{datasetFp:'d1', datasetName:'aspirin', modelFp:'m1', modelName:'MACE',"
+        "     data:{value: {nd: {values: [1], shape: [1]}}}}];"
+        "  const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const grouped = [{name:'MACE', data:{mae: a([0.1]), rmse: a([0.5])}}];"
+        "  return {"
+        "    table: heads(pn.buildPanel({kind:'table', title:'Energy MAE'}, one,"
+        "      {units: {value: 'meV'}}).html),"
+        "    tableDim: heads(pn.buildPanel({kind:'table', title:'Energy MAE'}, one,"
+        "      {units: {value: 'energy'}}).html),"
+        "    grouped: heads(pn.buildPanel({kind:'grouped_table'}, grouped,"
+        "      {elementOrder:[6], selectedElements:[6], units: {mae: 'meV/Å', rmse: 'force'}}).html),"
+        "  };"
+        "})()"
+    ),
+    # an energy or force shows the dataset's unit, "[unit]" until the user names it
+    "unit_resolution": (
+        "[un.resolveUnit('energy', {}), un.resolveUnit('energy', {energy: 'eV'}),"
+        " un.resolveUnit('force', {energy: 'eV'}), un.resolveUnit('meV', {}),"
+        " un.resolveUnit('length', {}), un.resolveUnit('energy', undefined),"
+        " un.withUnit('Energy MAE', un.resolveUnit('energy', {})),"
+        " un.withUnit('Energy MAE', un.resolveUnit('energy', {energy: 'kcal/mol'})),"
+        " un.editableDimension(' force '), un.editableDimension('length')]"
+    ),
+    "dataset_units_follow_the_root": (
+        "(() => { const m = new Map([['d1', {units: {energy: 'eV'}}], ['s1', {parent: 'd1', units: {}}],"
+        "  ['s2', {parent: 's1'}], ['c1', {parent: 'c2'}], ['c2', {parent: 'c1', units: {force: 'x'}}]]);"
+        "  return [un.datasetUnits('s2', m), un.datasetUnits('d1', m), un.datasetUnits('nope', m),"
+        "    un.datasetUnits(undefined, m), un.datasetUnits('c1', m)]; })()"
+    ),
+    "unit_headers_are_marked": (
+        "(() => {"
+        "  const doc = (html) => new DOMParser().parseFromString(html, 'text/html');"
+        "  const heads = (html) => [...doc(html).querySelectorAll('thead th')]"
+        "    .map(e => [e.textContent, e.dataset.unitRole || null]);"
+        "  const one = [{datasetFp:'d1', datasetName:'aspirin', modelFp:'m1', modelName:'MACE',"
+        "     data:{value: {nd: {values: [1], shape: [1]}}}}];"
+        "  const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const grouped = [{name:'MACE', data:{mae: a([0.1]), rmse: a([0.5])}}];"
+        "  return {"
+        "    table: heads(pn.buildPanel({kind:'table', title:'Energy MAE'}, one,"
+        "      {units: {value: '[unit]'}, unitDims: {value: 'energy'}}).html),"
+        "    grouped: heads(pn.buildPanel({kind:'grouped_table'}, grouped,"
+        "      {elementOrder:[6], selectedElements:[6], units: {mae: 'eV/Å', rmse: '[unit]'},"
+        "       unitDims: {mae: 'force', rmse: 'force'}}).html),"
+        "    plain: heads(pn.buildPanel({kind:'table', title:'Gyration'}, one, {units: {value: ''}}).html),"
+        "  };"
+        "})()"
+    ),
+    "unit_role_at": (
+        "(() => {"
+        "  const box = document.createElement('div');"
+        "  box.innerHTML = '<table><tr><th data-unit-role=\"mae\"><b>MAE</b></th><th>x</th></tr></table>'"
+        "    + '<svg><g class=\"g-xtitle\"><text>E</text></g><g class=\"g-ytitle\"><text>F</text></g></svg>';"
+        "  const axes = {x: 'value', y: 'y'};"
+        "  return [pn.unitRoleAt(box.querySelector('b'), axes), pn.unitRoleAt(box.querySelectorAll('th')[1], axes),"
+        "    pn.unitRoleAt(box.querySelector('.g-xtitle text'), axes),"
+        "    pn.unitRoleAt(box.querySelector('.g-ytitle text'), axes),"
+        "    pn.unitRoleAt(box.querySelector('.g-xtitle text'), null)];"
+        "})()"
+    ),
+    "plot_unit_axes": (
+        "(() => { const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const s = [{name: 'm', data: {y: a([1, 2]), x: a([1, 2])}}];"
+        "  return [pn.buildPanel({kind: 'timeline'}, s, {}).unitAxes,"
+        "    pn.buildPanel({kind: 'scatter'}, s, {}).unitAxes,"
+        "    pn.buildPanel({kind: 'timeline', y_label: ['Energy MAE', 'energyUnit']}, s,"
+        "      {units: {y: '[unit]'}}).layout.yaxis.title.text]; })()"
     ),
     "panel_unknown_kind_is_null": "pn.buildPanel({kind:'nope'}, [], {})",
     # ADR 0055 rule 4: decimals, but a non-zero value never prints as zero
@@ -467,10 +564,121 @@ CASES = {
         "[ex.canExtractFrom({is_sub: false}), ex.canExtractFrom({is_sub: true, frozen: true}),"
         " ex.canExtractFrom({is_sub: true, frozen: false}), ex.canExtractFrom(undefined)]"),
 
+    # ── theme.plotTheme: no document here, so the dark constants ────────────
+    "theme_series_count": "th.plotTheme().series.length",
+    "theme_line": "th.plotTheme().line",
+    "theme_grid_follows_line": "pn.baseLayout().xaxis.gridcolor === th.plotTheme().line",
+    "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
+    "theme_hex_alpha": "th.hexAlpha('#56b4e9', 0.15)",
+
+    # theme.js DARK, the fallback used before the page's tokens are read, is the
+    # :root column of index.html (read in a frame of the served page).
+    "theme_dark_is_root": (
+        "await (async () => {"
+        "  const frame = document.createElement('iframe');"
+        "  frame.src = 'index.html'; frame.style.cssText = 'width:800px;height:600px';"
+        "  document.body.appendChild(frame);"
+        "  await new Promise((ok) => frame.addEventListener('load', ok, {once: true}));"
+        "  const doc = frame.contentDocument;"
+        "  const css = frame.contentWindow.getComputedStyle(doc.documentElement);"
+        "  const v = (n) => css.getPropertyValue(n).trim();"
+        "  const probe = doc.createElement('span'); probe.style.fontSize = 'var(--fs-plot)';"
+        "  doc.body.appendChild(probe);"
+        "  const root = {surface: v('--surface'), line: v('--line'), ink2: v('--ink-2'), ink3: v('--ink-3'),"
+        "    fsPlot: parseFloat(frame.contentWindow.getComputedStyle(probe).fontSize), font: v('--font'),"
+        "    peak: v('--peak'), peakInk: v('--peak-ink'), median: v('--median'),"
+        "    series: v('--series').split(',').map((c) => c.trim())};"
+        "  frame.remove();"
+        "  const dark = th.plotTheme();"   # no tokens in this page: the DARK values
+        "  dark.fsPlot = 11;"              # (its probe reads this page's 16 px default)
+        "  return {root, dark}; })()"),
+
+    # ── peaks.pickPeaks (ADR 0063) ──────────────────────────────────────────
+    "peaks_five_spikes": (
+        "(() => { const y = new Array(100).fill(0);"
+        " [[22, 3], [41, 2], [58, 2.5], [73, 5], [86, 4]].forEach(([i, v]) => { y[i] = v; });"
+        " return pk.pickPeaks(y); })()"),
+    "peaks_adjacent": (
+        "(() => { const y = new Array(100).fill(0);"
+        " y[73] = 5; y[75] = 4; y[22] = 3; y[41] = 2; y[58] = 2.5;"
+        " return pk.pickPeaks(y).map(p => p.frame); })()"),
+    "peaks_short": "pk.pickPeaks([0, 1, 0, 5, 0, 1, 0, 2, 0])",
+    "peaks_nan": (
+        "(() => { const y = new Array(100).fill(0); y[30] = NaN; y[31] = 1; y[60] = 2;"
+        " return pk.pickPeaks(y, 2).map(p => p.frame); })()"),
+    "peaks_fewer_than_n": (
+        "(() => { const y = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]; return pk.pickPeaks(y).map(p => p.frame); })()"),
+    "peaks_all_zero": "pk.pickPeaks(new Array(100).fill(0))",
+    "peaks_plateau": (
+        "(() => { const y = new Array(20).fill(0); for (let i = 8; i <= 12; i++) y[i] = 5;"
+        " return pk.pickPeaks(y); })()"),
+    "peaks_annotation": (
+        "pn.peakAnnotations([{frame: 73, value: 0.4421}], '[unit]', (f) => f === 73)"
+        ".map(a => [a.text, a.textangle, a.opacity, a.hovertext, a.captureevents])"),
+    "peaks_annotation_unit": (
+        "pn.peakAnnotations([{frame: 5, value: 0.1}], 'eV/Å').map(a => a.text)"),
+    "peaks_annotation_no_unit": (
+        "pn.peakAnnotations([{frame: 5, value: 0.1}], 'energy').map(a => a.text)"),
+    "peaks_timeline_one_series": (
+        "(() => { const y = new Array(100).fill(0); y[22] = 3; y[73] = 5;"
+        " const b = pn.buildTimeline({x_label: null, y_label: ['Force MAE', 'u']},"
+        "   [{datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}}], {units: {y: 'eV'}});"
+        " return [b.layout.annotations.length, b.layout.yaxis.range, b.peaks.map(p => p.frame), b.layout.margin.t, b.extraHeight]; })()"),
+    "peaks_timeline_negative": (
+        "(() => { const y = Array.from({length: 100}, (_, i) => -3300 + (i % 7));"
+        " y[40] = -3078.6;"
+        " const b = pn.buildTimeline({y_label: ['E', 'u']},"
+        "   [{datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}}], {units: {}});"
+        " return [b.layout.yaxis.range, Math.max(...y)]; })()"),
+    "peaks_timeline_switched_off": (
+        "(() => { const y = new Array(100).fill(0); y[22] = 3;"
+        " const s = {datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}};"
+        " const b = pn.buildTimeline({y_label: ['F', 'u']}, [s], {units: {}, peaks: false});"
+        " return [b.layout.annotations === undefined, b.layout.margin.t,"
+        "   b.peaks.length, b.peaksEligible, b.extraHeight]; })()"),
+    "peaks_timeline_two_series": (
+        "(() => { const y = new Array(100).fill(0); y[22] = 3;"
+        " const s = {datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}};"
+        " const b = pn.buildTimeline({y_label: ['F', 'u']}, [s, s], {units: {}});"
+        " return [b.layout.annotations === undefined, b.peaks.length]; })()"),
+
+    # ── figure.js: panel letters and captions (ADR 0063) ────────────────────
+    "fig_letters_2x2": (
+        "[...fg.panelLetters([{index: 0, row: 1, col: 1}, {index: 1, row: 0, col: 1},"
+        " {index: 2, row: 1, col: 0}, {index: 3, row: 0, col: 0}])]"),
+    "fig_letters_tie_by_index": (
+        "[...fg.panelLetters([{index: 1, row: 0, col: 0}, {index: 0, row: 0, col: 0}])]"),
+    "fig_letters_27": (
+        "(() => { const m = fg.panelLetters(Array.from({length: 27}, (_, i) => ({index: i, row: i, col: 0})));"
+        " return [m.get(0), m.get(25), m.get(26)]; })()"),
+    "fig_cap_timeline_peaks": (
+        "fg.caption('timeline', {yTitle: 'Forces MAE [unit]', nSeries: 1, peaks: [{frame: 41}, {frame: 22}, {frame: 58}]})"),
+    "fig_cap_timeline_no_peaks": "fg.caption('timeline', {yTitle: 'Energy MAE', nSeries: 1, peaks: []})",
+    "fig_cap_timeline_series": "fg.caption('timeline', {yTitle: 'Energy MAE', nSeries: 3})",
+    "fig_cap_overlay_series": "fg.caption('overlay_timeline', {yTitle: 'Force', nSeries: 2})",
+    "fig_cap_density": "fg.caption('density', {xTitle: 'Energy MAE [unit]'})",
+    "fig_cap_grouped_density": "fg.caption('grouped_density', {xTitle: 'Distance'})",
+    "fig_cap_scatter": "fg.caption('scatter', {xTitle: 'Reference E', yTitle: 'Predicted E'})",
+    "fig_cap_untitled": (
+        "[fg.caption('timeline', {yTitle: ''}), fg.caption('density', {xTitle: ''}),"
+        " fg.caption('scatter', {xTitle: 'x', yTitle: ''})]"),
+    "fig_order": (
+        "[...fg.readingOrder([{index: 0, row: 1, col: 0}, {index: 1, row: 0, col: 1}, {index: 2, row: 0, col: 0}])]"),
+    "fig_cap_none": "['table', 'grouped_table', '3d'].map(k => fg.caption(k, {yTitle: 'x'}))",
+    "fig_segments": (
+        "fg.captionSegments('Predicted E [unit] against Reference E [unit].',"
+        " {xTitle: 'Reference E [unit]', yTitle: 'Predicted E [unit]'})"),
+
+    # ── icons.icon (ADR 0063) ───────────────────────────────────────────────
+    "icon_plus": "ic.icon('plus')",
+    "icon_every_name": "ic.ICON_NAMES.map(n => [n, ic.icon(n).startsWith('<svg') && ic.icon(n).includes('aria-hidden=\"true\"')])",
+    "icon_names": "ic.ICON_NAMES",
+    "icon_unknown": "ic.icon('no-such-icon')",
+
     "grad_matches_mapped": (
         "(() => {"
         "  const out = {};"
-        "  for (const n of ['viridis','coolwarm','force_error','hot']) {"
+        "  for (const n of ['viridis','coolwarm','force_error','hot','cividis']) {"
         "    const bar = cm.gradientCss(n).split(', ');"
         "    const k = bar.length;"
         "    const values = Array.from({length: k}, (_, i) => i / (k - 1));"
@@ -503,6 +711,13 @@ def results():
         f"  const so = await import('{origin}/session_ops.js');\n"
         f"  const cm = await import('{origin}/colormap.js');\n"
         f"  const pn = await import('{origin}/panels.js');\n"
+        f"  const th = await import('{origin}/theme.js');\n"
+        f"  const ic = await import('{origin}/icons.js');\n"
+        f"  const fg = await import('{origin}/figure.js');\n"
+        f"  const qs = await import('{origin}/quick_styles.js');\n"
+        f"  const ap = await import('{origin}/appearance.js');\n"
+        f"  const di = await import('{origin}/dialogs.js');\n"
+        f"  const pk = await import('{origin}/peaks.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
         f"  const tr = await import('{origin}/tab_rules.js');\n"
@@ -510,6 +725,7 @@ def results():
         f"  const te = await import('{origin}/tab_edit.js');\n"
         f"  const ss = await import('{origin}/start_settings.js');\n"
         f"  const ex = await import('{origin}/panes/extract.js');\n"
+        f"  const un = await import('{origin}/units.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -554,6 +770,209 @@ def results():
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+# ── theme.plotTheme (ADR 0063) ───────────────────────────────────────────────
+
+def test_plot_theme_without_a_page_gives_eight_series_and_the_dark_line(results):
+    assert results["theme_series_count"] == 8
+    assert results["theme_line"] == "#3a4047"
+
+
+def test_base_layout_grid_colour_is_the_theme_line(results):
+    assert results["theme_grid_follows_line"] is True
+
+
+def test_series_colours_wrap_around_the_theme_list(results):
+    assert results["theme_series_color_wraps"] is True
+
+
+# ── peaks.pickPeaks and the labels (ADR 0063) ────────────────────────────────
+
+def test_the_dark_fallback_theme_is_the_pages_root_tokens(results):
+    r = results["theme_dark_is_root"]
+    assert r["dark"] == r["root"]
+
+
+def test_five_spikes_on_a_flat_line_are_the_five_peaks(results):
+    frames = [p["frame"] for p in results["peaks_five_spikes"]]
+    assert frames == [22, 41, 58, 73, 86]
+    assert results["peaks_five_spikes"][3] == {"frame": 73, "value": 5}
+
+
+def test_spikes_closer_than_the_spacing_give_one_peak(results):
+    # 73 and 75 are both peaks by their neighbours (74 is 0); only the
+    # spacing rule (2 frames in 100) drops the lower one
+    frames = results["peaks_adjacent"]
+    assert 73 in frames and 75 not in frames
+
+
+def test_a_flat_line_has_no_peaks(results):
+    assert results["peaks_all_zero"] == []
+
+
+def test_a_plateau_gives_one_peak_at_its_first_frame(results):
+    # the 5s at frames 8-12 give frame 8 only; the zeros before them are a
+    # level stretch too, so they give frame 0
+    assert results["peaks_plateau"] == [{"frame": 0, "value": 0}, {"frame": 8, "value": 5}]
+
+
+def test_fewer_than_ten_frames_have_no_peaks(results):
+    assert results["peaks_short"] == []
+
+
+def test_a_nan_value_is_never_a_peak(results):
+    assert results["peaks_nan"] == [31, 60]
+
+
+def test_a_rising_line_has_one_peak_at_its_end(results):
+    assert results["peaks_fewer_than_n"] == [9]
+
+
+def test_trap_focus_wraps_tab_inside_the_modal_and_lets_go_when_removed(results):
+    forward, backward, inside, released = results["trap_focus"]
+    assert forward == "a"      # Tab from the last enabled button goes to the first
+    assert backward == "b"     # Shift+Tab from the first goes to the last enabled one
+    assert inside is True      # Tab between the two is left to the browser
+    assert released == "b"     # the trap is gone: nothing moves focus now
+
+
+def test_density_scales_are_one_one_fifteen_and_one_four(results):
+    assert results["ap_densities"] == {"compact": 1, "comfortable": 1.15, "large": 1.4}
+
+
+def test_an_unknown_density_name_means_compact(results):
+    assert results["ap_density_names"] == ["large", "compact", "compact", "compact", "compact"]
+
+
+def test_cividis_bar_starts_at_its_first_stop(results):
+    assert results["grad_cividis_first"] == "#00224e"
+
+
+def test_the_force_error_style_uses_the_desktop_force_error_map(results):
+    assert results["qs_force_error_colormap"] == ["Colour By", "Colormap", "force_error"]
+
+
+def test_a_peak_label_has_frame_value_unit_and_a_tick_when_visited(results):
+    assert results["peaks_annotation"] == [
+        ["73 · 0.442 [unit] ✓", -90, 0.55, "Open frame 73 in 3D", True]]
+
+
+def test_a_peak_label_prints_a_real_unit_and_no_bare_dimension(results):
+    assert results["peaks_annotation_unit"] == ["5 · 0.100 eV/Å"]
+    assert results["peaks_annotation_no_unit"] == ["5 · 0.100"]
+
+
+def test_a_one_series_timeline_is_labelled_and_given_a_top_margin_for_the_labels(results):
+    count, y_range, frames, margin_top, extra = results["peaks_timeline_one_series"]
+    # the two spikes, and the level stretch before the first one (a level
+    # stretch gives one peak, at its first frame)
+    assert count == 3 and frames == [0, 22, 73]
+    assert y_range == [0, 5 * 1.04]   # from the data alone, not the labels
+    assert margin_top > 8 + 18   # room for the tick and the longest label
+    assert extra == margin_top - 8   # the plot grows by what the labels take
+
+
+def test_a_timeline_of_negative_values_shows_its_highest_values(results):
+    (lo, hi), top = results["peaks_timeline_negative"]
+    assert lo == -3300   # the lowest value; 0 is above all of them
+    assert top <= hi < 0
+
+
+def test_a_timeline_of_positive_values_keeps_its_four_percent_headroom(results):
+    _count, y_range, *_ = results["peaks_timeline_one_series"]
+    assert y_range[0] == 0 and y_range[1] == pytest.approx(1.04 * 5)
+
+
+def test_a_timeline_with_peaks_switched_off_has_no_labels_but_stays_switchable(results):
+    assert results["peaks_timeline_switched_off"] == [True, 8, 0, True, 0]
+
+
+def test_a_timeline_of_several_series_is_not_labelled(results):
+    assert results["peaks_timeline_two_series"] == [True, 0]
+
+
+# ── figure.js: panel letters and captions (ADR 0063) ─────────────────────────
+
+def test_letters_follow_screen_position_not_file_order(results):
+    # Panels 3, 1, 2, 0 are top-left, top-right, bottom-left, bottom-right.
+    assert results["fig_letters_2x2"] == [[3, "a"], [1, "b"], [2, "c"], [0, "d"]]
+
+
+def test_reading_order_ranks_panels_by_row_then_column(results):
+    assert results["fig_order"] == [[2, 0], [1, 1], [0, 2]]
+
+
+def test_letters_break_a_tie_by_file_order(results):
+    assert results["fig_letters_tie_by_index"] == [[0, "a"], [1, "b"]]
+
+
+def test_letters_run_past_z_into_aa(results):
+    assert results["fig_letters_27"] == ["a", "z", "aa"]
+
+
+def test_a_one_series_timeline_caption_lists_its_peak_frames_in_order(results):
+    assert results["fig_cap_timeline_peaks"] == (
+        "Forces MAE [unit]. Top 3 peaks: frames 22, 41, 58.")
+
+
+def test_a_timeline_caption_without_peaks_is_one_sentence(results):
+    assert results["fig_cap_timeline_no_peaks"] == "Energy MAE."
+
+
+def test_several_series_captions_count_the_series(results):
+    assert results["fig_cap_timeline_series"] == "Energy MAE, 3 series."
+    assert results["fig_cap_overlay_series"] == "Force, 2 series."
+
+
+def test_distribution_and_scatter_captions(results):
+    assert results["fig_cap_density"] == "Distribution of Energy MAE [unit]."
+    assert results["fig_cap_grouped_density"] == "Distribution of Distance."
+    assert results["fig_cap_scatter"] == "Predicted E against Reference E."
+
+
+def test_a_panel_whose_axis_has_no_title_has_no_caption(results):
+    assert results["fig_cap_untitled"] == ["", "", ""]
+
+
+def test_tables_and_3d_panels_have_no_caption(results):
+    assert results["fig_cap_none"] == ["", "", ""]
+
+
+def test_caption_segments_mark_each_unit_with_its_axis(results):
+    assert results["fig_segments"] == [
+        {"text": "Predicted E "}, {"text": "[unit]", "axis": "y"},
+        {"text": " against Reference E "}, {"text": "[unit]", "axis": "x"},
+        {"text": "."},
+    ]
+
+
+# ── icons.icon (ADR 0063) ────────────────────────────────────────────────────
+
+ICON_NAMES = [
+    "pencil", "plus", "more", "play", "pause", "step-back", "step-forward", "gear",
+    "close", "new-window", "chevron-right", "chevron-down", "folder", "file",
+    "arrow-up", "home", "info", "bond", "align", "force", "scissors", "sliders",
+    "help", "check",
+]
+
+
+def test_icon_plus_is_a_hidden_inline_svg(results):
+    assert results["icon_plus"].startswith("<svg")
+    assert 'aria-hidden="true"' in results["icon_plus"]
+
+
+def test_every_listed_icon_name_draws(results):
+    assert sorted(results["icon_names"]) == sorted(ICON_NAMES)
+    assert all(ok for _, ok in results["icon_every_name"])
+
+
+def test_an_unknown_icon_name_draws_nothing(results):
+    assert results["icon_unknown"] == ""
+
+
+def test_hex_alpha_builds_an_rgba(results):
+    assert results["theme_hex_alpha"] == "rgba(86, 180, 233, 0.15)"
 
 
 # ── remote_browser.joinPath ─────────────────────────────────────────────────
@@ -683,7 +1102,7 @@ def test_the_colourbar_matches_the_colours_the_atoms_get(results):
     like. Deriving the bar from the same stops makes that impossible.
     """
     assert results["grad_matches_mapped"] == {
-        "viridis": True, "coolwarm": True, "force_error": True, "hot": True,
+        "viridis": True, "coolwarm": True, "force_error": True, "hot": True, "cividis": True,
     }
 
 
@@ -796,6 +1215,59 @@ def test_recent_servers_move_a_reconnected_server_to_the_front(results):
 
 def test_recent_servers_keep_five(results):
     assert results["recent_servers_cap"] == ["f", "a", "b", "c", "d"]
+
+
+def test_js_dimension_tags_match_the_metric_units_module(results):
+    """units.js hides exactly the dimension tags ffast/metrics/units.py defines."""
+    from ffast.metrics import units
+
+    tags = sorted(v for k, v in vars(units).items()
+                  if not k.startswith("_") and isinstance(v, str))
+    assert results["units_dimension_tags"] == tags
+
+
+def test_axis_title_prints_a_unit_but_not_a_dimension(results):
+    """"Energy MAE (energy)" named the dimension where the unit belongs."""
+    assert results["axis_title_units"] == [
+        "Energy MAE", "Energy MAE (meV)", "Energy MAE", "Density", "",
+    ]
+
+
+def test_table_headers_carry_a_declared_unit(results):
+    r = results["table_headers_carry_units"]
+    assert r["table"] == ["Energy MAE (meV)", "aspirin"]
+    assert r["tableDim"] == ["Energy MAE", "aspirin"]
+    assert r["grouped"] == ["Object", "C MAE (meV/Å)", "C RMSE"]
+
+
+def test_an_energy_or_force_shows_the_datasets_unit_or_unit_placeholder(results):
+    assert results["unit_resolution"] == [
+        "[unit]", "eV", "[unit]", "meV", "", "[unit]",
+        "Energy MAE [unit]", "Energy MAE (kcal/mol)", "force", None,
+    ]
+
+
+def test_a_subset_shows_the_units_of_the_dataset_it_was_cut_from(results):
+    assert results["dataset_units_follow_the_root"] == [
+        {"energy": "eV"}, {"energy": "eV"}, {}, {}, {"force": "x"},
+    ]
+
+
+def test_table_headers_whose_unit_can_be_named_are_marked(results):
+    r = results["unit_headers_are_marked"]
+    assert r["table"] == [["Energy MAE [unit]", "value"], ["aspirin", None]]
+    assert r["grouped"] == [["Object", None], ["C MAE (eV/Å)", "mae"], ["C RMSE [unit]", "rmse"]]
+    assert r["plain"] == [["Gyration", None], ["aspirin", None]]
+
+
+def test_a_click_finds_the_role_of_a_header_or_axis_title(results):
+    assert results["unit_role_at"] == ["mae", None, "value", "y", None]
+
+
+def test_plots_say_which_role_each_axis_shows(results):
+    timeline, scatter, title = results["plot_unit_axes"]
+    assert timeline == {"x": "x", "y": "y"} and scatter == {"x": "x", "y": "y"}
+    assert title == "Energy MAE [unit]"
 
 
 def test_table_value_never_prints_a_non_zero_value_as_zero(results):

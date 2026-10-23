@@ -24,11 +24,21 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, elementSymbol } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, unitRoleAt, refreshPeaks } from './panels.js';
+import { visitedKey } from './peaks.js';
+import { panelLetters, readingOrder, caption, captionSegments } from './figure.js';
+import { datasetUnits, editableDimension, resolveUnit } from './units.js';
+import { unitPopover } from './dialogs.js';
 import { KIND_3D } from './tab_rules.js';
 import { COLUMN_PX, ROW_PX, sizeTemplate } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState } from './layout_state.js';
+
+/** The smallest a plot column gets, and the gap between cells, in px (--col-min and the grid gap in index.html). */
+const COLUMN_MIN = 360;
+const GRID_GAP = 10;
+/** A 3D panel's row in a narrow grid, in px: at 300 px the colour legend covers the molecule. */
+const NARROW_3D_PX = 460;
 
 const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
   + 'Outlined buttons follow the selection in the left list; click one to pin this '
@@ -152,15 +162,20 @@ export class AnalysisManager {
    *   onSub: (o: {name: string, series: Array<{parentFp: string, modelFp: string|null}>,
    *     view?: object, active?: boolean, tick?: boolean}) => void,
    *   onPointFrame: (o: {datasetFp: string, modelFp: string|null, frame: number}) => void,
+   *   onSetUnit?: (o: {datasetFp: string, dimension: string, unit: string}) => void,
    * }} deps
    */
   constructor(deps) {
     this._tabbar = deps.tabbar;
+    new ResizeObserver(() => this._syncTabbarFade()).observe(this._tabbar);
     this._tabpanels = deps.tabpanels;
     this._metrics = deps.metricClient;
     this._onSelectTab = deps.onSelectTab;
     this._onSub = deps.onSub;
-    this._onPointFrame = deps.onPointFrame;
+    this._openFrame = deps.onPointFrame;
+    /** Frames the user opened from a plot, "dataset|model|frame"; kept for the page's life. */
+    this._visited = new Set();
+    this._onSetUnit = deps.onSetUnit;
 
     /** @type {Map<string, object>} id → catalog entry */
     this._catalog = new Map();
@@ -228,6 +243,7 @@ export class AnalysisManager {
   setLayout(tabs) {
     this.clear();
     (tabs || []).forEach((spec, i) => this._buildTab(spec, i));
+    this._syncTabbarFade();
   }
 
   /** @returns {Array<{id: string, name: string}>} the tabs, in bar order */
@@ -288,7 +304,8 @@ export class AnalysisManager {
     const key = (refs) => JSON.stringify(
       refs.map((r) => [r.datasetFp, framesKey(this._available.datasets.get(r.datasetFp))]));
     const refs = this.seriesRefs(t);
-    const all = JSON.stringify([refs, key(refs), this._elementOrder || [], t.selectedElements]);
+    const units = refs.map((r) => datasetUnits(r.datasetFp, this._available.datasets));
+    const all = JSON.stringify([refs, key(refs), this._elementOrder || [], t.selectedElements, units]);
     const subbed = this._cardRefs(t, null);
     const swapped = subbed.some((r, i) => r.datasetFp !== refs[i].datasetFp);
     return { all, subbed: swapped ? key(subbed) : '' };
@@ -330,6 +347,14 @@ export class AnalysisManager {
     }
   }
 
+  /** Draw the plots again, after Journal page or Density changed the tokens
+   * they read. Only the tab on screen is drawn; the others are drawn when
+   * `activate` shows them. */
+  rerenderAll() {
+    const t = this._tabs.find((x) => x.id === this._activeId);
+    if (t) this._renderTab(t);
+  }
+
   /** Called by app when a tab is activated (renders analysis tabs lazily). */
   activate(id) {
     this._activeId = id;
@@ -340,6 +365,7 @@ export class AnalysisManager {
   /** Remove every tab (on relayout). */
   clear() {
     for (const t of this._tabs) {
+      t.resizeObserver?.disconnect();   // or each rebuild leaves one watching
       t.tabEl.remove();
       t.panelEl.remove();
     }
@@ -357,6 +383,9 @@ export class AnalysisManager {
     tabEl.className = 'tab';
     tabEl.textContent = spec.name;
     tabEl.dataset.tab = id;
+    tabEl.setAttribute('role', 'tab');
+    tabEl.setAttribute('aria-selected', 'false');
+    tabEl.tabIndex = -1;   // app.js makes the tab on screen the one tab stop
     // An edited copy of a built-in or project tab says so (ADR 0056 rule 10),
     // and says when the original has changed since.
     if (spec.source === 'user' && spec.replaces) {
@@ -369,6 +398,17 @@ export class AnalysisManager {
       tabEl.appendChild(mark);
     }
     tabEl.addEventListener('click', () => this._onSelectTab(id));
+    // Left and Right move to the next tab and open it; Home and End go to the ends.
+    tabEl.addEventListener('keydown', (e) => {
+      const tabs = [...this._tabbar.querySelectorAll('.tab')];
+      const here = tabs.indexOf(tabEl);
+      const to = { ArrowRight: here + 1, ArrowLeft: here - 1, Home: 0, End: tabs.length - 1 }[e.key];
+      if (to === undefined) return;
+      e.preventDefault();
+      const next = tabs[(to + tabs.length) % tabs.length];
+      this._onSelectTab(next.dataset.tab);
+      next.focus();
+    });
     this._tabbar.appendChild(tabEl);
 
     // .tabpanel > controls row + body; the body holds the main column (pick
@@ -410,7 +450,14 @@ export class AnalysisManager {
       subbing: new Map(),
       // Zoomed plots: panelKey → {x, y, series}, kept for a reload.
       zoom: {},
+      peaksOff: new Set(),   // timelines (panelKey) whose peak labels are switched off
     };
+    t.resizeObserver = new ResizeObserver(() => {
+      const before = t.narrow;
+      this._sizeGrid(t);
+      if (t.narrow !== before) this._applyOrder(t);
+    });
+    t.resizeObserver.observe(gridEl);
     this._restoreTab(t);
     this._tabs.push(t);
     this._layoutGrid(t);
@@ -431,6 +478,7 @@ export class AnalysisManager {
     t.selectedDatasets = known(kept.datasets, this._available.datasets);
     t.selectedModels = known(kept.models, this._available.models);
     t.zoom = { ...(kept.zoom || {}) };
+    t.peaksOff = new Set(kept.peaksOff || []);
     const sub = t.spec.panels.findIndex((sp) => panelKey(sp) === kept.sub);
     if (sub >= 0 && t.selectedDatasets) t.subbing.set(sub, []);
   }
@@ -442,6 +490,7 @@ export class AnalysisManager {
       datasets: t.selectedDatasets, models: t.selectedModels,
       sub: driver == null ? null : panelKey(t.spec.panels[driver]),
       zoom: t.zoom,
+      peaksOff: [...t.peaksOff],
     });
   }
 
@@ -451,8 +500,15 @@ export class AnalysisManager {
     if (!layout?.xaxis) return;
     const key = panelKey(spec);
     const before = JSON.stringify(t.zoom[key] ?? null);
-    const range = (axis) => (!axis || axis.autorange ? null : axis.range.map(Number));
-    const x = range(layout.xaxis), y = range(layout.yaxis);
+    // A range the plot was drawn with (a labelled timeline sets its y range)
+    // is no more a zoom than autorange is.
+    const drawn = card.body._drawnRange || {};
+    const range = (axis, initial) => {
+      if (!axis || axis.autorange) return null;
+      const r = axis.range.map(Number);
+      return initial && r[0] === initial[0] && r[1] === initial[1] ? null : r;
+    };
+    const x = range(layout.xaxis, drawn.x), y = range(layout.yaxis, drawn.y);
     if (!x && !y) delete t.zoom[key];
     else t.zoom[key] = { x, y, series: seriesKey(card.series) };
     if (JSON.stringify(t.zoom[key] ?? null) !== before) this._keep(t);
@@ -488,6 +544,7 @@ export class AnalysisManager {
     const grid = t.gridEl;
     const panels = t.spec.panels || [];
     this._sizeGrid(t);
+    t.letters = this._lettersOf(panels);
 
     const strips = new Map();   // scroll_group → slot
     panels.forEach((spec, index) => {
@@ -506,8 +563,13 @@ export class AnalysisManager {
           title.textContent = spec.title;
           el.appendChild(title);
         }
+        // Its letter sits in the viewport, top left; Panel3D.mount moves it there.
+        const letterEl = document.createElement('span');
+        letterEl.className = 'panel-letter';
+        letterEl.textContent = t.letters.get(index) || '';
+        el.appendChild(letterEl);
         place(el);
-        t.cells3d.push({ spec, index, el });
+        t.cells3d.push({ spec, index, el, letterEl });
       } else if (spec.scroll_group) {
         let slot = strips.get(spec.scroll_group);
         if (!slot) {
@@ -528,9 +590,29 @@ export class AnalysisManager {
       }
     });
     t.has2d = t.slots.length > 0;
+    this._applyOrder(t);
     grid.classList.toggle('fill', grid.childElementCount === 1);
     // With several 3D panels, the focused one is outlined (ADR 0056 rule 8).
     grid.classList.toggle('multi3d', t.cells3d.length > 1);
+  }
+
+  /** Letters for a tab's panels, by screen position (figure.js). */
+  _lettersOf(panels) {
+    return panelLetters(panels.map((p, index) => ({ index, row: p.row, col: p.col })));
+  }
+
+  /** Give every panel the letter its place now calls for. */
+  _applyLetters(t) {
+    t.letters = this._lettersOf(t.spec.panels || []);
+    for (const slot of t.slots) {
+      (slot.cards || []).forEach((card, i) => {
+        card.letter = t.letters.get(slot.indices[i]) || '';
+        card.letterEl.textContent = card.letter;
+        card.captionLetter.textContent = card.letter;
+      });
+    }
+    for (const cell of t.cells3d) cell.letterEl.textContent = t.letters.get(cell.index) || '';
+    this._applyOrder(t);
   }
 
   /** The grid's column and row sizes, from the tab's spec. Set sizes are
@@ -541,9 +623,62 @@ export class AnalysisManager {
     const panels = t.spec.panels || [];
     const widths = t.spec.column_widths, heights = t.spec.row_heights;
     const maxCol = Math.max(1, widths?.length || 0, ...panels.map((p) => p.col + (p.colspan || 1)));
-    t.gridEl.style.gridTemplateColumns = widths?.length === maxCol
-      ? sizeTemplate(widths, COLUMN_PX) : `repeat(${maxCol}, minmax(var(--col-min), 1fr))`;
-    t.gridEl.style.gridTemplateRows = heights?.length ? sizeTemplate(heights, ROW_PX) : '';
+    const fixed = widths?.length === maxCol;
+    // A grid too narrow for two columns of the smallest plot stacks its panels
+    // in one column, in reading order, instead of scrolling sideways. Sizes the
+    // tab sets are kept as they are. An unmeasured (hidden) grid keeps its state.
+    const width = t.gridEl.clientWidth;
+    if (width) t.narrow = !fixed && maxCol > 1 && width < 2 * COLUMN_MIN + GRID_GAP;
+    t.gridEl.classList.toggle('narrow', !!t.narrow);
+    t.gridEl.style.gridTemplateColumns = t.narrow ? 'minmax(0, 1fr)'
+      : fixed ? sizeTemplate(widths, COLUMN_PX) : `repeat(${maxCol}, minmax(var(--col-min), 1fr))`;
+    this._sizeRows(t);
+  }
+
+  /** Each row's height: 300 px, or the height the tab sets, plus the room
+   * the peak labels of a timeline in it take, so its plot keeps its size.
+   * Written per row because the grid has a set height and scrolls: there a
+   * row grows only by its minimum, never to fit what is in it. A narrow
+   * grid's rows are its panels in reading order, a 3D panel's 460 px. */
+  _sizeRows(t) {
+    const heights = t.narrow ? null : t.spec.row_heights;
+    const rank = readingOrder((t.spec.panels || []).map((p, index) => ({ index, row: p.row, col: p.col })));
+    const items = [
+      ...(t.slots || []).map((slot) => ({ spec: slot.specs[0], index: slot.indices[0],
+        extra: Math.max(0, ...(slot.cards || []).map((c) => c.body._extraHeight || 0)) })),
+      ...(t.cells3d || []).map((cell) => ({ spec: cell.spec, index: cell.index, extra: 0,
+        min: t.narrow ? NARROW_3D_PX : 0 })),
+    ];
+    if (t.narrow) items.sort((a, b) => rank.get(a.index) - rank.get(b.index));
+    const rowOf = (item, i) => (t.narrow ? i : item.spec.row);
+    const extra = [], min = [];
+    items.forEach((item, i) => {
+      const r = rowOf(item, i);
+      extra[r] = Math.max(extra[r] || 0, item.extra);
+      min[r] = Math.max(min[r] || 0, item.min || 0);
+    });
+    t.gridEl._rowExtra = extra;   // edit mode saves a dragged row without it
+    if (t.gridEl.classList.contains('fill')
+        || (!heights?.length && !extra.some(Boolean) && !min.some(Boolean))) {
+      t.gridEl.style.gridTemplateRows = '';   // index.html's rows: 300 px, or one whole-height cell
+      return;
+    }
+    const n = Math.max(heights?.length || 0, extra.length);
+    t.gridEl.style.gridTemplateRows = Array.from({ length: n }, (_, i) =>
+      `minmax(${Math.max(heights?.[i] != null ? heights[i] * ROW_PX : ROW_PX, min[i] || 0)
+        + (extra[i] || 0)}px, auto)`).join(' ');
+  }
+
+  /** Stack order for a narrow grid: reading order, whatever the file order is. */
+  _applyOrder(t) {
+    const rank = readingOrder((t.spec.panels || []).map((p, index) => ({ index, row: p.row, col: p.col })));
+    for (const slot of t.slots) slot.el.style.order = String(rank.get(slot.indices[0]) ?? 0);
+    for (const cell of t.cells3d) cell.el.style.order = String(rank.get(cell.index) ?? 0);
+  }
+
+  /** Fade the tab strip's right edge while it holds more tabs than fit. */
+  _syncTabbarFade() {
+    this._tabbar.classList.toggle('overflowing', this._tabbar.scrollWidth > this._tabbar.clientWidth + 1);
   }
 
   /**
@@ -566,6 +701,7 @@ export class AnalysisManager {
     this._sizeGrid(t);
     for (const slot of t.slots) placeCell(slot.el, slot.specs[0]);
     for (const cell of t.cells3d) placeCell(cell.el, cell.spec);
+    this._applyLetters(t);
     return this.tab(t.id);
   }
 
@@ -737,6 +873,7 @@ export class AnalysisManager {
       this._tabModels(t).filter(Boolean));
     if (!holder.childElementCount) return;
     const { button, note } = helpToggle(PICKER_HELP, {
+      subject: "this tab's choice of data",
       open: !!t.pickerHelpOpen,
       onToggle: (open) => { t.pickerHelpOpen = open; },
     });
@@ -801,7 +938,8 @@ export class AnalysisManager {
     if (whole) return;
 
     for (const slot of t.slots) {
-      const cards = slot.specs.map((spec) => this._buildPanelCard(t, spec, token));
+      const cards = slot.specs.map((spec, i) =>
+        this._buildPanelCard(t, spec, token, t.letters.get(slot.indices[i]) || ''));
       slot.el.replaceChildren(...cards.map((c) => c.el));
       slot.cards = cards;
       cards.forEach((card, i) => {
@@ -811,7 +949,7 @@ export class AnalysisManager {
     }
   }
 
-  _buildPanelCard(t, spec, token) {
+  _buildPanelCard(t, spec, token, letter = '') {
     const el = document.createElement('div');
     el.className = 'analysis-panel';
     el.dataset.kind = spec.kind;
@@ -819,7 +957,12 @@ export class AnalysisManager {
 
     const title = document.createElement('div');
     title.className = 'panel-title';
-    title.innerHTML = `<span>${spec.title || ''}</span>`;
+    const letterEl = document.createElement('span');
+    letterEl.className = 'panel-letter';
+    letterEl.textContent = letter;
+    const name = document.createElement('span');
+    name.innerHTML = spec.title || '';
+    title.append(letterEl, name);
     if (spec.tooltip) title.title = spec.tooltip;
     el.appendChild(title);
 
@@ -832,7 +975,57 @@ export class AnalysisManager {
     params.className = 'panel-params';
     el.appendChild(params);
 
-    return { el, title, body, params };
+    // The caption under the figure: its letter, then one line (figure.js).
+    const captionEl = document.createElement('div');
+    captionEl.className = 'panel-caption-line';
+    captionEl.hidden = true;
+    const captionLetter = document.createElement('b');
+    captionLetter.textContent = letter;
+    const captionText = document.createElement('span');
+    captionEl.append(captionLetter, ' | ', captionText);
+    el.appendChild(captionEl);
+
+    const card = { el, title, body, params, letter, letterEl, captionEl, captionLetter, captionText };
+    body.addEventListener('click', (e) => this._onUnitClick(card, e));
+    captionEl.addEventListener('click', (e) => this._onUnitClick(card, e));
+    return card;
+  }
+
+  /** Write the caption line of a drawn panel; a "[unit]" in it that names an
+   * energy or force unit is clickable, like the axis title it repeats. */
+  _showCaption(card, spec) {
+    const info = card.body._figureInfo;
+    const text = info ? caption(spec.kind, info) : '';
+    card.captionEl.hidden = !text;
+    if (!text) { card.captionText.replaceChildren(); return; }
+    const axes = card.body._unitAxes || {};
+    const nodes = captionSegments(text, info).map((seg) => {
+      const role = seg.axis && axes[seg.axis];
+      if (!role || !(card.unitDims || {})[role]) return document.createTextNode(seg.text);
+      const span = document.createElement('span');
+      span.className = 'unit-editable';
+      span.dataset.unitRole = role;
+      span.textContent = seg.text;
+      return span;
+    });
+    card.captionText.replaceChildren(...nodes);
+  }
+
+  /** A click on a "[unit]" (or a unit) in an axis title or a table header
+   * names the unit of that dimension for the datasets the panel shows. */
+  async _onUnitClick(card, e) {
+    const role = unitRoleAt(e.target, card.body._unitAxes);
+    const dimension = role && card.unitDims && card.unitDims[role];
+    if (!dimension || !this._onSetUnit) return;
+    const fps = [...new Set((card.series || []).map((s) => s.datasetFp).filter(Boolean))];
+    if (!fps.length) return;
+    e.stopPropagation();
+    const unit = await unitPopover({
+      x: e.clientX, y: e.clientY, dimension,
+      value: datasetUnits(fps[0], this._available.datasets)[dimension] || '',
+    });
+    if (unit === null) return;
+    for (const datasetFp of fps) this._onSetUnit({ datasetFp, dimension, unit });
   }
 
   async _fetchAndRenderPanel(t, spec, card, token) {
@@ -856,11 +1049,15 @@ export class AnalysisManager {
     ])];
     if (missing.length) {
       card.body.className = '';
+      card.body._extraHeight = 0;
+      card.body.style.minHeight = '';
+      this._sizeRows(t);
       const msg = document.createElement('div');
       msg.className = 'panel-msg';
       msg.textContent = `${missing.length === 1 ? 'Metric' : 'Metrics'} ${missing.join(', ')} ` +
         `${missing.length === 1 ? 'is' : 'are'} not on this server.`;
       card.body.replaceChildren(msg);
+      card.captionEl.hidden = true;
       card.params.innerHTML = '';
       card.series = null;
       return;
@@ -889,23 +1086,35 @@ export class AnalysisManager {
 
     if (!series.length) {
       card.body.className = '';
+      card.body._extraHeight = 0;
+      card.body.style.minHeight = '';
+      this._sizeRows(t);
       const anyModel = refs.some((r) => r.modelFp);
       card.body.innerHTML =
         `<div class="panel-msg">${anyModel ? 'No data for this selection.'
           : 'Select a prediction to compute this panel.'}</div>`;
+      card.captionEl.hidden = true;
       card.params.innerHTML = '';
       return;
     }
     card.body.className = PLOT_KINDS.has(spec.kind) ? 'panel-plot' : '';
 
     const ctx = {
-      units: this._panelUnits(spec),
+      units: this._panelUnits(spec, series),
+      unitDims: this._panelUnitDims(spec),
       perFrame: this._isPerFrameScatter(spec),
       elementOrder: this._elementOrder || [],
       selectedElements: t.selectedElements,
+      visited: this._visited,
+      peaks: !t.peaksOff.has(panelKey(spec)),
     };
     renderPanel(card.body, spec, series, ctx);
     card.series = series;
+    card.unitDims = ctx.unitDims;
+    // Which axis titles name a unit the user can set (index.html makes those clickable).
+    const axes = card.body._unitAxes || {};
+    card.body.toggleAttribute('data-unit-x', !!ctx.unitDims[axes.x]);
+    card.body.toggleAttribute('data-unit-y', !!ctx.unitDims[axes.y]);
     card.el.dataset.datasets = series.map((x) => x.datasetFp).join(' ');
     if (PLOT_KINDS.has(spec.kind)) {
       // Before SUB is wired: it sends the zoom this plot shows.
@@ -913,7 +1122,52 @@ export class AnalysisManager {
       if (token !== this._renderToken || seq !== card.seq) return;   // superseded
     }
     this._wirePanelInteractions(t, spec, card);
+    this._wirePeaksToggle(t, spec, card);
+    this._sizeRows(t);
     this._buildPanelParams(t, spec, card);
+    this._showCaption(card, spec);
+  }
+
+  /** The "Peaks" checkbox of a one-series timeline: its peak labels on or off. */
+  _wirePeaksToggle(t, spec, card) {
+    if (spec.kind !== 'timeline') return;
+    const key = panelKey(spec);
+    if (!card.peaksToggle) {
+      const toggle = document.createElement('label');
+      toggle.className = 'peaks-toggle';
+      toggle.title = 'Label the five highest peaks';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.addEventListener('change', () => {
+        if (cb.checked) t.peaksOff.delete(key); else t.peaksOff.add(key);
+        this._keep(t);
+        this._fetchAndRenderPanel(t, spec, card, this._renderToken);
+      });
+      cb.setAttribute('aria-label', `Peaks on ${spec.title || 'this timeline'}`);   // one per panel
+      toggle.append(cb, document.createTextNode('Peaks'));
+      card.title.insertBefore(toggle, card.title.querySelector('.sub-toggle'));
+      card.peaksToggle = cb;
+      card.peaksLabel = toggle;
+    }
+    // Several series are never labelled, so there is nothing to switch.
+    card.peaksLabel.hidden = !card.body._peaksEligible;
+    card.peaksToggle.checked = !t.peaksOff.has(key);
+  }
+
+  /** A plot point or a peak label opened a frame: remember it and dim its
+   * label in every timeline of that dataset and model on the tab on screen. */
+  _onPointFrame(o) {
+    this._visited.add(visitedKey(o.datasetFp, o.modelFp, o.frame));
+    // The tab the click was made on, before opening the frame moves to the 3D view.
+    const t = this._tabs.find((x) => x.id === this._activeId);
+    for (const slot of (t && t.slots) || []) {
+      for (const card of slot.cards || []) {
+        const s = (card.series || [])[(card.body._subInfo?.curveSeries || [])[0]];
+        if (!s || s.datasetFp !== o.datasetFp || s.modelFp !== o.modelFp) continue;
+        refreshPeaks(card.body, (frame) => this._visited.has(visitedKey(s.datasetFp, s.modelFp, frame)));
+      }
+    }
+    this._openFrame?.(o);
   }
 
   /** Compute-param values to send for one metric of a panel. */
@@ -931,15 +1185,32 @@ export class AnalysisManager {
     return out;
   }
 
-  /** Per-axis units, taken from the bound metrics' catalog units. */
-  _panelUnits(spec) {
-    const unitOf = (role) => {
-      const id = spec.metrics && spec.metrics[role];
+  /** The catalog entry of the (first) metric bound to each role. */
+  _roleEntries(spec) {
+    return Object.entries(spec.metrics || {}).map(([role, id]) => {
       const first = Array.isArray(id) ? id[0] : id;
-      const entry = first && this._catalog.get(first);
-      return entry ? entry.unit || '' : '';
-    };
-    return { x: unitOf('x'), y: unitOf('y'), value: unitOf('value') };
+      return [role, first && this._catalog.get(first)];
+    });
+  }
+
+  /** Per-role units to print (x, y, value, mae, …): an energy or force in the
+   * unit the first series' dataset has, "[unit]" while it has none. */
+  _panelUnits(spec, series) {
+    const dsUnits = datasetUnits(series?.[0]?.datasetFp, this._available.datasets);
+    const units = {};
+    for (const [role, entry] of this._roleEntries(spec))
+      units[role] = entry ? resolveUnit(entry.unit, dsUnits) : '';
+    return units;
+  }
+
+  /** Per-role dimension whose unit the user can name, for the roles that have one. */
+  _panelUnitDims(spec) {
+    const dims = {};
+    for (const [role, entry] of this._roleEntries(spec)) {
+      const dim = entry && editableDimension(entry.unit);
+      if (dim) dims[role] = dim;
+    }
+    return dims;
   }
 
   /** A scatter panel is subbable only when its x metric is per-frame. */
@@ -1144,11 +1415,14 @@ export class AnalysisManager {
     if (el.removeAllListeners) el.removeAllListeners('plotly_relayout');
     el.on('plotly_relayout', () => this._noteZoom(t, spec, card));
     if (SUB_KINDS.has(spec.kind)) this._wireSub(t, spec, card);
+    clearTimeout(card.frameTimer);   // a click on the plot this one replaces
+    card.frameTimer = null;
     if (!el._subInfo || !el._subInfo.perFrame) return;   // only per-frame kinds
 
     // Point → frame: click a per-frame point to show that structure (PRD 63).
     // The click names the clicked curve's data, so the structure is looked up
-    // in the 3D view that holds it (ADR 0056 rule 4).
+    // in the 3D view that holds it (ADR 0056 rule 4). It waits out Plotly's
+    // double-click delay: a double-click (back to the first view) opens nothing.
     if (el.removeAllListeners) el.removeAllListeners('plotly_click');
     el.on('plotly_click', (ev) => {
       const info = el._subInfo;
@@ -1156,8 +1430,30 @@ export class AnalysisManager {
       if (!pt || !info) return;
       if (info.dataCurveCount != null && pt.curveNumber >= info.dataCurveCount) return;
       const src = (card.series || [])[(info.curveSeries || [])[pt.curveNumber] ?? 0];
-      if (pt.pointIndex != null && src && this._onPointFrame)
-        this._onPointFrame({ datasetFp: src.datasetFp, modelFp: src.modelFp, frame: pt.pointIndex });
+      if (pt.pointIndex == null || !src) return;
+      const frame = { datasetFp: src.datasetFp, modelFp: src.modelFp, frame: pt.pointIndex };
+      clearTimeout(card.frameTimer);
+      card.frameTimer = null;
+      // Plotly reports a double-click's second click too, after plotly_doubleclick.
+      if (ev.event?.detail > 1) return;
+      card.frameTimer = setTimeout(() => {
+        card.frameTimer = null;
+        this._onPointFrame(frame);
+      }, PLOT_CONFIG.doubleClickDelay ?? 300);
     });
+    if (el.removeAllListeners) el.removeAllListeners('plotly_doubleclick');
+    el.on('plotly_doubleclick', () => {
+      clearTimeout(card.frameTimer);
+      card.frameTimer = null;
+    });
+    // A peak label opens its frame, as a click on the curve does.
+    if (el._peaks && el._peaks.length) {
+      if (el.removeAllListeners) el.removeAllListeners('plotly_clickannotation');
+      el.on('plotly_clickannotation', (ev) => {
+        const peak = el._peaks[ev.index];
+        const src = (card.series || [])[(el._subInfo.curveSeries || [])[0] ?? 0];
+        if (peak && src) this._onPointFrame({ datasetFp: src.datasetFp, modelFp: src.modelFp, frame: peak.frame });
+      });
+    }
   }
 }

@@ -35,6 +35,10 @@
  * frames (analysis.js `_wireSub`).
  */
 
+import { withUnit, displayUnit } from './units.js';
+import { pickPeaks, visitedKey } from './peaks.js';
+import { plotTheme, hexAlpha } from './theme.js';
+
 /** @typedef {import('./protocol.js').PanelLayout} PanelLayout */
 /** @typedef {import('./metrics.js').MetricResult} MetricResult */
 
@@ -66,27 +70,29 @@ export function elementSymbol(z) {
   return ELEMENTS[z] || `Z${z}`;
 }
 
-// Distinct series/element colours (teal-anchored, colour-blind-friendly-ish).
-const SERIES_COLORS = [
-  '#1ca6bb', '#e0863a', '#7ac74f', '#c85bdb', '#d9534f', '#f0c33c',
-  '#9b7ede', '#4e9ad6', '#e0679a', '#6fbf8e',
-];
-
+// Series and element colours: the page's `--series` list (theme.js).
 export function seriesColor(i) {
-  return SERIES_COLORS[i % SERIES_COLORS.length];
+  const { series } = plotTheme();
+  return series[i % series.length];
 }
 
-// Shared dark Plotly theme, matching the app palette (index.html tokens).
-function baseLayout() {
+// The Plotly theme: the page's tokens, read when a panel is drawn (theme.js).
+export function baseLayout() {
+  const t = plotTheme();
+  const axis = () => ({
+    gridcolor: t.line, zerolinecolor: t.line, linecolor: t.line,
+    tickfont: { color: t.ink3 }, title: { font: { color: t.ink2 } },
+    automargin: true,
+  });
   return {
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
-    font: { color: '#b9bbc2', size: 14, family: 'system-ui, sans-serif' },
+    font: { color: t.ink2, size: t.fsPlot, family: t.font },
     margin: { l: 48, r: 12, t: 8, b: 36 },
     showlegend: false,
     // No `dragmode`: Plotly's default, a drag zooms, is what SUB follows.
-    xaxis: { gridcolor: '#36393f', zerolinecolor: '#494d55', automargin: true },
-    yaxis: { gridcolor: '#36393f', zerolinecolor: '#494d55', automargin: true },
+    xaxis: axis(),
+    yaxis: axis(),
     hovermode: 'closest',
   };
 }
@@ -95,7 +101,8 @@ function baseLayout() {
 function withLegend(layout, traceCount) {
   if (traceCount > 1) {
     layout.showlegend = true;
-    layout.legend = { orientation: 'h', y: 1.12, font: { size: 12 } };
+    // a point above the axis text, as the 12 px it was at Compact; it follows Density
+    layout.legend = { orientation: 'h', y: 1.12, font: { size: plotTheme().fsPlot + 1 } };
     layout.margin.t = 22;
   }
   return layout;
@@ -105,6 +112,9 @@ export const PLOT_CONFIG = {
   responsive: true,
   displaylogo: false,
   modeBarButtonsToRemove: ['lasso2d', 'autoScale2d', 'toggleSpikelines'],
+  // Back to the ranges the plot was drawn with, never autorange: a labelled
+  // timeline's autorange counts the label arrows and squashes the curve.
+  doubleClick: 'reset',
 };
 
 const Plotly = () => globalThis.Plotly;
@@ -120,15 +130,34 @@ function arrMax(a) { let m = -Infinity; for (let i = 0; i < a.length; i++) if (a
  * text. The desktop resolves the `unitKey` (e.g. "energyUnit") through the user
  * config; the browser has no such config, so it appends the bound metric's own
  * catalog unit (`unit`) when the label declares a unit slot — pragmatic-parity
- * units without a second config source.
+ * units without a second config source. A catalog unit that is only a dimension
+ * ("energy") is not printed (units.js).
  */
-function axisTitle(label, unit) {
+export function axisTitle(label, unit) {
   if (label == null) return '';
-  if (Array.isArray(label)) {
-    const [text] = label;
-    return unit ? `${text} (${unit})` : text;
-  }
+  if (Array.isArray(label)) return withUnit(label[0], unit);
   return String(label);
+}
+
+/**
+ * The metric role whose unit a click on `target` names: a table header marked
+ * by `unitAttr`, or a Plotly axis title, through the axes → roles map its
+ * builder returned (`unitAxes`). null for anything else.
+ * @param {Element} target
+ * @param {{x?: string, y?: string}|null} unitAxes
+ */
+export function unitRoleAt(target, unitAxes) {
+  const named = target?.closest?.('[data-unit-role]');
+  if (named) return named.dataset.unitRole;
+  const title = target?.closest?.('.g-xtitle, .g-ytitle');
+  if (!title || !unitAxes) return null;
+  return unitAxes[title.classList.contains('g-xtitle') ? 'x' : 'y'] || null;
+}
+
+/** ` data-unit-role="role"` on a table header whose unit the user can name
+ * (ctx.unitDims, from the metric's dimension), or nothing. */
+function unitAttr(ctx, role) {
+  return ctx && ctx.unitDims && ctx.unitDims[role] ? ` data-unit-role="${role}"` : '';
 }
 
 /** A 1-D metric result as a plain number array (or []). */
@@ -155,6 +184,60 @@ function seriesWith(series, role) {
 
 // ── plot-kind builders (pure) ───────────────────────────────────────────────
 
+/** Length of a peak's tick, in px. */
+const PEAK_TICK = 18;
+
+/** A peak label's text, "73 · 0.442 eV/Å" (and " ✓" once its frame was opened). */
+function peakText({ frame, value }, unit, seen) {
+  const shown = displayUnit(unit);
+  return `${frame} · ${formatSignificant(value)}${shown ? ` ${shown}` : ''}${seen ? ' ✓' : ''}`;
+}
+
+/** How long a label is when turned on its side, in px (digits are about 0.6 em wide). */
+function labelPx(text, fontPx) {
+  return Math.ceil(text.length * 0.6 * fontPx);
+}
+
+/**
+ * The top margin that holds the longest peak label above the plot, whether or
+ * not its frame was opened (the tick takes two characters more).
+ */
+export function peakMarginTop(peaks, unit) {
+  const fontPx = plotTheme().fsPlot;
+  const longest = Math.max(0, ...peaks.map((p) => labelPx(`${peakText(p, unit, true)}`, fontPx)));
+  return PEAK_TICK + longest + 8;
+}
+
+/**
+ * One Plotly annotation per peak: a short tick and a label turned on its side,
+ * "73 · 0.442 eV/Å". Clicking one opens that frame; one already opened is dimmed
+ * and ticked. `isVisited(frame)` says which. Plotly centres a turned label on
+ * the far end of its arrow, so that end is moved up by half the label's length:
+ * the label then stands on a tick of PEAK_TICK px.
+ */
+export function peakAnnotations(peaks, unit, isVisited = () => false) {
+  const t = plotTheme();
+  return peaks.map((peak) => {
+    const seen = isVisited(peak.frame);
+    const text = peakText(peak, unit, seen);
+    return {
+      x: peak.frame, y: peak.value, text,
+      textangle: -90, showarrow: true, arrowhead: 0, arrowwidth: 1, arrowcolor: t.peak,
+      ax: 0, ay: -(PEAK_TICK + labelPx(text, t.fsPlot) / 2),
+      font: { color: t.peakInk, size: t.fsPlot },
+      opacity: seen ? 0.55 : 1,
+      captureevents: true, hovertext: `Open frame ${peak.frame} in 3D`,
+    };
+  });
+}
+
+/** Draw the peak labels of a drawn timeline again (a frame was opened). */
+export function refreshPeaks(el, isVisited) {
+  if (!el._peaks || !el._peaks.length) return;
+  Plotly().relayout(el, { annotations: peakAnnotations(el._peaks, el._peakUnit, isVisited) })
+    .catch(() => {});   // hidden or replaced meanwhile
+}
+
 export function buildTimeline(spec, series, ctx) {
   const u = ctx.units || {};
   const traces = [];
@@ -170,9 +253,30 @@ export function buildTimeline(spec, series, ctx) {
     curveSeries.push(i);
   });
   const layout = withLegend(baseLayout(), traces.length);
-  layout.xaxis.title = { text: axisTitle(spec.x_label, u.x) || 'Configuration index' };
-  layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) };
-  return { traces, layout, subInfo: { perFrame: true, curveSeries } };
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.x) || 'Configuration index' };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) };
+  // With one series, its five worst frames are labelled; several would overlap.
+  let peaks = [];
+  let extraHeight = 0;
+  if (traces.length === 1 && ctx.peaks !== false) {
+    peaks = pickPeaks(traces[0].y);
+    if (peaks.length) {
+      const s = series[curveSeries[0]];
+      const seen = ctx.visited;
+      layout.annotations = peakAnnotations(peaks, u.y,
+        (frame) => !!seen && seen.has(visitedKey(s.datasetFp, s.modelFp, frame)));
+      // The labels stand above the plot, in the top margin, whatever the plot's size.
+      layout.margin.t = peakMarginTop(peaks, u.y);
+      // Plotly would count each label's far end in the axis range and flatten
+      // the curve, so the range is set from the data alone.
+      let lo = 0, hi = -Infinity;
+      for (const v of traces[0].y) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
+      // 4 % headroom over the span: hi * 1.04 fell below hi for negative data.
+      if (hi > lo) layout.yaxis.range = [lo, hi + 0.04 * (hi - lo)];
+      extraHeight = layout.margin.t - 8;   // and the plot grows by as much, so the curve keeps its size
+    }
+  }
+  return { traces, layout, peaks, extraHeight, peakUnit: u.y, peaksEligible: traces.length === 1, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
 }
 
 export function buildDensity(spec, series, ctx) {
@@ -186,15 +290,15 @@ export function buildDensity(spec, series, ctx) {
     return {
       x: row(s.data.value, 0), y: row(s.data.value, 1),
       type: 'scatter', mode: 'lines',
-      ...(fill ? { fill: 'tozeroy', fillcolor: 'rgba(28,166,187,0.15)' } : {}),
+      ...(fill ? { fill: 'tozeroy', fillcolor: hexAlpha(seriesColor(0), 0.15) } : {}),
       line: { color: seriesColor(i), width: 1.5 },
       name: s.name || '',
     };
   });
   const layout = withLegend(baseLayout(), traces.length);
-  layout.xaxis.title = { text: axisTitle(spec.x_label, u.value) };
-  layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) || 'Density' };
-  return { traces, layout, subInfo: null };
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.value) };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) || 'Density' };
+  return { traces, layout, subInfo: null, unitAxes: { x: 'value', y: 'y' } };
 }
 
 export function buildScatter(spec, series, ctx) {
@@ -222,13 +326,13 @@ export function buildScatter(spec, series, ctx) {
   if (spec.diagonal && dataCurveCount && Number.isFinite(lo)) {
     traces.push({
       x: [lo, hi], y: [lo, hi], type: 'scatter', mode: 'lines',
-      line: { color: '#8a8d94', width: 1, dash: 'dash' },
+      line: { color: plotTheme().ink3, width: 1, dash: 'dash' },
       hoverinfo: 'skip', showlegend: false,
     });
   }
   const layout = withLegend(baseLayout(), dataCurveCount);
-  layout.xaxis.title = { text: axisTitle(spec.x_label, u.x) };
-  layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) };
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.x) };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) };
   // Subbable only when the x metric is per-frame: within any one curve the
   // point index *is* the configuration index, whichever series it belongs to.
   return {
@@ -236,6 +340,7 @@ export function buildScatter(spec, series, ctx) {
     subInfo: ctx.perFrame
       ? { perFrame: true, dataCurveCount, curveSeries }
       : null,
+    unitAxes: { x: 'x', y: 'y' },
   };
 }
 
@@ -267,8 +372,8 @@ export function buildOverlayTimeline(spec, series, ctx) {
     });
   });
   const layout = withLegend(baseLayout(), Math.max(2, traces.length));
-  layout.xaxis.title = { text: axisTitle(spec.x_label, null) || 'Configuration index' };
-  layout.yaxis.title = { text: axisTitle(spec.y_label, null) };
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, null) || 'Configuration index' };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, null) };
   return { traces, layout, subInfo: { perFrame: true, curveSeries } };
 }
 
@@ -295,7 +400,7 @@ export function buildGroupedDensity(spec, series, ctx) {
       traces.push({
         x: row(s.data.aggregate, 0), y: row(s.data.aggregate, 1),
         type: 'scatter', mode: 'lines', name: `All${suffix(s.name)}`,
-        line: { color: multiElement ? '#b9bbc2' : seriesColor(si), width: 1.5 },
+        line: { color: multiElement ? plotTheme().ink2 : seriesColor(si), width: 1.5 },
       });
       curveSeries.push(si);
     }
@@ -320,20 +425,35 @@ export function buildGroupedDensity(spec, series, ctx) {
   });
   const layout = withLegend(baseLayout(), Math.max(2, traces.length));
   const u = ctx.units || {};
-  layout.xaxis.title = { text: axisTitle(spec.x_label, u.value) };
-  layout.yaxis.title = { text: axisTitle(spec.y_label, u.y) || 'Density' };
-  return { traces, layout, subInfo: null };
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.value) };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) || 'Density' };
+  return { traces, layout, subInfo: null, unitAxes: { x: 'value', y: 'y' } };
 }
 
 // ── table-kind builders (pure, return HTML) ─────────────────────────────────
 
 /**
+ * `v` with `digits` significant digits in plain notation, never scientific
+ * (`0.000921`, `0.0908`, `12.3`, `1235`). The desktop's `format_significant`
+ * matches.
+ */
+export function formatSignificant(v, digits = 3) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(n);
+  if (n === 0) return n.toFixed(digits - 1);
+  return n.toFixed(Math.max(0, digits - 1 - Math.floor(Math.log10(Math.abs(n)))));
+}
+
+/**
  * A table cell: `precision` decimal places, but never a false zero — a
  * non-zero value that would round to zero shows three significant digits
- * (`0.00213`, not `0.00`). The desktop's `format_table_value` matches (ADR 0055).
+ * (`0.00213`, not `0.00`). With `precision` unset the cell shows three
+ * significant digits throughout, so an error of 0.0134 is not cut to 0.01.
+ * The desktop's `format_table_value` matches (ADR 0055).
  */
-export function formatTableValue(v, precision = 2) {
+export function formatTableValue(v, precision = null) {
   if (v == null || Number.isNaN(v)) return '—';
+  if (precision == null) return formatSignificant(v);
   const n = Number(v);
   const text = n.toFixed(precision);
   return n !== 0 && Number(text) === 0 ? n.toPrecision(3) : text;
@@ -378,7 +498,8 @@ export function buildTable(spec, series, ctx) {
     cellOf.set(`${rKey}|${cKey}`, scalarOf(s.data.value));
   }
 
-  const head = `<thead><tr><th>${esc(spec.title || 'Value')}</th>`
+  const unit = (ctx && ctx.units && ctx.units.value) || '';
+  const head = `<thead><tr><th${unitAttr(ctx, 'value')}>${esc(withUnit(spec.title || 'Value', unit))}</th>`
     + cols.map((c) => `<th>${esc(c.label)}</th>`).join('') + '</tr></thead>';
   const body = '<tbody>' + rows.map((r) =>
     `<tr><td>${esc(r.label)}</td>` + cols.map((c) => {
@@ -401,6 +522,9 @@ export function buildTable(spec, series, ctx) {
 export function buildGroupedTable(spec, series, ctx) {
   const order = ctx.elementOrder || [];
   const selected = ctx.selectedElements || [];
+  const u = ctx.units || {};
+  const mae = withUnit('MAE', u.mae);
+  const rmse = withUnit('RMSE', u.rmse);
   const list = series || [];
   if (!list.length) return '<div class="panel-msg">No data for this selection.</div>';
 
@@ -414,7 +538,8 @@ export function buildGroupedTable(spec, series, ctx) {
   if (selected.length > 1) {
     const s = list[0];
     const shown = selected.filter((z) => z === 'All' || order.includes(z));
-    const head = '<thead><tr><th>Element</th><th>MAE</th><th>RMSE</th></tr></thead>';
+    const head = `<thead><tr><th>Element</th><th${unitAttr(ctx, 'mae')}>${esc(mae)}</th>`
+      + `<th${unitAttr(ctx, 'rmse')}>${esc(rmse)}</th></tr></thead>`;
     const body = '<tbody>' + shown.map((z) =>
       `<tr><td>${z === 'All' ? 'All' : esc(elementSymbol(z))}</td>`
       + `<td>${cell(s, z, 'mae', 'mae_all')}</td>`
@@ -426,8 +551,8 @@ export function buildGroupedTable(spec, series, ctx) {
   // gives no clue which element the error belongs to.
   const z = selected[0] ?? 'All';
   const label = z === 'All' ? 'All' : elementSymbol(z);
-  const head = `<thead><tr><th>Object</th><th>${esc(label)} MAE</th>`
-    + `<th>${esc(label)} RMSE</th></tr></thead>`;
+  const head = `<thead><tr><th>Object</th><th${unitAttr(ctx, 'mae')}>${esc(label)} ${esc(mae)}</th>`
+    + `<th${unitAttr(ctx, 'rmse')}>${esc(label)} ${esc(rmse)}</th></tr></thead>`;
   const body = '<tbody>' + list.map((s) =>
     `<tr><td>${esc(s.name || 'Reference')}</td>`
     + `<td>${cell(s, z, 'mae', 'mae_all')}</td>`
@@ -484,8 +609,31 @@ export function renderPanel(el, spec, series, ctx) {
   if (built.html !== undefined) {
     el.innerHTML = built.html;
     el._subInfo = null;
+    el._unitAxes = null;
+    el._figureInfo = null;
+    el._peaks = null;
+    el._drawnRange = null;
+    el._peaksEligible = false;
+    el._extraHeight = 0;
+    el.style.minHeight = '';
     return;
   }
+  el._unitAxes = built.unitAxes || null;
+  // A labelled timeline is taller than the 180 px every plot has (index.html).
+  el._extraHeight = built.extraHeight || 0;
+  el.style.minHeight = built.extraHeight ? `calc(180px + ${built.extraHeight}px)` : '';
+  el._peaks = built.peaks || null;
+  el._peaksEligible = !!built.peaksEligible;
+  el._peakUnit = built.peakUnit;
+  // The ranges it is drawn with, so a plot showing them is not taken for zoomed.
+  el._drawnRange = { x: built.layout.xaxis?.range?.map(Number) || null,
+                     y: built.layout.yaxis?.range?.map(Number) || null };
+  el._figureInfo = {
+    xTitle: built.layout.xaxis?.title?.text || '',
+    yTitle: built.layout.yaxis?.title?.text || '',
+    nSeries: built.traces.filter((t) => t.showlegend !== false).length,
+    peaks: built.peaks || [],
+  };
   el.querySelectorAll('.main-svg').forEach((svg) => { svg.style.transform = ''; });   // see followSize
   const start = performance.now();
   Plotly().react(el, built.traces, built.layout, PLOT_CONFIG);

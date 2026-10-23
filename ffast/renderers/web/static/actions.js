@@ -35,14 +35,17 @@ export function bindMenu(button, list, actions) {
     list.classList.add('hidden');
     button.setAttribute('aria-expanded', 'false');
   };
+  // Escape or an item closes it and gives focus back to its button, so a
+  // dialog the item opens gives focus back there too.
+  const back = () => { close(); button.focus(); };
   const open = () => {
-    fillMenu(list, typeof actions === 'function' ? actions() : actions, close);
+    fillMenu(list, typeof actions === 'function' ? actions() : actions, back);
     list.classList.remove('hidden');
     button.setAttribute('aria-expanded', 'true');
     list.querySelector('[role=menuitem]:not(:disabled)')?.focus();
   };
   button.addEventListener('click', () => (list.classList.contains('hidden') ? open() : close()));
-  bindMenuKeys(list, () => { close(); button.focus(); });
+  bindMenuKeys(list, back);
   document.addEventListener('pointerdown', (e) => {
     if (!list.contains(e.target) && !button.contains(e.target)) close();
   });
@@ -64,12 +67,13 @@ export function sharedMenu(list) {
     owner = null;
   };
   /** @param {HTMLElement} button @param {Array<Action|{separator: true}>} actions */
+  const back = () => { const button = owner; close(); button?.focus(); };
   const open = (button, actions) => {
     const again = owner === button;
     close();
     if (again) return;
     owner = button;
-    fillMenu(list, actions, close);
+    fillMenu(list, actions, back);
     const at = button.getBoundingClientRect();
     list.style.left = `${at.left}px`;
     list.style.top = `${at.bottom + 4}px`;
@@ -77,14 +81,15 @@ export function sharedMenu(list) {
     button.setAttribute('aria-expanded', 'true');
     list.querySelector('[role=menuitem]:not(:disabled)')?.focus();
   };
-  bindMenuKeys(list, () => { const back = owner; close(); back?.focus(); });
+  bindMenuKeys(list, back);
   document.addEventListener('pointerdown', (e) => {
     if (owner && !list.contains(e.target) && !owner.contains(e.target)) close();
   });
   return { open, close };
 }
 
-/** Fill a menu `list` with `entries`; choosing an item runs `close` first. */
+/** Fill a menu `list` with `entries`; choosing an item runs `close` (which
+ * gives focus back to the menu's button) first. */
 function fillMenu(list, entries, close) {
   list.replaceChildren(...entries.map((action) => {
     if (action.separator) {

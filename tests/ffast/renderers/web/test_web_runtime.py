@@ -293,6 +293,29 @@ async def test_web_file_menu_holds_the_session_actions(ffast_web_server):
             await browser.close()
 
 
+async def test_web_a_dataset_that_cannot_be_loaded_says_so_in_the_status(ffast_web_server):
+    """ADR 0063 follow-up: a text file loaded as a dataset used to leave
+    "Loading README.md…" up for good; the status now names the file and why."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            await page.locator("#fb-path").fill(str(REPO_ROOT))
+            await page.locator("#fb-path").press("Enter")
+            await page.locator("#fb-list .fb-row", has_text="README.md").click()
+            await page.locator("#fb-load").click()
+            status = page.locator("#status")
+            await expect(status).to_contain_text("Could not load README.md", timeout=30000)
+            await expect(status).to_have_class(re.compile(r"\berror\b"))
+        finally:
+            await browser.close()
+
+
 async def test_web_prediction_browser_keeps_load_button_inside_dialog(ffast_web_server):
     """The prediction-only selectors may wrap, but its actions stay reachable."""
     ws_port, web_port = ffast_web_server
@@ -480,7 +503,8 @@ async def test_web_dialog_asks_for_a_token_when_the_server_needs_one():
 
                 await page.locator("#token-input").fill(token)
                 await page.locator("#connect-btn").click()
-                await expect(page.locator("#status")).to_contain_text("Connected (CONTROLLING)")
+                await expect(page.locator("#status")).to_have_text("Connected")
+                await expect(page.locator("#status")).to_have_attribute("title", re.compile("CONTROLLING"))
                 await expect(dialog).to_be_hidden()
             finally:
                 await browser.close()
@@ -652,7 +676,9 @@ async def test_web_force_error_style_waits_for_a_prediction(ffast_web_server):
 async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server):
     """ADR 0055 "Quick styles": Force error only sets existing controls —
     colour by the per-atom force error of the selected prediction, with the
-    desktop's force_error colour map. Force arrows are left as they are."""
+    desktop app's force_error colour map (ADR 0063 follow-up; cividis before).
+    Force arrows are left as they are. The
+    colour legend sits on the 3D view."""
     ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
@@ -670,8 +696,99 @@ async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server
             await expect(page.locator(_control("Colour By", "Prediction"))).to_have_value(name)
             await expect(page.locator(_control("Colour By", "Colormap"))).to_have_value("force_error")
             await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
+            await expect(page.locator(".viewport #legend3d #colorbar")).to_have_count(1)
+            await expect(page.locator("#loupe-sidebar #colorbar")).to_have_count(0)
             await expect(page.locator(_control("Force Vectors", "Show force vectors", "input"))).not_to_be_checked()
             assert await page.evaluate("() => window.ffastApp.renderer._forceGroup") is None
+        finally:
+            await browser.close()
+
+
+async def test_web_the_hint_bar_keeps_clear_of_the_colour_legend(ffast_web_server):
+    """ADR 0063 follow-up: the rule that moves the hint bar aside nested
+    :has() in :has(), which CSS forbids, so the browser dropped it and the bar
+    lay on the legend."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1024, "height": 768})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            legend, hint = page.locator("#legend3d"), page.locator("#hint-bar")
+            await expect(legend).to_be_visible()
+            await expect(hint).to_be_visible()
+            assert await page.evaluate(
+                "() => [...document.styleSheets].some(s => [...s.cssRules]"
+                ".some(r => r.selectorText?.includes('#colorbar:not(.hidden)')))"
+            )
+            a, b = await legend.bounding_box(), await hint.bounding_box()
+            apart = (a["x"] + a["width"] <= b["x"] or b["x"] + b["width"] <= a["x"]
+                     or a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"])
+            assert apart, (a, b)
+            # Beside the legend there is no room for a step at this width, so
+            # the bar goes above it: all of it, and its ×, inside the 3D view.
+            view = await page.locator(".viewport:has(> #hint-bar)").bounding_box()
+            close = await page.locator("#hint-dismiss").bounding_box()
+            for box in (b, close):
+                assert view["x"] <= box["x"] and box["x"] + box["width"] <= view["x"] + view["width"], (view, box)
+            clipped = await page.evaluate(
+                "() => [...document.querySelectorAll('#hint-bar .hint-step')]"
+                ".some((el) => el.getBoundingClientRect().right > document.getElementById('hint-bar').getBoundingClientRect().right)"
+            )
+            assert not clipped
+        finally:
+            await browser.close()
+
+
+async def test_web_a_narrow_compare_tab_gives_its_3d_panel_room_and_no_hint_bar(ffast_web_server):
+    """ADR 0063 follow-up: at 1024 px Compare is one column; its 3D panel was
+    300 px high and the hint bar and colour legend covered the molecule. Now
+    the panel is 460 px high and the hint bar is not shown there."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1024, "height": 768})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            await _open_analysis_tab(page, "Compare")
+            grid = page.locator(".tabpanel.active .analysis-grid")
+            await expect(grid).to_have_class(re.compile(r"\bnarrow\b"))
+            await expect(page.locator("#legend3d")).to_be_visible()
+            await expect(page.locator("#hint-bar")).to_be_hidden()
+            box = await page.locator(".tabpanel.active .panel-3d").bounding_box()
+            assert box["height"] >= 460, box
+
+            await page.set_viewport_size({"width": 1600, "height": 900})
+            await expect(grid).not_to_have_class(re.compile(r"\bnarrow\b"))
+            await expect(page.locator("#hint-bar")).to_be_visible()
+        finally:
+            await browser.close()
+
+
+async def test_web_the_colourbar_names_the_unit_of_a_force_colouring(ffast_web_server):
+    """The colourbar of a force colouring says "[unit]" until it is clicked and
+    named; the unit is the dataset's, so the server announces it back."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        label = page.locator("#colorbar-label")
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            await expect(label).to_have_text(re.compile(r"\[unit\]$"), timeout=15000)
+            await label.click()
+            await page.locator("#unit-popover input").fill("eV/Å")
+            await page.locator("#unit-popover input").press("Enter")
+            await expect(label).to_have_text(re.compile(r"\(eV/Å\)$"), timeout=15000)
         finally:
             await browser.close()
 
@@ -753,6 +870,538 @@ async def test_web_input_boxes_are_dark(ffast_web_server):
             await browser.close()
 
 
+async def test_web_journal_page_whitens_the_figure_area_and_density_scales_the_type(ffast_web_server):
+    """ADR 0063: Journal page turns the panels white and leaves the rail dark;
+    Large is today's 18.2 px body; both survive a reload."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    background = "(el) => getComputedStyle(el).backgroundColor"
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+
+        async def open_basic_errors():
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+
+        try:
+            await open_basic_errors()
+            panel = page.locator(".tabpanel.active .analysis-panel").first
+            rail = page.locator("#objectbar")
+            assert await panel.evaluate(background) != "rgb(255, 255, 255)"
+            await expect(page.locator("body")).to_have_css("font-size", "13px")
+
+            await page.get_by_role("radio", name="Journal page").click()
+            await expect(page.get_by_role("radio", name="Journal page")).to_have_attribute("aria-checked", "true")
+            assert await panel.evaluate(background) == "rgb(255, 255, 255)"
+            assert await rail.evaluate(background) != "rgb(255, 255, 255)"
+            assert await page.locator("#topbar").evaluate(background) != "rgb(255, 255, 255)"
+            # the plots were drawn again with the Journal series colour
+            line = await page.evaluate(
+                "() => document.querySelector('.tabpanel.active .analysis-panel[data-title=\"Forces MAE timeline\"] .panel-plot').data[0].line.color")
+            assert line == "#0072b2", line
+
+            await page.locator("#density").select_option("large")
+            await expect(page.locator("body")).to_have_css("font-size", "18.2px")
+
+            await open_basic_errors()   # a reload
+            assert await page.locator(".tabpanel.active .analysis-panel").first.evaluate(background) == "rgb(255, 255, 255)"
+            await expect(page.locator("body")).to_have_css("font-size", "18.2px")
+            await expect(page.locator("#density")).to_have_value("large")
+            assert await page.locator("#objectbar").evaluate(background) != "rgb(255, 255, 255)"
+
+            await page.get_by_role("radio", name="Screen").click()
+            assert await page.locator(".tabpanel.active .analysis-panel").first.evaluate(background) != "rgb(255, 255, 255)"
+        finally:
+            await browser.close()
+
+
+async def test_web_journal_page_hides_the_controls_and_prints_units_as_text(ffast_web_server):
+    """ADR 0063 follow-up: Journal page is a print view: no control bar, no
+    Peaks/Sub, no Smoothing, no Plotly toolbar, and a unit is not a link; edit
+    mode keeps what it needs. Screen brings it all back."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            panel = _sub_panel("Forces MAE timeline")
+            controls = [
+                page.locator(".tabpanel.active .analysis-controls"),
+                page.locator(panel + " .peaks-toggle"),
+                page.locator(panel + " .sub-toggle"),
+                page.locator(panel + " .panel-params"),
+            ]
+            for c in controls:
+                await expect(c).to_be_visible()
+            await page.locator(panel + " .panel-plot").hover()
+            await expect(page.locator(panel + " .modebar")).to_be_visible()   # its container has no height
+
+            await page.get_by_role("radio", name="Journal page").click()
+            for c in controls:
+                await expect(c).to_be_hidden()
+            await page.locator(panel + " .panel-plot").hover()
+            await expect(page.locator(panel + " .modebar")).to_be_hidden()
+            unit = page.locator(panel + " .panel-caption-line .unit-editable")
+            await expect(unit).to_have_css("text-decoration-line", "none")
+            caption = page.locator(panel + " .panel-caption-line")
+            assert "Georgia" in await caption.evaluate("(el) => getComputedStyle(el).fontFamily")
+            await expect(caption).to_have_css("color", "rgb(17, 20, 24)")   # --ink
+            await unit.click(force=True)
+            await page.locator(panel + " .g-ytitle text").click(force=True)
+            await page.wait_for_timeout(300)
+            await expect(page.locator("#unit-popover")).to_have_count(0)
+
+            # Edit mode keeps its own controls.
+            await page.locator("#tab-edit-btn").click()
+            await expect(page.locator(".tabpanel.active .edit-bar")).to_be_visible()
+            await expect(page.locator(_CHROME).first.locator("[data-edit=remove]")).to_be_visible()
+            await page.locator("[data-edit=cancel]").click()
+            await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+
+            await page.get_by_role("radio", name="Screen").click()
+            for c in controls:
+                await expect(c).to_be_visible()
+            assert "Georgia" not in await caption.evaluate("(el) => getComputedStyle(el).fontFamily")
+            await unit.click()
+            await expect(page.locator("#unit-popover")).to_be_visible()
+        finally:
+            await browser.close()
+
+
+# Colour of the top-left pixel of a PNG data URL, as "#rrggbb".
+_PNG_CORNER = """async (url) => {
+  const img = new Image(); img.src = url; await img.decode();
+  const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+  const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0);
+  const [r, g, b] = ctx.getImageData(2, 2, 1, 1).data;
+  return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+}"""
+
+
+async def test_web_journal_page_draws_the_3d_view_on_white_in_this_browser_only(ffast_web_server):
+    """ADR 0063 follow-up: Journal page draws the 3D view on white; Screen
+    brings back the user's own background; an export keeps the background it
+    is given."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.evaluate("() => window.ffastApp._focusedRenderers().setBackgroundColor('#203040')")
+            clear = "() => window.ffastApp.renderer.clearColor"
+            corner = "() => window.ffastApp.renderer._canvas.toDataURL('image/png')"
+            assert await page.evaluate(clear) == "#203040"
+
+            await page.get_by_role("radio", name="Journal page").click()
+            assert await page.evaluate(clear) == "#ffffff"
+            await page.wait_for_timeout(200)   # a frame drawn on the new colour
+            assert await page.evaluate(_PNG_CORNER, await page.evaluate(corner)) == "#ffffff"
+            png = await page.evaluate(
+                "() => window.ffastApp.renderer.capturePng({background: '#203040'})")
+            assert await page.evaluate(_PNG_CORNER, png) == "#203040"
+            assert await page.evaluate(clear) == "#ffffff"   # and the view stays white
+
+            await page.get_by_role("radio", name="Screen").click()
+            assert await page.evaluate(clear) == "#203040"
+        finally:
+            await browser.close()
+
+
+async def test_web_journal_page_drops_the_cards_the_pick_bar_and_the_hint_bar(ffast_web_server):
+    """ADR 0063 follow-up: Journal page draws no card round a panel and hides
+    the 3D pick bar and the hint bar; the panel titles stay. Screen brings
+    them back."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            bars = [page.locator("#pick-bar"), page.locator("#hint-bar")]
+            for bar in bars:
+                await expect(bar).to_be_visible()
+            await page.get_by_role("radio", name="Journal page").click()
+            for bar in bars:
+                await expect(bar).to_be_hidden()
+
+            await _open_analysis_tab(page, "Basic Errors")
+            panel = page.locator(".tabpanel.active .analysis-panel").first
+            await expect(panel).to_have_css("border-top-color", "rgba(0, 0, 0, 0)")
+            await expect(panel).to_have_css("border-top-left-radius", "0px")
+            await expect(panel.locator(".panel-title")).to_be_visible()
+
+            await page.get_by_role("radio", name="Screen").click()
+            await expect(panel).not_to_have_css("border-top-color", "rgba(0, 0, 0, 0)")
+            await _open_analysis_tab(page, "3D")
+            for bar in bars:
+                await expect(bar).to_be_visible()
+        finally:
+            await browser.close()
+
+
+# A two-series timeline built in the app page: its legend font and the axes'.
+_LEGEND_SIZE = """async () => {
+  const pn = await import('/panels.js');
+  const th = await import('/theme.js');
+  const r = (v) => ({nd: {values: v, shape: [v.length]}});
+  const two = [{name: 'A', datasetFp: 'd', modelFp: 'a', data: {y: r([1, 2])}},
+               {name: 'B', datasetFp: 'd', modelFp: 'b', data: {y: r([3, 4])}}];
+  return [pn.buildPanel({kind: 'timeline'}, two, {}).layout.legend.font.size, th.plotTheme().fsPlot];
+}"""
+
+
+async def test_web_a_plot_legend_follows_density(ffast_web_server):
+    """ADR 0063 follow-up: a legend was 12 px at every Density."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            legend, axes = await page.evaluate(_LEGEND_SIZE)
+            assert (legend, axes) == (12, 11)   # as before, at Compact
+            await page.locator("#density").select_option("large")
+            legend, axes = await page.evaluate(_LEGEND_SIZE)
+            assert legend == axes + 1 and legend > 12, (legend, axes)
+        finally:
+            await browser.close()
+
+
+async def test_web_space_plays_and_esc_puts_down_a_pick_tool_on_the_3d_tab(ffast_web_server):
+    """ADR 0063: Space plays and pauses the 3D view; Esc puts down an armed
+    pick tool."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            playing = "() => window.ffastApp._playing"
+            await page.evaluate("() => document.activeElement.blur()")
+            await page.keyboard.press(" ")
+            assert await page.evaluate(playing) is True
+            await page.keyboard.press(" ")
+            assert await page.evaluate(playing) is False
+
+            tool = page.locator("#pick-toolbar .pick-tool-btn").first
+            await tool.click()
+            await expect(tool).to_have_class(re.compile(r"\bactive\b"))
+            await page.evaluate("() => document.activeElement.blur()")
+            await page.keyboard.press("Escape")
+            await expect(tool).not_to_have_class(re.compile(r"\bactive\b"))
+            assert await page.evaluate("() => window.ffastApp._activeTool") is None
+        finally:
+            await browser.close()
+
+
+async def test_web_density_comfortable_scales_the_type_by_1_15(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator("#density").select_option("comfortable")
+            scale = "() => getComputedStyle(document.documentElement).getPropertyValue('--scale').trim()"
+            assert await page.evaluate(scale) == "1.15"
+            await expect(page.locator("body")).to_have_css("font-size", "14.95px")   # 13 px × 1.15
+        finally:
+            await browser.close()
+
+
+async def test_web_a_timeline_of_two_series_has_no_peaks_checkbox(ffast_web_server):
+    """ADR 0063: only a one-series timeline is labelled, so only it can switch
+    the labels off."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    other_fp = await _load_another_dataset(ws_port, dataset_fp)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_analysis_tab(page, "Gyration")
+            panel = _sub_panel("Total gyration radius")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Total gyration radius", timeout=25000)
+            await expect(page.locator(panel + " .peaks-toggle")).to_be_visible()
+            picker = page.locator(".tabpanel.active [data-series='datasets']")
+            await picker.locator(f"button[data-fp='{dataset_fp}']").click()
+            await picker.locator(f"button[data-fp='{other_fp}']").click()
+            await page.wait_for_function(
+                "(sel) => (document.querySelector(sel + ' .panel-plot').data || []).length === 2",
+                arg=panel, timeout=25000)
+            await expect(page.locator(panel + " .peaks-toggle")).to_be_hidden()
+            await expect(page.locator(panel + " .panel-plot .annotation")).to_have_count(0)
+        finally:
+            await browser.close()
+
+
+_OUT_OF_ORDER_TOML = """
+[[visualization.tabs]]
+name = "Order"
+
+[[visualization.tabs.panels]]
+kind = "table"
+row = 1
+col = 0
+title = "C"
+  [visualization.tabs.panels.metrics.value]
+  metric = "ffast.force_component_mae"
+
+[[visualization.tabs.panels]]
+kind = "table"
+row = 0
+col = 1
+title = "B"
+  [visualization.tabs.panels.metrics.value]
+  metric = "ffast.force_component_mae"
+
+[[visualization.tabs.panels]]
+kind = "table"
+row = 0
+col = 0
+title = "A"
+  [visualization.tabs.panels.metrics.value]
+  metric = "ffast.force_component_mae"
+"""
+
+
+async def test_web_a_narrow_tab_stacks_its_panels_in_reading_order(tmp_path):
+    """ADR 0063 step 10: one column, in reading order (row, then column),
+    whatever order the tab's file lists its panels in."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_OUT_OF_ORDER_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp, _ = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 800, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_analysis_tab(page, "Order")
+                await expect(page.locator(".tabpanel.active .analysis-grid")).to_have_class(re.compile(r"\bnarrow\b"))
+                titles = await page.evaluate(
+                    """() => [...document.querySelectorAll('.tabpanel.active .analysis-panel[data-title]')]
+                         .map((el) => [el.getBoundingClientRect().top, el.dataset.title])
+                         .sort((a, b) => a[0] - b[0]).map(([, t]) => t)""")
+                assert titles == ["A", "B", "C"], titles
+            finally:
+                await browser.close()
+
+
+async def test_web_tabs_rail_rows_and_section_headers_work_from_the_keyboard(ffast_web_server):
+    """ADR 0063: Tab reaches the tab strip, the arrow keys move along it, Enter
+    presses a rail row, and a section header unfolds on Enter."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    other_fp = await _load_another_dataset(ws_port, dataset_fp)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(page.locator("#tabbar")).to_have_attribute("role", "tablist")
+            tabs = page.locator("#tabbar .tab")
+            assert await tabs.evaluate_all("els => els.filter((e) => e.tabIndex === 0).length") == 1
+
+            await page.locator("#file-menu-btn").focus()
+            for _ in range(40):
+                await page.keyboard.press("Tab")
+                if await page.evaluate("() => document.activeElement.classList.contains('tab')"):
+                    break
+            else:
+                raise AssertionError("Tab never reached a tab")
+            current = await page.evaluate("() => document.activeElement.textContent")
+            await page.keyboard.press("ArrowRight")
+            selected = page.locator("#tabbar .tab[aria-selected=true]")
+            await expect(selected).to_have_count(1)
+            assert await selected.inner_text() != current
+            await expect(selected).to_be_focused()
+            await page.keyboard.press("Home")
+            await expect(page.locator("#tabbar .tab").first).to_have_attribute("aria-selected", "true")
+            await page.keyboard.press("End")
+            await expect(page.locator("#tabbar .tab").last).to_have_attribute("aria-selected", "true")
+
+            await page.locator("#tabbar .tab", has_text="3D").click()
+            row = page.locator(f"#dataset-list .obj-row[data-fp='{other_fp}']")
+            await expect(row).to_have_attribute("role", "button")
+            await expect(row).to_have_attribute("aria-pressed", "false")
+            await row.focus()
+            await page.keyboard.press("Enter")
+            await expect(row).to_have_class(re.compile(r"\bselected\b"))
+            await expect(row).to_have_attribute("aria-pressed", "true")
+
+            header = page.locator(".pane[data-pane='Camera'] .pane-header")
+            await expect(header).to_have_attribute("aria-expanded", "false")
+            await header.focus()
+            await page.keyboard.press("Enter")
+            await expect(header).to_have_attribute("aria-expanded", "true")
+        finally:
+            await browser.close()
+
+
+async def test_web_a_delete_dialog_starts_on_cancel_and_keeps_focus_inside(ffast_web_server):
+    """ADR 0063: the dialog that deletes focuses the safe button, outlines Delete,
+    keeps Tab inside, and closes on Escape."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            dialog = await _delete_from_rail(page, "dataset", dataset_fp)
+            await expect(dialog).to_be_visible()
+            await expect(dialog.locator("button:focus")).to_have_text("Cancel")
+            await expect(dialog.get_by_role("button", name="Delete")).to_have_class(re.compile(r"\bdanger\b"))
+            for _ in range(5):
+                await page.keyboard.press("Tab")
+                assert await page.evaluate("() => !!document.activeElement.closest('.ask-dialog')")
+            await page.keyboard.press("Escape")
+            await expect(dialog).to_have_count(0)
+        finally:
+            await browser.close()
+
+
+async def test_web_the_file_browser_closes_on_escape_and_opens_with_a_row_focused(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator("#add-dataset-btn").click()
+            modal = page.locator("#fb-modal")
+            await expect(modal).not_to_have_class(re.compile(r"\bhidden\b"))
+            await expect(modal).to_have_attribute("role", "dialog")
+            await expect(modal).to_have_attribute("aria-modal", "true")
+            await expect(page.locator("#fb-list .fb-row").first).to_be_focused()
+            await expect(page.locator("#fb-path")).to_be_editable()
+            await page.keyboard.press("Escape")
+            await expect(modal).to_have_class(re.compile(r"\bhidden\b"))
+        finally:
+            await browser.close()
+
+
+async def test_web_four_shortcuts_step_frames_search_and_keep_out_of_inputs(ffast_web_server):
+    """ADR 0063: ←/→ step a frame, / focuses the settings search; neither fires
+    while typing in an input."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            label = page.locator("#frame-label")
+            await expect(label).to_have_text("0 / 99", timeout=15000)
+            await page.evaluate("() => document.activeElement.blur()")
+            await page.keyboard.press("ArrowRight")
+            await expect(label).to_have_text("1 / 99")
+            await page.keyboard.press("ArrowLeft")
+            await expect(label).to_have_text("0 / 99")
+
+            await page.keyboard.press("/")
+            await expect(page.locator("#sidebar-search")).to_be_focused()
+            await page.keyboard.type("a/")   # typing: the slash is text, and ArrowRight moves the caret
+            await expect(page.locator("#sidebar-search")).to_have_value("a/")
+            await page.keyboard.press("ArrowLeft")
+            await expect(label).to_have_text("0 / 99")
+
+            await page.locator("#sidebar-toggle").click()   # hide the sidebar...
+            await page.evaluate("() => document.activeElement.blur()")
+            await page.keyboard.press("/")                    # ...and / brings it back
+            await expect(page.locator("#content")).not_to_have_class(re.compile(r"\bsidebar-hidden\b"))
+            await expect(page.locator("#sidebar-search")).to_be_focused()
+        finally:
+            await browser.close()
+
+
+async def test_web_status_says_when_a_dataset_is_ready_and_the_rail_spells_frames_out(ffast_web_server):
+    """ADR 0063: a loaded dataset is announced ("ready"), the status says only
+    "Connected" with the role in the button's title, empty rail lists read
+    "None loaded", and a dataset's length is "100 frames"."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            status = page.locator("#status")
+            await expect(status).to_contain_text("ready")
+            await expect(status).to_contain_text("100 frames")
+            await expect(status).to_have_attribute("title", re.compile("CONTROLLING"))
+            await expect(page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}'] .meta")).to_have_text("100 frames")
+            await expect(page.locator("#model-list .obj-empty")).to_have_text("None loaded")
+        finally:
+            await browser.close()
+
+
+async def test_web_a_narrow_window_stacks_the_plots_instead_of_scrolling_sideways(ffast_web_server):
+    """ADR 0063: at 1024 px two plot columns fit and nothing scrolls sideways;
+    narrower, the grid is one column; wide again, two. (The ADR names 1024 px
+    for one column, but its own rule, two 360 px columns, fits there.)"""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1024, "height": 768})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            grid = page.locator(".tabpanel.active .analysis-grid")
+            tracks = "(g) => getComputedStyle(g).gridTemplateColumns.split(' ').length"
+            scrolls = "(g) => g.scrollWidth > g.clientWidth + 1"
+
+            assert await grid.evaluate(tracks) == 2
+            assert not await grid.evaluate(scrolls)
+
+            await page.set_viewport_size({"width": 900, "height": 768})
+            await expect(grid).to_have_class(re.compile(r"\bnarrow\b"))
+            assert await grid.evaluate(tracks) == 1
+            assert not await grid.evaluate(scrolls)
+            # one column, in reading order: no panel above the one before
+            tops = await page.evaluate(
+                "() => [...document.querySelectorAll('.tabpanel.active .analysis-grid .analysis-panel')]"
+                ".map((el) => el.getBoundingClientRect().top)")
+            assert tops == sorted(tops), tops   # (panels of one scroll strip share a top)
+            letters = await page.locator(".tabpanel.active .analysis-panel .panel-letter").all_inner_texts()
+            assert letters == sorted(letters, key=lambda t: (len(t), t)), letters
+
+            await page.set_viewport_size({"width": 1200, "height": 768})
+            await expect(grid).not_to_have_class(re.compile(r"\bnarrow\b"))
+            assert await grid.evaluate(tracks) == 2
+        finally:
+            await browser.close()
+
+
 async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
     """ADR 0055 "Help": a hint bar with numbered next steps; dismissing it is
     remembered in browser storage."""
@@ -769,6 +1418,8 @@ async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
             hint = page.locator("#hint-bar")
             await expect(hint).to_be_visible()
             await expect(hint).to_contain_text("Load a prediction")
+            await expect(hint).to_contain_text("Arm a pick tool and click atoms")
+            await expect(hint).not_to_contain_text("Force error")   # that button is disabled until a prediction loads
             await expect(hint.locator(".hint-n")).to_have_text(["1", "2", "3"])
             # A step never breaks across lines; the bar wraps between steps.
             lines = await page.evaluate(
@@ -1515,6 +2166,130 @@ async def _delete_from_rail(page, kind, fp):
     return page.locator(".ask-dialog")
 
 
+async def test_web_dialogs_and_repeated_controls_have_their_own_names(ffast_web_server):
+    """ADR 0063 follow-up: every "?" was "What is this?", dialogs had no name,
+    every Peaks box was "Peaks", and a pick tool did not say it was armed."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(page.locator(".pane[data-pane='Colour By'] .help-btn")).to_have_attribute(
+                "aria-label", "What is Colour By?")
+            tool = page.locator("#pick-toolbar .pick-tool-btn").first
+            await expect(tool).to_have_attribute("aria-pressed", "false")
+            await tool.click()
+            await expect(tool).to_have_attribute("aria-pressed", "true")
+            await tool.click()
+            await expect(tool).to_have_attribute("aria-pressed", "false")
+
+            await _delete_from_rail(page, "dataset", dataset_fp)
+            dialog = page.locator(".ask-dialog")
+            title_id = await dialog.get_attribute("aria-labelledby")
+            await expect(page.locator(f"#{title_id}")).to_have_text(re.compile("Delete"))
+            await page.keyboard.press("Escape")
+
+            await _file_menu(page, "Save Session…")
+            path = page.locator("#path-modal")
+            await expect(path).to_have_attribute("role", "dialog")
+            await expect(path).to_have_attribute("aria-modal", "true")
+            await expect(path).to_have_attribute("aria-labelledby", "path-title")
+            await page.keyboard.press("Escape")
+
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            await expect(page.locator(_sub_panel("Forces MAE timeline") + " .peaks-toggle input")).to_have_attribute(
+                "aria-label", "Peaks on Forces MAE timeline")
+            await expect(page.locator(".tabpanel.active .analysis-controls .help-btn")).to_have_attribute(
+                "aria-label", "What is this tab's choice of data?")
+        finally:
+            await browser.close()
+
+
+async def test_web_the_play_button_is_named_for_what_a_press_does(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            play = page.locator("#play-pause-btn")
+            await expect(play).to_have_attribute("aria-label", "Play")
+            await play.click()
+            await expect(play).to_have_attribute("aria-label", "Pause")
+            await expect(play).to_have_attribute("title", "Pause")
+            await play.click()
+            await expect(play).to_have_attribute("aria-label", "Play")
+        finally:
+            await browser.close()
+
+
+async def test_web_frame_and_play_keys_do_nothing_on_a_tab_without_a_3d_view(ffast_web_server):
+    """ADR 0063 follow-up: on an analysis tab without a 3D panel, ←/→ and
+    Space stepped and played the 3D view out of sight."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            label = page.locator("#frame-label")
+            await expect(label).to_have_text("0 / 99", timeout=15000)
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.evaluate("() => document.activeElement.blur()")
+            await page.keyboard.press("ArrowRight")
+            await page.keyboard.press(" ")
+            await page.wait_for_timeout(500)
+            await expect(label).to_have_text("0 / 99")
+            assert await page.evaluate("() => window.ffastApp._playing") is False
+
+            await _open_analysis_tab(page, "3D")
+            await page.evaluate("() => document.activeElement.blur()")
+            await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
+            await page.wait_for_timeout(300)   # the view opened again, as _open_loupe waits
+            await page.keyboard.press("ArrowRight")
+            await expect(label).to_have_text("1 / 99")
+        finally:
+            await browser.close()
+
+
+async def test_web_closing_a_dialog_gives_focus_back_to_what_opened_it(ffast_web_server):
+    """ADR 0063 follow-up: a dialog closed with Esc left focus on <body>."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            menu = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}'] .obj-menu-btn")
+            await menu.focus()
+            await page.keyboard.press("Enter")
+            await expect(page.locator(".rail-menu [data-action='dataset-delete']")).to_be_focused()
+            await page.keyboard.press("Enter")
+            await expect(page.locator(".ask-dialog")).to_be_visible()
+            await page.keyboard.press("Escape")
+            await expect(page.locator(".ask-dialog")).to_have_count(0)
+            await expect(menu).to_be_focused()
+
+            file_btn = page.locator("#file-menu-btn")
+            await file_btn.focus()
+            await page.keyboard.press("Enter")
+            await page.locator("#file-menu-list").get_by_role("menuitem", name="Save Session…").focus()
+            await page.keyboard.press("Enter")
+            await expect(page.locator("#path-input")).to_be_focused()
+            await page.keyboard.press("Escape")
+            await expect(page.locator("#path-modal")).to_be_hidden()
+            await expect(file_btn).to_be_focused()
+        finally:
+            await browser.close()
+
+
 async def test_web_the_rail_menu_deletes_a_dataset_or_prediction(ffast_web_server):
     """A rail row's ⋯ menu deletes it after a confirmation naming what goes
     with it: a prediction's results, a dataset's subsets."""
@@ -1579,7 +2354,7 @@ async def test_web_the_rail_menu_freezes_a_live_subset(ffast_web_server):
 
             frozen = page.locator("#dataset-list .obj-row", has_text="frozen")
             await expect(frozen).to_have_count(1, timeout=15000)
-            await expect(frozen).to_contain_text("frozen · 3 fr")
+            await expect(frozen).to_contain_text("frozen · 3 frames")
             await expect(page.locator("#status")).to_contain_text("Froze")
             dialog = await _delete_from_rail(page, "dataset", await frozen.get_attribute("data-fp"))
             await dialog.locator("button", has_text="Delete").click()
@@ -1615,6 +2390,46 @@ async def test_web_a_reloaded_page_shows_what_its_main_view_showed(ffast_web_ser
             await expect(page.locator("#model-list .obj-row.selected")).to_have_attribute("data-fp", model_fp)
         finally:
             await browser.close()
+
+
+_AXIS_TITLE = """([title, axis]) => document.querySelector(
+  `#tabpanels .tabpanel.active .analysis-panel[data-title="${title}"] .g-${axis}title text`)?.textContent"""
+
+
+async def test_web_a_unit_named_on_one_plot_shows_on_every_plot_and_window(ffast_web_server):
+    """No dataset file says whether its energies are eV: an energy axis shows
+    "[unit]", clicking it names the unit, and then every energy label of that
+    dataset shows it, forces still waiting. The server keeps it for every window."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1400, "height": 900})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+            assert await page.evaluate(_AXIS_TITLE, ["Energy MAE timeline", "y"]) == "Energy MAE [unit]"
+
+            await page.locator('.tabpanel.active .analysis-panel[data-title="Energy MAE timeline"] .g-ytitle text').click()
+            await page.locator("#unit-popover input").fill("eV")
+            await page.locator("#unit-popover input").press("Enter")
+            await expect(page.locator("#unit-popover")).to_have_count(0)
+
+            await page.wait_for_function(
+                f"() => ({_AXIS_TITLE})(['Energy MAE timeline', 'y']) === 'Energy MAE (eV)'", timeout=15000)
+            await expect(page.locator(
+                '.tabpanel.active .analysis-panel[data-title="Energy MAE"] th[data-unit-role]'
+            )).to_have_text("Energy MAE (eV)", timeout=15000)
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            assert await page.evaluate(_AXIS_TITLE, ["Forces MAE timeline", "y"]) == "Forces MAE [unit]"
+        finally:
+            await browser.close()
+
+    replayed = await _replayed_datasets(ws_port)
+    assert replayed[dataset_fp]["units"] == {"energy": "eV"}
 
 
 async def test_web_a_reloaded_page_keeps_a_main_view_without_prediction(ffast_web_server):
@@ -2069,7 +2884,7 @@ async def test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_scree
                 panel = saved["tabs"][0]["panels"][1]
                 assert panel["view"] == "independent" and panel["link_camera"] is False
                 assert panel["start"]["colour_by"] == "ffast.force_mae"
-                assert panel["start"]["colormap"] == "force_error"
+                assert panel["start"]["colormap"] == "force_error"   # what the Force error style sets
             finally:
                 await browser.close()
 
@@ -2146,9 +2961,9 @@ title = "T{col}"
 
 
 async def test_web_columns_keep_a_minimum_width_and_the_tab_scrolls_sideways(tmp_path):
-    """Columns are never narrower than 400 px (the desktop's smallest plot);
-    when they do not fit, the tab scrolls sideways, as it scrolls down for
-    rows. Columns that fit share the window as before."""
+    """Columns are never narrower than 360 px (400 before ADR 0063); when they
+    do not fit, the tab scrolls sideways, as it scrolls down for rows. Columns
+    that fit share the window as before."""
     config = tmp_path / "ffast.toml"
     config.write_text(_WIDE_TAB_TOML)
     async with _spawn_server("--config", str(config)) as (ws_port, web_port):
@@ -2163,7 +2978,7 @@ async def test_web_columns_keep_a_minimum_width_and_the_tab_scrolls_sideways(tmp
                 await expect(grid.locator(".analysis-panel")).to_have_count(4)
                 widths = [(await grid.locator(f"[data-title='T{c}']").bounding_box())["width"]
                           for c in range(4)]
-                assert min(widths) >= 400 - 1
+                assert min(widths) >= 360 - 1
                 assert await grid.evaluate("(el) => el.scrollWidth > el.clientWidth")
                 assert await page.evaluate(
                     "() => document.documentElement.scrollWidth <= window.innerWidth")
@@ -2224,7 +3039,10 @@ async def test_web_user_tabs_reach_every_window_and_can_be_reset_hidden_exported
                 await expect(gyration.locator(".tab-mark")).to_have_text("edited")
                 await gyration.click()
                 await _tab_menu(page, "Reset to original…")
-                await page.get_by_role("button", name="Reset").click()
+                dialog = page.locator(".ask-dialog")
+                await expect(dialog.locator("button:focus")).to_have_text("Cancel")
+                await expect(dialog.get_by_role("button", name="Confirm")).to_have_class(re.compile(r"\bdanger\b"))
+                await dialog.get_by_role("button", name="Confirm").click()
                 await expect(gyration.locator(".tab-mark")).to_have_count(0)
                 await expect(page.locator(".tabpanel.active .analysis-panel[data-kind='overlay_timeline']")).not_to_have_count(0)
 
@@ -2349,7 +3167,10 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
                 await page.mouse.up()
                 heights = await page.evaluate("() => window.ffastApp._editor.draft.row_heights")
                 assert heights[0] > 1.4
-                assert heights[1] * 300 == pytest.approx(below, abs=2)
+                # The row below is drawn taller than its set height by its peak
+                # labels' room, which is not saved into the height.
+                room = await grid.evaluate("(el) => el._rowExtra[1] || 0")
+                assert heights[1] * 300 + room == pytest.approx(below, abs=2)
                 assert await grid.evaluate(track, ["gridTemplateRows", 1]) == pytest.approx(below, abs=2)
                 assert await grid.evaluate("(el) => el.scrollHeight > el.clientHeight")
 
@@ -2491,6 +3312,12 @@ async def test_web_edit_mode_warns_when_another_window_saved_the_tab(tmp_path):
                 await page.locator("[data-edit=save]").click()
                 await expect(page.locator(".ask-dialog .warning-modal-message")).to_have_text(
                     "Basic Errors was changed in another window — overwrite or discard your edits?")
+                # Focus starts on Cancel, not on Overwrite; Cancel keeps editing.
+                await expect(page.locator(".ask-dialog").get_by_role("button", name="Cancel", exact=True)).to_be_focused()
+                await page.keyboard.press("Enter")
+                await expect(page.locator(".ask-dialog")).to_have_count(0)
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(1)
+                await page.locator("[data-edit=save]").click()
                 await page.get_by_role("button", name="Discard my edits").click()
                 await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
                 await expect(page.locator(".tabpanel.active .analysis-panel[data-title='Theirs']")).to_have_count(1)
@@ -2508,6 +3335,32 @@ async def test_web_edit_mode_warns_when_another_window_saved_the_tab(tmp_path):
                 assert 'name = "Mine now"' in (tabs_dir / "basic-errors.toml").read_text()
             finally:
                 await browser.close()
+
+
+# The panel letters each 3D viewport holds.
+_VIEWPORT_LETTERS = """() => [...document.querySelectorAll('.viewport')]
+  .map((v) => v.querySelectorAll(':scope > .panel-letter').length)"""
+
+
+async def test_web_a_3d_view_shows_one_panel_letter_however_often_the_layout_is_rebuilt(ffast_web_server):
+    """ADR 0063 follow-up: a rebuilt layout reuses its 3D panels, and each
+    mount added the new cell's letter beside the old one."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            counts = await page.evaluate(_VIEWPORT_LETTERS)
+            assert counts and all(n == 1 for n in counts), counts
+            for _ in range(2):
+                await page.evaluate("() => window.ffastApp._applyLayout([...window.ffastApp._layoutTabs])")
+            await page.wait_for_timeout(300)
+            counts = await page.evaluate(_VIEWPORT_LETTERS)
+            assert counts and all(n == 1 for n in counts), counts
+        finally:
+            await browser.close()
 
 
 async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(ffast_web_server):
@@ -3688,6 +4541,283 @@ async def test_web_analysis_scatter_renders(ffast_web_server):
             await browser.close()
 
 
+async def test_web_every_analysis_panel_has_a_letter_and_the_first_is_a(ffast_web_server):
+    """ADR 0063: panels are lettered in screen reading order, and a plot says
+    in one line under it what it shows."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(
+                _PANEL_HAS_POINTS, arg="Energy Scatter", timeout=25000)
+            panels = page.locator(".tabpanel.active .analysis-panel")
+            letters = page.locator(".tabpanel.active .analysis-panel .panel-letter")
+            count = await panels.count()
+            assert count > 1
+            await expect(letters).to_have_count(count)
+            assert (await letters.first.inner_text()) == "a"
+            texts = await letters.all_inner_texts()
+            assert texts == sorted(texts, key=lambda t: (len(t), t)), texts
+            # A plotted panel's caption starts with the same letter.
+            line = page.locator(".tabpanel.active .panel-caption-line:not([hidden])").first
+            await expect(line).to_be_visible()
+            assert (await line.locator("b").inner_text()) in texts
+        finally:
+            await browser.close()
+
+
+async def test_web_a_timeline_labels_its_five_worst_frames_and_a_label_opens_one(ffast_web_server):
+    """ADR 0063: a one-series timeline marks its 5 highest peaks, and clicking a
+    label opens that frame, as clicking the curve does; the frame stays marked."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            labels = page.locator(_sub_panel("Forces MAE timeline") + " .panel-plot .annotation")
+            await expect(labels).to_have_count(5)
+            texts = await labels.evaluate_all("els => els.map((e) => e.textContent)")   # SVG has no innerText
+            frames = [int(t.split(" · ")[0]) for t in texts]
+            assert frames == sorted(frames) and len(set(frames)) == 5, texts
+
+            target = frames[-1]
+            await labels.nth(4).click()
+            await expect(page.locator("#frame-label")).to_have_text(f"{target} / 99")
+            # Opening a frame moves to the 3D view; back on the tab, the label is ticked.
+            await _open_analysis_tab(page, "Basic Errors")
+            done = await page.locator(
+                _sub_panel("Forces MAE timeline") + " .panel-plot .annotation"
+            ).evaluate_all("els => els.map((e) => e.textContent)")
+            assert done[4].endswith("✓") and not any(t.endswith("✓") for t in done[:4]), done
+        finally:
+            await browser.close()
+
+
+async def test_web_a_timelines_peak_labels_switch_off_and_on(ffast_web_server):
+    """Each one-series timeline has a Peaks checkbox that hides its labels, and
+    the caption's peak sentence with them; the choice survives a reload."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            panel = _sub_panel("Forces MAE timeline")
+            labels = page.locator(panel + " .panel-plot .annotation")
+            peaks = page.locator(panel + " .peaks-toggle input")
+            caption = page.locator(panel + " .panel-caption-line")
+            await expect(labels).to_have_count(5)
+            await expect(peaks).to_be_checked()
+            await expect(caption).to_contain_text("Top 5 peaks")
+            # a distribution has nothing to label, so no switch
+            await expect(page.locator(_sub_panel("Forces MAE distribution") + " .peaks-toggle")).to_have_count(0)
+
+            await peaks.uncheck()
+            await expect(labels).to_have_count(0)
+            await expect(caption).not_to_contain_text("peaks")
+
+            await page.reload(wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            await expect(peaks).not_to_be_checked()
+            await expect(labels).to_have_count(0)
+
+            await peaks.check()
+            await expect(labels).to_have_count(5)
+        finally:
+            await browser.close()
+
+
+_Y_RANGE = """(sel) => document.querySelector(sel + ' .panel-plot')._fullLayout.yaxis.range.map(Number)"""
+
+
+async def _zoom_above_the_data(page, panel):
+    """Zoom to where no point is, so a double-click there cannot hit the curve."""
+    await page.evaluate(
+        """(sel) => { const el = document.querySelector(sel + ' .panel-plot');
+                     const [, hi] = el._fullLayout.yaxis.range;
+                     return Plotly.relayout(el, {'yaxis.range': [hi * 2, hi * 3]}); }""",
+        panel)
+
+
+async def test_web_double_clicking_a_labelled_timeline_goes_back_to_its_drawn_range(ffast_web_server):
+    """ADR 0063 follow-up: Plotly's default double-click switched a labelled
+    timeline to autorange, which counts the label arrows and squashed the curve."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            panel = _sub_panel("Forces MAE timeline")
+            await expect(page.locator(panel + " .panel-plot .annotation")).to_have_count(5)
+            drawn = await page.evaluate(_Y_RANGE, panel)
+            # A freshly drawn plot shows what it was drawn with: not a zoom to keep.
+            zoom = await page.evaluate(
+                "() => window.ffastApp._analysis._tabs.find((t) => t.spec.name === 'Basic Errors').zoom")
+            assert zoom == {}, zoom
+
+            await _zoom_above_the_data(page, panel)
+            assert await page.evaluate(_Y_RANGE, panel) != drawn
+            await page.locator(panel + " .panel-plot .nsewdrag").dblclick()
+            await page.wait_for_function(
+                "([sel, r]) => JSON.stringify(document.querySelector(sel + ' .panel-plot')"
+                "._fullLayout.yaxis.range.map(Number)) === JSON.stringify(r)",
+                arg=[panel, drawn], timeout=5000)
+
+            # Drawn again without its labels: a double-click gives the new range.
+            peaks = page.locator(panel + " .peaks-toggle input")
+            await peaks.uncheck()
+            await expect(page.locator(panel + " .panel-plot .annotation")).to_have_count(0)
+            await peaks.check()
+            await expect(page.locator(panel + " .panel-plot .annotation")).to_have_count(5)
+            redrawn = await page.evaluate(_Y_RANGE, panel)
+            await _zoom_above_the_data(page, panel)
+            await page.locator(panel + " .panel-plot .nsewdrag").dblclick()
+            await page.wait_for_function(
+                "([sel, r]) => JSON.stringify(document.querySelector(sel + ' .panel-plot')"
+                "._fullLayout.yaxis.range.map(Number)) === JSON.stringify(r)",
+                arg=[panel, redrawn], timeout=5000)
+
+            # A plot drawn without a set range still goes back to all its data.
+            density = _sub_panel("Forces MAE distribution")
+            await _zoom_above_the_data(page, density)
+            await page.locator(density + " .panel-plot .nsewdrag").dblclick()
+            await page.wait_for_function(
+                "(sel) => document.querySelector(sel + ' .panel-plot')._fullLayout.yaxis.autorange === true",
+                arg=density, timeout=5000)
+        finally:
+            await browser.close()
+
+
+# Page position of point `frame` of the first curve in the plot under `sel`.
+_POINT_XY = """([sel, frame]) => {
+  const el = document.querySelector(sel + ' .panel-plot');
+  const L = el._fullLayout, box = el.getBoundingClientRect();
+  return [box.left + L.xaxis._offset + L.xaxis.l2p(frame),
+          box.top + L.yaxis._offset + L.yaxis.l2p(el.data[0].y[frame])];
+}"""
+
+
+async def test_web_a_double_click_on_a_timeline_does_not_open_a_frame(ffast_web_server):
+    """ADR 0063 follow-up: the first click of a double-click opened the frame
+    under it and left the tab; a single click still opens it."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            panel = _sub_panel("Forces MAE timeline")
+            tab = page.locator("#tabbar .tab", has_text="Basic Errors")
+            await expect(tab).to_have_attribute("aria-selected", "true")
+            await page.locator(panel).scroll_into_view_if_needed()
+            x, y = await page.evaluate(_POINT_XY, [panel, 50])
+
+            await page.mouse.dblclick(x, y)
+            await page.wait_for_timeout(500)
+            await expect(tab).to_have_attribute("aria-selected", "true")
+
+            await page.mouse.click(x, y)
+            await expect(page.locator("#frame-label")).to_have_text("50 / 99")
+        finally:
+            await browser.close()
+
+
+# Each slot of a tab: its panel kinds, top and height on screen.
+_SLOT_BOXES = """(name) => window.ffastApp._analysis._tabs.find((t) => t.spec.name === name)
+  .slots.map((s) => { const r = s.el.getBoundingClientRect();
+    return [s.specs.map((x) => x.kind), Math.round(r.top), r.height]; })"""
+
+
+@pytest.mark.parametrize("width", [1440, 900])
+async def test_web_only_the_rows_with_peak_labels_grow(ffast_web_server, width):
+    """ADR 0063 follow-up: a labelled timeline made every row of its tab taller
+    by its labels' height, leaving the tables' rows mostly empty."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": width, "height": 900})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            await expect(page.locator(_sub_panel("Forces MAE timeline") + " .panel-plot .annotation")).to_have_count(5)
+            slots = await page.evaluate(_SLOT_BOXES, "Basic Errors")
+            timeline_tops = {top for kinds, top, _ in slots if "timeline" in kinds}
+            assert timeline_tops, slots
+            for kinds, top, height in slots:
+                if "timeline" in kinds:
+                    assert height > 300, slots
+                elif top not in timeline_tops:
+                    assert abs(height - 300) <= 2, (kinds, slots)
+            assert any("table" in kinds for kinds, top, _ in slots if top not in timeline_tops)
+            # and every row holds its panels: none reaches into the row below
+            for _, top, height in slots:
+                below = [t for _, t, _ in slots if t > top]
+                assert not below or top + height <= min(below), slots
+
+            if width == 1440:
+                # A set row height is a minimum: the labels' room still adds to it.
+                await page.evaluate(
+                    "() => { const a = window.ffastApp._analysis;"
+                    " const t = a._tabs.find((x) => x.spec.name === 'Basic Errors');"
+                    " a.placeCells({...t.spec, row_heights: [1, 1, 1, 1, 1]}); }")
+                slots = await page.evaluate(_SLOT_BOXES, "Basic Errors")
+                for kinds, top, height in slots:
+                    below = [t for _, t, _ in slots if t > top]
+                    assert not below or top + height <= min(below), slots
+                    if "timeline" in kinds:
+                        assert height > 300, slots
+        finally:
+            await browser.close()
+
+
 _SUBSETS = """() => [...window.ffastApp._datasets.entries()]
     .filter(([, m]) => m.is_sub).map(([fp, m]) => ({fp, name: m.name, n: m.n, active: m.active}))"""
 
@@ -3974,6 +5104,78 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
                 await browser.close()
 
 
+async def test_web_loading_a_session_that_does_not_exist_shows_an_error(ffast_web_server):
+    """ADR 0063 follow-up: a missing session folder used to report "Loaded session"."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Session…")
+            await page.locator("#path-input").fill("/nonexistent/x")
+            await page.locator("#path-ok").click()
+            status = page.locator("#status")
+            await expect(status).to_contain_text("Session load failed", timeout=15000)
+            await expect(status).to_contain_text("No saved session at /nonexistent/x")
+            await expect(status).to_have_class(re.compile(r"\berror\b"))
+            await expect(status).not_to_contain_text("Loaded session")
+        finally:
+            await browser.close()
+
+
+async def test_web_loading_a_prediction_the_server_already_holds_ends_the_loading_status(ffast_web_server):
+    """ADR 0063 follow-up: the server announces nothing for a prediction it
+    already holds, so "Loading prediction…" used to stay up for good."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, _ = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _file_menu(page, "Load Prediction…")
+            await page.locator("#fb-path").fill(str(PREDICTION_PATH.parent))
+            await page.locator("#fb-path").press("Enter")
+            await page.locator("#fb-list .fb-row", has_text="prediction.xyz").click()
+            await page.locator("#fb-load").click()
+            await expect(page.locator("#status")).to_have_text(
+                '"prediction.xyz" is already loaded', timeout=15000)
+        finally:
+            await browser.close()
+
+
+async def test_web_loading_a_dataset_the_server_already_holds_ends_the_loading_status(ffast_web_server):
+    """ADR 0063 follow-up: the server announces nothing new for a dataset it
+    already holds, so "Loading dataset.xyz…" used to stay up for good. A new
+    dataset still ends with "ready"."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+
+        async def load(name):
+            await _file_menu(page, "Load Dataset…")
+            await page.locator("#fb-path").fill(str(DATASET_PATH.parent))
+            await page.locator("#fb-path").press("Enter")
+            await page.locator("#fb-list .fb-row", has_text=name).click()
+            await page.locator("#fb-load").click()
+
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await load("dataset.xyz")
+            await expect(page.locator("#status")).to_have_text(
+                '"dataset.xyz" is already loaded', timeout=15000)
+            await load("prediction.xyz")   # a dataset the server does not hold yet
+            await expect(page.locator("#status")).to_contain_text(
+                'Dataset "prediction" ready', timeout=30000)
+        finally:
+            await browser.close()
+
+
 _RECORD_SENDS = """() => {
   const conn = window.ffastApp._conn;
   const send = conn.send.bind(conn);
@@ -3992,6 +5194,32 @@ async def _open_two_datasets(page, tmp_path, ws_port, web_port):
         ws_port, {dataset_fp}, ("LOAD_DATASET", (str(second), "ase (auto)"), {}))
     await _open_loupe(page, ws_port, web_port, dataset_fp)
     return dataset_fp, other["args"][0]
+
+
+async def test_web_a_prediction_for_a_dataset_not_on_screen_says_it_loaded(tmp_path):
+    """A new prediction for another dataset is not the "already loaded" case:
+    it ends its "Loading…" status as loaded, though it is not shown."""
+    async with _spawn_server() as (ws_port, web_port):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            try:
+                a_fp, b_fp = await _open_two_datasets(page, tmp_path, ws_port, web_port)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{b_fp}']").click()
+                await page.wait_for_function(
+                    "(fp) => window.ffastApp._main.current.datasetFp === fp", arg=b_fp)
+                await _file_menu(page, "Load Prediction…")
+                await page.locator("#fb-path").fill(str(PREDICTION_PATH.parent))
+                await page.locator("#fb-path").press("Enter")
+                await page.locator("#fb-list .fb-row", has_text="prediction.xyz").click()
+                await page.locator("#fb-target-ds").select_option(a_fp)
+                await page.locator("#fb-target-ds").dispatch_event("change")
+                await expect(page.locator("#fb-force-key")).to_have_value("MACE_forces")
+                await page.locator("#fb-load").click()
+                await expect(page.locator("#status")).to_have_text(
+                    'Prediction "prediction.xyz" loaded', timeout=15000)
+            finally:
+                await browser.close()
 
 
 async def test_web_going_back_to_a_dataset_reuses_its_view_and_clears_picks_in_the_view_left(tmp_path):

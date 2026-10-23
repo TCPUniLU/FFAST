@@ -147,6 +147,46 @@ class DatasetLoader(EventClass):
     loaded = False
     active = True
 
+    # The physical unit the user gave each dimension of this dataset's numbers
+    # ("energy" → "eV"). A dataset file declares none, so this starts empty and
+    # a window fills it in. It belongs to the loaded dataset: a view cut from
+    # it (a subset) has the same numbers, so it reads and writes its root's.
+    UNIT_DIMENSIONS = ("energy", "force")
+    units = None
+
+    def rootDataset(self):
+        """The loaded dataset this one was cut from, or itself."""
+        dataset = self
+        while getattr(dataset, "parent", None) is not None:
+            dataset = dataset.parent
+        return dataset
+
+    def getUnits(self) -> dict:
+        """{dimension: unit} for the dimensions that have one."""
+        return dict(self.rootDataset().units or {})
+
+    def setUnits(self, units: dict):
+        """Replace the units (an empty unit removes it) and announce the change."""
+        clean = {}
+        for dimension, unit in (units or {}).items():
+            if dimension not in self.UNIT_DIMENSIONS:
+                raise ValueError(f"Unknown unit dimension: {dimension!r}")
+            unit = str(unit or "").strip()
+            if unit:
+                clean[dimension] = unit
+        root = self.rootDataset()
+        if clean == (root.units or {}):
+            return
+        root.units = clean
+        if root.loaded:
+            root.eventPush("DATASET_STATE_CHANGED", root.fingerprint)
+
+    def setUnit(self, dimension, unit):
+        """Set one dimension's unit; an empty one removes it."""
+        units = self.getUnits()
+        units[dimension] = unit
+        self.setUnits(units)
+
     def getElementsName(self):
         return [zIntToZStr[x] for x in self.getElements()]
 
@@ -371,6 +411,7 @@ class DatasetLoader(EventClass):
             **self.lineageMeta(),
             "active": bool(getattr(self, "active", True)),
             "frozen": bool(getattr(self, "frozen", False)),
+            "units": dict(self.units or {}),
         }
 
     def lineageMeta(self) -> dict:
@@ -500,6 +541,7 @@ class FlatDatasetLoader(DatasetLoader):
             "parent_frames": None,
             "active": bool(getattr(self, "active", True)),
             "frozen": False,
+            "units": dict(self.units or {}),
         }
 
     def to_transfer_arrays(self) -> dict:

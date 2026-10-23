@@ -21,7 +21,7 @@ import { createExtractPane, canExtractFrom } from './panes/extract.js';
 import { createAlignPane } from './panes/align.js';
 import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
-import { Rail } from './rail.js';
+import { Rail, framesText } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
@@ -29,7 +29,10 @@ import { metricPanel, plotTarget, toSaved } from './tab_edit.js';
 import { MetricOps } from './metric_ops.js';
 import { sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
-import { askDialog, textDialog } from './dialogs.js';
+import { askDialog, textDialog, trapFocus } from './dialogs.js';
+import { applyStaticIcons, icon } from './icons.js';
+import { initAppearance } from './appearance.js';
+import { datasetUnits } from './units.js';
 import { TabEditor } from './edit_mode.js';
 import { bindMenu, runAction, whyUnavailable } from './actions.js';
 import { loadLayout, loadMainView, saveLayout, saveMainView } from './layout_state.js';
@@ -47,11 +50,11 @@ import { loadRecentServers, rememberServer, saveRecentServers } from './recent_s
  */
 const PICK_TOOLS = {
   // `section`: the sidebar section arming the tool opens (ADR 0055).
-  info:    { label: 'Info',    icon: '📐', multiselect: 4,     cycle: true },
-  bonds:   { label: 'Bonds',   icon: '🔗', multiselect: 2, section: 'Bonds' },
-  align:   { label: 'Align',   icon: '△', multiselect: 3, section: 'Alignment' },
-  forces:  { label: 'Force',   icon: '➤', multiselect: 10000, rectangle: true, section: 'Force Vectors' },
-  extract: { label: 'Extract', icon: '✂', multiselect: 10000, rectangle: true, section: 'Extract Subset' },
+  info:    { label: 'Info',    icon: 'info', multiselect: 4,     cycle: true },
+  bonds:   { label: 'Bonds',   icon: 'bond', multiselect: 2, section: 'Bonds' },
+  align:   { label: 'Align',   icon: 'align', multiselect: 3, section: 'Alignment' },
+  forces:  { label: 'Force',   icon: 'force', multiselect: 10000, rectangle: true, section: 'Force Vectors' },
+  extract: { label: 'Extract', icon: 'scissors', multiselect: 10000, rectangle: true, section: 'Extract Subset' },
 };
 
 /** What each sidebar section is for, behind its "?" (ADR 0055). */
@@ -62,7 +65,8 @@ const SECTION_HELP = {
     + 'Click an input to put it in the formula. Try computes on the whole dataset without saving; '
     + 'Save keeps the metric on the server for every window.',
   'Camera': 'Where you look from. Drag to orbit, scroll to zoom. XY, XZ and YZ snap to an '
-    + 'axis view; "Exact angles" sets the angles by number.',
+    + 'axis view; "Exact angles" sets the angles by number. '
+    + 'Keys: ←/→ frame, Space play, Esc puts down a pick tool, / search.',
   'Display': 'How atoms are drawn. Hide atoms by index (0 1 2) or element (C, -H); '
     + 'highlight atoms by index.',
   'Bonds': 'Dynamic bonds follow atom distances in every frame. Fixed bonds use your own '
@@ -80,7 +84,7 @@ const SECTION_HELP = {
 const HINTS = {
   'no-prediction': [
     ['Load a prediction: ', 'File ▸ Load Prediction…'],
-    ['Quick style ', 'Force error'],
+    ['Arm a pick tool and click atoms', ''],
     ['Find any setting with the search box', ''],
   ],
   'with-prediction': [
@@ -92,6 +96,8 @@ const HINTS = {
 
 export class FFastApp {
   constructor() {
+    applyStaticIcons();
+    initAppearance(() => this._analysis?.rerenderAll());
     this._conn = null;
     // The main view (ADR 0056): the one visualization view the rail drives,
     // drawn by every linked 3D panel. Its renderers come and go with the
@@ -246,6 +252,7 @@ export class FFastApp {
       onSelectTab: (id) => this._selectTab(id),
       onSub: (o) => this._onSub(o),
       onPointFrame: (o) => this._onPlotPoint(o),
+      onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
     });
     this._applyLayout([]);
   }
@@ -337,8 +344,12 @@ export class FFastApp {
     if (!tab) return;
     this._activeTab = id;
     queueMicrotask(() => this._syncTabButtons());
-    for (const el of document.querySelectorAll('#tabbar .tab'))
-      el.classList.toggle('active', el.dataset.tab === id);
+    for (const el of document.querySelectorAll('#tabbar .tab')) {
+      const on = el.dataset.tab === id;
+      el.classList.toggle('active', on);
+      el.setAttribute('aria-selected', String(on));
+      el.tabIndex = on ? 0 : -1;   // one tab stop; the arrow keys move along the tabs
+    }
     for (const el of document.querySelectorAll('#tabpanels .tabpanel'))
       el.classList.toggle('active', el.id === `panel-${id}`);
 
@@ -400,6 +411,15 @@ export class FFastApp {
     const byId = (x) => document.getElementById(x);
     byId('chrome3d').append(byId('pick-bar'), byId('loupe-controls'), byId('sidebar-resize'),
       byId('loupe-sidebar'), byId('overlay'), byId('hint-bar'));
+    this._attachLegend();
+  }
+
+  /** The colour legend belongs to the focused 3D panel's viewport; with no 3D
+   * panel on screen it is parked with the other 3D chrome. */
+  _attachLegend() {
+    const legend = this._panes?.colorBy.legend;
+    if (!legend) return;
+    (this._activePanel ? this._activePanel.viewport : document.getElementById('chrome3d')).append(legend);
   }
 
   /** Point the 3D controls at `panel`: an armed pick tool moves to it, and so
@@ -409,6 +429,7 @@ export class FFastApp {
     this._activePanel?.pick?.disarm();
     this._activePanel?.viewport.parentElement?.classList.remove('focused');
     this._activePanel = panel;
+    this._attachLegend();
     const view = panel?.independent || null;
     if (!keepView && view !== this._focusedIndependent) this._switchFocusedView(view);
     this._syncSidebarTitle();
@@ -493,6 +514,7 @@ export class FFastApp {
     // Playback (issue 08): prev/next/play-pause + FPS/skip, response-synced.
     document.getElementById('prev-frame-btn').addEventListener('click', () => this._stepFrame(-1));
     document.getElementById('next-frame-btn').addEventListener('click', () => this._stepFrame(1));
+    this._initShortcuts();
     document.getElementById('play-pause-btn').addEventListener('click', () => this._togglePlayback());
     this._bindPlaybackPop();
 
@@ -653,14 +675,16 @@ export class FFastApp {
 
   async _removeTab(name, how) {
     const reset = how === 'reset';
+    const yes = reset ? 'Confirm' : 'Delete';   // the red button; focus starts on Cancel
     const answer = await askDialog({
       title: reset ? 'Reset to original' : 'Delete tab',
       message: reset
         ? `Reset ${name} to the original? Your edited version is deleted.`
         : `Delete ${name}? Its file on the server is deleted.`,
-      buttons: ['Cancel', reset ? 'Reset' : 'Delete'],
+      buttons: ['Cancel', yes],
+      danger: yes,
     });
-    if (answer === 'Reset' || answer === 'Delete')
+    if (answer === yes)
       this._reportTab(await this._tabOps.remove(name), reset ? 'Reset' : 'Deleted');
   }
 
@@ -807,6 +831,8 @@ export class FFastApp {
       onPredictionChange: (modelKey) => this._sendSetParameter('ffast.atom_color', 'prediction_ref', modelKey),
       onColormapChange: (cm) => this._sendSetParameter('ffast.atom_color', 'colormap', cm),
       onMetricParam: (key, value) => this._sendSetParameter('ffast.atom_color', key, value),
+      unitsOf: () => datasetUnits(this._focusedDatasetFp(), this._datasets),
+      onSetUnit: (dimension, unit) => this._setDatasetUnit(this._focusedDatasetFp(), dimension, unit),
     });
 
     const metricsPane = createMetricsPane(sidebarEl, {
@@ -879,6 +905,7 @@ export class FFastApp {
     });
 
     this._panes = { colorBy, metrics: metricsPane, camera, display, bonds, forces, extract, export: exportPane, align };
+    this._attachLegend();
     // The rich look sizes ball-and-stick atoms from the Atom size setting of
     // the view it draws.
     this._mainView.atomScale = () => (this._main.current?.settings.display.atomSize ?? display.atomScale()) || 1;
@@ -914,7 +941,6 @@ export class FFastApp {
     document.getElementById('content').classList.toggle('sidebar-hidden', hidden);
     const btn = document.getElementById('sidebar-toggle');
     btn.setAttribute('aria-pressed', String(hidden));
-    btn.textContent = hidden ? '◂ Settings' : 'Settings ▸';
     btn.title = hidden ? 'Show the settings sidebar' : 'Hide the settings sidebar';
     if (remember) saveLayout({ sidebarHidden: hidden });
   }
@@ -1129,11 +1155,14 @@ export class FFastApp {
     msg.classList.toggle('hidden', !message);
     this._renderRecentServers();
     document.getElementById('conn-dialog').classList.remove('hidden');
+    this._connUntrap ||= trapFocus(document.getElementById('conn-dialog'));
     const focus = message && /token/i.test(message) ? 'token-input' : 'ws-url';
     document.getElementById(focus).focus();
   }
 
   _closeConnDialog() {
+    this._connUntrap?.();
+    this._connUntrap = null;
     document.getElementById('conn-dialog').classList.add('hidden');
   }
 
@@ -1174,6 +1203,7 @@ export class FFastApp {
       // if this._conn were still null then, _openView()'s guard would bail
       // and the view would never open.
       this._conn = conn;
+      this._readyStatus = null;
 
       // Metric channel (ADR 0045 Phase 3). The metric client registers the
       // METRIC_RESULT handler; build it before connect so buffered
@@ -1205,7 +1235,7 @@ export class FFastApp {
       // to arrive — good enough for a single-user session (ADR 0044: shared
       // workspace, not multi-tenant) and gives issue 21 a real completion
       // signal instead of the previous silent console.debug-only handling.
-      conn.on(IN.TASK_DONE,    (kw) => console.debug('TASK_DONE', kw));
+      conn.on(IN.TASK_DONE,    (kw) => { console.debug('TASK_DONE', kw); this._browser.onTaskDone(); });
       conn.on(IN.TASK_FAILED,  (kw) => console.warn('TASK_FAILED', kw));
       conn.on(IN.DATASET_LOADED, () => {});
       conn.on(IN.MODEL_LOADED,   () => {});
@@ -1223,10 +1253,18 @@ export class FFastApp {
       conn.on(IN.SESSION_SAVED,  (kw) => this._sessionOps.onSessionResult('save', kw));
       conn.on(IN.SESSION_LOADED, (kw) => this._sessionOps.onSessionResult('load', kw));
       conn.on(IN.SESSION_METRICS, (kw) => this._offerSessionMetrics(kw));
+      // A load that failed: end the "Loading <file>…" status with the reason.
+      conn.on(IN.LOAD_FAILED, (kw) => {
+        const name = String(kw.path || '').split(/[\\/]/).pop();
+        this._browser.settled(kw.kind);
+        this._setStatus(`Could not load ${name}: ${kw.error}`, 'error');
+      });
 
       await conn.connect();
 
-      this._setStatus(`Connected (${conn.role})`, 'connected');
+      // The server replays its datasets while connecting; the last one's "ready"
+      // stays. The role is in the button's title.
+      this._setStatus(this._readyStatus || 'Connected', 'connected');
       document.getElementById('disconnect-btn').disabled = false;
       saveRecentServers(rememberServer(loadRecentServers(), wsUrl));   // never the token
       this._syncEmptyState();
@@ -1302,6 +1340,16 @@ export class FFastApp {
   _onDatasetMeta(fp, meta) {
     const before = this._datasets.get(fp);
     this._datasets.set(fp, meta);
+    if (!before && !meta.is_sub) {
+      this._browser.settled('dataset');   // its "ready" below ends the "Loading…"
+      this._readyStatus = `Dataset "${meta.name || fp.slice(0, 8)}" ready · ${framesText(meta.n)}`;
+      // It replaces a "Loading…" that is over, not a result the user should
+      // still read, such as "Loaded session from …", which can arrive first.
+      const shown = document.getElementById('status').textContent;
+      if (/^(Loading|Connect|Dataset ".*" ready|Prediction ".*" ready)/.test(shown))
+        this._setStatus(this._readyStatus, 'connected');
+    }
+    this._panes?.colorBy.refreshUnits();
     // An independent panel on a subset whose Sub was unticked goes to its
     // parent, at the same structure, as the main view does.
     if (meta.active === false && meta.parent) {
@@ -1335,6 +1383,9 @@ export class FFastApp {
   _onModelMeta(fp, meta) {
     // meta = {name, dataset_fingerprints}. Fired on connect-replay and after
     // a LOAD_PREDICTION completes (the ghost model registers its forces cache).
+    // A model new to this window ends a pending prediction load, wherever it
+    // applies; only a duplicate announces nothing (RemoteBrowser.onTaskDone).
+    const loaded = !this._models.has(fp) && this._browser.settled('prediction');
     this._models.set(fp, meta || {});
     // Auto-select a freshly loaded prediction that applies to the current
     // dataset and refresh the view so its force overlay appears. A live
@@ -1348,6 +1399,8 @@ export class FFastApp {
       this._setStatus(`Prediction "${meta.name || fp.slice(0,8)}" ready`, 'connected');
       if (this._activePanel) this._openView();
       this._syncAnalysisContext();
+    } else if (loaded) {
+      this._setStatus(`Prediction "${meta?.name || fp.slice(0,8)}" loaded`, 'connected');
     }
     this._panes?.forces.refreshModels();
     this._panes?.colorBy.refreshModels(this._models);
@@ -1364,6 +1417,15 @@ export class FFastApp {
     if (meta?.parent_frames && !meta.frozen)
       return [{ id: 'dataset-freeze', label: 'Freeze', run: () => this._freezeSubset(fp), unavailable: why }];
     return [{ id: `${kind}-delete`, label: 'Delete…', run: () => this._deleteObject(kind, fp), unavailable: why }];
+  }
+
+  /** Name the unit of a dataset's energies or forces (a subset names its
+   * dataset's). The server announces the dataset again to every window. */
+  _setDatasetUnit(fp, dimension, unit) {
+    if (!fp) return;
+    const why = this._needsControl();
+    if (why) { this._setStatus(why, 'error'); return; }
+    this._conn.send(OUT.SET_DATASET_UNIT, { fingerprint: fp, dimension, unit });
   }
 
   /** Keep a live subset's frames as a frozen subset; the live one carries on
@@ -1395,6 +1457,7 @@ export class FFastApp {
       title: dataset ? 'Delete dataset' : 'Delete prediction',
       message: `Delete ${name}?${also}`,
       buttons: ['Cancel', 'Delete'],
+      danger: 'Delete',
     });
     if (answer !== 'Delete' || this._needsControl()) return;
     this._deleting.add(fp);
@@ -1747,11 +1810,12 @@ export class FFastApp {
       const btn = document.createElement('button');
       btn.className = 'pick-tool-btn';
       btn.dataset.tool = id;
-      const icon = document.createElement('span');
-      icon.className = 'pick-tool-icon';
-      icon.textContent = t.icon;
-      btn.append(icon, t.label);
+      const glyph = document.createElement('span');
+      glyph.className = 'pick-tool-icon';
+      glyph.innerHTML = icon(t.icon);
+      btn.append(glyph, t.label);
       btn.title = `${t.label} pick tool`;
+      btn.setAttribute('aria-pressed', 'false');   // a toggle: armed or not
       btn.addEventListener('click', () => this._setActiveTool(this._activeTool === id ? null : id));
       toolbar.appendChild(btn);
     }
@@ -1764,8 +1828,10 @@ export class FFastApp {
   _setActiveTool(id) {
     this._activeTool = id;
     this._clearPicks();   // switching tools starts a fresh picked set
-    for (const btn of document.querySelectorAll('#pick-toolbar .pick-tool-btn'))
+    for (const btn of document.querySelectorAll('#pick-toolbar .pick-tool-btn')) {
       btn.classList.toggle('active', btn.dataset.tool === id);
+      btn.setAttribute('aria-pressed', String(btn.dataset.tool === id));
+    }
     const pick = this._activePanel?.pick;
     if (id) {
       pick?.arm({ id, ...PICK_TOOLS[id] });
@@ -2217,9 +2283,42 @@ export class FFastApp {
     this._setFrame(this._currentFrame() + direction * (1 + this._videoSkipFrames()));
   }
 
+  /** Four shortcuts (ADR 0063): ←/→ step a frame, Space plays or pauses, Esc
+   * puts down the armed pick tool, / searches the settings. They are ignored
+   * while typing, while a dialog is open, and on a control that uses the key. */
+  _initShortcuts() {
+    document.addEventListener('keydown', (e) => {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target;
+      if (el.closest?.('input, textarea, select, [contenteditable]')) return;
+      if (document.querySelector('.warning-modal:not(.hidden), #fb-modal:not(.hidden), #path-modal:not(.hidden), #unit-popover')) return;
+      const click = (id) => { e.preventDefault(); document.getElementById(id).click(); };
+      // The frame, play and search keys act on the 3D controls, which a tab
+      // without a 3D panel keeps parked out of sight (_parkChrome).
+      const parked = document.getElementById('chrome3d').contains(document.getElementById('loupe-controls'));
+      if (parked && ['ArrowLeft', 'ArrowRight', ' ', '/'].includes(e.key)) return;
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        if (el.closest?.('[role=tab], [role=radio], [role=menuitem]')) return;
+        click(e.key === 'ArrowLeft' ? 'prev-frame-btn' : 'next-frame-btn');
+      } else if (e.key === ' ') {
+        if (el.closest?.('button, a, [role=button], [role=tab], [role=radio], [role=menuitem]')) return;
+        click('play-pause-btn');
+      } else if (e.key === 'Escape') {
+        if (this._activeTool) this._setActiveTool(null);
+      } else if (e.key === '/') {
+        e.preventDefault();
+        if (document.getElementById('content').classList.contains('sidebar-hidden')) this._setSidebarHidden(false);
+        document.getElementById('sidebar-search').focus();
+      }
+    });
+  }
+
   _togglePlayback() {
     this._playing = !this._playing;
-    document.getElementById('play-pause-btn').textContent = this._playing ? '⏸' : '▶';
+    const btn = document.getElementById('play-pause-btn');
+    btn.innerHTML = icon(this._playing ? 'pause' : 'play');
+    btn.title = this._playing ? 'Pause' : 'Play';   // the name says what a press does
+    btn.setAttribute('aria-label', btn.title);
     if (this._playing) this._playLoop();
   }
 
@@ -2301,5 +2400,6 @@ export class FFastApp {
     const el = document.getElementById('status');
     el.textContent = text;
     el.className = cls;
+    el.title = this._conn?.role ? `Connection… (${this._conn.role})` : 'Connection…';
   }
 }

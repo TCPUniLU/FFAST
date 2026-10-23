@@ -208,6 +208,23 @@ def test_requestDatasetLoad_no_session_falls_back_to_local_task():
     )]
 
 
+def test_a_queued_load_that_raises_reports_the_error_and_still_fails():
+    env = _fake_env()
+    coord = LoadingCoordinator(env)
+
+    def boom(path, datasetType, taskID=None, **kw):
+        raise IndexError("no frames")
+
+    coord.loadDataset = boom
+    errors = []
+    coord.taskLoadDataset("/d.xyz", "ase (auto)", on_error=errors.append)
+
+    (task_args, task_kwargs), = env._calls["tasks"]
+    with pytest.raises(IndexError):
+        task_args[0](*task_kwargs["args"], **task_kwargs["kwargs"], taskID=1)
+    assert [str(e) for e in errors] == ["no frames"]
+
+
 def test_remoteSession_returns_none_without_loop():
     env = _fake_env()
     env.remote.serverConnection = _FakeSession()
@@ -832,12 +849,17 @@ def test_loadPrepredictedDataset_wrong_file_length_is_rejected(tmp_path):
     ds = _FakeDataset(np.zeros((10,)))          # dataset has 10 frames, file has 3
     env = _file_env(ds)
 
+    errors = []
     LoadingCoordinator(env).loadPrepredictedDataset(
         path, "ds-fp",
-        selected_energy_key="ref_energy", selected_force_key="ref_forces")
+        selected_energy_key="ref_energy", selected_force_key="ref_forces",
+        on_error=errors.append)
 
     assert env.data.stored == []
     assert env.objects.registered == {}
+    # The failure is logged and returned from, not raised; the caller still
+    # hears of it (the server tells the window that asked).
+    assert errors == ["it does not match the selected dataset"]
 
 
 # ── in-file prediction columns over a real file ─────────────────────────────

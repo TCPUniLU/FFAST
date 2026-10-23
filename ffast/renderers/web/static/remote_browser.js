@@ -13,6 +13,8 @@
  */
 
 import { OUT } from './events.js';
+import { icon as drawIcon } from './icons.js';
+import { trapFocus } from './dialogs.js';
 
 /** Join a server-side directory and an entry name. Posix separators: the paths
  *  come from the server, so they are formatted in its convention, not the
@@ -85,6 +87,7 @@ export class RemoteBrowser {
     this._parent = null;      // parent abspath, or null at root
     this._home = null;        // server user's home directory
     this._selected = null;    // selected filename within _path
+    this._pending = null;   // {kind, name}: a load with no outcome yet
   }
 
   /** Wire the modal's own controls. Called once, at app setup. */
@@ -99,6 +102,16 @@ export class RemoteBrowser {
     $('fb-modal').addEventListener('click', (e) => {
       if (e.target.id === 'fb-modal') this.close();
     });
+    $('fb-modal').addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') this.close();
+    });
+    // The path can be typed: Enter goes there.
+    $('fb-path').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const path = $('fb-path').value.trim();
+      if (path) this._navigate(path);
+    });
   }
 
   /** @param {'dataset'|'prediction'} mode */
@@ -110,6 +123,8 @@ export class RemoteBrowser {
     $('fb-prediction-fields').style.display = isPred ? 'inline-flex' : 'none';
     if (isPred) this._populatePredictionTargets();
     $('fb-modal').classList.remove('hidden');
+    this._untrap ||= trapFocus($('fb-modal'));
+    this._focusFirstRow = true;   // once the listing arrives (_render)
     this._selected = null;
     $('fb-load').disabled = true;
     // null path → server starts at its home directory
@@ -117,6 +132,8 @@ export class RemoteBrowser {
   }
 
   close() {
+    this._untrap?.();
+    this._untrap = null;
     $('fb-modal').classList.add('hidden');
   }
 
@@ -201,8 +218,8 @@ export class RemoteBrowser {
       const row = document.createElement('div');
       row.className = `fb-row ${e.is_dir ? 'dir' : 'file'}`;
       const icon = document.createElement('span');
-      icon.className = 'icon';
-      icon.textContent = e.is_dir ? '📁' : '📄';
+      icon.className = 'fb-icon';
+      icon.innerHTML = drawIcon(e.is_dir ? 'folder' : 'file');
       const name = document.createElement('span');
       name.className = 'name';
       name.textContent = e.name;
@@ -213,6 +230,10 @@ export class RemoteBrowser {
         size.textContent = formatSize(e.size);
         row.append(size);
       }
+      row.tabIndex = 0;
+      row.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); row.click(); }
+      });
       if (e.is_dir) {
         row.addEventListener('click', () => this._navigate(joinPath(this._path, e.name)));
       } else {
@@ -223,6 +244,11 @@ export class RemoteBrowser {
         });
       }
       list.appendChild(row);
+    }
+    // A fresh dialog opens with the first row focused, so the keyboard can pick.
+    if (this._focusFirstRow) {
+      this._focusFirstRow = false;
+      list.querySelector('.fb-row')?.focus();
     }
   }
 
@@ -252,6 +278,24 @@ export class RemoteBrowser {
     });
   }
 
+  /** A new dataset or model arrived, or a load failed: the "Loading…" status
+   * of a pending load of that `kind` ('dataset' or 'prediction') is replaced,
+   * so a later task end must not touch it. True if one was pending. */
+  settled(kind) {
+    if (this._pending?.kind !== kind) return false;
+    this._pending = null;
+    return true;
+  }
+
+  /** A task ended. A dataset or prediction the server already holds announces
+   * nothing new, so a task that ends while a load is still pending is that
+   * duplicate: end its status. */
+  onTaskDone() {
+    if (!this._pending) return;
+    this._ports.setStatus(`"${this._pending.name}" is already loaded`, 'connected');
+    this._pending = null;
+  }
+
   _load() {
     if (!this._selected) return;
     const path = joinPath(this._path, this._selected);
@@ -268,11 +312,13 @@ export class RemoteBrowser {
         [path, dsFp],
       );
       this._ports.setStatus(`Loading prediction ${this._selected}…`, 'connected');
+      this._pending = { kind: 'prediction', name: this._selected };
     } else {
       const typ = $('fb-type').value;
       // LOAD_DATASET reads args=[path, datasetType]; "ase (auto)" auto-detects keys
       this._ports.send(OUT.LOAD_DATASET, {}, [path, typ]);
       this._ports.setStatus(`Loading ${this._selected}…`, 'connected');
+      this._pending = { kind: 'dataset', name: this._selected };
     }
     this.close();
   }

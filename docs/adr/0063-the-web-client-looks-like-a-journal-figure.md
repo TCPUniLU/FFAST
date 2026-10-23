@@ -1,4 +1,5 @@
-Status: Proposed 2026-10-21. Decided after the design critique of the web client
+Status: Accepted 2026-10-22, built 2026-10-22 (branch `figure`). Proposed 2026-10-21.
+Decided after the design critique of the web client
 (score 20/40) and the direction round that followed. The critique, the sketches
 and the design brief are not in git (`.impeccable/` is ignored); they live only in
 the main checkout:
@@ -525,4 +526,99 @@ Files: `index.html` (CSS), `analysis.js` (`_sizeGrid`), tests.
 
 ## As built
 
-(Filled in at step 11.)
+Steps 0 to 11 were built in order, one commit each, on branch `figure`. What
+differed from the steps, and what was added:
+
+**Added, and not in the steps**
+
+- **A "Peaks" checkbox on each one-series timeline** hides its peak labels, the
+  headroom they need and the caption's peak sentence. Asked for by the user; its own
+  commit. It is kept per panel for a reload in the tab's browser state
+  (`sessionStorage`, like zoom and SUB), never in a session file.
+- **Peak labels are laid out from their own text.** The step's fixed headroom
+  (1.45 × the highest value) left about 50 px for a label of about 100 px, so labels
+  were cut off. Plotly also centres a turned label on the far end of its arrow, so
+  low peaks' labels crossed the x axis. Now each arrow ends half a label's length
+  above its peak; the plot's top margin is set from the longest label (estimated
+  from the character count, 0.6 em per character); the y range is set from the data
+  alone, because Plotly would count the arrow ends and flatten the curve; and the
+  plot grows by the room the labels take, with the tab's rows (`--row-min`), so the
+  curve keeps its size. Side effects: every row of a tab with labelled timelines was
+  about 120 px taller, and the explicit y range was recorded like a zoom. Changed
+  after the build: a plot remembers the ranges it was drawn with, which are not a
+  zoom, and a double-click goes back to them (Plotly's `doubleClick: 'reset'`), not
+  to an autorange that counts the label arrows. Also changed: only the rows that
+  hold peak labels grow. `--row-min` is gone; `_sizeRows` writes each row's size
+  (300 px or the tab's set height, plus its labels' room), because the grid scrolls
+  and a row there does not grow to fit what is in it.
+- **`PEAK_HEADROOM`** existed for one commit (2.0) and was replaced by the above.
+- **Journal page is a print view**, added after the build. Besides the light
+  tokens, it hides the figure area's controls: the tab's control bar, the Peaks and
+  Sub checkboxes, the Smoothing inputs, Plotly's toolbar and any other control in a
+  panel title (edit mode keeps what it needs). A unit is plain text, not a link to
+  name it, and captions are set in serif. The 3D view is drawn on white; this is
+  local to the browser, like the switch itself, and an export keeps its own
+  background. The rail, top bar, tab bar and 3D sidebar stay as they are. Later,
+  chosen from screenshots: no card round a panel (no border, square corners), and
+  no 3D pick bar or hint bar; the panel titles and the playback strip stay. The
+  pick bar holds the sidebar's Settings button, so the sidebar cannot be hidden
+  there.
+
+**Where a step's text was followed differently**
+
+- **Step 4.** The caption line is the card's last row (below the Smoothing inputs),
+  as in the sketch. A panel with an empty axis title has no caption. The letter over
+  a 3D view ignores the pointer, or it caught orbit and focus clicks. An independent
+  panel's corner caption moves right of the letter. A "[unit]" in a caption is
+  clickable; `unitRoleAt` now accepts any element with `data-unit-role`.
+- **Step 5.** The rule "at least as high as each neighbour" made every frame of a
+  level stretch a peak, so a flat series got five piled-up labels. Changed after the
+  build: a peak must be higher than the frame before it and at least as high as the
+  one after, so a level stretch gives one peak, at its first frame, and a series of
+  one repeated value gives none. Opening a frame moves to the 3D tab, so the visited
+  marks are drawn before the frame is opened. The labels do not use
+  `yanchor: 'bottom'`: each arrow ends half a label's length above its peak, and
+  the turned label is centred there (see "Peak labels are laid out from their own
+  text").
+- **Step 7.** The Journal tokens are set on `.analysis-grid`, not `#tabpanels`: the
+  3D sidebar and pick bar are inside `#tabpanels` and would have turned white. The
+  old token names are written again there, because an alias on `:root` keeps its
+  dark value. `plotTheme()` reads the tokens from the first `.analysis-grid`.
+  Only the tab on screen is drawn again when a setting changes (`rerenderAll`);
+  other tabs are drawn when shown. Everything inside a 3D viewport in the figure
+  area takes the Journal tokens with the grid: the colour legend and panel letter,
+  and also the hint bar (`#hint-bar`), the load overlay (`#overlay`) and an
+  independent panel's caption and note (`.panel-caption`, `.panel-note`). Since
+  Journal page became a print view, the 3D view itself is drawn on white too.
+- **Step 8.** The ADR names only the Delete callers for `danger`. The "Reset to
+  original" tab dialog deletes the user's edited copy too, so it also passes it: its
+  buttons are Cancel and Confirm (not Reset), Confirm is red and focus starts on
+  Cancel. Esc closes the path prompt from any control in it.
+- **Step 9.** The "ready" status replaces a finished Loading, Connecting or
+  Connected, or an earlier "ready", but never a result such as "Loaded session from
+  …", which the server's dataset messages can follow. After connecting, the last
+  "ready" text is shown instead of a bare "Connected". One frame reads "1 frame".
+  A subset gets no "ready" status.
+- **Step 10.** The step says the Basic Errors grid has one column at 1024 px. Its
+  own rule does not give that: the grid is 804 px wide there and two 360 px columns
+  fit, with no sideways scroll. One column starts below about 970 px of window
+  width. A tab that sets its own column widths keeps them. A narrow grid drops the
+  tab's `row_heights` too. One column starts only below 730 px of grid width (two
+  360 px columns and the gap), so a tab with three or more columns still scrolls
+  sideways from there up to the width its columns need (1100 px for three).
+  Later, chosen from screenshots: in a one-column grid a 3D panel's row is 460 px,
+  not 300, and the hint bar is not shown, because at 300 px it and the colour
+  legend covered the molecule (Compare at 1024 px).
+
+**Other**
+
+- Step 3's gear icon reads a little like a sun at small sizes.
+- Step 6 also changed `test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_screen`,
+  which expected the saved colormap `force_error` after the Force error style.
+- Later, chosen from screenshots: the Force error style uses `force_error` again
+  (the desktop app's blue → green → yellow → red), not `cividis`. On the white
+  Journal 3D view cividis's high end, pale yellow, was the faintest colour; red
+  reads there. Red and green are hard to tell apart for some readers; the colour
+  legend gives the values. `cividis` stays in the Colormap list.
+- Not built, as the ADR says: Copy figure, atom rings, a Journal 3D background,
+  peak labels on several series, Qt.

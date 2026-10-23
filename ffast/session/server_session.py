@@ -158,13 +158,14 @@ class ServerSession:
             RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
-            CancelTryMetricRequest, AddSessionMetricsRequest,
+            CancelTryMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
             control.LOAD_MODEL:                 _Route(self._on_load_model, ["path", "model_type"], LoadModelRequest),
             control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint"], DeleteObjectRequest),
             control.FREEZE_SUBSET:              _Route(self._on_freeze_subset, ["fingerprint"], FreezeSubsetRequest),
+            control.SET_DATASET_UNIT:           _Route(self._on_set_dataset_unit, ["fingerprint", "dimension", "unit"], SetDatasetUnitRequest),
             control.CREATE_SUBSET:              _Route(self._on_create_subset, ["parent_fingerprint", "indices"], CreateSubsetRequest),
             control.DECLARE_SUBSET:             _Route(self._on_declare_subset, ["parent_fingerprint", "?indices"], DeclareSubsetRequest),
             control.REQUEST_SUBDATASET_ARRAYS:  _Route(self._on_request_subdataset_arrays, ["fingerprint"], RequestSubdatasetArraysRequest),
@@ -351,7 +352,9 @@ class ServerSession:
             kwargs["prediction_keys"] = [
                 tuple(k) for k in kwargs["prediction_keys"]
             ]
-        self.env.taskLoadDataset(path, dataset_type, **kwargs)
+        self.env.taskLoadDataset(
+            path, dataset_type, on_error=self._load_failed("dataset", path), **kwargs
+        )
 
     async def _on_load_model(self, path, model_type, **kwargs) -> None:
         self.env.taskLoadModel(path, model_type)
@@ -364,6 +367,19 @@ class ServerSession:
         freeze button does. The frozen subset announces itself to every
         window like any new dataset; the live one carries on with its plot."""
         self.env.freezeSubDataset(fingerprint)
+
+    async def _on_set_dataset_unit(self, fingerprint, dimension, unit, **kwargs) -> None:
+        """Name the unit of a dataset's energies or forces. The dataset (the
+        one a subset was cut from) announces itself again to every window
+        through ``DATASET_STATE_CHANGED`` → ``REMOTE_DATASET_META``."""
+        dataset = self.env.datasets.get(fingerprint)
+        if dataset is None:
+            logger.warning("SET_DATASET_UNIT: dataset %r not found", fingerprint)
+            return
+        try:
+            dataset.setUnit(dimension, unit)
+        except ValueError as exc:
+            logger.warning("SET_DATASET_UNIT: %s", exc)
 
     async def _on_create_subset(self, parent_fingerprint, indices, **kwargs) -> None:
         """Extract an atom-filtered subset dataset (ADR 0045 issue 12).
@@ -715,7 +731,30 @@ class ServerSession:
             path, dataset_fp,
             selected_energy_key=selected_energy_key,
             selected_force_key=selected_force_key,
+            on_error=self._load_failed("prediction", path),
         )
+
+    def _load_failed(self, kind: str, path: str):
+        """An ``on_error`` callback that tells this window its load failed.
+
+        A failed load task only pushes ``TASK_FAILED`` with a task id, which the
+        window cannot tie to its request, so its status stayed on "Loading…".
+        The callback runs in the task's worker thread, hence the hand-back to
+        this session's loop.
+        """
+        loop = asyncio.get_running_loop()
+
+        def report(exc):
+            from ffast.protocol.rpc import pack
+
+            logger.warning("Loading %s %r failed: %s", kind, path, exc)
+            data = pack(
+                control.LOAD_FAILED, (),
+                {"kind": kind, "path": path, "error": str(exc)},
+            )
+            loop.call_soon_threadsafe(self._emit_or_drop, data, "load failed")
+
+        return report
 
     async def _on_request_prediction_arrays(self, dataset_fp, model_fp, **kwargs) -> None:
         """Pack only cached prediction arrays for (dataset_fp, model_fp) and push.

@@ -9,8 +9,9 @@
  */
 
 /**
- * Colour atoms by force error with the desktop's force_error colour map.
- * Force arrows are left as they are.
+ * Colour atoms by force error with the force_error colour map, the desktop
+ * app's own blue → green → yellow → red: its red reads on the white Journal
+ * 3D view, where cividis's yellow end fades. Force arrows are left as they are.
  * @param {string} predictionLabel the prediction's name in the selectors
  */
 export function forceErrorStyle(predictionLabel) {

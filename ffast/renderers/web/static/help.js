@@ -4,17 +4,22 @@
  * the analysis tab picker.
  */
 
+import { icon } from './icons.js';
+
 /**
  * @param {string} text
- * @param {{open?: boolean, onToggle?: (open: boolean) => void}} [opts]
+ * @param {{subject?: string, open?: boolean, onToggle?: (open: boolean) => void}} [opts]
+ *   `subject` names what the note is about, for the button's name
+ *   ("What is Colour By?"): the page has many "?" buttons.
  * @returns {{button: HTMLButtonElement, note: HTMLParagraphElement}}
  */
-export function helpToggle(text, { open = false, onToggle = () => {} } = {}) {
+export function helpToggle(text, { subject = '', open = false, onToggle = () => {} } = {}) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'help-btn';
-  button.textContent = '?';
-  button.title = 'What is this?';
+  button.innerHTML = icon('help');
+  button.title = subject ? `What is ${subject}?` : 'What is this?';
+  button.setAttribute('aria-label', button.title);
   const note = document.createElement('p');
   note.className = 'help-text';
   note.textContent = text;

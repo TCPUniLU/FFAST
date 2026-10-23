@@ -73,6 +73,13 @@ export class Panel3D {
   /** Put the panel into a grid cell (moving it there if it was elsewhere). */
   mount(cell) {
     if (this.viewport.parentElement !== cell) cell.appendChild(this.viewport);
+    // The cell's panel letter belongs in the viewport, over the picture (ADR 0063).
+    // A panel mounted again (a layout rebuild) drops the letter it held.
+    const letter = cell.querySelector(':scope > .panel-letter');
+    if (letter) {
+      for (const old of this.viewport.querySelectorAll(':scope > .panel-letter')) old.remove();
+      this.viewport.appendChild(letter);
+    }
   }
 
   /** Make the renderer on first use, once the canvas has a size to draw at. */

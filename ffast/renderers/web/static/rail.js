@@ -7,6 +7,7 @@
  */
 
 import { sharedMenu } from './actions.js';
+import { icon } from './icons.js';
 
 /**
  * @typedef {{
@@ -31,8 +32,9 @@ export class Rail {
   _menuButton(kind, fp) {
     const btn = document.createElement('button');
     btn.className = 'obj-menu-btn';
-    btn.textContent = '⋯';
+    btn.innerHTML = icon('more');
     btn.title = 'More';
+    btn.setAttribute('aria-label', 'More');
     btn.setAttribute('aria-haspopup', 'menu');
     btn.setAttribute('aria-expanded', 'false');
     btn.addEventListener('click', (e) => {
@@ -59,7 +61,7 @@ export class Rail {
     const list = this._ports.datasetList;
     list.innerHTML = '';
     if (datasets.size === 0) {
-      list.innerHTML = '<div class="obj-empty">— none loaded —</div>';
+      list.innerHTML = '<div class="obj-empty">None loaded</div>';
       return;
     }
     for (const [fp, meta] of datasets) {
@@ -68,9 +70,10 @@ export class Rail {
       row.dataset.fp = fp;
       row.innerHTML =
         `<span class="name">${meta.name || fp.slice(0,8)}</span>` +
-        `<span class="meta">${meta.frozen ? 'frozen · ' : ''}${meta.n} fr</span>`;
+        `<span class="meta">${meta.frozen ? 'frozen · ' : ''}${framesText(meta.n)}</span>`;
       row.appendChild(this._menuButton('dataset', fp));
       row.addEventListener('click', () => this._ports.onSelectDataset(fp));
+      makeRowKeyboardOperable(row, fp === datasetFp);
       list.appendChild(row);
     }
   }
@@ -79,7 +82,7 @@ export class Rail {
     const list = this._ports.modelList;
     list.innerHTML = '';
     if (models.size === 0) {
-      list.innerHTML = '<div class="obj-empty">— none —</div>';
+      list.innerHTML = '<div class="obj-empty">None loaded</div>';
       return;
     }
     for (const [fp, meta] of models) {
@@ -93,7 +96,32 @@ export class Rail {
       row.innerHTML = `<span class="name">${meta.name || fp.slice(0,8)}</span>`;
       row.appendChild(this._menuButton('model', fp));
       if (ok) row.addEventListener('click', () => this._ports.onSelectModel(fp));
+      makeRowKeyboardOperable(row, fp === modelFp, !ok);
       list.appendChild(row);
     }
   }
+}
+
+/**
+ * A rail row acts like a button for the keyboard (ADR 0063): a tab stop that
+ * Enter or Space presses. The row's own ⋯ button keeps its own tab stop.
+ */
+function makeRowKeyboardOperable(row, selected, disabled = false) {
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-pressed', String(selected));
+  if (disabled) {
+    row.setAttribute('aria-disabled', 'true');
+    return;
+  }
+  row.tabIndex = 0;
+  row.addEventListener('keydown', (e) => {
+    if (e.target !== row || (e.key !== 'Enter' && e.key !== ' ')) return;
+    e.preventDefault();
+    row.click();
+  });
+}
+
+/** "100 frames", or "1 frame". */
+export function framesText(n) {
+  return `${n} frame${n === 1 ? '' : 's'}`;
 }

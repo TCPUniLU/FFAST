@@ -63,13 +63,29 @@ class LoadingCoordinator:
         """
         return self._env.remote.active_session()
 
-    def _queueLoad(self, fn, name, args=(), kwargs=None):
+    def _queueLoad(self, fn, name, args=(), kwargs=None, on_error=None):
         """Queue an in-process load so disk I/O and setup stay off the main loop.
 
         Every ``taskLoad*`` entry point wants the same task shape — visual,
         threaded, named "Loading <thing>" — so that shape lives here rather than
         being spelled out at each of them.
+
+        ``on_error(exc)`` lets the caller report a failed load (the server tells
+        the window that asked); an error that is raised is still raised, so the
+        task fails as before. The ``load*`` methods also take ``on_error``, for
+        the failures they log and return from.
         """
+        if on_error is not None:
+            load = fn
+            kwargs = {**(kwargs or {}), "on_error": on_error}
+
+            def fn(*a, **kw):
+                try:
+                    return load(*a, **kw)
+                except Exception as exc:
+                    on_error(exc)
+                    raise
+
         return self._env.newTask(
             fn,
             args=args,
@@ -178,7 +194,8 @@ class LoadingCoordinator:
     ## PREDICTIONS
     #############
 
-    def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None, selected_force_key=None):
+    def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None,
+                                    selected_force_key=None, on_error=None):
         """Queue import of external predictions as cached model outputs for a dataset."""
         self._queueLoad(
             self.loadPrepredictedDataset,
@@ -188,6 +205,7 @@ class LoadingCoordinator:
                 'selected_energy_key': selected_energy_key,
                 'selected_force_key': selected_force_key
             },
+            on_error=on_error,
         )
 
     def requestPredictionLoad(self, path, datasetKey, selected_energy_key=None,
@@ -219,7 +237,8 @@ class LoadingCoordinator:
             loop,
         )
 
-    def loadPrepredictedDataset(self, path, datasetKey, taskID=None, selected_energy_key=None, selected_force_key=None):
+    def loadPrepredictedDataset(self, path, datasetKey, taskID=None, selected_energy_key=None,
+                                selected_force_key=None, on_error=None):
         """Attach precomputed energies and forces to a dataset as a ghost model."""
         if "npz" in path:
             d = np.load(path, allow_pickle=True)
@@ -275,6 +294,8 @@ class LoadingCoordinator:
                     "Please try again and choose the correct prediction file according to the dataset selected "
                     "in the file filter dropdown."
                 )
+                if on_error:
+                    on_error("it does not match the selected dataset")
                 return
 
             self.lookForGhosts()
@@ -449,7 +470,8 @@ class LoadingCoordinator:
     #############
 
     def taskLoadDataset(self, path, datasetType, selected_energy_key=None,
-                       selected_force_key=None, prediction_keys=None, slice_num=0):
+                       selected_force_key=None, prediction_keys=None, slice_num=0,
+                       on_error=None):
         """Load dataset and optionally load predictions from same file.
 
         Args:
@@ -470,6 +492,7 @@ class LoadingCoordinator:
                 'prediction_keys': prediction_keys,
                 'slice_num': slice_num
             },
+            on_error=on_error,
         )
 
     def requestDatasetLoad(self, path, datasetType, selected_energy_key=None,
@@ -513,7 +536,8 @@ class LoadingCoordinator:
         )
 
     def loadDataset(self, path, datasetType, taskID=None, selected_energy_key=None,
-                   selected_force_key=None, prediction_keys=None, slice_num=0):
+                   selected_force_key=None, prediction_keys=None, slice_num=0,
+                   on_error=None):
         """Load dataset and create ghost models for prediction keys."""
         loaderClass = self._resolveLoad("dataset", path, datasetType)
         if loaderClass is None:
@@ -532,6 +556,8 @@ class LoadingCoordinator:
                 )
             except Exception as e:
                 logger.exception(f"Failed to load dataset {path} in method 'loadDataset'")
+                if on_error:
+                    on_error(e)
                 return None
         else:
             result = loaderClass(path)
@@ -556,6 +582,8 @@ class LoadingCoordinator:
 
         if dataset is None:
             logging.warn(f"Dataset `{path}` did not load successfully")
+            if on_error:
+                on_error("no dataset could be read from it")
             return
 
         dataset.initialise()

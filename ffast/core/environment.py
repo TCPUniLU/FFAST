@@ -156,12 +156,14 @@ class Environment(EventClass):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.loadModel(path, modelType, taskID=taskID)
 
-    def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None, selected_force_key=None):
+    def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None,
+                                    selected_force_key=None, on_error=None):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.taskLoadPrepredictedDataset(
             path, datasetKey,
             selected_energy_key=selected_energy_key,
             selected_force_key=selected_force_key,
+            on_error=on_error,
         )
 
     def requestPredictionLoad(self, path, datasetKey, selected_energy_key=None,
@@ -198,7 +200,8 @@ class Environment(EventClass):
 
 
     def taskLoadDataset(self, path, datasetType, selected_energy_key=None,
-                       selected_force_key=None, prediction_keys=None, slice_num=0):
+                       selected_force_key=None, prediction_keys=None, slice_num=0,
+                       on_error=None):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.taskLoadDataset(
             path, datasetType,
@@ -206,6 +209,7 @@ class Environment(EventClass):
             selected_force_key=selected_force_key,
             prediction_keys=prediction_keys,
             slice_num=slice_num,
+            on_error=on_error,
         )
 
     def requestDatasetLoad(self, path, datasetType, selected_energy_key=None,
