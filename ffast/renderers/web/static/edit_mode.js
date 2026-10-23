@@ -16,7 +16,7 @@
  * overwrite it or discard these edits (rule 16).
  */
 
-import { askDialog, trapFocus } from './dialogs.js';
+import { askDialog, labelBy, trapFocus } from './dialogs.js';
 import {
   COLUMN_PX, KIND_ROLES, ROW_PX, addPanel, columnsOf, copyOf, dragTrack, emptyTab,
   fitWidths, metricsFor, movePanel, new3DPanel, onlyPlacesChanged, removePanel, replacePanel,
@@ -660,6 +660,7 @@ function modal(title, body, labels) {
   const head = document.createElement('div');
   head.className = 'warning-modal-title';
   head.textContent = title;
+  labelBy(el, head);
   const content = document.createElement('div');
   content.className = 'edit-modal-body';
   content.appendChild(body);

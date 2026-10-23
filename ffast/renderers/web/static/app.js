@@ -1814,6 +1814,7 @@ export class FFastApp {
       glyph.innerHTML = icon(t.icon);
       btn.append(glyph, t.label);
       btn.title = `${t.label} pick tool`;
+      btn.setAttribute('aria-pressed', 'false');   // a toggle: armed or not
       btn.addEventListener('click', () => this._setActiveTool(this._activeTool === id ? null : id));
       toolbar.appendChild(btn);
     }
@@ -1826,8 +1827,10 @@ export class FFastApp {
   _setActiveTool(id) {
     this._activeTool = id;
     this._clearPicks();   // switching tools starts a fresh picked set
-    for (const btn of document.querySelectorAll('#pick-toolbar .pick-tool-btn'))
+    for (const btn of document.querySelectorAll('#pick-toolbar .pick-tool-btn')) {
       btn.classList.toggle('active', btn.dataset.tool === id);
+      btn.setAttribute('aria-pressed', String(btn.dataset.tool === id));
+    }
     const pick = this._activePanel?.pick;
     if (id) {
       pick?.arm({ id, ...PICK_TOOLS[id] });

@@ -1234,7 +1234,7 @@
        export all write server-side, with no native file dialog reachable
        from the browser — one small modal collects a path for whichever
        action armed it. ──────────────────────────────────────────────── -->
-  <div id="path-modal" class="hidden">
+  <div id="path-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="path-title">
     <div id="path-panel">
       <div id="path-header">
         <span class="title" id="path-title">Save Session</span>

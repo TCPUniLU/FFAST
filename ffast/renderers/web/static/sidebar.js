@@ -92,6 +92,7 @@ export function addSectionHelp(sidebarEl, texts, sections) {
     const text = texts[pane.dataset.pane];
     if (!text) continue;
     const { button, note } = helpToggle(text, {
+      subject: pane.dataset.pane,
       onToggle: (open) => { if (open) sections.open(pane.dataset.pane); },
     });
     pane.querySelector('.pane-header .pane-chevron').before(button);

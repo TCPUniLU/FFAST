@@ -3,6 +3,14 @@
  * the browser's own confirm() blocks the page and cannot be styled.
  */
 
+let dialogCount = 0;
+
+/** Name a dialog by its title element (screen readers read it on open). */
+export function labelBy(modal, head) {
+  head.id = `dialog-title-${++dialogCount}`;
+  modal.setAttribute('aria-labelledby', head.id);
+}
+
 const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), '
   + 'textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
 
@@ -56,6 +64,7 @@ export function askDialog({ title, message, buttons, danger = '' }) {
     const head = document.createElement('div');
     head.className = 'warning-modal-title';
     head.textContent = title;
+    labelBy(modal, head);
     const text = document.createElement('p');
     text.className = 'warning-modal-message';
     text.textContent = message;
@@ -138,6 +147,7 @@ export function textDialog({ title, text, filename, note = '' }) {
   const head = document.createElement('div');
   head.className = 'warning-modal-title';
   head.textContent = title;
+  labelBy(modal, head);
   const body = document.createElement('div');
   body.className = 'text-dialog-body';
   if (note) {

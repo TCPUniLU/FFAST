@@ -862,6 +862,7 @@ export class AnalysisManager {
       this._tabModels(t).filter(Boolean));
     if (!holder.childElementCount) return;
     const { button, note } = helpToggle(PICKER_HELP, {
+      subject: "this tab's choice of data",
       open: !!t.pickerHelpOpen,
       onToggle: (open) => { t.pickerHelpOpen = open; },
     });
@@ -1131,6 +1132,7 @@ export class AnalysisManager {
         this._keep(t);
         this._fetchAndRenderPanel(t, spec, card, this._renderToken);
       });
+      cb.setAttribute('aria-label', `Peaks on ${spec.title || 'this timeline'}`);   // one per panel
       toggle.append(cb, document.createTextNode('Peaks'));
       card.title.insertBefore(toggle, card.title.querySelector('.sub-toggle'));
       card.peaksToggle = cb;

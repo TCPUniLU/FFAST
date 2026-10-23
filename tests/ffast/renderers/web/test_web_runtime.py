@@ -1949,6 +1949,49 @@ async def _delete_from_rail(page, kind, fp):
     return page.locator(".ask-dialog")
 
 
+async def test_web_dialogs_and_repeated_controls_have_their_own_names(ffast_web_server):
+    """ADR 0063 follow-up: every "?" was "What is this?", dialogs had no name,
+    every Peaks box was "Peaks", and a pick tool did not say it was armed."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(page.locator(".pane[data-pane='Colour By'] .help-btn")).to_have_attribute(
+                "aria-label", "What is Colour By?")
+            tool = page.locator("#pick-toolbar .pick-tool-btn").first
+            await expect(tool).to_have_attribute("aria-pressed", "false")
+            await tool.click()
+            await expect(tool).to_have_attribute("aria-pressed", "true")
+            await tool.click()
+            await expect(tool).to_have_attribute("aria-pressed", "false")
+
+            await _delete_from_rail(page, "dataset", dataset_fp)
+            dialog = page.locator(".ask-dialog")
+            title_id = await dialog.get_attribute("aria-labelledby")
+            await expect(page.locator(f"#{title_id}")).to_have_text(re.compile("Delete"))
+            await page.keyboard.press("Escape")
+
+            await _file_menu(page, "Save Session…")
+            path = page.locator("#path-modal")
+            await expect(path).to_have_attribute("role", "dialog")
+            await expect(path).to_have_attribute("aria-modal", "true")
+            await expect(path).to_have_attribute("aria-labelledby", "path-title")
+            await page.keyboard.press("Escape")
+
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            await expect(page.locator(_sub_panel("Forces MAE timeline") + " .peaks-toggle input")).to_have_attribute(
+                "aria-label", "Peaks on Forces MAE timeline")
+            await expect(page.locator(".tabpanel.active .analysis-controls .help-btn")).to_have_attribute(
+                "aria-label", "What is this tab's choice of data?")
+        finally:
+            await browser.close()
+
+
 async def test_web_the_play_button_is_named_for_what_a_press_does(ffast_web_server):
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)
