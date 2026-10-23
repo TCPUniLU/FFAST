@@ -845,9 +845,12 @@ def test_an_unknown_density_name_means_compact(results):
     assert results["ap_density_names"] == ["large", "compact", "compact", "compact", "compact"]
 
 
-def test_cividis_bar_starts_at_its_first_stop_and_the_force_error_style_uses_it(results):
+def test_cividis_bar_starts_at_its_first_stop(results):
     assert results["grad_cividis_first"] == "#00224e"
-    assert results["qs_force_error_colormap"] == ["Colour By", "Colormap", "cividis"]
+
+
+def test_the_force_error_style_uses_the_desktop_force_error_map(results):
+    assert results["qs_force_error_colormap"] == ["Colour By", "Colormap", "force_error"]
 
 
 def test_a_peak_label_has_frame_value_unit_and_a_tick_when_visited(results):

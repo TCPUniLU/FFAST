@@ -615,5 +615,10 @@ differed from the steps, and what was added:
 - Step 3's gear icon reads a little like a sun at small sizes.
 - Step 6 also changed `test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_screen`,
   which expected the saved colormap `force_error` after the Force error style.
+- Later, chosen from screenshots: the Force error style uses `force_error` again
+  (the desktop app's blue → green → yellow → red), not `cividis`. On the white
+  Journal 3D view cividis's high end, pale yellow, was the faintest colour; red
+  reads there. Red and green are hard to tell apart for some readers; the colour
+  legend gives the values. `cividis` stays in the Colormap list.
 - Not built, as the ADR says: Copy figure, atom rings, a Journal 3D background,
   peak labels on several series, Qt.

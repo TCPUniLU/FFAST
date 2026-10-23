@@ -9,15 +9,15 @@
  */
 
 /**
- * Colour atoms by force error with the cividis colour map, which reads without
- * telling hues apart. (The force_error map stays in the list for old sessions.)
- * Force arrows are left as they are.
+ * Colour atoms by force error with the force_error colour map, the desktop
+ * app's own blue → green → yellow → red: its red reads on the white Journal
+ * 3D view, where cividis's yellow end fades. Force arrows are left as they are.
  * @param {string} predictionLabel the prediction's name in the selectors
  */
 export function forceErrorStyle(predictionLabel) {
   return [
     ['Colour By', 'Coloring', 'Force Error (per atom)'],
-    ['Colour By', 'Colormap', 'cividis'],
+    ['Colour By', 'Colormap', 'force_error'],
     ['Colour By', 'Prediction', predictionLabel],
   ];
 }
