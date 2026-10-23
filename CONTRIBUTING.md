@@ -31,6 +31,12 @@ pytest -m "not integration"   # ~1200 tests, about 20 seconds
 pytest                        # adds tests that spawn a real ffast-server
 ```
 
+Tests run in six parallel processes by default (pytest-xdist, in the `dev`
+extra; set by `addopts` in `pyproject.toml`). Each browser test starts its own
+server on free ports, so they do not collide; the browser tests take about 3
+minutes instead of 9. Add `-n 0` to run in one process, for example when
+debugging with `pdb` or reading `print` output.
+
 Qt-dependent tests need a display, or `QT_QPA_PLATFORM=offscreen`.
 
 Two extra checks are worth running before you push, because CI runs them:
