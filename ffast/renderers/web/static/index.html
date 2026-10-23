@@ -705,7 +705,7 @@
     }
     .legend3d:has(#colorbar.hidden) { display: none; }
     /* with the legend showing, the hint bar keeps clear of it */
-    .viewport:has(> .legend3d:not(:has(#colorbar.hidden))) > #hint-bar {
+    .viewport:has(> .legend3d #colorbar:not(.hidden)) > #hint-bar {
       left: 264px; right: 12px; transform: none; margin-inline: auto;
       width: fit-content; max-width: calc(100% - 276px);
     }

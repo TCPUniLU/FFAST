@@ -703,6 +703,34 @@ async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server
             await browser.close()
 
 
+async def test_web_the_hint_bar_keeps_clear_of_the_colour_legend(ffast_web_server):
+    """ADR 0063 follow-up: the rule that moves the hint bar aside nested
+    :has() in :has(), which CSS forbids, so the browser dropped it and the bar
+    lay on the legend."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1024, "height": 768})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            legend, hint = page.locator("#legend3d"), page.locator("#hint-bar")
+            await expect(legend).to_be_visible()
+            await expect(hint).to_be_visible()
+            assert await page.evaluate(
+                "() => [...document.styleSheets].some(s => [...s.cssRules]"
+                ".some(r => r.selectorText?.includes('#colorbar:not(.hidden)')))"
+            )
+            a, b = await legend.bounding_box(), await hint.bounding_box()
+            apart = (a["x"] + a["width"] <= b["x"] or b["x"] + b["width"] <= a["x"]
+                     or a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"])
+            assert apart, (a, b)
+        finally:
+            await browser.close()
+
+
 async def test_web_the_colourbar_names_the_unit_of_a_force_colouring(ffast_web_server):
     """The colourbar of a force colouring says "[unit]" until it is clicked and
     named; the unit is the dataset's, so the server announces it back."""
