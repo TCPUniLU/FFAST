@@ -101,7 +101,8 @@ export function baseLayout() {
 function withLegend(layout, traceCount) {
   if (traceCount > 1) {
     layout.showlegend = true;
-    layout.legend = { orientation: 'h', y: 1.12, font: { size: 12 } };
+    // a point above the axis text, as the 12 px it was at Compact; it follows Density
+    layout.legend = { orientation: 'h', y: 1.12, font: { size: plotTheme().fsPlot + 1 } };
     layout.margin.t = 22;
   }
   return layout;

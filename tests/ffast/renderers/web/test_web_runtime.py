@@ -992,6 +992,36 @@ async def test_web_journal_page_draws_the_3d_view_on_white_in_this_browser_only(
             await browser.close()
 
 
+# A two-series timeline built in the app page: its legend font and the axes'.
+_LEGEND_SIZE = """async () => {
+  const pn = await import('/panels.js');
+  const th = await import('/theme.js');
+  const r = (v) => ({nd: {values: v, shape: [v.length]}});
+  const two = [{name: 'A', datasetFp: 'd', modelFp: 'a', data: {y: r([1, 2])}},
+               {name: 'B', datasetFp: 'd', modelFp: 'b', data: {y: r([3, 4])}}];
+  return [pn.buildPanel({kind: 'timeline'}, two, {}).layout.legend.font.size, th.plotTheme().fsPlot];
+}"""
+
+
+async def test_web_a_plot_legend_follows_density(ffast_web_server):
+    """ADR 0063 follow-up: a legend was 12 px at every Density."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            legend, axes = await page.evaluate(_LEGEND_SIZE)
+            assert (legend, axes) == (12, 11)   # as before, at Compact
+            await page.locator("#density").select_option("large")
+            legend, axes = await page.evaluate(_LEGEND_SIZE)
+            assert legend == axes + 1 and legend > 12, (legend, axes)
+        finally:
+            await browser.close()
+
+
 async def test_web_tabs_rail_rows_and_section_headers_work_from_the_keyboard(ffast_web_server):
     """ADR 0063: Tab reaches the tab strip, the arrow keys move along it, Enter
     presses a rail row, and a section header unfolds on Enter."""
