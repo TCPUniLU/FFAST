@@ -571,15 +571,21 @@ differed from the steps, and what was added:
   level stretch a peak, so a flat series got five piled-up labels. Changed after the
   build: a peak must be higher than the frame before it and at least as high as the
   one after, so a level stretch gives one peak, at its first frame, and a series of
-  one repeated value gives none. Opening a frame moves to the 3D tab, so the visited marks are drawn before the
-  frame is opened.
+  one repeated value gives none. Opening a frame moves to the 3D tab, so the visited
+  marks are drawn before the frame is opened. The labels do not use
+  `yanchor: 'bottom'`: each arrow ends half a label's length above its peak, and
+  the turned label is centred there (see "Peak labels are laid out from their own
+  text").
 - **Step 7.** The Journal tokens are set on `.analysis-grid`, not `#tabpanels`: the
   3D sidebar and pick bar are inside `#tabpanels` and would have turned white. The
   old token names are written again there, because an alias on `:root` keeps its
   dark value. `plotTheme()` reads the tokens from the first `.analysis-grid`.
   Only the tab on screen is drawn again when a setting changes (`rerenderAll`);
-  other tabs are drawn when shown. The colour legend and the panel letter inside a
-  3D panel turn white with the grid; the viewport itself does not change.
+  other tabs are drawn when shown. Everything inside a 3D viewport in the figure
+  area takes the Journal tokens with the grid: the colour legend and panel letter,
+  and also the hint bar (`#hint-bar`), the load overlay (`#overlay`) and an
+  independent panel's caption and note (`.panel-caption`, `.panel-note`). Since
+  Journal page became a print view, the 3D view itself is drawn on white too.
 - **Step 8.** The ADR names only the Delete callers for `danger`. The "Reset to
   original" tab dialog deletes the user's edited copy too, so it also passes it: its
   buttons are Cancel and Confirm (not Reset), Confirm is red and focus starts on
@@ -588,10 +594,14 @@ differed from the steps, and what was added:
   Connected, or an earlier "ready", but never a result such as "Loaded session from
   …", which the server's dataset messages can follow. After connecting, the last
   "ready" text is shown instead of a bare "Connected". One frame reads "1 frame".
+  A subset gets no "ready" status.
 - **Step 10.** The step says the Basic Errors grid has one column at 1024 px. Its
   own rule does not give that: the grid is 804 px wide there and two 360 px columns
   fit, with no sideways scroll. One column starts below about 970 px of window
-  width. A tab that sets its own column widths keeps them.
+  width. A tab that sets its own column widths keeps them. A narrow grid drops the
+  tab's `row_heights` too. One column starts only below 730 px of grid width (two
+  360 px columns and the gap), so a tab with three or more columns still scrolls
+  sideways from there up to the width its columns need (1100 px for three).
 
 **Other**
 
