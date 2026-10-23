@@ -380,6 +380,8 @@
     /* Too narrow for two columns: one column, panels in reading order (analysis.js
        sets the order); the placements the panels carry are ignored. */
     .analysis-grid.narrow > * { grid-column: auto !important; grid-row: auto !important; }
+    /* ...and its 3D panel has no room for the hint bar beside the colour legend */
+    .analysis-grid.narrow #hint-bar { display: none !important; }
     /* A tab with one cell gives it the whole height. */
     .analysis-grid.fill { grid-template-rows: minmax(0, 1fr); align-content: stretch; }
     /* ...and a 3D panel alone is the whole tab, edge to edge (the "3D" tab). */

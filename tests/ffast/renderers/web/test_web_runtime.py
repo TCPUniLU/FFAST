@@ -742,6 +742,34 @@ async def test_web_the_hint_bar_keeps_clear_of_the_colour_legend(ffast_web_serve
             await browser.close()
 
 
+async def test_web_a_narrow_compare_tab_gives_its_3d_panel_room_and_no_hint_bar(ffast_web_server):
+    """ADR 0063 follow-up: at 1024 px Compare is one column; its 3D panel was
+    300 px high and the hint bar and colour legend covered the molecule. Now
+    the panel is 460 px high and the hint bar is not shown there."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1024, "height": 768})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            await _open_analysis_tab(page, "Compare")
+            grid = page.locator(".tabpanel.active .analysis-grid")
+            await expect(grid).to_have_class(re.compile(r"\bnarrow\b"))
+            await expect(page.locator("#legend3d")).to_be_visible()
+            await expect(page.locator("#hint-bar")).to_be_hidden()
+            box = await page.locator(".tabpanel.active .panel-3d").bounding_box()
+            assert box["height"] >= 460, box
+
+            await page.set_viewport_size({"width": 1600, "height": 900})
+            await expect(grid).not_to_have_class(re.compile(r"\bnarrow\b"))
+            await expect(page.locator("#hint-bar")).to_be_visible()
+        finally:
+            await browser.close()
+
+
 async def test_web_the_colourbar_names_the_unit_of_a_force_colouring(ffast_web_server):
     """The colourbar of a force colouring says "[unit]" until it is clicked and
     named; the unit is the dataset's, so the server announces it back."""

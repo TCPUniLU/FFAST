@@ -606,6 +606,9 @@ differed from the steps, and what was added:
   tab's `row_heights` too. One column starts only below 730 px of grid width (two
   360 px columns and the gap), so a tab with three or more columns still scrolls
   sideways from there up to the width its columns need (1100 px for three).
+  Later, chosen from screenshots: in a one-column grid a 3D panel's row is 460 px,
+  not 300, and the hint bar is not shown, because at 300 px it and the colour
+  legend covered the molecule (Compare at 1024 px).
 
 **Other**
 

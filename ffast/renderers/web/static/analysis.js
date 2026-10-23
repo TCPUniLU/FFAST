@@ -37,6 +37,8 @@ import { loadTabState, saveTabState } from './layout_state.js';
 /** The smallest a plot column gets, and the gap between cells, in px (--col-min and the grid gap in index.html). */
 const COLUMN_MIN = 360;
 const GRID_GAP = 10;
+/** A 3D panel's row in a narrow grid, in px: at 300 px the colour legend covers the molecule. */
+const NARROW_3D_PX = 460;
 
 const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
   + 'Outlined buttons follow the selection in the left list; click one to pin this '
@@ -637,27 +639,34 @@ export class AnalysisManager {
    * the peak labels of a timeline in it take, so its plot keeps its size.
    * Written per row because the grid has a set height and scrolls: there a
    * row grows only by its minimum, never to fit what is in it. A narrow
-   * grid's rows are its panels in reading order. */
+   * grid's rows are its panels in reading order, a 3D panel's 460 px. */
   _sizeRows(t) {
     const heights = t.narrow ? null : t.spec.row_heights;
     const rank = readingOrder((t.spec.panels || []).map((p, index) => ({ index, row: p.row, col: p.col })));
     const items = [
       ...(t.slots || []).map((slot) => ({ spec: slot.specs[0], index: slot.indices[0],
         extra: Math.max(0, ...(slot.cards || []).map((c) => c.body._extraHeight || 0)) })),
-      ...(t.cells3d || []).map((cell) => ({ spec: cell.spec, index: cell.index, extra: 0 })),
+      ...(t.cells3d || []).map((cell) => ({ spec: cell.spec, index: cell.index, extra: 0,
+        min: t.narrow ? NARROW_3D_PX : 0 })),
     ];
     if (t.narrow) items.sort((a, b) => rank.get(a.index) - rank.get(b.index));
     const rowOf = (item, i) => (t.narrow ? i : item.spec.row);
-    const extra = [];
-    items.forEach((item, i) => { extra[rowOf(item, i)] = Math.max(extra[rowOf(item, i)] || 0, item.extra); });
+    const extra = [], min = [];
+    items.forEach((item, i) => {
+      const r = rowOf(item, i);
+      extra[r] = Math.max(extra[r] || 0, item.extra);
+      min[r] = Math.max(min[r] || 0, item.min || 0);
+    });
     t.gridEl._rowExtra = extra;   // edit mode saves a dragged row without it
-    if (t.gridEl.classList.contains('fill') || (!heights?.length && !extra.some(Boolean))) {
+    if (t.gridEl.classList.contains('fill')
+        || (!heights?.length && !extra.some(Boolean) && !min.some(Boolean))) {
       t.gridEl.style.gridTemplateRows = '';   // index.html's rows: 300 px, or one whole-height cell
       return;
     }
     const n = Math.max(heights?.length || 0, extra.length);
     t.gridEl.style.gridTemplateRows = Array.from({ length: n }, (_, i) =>
-      `minmax(${(heights?.[i] != null ? heights[i] * ROW_PX : ROW_PX) + (extra[i] || 0)}px, auto)`).join(' ');
+      `minmax(${Math.max(heights?.[i] != null ? heights[i] * ROW_PX : ROW_PX, min[i] || 0)
+        + (extra[i] || 0)}px, auto)`).join(' ');
   }
 
   /** Stack order for a narrow grid: reading order, whatever the file order is. */
