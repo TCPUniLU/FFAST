@@ -54,6 +54,11 @@ const COLORMAP_STOPS = {
   ],
 };
 
+/** An atom whose value is "no value" (NaN, ADR 0064) is drawn this grey, never
+ * a colour of the scale; the desktop's `NO_VALUE_RGB` (presentation.py) is the
+ * same. */
+export const NO_VALUE_RGB = [0.55, 0.55, 0.55];
+
 function lerp(a, b, t) { return a + (b - a) * t; }
 
 function sampleStops(stops, t) {
@@ -69,7 +74,8 @@ function sampleStops(stops, t) {
 
 /**
  * Map an AtomColorBy descriptor's per-atom `values` through its named
- * colormap between `vmin`/`vmax` to per-atom [r, g, b] (0..1 each).
+ * colormap between `vmin`/`vmax` to per-atom [r, g, b] (0..1 each). An atom
+ * with no value (NaN) gets `NO_VALUE_RGB`.
  *
  * Returns null on an unrecognized colormap name — the caller falls back to
  * the server's baked element colors, exactly the vispy adapter's contract
@@ -87,6 +93,7 @@ export function mapColorBy(colorBy) {
 
   const out = new Array(values.length);
   for (let i = 0; i < values.length; i++) {
+    if (!Number.isFinite(values[i])) { out[i] = NO_VALUE_RGB.slice(); continue; }
     const t = flat ? 0 : Math.min(1, Math.max(0, (values[i] - lo) / (hi - lo)));
     out[i] = sampleStops(stops, t);
   }

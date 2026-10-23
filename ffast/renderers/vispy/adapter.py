@@ -234,10 +234,14 @@ class VispySceneAdapter:
         Returns None on failure so the caller falls back to element colors.
         """
         try:
+            from ffast.visualization.presentation import NO_VALUE_RGB
             v = np.asarray(color_by.values, dtype=np.float32)
             lo, hi = float(color_by.vmin), float(color_by.vmax)
             norm = np.zeros_like(v) if hi <= lo else np.clip((v - lo) / (hi - lo), 0.0, 1.0)
-            return np.asarray(self._get_colormap(color_by.colormap)[norm].rgba, dtype=np.float32)
+            rgba = np.asarray(self._get_colormap(color_by.colormap)[norm].rgba, dtype=np.float32)
+            # An atom with no value (NaN, ADR 0064) is grey, not a scale colour.
+            rgba[~np.isfinite(v)] = (*NO_VALUE_RGB, 1.0)
+            return rgba
         except Exception as exc:
             logger.debug("VispySceneAdapter: color mapping failed: %s", exc)
             return None

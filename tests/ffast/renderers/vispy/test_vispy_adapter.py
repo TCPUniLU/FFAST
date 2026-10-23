@@ -479,13 +479,14 @@ class TestColorMapping:
         out = adapter._map_color_by(self._color_by([0.0, 1.0], colormap="force_error"))
         assert out is not None and out.shape == (2, 4)
 
-    def test_map_nan_value_does_not_crash(self):
-        # A NaN sample must not abort mapping: vispy clamps it to a
-        # transparent-black row while the finite samples map normally.
+    def test_an_atom_with_no_value_is_grey(self):
+        # NaN is "no value" (ADR 0064): grey, not a colour of the scale.
+        from ffast.visualization.presentation import NO_VALUE_RGB
         adapter = self._adapter()
         out = adapter._map_color_by(self._color_by([0.0, float("nan"), 1.0]))
         assert out is not None and out.shape == (3, 4)
-        assert np.allclose(out[1], [0.0, 0.0, 0.0, 0.0])
+        assert np.allclose(out[1], [*NO_VALUE_RGB, 1.0])
+        assert not np.allclose(out[0, :3], NO_VALUE_RGB)
 
     def test_map_empty_values_returns_none(self):
         # Empty values cannot be indexed into a colormap, so mapping fails and

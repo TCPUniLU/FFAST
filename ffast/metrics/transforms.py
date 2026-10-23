@@ -41,15 +41,30 @@ from ffast.metrics.registry import default_registry
 # --------------------------------------------------------------------------- #
 # Shared reduction bodies (self-contained; transform_metrics.py imports these)
 # --------------------------------------------------------------------------- #
+def _finite(values):
+    """The values that are numbers: a gap ("no value", NaN, ADR 0064) is left
+    out of every summary and density."""
+    v = np.asarray(values, dtype=np.float64).ravel()
+    return v[np.isfinite(v)]
+
+
 def _smooth(values, window):
     """Sliding-average over a 1-D per-frame series (legacy ``np.convolve(...,
     "valid")``). Window is clamped to the series length, so an over-large window
-    degrades to a single mean rather than emitting nothing."""
+    degrades to a single mean rather than emitting nothing. A gap (NaN) is left
+    out of each window's mean and stays in its place, so the frames keep their
+    positions; a window of gaps only is a gap."""
     v = np.asarray(values, dtype=np.float64).ravel()
     w = int(max(1, min(window, len(v)))) if len(v) else 1
     if w <= 1:
         return v
-    return np.convolve(v, np.ones(w) / w, mode="valid")
+    has = np.isfinite(v)
+    if has.all():
+        return np.convolve(v, np.ones(w) / w, mode="valid")
+    sums = np.convolve(np.where(has, v, 0.0), np.ones(w), mode="valid")
+    counts = np.convolve(has.astype(np.float64), np.ones(w), mode="valid")
+    with np.errstate(invalid="ignore", divide="ignore"):
+        return np.where(counts > 0, sums / counts, np.nan)
 
 
 def _kde_xy(sample, bounds, n_pts=200):
@@ -59,7 +74,7 @@ def _kde_xy(sample, bounds, n_pts=200):
     KDE's degenerate branch)."""
     from scipy.stats import gaussian_kde
 
-    sample = np.asarray(sample, dtype=np.float64).ravel()
+    sample = _finite(sample)
     if sample.size < 2 or np.std(sample) < 1e-10:
         top = max(float(np.max(sample)), 1e-10) if sample.size else 1.0
         x = np.linspace(0.0, top, n_pts)
@@ -153,8 +168,13 @@ def _tb_abs(s, e, p): return np.abs(_f(s))
 def _tb_mirror_kde(s, e, p): return _mirror_kde(s)
 def _tb_abs_kde(s, e, p): return _abs_kde(s)
 def _tb_value_kde(s, e, p): return _value_kde(s)
-def _tb_mean_abs(s, e, p): return float(np.mean(np.abs(_f(s))))
-def _tb_rmse(s, e, p): return float(np.sqrt(np.mean(_f(s) ** 2)))
+def _tb_mean_abs(s, e, p): return _summary(np.abs(_finite(s)))
+def _tb_rmse(s, e, p): return float(np.sqrt(_summary(_finite(s) ** 2)))
+
+
+def _summary(v):
+    """The mean of the values left once gaps are out; no value if none are."""
+    return float(np.mean(v)) if v.size else float("nan")
 def _tb_shift(s, e, p):
     return _f(s) - (float(np.asarray(e["shift"])) if p.get("shifted") else 0.0)
 

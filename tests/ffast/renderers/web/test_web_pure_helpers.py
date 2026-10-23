@@ -680,6 +680,69 @@ CASES = {
     "icon_names": "ic.ICON_NAMES",
     "icon_unknown": "ic.icon('no-such-icon')",
 
+    # ── no value (NaN) in every display (ADR 0064 step 3) ───────────────────
+    # One fixture per panel kind, each holding gaps. The loop runs over the
+    # registries, so a kind added later without a fixture is reported.
+    "no_value_panels": (
+        "(() => {"
+        "  const N = NaN;"
+        "  const nd = (values, shape) => ({nd: {values, shape: shape || [values.length]}});"
+        "  const ser = (data) => ({name: 'S', datasetFp: 'D', modelFp: 'M',"
+        "    datasetName: 'D', modelName: 'M', data});"
+        "  const y = [1, N, 3, 2, 5, N, N, 4, 2, 8, 1, 3];"
+        "  const FIX = {"
+        "    timeline: [{}, [ser({y: nd(y)})], {}],"
+        "    density: [{}, [ser({value: nd([0, 1, 2, 3, 0.1, N, 0.3, 0.2], [2, 4])})], {}],"
+        "    scatter: [{diagonal: true}, [ser({x: nd(y), y: nd(y.map(v => v * 2))})], {perFrame: true}],"
+        "    overlay_timeline: [{options: {series_labels: ['a']}}, [ser({series: [nd(y)]})], {}],"
+        "    grouped_density: [{}, [ser({"
+        "      value: nd([0, 1, 2, 0.1, N, 0.3, 0, 1, 2, 0.5, 0.2, N], [2, 2, 3]),"
+        "      aggregate: nd([0, 1, 2, N, 0.1, 0.2], [2, 3])})],"
+        "      {elementOrder: [1, 6], selectedElements: ['All', 1, 6]}],"
+        "    table: [{}, [ser({value: nd([N])})], {}],"
+        "    grouped_table: [{}, [ser({mae: nd([0.1, N]), rmse: nd([N, 0.2]),"
+        "      mae_all: nd([N]), rmse_all: nd([0.3])})],"
+        "      {elementOrder: [1, 6], selectedElements: [1, 6, 'All']}],"
+        "  };"
+        "  const gapsIn = (series) => series.reduce((n, s) => n + Object.values(s.data)"
+        "    .flatMap(v => Array.isArray(v) ? v : [v])"
+        "    .reduce((k, r) => k + r.nd.values.filter(x => !Number.isFinite(x)).length, 0), 0);"
+        "  const notNumbers = (a) => Array.from(a || []).filter(x => !Number.isFinite(x)).length;"
+        "  const out = {};"
+        "  const kinds = [...Object.keys(pn.PLOT_BUILDERS), ...Object.keys(pn.TABLE_BUILDERS)];"
+        "  for (const kind of kinds) {"
+        "    const fx = FIX[kind];"
+        "    if (!fx) { out[kind] = {fixture: false}; continue; }"
+        "    const [spec, series, ctx] = fx;"
+        "    const b = pn.buildPanel({kind, ...spec}, series, ctx);"
+        "    const r = {fixture: true, gaps: gapsIn(series)};"
+        "    if (b.html !== undefined) {"
+        "      r.shown = (b.html.match(/—/g) || []).length;"
+        "      r.textNaN = b.html.includes('NaN');"
+        "    } else {"
+        "      const data = b.traces.filter(t => t.hoverinfo !== 'skip');"
+        "      r.shown = data.reduce((n, t) => n + notNumbers(t.x) + notNumbers(t.y), 0);"
+        "      r.peaksAtGaps = (b.peaks || []).filter(p => !Number.isFinite(p.value)).length;"
+        "      const range = b.layout.yaxis && b.layout.yaxis.range;"
+        "      r.rangeFinite = !range || range.every(Number.isFinite);"
+        "    }"
+        "    out[kind] = r;"
+        "  }"
+        "  return out;"
+        "})()"
+    ),
+    "no_value_colours": (
+        "(() => {"
+        "  const out = {grey: cm.NO_VALUE_RGB};"
+        "  for (const n of ['viridis','plasma','force_error','cividis','inferno','coolwarm','hot','bwr']) {"
+        "    const c = cm.mapColorBy({values: [0, NaN, 1, null], colormap: n, vmin: 0, vmax: 1});"
+        "    const grey = (rgb) => JSON.stringify(rgb) === JSON.stringify(cm.NO_VALUE_RGB);"
+        "    out[n] = [grey(c[0]), grey(c[1]), grey(c[2]), grey(c[3])];"
+        "  }"
+        "  return out;"
+        "})()"
+    ),
+
     "grad_matches_mapped": (
         "(() => {"
         "  const out = {};"
@@ -1213,6 +1276,24 @@ def test_table_shows_a_dash_for_a_pair_that_was_not_computed(results):
         ["MACE", "1.00", "—"],
         ["SchNet", "—", "4.00"],
     ]
+
+
+def test_every_panel_kind_shows_a_gap_as_a_gap_never_a_number(results):
+    """ADR 0064 step 3: each gap is left out (a plot) or a dash (a table)."""
+    for kind, r in results["no_value_panels"].items():
+        assert r["fixture"], f"panel kind {kind!r} has no no-value fixture here; add one"
+        assert r["gaps"] > 0
+        assert r["shown"] == r["gaps"], kind
+        assert not r.get("textNaN"), kind
+        assert r.get("peaksAtGaps", 0) == 0 and r.get("rangeFinite", True), kind
+
+
+def test_an_atom_with_no_value_is_grey_in_every_colour_map(results):
+    from ffast.visualization.presentation import NO_VALUE_RGB
+    r = dict(results["no_value_colours"])
+    assert r.pop("grey") == list(NO_VALUE_RGB)
+    for name, greys in r.items():
+        assert greys == [False, True, False, True], name
 
 
 def test_the_code_warning_matches_the_desktop_word_for_word(results):

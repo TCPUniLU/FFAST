@@ -571,7 +571,7 @@ export function buildGroupedTable(spec, series, ctx) {
 
 // ── dispatch ────────────────────────────────────────────────────────────────
 
-const PLOT_BUILDERS = {
+export const PLOT_BUILDERS = {
   timeline: buildTimeline,
   density: buildDensity,
   scatter: buildScatter,
@@ -579,7 +579,7 @@ const PLOT_BUILDERS = {
   grouped_density: buildGroupedDensity,
 };
 
-const TABLE_BUILDERS = {
+export const TABLE_BUILDERS = {
   table: buildTable,
   grouped_table: buildGroupedTable,
 };
