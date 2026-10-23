@@ -87,7 +87,7 @@ export class RemoteBrowser {
     this._parent = null;      // parent abspath, or null at root
     this._home = null;        // server user's home directory
     this._selected = null;    // selected filename within _path
-    this._pendingPrediction = null;   // file name whose load has no outcome yet
+    this._pending = null;   // {kind, name}: a load with no outcome yet
   }
 
   /** Wire the modal's own controls. Called once, at app setup. */
@@ -278,20 +278,22 @@ export class RemoteBrowser {
     });
   }
 
-  /** A model arrived or the load failed: the "Loading prediction…" status is
-   * replaced, so a later task end must not touch it. True if one was pending. */
-  predictionSettled() {
-    const pending = this._pendingPrediction !== null;
-    this._pendingPrediction = null;
-    return pending;
+  /** A new dataset or model arrived, or a load failed: the "Loading…" status
+   * of a pending load of that `kind` ('dataset' or 'prediction') is replaced,
+   * so a later task end must not touch it. True if one was pending. */
+  settled(kind) {
+    if (this._pending?.kind !== kind) return false;
+    this._pending = null;
+    return true;
   }
 
-  /** A task ended. A prediction already held announces nothing new, so a task
-   * that ends while one is still pending is that duplicate: end its status. */
+  /** A task ended. A dataset or prediction the server already holds announces
+   * nothing new, so a task that ends while a load is still pending is that
+   * duplicate: end its status. */
   onTaskDone() {
-    if (!this._pendingPrediction) return;
-    this._ports.setStatus(`"${this._pendingPrediction}" is already loaded`, 'connected');
-    this._pendingPrediction = null;
+    if (!this._pending) return;
+    this._ports.setStatus(`"${this._pending.name}" is already loaded`, 'connected');
+    this._pending = null;
   }
 
   _load() {
@@ -310,12 +312,13 @@ export class RemoteBrowser {
         [path, dsFp],
       );
       this._ports.setStatus(`Loading prediction ${this._selected}…`, 'connected');
-      this._pendingPrediction = this._selected;
+      this._pending = { kind: 'prediction', name: this._selected };
     } else {
       const typ = $('fb-type').value;
       // LOAD_DATASET reads args=[path, datasetType]; "ase (auto)" auto-detects keys
       this._ports.send(OUT.LOAD_DATASET, {}, [path, typ]);
       this._ports.setStatus(`Loading ${this._selected}…`, 'connected');
+      this._pending = { kind: 'dataset', name: this._selected };
     }
     this.close();
   }

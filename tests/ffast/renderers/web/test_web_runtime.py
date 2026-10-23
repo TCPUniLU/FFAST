@@ -5085,6 +5085,35 @@ async def test_web_loading_a_prediction_the_server_already_holds_ends_the_loadin
             await browser.close()
 
 
+async def test_web_loading_a_dataset_the_server_already_holds_ends_the_loading_status(ffast_web_server):
+    """ADR 0063 follow-up: the server announces nothing new for a dataset it
+    already holds, so "Loading dataset.xyz…" used to stay up for good. A new
+    dataset still ends with "ready"."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+
+        async def load(name):
+            await _file_menu(page, "Load Dataset…")
+            await page.locator("#fb-path").fill(str(DATASET_PATH.parent))
+            await page.locator("#fb-path").press("Enter")
+            await page.locator("#fb-list .fb-row", has_text=name).click()
+            await page.locator("#fb-load").click()
+
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await load("dataset.xyz")
+            await expect(page.locator("#status")).to_have_text(
+                '"dataset.xyz" is already loaded', timeout=15000)
+            await load("prediction.xyz")   # a dataset the server does not hold yet
+            await expect(page.locator("#status")).to_contain_text(
+                'Dataset "prediction" ready', timeout=30000)
+        finally:
+            await browser.close()
+
+
 _RECORD_SENDS = """() => {
   const conn = window.ffastApp._conn;
   const send = conn.send.bind(conn);

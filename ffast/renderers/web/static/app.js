@@ -1256,7 +1256,7 @@ export class FFastApp {
       // A load that failed: end the "Loading <file>…" status with the reason.
       conn.on(IN.LOAD_FAILED, (kw) => {
         const name = String(kw.path || '').split(/[\\/]/).pop();
-        this._browser.predictionSettled();
+        this._browser.settled(kw.kind);
         this._setStatus(`Could not load ${name}: ${kw.error}`, 'error');
       });
 
@@ -1341,6 +1341,7 @@ export class FFastApp {
     const before = this._datasets.get(fp);
     this._datasets.set(fp, meta);
     if (!before && !meta.is_sub) {
+      this._browser.settled('dataset');   // its "ready" below ends the "Loading…"
       this._readyStatus = `Dataset "${meta.name || fp.slice(0, 8)}" ready · ${framesText(meta.n)}`;
       // It replaces a "Loading…" that is over, not a result the user should
       // still read, such as "Loaded session from …", which can arrive first.
@@ -1384,7 +1385,7 @@ export class FFastApp {
     // a LOAD_PREDICTION completes (the ghost model registers its forces cache).
     // A model new to this window ends a pending prediction load, wherever it
     // applies; only a duplicate announces nothing (RemoteBrowser.onTaskDone).
-    const loaded = !this._models.has(fp) && this._browser.predictionSettled();
+    const loaded = !this._models.has(fp) && this._browser.settled('prediction');
     this._models.set(fp, meta || {});
     // Auto-select a freshly loaded prediction that applies to the current
     // dataset and refresh the view so its force overlay appears. A live
