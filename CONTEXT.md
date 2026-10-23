@@ -149,17 +149,29 @@ tests using it hide this.
 ### Transform metric
 
 A metric whose input is another metric, applying a reduction: KDE, smoothing,
-downsampling, per-structure reduction. Its settings are compute parameters, so
+downsampling. (Averaging per structure, per element or over everything is
+written in an Expression metric with `by=`, ADR 0064.) Its settings are compute parameters, so
 changing one recomputes rather than mutating something client-side. This is why
 panels never reduce: every axis is already a result array.
 
 ### Expression metric
 
-A metric compiled from a `[[metrics.expr]]` config entry, evaluating element-wise
-arithmetic over named variables. No Python. Unlike a transform metric it
-preserves shape, so all its non-scalar variables must share one shape while
-scalars and literals broadcast. Non-finite output raises rather than quietly
-emitting `nan` (ADR 0042).
+A metric compiled from a `[[metrics.expr]]` config entry, evaluating arithmetic
+over named variables. No Python. Arithmetic works value by value: the
+non-scalar operands must share one shape while scalars and literals broadcast.
+Reductions (`mean`, `sum`, `min`, `max`, `rms`, `std`) combine values and must
+say what they combine with `by=structure|element|all`, which alone decides the
+result's shape; `where=` picks the rows that count (ADR 0064). A bad value
+(non-finite output) raises rather than quietly emitting `nan` (ADR 0042).
+
+### No value
+
+A place in a metric's result that has nothing to show: a group a reduction
+left empty, such as a structure without hydrogen under `where=element("H")`.
+Stored as `nan`, shown as a gap, a `—` or a grey atom, and left out of later
+reductions. Not a **bad value**: a bad value fails the metric, no value does
+not. Only a formula's own `by=` / `where=` make one; a `nan` from a Python
+metric is a bad value (ADR 0064).
 
 ### Metric origin: built-in, project, user
 
