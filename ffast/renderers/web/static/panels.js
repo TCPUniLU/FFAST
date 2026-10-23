@@ -267,7 +267,8 @@ export function buildTimeline(spec, series, ctx) {
       // the curve, so the range is set from the data alone.
       let lo = 0, hi = -Infinity;
       for (const v of traces[0].y) if (Number.isFinite(v)) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
-      if (hi > lo) layout.yaxis.range = [lo, hi * 1.04];
+      // 4 % headroom over the span: hi * 1.04 fell below hi for negative data.
+      if (hi > lo) layout.yaxis.range = [lo, hi + 0.04 * (hi - lo)];
       extraHeight = layout.margin.t - 8;   // and the plot grows by as much, so the curve keeps its size
     }
   }

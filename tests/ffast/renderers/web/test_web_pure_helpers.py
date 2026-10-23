@@ -598,6 +598,12 @@ CASES = {
         " const b = pn.buildTimeline({x_label: null, y_label: ['Force MAE', 'u']},"
         "   [{datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}}], {units: {y: 'eV'}});"
         " return [b.layout.annotations.length, b.layout.yaxis.range, b.peaks.map(p => p.frame), b.layout.margin.t, b.extraHeight]; })()"),
+    "peaks_timeline_negative": (
+        "(() => { const y = Array.from({length: 100}, (_, i) => -3300 + (i % 7));"
+        " y[40] = -3078.6;"
+        " const b = pn.buildTimeline({y_label: ['E', 'u']},"
+        "   [{datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}}], {units: {}});"
+        " return [b.layout.yaxis.range, Math.max(...y)]; })()"),
     "peaks_timeline_switched_off": (
         "(() => { const y = new Array(100).fill(0); y[22] = 3;"
         " const s = {datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}};"
@@ -819,6 +825,17 @@ def test_a_one_series_timeline_is_labelled_and_given_a_top_margin_for_the_labels
     assert y_range == [0, 5 * 1.04]   # from the data alone, not the labels
     assert margin_top > 8 + 18   # room for the tick and the longest label
     assert extra == margin_top - 8   # the plot grows by what the labels take
+
+
+def test_a_timeline_of_negative_values_shows_its_highest_values(results):
+    (lo, hi), top = results["peaks_timeline_negative"]
+    assert lo == -3300   # the lowest value; 0 is above all of them
+    assert top <= hi < 0
+
+
+def test_a_timeline_of_positive_values_keeps_its_four_percent_headroom(results):
+    _count, y_range, *_ = results["peaks_timeline_one_series"]
+    assert y_range[0] == 0 and y_range[1] == pytest.approx(1.04 * 5)
 
 
 def test_a_timeline_with_peaks_switched_off_has_no_labels_but_stays_switchable(results):
