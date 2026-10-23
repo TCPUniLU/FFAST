@@ -554,9 +554,11 @@ differed from the steps, and what was added:
   a 3D view ignores the pointer, or it caught orbit and focus clicks. An independent
   panel's corner caption moves right of the letter. A "[unit]" in a caption is
   clickable; `unitRoleAt` now accepts any element with `data-unit-role`.
-- **Step 5.** On a flat line the rule "at least as high as each neighbour" makes
-  level stretches peaks, so a series with two spikes still gets five labels.
-  Opening a frame moves to the 3D tab, so the visited marks are drawn before the
+- **Step 5.** The rule "at least as high as each neighbour" made every frame of a
+  level stretch a peak, so a flat series got five piled-up labels. Changed after the
+  build: a peak must be higher than the frame before it and at least as high as the
+  one after, so a level stretch gives one peak, at its first frame, and a series of
+  one repeated value gives none. Opening a frame moves to the 3D tab, so the visited marks are drawn before the
   frame is opened.
 - **Step 7.** The Journal tokens are set on `.analysis-grid`, not `#tabpanels`: the
   3D sidebar and pick bar are inside `#tabpanels` and would have turned white. The
