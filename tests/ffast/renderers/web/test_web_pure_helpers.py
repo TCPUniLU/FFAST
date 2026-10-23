@@ -586,6 +586,10 @@ CASES = {
         " return pk.pickPeaks(y, 2).map(p => p.frame); })()"),
     "peaks_fewer_than_n": (
         "(() => { const y = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]; return pk.pickPeaks(y).map(p => p.frame); })()"),
+    "peaks_all_zero": "pk.pickPeaks(new Array(100).fill(0))",
+    "peaks_plateau": (
+        "(() => { const y = new Array(20).fill(0); for (let i = 8; i <= 12; i++) y[i] = 5;"
+        " return pk.pickPeaks(y); })()"),
     "peaks_annotation": (
         "pn.peakAnnotations([{frame: 73, value: 0.4421}], '[unit]', (f) => f === 73)"
         ".map(a => [a.text, a.textangle, a.opacity, a.hovertext, a.captureevents])"),
@@ -774,6 +778,16 @@ def test_adjacent_spikes_give_one_peak(results):
     assert 73 in frames and 74 not in frames
 
 
+def test_a_flat_line_has_no_peaks(results):
+    assert results["peaks_all_zero"] == []
+
+
+def test_a_plateau_gives_one_peak_at_its_first_frame(results):
+    # the 5s at frames 8-12 give frame 8 only; the zeros before them are a
+    # level stretch too, so they give frame 0
+    assert results["peaks_plateau"] == [{"frame": 0, "value": 0}, {"frame": 8, "value": 5}]
+
+
 def test_fewer_than_ten_frames_have_no_peaks(results):
     assert results["peaks_short"] == []
 
@@ -819,9 +833,9 @@ def test_a_peak_label_prints_a_real_unit_and_no_bare_dimension(results):
 
 def test_a_one_series_timeline_is_labelled_and_given_a_top_margin_for_the_labels(results):
     count, y_range, frames, margin_top, extra = results["peaks_timeline_one_series"]
-    # the two spikes lead; the flat rest fills the other labels (a level
-    # stretch is a peak under the ADR's rule)
-    assert count == 5 and 22 in frames and 73 in frames
+    # the two spikes, and the level stretch before the first one (a level
+    # stretch gives one peak, at its first frame)
+    assert count == 3 and frames == [0, 22, 73]
     assert y_range == [0, 5 * 1.04]   # from the data alone, not the labels
     assert margin_top > 8 + 18   # room for the tick and the longest label
     assert extra == margin_top - 8   # the plot grows by what the labels take
