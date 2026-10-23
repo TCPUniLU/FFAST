@@ -543,7 +543,8 @@
       flex: 0 0 6px; margin: 0 -3px; position: relative; z-index: 5;
       cursor: col-resize; background: transparent; transition: background 0.1s;
     }
-    .resize-handle:hover, .resize-handle:focus-visible { background: var(--hl1); outline: none; }
+    .resize-handle:hover { background: var(--hl1); }
+    .resize-handle:focus-visible { background: var(--accent); outline: none; }   /* seen from the keyboard */
     body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
     #sidebar-toggle { margin-left: auto; flex-shrink: 0; white-space: nowrap; }
     .link-btn {
@@ -692,7 +693,7 @@
     .searching .exact-angles.search-reveal { display: flex; }
     .ctl-textarea {
       flex: 1; min-height: 48px; resize: vertical; font-family: var(--font);
-      font-size: var(--fs-s); background: var(--bg2); color: var(--text1);
+      font-size: var(--fs-s); background: var(--surface-2); color: var(--text1);
       border: 1px solid var(--bg3); border-radius: 3px; padding: 4px 6px;
     }
     .ctl-hint { font-size: var(--fs-s); color: var(--danger); }
@@ -976,7 +977,7 @@
  }
     #fb-footer .spacer { flex: 1; }
     select {
-      background: var(--bg2); border: none; border-bottom: 2px solid var(--hl1);
+      background: var(--surface-2); border: none; border-bottom: 2px solid var(--hl1);
       border-radius: 4px 4px 0 0; color: var(--hl2); padding: 3px 8px;
       font-family: var(--font); font-size: var(--fs-m); line-height: 1.2;
       height: auto; min-height: calc(1.2em + 8px);
