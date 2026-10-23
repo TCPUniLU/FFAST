@@ -54,6 +54,7 @@ const STATIC_BUTTONS = {
   'playback-gear': ['gear', 'Playback settings'],
   'pick-clear': ['close', 'Clear'],
   'hint-dismiss': ['close', 'Dismiss'],
+  'metrics-close': ['close', 'Close Metrics'],
   'popout-btn': ['new-window', 'New window', 'New window'],
   'fb-up': ['arrow-up', 'Parent directory'],
   'fb-home': ['home', 'Home'],

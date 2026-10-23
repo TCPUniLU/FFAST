@@ -512,7 +512,7 @@ async def test_web_dialog_asks_for_a_token_when_the_server_needs_one():
 
 # ── 3D sidebar (ADR 0055 "3D sidebar" row) ─────────────────────────────────
 
-_SECTIONS = ["Colour By", "Metrics", "Camera", "Display", "Bonds", "Force Vectors",
+_SECTIONS = ["Colour By", "Camera", "Display", "Bonds", "Force Vectors",
              "Extract Subset", "Export", "Alignment"]
 
 

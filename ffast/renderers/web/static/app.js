@@ -61,9 +61,6 @@ const PICK_TOOLS = {
 const SECTION_HELP = {
   'Colour By': 'Colours atoms by element, by how far each atom moved, or by a per-atom '
     + 'metric such as force error. Any colouring other than Elements shows a colour bar.',
-  'Metrics': 'Your own metrics, as formulas over named inputs, such as norm(pred_F - ref_F). '
-    + 'Click an input to put it in the formula. Try computes on the whole dataset without saving; '
-    + 'Save keeps the metric on the server for every window.',
   'Camera': 'Where you look from. Drag to orbit, scroll to zoom. XY, XZ and YZ snap to an '
     + 'axis view; "Exact angles" sets the angles by number. '
     + 'Keys: ←/→ frame, Space play, Esc puts down a pick tool, / search.',
@@ -129,7 +126,7 @@ export class FFastApp {
       retired: (view) => {
         if (view === this._focusedIndependent) this._switchFocusedView(null);
       },
-      chosen: () => { this._syncPanelSection(); this._syncSidebarTitle(); this._panes?.metrics.contextChanged(); },
+      chosen: () => { this._syncPanelSection(); this._syncSidebarTitle(); this._syncMetricsContext(); },
       focusedCamera: (cam) => this._panes?.camera.syncFromCamera(cam),
       frameShown: (view) => { if (this._playbackView() === view) this._syncPlayback(); },
       sceneAtoms: (view, atoms) => {
@@ -227,6 +224,7 @@ export class FFastApp {
     this._initViews();
     this._initUI();
     this._initSidebarPanes();
+    this._initMetricsDrawer();
     this._initPickTools();
     this._initTabs();
     this._applyUrlParams();
@@ -807,6 +805,82 @@ export class FFastApp {
     this._syncHint();
   }
 
+  // ── Metrics drawer: the metric editor on every tab ──────────────────────
+  // The editor is not a 3D setting: a metric goes into any tab. It lists
+  // inputs and runs Try on its own dataset and prediction, which start from
+  // the view the sidebar acts on and follow it when that changes.
+  _initMetricsDrawer() {
+    this._metricsContext = { datasetFp: null, modelFp: null };
+    const drawer = document.getElementById('metrics-drawer');
+    const dsSelect = document.getElementById('metrics-dataset');
+    const modelSelect = document.getElementById('metrics-model');
+    document.getElementById('metrics-btn').addEventListener('click', () => this._setMetricsOpen(drawer.hidden));
+    document.getElementById('metrics-close').addEventListener('click', () => this._setMetricsOpen(false));
+    dsSelect.addEventListener('change', () => {
+      const datasetFp = dsSelect.value || null;
+      const model = this._models.get(this._metricsContext.modelFp);
+      const keep = model && predictionApplies(model, datasetFp, this._datasets);
+      this._metricsContext = { datasetFp, modelFp: keep ? this._metricsContext.modelFp : null };
+      this._renderMetricsPicker();
+      this._panes.metrics.contextChanged();
+    });
+    modelSelect.addEventListener('change', () => {
+      this._metricsContext = { ...this._metricsContext, modelFp: modelSelect.value || null };
+      this._panes.metrics.contextChanged();
+    });
+    const content = document.getElementById('content');
+    makeResizable(document.getElementById('metrics-resize'), drawer, {
+      name: 'metrics', side: 'right', width: 320, min: 240,
+      max: () => Math.max(240, content.clientWidth + drawer.clientWidth - 300 - 6),
+    });
+    // Open or closed is browser layout state, never session state (ADR 0055).
+    this._setMetricsOpen(loadLayout().metricsOpen === true, false);
+  }
+
+  _setMetricsOpen(open, remember = true) {
+    document.getElementById('metrics-drawer').hidden = !open;
+    document.getElementById('metrics-resize').hidden = !open;
+    document.getElementById('metrics-btn').setAttribute('aria-pressed', String(open));
+    if (remember) saveLayout({ metricsOpen: open });
+  }
+
+  /** The view the sidebar acts on changed: the drawer takes its data. */
+  _syncMetricsContext() {
+    if (!this._metricsContext) return;
+    this._metricsContext = { datasetFp: this._focusedDatasetFp() ?? null, modelFp: this._focusedModelFp() ?? null };
+    this._renderMetricsPicker();
+    this._panes?.metrics.contextChanged();   // asks again: the inputs may have changed
+  }
+
+  /** The drawer's dataset and prediction lists; a dataset that has gone is
+   * replaced by the one the sidebar acts on. */
+  _renderMetricsPicker() {
+    if (!this._metricsContext) return;
+    const datasets = this._listedDatasets();
+    const before = this._metricsContext;
+    if (before.datasetFp && !datasets.has(before.datasetFp)) {
+      const fp = this._focusedDatasetFp();
+      this._metricsContext = datasets.has(fp)
+        ? { datasetFp: fp, modelFp: this._focusedModelFp() ?? null } : { datasetFp: null, modelFp: null };
+    }
+    const { datasetFp } = this._metricsContext;
+    const name = (meta, fp) => meta?.name || fp.slice(0, 8);
+    const dsSelect = document.getElementById('metrics-dataset');
+    dsSelect.replaceChildren(...(datasets.size ? [] : [new Option('No dataset', '')]),
+      ...[...datasets].map(([fp, meta]) => new Option(name(meta, fp), fp)));
+    dsSelect.value = datasetFp ?? '';
+    const modelSelect = document.getElementById('metrics-model');
+    const models = [...this._models].filter(([, meta]) => !datasetFp || predictionApplies(meta, datasetFp, this._datasets));
+    modelSelect.replaceChildren(new Option('No prediction', ''),
+      ...models.map(([fp, meta]) => new Option(name(meta, fp), fp)));
+    if (!models.some(([fp]) => fp === this._metricsContext.modelFp))
+      this._metricsContext = { datasetFp, modelFp: null };
+    modelSelect.value = this._metricsContext.modelFp ?? '';
+    const after = this._metricsContext;
+    if (after.datasetFp !== before.datasetFp || after.modelFp !== before.modelFp)
+      this._panes?.metrics.contextChanged();
+  }
+
   // ── sidebar panes (ADR 0045 Phase 1: issues 03-07) ──────────────────────
   _initSidebarPanes() {
     const sidebarEl = document.getElementById('loupe-sidebar');
@@ -836,10 +910,10 @@ export class FFastApp {
       onSetUnit: (dimension, unit) => this._setDatasetUnit(this._focusedDatasetFp(), dimension, unit),
     });
 
-    const metricsPane = createMetricsPane(sidebarEl, {
+    const metricsPane = createMetricsPane(document.getElementById('metrics-body'), {
       ops: this._metricOps,
-      // The pane acts on the view the sidebar acts on (ADR 0060 section 3).
-      getContext: () => ({ datasetFp: this._focusedDatasetFp(), modelFp: this._focusedModelFp() }),
+      // The drawer's own dataset and prediction (_syncMetricsContext).
+      getContext: () => ({ ...this._metricsContext }),
       nameOf: ({ datasetFp, modelFp }) => this._pairName(datasetFp, modelFp),
       onGoToFrame: (frame, { datasetFp, modelFp }) => this._onPlotPoint({ datasetFp, modelFp, frame }),
       onColourAtoms: (id) => this._colourAtomsBy(id),
@@ -1069,7 +1143,7 @@ export class FFastApp {
     this._syncSidebarTitle();
     this._syncPlayback();
     this._renderQuickStyles();
-    this._panes.metrics.contextChanged();   // its inputs are those of the view now shown
+    this._syncMetricsContext();   // its inputs are those of the view now shown
   }
 
   /** Give an independent panel its starting look as its settings, so the
@@ -1289,7 +1363,7 @@ export class FFastApp {
       // The catalog, tab layout and metric lists come with the connect replay
       // (ADR 0062); only the inputs list is asked for, since it depends on
       // what this window has selected.
-      this._panes.metrics.contextChanged();
+      this._syncMetricsContext();
 
     } catch (err) {
       this._conn = null;   // handshake failed — undo the early assignment above
@@ -1578,6 +1652,7 @@ export class FFastApp {
     this._renderQuickStyles();
     this._syncHint();
     this._syncSidebarTitle();
+    this._renderMetricsPicker();
     // The analysis tabs offer their own multi-select over the same objects, so
     // they need the full lists, not just the rail's current pick.
     this._analysis?.setAvailable({ datasets: this._listedDatasets(), models: this._models });
@@ -2079,6 +2154,8 @@ export class FFastApp {
     if (why) { this._setStatus(why, 'error'); return; }
     if (!this._panes.colorBy.chooseMetric(id))
       this._setStatus(`${id} has no value per atom here`, 'error');
+    else if (!this._activePanel)
+      this._setStatus(`Atoms coloured by ${id}; a tab with a 3D panel shows them`, 'connected');
   }
 
   /** "Plot it" (rule 13): a panel for a per-structure metric, in the "My
@@ -2111,7 +2188,7 @@ export class FFastApp {
   }
 
   _syncAnalysisContext() {
-    this._panes?.metrics?.contextChanged();
+    this._syncMetricsContext();
     // The rail's choice is what a reload shows again; while replay settles on
     // what a reload showed, the first dataset it passes is not.
     if (this._autoDatasetFp === null && this._currentDatasetFp)

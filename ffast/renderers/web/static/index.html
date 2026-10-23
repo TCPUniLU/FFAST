@@ -590,6 +590,21 @@
       border-radius: 3px; color: var(--text1); padding: 2px 4px; font-size: var(--fs-s);
     }
 
+    /* ── Metrics drawer (on every tab) ───────────────────────────────── */
+    #metrics-btn[aria-pressed=true] { background: var(--accent); color: var(--accent-ink); }
+    #metrics-drawer {
+      width: 320px; flex-shrink: 0; overflow-y: auto;
+      background: var(--bg2); border-left: 1px solid var(--bg3);
+      padding: 8px; display: flex; flex-direction: column; gap: 6px;
+    }
+    #metrics-drawer[hidden], #metrics-resize[hidden] { display: none; }
+    .md-head { display: flex; align-items: center; justify-content: space-between; }
+    .md-title { font-size: var(--fs-s); font-weight: 600; color: var(--muted); }
+    .md-context { display: flex; align-items: center; gap: 6px; font-size: var(--fs-s); color: var(--muted); }
+    .md-context select { flex: 1 1 0; min-width: 0; }
+    .md-body { display: flex; flex-direction: column; gap: 6px; }
+    #metrics-drawer .mx-list { max-height: 40vh; }
+
     /* ── 3D settings sidebar ─────────────────────────────────────────── */
     #loupe-sidebar {
       width: 250px; flex-shrink: 0;
@@ -845,6 +860,7 @@
     @media (max-width: 720px) {
       #main { flex-direction: column; }
       #objectbar { width: 100% !important; max-height: 240px; border-right: 0; border-bottom: 1px solid var(--bg3); }
+      #metrics-drawer { width: 100% !important; max-height: 60vh; border-left: 0; border-top: 1px solid var(--bg3); }
       .resize-handle { display: none; }
       #topbar { flex-wrap: wrap; }
     }
@@ -1071,6 +1087,9 @@
       <button id="file-menu-btn" aria-haspopup="menu" aria-expanded="false">File</button>
       <div id="file-menu-list" class="menu-list hidden" role="menu"></div>
     </div>
+    <!-- Your own metrics, on every tab (app.js _initMetricsDrawer). -->
+    <button id="metrics-btn" type="button" aria-pressed="false" aria-controls="metrics-drawer"
+            title="Define your own metrics as formulas">Metrics</button>
     <!-- How the figure area looks (ADR 0063): Screen or Journal page, and Density. -->
     <div id="view-mode" role="radiogroup" aria-label="View mode">
       <button type="button" role="radio" aria-checked="true" data-mode="screen">Screen</button>
@@ -1168,6 +1187,22 @@
       </div>
       <div id="tabpanels"></div>
     </div>
+
+    <!-- The Metrics drawer: the metric editor (panes/metrics.js), beside any
+         tab, with its own dataset and prediction to list inputs and Try on. -->
+    <div id="metrics-resize" class="resize-handle" hidden></div>
+    <aside id="metrics-drawer" data-pane="Metrics" aria-label="Metrics" hidden>
+      <div class="md-head">
+        <span class="md-title">Metrics</span>
+        <button id="metrics-close" type="button" class="mini" title="Close" aria-label="Close Metrics"></button>
+      </div>
+      <div class="md-context">
+        <span class="md-on">on</span>
+        <select id="metrics-dataset" aria-label="Dataset for the metric editor"></select>
+        <select id="metrics-model" aria-label="Prediction for the metric editor"></select>
+      </div>
+      <div id="metrics-body" class="md-body"></div>
+    </aside>
   </div>
 
   <!-- The one set of 3D controls. app.js moves them into the tab on screen

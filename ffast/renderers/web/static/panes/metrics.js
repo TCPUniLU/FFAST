@@ -10,7 +10,6 @@
  * metric_logic.js; the wire is metric_ops.js. This file draws and wires.
  */
 
-import { createPane } from '../sidebar.js';
 import { icon } from '../icons.js';
 import {
   ID_PREFIX, completeAt, fixFor, formatStat, groupInputs, groupMetrics,
@@ -31,7 +30,7 @@ function el(tag, cls = '', text = '') {
 }
 
 /**
- * @param {HTMLElement} sidebarEl
+ * @param {HTMLElement} body the Metrics drawer's body (app.js), on every tab
  * @param {{
  *   ops: import('../metric_ops.js').MetricOps,
  *   getContext: () => {datasetFp: string|null, modelFp: string|null},
@@ -41,10 +40,8 @@ function el(tag, cls = '', text = '') {
  *   onPlot?: (metricId: string) => void,
  * }} callbacks
  */
-export function createMetricsPane(sidebarEl, callbacks) {
+export function createMetricsPane(body, callbacks) {
   const { ops } = callbacks;
-  const { el: paneEl, body } = createPane('Metrics');
-  sidebarEl.appendChild(paneEl);
 
   // ── state ────────────────────────────────────────────────────────────────
   let catalog = [];

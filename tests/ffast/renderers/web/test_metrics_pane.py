@@ -116,9 +116,11 @@ async def test_try_reports_bad_values_before_anything_is_saved(tmp_path):
 
 
 async def _open_metrics_pane(page):
-    pane = page.locator("[data-pane='Metrics']")
-    if "collapsed" in (await pane.get_attribute("class") or ""):
-        await pane.locator(".pane-header").click()
+    """Open the Metrics drawer from the top bar (it is on every tab)."""
+    pane = page.locator("#metrics-drawer")
+    if await pane.is_hidden():
+        await page.locator("#metrics-btn").click()
+    await expect(pane).to_be_visible()
     return pane
 
 
@@ -402,7 +404,8 @@ async def test_editing_a_metric_recolours_every_view_coloured_by_it(tmp_path):
         dataset_fp, _model_fp = await _preload_dataset_and_prediction(ws_port)
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page(viewport={"width": 1500, "height": 900})
+            # wide enough that Compare keeps two columns beside the Metrics drawer
+            page = await browser.new_page(viewport={"width": 1900, "height": 900})
             try:
                 await _open_compare(page, ws_port, web_port, dataset_fp)
                 pane = await _open_metrics_pane(page)
@@ -421,3 +424,44 @@ async def test_editing_a_metric_recolours_every_view_coloured_by_it(tmp_path):
                          .map(([, kw]) => kw.view_id.split('-')[0])).size === 2""")
             finally:
                 await browser.close()
+
+
+async def test_the_metrics_drawer_works_on_a_tab_with_no_3d_panel(tmp_path):
+    """The metric editor is not a 3D setting: the top bar opens it on a tab of
+    plots only. Its own picker starts from the selected dataset and
+    prediction; choosing "No prediction" there drops the prediction inputs
+    without touching the left list. Open or closed survives a reload."""
+    cm, _metrics_dir = await _server(tmp_path)
+    async with cm as (ws_port, web_port):
+        dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 900})
+            try:
+                await _open_app(page, web_port, ws_port)
+                await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+                await _open_analysis_tab(page, "Basic Errors")
+                await expect(page.locator(".tabpanel.active .panel-3d")).to_have_count(0)
+                assert await page.locator("#loupe-sidebar [data-pane='Metrics']").count() == 0
+
+                pane = await _open_metrics_pane(page)
+                await expect(page.locator("#metrics-btn")).to_have_attribute("aria-pressed", "true")
+                await expect(page.locator("#metrics-dataset")).to_have_value(dataset_fp)
+                await expect(page.locator("#metrics-model")).to_have_value(model_fp)
+                await pane.get_by_role("button", name="New metric").click()
+                prediction_input = pane.locator(".mx-input[data-ref='prediction.forces']")
+                await expect(prediction_input).to_have_count(1)
+
+                await page.locator("#metrics-model").select_option("")
+                await expect(prediction_input).to_have_count(0)
+                await expect(pane.locator(".mx-input[data-ref='reference.forces']")).to_have_count(1)
+                await expect(page.locator(f"#model-list .obj-row[data-fp='{model_fp}']")).to_have_class(
+                    re.compile(r"\bselected\b"))   # the left list keeps its prediction
+
+                await page.reload(wait_until="networkidle")
+                await expect(page.locator("#metrics-drawer")).to_be_visible()
+                await page.locator("#metrics-close").click()
+                await expect(page.locator("#metrics-drawer")).to_be_hidden()
+            finally:
+                await browser.close()
+
