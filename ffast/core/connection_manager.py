@@ -29,6 +29,19 @@ from ffast.protocol import control
 logger = logging.getLogger("FFAST")
 
 
+def _connected_progress(session, message: str) -> dict:
+    """The sidebar fields for a fresh connection: ``message``, plus a warning
+    in red when the server runs other FFAST code than this app (its HELLO_ACK
+    fingerprint differs, or it sends none: ffast.session.code_fingerprint)."""
+    from ffast.session.code_fingerprint import code_fingerprint, server_code_notice
+
+    notice = server_code_notice(session.server_code_fingerprint, code_fingerprint())
+    if notice is None:
+        return {"message": message}
+    logger.warning("%s", notice)
+    return {"message": f"{message}. {notice}", "error": True}
+
+
 class ConnectionManager:
     """Owns the ffast-server session lifecycle and transport (ADR 0020)."""
 
@@ -228,7 +241,7 @@ class ConnectionManager:
                 "TASK_PROGRESS",
                 taskID,
                 title=f"Cluster: {profile.host} [{session.job_id}]",
-                message="Connected — ✕ to disconnect",
+                **_connected_progress(session, "Connected — ✕ to disconnect"),
             )
 
             # Keep task alive so the sidebar item stays as a
@@ -371,7 +384,7 @@ class ConnectionManager:
                 "TASK_PROGRESS",
                 taskID,
                 title=f"Local server {host}:{port}",
-                message="Connected — ✕ to disconnect",
+                **_connected_progress(session, "Connected — ✕ to disconnect"),
             )
 
             try:
@@ -477,7 +490,7 @@ class ConnectionManager:
             self.eventPush(
                 "TASK_PROGRESS", taskID,
                 title="Local server",
-                message="Running — ✕ to stop",
+                **_connected_progress(session, "Running — ✕ to stop"),
             )
             logger.info("Local server ready on port %d", port)
 

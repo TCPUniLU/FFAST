@@ -140,6 +140,16 @@ class TestWheelContents:
         # model loaders cannot import on an installed server.
         assert "ffast/config/default.json" in wheel_names
 
+    def test_installed_code_has_the_checkout_fingerprint(self, wheel_path, tmp_path):
+        """A server installed from this wheel reports the same code fingerprint
+        as this checkout, so a fresh install never shows the "server runs
+        different code" warning."""
+        from ffast.session.code_fingerprint import code_fingerprint, fingerprint_of
+
+        with zipfile.ZipFile(wheel_path) as zf:
+            zf.extractall(tmp_path)
+        assert fingerprint_of(tmp_path) == code_fingerprint()
+
     def test_index_html_ships(self, wheel_names):
         assert "ffast/renderers/web/static/index.html" in wheel_names
 
