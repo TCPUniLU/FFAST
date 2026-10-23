@@ -544,7 +544,10 @@ differed from the steps, and what was added:
   alone, because Plotly would count the arrow ends and flatten the curve; and the
   plot grows by the room the labels take, with the tab's rows (`--row-min`), so the
   curve keeps its size. Side effects: every row of a tab with labelled timelines is
-  about 120 px taller, and the explicit y range is recorded like a zoom.
+  about 120 px taller, and the explicit y range was recorded like a zoom. Changed
+  after the build: a plot remembers the ranges it was drawn with, which are not a
+  zoom, and a double-click goes back to them (Plotly's `doubleClick: 'reset'`), not
+  to an autorange that counts the label arrows.
 - **`PEAK_HEADROOM`** existed for one commit (2.0) and was replaced by the above.
 
 **Where a step's text was followed differently**
