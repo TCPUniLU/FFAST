@@ -3095,6 +3095,12 @@ async def test_web_edit_mode_warns_when_another_window_saved_the_tab(tmp_path):
                 await page.locator("[data-edit=save]").click()
                 await expect(page.locator(".ask-dialog .warning-modal-message")).to_have_text(
                     "Basic Errors was changed in another window — overwrite or discard your edits?")
+                # Focus starts on Cancel, not on Overwrite; Cancel keeps editing.
+                await expect(page.locator(".ask-dialog").get_by_role("button", name="Cancel", exact=True)).to_be_focused()
+                await page.keyboard.press("Enter")
+                await expect(page.locator(".ask-dialog")).to_have_count(0)
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(1)
+                await page.locator("[data-edit=save]").click()
                 await page.get_by_role("button", name="Discard my edits").click()
                 await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
                 await expect(page.locator(".tabpanel.active .analysis-panel[data-title='Theirs']")).to_have_count(1)

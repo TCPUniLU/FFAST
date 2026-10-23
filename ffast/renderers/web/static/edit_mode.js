@@ -120,7 +120,9 @@ export class TabEditor {
       const answer = await askDialog({
         title: 'Changed in another window',
         message: `${this._previous} was changed in another window — overwrite or discard your edits?`,
-        buttons: ['Discard my edits', 'Overwrite'],
+        // Cancel (or Esc) keeps editing; focus starts on it, not on Overwrite.
+        buttons: ['Cancel', 'Discard my edits', 'Overwrite'],
+        danger: 'Overwrite',
       });
       if (answer === 'Discard my edits') { this.end(); return; }
       if (answer !== 'Overwrite') return;
@@ -128,7 +130,8 @@ export class TabEditor {
       const answer = await askDialog({
         title: 'Deleted in another window',
         message: `${this._previous} was deleted in another window — save your edits as a new tab, or discard them?`,
-        buttons: ['Discard my edits', 'Save as a new tab'],
+        buttons: ['Cancel', 'Discard my edits', 'Save as a new tab'],
+        danger: 'Discard my edits',
       });
       if (answer === 'Discard my edits') { this.end(); return; }
       if (answer !== 'Save as a new tab') return;
