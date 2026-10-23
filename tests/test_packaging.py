@@ -127,6 +127,11 @@ class TestWheelContents:
         with zipfile.ZipFile(wheels[0]) as zf:
             return zf.namelist()
 
+    def test_default_config_ships(self, wheel_names):
+        # ffast/config/user.py opens it at import; without it the dataset and
+        # model loaders cannot import on an installed server.
+        assert "ffast/config/default.json" in wheel_names
+
     def test_index_html_ships(self, wheel_names):
         assert "ffast/renderers/web/static/index.html" in wheel_names
 

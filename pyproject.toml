@@ -88,7 +88,7 @@ namespaces = true
 
 [tool.setuptools.package-data]
 config = ["default.json"]
-"ffast.config" = ["*.toml", "builtin_tabs/*.toml"]
+"ffast.config" = ["*.toml", "builtin_tabs/*.toml", "default.json"]
 # Vendored web client assets (ADR 0045): HTML/JS/CSS + vendored Three.js and
 # Plotly under static/. These must ship in the wheel or `ffast` (the web
 # launcher) serves a dead page. The recursive `static/**/*` glob covers the
