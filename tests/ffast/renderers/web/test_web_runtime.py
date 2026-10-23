@@ -1949,6 +1949,25 @@ async def _delete_from_rail(page, kind, fp):
     return page.locator(".ask-dialog")
 
 
+async def test_web_the_play_button_is_named_for_what_a_press_does(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            play = page.locator("#play-pause-btn")
+            await expect(play).to_have_attribute("aria-label", "Play")
+            await play.click()
+            await expect(play).to_have_attribute("aria-label", "Pause")
+            await expect(play).to_have_attribute("title", "Pause")
+            await play.click()
+            await expect(play).to_have_attribute("aria-label", "Play")
+        finally:
+            await browser.close()
+
+
 async def test_web_frame_and_play_keys_do_nothing_on_a_tab_without_a_3d_view(ffast_web_server):
     """ADR 0063 follow-up: on an analysis tab without a 3D panel, ←/→ and
     Space stepped and played the 3D view out of sight."""

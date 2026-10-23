@@ -2311,7 +2311,10 @@ export class FFastApp {
 
   _togglePlayback() {
     this._playing = !this._playing;
-    document.getElementById('play-pause-btn').innerHTML = icon(this._playing ? 'pause' : 'play');
+    const btn = document.getElementById('play-pause-btn');
+    btn.innerHTML = icon(this._playing ? 'pause' : 'play');
+    btn.title = this._playing ? 'Pause' : 'Play';   // the name says what a press does
+    btn.setAttribute('aria-label', btn.title);
     if (this._playing) this._playLoop();
   }
 
