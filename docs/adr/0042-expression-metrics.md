@@ -1,5 +1,9 @@
 # Expression Metrics: element-wise algebra over refs, no Python (Tier 2.5)
 
+Status: Accepted. Decision 1 ("Element-wise only") and its "Reduction scope"
+option are superseded by ADR 0064 (2026-10-23): formulas can now average, total
+and take extremes by structure, element or all. The rest stands.
+
 FFAST has a three-rung ladder for exposing custom metrics, but the middle rung
 is missing. A **Dataset Field** (ADR 0023) surfaces a file key as a passthrough
 metric with no Python; a **Transform** (ADR 0021) reduces one metric via a named

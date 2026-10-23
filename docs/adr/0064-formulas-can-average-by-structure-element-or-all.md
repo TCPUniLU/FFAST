@@ -1,6 +1,6 @@
 # Formulas can average, total and take extremes by structure, element or all, over chosen atoms
 
-Status: Accepted 2026-10-23 (not built). Supersedes ADR 0042 Decision 1 ("Element-wise
+Status: Accepted 2026-10-23, built 2026-10-23 (steps 1-7). Supersedes ADR 0042 Decision 1 ("Element-wise
 only") and the "Reduction scope" option it chose; the rest of ADR 0042 stands.
 
 ## The problem

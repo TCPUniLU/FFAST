@@ -414,8 +414,8 @@ expr  = "norm(pred_F - ref_F)"
 
 Each name in `expr` is bound in `vars` to an input: a metric id, a dataset
 field, or a raw reference such as `reference.forces`. `n_atoms` is always
-available (atoms per structure). The formula works element by element, so it
-never totals over atoms or frames.
+available (atoms per structure). Arithmetic works value by value; to combine
+values, use a reduction (below).
 
 What a formula may use:
 
@@ -429,8 +429,51 @@ What a formula may use:
 - Positions: `F[2]` is the third part of a vector. Write whole numbers only,
   starting at 0. Use a position when no name covers the part you want.
 
+- Reductions, which combine many values into one per group:
+  `mean`, `sum`, `min`, `max`, `rms` (square, average, root) and `std` (divides
+  by the number of values, like NumPy). Each needs `by=`, which says what to
+  combine and so the shape of the result:
+
+  | `by=` | combines | per-atom input gives | per-structure input gives |
+  |---|---|---|---|
+  | `structure` | the atoms of each structure | per structure | an error |
+  | `element` | the atoms of each element | per element | an error |
+  | `all` | everything | one number | one number |
+
+  A forgotten `by=` is an error, never a silent average over everything.
+  `by=all` counts every atom once: the mean of the per-structure means is
+  something else, written `mean(mean(err, by=structure), by=all)`. Per element,
+  the elements are listed by atomic number. `min(a, b)` is an error: the smaller
+  of two values at each place is `minimum(a, b)`.
+- A reduction keeps the parts of a vector: `sum(pred_F - ref_F, by=structure)`
+  is the net force error of each structure, a vector. `mean_parts(v)` and
+  `sum_parts(v)` average or add the parts at each place, so the two usual force
+  errors are `mean(norm(pred_F - ref_F), by=all)` (mean length of the error) and
+  `mean(mean_parts(abs(pred_F - ref_F)), by=all)` (mean of all x, y, z errors).
+- `element("H")` is 1 for each hydrogen atom and 0 for the others; it takes
+  several symbols, `element("C", "N", "O")`, and "all but H" is
+  `1 - element("H")`. These symbols are the only text a formula may hold.
+- `where=` on a reduction picks the rows that count, and never changes the
+  result's shape:
+
+  ```
+  mean(norm(pred_F - ref_F), by=structure, where=element("H"))   # H force error per structure
+  rms(norm(pred_F - ref_F), by=all, where=element("C", "O"))     # one number for C and O
+  mean(abs(pred_E - ref_E), by=all, where=n_atoms > 20)          # only large structures
+  ```
+
+Reductions nest and mix with arithmetic. One number spreads to any shape, so
+`norm(dF) / max(norm(dF), by=all)` scales each atom's error to 0..1, and
+`abs(dE - mean(dE, by=all))` removes the mean energy shift. A per-structure
+value does not spread onto atoms: `err - mean(err, by=structure)` is an error.
+
 Any bad number (infinity, not-a-number) makes the whole metric fail on that
-dataset, for example a division by zero.
+dataset, for example a division by zero. "No value" is different: a group with
+nothing to combine, such as a structure without hydrogen under
+`where=element("H")`. The metric still succeeds; that place shows as a gap in a
+timeline, `—` in a table, a grey atom, and is left out of scatter plots and
+densities. A later reduction leaves it out too. A formula that grows past
+2,000 characters or 50 levels of nesting is refused.
 
 **The position trap.** A position counts parts in the layout FFAST holds, not
 the layout of your file. A vector has three parts, so `F[2]` is z. A stress
@@ -455,11 +498,15 @@ shows and follows it; you can choose another one there without changing the tab.
    variables. Typing offers the same names. A name with no input is shown in red
    ("`ref_E` is not an input"), with a **Fix** button when exactly one input fits.
    The line under the formula says what the result is: per structure (can be
-   plotted), per atom (can colour atoms) or one number.
+   plotted), per atom (can colour atoms) or one number. A per-atom formula that
+   uses `by=all` or `by=element` cannot colour atoms yet, and the line says so:
+   colouring computes the frame on screen only, where those words would mean
+   "this frame".
 3. **Try** computes the formula on every frame of the selected dataset and
    prediction without saving it. It shows the smallest, average and largest
-   value, a histogram, and the first frames with bad values (infinity,
-   not-a-number); click a frame number to go to it. **Cancel** stops it. A bad
+   value, a histogram, how many places have no value ("12 structures have no
+   value"), and the first frames with bad values (infinity, not-a-number);
+   click a frame number to go to it. **Cancel** stops it. A bad
    value fails the whole metric once it is saved, so try first.
 4. **Save** keeps the metric on the server, in `~/.ffast/metrics/`, one TOML file
    each in the same format as `[[metrics.expr]]`. Every window connected to that
@@ -471,10 +518,11 @@ Only user metrics can be edited. Any other metric offers **Duplicate**, which
 starts a user copy under a new id. A formula metric copies its formula. A
 Python metric shows its code under **Python code** and copies as a formula that
 computes exactly the same where one can (`ffast.force_mae` copies as
-`norm(pred_F - ref_F)`). A Python metric that averages, totals or smooths, such as
-`ffast.force_mae_per_structure`, copies as a formula that takes the metric itself
-as its input (`force_mae_per_structure`), for you to change, e.g. to
-`1000 * force_mae_per_structure`.
+`norm(pred_F - ref_F)`, `ffast.force_mae_per_structure` as
+`mean(norm(pred_F - ref_F), by=structure)`). A Python metric with no such formula
+(smoothing, densities, geometry), such as `ffast.force_mae_per_structure_smoothed`,
+copies as a formula that takes the metric itself as its input, for you to
+change, e.g. to `1000 * force_mae_per_structure_smoothed`.
 **Delete** is refused while anything uses the metric: the pane lists the tabs,
 other metrics and the colouring that do. **Export** shows the TOML to paste into a
 project's `ffast.toml`.
