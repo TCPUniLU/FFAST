@@ -628,7 +628,34 @@ export class AnalysisManager {
     t.gridEl.classList.toggle('narrow', !!t.narrow);
     t.gridEl.style.gridTemplateColumns = t.narrow ? 'minmax(0, 1fr)'
       : fixed ? sizeTemplate(widths, COLUMN_PX) : `repeat(${maxCol}, minmax(var(--col-min), 1fr))`;
-    t.gridEl.style.gridTemplateRows = heights?.length && !t.narrow ? sizeTemplate(heights, ROW_PX) : '';
+    this._sizeRows(t);
+  }
+
+  /** Each row's height: 300 px, or the height the tab sets, plus the room
+   * the peak labels of a timeline in it take, so its plot keeps its size.
+   * Written per row because the grid has a set height and scrolls: there a
+   * row grows only by its minimum, never to fit what is in it. A narrow
+   * grid's rows are its panels in reading order. */
+  _sizeRows(t) {
+    const heights = t.narrow ? null : t.spec.row_heights;
+    const rank = readingOrder((t.spec.panels || []).map((p, index) => ({ index, row: p.row, col: p.col })));
+    const items = [
+      ...(t.slots || []).map((slot) => ({ spec: slot.specs[0], index: slot.indices[0],
+        extra: Math.max(0, ...(slot.cards || []).map((c) => c.body._extraHeight || 0)) })),
+      ...(t.cells3d || []).map((cell) => ({ spec: cell.spec, index: cell.index, extra: 0 })),
+    ];
+    if (t.narrow) items.sort((a, b) => rank.get(a.index) - rank.get(b.index));
+    const rowOf = (item, i) => (t.narrow ? i : item.spec.row);
+    const extra = [];
+    items.forEach((item, i) => { extra[rowOf(item, i)] = Math.max(extra[rowOf(item, i)] || 0, item.extra); });
+    t.gridEl._rowExtra = extra;   // edit mode saves a dragged row without it
+    if (t.gridEl.classList.contains('fill') || (!heights?.length && !extra.some(Boolean))) {
+      t.gridEl.style.gridTemplateRows = '';   // index.html's rows: 300 px, or one whole-height cell
+      return;
+    }
+    const n = Math.max(heights?.length || 0, extra.length);
+    t.gridEl.style.gridTemplateRows = Array.from({ length: n }, (_, i) =>
+      `minmax(${(heights?.[i] != null ? heights[i] * ROW_PX : ROW_PX) + (extra[i] || 0)}px, auto)`).join(' ');
   }
 
   /** Stack order for a narrow grid: reading order, whatever the file order is. */
@@ -1012,7 +1039,7 @@ export class AnalysisManager {
       card.body.className = '';
       card.body._extraHeight = 0;
       card.body.style.minHeight = '';
-      this._syncRowMin(t);
+      this._sizeRows(t);
       const msg = document.createElement('div');
       msg.className = 'panel-msg';
       msg.textContent = `${missing.length === 1 ? 'Metric' : 'Metrics'} ${missing.join(', ')} ` +
@@ -1049,7 +1076,7 @@ export class AnalysisManager {
       card.body.className = '';
       card.body._extraHeight = 0;
       card.body.style.minHeight = '';
-      this._syncRowMin(t);
+      this._sizeRows(t);
       const anyModel = refs.some((r) => r.modelFp);
       card.body.innerHTML =
         `<div class="panel-msg">${anyModel ? 'No data for this selection.'
@@ -1084,20 +1111,9 @@ export class AnalysisManager {
     }
     this._wirePanelInteractions(t, spec, card);
     this._wirePeaksToggle(t, spec, card);
-    this._syncRowMin(t);
+    this._sizeRows(t);
     this._buildPanelParams(t, spec, card);
     this._showCaption(card, spec);
-  }
-
-  /** Rows are 300 px at least; a tab with labelled timelines makes them taller
-   * by what the labels take, so every plot keeps its usual size. */
-  _syncRowMin(t) {
-    let extra = 0;
-    for (const slot of t.slots) {
-      for (const card of slot.cards || []) extra = Math.max(extra, card.body._extraHeight || 0);
-    }
-    if (extra) t.gridEl.style.setProperty('--row-min', `${300 + extra}px`);
-    else t.gridEl.style.removeProperty('--row-min');
   }
 
   /** The "Peaks" checkbox of a one-series timeline: its peak labels on or off. */

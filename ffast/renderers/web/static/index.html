@@ -356,8 +356,8 @@
       flex: 1; overflow: auto; padding: 10px; min-height: 0;
       display: grid; gap: 10px; align-content: start;
       grid-template-columns: repeat(2, minmax(var(--col-min), 1fr));
-      /* --row-min grows by what a labelled timeline's peak labels take (analysis.js) */
-      grid-auto-rows: minmax(var(--row-min, 300px), auto);
+      /* a row with peak labels, or a tab that sets heights, gets its own size (analysis.js _sizeRows) */
+      grid-auto-rows: minmax(300px, auto);
     }
     /* Too narrow for two columns: one column, panels in reading order (analysis.js
        sets the order); the placements the panels carry are ignored. */

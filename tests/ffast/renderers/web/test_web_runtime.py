@@ -2725,7 +2725,10 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
                 await page.mouse.up()
                 heights = await page.evaluate("() => window.ffastApp._editor.draft.row_heights")
                 assert heights[0] > 1.4
-                assert heights[1] * 300 == pytest.approx(below, abs=2)
+                # The row below is drawn taller than its set height by its peak
+                # labels' room, which is not saved into the height.
+                room = await grid.evaluate("(el) => el._rowExtra[1] || 0")
+                assert heights[1] * 300 + room == pytest.approx(below, abs=2)
                 assert await grid.evaluate(track, ["gridTemplateRows", 1]) == pytest.approx(below, abs=2)
                 assert await grid.evaluate("(el) => el.scrollHeight > el.clientHeight")
 
@@ -4284,6 +4287,59 @@ async def test_web_a_double_click_on_a_timeline_does_not_open_a_frame(ffast_web_
 
             await page.mouse.click(x, y)
             await expect(page.locator("#frame-label")).to_have_text("50 / 99")
+        finally:
+            await browser.close()
+
+
+# Each slot of a tab: its panel kinds, top and height on screen.
+_SLOT_BOXES = """(name) => window.ffastApp._analysis._tabs.find((t) => t.spec.name === name)
+  .slots.map((s) => { const r = s.el.getBoundingClientRect();
+    return [s.specs.map((x) => x.kind), Math.round(r.top), r.height]; })"""
+
+
+@pytest.mark.parametrize("width", [1440, 900])
+async def test_web_only_the_rows_with_peak_labels_grow(ffast_web_server, width):
+    """ADR 0063 follow-up: a labelled timeline made every row of its tab taller
+    by its labels' height, leaving the tables' rows mostly empty."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": width, "height": 900})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            await expect(page.locator(_sub_panel("Forces MAE timeline") + " .panel-plot .annotation")).to_have_count(5)
+            slots = await page.evaluate(_SLOT_BOXES, "Basic Errors")
+            timeline_tops = {top for kinds, top, _ in slots if "timeline" in kinds}
+            assert timeline_tops, slots
+            for kinds, top, height in slots:
+                if "timeline" in kinds:
+                    assert height > 300, slots
+                elif top not in timeline_tops:
+                    assert abs(height - 300) <= 2, (kinds, slots)
+            assert any("table" in kinds for kinds, top, _ in slots if top not in timeline_tops)
+            # and every row holds its panels: none reaches into the row below
+            for _, top, height in slots:
+                below = [t for _, t, _ in slots if t > top]
+                assert not below or top + height <= min(below), slots
+
+            if width == 1440:
+                # A set row height is a minimum: the labels' room still adds to it.
+                await page.evaluate(
+                    "() => { const a = window.ffastApp._analysis;"
+                    " const t = a._tabs.find((x) => x.spec.name === 'Basic Errors');"
+                    " a.placeCells({...t.spec, row_heights: [1, 1, 1, 1, 1]}); }")
+                slots = await page.evaluate(_SLOT_BOXES, "Basic Errors")
+                for kinds, top, height in slots:
+                    below = [t for _, t, _ in slots if t > top]
+                    assert not below or top + height <= min(below), slots
+                    if "timeline" in kinds:
+                        assert height > 300, slots
         finally:
             await browser.close()
 

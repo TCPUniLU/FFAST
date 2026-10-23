@@ -350,9 +350,9 @@ export class TabEditor {
       let next = sizes;
       const move = (ev) => {
         next = dragTrack(sizes, k, (axis === 'col' ? ev.clientX : ev.clientY) - start, min);
-        const template = next.map((px) => `${px}px`).join(' ');
-        if (axis === 'col') grid.style.gridTemplateColumns = template;
-        else grid.style.gridTemplateRows = template;
+        // A row height is a minimum, as analysis.js sets it (peak labels grow a row).
+        if (axis === 'col') grid.style.gridTemplateColumns = next.map((px) => `${px}px`).join(' ');
+        else grid.style.gridTemplateRows = next.map((px) => `minmax(${px}px, auto)`).join(' ');
         const shift = next[k - 1] - sizes[k - 1];
         for (const [d, at] of later) d.style[axis === 'col' ? 'left' : 'top'] = `${at + shift}px`;
       };
@@ -364,7 +364,14 @@ export class TabEditor {
           const widths = sizesOf(next, COLUMN_PX).slice(0, columnsOf(this._draft));
           this.change({ ...this._draft, column_widths: widths });
         } else {
-          const heights = sizesOf(next, ROW_PX).slice(0, Math.max(1, rowsOf(this._draft)));
+          // Rows are read as drawn, and a row with peak labels is drawn taller
+          // than its set height by their room (analysis.js _sizeRows): the
+          // dragged row is saved without it, the others keep their set height.
+          const set = this._draft.row_heights || [];
+          const room = grid._rowExtra || [];
+          const drawn = next.map((px, i) => px - (room[i] || 0));
+          const heights = sizesOf(drawn, ROW_PX).slice(0, Math.max(1, rowsOf(this._draft)))
+            .map((h, i) => (i !== k - 1 && set[i] != null ? set[i] : h));
           this.change({ ...this._draft, row_heights: heights });
         }
       };
