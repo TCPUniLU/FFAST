@@ -429,3 +429,48 @@ Done when: the formulas in section 9 compute what their built-ins compute (the
 test says so), and a user can write, try, save and plot a per-structure, a
 per-element and an H-only formula in the browser, the last with gaps where a
 structure has no H.
+
+## Amendment 2026-10-23: bars per element, and warnings for ignored bad values
+
+Decided after the build, when the review found two gaps.
+
+**1. A per-element result is drawn as bars.** "Done when" asks for a
+per-element formula to be plotted, but no panel kind took one value per
+element: the per-element table is fixed to an MAE and an RMSE column, and the
+per-element density draws curves. A new panel kind, **Bars per element**
+(`bars`), takes one per-element metric (`value`):
+
+- one group of bars per element, in order of atomic number, labelled by symbol,
+  with the element picker the other per-element panels have;
+- one bar per prediction in each group, in the series colours;
+- an element with no value has no bar and a "no value" label, never a bar at 0
+  (which would read as a perfect prediction);
+- **Plot it** appears for a per-element result and adds a bars panel to the
+  "My metrics" tab, as it adds a timeline for a per-structure one;
+- the desktop has the same kind, so both clients keep the same panel kinds.
+
+**2. A bad value in a row that `where=` leaves out does not fail the metric,
+but is reported.** Section 7 ("rows where it is 0 are left out") and section 8
+("a reduction never skips one") disagreed for such rows. They are left out:
+`mean(err, by=structure, where=element("H"))` does not fail because a carbon
+atom's force is broken, as `where(element("H"), err, 0)` never did. A
+broken input must still not pass unseen, so each such value is counted and
+shown:
+
+- Try adds a line: "1 bad value in rows left out by where= was ignored
+  (frame 41)";
+- the saved metric's result carries the warning, and a panel drawing it shows
+  ⚠ beside its title, with the sentence on hover; a formula that takes such a
+  metric as its input carries the warning on.
+
+Bad values in counted rows still fail the metric, and a bad value inside
+`where=` itself makes its row bad. The element-wise `where(cond, a, b)` is
+unchanged and gives no warning.
+
+**Consequence.** `METRIC_RESULT` gains an optional `warnings` list. This is a
+change to the message between server and client, and the one part that is hard
+to undo; a desktop client older than this change rejects a result that
+carries warnings (the code fingerprint warning of the connection says so).
+
+With these, "Done when" holds as written: a per-element formula is plotted as
+bars.
