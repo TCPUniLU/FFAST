@@ -67,8 +67,7 @@ def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
             "equivalent_vars": equivalent[1] if equivalent else None,
             "origin": user_metrics.origin(mid) if user_metrics is not None else "built-in",
             "expr": fn.expr if is_formula else None,
-            "vars": ({n: r for n, r in fn.var_refs.items() if n != "n_atoms"}
-                     if is_formula else None),
+            "vars": fn.user_vars if is_formula else None,
             "id": mid,
             "label": schema.label or mid,
             "shape": shape_to_str(schema.shape),

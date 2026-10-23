@@ -110,6 +110,13 @@ CASES = {
         " ml.tryHeadline({ok: false, error: 'boom'}, 'aspirin'), ml.tryHeadline({ok: true, cancelled: true}, 'aspirin'),"
         " ml.tryHeadline({ok: true, count: 1, bad_count: 0}, '')]"),
 
+    "no_value_lines": (
+        "[ml.noValueLine({no_value_count: 0, no_value_rows: 'structures'}),"
+        " ml.noValueLine({no_value_count: 12, no_value_rows: 'structures'}),"
+        " ml.noValueLine({no_value_count: 1, no_value_rows: 'structures'}),"
+        " ml.noValueLine({no_value_count: 2, no_value_rows: 'elements'}),"
+        " ml.noValueLine({no_value_count: 1, no_value_rows: 'result'}), ml.noValueLine({})]"),
+
     # ── Plot it (rule 13) ───────────────────────────────────────────────────
     "plot_panel": "te.metricPanel({id: 'user.a', label: 'A'})",
     "plot_makes_my_metrics_with_the_main_view": (
@@ -334,6 +341,12 @@ def test_a_try_names_the_data_it_ran_on(results):
         "12 values, all good — on aspirin · MACE",
         "1 bad value of 4 — saving would fail the metric — on aspirin",
         "boom", "Stopped", "1 value, all good"]
+
+
+def test_try_says_how_many_places_have_no_value(results):
+    assert results["no_value_lines"] == [
+        "", "12 structures have no value", "1 structure has no value",
+        "2 elements have no value", "The result has no value", ""]
 
 
 def test_the_list_is_grouped_by_origin_with_user_entries_from_the_user_list(results):

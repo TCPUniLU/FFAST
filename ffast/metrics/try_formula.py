@@ -2,8 +2,10 @@
 
 Evaluates the formula over every frame, in chunks of frames so a long run can
 report progress and stop cleanly when cancelled. Two sweeps: the first finds the
-statistics, the second fills the histogram, so no result is held whole. Chunking gives the same answer
-as one pass because a formula is element-wise. Nothing is registered and
+statistics, the second fills the histogram, so no result is held whole. Chunks
+hold whole structures, so a formula that is element-wise or groups by structure
+gives the same answer as one pass; one that groups by element or by all
+(ADR 0064) needs the whole dataset and is one pass. Nothing is registered and
 nothing is cached: this is a look at the numbers, so that bad values (infinity,
 not-a-number) are found *before* saving, where they would fail the metric.
 
@@ -21,7 +23,15 @@ import numpy as np
 
 from ffast.metrics import dims
 from ffast.metrics.dims import shape_to_str
-from ffast.metrics.expr import _ExprFn, analyze_expr, resolve_ref_shape
+from ffast.metrics.expr import (
+    HIDDEN_INPUTS,
+    _ExprFn,
+    analyze_expr,
+    by_words,
+    formula_inputs,
+    parse_and_validate,
+    resolve_ref_shape,
+)
 
 CHUNK_FRAMES = 2000
 BINS = 20
@@ -38,6 +48,8 @@ class TryResult:
     cancelled: bool = False
     count: int = 0                      # values computed, bad ones included
     bad_count: int = 0
+    no_value_count: int = 0             # rows with no value (ADR 0064)
+    no_value_rows: str = "structures"   # what those rows are
     min: float | None = None
     mean: float | None = None
     max: float | None = None
@@ -47,13 +59,18 @@ class TryResult:
     def to_dict(self) -> dict:
         return {
             "shape": self.shape, "cancelled": self.cancelled, "count": self.count,
-            "bad_count": self.bad_count, "min": self.min, "mean": self.mean,
+            "bad_count": self.bad_count, "no_value_count": self.no_value_count,
+            "no_value_rows": self.no_value_rows, "min": self.min, "mean": self.mean,
             "max": self.max, "bad_frames": self.bad_frames, "histogram": self.histogram,
         }
 
 
 def _lead(shape):
     return shape[0] if shape else dims.scalar
+
+
+# The rows of a result, in words: what a no-value count counts.
+_ROW_WORDS = {dims.N_frames: "structures", dims.N_atoms: "atoms", dims.N_elements: "elements"}
 
 
 def try_formula(expr: str, variables: dict[str, str], registry,
@@ -75,8 +92,10 @@ def try_formula(expr: str, variables: dict[str, str], registry,
         inputs, out_shape, var_parts = analyze_expr(expr, variables, registry=registry)
     except ValueError as exc:
         raise TryError(str(exc)) from None
-    fn = _ExprFn(expr, inputs, var_parts)
-    shapes = {n: tuple(resolve_ref_shape(r, registry)) for n, r in inputs.items()}
+    fn = _ExprFn(expr, inputs, var_parts, formula_inputs(inputs, registry))
+    hidden = {"_offsets": None, "_elements": (dims.N_atoms,)}
+    shapes = {n: hidden[n] if n in HIDDEN_INPUTS else tuple(resolve_ref_shape(r, registry))
+              for n, r in inputs.items()}
 
     n_atoms = np.asarray(n_atoms)
     n_frames = len(n_atoms)
@@ -87,18 +106,25 @@ def try_formula(expr: str, variables: dict[str, str], registry,
         if ref == "n_atoms":
             full[name] = n_atoms
             continue
+        if name == "_offsets":
+            full[name] = atom_offsets
+            continue
         value = resolve(ref)
         if value is None:
             raise TryError(f"{ref} is not available for this dataset and prediction")
         full[name] = np.asarray(value)
 
-    leads = {_lead(sh) for sh in shapes.values() if sh != (dims.scalar,)}
+    leads = {_lead(sh) for sh in shapes.values() if sh is not None and sh != (dims.scalar,)}
     out_lead = _lead(out_shape)
-    chunkable = leads <= {dims.N_frames, dims.N_atoms} and out_lead in (dims.N_frames, dims.N_atoms)
+    dataset_wide = bool(by_words(parse_and_validate(expr)) & {"element", "all"})
+    chunkable = (leads <= {dims.N_frames, dims.N_atoms} and not dataset_wide
+                 and out_lead in (dims.N_frames, dims.N_atoms))
 
-    result = TryResult(shape=shape_to_str(out_shape))
+    result = TryResult(shape=shape_to_str(out_shape),
+                       no_value_rows=_ROW_WORDS.get(out_lead, "result"))
     total = 0
     bad_total = 0
+    no_value = 0
     n_finite = 0
     bad_frames: list[int] = []
     sums = 0.0
@@ -106,15 +132,18 @@ def try_formula(expr: str, variables: dict[str, str], registry,
 
     def take(out, frame0):
         """Fold one chunk's output into the running statistics."""
-        nonlocal total, bad_total, n_finite, sums, lo, hi
-        arr = np.asarray(out, dtype=float)
+        nonlocal total, bad_total, n_finite, sums, lo, hi, no_value
+        arr, gap = out
+        arr = np.asarray(arr, dtype=float)
         flat_axes = tuple(range(1, arr.ndim))
-        bad_elem = ~np.isfinite(arr)
+        gap_elem = _spread(gap, arr)
+        no_value += int(np.sum(gap)) if gap is not None else 0
+        bad_elem = ~np.isfinite(arr) & ~gap_elem
         # Which entries (rows of the leading axis) hold a bad value.
         bad_rows = np.flatnonzero(bad_elem.any(axis=flat_axes) if flat_axes else bad_elem)
         total += arr.size
         bad_total += int(bad_elem.sum())
-        good = arr[~bad_elem]
+        good = arr[np.isfinite(arr)]          # neither bad nor no value
         if good.size:
             n_finite += good.size
             sums += float(good.sum())
@@ -138,7 +167,7 @@ def try_formula(expr: str, variables: dict[str, str], registry,
             # No frame axis to cut along (a scalar, or per-element result): one pass.
             if cancelled():
                 return False
-            visit(compute(fn.evaluate, full), 0, 0)
+            visit(compute(fn.evaluate_split, full), 0, 0)
             if progress:
                 progress(n_frames, n_frames)
             return True
@@ -150,13 +179,15 @@ def try_formula(expr: str, variables: dict[str, str], registry,
             kwargs = {}
             for name, arr in full.items():
                 lead = _lead(shapes[name])
-                if lead == dims.N_frames:
+                if name == "_offsets":
+                    kwargs[name] = arr[f0:f1 + 1] - arr[f0]
+                elif lead == dims.N_frames:
                     kwargs[name] = arr[f0:f1]
                 elif lead == dims.N_atoms:
                     kwargs[name] = arr[a0:a1]
                 else:
                     kwargs[name] = arr           # scalar: the same in every chunk
-            visit(compute(fn.evaluate, kwargs), f0, a0)
+            visit(compute(fn.evaluate_split, kwargs), f0, a0)
             if progress:
                 progress(f1, n_frames)
         return True
@@ -173,6 +204,7 @@ def try_formula(expr: str, variables: dict[str, str], registry,
 
     result.count = total
     result.bad_count = bad_total
+    result.no_value_count = no_value
     result.bad_frames = bad_frames
     if n_finite:
         result.min, result.max = lo, hi
@@ -183,7 +215,7 @@ def try_formula(expr: str, variables: dict[str, str], registry,
         edges = np.histogram_bin_edges([lo, hi], bins=BINS)
 
         def count(out, f0, a0):
-            arr = np.asarray(out, dtype=float)
+            arr = np.asarray(out[0], dtype=float)
             good = arr[np.isfinite(arr)]
             counts[:] += np.histogram(good, bins=edges)[0]
 
@@ -192,3 +224,12 @@ def try_formula(expr: str, variables: dict[str, str], registry,
             return result
         result.histogram = {"edges": edges.tolist(), "counts": counts.tolist()}
     return result
+
+
+def _spread(gap, arr):
+    """The no-value rows as a mask over every value of ``arr`` (its part
+    axes included)."""
+    if gap is None:
+        return np.zeros(arr.shape, dtype=bool)
+    gap = np.asarray(gap)
+    return np.broadcast_to(gap.reshape(gap.shape + (1,) * (arr.ndim - gap.ndim)), arr.shape)

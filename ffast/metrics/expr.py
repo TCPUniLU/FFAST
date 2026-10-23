@@ -58,6 +58,7 @@ import numpy as np
 from ffast.metrics import dims, units
 from ffast.metrics.inputs import parse_field_ref
 from ffast.metrics.registry import default_registry
+from ffast.metrics.segments import framesOrOne, segmentExtremes, segmentSums
 
 # Bump when the whitelist (functions / operators / constants) changes, so every
 # Expression Metric's cache identity invalidates (rides implementation_source).
@@ -119,6 +120,14 @@ _UNARYOPS = {ast.USub: lambda a: -a}  # unary minus only (Decision 6)
 # provides. Its input ref is the same literal string (resolved by InputResolver).
 RESERVED_VARS = {"n_atoms"}
 _RESERVED_SHAPE = {"n_atoms": (dims.N_frames,)}
+
+# Inputs a formula gets without naming them (ADR 0064 section 6): the dataset's
+# offsets when it groups by structure, the atomic numbers when it groups by
+# element or uses element(...). The leading underscore keeps them apart from
+# the user's variables.
+_OFFSETS = "_offsets"
+_ELEMENTS = "_elements"
+HIDDEN_INPUTS = {_OFFSETS: "offsets", _ELEMENTS: "reference.elements"}
 
 # Raw (non-metric, non-field) input refs → their Metric Shape, for the same-shape
 # check. Restricted to the continuous float quantities that element-wise algebra
@@ -596,16 +605,31 @@ class _ExprFn:
     pool (precedent: ``_TransformFn``, transforms.py). The executor calls
     ``fn(**resolved_inputs)`` keyed by each Expression Variable's local name; the
     AST is compiled once (cached by string) and evaluated over those arrays.
+
+    "No value" (ADR 0064 section 8) travels beside each value as its own mask
+    over the rows, so a bad value (inf, NaN from 0/0) is never mistaken for
+    one. It comes from a reduction's empty group, or from an input that is a
+    formula metric (``gap_inputs``), whose NaN can mean nothing else.
     """
 
     def __init__(self, expr: str, var_refs: dict[str, str],
-                 var_parts: dict[str, int] | None = None) -> None:
+                 var_parts: dict[str, int] | None = None,
+                 gap_inputs=()) -> None:
         self.expr = expr
         # sorted for a stable implementation_source regardless of dict order
         self.var_refs = dict(sorted(var_refs.items()))
         # name → number of trailing part axes (vector 1, Voigt 1, 3x3 2); the
         # compiler fills it from the input shapes. Absent = no part axes.
         self.var_parts = dict(var_parts or {})
+        # inputs whose NaN is "no value": those bound to a formula metric
+        self.gap_inputs = frozenset(gap_inputs)
+
+    @property
+    def user_vars(self) -> dict[str, str]:
+        """The variables the user named: without ``n_atoms`` and the hidden
+        offsets / elements inputs."""
+        return {n: r for n, r in self.var_refs.items()
+                if n not in RESERVED_VARS and n not in HIDDEN_INPUTS}
 
     def _tree(self) -> ast.Expression:
         tree = _AST_CACHE.get(self.expr)
@@ -615,55 +639,153 @@ class _ExprFn:
         return tree
 
     def _eval(self, node, ns):
-        """Returns ``(value, k)``: the array and its count of trailing part axes."""
+        """Returns ``(value, k, gap)``: the array, its count of trailing part
+        axes, and the rows that have no value (a bool array over the value's
+        shape without its part axes), or None when every row has one."""
         if isinstance(node, ast.Expression):
             return self._eval(node.body, ns)
         if isinstance(node, ast.Constant):
-            return node.value, 0
+            return node.value, 0, None
         if isinstance(node, ast.Name):
             if node.id in _CONSTS:
-                return _CONSTS[node.id], 0
-            return ns[node.id], self.var_parts.get(node.id, 0)
+                return _CONSTS[node.id], 0, None
+            return self._input(node.id, ns)
         if isinstance(node, ast.BinOp):
-            (a, ka), (b, kb) = self._eval(node.left, ns), self._eval(node.right, ns)
-            return _BINOPS[type(node.op)](a, b), max(ka, kb)
+            (a, ka, ga), (b, kb, gb) = self._eval(node.left, ns), self._eval(node.right, ns)
+            return _BINOPS[type(node.op)](a, b), max(ka, kb), _either(ga, gb)
         if isinstance(node, ast.UnaryOp):
-            a, k = self._eval(node.operand, ns)
-            return _UNARYOPS[type(node.op)](a), k
+            a, k, g = self._eval(node.operand, ns)
+            return _UNARYOPS[type(node.op)](a), k, g
         if isinstance(node, ast.Compare):
-            (a, ka), (b, kb) = self._eval(node.left, ns), self._eval(node.comparators[0], ns)
-            return _CMPOPS[type(node.ops[0])](a, b), max(ka, kb)
+            (a, ka, ga), (b, kb, gb) = self._eval(node.left, ns), self._eval(node.comparators[0], ns)
+            return _CMPOPS[type(node.ops[0])](a, b), max(ka, kb), _either(ga, gb)
         if isinstance(node, ast.Subscript):
-            a, k = self._eval(node.value, ns)
+            a, k, g = self._eval(node.value, ns)
             pos = _positions(node, self.expr)
-            return np.asarray(a)[(..., *pos)], 0
+            return np.asarray(a)[(..., *pos)], 0, g
         if isinstance(node, ast.Call):
             name = node.func.id
+            if name in _REDUCERS:
+                return self._reduce(node, ns)
+            if name == _ELEMENT:
+                wanted = [element_numbers()[a.value] for a in node.args]
+                return np.isin(np.asarray(ns[_ELEMENTS]), wanted).astype(float), 0, None
             evald = [self._eval(a, ns) for a in node.args]
-            if name == "norm":
-                a, k = evald[0]
+            if name in _COLLAPSING:
+                a, k, g = evald[0]
                 arr = np.asarray(a, dtype=float)
-                return np.sqrt(np.sum(arr * arr, axis=tuple(range(-k, 0)))), 0
+                axes = tuple(range(-k, 0))
+                if name == "norm":
+                    return np.sqrt(np.sum(arr * arr, axis=axes)), 0, g
+                return (np.mean if name == "mean_parts" else np.sum)(arr, axis=axes), 0, g
             if name in _XYZ_INDEX:
-                return np.asarray(evald[0][0])[..., _XYZ_INDEX[name]], 0
-            return _FUNCS[name](*[v for v, _ in evald]), max((k for _, k in evald), default=0)
+                a, _k, g = evald[0]
+                return np.asarray(a)[..., _XYZ_INDEX[name]], 0, g
+            gap = None
+            for _v, _k, g in evald:
+                gap = _either(gap, g)
+            return (_FUNCS[name](*[v for v, _, _ in evald]),
+                    max((k for _, k, _ in evald), default=0), gap)
         raise ValueError(f"expr {self.expr!r}: cannot evaluate {type(node).__name__}")
 
-    def evaluate(self, /, **kwargs):
-        """The formula over these inputs, bad values left in (a bare comparison
-        gives 1.0 / 0.0). ``Try`` counts the bad values; a metric run rejects
-        them in ``__call__``."""
-        out, _k = self._eval(self._tree(), kwargs)
+    def _input(self, name, ns):
+        value, k = ns[name], self.var_parts.get(name, 0)
+        if name not in self.gap_inputs:
+            return value, k, None
+        arr = np.asarray(value, dtype=float)
+        gap = np.isnan(arr)
+        if k:
+            gap = gap.any(axis=tuple(range(-k, 0)))
+        return arr, k, (gap if gap.any() else None)
+
+    def _reduce(self, node, ns):
+        """``mean(x, by=..., where=...)`` and its siblings (ADR 0064): group
+        the rows, leave out those ``where=`` drops and those with no value,
+        and combine each group with the per-structure sums of segments.py. A
+        group with nothing left has no value; a bad value in a counted row
+        makes its group bad."""
+        name = node.func.id
+        value, k, gap = self._eval(node.args[0], ns)
+        v = np.asarray(value, dtype=float)
+        rows = v.shape[0]
+        counted = np.ones(rows, dtype=bool) if gap is None else ~np.broadcast_to(gap, (rows,))
+        where = _keyword(node, "where")
+        if where is not None:
+            w, _wk, wgap = self._eval(where, ns)
+            counted = counted & (np.broadcast_to(np.asarray(w), (rows,)) != 0)
+            if wgap is not None:
+                counted = counted & ~np.broadcast_to(wgap, (rows,))
+
+        by = _keyword(node, "by").id
+        order = None
+        if by == "structure":
+            offsets = framesOrOne(ns.get(_OFFSETS), v)
+        elif by == "element":
+            z = np.asarray(ns[_ELEMENTS])
+            groups = np.unique(z)
+            index = np.searchsorted(groups, z)
+            order = np.argsort(index, kind="stable")
+            offsets = np.concatenate([[0], np.cumsum(np.bincount(index, minlength=groups.size))])
+        else:
+            offsets = np.array([0, rows])
+        if order is not None:
+            v, counted = v[order], counted[order]
+
+        keep = counted.reshape((rows,) + (1,) * k)
+        n = segmentSums(counted.astype(float), offsets)
+        empty = n == 0
+        per_group = n.reshape(n.shape + (1,) * k)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            if name in ("min", "max"):
+                fill = np.inf if name == "min" else -np.inf
+                ufunc = np.minimum if name == "min" else np.maximum
+                out = segmentExtremes(np.where(keep, v, fill), offsets, ufunc)
+            else:
+                sums = segmentSums(np.where(keep, v, 0.0), offsets)
+                if name == "sum":
+                    out = sums
+                elif name == "mean":
+                    out = sums / per_group
+                elif name == "rms":
+                    out = np.sqrt(segmentSums(np.where(keep, v * v, 0.0), offsets) / per_group)
+                else:  # std: about each group's mean, divided by N (np.std)
+                    mean = sums / per_group
+                    group_of_row = np.repeat(np.arange(n.size), np.diff(offsets))
+                    dev = np.where(keep, v - mean[group_of_row], 0.0)
+                    out = np.sqrt(segmentSums(dev * dev, offsets) / per_group)
+        if by == "all":
+            out, empty = out[0], empty[0]
+        return out, k, (empty if np.any(empty) else None)
+
+    def evaluate_split(self, /, **kwargs):
+        """``(values, gap)``: the formula's values, NaN where there is no
+        value, and the rows with no value (or None). Bad values are left in;
+        a metric run rejects them in ``__call__``, Try counts them."""
+        out, k, gap = self._eval(self._tree(), kwargs)
         arr = np.asarray(out)
-        return arr.astype(float) if arr.dtype == bool else arr
+        arr = arr.astype(float) if arr.dtype == bool else arr
+        if gap is not None:
+            gap = np.broadcast_to(gap, arr.shape[:arr.ndim - k])
+            arr = np.array(arr, dtype=float)
+            arr[gap] = np.nan
+        return arr, gap
+
+    def evaluate(self, /, **kwargs):
+        """The formula over these inputs: NaN where there is no value, bad
+        values left in (a bare comparison gives 1.0 / 0.0)."""
+        return self.evaluate_split(**kwargs)[0]
 
     def __call__(self, /, **kwargs):
         # ``self`` is positional-only so an Expression Variable legitimately named
         # ``self`` (bound via ``fn(**resolved_inputs)``) cannot collide with it.
-        arr = self.evaluate(**kwargs)
-        if not np.all(np.isfinite(arr)):
+        arr, gap = self.evaluate_split(**kwargs)
+        bad = ~np.isfinite(arr)
+        if gap is not None:
+            bad &= ~gap.reshape(gap.shape + (1,) * (arr.ndim - gap.ndim))
+        if np.any(bad):
             # Decision 7: a Metric never returns silent inf/nan. Raising here
             # surfaces as a Metric Failure naming this metric (per the executor).
+            # "No value" (ADR 0064) is not bad: it is NaN in the result.
             raise ValueError(
                 f"expr {self.expr!r} produced non-finite values "
                 f"(inf/nan) — check for division by zero or log of a "
@@ -677,6 +799,15 @@ class _ExprFn:
 
     def __repr__(self) -> str:
         return f"_ExprFn({self.expr!r})"
+
+
+def _either(a, b):
+    """Rows with no value in either operand."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return np.logical_or(a, b)
 
 
 # --------------------------------------------------------------------------- #
@@ -698,6 +829,12 @@ def analyze_expr(expr, vars, *, registry=None, id="<expr>"):
         )
     tree = parse_and_validate(expr)
     used = _value_names(tree) - set(_CONSTS)
+    hidden = sorted(used & set(HIDDEN_INPUTS))
+    if hidden:
+        raise ValueError(
+            f"expr metric '{id}': {hidden[0]!r} is a name FFAST keeps for itself — "
+            f"rename the variable"
+        )
     unknown = used - set(vars) - RESERVED_VARS
     if unknown:
         raise ValueError(
@@ -719,7 +856,33 @@ def analyze_expr(expr, vars, *, registry=None, id="<expr>"):
     except ValueError as e:
         raise ValueError(f"expr metric '{id}': {e}") from e
     var_parts = {n: len(_part_axes(sh)) for n, sh in shapes.items() if _part_axes(sh)}
+    words = by_words(tree)
+    if "structure" in words:
+        inputs[_OFFSETS] = HIDDEN_INPUTS[_OFFSETS]
+    if "element" in words or _uses_element(tree):
+        inputs[_ELEMENTS] = HIDDEN_INPUTS[_ELEMENTS]
     return inputs, output_shape, var_parts
+
+
+def by_words(tree: ast.Expression) -> set[str]:
+    """The ``by=`` words a parsed formula uses anywhere."""
+    return {
+        kw.value.id for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _REDUCERS
+        for kw in n.keywords if kw.arg == "by" and isinstance(kw.value, ast.Name)
+    }
+
+
+def _uses_element(tree: ast.Expression) -> bool:
+    return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == _ELEMENT
+               for n in ast.walk(tree))
+
+
+def formula_inputs(inputs: dict[str, str], registry) -> set[str]:
+    """The variables bound to a formula metric: their NaN is "no value",
+    never a bad value (ADR 0064 section 8). A Python metric's NaN stays bad."""
+    return {name for name, ref in inputs.items()
+            if registry.has(ref) and isinstance(registry.get(ref)[1], _ExprFn)}
 
 
 def compile_expr_metric(id, expr, vars, *, label="", unit="", registry=None) -> str:
@@ -752,7 +915,7 @@ def compile_expr_metric(id, expr, vars, *, label="", unit="", registry=None) -> 
         shape=output_shape,
         unit=unit or units.dimensionless,
     )
-    decorator(_ExprFn(expr, inputs, var_parts))
+    decorator(_ExprFn(expr, inputs, var_parts, formula_inputs(inputs, registry)))
     return id
 
 

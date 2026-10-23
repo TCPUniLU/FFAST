@@ -4,7 +4,8 @@ Use via:
     from ffast.metrics import inputs as I
     @metric(..., inputs={"reference": I.reference_forces, ...})
 
-offsets is declared via optional_inputs=["offsets"], not inputs.
+A Python metric declares offsets via optional_inputs=["offsets"]; a formula
+that groups by structure (ADR 0064) names it as a required input.
 
 Beyond the closed set below, a metric may reference an arbitrary **Dataset
 Field** by key-in-the-ref (ADR 0023): ``{reference,prediction}.{info,atoms}.<key>``
@@ -33,6 +34,10 @@ selection_indices   = "selection.indices"
 # count-per-structure for uniform).
 n_atoms = "n_atoms"
 
+# Where each structure's atoms start (ADR 0058 step 6); a formula that groups
+# by structure gets it without naming it (ADR 0064 section 6).
+offsets = "offsets"
+
 ALL_VALID_REFS: frozenset = frozenset({
     reference_energies,
     reference_forces,
@@ -45,6 +50,7 @@ ALL_VALID_REFS: frozenset = frozenset({
     prediction_stress,
     selection_indices,
     n_atoms,
+    offsets,
 })
 
 # Dataset Field refs (ADR 0023): {reference,prediction}.{info,atoms}.<key>.

@@ -1,4 +1,5 @@
-"""Per-frame sums and means over flat per-atom arrays (ADR 0058, step 6).
+"""Per-frame sums, means and extremes over flat per-atom arrays (ADR 0058,
+step 6). Formula reductions (ADR 0064) group with the same functions.
 
 A flat array holds one row per atom, frame after frame; ``offsets[i]`` is where
 frame ``i``'s rows start, and ``offsets[-1]`` is the number of rows. A Python
@@ -25,6 +26,20 @@ def segmentSums(values, offsets) -> np.ndarray:
         # reduceat sums from each start to the next one given, so empty frames
         # (whose start equals the next start) are left out and stay zero.
         out[filled] = np.add.reduceat(values[:offsets[-1]], offsets[:-1][filled], axis=0)
+    return out
+
+
+def segmentExtremes(values, offsets, ufunc) -> np.ndarray:
+    """``ufunc`` (``np.minimum`` or ``np.maximum``) over each frame's rows:
+    ``(frames, ...)``. A frame with no rows is NaN. A NaN row makes its frame
+    NaN, as ``np.min`` does."""
+    values = np.asarray(values, dtype=np.float64)
+    offsets = np.asarray(offsets, dtype=np.intp)
+    counts = np.diff(offsets)
+    out = np.full((counts.size,) + values.shape[1:], np.nan)
+    filled = counts > 0
+    if filled.any():
+        out[filled] = ufunc.reduceat(values[:offsets[-1]], offsets[:-1][filled], axis=0)
     return out
 
 

@@ -236,6 +236,16 @@ export function tryHeadline(r, name = '') {
   return `${r.count} value${r.count === 1 ? '' : 's'}, all good${on}`;
 }
 
+/** The line a Try adds when some places have no value (ADR 0064): '12
+ * structures have no value'; '' when every place has one. */
+export function noValueLine(r) {
+  const n = r.no_value_count || 0;
+  if (!n) return '';
+  if (r.no_value_rows === 'result' || !r.no_value_rows) return 'The result has no value';
+  const rows = n === 1 ? r.no_value_rows.replace(/s$/, '') : r.no_value_rows;
+  return `${n} ${rows} ${n === 1 ? 'has' : 'have'} no value`;
+}
+
 /**
  * Metrics grouped for the list: built-in, project, then user. User entries come
  * from the user list (which also holds hidden and broken ones); everything else

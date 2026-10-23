@@ -373,7 +373,7 @@ class UserMetrics:
                 continue
             if not isinstance(fn, expr_fn):
                 continue
-            refs = {n: r for n, r in fn.var_refs.items() if n != "n_atoms"}
+            refs = fn.user_vars
             try:
                 _i, shape, _p = analyze_expr(fn.expr, refs, registry=_Without(self.registry, dep), id=dep)
             except ValueError as exc:

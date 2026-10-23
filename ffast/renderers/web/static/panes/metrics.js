@@ -13,7 +13,7 @@
 import { icon } from '../icons.js';
 import {
   ID_PREFIX, completeAt, duplicateDraft, fixFor, formatStat, groupInputs, groupMetrics,
-  idProblem, insertAt, isDirty, renameVariable, shapeHint, shortcutFor, sideMark,
+  idProblem, insertAt, isDirty, noValueLine, renameVariable, shapeHint, shortcutFor, sideMark,
   suggestions, toDraft, toPayload, tryHeadline, undefinedNames, uniqueName, valueNames,
   variableNameProblem,
 } from '../metric_logic.js';
@@ -438,6 +438,8 @@ export function createMetricsPane(body, callbacks) {
     for (const [k, v] of [['min', r.min], ['mean', r.mean], ['max', r.max]])
       stats.append(el('span', '', `${k} ${formatStat(v)}`));
     tryEl.appendChild(stats);
+    const gaps = noValueLine(r);
+    if (gaps) tryEl.appendChild(el('div', 'mx-try-note mx-try-gaps', gaps));
     if (r.bad_frames?.length) {
       const words = el('div', 'mx-try-bad');
       words.append(document.createTextNode('first bad frames: '));
