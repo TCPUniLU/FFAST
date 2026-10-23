@@ -951,6 +951,47 @@ async def test_web_journal_page_hides_the_controls_and_prints_units_as_text(ffas
             await browser.close()
 
 
+# Colour of the top-left pixel of a PNG data URL, as "#rrggbb".
+_PNG_CORNER = """async (url) => {
+  const img = new Image(); img.src = url; await img.decode();
+  const c = document.createElement('canvas'); c.width = img.width; c.height = img.height;
+  const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0);
+  const [r, g, b] = ctx.getImageData(2, 2, 1, 1).data;
+  return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+}"""
+
+
+async def test_web_journal_page_draws_the_3d_view_on_white_in_this_browser_only(ffast_web_server):
+    """ADR 0063 follow-up: Journal page draws the 3D view on white; Screen
+    brings back the user's own background; an export keeps the background it
+    is given."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.evaluate("() => window.ffastApp._focusedRenderers().setBackgroundColor('#203040')")
+            clear = "() => window.ffastApp.renderer.clearColor"
+            corner = "() => window.ffastApp.renderer._canvas.toDataURL('image/png')"
+            assert await page.evaluate(clear) == "#203040"
+
+            await page.get_by_role("radio", name="Journal page").click()
+            assert await page.evaluate(clear) == "#ffffff"
+            await page.wait_for_timeout(200)   # a frame drawn on the new colour
+            assert await page.evaluate(_PNG_CORNER, await page.evaluate(corner)) == "#ffffff"
+            png = await page.evaluate(
+                "() => window.ffastApp.renderer.capturePng({background: '#203040'})")
+            assert await page.evaluate(_PNG_CORNER, png) == "#203040"
+            assert await page.evaluate(clear) == "#ffffff"   # and the view stays white
+
+            await page.get_by_role("radio", name="Screen").click()
+            assert await page.evaluate(clear) == "#203040"
+        finally:
+            await browser.close()
+
+
 async def test_web_tabs_rail_rows_and_section_headers_work_from_the_keyboard(ffast_web_server):
     """ADR 0063: Tab reaches the tab strip, the arrow keys move along it, Enter
     presses a rail row, and a section header unfolds on Enter."""

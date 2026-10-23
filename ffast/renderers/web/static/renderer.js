@@ -68,7 +68,12 @@ export class MoleculeRenderer {
       canvas, antialias: true, alpha: true, preserveDrawingBuffer: true,
     });
     this._renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
-    this._renderer.setClearColor(0x000000, 1);  // Qt loupe default (default.json loupeBGColor)
+    this._background = '#000000';   // Qt loupe default (default.json loupeBGColor)
+    this._applyBackground();
+    // Journal page (body.journal, appearance.js) draws on white, in this
+    // browser only; the user's own background comes back with Screen.
+    this._journalObserver = new MutationObserver(() => this._applyBackground());
+    this._journalObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
 
     this._scene   = new THREE.Scene();
     this._perspCamera = new THREE.PerspectiveCamera(60, 1, 0.01, 5000);
@@ -182,6 +187,7 @@ export class MoleculeRenderer {
     this._rafId = null;
     window.removeEventListener('resize', this._onWindowResize);
     this._resizeObserver.disconnect();
+    this._journalObserver.disconnect();
     this._controls.dispose();
     this.clear();
     this._renderer.dispose();
@@ -269,6 +275,20 @@ export class MoleculeRenderer {
 
   /** @param {string} hex CSS colour, e.g. '#000000' */
   setBackgroundColor(hex) {
+    this._background = hex;
+    this._applyBackground();
+  }
+
+  /** The colour drawn behind the atoms, as `#rrggbb`. */
+  get clearColor() {
+    return `#${this._renderer.getClearColor(new THREE.Color()).getHexString()}`;
+  }
+
+  _applyBackground() {
+    const journal = document.body.classList.contains('journal');
+    const hex = journal ? '#ffffff' : this._background;
+    if (hex === this._drawnBackground) return;   // another class changed
+    this._drawnBackground = hex;
     this._renderer.setClearColor(new THREE.Color(hex), 1);
   }
 
