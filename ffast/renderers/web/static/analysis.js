@@ -363,6 +363,7 @@ export class AnalysisManager {
   /** Remove every tab (on relayout). */
   clear() {
     for (const t of this._tabs) {
+      t.resizeObserver?.disconnect();   // or each rebuild leaves one watching
       t.tabEl.remove();
       t.panelEl.remove();
     }
@@ -449,11 +450,12 @@ export class AnalysisManager {
       zoom: {},
       peaksOff: new Set(),   // timelines (panelKey) whose peak labels are switched off
     };
-    new ResizeObserver(() => {
+    t.resizeObserver = new ResizeObserver(() => {
       const before = t.narrow;
       this._sizeGrid(t);
       if (t.narrow !== before) this._applyOrder(t);
-    }).observe(gridEl);
+    });
+    t.resizeObserver.observe(gridEl);
     this._restoreTab(t);
     this._tabs.push(t);
     this._layoutGrid(t);
