@@ -311,3 +311,27 @@ One commit per step, so each can be reverted alone:
 
 Later, with loading stress (not part of this ADR): stress held as 3×3, tensor
 names `xx`…`zz` and `trace`, and the usage docs' trap example updated to stress.
+
+## Amendment (2026-10-23): the editor is a drawer on every tab
+
+Rule 9 put the pane in the 3D settings sidebar, so it was only reachable from a
+tab with a 3D panel, though a metric goes into any tab. It is now a drawer on
+the right of the main area, opened by **Metrics** in the top bar, on every tab;
+the 3D sidebar no longer has a Metrics section. The drawer has its own dataset
+and prediction ("on …"), used for the inputs list and Try. They start from the
+view the sidebar acts on (ADR 0060 section 3) and follow it when it changes; a
+choice made in the drawer changes neither the left list nor the tab. Whether
+the drawer is open is browser layout state (ADR 0055 rule 3). Colour atoms by
+this still colours the view the sidebar acts on. The "My metrics" tab keeps its
+3D panel; it is no longer needed to reach the editor.
+
+## Amendment (2026-10-23): every metric can be duplicated
+
+Duplicate was offered only for formula metrics. It is now offered for every
+metric. The catalog entry of a Python metric carries its code (`source`, shown
+read only) and, when a formula computes exactly the same, that formula
+(`equivalent_expr`, `equivalent_vars`). The exact formulas are listed in
+`ffast/metrics/builtin/equivalents.py`, and a test runs each one against its
+Python metric; a metric with parameters is listed for its defaults. A formula
+works on one value at a time, so a metric that averages, totals or smooths has
+no exact formula yet; its copy is a formula over the metric itself.

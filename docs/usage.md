@@ -441,10 +441,12 @@ mean different things for inputs of different layout. Prefer the names
 
 ### Your own metrics in the browser
 
-The **Metrics** section of the settings sidebar, next to Colour By, lists every
-metric by where it comes from (built-in, project, user) and lets you write your
-own as formulas, while the app runs. It needs a tab with a 3D panel, because the
-sidebar belongs to the 3D controls.
+The **Metrics** button in the top bar opens the Metrics drawer on the right, on
+any tab. It lists every metric by where it comes from (built-in, project, user)
+and lets you write your own as formulas, while the app runs. The line under its
+title ("on aspirin · MACE") is the dataset and prediction it lists inputs for and
+tries formulas on. It starts from what the left list (or the focused 3D panel)
+shows and follows it; you can choose another one there without changing the tab.
 
 1. **New metric.** The id starts with `user.`; you may type any dotted id, such
    as `mylab.e_per_atom`. A taken id is refused.
@@ -465,16 +467,23 @@ sidebar belongs to the 3D controls.
    another window changed it meanwhile, the pane says "Changed in another window"
    and offers **Reload** (drop your edits) or **Overwrite**.
 
-Only user metrics can be edited. A built-in or project formula metric shows its
-formula and offers **Duplicate**, which starts a user copy under a new id.
+Only user metrics can be edited. Any other metric offers **Duplicate**, which
+starts a user copy under a new id. A formula metric copies its formula. A
+Python metric shows its code under **Python code** and copies as a formula that
+computes exactly the same where one can (`ffast.force_mae` copies as
+`norm(pred_F - ref_F)`). A Python metric that averages, totals or smooths, such as
+`ffast.force_mae_per_structure`, copies as a formula that takes the metric itself
+as its input (`force_mae_per_structure`), for you to change, e.g. to
+`1000 * force_mae_per_structure`.
 **Delete** is refused while anything uses the metric: the pane lists the tabs,
 other metrics and the colouring that do. **Export** shows the TOML to paste into a
 project's `ffast.toml`.
 
-For a per-atom metric, **Colour atoms by this** sets the main view's colouring.
-For a per-structure metric, **Plot it** adds a timeline to the "My metrics" tab
-(made for you, with the main view beside the plot, so the pane stays in reach).
-It never changes a built-in or project tab.
+For a per-atom metric, **Colour atoms by this** sets the colouring of the 3D view
+the settings sidebar acts on. For a per-structure metric, **Plot it** adds a
+timeline to the "My metrics" tab (made for you, with the main view beside the
+plot). It never changes a built-in or project tab. Any saved metric can also be
+put into a panel of any tab with the tab editor.
 
 If a project or built-in metric has the same id as a user file, that one wins and
 the file is listed as "Hidden"; duplicate it under a new id, or delete it.
