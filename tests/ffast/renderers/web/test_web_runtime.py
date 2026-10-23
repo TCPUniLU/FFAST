@@ -4248,6 +4248,46 @@ async def test_web_double_clicking_a_labelled_timeline_goes_back_to_its_drawn_ra
             await browser.close()
 
 
+# Page position of point `frame` of the first curve in the plot under `sel`.
+_POINT_XY = """([sel, frame]) => {
+  const el = document.querySelector(sel + ' .panel-plot');
+  const L = el._fullLayout, box = el.getBoundingClientRect();
+  return [box.left + L.xaxis._offset + L.xaxis.l2p(frame),
+          box.top + L.yaxis._offset + L.yaxis.l2p(el.data[0].y[frame])];
+}"""
+
+
+async def test_web_a_double_click_on_a_timeline_does_not_open_a_frame(ffast_web_server):
+    """ADR 0063 follow-up: the first click of a double-click opened the frame
+    under it and left the tab; a single click still opens it."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            panel = _sub_panel("Forces MAE timeline")
+            tab = page.locator("#tabbar .tab", has_text="Basic Errors")
+            await expect(tab).to_have_attribute("aria-selected", "true")
+            await page.locator(panel).scroll_into_view_if_needed()
+            x, y = await page.evaluate(_POINT_XY, [panel, 50])
+
+            await page.mouse.dblclick(x, y)
+            await page.wait_for_timeout(500)
+            await expect(tab).to_have_attribute("aria-selected", "true")
+
+            await page.mouse.click(x, y)
+            await expect(page.locator("#frame-label")).to_have_text("50 / 99")
+        finally:
+            await browser.close()
+
+
 _SUBSETS = """() => [...window.ffastApp._datasets.entries()]
     .filter(([, m]) => m.is_sub).map(([fp, m]) => ({fp, name: m.name, n: m.n, active: m.active}))"""
 

@@ -24,7 +24,7 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, elementSymbol, unitRoleAt, refreshPeaks } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, unitRoleAt, refreshPeaks } from './panels.js';
 import { visitedKey } from './peaks.js';
 import { panelLetters, readingOrder, caption, captionSegments } from './figure.js';
 import { datasetUnits, editableDimension, resolveUnit } from './units.js';
@@ -1386,11 +1386,14 @@ export class AnalysisManager {
     if (el.removeAllListeners) el.removeAllListeners('plotly_relayout');
     el.on('plotly_relayout', () => this._noteZoom(t, spec, card));
     if (SUB_KINDS.has(spec.kind)) this._wireSub(t, spec, card);
+    clearTimeout(card.frameTimer);   // a click on the plot this one replaces
+    card.frameTimer = null;
     if (!el._subInfo || !el._subInfo.perFrame) return;   // only per-frame kinds
 
     // Point → frame: click a per-frame point to show that structure (PRD 63).
     // The click names the clicked curve's data, so the structure is looked up
-    // in the 3D view that holds it (ADR 0056 rule 4).
+    // in the 3D view that holds it (ADR 0056 rule 4). It waits out Plotly's
+    // double-click delay: a double-click (back to the first view) opens nothing.
     if (el.removeAllListeners) el.removeAllListeners('plotly_click');
     el.on('plotly_click', (ev) => {
       const info = el._subInfo;
@@ -1398,8 +1401,21 @@ export class AnalysisManager {
       if (!pt || !info) return;
       if (info.dataCurveCount != null && pt.curveNumber >= info.dataCurveCount) return;
       const src = (card.series || [])[(info.curveSeries || [])[pt.curveNumber] ?? 0];
-      if (pt.pointIndex != null && src)
-        this._onPointFrame({ datasetFp: src.datasetFp, modelFp: src.modelFp, frame: pt.pointIndex });
+      if (pt.pointIndex == null || !src) return;
+      const frame = { datasetFp: src.datasetFp, modelFp: src.modelFp, frame: pt.pointIndex };
+      clearTimeout(card.frameTimer);
+      card.frameTimer = null;
+      // Plotly reports a double-click's second click too, after plotly_doubleclick.
+      if (ev.event?.detail > 1) return;
+      card.frameTimer = setTimeout(() => {
+        card.frameTimer = null;
+        this._onPointFrame(frame);
+      }, PLOT_CONFIG.doubleClickDelay ?? 300);
+    });
+    if (el.removeAllListeners) el.removeAllListeners('plotly_doubleclick');
+    el.on('plotly_doubleclick', () => {
+      clearTimeout(card.frameTimer);
+      card.frameTimer = null;
     });
     // A peak label opens its frame, as a click on the curve does.
     if (el._peaks && el._peaks.length) {
