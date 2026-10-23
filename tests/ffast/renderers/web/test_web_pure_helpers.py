@@ -578,7 +578,7 @@ CASES = {
         " return pk.pickPeaks(y); })()"),
     "peaks_adjacent": (
         "(() => { const y = new Array(100).fill(0);"
-        " y[73] = 5; y[74] = 4; y[22] = 3; y[41] = 2; y[58] = 2.5;"
+        " y[73] = 5; y[75] = 4; y[22] = 3; y[41] = 2; y[58] = 2.5;"
         " return pk.pickPeaks(y).map(p => p.frame); })()"),
     "peaks_short": "pk.pickPeaks([0, 1, 0, 5, 0, 1, 0, 2, 0])",
     "peaks_nan": (
@@ -773,9 +773,11 @@ def test_five_spikes_on_a_flat_line_are_the_five_peaks(results):
     assert results["peaks_five_spikes"][3] == {"frame": 73, "value": 5}
 
 
-def test_adjacent_spikes_give_one_peak(results):
+def test_spikes_closer_than_the_spacing_give_one_peak(results):
+    # 73 and 75 are both peaks by their neighbours (74 is 0); only the
+    # spacing rule (2 frames in 100) drops the lower one
     frames = results["peaks_adjacent"]
-    assert 73 in frames and 74 not in frames
+    assert 73 in frames and 75 not in frames
 
 
 def test_a_flat_line_has_no_peaks(results):
