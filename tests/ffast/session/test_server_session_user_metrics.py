@@ -221,7 +221,7 @@ def test_check_replies_with_the_shape_and_echoes_the_check_id(env):
     own, everyone = _dispatch(env, control.CHECK_METRIC, {
         "metric": {"id": "t57.c", "expr": "2 * f", "vars": {"f": "ffast.force_component_mae"}},
         "check_id": "7"})
-    assert own == [(control.METRIC_CHECKED, [], {"check_id": "7", "ok": True, "error": None, "shape": "scalar"})]
+    assert own == [(control.METRIC_CHECKED, [], {"check_id": "7", "ok": True, "error": None, "shape": "scalar", "colour_problem": None})]
     assert everyone == []
 
 

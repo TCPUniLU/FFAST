@@ -110,7 +110,8 @@ async def test_try_reports_bad_values_before_anything_is_saved(tmp_path):
             assert not (metrics_dir / "user.bad.toml").exists()     # nothing saved
             await ws.send(pack("CHECK_METRIC", (), {"metric": bad, "check_id": "9"}))
             checked = (await _wait_for_event(ws, "METRIC_CHECKED"))["kwargs"]
-            assert checked == {"check_id": "9", "ok": True, "error": None, "shape": "N_frames"}
+            assert checked == {"check_id": "9", "ok": True, "error": None, "shape": "N_frames",
+                           "colour_problem": None}
         finally:
             await ws.close()
 
@@ -504,5 +505,56 @@ async def test_every_python_metric_shows_its_code_and_duplicates_as_a_formula(tm
                 await expect(pane.locator(".mx-group[data-origin='user']")).to_contain_text(
                     "user.force_mae_per_structure_smoothed_copy")
                 assert (metrics_dir / "user.force_mae_per_structure_smoothed_copy.toml").exists()
+            finally:
+                await browser.close()
+
+
+async def test_an_h_only_formula_is_tried_saved_and_plotted_with_a_gap(tmp_path):
+    """ADR 0064 step 6: by=structure with where=element("H"). The example
+    data has one structure without hydrogen (C6Cl3F3): it has no value."""
+    import ase.io as aio
+    no_h = [i for i, a in enumerate(aio.read(DATASET_PATH, index=":")) if "H" not in a.symbols]
+    assert len(no_h) == 1
+    cm, metrics_dir = await _server(tmp_path)
+    async with cm as (ws_port, web_port):
+        await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 900})
+            try:
+                await _open_app(page, web_port, ws_port)
+                pane = await _open_metrics_pane(page)
+                await pane.get_by_role("button", name="New metric").click()
+                await pane.get_by_label("Metric id").fill("user.h_force")
+                formula = pane.get_by_label("Formula")
+
+                # a dataset-wide word: the hint says colouring refuses it
+                await formula.fill("norm(pred_F - ref_F) / max(norm(pred_F - ref_F), by=all)")
+                for _ in range(2):
+                    await pane.get_by_role("button", name=re.compile("^Fix")).click()
+                await expect(pane.locator(".mx-check")).to_have_text(
+                    "per atom → by=all can't be used for colouring yet: colouring sees one frame")
+
+                await formula.fill('mean(norm(pred_F - ref_F), by=structure, where=element("H"))')
+                await expect(pane.locator(".mx-check")).to_contain_text("per structure")
+
+                await pane.get_by_role("button", name="Try", exact=True).click()
+                await expect(pane.locator(".mx-try-head")).to_contain_text("all good")
+                await expect(pane.locator(".mx-try-gaps")).to_have_text("1 structure has no value")
+
+                await pane.get_by_role("button", name="Save", exact=True).click()
+                await expect(pane.locator(".mx-item[data-id='user.h_force']")).to_be_visible()
+                text = (metrics_dir / "user.h_force.toml").read_text()
+                assert tomllib.loads(text)["metrics"]["expr"][0]["vars"] == {
+                    "pred_F": "prediction.forces", "ref_F": "reference.forces"}
+
+                await pane.get_by_role("button", name="Plot it").click()
+                await expect(page.locator("#tabbar .tab.active")).to_have_text(re.compile("My metrics"))
+                gaps = await page.wait_for_function(
+                    "() => { const el = [...document.querySelectorAll('.tabpanel.active .js-plotly-plot')]"
+                    "  .find((d) => d.data && d.data.length && d.data[0].y && d.data[0].y.length === 100);"
+                    "  if (!el) return null;"
+                    "  return Array.from(el.data[0].y).flatMap((v, i) => Number.isFinite(v) ? [] : [i]); }")
+                assert await gaps.json_value() == no_h
             finally:
                 await browser.close()

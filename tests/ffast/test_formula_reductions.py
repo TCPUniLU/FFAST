@@ -180,3 +180,20 @@ def test_the_parser_accepts_every_new_form():
     for e in ('mean(a, by=all)', 'sum(a, by=structure, where=b)', 'mean_parts(a)',
               'element("H", "C")', 'std(a, where=b > 1, by=element)'):
         parse_and_validate(e)
+
+
+# ── section 5: colouring refuses dataset-wide words ──────────────────────────
+
+@pytest.mark.parametrize("expr,problem", [
+    ("norm(pF - rF) / max(norm(pF - rF), by=all)", "by=all"),
+    ("mean(norm(pF - rF), by=element)", "by=element"),
+    ('where(element("H"), norm(pF - rF), 0)', None),
+    ("mean(norm(pF - rF), by=structure)", None),
+])
+def test_colouring_refuses_by_all_and_by_element(expr, problem):
+    from ffast.metrics.expr import colour_problem
+    got = colour_problem(expr)
+    if problem is None:
+        assert got is None
+    else:
+        assert got == f"{problem} can't be used for colouring yet: colouring sees one frame"

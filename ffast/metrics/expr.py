@@ -878,6 +878,41 @@ def _uses_element(tree: ast.Expression) -> bool:
                for n in ast.walk(tree))
 
 
+# The by= words that mean "the whole dataset". Colouring runs a metric on the
+# frame on screen only, where they would mean "this frame" (ADR 0064 section 5).
+_DATASET_WIDE = ("all", "element")
+
+
+def colour_problem(expr: str, refs=(), registry=None) -> str | None:
+    """Why this formula cannot colour atoms, or None. A formula that uses
+    by=all or by=element anywhere, itself or in a formula metric it takes as
+    an input, would give one number in Try and another on screen."""
+    words = set(by_words(parse_and_validate(expr)))
+    seen: set[str] = set()
+    todo = [r for r in refs if registry is not None and registry.has(r)]
+    while todo:
+        ref = todo.pop()
+        if ref in seen:
+            continue
+        seen.add(ref)
+        fn = registry.get(ref)[1]
+        if isinstance(fn, _ExprFn):
+            words |= by_words(fn._tree())
+            todo.extend(r for r in fn.var_refs.values() if registry.has(r))
+    for word in _DATASET_WIDE:
+        if word in words:
+            return f"by={word} can't be used for colouring yet: colouring sees one frame"
+    return None
+
+
+def metric_colour_problem(metric_id: str, registry) -> str | None:
+    """``colour_problem`` of a registered metric; None for a Python metric."""
+    fn = registry.get(metric_id)[1]
+    if not isinstance(fn, _ExprFn):
+        return None
+    return colour_problem(fn.expr, fn.var_refs.values(), registry)
+
+
 def formula_inputs(inputs: dict[str, str], registry) -> set[str]:
     """The variables bound to a formula metric: their NaN is "no value",
     never a bad value (ADR 0064 section 8). A Python metric's NaN stays bad."""

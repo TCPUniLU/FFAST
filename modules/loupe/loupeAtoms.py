@@ -181,7 +181,9 @@ def _colorable_metric_entries(loupe):
         except Exception:
             catalog = {}
     entries = catalog.values() if isinstance(catalog, dict) else catalog
-    return [e for e in entries if e.get("shape") in _COLORABLE_SHAPES]
+    # A formula that averages by all or by element cannot colour (ADR 0064).
+    return [e for e in entries
+            if e.get("shape") in _COLORABLE_SHAPES and not e.get("colour_problem")]
 
 
 def addMetricControls(UIHandler, loupe):

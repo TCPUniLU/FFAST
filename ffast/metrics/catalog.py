@@ -55,7 +55,7 @@ def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
     (ffast/metrics/builtin/equivalents.py): what Duplicate starts from.
     """
     from ffast.metrics.builtin.equivalents import equivalent_of
-    from ffast.metrics.expr import _ExprFn
+    from ffast.metrics.expr import _ExprFn, metric_colour_problem
     catalog = []
     for mid in sorted(registry.list_metrics()):
         schema, fn = registry.get(mid)
@@ -68,6 +68,8 @@ def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
             "origin": user_metrics.origin(mid) if user_metrics is not None else "built-in",
             "expr": fn.expr if is_formula else None,
             "vars": fn.user_vars if is_formula else None,
+            # Why colouring refuses this metric (ADR 0064), or None.
+            "colour_problem": metric_colour_problem(mid, registry),
             "id": mid,
             "label": schema.label or mid,
             "shape": shape_to_str(schema.shape),

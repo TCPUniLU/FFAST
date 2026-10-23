@@ -48,11 +48,13 @@ export function startCommands(start, { modelFp, catalog }) {
     let source = s.colour_by;
     if (source !== 'element' && source !== 'displacement') {
       const entry = (catalog || []).find((e) => e.id === source);
-      if (entry && (entry.shape == null || COLORABLE_SHAPES.has(entry.shape))) source = `metric:${source}`;
+      if (entry && !entry.colour_problem && (entry.shape == null || COLORABLE_SHAPES.has(entry.shape))) source = `metric:${source}`;
       else {
-        note = entry
-          ? `Colour metric ${source} has no value per atom; showing element colours`
-          : `Colour metric ${source} is not on this server; showing element colours`;
+        note = !entry
+          ? `Colour metric ${source} is not on this server; showing element colours`
+          : entry.colour_problem
+            ? `Colour metric ${source}: ${entry.colour_problem}; showing element colours`
+            : `Colour metric ${source} has no value per atom; showing element colours`;
         source = 'element';
       }
     }

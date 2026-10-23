@@ -224,19 +224,24 @@ export function isDirty(draft, saved) {
 
 /**
  * The shortcut a result shape offers (rule 13): per atom colours the main view,
- * per structure plots.
- * @param {string|null|undefined} shape @returns {'colour'|'plot'|null}
+ * per structure plots. A formula colouring refuses (`colourProblem`, ADR 0064)
+ * offers none.
+ * @param {string|null|undefined} shape @param {string|null} [colourProblem]
+ * @returns {'colour'|'plot'|null}
  */
-export function shortcutFor(shape) {
-  if (shape === 'N_atoms') return 'colour';
+export function shortcutFor(shape, colourProblem = null) {
+  if (shape === 'N_atoms') return typeof colourProblem === 'string' && colourProblem ? null : 'colour';
   if (shape === 'N_frames') return 'plot';
   return null;
 }
 
-/** The grey words for a good check: where the result can go. */
-export function shapeHint(shape) {
+/** The grey words for a good check: where the result can go. A per-atom
+ * result colouring refuses says why instead (ADR 0064). */
+export function shapeHint(shape, colourProblem = null) {
+  if (shape === 'N_atoms' && typeof colourProblem === 'string' && colourProblem)
+    return `per atom → ${colourProblem}`;
   const where = { N_atoms: 'per atom → can colour atoms', N_frames: 'per structure → can be plotted',
-    scalar: 'one number for the dataset' }[shape];
+    N_elements: 'per element', scalar: 'one number for the dataset' }[shape];
   return where ? `${where}` : `result shape ${shape}`;
 }
 

@@ -314,7 +314,7 @@ export function createColorByPane(sidebarEl, callbacks) {
       for (const opt of [...coloringSelect.options])
         if (!['Elements', 'Displacement'].includes(opt.value)) opt.remove();
       for (const entry of entries) {
-        if (!COLORABLE_SHAPES.has(entry.shape)) continue;
+        if (!COLORABLE_SHAPES.has(entry.shape) || entry.colour_problem) continue;
         const label = entry.label || entry.id;
         if (labelToMetricId.has(label)) continue;
         labelToMetricId.set(label, entry.id);

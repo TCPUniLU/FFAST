@@ -107,6 +107,9 @@ class MetricCatalogEntry(BaseModel):
     source: Optional[str] = None
     equivalent_expr: Optional[str] = None
     equivalent_vars: Optional[dict[str, str]] = None
+    # Why colouring atoms refuses this metric (it averages by all or by
+    # element, ADR 0064), or None.
+    colour_problem: Optional[str] = None
 
 
 class MetricCatalog(BaseModel):

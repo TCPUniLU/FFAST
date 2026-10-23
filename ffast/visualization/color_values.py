@@ -162,6 +162,13 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
                     "colors", metric_id,
                 )
                 return None
+            from ffast.metrics.expr import metric_colour_problem
+            problem = metric_colour_problem(metric_id, reg)
+            if problem:
+                # ADR 0064: by=all / by=element would mean "this frame" here.
+                logger.warning("atom-color: %s: %s; falling back to element colors",
+                               metric_id, problem)
+                return None
             if executor is None:
                 logger.warning(
                     "atom-color: no metric executor injected; falling back to "
