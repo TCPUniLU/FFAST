@@ -926,6 +926,9 @@ async def test_web_journal_page_hides_the_controls_and_prints_units_as_text(ffas
             await expect(page.locator(panel + " .modebar")).to_be_hidden()
             unit = page.locator(panel + " .panel-caption-line .unit-editable")
             await expect(unit).to_have_css("text-decoration-line", "none")
+            caption = page.locator(panel + " .panel-caption-line")
+            assert "Georgia" in await caption.evaluate("(el) => getComputedStyle(el).fontFamily")
+            await expect(caption).to_have_css("color", "rgb(17, 20, 24)")   # --ink
             await unit.click(force=True)
             await page.locator(panel + " .g-ytitle text").click(force=True)
             await page.wait_for_timeout(300)
@@ -941,6 +944,7 @@ async def test_web_journal_page_hides_the_controls_and_prints_units_as_text(ffas
             await page.get_by_role("radio", name="Screen").click()
             for c in controls:
                 await expect(c).to_be_visible()
+            assert "Georgia" not in await caption.evaluate("(el) => getComputedStyle(el).fontFamily")
             await unit.click()
             await expect(page.locator("#unit-popover")).to_be_visible()
         finally:

@@ -86,6 +86,10 @@
     body.journal .analysis-grid :is(.unit-editable, [data-unit-role], .g-xtitle text, .g-ytitle text) {
       text-decoration: none !important; cursor: auto !important; pointer-events: none !important;
     }
+    /* captions set in serif, as under a printed figure */
+    body.journal .analysis-grid .panel-caption-line {
+      font-family: Georgia, "Times New Roman", serif; font-size: var(--fs-s); color: var(--ink);
+    }
 
     /* drawn icons (icons.js): one stroke, the text colour */
     .icon { width: 1.1em; height: 1.1em; vertical-align: -0.15em; }
