@@ -41,6 +41,15 @@ CASES = {
     "names_x_call_is_not_a_value": "ml.valueNames('x(F) + y(F)')",
     "names_a_variable_called_x": "ml.valueNames('x + 1')",
     "names_numbers_with_exponents": "ml.valueNames('a * 1e5 + 2e-3')",
+    "names_skip_by_words_and_symbols": (
+        "ml.valueNames('mean(norm(pF - rF), by=structure, where=element(\"H\", \"C\")) + sum(e, by = all)')"),
+    "names_keep_a_comparison_and_a_variable_called_all": "ml.valueNames('where(a == all, all, 0)')",
+    "rename_leaves_words_and_text": (
+        "ml.renameVariable('mean(all, by=all, where=element(\"all\"))', 'all', 'v')"),
+    "suggest_by_words": (
+        "[ml.suggestions('mean(e, by=s', 12, ['e'], []).map(s => [s.text, s.kind]),"
+        " ml.suggestions('mean(e, by=', 11, ['e'], []).length,"
+        " ml.suggestions('me', 2, [], []).map(s => s.text)]"),
     "undefined_ignores_constants": "ml.undefinedNames('pi * a + n_atoms', ['a'])",
     "undefined_lists_unknown": "ml.undefinedNames('a + b + c', ['a'])",
 
@@ -247,6 +256,15 @@ def test_completing_replaces_only_the_typed_part(results):
 
 def test_renaming_changes_values_not_function_calls(results):
     assert results["rename_changes_values_only"] == "x(F) + F * k"
+    assert results["rename_leaves_words_and_text"] == 'mean(v, by=all, where=element("all"))'
+
+
+def test_the_editor_reads_reductions(results):
+    """ADR 0064: by=/where= are keywords, the word after by= is a word, the
+    symbols in element(...) are text; none of them is an input."""
+    assert results["names_skip_by_words_and_symbols"] == ["pF", "rF", "e"]
+    assert results["names_keep_a_comparison_and_a_variable_called_all"] == ["a", "all"]
+    assert results["suggest_by_words"] == [[["structure", "word"]], 0, ["mean", "mean_parts"]]
     assert results["rename_whole_names_only"] == "ab + q + abc"
 
 

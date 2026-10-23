@@ -7,11 +7,15 @@
  * as, how a Try's numbers read. `panes/metrics.js` draws; this file decides.
  */
 
-/** Functions a formula may call (ffast/metrics/expr.py). */
+/** Functions a formula may call (ffast/metrics/expr.py); the reductions
+ * and `element` come from ADR 0064. */
 export const FORMULA_FUNCTIONS = [
   'abs', 'sqrt', 'exp', 'log', 'log10', 'clip', 'where', 'minimum', 'maximum',
   'sign', 'norm', 'x', 'y', 'z',
+  'mean', 'sum', 'min', 'max', 'rms', 'std', 'mean_parts', 'sum_parts', 'element',
 ];
+/** The words `by=` takes. */
+export const BY_WORDS = ['structure', 'element', 'all'];
 /** Names that need no `vars` row. */
 export const FORMULA_CONSTANTS = ['pi', 'n_atoms'];
 
@@ -22,20 +26,35 @@ const ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/;
 export const ID_PREFIX = 'user.';
 
 /**
- * The names a formula uses as values, in order of first use. A name followed by
- * "(" is a function call, not a value (so `x(F)` uses F, not x).
+ * Where the formula uses a name as a value: each match of an identifier that
+ * is not a function call (`x(F)` uses F, not x), not the keyword before `=`
+ * in `by=` / `where=`, not the word after `by=`, and not text in quotes (the
+ * symbols in `element("H")`).
+ * @param {string} expr @returns {RegExpMatchArray[]}
+ */
+function valueMatches(expr) {
+  // Text in quotes is blanked out, keeping every other character in place.
+  const bare = expr.replace(/"[^"]*"?|'[^']*'?/g, (t) => ' '.repeat(t.length));
+  const out = [];
+  for (const m of bare.matchAll(IDENT)) {
+    const after = bare.slice(m.index + m[0].length);
+    if (/^\s*\(/.test(after)) continue;
+    if (/^\s*=(?!=)/.test(after)) continue;
+    if (BY_WORDS.includes(m[0]) && /\bby\s*=\s*$/.test(bare.slice(0, m.index))) continue;
+    // `1e5` / `2e-3`: the "e" belongs to the number
+    if (m.index > 0 && /[0-9.]/.test(expr[m.index - 1]) && /^e\d*$/.test(m[0])) continue;
+    out.push(m);
+  }
+  return out;
+}
+
+/**
+ * The names a formula uses as values, in order of first use (see
+ * `valueMatches` for what is not a value).
  * @param {string} expr @returns {string[]}
  */
 export function valueNames(expr) {
-  const out = [];
-  for (const m of expr.matchAll(IDENT)) {
-    const after = expr.slice(m.index + m[0].length);
-    if (/^\s*\(/.test(after)) continue;
-    // `1e5` / `2e-3`: the "e" belongs to the number
-    if (m.index > 0 && /[0-9.]/.test(expr[m.index - 1]) && /^e\d*$/.test(m[0])) continue;
-    if (!out.includes(m[0])) out.push(m[0]);
-  }
-  return out;
+  return [...new Set(valueMatches(expr).map((m) => m[0]))];
 }
 
 /**
@@ -104,12 +123,15 @@ export function identifierBefore(value, caret) {
  * has been typed, or the only candidate is what is already there.
  * @param {string} value @param {number} caret @param {string[]} varNames
  * @param {Array<{name: string, ref: string, label: string}>} inputs
- * @returns {Array<{text: string, kind: 'variable'|'input'|'function', ref?: string}>}
+ * @returns {Array<{text: string, kind: 'variable'|'input'|'function'|'word', ref?: string}>}
  */
 export function suggestions(value, caret, varNames, inputs) {
-  const { prefix } = identifierBefore(value, caret);
+  const { prefix, start } = identifierBefore(value, caret);
   if (!prefix) return [];
   const q = prefix.toLowerCase();
+  // After `by=` only its three words make sense.
+  if (/\bby\s*=\s*$/.test(value.slice(0, start)))
+    return BY_WORDS.filter((w) => w.startsWith(q) && w !== prefix).map((w) => ({ text: w, kind: 'word' }));
   const out = [];
   const seen = new Set();
   const add = (item) => {
@@ -289,11 +311,14 @@ export function badFrameWords(frames, count) {
  * @param {string} expr @param {string} from @param {string} to
  */
 export function renameVariable(expr, from, to) {
-  return expr.replace(IDENT, (name, offset) => {
-    if (name !== from) return name;
-    if (/^\s*\(/.test(expr.slice(offset + name.length))) return name;
-    return to;
-  });
+  let out = '';
+  let last = 0;
+  for (const m of valueMatches(expr)) {
+    if (m[0] !== from) continue;
+    out += expr.slice(last, m.index) + to;
+    last = m.index + from.length;
+  }
+  return out + expr.slice(last);
 }
 
 /** Whether a name can be a variable: an identifier that is not a function or a constant. */
