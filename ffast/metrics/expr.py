@@ -712,9 +712,15 @@ class _ExprFn:
         where = _keyword(node, "where")
         if where is not None:
             w, _wk, wgap = self._eval(where, ns)
-            counted = counted & (np.broadcast_to(np.asarray(w), (rows,)) != 0)
+            w = np.broadcast_to(np.asarray(w, dtype=float), (rows,))
+            # A bad value in where= is neither 1 nor 0: the row counts and is
+            # made bad, so its group fails rather than being quietly decided.
+            w_bad = ~np.isfinite(w)
+            counted = counted & ((w != 0) | w_bad)
             if wgap is not None:
                 counted = counted & ~np.broadcast_to(wgap, (rows,))
+            if w_bad.any():
+                v = np.where(w_bad.reshape((rows,) + (1,) * k), np.nan, v)
 
         by = _keyword(node, "by").id
         order = None
@@ -740,6 +746,10 @@ class _ExprFn:
                 fill = np.inf if name == "min" else -np.inf
                 ufunc = np.minimum if name == "min" else np.maximum
                 out = segmentExtremes(np.where(keep, v, fill), offsets, ufunc)
+                # The fill would hide an infinity among the counted rows: a
+                # group holding any bad value is bad.
+                bad = segmentSums(np.where(keep, ~np.isfinite(v), False).astype(float), offsets)
+                out = np.where(bad > 0, np.nan, out)
             else:
                 sums = segmentSums(np.where(keep, v, 0.0), offsets)
                 if name == "sum":

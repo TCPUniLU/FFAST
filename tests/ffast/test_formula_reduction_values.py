@@ -239,3 +239,20 @@ def test_a_registry_holding_a_grouping_formula_freezes():
     compile_expr_metric("t.h", 'mean(norm(p - q), by=structure, where=element("H"))',
                         {"p": "prediction.forces", "q": "reference.forces"}, registry=r)
     assert r.freeze() == []
+
+
+# ── review fixes: a bad value is never skipped ───────────────────────────────
+
+@pytest.mark.parametrize("name,bad", [("min", np.inf), ("max", -np.inf), ("min", np.nan)])
+def test_min_and_max_never_skip_a_bad_value(name, bad):
+    raw = {**RAW, "err": np.array([1.0, bad, 3.0, 4.0, 5.0, 6.0])}
+    with pytest.raises(ValueError, match="non-finite"):
+        _values(f"{name}(err, by=structure)", raw=raw)
+
+
+@pytest.mark.parametrize("w", [np.nan, np.inf])
+def test_a_bad_value_in_where_fails_the_metric(w):
+    vars_ = {**VARS, "w": "reference.atoms.w"}
+    raw = {**RAW, "w": np.array([1.0, w, 1.0, 0.0, 1.0, 1.0])}
+    with pytest.raises(ValueError, match="non-finite"):
+        _values("mean(err, by=all, where=w)", vars_=vars_, raw=raw)
