@@ -90,6 +90,12 @@
     body.journal .analysis-grid .panel-caption-line {
       font-family: Georgia, "Times New Roman", serif; font-size: var(--fs-s); color: var(--ink);
     }
+    /* no card round a panel (square, or its corners leave marks), and no 3D
+       pick bar or hint bar; the titles stay */
+    body.journal .tabpanel:not(.editing) .analysis-grid .analysis-panel {
+      border-color: transparent; border-radius: 0;
+    }
+    body.journal .tabpanel:not(.editing) :is(#pick-bar, #hint-bar) { display: none !important; }
 
     /* drawn icons (icons.js): one stroke, the text colour */
     .icon { width: 1.1em; height: 1.1em; vertical-align: -0.15em; }

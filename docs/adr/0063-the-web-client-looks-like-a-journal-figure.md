@@ -558,7 +558,11 @@ differed from the steps, and what was added:
   panel title (edit mode keeps what it needs). A unit is plain text, not a link to
   name it, and captions are set in serif. The 3D view is drawn on white; this is
   local to the browser, like the switch itself, and an export keeps its own
-  background. The rail, top bar, tab bar and 3D sidebar stay as they are.
+  background. The rail, top bar, tab bar and 3D sidebar stay as they are. Later,
+  chosen from screenshots: no card round a panel (no border, square corners), and
+  no 3D pick bar or hint bar; the panel titles and the playback strip stay. The
+  pick bar holds the sidebar's Settings button, so the sidebar cannot be hidden
+  there.
 
 **Where a step's text was followed differently**
 

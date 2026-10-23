@@ -992,6 +992,39 @@ async def test_web_journal_page_draws_the_3d_view_on_white_in_this_browser_only(
             await browser.close()
 
 
+async def test_web_journal_page_drops_the_cards_the_pick_bar_and_the_hint_bar(ffast_web_server):
+    """ADR 0063 follow-up: Journal page draws no card round a panel and hides
+    the 3D pick bar and the hint bar; the panel titles stay. Screen brings
+    them back."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            bars = [page.locator("#pick-bar"), page.locator("#hint-bar")]
+            for bar in bars:
+                await expect(bar).to_be_visible()
+            await page.get_by_role("radio", name="Journal page").click()
+            for bar in bars:
+                await expect(bar).to_be_hidden()
+
+            await _open_analysis_tab(page, "Basic Errors")
+            panel = page.locator(".tabpanel.active .analysis-panel").first
+            await expect(panel).to_have_css("border-top-color", "rgba(0, 0, 0, 0)")
+            await expect(panel).to_have_css("border-top-left-radius", "0px")
+            await expect(panel.locator(".panel-title")).to_be_visible()
+
+            await page.get_by_role("radio", name="Screen").click()
+            await expect(panel).not_to_have_css("border-top-color", "rgba(0, 0, 0, 0)")
+            await _open_analysis_tab(page, "3D")
+            for bar in bars:
+                await expect(bar).to_be_visible()
+        finally:
+            await browser.close()
+
+
 # A two-series timeline built in the app page: its legend font and the axes'.
 _LEGEND_SIZE = """async () => {
   const pn = await import('/panels.js');
