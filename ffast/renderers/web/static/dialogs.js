@@ -8,11 +8,14 @@ const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:
 
 /**
  * Keep Tab and Shift+Tab inside `modal` (ADR 0063). Returns a function that
- * removes the trap; a modal that is taken out of the page needs no call.
+ * removes the trap and puts focus back on what had it when the trap was set,
+ * if that is still in the page and focus is in the modal or lost (on body):
+ * call it as the modal closes, also one that is taken out of the page.
  * @param {HTMLElement} modal
  * @returns {() => void}
  */
 export function trapFocus(modal) {
+  const opener = document.activeElement;
   const onKey = (e) => {
     if (e.key !== 'Tab') return;
     const items = [...modal.querySelectorAll(FOCUSABLE)].filter((el) => el.getClientRects().length);
@@ -25,7 +28,12 @@ export function trapFocus(modal) {
     }
   };
   modal.addEventListener('keydown', onKey);
-  return () => modal.removeEventListener('keydown', onKey);
+  return () => {
+    modal.removeEventListener('keydown', onKey);
+    const at = document.activeElement;
+    const lost = !at || at === document.body || modal.contains(at);
+    if (lost && opener && opener !== document.body && opener.isConnected) opener.focus();
+  };
 }
 
 /**
@@ -53,7 +61,8 @@ export function askDialog({ title, message, buttons, danger = '' }) {
     text.textContent = message;
     const foot = document.createElement('div');
     foot.className = 'warning-modal-footer';
-    const done = (answer) => { modal.remove(); resolve(answer); };
+    let untrap = () => {};
+    const done = (answer) => { modal.remove(); untrap(); resolve(answer); };
     for (const label of buttons) {
       const btn = document.createElement('button');
       btn.textContent = label;
@@ -62,7 +71,7 @@ export function askDialog({ title, message, buttons, danger = '' }) {
       foot.appendChild(btn);
     }
     modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') done(null); });
-    trapFocus(modal);
+    untrap = trapFocus(modal);
     panel.append(head, text, foot);
     modal.appendChild(panel);
     document.body.appendChild(modal);
@@ -144,7 +153,8 @@ export function textDialog({ title, text, filename, note = '' }) {
   body.appendChild(area);
   const foot = document.createElement('div');
   foot.className = 'warning-modal-footer';
-  const close = () => modal.remove();
+  let untrap = () => {};
+  const close = () => { modal.remove(); untrap(); };
   const copy = document.createElement('button');
   copy.textContent = 'Copy';
   copy.addEventListener('click', async () => {
@@ -172,7 +182,7 @@ export function textDialog({ title, text, filename, note = '' }) {
   done.addEventListener('click', close);
   foot.append(copy, save, spacer, done);
   modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
-  trapFocus(modal);
+  untrap = trapFocus(modal);
   panel.append(head, body, foot);
   modal.appendChild(panel);
   document.body.appendChild(modal);

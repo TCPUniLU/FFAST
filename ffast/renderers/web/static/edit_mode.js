@@ -666,8 +666,9 @@ function modal(title, body, labels) {
   const foot = document.createElement('div');
   foot.className = 'warning-modal-footer';
   let close;
+  let untrap = () => {};
   const answer = new Promise((resolve) => {
-    close = (label) => { el.remove(); resolve(label); };
+    close = (label) => { el.remove(); untrap(); resolve(label); };
   });
   const buttons = labels.map((label) => {
     const b = button(label, () => close(label));
@@ -675,7 +676,7 @@ function modal(title, body, labels) {
     return b;
   });
   el.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(null); });
-  trapFocus(el);
+  untrap = trapFocus(el);
   panel.append(head, content, foot);
   el.appendChild(panel);
   document.body.appendChild(el);

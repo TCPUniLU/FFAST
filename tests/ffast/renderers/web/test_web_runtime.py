@@ -1949,6 +1949,38 @@ async def _delete_from_rail(page, kind, fp):
     return page.locator(".ask-dialog")
 
 
+async def test_web_closing_a_dialog_gives_focus_back_to_what_opened_it(ffast_web_server):
+    """ADR 0063 follow-up: a dialog closed with Esc left focus on <body>."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            menu = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}'] .obj-menu-btn")
+            await menu.focus()
+            await page.keyboard.press("Enter")
+            await expect(page.locator(".rail-menu [data-action='dataset-delete']")).to_be_focused()
+            await page.keyboard.press("Enter")
+            await expect(page.locator(".ask-dialog")).to_be_visible()
+            await page.keyboard.press("Escape")
+            await expect(page.locator(".ask-dialog")).to_have_count(0)
+            await expect(menu).to_be_focused()
+
+            file_btn = page.locator("#file-menu-btn")
+            await file_btn.focus()
+            await page.keyboard.press("Enter")
+            await page.locator("#file-menu-list").get_by_role("menuitem", name="Save Session…").focus()
+            await page.keyboard.press("Enter")
+            await expect(page.locator("#path-input")).to_be_focused()
+            await page.keyboard.press("Escape")
+            await expect(page.locator("#path-modal")).to_be_hidden()
+            await expect(file_btn).to_be_focused()
+        finally:
+            await browser.close()
+
+
 async def test_web_the_rail_menu_deletes_a_dataset_or_prediction(ffast_web_server):
     """A rail row's ⋯ menu deletes it after a confirmation naming what goes
     with it: a prediction's results, a dataset's subsets."""
