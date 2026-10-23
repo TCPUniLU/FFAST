@@ -295,6 +295,10 @@ CASES = {
     "recent_servers_cap": (
         "rs.rememberServer(['a','b','c','d','e'], 'f')"
     ),
+    # the server-runs-other-code warning (ffast.session.code_fingerprint)
+    "code_notice_same": "cf.serverCodeNotice('abc', 'abc')",
+    "code_notice_older": "cf.serverCodeNotice(null, 'abc')",
+    "code_notice_different": "cf.serverCodeNotice('abd', 'abc')",
     # a built-in metric declares a dimension ("energy"), not a unit
     "units_dimension_tags": "[...un.DIMENSIONS].sort()",
     "axis_title_units": (
@@ -721,6 +725,7 @@ def results():
         f"  const pk = await import('{origin}/peaks.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
+        f"  const cf = await import('{origin}/code_fingerprint.js');\n"
         f"  const tr = await import('{origin}/tab_rules.js');\n"
         f"  const fl = await import('{origin}/frame_links.js');\n"
         f"  const te = await import('{origin}/tab_edit.js');\n"
@@ -1208,6 +1213,14 @@ def test_table_shows_a_dash_for_a_pair_that_was_not_computed(results):
         ["MACE", "1.00", "—"],
         ["SchNet", "—", "4.00"],
     ]
+
+
+def test_the_code_warning_matches_the_desktop_word_for_word(results):
+    from ffast.session.code_fingerprint import server_code_notice
+
+    assert results["code_notice_same"] is None
+    assert results["code_notice_older"] == server_code_notice(None, "abc")
+    assert results["code_notice_different"] == server_code_notice("abd", "abc")
 
 
 def test_recent_servers_move_a_reconnected_server_to_the_front(results):

@@ -14,6 +14,8 @@ export class FFastConnection {
     this._ws = null;
     this._handlers = new Map();
     this.role = 'READ_ONLY';
+    /** The server's code fingerprint from HELLO_ACK; null from an older server. */
+    this.serverCodeFingerprint = null;
   }
 
   connect() {
@@ -80,6 +82,7 @@ export class FFastConnection {
       );
       const ack = msgpack.decode(ackData)?.kwargs || {};
       role = ack.role || 'READ_ONLY';
+      this.serverCodeFingerprint = ack.code_fingerprint || null;
     } catch (_) {
       console.warn('FFAST: no HELLO_ACK received — using READ_ONLY (backward compat)');
     }

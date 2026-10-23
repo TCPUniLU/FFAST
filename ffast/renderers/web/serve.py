@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import functools
 import http.server
+import json
 import logging
 import os
 import threading
@@ -46,6 +47,21 @@ class _SilentStaticHandler(http.server.SimpleHTTPRequestHandler):
 
     def log_message(self, format, *args):  # noqa: A002
         pass
+
+    def do_GET(self):
+        # Which FFAST code served this page, so the page can warn when the
+        # server it connects to runs other code (code_fingerprint.js).
+        if self.path.split("?", 1)[0] == "/code-fingerprint.json":
+            from ffast.session.code_fingerprint import code_fingerprint
+
+            body = json.dumps({"code_fingerprint": code_fingerprint()}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        super().do_GET()
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")

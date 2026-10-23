@@ -41,6 +41,7 @@ import { DEFAULT_LOOK, startCommands, startFromCurrent } from './start_settings.
 import { addSectionHelp, bindSidebarSearch, checkboxRow, oneSectionOpen, selectRow } from './sidebar.js';
 import { makeResizable } from './resizers.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
+import { pageCodeFingerprint, serverCodeNotice } from './code_fingerprint.js';
 
 /**
  * The five pick tools (ADR 0045 Phase 2). Each mirrors a Qt AtomSelectionBase
@@ -1335,6 +1336,8 @@ export class FFastApp {
         this._setStatus(`Could not load ${name}: ${kw.error}`, 'error');
       });
 
+      // Asked while the handshake runs, so it adds no wait.
+      const pageFingerprint = pageCodeFingerprint();
       await conn.connect();
 
       // The server replays its datasets while connecting; the last one's "ready"
@@ -1345,13 +1348,23 @@ export class FFastApp {
       this._syncEmptyState();
       // A server that needs a token gives a client without a valid one the
       // read-only role rather than refusing it.
+      const notices = [];
       if (conn.role === 'READ_ONLY' && !readOnly) {
-        this._openConnDialog(token
+        notices.push(token
           ? 'That token was not accepted, so you are connected read-only. Check it and connect again.'
           : 'This server needs a token to control the session; you are connected read-only. Enter the token and connect again.');
-      } else {
-        this._closeConnDialog();
       }
+      // A server still running other code (e.g. a cluster job started before
+      // an update) is said at once, not found out from a failing feature.
+      const pageFp = await pageFingerprint;
+      const codeNotice = pageFp === null
+        ? null : serverCodeNotice(conn.serverCodeFingerprint, pageFp);
+      if (codeNotice) {
+        console.warn('FFAST:', codeNotice);
+        notices.push(codeNotice);
+      }
+      if (notices.length) this._openConnDialog(notices.join(' '));
+      else this._closeConnDialog();
       // A READ_ONLY viewer's mutating Control messages are dropped server-side
       // (ADR 0044 Phase 2) — grey out the buttons that would send one, rather
       // than let the click silently do nothing.

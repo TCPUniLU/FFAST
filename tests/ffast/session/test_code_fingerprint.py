@@ -127,3 +127,23 @@ async def test_hello_returns_the_server_fingerprint():
     ack = await _do_hello(_WS(), "token")
     assert ack["code_fingerprint"] == code_fingerprint()
 
+
+# --- web client -------------------------------------------------------------
+
+def test_the_page_server_tells_the_page_its_fingerprint():
+    import json
+    import urllib.request
+
+    from ffast.renderers.web.serve import start_static_server
+
+    httpd = start_static_server(0, host="127.0.0.1")
+    try:
+        port = httpd.server_address[1]
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/code-fingerprint.json") as r:
+            assert r.headers["Content-Type"] == "application/json"
+            assert json.loads(r.read()) == {"code_fingerprint": code_fingerprint()}
+        # every other path is still a static file
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/code_fingerprint.js") as r:
+            assert b"serverCodeNotice" in r.read()
+    finally:
+        httpd.shutdown()
