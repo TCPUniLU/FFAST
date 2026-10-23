@@ -552,6 +552,13 @@ differed from the steps, and what was added:
   (300 px or the tab's set height, plus its labels' room), because the grid scrolls
   and a row there does not grow to fit what is in it.
 - **`PEAK_HEADROOM`** existed for one commit (2.0) and was replaced by the above.
+- **Journal page is a print view**, added after the build. Besides the light
+  tokens, it hides the figure area's controls: the tab's control bar, the Peaks and
+  Sub checkboxes, the Smoothing inputs, Plotly's toolbar and any other control in a
+  panel title (edit mode keeps what it needs). A unit is plain text, not a link to
+  name it, and captions are set in serif. The 3D view is drawn on white; this is
+  local to the browser, like the switch itself, and an export keeps its own
+  background. The rail, top bar, tab bar and 3D sidebar stay as they are.
 
 **Where a step's text was followed differently**
 
