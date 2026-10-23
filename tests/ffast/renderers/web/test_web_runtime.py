@@ -1949,6 +1949,36 @@ async def _delete_from_rail(page, kind, fp):
     return page.locator(".ask-dialog")
 
 
+async def test_web_frame_and_play_keys_do_nothing_on_a_tab_without_a_3d_view(ffast_web_server):
+    """ADR 0063 follow-up: on an analysis tab without a 3D panel, ←/→ and
+    Space stepped and played the 3D view out of sight."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            label = page.locator("#frame-label")
+            await expect(label).to_have_text("0 / 99", timeout=15000)
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.evaluate("() => document.activeElement.blur()")
+            await page.keyboard.press("ArrowRight")
+            await page.keyboard.press(" ")
+            await page.wait_for_timeout(500)
+            await expect(label).to_have_text("0 / 99")
+            assert await page.evaluate("() => window.ffastApp._playing") is False
+
+            await _open_analysis_tab(page, "3D")
+            await page.evaluate("() => document.activeElement.blur()")
+            await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
+            await page.wait_for_timeout(300)   # the view opened again, as _open_loupe waits
+            await page.keyboard.press("ArrowRight")
+            await expect(label).to_have_text("1 / 99")
+        finally:
+            await browser.close()
+
+
 async def test_web_closing_a_dialog_gives_focus_back_to_what_opened_it(ffast_web_server):
     """ADR 0063 follow-up: a dialog closed with Esc left focus on <body>."""
     ws_port, web_port = ffast_web_server

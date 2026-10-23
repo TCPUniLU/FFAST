@@ -2289,6 +2289,10 @@ export class FFastApp {
       if (el.closest?.('input, textarea, select, [contenteditable]')) return;
       if (document.querySelector('.warning-modal:not(.hidden), #fb-modal:not(.hidden), #path-modal:not(.hidden), #unit-popover')) return;
       const click = (id) => { e.preventDefault(); document.getElementById(id).click(); };
+      // The frame, play and search keys act on the 3D controls, which a tab
+      // without a 3D panel keeps parked out of sight (_parkChrome).
+      const parked = document.getElementById('chrome3d').contains(document.getElementById('loupe-controls'));
+      if (parked && ['ArrowLeft', 'ArrowRight', ' ', '/'].includes(e.key)) return;
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         if (el.closest?.('[role=tab], [role=radio], [role=menuitem]')) return;
         click(e.key === 'ArrowLeft' ? 'prev-frame-btn' : 'next-frame-btn');
