@@ -16,6 +16,7 @@ the whole module is marked ``integration``. The pure-metadata checks
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -104,8 +105,11 @@ class TestWheelContents:
     launcher that 404s every asset."""
 
     @pytest.fixture(scope="class")
-    def wheel_names(self, tmp_path_factory) -> list[str]:
+    def wheel_path(self, tmp_path_factory) -> Path:
         out = tmp_path_factory.mktemp("wheel")
+        # As cluster/bootstrap.py does: setuptools never prunes build/lib, so a
+        # file deleted from the source would otherwise still ship.
+        shutil.rmtree(REPO_ROOT / "build" / "lib", ignore_errors=True)
         # Build via the PEP 517 backend directly (setuptools.build_meta) rather
         # than `python -m build`: the backend is guaranteed present (it is this
         # project's build-backend) whereas `build`/`pip` may not be installed
@@ -124,7 +128,11 @@ class TestWheelContents:
         assert proc.returncode == 0, f"wheel build failed:\n{proc.stderr}"
         wheels = list(out.glob("*.whl"))
         assert len(wheels) == 1, f"expected exactly one wheel, got {wheels}"
-        with zipfile.ZipFile(wheels[0]) as zf:
+        return wheels[0]
+
+    @pytest.fixture(scope="class")
+    def wheel_names(self, wheel_path) -> list[str]:
+        with zipfile.ZipFile(wheel_path) as zf:
             return zf.namelist()
 
     def test_default_config_ships(self, wheel_names):
