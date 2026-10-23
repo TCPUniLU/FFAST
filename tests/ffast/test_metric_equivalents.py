@@ -15,7 +15,11 @@ from ffast.metrics.dims import shape_to_str
 
 rng = np.random.default_rng(0)
 N_ATOMS, N_FRAMES = 12, 4
+# Structures of different sizes, so averaging by structure is tested properly.
+OFFSETS = np.array([0, 2, 5, 9, 12])
 RAW = {
+    "offsets": OFFSETS,
+    "reference.elements": np.array([8, 1, 6, 1, 1, 8, 1, 6, 6, 1, 7, 1]),
     "prediction.forces": rng.normal(size=(N_ATOMS, 3)),
     "reference.forces": rng.normal(size=(N_ATOMS, 3)),
     "prediction.energies": rng.normal(size=N_FRAMES),
@@ -34,6 +38,8 @@ def _python_inputs(metric_id):
                 out[local] = RAW[ref]
             elif default_registry.has(ref):
                 todo.append(ref)
+        for local in schema.optional_inputs:        # offsets
+            out[local] = RAW[local]
     return out
 
 
@@ -50,5 +56,11 @@ def test_the_formula_gives_what_the_python_metric_gives(metric_id):
     np.testing.assert_allclose(formula, python.values, rtol=1e-12)
 
 
-def test_a_metric_that_averages_has_no_equivalent():
-    assert equivalent_of("ffast.force_mae_per_structure") is None
+def test_a_metric_that_smooths_or_mixes_shapes_has_no_equivalent():
+    for metric_id in ("ffast.force_rmse_smoothed", "ffast.gyradius", "ffast.accel_difference"):
+        assert equivalent_of(metric_id) is None
+
+
+def test_most_built_ins_now_have_an_exact_formula():
+    """ADR 0064 section 9: about 21 of the 37 that had none."""
+    assert len(EQUIVALENTS) >= 8 + 21

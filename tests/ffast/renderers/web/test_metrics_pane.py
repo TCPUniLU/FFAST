@@ -468,8 +468,9 @@ async def test_the_metrics_drawer_works_on_a_tab_with_no_3d_panel(tmp_path):
 
 async def test_every_python_metric_shows_its_code_and_duplicates_as_a_formula(tmp_path):
     """ADR 0057 amendment: a built-in shows its Python code; Duplicate gives
-    the exact formula where there is one (force_mae), and otherwise a formula
-    over the metric itself (force_mae_per_structure), which saves."""
+    the exact formula where there is one (force_mae, and force_mae_per_structure
+    with by=, ADR 0064), and otherwise a formula over the metric itself
+    (force_mae_per_structure_smoothed), which saves."""
     cm, metrics_dir = await _server(tmp_path)
     async with cm as (ws_port, web_port):
         await _preload_dataset_and_prediction(ws_port)
@@ -489,14 +490,19 @@ async def test_every_python_metric_shows_its_code_and_duplicates_as_a_formula(tm
                 await expect(pane.locator(".mx-check")).to_contain_text("per atom")
 
                 await pane.locator(".mx-item[data-id='ffast.force_mae_per_structure']").click()
+                await pane.get_by_role("button", name="Duplicate").click()
+                await expect(formula).to_have_value("mean(norm(pred_F - ref_F), by=structure)")
+                await expect(pane.locator(".mx-check")).to_contain_text("per structure")
+
+                await pane.locator(".mx-item[data-id='ffast.force_mae_per_structure_smoothed']").click()
                 await expect(pane.locator(".mx-notice")).to_contain_text("takes this metric as its input")
                 await pane.get_by_role("button", name="Duplicate").click()
-                await expect(formula).to_have_value("force_mae_per_structure")
+                await expect(formula).to_have_value("force_mae_per_structure_smoothed")
                 await expect(pane.locator(".mx-check")).to_contain_text("per structure")
-                await formula.fill("1000 * force_mae_per_structure")
+                await formula.fill("1000 * force_mae_per_structure_smoothed")
                 await pane.get_by_role("button", name="Save", exact=True).click()
                 await expect(pane.locator(".mx-group[data-origin='user']")).to_contain_text(
-                    "user.force_mae_per_structure_copy")
-                assert (metrics_dir / "user.force_mae_per_structure_copy.toml").exists()
+                    "user.force_mae_per_structure_smoothed_copy")
+                assert (metrics_dir / "user.force_mae_per_structure_smoothed_copy.toml").exists()
             finally:
                 await browser.close()
