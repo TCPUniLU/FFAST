@@ -24,7 +24,7 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, unitRoleAt, refreshPeaks } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, unitRoleAt, refreshPeaks, panelWarnings } from './panels.js';
 import { visitedKey } from './peaks.js';
 import { panelLetters, readingOrder, caption, captionSegments } from './figure.js';
 import { datasetUnits, editableDimension, resolveUnit } from './units.js';
@@ -1109,6 +1109,7 @@ export class AnalysisManager {
       peaks: !t.peaksOff.has(panelKey(spec)),
     };
     renderPanel(card.body, spec, series, ctx);
+    this._showWarnings(card, series);
     card.series = series;
     card.unitDims = ctx.unitDims;
     // Which axis titles name a unit the user can set (index.html makes those clickable).
@@ -1126,6 +1127,23 @@ export class AnalysisManager {
     this._sizeRows(t);
     this._buildPanelParams(t, spec, card);
     this._showCaption(card, spec);
+  }
+
+  /** ⚠ beside the title when a result behind the panel carries a warning;
+   * the sentences show on hover (ADR 0064 amendment). */
+  _showWarnings(card, series) {
+    const warnings = panelWarnings(series);
+    let mark = card.title.querySelector('.panel-warning');
+    if (!warnings.length) { if (mark) mark.remove(); return; }
+    if (!mark) {
+      mark = document.createElement('span');
+      mark.className = 'panel-warning';
+      mark.textContent = '⚠';
+      mark.tabIndex = 0;
+      card.title.insertBefore(mark, card.title.children[2] || null);
+    }
+    mark.title = warnings.join('\n');
+    mark.setAttribute('aria-label', `Warning: ${warnings.join('; ')}`);
   }
 
   /** The "Peaks" checkbox of a one-series timeline: its peak labels on or off. */

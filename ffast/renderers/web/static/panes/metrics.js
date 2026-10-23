@@ -440,6 +440,7 @@ export function createMetricsPane(body, callbacks) {
     tryEl.appendChild(stats);
     const gaps = noValueLine(r);
     if (gaps) tryEl.appendChild(el('div', 'mx-try-note mx-try-gaps', gaps));
+    if (r.ignored_warning) tryEl.appendChild(el('div', 'mx-try-note mx-try-ignored', `⚠ ${r.ignored_warning}`));
     if (r.bad_frames?.length) {
       const words = el('div', 'mx-try-bad');
       words.append(document.createTextNode('first bad frames: '));

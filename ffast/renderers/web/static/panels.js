@@ -182,6 +182,21 @@ function seriesWith(series, role) {
   });
 }
 
+/**
+ * Every warning the results behind a panel carry, once each (ADR 0064
+ * amendment: bad values a formula's where= left out).
+ * @param {PanelSeries[]} series @returns {string[]}
+ */
+export function panelWarnings(series) {
+  const out = new Set();
+  for (const s of series || []) {
+    for (const v of Object.values(s.data || {})) {
+      for (const res of Array.isArray(v) ? v : [v]) for (const w of res?.warnings || []) out.add(w);
+    }
+  }
+  return [...out];
+}
+
 // ── plot-kind builders (pure) ───────────────────────────────────────────────
 
 /** Length of a peak's tick, in px. */

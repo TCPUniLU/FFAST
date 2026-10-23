@@ -55,3 +55,14 @@ def test_the_element_picker_chooses_the_groups():
                                      {"value": "m.e", "selector_obj": _Picker()})
     assert panel.bars == [([0.0], [0.3], 0.8, True)]
     assert panel.ticks == ([0], ["O"])
+
+
+def test_a_desktop_panel_collects_each_warning_once():
+    from UI.panels import result_warnings
+
+    class _R:
+        def __init__(self, warnings):
+            self.warnings = warnings
+
+    data = [{"dataEntry": {"a": _R(["x", "y"]), "b": _R([])}}, {"dataEntry": {"a": _R(["x"])}}]
+    assert result_warnings(data) == ["x", "y"]

@@ -472,7 +472,11 @@ dataset, for example a division by zero. "No value" is different: a group with
 nothing to combine, such as a structure without hydrogen under
 `where=element("H")`. The metric still succeeds; that place shows as a gap in a
 timeline, `—` in a table, a grey atom, and is left out of scatter plots and
-densities. A later reduction leaves it out too. A formula that grows past
+densities. A later reduction leaves it out too. A bad value in a row that
+`where=` leaves out does not fail the metric, since the formula never uses
+it, but it is not passed over in silence: Try says "1 bad value in rows left
+out by where= was ignored (frame 41)", and a panel drawing the metric shows ⚠
+beside its title with the same sentence on hover. A formula that grows past
 2,000 characters or 50 levels of nesting is refused.
 
 **The position trap.** A position counts parts in the layout FFAST holds, not

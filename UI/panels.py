@@ -384,6 +384,16 @@ class _ParamControls:
         return box
 
 
+def result_warnings(data_list):
+    """Every warning of the results drawn from ``data_list``, once each."""
+    out = {}
+    for data in data_list:
+        for result in (data.get("dataEntry") or {}).values():
+            for w in getattr(result, "warnings", None) or []:
+                out[w] = None
+    return list(out)
+
+
 class MetricPlotPanel(_ParamControls, BasicPlotWidget):
     """Generic plot Panel; all chart behaviour is delegated to its PanelKind."""
 
@@ -417,6 +427,15 @@ class MetricPlotPanel(_ParamControls, BasicPlotWidget):
         for data in data_list:
             self._kind.draw(self, data, self._spec)
         self._kind.draw_overlay(self, data_list, self._spec)
+        self._showWarnings(data_list)
+
+    def _showWarnings(self, data_list):
+        """⚠ after the title when a drawn result carries a warning, the
+        sentences on hover (ADR 0064 amendment); the browser does the same."""
+        warnings = result_warnings(data_list)
+        base = self._spec.get("title", self._spec["name"])
+        self.titleLabel.setText(f"{base} ⚠" if warnings else base)
+        self.titleLabel.setToolTip("\n".join(warnings))
 
     def getDatasetSubIndices(self, dataset, model):
         idx = self._kind.sub_indices(self, dataset, model, self._spec)

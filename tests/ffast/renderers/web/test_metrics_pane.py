@@ -577,3 +577,42 @@ async def test_h_only_and_per_element_formulas_are_tried_saved_and_plotted(tmp_p
                 assert await bars.json_value() == [n_elements, n_elements]
             finally:
                 await browser.close()
+
+
+async def test_a_bad_value_where_leaves_out_is_ignored_with_a_warning(tmp_path):
+    """ADR 0064 amendment: a broken carbon force does not stop an H-only
+    formula; Try and the plotted panel say it was ignored, and where."""
+    import numpy as np
+    frames = ase.io.read(DATASET_PATH, index=":20")
+    carbon = next(i for i, z in enumerate(frames[3].numbers) if z == 6)
+    assert 1 in frames[3].numbers
+    frames[3].arrays["REF_forces"][carbon] = np.nan
+    broken = tmp_path / "broken.xyz"
+    ase.io.write(broken, frames, format="extxyz")
+    cm, _metrics_dir = await _server(tmp_path)
+    async with cm as (ws_port, web_port):
+        await _load_more(ws_port, set(), ("LOAD_DATASET", (str(broken), "ase (auto)"), {}))
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 900})
+            try:
+                await _open_app(page, web_port, ws_port)
+                pane = await _open_metrics_pane(page)
+                await pane.get_by_role("button", name="New metric").click()
+                await pane.get_by_label("Metric id").fill("user.h_ref")
+                await pane.get_by_label("Formula").fill('mean(norm(ref_F), by=structure, where=element("H"))')
+                await pane.get_by_role("button", name=re.compile("^Fix")).click()
+                await expect(pane.locator(".mx-check")).to_contain_text("per structure")
+                sentence = "1 bad value in rows left out by where= was ignored (frame 3)"
+
+                await pane.get_by_role("button", name="Try", exact=True).click()
+                await expect(pane.locator(".mx-try-head")).to_contain_text("all good")
+                await expect(pane.locator(".mx-try-ignored")).to_have_text(f"⚠ {sentence}")
+
+                await pane.get_by_role("button", name="Save", exact=True).click()
+                await expect(pane.locator(".mx-item[data-id='user.h_ref']")).to_be_visible()
+                await pane.get_by_role("button", name="Plot it").click()
+                mark = page.locator(".tabpanel.active .analysis-panel .panel-warning")
+                await expect(mark).to_have_attribute("title", sentence)
+            finally:
+                await browser.close()

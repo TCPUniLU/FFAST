@@ -221,6 +221,9 @@ class MetricResultMessage(BaseModel):
     implementation_hash: Optional[str] = None
     checksum: Optional[str] = None
     values: Optional[dict] = None
+    # Sentences about what the result left out (ADR 0064 amendment); sent only
+    # when there are some, so the message is unchanged for a clean result.
+    warnings: Optional[list[str]] = None
 
 
 # ── Control message requests (client→server) ─────────────────────────────────

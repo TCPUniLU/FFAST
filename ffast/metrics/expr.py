@@ -57,6 +57,7 @@ import numpy as np
 
 from ffast.metrics import dims, units
 from ffast.metrics.inputs import parse_field_ref
+from ffast.metrics.models import WithWarnings
 from ffast.metrics.registry import default_registry
 from ffast.metrics.segments import framesOrOne, segmentExtremes, segmentSums
 
@@ -128,6 +129,23 @@ _RESERVED_SHAPE = {"n_atoms": (dims.N_frames,)}
 _OFFSETS = "_offsets"
 _ELEMENTS = "_elements"
 HIDDEN_INPUTS = {_OFFSETS: "offsets", _ELEMENTS: "reference.elements"}
+# Where the evaluator collects the bad values that where= left out.
+_IGNORED = "__ignored"
+_MAX_FRAMES_SHOWN = 5
+
+
+def ignored_warning(count: int, frames) -> str:
+    """The sentence for bad values that where= left out (ADR 0064 amendment):
+    they do not fail the metric, but are not passed over in silence."""
+    one = count == 1
+    text = (f"{count} bad value{'' if one else 's'} in rows left out by where= "
+            f"{'was' if one else 'were'} ignored")
+    frames = list(frames)
+    if not frames:
+        return text
+    shown = ", ".join(str(f) for f in frames[:_MAX_FRAMES_SHOWN])
+    more = ", …" if len(frames) > _MAX_FRAMES_SHOWN else ""
+    return f"{text} (frame{'' if len(frames) == 1 else 's'} {shown}{more})"
 
 # Raw (non-metric, non-field) input refs → their Metric Shape, for the same-shape
 # check. Restricted to the continuous float quantities that element-wise algebra
@@ -716,6 +734,8 @@ class _ExprFn:
             # A bad value in where= is neither 1 nor 0: the row counts and is
             # made bad, so its group fails rather than being quietly decided.
             w_bad = ~np.isfinite(w)
+            left_out = counted & (w == 0)
+            self._note_ignored(v, k, left_out, ns)
             counted = counted & ((w != 0) | w_bad)
             if wgap is not None:
                 counted = counted & ~np.broadcast_to(wgap, (rows,))
@@ -767,18 +787,43 @@ class _ExprFn:
             out, empty = out[0], empty[0]
         return out, k, (empty if np.any(empty) else None)
 
+    def _note_ignored(self, v, k, left_out, ns) -> None:
+        """Record the bad values in rows where= leaves out, with their frames
+        when the rows can be placed (per atom or per structure)."""
+        bad = ~np.isfinite(v)
+        if k:
+            bad = bad.any(axis=tuple(range(-k, 0)))
+        rows = np.flatnonzero(left_out & bad)
+        if not rows.size:
+            return
+        offsets = ns.get(_OFFSETS)
+        frames = []
+        if offsets is not None:
+            offsets = np.asarray(offsets)
+            if v.shape[0] == offsets[-1]:            # per atom
+                frames = np.searchsorted(offsets, rows, side="right") - 1
+            elif v.shape[0] == offsets.size - 1:     # per structure
+                frames = rows
+        ns[_IGNORED].append((int(rows.size), [int(f) for f in frames]))
+
     def evaluate_split(self, /, **kwargs):
-        """``(values, gap)``: the formula's values, NaN where there is no
-        value, and the rows with no value (or None). Bad values are left in;
-        a metric run rejects them in ``__call__``, Try counts them."""
-        out, k, gap = self._eval(self._tree(), kwargs)
+        """``(values, gap, ignored)``: the formula's values, NaN where there is
+        no value; the rows with no value (or None); and the bad values where=
+        left out, ``{"count", "frames"}`` (or None). Bad values elsewhere are
+        left in; a metric run rejects them in ``__call__``, Try counts them."""
+        ns = {**kwargs, _IGNORED: []}
+        out, k, gap = self._eval(self._tree(), ns)
+        ignored = None
+        if ns[_IGNORED]:
+            frames = sorted({f for _n, fs in ns[_IGNORED] for f in fs})
+            ignored = {"count": sum(n for n, _fs in ns[_IGNORED]), "frames": frames}
         arr = np.asarray(out)
         arr = arr.astype(float) if arr.dtype == bool else arr
         if gap is not None:
             gap = np.broadcast_to(gap, arr.shape[:arr.ndim - k])
             arr = np.array(arr, dtype=float)
             arr[gap] = np.nan
-        return arr, gap
+        return arr, gap, ignored
 
     def evaluate(self, /, **kwargs):
         """The formula over these inputs: NaN where there is no value, bad
@@ -788,7 +833,7 @@ class _ExprFn:
     def __call__(self, /, **kwargs):
         # ``self`` is positional-only so an Expression Variable legitimately named
         # ``self`` (bound via ``fn(**resolved_inputs)``) cannot collide with it.
-        arr, gap = self.evaluate_split(**kwargs)
+        arr, gap, ignored = self.evaluate_split(**kwargs)
         bad = ~np.isfinite(arr)
         if gap is not None:
             bad &= ~gap.reshape(gap.shape + (1,) * (arr.ndim - gap.ndim))
@@ -801,6 +846,8 @@ class _ExprFn:
                 f"(inf/nan) — check for division by zero or log of a "
                 f"non-positive value in the data"
             )
+        if ignored:
+            return WithWarnings(arr, [ignored_warning(ignored["count"], ignored["frames"])])
         return arr
 
     def implementation_source(self) -> str:
@@ -867,7 +914,8 @@ def analyze_expr(expr, vars, *, registry=None, id="<expr>"):
         raise ValueError(f"expr metric '{id}': {e}") from e
     var_parts = {n: len(_part_axes(sh)) for n, sh in shapes.items() if _part_axes(sh)}
     words = by_words(tree)
-    if "structure" in words:
+    # where= needs the offsets too, to name the frames of what it leaves out.
+    if "structure" in words or _uses_where(tree):
         inputs[_OFFSETS] = HIDDEN_INPUTS[_OFFSETS]
     if "element" in words or _uses_element(tree):
         inputs[_ELEMENTS] = HIDDEN_INPUTS[_ELEMENTS]
@@ -881,6 +929,11 @@ def by_words(tree: ast.Expression) -> set[str]:
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _REDUCERS
         for kw in n.keywords if kw.arg == "by" and isinstance(kw.value, ast.Name)
     }
+
+
+def _uses_where(tree: ast.Expression) -> bool:
+    return any(kw.arg == "where" for n in ast.walk(tree) if isinstance(n, ast.Call)
+               for kw in n.keywords)
 
 
 def _uses_element(tree: ast.Expression) -> bool:

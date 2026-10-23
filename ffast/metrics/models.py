@@ -118,3 +118,17 @@ class MetricResult(BaseModel):
     implementation_hash: str
     checksum: str
     values: Any
+    # Sentences about something the result left out but the user should know,
+    # e.g. bad values in rows a formula's where= left out (ADR 0064 amendment).
+    warnings: list[str] = Field(default_factory=list)
+
+
+class WithWarnings:
+    """A metric function's output together with warnings for its result.
+
+    A plain picklable pair, so it crosses from the metric worker like an
+    array; the execution context unwraps it into ``MetricResult.warnings``."""
+
+    def __init__(self, values, warnings) -> None:
+        self.values = values
+        self.warnings = list(warnings)

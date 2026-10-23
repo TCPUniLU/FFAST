@@ -30,7 +30,7 @@ function requestLabel(metricId, params, modelFp, datasetFp) {
 }
 
 /** @typedef {{values: number[], shape: number[]}} DecodedArray */
-/** @typedef {{nd: DecodedArray|null, shape: string, unit: string, dtype: string}} MetricResult */
+/** @typedef {{nd: DecodedArray|null, shape: string, unit: string, dtype: string, warnings: string[]}} MetricResult */
 
 const _TIMEOUT_MS = 120000;
 
@@ -93,7 +93,8 @@ export class MetricClient {
     clearTimeout(waiter.timer);
     waiter.resolve(
       kw.ok
-        ? { nd: decodeNdarray(kw.values), shape: kw.shape, unit: kw.unit, dtype: kw.dtype }
+        ? { nd: decodeNdarray(kw.values), shape: kw.shape, unit: kw.unit, dtype: kw.dtype,
+            warnings: kw.warnings || [] }
         : null,
     );
   }

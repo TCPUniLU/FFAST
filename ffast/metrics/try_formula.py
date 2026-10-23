@@ -26,6 +26,7 @@ from ffast.metrics.dims import shape_to_str
 from ffast.metrics.expr import (
     HIDDEN_INPUTS,
     _ExprFn,
+    ignored_warning,
     analyze_expr,
     by_words,
     formula_inputs,
@@ -50,6 +51,7 @@ class TryResult:
     bad_count: int = 0
     no_value_count: int = 0             # rows with no value (ADR 0064)
     no_value_rows: str = "structures"   # what those rows are
+    ignored_warning: str | None = None  # bad values where= left out (amendment)
     min: float | None = None
     mean: float | None = None
     max: float | None = None
@@ -60,7 +62,8 @@ class TryResult:
         return {
             "shape": self.shape, "cancelled": self.cancelled, "count": self.count,
             "bad_count": self.bad_count, "no_value_count": self.no_value_count,
-            "no_value_rows": self.no_value_rows, "min": self.min, "mean": self.mean,
+            "no_value_rows": self.no_value_rows, "ignored_warning": self.ignored_warning,
+            "min": self.min, "mean": self.mean,
             "max": self.max, "bad_frames": self.bad_frames, "histogram": self.histogram,
         }
 
@@ -125,6 +128,8 @@ def try_formula(expr: str, variables: dict[str, str], registry,
     total = 0
     bad_total = 0
     no_value = 0
+    ignored_count = 0
+    ignored_frames: list[int] = []
     n_finite = 0
     bad_frames: list[int] = []
     sums = 0.0
@@ -132,8 +137,11 @@ def try_formula(expr: str, variables: dict[str, str], registry,
 
     def take(out, frame0):
         """Fold one chunk's output into the running statistics."""
-        nonlocal total, bad_total, n_finite, sums, lo, hi, no_value
-        arr, gap = out
+        nonlocal total, bad_total, n_finite, sums, lo, hi, no_value, ignored_count
+        arr, gap, ignored = out
+        if ignored:
+            ignored_count += ignored["count"]
+            ignored_frames.extend(frame0 + f for f in ignored["frames"])
         arr = np.asarray(arr, dtype=float)
         flat_axes = tuple(range(1, arr.ndim))
         gap_elem = _spread(gap, arr)
@@ -205,6 +213,8 @@ def try_formula(expr: str, variables: dict[str, str], registry,
     result.count = total
     result.bad_count = bad_total
     result.no_value_count = no_value
+    if ignored_count:
+        result.ignored_warning = ignored_warning(ignored_count, sorted(set(ignored_frames)))
     result.bad_frames = bad_frames
     if n_finite:
         result.min, result.max = lo, hi

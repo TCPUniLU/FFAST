@@ -137,7 +137,7 @@ def test_evaluate_tells_a_bad_value_from_no_value():
     raw = {**RAW, "err": np.array([1.0, np.inf, 3.0, 4.0, 5.0, 6.0])}
     expr = 'mean(err, by=structure, where=element("H"))'
     inputs, _s, parts = analyze_expr(expr, VARS, registry=MetricRegistry())
-    out, gap = _ExprFn(expr, inputs, parts).evaluate_split(**{n: raw[n] for n in inputs})
+    out, gap, _ignored = _ExprFn(expr, inputs, parts).evaluate_split(**{n: raw[n] for n in inputs})
     assert gap.tolist() == [False, False, True]
     assert np.isinf(out[0]) and np.isnan(out[2])
 
@@ -256,3 +256,74 @@ def test_a_bad_value_in_where_fails_the_metric(w):
     raw = {**RAW, "w": np.array([1.0, w, 1.0, 0.0, 1.0, 1.0])}
     with pytest.raises(ValueError, match="non-finite"):
         _values("mean(err, by=all, where=w)", vars_=vars_, raw=raw)
+
+
+# ── amendment: a bad value where= leaves out is ignored, with a warning ──────
+
+def _with_broken_carbon():
+    # The carbon atom (row 2, structure 1) has a broken value.
+    return {**RAW, "err": np.array([1.0, 2.0, np.nan, 4.0, 5.0, 6.0])}
+
+
+def test_a_bad_value_left_out_by_where_does_not_fail_but_warns():
+    from ffast.metrics.models import WithWarnings
+    out = _values('mean(err, by=structure, where=element("H"))', raw=_with_broken_carbon())
+    assert isinstance(out, WithWarnings)
+    np.testing.assert_allclose(out.values[:2], [2.0, 4.5])
+    assert out.warnings == ["1 bad value in rows left out by where= was ignored (frame 1)"]
+
+
+def test_without_where_the_same_bad_value_fails():
+    with pytest.raises(ValueError, match="non-finite"):
+        _values("mean(err, by=structure)", raw=_with_broken_carbon())
+
+
+def test_a_clean_result_carries_no_warning():
+    out = _values('mean(err, by=structure, where=element("H"))')
+    assert isinstance(out, np.ndarray)
+
+
+def test_the_warning_counts_and_lists_frames():
+    from ffast.metrics.expr import ignored_warning
+    assert ignored_warning(3, [4, 9, 12]) == (
+        "3 bad values in rows left out by where= were ignored (frames 4, 9, 12)")
+    assert ignored_warning(7, list(range(7))) == (
+        "7 bad values in rows left out by where= were ignored (frames 0, 1, 2, 3, 4, …)")
+    assert ignored_warning(2, []) == "2 bad values in rows left out by where= were ignored"
+
+
+def test_a_metric_result_carries_the_warning_and_passes_it_on():
+    r = MetricRegistry()
+    compile_expr_metric("t.h", 'mean(err, by=structure, where=element("H"))',
+                        {"err": "reference.atoms.err"}, registry=r)
+    compile_expr_metric("t.h2", "2 * h", {"h": "t.h"}, registry=r)
+    source = FlatInputSource({"err": _with_broken_carbon()["err"], "_offsets": OFFSETS, "_elements": Z})
+    out = InProcessExecutor(r).run("t.h2", source, {})
+    assert not isinstance(out, MetricFailure), getattr(out, "traceback", "")
+    assert out.warnings == ["1 bad value in rows left out by where= was ignored (frame 1)"]
+    np.testing.assert_allclose(out.values[:2], [4.0, 9.0])
+
+
+def test_the_warning_travels_in_the_metric_result_message():
+    from ffast.metrics.models import MetricResult
+    from ffast.protocol.rpc import pack_metric_result, unpack, unpack_metric_result
+    result = MetricResult(metric_id="t.h", shape="N_frames", dtype="float64", unit="x",
+                          compute_parameters={}, implementation_hash="h", checksum="c",
+                          values=np.array([1.0, np.nan]), warnings=["careful"])
+    _event, _args, kwargs = unpack(pack_metric_result("r1", "t.h", True, result))
+    assert kwargs["warnings"] == ["careful"]
+    assert unpack_metric_result(kwargs).warnings == ["careful"]
+    plain = result.model_copy(update={"warnings": []})
+    _e, _a, kwargs = unpack(pack_metric_result("r1", "t.h", True, plain))
+    assert "warnings" not in kwargs                  # an old client never sees the field
+
+
+def test_try_reports_the_ignored_bad_values():
+    def resolve(ref):
+        return {"reference.atoms.err": _with_broken_carbon()["err"], "offsets": OFFSETS,
+                "reference.elements": Z}.get(ref)
+    for chunk in (100, 1):
+        r = try_formula('mean(err, by=structure, where=element("H"))', {"err": "reference.atoms.err"},
+                        MetricRegistry(), resolve, np.diff(OFFSETS), chunk_frames=chunk)
+        assert r.bad_count == 0
+        assert r.ignored_warning == "1 bad value in rows left out by where= was ignored (frame 1)"

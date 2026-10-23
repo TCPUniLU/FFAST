@@ -736,6 +736,9 @@ CASES = {
         "  return out;"
         "})()"
     ),
+    "panel_warnings": (
+        "pn.panelWarnings([{data: {y: {warnings: ['a', 'b']}}},"
+        " {data: {y: {warnings: ['a']}, series: [{warnings: ['c']}, null]}}, {data: {y: null}}])"),
     "no_value_colours": (
         "(() => {"
         "  const out = {grey: cm.NO_VALUE_RGB};"
@@ -1297,6 +1300,10 @@ def test_every_panel_kind_shows_a_gap_as_a_gap_never_a_number(results):
         assert r.get("peaksAtGaps", 0) == 0 and r.get("rangeFinite", True), kind
     # bars: carbon has no value in either series, so it is labelled, not drawn at 0
     assert results["no_value_panels"]["bars"]["noValueLabels"] == ["C"]
+
+
+def test_a_panel_collects_each_warning_of_its_results_once(results):
+    assert results["panel_warnings"] == ["a", "b", "c"]
 
 
 def test_an_atom_with_no_value_is_grey_in_every_colour_map(results):
