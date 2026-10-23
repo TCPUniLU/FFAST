@@ -138,6 +138,31 @@ def _part_axes(shape) -> tuple:
 # --------------------------------------------------------------------------- #
 # AST validation
 # --------------------------------------------------------------------------- #
+# Safety limits (ADR 0064 step 1). Each operation makes a full-size temporary
+# array, and the shape check and the evaluator walk the tree recursively, so a
+# formula's size is capped before anything else looks at it.
+MAX_FORMULA_CHARS = 2000
+MAX_FORMULA_DEPTH = 50
+
+# AST nodes that mark an operator or a load, not a part of the formula.
+_MARKERS = (ast.operator, ast.unaryop, ast.cmpop, ast.expr_context, ast.boolop)
+
+
+def _depth(node) -> int:
+    """Parts on the formula's deepest path: ``a`` is 1, ``abs(a)`` 2, and
+    ``a + a + a`` 3 (Python reads it as ``(a + a) + a``). Without recursion,
+    so a formula far past the limit is measured, not crashed on."""
+    deepest = 0
+    stack = [(node, 1)]
+    while stack:
+        n, d = stack.pop()
+        deepest = max(deepest, d)
+        for child in ast.iter_child_nodes(n):
+            if not isinstance(child, _MARKERS):
+                stack.append((child, d + 1))
+    return deepest
+
+
 def parse_and_validate(expr: str) -> ast.Expression:
     """Parse ``expr`` in eval mode and reject anything outside the whitelist.
 
@@ -149,10 +174,21 @@ def parse_and_validate(expr: str) -> ast.Expression:
     lambdas, etc. raise ``ValueError`` with a precise message (errors at
     config-load, ADR 0042 / 0057).
     """
+    if len(expr) > MAX_FORMULA_CHARS:
+        raise ValueError(
+            f"the formula is {len(expr):,} characters long; the limit is "
+            f"{MAX_FORMULA_CHARS:,}"
+        )
     try:
         tree = ast.parse(expr, mode="eval")
     except SyntaxError as e:
         raise ValueError(f"expr {expr!r} is not a valid expression: {e.msg}") from e
+    depth = _depth(tree.body)
+    if depth > MAX_FORMULA_DEPTH:
+        raise ValueError(
+            f"the formula is nested {depth} levels deep; the limit is "
+            f"{MAX_FORMULA_DEPTH} (each bracket, function and operator adds a level)"
+        )
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Expression):

@@ -1382,8 +1382,8 @@ class ServerSession:
         await self._emit(pack(control.METRIC_TRIED, [], {"try_id": try_id, **out}))
 
     def _try_blocking(self, metric, dataset_fp, model_fp, progress, cancelled) -> dict:
-        """The Try itself, on a worker thread: resolve the inputs for the
-        selected dataset and prediction, evaluate in chunks."""
+        """The Try itself, on a thread: resolve the inputs for the selected
+        dataset and prediction, then evaluate in chunks on the metric worker."""
         from pydantic import ValidationError
 
         from ffast.config.models import ExprMetricConfig
@@ -1417,9 +1417,13 @@ class ServerSession:
         n_atoms = resolver.resolve("n_atoms", dataset=dataset)
         if n_atoms is None:
             raise TryError("The dataset's atom counts are not available")
+        # The formula runs where saved metrics run, in the metric worker: one
+        # that uses up memory or time then stops the worker, not the server.
+        executor = data.metricExecutor
         result = try_formula(
             cfg.expr, dict(cfg.vars), um.registry_without(cfg.id), resolve, n_atoms,
-            on_progress=progress, cancelled=cancelled)
+            on_progress=progress, cancelled=cancelled,
+            compute=lambda fn, kwargs: executor.call(fn, kwargs, label=cfg.id))
         return result.to_dict()
 
     # ── user metrics a session carries (ADR 0057 rules 15, 16) ──────────────

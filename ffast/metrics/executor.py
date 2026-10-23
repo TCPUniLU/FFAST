@@ -20,6 +20,11 @@ class MetricExecutor(ABC):
     def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
         ...
 
+    def call(self, fn: Any, kwargs: dict[str, Any], label: str = "formula") -> Any:
+        """``fn(**kwargs)`` where this executor runs metric code; raises if it
+        fails. Try computes a formula this way (ADR 0064 step 1)."""
+        raise NotImplementedError
+
 
 class InProcessExecutor(MetricExecutor):
     """Runs metrics directly in the calling process.
@@ -49,6 +54,9 @@ class InProcessExecutor(MetricExecutor):
                 mid, schema, fn, kwargs, cparams, plan.parameters
             ),
         )
+
+    def call(self, fn: Any, kwargs: dict[str, Any], label: str = "formula") -> Any:
+        return fn(**kwargs)
 
     def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
         """Run a single metric and its dependencies."""

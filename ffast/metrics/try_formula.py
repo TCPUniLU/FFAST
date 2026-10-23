@@ -8,8 +8,9 @@ nothing is cached: this is a look at the numbers, so that bad values (infinity,
 not-a-number) are found *before* saving, where they would fail the metric.
 
 Pure: the caller supplies ``resolve(ref)`` (full arrays for one dataset and
-prediction) and the per-structure atom counts; this module knows nothing of
-the environment.
+prediction), the per-structure atom counts, and ``compute(fn, kwargs)``, which
+runs each chunk's formula where metric code runs (the server's worker process,
+ADR 0064 step 1); this module knows nothing of the environment.
 """
 from __future__ import annotations
 
@@ -59,13 +60,16 @@ def try_formula(expr: str, variables: dict[str, str], registry,
                 resolve: Callable[[str], object], n_atoms: np.ndarray, *,
                 chunk_frames: int = CHUNK_FRAMES,
                 on_progress: Callable[[int, int], None] | None = None,
-                cancelled: Callable[[], bool] = lambda: False) -> TryResult:
+                cancelled: Callable[[], bool] = lambda: False,
+                compute: Callable[[Callable, dict], object] = lambda fn, kwargs: fn(**kwargs),
+                ) -> TryResult:
     """Evaluate ``expr`` over all frames.
 
     ``variables`` maps each variable to its input ref; ``resolve(ref)`` gives
     that input's full array (``None`` if unavailable here); ``n_atoms`` is the
     atom count of every frame. ``on_progress(done_frames, total_frames)`` is
     called after each chunk; ``cancelled()`` is asked before each.
+    ``compute(fn, kwargs)`` gives ``fn(**kwargs)``; by default, here.
     """
     try:
         inputs, out_shape, var_parts = analyze_expr(expr, variables, registry=registry)
@@ -134,7 +138,7 @@ def try_formula(expr: str, variables: dict[str, str], registry,
             # No frame axis to cut along (a scalar, or per-element result): one pass.
             if cancelled():
                 return False
-            visit(fn.evaluate(**full), 0, 0)
+            visit(compute(fn.evaluate, full), 0, 0)
             if progress:
                 progress(n_frames, n_frames)
             return True
@@ -152,7 +156,7 @@ def try_formula(expr: str, variables: dict[str, str], registry,
                     kwargs[name] = arr[a0:a1]
                 else:
                     kwargs[name] = arr           # scalar: the same in every chunk
-            visit(fn.evaluate(**kwargs), f0, a0)
+            visit(compute(fn.evaluate, kwargs), f0, a0)
             if progress:
                 progress(f1, n_frames)
         return True

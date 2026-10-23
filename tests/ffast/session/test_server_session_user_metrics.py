@@ -197,9 +197,11 @@ class _Resolver:
 
 
 def _try_env(env):
+    from ffast.metrics.executor import InProcessExecutor
     env.datasets = {"ds1": object()}
     env.models = {}
     env.data.inputResolver = _Resolver()
+    env.data.metricExecutor = InProcessExecutor(default_registry)
     return env
 
 
@@ -271,6 +273,50 @@ def test_try_finds_the_bad_frames(env):
 
     tried = _run_session(env, steps)[-1][2]
     assert tried["ok"] and tried["bad_count"] == 1 and tried["bad_frames"] == [2]
+
+
+def test_try_computes_the_formula_on_the_metric_executor(env):
+    """ADR 0064 step 1: not in a thread of the server process."""
+    _try_env(env)
+    calls = []
+
+    class _Recording:
+        def call(self, fn, kwargs, label="formula"):
+            calls.append(sorted(kwargs))
+            return fn(**kwargs)
+
+    env.data.metricExecutor = _Recording()
+    trial = {"id": "t57.try", "expr": "e * 10", "vars": {"e": "reference.energies"}}
+
+    async def steps(s):
+        await s.dispatch(control.TRY_METRIC, [], {"metric": trial, "try_id": "t6", "dataset_fp": "ds1"})
+        await s._tries["t6"][1]
+
+    tried = _run_session(env, steps)[-1][2]
+    assert tried["ok"] and tried["max"] == 40.0
+    assert calls and all(c == ["e"] for c in calls)
+
+
+def test_a_try_whose_worker_dies_fails_and_the_server_still_answers(env):
+    from ffast.metrics.pool import WorkerCallError
+    _try_env(env)
+
+    class _Dying:
+        def call(self, fn, kwargs, label="formula"):
+            raise WorkerCallError("the worker process stopped (it may have run out of memory)")
+
+    env.data.metricExecutor = _Dying()
+    trial = {"id": "t57.try", "expr": "e", "vars": {"e": "reference.energies"}}
+
+    async def steps(s):
+        await s.dispatch(control.TRY_METRIC, [], {"metric": trial, "try_id": "t7", "dataset_fp": "ds1"})
+        await s._tries["t7"][1]
+        await s.dispatch(control.CHECK_METRIC, [], {"metric": trial, "check_id": "9"})
+
+    got = _run_session(env, steps)
+    tried = next(k for e, _, k in got if e == control.METRIC_TRIED)
+    assert tried["ok"] is False and "worker process stopped" in tried["error"]
+    assert got[-1][0] == control.METRIC_CHECKED and got[-1][2]["ok"] is True
 
 
 def test_cancel_stops_a_running_try_cleanly(env):

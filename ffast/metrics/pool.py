@@ -73,6 +73,24 @@ class PoolPolicy:
 _READY = "__worker_ready__"
 
 
+# The failure a task gets when its worker process ends without answering.
+WORKER_DIED = "Worker process died unexpectedly"
+
+
+class WorkerCallError(RuntimeError):
+    """A function run with ``WorkerProcessExecutor.call`` failed; the message
+    says why in a sentence."""
+
+
+def _failure_message(traceback: str) -> str:
+    """One line for a failed call: the error it raised, or what became of
+    the worker."""
+    if traceback == WORKER_DIED:
+        return "the worker process stopped (it may have run out of memory); it restarts on its own"
+    lines = [ln for ln in traceback.strip().splitlines() if ln.strip()]
+    return lines[-1] if lines else traceback
+
+
 # ── Shared-memory helpers (Worker Buffers) ────────────────────────────────────
 
 @dataclass
@@ -328,7 +346,19 @@ class WorkerProcessExecutor(MetricExecutor):
             if hint is not None
             else self._policy.max_runtime_s
         )
+        return self._send(id, fn, resolved, compute_params, parameters, effective_timeout)
 
+    def call(self, fn: Any, kwargs: dict[str, Any], label: str = "formula") -> Any:
+        """``fn(**kwargs)`` in the worker, under the policy's time limit. A
+        failure raises ``WorkerCallError``; a worker that dies (e.g. out of
+        memory) is replaced on the next call, and this process carries on."""
+        out = self._send(label, fn, kwargs, {}, {}, self._policy.max_runtime_s)
+        if isinstance(out, MetricFailure):
+            raise WorkerCallError(_failure_message(out.traceback))
+        return out
+
+    def _send(self, id, fn, resolved, compute_params, parameters, effective_timeout):
+        """One task on the worker; its raw output, or a ``MetricFailure``."""
         with self._lock:
             self._task_counter += 1
             task_id = self._task_counter
@@ -399,7 +429,7 @@ class WorkerProcessExecutor(MetricExecutor):
                 self._worker = None
                 return MetricFailure(
                     metric_id=id,
-                    traceback="Worker process died unexpectedly",
+                    traceback=WORKER_DIED,
                     parameters=parameters,
                 )
             finally:
