@@ -3120,6 +3120,32 @@ async def test_web_edit_mode_warns_when_another_window_saved_the_tab(tmp_path):
                 await browser.close()
 
 
+# The panel letters each 3D viewport holds.
+_VIEWPORT_LETTERS = """() => [...document.querySelectorAll('.viewport')]
+  .map((v) => v.querySelectorAll(':scope > .panel-letter').length)"""
+
+
+async def test_web_a_3d_view_shows_one_panel_letter_however_often_the_layout_is_rebuilt(ffast_web_server):
+    """ADR 0063 follow-up: a rebuilt layout reuses its 3D panels, and each
+    mount added the new cell's letter beside the old one."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            counts = await page.evaluate(_VIEWPORT_LETTERS)
+            assert counts and all(n == 1 for n in counts), counts
+            for _ in range(2):
+                await page.evaluate("() => window.ffastApp._applyLayout([...window.ffastApp._layoutTabs])")
+            await page.wait_for_timeout(300)
+            counts = await page.evaluate(_VIEWPORT_LETTERS)
+            assert counts and all(n == 1 for n in counts), counts
+        finally:
+            await browser.close()
+
+
 async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(ffast_web_server):
     """The first time a dataset's view opens, every atom is in view. After
     that the camera is the user's: switching tabs and back keeps it (457dcaa)."""
