@@ -23,8 +23,11 @@ pass on server, client, and headless thread (idempotent).
 
 Design (ADR 0042 Decisions):
 
-* **Element-wise only.** The function whitelist is shape-preserving; no reducers
-  — all reduction stays in the Transform layer.
+* **Reductions say what they combine** (ADR 0064, superseding "element-wise
+  only"): ``mean/sum/min/max/rms/std(x, by=structure|element|all, where=...)``;
+  ``by=`` alone decides the result's shape, and the vector parts are kept.
+  Grouping uses the same per-structure sums as the built-ins (segments.py).
+  KDE and smoothing stay in the Transform layer.
 * **Same-shape only.** Every non-scalar variable in one expr must resolve to the
   same **Metric Shape**; mixing shapes is rejected at config-load. Scalars (and
   numeric literals) broadcast (Decisions 2, 3).
@@ -58,10 +61,10 @@ from ffast.metrics.registry import default_registry
 
 # Bump when the whitelist (functions / operators / constants) changes, so every
 # Expression Metric's cache identity invalidates (rides implementation_source).
-_WHITELIST_VERSION = "2"
+_WHITELIST_VERSION = "3"
 
-# Element-wise (shape-preserving) numpy functions only — no reducers. minimum/
-# maximum/clip/where are element-wise, not the reducing min/max (Decision 6).
+# Element-wise (shape-preserving) numpy functions. minimum/maximum/clip/where
+# are element-wise, not the reducing min/max (Decision 6; those are _REDUCERS).
 _FUNCS = {
     "abs": np.abs,
     "sqrt": np.sqrt,
@@ -79,8 +82,21 @@ _CONSTS = {"pi": np.pi}
 # Part-axis functions (ADR 0057 rule 17). They read or collapse the trailing
 # *part axes* of an input (a vector's xyz, a stress's 3x3 / Voigt), so they are
 # handled by the shape-aware walk below, not by the plain ``_FUNCS`` table.
-_PART_FUNCS = {"norm", "x", "y", "z"}
+# ``norm``, ``mean_parts`` and ``sum_parts`` collapse every part axis (ADR 0064).
+_PART_FUNCS = {"norm", "mean_parts", "sum_parts", "x", "y", "z"}
+_COLLAPSING = {"norm", "mean_parts", "sum_parts"}
 _XYZ_INDEX = {"x": 0, "y": 1, "z": 2}
+
+# Reductions (ADR 0064): each combines the values of a group into one and
+# needs ``by=`` to say which groups. ``where=`` picks the rows that count.
+_REDUCERS = {"mean", "sum", "min", "max", "rms", "std"}
+BY_WORDS = ("structure", "element", "all")
+_REDUCER_KEYWORDS = ("by", "where")
+# The two-value functions a reducing min/max is easily mistaken for.
+_PAIRWISE = {"min": "minimum", "max": "maximum"}
+# ``element("H", ...)``: 1 for each atom of those elements, 0 for the others.
+# The symbols are the only text a formula may hold.
+_ELEMENT = "element"
 
 _CMPOPS = {
     ast.Gt: lambda a, b: a > b,
@@ -163,6 +179,87 @@ def _depth(node) -> int:
     return deepest
 
 
+def element_numbers() -> dict[str, int]:
+    """Element symbol → atomic number (``"H"`` → 1), real elements only."""
+    global _ELEMENT_NUMBERS
+    if _ELEMENT_NUMBERS is None:
+        from ase.data import atomic_numbers
+        _ELEMENT_NUMBERS = {sym: z for sym, z in atomic_numbers.items() if z > 0}
+    return _ELEMENT_NUMBERS
+
+
+_ELEMENT_NUMBERS: dict[str, int] | None = None
+
+
+def _keyword(node: ast.Call, name: str):
+    """The value node of keyword ``name=`` in a call, or None."""
+    return next((kw.value for kw in node.keywords if kw.arg == name), None)
+
+
+def _check_reduction(node: ast.Call, expr: str) -> None:
+    """``mean(x, by=..., where=...)`` and its siblings: one value, a ``by=``
+    word, and no keyword but ``by`` and ``where``."""
+    name = node.func.id
+    if len(node.args) != 1:
+        if name in _PAIRWISE and len(node.args) == 2:
+            raise ValueError(
+                f"expr {expr!r}: {name}(...) combines many values into one per "
+                f"group; to take the {'smaller' if name == 'min' else 'larger'} of "
+                f"two values at each place, use {_PAIRWISE[name]}(a, b)"
+            )
+        raise ValueError(f"expr {expr!r}: {name}(...) takes one value, then by= and where=")
+    for kw in node.keywords:
+        if kw.arg not in _REDUCER_KEYWORDS:
+            raise ValueError(
+                f"expr {expr!r}: {kw.arg or '**'}= is not a keyword of "
+                f"{name}(...); it takes by= and where="
+            )
+    by = _keyword(node, "by")
+    if by is None:
+        raise ValueError(
+            f"expr {expr!r}: {name}(...) needs by=structure, by=element or by=all"
+        )
+    if not isinstance(by, ast.Name) or by.id not in BY_WORDS:
+        raise ValueError(f"expr {expr!r}: by= takes structure, element or all")
+
+
+def _check_element(node: ast.Call, expr: str) -> None:
+    """``element("H", "C")``: one or more element symbols in quotes."""
+    if node.keywords:
+        raise ValueError(f"expr {expr!r}: keyword arguments are not allowed in 'element(...)'")
+    if not node.args or not all(
+            isinstance(a, ast.Constant) and isinstance(a.value, str) for a in node.args):
+        raise ValueError(
+            f'expr {expr!r}: element(...) takes element symbols in quotes, such '
+            f'as element("H") or element("C", "O")'
+        )
+    known = element_numbers()
+    for a in node.args:
+        if a.value not in known:
+            raise ValueError(f'expr {expr!r}: "{a.value}" is not an element symbol')
+
+
+def _symbol_nodes(tree) -> set[int]:
+    """ids of the text nodes that are symbols inside ``element(...)``."""
+    return {
+        id(a) for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == _ELEMENT
+        for a in n.args
+    }
+
+
+def _by_word_nodes(tree) -> set[int]:
+    """ids of the ``structure`` / ``element`` / ``all`` words after ``by=``."""
+    return {
+        id(kw.value) for n in ast.walk(tree)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _REDUCERS
+        for kw in n.keywords if kw.arg == "by"
+    }
+
+
+_ALLOWED_FUNCS = set(_FUNCS) | _PART_FUNCS | _REDUCERS | {_ELEMENT}
+
+
 def parse_and_validate(expr: str) -> ast.Expression:
     """Parse ``expr`` in eval mode and reject anything outside the whitelist.
 
@@ -190,9 +287,12 @@ def parse_and_validate(expr: str) -> ast.Expression:
             f"{MAX_FORMULA_DEPTH} (each bracket, function and operator adds a level)"
         )
 
+    symbols = _symbol_nodes(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.Expression):
             continue
+        if isinstance(node, ast.keyword):
+            continue  # checked with its call below
         # Operator marker nodes (ast.Add / ast.USub / ...) are children of a
         # BinOp/UnaryOp already validated below; skip them here.
         if isinstance(node, (ast.operator, ast.unaryop, ast.cmpop)):
@@ -234,6 +334,8 @@ def parse_and_validate(expr: str) -> ast.Expression:
                 )
             continue
         if isinstance(node, ast.Constant):
+            if id(node) in symbols:
+                continue  # checked with element(...) below
             if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
                 raise ValueError(
                     f"expr {expr!r}: only numeric literals are allowed, not "
@@ -247,11 +349,17 @@ def parse_and_validate(expr: str) -> ast.Expression:
         if isinstance(node, ast.Call):
             if not isinstance(node.func, ast.Name):
                 raise ValueError(f"expr {expr!r}: only direct function calls are allowed")
-            if node.func.id not in _FUNCS and node.func.id not in _PART_FUNCS:
+            if node.func.id not in _ALLOWED_FUNCS:
                 raise ValueError(
                     f"expr {expr!r}: function '{node.func.id}' is not allowed "
-                    f"(permitted: {', '.join(sorted(set(_FUNCS) | _PART_FUNCS))})"
+                    f"(permitted: {', '.join(sorted(_ALLOWED_FUNCS))})"
                 )
+            if node.func.id in _REDUCERS:
+                _check_reduction(node, expr)
+                continue
+            if node.func.id == _ELEMENT:
+                _check_element(node, expr)
+                continue
             if node.keywords:
                 raise ValueError(
                     f"expr {expr!r}: keyword arguments are not allowed in "
@@ -282,11 +390,12 @@ def _positions(node: ast.Subscript, expr: str) -> tuple[int, ...]:
 
 
 def _value_names(tree: ast.Expression) -> set[str]:
-    """Names referenced as *values* (excludes the name of a called function)."""
+    """Names referenced as *values* (excludes the name of a called function
+    and the word after ``by=``)."""
     func_nodes = {
         id(n.func) for n in ast.walk(tree)
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-    }
+    } | _by_word_nodes(tree)
     return {
         n.id for n in ast.walk(tree)
         if isinstance(n, ast.Name) and id(n) not in func_nodes
@@ -346,6 +455,64 @@ def _combine(shapes: list, expr: str):
     return non_scalar[0] if non_scalar else (dims.scalar,)
 
 
+_LEAD_WORDS = {
+    dims.N_atoms: "per atom",
+    dims.N_frames: "per structure",
+    dims.N_elements: "per element",
+    dims.scalar: "one number",
+}
+
+
+def shape_words(shape) -> str:
+    """A shape in plain words: ``per atom``, ``per structure, a vector``,
+    ``one number``."""
+    shape = _as_tuple(shape)
+    if shape[0] in _PART_AXES:
+        return "one vector" if shape[0] == dims.xyz else "one tensor"
+    words = _LEAD_WORDS.get(shape[0], dims.shape_to_str(shape))
+    if len(shape) > 1:
+        words += ", a vector" if shape[-1] == dims.xyz else ", a tensor"
+    return words
+
+
+# The leading axes a reduction can combine over (rows), by= word → result row.
+_ROWS = (dims.N_atoms, dims.N_frames, dims.N_elements)
+_BY_RESULT = {"structure": dims.N_frames, "element": dims.N_elements}
+
+
+def _reduction_shape(node: ast.Call, go, expr: str) -> tuple:
+    """Shape of ``mean(x, by=..., where=...)`` (ADR 0064 section 1): ``by=``
+    alone decides it; the parts of a vector are kept."""
+    value = node.args[0]
+    shape = tuple(go(value))
+    lead, parts = shape[0], shape[1:]
+    by = _keyword(node, "by").id
+    if by in _BY_RESULT:
+        if lead != dims.N_atoms:
+            raise ValueError(
+                f"expr {expr!r}: by={by} needs a per-atom value; "
+                f"{ast.unparse(value)} is {shape_words(shape)}"
+            )
+        out = (_BY_RESULT[by], *parts)
+    else:
+        if lead not in _ROWS:
+            raise ValueError(
+                f"expr {expr!r}: by=all needs a per-atom, per-structure or "
+                f"per-element value; {ast.unparse(value)} is {shape_words(shape)}"
+            )
+        out = tuple(parts) or (dims.scalar,)
+    where = _keyword(node, "where")
+    if where is not None:
+        where_shape = tuple(go(where))
+        if where_shape != (lead,):
+            raise ValueError(
+                f"expr {expr!r}: where= must have the input's shape: "
+                f"{shape_words((lead,))} here, {ast.unparse(where)} is "
+                f"{shape_words(where_shape)}"
+            )
+    return out
+
+
 def infer_shape(tree: ast.Expression, var_shapes: dict, expr: str = "") -> tuple:
     """Output Metric Shape of a validated expr, given each variable's shape.
 
@@ -389,17 +556,21 @@ def infer_shape(tree: ast.Expression, var_shapes: dict, expr: str = "") -> tuple
             return inner[:-1] or (dims.scalar,)
         if isinstance(node, ast.Call):
             name = node.func.id
+            if name in _REDUCERS:
+                return _reduction_shape(node, go, expr)
+            if name == _ELEMENT:
+                return (dims.N_atoms,)
             shapes = [go(a) for a in node.args]
             if name in _PART_FUNCS:
                 if len(shapes) != 1:
                     raise ValueError(f"expr {expr!r}: {name}(...) takes one argument")
                 sh = shapes[0]
-                if name == "norm" and not _part_axes(sh):
+                if name in _COLLAPSING and not _part_axes(sh):
                     raise ValueError(
-                        f"expr {expr!r}: norm needs an input with part axes "
+                        f"expr {expr!r}: {name} needs an input with part axes "
                         f"(vector, 3x3, Voigt); this one is {dims.shape_to_str(sh)}"
                     )
-                if name != "norm" and sh[-1] != dims.xyz:
+                if name not in _COLLAPSING and sh[-1] != dims.xyz:
                     raise ValueError(
                         f"expr {expr!r}: {name}(...) needs a vector input "
                         f"(shape ending in xyz); this one is {dims.shape_to_str(sh)}"

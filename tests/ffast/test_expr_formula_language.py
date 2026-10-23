@@ -61,7 +61,7 @@ def _run(r, mid, **inputs):
 
 def test_whitelist_version_bumped():
     from ffast.metrics import expr
-    assert expr._WHITELIST_VERSION == "2"
+    assert expr._WHITELIST_VERSION == "3"
 
 
 def test_parse_accepts_new_forms():
