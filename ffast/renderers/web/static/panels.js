@@ -111,6 +111,9 @@ export const PLOT_CONFIG = {
   responsive: true,
   displaylogo: false,
   modeBarButtonsToRemove: ['lasso2d', 'autoScale2d', 'toggleSpikelines'],
+  // Back to the ranges the plot was drawn with, never autorange: a labelled
+  // timeline's autorange counts the label arrows and squashes the curve.
+  doubleClick: 'reset',
 };
 
 const Plotly = () => globalThis.Plotly;
@@ -608,6 +611,7 @@ export function renderPanel(el, spec, series, ctx) {
     el._unitAxes = null;
     el._figureInfo = null;
     el._peaks = null;
+    el._drawnRange = null;
     el._peaksEligible = false;
     el._extraHeight = 0;
     el.style.minHeight = '';
@@ -620,6 +624,9 @@ export function renderPanel(el, spec, series, ctx) {
   el._peaks = built.peaks || null;
   el._peaksEligible = !!built.peaksEligible;
   el._peakUnit = built.peakUnit;
+  // The ranges it is drawn with, so a plot showing them is not taken for zoomed.
+  el._drawnRange = { x: built.layout.xaxis?.range?.map(Number) || null,
+                     y: built.layout.yaxis?.range?.map(Number) || null };
   el._figureInfo = {
     xTitle: built.layout.xaxis?.title?.text || '',
     yTitle: built.layout.yaxis?.title?.text || '',

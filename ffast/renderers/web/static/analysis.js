@@ -496,8 +496,15 @@ export class AnalysisManager {
     if (!layout?.xaxis) return;
     const key = panelKey(spec);
     const before = JSON.stringify(t.zoom[key] ?? null);
-    const range = (axis) => (!axis || axis.autorange ? null : axis.range.map(Number));
-    const x = range(layout.xaxis), y = range(layout.yaxis);
+    // A range the plot was drawn with (a labelled timeline sets its y range)
+    // is no more a zoom than autorange is.
+    const drawn = card.body._drawnRange || {};
+    const range = (axis, initial) => {
+      if (!axis || axis.autorange) return null;
+      const r = axis.range.map(Number);
+      return initial && r[0] === initial[0] && r[1] === initial[1] ? null : r;
+    };
+    const x = range(layout.xaxis, drawn.x), y = range(layout.yaxis, drawn.y);
     if (!x && !y) delete t.zoom[key];
     else t.zoom[key] = { x, y, series: seriesKey(card.series) };
     if (JSON.stringify(t.zoom[key] ?? null) !== before) this._keep(t);

@@ -4180,6 +4180,74 @@ async def test_web_a_timelines_peak_labels_switch_off_and_on(ffast_web_server):
             await browser.close()
 
 
+_Y_RANGE = """(sel) => document.querySelector(sel + ' .panel-plot')._fullLayout.yaxis.range.map(Number)"""
+
+
+async def _zoom_above_the_data(page, panel):
+    """Zoom to where no point is, so a double-click there cannot hit the curve."""
+    await page.evaluate(
+        """(sel) => { const el = document.querySelector(sel + ' .panel-plot');
+                     const [, hi] = el._fullLayout.yaxis.range;
+                     return Plotly.relayout(el, {'yaxis.range': [hi * 2, hi * 3]}); }""",
+        panel)
+
+
+async def test_web_double_clicking_a_labelled_timeline_goes_back_to_its_drawn_range(ffast_web_server):
+    """ADR 0063 follow-up: Plotly's default double-click switched a labelled
+    timeline to autorange, which counts the label arrows and squashed the curve."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            panel = _sub_panel("Forces MAE timeline")
+            await expect(page.locator(panel + " .panel-plot .annotation")).to_have_count(5)
+            drawn = await page.evaluate(_Y_RANGE, panel)
+            # A freshly drawn plot shows what it was drawn with: not a zoom to keep.
+            zoom = await page.evaluate(
+                "() => window.ffastApp._analysis._tabs.find((t) => t.spec.name === 'Basic Errors').zoom")
+            assert zoom == {}, zoom
+
+            await _zoom_above_the_data(page, panel)
+            assert await page.evaluate(_Y_RANGE, panel) != drawn
+            await page.locator(panel + " .panel-plot .nsewdrag").dblclick()
+            await page.wait_for_function(
+                "([sel, r]) => JSON.stringify(document.querySelector(sel + ' .panel-plot')"
+                "._fullLayout.yaxis.range.map(Number)) === JSON.stringify(r)",
+                arg=[panel, drawn], timeout=5000)
+
+            # Drawn again without its labels: a double-click gives the new range.
+            peaks = page.locator(panel + " .peaks-toggle input")
+            await peaks.uncheck()
+            await expect(page.locator(panel + " .panel-plot .annotation")).to_have_count(0)
+            await peaks.check()
+            await expect(page.locator(panel + " .panel-plot .annotation")).to_have_count(5)
+            redrawn = await page.evaluate(_Y_RANGE, panel)
+            await _zoom_above_the_data(page, panel)
+            await page.locator(panel + " .panel-plot .nsewdrag").dblclick()
+            await page.wait_for_function(
+                "([sel, r]) => JSON.stringify(document.querySelector(sel + ' .panel-plot')"
+                "._fullLayout.yaxis.range.map(Number)) === JSON.stringify(r)",
+                arg=[panel, redrawn], timeout=5000)
+
+            # A plot drawn without a set range still goes back to all its data.
+            density = _sub_panel("Forces MAE distribution")
+            await _zoom_above_the_data(page, density)
+            await page.locator(density + " .panel-plot .nsewdrag").dblclick()
+            await page.wait_for_function(
+                "(sel) => document.querySelector(sel + ' .panel-plot')._fullLayout.yaxis.autorange === true",
+                arg=density, timeout=5000)
+        finally:
+            await browser.close()
+
+
 _SUBSETS = """() => [...window.ffastApp._datasets.entries()]
     .filter(([, m]) => m.is_sub).map(([fp, m]) => ({fp, name: m.name, n: m.n, active: m.active}))"""
 
