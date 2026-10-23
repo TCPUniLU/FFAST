@@ -571,6 +571,28 @@ CASES = {
     "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
     "theme_hex_alpha": "th.hexAlpha('#56b4e9', 0.15)",
 
+    # theme.js DARK, the fallback used before the page's tokens are read, is the
+    # :root column of index.html (read in a frame of the served page).
+    "theme_dark_is_root": (
+        "await (async () => {"
+        "  const frame = document.createElement('iframe');"
+        "  frame.src = 'index.html'; frame.style.cssText = 'width:800px;height:600px';"
+        "  document.body.appendChild(frame);"
+        "  await new Promise((ok) => frame.addEventListener('load', ok, {once: true}));"
+        "  const doc = frame.contentDocument;"
+        "  const css = frame.contentWindow.getComputedStyle(doc.documentElement);"
+        "  const v = (n) => css.getPropertyValue(n).trim();"
+        "  const probe = doc.createElement('span'); probe.style.fontSize = 'var(--fs-plot)';"
+        "  doc.body.appendChild(probe);"
+        "  const root = {surface: v('--surface'), line: v('--line'), ink2: v('--ink-2'), ink3: v('--ink-3'),"
+        "    fsPlot: parseFloat(frame.contentWindow.getComputedStyle(probe).fontSize), font: v('--font'),"
+        "    peak: v('--peak'), peakInk: v('--peak-ink'), median: v('--median'),"
+        "    series: v('--series').split(',').map((c) => c.trim())};"
+        "  frame.remove();"
+        "  const dark = th.plotTheme();"   # no tokens in this page: the DARK values
+        "  dark.fsPlot = 11;"              # (its probe reads this page's 16 px default)
+        "  return {root, dark}; })()"),
+
     # ── peaks.pickPeaks (ADR 0063) ──────────────────────────────────────────
     "peaks_five_spikes": (
         "(() => { const y = new Array(100).fill(0);"
@@ -766,6 +788,11 @@ def test_series_colours_wrap_around_the_theme_list(results):
 
 
 # ── peaks.pickPeaks and the labels (ADR 0063) ────────────────────────────────
+
+def test_the_dark_fallback_theme_is_the_pages_root_tokens(results):
+    r = results["theme_dark_is_root"]
+    assert r["dark"] == r["root"]
+
 
 def test_five_spikes_on_a_flat_line_are_the_five_peaks(results):
     frames = [p["frame"] for p in results["peaks_five_spikes"]]

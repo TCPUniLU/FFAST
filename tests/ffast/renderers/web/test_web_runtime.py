@@ -1022,6 +1022,131 @@ async def test_web_a_plot_legend_follows_density(ffast_web_server):
             await browser.close()
 
 
+async def test_web_space_plays_and_esc_puts_down_a_pick_tool_on_the_3d_tab(ffast_web_server):
+    """ADR 0063: Space plays and pauses the 3D view; Esc puts down an armed
+    pick tool."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            playing = "() => window.ffastApp._playing"
+            await page.evaluate("() => document.activeElement.blur()")
+            await page.keyboard.press(" ")
+            assert await page.evaluate(playing) is True
+            await page.keyboard.press(" ")
+            assert await page.evaluate(playing) is False
+
+            tool = page.locator("#pick-toolbar .pick-tool-btn").first
+            await tool.click()
+            await expect(tool).to_have_class(re.compile(r"\bactive\b"))
+            await page.evaluate("() => document.activeElement.blur()")
+            await page.keyboard.press("Escape")
+            await expect(tool).not_to_have_class(re.compile(r"\bactive\b"))
+            assert await page.evaluate("() => window.ffastApp._activeTool") is None
+        finally:
+            await browser.close()
+
+
+async def test_web_density_comfortable_scales_the_type_by_1_15(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator("#density").select_option("comfortable")
+            scale = "() => getComputedStyle(document.documentElement).getPropertyValue('--scale').trim()"
+            assert await page.evaluate(scale) == "1.15"
+            await expect(page.locator("body")).to_have_css("font-size", "14.95px")   # 13 px × 1.15
+        finally:
+            await browser.close()
+
+
+async def test_web_a_timeline_of_two_series_has_no_peaks_checkbox(ffast_web_server):
+    """ADR 0063: only a one-series timeline is labelled, so only it can switch
+    the labels off."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    other_fp = await _load_another_dataset(ws_port, dataset_fp)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_analysis_tab(page, "Gyration")
+            panel = _sub_panel("Total gyration radius")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Total gyration radius", timeout=25000)
+            await expect(page.locator(panel + " .peaks-toggle")).to_be_visible()
+            picker = page.locator(".tabpanel.active [data-series='datasets']")
+            await picker.locator(f"button[data-fp='{dataset_fp}']").click()
+            await picker.locator(f"button[data-fp='{other_fp}']").click()
+            await page.wait_for_function(
+                "(sel) => (document.querySelector(sel + ' .panel-plot').data || []).length === 2",
+                arg=panel, timeout=25000)
+            await expect(page.locator(panel + " .peaks-toggle")).to_be_hidden()
+            await expect(page.locator(panel + " .panel-plot .annotation")).to_have_count(0)
+        finally:
+            await browser.close()
+
+
+_OUT_OF_ORDER_TOML = """
+[[visualization.tabs]]
+name = "Order"
+
+[[visualization.tabs.panels]]
+kind = "table"
+row = 1
+col = 0
+title = "C"
+  [visualization.tabs.panels.metrics.value]
+  metric = "ffast.force_component_mae"
+
+[[visualization.tabs.panels]]
+kind = "table"
+row = 0
+col = 1
+title = "B"
+  [visualization.tabs.panels.metrics.value]
+  metric = "ffast.force_component_mae"
+
+[[visualization.tabs.panels]]
+kind = "table"
+row = 0
+col = 0
+title = "A"
+  [visualization.tabs.panels.metrics.value]
+  metric = "ffast.force_component_mae"
+"""
+
+
+async def test_web_a_narrow_tab_stacks_its_panels_in_reading_order(tmp_path):
+    """ADR 0063 step 10: one column, in reading order (row, then column),
+    whatever order the tab's file lists its panels in."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_OUT_OF_ORDER_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp, _ = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 800, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_analysis_tab(page, "Order")
+                await expect(page.locator(".tabpanel.active .analysis-grid")).to_have_class(re.compile(r"\bnarrow\b"))
+                titles = await page.evaluate(
+                    """() => [...document.querySelectorAll('.tabpanel.active .analysis-panel[data-title]')]
+                         .map((el) => [el.getBoundingClientRect().top, el.dataset.title])
+                         .sort((a, b) => a[0] - b[0]).map(([, t]) => t)""")
+                assert titles == ["A", "B", "C"], titles
+            finally:
+                await browser.close()
+
+
 async def test_web_tabs_rail_rows_and_section_headers_work_from_the_keyboard(ffast_web_server):
     """ADR 0063: Tab reaches the tab strip, the arrow keys move along it, Enter
     presses a rail row, and a section header unfolds on Enter."""
