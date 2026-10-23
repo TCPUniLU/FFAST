@@ -891,6 +891,62 @@ async def test_web_journal_page_whitens_the_figure_area_and_density_scales_the_t
             await browser.close()
 
 
+async def test_web_journal_page_hides_the_controls_and_prints_units_as_text(ffast_web_server):
+    """ADR 0063 follow-up: Journal page is a print view: no control bar, no
+    Peaks/Sub, no Smoothing, no Plotly toolbar, and a unit is not a link; edit
+    mode keeps what it needs. Screen brings it all back."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            panel = _sub_panel("Forces MAE timeline")
+            controls = [
+                page.locator(".tabpanel.active .analysis-controls"),
+                page.locator(panel + " .peaks-toggle"),
+                page.locator(panel + " .sub-toggle"),
+                page.locator(panel + " .panel-params"),
+            ]
+            for c in controls:
+                await expect(c).to_be_visible()
+            await page.locator(panel + " .panel-plot").hover()
+            await expect(page.locator(panel + " .modebar")).to_be_visible()   # its container has no height
+
+            await page.get_by_role("radio", name="Journal page").click()
+            for c in controls:
+                await expect(c).to_be_hidden()
+            await page.locator(panel + " .panel-plot").hover()
+            await expect(page.locator(panel + " .modebar")).to_be_hidden()
+            unit = page.locator(panel + " .panel-caption-line .unit-editable")
+            await expect(unit).to_have_css("text-decoration-line", "none")
+            await unit.click(force=True)
+            await page.locator(panel + " .g-ytitle text").click(force=True)
+            await page.wait_for_timeout(300)
+            await expect(page.locator("#unit-popover")).to_have_count(0)
+
+            # Edit mode keeps its own controls.
+            await page.locator("#tab-edit-btn").click()
+            await expect(page.locator(".tabpanel.active .edit-bar")).to_be_visible()
+            await expect(page.locator(_CHROME).first.locator("[data-edit=remove]")).to_be_visible()
+            await page.locator("[data-edit=cancel]").click()
+            await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+
+            await page.get_by_role("radio", name="Screen").click()
+            for c in controls:
+                await expect(c).to_be_visible()
+            await unit.click()
+            await expect(page.locator("#unit-popover")).to_be_visible()
+        finally:
+            await browser.close()
+
+
 async def test_web_tabs_rail_rows_and_section_headers_work_from_the_keyboard(ffast_web_server):
     """ADR 0063: Tab reaches the tab strip, the arrow keys move along it, Enter
     presses a rail row, and a section header unfolds on Enter."""

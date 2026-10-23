@@ -78,6 +78,14 @@
       --success: var(--accent);
       background: var(--ground); color: var(--ink-2);
     }
+    /* ...and prints like one: no controls in it (edit mode keeps what it needs),
+       and a unit is plain text, not a link to name it. */
+    body.journal .tabpanel:not(.editing) :is(
+      .analysis-controls, .panel-params, .modebar-container,
+      .analysis-grid .panel-title :is(input, button, select, label, .help-btn)) { display: none !important; }
+    body.journal .analysis-grid :is(.unit-editable, [data-unit-role], .g-xtitle text, .g-ytitle text) {
+      text-decoration: none !important; cursor: auto !important; pointer-events: none !important;
+    }
 
     /* drawn icons (icons.js): one stroke, the text colour */
     .icon { width: 1.1em; height: 1.1em; vertical-align: -0.15em; }
