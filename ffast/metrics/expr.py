@@ -941,15 +941,17 @@ def _uses_element(tree: ast.Expression) -> bool:
                for n in ast.walk(tree))
 
 
-# The by= words that mean "the whole dataset". Colouring runs a metric on the
-# frame on screen only, where they would mean "this frame" (ADR 0064 section 5).
+# The by= words that mean "the whole dataset". Colouring reads a metric over
+# the whole dataset; when only the frame on screen can be computed, they would
+# mean "this frame" there (ADR 0064 section 5, amendment 2026-10-24).
 _DATASET_WIDE = ("all", "element")
 
 
 def colour_problem(expr: str, refs=(), registry=None) -> str | None:
-    """Why this formula cannot colour atoms, or None. A formula that uses
-    by=all or by=element anywhere, itself or in a formula metric it takes as
-    an input, would give one number in Try and another on screen."""
+    """Why this formula cannot colour atoms from the frame on screen alone,
+    or None. A formula that uses by=all or by=element anywhere, itself or in a
+    formula metric it takes as an input, would give one number in Try and
+    another on screen."""
     words = set(by_words(parse_and_validate(expr)))
     seen: set[str] = set()
     todo = [r for r in refs if registry is not None and registry.has(r)]
@@ -964,7 +966,8 @@ def colour_problem(expr: str, refs=(), registry=None) -> str | None:
             todo.extend(r for r in fn.var_refs.values() if registry.has(r))
     for word in _DATASET_WIDE:
         if word in words:
-            return f"by={word} can't be used for colouring yet: colouring sees one frame"
+            return (f"by={word} colours atoms only when the prediction covers every "
+                    f"frame; this one covers the frame on screen")
     return None
 
 

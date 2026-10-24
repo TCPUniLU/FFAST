@@ -182,7 +182,7 @@ def test_the_parser_accepts_every_new_form():
         parse_and_validate(e)
 
 
-# ── section 5: colouring refuses dataset-wide words ──────────────────────────
+# ── section 5: colouring from one frame refuses dataset-wide words ───────────
 
 @pytest.mark.parametrize("expr,problem", [
     ("norm(pF - rF) / max(norm(pF - rF), by=all)", "by=all"),
@@ -190,10 +190,11 @@ def test_the_parser_accepts_every_new_form():
     ('where(element("H"), norm(pF - rF), 0)', None),
     ("mean(norm(pF - rF), by=structure)", None),
 ])
-def test_colouring_refuses_by_all_and_by_element(expr, problem):
+def test_colouring_from_one_frame_refuses_by_all_and_by_element(expr, problem):
     from ffast.metrics.expr import colour_problem
     got = colour_problem(expr)
     if problem is None:
         assert got is None
     else:
-        assert got == f"{problem} can't be used for colouring yet: colouring sees one frame"
+        assert got == (f"{problem} colours atoms only when the prediction covers every "
+                       f"frame; this one covers the frame on screen")

@@ -108,9 +108,7 @@ CASES = {
     # ── shortcuts and words ─────────────────────────────────────────────────
     "shortcuts": "['N_atoms', 'N_frames', 'scalar', '(N_atoms, xyz)', null].map(ml.shortcutFor)",
     "shape_hints": "['N_frames', 'N_atoms', 'scalar'].map(ml.shapeHint)",
-    "colour_refused": (
-        "[ml.shapeHint('N_atoms', 'by=all can\\'t be used for colouring yet: colouring sees one frame'),"
-        " ml.shortcutFor('N_atoms', 'by=all ...'), ml.shortcutFor('N_atoms', null), ml.shapeHint('N_elements')]"),
+    "element_hint": "ml.shapeHint('N_elements')",
     "stats_format": "[ml.formatStat(null), ml.formatStat(NaN), ml.formatStat(0), ml.formatStat(12.3456789), ml.formatStat(1234567), ml.formatStat(0.00012)]",
     "try_headlines": (
         "[ml.tryHeadline({ok: true, count: 4, bad_count: 0}), ml.tryHeadline({ok: true, count: 4, bad_count: 1}),"
@@ -440,7 +438,5 @@ def test_duplicating_any_other_python_metric_takes_it_as_the_input(results):
     assert results["dup_wrapper_not_a_function"] == "m_x"   # x(F) is a function
 
 
-def test_a_formula_colouring_refuses_says_why_and_offers_no_colour_shortcut(results):
-    assert results["colour_refused"] == [
-        "per atom → by=all can't be used for colouring yet: colouring sees one frame",
-        None, "colour", "per element → can be plotted as bars"]
+def test_a_per_element_result_can_be_plotted_as_bars(results):
+    assert results["element_hint"] == "per element → can be plotted as bars"

@@ -227,13 +227,6 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
                     "colors", metric_id,
                 )
                 return None
-            from ffast.metrics.expr import metric_colour_problem
-            problem = metric_colour_problem(metric_id, reg)
-            if problem:
-                # ADR 0064: by=all / by=element would mean "this frame" here.
-                logger.warning("atom-color: %s: %s; falling back to element colors",
-                               metric_id, problem)
-                return None
             from ffast.metrics.dims import shape_to_str
             schema, _ = reg.get(metric_id)
             shape = shape_to_str(schema.shape)
@@ -247,6 +240,13 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
                     logger.info("atom-color: metric %s resolved from the whole dataset",
                                 metric_id)
                     return vals, schema.label or metric_id, schema.unit, span
+            from ffast.metrics.expr import metric_colour_problem
+            problem = metric_colour_problem(metric_id, reg)
+            if problem:
+                # ADR 0064: by=all / by=element would mean "this frame" here.
+                logger.warning("atom-color: %s: %s; falling back to element colors",
+                               metric_id, problem)
+                return None
             if executor is None:
                 logger.warning(
                     "atom-color: no metric executor injected; falling back to "

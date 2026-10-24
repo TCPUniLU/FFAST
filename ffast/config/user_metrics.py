@@ -252,12 +252,10 @@ class UserMetrics:
                 "id": e.cfg.id, "label": e.cfg.label, "unit": e.cfg.unit,
                 "expr": e.cfg.expr, "vars": dict(e.cfg.vars),
                 "status": e.status, "message": e.message,
-                "revision": metric_revision(e.cfg), "shape": None, "colour_problem": None,
+                "revision": metric_revision(e.cfg), "shape": None,
             }
             if e.status == "ok" and self.registry.has(e.cfg.id):
-                from ffast.metrics.expr import metric_colour_problem
                 d["shape"] = shape_to_str(self.registry.get(e.cfg.id)[0].shape)
-                d["colour_problem"] = metric_colour_problem(e.cfg.id, self.registry)
             out.append(d)
         return out
 
@@ -272,8 +270,8 @@ class UserMetrics:
 
     def check(self, data: dict) -> dict:
         """Validate a formula without changing anything (rule 11): returns
-        ``{ok, error, shape, colour_problem}``. Touches no data."""
-        from ffast.metrics.expr import analyze_expr, colour_problem
+        ``{ok, error, shape}``. Touches no data."""
+        from ffast.metrics.expr import analyze_expr
         try:
             cfg = ExprMetricConfig.model_validate(data)
         except ValidationError as exc:
@@ -285,9 +283,7 @@ class UserMetrics:
                 cfg.expr, dict(cfg.vars), registry=self.registry_without(cfg.id), id=cfg.id)
         except ValueError as exc:
             return {"ok": False, "error": str(exc), "shape": None}
-        return {"ok": True, "error": None, "shape": shape_to_str(shape),
-                "colour_problem": colour_problem(cfg.expr, cfg.vars.values(),
-                                                 self.registry_without(cfg.id))}
+        return {"ok": True, "error": None, "shape": shape_to_str(shape)}
 
     # ── changing ────────────────────────────────────────────────────────────
     @_locked

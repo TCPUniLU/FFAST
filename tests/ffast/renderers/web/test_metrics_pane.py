@@ -110,8 +110,7 @@ async def test_try_reports_bad_values_before_anything_is_saved(tmp_path):
             assert not (metrics_dir / "user.bad.toml").exists()     # nothing saved
             await ws.send(pack("CHECK_METRIC", (), {"metric": bad, "check_id": "9"}))
             checked = (await _wait_for_event(ws, "METRIC_CHECKED"))["kwargs"]
-            assert checked == {"check_id": "9", "ok": True, "error": None, "shape": "N_frames",
-                           "colour_problem": None}
+            assert checked == {"check_id": "9", "ok": True, "error": None, "shape": "N_frames"}
         finally:
             await ws.close()
 
@@ -213,6 +212,50 @@ async def _save_in_pane(pane, metric_id, before, ref_button, after):
     await expect(pane.locator(".mx-check.good")).to_be_visible()
     await pane.get_by_role("button", name="Save", exact=True).click()
     await _list_shows(pane, f".mx-item[data-id='{metric_id}']")
+
+
+async def test_a_by_all_formula_colours_atoms_with_one_range_for_every_frame(tmp_path):
+    """Colouring reads the metric over the whole dataset (the prediction file
+    covers every frame), so a by=all formula colours atoms and the colour bar
+    keeps its range from frame to frame."""
+    cm, _ = await _server(tmp_path)
+    async with cm as (ws_port, web_port):
+        await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 900})
+            try:
+                await _open_app(page, web_port, ws_port)
+                pane = await _open_metrics_pane(page)
+                await pane.get_by_role("button", name="New metric").click()
+                await pane.get_by_label("Metric id").fill("user.rel_err")
+                await pane.get_by_label("Formula").fill(
+                    "norm(pred_F - ref_F) / max(norm(pred_F - ref_F), by=all)")
+                for _ in range(2):
+                    await pane.get_by_role("button", name=re.compile("^Fix")).click()
+                await expect(pane.locator(".mx-check")).to_have_text("per atom → can colour atoms")
+                await pane.get_by_role("button", name="Save", exact=True).click()
+                await _list_shows(pane, ".mx-item[data-id='user.rel_err']")
+
+                await pane.get_by_role("button", name="Colour atoms by this").click()
+                bar = page.locator("#colorbar")
+                await expect(bar).not_to_have_class(re.compile(r"\bhidden\b"))
+                bar_max = page.locator("#colorbar .cb-max")
+                # The largest error of the dataset divided by itself.
+                await page.wait_for_function(
+                    "() => Math.abs(parseFloat(document.querySelector('#colorbar .cb-max').textContent) - 1) < 1e-3")
+                top, bottom = await bar_max.inner_text(), await page.locator("#colorbar .cb-min").inner_text()
+
+                label = page.locator("#frame-label")
+                await page.evaluate("() => document.activeElement.blur()")
+                for frame in (1, 2, 3):
+                    await page.keyboard.press("ArrowRight")
+                    await expect(label).to_have_text(re.compile(rf"^{frame} / "))
+                    await page.wait_for_timeout(300)
+                    assert await bar_max.inner_text() == top
+                    assert await page.locator("#colorbar .cb-min").inner_text() == bottom
+            finally:
+                await browser.close()
 
 
 async def test_the_shortcuts_colour_the_atoms_and_plot_the_metric(tmp_path):
@@ -552,12 +595,11 @@ async def test_h_only_and_per_element_formulas_are_tried_saved_and_plotted(tmp_p
                 await pane.get_by_label("Metric id").fill("user.h_force")
                 formula = pane.get_by_label("Formula")
 
-                # a dataset-wide word: the hint says colouring refuses it
+                # a dataset-wide word: colouring reads the whole dataset, so it can colour
                 await formula.fill("norm(pred_F - ref_F) / max(norm(pred_F - ref_F), by=all)")
                 for _ in range(2):
                     await pane.get_by_role("button", name=re.compile("^Fix")).click()
-                await expect(pane.locator(".mx-check")).to_have_text(
-                    "per atom → by=all can't be used for colouring yet: colouring sees one frame")
+                await expect(pane.locator(".mx-check")).to_have_text("per atom → can colour atoms")
 
                 await formula.fill('mean(norm(pred_F - ref_F), by=structure, where=element("H"))')
                 await expect(pane.locator(".mx-check")).to_contain_text("per structure")

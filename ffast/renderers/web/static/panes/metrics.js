@@ -367,7 +367,7 @@ export function createMetricsPane(body, callbacks) {
       return;
     }
     if (check.ok === false) { checkEl.textContent = check.error; checkEl.classList.add('bad'); }
-    else if (check.ok === true) { checkEl.textContent = shapeHint(check.shape, check.colour_problem); checkEl.classList.add('good'); }
+    else if (check.ok === true) { checkEl.textContent = shapeHint(check.shape); checkEl.classList.add('good'); }
     else checkEl.textContent = 'Checking…';
   }
 
@@ -419,7 +419,7 @@ export function createMetricsPane(body, callbacks) {
     // rule 13: one shortcut, by the shape of the result
     shortcutsEl.replaceChildren();
     const shape = selected?.shape;
-    const kind = !isNew && selected?.status === 'ok' ? shortcutFor(shape, selected.colour_problem) : null;
+    const kind = !isNew && selected?.status === 'ok' ? shortcutFor(shape) : null;
     if (kind === 'colour' && callbacks.onColourAtoms) {
       const b = el('button', '', 'Colour atoms by this');
       b.addEventListener('click', () => callbacks.onColourAtoms(selected.id));
@@ -715,7 +715,7 @@ export function createMetricsPane(body, callbacks) {
 
   // ── from the server ──────────────────────────────────────────────────────
   ops.onCheck = (kw) => {
-    check = { ok: kw.ok, error: kw.error || '', shape: kw.shape, colour_problem: kw.colour_problem || null };
+    check = { ok: kw.ok, error: kw.error || '', shape: kw.shape };
     renderCheck();
     renderButtons();
   };

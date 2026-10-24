@@ -274,14 +274,8 @@ def test_delete_also_drops_derived_transform_metrics(um, registry):
 # ── checking without saving (rule 11) ───────────────────────────────────────
 def test_check_reports_the_result_shape_and_registers_nothing(um, registry):
     out = um.check(metric(id="user.try"))
-    assert out == {"ok": True, "error": None, "shape": "N_frames", "colour_problem": None}
+    assert out == {"ok": True, "error": None, "shape": "N_frames"}
     assert not registry.has("user.try")
-
-
-def test_check_says_why_a_formula_cannot_colour_atoms(um):
-    out = um.check(metric(id="user.try", expr="e - mean(e, by=all)"))
-    assert out["ok"] is True
-    assert out["colour_problem"] == "by=all can't be used for colouring yet: colouring sees one frame"
 
 
 def test_check_reports_an_error(um):

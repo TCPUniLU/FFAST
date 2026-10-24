@@ -260,7 +260,7 @@ def test_displacement_falls_back_to_element_colours_when_structures_differ_in_si
         state, ds, 0, ds.getCoordinates(0), ds.getElements(0), None) is None
 
 
-# ── ADR 0064: dataset-wide words cannot colour; filters can ─────────────────
+# ── ADR 0064: dataset-wide words colour from the whole dataset only ─────────
 
 @pytest.fixture
 def formula_metrics():
@@ -277,7 +277,7 @@ def formula_metrics():
     reg.freeze()
 
 
-def _colour(metric_id, reg):
+def _colour(metric_id, reg, get_metric=None):
     from ffast.metrics.executor import InProcessExecutor
     from ffast.visualization.color_values import resolve_atom_color_values
     ds = _FakeDataset(n_atoms=3)
@@ -285,14 +285,24 @@ def _colour(metric_id, reg):
     pred = np.ones((1, 3, 3)) * np.array([[[2.0], [3.0], [4.0]]])
     return resolve_atom_color_values(state, ds, 0, np.zeros((3, 3)), ds._z,
                                      lambda d, m: _PredictionView(pred),
-                                     executor=InProcessExecutor(reg))
+                                     executor=InProcessExecutor(reg), get_metric=get_metric)
 
 
-def test_a_formula_with_by_all_is_refused_for_colouring(formula_metrics):
+def test_a_formula_with_by_all_colours_from_the_whole_dataset(formula_metrics):
+    from types import SimpleNamespace
+    whole = lambda *_: SimpleNamespace(values=np.array([0.25, 0.5, 1.0]))
+    values, label, _unit, span = _colour("t64.scaled", formula_metrics, get_metric=whole)
+    assert list(values) == [0.25, 0.5, 1.0] and span == (0.25, 1.0)
+    assert label == "t64.scaled"
+
+
+def test_a_formula_with_by_all_is_refused_with_only_the_frame_on_screen(formula_metrics):
     from ffast.metrics.expr import metric_colour_problem
     assert metric_colour_problem("t64.scaled", formula_metrics) == (
-        "by=all can't be used for colouring yet: colouring sees one frame")
+        "by=all colours atoms only when the prediction covers every frame; "
+        "this one covers the frame on screen")
     assert _colour("t64.scaled", formula_metrics) is None          # element colours
+    assert _colour("t64.scaled", formula_metrics, get_metric=lambda *_: None) is None
 
 
 def test_a_formula_on_such_a_formula_is_refused_too(formula_metrics):
@@ -308,10 +318,3 @@ def test_an_element_filter_still_colours(formula_metrics):
     # elements H, C, O: only the hydrogen keeps its error
     assert values[0] > 0 and values[1] == 0 and values[2] == 0
 
-
-def test_the_catalog_says_why_a_metric_cannot_colour(formula_metrics):
-    from ffast.metrics.catalog import build_metric_catalog
-    by_id = {e["id"]: e for e in build_metric_catalog(formula_metrics)}
-    assert by_id["t64.scaled"]["colour_problem"].startswith("by=all")
-    assert by_id["t64.h_only"]["colour_problem"] is None
-    assert by_id["ffast.force_mae"]["colour_problem"] is None
