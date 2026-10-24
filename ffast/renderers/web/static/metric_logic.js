@@ -260,7 +260,13 @@ export function tryHeadline(r, name = '') {
   if (!r.ok) return r.error || 'Could not try the formula';
   const on = name ? ` — on ${name}` : '';
   if (r.bad_count) return `${r.bad_count} bad value${r.bad_count === 1 ? '' : 's'} of ${r.count} — saving would fail the metric${on}`;
+  if (r.table) return `${tableSize(r.table)}, all good${on}`;
   return `${r.count} value${r.count === 1 ? '' : 's'}, all good${on}`;
+}
+
+/** A table's size in words, '100 structures × 3 elements' (ADR 0064 amendment). */
+export function tableSize([rows, cols]) {
+  return `${rows} structure${rows === 1 ? '' : 's'} × ${cols} element${cols === 1 ? '' : 's'}`;
 }
 
 /** The line a Try adds when some places have no value (ADR 0064): '12

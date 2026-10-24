@@ -212,3 +212,32 @@ def test_one_structure_without_offsets_is_one_row():
     # The colouring path runs a metric on the frame on screen, without offsets.
     raw = {"err": ERR[2:5], "_elements": Z[2:5], "_offsets": None}
     np.testing.assert_allclose(_values("mean(err, by=(structure, element))", raw), [[4.5, 3.0]])
+
+
+# ── step 3: Try ──────────────────────────────────────────────────────────────
+
+from ffast.metrics.try_formula import try_formula  # noqa: E402
+
+
+def _resolve(ref):
+    return {"reference.atoms.err": ERR, "offsets": OFFSETS, "reference.elements": Z}.get(ref)
+
+
+def test_try_summarises_a_table_over_the_cells_that_have_a_value():
+    for chunk in (100, 1):    # always one pass: the columns are the dataset's
+        r = try_formula("mean(err, by=(structure, element))", {"err": "reference.atoms.err"},
+                        MetricRegistry(), _resolve, np.diff(OFFSETS), chunk_frames=chunk)
+        assert r.table == [3, 3] and r.count == 9
+        assert (r.no_value_count, r.no_value_rows, r.bad_count) == (4, "cells", 0)
+        assert (r.min, r.max) == (1.0, 6.0)
+        assert r.mean == pytest.approx((2 + 1 + 4.5 + 3 + 6) / 5)
+        assert sum(r.histogram["counts"]) == 5
+
+
+def test_try_of_a_table_names_the_frame_of_a_bad_cell():
+    def resolve(ref):
+        return {**{"reference.elements": Z, "offsets": OFFSETS},
+                "reference.atoms.err": np.array([1.0, 2.0, np.inf, 4.0, 5.0, 6.0])}.get(ref)
+    r = try_formula("mean(err, by=(structure, element))", {"err": "reference.atoms.err"},
+                    MetricRegistry(), resolve, np.diff(OFFSETS))
+    assert (r.bad_count, r.bad_frames) == (1, [1])
