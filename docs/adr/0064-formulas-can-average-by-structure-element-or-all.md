@@ -1,6 +1,7 @@
 # Formulas can average, total and take extremes by structure, element or all, over chosen atoms
 
-Status: Accepted 2026-10-23, built 2026-10-23 (steps 1-7). Supersedes ADR 0042 Decision 1 ("Element-wise
+Status: Accepted 2026-10-23, built 2026-10-23 (steps 1-7). Amendment of 2026-10-24
+(per structure and per element at once) proposed. Supersedes ADR 0042 Decision 1 ("Element-wise
 only") and the "Reduction scope" option it chose; the rest of ADR 0042 stands.
 
 ## The problem
@@ -318,7 +319,8 @@ with options (a formula has none).
   common in force-field papers (e.g. the 95th-percentile force error). They
   fit the same `by=` and `where=`, but cannot reuse the sums in `segments.py`
   (they sort each group), so they are a separate piece of work.
-- **Per structure and per element at once** (`by=(structure, element)`,
+- **Per structure and per element at once** (taken up by the amendment of
+  2026-10-24) (`by=(structure, element)`,
   e.g. the H, C and O error of each structure). Computing it is small: the
   parser takes a pair of words, the shape check gains structures × elements,
   and each (structure, element) pair becomes one group for `segments.py`. The
@@ -474,3 +476,103 @@ carries warnings (the code fingerprint warning of the connection says so).
 
 With these, "Done when" holds as written: a per-element formula is plotted as
 bars.
+
+## Amendment 2026-10-24: per structure and per element at once
+
+Status: Proposed 2026-10-24. Takes "Per structure and per element at once"
+out of "Not now".
+
+**The problem.** "Per element" means two different things today. The built-in
+`ffast.force_mae_per_element` colours atoms by the frame on screen, but its
+bars average every frame. The same name gives two numbers, so the 3D view
+labels it "(per element, this frame)". A formula with `by=element` cannot
+colour at all (section 5). Neither tells you how the error of one element
+changes from frame to frame.
+
+**1. `by=` takes the pair `(structure, element)`.**
+
+```
+mean(mean_parts(abs(pred_F - ref_F)), by=(structure, element))
+```
+
+Each (structure, element) pair is one group: the H atoms of structure 1, the
+C atoms of structure 1, the H atoms of structure 2, and so on. All six
+reductions and `where=` take it. The input must be per atom; a per-structure
+input is an error, as with `by=element`. Only this order is accepted;
+`by=(element, structure)` is an error that names the right order, so there is
+one way to write it.
+
+**2. The result is a table: one row per structure, one column per element.**
+The columns are every element in the dataset, in order of atomic number (as
+`by=element` orders them). A structure without that element has no value in
+that cell (section 8). In a variable-size dataset many cells can be empty.
+
+The shape check names it "per structure and element". The shape is
+`(N_frames, N_elements)`.
+
+**3. What a table can be combined with.** Arithmetic with a single number or
+with another table of the same shape works cell by cell. It does not mix with
+a per-structure or a per-element value (ADR 0042 Decision 2: nothing spreads
+silently). A table cannot be reduced again yet (see "Not now" below).
+
+**4. It colours atoms, and means the same on screen as in Try.** Each row
+belongs to one structure, so colouring the frame on screen with its own row is
+the same number Try and the plot show. Colouring therefore accepts it: each
+atom gets its element's value in that frame. Section 5's refusal stays for
+`by=all` and for `by=element` on its own; the word `element` inside the pair
+does not trigger it.
+
+**5. A timeline draws it, one line per element.** The Timeline panel kind
+accepts a table in its `y` role:
+
+- one line per element, coloured by element, with the element picker the
+  per-element panels have;
+- with several predictions, each prediction's lines share one line style;
+- an empty cell is a gap in its line, as everywhere (section 8);
+- **Plot it** adds such a timeline to the "My metrics" tab;
+- the desktop timeline gets the same rule, so both clients keep the same
+  panel kinds.
+
+**6. Try** counts structures and elements ("100 structures × 3 elements"),
+reports empty cells as no value, and computes its minimum, mean, maximum and
+histogram over the cells that have a value.
+
+**Not now.**
+- **Reducing a table again**, e.g. `mean(table, by=element)` for the mean of
+  the per-structure H errors. It needs a rule for which axis each `by=` word
+  removes. Wait until someone needs it.
+- **Replacing the built-in per-element metrics** with this formula, so the
+  "(this frame)" label could go. Wait until the formula has been used.
+- **Tables in the other panel kinds** (density, table, bars).
+
+**Consequences.**
+- The cache version `_WHITELIST_VERSION` in `expr.py` goes up.
+- A saved formula that uses the pair does not compile on an older server. The
+  code fingerprint warning of the connection already says when the server is
+  older.
+- The colouring list and the catalog gain the shape `(N_frames, N_elements)`
+  (`COLORABLE_SHAPES` in `start_settings.js`, `_COLORABLE_SHAPES` in
+  `loupeAtoms.py`).
+
+**Steps.** One commit each; the suite stays green.
+
+1. **Parser and shape check** (`expr.py`): the pair after `by=`, the error for
+   the other order, the table shape, the combination rules in point 3. Tests:
+   each rule and each message.
+2. **Evaluation**: each (structure, element) pair as one group for
+   `segments.py`, columns for every element of the dataset, empty cells as no
+   value, `where=`. Tests: equal and unequal structure sizes, an element
+   missing from some structures, `where=`, a bad value in a counted cell.
+3. **Try**: the counts and summary in point 6. Test: the summary of a table
+   with empty cells.
+4. **Colouring** (`color_values.py`, both clients' lists): the frame's row
+   onto its atoms. Tests: the colour of an atom equals the cell Try gives for
+   that structure and element; `by=all` and `by=element` are still refused.
+5. **Timeline** (web and desktop): lines per element, the element picker,
+   gaps, **Plot it**. Browser test: write the formula above, Try, Save, Plot
+   it, see one line per element; colour atoms with it.
+6. **Docs**: `docs/usage.md` gains the pair and its example.
+
+Done when: a user can write the formula above, plot one line per element, and
+colour atoms with it, and an atom's colour matches the value for its frame and
+element on the timeline.
