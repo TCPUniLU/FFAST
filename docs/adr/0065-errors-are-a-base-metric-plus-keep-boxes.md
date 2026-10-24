@@ -286,6 +286,10 @@ Where the build differs from or adds to the text above:
   **Open it**), even when a built-in tab uses it. Deleting a saved box id drops
   only its file and name: the setting stays registered, so its users keep
   working, and delete is not refused while something uses it.
+- **Color by also offers structure ✓ + element ✓** (one value per element in
+  each frame): it gives one value per atom, as section 5 requires, so every
+  atom of an element shares a colour in a frame and the colour follows the
+  frame. Element ✓ alone takes the value over the whole dataset.
 - **Every metric can be a base.** A box id over a user formula wraps it
   (`user.odd[dataset;max]`); that is how a custom formula's boxes work.
 - **The energy-shift toggle** of Basic Errors kept its `shifted` parameter but
