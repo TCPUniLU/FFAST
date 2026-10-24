@@ -55,14 +55,14 @@ def test_force_components_of_frames_of_different_sizes_map_to_their_frames():
 
 def test_a_density_reads_the_values_it_was_drawn_from():
     assert source_metric(default_registry, "ffast.force_mae_per_structure_density") \
-        == "ffast.force_mae_per_structure"
+        == "ffast.force_component_mae_per_structure"
 
 
 def test_the_view_of_each_kind():
     values = {
         "e_true": np.array([0.0, 1.0, 2.0, 3.0]),
         "e_pred": np.array([0.0, 1.1, 2.4, 2.9]),
-        "ffast.force_mae_per_structure": np.array([0.01, 0.2, 0.05, 0.3]),
+        "ffast.force_component_mae_per_structure": np.array([0.01, 0.2, 0.05, 0.3]),
     }
 
     def frames(view):

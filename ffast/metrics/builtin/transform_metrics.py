@@ -58,20 +58,20 @@ Shifted = Annotated[bool, P(
     label="Forces RMSE (smoothed)",
     unit=units.force,
     tests=[
-        {  # window=1 ⇒ identity of ffast.force_rmse ([0.7071] from its own test)
+        {  # window=1 ⇒ identity of ffast.force_component_rmse_per_structure
             "inputs": {
                 "reference": [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
                 "predicted": [[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
                 "offsets": [0, 2],
             },
             "parameters": {"window": 1},
-            "expected": [0.7071067811865476],
+            "expected": [0.408248290463863],
             "atol": 1e-6,
         }
     ],
 )
 def force_rmse_smoothed(
-    src: Ref["ffast.force_rmse"],
+    src: Ref["ffast.force_component_rmse_per_structure"],
     *,
     window: Window = 1,
 ) -> Float[np.ndarray, "N_frames"]:
@@ -82,20 +82,20 @@ def force_rmse_smoothed(
     label="Forces MAE (smoothed)",
     unit=units.force,
     tests=[
-        {  # window=1 ⇒ identity of ffast.force_mae_per_structure ([0.5])
+        {  # window=1 ⇒ identity of ffast.force_component_mae_per_structure
             "inputs": {
                 "reference": [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
                 "predicted": [[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
                 "offsets": [0, 2],
             },
             "parameters": {"window": 1},
-            "expected": [0.5],
+            "expected": [1.0 / 6.0],
             "atol": 1e-6,
         }
     ],
 )
 def force_mae_per_structure_smoothed(
-    src: Ref["ffast.force_mae_per_structure"],
+    src: Ref["ffast.force_component_mae_per_structure"],
     *,
     window: Window = 1,
 ) -> Float[np.ndarray, "N_frames"]:
@@ -141,7 +141,7 @@ def energy_error_smoothed(
     unit=units.force,
 )
 def force_rmse_density(
-    src: Ref["ffast.force_rmse"],
+    src: Ref["ffast.force_component_rmse_per_structure"],
 ) -> Float[np.ndarray, "curve_xy grid"]:
     return _mirror_kde(src)
 
@@ -151,7 +151,7 @@ def force_rmse_density(
     unit=units.force,
 )
 def force_mae_per_structure_density(
-    src: Ref["ffast.force_mae_per_structure"],
+    src: Ref["ffast.force_component_mae_per_structure"],
 ) -> Float[np.ndarray, "curve_xy grid"]:
     return _mirror_kde(src)
 

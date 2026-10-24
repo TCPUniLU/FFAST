@@ -830,7 +830,7 @@ class TestBuildSceneColorBy:
             executor=InProcessExecutor(default_registry),
         )
         assert scene.atoms.color_by is not None
-        assert scene.atoms.color_by.label == "Force Error (per atom)"  # metric display name
+        assert scene.atoms.color_by.label == "Force Error Magnitude (per atom)"  # metric display name
         assert len(scene.atoms.color_by.values) == 4
 
     def test_metric_source_falls_back_without_prediction(self, ds, caplog):

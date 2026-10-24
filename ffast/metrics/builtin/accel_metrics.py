@@ -35,7 +35,12 @@ def accel_difference(force_difference, masses):
 
 @metric(
     id="ffast.accel_mae",
-    label="Acceleration MAE (per atom)",
+    label="Acceleration Error Magnitude (per atom)",
+    description=(
+        "Length of each atom's acceleration error vector (force error divided "
+        "by mass) (norm l2); with norm l1, the mean of its three absolute "
+        "components."
+    ),
     inputs={"accel_difference": "ffast.accel_difference"},
     shape=(dims.N_atoms,),
     unit=units.acceleration,
@@ -73,7 +78,7 @@ def accel_mae(accel_difference, *, norm="l2"):
 
 @metric(
     id="ffast.accel_rmse",
-    label="Acceleration RMSE (per frame)",
+    label="Acceleration Error Magnitude, RMS (per frame)",
     inputs={"accel_mae": "ffast.accel_mae"},
     optional_inputs=["offsets"],
     shape=(dims.N_frames,),
@@ -98,7 +103,7 @@ def accel_rmse(accel_mae, offsets=None):
 
 @metric(
     id="ffast.accel_mae_global",
-    label="Acceleration MAE",
+    label="Acceleration Error Magnitude, mean",
     inputs={"accel_mae": "ffast.accel_mae"},
     shape=(dims.scalar,),
     unit=units.acceleration,
@@ -121,7 +126,7 @@ def accel_mae_global(accel_mae):
 
 @metric(
     id="ffast.accel_rmse_global",
-    label="Acceleration RMSE",
+    label="Acceleration Error Magnitude, RMS",
     inputs={"accel_mae": "ffast.accel_mae"},
     shape=(dims.scalar,),
     unit=units.acceleration,
@@ -143,11 +148,59 @@ def accel_rmse_global(accel_mae):
 
 
 @metric(
+    id="ffast.accel_component_mae",
+    label="Acceleration MAE",
+    description="Mean of the absolute acceleration error over every x, y and z component of every atom.",
+    inputs={"accel_difference": "ffast.accel_difference"},
+    shape=(dims.scalar,),
+    unit=units.acceleration,
+    tests=[
+        {
+            "inputs": {
+                "reference": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]],
+                "masses": [1.0, 2.0],
+            },
+            "parameters": {},
+            "expected": 7.0 / 6.0,
+            "atol": 1e-6,
+        }
+    ],
+)
+def accel_component_mae(accel_difference):
+    return np.mean(np.abs(accel_difference))
+
+
+@metric(
+    id="ffast.accel_component_rmse",
+    label="Acceleration RMSE",
+    description="Root mean square of the acceleration error over every x, y and z component of every atom.",
+    inputs={"accel_difference": "ffast.accel_difference"},
+    shape=(dims.scalar,),
+    unit=units.acceleration,
+    tests=[
+        {
+            "inputs": {
+                "reference": [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[3.0, 4.0, 0.0], [0.0, 0.0, 0.0]],
+                "masses": [1.0, 2.0],
+            },
+            "parameters": {},
+            "expected": (25.0 / 6.0) ** 0.5,
+            "atol": 1e-6,
+        }
+    ],
+)
+def accel_component_rmse(accel_difference):
+    return np.sqrt(np.mean(np.asarray(accel_difference) ** 2))
+
+
+@metric(
     id="ffast.accel_mae_per_atom",
-    label="Acceleration Error",
+    label="Acceleration Error Magnitude (averaged per atom)",
     description=(
-        "Per-atom mean absolute acceleration error (force error divided by "
-        "mass). When every structure has the same atoms, each atom's error is "
+        "Length of each atom's acceleration error vector (force error divided "
+        "by mass). When every structure has the same atoms, each atom's error is "
         "averaged over the structures; otherwise atom i of one structure is not "
         "atom i of another, and every atom of every structure keeps its own."
     ),
@@ -176,7 +229,7 @@ def accel_mae_per_atom(accel_mae, offsets=None):
 
 @metric(
     id="ffast.accel_mae_per_element",
-    label="Acceleration Error (by element)",
+    label="Acceleration Error Magnitude, mean (by element)",
     inputs={
         "accel_mae": "ffast.accel_mae",
         "elements": I.reference_elements,

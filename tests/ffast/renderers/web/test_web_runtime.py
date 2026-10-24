@@ -748,7 +748,7 @@ async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server
             await page.locator("#quick-styles button", has_text="Force error").click()
             assert await _open_sections(page) == ["Colour By"]
             await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value(
-                "Force Error (per atom)")
+                "Force Error Magnitude (per atom)")
             await expect(page.locator(_control("Colour By", "Prediction"))).to_have_value(name)
             await expect(page.locator(_control("Colour By", "Colormap"))).to_have_value("force_error")
             await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
@@ -2749,7 +2749,7 @@ async def test_web_a_subset_opens_looking_like_its_parent(ffast_web_server):
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await page.locator("#quick-styles button", has_text="Force error").click()
             coloring = page.locator(_control("Colour By", "Coloring"))
-            await expect(coloring).to_have_value("Force Error (per atom)")
+            await expect(coloring).to_have_value("Force Error Magnitude (per atom)")
 
             await _open_analysis_tab(page, "Basic Errors")
             await page.wait_for_function(
@@ -2761,7 +2761,7 @@ async def test_web_a_subset_opens_looking_like_its_parent(ffast_web_server):
 
             await _open_analysis_tab(page, "3D")
             await expect(page.locator("#frame-label")).to_have_text("0 / 9", timeout=15000)
-            await expect(coloring).to_have_value("Force Error (per atom)")
+            await expect(coloring).to_have_value("Force Error Magnitude (per atom)")
             await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
         finally:
             await browser.close()
@@ -2829,7 +2829,7 @@ async def test_web_an_independent_panel_has_its_own_data_and_look(tmp_path):
                 await expect(page.locator(_PANEL)).to_be_visible()
                 await expect(page.locator(_panel_control("Dataset"))).to_have_value(dataset_fp)
                 await expect(page.locator(_panel_control("Prediction"))).to_have_value(model_fp)
-                await expect(coloring).to_have_value("Force Error (per atom)")
+                await expect(coloring).to_have_value("Force Error Magnitude (per atom)")
 
                 await _focus_3d(page, 0)
                 await expect(page.locator("#sidebar-title")).to_contain_text("(main view)")
@@ -2995,7 +2995,7 @@ async def test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_scree
                 await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
                 await page.locator("#quick-styles button", has_text="Force error").click()
                 await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value(
-                    "Force Error (per atom)")
+                    "Force Error Magnitude (per atom)")
 
                 await page.locator("#tab-edit-btn").click()
                 await page.locator(_CHROME).nth(1).locator("[data-edit=panel3d]").click()
@@ -3551,7 +3551,7 @@ async def _show_rows_that_offer_a_prediction(page):
     only for a metric colouring, Force Vectors shows Source only with arrows on."""
     await _open_section(page, "Colour By")
     coloring = page.locator(".pane[data-pane='Colour By'] .ctl-row[data-label='Coloring'] select")
-    await coloring.select_option(label="Acceleration Error")
+    await coloring.select_option(label="Acceleration Error Magnitude (averaged per atom)")
     await _open_section(page, "Force Vectors")
     await page.locator(
         ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Show force vectors'] input"
@@ -4085,12 +4085,12 @@ async def test_web_color_by_selector_recolors_atoms_and_shows_colorbar(ffast_web
             coloring = page.locator(
                 ".pane[data-pane='Colour By'] .ctl-row[data-label='Coloring'] select"
             )
-            # Exact match: "Acceleration Error (by element)" also exists and
-            # would otherwise satisfy a substring match.
+            # Exact match: other "Acceleration Error Magnitude" colourings
+            # exist and would otherwise satisfy a substring match.
             await expect(
-                coloring.locator("option", has_text=re.compile(r"^Acceleration Error$"))
+                coloring.locator("option", has_text=re.compile(r"^Acceleration Error Magnitude \(averaged per atom\)$"))
             ).to_have_count(1)
-            await coloring.select_option(label="Acceleration Error")
+            await coloring.select_option(label="Acceleration Error Magnitude (averaged per atom)")
             await page.wait_for_timeout(700)
 
             await expect(colorbar).not_to_have_class(re.compile(r"\bhidden\b"))

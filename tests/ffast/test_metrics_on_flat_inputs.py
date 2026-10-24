@@ -7,7 +7,9 @@ structure's elements and masses, and no offsets. Now every dataset hands flat
 arrays (one row per atom, frame after frame), every atom's elements and
 masses, and offsets. The numbers the metrics gave on the old form were saved
 before their 3D code was deleted (data/metrics_on_uniform_before_flat.npz,
-written at commit d7fb84f from ``_uniform()`` below). Joining frames gives the
+written at commit d7fb84f from ``_uniform()`` below). The per-component force
+and acceleration errors, and the force plots that read them, were added later
+from plain NumPy on the same ``(frames, atoms, 3)`` arrays. Joining frames gives the
 same order as flattening (frames, atoms, ...), so results are compared
 flattened.
 """

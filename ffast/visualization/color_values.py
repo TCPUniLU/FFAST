@@ -110,8 +110,8 @@ def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state,
 def frame_colour_label(label: str, shape: str) -> str:
     """The name of a colouring as the 3D view shows it. A per-element metric
     colours by the frame on screen, while its 2D plots average all frames, so
-    in 3D its name says "this frame": "Force Error (per element)" becomes
-    "Force Error (per element, this frame)"."""
+    in 3D its name says "this frame": "Force MAE (by element)" becomes
+    "Force MAE (by element, this frame)"."""
     if shape != "N_elements":
         return label
     if label.endswith(")"):

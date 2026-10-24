@@ -66,8 +66,8 @@ class TestMetricDisplayNames:
     (ADR 0016), replacing the hardcoded friendly-label dictionaries."""
 
     def test_atom_colorable_metrics_have_labels(self):
-        assert reg.get("ffast.force_mae")[0].label == "Force Error (per atom)"
-        assert reg.get("ffast.accel_mae_per_atom")[0].label == "Acceleration Error"
+        assert reg.get("ffast.force_mae")[0].label == "Force Error Magnitude (per atom)"
+        assert reg.get("ffast.accel_mae_per_atom")[0].label == "Acceleration Error Magnitude (averaged per atom)"
 
     def test_metric_color_label_falls_back_to_id(self):
         mod = _load_loupe_atoms()
@@ -83,7 +83,7 @@ class TestMetricCatalog:
     def test_catalog_includes_metrics_with_labels_and_shapes(self):
         from ffast.metrics.catalog import build_metric_catalog
         cat = {e["id"]: e for e in build_metric_catalog(reg)}
-        assert cat["ffast.force_mae"]["label"] == "Force Error (per atom)"
+        assert cat["ffast.force_mae"]["label"] == "Force Error Magnitude (per atom)"
         assert cat["ffast.force_mae"]["shape"] == "N_atoms"
         assert cat["ffast.force_mae_per_element"]["shape"] == "N_elements"
         assert cat["ffast.energy_mae"]["shape"] == "scalar"
@@ -177,7 +177,7 @@ class TestColorSourceResolution:
     SOURCE_MAP = {
         "Elements": "element",
         "Force Error": "metric:ffast.force_mae",
-        "Acceleration Error": "metric:ffast.accel_mae_per_atom",
+        "Acceleration Error Magnitude (averaged per atom)": "metric:ffast.accel_mae_per_atom",
         "Displacement": "displacement",
     }
 
@@ -188,7 +188,7 @@ class TestColorSourceResolution:
         resolve = self._resolve()
         assert resolve("Elements", self.SOURCE_MAP) == "element"
         assert resolve("Force Error", self.SOURCE_MAP) == "metric:ffast.force_mae"
-        assert resolve("Acceleration Error", self.SOURCE_MAP) == "metric:ffast.accel_mae_per_atom"
+        assert resolve("Acceleration Error Magnitude (averaged per atom)", self.SOURCE_MAP) == "metric:ffast.accel_mae_per_atom"
         # The regression: displacement used to resolve to "element".
         assert resolve("Displacement", self.SOURCE_MAP) == "displacement"
 
@@ -326,7 +326,7 @@ class TestServerMetricColoring:
         assert len(cb.values) == 4                       # one value per atom
         assert cb.values[1] == pytest.approx(cb.values[2])   # both H atoms equal
         assert cb.values[0] != pytest.approx(cb.values[1])   # C differs from H
-        assert cb.label == "Force Error (per element, this frame)"   # 3D colours by this frame
+        assert cb.label == "Force MAE (by element, this frame)"   # 3D colours by this frame
 
     def test_accel_metric_resolves_via_ase_mass_fallback(self):
         """Acceleration error needs atomic masses; _DS has no getMasses, so the
@@ -432,7 +432,7 @@ def test_a_per_element_colouring_says_this_frame():
     """3D colours a per-element metric by the frame on screen, its 2D plots by
     all frames: the 3D name says so; other shapes keep their name."""
     from ffast.visualization.color_values import frame_colour_label
-    assert frame_colour_label("Force Error (per element)", "N_elements") == \
-        "Force Error (per element, this frame)"
+    assert frame_colour_label("Force MAE (by element)", "N_elements") == \
+        "Force MAE (by element, this frame)"
     assert frame_colour_label("my.metric", "N_elements") == "my.metric (this frame)"
-    assert frame_colour_label("Force Error (per atom)", "N_atoms") == "Force Error (per atom)"
+    assert frame_colour_label("Force Error Magnitude (per atom)", "N_atoms") == "Force Error Magnitude (per atom)"

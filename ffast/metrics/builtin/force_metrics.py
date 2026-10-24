@@ -73,8 +73,11 @@ def force_prediction(
 
 
 @metric(
-    label="Force Error (per atom)",
-    description="Per-atom mean absolute force error between prediction and reference.",
+    label="Force Error Magnitude (per atom)",
+    description=(
+        "Length of each atom's force error vector |F_pred - F_ref| (norm l2); "
+        "with norm l1, the mean of its three absolute components."
+    ),
     unit=units.force,
     tests=[
         {
@@ -108,7 +111,11 @@ def force_mae(
 
 
 @metric(
-    label="Force RMSE (per frame)",
+    label="Force Error Magnitude, RMS (per frame)",
+    description=(
+        "Root mean square over each structure's atoms of the error vector "
+        "length; always sqrt(3) times Force RMSE (per frame)."
+    ),
     unit=units.force,
     tests=[
         {
@@ -133,8 +140,8 @@ def force_rmse(
 
 
 @metric(
-    label="Force MAE (per frame)",
-    description="Per-structure mean of the per-atom force error magnitude.",
+    label="Force Error Magnitude, mean (per frame)",
+    description="Per-structure mean of the per-atom force error vector length.",
     unit=units.force,
     tests=[
         {
@@ -158,7 +165,8 @@ def force_mae_per_structure(
 
 
 @metric(
-    label="Force MAE",
+    label="Force Error Magnitude, mean",
+    description="Mean over all atoms of the force error vector length.",
     unit=units.force,
     tests=[
         {
@@ -177,7 +185,8 @@ def force_mae_global(force_mae: Ref["ffast.force_mae"]) -> float:
 
 
 @metric(
-    label="Force RMSE",
+    label="Force Error Magnitude, RMS",
+    description="Root mean square over all atoms of the force error vector length; always sqrt(3) times Force RMSE.",
     unit=units.force,
     tests=[
         {
@@ -196,7 +205,11 @@ def force_rmse_global(force_mae: Ref["ffast.force_mae"]) -> float:
 
 
 @metric(
-    label="Force Component MAE",
+    label="Force MAE",
+    description=(
+        "Mean of |F_pred - F_ref| over every x, y and z component of every "
+        "atom, as MACE and NequIP report it."
+    ),
     unit=units.force,
     tests=[
         {
@@ -215,7 +228,11 @@ def force_component_mae(force_difference: Ref["ffast.force_difference"]) -> floa
 
 
 @metric(
-    label="Force Component RMSE",
+    label="Force RMSE",
+    description=(
+        "Root mean square of F_pred - F_ref over every x, y and z component of "
+        "every atom, as MACE and NequIP report it."
+    ),
     unit=units.force,
     tests=[
         {
@@ -231,6 +248,58 @@ def force_component_mae(force_difference: Ref["ffast.force_difference"]) -> floa
 )
 def force_component_rmse(force_difference: Ref["ffast.force_difference"]) -> float:
     return np.sqrt(np.mean(force_difference ** 2))
+
+
+@metric(
+    label="Force MAE (per frame)",
+    description="Force MAE of each structure: the mean over its atoms' x, y and z components.",
+    unit=units.force,
+    tests=[
+        {
+            # 1 molecule, 2 atoms — offsets=[0,2]
+            "inputs": {
+                "reference": [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "offsets": [0, 2],
+            },
+            "parameters": {},
+            "expected": [1.0 / 6.0],
+            "atol": 1e-6,
+        }
+    ],
+)
+def force_component_mae_per_structure(
+    force_difference: Ref["ffast.force_difference"],
+    offsets=None,
+) -> Float[np.ndarray, "N_frames"]:
+    fd = np.asarray(force_difference)
+    return segmentMeans(np.abs(fd).mean(axis=-1), framesOrOne(offsets, fd))
+
+
+@metric(
+    label="Force RMSE (per frame)",
+    description="Force RMSE of each structure: the root mean square over its atoms' x, y and z components.",
+    unit=units.force,
+    tests=[
+        {
+            # 1 molecule, 2 atoms — offsets=[0,2]
+            "inputs": {
+                "reference": [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "predicted": [[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                "offsets": [0, 2],
+            },
+            "parameters": {},
+            "expected": [0.408248290463863],
+            "atol": 1e-6,
+        }
+    ],
+)
+def force_component_rmse_per_structure(
+    force_difference: Ref["ffast.force_difference"],
+    offsets=None,
+) -> Float[np.ndarray, "N_frames"]:
+    fd = np.asarray(force_difference)
+    return np.sqrt(segmentMeans((fd ** 2).mean(axis=-1), framesOrOne(offsets, fd)))
 
 
 @metric(

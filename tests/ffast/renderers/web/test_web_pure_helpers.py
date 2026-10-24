@@ -98,9 +98,9 @@ CASES = {
         " r.after_close = box.children.length; box.remove(); return r; })()"
     ),
     "ss_colouring_labels": (
-        "[ss.colouringLabel({id: 'ffast.force_mae_per_element', label: 'Force Error (per element)', shape: 'N_elements'}),"
+        "[ss.colouringLabel({id: 'ffast.force_mae_per_element', label: 'Force MAE (by element)', shape: 'N_elements'}),"
         " ss.colouringLabel({id: 'my.el', shape: 'N_elements'}),"
-        " ss.colouringLabel({id: 'ffast.force_mae', label: 'Force Error (per atom)', shape: 'N_atoms'})]"
+        " ss.colouringLabel({id: 'ffast.force_mae', label: 'Force Error Magnitude (per atom)', shape: 'N_atoms'})]"
     ),
     "trap_focus": (
         "(() => { const m = document.createElement('div');"
@@ -868,7 +868,7 @@ def results():
 
 def test_a_per_element_colouring_says_this_frame_in_the_list(results):
     assert results["ss_colouring_labels"] == [
-        "Force Error (per element, this frame)", "my.el (this frame)", "Force Error (per atom)"]
+        "Force MAE (by element, this frame)", "my.el (this frame)", "Force Error Magnitude (per atom)"]
 
 
 # ── toasts.showWarning ───────────────────────────────────────────────────────

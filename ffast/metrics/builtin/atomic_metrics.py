@@ -27,7 +27,8 @@ def _per_structure_element_mae(force_difference, elements, offsets, z_target):
 
 
 @metric(
-    label="Force Error (per element)",
+    label="Force MAE (by element)",
+    description="Force MAE of each element's atoms, over their x, y and z components.",
     unit=units.force,
     tests=[
         {
@@ -57,6 +58,7 @@ def force_mae_per_element(
 
 @metric(
     label="Force RMSE (by element)",
+    description="Force RMSE of each element's atoms, over their x, y and z components.",
     unit=units.force,
     tests=[
         {

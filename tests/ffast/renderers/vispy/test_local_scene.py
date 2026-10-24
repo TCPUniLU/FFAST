@@ -195,7 +195,7 @@ def test_build_loupe_scene_snapshot_metric_coloring_uses_prediction_without_forc
     )
 
     assert snapshot.scene.atoms.color_by is not None
-    assert snapshot.scene.atoms.color_by.label == "Force Error (per atom)"  # metric display name
+    assert snapshot.scene.atoms.color_by.label == "Force Error Magnitude (per atom)"  # metric display name
     assert snapshot.scene.forces is None
 
 

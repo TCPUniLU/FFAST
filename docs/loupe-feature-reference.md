@@ -30,7 +30,7 @@ control drives it.
 |------|------------------------|-------------|
 | By element (CPK) | `"element"` | Coloring → Elements |
 | By metric (per-atom shape) | `"metric:<metric_id>"` | Coloring → Metric |
-| Force MAE (mean or per-frame) | `"metric:ffast.force_mae"` | Coloring → Mean/Force Error |
+| Force error magnitude (per atom) | `"metric:ffast.force_mae"` | Coloring → Force Error Magnitude (per atom) |
 | Acceleration norm error | `"metric:ffast.accel_mae_per_atom"` | Coloring → Acceleration Norm Error |
 | Displacement (total / mean) | `"metric:ffast.displacement_stats"` | Coloring → Total/Mean Displacement |
 
