@@ -11,10 +11,11 @@
  */
 
 import { icon } from '../icons.js';
+import { createKeepBoxes } from '../keep_boxes.js';
 import {
   ID_PREFIX, completeAt, duplicateDraft, fixFor, formatStat, groupInputs, groupMetrics,
-  idProblem, insertAt, isDirty, noValueLine, renameVariable, shapeHint, shortcutFor, sideMark,
-  suggestions, toDraft, toPayload, tryHeadline, undefinedNames, uniqueName, valueNames,
+  idProblem, insertAt, isDirty, noValueLine, renameVariable, sameSetting, shapeHint, shortcutFor,
+  sideMark, suggestions, toDraft, toPayload, tryHeadline, undefinedNames, uniqueName, valueNames,
   variableNameProblem,
 } from '../metric_logic.js';
 
@@ -64,6 +65,11 @@ export function createMetricsPane(body, callbacks) {
   let deleteArmed = false;
   let checkTimer = null;
   let caret = [0, 0];
+  // Keep boxes (ADR 0065): the server's last METRIC_BOXES for the selected
+  // metric, and the setting it opened with.
+  let boxes = null;
+  let boxesOpened = null;
+  let boxName = '';           // the Create metric name, the auto name until edited
 
   // ── layout ───────────────────────────────────────────────────────────────
   const toolbar = el('div', 'mx-toolbar');
@@ -164,7 +170,26 @@ export function createMetricsPane(body, callbacks) {
   const usedByEl = el('div', 'mx-usedby');
   const messageEl = el('div', 'mx-message');
   const exportEl = el('div', 'mx-export');
-  editor.append(heading, notice, sourceBox, fieldRows, formula, suggest, varsEl, checkRow,
+  // Keep boxes under the selected metric: changing them tries the new
+  // setting at once; Create metric registers it (ADR 0065 section 4).
+  const boxesEl = el('div', 'mx-boxes');
+  const keepBoxes = createKeepBoxes((setting) => askBoxes('change', { base: boxes.base, setting }));
+  const boxesNote = el('div', 'mx-boxes-note');
+  const boxesFormula = el('details', 'mx-source mx-boxes-formula');
+  const boxesFormulaText = el('pre', 'mx-source-code');
+  boxesFormula.append(el('summary', '', 'Show as formula'), boxesFormulaText);
+  const createRow = el('div', 'mx-boxes-create');
+  const boxNameInput = el('input');
+  boxNameInput.type = 'text';
+  boxNameInput.setAttribute('aria-label', 'New metric name');
+  const createBtn = el('button', 'mx-primary', 'Create metric');
+  const openBtn = el('button', '', 'Open it');
+  createRow.append(boxNameInput, createBtn, openBtn);
+  boxesEl.append(el('div', 'mx-subhead', 'Keep boxes'), keepBoxes.el, boxesNote, boxesFormula, createRow);
+  boxNameInput.addEventListener('input', () => { boxName = boxNameInput.value; });
+  createBtn.addEventListener('click', () => createFromBoxes());
+  openBtn.addEventListener('click', () => { if (boxes) selectById(boxes.id); });
+  editor.append(heading, notice, boxesEl, sourceBox, fieldRows, formula, suggest, varsEl, checkRow,
     el('div', 'mx-subhead', 'Inputs'), inputSearch, inputsEl,
     actions, shortcutsEl, conflictEl, tryEl, usedByEl, messageEl, exportEl);
 
@@ -220,6 +245,9 @@ export function createMetricsPane(body, callbacks) {
     saved = entry.origin === 'user' ? entry : null;
     draft = entry.expr != null ? toDraft(entry) : null;
     resetEditorState();
+    boxes = null;
+    boxesOpened = null;
+    if (entry.status !== 'hidden' && entry.status !== 'error') askBoxes('open', { metricId: entry.id });
     renderList();
     renderEditor();
     if (draft) scheduleCheck(true);
@@ -229,6 +257,7 @@ export function createMetricsPane(body, callbacks) {
     selected = null;
     isNew = true;
     saved = null;
+    boxes = null;
     draft = from ? { ...from, vars: from.vars.map((v) => ({ ...v })) }
       : { id: ID_PREFIX, label: '', unit: '', expr: '', vars: [] };
     resetEditorState();
@@ -297,6 +326,7 @@ export function createMetricsPane(body, callbacks) {
       if (formula.value !== draft.expr) formula.value = draft.expr;
       formula.readOnly = ro;
     }
+    renderBoxes();
     renderVars();
     renderCheck();
     renderInputs();
@@ -306,6 +336,72 @@ export function createMetricsPane(body, callbacks) {
     renderMessage();
     renderUsedBy();
     renderExport();
+  }
+
+  function renderBoxes() {
+    // A metric whose boxes allow nothing but itself (a density, a curve) shows none.
+    boxesEl.hidden = isNew || !boxes || boxes.allowed.length <= 1;
+    if (boxesEl.hidden) return;
+    keepBoxes.render(boxes.setting, boxes.allowed, boxes.hints);
+    const changedBoxes = !sameSetting(boxes.setting, boxesOpened);
+    let note = '';
+    if (boxes.problem) note = boxes.problem;
+    else {
+      if (boxes.custom && !changedBoxes) note = 'A custom formula: its boxes come from its shape, and changing them wraps it. ';
+      note += `${shapeHint(boxes.shape)}${boxes.unit ? ` · ${boxes.unit}` : ''}`;
+    }
+    boxesNote.textContent = note;
+    boxesNote.classList.toggle('bad', !!boxes.problem);
+    boxesFormula.hidden = !boxes.expr;
+    boxesFormulaText.textContent = boxes.expr ? `${boxes.expr}\n\nD → ${boxes.base}` : '';
+    createRow.hidden = !changedBoxes || !!boxes.problem;
+    boxNameInput.hidden = createBtn.hidden = boxes.exists;
+    openBtn.hidden = !boxes.exists;
+    if (boxNameInput.value !== boxName) boxNameInput.value = boxName;
+  }
+
+  /** Ask the server for the boxes of a metric or of a box change; only the
+   * answer to the latest question is shown. */
+  let boxesSeq = 0;
+  async function askBoxes(why, request) {
+    const seq = ++boxesSeq;
+    const kw = await ops.boxes(request, context().datasetFp);
+    if (seq !== boxesSeq) return;
+    if (kw.error) { boxes = null; renderBoxes(); return; }
+    boxes = kw;
+    if (why === 'open') boxesOpened = kw.setting;
+    if (why !== 'refresh') boxName = kw.label || '';
+    renderBoxes();
+    if (why === 'change' && !kw.problem && !sameSetting(kw.setting, boxesOpened)) tryBoxes();
+  }
+
+  /** Try the boxes' setting at once on the selected dataset (no approval). */
+  async function tryBoxes() {
+    const { datasetFp, modelFp } = context();
+    if (!datasetFp || !boxes?.expr) return;
+    tryContext = { datasetFp, modelFp };
+    tryResult = null;
+    tryProgress = { progress: 0, message: 'Trying…' };
+    renderTry();
+    const result = await ops.tryIt({ id: `${ID_PREFIX}boxes`, label: boxes.label, unit: boxes.unit,
+      expr: boxes.expr, vars: boxes.vars }, datasetFp, modelFp, (kw) => { tryProgress = kw; renderTry(); });
+    tryProgress = null;
+    if (!result.cancelled) tryResult = result;
+    renderTry();
+    renderButtons();
+  }
+
+  async function createFromBoxes() {
+    if (!boxes?.id || boxes.exists) return;
+    createBtn.disabled = true;
+    const r = await ops.save({ id: boxes.id, label: boxName.trim() || boxes.label, unit: boxes.unit,
+      expr: boxes.expr, vars: boxes.vars });
+    createBtn.disabled = false;
+    if (r.ok) {
+      setMessage('Created. Every window now has it.');
+      pendingSelect = r.id;
+      selectById(r.id);
+    } else setMessage(r.error || 'Could not create the metric', true);
   }
 
   function renderVars() {
@@ -408,8 +504,10 @@ export function createMetricsPane(body, callbacks) {
     tryBtn.textContent = ops.trying ? 'Cancel' : 'Try';
     tryBtn.classList.toggle('active', ops.trying);
     const why = problem();
-    saveBtn.disabled = !!why || (!isNew && !isDirty(draft, saved) && !conflict);
-    saveBtn.title = why || (isDirty(draft, saved) ? 'Save for every window' : 'Nothing changed');
+    // a Python metric has no draft: nothing to save
+    const dirty = !!draft && isDirty(draft, saved);
+    saveBtn.disabled = !!why || (!isNew && !dirty && !conflict);
+    saveBtn.title = why || (dirty ? 'Save for every window' : 'Nothing changed');
     tryBtn.disabled = !ops.trying && (!!undefinedNames(draft?.expr || '', draft ? varNames() : []).length || check.ok === false || !draft?.expr.trim());
     const users = selected?.used_by || [];
     delBtn.disabled = users.length > 0;
@@ -760,6 +858,8 @@ export function createMetricsPane(body, callbacks) {
       const { datasetFp, modelFp } = context();
       inputs = [];
       if (datasetFp) ops.requestInputs(datasetFp, modelFp);
+      // Whether by=atom is allowed depends on the dataset's structures.
+      if (boxes && !isNew) askBoxes('refresh', { base: boxes.base, setting: boxes.setting });
       if (!editor.hidden) { renderInputs(); renderCheck(); }
     },
     /** A disconnect: nothing the pane holds is current. */

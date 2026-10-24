@@ -50,6 +50,8 @@ export const OUT = Object.freeze({
   CHECK_METRIC: 'CHECK_METRIC',
   TRY_METRIC: 'TRY_METRIC',
   CANCEL_TRY_METRIC: 'CANCEL_TRY_METRIC',
+  // The keep boxes of a metric or of a box change (ADR 0065)
+  REQUEST_METRIC_BOXES: 'REQUEST_METRIC_BOXES',
   ADD_SESSION_METRICS: 'ADD_SESSION_METRICS',
   GRACEFUL_DISCONNECT: 'GRACEFUL_DISCONNECT',
 });
@@ -97,6 +99,7 @@ export const IN = Object.freeze({
   METRIC_INPUTS: 'METRIC_INPUTS',
   METRIC_CHECKED: 'METRIC_CHECKED',
   METRIC_TRIED: 'METRIC_TRIED',
+  METRIC_BOXES: 'METRIC_BOXES',
   // After a session load: user metrics it carries that this server lacks.
   SESSION_METRICS: 'SESSION_METRICS',
   // Which subset a DECLARE_SUBSET made, to the window that sent it, so the

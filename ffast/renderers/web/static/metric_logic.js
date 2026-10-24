@@ -361,3 +361,98 @@ export function sessionMetricsQuestion(metrics) {
     message: `This session uses ${n} metric${n === 1 ? '' : 's'} this server doesn't have:\n${lines.join('\n')}\n\nAdd them?`,
   };
 }
+
+// ── keep boxes (ADR 0065) ───────────────────────────────────────────────────
+// A setting is {keep: [box…], combine, statistic}; the server sends the
+// settings a metric allows (ffast/metrics/boxes.py) and writes the formula.
+
+/** The keep boxes in their order, with the words the pane shows. */
+export const KEEP_BOXES = [['atom', 'atom'], ['structure', 'structure'], ['element', 'element'], ['xyz', 'x/y/z']];
+export const COMBINE_CHOICES = [['component', 'Per component'], ['length', 'Length']];
+export const STATISTIC_CHOICES = [['mae', 'MAE'], ['rmse', 'RMSE'], ['max', 'Max'], ['mean', 'Mean (signed)']];
+
+const sameKeep = (a, b) => a.length === b.length && a.every((k) => b.includes(k));
+
+/** Whether two settings are the same. */
+export function sameSetting(a, b) {
+  return !!a && !!b && sameKeep(a.keep, b.keep) && a.combine === b.combine && a.statistic === b.statistic;
+}
+
+/** The allowed setting with these keep boxes that is closest to `want`:
+ * its Combine and Statistic when they still apply, else per component and
+ * MAE. null when no allowed setting keeps exactly these boxes. */
+function closest(want, allowed) {
+  const score = (s) => (want.combine && s.combine === want.combine ? 8 : 0)
+    + (want.statistic && s.statistic === want.statistic ? 4 : 0)
+    + (s.combine === 'component' ? 2 : 0) + (s.statistic === 'mae' ? 1 : 0);
+  let best = null;
+  for (const s of allowed) {
+    if (sameKeep(s.keep, want.keep) && (!best || score(s) > score(best))) best = s;
+  }
+  return best ? { ...best, keep: [...best.keep] } : null;
+}
+
+/** The setting a click on keep box `box` gives, or null when the boxes grey it. */
+export function toggleBox(setting, box, allowed) {
+  const keep = setting.keep.includes(box) ? setting.keep.filter((k) => k !== box) : [...setting.keep, box];
+  const order = KEEP_BOXES.map(([k]) => k);
+  return closest({ ...setting, keep: keep.sort((a, b) => order.indexOf(a) - order.indexOf(b)) }, allowed);
+}
+
+/** Whether keep box `box` can be clicked. */
+export function boxAvailable(setting, box, allowed) {
+  return toggleBox(setting, box, allowed) !== null;
+}
+
+/** Why a box is greyed, in words. */
+export function boxHint(setting, box, hints) {
+  if (hints[box]) return hints[box];
+  if (box === 'element' && setting.keep.includes('atom')) return 'element is greyed when atom is ticked';
+  if (box === 'atom' && setting.keep.includes('element')) return 'atom is greyed when element is ticked';
+  if (hints.atom_only && (box === 'structure' || box === 'atom')) return hints.atom_only;
+  return 'not with the boxes ticked now';
+}
+
+/** The setting choosing Combine or Statistic gives (`field` 'combine' or
+ * 'statistic'); Mean (signed) on a length moves to per component. */
+export function chooseSetting(setting, field, value, allowed) {
+  const want = { ...setting, [field]: value };
+  const same = allowed.filter((s) => sameKeep(s.keep, setting.keep) && s[field] === value);
+  const exact = same.find((s) => sameSetting(s, want));
+  if (exact) return { ...exact, keep: [...exact.keep] };
+  return same.length ? closest(want, same) : null;
+}
+
+/** The Combine choices these keep boxes allow; [] when x/y/z is kept. */
+export function combineChoices(setting, allowed) {
+  return COMBINE_CHOICES.map(([c]) => c)
+    .filter((c) => allowed.some((s) => sameKeep(s.keep, setting.keep) && s.combine === c));
+}
+
+/** The Statistic choices these keep boxes allow; [] when nothing is averaged. */
+export function statisticChoices(setting, allowed) {
+  if (!setting.statistic) return [];
+  return STATISTIC_CHOICES.map(([c]) => c)
+    .filter((c) => allowed.some((s) => sameKeep(s.keep, setting.keep) && s.statistic === c));
+}
+
+/** `{base, keep, rest}` of a box id such as
+ * `ffast.force_difference[atom;length;mae]`, or null for any other id. */
+export function parseBoxId(id) {
+  const m = /^([^[\]]+)\[([a-z+;]+)\]$/.exec(id || '');
+  return m ? { base: m[1], fields: m[2] } : null;
+}
+
+/** The settings that give one value per atom, the only ones Color by takes
+ * (ADR 0065 section 5): atom kept, or element kept without atom; never x/y/z. */
+export function colourSettings(allowed) {
+  return allowed.filter((s) => !s.keep.includes('xyz') && (s.keep.includes('atom') || s.keep.includes('element')));
+}
+
+/** The first per-atom setting of a vector metric, for colouring by it:
+ * each atom, per component, MAE. */
+export function firstColourSetting(allowed) {
+  const ok = colourSettings(allowed);
+  return ok.find((s) => sameKeep(s.keep, ['atom', 'structure']) && s.combine === 'component' && s.statistic === 'mae')
+    || ok[0] || null;
+}

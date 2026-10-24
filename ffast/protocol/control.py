@@ -63,6 +63,8 @@ REQUEST_METRIC_INPUTS = "REQUEST_METRIC_INPUTS"
 CHECK_METRIC = "CHECK_METRIC"
 TRY_METRIC = "TRY_METRIC"
 CANCEL_TRY_METRIC = "CANCEL_TRY_METRIC"
+# The keep boxes of a metric, or of a box change (ADR 0065): touches no data.
+REQUEST_METRIC_BOXES = "REQUEST_METRIC_BOXES"
 # Answer "Add them?" after a session load offered the user metrics it carries
 # that this server lacks (rule 15).
 ADD_SESSION_METRICS = "ADD_SESSION_METRICS"
@@ -81,7 +83,7 @@ CLIENT_TO_SERVER = frozenset(
         SAVE_TAB, DELETE_TAB, HIDE_TAB, EXPORT_TAB,
         REQUEST_USER_METRICS, SAVE_USER_METRIC, DELETE_USER_METRIC, EXPORT_USER_METRIC,
         REQUEST_METRIC_INPUTS, CHECK_METRIC, TRY_METRIC, CANCEL_TRY_METRIC,
-        ADD_SESSION_METRICS, TRACE,
+        REQUEST_METRIC_BOXES, ADD_SESSION_METRICS, TRACE,
     }
 )
 
@@ -193,6 +195,10 @@ METRIC_INPUTS = "METRIC_INPUTS"
 SESSION_METRICS = "SESSION_METRICS"
 METRIC_CHECKED = "METRIC_CHECKED"
 METRIC_TRIED = "METRIC_TRIED"
+# Reply to REQUEST_METRIC_BOXES, to the window that asked: {request_id, base,
+# base_label, setting, custom, allowed, hints, problem, id, expr, vars, label,
+# unit, shape, exists} (ffast.metrics.boxes.box_state), or {request_id, error}.
+METRIC_BOXES = "METRIC_BOXES"
 # Reply to DECLARE_SUBSET, to the window that sent it: {fingerprint,
 # parent_fingerprint, model_fp, name}, which subset the plot's view made, so
 # the window that ticked SUB can show it in its main view. Every window learns

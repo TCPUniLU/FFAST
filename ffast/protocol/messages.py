@@ -537,6 +537,21 @@ class CheckMetricRequest(BaseModel):
     check_id: Optional[str] = None
 
 
+class RequestMetricBoxesRequest(BaseModel):
+    """Typed payload for ``REQUEST_METRIC_BOXES`` (ADR 0065): the keep boxes of
+    ``metric_id``, or of ``base`` with ``setting`` after a box change.
+    ``dataset_fp`` says whether by=atom is allowed (uniform structures);
+    ``request_id`` is echoed so the pane can drop a stale answer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    metric_id: Optional[str] = None
+    base: Optional[str] = None
+    setting: Optional[dict] = None
+    dataset_fp: Optional[str] = None
+
+
 class TryMetricRequest(BaseModel):
     """Typed payload for ``TRY_METRIC`` (rule 12): compute the formula over all
     frames of this dataset and prediction, without saving."""

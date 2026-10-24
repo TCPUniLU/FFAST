@@ -164,7 +164,7 @@ class ServerSession:
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
             CancelTryMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
-            TraceRequest,
+            TraceRequest, RequestMetricBoxesRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -201,6 +201,7 @@ class ServerSession:
             control.CHECK_METRIC:               _Route(self._on_check_metric, ["metric", "?check_id"], CheckMetricRequest),
             control.TRY_METRIC:                 _Route(self._on_try_metric, ["metric", "try_id", "?dataset_fp", "?model_fp"], TryMetricRequest),
             control.CANCEL_TRY_METRIC:          _Route(self._on_cancel_try_metric, ["try_id"], CancelTryMetricRequest),
+            control.REQUEST_METRIC_BOXES:       _Route(self._on_request_metric_boxes, ["request_id", "?metric_id", "?base", "?setting", "?dataset_fp"], RequestMetricBoxesRequest),
             control.ADD_SESSION_METRICS:        _Route(self._on_add_session_metrics, ["offer_id"], AddSessionMetricsRequest),
             control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
             control.TRACE:                      _Route(self._on_trace, ["kind", "text"], TraceRequest),
@@ -1406,6 +1407,27 @@ class ServerSession:
         else:
             out = um.check(metric)
         await self._emit(pack(control.METRIC_CHECKED, [], {"check_id": check_id, **out}))
+
+    async def _on_request_metric_boxes(self, request_id, metric_id=None, base=None,
+                                       setting=None, dataset_fp=None, **kwargs) -> None:
+        """Reply with METRIC_BOXES: the keep boxes of a metric, or the formula,
+        id and name a box change gives (ADR 0065). Touches no data; the
+        dataset is asked only whether its structures have the same atoms."""
+        from ffast.metrics.boxes import box_state
+        from ffast.metrics.registry import default_registry
+        from ffast.protocol.rpc import pack
+        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
+        uniform = None if dataset is None else not getattr(dataset, "isVariable", False)
+        revision = default_registry.revision
+        try:
+            out = box_state(default_registry, metric_id=metric_id, base=base,
+                            setting=setting, uniform=uniform)
+        except (KeyError, ValueError) as exc:
+            out = {"error": str(exc).strip("'\"")}
+        await self._emit(pack(control.METRIC_BOXES, [], {"request_id": request_id, **out}))
+        if default_registry.revision != revision:
+            # Opening a box id registered it: every window's list gains it.
+            self.feed.changed(control.METRIC_CATALOG)
 
     async def _on_try_metric(self, metric, try_id, dataset_fp=None, model_fp=None, **kwargs) -> None:
         """Start a Try and return at once: it runs as its own task so a

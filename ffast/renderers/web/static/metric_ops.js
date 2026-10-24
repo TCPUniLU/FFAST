@@ -19,6 +19,8 @@ export class MetricOps {
     this._saved = [];       // resolvers waiting for USER_METRIC_SAVED, oldest first
     this._exported = [];    // resolvers waiting for USER_METRIC_EXPORTED
     this._checkSeq = 0;
+    this._boxesSeq = 0;
+    this._boxes = new Map();   // request id → resolver waiting for METRIC_BOXES
     this._trySeq = 0;
     /** @type {{id: string, resolve: Function, onProgress: Function|null}|null} */
     this._try = null;
@@ -52,6 +54,19 @@ export class MetricOps {
    * check was sent since. */
   check(metric) {
     this._send(OUT.CHECK_METRIC, { metric, check_id: String(++this._checkSeq) });
+  }
+
+  /** The keep boxes of a metric (`{metricId}`) or of a box change
+   * (`{base, setting}`), ADR 0065.
+   * @returns {Promise<object>} the METRIC_BOXES payload */
+  boxes({ metricId = null, base = null, setting = null }, datasetFp = null) {
+    const id = String(++this._boxesSeq);
+    return new Promise((resolve) => {
+      this._boxes.set(id, resolve);
+      this._send(OUT.REQUEST_METRIC_BOXES, {
+        request_id: id, metric_id: metricId, base, setting, dataset_fp: datasetFp,
+      });
+    });
   }
 
   /** What a formula can use for this dataset and prediction. */
@@ -90,6 +105,12 @@ export class MetricOps {
     if (kw.check_id === String(this._checkSeq)) this.onCheck(kw);
   }
 
+  onBoxesReply(kw) {
+    const resolve = this._boxes.get(kw.request_id);
+    this._boxes.delete(kw.request_id);
+    resolve?.(kw);
+  }
+
   onInputsReply(kw) {
     const want = this._inputsFor;
     if (want && kw.dataset_fp === want.datasetFp && kw.model_fp === want.modelFp) this.onInputs(kw.inputs || []);
@@ -111,6 +132,8 @@ export class MetricOps {
   reset() {
     for (const resolve of this._saved.splice(0)) resolve({ ok: false, error: 'Disconnected', conflict: false });
     for (const resolve of this._exported.splice(0)) resolve({ toml: null, error: 'Disconnected' });
+    for (const resolve of this._boxes.values()) resolve({ error: 'Disconnected' });
+    this._boxes.clear();
     if (this._try) {
       const { resolve } = this._try;
       this._try = null;

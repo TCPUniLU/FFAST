@@ -27,16 +27,16 @@ INPUTS = (
     " {ref:'prediction.energies',name:'pred_E',label:'Energy',group:'Prediction',only:null},"
     " {ref:'reference.positions',name:'ref_R',label:'Positions',group:'Reference',only:'reference'},"
     " {ref:'reference.info.REF_energy',name:'ref_REF_energy',label:'REF_energy',group:'File keys',only:null},"
-    " {ref:'ffast.force_mae',name:'force_mae',label:'Force MAE',group:'Metrics',only:null}]"
+    " {ref:'ffast.force_difference',name:'force_difference',label:'Force Difference',group:'Metrics',only:null}]"
 )
 
 CASES = {
     # ── which names a formula uses ──────────────────────────────────────────
     "names_skip_functions": "ml.valueNames('norm(pred_F - ref_F) / n_atoms')",
     "dup_formula": "ml.duplicateDraft({id: 'p.e', label: 'E', unit: 'energy', expr: '2 * e', vars: {e: 'reference.energies'}})",
-    "dup_equivalent": ("ml.duplicateDraft({id: 'ffast.force_mae', label: 'Force MAE', unit: 'force', expr: null,"
-                       " equivalent_expr: 'norm(pred_F - ref_F)', equivalent_vars: {pred_F: 'prediction.forces', ref_F: 'reference.forces'}})"),
-    "dup_wrapper": "ml.duplicateDraft({id: 'ffast.force_mae_per_structure', label: 'MAE', unit: 'force', expr: null})",
+    "dup_equivalent": ("ml.duplicateDraft({id: 'ffast.force_difference', label: 'Force Difference', unit: 'force', expr: null,"
+                       " equivalent_expr: 'pred_F - ref_F', equivalent_vars: {pred_F: 'prediction.forces', ref_F: 'reference.forces'}})"),
+    "dup_wrapper": "ml.duplicateDraft({id: 'ffast.force_rmse_smoothed', label: 'RMSE', unit: 'force', expr: null})",
     "dup_wrapper_not_a_function": "ml.duplicateDraft({id: 'my.x', label: '', unit: '', expr: null}).expr",
     "names_x_call_is_not_a_value": "ml.valueNames('x(F) + y(F)')",
     "names_a_variable_called_x": "ml.valueNames('x + 1')",
@@ -466,15 +466,15 @@ def test_duplicating_a_formula_metric_copies_its_formula(results):
 
 def test_duplicating_a_python_metric_with_an_exact_formula_copies_that_formula(results):
     d = results["dup_equivalent"]
-    assert d["expr"] == "norm(pred_F - ref_F)" and d["unit"] == "force"
+    assert d["expr"] == "pred_F - ref_F" and d["unit"] == "force"
     assert d["vars"] == [{"name": "pred_F", "ref": "prediction.forces"},
                          {"name": "ref_F", "ref": "reference.forces"}]
 
 
 def test_duplicating_any_other_python_metric_takes_it_as_the_input(results):
     d = results["dup_wrapper"]
-    assert d["expr"] == "force_mae_per_structure"
-    assert d["vars"] == [{"name": "force_mae_per_structure", "ref": "ffast.force_mae_per_structure"}]
+    assert d["expr"] == "force_rmse_smoothed"
+    assert d["vars"] == [{"name": "force_rmse_smoothed", "ref": "ffast.force_rmse_smoothed"}]
     assert results["dup_wrapper_not_a_function"] == "m_x"   # x(F) is a function
 
 

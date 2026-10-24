@@ -350,14 +350,15 @@ def test_align_changes_after_a_new_show_leave_the_old_settings_alone(results):
 def test_color_by_shows_its_settings_without_sending_anything(results):
     r = results["color_show"]
     assert r["controls"] == ["A metric", "MACE", "plasma"]
-    assert r["calls"] == []
+    # asking the server for the metric's keep boxes (ADR 0065) changes nothing
+    assert [c for c in r["calls"] if c[0] != "boxes"] == []
 
 
 def test_color_by_writes_every_change_into_its_settings(results):
     r = results["color_write"]
     assert r["source"] == "metric:m.a"
     assert r["s"] == {"source": "displacement", "prediction": "fp1", "colormap": "inferno", "norm": "None"}
-    assert [c[0] for c in r["calls"]] == [
+    assert [c[0] for c in r["calls"] if c[0] != "boxes"] == [
         "onSourceChange", "onPredictionChange", "onColormapChange", "onSourceChange"]
 
 
@@ -377,7 +378,7 @@ def test_choosing_a_metric_writes_the_source(results):
     r = results["color_choose_metric"]
     assert r["ok"] is True and r["missing"] is False
     assert r["source"] == "metric:m.a" and r["coloring"] == "A metric"
-    assert [c[:2] for c in r["calls"]] == [["onSourceChange", "metric:m.a"]]
+    assert [c[:2] for c in r["calls"] if c[0] != "boxes"] == [["onSourceChange", "metric:m.a"]]
 
 
 def test_the_prediction_follows_the_settings_and_goes_back_to_ground_truth(results):

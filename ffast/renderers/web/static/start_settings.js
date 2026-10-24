@@ -6,6 +6,8 @@
  * today's default. Pure functions, so they test without a server.
  */
 
+import { parseBoxId } from './metric_logic.js';
+
 /** Today's look of a new view, which unset keys keep. */
 export const DEFAULT_LOOK = Object.freeze({
   source: 'element',
@@ -61,7 +63,10 @@ export function startCommands(start, { modelFp, catalog }) {
     let source = s.colour_by;
     if (source !== 'element' && source !== 'displacement') {
       const entry = (catalog || []).find((e) => e.id === source);
-      if (entry && (entry.shape == null || COLORABLE_SHAPES.has(entry.shape))) source = `metric:${source}`;
+      // A keep-box setting (ADR 0065) is registered when first asked for, so
+      // the catalog may not list it yet.
+      if ((entry && (entry.shape == null || COLORABLE_SHAPES.has(entry.shape)))
+          || (!entry && parseBoxId(source))) source = `metric:${source}`;
       else {
         note = !entry
           ? `Colour metric ${source} is not on this server; showing element colours`

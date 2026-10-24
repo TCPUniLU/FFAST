@@ -920,6 +920,9 @@ export class FFastApp {
       onLimit: (key, value) => this._sendSetParameter('ffast.atom_color', key, value),
       unitsOf: () => datasetUnits(this._focusedDatasetFp(), this._datasets),
       onSetUnit: (dimension, unit) => this._setDatasetUnit(this._focusedDatasetFp(), dimension, unit),
+      // Keep boxes (ADR 0065): the focused view's dataset says whether by=atom applies.
+      boxes: (request) => this._metricOps.boxes(request, this._focusedDatasetFp() ?? null),
+      saveMetric: (metric) => this._metricOps.save(metric),
     });
 
     const metricsPane = createMetricsPane(document.getElementById('metrics-body'), {
@@ -1308,6 +1311,7 @@ export class FFastApp {
       conn.on(IN.METRIC_CHECKED, (kw) => this._metricOps.onChecked(kw));
       conn.on(IN.METRIC_INPUTS, (kw) => this._metricOps.onInputsReply(kw));
       conn.on(IN.METRIC_TRIED, (kw) => this._metricOps.onTried(kw));
+      conn.on(IN.METRIC_BOXES, (kw) => this._metricOps.onBoxesReply(kw));
 
       conn.on(IN.REMOTE_DATASET_META, (kw, args) => this._onDatasetMeta(args[0], kw));
       conn.on(IN.REMOTE_MODEL_META,   (kw, args) => this._onModelMeta(args[0], kw));

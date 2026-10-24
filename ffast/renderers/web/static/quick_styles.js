@@ -16,7 +16,8 @@
  */
 export function forceErrorStyle(predictionLabel) {
   return [
-    ['Colour By', 'Coloring', 'Force Error Magnitude (per atom)'],
+    // its first per-atom setting: each atom, per component, MAE (ADR 0065)
+    ['Colour By', 'Coloring', 'Force Difference'],
     ['Colour By', 'Colormap', 'force_error'],
     ['Colour By', 'Prediction', predictionLabel],
   ];

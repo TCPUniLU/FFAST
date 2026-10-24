@@ -529,9 +529,9 @@ async def test_the_metrics_drawer_works_on_a_tab_with_no_3d_panel(tmp_path):
 
 async def test_every_python_metric_shows_its_code_and_duplicates_as_a_formula(tmp_path):
     """ADR 0057 amendment: a built-in shows its Python code; Copy and edit gives
-    the exact formula where there is one (force_mae, and force_mae_per_structure
-    with by=, ADR 0064), and otherwise a formula over the metric itself
-    (force_mae_per_structure_smoothed), which saves."""
+    the exact formula where there is one (force_difference, and
+    force_net_residual with by=, ADR 0064), and otherwise a formula over the
+    metric itself (force_mae_per_structure_smoothed), which saves."""
     cm, metrics_dir = await _server(tmp_path)
     async with cm as (ws_port, web_port):
         await _preload_dataset_and_prediction(ws_port)
@@ -543,17 +543,18 @@ async def test_every_python_metric_shows_its_code_and_duplicates_as_a_formula(tm
                 pane = await _open_metrics_pane(page)
                 formula = pane.get_by_label("Formula")
 
-                await _pick(pane, "ffast.force_mae")
-                await pane.locator(".mx-source summary").click()
-                await expect(pane.locator(".mx-source-code")).to_contain_text("def force_mae(")
+                await _pick(pane, "ffast.force_difference")
+                python = pane.locator(".mx-source", has_text="Python code")   # a base also shows its boxes' formula
+                await python.locator("summary").click()
+                await expect(python.locator(".mx-source-code")).to_contain_text("def force_difference(")
                 await pane.get_by_role("button", name="Copy and edit").click()
-                await expect(formula).to_have_value("norm(pred_F - ref_F)")
-                await expect(pane.locator(".mx-check")).to_contain_text("per atom")
+                await expect(formula).to_have_value("pred_F - ref_F")
+                await expect(pane.locator(".mx-check")).to_contain_text("(N_atoms, xyz)")
 
-                await _pick(pane, "ffast.force_mae_per_structure")
+                await _pick(pane, "ffast.force_net_residual")
                 await pane.get_by_role("button", name="Copy and edit").click()
-                await expect(formula).to_have_value("mean(norm(pred_F - ref_F), by=structure)")
-                await expect(pane.locator(".mx-check")).to_contain_text("per structure")
+                await expect(formula).to_have_value("sum(pred_F - ref_F, by=structure)")
+                await expect(pane.locator(".mx-check")).to_contain_text("(N_frames, xyz)")
 
                 # the keyboard: typing narrows the drop-down, Down and Enter open a metric
                 search = pane.locator(".mx-toolbar input[type=search]")

@@ -14,8 +14,16 @@
  * into them. The settings hold the source (`element`, `displacement`,
  * `metric:<id>`) and the prediction's fingerprint, not the labels the drop-downs
  * show: labels depend on the metric catalog and the loaded predictions.
+ *
+ * Keep boxes (ADR 0065 section 5): a metric's setting is chosen with the boxes
+ * under the Coloring list, and a change recolours at once. The setting is the
+ * source's box id (`metric:ffast.force_difference[atom;length;mae]`), saved
+ * with the view; the list shows it under its base. Save as metric keeps it as
+ * a user metric. Only settings with one value per atom are offered.
  */
 
+import { createKeepBoxes } from '../keep_boxes.js';
+import { colourSettings, firstColourSetting, parseBoxId, sameSetting } from '../metric_logic.js';
 import { COLORABLE_SHAPES, DEFAULT_LOOK, colouringLabel } from '../start_settings.js';
 import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.js';
 import { gradientCss } from '../colormap.js';
@@ -29,6 +37,8 @@ const COLORMAPS = ['force_error', 'cividis', 'viridis', 'inferno', 'plasma', 'co
 // Shared with an independent panel's starting look (start_settings.js).
 
 const LEGEND_MIN = { w: 160, h: 48 };
+// A base with x/y/z per atom (Force Difference): coloured through its boxes.
+const VECTOR_PER_ATOM = '(N_atoms, xyz)';
 
 /** Size the legend (`null`: its default size). The size is a page-wide CSS
  * variable, so the hint bar keeps clear of it, and it is this browser's own
@@ -95,7 +105,10 @@ function legendGrip() {
  *   onLimit?: (key: 'vmin'|'vmax', value: number|null) => void,
  *   unitsOf?: () => Object<string, string>,
  *   onSetUnit?: (dimension: string, unit: string) => void,
- * }} callbacks unitsOf: the units of the shown view's dataset; onSetUnit: name one
+ *   boxes?: (request: {metricId?: string, base?: string, setting?: object}) => Promise<object>,
+ *   saveMetric?: (metric: object) => Promise<{ok: boolean, error: string|null}>,
+ * }} callbacks unitsOf: the units of the shown view's dataset; onSetUnit: name one;
+ *   boxes: REQUEST_METRIC_BOXES; saveMetric: Save as metric
  */
 export function createColorByPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Colour By');
@@ -108,20 +121,104 @@ export function createColorByPane(sidebarEl, callbacks) {
   let keyByLabel = new Map();    // prediction combo label -> model fingerprint
   let state = defaultSettings().colorBy;   // the shown view's settings
 
-  /** The Coloring label of a source, or undefined (a metric the catalog lacks). */
-  const labelOfSource = (source) => [...labelToSource].find(([, src]) => src === source)?.[0];
+  /** The Coloring label of a source, or undefined (a metric the catalog lacks).
+   * A box setting shows as its base. */
+  const labelOfSource = (source) => {
+    const find = (src) => [...labelToSource].find(([, s]) => s === src)?.[0];
+    const box = source?.startsWith('metric:') ? parseBoxId(source.slice(7)) : null;
+    return find(source) ?? (box ? find(`metric:${box.base}`) : undefined);
+  };
   /** The prediction combo label of a fingerprint (Ground Truth for none or unknown). */
   const labelOfPrediction = (fp) => [...keyByLabel].find(([, key]) => key === fp)?.[0] || 'Ground Truth';
 
   const coloringSelect = selectRow(body, 'Coloring', ['Elements', 'Displacement'], 'Elements', (label) => {
     currentLabel = label;
-    state.source = labelToSource.get(label) || 'element';
+    const mid = labelToMetricId.get(label);
+    if (mid && metricsById.get(mid)?.shape === VECTOR_PER_ATOM) {
+      // A vector base colours through its first per-atom setting.
+      firstSetting(mid);
+      return;
+    }
+    applySource(labelToSource.get(label) || 'element');
+  });
+
+  // ── keep boxes ──────────────────────────────────────────────────────────
+  const boxesEl = document.createElement('div');
+  boxesEl.className = 'colorby-boxes';
+  const keepBoxes = createKeepBoxes((setting) => chooseBoxes(setting));
+  const saveLink = document.createElement('button');
+  saveLink.className = 'mx-link';
+  saveLink.textContent = 'Save as metric';
+  const boxesNote = document.createElement('div');
+  boxesNote.className = 'mx-boxes-note';
+  boxesEl.append(keepBoxes.el, saveLink, boxesNote);
+  body.appendChild(boxesEl);
+  boxesEl.hidden = true;
+  let boxes = null;         // METRIC_BOXES of the colouring metric, or null
+  let boxesSeq = 0;
+  saveLink.addEventListener('click', async () => {
+    if (!boxes?.id || !callbacks.saveMetric) return;
+    const r = await callbacks.saveMetric({ id: boxes.id, label: boxes.label, unit: boxes.unit,
+      expr: boxes.expr, vars: boxes.vars });
+    boxesNote.textContent = r.ok ? 'Saved: the Metrics pane lists it.' : (r.error || 'Could not save');
+  });
+
+  /** Colour by `source` (element, displacement or metric:<id>) now. */
+  function applySource(source) {
+    state.source = source;
+    boxesNote.textContent = '';
     missingNote.hidden = true;
     _syncVisibility();
     clearLimits();
     callbacks.onSourceChange(state.source);
     _rebuildParamControls();
-  });
+    showBoxes();
+  }
+
+  /** Ask the server; only the answer to the latest question counts. */
+  async function askBoxes(request) {
+    if (!callbacks.boxes) return null;
+    const seq = ++boxesSeq;
+    const kw = await callbacks.boxes(request);
+    return seq === boxesSeq && kw && !kw.error ? kw : null;
+  }
+
+  async function firstSetting(base) {
+    const kw = await askBoxes({ metricId: base });
+    const setting = kw && firstColourSetting(kw.allowed);
+    if (setting) chooseBoxes(setting, base);
+  }
+
+  /** A box change recolours at once (no approval). */
+  async function chooseBoxes(setting, base = boxes?.base) {
+    const kw = await askBoxes({ base, setting });
+    if (!kw?.id) return;
+    boxes = kw;
+    applySource(`metric:${kw.id}`);
+  }
+
+  /** The boxes of the colouring metric, when it has more than one per-atom setting. */
+  async function showBoxes() {
+    const id = state.source?.startsWith('metric:') ? state.source.slice(7) : null;
+    if (!id) { boxes = null; renderBoxes(); return; }
+    if (boxes?.id !== id) {
+      boxes = null;
+      renderBoxes();
+      boxes = await askBoxes({ metricId: id });
+    }
+    renderBoxes();
+  }
+
+  function renderBoxes() {
+    const allowed = boxes ? colourSettings(boxes.allowed) : [];
+    boxesEl.hidden = !boxes || allowed.length <= 1 || !allowed.some((s) => sameSetting(s, boxes.setting));
+    if (boxesEl.hidden) return;
+    keepBoxes.render(boxes.setting, allowed, {
+      ...boxes.hints, xyz: 'a colour is one value per atom',
+    });
+    // a box setting nobody saved yet can be kept as a metric
+    saveLink.hidden = !parseBoxId(boxes.id) || metricsById.get(boxes.id)?.origin === 'user';
+  }
 
   const predictionSelect = selectRow(body, 'Prediction', ['Ground Truth'], 'Ground Truth', (label) => {
     state.prediction = label === 'Ground Truth' ? null : keyByLabel.get(label) ?? null;
@@ -314,7 +411,9 @@ export function createColorByPane(sidebarEl, callbacks) {
       for (const opt of [...coloringSelect.options])
         if (!['Elements', 'Displacement'].includes(opt.value)) opt.remove();
       for (const entry of entries) {
-        if (!COLORABLE_SHAPES.has(entry.shape)) continue;
+        // a box setting is listed as its base, and chosen with the boxes
+        if (parseBoxId(entry.id)) continue;
+        if (!COLORABLE_SHAPES.has(entry.shape) && entry.shape !== VECTOR_PER_ATOM) continue;
         const label = colouringLabel(entry);
         if (labelToMetricId.has(label)) continue;
         labelToMetricId.set(label, entry.id);
@@ -338,21 +437,17 @@ export function createColorByPane(sidebarEl, callbacks) {
         }
       }
       _rebuildParamControls();
+      renderBoxes();
     },
 
     /** Colour the atoms by metric `id` (the Metrics pane's shortcut, ADR 0057
      * rule 13): the same as picking it in the Coloring list.
      * @returns {boolean} false when the metric has no value per atom here */
     chooseMetric(id) {
-      const label = [...labelToMetricId].find(([, m]) => m === id)?.[0];
+      const label = labelOfSource(`metric:${id}`);
       if (!label) return false;
       coloringSelect.value = currentLabel = label;
-      state.source = `metric:${id}`;
-      missingNote.hidden = true;
-      _syncVisibility();
-      clearLimits();
-      callbacks.onSourceChange(state.source);
-      _rebuildParamControls();
+      applySource(`metric:${id}`);
       return true;
     },
 
@@ -392,6 +487,7 @@ export function createColorByPane(sidebarEl, callbacks) {
       colormapSelect.value = settings.colormap;
       _syncVisibility();
       _rebuildParamControls({ restore: true });
+      showBoxes();
     },
   };
 }

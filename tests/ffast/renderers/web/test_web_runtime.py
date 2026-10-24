@@ -748,7 +748,7 @@ async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server
             await page.locator("#quick-styles button", has_text="Force error").click()
             assert await _open_sections(page) == ["Colour By"]
             await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value(
-                "Force Error Magnitude (per atom)")
+                "Force Difference")
             await expect(page.locator(_control("Colour By", "Prediction"))).to_have_value(name)
             await expect(page.locator(_control("Colour By", "Colormap"))).to_have_value("force_error")
             await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
@@ -1275,7 +1275,7 @@ row = 1
 col = 0
 title = "C"
   [visualization.tabs.panels.metrics.value]
-  metric = "ffast.force_component_mae"
+  metric = "ffast.force_difference[dataset;component;mae]"
 
 [[visualization.tabs.panels]]
 kind = "table"
@@ -1283,7 +1283,7 @@ row = 0
 col = 1
 title = "B"
   [visualization.tabs.panels.metrics.value]
-  metric = "ffast.force_component_mae"
+  metric = "ffast.force_difference[dataset;component;mae]"
 
 [[visualization.tabs.panels]]
 kind = "table"
@@ -1291,7 +1291,7 @@ row = 0
 col = 0
 title = "A"
   [visualization.tabs.panels.metrics.value]
-  metric = "ffast.force_component_mae"
+  metric = "ffast.force_difference[dataset;component;mae]"
 """
 
 
@@ -1889,7 +1889,7 @@ row = 1
 col = 1
 title = "Forces MAE"
   [visualization.tabs.panels.metrics.value]
-  metric = "ffast.force_component_mae"
+  metric = "ffast.force_difference[dataset;component;mae]"
 """
 
 
@@ -2749,7 +2749,7 @@ async def test_web_a_subset_opens_looking_like_its_parent(ffast_web_server):
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await page.locator("#quick-styles button", has_text="Force error").click()
             coloring = page.locator(_control("Colour By", "Coloring"))
-            await expect(coloring).to_have_value("Force Error Magnitude (per atom)")
+            await expect(coloring).to_have_value("Force Difference")
 
             await _open_analysis_tab(page, "Basic Errors")
             await page.wait_for_function(
@@ -2761,7 +2761,7 @@ async def test_web_a_subset_opens_looking_like_its_parent(ffast_web_server):
 
             await _open_analysis_tab(page, "3D")
             await expect(page.locator("#frame-label")).to_have_text("0 / 9", timeout=15000)
-            await expect(coloring).to_have_value("Force Error Magnitude (per atom)")
+            await expect(coloring).to_have_value("Force Difference")
             await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
         finally:
             await browser.close()
@@ -2783,7 +2783,7 @@ row = 0
 col = 1
 view = "independent"
   [visualization.tabs.panels.start]
-  colour_by = "ffast.force_mae"
+  colour_by = "ffast.force_difference[atom+structure;length]"
   colormap = "force_error"
 """
 
@@ -2829,7 +2829,7 @@ async def test_web_an_independent_panel_has_its_own_data_and_look(tmp_path):
                 await expect(page.locator(_PANEL)).to_be_visible()
                 await expect(page.locator(_panel_control("Dataset"))).to_have_value(dataset_fp)
                 await expect(page.locator(_panel_control("Prediction"))).to_have_value(model_fp)
-                await expect(coloring).to_have_value("Force Error Magnitude (per atom)")
+                await expect(coloring).to_have_value("Force Difference")
 
                 await _focus_3d(page, 0)
                 await expect(page.locator("#sidebar-title")).to_contain_text("(main view)")
@@ -2843,7 +2843,7 @@ async def test_web_a_missing_start_colour_metric_shows_elements_and_says_why(tmp
     """Rule 13: a starting colour metric the server lacks gives element
     colours, and the panel says why."""
     config = tmp_path / "ffast.toml"
-    config.write_text(_COMPARE_TOML.replace("ffast.force_mae", "nope.metric"))
+    config.write_text(_COMPARE_TOML.replace("ffast.force_difference[atom+structure;length]", "nope.metric"))
     async with _spawn_server("--config", str(config)) as (ws_port, web_port):
         dataset_fp = await _preload_dataset(ws_port)
         async with async_playwright() as p:
@@ -2982,7 +2982,7 @@ async def test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_scree
     screen; Save writes them to the tab file."""
     config = tmp_path / "ffast.toml"
     config.write_text(_COMPARE_TOML.replace('view = "independent"\n  [visualization.tabs.panels.start]\n'
-                                            '  colour_by = "ffast.force_mae"\n  colormap = "force_error"\n', ""))
+                                            '  colour_by = "ffast.force_difference[atom+structure;length]"\n  colormap = "force_error"\n', ""))
     tabs_dir = tmp_path / "tabs"
     async with _spawn_server("--config", str(config), "--tabs-dir", str(tabs_dir)) as (ws_port, web_port):
         dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
@@ -2995,7 +2995,7 @@ async def test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_scree
                 await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
                 await page.locator("#quick-styles button", has_text="Force error").click()
                 await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value(
-                    "Force Error Magnitude (per atom)")
+                    "Force Difference")
 
                 await page.locator("#tab-edit-btn").click()
                 await page.locator(_CHROME).nth(1).locator("[data-edit=panel3d]").click()
@@ -3003,7 +3003,9 @@ async def test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_scree
                 await dialog.locator("select[data-field=view]").select_option("independent")
                 await dialog.locator("input[data-field=link_camera]").uncheck()
                 await dialog.locator("[data-edit=use-current]").click()
-                await expect(dialog.locator("[data-field=start]")).to_contain_text("colour_by = ffast.force_mae")
+                # the Force error style colours by Force Difference's first per-atom setting
+                await expect(dialog.locator("[data-field=start]")).to_contain_text(
+                    "colour_by = ffast.force_difference[atom+structure;component;mae]")
                 await dialog.get_by_role("button", name="Apply").click()
                 await page.locator("[data-edit=save]").click()
                 await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
@@ -3011,7 +3013,7 @@ async def test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_scree
                 saved = tomllib.loads((tabs_dir / "compare.toml").read_text())
                 panel = saved["tabs"][0]["panels"][1]
                 assert panel["view"] == "independent" and panel["link_camera"] is False
-                assert panel["start"]["colour_by"] == "ffast.force_mae"
+                assert panel["start"]["colour_by"] == "ffast.force_difference[atom+structure;component;mae]"
                 # force_error is the default colour map, so the start leaves it out
                 assert "colormap" not in panel["start"]
             finally:
@@ -3036,7 +3038,7 @@ row = 0
 col = 1
 title = "Top"
   [visualization.tabs.panels.metrics.value]
-  metric = "ffast.force_component_mae"
+  metric = "ffast.force_difference[dataset;component;mae]"
 
 [[visualization.tabs.panels]]
 kind = "table"
@@ -3044,7 +3046,7 @@ row = 1
 col = 1
 title = "Bottom"
   [visualization.tabs.panels.metrics.value]
-  metric = "ffast.force_component_rmse"
+  metric = "ffast.force_difference[dataset;component;rmse]"
 """
 
 
@@ -3085,7 +3087,7 @@ row = 0
 col = {col}
 title = "T{col}"
   [visualization.tabs.panels.metrics.value]
-  metric = "ffast.force_component_mae"
+  metric = "ffast.force_difference[dataset;component;mae]"
 """ for col in range(4))
 
 
@@ -3162,7 +3164,7 @@ async def test_web_user_tabs_reach_every_window_and_can_be_reset_hidden_exported
                 # An edited built-in tab, in its place, marked.
                 answer = await _tab_request(ws_port, "SAVE_TAB", {"previous_name": "Gyration", "tab": {
                     "name": "Gyration", "panels": [{"kind": "table", "row": 0, "col": 0, "title": "MAE",
-                        "metrics": {"value": {"metric": "ffast.force_component_mae"}}}]}})
+                        "metrics": {"value": {"metric": "ffast.force_difference[dataset;component;mae]"}}}]}})
                 assert answer["ok"], answer
                 gyration = page.locator("#tabbar .tab", has_text="Gyration")
                 await expect(gyration.locator(".tab-mark")).to_have_text("edited")
@@ -3254,7 +3256,7 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
                 await page.locator(".edit-modal select[data-field=kind]").select_option("table")
                 assert "ffast.gyradius" not in await page.locator(
                     ".edit-modal select[data-role=value]").inner_text()   # not a scalar
-                await page.locator(".edit-modal select[data-role=value]").select_option("ffast.force_component_mae")
+                await page.locator(".edit-modal select[data-role=value]").select_option("ffast.force_difference[dataset;component;mae]")
                 await page.locator(".edit-modal input[data-field=title]").fill("Force MAE")
                 await page.get_by_role("button", name="Add", exact=True).click()
                 await expect(page.locator(_CHROME)).to_have_count(5)
@@ -3429,7 +3431,7 @@ async def test_web_edit_mode_warns_when_another_window_saved_the_tab(tmp_path):
             page = await browser.new_page(viewport={"width": 1300, "height": 820})
             other = {"previous_name": "Basic Errors", "tab": {"name": "Basic Errors", "panels": [
                 {"kind": "table", "row": 0, "col": 0, "title": "Theirs",
-                 "metrics": {"value": {"metric": "ffast.force_component_mae"}}}]}}
+                 "metrics": {"value": {"metric": "ffast.force_difference[dataset;component;mae]"}}}]}}
             try:
                 await _open_app(page, web_port, ws_port)
                 await _open_analysis_tab(page, "Basic Errors")
@@ -3551,7 +3553,7 @@ async def _show_rows_that_offer_a_prediction(page):
     only for a metric colouring, Force Vectors shows Source only with arrows on."""
     await _open_section(page, "Colour By")
     coloring = page.locator(".pane[data-pane='Colour By'] .ctl-row[data-label='Coloring'] select")
-    await coloring.select_option(label="Acceleration Error Magnitude (averaged per atom)")
+    await coloring.select_option(label="Acceleration Difference")
     await _open_section(page, "Force Vectors")
     await page.locator(
         ".pane[data-pane='Force Vectors'] .ctl-row[data-label='Show force vectors'] input"
@@ -4085,12 +4087,12 @@ async def test_web_color_by_selector_recolors_atoms_and_shows_colorbar(ffast_web
             coloring = page.locator(
                 ".pane[data-pane='Colour By'] .ctl-row[data-label='Coloring'] select"
             )
-            # Exact match: other "Acceleration Error Magnitude" colourings
-            # exist and would otherwise satisfy a substring match.
-            await expect(
-                coloring.locator("option", has_text=re.compile(r"^Acceleration Error Magnitude \(averaged per atom\)$"))
+            # The base is listed once; its setting is chosen with the keep
+            # boxes under the list (ADR 0065).
+            await expect(coloring.locator("option", has_text=re.compile(
+                r"^Acceleration Difference$"))
             ).to_have_count(1)
-            await coloring.select_option(label="Acceleration Error Magnitude (averaged per atom)")
+            await coloring.select_option(label="Acceleration Difference")
             await page.wait_for_timeout(700)
 
             await expect(colorbar).not_to_have_class(re.compile(r"\bhidden\b"))

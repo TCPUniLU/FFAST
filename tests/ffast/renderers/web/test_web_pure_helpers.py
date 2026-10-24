@@ -98,9 +98,11 @@ CASES = {
         " r.after_close = box.children.length; box.remove(); return r; })()"
     ),
     "ss_colouring_labels": (
-        "[ss.colouringLabel({id: 'ffast.force_mae_per_element', label: 'Force MAE (by element)', shape: 'N_elements'}),"
+        "[ss.colouringLabel({id: 'ffast.force_difference[element;component;mae]',"
+        " label: 'Force Difference · MAE · per element · per component', shape: 'N_elements'}),"
         " ss.colouringLabel({id: 'my.el', shape: 'N_elements'}),"
-        " ss.colouringLabel({id: 'ffast.force_mae', label: 'Force Error Magnitude (per atom)', shape: 'N_atoms'})]"
+        " ss.colouringLabel({id: 'ffast.force_difference[atom+structure;length]',"
+        " label: 'Force Difference · per atom · length', shape: 'N_atoms'})]"
     ),
     "trap_focus": (
         "(() => { const m = document.createElement('div');"
@@ -486,9 +488,9 @@ CASES = {
 
     # ── ss: an independent panel's starting look (rule 13) ──────────────────
     "ss_full": (
-        "ss.startCommands({colour_by: 'ffast.force_mae', colormap: 'force_error', atom_size: 1.2,"
+        "ss.startCommands({colour_by: 'ffast.force_difference[atom+structure;length]', colormap: 'force_error', atom_size: 1.2,"
         " bond_width: 60, bond_colour: '#ff8800', force_arrows: true, force_length: 20,"
-        " force_normalised: false}, {modelFp: 'm1', catalog: [{id: 'ffast.force_mae'}]})"),
+        " force_normalised: false}, {modelFp: 'm1', catalog: [{id: 'ffast.force_difference[atom+structure;length]'}]})"),
     "ss_missing_metric": (
         "ss.startCommands({colour_by: 'nope.metric'}, {modelFp: 'm1', catalog: []})"),
     "ss_plain": "ss.startCommands({colour_by: 'displacement'}, {modelFp: null, catalog: []})",
@@ -496,14 +498,14 @@ CASES = {
         "ss.startCommands({colour_by: 'user.h_err'},"
         " {modelFp: 'm1', catalog: [{id: 'user.h_err', shape: '(N_frames, N_elements)'}]}).commands[0].value"),
     "ss_not_per_atom": (
-        "ss.startCommands({colour_by: 'ffast.energy_mae'},"
-        " {modelFp: 'm1', catalog: [{id: 'ffast.energy_mae', shape: 'scalar'}]}).note"),
+        "ss.startCommands({colour_by: 'ffast.energy_difference[dataset;mae]'},"
+        " {modelFp: 'm1', catalog: [{id: 'ffast.energy_difference[dataset;mae]', shape: 'scalar'}]}).note"),
     "ss_clean": (
         "[ss.cleanStart({colormap: 'viridis', atom_size: null, bond_width: undefined}),"
         " ss.cleanStart({atom_size: null}), ss.cleanStart(null)]"),
     "ss_empty": "ss.startCommands(null, {modelFp: null, catalog: []})",
     "ss_from_current": (
-        "ss.startFromCurrent({source: 'metric:ffast.force_mae', colormap: 'force_error', atomSize: 1,"
+        "ss.startFromCurrent({source: 'metric:ffast.force_difference[atom+structure;length]', colormap: 'force_error', atomSize: 1,"
         " bondWidth: 100, bondColour: '#404040', forces: {show: true, length: 10, normalised: true}})"),
     "ss_from_current_plain": (
         "ss.startFromCurrent({source: 'element', colormap: 'viridis', atomSize: 1.5,"
@@ -887,7 +889,8 @@ def results():
 
 def test_a_colouring_has_the_plots_name_in_the_list(results):
     assert results["ss_colouring_labels"] == [
-        "Force MAE (by element)", "my.el", "Force Error Magnitude (per atom)"]
+        "Force Difference · MAE · per element · per component", "my.el",
+        "Force Difference · per atom · length"]
 
 
 # ── toasts.showWarning ───────────────────────────────────────────────────────
@@ -1625,7 +1628,7 @@ def test_a_starting_look_becomes_view_commands_on_the_panels_own_prediction(resu
     full = results["ss_full"]
     assert full["commands"] == [
         {"type": "SET_PARAMETER", "stage_id": "ffast.atom_color", "parameter": "source",
-         "value": "metric:ffast.force_mae"},
+         "value": "metric:ffast.force_difference[atom+structure;length]"},
         {"type": "SET_PARAMETER", "stage_id": "ffast.atom_color", "parameter": "prediction_ref",
          "value": "m1"},
         {"type": "SET_PARAMETER", "stage_id": "ffast.atom_color", "parameter": "colormap",
@@ -1643,7 +1646,7 @@ def test_a_starting_look_becomes_view_commands_on_the_panels_own_prediction(resu
     assert full["bondStyle"] == [60, "#ff8800", True]
     assert full["note"] == ""
     assert full["settings"] == {
-        "source": "metric:ffast.force_mae", "colormap": "force_error", "prediction": "m1",
+        "source": "metric:ffast.force_difference[atom+structure;length]", "colormap": "force_error", "prediction": "m1",
         "atomSize": 1.2, "bondWidth": 60, "bondColour": "#ff8800",
         "forces": {"show": True, "length": 20, "normalised": False}}
 
@@ -1656,7 +1659,7 @@ def test_a_missing_colour_metric_falls_back_to_element_colours_and_says_why(resu
 
 def test_a_start_colour_metric_without_a_value_per_atom_falls_back_too(results):
     assert results["ss_not_per_atom"] == (
-        "Colour metric ffast.energy_mae has no value per atom; showing element colours")
+        "Colour metric ffast.energy_difference[dataset;mae] has no value per atom; showing element colours")
 
 
 def test_a_table_per_structure_and_element_colours_atoms(results):
@@ -1680,7 +1683,7 @@ def test_use_current_3d_settings_as_start(results):
     """Rule 15's "Use current 3D settings as start": the look on screen, as
     the start keys; defaults are left out."""
     assert results["ss_from_current"] == {
-        "colour_by": "ffast.force_mae", "force_arrows": True}
+        "colour_by": "ffast.force_difference[atom+structure;length]", "force_arrows": True}
     assert results["ss_from_current_plain"] == {
         "colormap": "viridis", "atom_size": 1.5, "bond_width": 40, "bond_colour": "#123456"}
 
