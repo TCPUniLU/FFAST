@@ -326,7 +326,7 @@ class TestServerMetricColoring:
         assert len(cb.values) == 4                       # one value per atom
         assert cb.values[1] == pytest.approx(cb.values[2])   # both H atoms equal
         assert cb.values[0] != pytest.approx(cb.values[1])   # C differs from H
-        assert cb.label == "Force MAE (by element, this frame)"   # 3D colours by this frame
+        assert cb.label == "Force MAE (by element, this frame)"   # no whole dataset given
 
     def test_accel_metric_resolves_via_ase_mass_fallback(self):
         """Acceleration error needs atomic masses; _DS has no getMasses, so the

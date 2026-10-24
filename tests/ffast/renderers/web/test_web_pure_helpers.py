@@ -866,9 +866,9 @@ def results():
         thread.join(timeout=5)
 
 
-def test_a_per_element_colouring_says_this_frame_in_the_list(results):
+def test_a_colouring_has_the_plots_name_in_the_list(results):
     assert results["ss_colouring_labels"] == [
-        "Force MAE (by element, this frame)", "my.el (this frame)", "Force Error Magnitude (per atom)"]
+        "Force MAE (by element)", "my.el", "Force Error Magnitude (per atom)"]
 
 
 # ── toasts.showWarning ───────────────────────────────────────────────────────

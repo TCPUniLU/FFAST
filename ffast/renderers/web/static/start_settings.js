@@ -22,15 +22,14 @@ const COLOUR = 'ffast.atom_color';
 export const COLORABLE_SHAPES = new Set(['N_atoms', 'N_elements']);
 
 /**
- * A metric's name in the Coloring list. A per-element metric colours by the
- * frame on screen, while its 2D plots average all frames, so here its name
- * says "this frame" (ffast.visualization.color_values.frame_colour_label).
+ * A metric's name in the Coloring list. Colouring reads the metric over the
+ * whole dataset, as the 2D plots do, so the name is the plots' name. Only when
+ * the prediction covers the frame on screen alone does the colour bar say
+ * "this frame" (ffast.visualization.color_values.frame_colour_label).
  * @param {{id: string, label?: string, shape: string}} entry
  */
 export function colouringLabel(entry) {
-  const label = entry.label || entry.id;
-  if (entry.shape !== 'N_elements') return label;
-  return label.endsWith(')') ? `${label.slice(0, -1)}, this frame)` : `${label} (this frame)`;
+  return entry.label || entry.id;
 }
 
 /** The keys that are set: the server sends unset ones as null. Null when
