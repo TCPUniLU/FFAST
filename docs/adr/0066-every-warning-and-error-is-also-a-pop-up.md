@@ -1,6 +1,6 @@
 # Every warning and error is also a pop-up
 
-Status: Accepted 2026-10-24.
+Status: Accepted 2026-10-24, built 2026-10-24 (steps 1-6).
 
 ## The problem
 

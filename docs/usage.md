@@ -110,6 +110,16 @@ One page rather than a menu bar:
 - **Right sidebar** (in the 3D view). Collapsible panes, grouped: Display, Bonds
   and Unit Cell under Appearance; Colour By, Force Vectors, Extract Subset and
   Alignment under Analysis; Camera and Export under View.
+- **Warnings and errors** appear as pop-ups in the bottom-right corner:
+  yellow for a warning (the work was done, but something is left out or
+  doubtful), red for an error (something you asked for did not happen). A
+  pop-up closes by its × or by itself after 10 seconds, and stays while the
+  pointer is on it. The same message again adds "×2" to the open pop-up. A
+  panel's warning or failure pops up once, not on every redraw. The pop-up
+  is extra: the ⚠ beside a panel's title, a failed panel's "Could not compute
+  ‹metric›: ‹reason›", a warning under a formula and an error on the status
+  line stay where they are. An error that answers a button you pressed in a
+  pane (such as "x is not an input") shows only next to that button.
 
 Selecting a dataset is what makes everything else light up; analysis tabs also
 need at least one prediction selected.
@@ -458,7 +468,9 @@ What a formula may use:
   | `atom` | the same atom in every structure | per atom of one structure | an error |
 
   `by=atom` needs every structure to have the same atoms in the same order;
-  on any other dataset the metric fails and says so.
+  on any other dataset the metric fails and says so. In the browser, the
+  check under the formula already warns when the dataset you have open is
+  such a dataset; you can still save the formula for another one.
 
   A forgotten `by=` is an error, never a silent average over everything.
   `by=all` counts every atom once: the mean of the per-structure means is
