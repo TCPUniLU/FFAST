@@ -454,6 +454,7 @@ What a formula may use:
   | `structure` | the atoms of each structure | per structure | an error |
   | `element` | the atoms of each element | per element | an error |
   | `all` | everything | one number | one number |
+  | `(structure, element)` | the atoms of each element in each structure | per structure and element | an error |
 
   A forgotten `by=` is an error, never a silent average over everything.
   `by=all` counts every atom once: the mean of the per-structure means is
@@ -465,6 +466,18 @@ What a formula may use:
   `sum_parts(v)` average or add the parts at each place, so the two usual force
   errors are `mean(norm(pred_F - ref_F), by=all)` (mean length of the error) and
   `mean(mean_parts(abs(pred_F - ref_F)), by=all)` (mean of all x, y, z errors).
+- `by=(structure, element)` gives a table: one row per structure, one column per
+  element of the dataset, in order of atomic number. A structure without that
+  element has no value in that cell. It shows how the error of each element
+  changes from frame to frame:
+
+  ```
+  mean(mean_parts(abs(pred_F - ref_F)), by=(structure, element))
+  ```
+
+  Write the pair in this order (`by=(element, structure)` is an error). A table
+  combines with one number or with another table, but not with a per-structure
+  or per-element value, and it cannot be reduced again yet.
 - `element("H")` is 1 for each hydrogen atom and 0 for the others; it takes
   several symbols, `element("C", "N", "O")`, and "all but H" is
   `1 - element("H")`. These symbols are the only text a formula may hold.
@@ -517,15 +530,17 @@ shows and follows it; you can choose another one there without changing the tab.
    variables. Typing offers the same names. A name with no input is shown in red
    ("`ref_E` is not an input"), with a **Fix** button when exactly one input fits.
    The line under the formula says what the result is: per structure (can be
-   plotted), per atom (can colour atoms) or one number. A per-atom formula that
-   uses `by=all` or `by=element` colours atoms from the whole dataset, so
-   `norm(pred_F - ref_F) / max(norm(pred_F - ref_F), by=all)` gives 1 to the
-   largest error of the dataset. With a prediction that covers only the frame
-   on screen, such a formula shows element colours.
+   plotted), per atom (can colour atoms), per element (bars), per structure and
+   element (a line per element, and can colour atoms) or one number. A per-atom
+   formula that uses `by=all` or `by=element` colours atoms from the whole
+   dataset, so `norm(pred_F - ref_F) / max(norm(pred_F - ref_F), by=all)` gives
+   1 to the largest error of the dataset. With a prediction that covers only the
+   frame on screen, such a formula shows element colours.
 3. **Try** computes the formula on every frame of the selected dataset and
    prediction without saving it. It shows the smallest, average and largest
    value, a histogram, how many places have no value ("12 structures have no
-   value"), and the first frames with bad values (infinity, not-a-number);
+   value"; for a table, "100 structures × 3 elements" and its empty cells), and
+   the first frames with bad values (infinity, not-a-number);
    click a frame number to go to it. **Cancel** stops it. A bad
    value fails the whole metric once it is saved, so try first.
 4. **Save** keeps the metric on the server, in `~/.ffast/metrics/`, one TOML file
@@ -549,8 +564,11 @@ project's `ffast.toml`.
 
 For a per-atom metric, **Colour atoms by this** sets the colouring of the 3D view
 the settings sidebar acts on. For a per-structure metric, **Plot it** adds a
-timeline, and for a per-element one a bars panel, to the "My metrics" tab (made
-for you, with the main view beside the plot). It never changes a built-in or project tab. Any saved metric can also be
+timeline, for a per-element one a bars panel, and for a per-structure-and-element
+one a timeline with one line per element (and the element picker), to the "My
+metrics" tab (made for you, with the main view beside the plot). A
+per-structure-and-element metric also colours atoms: each atom takes its
+element's value in the frame on screen, the same number the timeline shows. It never changes a built-in or project tab. Any saved metric can also be
 put into a panel of any tab with the tab editor.
 
 If a project or built-in metric has the same id as a user file, that one wins and
@@ -568,7 +586,10 @@ the session's one is added as `<id>.2` and the server's is left alone.
 A tab is a grid of panels; a panel binds metrics to axes. Panel kinds available:
 `timeline`, `density`, `scatter`, `table`, `overlay_timeline`, `grouped_density`,
 `grouped_table`, and `bars` (one per-element metric, `value`, as a group of
-bars per element; an element with no value has no bar and says so).
+bars per element; an element with no value has no bar and says so). A
+`timeline` also takes a per-structure-and-element metric as `y`: one line per
+element in the element's colour, one line style per prediction, gaps for
+empty cells.
 
 ```toml
 [[visualization.tabs]]

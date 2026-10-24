@@ -44,7 +44,8 @@ def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
     Each entry: ``{id, label, shape, unit, parameters}`` where ``shape`` is the
     string form (e.g. ``"N_atoms"``, ``"N_elements"``, ``"scalar"``) and
     ``parameters`` maps name → flattened ParameterSchema. Clients filter by
-    ``shape`` for their use (atom coloring keeps ``N_atoms`` / ``N_elements``).
+    ``shape`` for their use (atom coloring keeps ``N_atoms`` / ``N_elements`` /
+    ``(N_frames, N_elements)``).
 
     With ``user_metrics`` (ADR 0057) each entry also says where the metric
     comes from and its formula if it is an Expression Metric. Who uses it is a

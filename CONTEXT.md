@@ -160,8 +160,10 @@ A metric compiled from a `[[metrics.expr]]` config entry, evaluating arithmetic
 over named variables. No Python. Arithmetic works value by value: the
 non-scalar operands must share one shape while scalars and literals broadcast.
 Reductions (`mean`, `sum`, `min`, `max`, `rms`, `std`) combine values and must
-say what they combine with `by=structure|element|all`, which alone decides the
-result's shape; `where=` picks the rows that count (ADR 0064). A bad value
+say what they combine with `by=structure|element|all`, or
+`by=(structure, element)` for a table with a row per structure and a column
+per element; `by=` alone decides the result's shape, and `where=` picks the
+rows that count (ADR 0064). A bad value
 (non-finite output) raises rather than quietly emitting `nan` (ADR 0042).
 
 ### No value

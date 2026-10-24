@@ -1,7 +1,7 @@
 # Formulas can average, total and take extremes by structure, element or all, over chosen atoms
 
 Status: Accepted 2026-10-23, built 2026-10-23 (steps 1-7). Amendment of 2026-10-24
-(per structure and per element at once) proposed. Amendment of 2026-10-24
+(per structure and per element at once) accepted and built 2026-10-24. Amendment of 2026-10-24
 (colouring reads the whole dataset) accepted and built. Supersedes ADR 0042 Decision 1 ("Element-wise
 only") and the "Reduction scope" option it chose; the rest of ADR 0042 stands.
 
@@ -483,8 +483,8 @@ bars.
 
 ## Amendment 2026-10-24: per structure and per element at once
 
-Status: Proposed 2026-10-24. Takes "Per structure and per element at once"
-out of "Not now".
+Status: Accepted 2026-10-24, built 2026-10-24 (steps 1-6). Takes "Per
+structure and per element at once" out of "Not now".
 
 **The problem.** "Per element" means two different things today. The built-in
 `ffast.force_mae_per_element` colours atoms by the frame on screen, but its

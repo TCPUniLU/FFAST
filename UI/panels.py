@@ -479,19 +479,32 @@ class MetricTablePanel(_ParamControls, Table):
 # Built-in Panel Kinds
 # --------------------------------------------------------------------------- #
 import ffast.metrics.dims as dims  # noqa: E402  (after BasicPlotWidget import block)
+import pyqtgraph  # noqa: E402
+
+# Line styles that tell series apart where colour means element.
+_LINE_STYLES = (QtCore.Qt.PenStyle.SolidLine, QtCore.Qt.PenStyle.DashLine,
+                QtCore.Qt.PenStyle.DotLine, QtCore.Qt.PenStyle.DashDotLine)
 
 
 class TimelineKind(PanelKind):
-    """X = configuration index, Y = a per-frame Metric. Subbable (x-range → frames)."""
+    """X = configuration index, Y = a per-frame Metric. Subbable (x-range → frames).
+
+    A table per structure and element (ADR 0064 amendment 2026-10-24) draws a
+    line per element in the element's colour, one line style per series; the
+    tab's element picker, when it has one, chooses the lines. The browser's
+    ``buildTimeline`` (panels.js) draws the same."""
 
     name = "timeline"
     subbable = True
     roles = ("y",)
-    shapes = {"y": dims.N_frames}
+    shapes = {"y": [dims.N_frames, (dims.N_frames, dims.N_elements)]}
     x_default = "Configuration index"
 
     def draw(self, panel, data, spec):
-        y = np.asarray(data["dataEntry"][spec["y"]].values).ravel()
+        y = np.asarray(data["dataEntry"][spec["y"]].values)
+        if y.ndim == 2:
+            return  # a table: every series at once, in draw_overlay (each needs its line style)
+        y = y.ravel()
         # antialias=False: a timeline is a long per-frame signal; zoomed in, its
         # off-screen points reach million-pixel device coords and AA coverage
         # math over segments that large is what stalls the software raster
@@ -501,6 +514,30 @@ class TimelineKind(PanelKind):
             np.arange(y.shape[0]), y, autoColor=data, autoLabel=data,
             antialias=False,
         )
+
+    def draw_overlay(self, panel, data_list, spec):
+        from ffast.chemistry import atomColors
+        from ase.data import chemical_symbols
+        tables = [d for d in data_list
+                  if d["dataEntry"].get(spec["y"]) is not None
+                  and np.ndim(d["dataEntry"][spec["y"]].values) == 2]
+        selector = spec.get("selector_obj")
+        atom_types = selector.getSelectedAtomInfo() if selector else {"All": {}}
+        picked = {info["index"] for name, info in atom_types.items() if name != "All"}
+        for i, data in enumerate(tables):
+            table = np.asarray(data["dataEntry"][spec["y"]].values, dtype=float)
+            order = [int(z) for z in _element_order(data["dataset"])]
+            shown = order if "All" in atom_types or not picked else [z for z in order if z in picked]
+            style = _LINE_STYLES[i % len(_LINE_STYLES)]
+            for z in shown:
+                col = order.index(z)
+                if col >= table.shape[1]:
+                    continue
+                pen = pyqtgraph.mkPen(atomColors[z], width=float(getConfig("plotPenWidth")), style=style)
+                # connect="finite": an empty cell (NaN) is a gap in its line.
+                label = f"{chemical_symbols[z]} — __NAME__" if len(tables) > 1 else chemical_symbols[z]
+                panel.plot(np.arange(table.shape[0]), table[:, col], pen=pen, autoColor=data,
+                           label=label, autoLabel=data, antialias=False, connect="finite")
 
     def sub_indices(self, panel, dataset, model, spec):
         # Phase 1: drawn-index ≈ frame index. The smoothing-window offset that a

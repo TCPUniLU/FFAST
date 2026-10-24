@@ -50,6 +50,19 @@ CASES = {
         "[ml.suggestions('mean(e, by=s', 12, ['e'], []).map(s => [s.text, s.kind]),"
         " ml.suggestions('mean(e, by=', 11, ['e'], []).length,"
         " ml.suggestions('me', 2, [], []).map(s => s.text)]"),
+    "names_skip_the_by_pair": (
+        "ml.valueNames('mean(err, by=(structure, element)) + mean(err, by = ( structure , element ))')"),
+    "suggest_in_the_by_pair": (
+        "[ml.suggestions('mean(e, by=(s', 13, ['e'], []).map(s => s.text),"
+        " ml.suggestions('mean(e, by=(structure, el', 25, ['e'], []).map(s => s.text)]"),
+    "table_shape": (
+        "[ml.shortcutFor(ml.TABLE_SHAPE), ml.shapeHint(ml.TABLE_SHAPE),"
+        " te.metricPanel({id: 'user.t', label: 'T', shape: ml.TABLE_SHAPE}).kind,"
+        " te.plotTarget([], te.metricPanel({id: 'user.t', shape: ml.TABLE_SHAPE}), {elementPicker: true}).tab.selector,"
+        " te.plotTarget([{name: 'My metrics', selector: 'other', panels: []}],"
+        "   te.metricPanel({id: 'user.t', shape: ml.TABLE_SHAPE}), {elementPicker: true}).tab.selector,"
+        " te.plotTarget([], te.metricPanel({id: 'user.a'})).tab.selector,"
+        " te.KIND_ROLES.timeline.roles.y]"),
     "undefined_ignores_constants": "ml.undefinedNames('pi * a + n_atoms', ['a'])",
     "undefined_lists_unknown": "ml.undefinedNames('a + b + c', ['a'])",
 
@@ -126,6 +139,11 @@ CASES = {
         " ml.noValueLine({no_value_count: 1, no_value_rows: 'structures'}),"
         " ml.noValueLine({no_value_count: 2, no_value_rows: 'elements'}),"
         " ml.noValueLine({no_value_count: 1, no_value_rows: 'result'}), ml.noValueLine({})]"),
+    "try_table": (
+        "[ml.tryHeadline({ok: true, count: 300, bad_count: 0, table: [100, 3]}, 'aspirin'),"
+        " ml.tryHeadline({ok: true, count: 300, bad_count: 2, table: [100, 3]}),"
+        " ml.tryHeadline({ok: true, count: 1, bad_count: 0, table: [1, 1]}),"
+        " ml.noValueLine({no_value_count: 12, no_value_rows: 'cells'})]"),
 
     # ── Plot it (rule 13) ───────────────────────────────────────────────────
     "plot_panel": "te.metricPanel({id: 'user.a', label: 'A'})",
@@ -271,6 +289,19 @@ def test_the_editor_reads_reductions(results):
     assert results["rename_whole_names_only"] == "ab + q + abc"
 
 
+def test_the_editor_reads_the_by_pair(results):
+    """ADR 0064 amendment 2026-10-24: the words of by=(structure, element) are
+    not inputs, and typing inside the pair offers them."""
+    assert results["names_skip_the_by_pair"] == ["err"]
+    assert results["suggest_in_the_by_pair"] == [["structure"], ["element"]]
+
+
+def test_a_table_is_plotted_as_a_timeline_with_the_element_picker(results):
+    assert results["table_shape"] == [
+        "plot", "per structure and element → can be plotted, a line per element, and colour atoms",
+        "timeline", "atomic", "other", None, ["N_frames", "(N_frames, N_elements)"]]
+
+
 def test_variable_names_must_be_clean_and_new(results):
     assert results["variable_name_problems"] == [
         "A name is letters, digits and underscores, not starting with a digit",
@@ -368,6 +399,15 @@ def test_try_says_how_many_places_have_no_value(results):
     assert results["no_value_lines"] == [
         "", "12 structures have no value", "1 structure has no value",
         "2 elements have no value", "The result has no value", ""]
+
+
+def test_try_of_a_table_counts_structures_and_elements(results):
+    # ADR 0064 amendment 2026-10-24, point 6.
+    assert results["try_table"] == [
+        "100 structures × 3 elements, all good — on aspirin",
+        "2 bad values of 300 — saving would fail the metric",
+        "1 structure × 1 element, all good",
+        "12 cells have no value"]
 
 
 def test_the_list_is_grouped_by_origin_with_user_entries_from_the_user_list(results):

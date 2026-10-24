@@ -5,7 +5,8 @@ report progress and stop cleanly when cancelled. Two sweeps: the first finds the
 statistics, the second fills the histogram, so no result is held whole. Chunks
 hold whole structures, so a formula that is element-wise or groups by structure
 gives the same answer as one pass; one that groups by element or by all
-(ADR 0064) needs the whole dataset and is one pass. Nothing is registered and
+(ADR 0064), or by structure and element (its columns are the dataset's
+elements), needs the whole dataset and is one pass. Nothing is registered and
 nothing is cached: this is a look at the numbers, so that bad values (infinity,
 not-a-number) are found *before* saving, where they would fail the metric.
 
@@ -25,11 +26,13 @@ from ffast.metrics import dims
 from ffast.metrics.dims import shape_to_str
 from ffast.metrics.expr import (
     HIDDEN_INPUTS,
+    PAIR,
     _ExprFn,
     ignored_warning,
     analyze_expr,
     by_words,
     formula_inputs,
+    is_table,
     parse_and_validate,
     resolve_ref_shape,
 )
@@ -57,6 +60,7 @@ class TryResult:
     max: float | None = None
     bad_frames: list[int] = field(default_factory=list)   # first few, in order
     histogram: dict | None = None       # {"edges": [...], "counts": [...]}
+    table: list[int] | None = None      # [structures, elements] of a table result
 
     def to_dict(self) -> dict:
         return {
@@ -65,6 +69,7 @@ class TryResult:
             "no_value_rows": self.no_value_rows, "ignored_warning": self.ignored_warning,
             "min": self.min, "mean": self.mean,
             "max": self.max, "bad_frames": self.bad_frames, "histogram": self.histogram,
+            "table": self.table,
         }
 
 
@@ -119,12 +124,14 @@ def try_formula(expr: str, variables: dict[str, str], registry,
 
     leads = {_lead(sh) for sh in shapes.values() if sh is not None and sh != (dims.scalar,)}
     out_lead = _lead(out_shape)
-    dataset_wide = bool(by_words(parse_and_validate(expr)) & {"element", "all"})
+    dataset_wide = bool(by_words(parse_and_validate(expr)) & {"element", "all", PAIR})
     chunkable = (leads <= {dims.N_frames, dims.N_atoms} and not dataset_wide
                  and out_lead in (dims.N_frames, dims.N_atoms))
 
+    table = is_table(out_shape)
+    # A table's no-value places are its empty cells (ADR 0064 amendment).
     result = TryResult(shape=shape_to_str(out_shape),
-                       no_value_rows=_ROW_WORDS.get(out_lead, "result"))
+                       no_value_rows="cells" if table else _ROW_WORDS.get(out_lead, "result"))
     total = 0
     bad_total = 0
     no_value = 0
@@ -143,6 +150,8 @@ def try_formula(expr: str, variables: dict[str, str], registry,
             ignored_count += ignored["count"]
             ignored_frames.extend(frame0 + f for f in ignored["frames"])
         arr = np.asarray(arr, dtype=float)
+        if table:
+            result.table = [int(n) for n in arr.shape[:2]]
         flat_axes = tuple(range(1, arr.ndim))
         gap_elem = _spread(gap, arr)
         no_value += int(np.sum(gap)) if gap is not None else 0

@@ -14,8 +14,10 @@ export const FORMULA_FUNCTIONS = [
   'sign', 'norm', 'x', 'y', 'z',
   'mean', 'sum', 'min', 'max', 'rms', 'std', 'mean_parts', 'sum_parts', 'element',
 ];
-/** The words `by=` takes. */
+/** The words `by=` takes, alone or as the pair `by=(structure, element)`. */
 export const BY_WORDS = ['structure', 'element', 'all'];
+/** Text that ends where a by= word goes: `by=`, `by=(` or `by=(structure, `. */
+const BY_BEFORE = /\bby\s*=\s*(\(\s*([A-Za-z_]+\s*,\s*)?)?$/;
 /** Names that need no `vars` row. */
 export const FORMULA_CONSTANTS = ['pi', 'n_atoms'];
 
@@ -40,7 +42,7 @@ function valueMatches(expr) {
     const after = bare.slice(m.index + m[0].length);
     if (/^\s*\(/.test(after)) continue;
     if (/^\s*=(?!=)/.test(after)) continue;
-    if (BY_WORDS.includes(m[0]) && /\bby\s*=\s*$/.test(bare.slice(0, m.index))) continue;
+    if (BY_WORDS.includes(m[0]) && BY_BEFORE.test(bare.slice(0, m.index))) continue;
     // `1e5` / `2e-3`: the "e" belongs to the number
     if (m.index > 0 && /[0-9.]/.test(expr[m.index - 1]) && /^e\d*$/.test(m[0])) continue;
     out.push(m);
@@ -129,8 +131,8 @@ export function suggestions(value, caret, varNames, inputs) {
   const { prefix, start } = identifierBefore(value, caret);
   if (!prefix) return [];
   const q = prefix.toLowerCase();
-  // After `by=` only its three words make sense.
-  if (/\bby\s*=\s*$/.test(value.slice(0, start)))
+  // After `by=` only its words make sense.
+  if (BY_BEFORE.test(value.slice(0, start)))
     return BY_WORDS.filter((w) => w.startsWith(q) && w !== prefix).map((w) => ({ text: w, kind: 'word' }));
   const out = [];
   const seen = new Set();
@@ -224,20 +226,26 @@ export function isDirty(draft, saved) {
 
 /**
  * The shortcut a result shape offers (rule 13): per atom colours the main view,
- * per structure plots a timeline, per element plots bars (ADR 0064 amendment).
+ * per structure plots a timeline, per element plots bars, per structure and
+ * element plots a line per element (ADR 0064 amendments).
  * @param {string|null|undefined} shape
  * @returns {'colour'|'plot'|null}
  */
 export function shortcutFor(shape) {
   if (shape === 'N_atoms') return 'colour';
-  if (shape === 'N_frames' || shape === 'N_elements') return 'plot';
+  if (shape === 'N_frames' || shape === 'N_elements' || shape === TABLE_SHAPE) return 'plot';
   return null;
 }
+
+/** The shape of a by=(structure, element) result: a row per structure, a
+ * column per element (ADR 0064 amendment 2026-10-24). */
+export const TABLE_SHAPE = '(N_frames, N_elements)';
 
 /** The grey words for a good check: where the result can go. */
 export function shapeHint(shape) {
   const where = { N_atoms: 'per atom → can colour atoms', N_frames: 'per structure → can be plotted',
-    N_elements: 'per element → can be plotted as bars', scalar: 'one number for the dataset' }[shape];
+    N_elements: 'per element → can be plotted as bars', scalar: 'one number for the dataset',
+    [TABLE_SHAPE]: 'per structure and element → can be plotted, a line per element, and colour atoms' }[shape];
   return where ? `${where}` : `result shape ${shape}`;
 }
 
@@ -256,7 +264,13 @@ export function tryHeadline(r, name = '') {
   if (!r.ok) return r.error || 'Could not try the formula';
   const on = name ? ` — on ${name}` : '';
   if (r.bad_count) return `${r.bad_count} bad value${r.bad_count === 1 ? '' : 's'} of ${r.count} — saving would fail the metric${on}`;
+  if (r.table) return `${tableSize(r.table)}, all good${on}`;
   return `${r.count} value${r.count === 1 ? '' : 's'}, all good${on}`;
+}
+
+/** A table's size in words, '100 structures × 3 elements' (ADR 0064 amendment). */
+export function tableSize([rows, cols]) {
+  return `${rows} structure${rows === 1 ? '' : 's'} × ${cols} element${cols === 1 ? '' : 's'}`;
 }
 
 /** The line a Try adds when some places have no value (ADR 0064): '12

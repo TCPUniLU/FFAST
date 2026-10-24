@@ -18,8 +18,10 @@ export const DEFAULT_LOOK = Object.freeze({
 
 const COLOUR = 'ffast.atom_color';
 
-/** Metric shapes that colour atoms: one value per atom or per element. */
-export const COLORABLE_SHAPES = new Set(['N_atoms', 'N_elements']);
+/** Metric shapes that colour atoms: one value per atom or per element, or a
+ * table per structure and element, whose row for the frame on screen colours
+ * it (ADR 0064 amendment). */
+export const COLORABLE_SHAPES = new Set(['N_atoms', 'N_elements', '(N_frames, N_elements)']);
 
 /**
  * A metric's name in the Coloring list. Colouring reads the metric over the

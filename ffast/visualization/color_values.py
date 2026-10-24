@@ -145,7 +145,15 @@ def _whole_dataset_values(get_metric, metric_id, params, shape, ds, idx, z, data
         return None
     vals = np.asarray(result.values, dtype=np.float64).ravel()
     zarr = np.asarray(z).ravel()
-    if shape == "N_elements":
+    if shape == "(N_frames, N_elements)":
+        # A row per structure, a column per element of the dataset (ADR 0064
+        # amendment): the frame on screen reads its row.
+        unique_z = np.unique(np.asarray(ds.getAllElements()))
+        if len(unique_z) == 0 or len(vals) % len(unique_z):
+            return None
+        row = vals.reshape(-1, len(unique_z))[idx]
+        frame = row[np.searchsorted(unique_z, zarr)]
+    elif shape == "N_elements":
         unique_z = np.unique(np.asarray(ds.getAllElements()))
         if len(vals) != len(unique_z):
             return None
@@ -263,10 +271,12 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
                 )
                 return None
             vals = np.asarray(result.values, dtype=np.float64).ravel()
-            if shape == "N_elements":
+            if shape in ("N_elements", "(N_frames, N_elements)"):
                 # Broadcast per-element values onto atoms. Per-element metrics
                 # order their output by sorted unique Z (np.unique), so map each
-                # atom's element to its slot the same way.
+                # atom's element to its slot the same way. A table (ADR 0064
+                # amendment) run on this one frame is its row: one value per
+                # element of the frame, in the same order.
                 zarr = np.asarray(z).ravel()
                 unique_z = np.unique(zarr)
                 if len(vals) != len(unique_z):

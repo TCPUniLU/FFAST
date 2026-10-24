@@ -26,6 +26,8 @@ Design (ADR 0042 Decisions):
 * **Reductions say what they combine** (ADR 0064, superseding "element-wise
   only"): ``mean/sum/min/max/rms/std(x, by=structure|element|all, where=...)``;
   ``by=`` alone decides the result's shape, and the vector parts are kept.
+  ``by=(structure, element)`` gives a table: a row per structure, a column
+  per element of the dataset.
   Grouping uses the same per-structure sums as the built-ins (segments.py).
   KDE and smoothing stay in the Transform layer.
 * **Same-shape only.** Every non-scalar variable in one expr must resolve to the
@@ -63,7 +65,7 @@ from ffast.metrics.segments import framesOrOne, segmentExtremes, segmentSums
 
 # Bump when the whitelist (functions / operators / constants) changes, so every
 # Expression Metric's cache identity invalidates (rides implementation_source).
-_WHITELIST_VERSION = "3"
+_WHITELIST_VERSION = "4"
 
 # Element-wise (shape-preserving) numpy functions. minimum/maximum/clip/where
 # are element-wise, not the reducing min/max (Decision 6; those are _REDUCERS).
@@ -93,6 +95,10 @@ _XYZ_INDEX = {"x": 0, "y": 1, "z": 2}
 # needs ``by=`` to say which groups. ``where=`` picks the rows that count.
 _REDUCERS = {"mean", "sum", "min", "max", "rms", "std"}
 BY_WORDS = ("structure", "element", "all")
+# ``by=(structure, element)`` (ADR 0064 amendment 2026-10-24): one group per
+# structure and element, a table with a row per structure and a column per
+# element. Only this order; the key is how by= is written.
+PAIR = "(structure, element)"
 _REDUCER_KEYWORDS = ("by", "where")
 # The two-value functions a reducing min/max is easily mistaken for.
 _PAIRWISE = {"min": "minimum", "max": "maximum"}
@@ -246,8 +252,22 @@ def _check_reduction(node: ast.Call, expr: str) -> None:
         raise ValueError(
             f"expr {expr!r}: {name}(...) needs by=structure, by=element or by=all"
         )
-    if not isinstance(by, ast.Name) or by.id not in BY_WORDS:
-        raise ValueError(f"expr {expr!r}: by= takes structure, element or all")
+    if isinstance(by, ast.Tuple) and [getattr(e, "id", None) for e in by.elts] == ["element", "structure"]:
+        raise ValueError(f"expr {expr!r}: write by={PAIR}, structure first")
+    if _by_key(by) is None:
+        raise ValueError(
+            f"expr {expr!r}: by= takes structure, element, all or {PAIR}"
+        )
+
+
+def _by_key(node) -> str | None:
+    """The by= word of a by= value node: ``structure``, ``element``, ``all``
+    or ``PAIR``; None for anything else."""
+    if isinstance(node, ast.Name) and node.id in BY_WORDS:
+        return node.id
+    if isinstance(node, ast.Tuple) and [getattr(e, "id", None) for e in node.elts] == ["structure", "element"]:
+        return PAIR
+    return None
 
 
 def _check_element(node: ast.Call, expr: str) -> None:
@@ -276,11 +296,13 @@ def _symbol_nodes(tree) -> set[int]:
 
 
 def _by_word_nodes(tree) -> set[int]:
-    """ids of the ``structure`` / ``element`` / ``all`` words after ``by=``."""
+    """ids of the ``structure`` / ``element`` / ``all`` words after ``by=``,
+    those of the pair included."""
     return {
-        id(kw.value) for n in ast.walk(tree)
+        id(word) for n in ast.walk(tree)
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _REDUCERS
         for kw in n.keywords if kw.arg == "by"
+        for word in (kw.value.elts if isinstance(kw.value, ast.Tuple) else [kw.value])
     }
 
 
@@ -345,7 +367,7 @@ def parse_and_validate(expr: str) -> ast.Expression:
             _positions(node, expr)  # raises on anything but whole-number literals
             continue
         if isinstance(node, ast.Tuple):
-            continue  # only reachable as a Subscript slice; checked above
+            continue  # a Subscript slice or the by= pair; checked with those
         if isinstance(node, ast.BinOp):
             if type(node.op) not in _BINOPS:
                 raise ValueError(
@@ -490,13 +512,25 @@ _LEAD_WORDS = {
 }
 
 
+# The result of by=(structure, element): a row per structure, a column per element.
+TABLE = (dims.N_frames, dims.N_elements)
+
+
+def is_table(shape) -> bool:
+    """Whether ``shape`` is a structures × elements table (a vector part or not)."""
+    return _as_tuple(shape)[:2] == TABLE
+
+
 def shape_words(shape) -> str:
     """A shape in plain words: ``per atom``, ``per structure, a vector``,
-    ``one number``."""
+    ``per structure and element``, ``one number``."""
     shape = _as_tuple(shape)
     if shape[0] in _PART_AXES:
         return "one vector" if shape[0] == dims.xyz else "one tensor"
-    words = _LEAD_WORDS.get(shape[0], dims.shape_to_str(shape))
+    if is_table(shape):
+        words, shape = "per structure and element", shape[1:]
+    else:
+        words = _LEAD_WORDS.get(shape[0], dims.shape_to_str(shape))
     if len(shape) > 1:
         words += ", a vector" if shape[-1] == dims.xyz else ", a tensor"
     return words
@@ -504,7 +538,7 @@ def shape_words(shape) -> str:
 
 # The leading axes a reduction can combine over (rows), by= word → result row.
 _ROWS = (dims.N_atoms, dims.N_frames, dims.N_elements)
-_BY_RESULT = {"structure": dims.N_frames, "element": dims.N_elements}
+_BY_RESULT = {"structure": (dims.N_frames,), "element": (dims.N_elements,), PAIR: TABLE}
 
 
 def _reduction_shape(node: ast.Call, go, expr: str) -> tuple:
@@ -513,14 +547,19 @@ def _reduction_shape(node: ast.Call, go, expr: str) -> tuple:
     value = node.args[0]
     shape = tuple(go(value))
     lead, parts = shape[0], shape[1:]
-    by = _keyword(node, "by").id
+    by = _by_key(_keyword(node, "by"))
+    if is_table(shape):
+        raise ValueError(
+            f"expr {expr!r}: {ast.unparse(value)} is per structure and element, "
+            f"which can't be reduced again yet"
+        )
     if by in _BY_RESULT:
         if lead != dims.N_atoms:
             raise ValueError(
                 f"expr {expr!r}: by={by} needs a per-atom value; "
                 f"{ast.unparse(value)} is {shape_words(shape)}"
             )
-        out = (_BY_RESULT[by], *parts)
+        out = (*_BY_RESULT[by], *parts)
     else:
         if lead not in _ROWS:
             raise ValueError(
@@ -742,16 +781,25 @@ class _ExprFn:
             if w_bad.any():
                 v = np.where(w_bad.reshape((rows,) + (1,) * k), np.nan, v)
 
-        by = _keyword(node, "by").id
-        order = None
+        by = _by_key(_keyword(node, "by"))
+        order = grid = None
         if by == "structure":
             offsets = framesOrOne(ns.get(_OFFSETS), v)
-        elif by == "element":
+        elif by in ("element", PAIR):
+            # Columns: every element of the dataset, in order of atomic number.
             z = np.asarray(ns[_ELEMENTS])
-            groups = np.unique(z)
-            index = np.searchsorted(groups, z)
+            columns = np.unique(z)
+            index = np.searchsorted(columns, z)
+            size = columns.size
+            if by == PAIR:
+                # One group per (structure, element): structure i's column j
+                # is group i * columns + j.
+                frames = framesOrOne(ns.get(_OFFSETS), v)
+                grid = (frames.size - 1, columns.size)
+                index = np.repeat(np.arange(grid[0]), np.diff(frames)) * columns.size + index
+                size = grid[0] * grid[1]
             order = np.argsort(index, kind="stable")
-            offsets = np.concatenate([[0], np.cumsum(np.bincount(index, minlength=groups.size))])
+            offsets = np.concatenate([[0], np.cumsum(np.bincount(index, minlength=size))])
         else:
             offsets = np.array([0, rows])
         if order is not None:
@@ -785,6 +833,8 @@ class _ExprFn:
                     out = np.sqrt(segmentSums(dev * dev, offsets) / per_group)
         if by == "all":
             out, empty = out[0], empty[0]
+        elif grid is not None:
+            out, empty = out.reshape(grid + out.shape[1:]), empty.reshape(grid)
         return out, k, (empty if np.any(empty) else None)
 
     def _note_ignored(self, v, k, left_out, ns) -> None:
@@ -915,20 +965,20 @@ def analyze_expr(expr, vars, *, registry=None, id="<expr>"):
     var_parts = {n: len(_part_axes(sh)) for n, sh in shapes.items() if _part_axes(sh)}
     words = by_words(tree)
     # where= needs the offsets too, to name the frames of what it leaves out.
-    if "structure" in words or _uses_where(tree):
+    if words & {"structure", PAIR} or _uses_where(tree):
         inputs[_OFFSETS] = HIDDEN_INPUTS[_OFFSETS]
-    if "element" in words or _uses_element(tree):
+    if words & {"element", PAIR} or _uses_element(tree):
         inputs[_ELEMENTS] = HIDDEN_INPUTS[_ELEMENTS]
     return inputs, output_shape, var_parts
 
 
 def by_words(tree: ast.Expression) -> set[str]:
-    """The ``by=`` words a parsed formula uses anywhere."""
+    """The ``by=`` words a parsed formula uses anywhere; the pair is ``PAIR``."""
     return {
-        kw.value.id for n in ast.walk(tree)
+        _by_key(kw.value) for n in ast.walk(tree)
         if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _REDUCERS
-        for kw in n.keywords if kw.arg == "by" and isinstance(kw.value, ast.Name)
-    }
+        for kw in n.keywords if kw.arg == "by"
+    } - {None}
 
 
 def _uses_where(tree: ast.Expression) -> bool:
@@ -943,7 +993,8 @@ def _uses_element(tree: ast.Expression) -> bool:
 
 # The by= words that mean "the whole dataset". Colouring reads a metric over
 # the whole dataset; when only the frame on screen can be computed, they would
-# mean "this frame" there (ADR 0064 section 5, amendment 2026-10-24).
+# mean "this frame" there (ADR 0064 section 5, amendment 2026-10-24). The pair
+# is not one: each of its rows is one structure (amendment 2026-10-24).
 _DATASET_WIDE = ("all", "element")
 
 

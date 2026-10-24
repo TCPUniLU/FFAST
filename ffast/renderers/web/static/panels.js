@@ -253,7 +253,53 @@ export function refreshPeaks(el, isVisited) {
     .catch(() => {});   // hidden or replaced meanwhile
 }
 
+/** Line styles that tell predictions apart when colour means element. */
+const DASHES = ['solid', 'dash', 'dot', 'dashdot'];
+
+/** Whether a result is a table per structure and element (ADR 0064 amendment). */
+function isTable(res) {
+  return !!(res && res.nd && res.nd.shape.length === 2);
+}
+
+/**
+ * A timeline of tables (ADR 0064 amendment 2026-10-24): one line per element,
+ * in the element's colour, and one line style per series. The element picker,
+ * when the tab has one, chooses the lines. An empty cell is NaN, a gap.
+ */
+function buildTableTimeline(spec, series, ctx) {
+  const u = ctx.units || {};
+  const order = ctx.elementOrder || [];
+  const selected = ctx.selectedElements || ['All'];
+  const shown = selected.includes('All') ? order : order.filter((z) => selected.includes(z));
+  const multiSeries = seriesWith(series, 'y').length > 1;
+  const traces = [];
+  const curveSeries = [];
+  (series || []).forEach((s, i) => {
+    if (!isTable(s.data.y)) return;
+    const [frames, columns] = s.data.y.nd.shape;
+    const values = s.data.y.nd.values;
+    for (const z of shown) {
+      const col = order.indexOf(z);
+      if (col < 0 || col >= columns) continue;
+      traces.push({
+        x: Array.from({ length: frames }, (_, f) => f),
+        y: Array.from({ length: frames }, (_, f) => values[f * columns + col]),
+        type: 'scatter', mode: 'lines',
+        line: { color: seriesColor(col), width: 1.5, dash: DASHES[i % DASHES.length] },
+        name: `${elementSymbol(z)}${multiSeries && s.name ? ` — ${s.name}` : ''}`,
+      });
+      curveSeries.push(i);
+    }
+  });
+  const layout = withLegend(baseLayout(), Math.max(2, traces.length));
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.x) || 'Configuration index' };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) };
+  return { traces, layout, peaks: [], extraHeight: 0, peakUnit: u.y, peaksEligible: false,
+    subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
+}
+
 export function buildTimeline(spec, series, ctx) {
+  if ((series || []).some((s) => isTable(s.data.y))) return buildTableTimeline(spec, series, ctx);
   const u = ctx.units || {};
   const traces = [];
   const curveSeries = [];

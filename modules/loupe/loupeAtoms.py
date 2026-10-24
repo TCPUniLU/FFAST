@@ -6,8 +6,9 @@ from ffast.visualization.scene import DEFAULT_COLORMAP
 DEPENDENCIES = []
 
 # Metric shapes that can color atoms: per-atom directly, per-element broadcast
-# onto atoms. Scalar / per-frame shapes describe whole structures and can't.
-_COLORABLE_SHAPES = ("N_atoms", "N_elements")
+# onto atoms, and a table per structure and element by the frame's row (ADR
+# 0064 amendment). Scalar / per-frame shapes describe whole structures and can't.
+_COLORABLE_SHAPES = ("N_atoms", "N_elements", "(N_frames, N_elements)")
 
 
 def _atom_coloring_metric_ids(registry):
