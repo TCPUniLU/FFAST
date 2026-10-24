@@ -230,6 +230,11 @@ class UserMetrics:
         entry = self._entries.get(id)
         if entry is not None and entry.status == "ok":
             return "user"
+        from ffast.metrics.boxes import parse_box_id
+        parsed = parse_box_id(id)
+        if parsed is not None:
+            # a keep-box setting nobody saved comes from its base (ADR 0065)
+            return self.origin(parsed[0])
         if self.builtin_ids is not None and id not in self.builtin_ids:
             return "project"
         return "built-in"
@@ -296,14 +301,24 @@ class UserMetrics:
             cfg = ExprMetricConfig.model_validate(data)
         except ValidationError as exc:
             raise MetricError(_validation_message(exc)) from None
-        if not _ID.match(cfg.id):
+        from ffast.metrics.boxes import box_formula_problem, parse_box_id
+        if parse_box_id(cfg.id) is not None:
+            # A keep-box setting saved by Create metric (ADR 0065): its id says
+            # its formula, so only the name may differ.
+            problem = box_formula_problem(cfg.id, cfg.expr, cfg.vars, self.registry)
+            if problem:
+                raise MetricError(problem)
+        elif not _ID.match(cfg.id):
             raise MetricError(
                 f"{cfg.id!r} is not a usable id: letters, digits and underscores "
                 f"in dot-separated parts, such as mylab.e_per_atom")
 
         current = self._entries.get(cfg.id)
         if previous_id is None:
-            if self.registry.has(cfg.id) or current is not None:
+            # A box setting registered on the fly since start-up (colouring
+            # by it, opening it) is not anyone's yet: saving names and keeps it.
+            on_the_fly = parse_box_id(cfg.id) is not None and cfg.id not in self.baseline
+            if (self.registry.has(cfg.id) and not on_the_fly) or current is not None:
                 raise MetricError(f"The id {cfg.id} is already taken")
         else:
             if cfg.id != previous_id:
@@ -538,6 +553,10 @@ class _Without:
 
     def has(self, metric_id) -> bool:
         return metric_id != self._hidden and self._registry.has(metric_id)
+
+    def ensure(self, metric_id) -> bool:
+        """``has``, registering a box id first (ADR 0065)."""
+        return metric_id != self._hidden and self._registry.ensure(metric_id)
 
     def get(self, metric_id):
         if metric_id == self._hidden:

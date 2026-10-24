@@ -100,7 +100,7 @@ _MIXED = {
         {"kind": "3d", "row": 1, "col": 1, "view": "independent",
          "link_camera": False},
         {"kind": "table", "row": 0, "col": 1, "title": "Force MAE",
-         "metrics": {"value": {"metric": "ffast.force_component_mae"}}},
+         "metrics": {"value": {"metric": "ffast.force_difference[dataset;component;mae]"}}},
     ],
 }
 

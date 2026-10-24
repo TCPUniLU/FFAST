@@ -40,7 +40,7 @@ Window = Annotated[int, P(
 )]
 
 # Energy-offset toggle (Phase 4): when on, subtract the mean energy offset
-# mean(E_pred − E_true) = ffast.energy_shift. A `role:"compute"` bool so it is
+# mean(E_pred − E_true) = ffast.energy_difference[dataset;mean]. A `role:"compute"` bool so it is
 # part of computation identity / cache key; the Basic Errors tab drives it across
 # all energy panels via one shared checkbox (see UI/panels.setSharedParam).
 Shifted = Annotated[bool, P(
@@ -58,11 +58,11 @@ Shifted = Annotated[bool, P(
     label="Forces RMSE (smoothed)",
     unit=units.force,
     tests=[
-        {  # window=1 ⇒ identity of ffast.force_component_rmse_per_structure
+        {  # window=1 ⇒ identity of Force RMSE per frame
             "inputs": {
                 "reference": [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
                 "predicted": [[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-                "offsets": [0, 2],
+                "_offsets": [0, 2],   # the box formula's frames
             },
             "parameters": {"window": 1},
             "expected": [0.408248290463863],
@@ -71,7 +71,7 @@ Shifted = Annotated[bool, P(
     ],
 )
 def force_rmse_smoothed(
-    src: Ref["ffast.force_component_rmse_per_structure"],
+    src: Ref["ffast.force_difference[structure;component;rmse]"],
     *,
     window: Window = 1,
 ) -> Float[np.ndarray, "N_frames"]:
@@ -82,11 +82,11 @@ def force_rmse_smoothed(
     label="Forces MAE (smoothed)",
     unit=units.force,
     tests=[
-        {  # window=1 ⇒ identity of ffast.force_component_mae_per_structure
+        {  # window=1 ⇒ identity of Force MAE per frame
             "inputs": {
                 "reference": [[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
                 "predicted": [[2.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
-                "offsets": [0, 2],
+                "_offsets": [0, 2],   # the box formula's frames
             },
             "parameters": {"window": 1},
             "expected": [1.0 / 6.0],
@@ -95,7 +95,7 @@ def force_rmse_smoothed(
     ],
 )
 def force_mae_per_structure_smoothed(
-    src: Ref["ffast.force_component_mae_per_structure"],
+    src: Ref["ffast.force_difference[structure;component;mae]"],
     *,
     window: Window = 1,
 ) -> Float[np.ndarray, "N_frames"]:
@@ -123,7 +123,7 @@ def force_mae_per_structure_smoothed(
 )
 def energy_error_smoothed(
     src: Ref["ffast.energy_difference"],
-    shift: Ref["ffast.energy_shift"],
+    shift: Ref["ffast.energy_difference[dataset;mean]"],
     *,
     window: Window = 1,
     shifted: Shifted = False,
@@ -141,7 +141,7 @@ def energy_error_smoothed(
     unit=units.force,
 )
 def force_rmse_density(
-    src: Ref["ffast.force_component_rmse_per_structure"],
+    src: Ref["ffast.force_difference[structure;component;rmse]"],
 ) -> Float[np.ndarray, "curve_xy grid"]:
     return _mirror_kde(src)
 
@@ -151,7 +151,7 @@ def force_rmse_density(
     unit=units.force,
 )
 def force_mae_per_structure_density(
-    src: Ref["ffast.force_component_mae_per_structure"],
+    src: Ref["ffast.force_difference[structure;component;mae]"],
 ) -> Float[np.ndarray, "curve_xy grid"]:
     return _mirror_kde(src)
 
@@ -162,91 +162,10 @@ def force_mae_per_structure_density(
 )
 def energy_difference_density(
     src: Ref["ffast.energy_difference"],
-    shift: Ref["ffast.energy_shift"],
+    shift: Ref["ffast.energy_difference[dataset;mean]"],
     *,
     shifted: Shifted = False,
 ) -> Float[np.ndarray, "curve_xy grid"]:
     d = np.asarray(src) - (float(shift) if shifted else 0.0)
     return _mirror_kde(d)
 
-
-# --- 0c/Phase 4: energy scatter (shifted prediction) + energy tables ---------
-# These give the Basic Errors energy panels a single `shifted` knob instead of
-# the legacy paired metrics (energy_mae vs energy_mae_shifted).
-
-@metric(
-    label="Predicted Energy (optionally shifted)",
-    unit=units.energy,
-    tests=[
-        {
-            "inputs": {"reference": [1.0, 2.0, 3.0], "predicted": [1.5, 2.5, 3.5]},
-            "parameters": {"shifted": True},
-            "expected": [1.0, 2.0, 3.0],  # pred − mean(pred−ref) = ref here
-            "atol": 1e-10,
-        }
-    ],
-)
-def energy_prediction_shifted(
-    pred: Ref["ffast.energy_prediction"],
-    shift: Ref["ffast.energy_shift"],
-    *,
-    shifted: Shifted = False,
-) -> Float[np.ndarray, "N_frames"]:
-    return np.asarray(pred) - (float(shift) if shifted else 0.0)
-
-
-@metric(
-    label="Energy MAE",
-    description="Mean |energy difference|, optionally offset-shifted (one param-driven metric for both Basic Errors table modes).",
-    unit=units.energy,
-    tests=[
-        {
-            "inputs": {"reference": [1.0, 2.0, 3.0], "predicted": [1.5, 2.5, 3.5]},
-            "parameters": {},
-            "expected": 0.5,
-            "atol": 1e-10,
-        },
-        {
-            "inputs": {"reference": [1.0, 2.0, 3.0], "predicted": [1.5, 2.5, 3.5]},
-            "parameters": {"shifted": True},
-            "expected": 0.0,
-            "atol": 1e-10,
-        },
-    ],
-)
-def energy_mae_p(
-    diff: Ref["ffast.energy_difference"],
-    shift: Ref["ffast.energy_shift"],
-    *,
-    shifted: Shifted = False,
-) -> float:
-    d = np.asarray(diff) - (float(shift) if shifted else 0.0)
-    return np.mean(np.abs(d))
-
-
-@metric(
-    label="Energy RMSE",
-    unit=units.energy,
-    tests=[
-        {
-            "inputs": {"reference": [1.0, 2.0, 3.0], "predicted": [1.5, 2.5, 3.5]},
-            "parameters": {},
-            "expected": 0.5,
-            "atol": 1e-10,
-        },
-        {
-            "inputs": {"reference": [1.0, 2.0, 3.0], "predicted": [1.5, 2.5, 3.5]},
-            "parameters": {"shifted": True},
-            "expected": 0.0,
-            "atol": 1e-10,
-        },
-    ],
-)
-def energy_rmse_p(
-    diff: Ref["ffast.energy_difference"],
-    shift: Ref["ffast.energy_shift"],
-    *,
-    shifted: Shifted = False,
-) -> float:
-    d = np.asarray(diff) - (float(shift) if shifted else 0.0)
-    return np.sqrt(np.mean(d ** 2))

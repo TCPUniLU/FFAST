@@ -76,7 +76,7 @@ def test_open_view_request_all_optional():
 
 def test_request_metric_request_shape():
     payload = {
-        "metric_id": "ffast.force_rmse", "request_id": "k1",
+        "metric_id": "ffast.force_difference[structure;length;rmse]", "request_id": "k1",
         "params": {"order": 1}, "model_fp": "m1", "dataset_fp": "d1",
     }
     assert RequestMetricRequest.model_validate(payload).model_dump() == payload

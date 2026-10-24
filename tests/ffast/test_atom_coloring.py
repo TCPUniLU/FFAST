@@ -23,6 +23,17 @@ from ffast.metrics.registry import _default_registry as reg
 from ffast.visualization.models import VisualizationState
 from ffast.visualization.scene_builder import build_scene
 
+# A box setting (ADR 0065) is registered the first time it is named; name the
+# ones these tests look for in the shared registry.
+for _box in ("ffast.force_difference[atom+structure;length]",
+             "ffast.accel_difference[atom;length;mae]",
+             "ffast.force_difference[element;component;mae]",
+             "ffast.accel_difference[element;length;mae]",
+             "ffast.force_difference[dataset;length;mae]",
+             "ffast.force_difference[structure;length;rmse]",
+             "ffast.energy_difference[dataset;mae]"):
+    reg.ensure(_box)
+
 
 def _load_loupe_atoms():
     """Load modules/loupe/loupeAtoms.py by file path (load it as a plugin would)."""
@@ -37,21 +48,21 @@ def _load_loupe_atoms():
 class TestAtomColoringMetricSelection:
     def test_per_atom_metrics_are_offered(self):
         ids = _load_loupe_atoms()._atom_coloring_metric_ids(reg)
-        assert "ffast.force_mae" in ids
-        assert "ffast.accel_mae_per_atom" in ids
+        assert "ffast.force_difference[atom+structure;length]" in ids
+        assert "ffast.accel_difference[atom;length;mae]" in ids
 
     def test_per_element_metrics_are_offered(self):
         # per-element metrics color atoms by broadcasting the element's value.
         ids = _load_loupe_atoms()._atom_coloring_metric_ids(reg)
-        assert "ffast.force_mae_per_element" in ids
-        assert "ffast.accel_mae_per_element" in ids
+        assert "ffast.force_difference[element;component;mae]" in ids
+        assert "ffast.accel_difference[element;length;mae]" in ids
 
     def test_non_colorable_metrics_excluded(self):
         ids = _load_loupe_atoms()._atom_coloring_metric_ids(reg)
-        assert "ffast.force_mae_global" not in ids    # scalar
-        assert "ffast.force_rmse" not in ids           # per-frame
+        assert "ffast.force_difference[dataset;length;mae]" not in ids    # scalar
+        assert "ffast.force_difference[structure;length;rmse]" not in ids           # per-frame
         assert "ffast.force_difference" not in ids      # vector per atom
-        assert "ffast.energy_mae" not in ids            # scalar
+        assert "ffast.energy_difference[dataset;mae]" not in ids            # scalar
 
     def test_old_string_predicate_matched_nothing(self):
         # Documents the bug: shapes are Dim tuples, never the literal string.
@@ -66,13 +77,15 @@ class TestMetricDisplayNames:
     (ADR 0016), replacing the hardcoded friendly-label dictionaries."""
 
     def test_atom_colorable_metrics_have_labels(self):
-        assert reg.get("ffast.force_mae")[0].label == "Force Error Magnitude (per atom)"
-        assert reg.get("ffast.accel_mae_per_atom")[0].label == "Acceleration Error Magnitude (averaged per atom)"
+        assert reg.get("ffast.force_difference[atom+structure;length]")[0].label == (
+            "Force Difference · per atom · length")
+        assert reg.get("ffast.accel_difference[atom;length;mae]")[0].label == (
+            "Acceleration Difference · MAE · per atom, over frames · length")
 
     def test_metric_color_label_falls_back_to_id(self):
         mod = _load_loupe_atoms()
         # operates on catalog entries (plain dicts)
-        assert mod.metric_color_label({"label": "Force Error", "id": "ffast.force_mae"}) == "Force Error"
+        assert mod.metric_color_label({"label": "Force Error", "id": "ffast.force_difference[atom+structure;length]"}) == "Force Error"
         assert mod.metric_color_label({"label": "", "id": "x.y"}) == "x.y"
 
 
@@ -83,12 +96,13 @@ class TestMetricCatalog:
     def test_catalog_includes_metrics_with_labels_and_shapes(self):
         from ffast.metrics.catalog import build_metric_catalog
         cat = {e["id"]: e for e in build_metric_catalog(reg)}
-        assert cat["ffast.force_mae"]["label"] == "Force Error Magnitude (per atom)"
-        assert cat["ffast.force_mae"]["shape"] == "N_atoms"
-        assert cat["ffast.force_mae_per_element"]["shape"] == "N_elements"
-        assert cat["ffast.energy_mae"]["shape"] == "scalar"
+        assert cat["ffast.force_difference[atom+structure;length]"]["label"] == (
+            "Force Difference · per atom · length")
+        assert cat["ffast.force_difference[atom+structure;length]"]["shape"] == "N_atoms"
+        assert cat["ffast.force_difference[element;component;mae]"]["shape"] == "N_elements"
+        assert cat["ffast.energy_difference[dataset;mae]"]["shape"] == "scalar"
         # parameters are plain, transport-safe dicts
-        assert cat["ffast.force_mae"]["parameters"]["norm"]["choices"] == ["l1", "l2"]
+        assert cat["ffast.force_rmse_smoothed"]["parameters"]["window"]["default"] == 1
 
     def test_catalog_entries_are_plain_dicts(self):
         from ffast.metrics.catalog import build_metric_catalog
@@ -105,9 +119,9 @@ class TestMetricCatalog:
         catalog = {e["id"]: e for e in build_metric_catalog(reg)}
         loupe = types.SimpleNamespace(env=types.SimpleNamespace(metricCatalog=catalog))
         ids = {e["id"] for e in mod._colorable_metric_entries(loupe)}
-        assert "ffast.force_mae" in ids
-        assert "ffast.force_mae_per_element" in ids
-        assert "ffast.energy_mae" not in ids   # scalar excluded
+        assert "ffast.force_difference[atom+structure;length]" in ids
+        assert "ffast.force_difference[element;component;mae]" in ids
+        assert "ffast.energy_difference[dataset;mae]" not in ids   # scalar excluded
 
     def test_server_replay_enqueues_metric_catalog(self):
         """The server's state replay packs a METRIC_CATALOG message (and
@@ -130,8 +144,8 @@ class TestMetricCatalog:
             m for m in map(unpack, out.sent) if m[0] == "METRIC_CATALOG")
         assert event == "METRIC_CATALOG"
         ids = {m["id"] for m in kwargs["metrics"]}
-        assert "ffast.force_mae" in ids
-        assert "ffast.accel_mae_per_atom" in ids   # registered via the replay
+        assert "ffast.force_difference" in ids
+        assert "ffast.accel_difference" in ids   # registered via the replay
 
     def test_server_loads_external_metric_modules(self, tmp_path):
         """(A) The server loads project-config Trusted Metric Modules at startup,
@@ -176,8 +190,8 @@ class TestColorSourceResolution:
 
     SOURCE_MAP = {
         "Elements": "element",
-        "Force Error": "metric:ffast.force_mae",
-        "Acceleration Error Magnitude (averaged per atom)": "metric:ffast.accel_mae_per_atom",
+        "Force Error": "metric:ffast.force_difference[atom+structure;length]",
+        "Acceleration Error Magnitude (averaged per atom)": "metric:ffast.accel_difference[atom;length;mae]",
         "Displacement": "displacement",
     }
 
@@ -187,8 +201,8 @@ class TestColorSourceResolution:
     def test_each_label_maps_to_its_own_source(self):
         resolve = self._resolve()
         assert resolve("Elements", self.SOURCE_MAP) == "element"
-        assert resolve("Force Error", self.SOURCE_MAP) == "metric:ffast.force_mae"
-        assert resolve("Acceleration Error Magnitude (averaged per atom)", self.SOURCE_MAP) == "metric:ffast.accel_mae_per_atom"
+        assert resolve("Force Error", self.SOURCE_MAP) == "metric:ffast.force_difference[atom+structure;length]"
+        assert resolve("Acceleration Error Magnitude (averaged per atom)", self.SOURCE_MAP) == "metric:ffast.accel_difference[atom;length;mae]"
         # The regression: displacement used to resolve to "element".
         assert resolve("Displacement", self.SOURCE_MAP) == "displacement"
 
@@ -238,7 +252,7 @@ class TestPredictionAttachment:
             selectedDatasetKey=_FakeColorEnv.DS,
             _colorSourceByLabel={
                 "Elements": "element",
-                "Force Error": "metric:ffast.force_mae",
+                "Force Error": "metric:ffast.force_difference[atom+structure;length]",
             },
             _colorSourceHooks={},
         )
@@ -248,7 +262,7 @@ class TestPredictionAttachment:
         loupe = self._loupe("Force Error")
         mod._apply_coloring_selection(loupe)
         assert loupe.settings["scenePredictionRef"] == "model1"
-        assert loupe.settings["atomColorSource"] == "metric:ffast.force_mae"
+        assert loupe.settings["atomColorSource"] == "metric:ffast.force_difference[atom+structure;length]"
 
     def test_element_source_does_not_attach_prediction(self):
         mod = _load_loupe_atoms()
@@ -267,12 +281,13 @@ class _DS:
     def getN(self): return 2
     def getCoordinates(self, idx): return self._R[idx]
     def getElements(self, idx=None): return self._z
+    def getAllElements(self): return np.tile(self._z, 2)
     def getForces(self, indices=None): return self._F[indices]
     def getBondIndices(self, idx): return np.empty((0, 2), dtype=np.int64)
 
 
 class _Pred:
-    # predicted forces: atom 1 has a (3,4,0) error → |F|=5 (l2), mean|comp|=7/3 (l1)
+    # predicted forces: atom 1 has a (3,4,0) error → |F|=5 (length), mean|comp|=7/3 (component)
     forces = np.stack(
         [np.array([[0, 0, 0], [3, 4, 0], [0, 0, 0], [0, 0, 0]], dtype=float)] * 2
     )
@@ -286,7 +301,7 @@ class TestServerMetricColoring:
         # In-process executor → no worker subprocess in the test (ADR 0046:
         # executor is injected via build_scene, not a monkeypatched module global).
         executor = InProcessExecutor(reg)
-        params = {"source": "metric:ffast.force_mae", "colormap": "viridis"}
+        params = {"source": "metric:ffast.force_difference[atom+structure;length]", "colormap": "viridis"}
         params.update(extra_params)
         state = VisualizationState(
             view_id="v", dataset_ref="fp", prediction_ref="m",
@@ -299,34 +314,37 @@ class TestServerMetricColoring:
         cb = self._color_by({})
         assert cb is not None
         assert len(cb.values) == 4
-        # default norm is l2 → high-error atom = 5.0
+        # length → high-error atom = |(3,4,0)| = 5.0
         assert cb.values[1] == pytest.approx(5.0)
         assert cb.colormap == "viridis"
 
-    def test_compute_parameter_changes_colors(self):
-        cb = self._color_by({"norm": "l1"})
+    def test_the_combine_box_changes_colors(self):
+        cb = self._color_by({"source": "metric:ffast.force_difference[atom+structure;component;mae]"})
         assert cb is not None
-        # l1 norm → mean of |components| = (3+4+0)/3
+        # per component → mean of |components| = (3+4+0)/3
         assert cb.values[1] == pytest.approx(7.0 / 3.0)
 
     def test_per_element_metric_broadcasts_onto_atoms(self):
         """A per-element metric (N_elements) colors atoms by broadcasting each
-        element's value onto its atoms. _DS is C,H,H,H."""
-        from ffast.metrics.executor import InProcessExecutor
-        executor = InProcessExecutor(reg)
+        element's value onto its atoms. _DS is C,H,H,H. A by=element setting
+        is a formula, so it is read over the whole dataset (ADR 0064)."""
+        from types import SimpleNamespace
         state = VisualizationState(
             view_id="v", dataset_ref="fp", prediction_ref="m", structure_index=0,
             parameters={"ffast.atom_color": {
-                "source": "metric:ffast.force_mae_per_element", "colormap": "viridis",
+                "source": "metric:ffast.force_difference[element;component;mae]",
+                "colormap": "viridis",
             }},
         )
-        scene = build_scene(state, lambda fp: _DS(), lambda d, m: _Pred(), executor=executor)
+        # Elements in sorted order: H (1), then C (6).
+        whole = lambda mid, params, d, m: SimpleNamespace(values=np.array([0.5, 0.0]))
+        scene = build_scene(state, lambda fp: _DS(), lambda d, m: _Pred(), get_metric=whole)
         cb = scene.atoms.color_by
         assert cb is not None
         assert len(cb.values) == 4                       # one value per atom
         assert cb.values[1] == pytest.approx(cb.values[2])   # both H atoms equal
         assert cb.values[0] != pytest.approx(cb.values[1])   # C differs from H
-        assert cb.label == "Force MAE (by element, this frame)"   # no whole dataset given
+        assert cb.label == "Force Difference · MAE · per element · per component"
 
     def test_accel_metric_resolves_via_ase_mass_fallback(self):
         """Acceleration error needs atomic masses; _DS has no getMasses, so the
@@ -337,7 +355,8 @@ class TestServerMetricColoring:
         state = VisualizationState(
             view_id="v", dataset_ref="fp", prediction_ref="m", structure_index=0,
             parameters={"ffast.atom_color": {
-                "source": "metric:ffast.accel_mae_per_atom", "colormap": "viridis",
+                "source": "metric:ffast.accel_difference[atom+structure;length]",
+                "colormap": "viridis",
             }},
         )
         scene = build_scene(state, lambda fp: _DS(), lambda d, m: _Pred(), executor=executor)
@@ -359,15 +378,15 @@ class TestServerMetricColoring:
         # unpicklable once its tmp_path module is gone; isolating here keeps this
         # e2e test independent of suite ordering.
         scratch = MetricRegistry()
-        for mid in ("ffast.force_difference", "ffast.force_mae"):
-            scratch._metrics[mid] = reg.get(mid)
+        scratch._metrics["ffast.force_difference"] = reg.get("ffast.force_difference")
+        scratch.ensure("ffast.force_difference[atom+structure;length]")
         executor = WorkerProcessExecutor(scratch)
         try:
             state = VisualizationState(
                 view_id="v", dataset_ref="fp", prediction_ref="m",
                 structure_index=0,
                 parameters={"ffast.atom_color": {
-                    "source": "metric:ffast.force_mae", "colormap": "viridis",
+                    "source": "metric:ffast.force_difference[atom+structure;length]", "colormap": "viridis",
                 }},
             )
             scene = build_scene(state, lambda fp: _DS(), lambda d, m: _Pred(), executor=executor)

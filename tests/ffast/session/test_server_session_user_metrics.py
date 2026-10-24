@@ -17,7 +17,8 @@ from ffast.protocol.rpc import unpack
 from ffast.session.server_session import ServerSession
 from ffast.session.window_feed import WindowFeed
 
-METRIC = {"id": "t57.double", "expr": "2 * f", "vars": {"f": "ffast.force_component_mae"}}
+METRIC = {"id": "t57.double", "expr": "2 * f",
+          "vars": {"f": "ffast.force_difference[dataset;component;mae]"}}
 
 
 class _Data:
@@ -112,7 +113,7 @@ def test_the_change_and_the_invalidation_run_in_one_thread_call(env, monkeypatch
 
 def test_a_refused_change_says_why_and_tells_nobody(env):
     own, everyone = _dispatch(env, control.SAVE_USER_METRIC,
-                              {"metric": {**METRIC, "id": "ffast.force_component_mae"}})
+                              {"metric": {**METRIC, "id": "ffast.force_difference"}})
     assert own[0][2]["ok"] is False and "already taken" in own[0][2]["error"]
     assert everyone == []
 
@@ -160,8 +161,8 @@ def test_the_catalog_says_where_each_metric_comes_from(env):
     cat = {m["id"]: m for m in build_metric_catalog(default_registry, env.user_metrics)}
     assert cat["t57.double"]["origin"] == "user"
     assert cat["t57.double"]["expr"] == "2 * f"
-    assert cat["ffast.force_component_mae"]["origin"] == "built-in"
-    assert "used_by" not in cat["ffast.force_component_mae"]
+    assert cat["ffast.force_difference[dataset;component;mae]"]["origin"] == "built-in"
+    assert "used_by" not in cat["ffast.force_difference[dataset;component;mae]"]
 
 
 def test_user_metric_changes_are_controlling_only():
@@ -219,7 +220,8 @@ def _run_session(env, steps):
 
 def test_check_replies_with_the_shape_and_echoes_the_check_id(env):
     own, everyone = _dispatch(env, control.CHECK_METRIC, {
-        "metric": {"id": "t57.c", "expr": "2 * f", "vars": {"f": "ffast.force_component_mae"}},
+        "metric": {"id": "t57.c", "expr": "2 * f",
+                   "vars": {"f": "ffast.force_difference[dataset;component;mae]"}},
         "check_id": "7"})
     assert own == [(control.METRIC_CHECKED, [], {"check_id": "7", "ok": True, "error": None, "shape": "scalar"})]
     assert everyone == []
@@ -596,7 +598,7 @@ def test_the_replay_ends_with_who_uses_what(env):
     sent = [unpack(out.get_nowait()) for _ in range(out.qsize())]
     event, _, kwargs = sent[-1]
     assert event == control.METRIC_USERS
-    assert kwargs["users"]["ffast.force_component_mae"] == ["metric t57.double"]
+    assert kwargs["users"]["ffast.force_difference[dataset;component;mae]"] == ["metric t57.double"]
     assert "t57.double" not in kwargs["users"]   # nobody uses it
 
 

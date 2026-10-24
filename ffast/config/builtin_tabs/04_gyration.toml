@@ -61,5 +61,5 @@ controls = ["smoothing"]
   metric = "ffast.gyradius"
   transform = "smooth"
   [[tabs.panels.metrics.series]]
-  metric = "ffast.force_component_mae_per_structure"
+  metric = "ffast.force_difference[structure;component;mae]"
   transform = "smooth"

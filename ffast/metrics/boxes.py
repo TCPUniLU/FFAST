@@ -285,13 +285,113 @@ def ensure_metric(metric_id: str, registry=None) -> bool:
     registry = registry if registry is not None else default_registry
     if registry.has(metric_id):
         return True
-    if parse_box_id(metric_id) is None:
+    if parse_box_id(metric_id) is None or not hasattr(registry, "metric"):
         return False
     try:
         compile_box_metric(metric_id, registry=registry)
     except ValueError:
         return False
     return True
+
+
+# --------------------------------------------------------------------------- #
+# What the Metrics pane is told (section 4)
+# --------------------------------------------------------------------------- #
+# A setting the boxes refuse on a dataset whose structures differ in atoms.
+_DIFFERENT_ATOMS = "structures have different atoms"
+
+
+def read_metric(metric_id: str, registry) -> tuple[str, Setting, bool]:
+    """``(base, setting, custom)`` the boxes open a metric with: a box id is
+    its base and setting; a formula or a built-in with a formula twin that
+    the boxes could have written is that base and setting; anything else is
+    its own base with everything kept — custom when it is a formula that
+    reduces in a way the boxes do not write."""
+    from ffast.metrics.expr import _ExprFn
+    parsed = parse_box_id(metric_id)
+    if parsed is not None:
+        return parsed[0], parsed[1], False
+    schema, fn = registry.get(metric_id)
+    found = _formula_of(metric_id, registry)
+    if found is not None:
+        reading = classify(found[0], found[1], registry)
+        if not reading.custom and reading.base != metric_id:
+            return reading.base, reading.setting, False
+    custom = isinstance(fn, _ExprFn) and _reduces(fn.expr)
+    return metric_id, identity(schema.shape), custom
+
+
+def _reduces(expr: str) -> bool:
+    """Whether a formula combines values: a by= reduction or a part collapse."""
+    from ffast.metrics.expr import _COLLAPSING, _REDUCERS, parse_and_validate
+    return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+               and n.func.id in _REDUCERS | _COLLAPSING
+               for n in ast.walk(parse_and_validate(expr)))
+
+
+def box_state(registry, *, metric_id: str | None = None, base: str | None = None,
+              setting: dict | None = None, uniform: bool | None = None) -> dict:
+    """Everything the boxes show for a metric (``metric_id``) or for a box
+    change (``base`` + ``setting``): the setting, the settings allowed, why
+    a box is greyed, and the formula, id, name, unit and shape it gives.
+    ``uniform`` False greys atom ✓ structure ✗ (by=atom)."""
+    from ffast.metrics.dims import shape_to_str
+    from ffast.metrics.expr import analyze_expr
+    custom = False
+    if metric_id is not None:
+        registry.ensure(metric_id)
+        base, current, custom = read_metric(metric_id, registry)
+    else:
+        current = Setting.from_dict(setting or {})
+    schema, _fn = registry.get(base)
+    shape = schema.shape
+    allowed = settings_for(shape)
+    hints = {}
+    for box in KEEP_ORDER:
+        if not any(box in s.keep for s in allowed):
+            hints[box] = ("this metric has no x/y/z" if box == "xyz"
+                          else _ALREADY.get(rows_of(shape), "these boxes do not fit this metric"))
+    if uniform is False:
+        allowed = [s for s in allowed if s.keep - {"xyz"} != {"atom"}]
+        hints["atom_only"] = _DIFFERENT_ATOMS
+    problem = setting_problem(current, shape)
+    if problem is None and uniform is False and current.keep - {"xyz"} == {"atom"}:
+        problem = _DIFFERENT_ATOMS
+    state = {
+        "base": base, "base_label": schema.label or base,
+        "setting": current.to_dict(), "custom": custom,
+        "allowed": [s.to_dict() for s in allowed], "hints": hints,
+        "problem": problem, "id": None, "expr": None, "vars": None,
+        "label": None, "unit": schema.unit, "shape": None, "exists": False,
+    }
+    if problem is not None:
+        return state
+    same = current == identity(shape)
+    state["id"] = base if same else box_id(base, current)
+    state["expr"] = formula(current, shape)
+    state["vars"] = {"D": base}
+    state["label"] = (schema.label or base) if same else box_label(schema.label or base, current)
+    state["shape"] = shape_to_str(analyze_expr(state["expr"], state["vars"], registry=registry)[1])
+    state["exists"] = registry.has(state["id"])
+    return state
+
+
+def box_formula_problem(metric_id: str, expr: str, vars_: dict, registry) -> str | None:
+    """Why a metric saved under a box id may not have this formula, or None:
+    a box id's formula is its setting's (ADR 0065)."""
+    parsed = parse_box_id(metric_id)
+    if parsed is None:
+        return None
+    base, setting = parsed
+    if not registry.has(base):
+        return f"{base} is not a metric"
+    problem = setting_problem(setting, registry.get(base)[0].shape)
+    if problem:
+        return f"{metric_id}: {problem}"
+    if expr != formula(setting, registry.get(base)[0].shape) or dict(vars_) != {"D": base}:
+        return (f"{metric_id} is a keep-box setting; its formula is set by the boxes. "
+                f"Use Copy and edit to change the formula")
+    return None
 
 
 # --------------------------------------------------------------------------- #

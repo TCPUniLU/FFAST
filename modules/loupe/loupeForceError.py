@@ -3,12 +3,31 @@ from client.dataWatcher import DataWatcher
 
 DEPENDENCIES = ["loupeAtoms"]
 
+# Each atom's force error length (ADR 0065 keep boxes; was ffast.force_mae).
+FORCE_ERROR_LENGTH = "ffast.force_difference[atom+structure;length]"
+# The desktop has no keep boxes (ADR 0065 section 9), so its Coloring list
+# offers these settings of the force and acceleration bases: what the deleted
+# per-atom and per-element metrics gave, and their per-component twins.
+DESKTOP_COLOURINGS = (
+    FORCE_ERROR_LENGTH,
+    "ffast.force_difference[atom+structure;component;mae]",
+    "ffast.force_difference[element;component;mae]",
+    "ffast.force_difference[element;component;rmse]",
+    "ffast.accel_difference[atom+structure;length]",
+    "ffast.accel_difference[atom;length;mae]",
+    "ffast.accel_difference[element;length;mae]",
+)
+
 
 def loadData(env):
-    # Self-register the force built-ins this module colours by (``ffast.force_mae``)
-    # instead of relying on another module's load order (was the only reason this
-    # depended on the retired basicErrors anchor).
-    from ffast.metrics.builtin import force_metrics  # noqa: F401
+    # Self-register the force built-ins this module colours by (Force
+    # Difference and its keep-box settings, ADR 0065) instead of relying on
+    # another module's load order (was the only reason this depended on the
+    # retired basicErrors anchor).
+    from ffast.metrics.builtin import accel_metrics, force_metrics  # noqa: F401
+    from ffast.metrics.registry import default_registry
+    for metric_id in DESKTOP_COLOURINGS:
+        default_registry.ensure(metric_id)
 
 
 def addSettings(UIHandler, loupe):
@@ -19,7 +38,7 @@ def addSettings(UIHandler, loupe):
     dw = DataWatcher(loupe.env)
     loupe.forceErrorDataWatcher = dw
     # Repaint trigger only: fires when force-error metric data lands (ADR 0019).
-    dw.setMetricDependencies({"ffast.force_mae": {}})
+    dw.setMetricDependencies({FORCE_ERROR_LENGTH: {}})
 
     settings = loupe.settings
 

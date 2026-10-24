@@ -59,7 +59,7 @@ def test_wrong_typed_field_raises_validation_error(tmp_path):
     config_file = tmp_path / "ffast.toml"
     config_file.write_text("""
 [visualization.atom_color]
-metric_id = "ffast.force_mae"
+metric_id = "ffast.force_difference[atom+structure;length]"
 vmin = "not_a_number"
 """)
     with pytest.raises(ValidationError):
@@ -84,7 +84,7 @@ def test_atom_color_presentation_parsed(tmp_path):
     config_file = tmp_path / "ffast.toml"
     config_file.write_text("""
 [visualization.atom_color]
-metric_id = "ffast.force_mae"
+metric_id = "ffast.force_difference[atom+structure;length]"
 colormap = "plasma"
 vmin = 0.0
 vmax = 1.0
@@ -92,7 +92,7 @@ vmax = 1.0
     config = load_project_config(config_file)
     ac = config.visualization.atom_color
     assert ac is not None
-    assert ac.metric_id == "ffast.force_mae"
+    assert ac.metric_id == "ffast.force_difference[atom+structure;length]"
     assert ac.colormap == "plasma"
     assert ac.vmin == 0.0
     assert ac.vmax == 1.0
@@ -102,7 +102,7 @@ def test_atom_color_defaults(tmp_path):
     config_file = tmp_path / "ffast.toml"
     config_file.write_text("""
 [visualization.atom_color]
-metric_id = "ffast.force_mae"
+metric_id = "ffast.force_difference[atom+structure;length]"
 """)
     config = load_project_config(config_file)
     ac = config.visualization.atom_color
@@ -133,7 +133,7 @@ def test_save_load_atom_color_round_trip(tmp_path):
     config = ProjectConfig(
         visualization=VisualizationConfig(
             atom_color=AtomColorPresentation(
-                metric_id="ffast.force_mae",
+                metric_id="ffast.force_difference[atom+structure;length]",
                 colormap="plasma",
                 vmin=0.0,
                 vmax=2.5,
@@ -144,7 +144,7 @@ def test_save_load_atom_color_round_trip(tmp_path):
     reloaded = load_project_config(config_file)
     ac = reloaded.visualization.atom_color
     assert ac is not None
-    assert ac.metric_id == "ffast.force_mae"
+    assert ac.metric_id == "ffast.force_difference[atom+structure;length]"
     assert ac.colormap == "plasma"
     assert ac.vmin == 0.0
     assert ac.vmax == 2.5
@@ -154,7 +154,7 @@ def test_save_load_atom_color_defaults_omits_none(tmp_path):
     config_file = tmp_path / "ffast.toml"
     config = ProjectConfig(
         visualization=VisualizationConfig(
-            atom_color=AtomColorPresentation(metric_id="ffast.energy_mae")
+            atom_color=AtomColorPresentation(metric_id="ffast.energy_difference[dataset;mae]")
         )
     )
     save_project_config(config, config_file)

@@ -177,7 +177,7 @@ def _sample_metric_result():
     from ffast.metrics.models import MetricResult
 
     return MetricResult(
-        metric_id="ffast.force_rmse", shape="per_structure", dtype="float64",
+        metric_id="ffast.force_difference[structure;length;rmse]", shape="per_structure", dtype="float64",
         unit="eV/Angstrom", compute_parameters={"order": 1},
         implementation_hash="impl-abc", checksum="chk-def",
         values=np.array([1.0, 2.0, 3.0]),
@@ -192,7 +192,7 @@ def test_metric_result_ok_wire_shape_and_roundtrip():
     event, args, kw = unpack(pack_metric_result("k1", r.metric_id, True, r))
 
     assert event == "METRIC_RESULT"
-    assert args == ["k1", "ffast.force_rmse"]
+    assert args == ["k1", "ffast.force_difference[structure;length;rmse]"]
     # exact key set — metadata + encoded array, no extra/None keys (parity with
     # the pre-typing hand-rolled payload)
     assert set(kw) == {

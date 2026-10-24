@@ -12,6 +12,10 @@ and acceleration errors, and the force plots that read them, were added later
 from plain NumPy on the same ``(frames, atoms, 3)`` arrays. Joining frames gives the
 same order as flattening (frames, atoms, ...), so results are compared
 flattened.
+
+ADR 0065 deleted the fixed force, acceleration and energy error metrics; the
+numbers saved under an old id are checked against the box setting that
+replaces it (ffast/metrics/retired.py).
 """
 from pathlib import Path
 
@@ -22,7 +26,10 @@ import ffast.metrics.builtin  # noqa: F401  (registers the built-in metrics)
 from ffast.metrics.execution import InputSource
 from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.models import MetricFailure
+from ffast.metrics.boxes import parse_box_id
 from ffast.metrics.registry import default_registry
+from ffast.metrics.retired import REPLACEMENTS
+from ffast.metrics.transforms import compile_transform
 
 N_FRAMES, N_ATOMS = 5, 4
 
@@ -77,43 +84,60 @@ def _leaves(metric_id, seen=None):
 
 
 AVAILABLE = set(_uniform()) | {"offsets"}
-METRICS = sorted(m for m in default_registry.list_metrics() if _leaves(m) <= AVAILABLE)
+# The base metrics; box settings and compiled transforms another test
+# registered are not among them.
+METRICS = sorted(m for m in default_registry.list_metrics()
+                 if parse_box_id(m) is None and "__" not in m and _leaves(m) <= AVAILABLE)
+# Added by ADR 0065, after the numbers were saved.
+NOT_SAVED = {"ffast.energy_difference_shifted"}
 
 BEFORE = np.load(Path(__file__).parent / "data" / "metrics_on_uniform_before_flat.npz")
 
 
+def _now(old):
+    """The metric that gives the numbers saved under ``old`` today."""
+    if old == "ffast.energy_prediction_shifted":
+        return compile_transform("ffast.energy_prediction", "shift")
+    return REPLACEMENTS.get(old, old)
+
+
+COMPARED = sorted((_now(old), old) for old in BEFORE.files)   # (metric now, saved under)
+
+
 def test_the_comparison_covers_the_force_and_structure_metrics():
-    for metric in ("ffast.force_rmse", "ffast.force_mae_per_element", "ffast.accel_rmse",
-                   "ffast.gyradius", "ffast.force_net_residual"):
-        assert metric in METRICS
+    now = {metric for metric, _ in COMPARED}
+    for old in ("ffast.force_rmse", "ffast.force_mae_per_element", "ffast.accel_rmse"):
+        assert REPLACEMENTS[old] in now
+    for metric in ("ffast.gyradius", "ffast.force_net_residual"):
+        assert metric in METRICS and metric in now
 
 
 def test_every_metric_compared_has_its_saved_numbers():
-    assert set(METRICS) == set(BEFORE.files)
+    assert set(METRICS) - NOT_SAVED <= {metric for metric, _ in COMPARED}
 
 
-@pytest.mark.parametrize("metric_id", METRICS)
-def test_a_metric_gives_the_same_numbers_on_flat_inputs(metric_id):
+@pytest.mark.parametrize("metric_id,saved_as", COMPARED)
+def test_a_metric_gives_the_same_numbers_on_flat_inputs(metric_id, saved_as):
     flat = InProcessExecutor(default_registry).run(metric_id, _ByRef(_flat(_uniform())), {})
     assert not isinstance(flat, MetricFailure), flat
-    np.testing.assert_allclose(np.ravel(flat.values), BEFORE[metric_id], rtol=1e-10, atol=1e-12)
+    np.testing.assert_allclose(np.ravel(flat.values), BEFORE[saved_as], rtol=1e-10, atol=1e-12)
 
 
-def test_acceleration_per_atom_keeps_every_atom_when_structures_differ_in_size():
-    """Atom i of one structure is not atom i of another, so nothing is
-    averaged: as the metric gave on variable files before step 6."""
+def test_acceleration_per_atom_is_refused_when_structures_differ_in_size():
+    """Atom i of one structure is not atom i of another, so there is nothing
+    to average per atom: by=atom is refused (ADR 0065)."""
     rng = np.random.default_rng(3)
     values = {
         "reference.forces": rng.normal(size=(7, 3)),
         "prediction.forces": rng.normal(size=(7, 3)),
         "reference.masses": np.ones(7),
+        "reference.elements": np.array([8, 1, 1, 6, 1, 1, 1]),
         "offsets": np.array([0, 3, 7]),
     }
-    executor = InProcessExecutor(default_registry)
-    per_atom = executor.run("ffast.accel_mae_per_atom", _ByRef(values), {})
-    accel = executor.run("ffast.accel_mae", _ByRef(values), {})
-    np.testing.assert_allclose(per_atom.values, accel.values)
-    assert per_atom.values.shape == (7,)
+    per_atom = InProcessExecutor(default_registry).run(
+        REPLACEMENTS["ffast.accel_mae_per_atom"], _ByRef(values), {})
+    assert isinstance(per_atom, MetricFailure)
+    assert "by=atom needs structures with the same atoms in the same order" in per_atom.traceback
 
 
 def test_the_resolver_hands_a_uniform_file_and_its_prediction_flat():

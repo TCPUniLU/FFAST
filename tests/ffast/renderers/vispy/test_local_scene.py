@@ -188,14 +188,15 @@ def test_build_loupe_scene_snapshot_metric_coloring_uses_prediction_without_forc
         dataset_ref=ds.fingerprint,
         structure_index=1,
         get_dataset=env.getDataset,
-        settings=_Settings(atomColorSource="metric:ffast.force_mae"),
+        settings=_Settings(
+            atomColorSource="metric:ffast.force_difference[atom+structure;length]"),
         prediction_ref="mace",
         get_prediction=make_cache_prediction_resolver(env),
         executor=InProcessExecutor(default_registry),
     )
 
     assert snapshot.scene.atoms.color_by is not None
-    assert snapshot.scene.atoms.color_by.label == "Force Error Magnitude (per atom)"  # metric display name
+    assert snapshot.scene.atoms.color_by.label == "Force Difference · per atom · length"  # metric display name
     assert snapshot.scene.forces is None
 
 

@@ -56,9 +56,9 @@ def test_getcachekey_returns_none_when_required_model_missing():
 # ── DataService.make_metric_cache_key ─────────────────────────────────────────
 
 def test_make_metric_key_parity_no_params():
-    key = DataService.make_metric_cache_key(SimpleNamespace(), "ffast.force_mae", {}, _obj("M"), _obj("D"))
-    assert key == "ffast.force_mae__M__D"              # byte-identical to legacy 3-part form
-    assert CacheKey.parse(key) == CacheKey("ffast.force_mae", "M", "D")
+    key = DataService.make_metric_cache_key(SimpleNamespace(), "ffast.force_difference", {}, _obj("M"), _obj("D"))
+    assert key == "ffast.force_difference__M__D"  # byte-identical to legacy 3-part form
+    assert CacheKey.parse(key) == CacheKey("ffast.force_difference", "M", "D")
 
 
 def test_make_metric_key_nil_slots_when_model_or_dataset_none():
@@ -68,11 +68,11 @@ def test_make_metric_key_nil_slots_when_model_or_dataset_none():
 
 def test_make_metric_key_folds_params_into_identity():
     key = DataService.make_metric_cache_key(
-        SimpleNamespace(), "ffast.force_mae", {"norm": "l2"}, _obj("M"), _obj("D")
+        SimpleNamespace(), "ffast.force_difference", {"norm": "l2"}, _obj("M"), _obj("D")
     )
     parsed = CacheKey.parse(key)
     assert parsed.model_fp == "M" and parsed.dataset_fp == "D"      # right-anchor still recovers them
-    assert parsed.dtype.startswith("ffast.force_mae__p")           # params live in the identity, not a 4th field
+    assert parsed.dtype.startswith("ffast.force_difference__p")  # params live in the identity, not a 4th field
 
 
 def test_make_metric_key_params_are_deterministic_and_distinct():
@@ -86,10 +86,10 @@ def test_make_metric_key_params_are_deterministic_and_distinct():
 def test_make_metric_key_transform_id_with_underscores_round_trips():
     # A compiled Transform Metric id already carries __ ; right-anchoring keeps it whole.
     key = DataService.make_metric_cache_key(
-        SimpleNamespace(), "ffast.force_mae__kde__p1a2b3c4", {}, _obj("M"), _obj("D")
+        SimpleNamespace(), "ffast.force_difference[atom+structure;length]__kde__p1a2b3c4", {}, _obj("M"), _obj("D")
     )
-    assert key == "ffast.force_mae__kde__p1a2b3c4__M__D"
-    assert CacheKey.parse(key).dtype == "ffast.force_mae__kde__p1a2b3c4"
+    assert key == "ffast.force_difference[atom+structure;length]__kde__p1a2b3c4__M__D"
+    assert CacheKey.parse(key).dtype == "ffast.force_difference[atom+structure;length]__kde__p1a2b3c4"
 
 
 # ── formula identity in the key (ADR 0057 rule 5) ─────────────────────────────
@@ -134,3 +134,14 @@ def test_builtin_style_metric_key_is_unchanged(monkeypatch):
     _formula_registry(monkeypatch)
     assert _key("t.base") == "t.base__M__D"
 
+
+
+def test_a_box_id_key_keeps_its_brackets_and_round_trips():
+    # A box id (ADR 0065) is a formula over its base; its [ ; + stay in the identity.
+    import ffast.metrics.builtin  # noqa: F401
+    from ffast.metrics.registry import default_registry
+    box = "ffast.force_difference[atom+structure;length]"
+    default_registry.ensure(box)
+    parsed = CacheKey.parse(_key(box))
+    assert parsed.dtype.startswith(f"{box}__f")
+    assert (parsed.model_fp, parsed.dataset_fp) == ("M", "D")

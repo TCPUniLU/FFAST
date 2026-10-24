@@ -124,7 +124,7 @@ class Transform:
     ``shape`` / ``unit`` are ``"inherit"`` (take the source's) or an explicit
     Dim-tuple / units constant. ``compute_params`` are ParameterSchema dicts
     (interactive, fold into the cache key); ``extra_inputs`` maps an input slot to
-    a concrete metric id (e.g. ``shift`` → ``ffast.energy_shift``)."""
+    a concrete metric id (e.g. ``shift`` → ``ffast.energy_difference[dataset;mean]``)."""
 
     name: str
     fn: Callable[[Any, dict, dict], Any]
@@ -188,7 +188,7 @@ for _t in (
     Transform("mean_abs", _tb_mean_abs, shape=_SCALAR_SHAPE),
     Transform("rmse", _tb_rmse, shape=_SCALAR_SHAPE),
     Transform("shift", _tb_shift,
-              extra_inputs={"shift": "ffast.energy_shift"},
+              extra_inputs={"shift": "ffast.energy_difference[dataset;mean]"},
               compute_params={"shifted": _SHIFTED}),
 ):
     register_transform(_t)
@@ -270,8 +270,10 @@ def compile_pipeline(source_id: str, steps, *, id: str | None = None,
     ``id`` overrides the final id (e.g. to pin a legacy literal id). ``registry``
     defaults to the shared ``default_registry`` (tests pass a throwaway one)."""
     registry = registry if registry is not None else default_registry
-    if not registry.has(source_id):
-        raise ValueError(f"compile: unknown source metric '{source_id}'")
+    if not registry.ensure(source_id):
+        from ffast.metrics.retired import retired_message
+        raise ValueError(retired_message(source_id)
+                         or f"compile: unknown source metric '{source_id}'")
     if not steps:
         raise ValueError("compile: at least one transform step is required")
 

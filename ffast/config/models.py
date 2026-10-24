@@ -112,7 +112,8 @@ class StartSettings(BaseModel):
     default. If ``colour_by`` names a metric the server lacks, the browser
     shows element colours and says why."""
     model_config = ConfigDict(extra="forbid")
-    # "element", "displacement", or a per-atom metric id ("ffast.force_mae").
+    # "element", "displacement", or a per-atom metric id
+    # ("ffast.force_difference[atom+structure;length]").
     colour_by: str | None = None
     colormap: str | None = None
     atom_size: float | None = Field(default=None, gt=0)

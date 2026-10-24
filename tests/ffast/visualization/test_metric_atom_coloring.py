@@ -1,9 +1,10 @@
 """Regression tests for metric-driven atom coloring end-to-end.
 
 Covers the chain:
-  SET_PARAMETER(ffast.atom_color, source="metric:ffast.force_mae")
+  SET_PARAMETER(ffast.atom_color, source="metric:ffast.force_difference[atom+structure;length]")
   + view.state.prediction_ref set
-  → resolve_atom_color_values → ffast.force_mae computed → per-atom colors
+  → resolve_atom_color_values → ffast.force_difference[atom+structure;length]
+    computed → per-atom colors
 
 This is the server-side seam for H4 and H1 from the diagnose session.
 """
@@ -79,7 +80,8 @@ def test_resolve_color_force_mae_returns_per_atom_values():
 
     prediction_fp = "pred-fp-001"
     dataset_fp = "ds-fp-001"
-    state = _make_state_with_metric("ffast.force_mae", prediction_ref=prediction_fp)
+    state = _make_state_with_metric("ffast.force_difference[atom+structure;length]",
+                                    prediction_ref=prediction_fp)
 
     def get_prediction(ds_fp, model_fp):
         if ds_fp == dataset_fp and model_fp == prediction_fp:
@@ -121,7 +123,7 @@ def test_resolve_color_prediction_ref_override_wins_over_global():
     state.dataset_ref = dataset_fp
     state.prediction_ref = global_fp   # the view's overlay prediction
     state.parameters["ffast.atom_color"] = {
-        "source": "metric:ffast.force_mae",
+        "source": "metric:ffast.force_difference[atom+structure;length]",
         "prediction_ref": override_fp,   # coloring explicitly asks for a different model
     }
 
@@ -156,7 +158,8 @@ def test_resolve_color_no_prediction_ref_returns_none():
     state = VisualizationState(view_id="v1")
     state.dataset_ref = "ds-fp-001"
     state.prediction_ref = None  # not set — the critical case
-    state.parameters["ffast.atom_color"] = {"source": "metric:ffast.force_mae"}
+    state.parameters["ffast.atom_color"] = {
+        "source": "metric:ffast.force_difference[atom+structure;length]"}
 
     ds = _FakeDataset(n_atoms=3)
 
@@ -174,7 +177,7 @@ def test_resolve_color_prediction_lookup_failure_returns_none():
     from ffast.metrics.registry import _default_registry as reg
     from ffast.visualization.color_values import resolve_atom_color_values
 
-    state = _make_state_with_metric("ffast.force_mae")
+    state = _make_state_with_metric("ffast.force_difference[atom+structure;length]")
     ds = _FakeDataset(n_atoms=3)
 
     result = resolve_atom_color_values(

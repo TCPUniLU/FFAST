@@ -229,10 +229,11 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
             from ffast.metrics.models import MetricFailure
             from ffast.metrics.registry import _default_registry as reg
             metric_id = source.split(":", 1)[1]
-            if not reg.has(metric_id):
+            if not reg.ensure(metric_id):
+                from ffast.metrics.retired import retired_message
                 logger.warning(
-                    "atom-color: metric %r is not registered; falling back to element "
-                    "colors", metric_id,
+                    "atom-color: %s; falling back to element colors",
+                    retired_message(metric_id) or f"metric {metric_id!r} is not registered",
                 )
                 return None
             from ffast.metrics.dims import shape_to_str

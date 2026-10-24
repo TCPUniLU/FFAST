@@ -3,11 +3,7 @@ frame, every atom's element, and offsets (ADR 0058 step 6)."""
 import numpy as np
 import ffast.metrics.builtin.force_metrics  # noqa: F401 — register force_difference dependency
 import ffast.metrics.builtin.transform_metrics  # noqa: F401 — registers the aggregate density
-from ffast.metrics.builtin.atomic_metrics import (
-    force_mae_per_element,
-    force_mae_per_structure_per_element_kde,
-    force_rmse_per_element,
-)
+from ffast.metrics.builtin.atomic_metrics import force_mae_per_structure_per_element_kde
 from ffast.metrics.execution import FlatInputSource
 from ffast.metrics.executor import InProcessExecutor
 from ffast.metrics.registry import MetricRegistry
@@ -21,83 +17,8 @@ def _registry_with_builtins():
     return r
 
 
-def test_builtin_registry():
-    from ffast.metrics.registry import _default_registry
-    _, fn_mae = _default_registry.get("ffast.force_mae_per_element")
-    _, fn_rmse = _default_registry.get("ffast.force_rmse_per_element")
-    assert fn_mae is force_mae_per_element
-    assert fn_rmse is force_rmse_per_element
-
-
-def test_force_mae_per_element_values():
-    # 1 structure, 2 atoms (H=1, C=6), 3 force components
-    # force_difference = [[1,0,0],[0,0,0]]
-    fd = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
-    el = np.array([1, 6])
-    result = force_mae_per_element(fd, el)
-    assert result.shape == (2,)
-    assert np.isclose(result[0], 1.0 / 3.0)  # H
-    assert np.isclose(result[1], 0.0)          # C
-
-
-def test_force_rmse_per_element_values():
-    fd = np.array([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
-    el = np.array([1, 6])
-    result = force_rmse_per_element(fd, el)
-    assert result.shape == (2,)
-    assert np.isclose(result[0], np.sqrt(1.0 / 3.0))  # H
-    assert np.isclose(result[1], 0.0)                   # C
-
-
-def test_force_mae_per_element_multi_structure():
-    # 3 structures, same 2 atoms, H always has diff [1,0,0]
-    fd = np.tile([[1.0, 0.0, 0.0], [0.0, 0.0, 0.0]], (3, 1))
-    el = np.tile([1, 6], 3)
-    result = force_mae_per_element(fd, el)
-    assert np.isclose(result[0], 1.0 / 3.0)
-    assert np.isclose(result[1], 0.0)
-
-
-def test_per_element_sorted_by_z():
-    # elements in reverse order — result must still be sorted by Z
-    fd = np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]])
-    el = np.array([6, 1])  # C first, then H
-    result_mae = force_mae_per_element(fd, el)
-    result_rmse = force_rmse_per_element(fd, el)
-    # unique_z sorted = [1, 6]; index 0 = H (z=1, fd=[2,0,0]), index 1 = C (z=6, fd=[1,0,0])
-    assert np.isclose(result_mae[0], 2.0 / 3.0)   # H
-    assert np.isclose(result_mae[1], 1.0 / 3.0)   # C
-    assert np.isclose(result_rmse[0], np.sqrt(4.0 / 3.0))
-    assert np.isclose(result_rmse[1], np.sqrt(1.0 / 3.0))
-
-
-# ── Degenerate scientific inputs ──────────────────────────────────────────────
-
-def test_force_mae_per_element_single_atom_single_element():
-    # A one-atom structure with a single element: the mean over that element's
-    # components is |1|+|0|+|0| averaged over 3 -> 1/3.
-    fd = np.array([[1.0, 0.0, 0.0]])   # (1 atom, 3)
-    el = np.array([1])
-    result = force_mae_per_element(fd, el)
-    assert result.shape == (1,)
-    assert np.isclose(result[0], 1.0 / 3.0)
-
-
-def test_force_mae_per_element_propagates_nan():
-    # A NaN in the H atom's force diff makes H's mean NaN; C stays clean.
-    fd = np.array([[np.nan, 0.0, 0.0], [0.0, 0.0, 0.0]])
-    el = np.array([1, 6])
-    result = force_mae_per_element(fd, el)
-    assert np.isnan(result[0])   # H
-    assert np.isclose(result[1], 0.0)  # C
-
-
-def test_force_rmse_per_element_propagates_nan():
-    fd = np.array([[np.nan, 0.0, 0.0], [0.0, 0.0, 0.0]])
-    el = np.array([1, 6])
-    result = force_rmse_per_element(fd, el)
-    assert np.isnan(result[0])   # H
-    assert np.isclose(result[1], 0.0)  # C
+# Force MAE and RMSE per element are box settings of ffast.force_difference
+# now (ADR 0065); tests/ffast/test_retired_metrics.py checks their numbers.
 
 
 def test_executor_resolves_dependency():
@@ -106,9 +27,10 @@ def test_executor_resolves_dependency():
     inputs = {
         "reference": np.array([[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]]),
         "predicted": np.array([[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]]),
-        "elements": np.array([1, 6]),
+        "_elements": np.array([1, 6]),
     }
-    result = executor.run("ffast.force_mae_per_element", FlatInputSource(inputs), {})
+    result = executor.run("ffast.force_difference[element;component;mae]",
+                          FlatInputSource(inputs), {})
     assert result.shape == "N_elements"
     assert np.isclose(result.values[0], 1.0 / 3.0)  # H diff=[1,0,0]
     assert np.isclose(result.values[1], 0.0)          # C diff=[0,0,0]

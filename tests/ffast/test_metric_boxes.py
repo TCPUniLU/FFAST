@@ -233,6 +233,10 @@ FIXED = [
     ("mean(pred_E - ref_E, by=all)", _EV, "ffast.energy_difference[dataset;mean]"),
     ("mean(abs(pred_E - ref_E), by=all)", _EV, "ffast.energy_difference[dataset;mae]"),
     ("rms(pred_E - ref_E, by=all)", _EV, "ffast.energy_difference[dataset;rmse]"),
+    ("mean(abs(pred_E - ref_E - mean(pred_E - ref_E, by=all)), by=all)", _EV,
+     "ffast.energy_difference_shifted[dataset;mae]"),
+    ("rms(pred_E - ref_E - mean(pred_E - ref_E, by=all), by=all)", _EV,
+     "ffast.energy_difference_shifted[dataset;rmse]"),
 ]
 
 
@@ -242,3 +246,69 @@ def test_each_fixed_metrics_formula_reads_as_its_setting(expr, vars_, replacemen
     from ffast.metrics.registry import default_registry
     got = classify(expr, vars_, default_registry)
     assert box_id(got.base, got.setting) == replacement
+
+
+# ── what the Metrics pane is told (section 4) ────────────────────────────────
+
+def test_the_pane_reads_a_box_metric_as_its_base_and_setting():
+    from ffast.metrics.boxes import box_state
+    r = _registry()
+    state = box_state(r, metric_id="ffast.force_difference[structure;length;rmse]")
+    assert state["base"] == "ffast.force_difference"
+    assert state["setting"] == {"keep": ["structure"], "combine": "length", "statistic": "rmse"}
+    assert state["custom"] is False
+    assert state["id"] == "ffast.force_difference[structure;length;rmse]"
+    assert state["expr"] == "rms(norm(D), by=structure)"
+    assert state["vars"] == {"D": "ffast.force_difference"}
+    assert state["label"] == "Force Difference · RMSE · per frame · length"
+    assert state["shape"] == "N_frames" and state["unit"] == "force"
+    assert state["exists"] is True          # opening a box id registers it
+    assert {"keep": ["structure"], "combine": "component", "statistic": "mae"} in state["allowed"]
+
+
+def test_a_base_opens_with_everything_kept_and_nothing_to_create():
+    from ffast.metrics.boxes import box_state
+    state = box_state(_registry(), metric_id="ffast.force_difference")
+    assert state["setting"] == {"keep": ["atom", "structure", "xyz"], "combine": None, "statistic": None}
+    assert state["id"] == "ffast.force_difference"
+    assert state["exists"] is True
+
+
+def test_a_change_of_boxes_gives_the_new_formula_and_name():
+    from ffast.metrics.boxes import box_state
+    state = box_state(_registry(), base="ffast.force_difference",
+                      setting={"keep": ["element"], "combine": "component", "statistic": "mae"})
+    assert state["id"] == "ffast.force_difference[element;component;mae]"
+    assert state["expr"] == "mean(mean_parts(abs(D)), by=element)"
+    assert state["shape"] == "N_elements"
+    assert state["problem"] is None
+
+
+def test_a_per_frame_metric_greys_the_finer_boxes_with_a_hint():
+    from ffast.metrics.boxes import box_state
+    state = box_state(_registry(), metric_id="ffast.energy_difference")
+    assert state["hints"]["atom"] == "this metric is already averaged per frame"
+    assert state["hints"]["element"] == "this metric is already averaged per frame"
+    assert state["hints"]["xyz"] == "this metric has no x/y/z"
+    assert "structure" not in state["hints"]
+
+
+def test_atom_without_structure_is_greyed_when_structures_differ():
+    from ffast.metrics.boxes import box_state
+    state = box_state(_registry(), metric_id="ffast.force_difference", uniform=False)
+    assert all(s["keep"] != ["atom"] for s in state["allowed"])
+    assert state["hints"]["atom_only"] == "structures have different atoms"
+
+
+def test_a_custom_formula_is_its_own_base():
+    from ffast.metrics.boxes import box_state
+    from ffast.metrics.expr import compile_expr_metric
+    r = _registry()
+    compile_expr_metric("user.odd", "abs(D - mean(D, by=all))", {"D": "ffast.energy_difference"},
+                        label="Odd", unit="energy", registry=r)
+    state = box_state(r, metric_id="user.odd")
+    assert state["custom"] is True
+    assert state["base"] == "user.odd"
+    state = box_state(r, base="user.odd", setting={"keep": [], "combine": None, "statistic": "max"})
+    assert state["expr"] == "max(abs(D), by=all)"
+    assert state["id"] == "user.odd[dataset;max]"

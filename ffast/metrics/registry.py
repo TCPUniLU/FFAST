@@ -79,12 +79,22 @@ class MetricRegistry:
         return register
 
     def get(self, id: str) -> tuple[MetricSchema, Callable]:
-        if id not in self._metrics:
-            raise KeyError(f"Metric with id '{id}' is not registered")
+        if id not in self._metrics and not self.ensure(id):
+            from ffast.metrics.retired import retired_message
+            raise KeyError(retired_message(id) or f"Metric with id '{id}' is not registered")
         return self._metrics[id]
 
     def has(self, id: str) -> bool:
         return id in self._metrics
+
+    def ensure(self, id: str) -> bool:
+        """Whether ``id`` is registered, registering it first when it is a box
+        id such as ``ffast.force_difference[structure;component;mae]``
+        (ADR 0065): any setting of a base metric works without being created."""
+        if id in self._metrics:
+            return True
+        from ffast.metrics.boxes import ensure_metric
+        return ensure_metric(id, self)
 
     # -- changing the table on a running server (ADR 0057 rule 5) -------------
     # The table is frozen at start-up, then user metrics are added, replaced and
@@ -140,6 +150,10 @@ class MetricRegistry:
         """
         from ffast.metrics.inputs import ALL_VALID_REFS
         valid_refs = ALL_VALID_REFS if validate_refs else None
+        # A metric may take a box setting as its input (ADR 0065).
+        for schema, _fn in list(self._metrics.values()):
+            for ref in schema.inputs.values():
+                self.ensure(ref)
         errors = self._graph.freeze(self._metrics, valid_refs=valid_refs)
         for mid, msg in errors:
             logger.error("MetricRegistry.freeze [%s]: %s", mid, msg)

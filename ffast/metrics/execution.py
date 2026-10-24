@@ -160,6 +160,8 @@ def build_execution_plan(
     steps: list[PlanStep] = []
     seen: set[str] = set()
     visiting: set[str] = set()
+    # A box id (ADR 0065) is registered the first time it is asked for.
+    ensure = getattr(registry, "ensure", registry.has)
 
     def visit(metric_id: str) -> None:
         if metric_id in visiting:
@@ -168,13 +170,14 @@ def build_execution_plan(
             return
         visiting.add(metric_id)
         seen.add(metric_id)
+        ensure(metric_id)
         schema, _ = registry.get(metric_id)
 
         bindings: dict[str, Binding] = {}
         failure: str | None = None
 
         for local_key, ref in schema.inputs.items():
-            if registry.has(ref):
+            if ensure(ref):
                 visit(ref)  # dependency first → post-order gives a valid run order
                 bindings[local_key] = DepInput(ref)
                 continue

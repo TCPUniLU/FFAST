@@ -19,7 +19,7 @@ from ffast.session.server_session import ServerSession
 
 VIEW = {"kind": "3d", "row": 0, "col": 0}
 TABLE = {"kind": "table", "row": 0, "col": 0, "title": "MAE",
-         "metrics": {"value": {"metric": "ffast.force_component_mae"}}}
+         "metrics": {"value": {"metric": "ffast.force_difference[dataset;component;mae]"}}}
 
 
 class _Env:

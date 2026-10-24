@@ -18,8 +18,8 @@ from ffast.core.dataset_registry import DatasetRegistry
 from ffast.core.object_catalog import ObjectCatalog
 
 # The two keys the old len==3 filter leaked.
-PARAMS_KEY = "ffast.force_mae__pdeadbeef__M__D"          # 4 segments
-TRANSFORM_KEY = "ffast.force_mae__kde__p1a2b3c4__M__D"   # 5 segments (identity has __)
+PARAMS_KEY = "ffast.force_difference[atom+structure;length]__pdeadbeef__M__D"  # 4 segments
+TRANSFORM_KEY = "ffast.force_difference[atom+structure;length]__kde__p1a2b3c4__M__D"  # 5 segments (identity has __)
 
 
 def _events():
@@ -43,7 +43,7 @@ def _seed_cache():
     cache[PARAMS_KEY] = object()            # M, would have leaked
     cache[TRANSFORM_KEY] = object()         # M, would have leaked
     cache["forces__OTHER__D"] = object()    # different model — must survive
-    cache["ffast.force_mae__kde__p1a2b3c4__OTHER__D"] = object()  # different model — survive
+    cache["ffast.force_difference[atom+structure;length]__kde__p1a2b3c4__OTHER__D"] = object()  # different model — survive
     return cache
 
 
@@ -61,7 +61,7 @@ def test_delete_model_prunes_params_and_transform_keys():
     assert TRANSFORM_KEY not in cache
     # Other model's keys untouched.
     assert "forces__OTHER__D" in cache
-    assert "ffast.force_mae__kde__p1a2b3c4__OTHER__D" in cache
+    assert "ffast.force_difference[atom+structure;length]__kde__p1a2b3c4__OTHER__D" in cache
 
 
 def test_delete_dataset_prunes_params_and_transform_keys():
@@ -70,7 +70,7 @@ def test_delete_dataset_prunes_params_and_transform_keys():
     cache[PARAMS_KEY] = object()                                  # dataset D, would have leaked
     cache[TRANSFORM_KEY] = object()                               # dataset D, would have leaked
     cache["forces__M__OTHERDS"] = object()                        # different dataset — survive
-    cache["ffast.force_mae__kde__p1a2b3c4__M__OTHERDS"] = object()  # survive
+    cache["ffast.force_difference[atom+structure;length]__kde__p1a2b3c4__M__OTHERDS"] = object()  # survive
 
     reg = DatasetRegistry(cache, _events())
     reg._datasets["D"] = SimpleNamespace(fingerprint="D", onDelete=lambda: None)
@@ -81,7 +81,7 @@ def test_delete_dataset_prunes_params_and_transform_keys():
     assert PARAMS_KEY not in cache
     assert TRANSFORM_KEY not in cache
     assert "forces__M__OTHERDS" in cache
-    assert "ffast.force_mae__kde__p1a2b3c4__M__OTHERDS" in cache
+    assert "ffast.force_difference[atom+structure;length]__kde__p1a2b3c4__M__OTHERDS" in cache
 
 
 def test_delete_also_prunes_object_metadata():

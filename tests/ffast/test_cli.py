@@ -39,17 +39,17 @@ def test_metrics_list(tmp_path, capsys):
     config_file.write_text("")
     main(["metrics", "list", "--config", str(config_file)])
     out = capsys.readouterr().out
-    assert "ffast.force_mae" in out
-    assert "ffast.energy_mae" in out
+    assert "ffast.force_difference" in out
+    assert "ffast.energy_difference" in out
 
 
 def test_metrics_inspect(tmp_path, capsys):
     config_file = tmp_path / "ffast.toml"
     config_file.write_text("")
-    main(["metrics", "inspect", "ffast.force_mae", "--config", str(config_file)])
+    main(["metrics", "inspect", "ffast.force_difference[atom+structure;length]", "--config", str(config_file)])
     out = capsys.readouterr().out
     data = json.loads(out)
-    assert data["id"] == "ffast.force_mae"
+    assert data["id"] == "ffast.force_difference[atom+structure;length]"
     assert data["shape"] == "N_atoms"
 
 
@@ -74,7 +74,7 @@ def test_metrics_run_unknown_metric(tmp_path):
 def test_metrics_run_unknown_param(capsys):
     with pytest.raises(SystemExit) as exc:
         main([
-            "metrics", "run", "ffast.force_mae",
+            "metrics", "run", "ffast.force_difference[atom+structure;length]",
             "--dataset", "examples/data/dataset.xyz",
             "--prediction", "examples/data/prediction.xyz",
             "--param", "bogus=1",
@@ -87,7 +87,7 @@ def test_metrics_run_needs_prediction(capsys):
     """A prediction-dependent metric without --prediction fails with guidance."""
     with pytest.raises(SystemExit) as exc:
         main([
-            "metrics", "run", "ffast.force_mae_global",
+            "metrics", "run", "ffast.force_difference[dataset;length;mae]",
             "--dataset", "examples/data/dataset.xyz",
         ])
     assert exc.value.code == 1
@@ -224,14 +224,14 @@ def test_stages_test_unknown_exits_1(capsys):
 # ── metrics test ─────────────────────────────────────────────────────────────
 
 def test_metrics_test_reports_ok(tmp_path, capsys):
-    # ffast.accel_mae carries embedded correctness/determinism tests; the command
+    # ffast.accel_difference carries embedded correctness/determinism tests; the command
     # runs them twice and prints "OK <label>" for each, exiting 0.
     config_file = tmp_path / "ffast.toml"
     config_file.write_text("")
-    main(["metrics", "test", "ffast.accel_mae", "--config", str(config_file)])
+    main(["metrics", "test", "ffast.accel_difference", "--config", str(config_file)])
     out = capsys.readouterr().out
     assert "OK" in out
-    assert "ffast.accel_mae[0]" in out
+    assert "ffast.accel_difference[0]" in out
 
 
 def test_every_builtin_metric_passes_its_own_tests(tmp_path, capsys):
@@ -265,13 +265,13 @@ def test_metrics_run_with_prediction_end_to_end(capsys):
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
     main([
-        "metrics", "run", "ffast.force_mae_global",
+        "metrics", "run", "ffast.force_difference[dataset;length;mae]",
         "--dataset", str(_DATASET),
         "--prediction", str(_PREDICTION),
         "--json",
     ])
     data = json.loads(capsys.readouterr().out)
-    assert data["metric_id"] == "ffast.force_mae_global"
+    assert data["metric_id"] == "ffast.force_difference[dataset;length;mae]"
     assert data["shape"] == "scalar"
     assert data["unit"] == "force"
     assert isinstance(data["values"], (int, float))

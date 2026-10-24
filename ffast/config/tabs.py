@@ -47,9 +47,16 @@ def resolve_ref(ref: PanelMetricRef, *, registry=None) -> str:
 
     No transform → the raw metric id. A single transform / a pipeline list is
     sent to the compiler (idempotent), which registers it and returns its id."""
+    from ffast.metrics.registry import default_registry
+    from ffast.metrics.retired import retired_message
     from ffast.metrics.transforms import compile_pipeline, compile_transform
 
     if not ref.transform:
+        # A box setting (ADR 0065) is registered when a tab names it; a
+        # deleted id is refused with its replacement.
+        if not (registry if registry is not None else default_registry).ensure(ref.metric):
+            if retired_message(ref.metric):
+                raise ValueError(retired_message(ref.metric))
         return ref.metric
     if isinstance(ref.transform, list):
         return compile_pipeline(ref.metric, list(ref.transform), registry=registry)

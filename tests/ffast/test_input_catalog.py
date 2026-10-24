@@ -109,5 +109,5 @@ def test_the_server_answers_the_window_that_asked():
     event, _, kwargs = asyncio.run(scenario())
     assert event == control.METRIC_INPUTS and kwargs["dataset_fp"] == "ds1"
     refs = {e["ref"] for e in kwargs["inputs"]}
-    assert {"reference.energies", "reference.info.REF_energy", "ffast.force_component_mae"} <= refs
+    assert {"reference.energies", "reference.info.REF_energy", "ffast.force_difference"} <= refs
     assert control.REQUEST_METRIC_INPUTS not in control.MUTATING_CLIENT_EVENTS

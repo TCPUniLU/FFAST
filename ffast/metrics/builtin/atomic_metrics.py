@@ -27,66 +27,6 @@ def _per_structure_element_mae(force_difference, elements, offsets, z_target):
 
 
 @metric(
-    label="Force MAE (by element)",
-    description="Force MAE of each element's atoms, over their x, y and z components.",
-    unit=units.force,
-    tests=[
-        {
-            "inputs": {
-                "reference": [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
-                "predicted": [[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
-                "elements": [1, 6],
-            },
-            "parameters": {},
-            "expected": [1.0 / 3.0, 0.0],
-            "atol": 1e-6,
-        }
-    ],
-)
-def force_mae_per_element(
-    force_difference: Ref["ffast.force_difference"],
-    elements: Ref[I.reference_elements],
-) -> Float[np.ndarray, "N_elements"]:
-    fd = np.asarray(force_difference)
-    el = np.asarray(elements)
-    unique_z = np.unique(el)
-    result = np.empty(len(unique_z), dtype=np.float64)
-    for i, z in enumerate(unique_z):
-        result[i] = np.mean(np.abs(fd[el == z]))
-    return result
-
-
-@metric(
-    label="Force RMSE (by element)",
-    description="Force RMSE of each element's atoms, over their x, y and z components.",
-    unit=units.force,
-    tests=[
-        {
-            "inputs": {
-                "reference": [[1.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
-                "predicted": [[2.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
-                "elements": [1, 6],
-            },
-            "parameters": {},
-            "expected": [0.5773502691896258, 0.0],
-            "atol": 1e-6,
-        }
-    ],
-)
-def force_rmse_per_element(
-    force_difference: Ref["ffast.force_difference"],
-    elements: Ref[I.reference_elements],
-) -> Float[np.ndarray, "N_elements"]:
-    fd = np.asarray(force_difference)
-    el = np.asarray(elements)
-    unique_z = np.unique(el)
-    result = np.empty(len(unique_z), dtype=np.float64)
-    for i, z in enumerate(unique_z):
-        result[i] = np.sqrt(np.mean(fd[el == z] ** 2))
-    return result
-
-
-@metric(
     label="Force MAE distribution (per element)",
     description=(
         "Per-structure force MAE distribution, KDE'd per element — one "

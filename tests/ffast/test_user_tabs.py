@@ -22,7 +22,7 @@ def _tab(name, *panels):
 
 VIEW = {"kind": "3d", "row": 0, "col": 0}
 TABLE = {"kind": "table", "row": 0, "col": 1, "title": "MAE",
-         "metrics": {"value": {"metric": "ffast.force_component_mae"}}}
+         "metrics": {"value": {"metric": "ffast.force_difference[dataset;component;mae]"}}}
 SMOOTH = {"kind": "timeline", "row": 0, "col": 0, "title": "Gyradius",
           "metrics": {"y": {"metric": "ffast.gyradius", "transform": "smooth"}}}
 
@@ -213,7 +213,7 @@ def test_the_layout_tells_the_browser_where_each_tab_comes_from(store):
 # ── independent 3D panels (rule 13) ─────────────────────────────────────────
 
 INDEPENDENT = {"kind": "3d", "row": 0, "col": 1, "view": "independent", "link_camera": False,
-               "start": {"colour_by": "ffast.force_mae", "colormap": "force_error"}}
+               "start": {"colour_by": "ffast.force_difference[atom+structure;length]", "colormap": "force_error"}}
 
 
 def test_an_independent_panel_is_saved_with_its_links_and_start(store, tmp_path):

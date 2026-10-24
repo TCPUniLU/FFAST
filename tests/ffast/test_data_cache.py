@@ -52,7 +52,7 @@ def test_reads_of_malformed_key_degrade_to_absent():
 
 def test_transform_key_with_underscores_round_trips_through_cache():
     c = DataCache()
-    key = "ffast.force_mae__kde__p1a2b3c4__M__D"
+    key = "ffast.force_difference[atom+structure;length]__kde__p1a2b3c4__M__D"
     c[key] = "v"
     assert c[key] == "v"
     assert c[CacheKey.parse(key)] == "v"            # CacheKey lookup hits the same entry

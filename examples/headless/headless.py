@@ -26,15 +26,21 @@ env.loadPrepredictedDataset("examples/data/prediction.xyz", dataset.fingerprint)
 model = env.models.all()[0]
 
 # Queue metric computations
+# A base metric plus its keep-box setting names each error (ADR 0065):
+# [kept boxes;combine;statistic], "dataset" when nothing is kept.
+ENERGY_MAE = "ffast.energy_difference[dataset;mae]"
+ENERGY_RMSE = "ffast.energy_difference[dataset;rmse]"
+FORCE_MAE = "ffast.force_difference[dataset;component;mae]"
+FORCE_RMSE = "ffast.force_difference[dataset;component;rmse]"
 metrics = [
-    ("ffast.energy_mae",        {}),
-    ("ffast.energy_rmse",       {}),
-    ("ffast.energy_mae_shifted",  {}),
-    ("ffast.energy_rmse_shifted", {}),
-    ("ffast.force_mae_global",  {}),
-    ("ffast.force_rmse_global", {}),
+    (ENERGY_MAE, {}),
+    (ENERGY_RMSE, {}),
+    ("ffast.energy_difference_shifted[dataset;mae]", {}),
+    ("ffast.energy_difference_shifted[dataset;rmse]", {}),
+    (FORCE_MAE, {}),
+    (FORCE_RMSE, {}),
     ("ffast.energy_difference", {}),
-    ("ffast.force_mae",         {"norm": "l1"}),
+    ("ffast.force_difference[atom+structure;component;mae]", {}),
 ]
 for metric_id, params in metrics:
     key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
@@ -47,10 +53,10 @@ def get_metric(metric_id, params={}):
     result = env.data.getCacheByKey(key, subChecks=False)
     return float(result.values) if result is not None else None
 
-e_mae   = get_metric("ffast.energy_mae")
-e_rmse  = get_metric("ffast.energy_rmse")
-f_mae   = get_metric("ffast.force_mae_global")
-f_rmse  = get_metric("ffast.force_rmse_global")
+e_mae   = get_metric(ENERGY_MAE)
+e_rmse  = get_metric(ENERGY_RMSE)
+f_mae   = get_metric(FORCE_MAE)
+f_rmse  = get_metric(FORCE_RMSE)
 
 print(f"Energy MAE:  {e_mae:.4f}")
 print(f"Energy RMSE: {e_rmse:.4f}")

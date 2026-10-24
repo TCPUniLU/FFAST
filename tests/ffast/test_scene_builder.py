@@ -825,7 +825,7 @@ class TestBuildSceneColorBy:
         pred = np.stack([np.full((4, 3), 0.5)] * 3)  # predicted forces
         state = VisualizationState(
             view_id="v1", dataset_ref="DS", prediction_ref="M", structure_index=1,
-            parameters={"ffast.atom_color": {"source": "metric:ffast.force_mae"}},
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[atom+structure;length]"}},
         )
         scene = build_scene(
             state, get_dataset=lambda fp: ds,
@@ -833,7 +833,7 @@ class TestBuildSceneColorBy:
             executor=InProcessExecutor(default_registry),
         )
         assert scene.atoms.color_by is not None
-        assert scene.atoms.color_by.label == "Force Error Magnitude (per atom)"  # metric display name
+        assert scene.atoms.color_by.label == "Force Difference · per atom · length"  # metric display name
         assert len(scene.atoms.color_by.values) == 4
 
     def _whole(self, values, calls=None):
@@ -850,7 +850,7 @@ class TestBuildSceneColorBy:
         calls = []
         state = VisualizationState(
             view_id="v1", dataset_ref="DS", prediction_ref="M", structure_index=1,
-            parameters={"ffast.atom_color": {"source": "metric:ffast.force_mae",
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[atom+structure;length]",
                                              "colormap": "viridis"}},
         )
         scene = build_scene(state, get_dataset=lambda fp: ds,
@@ -858,14 +858,14 @@ class TestBuildSceneColorBy:
         cb = scene.atoms.color_by
         assert list(cb.values) == [4.0, 5.0, 6.0, 7.0]      # frame 1 of 3, 4 atoms each
         assert (cb.vmin, cb.vmax) == (0.0, 11.0)             # every frame
-        assert cb.label == "Force Error Magnitude (per atom)"
+        assert cb.label == "Force Difference · per atom · length"
         # Only the metric's own parameters: the plots' stored result is reused.
-        assert calls == [("ffast.force_mae", {}, "DS", "M")]
+        assert calls == [("ffast.force_difference[atom+structure;length]", {}, "DS", "M")]
 
     def test_a_per_element_metric_over_the_whole_dataset_is_not_this_frame(self, ds):
         state = VisualizationState(
             view_id="v1", dataset_ref="DS", prediction_ref="M",
-            parameters={"ffast.atom_color": {"source": "metric:ffast.force_mae_per_element"}},
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[element;component;mae]"}},
         )
         # Elements in sorted order: H (1), then C (6).
         scene = build_scene(state, get_dataset=lambda fp: ds,
@@ -873,25 +873,27 @@ class TestBuildSceneColorBy:
         cb = scene.atoms.color_by
         assert list(cb.values) == [0.9, 0.3, 0.3, 0.3]       # C H H H
         assert (cb.vmin, cb.vmax) == (0.3, 0.9)
-        assert cb.label == "Force MAE (by element)"
+        assert cb.label == "Force Difference · MAE · per element · per component"
 
     def test_a_typed_limit_wins_over_the_whole_dataset_range(self, ds):
         state = VisualizationState(
             view_id="v1", dataset_ref="DS", prediction_ref="M",
-            parameters={"ffast.atom_color": {"source": "metric:ffast.force_mae", "vmax": 2.0}},
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[atom+structure;length]", "vmax": 2.0}},
         )
         cb = build_scene(state, get_dataset=lambda fp: ds,
                          get_metric=self._whole(np.arange(12.0))).atoms.color_by
         assert (cb.vmin, cb.vmax) == (0.0, 2.0)
 
-    def test_without_the_whole_dataset_the_colouring_uses_this_frame(self, ds):
+    def test_without_the_whole_dataset_a_per_element_setting_is_not_coloured(self, ds):
+        # A by=element setting is a formula: over this frame alone it would
+        # mean something else, so it falls back to element colours (ADR 0064).
         from ffast.metrics.executor import InProcessExecutor
         from ffast.metrics.registry import default_registry
 
         pred = np.stack([np.full((4, 3), 0.5)] * 3)
         state = VisualizationState(
             view_id="v1", dataset_ref="DS", prediction_ref="M", structure_index=2,
-            parameters={"ffast.atom_color": {"source": "metric:ffast.force_mae_per_element"}},
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[element;component;mae]"}},
         )
         cb = build_scene(
             state, get_dataset=lambda fp: ds,
@@ -899,19 +901,17 @@ class TestBuildSceneColorBy:
             executor=InProcessExecutor(default_registry),
             get_metric=self._whole(None),
         ).atoms.color_by
-        assert cb.label == "Force MAE (by element, this frame)"
-        # Frame 2: reference 2.0, predicted 0.5 on every component.
-        assert (cb.vmin, cb.vmax) == (1.5, 1.5)
+        assert cb is None
 
     def test_metric_source_falls_back_without_prediction(self, ds, caplog):
         # No prediction_ref → prediction.forces unresolvable → graceful None.
         state = VisualizationState(
             view_id="v1", dataset_ref="DS",
-            parameters={"ffast.atom_color": {"source": "metric:ffast.force_mae"}},
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[atom+structure;length]"}},
         )
         scene = build_scene(state, get_dataset=lambda fp: ds)
         assert scene.atoms.color_by is None
-        assert "color source 'metric:ffast.force_mae' failed" not in caplog.text
+        assert "color source 'metric:ffast.force_difference[atom+structure;length]' failed" not in caplog.text
 
     def test_unknown_metric_falls_back(self, ds):
         state = VisualizationState(

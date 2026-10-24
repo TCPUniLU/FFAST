@@ -414,6 +414,11 @@ class _ExistingOnly:
     def has(self, metric_id) -> bool:
         return self._registry.has(metric_id)
 
+    def ensure(self, metric_id) -> bool:
+        """A box id (ADR 0065) is a formula over a registered base: it can be
+        registered and computed at any time, so it counts as existing."""
+        return self._registry.ensure(metric_id)
+
     def get(self, metric_id):
         return self._registry.get(metric_id)
 

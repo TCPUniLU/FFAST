@@ -28,10 +28,10 @@ row = 1
 col = 0
 title = "Atomic Errors"
   [tabs.panels.metrics.mae]
-  metric = "ffast.force_mae_per_element"
+  metric = "ffast.force_difference[element;component;mae]"
   [tabs.panels.metrics.rmse]
-  metric = "ffast.force_rmse_per_element"
+  metric = "ffast.force_difference[element;component;rmse]"
   [tabs.panels.metrics.mae_all]
-  metric = "ffast.force_component_mae"
+  metric = "ffast.force_difference[dataset;component;mae]"
   [tabs.panels.metrics.rmse_all]
-  metric = "ffast.force_component_rmse"
+  metric = "ffast.force_difference[dataset;component;rmse]"

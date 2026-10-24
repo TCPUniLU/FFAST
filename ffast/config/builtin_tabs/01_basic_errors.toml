@@ -78,7 +78,8 @@ scroll_group = "tables"
 title = "Energy MAE"
 hidden_params = ["shifted"]
   [tabs.panels.metrics.value]
-  metric = "ffast.energy_mae_p"
+  metric = "ffast.energy_difference"
+  transform = ["shift", "mean_abs"]
 
 [[tabs.panels]]
 kind = "table"
@@ -89,7 +90,8 @@ scroll_group = "tables"
 title = "Energy RMSE"
 hidden_params = ["shifted"]
   [tabs.panels.metrics.value]
-  metric = "ffast.energy_rmse_p"
+  metric = "ffast.energy_difference"
+  transform = ["shift", "rmse"]
 
 [[tabs.panels]]
 kind = "table"
@@ -99,7 +101,7 @@ colspan = 2
 scroll_group = "tables"
 title = "Forces MAE"
   [tabs.panels.metrics.value]
-  metric = "ffast.force_component_mae"
+  metric = "ffast.force_difference[dataset;component;mae]"
 
 [[tabs.panels]]
 kind = "table"
@@ -109,7 +111,7 @@ colspan = 2
 scroll_group = "tables"
 title = "Forces RMSE"
   [tabs.panels.metrics.value]
-  metric = "ffast.force_component_rmse"
+  metric = "ffast.force_difference[dataset;component;rmse]"
 
 # --- row 4: true-vs-predicted scatter -------------------------------------- #
 [[tabs.panels]]
@@ -124,7 +126,8 @@ hidden_params = ["shifted"]
   [tabs.panels.metrics.x]
   metric = "ffast.energy_reference"
   [tabs.panels.metrics.y]
-  metric = "ffast.energy_prediction_shifted"
+  metric = "ffast.energy_prediction"
+  transform = "shift"
 
 [[tabs.panels]]
 kind = "scatter"

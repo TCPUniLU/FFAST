@@ -476,7 +476,7 @@ def _resolve_ref_shape(ref: str, registry):
     check). A registered metric contributes its declared shape; a Dataset Field
     contributes per-atom/per-frame; a raw ref its fixed shape; ``n_atoms`` is
     per-structure. An unresolvable ref raises (bad ref → config-load error)."""
-    if registry.has(ref):
+    if registry.has(ref) or (hasattr(registry, "ensure") and registry.ensure(ref)):
         return _as_tuple(registry.get(ref)[0].shape)
     if ref in _RESERVED_SHAPE:
         return _RESERVED_SHAPE[ref]
@@ -486,6 +486,9 @@ def _resolve_ref_shape(ref: str, registry):
         return (dims.N_atoms,) if kind == "atoms" else (dims.N_frames,)
     if ref in _RAW_REF_SHAPE:
         return _RAW_REF_SHAPE[ref]
+    from ffast.metrics.retired import retired_message
+    if retired_message(ref):
+        raise ValueError(retired_message(ref))
     raise ValueError(
         f"cannot determine a Metric Shape for ref '{ref}' — expr variables must "
         f"bind a registered metric id, a Dataset Field "

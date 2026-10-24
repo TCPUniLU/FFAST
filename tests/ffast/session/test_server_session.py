@@ -28,7 +28,7 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _make_metric_result(metric_id="ffast.force_mae", values=None):
+def _make_metric_result(metric_id="ffast.force_difference[atom+structure;length]", values=None):
     """A real MetricResult so pack_metric_result reads its actual fields."""
     return MetricResult(
         metric_id=metric_id,
@@ -504,7 +504,7 @@ def test_replay_empty_env_enqueues_only_the_shared_pieces():
 def test_request_metric_cache_hit_returns_result_without_computing():
     """A cached MetricResult is served straight back as an ok=True
     METRIC_RESULT — the compute path (env.data) is never touched."""
-    key = "ffast.force_mae__nil__nil"          # what the server's own key builder gives
+    key = "ffast.force_difference[atom+structure;length]__nil__nil"  # what the server's own key builder gives
     result = _make_metric_result(values=np.array([1.5, 2.5]))
     env = _FakeEnv(datasets={"ds1": object()}, cache={key: result})
     env.data = _FakeData(env.cache)
@@ -512,16 +512,16 @@ def test_request_metric_cache_hit_returns_result_without_computing():
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
         await s.dispatch(
-            "REQUEST_METRIC", ["ffast.force_mae", "m1"], {"dataset_fp": "ds1"}
+            "REQUEST_METRIC", ["ffast.force_difference[atom+structure;length]", "m1"], {"dataset_fp": "ds1"}
         )
         return s.outbound.get_nowait()
 
     event, args, kwargs = unpack(_run(scenario()))
     assert event == control.METRIC_RESULT
-    assert args == ["m1", "ffast.force_mae"]       # (request_id, metric_id) positional
+    assert args == ["m1", "ffast.force_difference[atom+structure;length]"]  # (request_id, metric_id) positional
     recovered = unpack_metric_result(kwargs)
     assert recovered is not None
-    assert recovered.metric_id == "ffast.force_mae"
+    assert recovered.metric_id == "ffast.force_difference[atom+structure;length]"
     np.testing.assert_array_equal(recovered.values, np.array([1.5, 2.5]))
 
 
@@ -534,14 +534,14 @@ def test_request_metric_missing_model_signals_client_fallback():
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
         await s.dispatch(
-            "REQUEST_METRIC", ["ffast.energy_mae", "m2"],
+            "REQUEST_METRIC", ["ffast.energy_difference[dataset;mae]", "m2"],
             {"model_fp": "realmodel", "dataset_fp": "ds1"},
         )
         return s.outbound.get_nowait()
 
     event, args, kwargs = unpack(_run(scenario()))
     assert event == control.METRIC_RESULT
-    assert args == ["m2", "ffast.energy_mae"]
+    assert args == ["m2", "ffast.energy_difference[dataset;mae]"]
     assert kwargs["ok"] is False
     assert unpack_metric_result(kwargs) is None
 
@@ -555,19 +555,19 @@ def test_request_metric_computes_on_cache_miss_and_replies_with_request_id():
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_METRIC", ["ffast.force_rmse", "m3"], {"dataset_fp": "ds1"})
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;length;rmse]", "m3"], {"dataset_fp": "ds1"})
         return s.outbound.get_nowait()
 
     event, args, kwargs = unpack(_run(scenario()))
-    stored_key = "ffast.force_rmse__f1234abcd__nil__nil"   # carries the formula hash
+    stored_key = "ffast.force_difference[structure;length;rmse]__f1234abcd__nil__nil"  # carries the formula hash
     assert event == control.METRIC_RESULT
-    assert args == ["m3", "ffast.force_rmse"]
+    assert args == ["m3", "ffast.force_difference[structure;length;rmse]"]
     assert env.data.make_key_calls, "make_metric_cache_key should be used"
-    assert env.data.generate_metric_calls == [("ffast.force_rmse", stored_key)]
+    assert env.data.generate_metric_calls == [("ffast.force_difference[structure;length;rmse]", stored_key)]
     assert list(env.cache._entries) == [stored_key]   # nothing stored under the request id
     recovered = unpack_metric_result(kwargs)
     assert recovered is not None
-    assert recovered.metric_id == "ffast.force_rmse"
+    assert recovered.metric_id == "ffast.force_difference[structure;length;rmse]"
     np.testing.assert_array_equal(recovered.values, np.array([3.0]))
 
 
@@ -1208,9 +1208,9 @@ def test_colouring_reads_the_metric_the_plots_stored():
     stored = _make_metric_result(values=np.array([1.0, 2.0]))
     env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
                    models={"m1": SimpleNamespace(fingerprint="m1")},
-                   cache={"ffast.force_mae__nil__nil": stored})
+                   cache={"ffast.force_difference[atom+structure;length]__nil__nil": stored})
     env.data = _ColourData(env.cache)
-    assert ServerSession(env, asyncio.Queue()).get_metric("ffast.force_mae", {}, "ds1", "m1") is stored
+    assert ServerSession(env, asyncio.Queue()).get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "m1") is stored
     assert env.data.generate_metric_calls == []
 
 
@@ -1219,9 +1219,9 @@ def test_colouring_computes_the_whole_dataset_when_the_prediction_is_there():
     env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
                    models={"m1": SimpleNamespace(fingerprint="m1")})
     env.data = _ColourData(env.cache)
-    result = ServerSession(env, asyncio.Queue()).get_metric("ffast.force_mae", {}, "ds1", "m1")
+    result = ServerSession(env, asyncio.Queue()).get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "m1")
     assert list(result.values) == [3.0]
-    assert [c[0] for c in env.data.generate_metric_calls] == ["ffast.force_mae"]
+    assert [c[0] for c in env.data.generate_metric_calls] == ["ffast.force_difference[atom+structure;length]"]
 
 
 def test_colouring_never_starts_a_prediction_of_every_frame():
@@ -1232,11 +1232,11 @@ def test_colouring_never_starts_a_prediction_of_every_frame():
                    models={"m1": SimpleNamespace(fingerprint="m1")})
     env.data = _ColourData(env.cache, missing=["forces__m1__ds1"])
     session = ServerSession(env, asyncio.Queue())
-    assert session.get_metric("ffast.force_mae", {}, "ds1", "m1") is None
+    assert session.get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "m1") is None
     assert env.data.generate_metric_calls == [] and env.data.generate_data_calls == []
     # A model or dataset that is gone gives nothing either.
-    assert session.get_metric("ffast.force_mae", {}, "ds1", "gone") is None
-    assert session.get_metric("ffast.force_mae", {}, "gone", "m1") is None
+    assert session.get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "gone") is None
+    assert session.get_metric("ffast.force_difference[atom+structure;length]", {}, "gone", "m1") is None
 
 
 # ── OPEN_VIEW start_from: a subset opens with its parent's look ─────────────
@@ -1275,8 +1275,8 @@ def test_request_metric_with_a_key_is_rejected():
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_METRIC", ["ffast.force_rmse", "m4"],
-                         {"dataset_fp": "ds1", "key": "ffast.force_rmse__nil__nil"})
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;length;rmse]", "m4"],
+                         {"dataset_fp": "ds1", "key": "ffast.force_difference[structure;length;rmse]__nil__nil"})
         return s.outbound.empty()
 
     assert _run(scenario())
@@ -1289,7 +1289,7 @@ def test_request_metric_without_a_request_id_is_dropped():
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_METRIC", ["ffast.force_rmse"], {"dataset_fp": "ds1"})
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;length;rmse]"], {"dataset_fp": "ds1"})
         return s.outbound.empty()
 
     assert _run(scenario())

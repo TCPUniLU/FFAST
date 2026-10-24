@@ -61,6 +61,7 @@ def test_a_metric_that_smooths_or_measures_geometry_has_no_equivalent():
         assert equivalent_of(metric_id) is None
 
 
-def test_most_built_ins_now_have_an_exact_formula():
-    """ADR 0064 section 9: about 21 of the 37 that had none."""
-    assert len(EQUIVALENTS) >= 8 + 21
+def test_every_base_metric_has_an_exact_formula():
+    """ADR 0065 section 6: each base classifies like any formula."""
+    from ffast.metrics.retired import BASE_LABELS
+    assert set(BASE_LABELS) <= set(EQUIVALENTS)

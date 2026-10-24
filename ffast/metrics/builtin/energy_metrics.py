@@ -10,7 +10,7 @@ METRIC_NAMESPACE = "ffast"
 
 
 @metric(
-    label="Energy Difference (per frame)",
+    label="Energy Difference",
     unit=units.energy,
     tests=[
         {
@@ -70,102 +70,27 @@ def energy_prediction(
     return np.asarray(predicted)
 
 
+# Energy errors are these two base metrics reduced with the keep boxes
+# (ADR 0065): Energy MAE is ffast.energy_difference[dataset;mae], the energy
+# shift ffast.energy_difference[dataset;mean].
 @metric(
-    label="Energy Shift",
+    label="Energy Difference (shifted)",
+    description=(
+        "Energy difference of each frame minus its mean over the dataset, so a "
+        "constant offset between the model and the reference is taken out."
+    ),
     unit=units.energy,
     tests=[
         {
-            "inputs": {
-                "reference": [1.0, 2.0, 3.0],
-                "predicted": [1.5, 2.5, 3.5],
-            },
+            "inputs": {"reference": [1.0, 2.0, 3.0], "predicted": [1.5, 2.5, 4.5]},
             "parameters": {},
-            "expected": 0.5,
+            "expected": [-1.0 / 3.0, -1.0 / 3.0, 2.0 / 3.0],
             "atol": 1e-10,
         }
     ],
 )
-def energy_shift(energy_difference: Ref["ffast.energy_difference"]) -> float:
-    return np.mean(energy_difference)
-
-
-@metric(
-    label="Energy MAE",
-    unit=units.energy,
-    tests=[
-        {
-            "inputs": {
-                "reference": [0.0, 2.0],
-                "predicted": [1.0, 2.0],
-            },
-            "parameters": {},
-            "expected": 0.5,
-            "atol": 1e-10,
-        }
-    ],
-)
-def energy_mae(energy_difference: Ref["ffast.energy_difference"]) -> float:
-    return np.mean(np.abs(energy_difference))
-
-
-@metric(
-    label="Energy RMSE",
-    unit=units.energy,
-    tests=[
-        {
-            "inputs": {
-                "reference": [0.0, 2.0],
-                "predicted": [1.0, 2.0],
-            },
-            "parameters": {},
-            "expected": 0.7071067811865476,
-            "atol": 1e-6,
-        }
-    ],
-)
-def energy_rmse(energy_difference: Ref["ffast.energy_difference"]) -> float:
-    return np.sqrt(np.mean(energy_difference ** 2))
-
-
-@metric(
-    label="Energy MAE (shifted)",
-    unit=units.energy,
-    tests=[
-        {
-            "inputs": {
-                "reference": [0.0, 0.0],
-                "predicted": [0.5, 0.5],
-            },
-            "parameters": {},
-            "expected": 0.0,
-            "atol": 1e-10,
-        }
-    ],
-)
-def energy_mae_shifted(
+def energy_difference_shifted(
     energy_difference: Ref["ffast.energy_difference"],
-    energy_shift: Ref["ffast.energy_shift"],
-) -> float:
-    return np.mean(np.abs(energy_difference - energy_shift))
-
-
-@metric(
-    label="Energy RMSE (shifted)",
-    unit=units.energy,
-    tests=[
-        {
-            "inputs": {
-                "reference": [0.0, 0.0],
-                "predicted": [0.5, 0.5],
-            },
-            "parameters": {},
-            "expected": 0.0,
-            "atol": 1e-10,
-        }
-    ],
-)
-def energy_rmse_shifted(
-    energy_difference: Ref["ffast.energy_difference"],
-    energy_shift: Ref["ffast.energy_shift"],
-) -> float:
-    return np.sqrt(np.mean((energy_difference - energy_shift) ** 2))
+) -> Float[np.ndarray, "N_frames"]:
+    d = np.asarray(energy_difference, dtype=np.float64)
+    return d - np.mean(d)

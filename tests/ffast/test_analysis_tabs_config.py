@@ -76,7 +76,7 @@ col = 1
 view = "independent"
 link_frame = false
   [tabs.panels.start]
-  colour_by = "ffast.force_mae"
+  colour_by = "ffast.force_difference[atom+structure;length]"
   colormap = "force_error"
   atom_size = 1.2
   bond_width = 60
@@ -97,7 +97,7 @@ def test_an_independent_3d_panel_stores_its_links_and_starting_look():
     assert (independent.view, independent.link_frame, independent.link_camera) == (
         "independent", False, True)
     assert independent.start.model_dump() == {
-        "colour_by": "ffast.force_mae", "colormap": "force_error", "atom_size": 1.2,
+        "colour_by": "ffast.force_difference[atom+structure;length]", "colormap": "force_error", "atom_size": 1.2,
         "bond_width": 60, "bond_colour": "#ff8800", "force_arrows": True,
         "force_length": 20, "force_normalised": False}
 
@@ -238,11 +238,11 @@ def test_metric_ref_forms():
         "name": "T",
         "panels": [{
             "kind": "density", "row": 0, "col": 0,
-            "metrics": {"value": {"metric": "ffast.force_rmse", "transform": "mirror_kde"}},
+            "metrics": {"value": {"metric": "ffast.force_difference[structure;length;rmse]", "transform": "mirror_kde"}},
         }],
     })
     ref = tab.panels[0].metrics["value"]
-    assert ref.metric == "ffast.force_rmse" and ref.transform == "mirror_kde"
+    assert ref.metric == "ffast.force_difference[structure;length;rmse]" and ref.transform == "mirror_kde"
 
 
 def test_compile_tabs_registers_transform_metrics():
@@ -252,7 +252,7 @@ def test_compile_tabs_registers_transform_metrics():
     from ffast.metrics.registry import default_registry
 
     ids = compile_tabs_metrics(load_builtin_tabs())
-    assert "ffast.force_net_mae_per_structure__mirror_kde" in ids
+    assert "ffast.force_net_residual[structure;component;mae]__mirror_kde" in ids
     for mid in ids:
         assert default_registry.has(mid)
 
@@ -261,8 +261,8 @@ def test_resolve_ref_raw_vs_transform():
     import ffast.metrics.builtin  # noqa: F401
     from ffast.config.models import PanelMetricRef
 
-    raw = PanelMetricRef(metric="ffast.force_net_mae")
-    assert resolve_ref(raw) == "ffast.force_net_mae"  # no transform → raw id
+    raw = PanelMetricRef(metric="ffast.force_net_residual[dataset;component;mae]")
+    assert resolve_ref(raw) == "ffast.force_net_residual[dataset;component;mae]"  # no transform → raw id
 
     smoothed = PanelMetricRef(metric="ffast.gyradius", transform="smooth")
     assert resolve_ref(smoothed) == "ffast.gyradius__smooth"
@@ -292,7 +292,7 @@ def test_build_tab_layout_shape_and_resolved_ids():
     # A transform role resolves to the compiled `{source}__{transform}` id.
     subsystem = by_name["Subsystem Errors"]
     density = next(p for p in subsystem["panels"] if p["kind"] == "density")
-    assert density["metrics"]["value"] == "ffast.force_net_mae_per_structure__mirror_kde"
+    assert density["metrics"]["value"] == "ffast.force_net_residual[structure;component;mae]__mirror_kde"
 
     # An overlay `series` list role resolves to a list of ids.
     gyration = by_name["Gyration"]
