@@ -1,4 +1,5 @@
 from __future__ import annotations
+import re
 from typing import Annotated, Any, Literal, Optional, Union
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
@@ -106,6 +107,18 @@ class MetricFailure(BaseModel):
     metric_id: str
     traceback: str
     parameters: dict[str, Any] = Field(default_factory=dict)
+
+    @property
+    def reason(self) -> str:
+        """Why it failed, in words: a traceback's last line without the
+        exception's name, or the sentence the failure was made with
+        (ADR 0066 rule 6)."""
+        lines = [line for line in self.traceback.splitlines() if line.strip()]
+        if not lines:
+            return ""
+        if "Traceback (most recent call last)" not in self.traceback:
+            return self.traceback.strip()
+        return re.sub(r"^[A-Za-z_][\w.]*: ", "", lines[-1].strip(), count=1)
 
 
 class MetricResult(BaseModel):

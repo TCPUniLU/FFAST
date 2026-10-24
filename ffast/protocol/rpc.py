@@ -184,13 +184,15 @@ def pack_prediction_arrays(
 
 # ── server-computed metric results (Stage 4a) ───────────────────────────────────
 
-def pack_metric_result(request_id: str, metric_id: str, ok: bool, result=None) -> bytes:
+def pack_metric_result(request_id: str, metric_id: str, ok: bool, result=None,
+                       error: str | None = None) -> bytes:
     """Serialize a METRIC_RESULT response (server-owned metric computation).
 
     ``result`` is a ``MetricResult`` (or ``None`` when ``ok`` is False — e.g. the
     server can't source a real client-only model).  Its ``values`` array is
     numpy-encoded; the small identity metadata travels as plain primitives so the
-    client can reconstruct an equivalent ``MetricResult``.
+    client can reconstruct an equivalent ``MetricResult``. ``error`` says why
+    a metric that failed did (ADR 0066); it is sent only when ``ok`` is False.
 
     ``request_id`` is the label the client sent with ``REQUEST_METRIC``; replies
     are matched by it (ADR 0061).
@@ -215,7 +217,7 @@ def pack_metric_result(request_id: str, metric_id: str, ok: bool, result=None) -
             warnings=list(getattr(result, "warnings", None) or []) or None,
         )
     else:
-        msg = MetricResultMessage(ok=bool(ok))
+        msg = MetricResultMessage(ok=bool(ok), error=error or None)
     return pack(
         control.METRIC_RESULT, (request_id, metric_id), msg.model_dump(exclude_none=True)
     )

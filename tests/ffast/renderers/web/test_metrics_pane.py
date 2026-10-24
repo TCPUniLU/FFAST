@@ -686,6 +686,41 @@ async def test_a_bad_value_where_leaves_out_is_ignored_with_a_warning(tmp_path):
                 await browser.close()
 
 
+async def test_a_metric_that_fails_says_why_in_its_panel_and_a_popup(tmp_path):
+    """ADR 0066 rule 6: by=atom on a dataset whose structures differ fails;
+    the panel says so with the reason, not "No data", and so does a red pop-up."""
+    frames = ase.io.read(DATASET_PATH, index=":20")
+    del frames[3][0]                                 # one structure has an atom fewer
+    varied = tmp_path / "varied.xyz"
+    ase.io.write(varied, frames, format="extxyz")
+    cm, _metrics_dir = await _server(tmp_path)
+    async with cm as (ws_port, web_port):
+        await _load_more(ws_port, set(), ("LOAD_DATASET", (str(varied), "ase (auto)"), {}))
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 900})
+            try:
+                await _open_app(page, web_port, ws_port)
+                pane = await _open_metrics_pane(page)
+                await pane.get_by_role("button", name="New metric").click()
+                await pane.get_by_label("Metric id").fill("user.off_mean")
+                await pane.get_by_label("Formula").fill(
+                    "mean(norm(ref_F) - mean(norm(ref_F), by=atom), by=structure)")
+                await pane.get_by_role("button", name=re.compile("^Fix")).click()
+                await expect(pane.locator(".mx-check")).to_contain_text("per structure")
+                await pane.get_by_role("button", name="Save", exact=True).click()
+                await _list_shows(pane, ".mx-item[data-id='user.off_mean']")
+                await pane.get_by_role("button", name="Plot it").click()
+                sentence = ("Could not compute user.off_mean: by=atom needs structures with "
+                            "the same atoms in the same order; the structures of this "
+                            "dataset differ")
+                msg = page.locator(".tabpanel.active .analysis-panel .panel-msg")
+                await expect(msg).to_have_text(sentence)
+                await expect(page.locator("#toasts .toast-error", has_text=sentence)).to_have_count(1)
+            finally:
+                await browser.close()
+
+
 async def test_a_per_structure_and_element_formula_plots_a_line_per_element_and_colours(tmp_path):
     """ADR 0064 amendment 2026-10-24: write the formula, Try, Save, Plot it,
     see one line per element with gaps where a structure lacks the element,

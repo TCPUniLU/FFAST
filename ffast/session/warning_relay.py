@@ -13,6 +13,8 @@ Rules:
   on every frame change; one pop-up says it.
 - Warnings from ``websockets`` and ``asyncio`` stay in the log: they are about
   connections, which the user cannot act on.
+- A record logged with ``extra={"popup": False}`` stays in the log: the
+  window it concerns shows it itself (a failed metric in its panel, ADR 0066).
 - ``emit`` runs on whatever thread logged; the send is handed to the server's
   event loop, which owns the outbound queues.
 """
@@ -44,6 +46,8 @@ class WarningRelay(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         if record.name.split(".")[0] in _QUIET_LOGGERS:
             return
+        if getattr(record, "popup", True) is False:
+            return      # the window it concerns shows it itself (ADR 0066)
         try:
             text = record.getMessage()
             now = time.monotonic()

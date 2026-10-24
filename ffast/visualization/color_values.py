@@ -267,9 +267,10 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
             )
             result = executor.run(metric_id, _FrameInputSource(resolve), params)
             if isinstance(result, MetricFailure):
-                logger.warning(
-                    "atom-color: metric %s failed: %s", metric_id, result.traceback,
-                )
+                # A sentence, not the traceback: it is a pop-up (ADR 0066 rule 6).
+                logger.warning("Could not compute %s: %s; colouring by element instead",
+                               schema.label or metric_id, result.reason)
+                logger.debug("atom-color: metric %s failed: %s", metric_id, result.traceback)
                 return None
             vals = np.asarray(result.values, dtype=np.float64).ravel()
             if shape in ("N_elements", "(N_frames, N_elements)"):

@@ -219,6 +219,26 @@ export function panelPopups(series, labelOf) {
   return [...out.values()];
 }
 
+/**
+ * The failed metrics behind a panel (ADR 0066 rules 3, 4, 6): one sentence
+ * each, "Could not compute ‹name›: ‹reason›", keyed like `panelPopups`.
+ * `results[i]` are the replies for `refs[i]` (a series' dataset and prediction).
+ * @param {{datasetFp: string, modelFp: string|null}[]} refs
+ * @param {Array<Array<object|null>>} results @param {(id: string) => string} labelOf
+ * @returns {{key: string, text: string}[]}
+ */
+export function panelFailures(refs, results, labelOf) {
+  const out = new Map();
+  refs.forEach((ref, i) => {
+    for (const r of results[i] || []) {
+      if (!r?.failed) continue;
+      const key = `${r.metricId}|${ref.datasetFp}|${ref.modelFp}|${r.error}`;
+      if (!out.has(key)) out.set(key, { key, text: `Could not compute ${labelOf(r.metricId)}: ${r.error}` });
+    }
+  });
+  return [...out.values()];
+}
+
 // ── plot-kind builders (pure) ───────────────────────────────────────────────
 
 /** Length of a peak's tick, in px. */

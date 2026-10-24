@@ -81,3 +81,13 @@ def test_a_closed_loop_drops_the_warning_quietly():
 
     relay = WarningRelay(_Closed(), lambda data: None)
     relay.handle(logging.LogRecord("FFAST", logging.WARNING, "", 0, "late", (), None))
+
+
+def test_an_error_the_asking_window_shows_itself_stays_in_the_log():
+    # A failed metric: its panel says why (ADR 0066), not every window.
+    log, relay, sent = _relay()
+    try:
+        log.error("Could not compute X: bad", extra={"popup": False})
+    finally:
+        log.removeHandler(relay)
+    assert sent == []

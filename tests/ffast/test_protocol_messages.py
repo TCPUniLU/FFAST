@@ -230,9 +230,10 @@ def test_metric_result_extra_key_rejected():
 
 def test_metric_result_fields_match_metricresult():
     # Drift guard: the message's metadata fields are exactly MetricResult's
-    # fields plus the transport-only `ok` flag.
+    # fields plus the transport-only `ok` flag and `error` (why a failed
+    # metric failed, ADR 0066).
     from ffast.metrics.models import MetricResult
 
     assert set(MetricResultMessage.model_fields) == set(
         MetricResult.model_fields
-    ) | {"ok"}
+    ) | {"ok", "error"}

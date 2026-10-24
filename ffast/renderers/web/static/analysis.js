@@ -24,7 +24,7 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, unitRoleAt, refreshPeaks, panelWarnings, panelPopups } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures } from './panels.js';
 import { showOnce } from './toasts.js';
 import { visitedKey } from './peaks.js';
 import { panelLetters, readingOrder, caption, captionSegments } from './figure.js';
@@ -1071,6 +1071,12 @@ export class AnalysisManager {
       })))));
     if (token !== this._renderToken || seq !== card.seq) return;   // superseded
 
+    // A metric that ran and failed says why, once, as a pop-up (ADR 0066);
+    // below it counts as no result.
+    const failures = panelFailures(refs, perSeries, (id) => this._catalog.get(id)?.label || id);
+    for (const f of failures) showOnce(f.key, f.text, 'error');
+    for (const results of perSeries) results.forEach((r, i) => { if (r?.failed) results[i] = null; });
+
     // A series whose every metric came back empty is dropped rather than drawn
     // as a gap: a prediction that cannot compute this panel should not cost the
     // panel its other predictions.
@@ -1091,9 +1097,11 @@ export class AnalysisManager {
       card.body.style.minHeight = '';
       this._sizeRows(t);
       const anyModel = refs.some((r) => r.modelFp);
-      card.body.innerHTML =
-        `<div class="panel-msg">${anyModel ? 'No data for this selection.'
-          : 'Select a prediction to compute this panel.'}</div>`;
+      const msg = document.createElement('div');
+      msg.className = 'panel-msg';
+      msg.textContent = failures.length ? failures.map((f) => f.text).join('\n')
+        : anyModel ? 'No data for this selection.' : 'Select a prediction to compute this panel.';
+      card.body.replaceChildren(msg);
       card.captionEl.hidden = true;
       card.params.innerHTML = '';
       return;

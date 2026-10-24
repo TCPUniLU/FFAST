@@ -221,6 +221,9 @@ class MetricResultMessage(BaseModel):
     # Sentences about what the result left out (ADR 0064 amendment); sent only
     # when there are some, so the message is unchanged for a clean result.
     warnings: Optional[list[str]] = None
+    # Why the metric failed, in words, when ``ok`` is False because it failed
+    # (ADR 0066 rule 6); None when it could not be computed for lack of data.
+    error: Optional[str] = None
 
 
 # ── Control message requests (client→server) ─────────────────────────────────

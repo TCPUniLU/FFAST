@@ -128,7 +128,11 @@ error that is not the answer to a pane's own button goes through a reply's
 - `CHECK_METRIC` gains `dataset_fp`, `METRIC_CHECKED` gains `warnings`,
   `METRIC_RESULT` gains `error`. All optional: an older window that sends no
   dataset gets no dataset warnings, and an older server sends no `error`, so
-  the panel says "Could not compute ‹metric name›".
+  its panel says "No data for this selection." as before: without a reason
+  the window cannot tell a failure from missing data.
+- Only the window that asked shows a failed metric's pop-up: the data service
+  logs the sentence with `extra={"popup": False}`, which the warning relay
+  keeps out of `SERVER_WARNING`; the traceback goes to the log at debug level.
 - The data service logs a failed metric as the sentence of rule 3.
 - The desktop client is left as it is: it is being retired.
 

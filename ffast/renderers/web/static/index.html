@@ -435,6 +435,7 @@
     .analysis-panel .panel-msg {
       flex: 1; display: flex; align-items: center; justify-content: center;
       color: var(--muted); font-size: var(--fs-s); font-style: italic; padding: 16px; text-align: center;
+      white-space: pre-line;   /* one failed metric per line (ADR 0066) */
     }
     /* scroll_group strip: panels laid side-by-side, horizontally scrolling */
     .analysis-scrollstrip {

@@ -794,6 +794,11 @@ CASES = {
         "{datasetFp: 'd1', modelFp: 'p1', data: {y: {metricId: 'm', warnings: ['a']}}},"
         "{datasetFp: 'd1', modelFp: 'p2', data: {y: {metricId: 'm', warnings: ['a']}}}],"
         " (id) => id === 'm' ? 'Metric M' : id)"),
+    "panel_failures": (
+        "pn.panelFailures([{datasetFp: 'd1', modelFp: 'p1'}, {datasetFp: 'd2', modelFp: null}],"
+        " [[{nd: null, failed: true, error: 'bad', metricId: 'm'}, {nd: {}}],"
+        "  [{nd: null, failed: true, error: 'bad', metricId: 'm'}, null]],"
+        " (id) => 'Metric M')"),
     "no_value_colours": (
         "(() => {"
         "  const out = {grey: cm.NO_VALUE_RGB};"
@@ -1405,6 +1410,13 @@ def test_a_panels_popups_name_the_metric_once_per_metric_dataset_and_prediction(
         {"key": "m|d1|p1|a", "text": "Metric M: a"},
         {"key": "n|d1|p1|a", "text": "n: a"},
         {"key": "m|d1|p2|a", "text": "Metric M: a"},
+    ]
+
+
+def test_a_panels_failures_say_could_not_compute_per_metric_dataset_and_prediction(results):
+    assert results["panel_failures"] == [
+        {"key": "m|d1|p1|bad", "text": "Could not compute Metric M: bad"},
+        {"key": "m|d2|null|bad", "text": "Could not compute Metric M: bad"},
     ]
 
 

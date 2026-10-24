@@ -1209,7 +1209,10 @@ class ServerSession:
                 made = None
             result = self.env.cache.get(made) if made else None
 
-        data = pack_metric_result(request_id, metric_id, result is not None, result)
+        # Why it failed, when it did (ADR 0066 rule 6); not for missing data.
+        error = (None if result is not None else
+                 getattr(self.env.data, "metric_failures", {}).pop(key, None))
+        data = pack_metric_result(request_id, metric_id, result is not None, result, error)
         await self._emit(data)
         logger.info(
             "METRIC_RESULT queued: metric=%r ok=%s request_id=%r",

@@ -31,6 +31,8 @@ function requestLabel(metricId, params, modelFp, datasetFp) {
 
 /** @typedef {{values: number[], shape: number[]}} DecodedArray */
 /** @typedef {{nd: DecodedArray|null, shape: string, unit: string, dtype: string, warnings: string[], metricId: string}} MetricResult */
+/** A metric that failed, and why (ADR 0066 rule 6).
+ * @typedef {{nd: null, failed: true, error: string, metricId: string}} MetricFailure */
 
 const _TIMEOUT_MS = 120000;
 
@@ -41,7 +43,7 @@ export class MetricClient {
     this._nextId = 0;
     /** @type {Map<string, {resolve: Function, timer: any}>} */
     this._byId = new Map();
-    /** @type {Map<string, Promise<MetricResult|null>>} */
+    /** @type {Map<string, Promise<MetricResult|MetricFailure|null>>} */
     this._inFlight = new Map();
     conn.on(IN.METRIC_RESULT, (kw, args) => this._onResult(kw, args));
   }
@@ -50,8 +52,10 @@ export class MetricClient {
    * Request a metric's computed array.
    * @param {string} metricId concrete (already resolved) metric id
    * @param {{params?: object, modelFp?: string|null, datasetFp?: string|null}} [opts]
-   * @returns {Promise<MetricResult|null>} null when the server can't compute it
-   *   (e.g. a client-only model — `ok:false`) or the request times out.
+   * @returns {Promise<MetricResult|MetricFailure|null>} a failure when the
+   *   metric ran and failed; null when the server can't compute it (e.g. a
+   *   client-only model, no data — `ok:false` without an error) or the
+   *   request times out.
    */
   request(metricId, { params = {}, modelFp = null, datasetFp = null } = {}) {
     const label = requestLabel(metricId, params, modelFp, datasetFp);
@@ -95,7 +99,9 @@ export class MetricClient {
       kw.ok
         ? { nd: decodeNdarray(kw.values), shape: kw.shape, unit: kw.unit, dtype: kw.dtype,
             warnings: kw.warnings || [], metricId: kw.metric_id }
-        : null,
+        : kw.error
+          ? { nd: null, failed: true, error: kw.error, metricId: args[1] }
+          : null,
     );
   }
 }
