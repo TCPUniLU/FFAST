@@ -174,7 +174,7 @@
 
 /**
  * One metric in the METRIC_CATALOG message (ffast/protocol/messages.py
- * `MetricCatalogEntry`) — filtered to `shape` in `("N_atoms","N_elements")`
+ * `MetricCatalogEntry`) — filtered to `COLORABLE_SHAPES` (start_settings.js)
  * for atom-colorable metrics (ADR 0016).
  * @typedef {Object} MetricCatalogEntry
  * @property {string} id

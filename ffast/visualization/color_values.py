@@ -187,10 +187,12 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
             vals = np.asarray(result.values, dtype=np.float64).ravel()
             schema, _ = reg.get(metric_id)
             from ffast.metrics.dims import shape_to_str
-            if shape_to_str(schema.shape) == "N_elements":
+            if shape_to_str(schema.shape) in ("N_elements", "(N_frames, N_elements)"):
                 # Broadcast per-element values onto atoms. Per-element metrics
                 # order their output by sorted unique Z (np.unique), so map each
-                # atom's element to its slot the same way.
+                # atom's element to its slot the same way. A table (ADR 0064
+                # amendment) run on this one frame is its row: one value per
+                # element of the frame, in the same order.
                 zarr = np.asarray(z).ravel()
                 unique_z = np.unique(zarr)
                 if len(vals) != len(unique_z):

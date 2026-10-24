@@ -476,6 +476,9 @@ CASES = {
     "ss_missing_metric": (
         "ss.startCommands({colour_by: 'nope.metric'}, {modelFp: 'm1', catalog: []})"),
     "ss_plain": "ss.startCommands({colour_by: 'displacement'}, {modelFp: null, catalog: []})",
+    "ss_table": (
+        "ss.startCommands({colour_by: 'user.h_err'},"
+        " {modelFp: 'm1', catalog: [{id: 'user.h_err', shape: '(N_frames, N_elements)'}]}).commands[0].value"),
     "ss_not_per_atom": (
         "ss.startCommands({colour_by: 'ffast.energy_mae'},"
         " {modelFp: 'm1', catalog: [{id: 'ffast.energy_mae', shape: 'scalar'}]}).note"),
@@ -1585,6 +1588,11 @@ def test_a_missing_colour_metric_falls_back_to_element_colours_and_says_why(resu
 def test_a_start_colour_metric_without_a_value_per_atom_falls_back_too(results):
     assert results["ss_not_per_atom"] == (
         "Colour metric ffast.energy_mae has no value per atom; showing element colours")
+
+
+def test_a_table_per_structure_and_element_colours_atoms(results):
+    # ADR 0064 amendment 2026-10-24, point 4: the frame's row colours it.
+    assert results["ss_table"] == "metric:user.h_err"
 
 
 def test_a_start_compares_by_the_keys_that_are_set(results):

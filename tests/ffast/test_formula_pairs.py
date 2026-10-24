@@ -241,3 +241,63 @@ def test_try_of_a_table_names_the_frame_of_a_bad_cell():
     r = try_formula("mean(err, by=(structure, element))", {"err": "reference.atoms.err"},
                     MetricRegistry(), resolve, np.diff(OFFSETS))
     assert (r.bad_count, r.bad_frames) == (1, [1])
+
+
+# ── step 4: colouring ────────────────────────────────────────────────────────
+
+class _TwoFrames:
+    """Two frames of different make-up: C H H, then H O."""
+    isVariable = True
+    _z = [np.array([6, 1, 1]), np.array([1, 8])]
+    _F = [np.zeros((3, 3)), np.zeros((2, 3))]
+
+    def getN(self): return 2
+    def getCoordinates(self, idx): return np.zeros((len(self._z[idx]), 3))
+    def getElements(self, idx=None): return self._z[idx]
+    def getForces(self, indices=None): return self._F[indices]
+    def getBondIndices(self, idx): return np.empty((0, 2), dtype=np.int64)
+
+
+class _TwoFramesPrediction:
+    forces = [np.array([[1.0, 0, 0], [3, 0, 0], [6, 0, 0]]), np.array([[2.0, 0, 0], [9, 0, 0]])]
+
+
+@pytest.mark.parametrize("frame", [0, 1])
+def test_an_atoms_colour_is_its_cell_of_the_table(frame):
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
+    from ffast.visualization.models import VisualizationState
+    from ffast.visualization.scene_builder import build_scene
+
+    expr = "mean(norm(pF - rF), by=(structure, element))"
+    vars_ = {"pF": "prediction.forces", "rF": "reference.forces"}
+    mid = compile_expr_metric("test.pair_colour", expr, vars_, registry=reg)
+    try:
+        state = VisualizationState(
+            view_id="v", dataset_ref="fp", prediction_ref="m", structure_index=frame,
+            parameters={"ffast.atom_color": {"source": f"metric:{mid}"}})
+        scene = build_scene(state, lambda fp: _TwoFrames(), lambda d, m: _TwoFramesPrediction(),
+                            executor=InProcessExecutor(reg))
+        colours = scene.atoms.color_by.values
+    finally:
+        reg._metrics.pop(mid, None)
+
+    # The table Try gives over the whole dataset: columns H, C, O.
+    flat = {"prediction.forces": np.concatenate(_TwoFramesPrediction.forces),
+            "reference.forces": np.zeros((5, 3)),
+            "reference.elements": np.concatenate(_TwoFrames._z),
+            "offsets": np.array([0, 3, 5])}
+    r = MetricRegistry()
+    inputs, _s, parts = analyze_expr(expr, vars_, registry=r)
+    table = _ExprFn(expr, inputs, parts).evaluate(**{n: flat[ref] for n, ref in inputs.items()})
+    np.testing.assert_allclose(table, [[4.5, 1.0, NAN], [2.0, NAN, 9.0]])
+    column = {1: 0, 6: 1, 8: 2}
+    expected = [table[frame, column[int(z)]] for z in _TwoFrames._z[frame]]
+    np.testing.assert_allclose(colours, expected)
+
+
+def test_the_desktop_offers_a_table_for_colouring():
+    # The browser's list is COLORABLE_SHAPES in start_settings.js, checked by
+    # the web tests.
+    from tests.ffast.test_atom_coloring import _load_loupe_atoms
+    assert _load_loupe_atoms()._atom_coloring_metric_ids(_registry()) == ["t.per_element", "t.table"]
