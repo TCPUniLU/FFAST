@@ -674,6 +674,7 @@ async def test_a_bad_value_where_leaves_out_is_ignored_with_a_warning(tmp_path):
                 await pane.get_by_role("button", name="Try", exact=True).click()
                 await expect(pane.locator(".mx-try-head")).to_contain_text("all good")
                 await expect(pane.locator(".mx-try-ignored")).to_have_text(f"⚠ {sentence}")
+                await expect(page.locator("#toasts .toast", has_text=f"Try: {sentence}")).to_have_count(1)
 
                 await pane.get_by_role("button", name="Save", exact=True).click()
                 await _list_shows(pane, ".mx-item[data-id='user.h_ref']")

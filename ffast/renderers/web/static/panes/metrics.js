@@ -11,6 +11,7 @@
  */
 
 import { icon } from '../icons.js';
+import { showWarning } from '../toasts.js';
 import { createKeepBoxes } from '../keep_boxes.js';
 import {
   ID_PREFIX, completeAt, duplicateDraft, fixFor, formatStat, groupInputs, groupMetrics,
@@ -387,6 +388,7 @@ export function createMetricsPane(body, callbacks) {
       expr: boxes.expr, vars: boxes.vars }, datasetFp, modelFp, (kw) => { tryProgress = kw; renderTry(); });
     tryProgress = null;
     if (!result.cancelled) tryResult = result;
+    popTryWarning(result);
     renderTry();
     renderButtons();
   }
@@ -543,6 +545,11 @@ export function createMetricsPane(body, callbacks) {
     over.title = deleted ? 'Make the metric again from my edits' : 'Save my version over the other window\'s';
     over.addEventListener('click', () => save(true));
     conflictEl.append(reload, over);
+  }
+
+  /** A Try's warning is also a pop-up, once per Try (ADR 0066). */
+  function popTryWarning(result) {
+    if (result?.ignored_warning && !result.cancelled) showWarning(`Try: ${result.ignored_warning}`);
   }
 
   function renderTry() {
@@ -780,6 +787,7 @@ export function createMetricsPane(body, callbacks) {
     const result = await ops.tryIt(payload, datasetFp, modelFp, (kw) => { tryProgress = kw; renderTry(); });
     tryProgress = null;
     tryResult = result;
+    popTryWarning(result);
     renderTry();
     renderButtons();
   }
