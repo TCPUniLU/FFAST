@@ -1,7 +1,8 @@
 # Formulas can average, total and take extremes by structure, element or all, over chosen atoms
 
 Status: Accepted 2026-10-23, built 2026-10-23 (steps 1-7). Amendment of 2026-10-24
-(per structure and per element at once) proposed. Supersedes ADR 0042 Decision 1 ("Element-wise
+(per structure and per element at once) proposed. Amendment of 2026-10-24
+(colouring reads the whole dataset) accepted and built. Supersedes ADR 0042 Decision 1 ("Element-wise
 only") and the "Reduction scope" option it chose; the rest of ADR 0042 stands.
 
 ## The problem
@@ -303,7 +304,8 @@ with options (a formula has none).
   by=structure)`, "atom error relative to its structure"). Useful, but it lets a
   shape mistake pass silently. If wanted, it gets its own explicit function
   (e.g. `per_atom(x)`) in a later ADR.
-- **Dataset-wide colouring**: run a colouring formula that contains `by=all`
+- **Dataset-wide colouring** (taken up by the amendment "Colouring reads the
+  whole dataset"): run a colouring formula that contains `by=all`
   or `by=element` over the whole dataset once, cache it, and colour the frame
   from its slice, so the formula means the same on screen as in Try. Deferred
   because it needs predictions for every frame: a prediction file has them,
@@ -353,7 +355,9 @@ with options (a formula has none).
 - **Some per-atom formulas cannot colour atoms.** A per-atom formula that
   contains `by=all` or `by=element` (e.g. `norm(dF) / max(norm(dF), by=all)`)
   can be tried, saved and plotted, but colouring refuses it (section 5). The
-  editor shows this under the shape hint.
+  editor shows this under the shape hint. (Changed by the amendment "Colouring
+  reads the whole dataset": refused only when the prediction covers the frame
+  on screen alone, and the editor no longer shows it.)
 - **Saved formulas need a newer server.** A user metric file using `by=` (in
   `~/.ffast/metrics/`, a project `ffast.toml`, or a saved session) does not
   compile on a server older than this change. This is the one part that is hard
@@ -576,3 +580,69 @@ histogram over the cells that have a value.
 Done when: a user can write the formula above, plot one line per element, and
 colour atoms with it, and an atom's colour matches the value for its frame and
 element on the timeline.
+
+## Amendment 2026-10-24: colouring reads the whole dataset
+
+Status: Accepted and built 2026-10-24. Takes "Dataset-wide colouring" out of
+"Not now".
+
+**The problem.** Colouring ran a metric on the frame on screen only. Three
+things followed:
+
+- the automatic colour range was that frame's lowest and highest value, so it
+  changed on every frame, and the same colour meant a different error in each
+  frame;
+- a per-element metric meant "this frame" in 3D but "every frame" in its
+  plots, so the 3D view renamed it "(per element, this frame)";
+- a formula with `by=all` or `by=element` was refused (section 5).
+
+The reason given for waiting, a live model predicting only the frame on screen,
+does not hold for colouring: colouring by a prediction already reads that
+prediction's forces for every frame from the server's store
+(`ServerSession.get_prediction`). When the store has them, the whole dataset
+can be computed.
+
+**1. Colouring reads the metric over the whole dataset.** The server hands
+`build_scene` a `get_metric` (`ServerSession.get_metric`). It reads the metric
+under the same key as a 2D plot's, so the two compute it once, and computes
+it when it is not stored yet. Colouring cuts the frame on screen out of it:
+
+- a per-atom result: that frame's atoms; when the result already averages
+  over frames (one row per atom of a structure), the result itself;
+- a per-element result: each atom gets its element's value, the same in every
+  frame.
+
+Only the metric's own parameters go into the key, not the colour map or the
+limits, so the plots' stored result is reused.
+
+**2. The automatic colour range covers every frame.** It is the lowest and
+highest value over the whole result. A limit the user typed still wins.
+
+**3. When the whole dataset can't be computed, colouring uses the frame on
+screen, as before.** This happens when a prediction is missing for the
+dataset (a live model asked for one frame). Colouring never starts a
+prediction of every frame. In that case the colour range is the frame's, a
+per-element metric's colour bar says "this frame", and a formula with `by=all`
+or `by=element` is refused with a message that says why.
+
+**4. The editor and the Colour By list accept such formulas.** Whether the
+whole dataset can be computed depends on the view, not the formula, so the
+catalog, the formula check and the user metric list drop `colour_problem`, and
+the Coloring list names a per-element metric as the plots do.
+
+**Consequences.**
+- The first colouring by a metric on a large dataset computes it over every
+  frame, once; stepping through frames afterwards reads the stored result.
+- `colour_problem` leaves `METRIC_CATALOG` and `METRIC_CHECKED`. An older
+  client reads it as missing, which it already allowed.
+- The amendment "per structure and per element at once" (point 4) colours a
+  table by the frame's row. With this amendment its range comes from the whole
+  table, and its step 4 has to be merged onto `_whole_dataset_values`.
+
+**Not now.**
+- **A choice between "every frame" and "this frame" for the range.** Typed
+  limits cover a fixed range of the user's own; wait until someone asks for
+  the frame's range back.
+- **Outliers.** One very large error squeezes every other colour to the bottom
+  of the scale. A percentile range (the setting `loupeForceErrorPercentile`
+  describes one) can come later.

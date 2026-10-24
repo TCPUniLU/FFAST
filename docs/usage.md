@@ -250,9 +250,14 @@ The sidebar panes:
   or `-H` to exclude), highlighting, pick radius.
 - **Bonds** — show or hide, width, dynamic detection with an adjustable cutoff
   leniency, or fixed bonds.
-- **Colour By** — elements, displacement, or any per-atom metric such as force
-  error, with a choice of colormap and a colourbar. Metric parameters appear
-  under the picker when the chosen metric has any.
+- **Colour By** — elements, displacement, or any per-atom or per-element metric
+  such as force error, with a choice of colormap and a colourbar. The metric is
+  computed over the whole dataset, as the plots compute it, so the colourbar's
+  range covers every frame and a colour means the same error in each frame.
+  Type a minimum or maximum to fix the range yourself. With a prediction that
+  covers only the frame on screen, the colouring uses that frame and the
+  colourbar says "this frame". Metric parameters appear under the picker when
+  the chosen metric has any.
 - **Force Vectors** — arrow length, normalised or true length, restricted to a
   selection or not.
 - **Camera** — position and target, field of view, centre-of-mass tracking, saved
@@ -513,9 +518,10 @@ shows and follows it; you can choose another one there without changing the tab.
    ("`ref_E` is not an input"), with a **Fix** button when exactly one input fits.
    The line under the formula says what the result is: per structure (can be
    plotted), per atom (can colour atoms) or one number. A per-atom formula that
-   uses `by=all` or `by=element` cannot colour atoms yet, and the line says so:
-   colouring computes the frame on screen only, where those words would mean
-   "this frame".
+   uses `by=all` or `by=element` colours atoms from the whole dataset, so
+   `norm(pred_F - ref_F) / max(norm(pred_F - ref_F), by=all)` gives 1 to the
+   largest error of the dataset. With a prediction that covers only the frame
+   on screen, such a formula shows element colours.
 3. **Try** computes the formula on every frame of the selected dataset and
    prediction without saving it. It shows the smallest, average and largest
    value, a histogram, how many places have no value ("12 structures have no
