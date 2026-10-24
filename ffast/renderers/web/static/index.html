@@ -539,7 +539,8 @@
       text-align: center; color: var(--ink-3); pointer-events: none;
     }
     #overlay.hidden { display: none; }
-    #empty-load-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: var(--fs-m); }
+    #empty-load-btn, #empty-example-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: var(--fs-m); }
+    #empty-example-btn { margin-left: 8px; }
     #content.no-view #loupe-sidebar,
     #content.no-view #pick-bar,
     #content.no-view #loupe-controls,
@@ -1240,6 +1241,7 @@
       <div class="big">No dataset open</div>
       <div class="small" id="overlay-hint">Load a dataset to see it here.</div>
       <button id="empty-load-btn">Load Dataset…</button>
+      <button id="empty-example-btn">Load Example</button>
     </div>
     <!-- hint bar (ADR 0055): numbered next steps, dismissable -->
     <div id="hint-bar" class="hidden" role="note">

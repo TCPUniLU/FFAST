@@ -425,6 +425,48 @@ def test_a_failed_load_tells_the_window_which_file_and_why(event, args, kind):
     assert kwargs["error"] in ("list index out of range", "no forces")
 
 
+class _ExampleEnv:
+    """Runs a queued load at once and remembers which paths it loaded."""
+
+    def __init__(self):
+        self.calls = []
+        self._loaded = {}
+        self.loading = self   # the Loading Coordinator's load* methods
+
+    def newTask(self, func, **kwargs):
+        func(taskID=1)
+
+    def getDatasetFromPath(self, path):
+        return self._loaded.get(path)
+
+    def getKeyFromPath(self, path):
+        return self._loaded.get(path)
+
+    def loadDataset(self, path, dataset_type, on_error=None):
+        self.calls.append(("dataset", os.path.basename(path), dataset_type))
+        self._loaded[path] = "ds-fp"
+
+    def loadPrepredictedDataset(self, path, dataset_fp, on_error=None, **keys):
+        self.calls.append(("prediction", os.path.basename(path), dataset_fp, keys))
+        self._loaded[path] = "model-fp"
+
+
+def test_load_example_loads_the_dataset_then_its_prediction_once():
+    env = _ExampleEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("LOAD_EXAMPLE", [], {})
+        await s.dispatch("LOAD_EXAMPLE", [], {})   # a second click loads nothing
+
+    _run(scenario())
+    assert env.calls == [
+        ("dataset", "dataset.xyz", "ase (auto)"),
+        ("prediction", "prediction.xyz", "ds-fp",
+         {"selected_energy_key": "MACE_energy", "selected_force_key": "MACE_forces"}),
+    ]
+
+
 # ── handler enqueue, end-to-end through dispatch ──────────────────────────────
 
 def test_dispatch_list_dir_enqueues_listing(tmp_path):

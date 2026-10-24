@@ -544,6 +544,8 @@ export class FFastApp {
     document.getElementById('hint-dismiss').addEventListener('click', () => this._dismissHint());
     document.getElementById('empty-load-btn').addEventListener('click',
       () => runAction(this._action('load-dataset')));
+    document.getElementById('empty-example-btn').addEventListener('click',
+      () => runAction(this._action('load-example')));
     this._syncEmptyState();
     // Each modal owns its own controls (ADR 0050).
     this._sessionOps.bindControls();
@@ -569,6 +571,13 @@ export class FFastApp {
       { id: 'load-prediction', label: 'Load Prediction…', menu: 'file',
         run: () => this._browser.open('prediction'),
         unavailable: () => needsControl() || (this._datasets.size ? '' : 'Load a dataset first') },
+      // The example pair in examples/data: the server knows where it lives.
+      { id: 'load-example', label: 'Load Example Dataset and Prediction', menu: 'file',
+        run: () => {
+          this._conn.send(OUT.LOAD_EXAMPLE, {}, []);
+          this._setStatus('Loading example…', 'connected');
+        },
+        unavailable: needsControl },
       { id: 'save-session', label: 'Save Session…', menu: 'file',
         run: () => this._sessionOps.saveSession(), unavailable: needsControl },
       { id: 'load-session', label: 'Load Session…', menu: 'file',
@@ -802,6 +811,7 @@ export class FFastApp {
     const why = whyUnavailable(this._action('load-dataset'));
     const btn = document.getElementById('empty-load-btn');
     btn.disabled = !!why;
+    document.getElementById('empty-example-btn').disabled = !!why;
     document.getElementById('overlay-hint').textContent = why || 'Load a dataset to see it here.';
     this._syncHint();
   }

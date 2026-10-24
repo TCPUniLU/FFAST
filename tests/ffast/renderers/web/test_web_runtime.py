@@ -1741,6 +1741,25 @@ async def test_web_3d_tab_shows_only_a_load_button_until_a_dataset_is_open(ffast
             await browser.close()
 
 
+async def test_web_empty_state_loads_the_example_dataset_and_prediction(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator("#empty-example-btn").click()
+            await page.wait_for_function(
+                "() => window.ffastApp._datasets.size === 1 && window.ffastApp._models.size >= 1",
+                timeout=30000,
+            )
+            await expect(page.locator("#overlay")).to_be_hidden()
+        finally:
+            await browser.close()
+
+
 async def test_web_3d_controls_appear_once_a_dataset_is_open(ffast_web_server):
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)

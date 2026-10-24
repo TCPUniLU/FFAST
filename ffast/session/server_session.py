@@ -30,6 +30,7 @@ import copy
 import logging
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -173,6 +174,7 @@ class ServerSession:
             control.PROBE_DATASET_LENGTH:       _Route(self._on_probe_dataset_length, ["path"], ProbeDatasetLengthRequest),
             control.LIST_DIR:                   _Route(self._on_list_dir, ["?path"], ListDirRequest),
             control.LOAD_PREDICTION:            _Route(self._on_load_prediction, ["path", "dataset_fp"], LoadPredictionRequest),
+            control.LOAD_EXAMPLE:               _Route(self._on_load_example, [], EmptyRequest),
             control.REQUEST_PREDICTION_ARRAYS:  _Route(self._on_request_prediction_arrays, ["dataset_fp", "model_fp"], RequestPredictionArraysRequest),
             control.OPEN_VIEW:                  _Route(self._on_open_view, [], OpenViewRequest),
             control.CLOSE_VIEW:                 _Route(self._on_close_view, ["view_id"], CloseViewRequest),
@@ -733,6 +735,49 @@ class ServerSession:
             selected_force_key=selected_force_key,
             on_error=self._load_failed("prediction", path),
         )
+
+    async def _on_load_example(self, **kwargs) -> None:
+        """Load the example pair in ``examples/data``: the dataset, then the
+        prediction against it, in one task so the prediction waits for the
+        dataset. Both announce themselves like any other load. A server
+        installed without the repository has no examples; the window is told."""
+        data = Path(__file__).resolve().parents[2] / "examples" / "data"
+        dataset_path = str(data / "dataset.xyz")
+        prediction_path = str(data / "prediction.xyz")
+        if not (data / "dataset.xyz").is_file() or not (data / "prediction.xyz").is_file():
+            self._load_failed("dataset", dataset_path)(
+                "this server has no examples (it was installed without the repository)"
+            )
+            return
+        env = self.env
+        dataset_failed = self._load_failed("dataset", dataset_path)
+        prediction_failed = self._load_failed("prediction", prediction_path)
+
+        def load(taskID=None):
+            # The Loading Coordinator's load* take on_error; the Environment's
+            # delegates do not pass it on.
+            if env.getDatasetFromPath(dataset_path) is None:
+                try:
+                    env.loading.loadDataset(dataset_path, "ase (auto)", on_error=dataset_failed)
+                except Exception as exc:
+                    dataset_failed(exc)
+                    raise
+            dataset_fp = env.getKeyFromPath(dataset_path)
+            if dataset_fp is None:
+                return
+            if env.getKeyFromPath(prediction_path) is None:
+                try:
+                    env.loading.loadPrepredictedDataset(
+                        prediction_path, dataset_fp,
+                        selected_energy_key="MACE_energy",
+                        selected_force_key="MACE_forces",
+                        on_error=prediction_failed,
+                    )
+                except Exception as exc:
+                    prediction_failed(exc)
+                    raise
+
+        env.newTask(load, visual=True, name="Loading example", threaded=True)
 
     def _load_failed(self, kind: str, path: str):
         """An ``on_error`` callback that tells this window its load failed.
