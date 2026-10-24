@@ -20,7 +20,7 @@ import { KIND_3D } from './tab_rules.js';
  * in step). `list` roles take several metrics.
  */
 export const KIND_ROLES = Object.freeze({
-  timeline: { label: 'Timeline', roles: { y: ['N_frames'] } },
+  timeline: { label: 'Timeline', roles: { y: ['N_frames', '(N_frames, N_elements)'] } },
   density: { label: 'Density', roles: { value: ['(curve_xy, grid)'] } },
   scatter: { label: 'Scatter', roles: { x: ['N_frames'], y: ['N_frames'] } },
   table: { label: 'Table', roles: { value: ['scalar'] } },
@@ -358,8 +358,9 @@ export function toSaved(tab) {
 export const MY_METRICS_TAB = 'My metrics';
 
 /** The panel "Plot it" adds: the default kind for the metric's shape, a
- * timeline for a per-structure metric and bars for a per-element one (ADR 0064
- * amendment). An ordinary panel, edited like any other. */
+ * timeline for a per-structure metric or a table per structure and element
+ * (one line per element), and bars for a per-element one (ADR 0064
+ * amendments). An ordinary panel, edited like any other. */
 export function metricPanel(metric) {
   if (metric.shape === 'N_elements') {
     return {
@@ -384,10 +385,14 @@ export function metricPanel(metric) {
  * Returns the tab to save and the tab it was edited from (null: a new tab).
  * @param {object[]} tabs every tab the server sent
  * @param {object} panel what to add
+ * @param {{elementPicker?: boolean}} [opts] give the tab the element picker
  */
-export function plotTarget(tabs, panel) {
+export function plotTarget(tabs, panel, { elementPicker = false } = {}) {
   const mine = (tabs || []).find((t) => t.name === MY_METRICS_TAB);
-  if (mine) return { tab: addPanel(mine, panel), previous: mine.name };
+  // A line per element wants the element picker (ADR 0064 amendment); a tab
+  // that has another selector keeps it.
+  const pick = (tab) => (elementPicker && !tab.selector ? { ...tab, selector: 'atomic' } : tab);
+  if (mine) return { tab: pick(addPanel(mine, panel)), previous: mine.name };
   const fresh = addPanel(emptyTab(MY_METRICS_TAB), new3DPanel());
-  return { tab: addPanel(fresh, panel), previous: null };
+  return { tab: pick(addPanel(fresh, panel)), previous: null };
 }

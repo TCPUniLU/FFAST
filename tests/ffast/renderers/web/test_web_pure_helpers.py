@@ -684,6 +684,22 @@ CASES = {
     "icon_names": "ic.ICON_NAMES",
     "icon_unknown": "ic.icon('no-such-icon')",
 
+    # ── a timeline of tables: a line per element (ADR 0064 amendment) ───────
+    "timeline_table": (
+        "(() => {"
+        "  const N = NaN;"
+        "  const table = (values) => ({nd: {values, shape: [3, 2]}});"   # 3 frames x [H, C]
+        "  const ser = (name, values) => ({name, datasetFp: 'D', modelFp: name, data: {y: table(values)}});"
+        "  const two = [ser('MACE', [0.1, N, 0.2, 0.5, N, 0.6]), ser('SchNet', [0.3, 0.4, N, N, 0.7, 0.8])];"
+        "  const look = (b) => b.traces.map(t => [t.name, t.line.color, t.line.dash, t.y.map(v => Number.isFinite(v) ? v : null)]);"
+        "  const all = pn.buildPanel({kind: 'timeline'}, two, {elementOrder: [1, 6], selectedElements: ['All']});"
+        "  const carbon = pn.buildPanel({kind: 'timeline'}, [two[0]], {elementOrder: [1, 6], selectedElements: [6]});"
+        "  return {all: look(all), carbon: look(carbon), curveSeries: all.subInfo.curveSeries,"
+        "    peaks: all.peaksEligible || carbon.peaksEligible, legend: carbon.layout.showlegend,"
+        "    colours: [pn.seriesColor(0), pn.seriesColor(1)]};"
+        "})()"
+    ),
+
     # ── no value (NaN) in every display (ADR 0064 step 3) ───────────────────
     # One fixture per panel kind, each holding gaps. The loop runs over the
     # registries, so a kind added later without a fixture is reported.
@@ -1293,6 +1309,19 @@ def test_table_shows_a_dash_for_a_pair_that_was_not_computed(results):
     ]
 
 
+def test_a_timeline_draws_a_table_as_a_line_per_element(results):
+    """ADR 0064 amendment 2026-10-24, point 5: colour means element, the line
+    style means prediction, an empty cell is a gap, and the picker chooses."""
+    r = results["timeline_table"]
+    h, c = r["colours"]
+    assert r["all"] == [
+        ["H — MACE", h, "solid", [0.1, 0.2, None]], ["C — MACE", c, "solid", [None, 0.5, 0.6]],
+        ["H — SchNet", h, "dash", [0.3, None, 0.7]], ["C — SchNet", c, "dash", [0.4, None, 0.8]]]
+    assert r["carbon"] == [["C", c, "solid", [None, 0.5, 0.6]]]
+    assert r["curveSeries"] == [0, 0, 1, 1]
+    assert r["peaks"] is False and r["legend"] is True
+
+
 def test_every_panel_kind_shows_a_gap_as_a_gap_never_a_number(results):
     """ADR 0064 step 3: each gap is left out (a plot) or a dash (a table)."""
     for kind, r in results["no_value_panels"].items():
@@ -1757,7 +1786,8 @@ def test_te_kind_roles_match_the_desktop_panel_kinds(results):
             assert role in js[name]["roles"], (name, role)
         for role, shape in kind.shapes.items():
             if role in kind.roles:
-                assert js[name]["roles"][role] == [shape_to_str(shape)], (name, role)
+                shapes = shape if isinstance(shape, list) else [shape]
+                assert js[name]["roles"][role] == [shape_to_str(s) for s in shapes], (name, role)
 
 
 def test_the_colour_legend_limits_are_in_scientific_notation(results):

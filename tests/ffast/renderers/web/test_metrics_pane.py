@@ -616,3 +616,60 @@ async def test_a_bad_value_where_leaves_out_is_ignored_with_a_warning(tmp_path):
                 await expect(mark).to_have_attribute("title", sentence)
             finally:
                 await browser.close()
+
+
+async def test_a_per_structure_and_element_formula_plots_a_line_per_element_and_colours(tmp_path):
+    """ADR 0064 amendment 2026-10-24: write the formula, Try, Save, Plot it,
+    see one line per element with gaps where a structure lacks the element,
+    and colour atoms with it."""
+    import ase.io as aio
+    frames = aio.read(DATASET_PATH, index=":")
+    elements = sorted({int(z) for a in frames for z in a.numbers})
+    empty = sum(len(set(elements) - {int(z) for z in a.numbers}) for a in frames)
+    assert empty > 0
+    cm, _ = await _server(tmp_path)
+    async with cm as (ws_port, web_port):
+        await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 900})
+            try:
+                await _open_app(page, web_port, ws_port)
+                pane = await _open_metrics_pane(page)
+                await pane.get_by_role("button", name="New metric").click()
+                await pane.get_by_label("Metric id").fill("user.pair")
+                await pane.get_by_label("Formula").fill(
+                    "mean(mean_parts(abs(pred_F - ref_F)), by=(structure, element))")
+                for _ in range(2):
+                    await pane.get_by_role("button", name=re.compile("^Fix")).click()
+                await expect(pane.locator(".mx-check")).to_contain_text("per structure and element")
+
+                await pane.get_by_role("button", name="Try", exact=True).click()
+                await expect(pane.locator(".mx-try-head")).to_contain_text(
+                    f"{len(frames)} structures × {len(elements)} elements, all good")
+                await expect(pane.locator(".mx-try-gaps")).to_have_text(f"{empty} cells have no value")
+
+                await pane.get_by_role("button", name="Save", exact=True).click()
+                await expect(pane.locator(".mx-item[data-id='user.pair']")).to_be_visible()
+                await pane.get_by_role("button", name="Plot it").click()
+                await expect(page.locator("#tabbar .tab.active")).to_have_text(re.compile("My metrics"))
+                lines = await page.wait_for_function(
+                    "() => { const el = [...document.querySelectorAll('.tabpanel.active .js-plotly-plot')]"
+                    "  .find((d) => d.data && d.data.length && d.data[0].y && d.data[0].y.length === %d);"
+                    "  if (!el) return null;"
+                    "  return [el.data.map((t) => t.name),"
+                    "    el.data.reduce((n, t) => n + Array.from(t.y).filter((v) => !Number.isFinite(v)).length, 0)]; }"
+                    % len(frames))
+                names, gaps = await lines.json_value()
+                from ase.data import chemical_symbols
+                assert names == [chemical_symbols[z] for z in elements]
+                assert gaps == empty
+                # the element picker came with it
+                await expect(page.locator(".tabpanel.active [data-control='element-picker']")).to_be_visible()
+
+                # it colours atoms: each by its element's cell in the frame on screen
+                coloring = page.locator(".pane[data-pane='Colour By'] .ctl-row[data-label='Coloring'] select")
+                await coloring.select_option("user.pair")
+                await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
+            finally:
+                await browser.close()

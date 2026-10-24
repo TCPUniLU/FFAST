@@ -27,7 +27,7 @@ import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
 import { metricPanel, plotTarget, toSaved } from './tab_edit.js';
 import { MetricOps } from './metric_ops.js';
-import { sessionMetricsQuestion } from './metric_logic.js';
+import { TABLE_SHAPE, sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
 import { askDialog, textDialog, trapFocus } from './dialogs.js';
 import { applyStaticIcons, icon } from './icons.js';
@@ -2188,7 +2188,8 @@ export class FFastApp {
     if (why) { this._setStatus(why, 'error'); return; }
     const metric = this._metricCatalog.find((m) => m.id === id);
     if (!metric) return;
-    const { tab, previous } = plotTarget(this._layoutTabs, metricPanel(metric));
+    const { tab, previous } = plotTarget(this._layoutTabs, metricPanel(metric),
+      { elementPicker: metric.shape === TABLE_SHAPE });
     this._pendingShow = tab.name;      // the layout that follows the save shows it
     const r = await this._tabOps.save(toSaved(tab), previous);
     if (!r.ok) this._pendingShow = null;
