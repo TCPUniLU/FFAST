@@ -97,6 +97,17 @@ CASES = {
         " box.lastElementChild.querySelector('.toast-close').click();"
         " r.after_close = box.children.length; box.remove(); return r; })()"
     ),
+    # ADR 0066 rule 4: once per key, even after its pop-up has closed
+    "toasts_once": (
+        "(() => { const a = ts.showOnce('m|d|p|x', 'M: x');"
+        " a.querySelector('.toast-close').click();"
+        " const again = ts.showOnce('m|d|p|x', 'M: x');"
+        " const other = ts.showOnce('m|d|p|y', 'M: y', 'error');"
+        " const box = document.getElementById('toasts');"
+        " const r = {first: !!a, again: again, other: other.classList.contains('toast-error'),"
+        "  shown: [...box.children].map((t) => t.dataset.text)};"
+        " box.remove(); return r; })()"
+    ),
     "ss_colouring_labels": (
         "[ss.colouringLabel({id: 'ffast.force_difference[element;component;mae]',"
         " label: 'Force Difference · MAE · per element · per component', shape: 'N_elements'}),"
@@ -776,6 +787,13 @@ CASES = {
     "panel_warnings": (
         "pn.panelWarnings([{data: {y: {warnings: ['a', 'b']}}},"
         " {data: {y: {warnings: ['a']}, series: [{warnings: ['c']}, null]}}, {data: {y: null}}])"),
+    "panel_popups": (
+        "pn.panelPopups(["
+        "{datasetFp: 'd1', modelFp: 'p1', data: {y: {metricId: 'm', warnings: ['a']},"
+        "  series: [{metricId: 'n', warnings: ['a']}, null]}},"
+        "{datasetFp: 'd1', modelFp: 'p1', data: {y: {metricId: 'm', warnings: ['a']}}},"
+        "{datasetFp: 'd1', modelFp: 'p2', data: {y: {metricId: 'm', warnings: ['a']}}}],"
+        " (id) => id === 'm' ? 'Metric M' : id)"),
     "no_value_colours": (
         "(() => {"
         "  const out = {grey: cm.NO_VALUE_RGB};"
@@ -1375,6 +1393,19 @@ def test_every_panel_kind_shows_a_gap_as_a_gap_never_a_number(results):
         assert r.get("peaksAtGaps", 0) == 0 and r.get("rangeFinite", True), kind
     # bars: carbon has no value in either series, so it is labelled, not drawn at 0
     assert results["no_value_panels"]["bars"]["noValueLabels"] == ["C"]
+
+
+def test_a_warning_pops_up_once_per_key_even_after_it_closed(results):
+    assert results["toasts_once"] == {"first": True, "again": None, "other": True,
+                                      "shown": ["M: y"]}
+
+
+def test_a_panels_popups_name_the_metric_once_per_metric_dataset_and_prediction(results):
+    assert results["panel_popups"] == [
+        {"key": "m|d1|p1|a", "text": "Metric M: a"},
+        {"key": "n|d1|p1|a", "text": "n: a"},
+        {"key": "m|d1|p2|a", "text": "Metric M: a"},
+    ]
 
 
 def test_a_panel_collects_each_warning_of_its_results_once(results):

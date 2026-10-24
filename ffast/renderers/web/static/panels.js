@@ -197,6 +197,28 @@ export function panelWarnings(series) {
   return [...out];
 }
 
+/**
+ * The pop-ups a panel's result warnings give (ADR 0066 rules 3, 4): each
+ * sentence led by the name of the metric that carries it, keyed by metric,
+ * dataset, prediction and sentence so a redraw does not repeat it.
+ * @param {PanelSeries[]} series @param {(id: string) => string} labelOf
+ * @returns {{key: string, text: string}[]}
+ */
+export function panelPopups(series, labelOf) {
+  const out = new Map();
+  for (const s of series || []) {
+    for (const v of Object.values(s.data || {})) {
+      for (const res of Array.isArray(v) ? v : [v]) {
+        for (const w of res?.warnings || []) {
+          const key = `${res.metricId}|${s.datasetFp}|${s.modelFp}|${w}`;
+          if (!out.has(key)) out.set(key, { key, text: `${labelOf(res.metricId)}: ${w}` });
+        }
+      }
+    }
+  }
+  return [...out.values()];
+}
+
 // ── plot-kind builders (pure) ───────────────────────────────────────────────
 
 /** Length of a peak's tick, in px. */

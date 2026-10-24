@@ -24,7 +24,8 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, unitRoleAt, refreshPeaks, panelWarnings } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, unitRoleAt, refreshPeaks, panelWarnings, panelPopups } from './panels.js';
+import { showOnce } from './toasts.js';
 import { visitedKey } from './peaks.js';
 import { panelLetters, readingOrder, caption, captionSegments } from './figure.js';
 import { datasetUnits, editableDimension, resolveUnit } from './units.js';
@@ -1130,8 +1131,11 @@ export class AnalysisManager {
   }
 
   /** ⚠ beside the title when a result behind the panel carries a warning;
-   * the sentences show on hover (ADR 0064 amendment). */
+   * the sentences show on hover (ADR 0064 amendment), and each pops up once,
+   * naming its metric (ADR 0066). */
   _showWarnings(card, series) {
+    const labelOf = (id) => this._catalog.get(id)?.label || id;
+    for (const p of panelPopups(series, labelOf)) showOnce(p.key, p.text);
     const warnings = panelWarnings(series);
     let mark = card.title.querySelector('.panel-warning');
     if (!warnings.length) { if (mark) mark.remove(); return; }

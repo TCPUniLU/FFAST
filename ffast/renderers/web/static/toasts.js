@@ -5,6 +5,9 @@
  * HIDE_AFTER_MS, unless the pointer is on it. The same text while its pop-up
  * is still open adds "×2" to it instead of a second pop-up. At most MAX_SHOWN
  * are open; a new one closes the oldest.
+ *
+ * `showOnce` is for messages a redraw repeats (a panel's result warning): it
+ * shows each key once per page load, open or closed since (ADR 0066 rule 4).
  */
 
 const HIDE_AFTER_MS = 10000;
@@ -73,4 +76,18 @@ export function showWarning(message, level = 'warning') {
   while (box.children.length > MAX_SHOWN) box.firstElementChild.remove();
   toast._restart();
   return toast;
+}
+
+const shownKeys = new Set();
+
+/**
+ * `showWarning(message, level)` the first time `key` is seen in this window;
+ * null after that.
+ * @param {string} key @param {string} message @param {string} [level]
+ * @returns {HTMLElement|null}
+ */
+export function showOnce(key, message, level = 'warning') {
+  if (shownKeys.has(key)) return null;
+  shownKeys.add(key);
+  return showWarning(message, level);
 }
