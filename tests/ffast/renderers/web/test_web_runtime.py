@@ -242,8 +242,8 @@ async def _file_menu(page, label):
 
 
 FILE_MENU = [
-    "Load Dataset…", "Load Prediction…", "Save Session…", "Load Session…",
-    "Export Selected Dataset…", "Connect to Server…",
+    "Load Dataset…", "Load Prediction…", "Load Example Dataset and Prediction",
+    "Save Session…", "Load Session…", "Export Selected Dataset…", "Connect to Server…",
 ]
 
 
