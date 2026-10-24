@@ -84,6 +84,7 @@ class LoadingCoordinator:
                     return load(*a, **kw)
                 except Exception as exc:
                     on_error(exc)
+                    exc.ffast_reported = True   # no second pop-up (ADR 0066)
                     raise
 
         return self._env.newTask(
@@ -292,7 +293,8 @@ class LoadingCoordinator:
                 logger.error(
                     "Prediction load failed, you have probably selected the wrong prediction for the designated dataset. "
                     "Please try again and choose the correct prediction file according to the dataset selected "
-                    "in the file filter dropdown."
+                    "in the file filter dropdown.",
+                    extra={"popup": on_error is None},   # else the window says it
                 )
                 if on_error:
                     on_error("it does not match the selected dataset")
@@ -555,7 +557,8 @@ class LoadingCoordinator:
                     slice_num=slice_num
                 )
             except Exception as e:
-                logger.exception(f"Failed to load dataset {path} in method 'loadDataset'")
+                logger.exception(f"Failed to load dataset {path} in method 'loadDataset'",
+                                 extra={"popup": on_error is None})
                 if on_error:
                     on_error(e)
                 return None
@@ -581,7 +584,8 @@ class LoadingCoordinator:
             dataset = result
 
         if dataset is None:
-            logging.warn(f"Dataset `{path}` did not load successfully")
+            logger.warning(f"Dataset `{path}` did not load successfully",
+                           extra={"popup": on_error is None})
             if on_error:
                 on_error("no dataset could be read from it")
             return

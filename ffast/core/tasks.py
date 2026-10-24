@@ -171,8 +171,13 @@ class TaskManager(EventClass):
         except asyncio.CancelledError:
             pass  # Task cancellation should not be logged as an error.
 
-        except Exception:  # pylint: disable=broad-except
-            logging.exception("Exception raised by task = %r", task)
+        except Exception as exc:  # pylint: disable=broad-except
+            # A sentence, as the warning relay shows it to the user (ADR 0066
+            # rule 7). An error the window was already told of (a load's
+            # on_error) stays in the log.
+            info = self.runningTasks.get(getattr(task, "taskID", None)) or {}
+            logger.error("%s failed: %s", info.get("name") or "A task", exc, exc_info=exc,
+                         extra={"popup": not getattr(exc, "ffast_reported", False)})
 
             if task.taskID is not None:
                 self.eventPush("TASK_DONE", task.taskID)

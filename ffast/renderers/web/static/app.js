@@ -1864,6 +1864,7 @@ export class FFastApp {
   _onCommandResult(kw) {
     if (!kw?.success) {
       console.warn('VIEW_COMMAND failed:', kw?.error);
+      showWarning(kw?.error ? `The 3D view could not do that: ${kw.error}` : 'The 3D view could not do that', 'error');
       if (typeof kw?.new_version !== 'number') return;
       const view = this._viewById(kw.view_id);
       if (view) view.version = kw.new_version;
@@ -2505,7 +2506,10 @@ export class FFastApp {
     return this._currentDatasetFp;
   }
 
+  /** The status line; an error is also a red pop-up, so the next message
+   * cannot replace it unread (ADR 0066 rule 7). */
   _setStatus(text, cls) {
+    if (cls === 'error') showWarning(text, 'error');
     const el = document.getElementById('status');
     el.textContent = text;
     el.className = cls;

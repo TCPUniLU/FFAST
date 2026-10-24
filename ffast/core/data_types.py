@@ -375,7 +375,8 @@ class AtomsList(UserList):
         number_of_slice_chunks = len(atoms)
 
         if number_of_slice_chunks == 0:
-            logger.error(f"Dataset ({self.path}) has no entries!!!")
+            # The load that asked reports its failure (ADR 0066): log only.
+            logger.error(f"Dataset ({self.path}) has no entries!!!", extra={"popup": False})
             return 0
 
         remaining_atoms = ase.io.read(self.path, index=slice(slice_size*(number_of_slice_chunks-1), None))
@@ -410,7 +411,8 @@ class AtomsList(UserList):
         number_of_slice_chunks = len(atoms)
 
         if number_of_slice_chunks == 0:
-            logger.error(f"Dataset ({path}) has no entries!!!")
+            # The load that asked reports its failure (ADR 0066): log only.
+            logger.error(f"Dataset ({path}) has no entries!!!", extra={"popup": False})
             return 0
 
         remaining_atoms = ase.io.read(path, index=slice(slice_size * (number_of_slice_chunks - 1), None))

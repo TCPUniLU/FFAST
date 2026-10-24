@@ -838,7 +838,9 @@ class ServerSession:
         def report(exc):
             from ffast.protocol.rpc import pack
 
-            logger.warning("Loading %s %r failed: %s", kind, path, exc)
+            # The window that asked shows it (LOAD_FAILED), not every window.
+            logger.warning("Loading %s %r failed: %s", kind, path, exc,
+                           extra={"popup": False})
             data = pack(
                 control.LOAD_FAILED, (),
                 {"kind": kind, "path": path, "error": str(exc)},

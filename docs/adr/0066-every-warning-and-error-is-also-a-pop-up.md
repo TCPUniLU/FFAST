@@ -134,6 +134,11 @@ error that is not the answer to a pane's own button goes through a reply's
   logs the sentence with `extra={"popup": False}`, which the warning relay
   keeps out of `SERVER_WARNING`; the traceback goes to the log at debug level.
 - The data service logs a failed metric as the sentence of rule 3.
+- `TASK_FAILED` carries only a task id, so its pop-up comes from the log: the
+  task manager logs "‹task name› failed: ‹error›" and the warning relay sends
+  it. A load whose window was told by `LOAD_FAILED` (it shows the status-line
+  error and its pop-up) keeps its log lines out of the relay, so one failed
+  load is one pop-up.
 - The desktop client is left as it is: it is being retired.
 
 ## Steps

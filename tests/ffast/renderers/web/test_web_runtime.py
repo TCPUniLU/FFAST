@@ -346,6 +346,12 @@ async def test_web_a_dataset_that_cannot_be_loaded_says_so_in_the_status(ffast_w
             status = page.locator("#status")
             await expect(status).to_contain_text("Could not load README.md", timeout=30000)
             await expect(status).to_have_class(re.compile(r"\berror\b"))
+            # ADR 0066 rule 7: and as one red pop-up, not one per log line
+            toasts = page.locator("#toasts .toast")
+            await expect(toasts.filter(has_text="Could not load README.md")).to_have_class(
+                re.compile(r"\btoast-error\b"))
+            await page.wait_for_timeout(1500)       # a late relayed log line would land here
+            await expect(toasts).to_have_count(1)
         finally:
             await browser.close()
 
