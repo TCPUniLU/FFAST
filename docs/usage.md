@@ -518,7 +518,7 @@ shows and follows it; you can choose another one there without changing the tab.
    another window changed it meanwhile, the pane says "Changed in another window"
    and offers **Reload** (drop your edits) or **Overwrite**.
 
-Only user metrics can be edited. Any other metric offers **Duplicate**, which
+Only user metrics can be edited. Any other metric offers **Copy and edit**, which
 starts a user copy under a new id. A formula metric copies its formula. A
 Python metric shows its code under **Python code** and copies as a formula that
 computes exactly the same where one can (`ffast.force_mae` copies as

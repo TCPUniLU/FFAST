@@ -125,6 +125,23 @@ async def _open_metrics_pane(page):
     return pane
 
 
+async def _list_shows(pane, selector):
+    """Drop the metric list down from the search box, check `selector` is
+    in it, and close it again (it floats over the editor)."""
+    search = pane.locator(".mx-toolbar input[type=search]")
+    await search.click()
+    await expect(pane.locator(selector).first).to_be_visible()
+    await search.press("Escape")
+    await expect(pane.locator(".mx-list")).to_be_hidden()
+
+
+async def _pick(pane, metric_id):
+    """Drop the metric list down from the search box and open `metric_id`."""
+    await pane.locator(".mx-toolbar input[type=search]").click()
+    await pane.locator(f".mx-item[data-id='{metric_id}']").click()
+    await expect(pane.locator(".mx-list")).to_be_hidden()
+
+
 async def test_the_pane_checks_fixes_tries_and_saves_a_formula(tmp_path):
     cm, metrics_dir = await _server(tmp_path)
     async with cm as (ws_port, web_port):
@@ -136,7 +153,8 @@ async def test_the_pane_checks_fixes_tries_and_saves_a_formula(tmp_path):
             try:
                 await _open_app(page, web_port, ws_port)
                 pane = await _open_metrics_pane(page)
-                await expect(pane.locator(".mx-group[data-origin='built-in'] .mx-item").first).to_be_visible()
+                await expect(pane.locator(".mx-list")).to_be_hidden()
+                await _list_shows(pane, ".mx-group[data-origin='built-in'] .mx-item")
                 await expect(pane.locator(".mx-group[data-origin='user']")).to_contain_text("None yet")
 
                 await pane.get_by_role("button", name="New metric").click()
@@ -156,19 +174,18 @@ async def test_the_pane_checks_fixes_tries_and_saves_a_formula(tmp_path):
                 assert not metrics_dir.exists() or not list(metrics_dir.glob("*.toml"))
 
                 await pane.get_by_role("button", name="Save", exact=True).click()
-                item = pane.locator(".mx-group[data-origin='user'] .mx-item[data-id='user.e_per_atom']")
-                await expect(item).to_be_visible()
+                await _list_shows(pane, ".mx-group[data-origin='user'] .mx-item[data-id='user.e_per_atom']")
                 assert (metrics_dir / "user.e_per_atom.toml").exists()
 
                 # a second window sees it without reloading
                 await _open_app(second, web_port, ws_port)
                 pane2 = await _open_metrics_pane(second)
-                await expect(pane2.locator(".mx-item[data-id='user.e_per_atom']")).to_be_visible()
+                await _list_shows(pane2, ".mx-item[data-id='user.e_per_atom']")
 
                 # the second window edits; the first, with unsaved edits, is told
-                await item.click()
+                await _pick(pane, "user.e_per_atom")
                 await formula.fill("abs(ref_E) / n_atoms + 1")
-                await pane2.locator(".mx-item[data-id='user.e_per_atom']").click()
+                await _pick(pane2, "user.e_per_atom")
                 await pane2.get_by_label("Formula").fill("abs(ref_E) / n_atoms * 2")
                 await pane2.get_by_role("button", name="Save", exact=True).click()
                 await expect(pane.locator(".mx-conflict")).to_contain_text("Changed in another window")
@@ -195,7 +212,7 @@ async def _save_in_pane(pane, metric_id, before, ref_button, after):
     await formula.press_sequentially(after)
     await expect(pane.locator(".mx-check.good")).to_be_visible()
     await pane.get_by_role("button", name="Save", exact=True).click()
-    await expect(pane.locator(f".mx-item[data-id='{metric_id}']")).to_be_visible()
+    await _list_shows(pane, f".mx-item[data-id='{metric_id}']")
 
 
 async def test_the_shortcuts_colour_the_atoms_and_plot_the_metric(tmp_path):
@@ -241,7 +258,7 @@ async def test_the_shortcuts_colour_the_atoms_and_plot_the_metric(tmp_path):
                 assert spec == [["3d", None], ["timeline", "user.double_e"]]
                 # ... and the next one joins it, since it has a plot now
                 pane = await _open_metrics_pane(page)
-                await pane.locator(".mx-item[data-id='user.double_e']").click()
+                await _pick(pane, "user.double_e")
                 await pane.get_by_role("button", name="Plot it").click()
                 await page.wait_for_function(
                     "() => window.ffastApp._layoutTabs.find((t) => t.name === 'My metrics').panels.length === 3")
@@ -468,7 +485,7 @@ async def test_the_metrics_drawer_works_on_a_tab_with_no_3d_panel(tmp_path):
 
 
 async def test_every_python_metric_shows_its_code_and_duplicates_as_a_formula(tmp_path):
-    """ADR 0057 amendment: a built-in shows its Python code; Duplicate gives
+    """ADR 0057 amendment: a built-in shows its Python code; Copy and edit gives
     the exact formula where there is one (force_mae, and force_mae_per_structure
     with by=, ADR 0064), and otherwise a formula over the metric itself
     (force_mae_per_structure_smoothed), which saves."""
@@ -483,21 +500,27 @@ async def test_every_python_metric_shows_its_code_and_duplicates_as_a_formula(tm
                 pane = await _open_metrics_pane(page)
                 formula = pane.get_by_label("Formula")
 
-                await pane.locator(".mx-item[data-id='ffast.force_mae']").click()
+                await _pick(pane, "ffast.force_mae")
                 await pane.locator(".mx-source summary").click()
                 await expect(pane.locator(".mx-source-code")).to_contain_text("def force_mae(")
-                await pane.get_by_role("button", name="Duplicate").click()
+                await pane.get_by_role("button", name="Copy and edit").click()
                 await expect(formula).to_have_value("norm(pred_F - ref_F)")
                 await expect(pane.locator(".mx-check")).to_contain_text("per atom")
 
-                await pane.locator(".mx-item[data-id='ffast.force_mae_per_structure']").click()
-                await pane.get_by_role("button", name="Duplicate").click()
+                await _pick(pane, "ffast.force_mae_per_structure")
+                await pane.get_by_role("button", name="Copy and edit").click()
                 await expect(formula).to_have_value("mean(norm(pred_F - ref_F), by=structure)")
                 await expect(pane.locator(".mx-check")).to_contain_text("per structure")
 
-                await pane.locator(".mx-item[data-id='ffast.force_mae_per_structure_smoothed']").click()
+                # the keyboard: typing narrows the drop-down, Down and Enter open a metric
+                search = pane.locator(".mx-toolbar input[type=search]")
+                await search.fill("per_structure_smoothed")
+                await expect(pane.locator(".mx-item")).to_have_count(1)
+                await search.press("ArrowDown")
+                await search.press("Enter")
+                await expect(pane.locator(".mx-list")).to_be_hidden()
                 await expect(pane.locator(".mx-notice")).to_contain_text("takes this metric as its input")
-                await pane.get_by_role("button", name="Duplicate").click()
+                await pane.get_by_role("button", name="Copy and edit").click()
                 await expect(formula).to_have_value("force_mae_per_structure_smoothed")
                 await expect(pane.locator(".mx-check")).to_contain_text("per structure")
                 await formula.fill("1000 * force_mae_per_structure_smoothed")
@@ -544,7 +567,7 @@ async def test_h_only_and_per_element_formulas_are_tried_saved_and_plotted(tmp_p
                 await expect(pane.locator(".mx-try-gaps")).to_have_text("1 structure has no value")
 
                 await pane.get_by_role("button", name="Save", exact=True).click()
-                await expect(pane.locator(".mx-item[data-id='user.h_force']")).to_be_visible()
+                await _list_shows(pane, ".mx-item[data-id='user.h_force']")
                 text = (metrics_dir / "user.h_force.toml").read_text()
                 assert tomllib.loads(text)["metrics"]["expr"][0]["vars"] == {
                     "pred_F": "prediction.forces", "ref_F": "reference.forces"}
@@ -567,7 +590,7 @@ async def test_h_only_and_per_element_formulas_are_tried_saved_and_plotted(tmp_p
                     await pane.get_by_role("button", name=re.compile("^Fix")).click()
                 await expect(pane.locator(".mx-check")).to_contain_text("per element")
                 await pane.get_by_role("button", name="Save", exact=True).click()
-                await expect(pane.locator(".mx-item[data-id='user.f_by_element']")).to_be_visible()
+                await _list_shows(pane, ".mx-item[data-id='user.f_by_element']")
                 await pane.get_by_role("button", name="Plot it").click()
                 n_elements = len({z for a in aio.read(DATASET_PATH, index=":") for z in a.numbers})
                 bars = await page.wait_for_function(
@@ -610,7 +633,7 @@ async def test_a_bad_value_where_leaves_out_is_ignored_with_a_warning(tmp_path):
                 await expect(pane.locator(".mx-try-ignored")).to_have_text(f"⚠ {sentence}")
 
                 await pane.get_by_role("button", name="Save", exact=True).click()
-                await expect(pane.locator(".mx-item[data-id='user.h_ref']")).to_be_visible()
+                await _list_shows(pane, ".mx-item[data-id='user.h_ref']")
                 await pane.get_by_role("button", name="Plot it").click()
                 mark = page.locator(".tabpanel.active .analysis-panel .panel-warning")
                 await expect(mark).to_have_attribute("title", sentence)

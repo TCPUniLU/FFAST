@@ -792,7 +792,13 @@
     /* Metrics pane (ADR 0057): list by origin, editor, inputs, Try */
     .mx-toolbar { display: flex; gap: 6px; align-items: center; }
     .mx-toolbar input[type="search"] { flex: 1; min-width: 0; font-size: var(--fs-s); padding: 2px 6px; }
-    .mx-list { display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
+    .mx-picker { position: relative; }
+    .mx-list {
+      display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto;
+      position: absolute; top: 100%; left: 0; right: 0; z-index: 10;
+      background: var(--bg2); border: 1px solid var(--bg4); border-radius: 3px; padding: 4px;
+    }
+    .mx-list[hidden] { display: none; }
     .mx-group-title, .mx-subhead {
       font-size: var(--fs-xs); font-weight: 600; color: var(--muted); padding: 4px 2px 2px;
     }
@@ -802,7 +808,7 @@
       background: transparent; border: 0; border-radius: 3px; padding: 2px 6px;
       color: var(--text1); font-size: var(--fs-s); cursor: pointer;
     }
-    .mx-item:hover, .mx-input:hover, .mx-suggest-item:hover, .mx-suggest-item.selected { background: var(--bg4); color: var(--text2); }
+    .mx-item.active, .mx-item:hover, .mx-input:hover, .mx-suggest-item:hover, .mx-suggest-item.selected { background: var(--bg4); color: var(--text2); }
     .mx-item.selected { background: var(--sel); color: var(--text2); }
     .mx-item-label, .mx-input-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .mx-item-id, .mx-input-ref { flex: 1; min-width: 0; font-size: var(--fs-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

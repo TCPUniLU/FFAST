@@ -1,11 +1,11 @@
 /**
  * Metrics pane (ADR 0057): define your own metrics as formulas while the app
- * runs. Lists every metric by origin (built-in, project, user); the editor
- * below it checks the formula as you type, tries it on the whole dataset
+ * runs. A search box drops down every metric by origin (built-in, project,
+ * user); the editor below it checks the formula as you type, tries it on the whole dataset
  * without saving, and saves it on the server so every window sees it.
  *
  * Only user metrics are editable. A built-in or project formula metric shows
- * its formula and offers Duplicate, which starts a new user metric from it.
+ * its formula and offers Copy and edit, which starts a new user metric from it.
  * The decisions (names, suggestions, Fix, what a draft saves as) live in
  * metric_logic.js; the wire is metric_ops.js. This file draws and wires.
  */
@@ -49,7 +49,7 @@ export function createMetricsPane(body, callbacks) {
   let metricUsers = {};       // METRIC_USERS: metric id → who uses it
   let inputs = [];
   let selected = null;        // the list entry being shown, or null
-  let isNew = false;          // a metric not saved yet (New, or Duplicate)
+  let isNew = false;          // a metric not saved yet (New, or Copy and edit)
   let draft = null;           // the formula being edited
   let saved = null;           // the user entry the draft was loaded from
   let check = { ok: null, error: '', shape: null };   // the server's last word
@@ -76,10 +76,36 @@ export function createMetricsPane(body, callbacks) {
   const listEl = el('div', 'mx-list');
   const editor = el('div', 'mx-editor');
   editor.hidden = true;
-  body.append(toolbar, listEl, editor);
+  const picker = el('div', 'mx-picker');
+  picker.append(toolbar, listEl);
+  body.append(picker, editor);
 
   newBtn.addEventListener('click', () => startNew());
-  search.addEventListener('input', () => { filter = search.value.trim().toLowerCase(); renderList(); });
+  listEl.hidden = true;
+  // focus, and click too: after Escape the box keeps focus, so a click must reopen it
+  for (const ev of ['focus', 'click']) search.addEventListener(ev, () => { listEl.hidden = false; renderList(); });
+  search.addEventListener('input', () => { filter = search.value.trim().toLowerCase(); listEl.hidden = false; renderList(); });
+  search.addEventListener('blur', () => { setTimeout(() => { listEl.hidden = true; }, 120); });
+  let listIndex = -1;   // the row the arrow keys are on, or -1
+  /** @param {number} step */
+  function moveInList(step) {
+    const rows = [...listEl.querySelectorAll('.mx-item')];
+    if (!rows.length) return;
+    listIndex = (listIndex + step + rows.length) % rows.length;
+    rows.forEach((r, n) => r.classList.toggle('active', n === listIndex));
+    rows[listIndex].scrollIntoView({ block: 'nearest' });
+  }
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { listEl.hidden = true; return; }
+    if (e.key === 'ArrowDown' && listEl.hidden) { listEl.hidden = false; renderList(); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); moveInList(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveInList(-1); }
+    else if (e.key === 'Enter') {
+      const row = /** @type {HTMLElement|undefined} */ (listEl.querySelectorAll('.mx-item')[listIndex]);
+      if (row) { e.preventDefault(); listEl.hidden = true; selectById(row.dataset.id); }
+    }
+  });
+
 
   // editor parts (built once, filled by `renderEditor`)
   const heading = el('div', 'mx-heading');
@@ -128,7 +154,7 @@ export function createMetricsPane(body, callbacks) {
   const actions = el('div', 'mx-actions');
   const tryBtn = el('button', '', 'Try');
   const saveBtn = el('button', 'mx-primary', 'Save');
-  const dupBtn = el('button', '', 'Duplicate');
+  const dupBtn = el('button', '', 'Copy and edit');
   const delBtn = el('button', '', 'Delete');
   const exportBtn = el('button', '', 'Export');
   actions.append(tryBtn, saveBtn, dupBtn, delBtn, exportBtn);
@@ -162,6 +188,7 @@ export function createMetricsPane(body, callbacks) {
   // ── list ─────────────────────────────────────────────────────────────────
   function renderList() {
     listEl.replaceChildren();
+    listIndex = -1;
     const groups = groupMetrics(catalog, userMetrics, metricUsers);
     for (const origin of ['user', 'project', 'built-in']) {
       const items = groups[origin].filter((m) =>
@@ -179,7 +206,7 @@ export function createMetricsPane(body, callbacks) {
         item.append(el('span', 'mx-item-label', m.label), el('span', 'mx-item-id', m.id));
         if (m.status === 'hidden') item.append(el('span', 'mx-badge', 'hidden'));
         else if (m.status === 'error') item.append(el('span', 'mx-badge bad', 'error'));
-        item.addEventListener('click', () => select(m));
+        item.addEventListener('mousedown', (e) => { e.preventDefault(); listEl.hidden = true; select(m); });
         group.appendChild(item);
       }
       listEl.appendChild(group);
@@ -243,11 +270,11 @@ export function createMetricsPane(body, callbacks) {
     if (!isNew && selected.status === 'hidden') notice.textContent = selected.message;
     else if (!isNew && selected.status === 'error') notice.textContent = `Does not compile: ${selected.message}`;
     else if (ro && selected.expr == null && selected.equivalent_expr)
-      notice.textContent = 'A Python metric: read only. Duplicate makes a formula that computes the same, for you to edit.';
+      notice.textContent = 'A Python metric: read only. Copy and edit makes a formula that computes the same, for you to edit.';
     else if (ro && selected.expr == null)
       notice.textContent = 'A Python metric: it averages, totals or smooths, which a formula cannot do yet. '
-        + 'Duplicate makes a formula that takes this metric as its input, for you to change.';
-    else if (ro) notice.textContent = `A ${ORIGIN_TITLES[selected.origin].toLowerCase()} metric: read only. Duplicate makes a copy you can edit.`;
+        + 'Copy and edit makes a formula that takes this metric as its input, for you to change.';
+    else if (ro) notice.textContent = `A ${ORIGIN_TITLES[selected.origin].toLowerCase()} metric: read only. Copy and edit makes a copy you can edit.`;
     notice.hidden = !notice.textContent;
     const source = !isNew && selected?.expr == null ? selected?.source : null;
     sourceBox.hidden = !source;
