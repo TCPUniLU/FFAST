@@ -1045,11 +1045,9 @@ def _uses_element(tree: ast.Expression) -> bool:
 _DATASET_WIDE = ("all", "element", "atom")
 
 
-def colour_problem(expr: str, refs=(), registry=None) -> str | None:
-    """Why this formula cannot colour atoms from the frame on screen alone,
-    or None. A formula that uses by=all or by=element anywhere, itself or in a
-    formula metric it takes as an input, would give one number in Try and
-    another on screen."""
+def formula_by_words(expr: str, refs=(), registry=None) -> set[str]:
+    """The by= words a formula uses anywhere: itself, or in a formula metric
+    it takes as an input, however deep."""
     words = set(by_words(parse_and_validate(expr)))
     seen: set[str] = set()
     todo = [r for r in refs if registry is not None and registry.has(r)]
@@ -1062,6 +1060,28 @@ def colour_problem(expr: str, refs=(), registry=None) -> str | None:
         if isinstance(fn, _ExprFn):
             words |= by_words(fn._tree())
             todo.extend(r for r in fn.var_refs.values() if registry.has(r))
+    return words
+
+
+BY_ATOM_DIFFERENT = ("by=atom needs structures with the same atoms in the same order; "
+                     "this dataset's structures differ")
+
+
+def dataset_warnings(expr: str, refs=(), registry=None, *, uniform: bool | None = None) -> list[str]:
+    """What Check warns of for the dataset open in the pane (ADR 0066 rule 5):
+    sentences, not refusals, since the formula may be right for another
+    dataset. ``uniform`` None (no dataset) warns of nothing."""
+    if uniform is False and "atom" in formula_by_words(expr, refs, registry):
+        return [BY_ATOM_DIFFERENT]
+    return []
+
+
+def colour_problem(expr: str, refs=(), registry=None) -> str | None:
+    """Why this formula cannot colour atoms from the frame on screen alone,
+    or None. A formula that uses by=all or by=element anywhere, itself or in a
+    formula metric it takes as an input, would give one number in Try and
+    another on screen."""
+    words = formula_by_words(expr, refs, registry)
     for word in _DATASET_WIDE:
         if word in words:
             return (f"by={word} colours atoms only when the prediction covers every "

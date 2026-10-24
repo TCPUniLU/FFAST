@@ -538,6 +538,8 @@ class CheckMetricRequest(BaseModel):
 
     metric: dict
     check_id: Optional[str] = None
+    # The dataset open in the pane, for Check's warnings (ADR 0066 rule 5).
+    dataset_fp: Optional[str] = None
 
 
 class RequestMetricBoxesRequest(BaseModel):

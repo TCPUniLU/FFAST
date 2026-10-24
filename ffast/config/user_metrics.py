@@ -281,22 +281,27 @@ class UserMetrics:
         old entry, so it cannot depend on itself."""
         return _Without(self.registry, id)
 
-    def check(self, data: dict) -> dict:
+    def check(self, data: dict, uniform: bool | None = None) -> dict:
         """Validate a formula without changing anything (rule 11): returns
-        ``{ok, error, shape}``. Touches no data."""
-        from ffast.metrics.expr import analyze_expr
+        ``{ok, error, shape, warnings}``. Touches no data; ``uniform`` says
+        whether the pane's dataset has the same atoms in every structure, for
+        the warnings (ADR 0066 rule 5), None when no dataset is open."""
+        from ffast.metrics.expr import analyze_expr, dataset_warnings
         try:
             cfg = ExprMetricConfig.model_validate(data)
         except ValidationError as exc:
-            return {"ok": False, "error": _validation_message(exc), "shape": None}
+            return {"ok": False, "error": _validation_message(exc), "shape": None, "warnings": []}
+        registry = self.registry_without(cfg.id)
         try:
             # Editing: the metric's own old entry must not be seen as a
             # dependency of itself, so look through a copy without it.
             _inputs, shape, _parts = analyze_expr(
-                cfg.expr, dict(cfg.vars), registry=self.registry_without(cfg.id), id=cfg.id)
+                cfg.expr, dict(cfg.vars), registry=registry, id=cfg.id)
         except ValueError as exc:
-            return {"ok": False, "error": str(exc), "shape": None}
-        return {"ok": True, "error": None, "shape": shape_to_str(shape)}
+            return {"ok": False, "error": str(exc), "shape": None, "warnings": []}
+        return {"ok": True, "error": None, "shape": shape_to_str(shape),
+                "warnings": dataset_warnings(cfg.expr, cfg.vars.values(), registry,
+                                             uniform=uniform)}
 
     # ── changing ────────────────────────────────────────────────────────────
     @_locked

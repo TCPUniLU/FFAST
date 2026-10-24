@@ -11,7 +11,7 @@
  */
 
 import { icon } from '../icons.js';
-import { showWarning } from '../toasts.js';
+import { showOnce, showWarning } from '../toasts.js';
 import { createKeepBoxes } from '../keep_boxes.js';
 import {
   ID_PREFIX, completeAt, duplicateDraft, fixFor, formatStat, groupInputs, groupMetrics,
@@ -153,8 +153,9 @@ export function createMetricsPane(body, callbacks) {
   const checkEl = el('div', 'mx-check');
   const fixBtn = el('button', 'mx-fix', 'Fix');
   fixBtn.hidden = true;
+  const checkWarnEl = el('div', 'mx-check-warning');
   const checkRow = el('div', 'mx-check-row');
-  checkRow.append(checkEl, fixBtn);
+  checkRow.append(checkEl, fixBtn, checkWarnEl);
   const inputSearch = el('input'); inputSearch.type = 'search'; inputSearch.placeholder = 'Search inputs';
   inputSearch.setAttribute('aria-label', 'Search inputs');
   const inputsEl = el('div', 'mx-inputs');
@@ -449,6 +450,7 @@ export function createMetricsPane(body, callbacks) {
 
   function renderCheck() {
     fixBtn.hidden = true;
+    checkWarnEl.replaceChildren(...(check.warnings || []).map((w) => el('div', '', `⚠ ${w}`)));
     checkEl.className = 'mx-check';
     if (!draft || readOnly()) return;
     if (!draft.expr.trim()) { checkEl.textContent = ''; return; }
@@ -644,7 +646,7 @@ export function createMetricsPane(body, callbacks) {
       const payload = toPayload(draft);
       // the id may not be typed yet; the check is about the formula
       if (isNew && idProblem(payload.id)) payload.id = `${ID_PREFIX}draft`;
-      ops.check(payload);
+      ops.check(payload, context().datasetFp);
     };
     if (now) send(); else checkTimer = setTimeout(send, CHECK_DELAY_MS);
   }
@@ -821,7 +823,10 @@ export function createMetricsPane(body, callbacks) {
 
   // ── from the server ──────────────────────────────────────────────────────
   ops.onCheck = (kw) => {
-    check = { ok: kw.ok, error: kw.error || '', shape: kw.shape };
+    check = { ok: kw.ok, error: kw.error || '', shape: kw.shape, warnings: kw.warnings || [] };
+    // once per dataset and sentence, not per keystroke (ADR 0066 rule 4)
+    const fp = context().datasetFp;
+    for (const w of check.warnings) showOnce(`check|${fp}|${w}`, w);
     renderCheck();
     renderButtons();
   };

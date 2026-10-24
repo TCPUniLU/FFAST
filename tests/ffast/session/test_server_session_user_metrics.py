@@ -223,7 +223,8 @@ def test_check_replies_with_the_shape_and_echoes_the_check_id(env):
         "metric": {"id": "t57.c", "expr": "2 * f",
                    "vars": {"f": "ffast.force_difference[dataset;component;mae]"}},
         "check_id": "7"})
-    assert own == [(control.METRIC_CHECKED, [], {"check_id": "7", "ok": True, "error": None, "shape": "scalar"})]
+    assert own == [(control.METRIC_CHECKED, [], {"check_id": "7", "ok": True, "error": None, "shape": "scalar",
+                                                  "warnings": []})]
     assert everyone == []
 
 

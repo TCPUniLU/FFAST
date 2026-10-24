@@ -274,7 +274,7 @@ def test_delete_also_drops_derived_transform_metrics(um, registry):
 # ── checking without saving (rule 11) ───────────────────────────────────────
 def test_check_reports_the_result_shape_and_registers_nothing(um, registry):
     out = um.check(metric(id="user.try"))
-    assert out == {"ok": True, "error": None, "shape": "N_frames"}
+    assert out == {"ok": True, "error": None, "shape": "N_frames", "warnings": []}
     assert not registry.has("user.try")
 
 
@@ -287,6 +287,32 @@ def test_check_of_an_edit_does_not_see_the_old_self(um):
     um.save(metric())
     out = um.check({"id": "user.double", "expr": "d + 1", "vars": {"d": "user.double"}})
     assert out["ok"] is False
+
+
+DIFFERENT = ("by=atom needs structures with the same atoms in the same order; "
+             "this dataset's structures differ")
+
+
+def by_atom(**kw):
+    return {"id": "user.q_mean", "expr": "mean(q, by=atom)", "vars": {"q": "base.atom_q"}, **kw}
+
+
+def test_check_warns_of_by_atom_on_a_dataset_whose_structures_differ(um):
+    # ADR 0066 rule 5: a warning, not a refusal; it may be right elsewhere
+    out = um.check(by_atom(), uniform=False)
+    assert out["ok"] is True and out["warnings"] == [DIFFERENT]
+
+
+def test_check_does_not_warn_where_structures_match_or_the_dataset_is_unknown(um):
+    assert um.check(by_atom(), uniform=True)["warnings"] == []
+    assert um.check(by_atom())["warnings"] == []
+
+
+def test_check_warns_of_by_atom_in_a_metric_the_formula_takes(um):
+    um.save(by_atom())
+    out = um.check({"id": "user.twice", "expr": "2 * m", "vars": {"m": "user.q_mean"}},
+                   uniform=False)
+    assert out["warnings"] == [DIFFERENT]
 
 
 # ── origin ──────────────────────────────────────────────────────────────────

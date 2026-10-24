@@ -198,7 +198,7 @@ class ServerSession:
             control.SAVE_USER_METRIC:           _Route(self._on_save_user_metric, ["metric", "?previous_id", "?base_revision", "?overwrite"], SaveUserMetricRequest),
             control.DELETE_USER_METRIC:         _Route(self._on_delete_user_metric, ["id"], DeleteUserMetricRequest),
             control.REQUEST_METRIC_INPUTS:      _Route(self._on_request_metric_inputs, ["?dataset_fp", "?model_fp"], RequestMetricInputsRequest),
-            control.CHECK_METRIC:               _Route(self._on_check_metric, ["metric", "?check_id"], CheckMetricRequest),
+            control.CHECK_METRIC:               _Route(self._on_check_metric, ["metric", "?check_id", "?dataset_fp"], CheckMetricRequest),
             control.TRY_METRIC:                 _Route(self._on_try_metric, ["metric", "try_id", "?dataset_fp", "?model_fp"], TryMetricRequest),
             control.CANCEL_TRY_METRIC:          _Route(self._on_cancel_try_metric, ["try_id"], CancelTryMetricRequest),
             control.REQUEST_METRIC_BOXES:       _Route(self._on_request_metric_boxes, ["request_id", "?metric_id", "?base", "?setting", "?dataset_fp"], RequestMetricBoxesRequest),
@@ -1401,16 +1401,24 @@ class ServerSession:
 
     # ── check and try a formula (ADR 0057 rules 11, 12) ─────────────────────
 
-    async def _on_check_metric(self, metric, check_id=None, **kwargs) -> None:
-        """Reply with METRIC_CHECKED: the formula's error or result shape.
-        Touches no data and changes nothing, so it runs on every keystroke."""
+    def _uniform(self, dataset_fp) -> bool | None:
+        """Whether every structure of a dataset has the same atoms in the same
+        order (ADR 0058), as by=atom needs; None when no dataset is named."""
+        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
+        return None if dataset is None else not getattr(dataset, "isVariable", False)
+
+    async def _on_check_metric(self, metric, check_id=None, dataset_fp=None, **kwargs) -> None:
+        """Reply with METRIC_CHECKED: the formula's error or result shape, and
+        warnings for the pane's dataset (ADR 0066). Touches no data and
+        changes nothing, so it runs on every keystroke."""
         from ffast.config.user_metrics import MetricError
         from ffast.protocol.rpc import pack
         um = getattr(self.env, "user_metrics", None)
         if um is None:
-            out = {"ok": False, "error": "This server keeps no user metrics", "shape": None}
+            out = {"ok": False, "error": "This server keeps no user metrics", "shape": None,
+                   "warnings": []}
         else:
-            out = um.check(metric)
+            out = um.check(metric, uniform=self._uniform(dataset_fp))
         await self._emit(pack(control.METRIC_CHECKED, [], {"check_id": check_id, **out}))
 
     async def _on_request_metric_boxes(self, request_id, metric_id=None, base=None,
@@ -1421,8 +1429,7 @@ class ServerSession:
         from ffast.metrics.boxes import box_state
         from ffast.metrics.registry import default_registry
         from ffast.protocol.rpc import pack
-        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
-        uniform = None if dataset is None else not getattr(dataset, "isVariable", False)
+        uniform = self._uniform(dataset_fp)
         um = getattr(self.env, "user_metrics", None)
         revision = default_registry.revision
         try:

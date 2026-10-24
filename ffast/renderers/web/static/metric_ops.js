@@ -50,10 +50,11 @@ export class MetricOps {
   /** @returns {Promise<{id: string, toml: string|null, error: string|null}>} */
   exportToml(id) { return this._ask(this._exported, OUT.EXPORT_USER_METRIC, { id }); }
 
-  /** Check a formula as typed; the answer goes to `onCheck` unless a newer
-   * check was sent since. */
-  check(metric) {
-    this._send(OUT.CHECK_METRIC, { metric, check_id: String(++this._checkSeq) });
+  /** Check a formula as typed, with the pane's dataset for its warnings
+   * (ADR 0066); the answer goes to `onCheck` unless a newer check was sent
+   * since. */
+  check(metric, datasetFp = null) {
+    this._send(OUT.CHECK_METRIC, { metric, check_id: String(++this._checkSeq), dataset_fp: datasetFp });
   }
 
   /** The keep boxes of a metric (`{metricId}`) or of a box change

@@ -110,7 +110,8 @@ async def test_try_reports_bad_values_before_anything_is_saved(tmp_path):
             assert not (metrics_dir / "user.bad.toml").exists()     # nothing saved
             await ws.send(pack("CHECK_METRIC", (), {"metric": bad, "check_id": "9"}))
             checked = (await _wait_for_event(ws, "METRIC_CHECKED"))["kwargs"]
-            assert checked == {"check_id": "9", "ok": True, "error": None, "shape": "N_frames"}
+            assert checked == {"check_id": "9", "ok": True, "error": None, "shape": "N_frames",
+                               "warnings": []}
         finally:
             await ws.close()
 
@@ -709,6 +710,11 @@ async def test_a_metric_that_fails_says_why_in_its_panel_and_a_popup(tmp_path):
                     "mean(norm(ref_F) - mean(norm(ref_F), by=atom), by=structure)")
                 await pane.get_by_role("button", name=re.compile("^Fix")).click()
                 await expect(pane.locator(".mx-check")).to_contain_text("per structure")
+                # Check warns for this dataset, under the formula and as a pop-up
+                warning = ("by=atom needs structures with the same atoms in the same order; "
+                           "this dataset's structures differ")
+                await expect(pane.locator(".mx-check-warning")).to_have_text(f"⚠ {warning}")
+                await expect(page.locator("#toasts .toast-warning", has_text=warning)).to_have_count(1)
                 await pane.get_by_role("button", name="Save", exact=True).click()
                 await _list_shows(pane, ".mx-item[data-id='user.off_mean']")
                 await pane.get_by_role("button", name="Plot it").click()
