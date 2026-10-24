@@ -24,6 +24,8 @@ _SHIFTED = "pred_E - ref_E - mean(pred_E - ref_E, by=all)"
 # metric id → (expr, vars)
 EQUIVALENTS: dict[str, tuple[str, dict[str, str]]] = {
     "ffast.force_difference": ("pred_F - ref_F", _F),
+    # each atom's mass divides its x, y and z (ADR 0065 section 8)
+    "ffast.accel_difference": ("(pred_F - ref_F) / m", _A),
     "ffast.force_mae": (_FORCE, _F),                            # norm = "l2"
     # |F / m| = |F| / m, so the mass need not divide each part
     "ffast.accel_mae": (_ACCEL, _A),   # norm = "l2"

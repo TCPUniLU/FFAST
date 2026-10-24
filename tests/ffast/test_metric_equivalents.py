@@ -56,8 +56,8 @@ def test_the_formula_gives_what_the_python_metric_gives(metric_id):
     np.testing.assert_allclose(formula, python.values, rtol=1e-12)
 
 
-def test_a_metric_that_smooths_or_mixes_shapes_has_no_equivalent():
-    for metric_id in ("ffast.force_rmse_smoothed", "ffast.gyradius", "ffast.accel_difference"):
+def test_a_metric_that_smooths_or_measures_geometry_has_no_equivalent():
+    for metric_id in ("ffast.force_rmse_smoothed", "ffast.gyradius"):
         assert equivalent_of(metric_id) is None
 
 
