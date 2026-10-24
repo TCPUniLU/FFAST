@@ -12,10 +12,11 @@
 export const FORMULA_FUNCTIONS = [
   'abs', 'sqrt', 'exp', 'log', 'log10', 'clip', 'where', 'minimum', 'maximum',
   'sign', 'norm', 'x', 'y', 'z',
-  'mean', 'sum', 'min', 'max', 'rms', 'std', 'mean_parts', 'sum_parts', 'element',
+  'mean', 'sum', 'min', 'max', 'rms', 'std', 'mean_parts', 'sum_parts', 'max_parts', 'element',
 ];
-/** The words `by=` takes, alone or as the pair `by=(structure, element)`. */
-export const BY_WORDS = ['structure', 'element', 'all'];
+/** The words `by=` takes, alone or as the pair `by=(structure, element)`;
+ * `atom` from ADR 0065. */
+export const BY_WORDS = ['structure', 'element', 'atom', 'all'];
 /** Text that ends where a by= word goes: `by=`, `by=(` or `by=(structure, `. */
 const BY_BEFORE = /\bby\s*=\s*(\(\s*([A-Za-z_]+\s*,\s*)?)?$/;
 /** Names that need no `vars` row. */

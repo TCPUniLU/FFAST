@@ -66,7 +66,7 @@ def test_the_other_order_names_the_right_one():
 
 @pytest.mark.parametrize("by", ["(structure, all)", "(structure,)", "(structure, element, all)"])
 def test_no_other_pair_is_a_by_word(by):
-    assert "by= takes structure, element, all or (structure, element)" in _error(
+    assert "by= takes structure, element, atom, all or (structure, element)" in _error(
         f"mean(norm(pF), by={by})")
 
 

@@ -61,7 +61,7 @@ def _run(r, mid, **inputs):
 
 def test_whitelist_version_bumped():
     from ffast.metrics import expr
-    assert expr._WHITELIST_VERSION == "4"
+    assert expr._WHITELIST_VERSION == "5"
 
 
 def test_parse_accepts_new_forms():
@@ -158,10 +158,11 @@ def test_variable_named_x_is_still_a_value():
     np.testing.assert_allclose(_run(r, mid, reference=[1.0, 2.0]), [2.0, 3.0])
 
 
-def test_vector_cannot_mix_with_per_atom_scalar_until_a_part_is_taken():
+def test_a_per_atom_value_applies_to_each_part_of_a_vector():
+    # ADR 0065 section 8 (until then this mix was refused).
     r = _registry()
-    with pytest.raises(ValueError, match="different Metric Shapes"):
-        compile_expr_metric("lab.x", "F + q", {"F": "t.ref_f", "q": "t.atom_q"}, registry=r)
+    mid = compile_expr_metric("lab.x", "F + q", {"F": "t.ref_f", "q": "t.atom_q"}, registry=r)
+    assert r.get(mid)[0].shape == (dims.N_atoms, dims.xyz)
     mid = compile_expr_metric("lab.y", "x(F) * q", {"F": "t.ref_f", "q": "t.atom_q"}, registry=r)
     assert r.get(mid)[0].shape == (dims.N_atoms,)
 

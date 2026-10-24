@@ -65,7 +65,7 @@ from ffast.metrics.segments import framesOrOne, segmentExtremes, segmentSums
 
 # Bump when the whitelist (functions / operators / constants) changes, so every
 # Expression Metric's cache identity invalidates (rides implementation_source).
-_WHITELIST_VERSION = "4"
+_WHITELIST_VERSION = "5"
 
 # Element-wise (shape-preserving) numpy functions. minimum/maximum/clip/where
 # are element-wise, not the reducing min/max (Decision 6; those are _REDUCERS).
@@ -86,15 +86,19 @@ _CONSTS = {"pi": np.pi}
 # Part-axis functions (ADR 0057 rule 17). They read or collapse the trailing
 # *part axes* of an input (a vector's xyz, a stress's 3x3 / Voigt), so they are
 # handled by the shape-aware walk below, not by the plain ``_FUNCS`` table.
-# ``norm``, ``mean_parts`` and ``sum_parts`` collapse every part axis (ADR 0064).
-_PART_FUNCS = {"norm", "mean_parts", "sum_parts", "x", "y", "z"}
-_COLLAPSING = {"norm", "mean_parts", "sum_parts"}
+# ``norm``, ``mean_parts``, ``sum_parts`` and ``max_parts`` collapse every part
+# axis (ADR 0064; ``max_parts`` ADR 0065, for the Max statistic).
+_PART_FUNCS = {"norm", "mean_parts", "sum_parts", "max_parts", "x", "y", "z"}
+_COLLAPSING = {"norm", "mean_parts", "sum_parts", "max_parts"}
+_PART_REDUCERS = {"mean_parts": np.mean, "sum_parts": np.sum, "max_parts": np.max}
 _XYZ_INDEX = {"x": 0, "y": 1, "z": 2}
 
 # Reductions (ADR 0064): each combines the values of a group into one and
 # needs ``by=`` to say which groups. ``where=`` picks the rows that count.
 _REDUCERS = {"mean", "sum", "min", "max", "rms", "std"}
-BY_WORDS = ("structure", "element", "all")
+# ``by=atom`` (ADR 0065) groups the same atom position across structures, so
+# it needs structures with the same atoms in the same order.
+BY_WORDS = ("structure", "element", "atom", "all")
 # ``by=(structure, element)`` (ADR 0064 amendment 2026-10-24): one group per
 # structure and element, a table with a row per structure and a column per
 # element. Only this order; the key is how by= is written.
@@ -250,13 +254,13 @@ def _check_reduction(node: ast.Call, expr: str) -> None:
     by = _keyword(node, "by")
     if by is None:
         raise ValueError(
-            f"expr {expr!r}: {name}(...) needs by=structure, by=element or by=all"
+            f"expr {expr!r}: {name}(...) needs by=structure, by=element, by=atom or by=all"
         )
     if isinstance(by, ast.Tuple) and [getattr(e, "id", None) for e in by.elts] == ["element", "structure"]:
         raise ValueError(f"expr {expr!r}: write by={PAIR}, structure first")
     if _by_key(by) is None:
         raise ValueError(
-            f"expr {expr!r}: by= takes structure, element, all or {PAIR}"
+            f"expr {expr!r}: by= takes structure, element, atom, all or {PAIR}"
         )
 
 
@@ -491,8 +495,14 @@ def _resolve_ref_shape(ref: str, registry):
 
 
 def _combine(shapes: list, expr: str):
-    """Element-wise combination: scalars broadcast, every other shape must match."""
+    """Element-wise combination: scalars broadcast, every other shape must
+    match, except that a value without parts applies to each part of one with
+    the same rows: per atom with per atom × xyz (ADR 0065 section 8)."""
     non_scalar = [tuple(sh) for sh in shapes if not _is_scalar_shape(sh)]
+    widest = max(non_scalar, key=len, default=None)
+    if widest is not None and _part_axes(widest):
+        rows = widest[:-1]
+        non_scalar = [widest if sh == rows else sh for sh in non_scalar]
     distinct = set(non_scalar)
     if len(distinct) > 1:
         detail = " vs ".join(dims.shape_to_str(sh) for sh in sorted(distinct, key=str))
@@ -538,7 +548,8 @@ def shape_words(shape) -> str:
 
 # The leading axes a reduction can combine over (rows), by= word → result row.
 _ROWS = (dims.N_atoms, dims.N_frames, dims.N_elements)
-_BY_RESULT = {"structure": (dims.N_frames,), "element": (dims.N_elements,), PAIR: TABLE}
+_BY_RESULT = {"structure": (dims.N_frames,), "element": (dims.N_elements,),
+              "atom": (dims.N_atoms,), PAIR: TABLE}
 
 
 def _reduction_shape(node: ast.Call, go, expr: str) -> tuple:
@@ -709,12 +720,14 @@ class _ExprFn:
             return self._input(node.id, ns)
         if isinstance(node, ast.BinOp):
             (a, ka, ga), (b, kb, gb) = self._eval(node.left, ns), self._eval(node.right, ns)
+            a, b = _align([(a, ka), (b, kb)])
             return _BINOPS[type(node.op)](a, b), max(ka, kb), _either(ga, gb)
         if isinstance(node, ast.UnaryOp):
             a, k, g = self._eval(node.operand, ns)
             return _UNARYOPS[type(node.op)](a), k, g
         if isinstance(node, ast.Compare):
             (a, ka, ga), (b, kb, gb) = self._eval(node.left, ns), self._eval(node.comparators[0], ns)
+            a, b = _align([(a, ka), (b, kb)])
             return _CMPOPS[type(node.ops[0])](a, b), max(ka, kb), _either(ga, gb)
         if isinstance(node, ast.Subscript):
             a, k, g = self._eval(node.value, ns)
@@ -734,14 +747,14 @@ class _ExprFn:
                 axes = tuple(range(-k, 0))
                 if name == "norm":
                     return np.sqrt(np.sum(arr * arr, axis=axes)), 0, g
-                return (np.mean if name == "mean_parts" else np.sum)(arr, axis=axes), 0, g
+                return _PART_REDUCERS[name](arr, axis=axes), 0, g
             if name in _XYZ_INDEX:
                 a, _k, g = evald[0]
                 return np.asarray(a)[..., _XYZ_INDEX[name]], 0, g
             gap = None
             for _v, _k, g in evald:
                 gap = _either(gap, g)
-            return (_FUNCS[name](*[v for v, _, _ in evald]),
+            return (_FUNCS[name](*_align([(v, k) for v, k, _ in evald])),
                     max((k for _, k, _ in evald), default=0), gap)
         raise ValueError(f"expr {self.expr!r}: cannot evaluate {type(node).__name__}")
 
@@ -785,6 +798,14 @@ class _ExprFn:
         order = grid = None
         if by == "structure":
             offsets = framesOrOne(ns.get(_OFFSETS), v)
+        elif by == "atom":
+            # Group i: atom i of every structure.
+            frames = framesOrOne(ns.get(_OFFSETS), v)
+            _check_same_atoms(frames, ns.get(_ELEMENTS))
+            size = int(frames[1] - frames[0]) if frames.size > 1 else 0
+            index = np.arange(rows) - np.repeat(frames[:-1], np.diff(frames))
+            order = np.argsort(index, kind="stable")
+            offsets = np.concatenate([[0], np.cumsum(np.bincount(index, minlength=size))])
         elif by in ("element", PAIR):
             # Columns: every element of the dataset, in order of atomic number.
             z = np.asarray(ns[_ELEMENTS])
@@ -908,6 +929,28 @@ class _ExprFn:
         return f"_ExprFn({self.expr!r})"
 
 
+def _align(values):
+    """Values ready for numpy: one without parts gets a trailing axis per part
+    of the widest, so each atom's value applies to all its parts."""
+    k = max(kv for _v, kv in values)
+    return [np.asarray(v).reshape(np.shape(v) + (1,) * (k - kv))
+            if kv < k and np.ndim(v) > 0 else v for v, kv in values]
+
+
+def _check_same_atoms(frames, elements) -> None:
+    """``by=atom`` groups atom i of every structure, so every structure must
+    have the same atoms in the same order (ADR 0058 "uniform")."""
+    sizes = np.diff(frames)
+    same = sizes.size == 0 or bool(np.all(sizes == sizes[0]))
+    if same and elements is not None and sizes.size > 1:
+        z = np.asarray(elements).reshape(sizes.size, sizes[0])
+        same = bool(np.all(z == z[0]))
+    if not same:
+        raise ValueError(
+            "by=atom needs structures with the same atoms in the same order; "
+            "the structures of this dataset differ")
+
+
 def _either(a, b):
     """Rows with no value in either operand."""
     if a is None:
@@ -965,9 +1008,9 @@ def analyze_expr(expr, vars, *, registry=None, id="<expr>"):
     var_parts = {n: len(_part_axes(sh)) for n, sh in shapes.items() if _part_axes(sh)}
     words = by_words(tree)
     # where= needs the offsets too, to name the frames of what it leaves out.
-    if words & {"structure", PAIR} or _uses_where(tree):
+    if words & {"structure", "atom", PAIR} or _uses_where(tree):
         inputs[_OFFSETS] = HIDDEN_INPUTS[_OFFSETS]
-    if words & {"element", PAIR} or _uses_element(tree):
+    if words & {"element", "atom", PAIR} or _uses_element(tree):
         inputs[_ELEMENTS] = HIDDEN_INPUTS[_ELEMENTS]
     return inputs, output_shape, var_parts
 
@@ -995,7 +1038,8 @@ def _uses_element(tree: ast.Expression) -> bool:
 # the whole dataset; when only the frame on screen can be computed, they would
 # mean "this frame" there (ADR 0064 section 5, amendment 2026-10-24). The pair
 # is not one: each of its rows is one structure (amendment 2026-10-24).
-_DATASET_WIDE = ("all", "element")
+# by=atom averages over every structure (ADR 0065).
+_DATASET_WIDE = ("all", "element", "atom")
 
 
 def colour_problem(expr: str, refs=(), registry=None) -> str | None:

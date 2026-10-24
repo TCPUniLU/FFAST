@@ -68,12 +68,12 @@ def test_the_six_reductions(name):
 # ── by= is required, and min/max are not minimum/maximum ─────────────────────
 
 def test_a_forgotten_by_is_an_error():
-    assert "mean(...) needs by=structure, by=element or by=all" in _error("mean(norm(pF - rF))")
+    assert "mean(...) needs by=structure, by=element, by=atom or by=all" in _error("mean(norm(pF - rF))")
 
 
-def test_by_takes_only_the_three_words():
-    assert "by= takes structure, element, all or (structure, element)" in _error("mean(pE, by=frame)")
-    assert "by= takes structure, element, all or (structure, element)" in _error("mean(pE, by=2)")
+def test_by_takes_only_its_words():
+    assert "by= takes structure, element, atom, all or (structure, element)" in _error("mean(pE, by=frame)")
+    assert "by= takes structure, element, atom, all or (structure, element)" in _error("mean(pE, by=2)")
 
 
 @pytest.mark.parametrize("name,pair", [("min", "minimum"), ("max", "maximum")])
@@ -151,7 +151,7 @@ def test_element_takes_symbols_in_quotes(expr):
 
 def test_text_is_allowed_only_inside_element():
     assert "only numeric literals" in _error('pE + "H"')
-    assert "by= takes structure, element, all or (structure, element)" in _error('mean(pE, by="all")')
+    assert "by= takes structure, element, atom, all or (structure, element)" in _error('mean(pE, by="all")')
 
 
 @pytest.mark.parametrize("expr,shape", [
@@ -173,7 +173,7 @@ def test_where_must_have_the_inputs_shape():
 
 def test_the_language_version_went_up():
     from ffast.metrics import expr
-    assert expr._WHITELIST_VERSION == "4"
+    assert expr._WHITELIST_VERSION == "5"
 
 
 def test_the_parser_accepts_every_new_form():
