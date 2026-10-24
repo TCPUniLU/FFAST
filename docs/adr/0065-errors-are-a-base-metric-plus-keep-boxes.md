@@ -240,6 +240,27 @@ Each step is one commit and leaves the suite green.
    metrics (`modules/loupe/loupeForceError.py`, `UI/clientFeatures.py`).
 8. **Docs**: `docs/usage.md`, `CONTEXT.md`, ADR 0064 status line, README row.
 
+### Step 1 measurements (2026-10-24)
+
+`temp/bench_variable.xyz`: 5000 frames, 172,513 atoms, structures of
+different sizes; prediction = reference forces + noise. Best of 5 runs through
+`InProcessExecutor`, fresh executor each run (no cache), each metric computing
+its whole dependency chain from the raw arrays. Times in ms.
+
+| metric | Python | formula |
+|---|---|---|
+| force MAE / RMSE over the dataset (per component) | 10 | 6 |
+| force MAE / RMSE per frame (per component) | 11 | 6 |
+| force error length per atom / per frame / global | 12-14 | 6-7 |
+| force MAE / RMSE per element | 18 | 22 |
+| net force MAE / RMSE | 11 | 7 |
+| acceleration (per atom, per frame, global, component) | 17-21 | 7 |
+| acceleration per element | 28 | 23 |
+| energy MAE / RMSE / shift / shifted | 0.8-1.2 | 0.1-0.2 |
+
+Formulas are as fast or faster everywhere except force per element, 20 %
+slower (the grouping sorts the atoms by element). Not worth a special case.
+
 Done when: the Metrics pane shows the five bases, any force/energy error used
 today can be made with the boxes and gives the same numbers, and Color by
 recolours on a box change.
