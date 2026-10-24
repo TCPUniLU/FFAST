@@ -27,6 +27,7 @@ from ffast.visualization.presentation import (
     SELECTION_OVERLAY_COLOR,
 )
 from ffast.visualization.scene import (
+    DEFAULT_COLORMAP,
     AtomColorBy,
     AtomScene,
     BondScene,
@@ -179,7 +180,7 @@ def build_scene(
         # A limit the user cleared (None) is automatic again.
         lo, hi = cparams.get("vmin"), cparams.get("vmax")
         color_meta = {
-            "colormap": cparams.get("colormap", "viridis"),
+            "colormap": cparams.get("colormap", DEFAULT_COLORMAP),
             "vmin": float(auto_lo if lo is None else lo),
             "vmax": float(auto_hi if hi is None else hi),
             "label": _clabel,

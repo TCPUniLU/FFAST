@@ -16,7 +16,7 @@
  * show: labels depend on the metric catalog and the loaded predictions.
  */
 
-import { COLORABLE_SHAPES } from '../start_settings.js';
+import { COLORABLE_SHAPES, DEFAULT_LOOK } from '../start_settings.js';
 import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.js';
 import { gradientCss } from '../colormap.js';
 import { defaultSettings } from '../view_settings.js';
@@ -25,7 +25,7 @@ import { unitPopover } from '../dialogs.js';
 import { formatScientific } from '../panels.js';
 import { loadLayout, saveLayout } from '../layout_state.js';
 
-const COLORMAPS = ['cividis', 'viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr', 'force_error'];
+const COLORMAPS = ['force_error', 'cividis', 'viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr'];
 // Shared with an independent panel's starting look (start_settings.js).
 
 const LEGEND_MIN = { w: 160, h: 48 };
@@ -128,7 +128,7 @@ export function createColorByPane(sidebarEl, callbacks) {
     callbacks.onPredictionChange(state.prediction);
   });
 
-  const colormapSelect = selectRow(body, 'Colormap', COLORMAPS, 'viridis', (cm) => {
+  const colormapSelect = selectRow(body, 'Colormap', COLORMAPS, DEFAULT_LOOK.colormap, (cm) => {
     state.colormap = cm;
     callbacks.onColormapChange(cm);
   });

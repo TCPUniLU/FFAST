@@ -819,7 +819,7 @@ async def test_web_publication_style_and_reset(ffast_web_server):
             await page.locator("#quick-styles button", has_text="Reset").click()
             assert await page.evaluate(state) == {"clear": "#000000", "ortho": False, "gizmo": False}
             await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value("Elements")
-            await expect(page.locator(_control("Colour By", "Colormap"))).to_have_value("viridis")
+            await expect(page.locator(_control("Colour By", "Colormap"))).to_have_value("force_error")
         finally:
             await browser.close()
 
@@ -2956,7 +2956,8 @@ async def test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_scree
                 panel = saved["tabs"][0]["panels"][1]
                 assert panel["view"] == "independent" and panel["link_camera"] is False
                 assert panel["start"]["colour_by"] == "ffast.force_mae"
-                assert panel["start"]["colormap"] == "force_error"   # what the Force error style sets
+                # force_error is the default colour map, so the start leaves it out
+                assert "colormap" not in panel["start"]
             finally:
                 await browser.close()
 

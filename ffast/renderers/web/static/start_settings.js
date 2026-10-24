@@ -9,7 +9,7 @@
 /** Today's look of a new view, which unset keys keep. */
 export const DEFAULT_LOOK = Object.freeze({
   source: 'element',
-  colormap: 'viridis',
+  colormap: 'force_error',   // the desktop app's blue → green → yellow → red
   atomSize: 1,
   bondWidth: 100,
   bondColour: '#404040',

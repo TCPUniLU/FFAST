@@ -31,7 +31,7 @@ export const PUBLICATION_STYLE = [
 /** Puts back everything the other styles change. */
 export const RESET_STYLE = [
   ['Colour By', 'Coloring', 'Elements'],
-  ['Colour By', 'Colormap', 'viridis'],
+  ['Colour By', 'Colormap', 'force_error'],
   ['Colour By', 'Prediction', 'Ground Truth'],
   ['Camera', 'Background', '#000000'],
   ['Camera', 'Orthographic', false],

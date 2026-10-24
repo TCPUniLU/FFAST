@@ -106,7 +106,7 @@ metric_id = "ffast.force_mae"
 """)
     config = load_project_config(config_file)
     ac = config.visualization.atom_color
-    assert ac.colormap == "viridis"
+    assert ac.colormap == "force_error"
     assert ac.vmin is None
     assert ac.vmax is None
 
@@ -160,7 +160,7 @@ def test_save_load_atom_color_defaults_omits_none(tmp_path):
     save_project_config(config, config_file)
     reloaded = load_project_config(config_file)
     ac = reloaded.visualization.atom_color
-    assert ac.colormap == "viridis"
+    assert ac.colormap == "force_error"
     assert ac.vmin is None
     assert ac.vmax is None
 

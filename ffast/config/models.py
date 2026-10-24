@@ -84,7 +84,7 @@ class MetricsConfig(BaseModel):
 class AtomColorPresentation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     metric_id: str
-    colormap: str = "viridis"
+    colormap: str = "force_error"  # ffast.visualization.scene.DEFAULT_COLORMAP
     vmin: float | None = None
     vmax: float | None = None
 

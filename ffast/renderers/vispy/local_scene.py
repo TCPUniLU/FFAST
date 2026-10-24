@@ -6,7 +6,7 @@ from typing import Any, Callable
 import numpy as np
 
 from ffast.visualization.models import ScientificSelection, SelectionScope, VisualizationState
-from ffast.visualization.scene import SceneSnapshot
+from ffast.visualization.scene import DEFAULT_COLORMAP, SceneSnapshot
 from ffast.visualization.scene_builder import build_scene
 
 logger = logging.getLogger(__name__)
@@ -201,10 +201,10 @@ def build_loupe_scene_snapshot(
         state.parameters.setdefault("ffast.atom_filter", {})["indices"] = filter_indices
 
     color_source = _setting(settings, "atomColorSource", "element")
-    color_map = _setting(settings, "atomColorMap", "viridis")
+    color_map = _setting(settings, "atomColorMap", DEFAULT_COLORMAP)
     state.parameters["ffast.atom_color"] = {
         "source": color_source or "element",
-        "colormap": color_map or "viridis",
+        "colormap": color_map or DEFAULT_COLORMAP,
     }
 
     highlight = parse_index_list(_setting(settings, "sceneSelectIndices", ""))

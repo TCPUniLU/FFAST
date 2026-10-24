@@ -1,6 +1,7 @@
 from functools import partial
 
 from UI.clientFeatures import ClientFeature
+from ffast.visualization.scene import DEFAULT_COLORMAP
 
 DEPENDENCIES = []
 
@@ -88,7 +89,7 @@ def addSettings(UIHandler, loupe):
         "atomColorType": ["Elements"],   # combo selection (UI state)
         "scenePredictionRef": ["", "applyScenePrediction"],
         "atomColorSource": ["element", "applyColorSource"],
-        "atomColorMap": ["viridis", "applyColormap"],
+        "atomColorMap": [DEFAULT_COLORMAP, "applyColormap"],
     })
     settings.markAsPerDataset("scenePredictionRef")
 
@@ -143,7 +144,7 @@ def addSettingsPane(UIHandler, loupe):
         "ComboBox",
         "Colormap",
         settingsKey="atomColorMap",
-        items=["viridis", "inferno", "plasma", "coolwarm", "hot", "bwr", "force_error"],
+        items=["force_error", "viridis", "inferno", "plasma", "coolwarm", "hot", "bwr"],
         labelWidth=60,
     )
     colormap.setHideCondition(_colorIsElements)  # refreshed via pane.updateVisibilities
@@ -159,8 +160,10 @@ def addSettingsPane(UIHandler, loupe):
 
 
 def metric_color_label(entry):
-    """Display name for a metric catalog entry — its label, or the id."""
-    return entry.get("label") or entry["id"]
+    """Display name for a metric catalog entry — its label, or the id, with
+    "this frame" for a per-element one (it colours by the frame on screen)."""
+    from ffast.visualization.color_values import frame_colour_label
+    return frame_colour_label(entry.get("label") or entry["id"], entry.get("shape", ""))
 
 
 def _colorable_metric_entries(loupe):

@@ -86,7 +86,7 @@ def results():
 
 def test_defaults_are_todays_defaults(results):
     assert results["defaults"] == {
-        "colorBy": {"source": "element", "prediction": None, "colormap": "viridis", "norm": "None",
+        "colorBy": {"source": "element", "prediction": None, "colormap": "force_error", "norm": "None",
                     "vmin": None, "vmax": None},
         "camera": {"ortho": False, "gizmo": False, "background": "#000000"},
         "display": {"atomSize": 1, "hide": "", "highlight": "", "unitCell": True},

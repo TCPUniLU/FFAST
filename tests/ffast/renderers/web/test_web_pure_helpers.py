@@ -1603,9 +1603,9 @@ def test_use_current_3d_settings_as_start(results):
     """Rule 15's "Use current 3D settings as start": the look on screen, as
     the start keys; defaults are left out."""
     assert results["ss_from_current"] == {
-        "colour_by": "ffast.force_mae", "colormap": "force_error", "force_arrows": True}
+        "colour_by": "ffast.force_mae", "force_arrows": True}
     assert results["ss_from_current_plain"] == {
-        "atom_size": 1.5, "bond_width": 40, "bond_colour": "#123456"}
+        "colormap": "viridis", "atom_size": 1.5, "bond_width": 40, "bond_colour": "#123456"}
 
 
 def test_te_a_3d_panel_can_be_made_independent_and_linked_again(results):
