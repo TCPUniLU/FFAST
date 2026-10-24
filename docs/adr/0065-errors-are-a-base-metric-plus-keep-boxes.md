@@ -1,6 +1,7 @@
 # Errors are a base metric plus keep boxes, not a list of fixed variants
 
-Status: Accepted 2026-10-24. Amends ADR 0064 (adds `by=atom`, a signed mean
+Status: Accepted 2026-10-24, built 2026-10-24 (steps 0-8; see "As built").
+Amends ADR 0064 (adds `by=atom`, a signed mean
 statistic in the boxes, and per-atom values combining with per-atom vectors).
 Supersedes the `norm` parameter of `ffast.force_mae` / `ffast.accel_mae` and the
 fixed force, acceleration and energy error metrics listed in section 7.
@@ -264,3 +265,29 @@ slower (the grouping sorts the atoms by element). Not worth a special case.
 Done when: the Metrics pane shows the five bases, any force/energy error used
 today can be made with the boxes and gives the same numbers, and Color by
 recolours on a box change.
+
+## As built (2026-10-24)
+
+Where the build differs from or adds to the text above:
+
+- **`max_parts`** joined the formula language (section 8): the Max statistic
+  per component is `max(max_parts(abs(D)), by=...)`.
+- **Box id form**: `base[keep;combine;statistic]`, the kept boxes joined with
+  `+` in the order atom, structure, element, x/y/z, `dataset` when none is
+  kept, and Combine or Statistic left out when the boxes grey it:
+  `ffast.energy_difference[dataset;mean]`, `ffast.force_difference[atom+structure;length]`.
+  Any box id is registered the first time something asks for it
+  (`MetricRegistry.ensure`), so tab files, sessions and colourings use it
+  without Create. Create metric saves it as a user metric file under that id
+  with its name; its formula must stay the setting's.
+- **Every metric can be a base.** A box id over a user formula wraps it
+  (`user.odd[dataset;max]`); that is how a custom formula's boxes work.
+- **The energy-shift toggle** of Basic Errors kept its `shifted` parameter but
+  drives the existing `shift` transform: the tables are Energy Difference with
+  transforms `shift` then `mean_abs` / `rmse`, the scatter Predicted Energy with
+  `shift`. The three toggle metrics are deleted as decided.
+- **Python metrics without a twin** open with their boxes from their shape;
+  `@metric(recipe=...)` (section 3, point 3) was not needed: every built-in
+  that reduces was deleted.
+- **Desktop Coloring list** (no boxes, section 9) offers fixed settings of the
+  force and acceleration bases (`modules/loupe/loupeForceError.py`).

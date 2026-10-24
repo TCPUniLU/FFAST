@@ -2,7 +2,8 @@
 
 Status: Accepted 2026-10-23, built 2026-10-23 (steps 1-7). Amendment of 2026-10-24
 (per structure and per element at once) accepted and built 2026-10-24. Amendment of 2026-10-24
-(colouring reads the whole dataset) accepted and built. Supersedes ADR 0042 Decision 1 ("Element-wise
+(colouring reads the whole dataset) accepted and built. Amended by ADR 0065 (`by=atom`,
+`max_parts`, a per-atom value with a per-atom vector). Supersedes ADR 0042 Decision 1 ("Element-wise
 only") and the "Reduction scope" option it chose; the rest of ADR 0042 stands.
 
 ## The problem
