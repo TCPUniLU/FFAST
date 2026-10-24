@@ -188,6 +188,7 @@ class UserMetrics:
         metric already holds is listed as hidden. Files may build on each
         other, so compile in rounds until a round adds nothing.
         """
+        from ffast.metrics.boxes import parse_box_id
         self.baseline = set(self.registry.list_metrics())
         self._entries = {}
         pending = []
@@ -195,7 +196,11 @@ class UserMetrics:
             if cfg.id in self._entries:
                 continue
             entry = self._entries[cfg.id] = _Entry(cfg)
-            if cfg.id in self.baseline:
+            if parse_box_id(cfg.id) is not None and self.registry.has(cfg.id):
+                # A tab registered the setting first; the saved one names it.
+                self.registry.unregister(cfg.id)
+                pending.append(entry)
+            elif cfg.id in self.baseline:
                 entry.status = "hidden"
                 entry.message = f"Hidden: the project defines {cfg.id}"
             else:
@@ -214,6 +219,9 @@ class UserMetrics:
                 if entry not in failed:
                     entry.status, entry.message = "ok", ""
             pending = failed
+        for entry in pending:
+            if parse_box_id(entry.cfg.id) is not None:
+                self.registry.ensure(entry.cfg.id)   # the setting, unnamed
         errors = self.registry.freeze()
         for mid, msg in errors:
             logger.error("User metrics: %s: %s", mid, msg)
@@ -315,10 +323,10 @@ class UserMetrics:
 
         current = self._entries.get(cfg.id)
         if previous_id is None:
-            # A box setting registered on the fly since start-up (colouring
-            # by it, opening it) is not anyone's yet: saving names and keeps it.
-            on_the_fly = parse_box_id(cfg.id) is not None and cfg.id not in self.baseline
-            if (self.registry.has(cfg.id) and not on_the_fly) or current is not None:
+            # A box setting a tab, a colouring or opening it registered is
+            # not anyone's yet: saving names and keeps it.
+            unnamed_box = parse_box_id(cfg.id) is not None
+            if (self.registry.has(cfg.id) and not unnamed_box) or current is not None:
                 raise MetricError(f"The id {cfg.id} is already taken")
         else:
             if cfg.id != previous_id:
@@ -409,6 +417,16 @@ class UserMetrics:
             self.store.delete(id)
             del self._entries[id]
             return Change(id, set())
+        from ffast.metrics.boxes import parse_box_id
+        if parse_box_id(id) is not None:
+            # A saved box setting loses only its name: whatever uses the
+            # setting keeps working under the name the boxes give.
+            self.registry.unregister(id)
+            self.registry.ensure(id)
+            self.registry.freeze()
+            self.store.delete(id)
+            del self._entries[id]
+            return Change(id, {id, *self.registry.dependents_of(id)})
         users = self.used_by(id)
         if users:
             raise MetricError(f"{id} is still used by: {', '.join(users)}")

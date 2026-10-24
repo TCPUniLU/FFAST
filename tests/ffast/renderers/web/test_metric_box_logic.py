@@ -51,6 +51,15 @@ CASES = {
     "first_colour": f"ml.firstColourSetting({FORCE})",
     "box_base": "ml.parseBoxId('ffast.force_difference[atom;length;mae]')?.base",
     "not_a_box": "ml.parseBoxId('ffast.force_difference')",
+    # a setting a tab registered is not listed; one saved by Create metric is
+    "listed": (
+        "(() => { const g = ml.groupMetrics(["
+        "{id: 'ffast.force_difference', label: 'Force Difference', origin: 'built-in'},"
+        "{id: 'ffast.force_difference[dataset;component;mae]', label: 'a', origin: 'built-in'},"
+        "{id: 'ffast.force_difference[structure;length;rmse]', label: 'Kept', origin: 'user'}],"
+        "[{id: 'ffast.force_difference[structure;length;rmse]', label: 'Kept', status: 'ok'}]);"
+        " return Object.fromEntries(Object.entries(g).map(([k, v]) => [k, v.map((m) => m.id)])); })()"
+    ),
 }
 
 
@@ -147,3 +156,9 @@ def test_colouring_takes_only_settings_with_a_value_per_atom(results):
 def test_a_box_id_names_its_base(results):
     assert results["box_base"] == "ffast.force_difference"
     assert results["not_a_box"] is None
+
+
+def test_the_list_shows_a_box_setting_only_once_saved(results):
+    assert results["listed"] == {
+        "built-in": ["ffast.force_difference"], "project": [],
+        "user": ["ffast.force_difference[structure;length;rmse]"]}

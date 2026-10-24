@@ -98,6 +98,16 @@ def test_metrics_are_listed_without_derived_transforms():
     assert [(m["ref"], m["shape"], m["label"]) for m in metrics] == [("lab.e", "N_frames", "E")]
 
 
+def test_a_box_setting_is_listed_only_once_saved():
+    # A tab or a colouring registers a keep-box setting nobody named (ADR 0065).
+    r = _registry()
+    r.ensure("lab.e[dataset;mean]")
+    r.ensure("lab.e[dataset;max]")
+    saved = SimpleNamespace(origin=lambda m: "user" if m == "lab.e[dataset;mean]" else "built-in")
+    metrics = _by_group(build_input_catalog(r, None, user_metrics=saved))["Metrics"]
+    assert [m["ref"] for m in metrics] == ["lab.e", "lab.e[dataset;mean]"]
+
+
 def test_the_server_answers_the_window_that_asked():
     env = SimpleNamespace(datasets={"ds1": _Dataset()}, models={}, data=SimpleNamespace(predictionFields={}))
 

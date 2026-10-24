@@ -51,6 +51,8 @@ async def test_the_boxes_make_a_metric_that_tries_creates_and_plots(tmp_path):
                 await expect(pane.locator(".mx-try-head")).to_have_class(re.compile(r"\bgood\b"))
                 assert not list(metrics_dir.glob("*.toml"))
 
+                # the settings Basic Errors and the colouring use are nobody's metrics
+                await expect(pane.locator(".mx-item[data-id*='[']")).to_have_count(0)
                 name = pane.get_by_label("New metric name")
                 await expect(name).to_have_value("Force Difference · RMSE · per frame · length")
                 await name.fill("My force RMSE")
@@ -69,19 +71,24 @@ async def test_the_boxes_make_a_metric_that_tries_creates_and_plots(tmp_path):
                 await browser.close()
 
 
-async def test_the_same_setting_again_offers_the_metric_that_exists(tmp_path):
+async def test_a_setting_a_tab_uses_can_be_created_and_then_exists(tmp_path):
     cm, _metrics_dir = await _server(tmp_path)
     async with cm as (ws_port, _web_port):
         await _preload_dataset_and_prediction(ws_port)
         ws = await _connect_headless_client(ws_port)
         try:
-            # Basic Errors already uses Force RMSE over the dataset
+            # Basic Errors already uses Force RMSE over the dataset; nobody named it
             setting = {"keep": [], "combine": "component", "statistic": "rmse"}
-            await ws.send(pack("REQUEST_METRIC_BOXES", (), {
-                "request_id": "1", "base": "ffast.force_difference", "setting": setting}))
+            ask = {"request_id": "1", "base": "ffast.force_difference", "setting": setting}
+            await ws.send(pack("REQUEST_METRIC_BOXES", (), ask))
             reply = (await _wait_for_event(ws, "METRIC_BOXES"))["kwargs"]
             assert reply["id"] == "ffast.force_difference[dataset;component;rmse]"
-            assert reply["exists"] is True
+            assert reply["exists"] is False
+            await ws.send(pack("SAVE_USER_METRIC", (), {"metric": {
+                k: reply[k] for k in ("id", "label", "unit", "expr", "vars")}}))
+            assert (await _wait_for_event(ws, "USER_METRIC_SAVED"))["kwargs"]["ok"] is True
+            await ws.send(pack("REQUEST_METRIC_BOXES", (), ask))
+            assert (await _wait_for_event(ws, "METRIC_BOXES"))["kwargs"]["exists"] is True
             await ws.send(pack("REQUEST_METRIC_BOXES", (), {"request_id": "2", "metric_id": "ffast.force_rmse"}))
             reply = (await _wait_for_event(ws, "METRIC_BOXES"))["kwargs"]
             assert reply["error"].startswith("ffast.force_rmse no longer exists")

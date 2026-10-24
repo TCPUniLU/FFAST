@@ -1418,15 +1418,17 @@ class ServerSession:
         from ffast.protocol.rpc import pack
         dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
         uniform = None if dataset is None else not getattr(dataset, "isVariable", False)
+        um = getattr(self.env, "user_metrics", None)
         revision = default_registry.revision
         try:
             out = box_state(default_registry, metric_id=metric_id, base=base,
-                            setting=setting, uniform=uniform)
+                            setting=setting, uniform=uniform,
+                            saved=lambda i: um is not None and um.origin(i) == "user")
         except (KeyError, ValueError) as exc:
             out = {"error": str(exc).strip("'\"")}
         await self._emit(pack(control.METRIC_BOXES, [], {"request_id": request_id, **out}))
         if default_registry.revision != revision:
-            # Opening a box id registered it: every window's list gains it.
+            # Opening a box id registered it: other panels may now name it.
             self.feed.changed(control.METRIC_CATALOG)
 
     async def _on_try_metric(self, metric, try_id, dataset_fp=None, model_fp=None, **kwargs) -> None:

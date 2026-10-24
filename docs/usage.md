@@ -597,8 +597,10 @@ the formula it writes (**Show as formula**): structure ✓, Length, RMSE is
 `rms(norm(D), by=structure)` with D the base. Nothing is saved until **Create
 metric**, which makes a user metric under the setting's id,
 `ffast.force_difference[structure;length;rmse]`, with a name you can change. The
-same setting is always the same id: a tab file or a session can name it directly,
-and when it already exists the pane offers **Open it** instead. A formula the
+same setting is always the same id: a tab file or a session can name it directly
+without creating it. The metrics list shows a setting only once someone created
+it; when you have, the pane offers **Open it** instead. Deleting it drops only
+the name: a tab that uses the setting keeps working. A formula the
 boxes did not write, such as `abs(dE - mean(dE, by=all))`, opens as *custom*:
 its boxes come from its shape, and changing them wraps it,
 `max(that, by=all)`. From a metric already averaged per frame you can only go

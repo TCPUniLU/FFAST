@@ -330,11 +330,14 @@ def _reduces(expr: str) -> bool:
 
 
 def box_state(registry, *, metric_id: str | None = None, base: str | None = None,
-              setting: dict | None = None, uniform: bool | None = None) -> dict:
+              setting: dict | None = None, uniform: bool | None = None,
+              saved=lambda _id: False) -> dict:
     """Everything the boxes show for a metric (``metric_id``) or for a box
     change (``base`` + ``setting``): the setting, the settings allowed, why
     a box is greyed, and the formula, id, name, unit and shape it gives.
-    ``uniform`` False greys atom ✓ structure ✗ (by=atom)."""
+    ``uniform`` False greys atom ✓ structure ✗ (by=atom). A box id
+    ``exists`` only once ``saved`` says someone saved it: tabs and colouring
+    register settings nobody named."""
     from ffast.metrics.dims import shape_to_str
     from ffast.metrics.expr import analyze_expr
     custom = False
@@ -372,7 +375,8 @@ def box_state(registry, *, metric_id: str | None = None, base: str | None = None
     state["vars"] = {"D": base}
     state["label"] = (schema.label or base) if same else box_label(schema.label or base, current)
     state["shape"] = shape_to_str(analyze_expr(state["expr"], state["vars"], registry=registry)[1])
-    state["exists"] = registry.has(state["id"])
+    state["exists"] = (registry.has(state["id"]) if state["id"] == base
+                       else saved(state["id"]))
     return state
 
 

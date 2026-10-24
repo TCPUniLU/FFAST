@@ -79,9 +79,32 @@ def test_a_setting_compiled_on_the_fly_can_still_be_saved(um, registry):
     assert registry.get(BOX)[0].label == "Kept"
 
 
-def test_a_setting_a_tab_had_at_start_is_taken(tmp_path, registry):
+def test_a_setting_a_tab_had_at_start_can_be_saved(tmp_path, registry):
+    # A built-in tab uses the setting, so it is registered before user metrics
+    # load; it is still nobody's until Create metric names it.
     registry.ensure(BOX)
     m = UserMetrics(UserMetricStore(tmp_path / "metrics"), registry, builtin_ids={"base.fd"})
     m.load()
-    with pytest.raises(MetricError, match="already taken"):
-        m.save(box())
+    m.save(box(label="Kept"))
+    assert m.origin(BOX) == "user"
+    assert registry.get(BOX)[0].label == "Kept"
+
+
+def test_a_saved_setting_a_tab_uses_loads_after_a_restart(um, tmp_path):
+    um.save(box(label="Kept"))
+    fresh = MetricRegistry()
+    fresh._metrics.update({"base.fd": um.registry.get("base.fd")})
+    fresh.ensure(BOX)                              # the tab registered it first
+    again = UserMetrics(UserMetricStore(tmp_path / "metrics"), fresh)
+    assert again.load() == []
+    assert again.origin(BOX) == "user"
+    assert fresh.get(BOX)[0].label == "Kept"
+
+
+def test_deleting_a_saved_setting_forgets_the_name_but_keeps_the_setting(um, registry):
+    um.save(box(label="Kept"))
+    um.usage_providers.append(lambda id: ["tab Basic Errors"] if id == BOX else [])
+    um.delete(BOX)
+    assert um.origin(BOX) == "built-in"
+    assert registry.has(BOX)
+    assert registry.get(BOX)[0].label == "Force Difference · RMSE · per frame · length"

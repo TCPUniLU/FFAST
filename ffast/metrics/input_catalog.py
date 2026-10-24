@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import re
 
+from ffast.metrics.boxes import parse_box_id
 from ffast.metrics.dims import shape_to_str
 
 # (ref suffix, short name part, label, shape). Only the continuous raw inputs an
@@ -96,6 +97,9 @@ def build_input_catalog(registry, dataset=None, model=None, prediction_fields=No
     for mid in sorted(registry.list_metrics()):
         if "__" in mid:     # a transform made for a plot, not a metric to build on
             continue
+        if parse_box_id(mid) is not None and (
+                user_metrics is None or user_metrics.origin(mid) != "user"):
+            continue        # a keep-box setting a tab or a colouring made, unnamed
         schema, _fn = registry.get(mid)
         out.append(_entry(mid, "Metrics", _ident(mid.rsplit(".", 1)[-1]),
                           schema.label or mid, shape_to_str(schema.shape),

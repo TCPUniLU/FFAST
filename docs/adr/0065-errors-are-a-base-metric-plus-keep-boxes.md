@@ -280,6 +280,12 @@ Where the build differs from or adds to the text above:
   (`MetricRegistry.ensure`), so tab files, sessions and colourings use it
   without Create. Create metric saves it as a user metric file under that id
   with its name; its formula must stay the setting's.
+- **Registered is not listed.** Tabs, colourings and opening a setting register
+  box ids, but the metrics list and the formula inputs show a box id only once
+  it is saved as a user metric; until then Create offers to save it (not
+  **Open it**), even when a built-in tab uses it. Deleting a saved box id drops
+  only its file and name: the setting stays registered, so its users keep
+  working, and delete is not refused while something uses it.
 - **Every metric can be a base.** A box id over a user formula wraps it
   (`user.odd[dataset;max]`); that is how a custom formula's boxes work.
 - **The energy-shift toggle** of Basic Errors kept its `shifted` parameter but

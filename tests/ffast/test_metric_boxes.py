@@ -262,7 +262,7 @@ def test_the_pane_reads_a_box_metric_as_its_base_and_setting():
     assert state["vars"] == {"D": "ffast.force_difference"}
     assert state["label"] == "Force Difference · RMSE · per frame · length"
     assert state["shape"] == "N_frames" and state["unit"] == "force"
-    assert state["exists"] is True          # opening a box id registers it
+    assert state["exists"] is False         # registered on opening, but nobody saved it
     assert {"keep": ["structure"], "combine": "component", "statistic": "mae"} in state["allowed"]
 
 
@@ -271,6 +271,13 @@ def test_a_base_opens_with_everything_kept_and_nothing_to_create():
     state = box_state(_registry(), metric_id="ffast.force_difference")
     assert state["setting"] == {"keep": ["atom", "structure", "xyz"], "combine": None, "statistic": None}
     assert state["id"] == "ffast.force_difference"
+    assert state["exists"] is True
+
+
+def test_a_saved_box_setting_exists():
+    from ffast.metrics.boxes import box_state
+    box = "ffast.force_difference[structure;length;rmse]"
+    state = box_state(_registry(), metric_id=box, saved=lambda i: i == box)
     assert state["exists"] is True
 
 

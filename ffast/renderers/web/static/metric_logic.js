@@ -304,6 +304,7 @@ export function groupMetrics(catalog, userMetrics, users = {}) {
   const out = { 'built-in': [], project: [], user: [] };
   for (const m of catalog) {
     if (m.id.includes('__')) continue;          // made for a plot, not a metric to pick
+    if (m.origin !== 'user' && parseBoxId(m.id)) continue;   // a box setting nobody saved
     const u = m.origin === 'user' ? byId.get(m.id) : null;
     if (u) out.user.push(entry(m, 'user', { ...u, label: u.label || m.label, shape: u.shape ?? m.shape }));
     else out[m.origin === 'project' ? 'project' : m.origin === 'user' ? 'user' : 'built-in'].push(entry(m, m.origin));
