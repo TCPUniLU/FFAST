@@ -316,6 +316,28 @@ async def test_web_a_dataset_that_cannot_be_loaded_says_so_in_the_status(ffast_w
             await browser.close()
 
 
+async def test_web_a_server_warning_pops_up_once(ffast_web_server):
+    """A warning the server logs pops up in the corner; the same one again
+    within a minute does not add a second pop-up."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            # An event the server does not know: it logs "Unknown client event".
+            await page.evaluate("() => { const c = window.ffastApp._conn;"
+                                " c.send('NOT_AN_EVENT', {}); c.send('NOT_AN_EVENT', {}); }")
+            toast = page.locator("#toasts .toast", has_text="Unknown client event: NOT_AN_EVENT")
+            await expect(toast).to_have_count(1, timeout=10000)
+            await toast.locator(".toast-close").click()
+            await expect(toast).to_have_count(0)
+        finally:
+            await browser.close()
+
+
 async def test_web_prediction_browser_keeps_load_button_inside_dialog(ffast_web_server):
     """The prediction-only selectors may wrap, but its actions stay reachable."""
     ws_port, web_port = ffast_web_server

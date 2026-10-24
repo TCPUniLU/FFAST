@@ -30,6 +30,7 @@ import { MetricOps } from './metric_ops.js';
 import { sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
 import { askDialog, textDialog, trapFocus } from './dialogs.js';
+import { showWarning } from './toasts.js';
 import { applyStaticIcons, icon } from './icons.js';
 import { initAppearance } from './appearance.js';
 import { datasetUnits } from './units.js';
@@ -1339,6 +1340,8 @@ export class FFastApp {
       conn.on(IN.SESSION_SAVED,  (kw) => this._sessionOps.onSessionResult('save', kw));
       conn.on(IN.SESSION_LOADED, (kw) => this._sessionOps.onSessionResult('load', kw));
       conn.on(IN.SESSION_METRICS, (kw) => this._offerSessionMetrics(kw));
+      // A warning the server logged (ffast.session.warning_relay).
+      conn.on(IN.SERVER_WARNING, (kw) => showWarning(kw.message, kw.level));
       // A load that failed: end the "Loading <file>…" status with the reason.
       conn.on(IN.LOAD_FAILED, (kw) => {
         const name = String(kw.path || '').split(/[\\/]/).pop();

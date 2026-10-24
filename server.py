@@ -681,6 +681,10 @@ async def _main(
 
     env.eventSubscribe("MODEL_LOADED", _on_model_loaded_meta)
 
+    # Every warning the server logs from here on also pops up in every window.
+    from ffast.session.warning_relay import WarningRelay
+    logging.getLogger().addHandler(WarningRelay(asyncio.get_running_loop(), hub.broadcast))
+
     logger.info("Environment ready (job_id=%s)", job_id)
 
     if web_port > 0:

@@ -195,3 +195,7 @@ METRIC_TRIED = "METRIC_TRIED"
 # the window that ticked SUB can show it in its main view. Every window learns
 # of the subset itself from REMOTE_DATASET_META. Out of REPLY_EVENTS.
 SUBSET_DECLARED = "SUBSET_DECLARED"
+# A warning the server logged, to every window: {message, level} (level is
+# "warning", "error" or "critical"). The web client shows it as a pop-up; the
+# same text comes at most once a minute (ffast.session.warning_relay).
+SERVER_WARNING = "SERVER_WARNING"

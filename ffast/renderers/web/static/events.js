@@ -101,5 +101,7 @@ export const IN = Object.freeze({
   // Which subset a DECLARE_SUBSET made, to the window that sent it, so the
   // window that ticked SUB can show it.
   SUBSET_DECLARED: 'SUBSET_DECLARED',
+  // A warning the server logged, {message, level}: shown as a pop-up.
+  SERVER_WARNING: 'SERVER_WARNING',
   METRIC_RESULT: 'METRIC_RESULT',
 });

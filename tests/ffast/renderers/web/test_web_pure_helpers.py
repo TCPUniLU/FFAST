@@ -86,6 +86,17 @@ CASES = {
     # ── cm.gradientCss — the colourbar derives from the atoms' LUT (ADR 0052) ──
     "grad_viridis": "cm.gradientCss('viridis')",
     "grad_unknown": "cm.gradientCss('not_a_colormap')",
+    "toasts": (
+        "(() => { const a = ts.showWarning('falling back'); ts.showWarning('falling back');"
+        " const b = ts.showWarning('broke', 'error');"
+        " for (let i = 0; i < 4; i++) ts.showWarning(`w${i}`);"
+        " const box = document.getElementById('toasts');"
+        " const r = {count_after_repeat: a.querySelector('.toast-count').textContent,"
+        "  error_class: b.classList.contains('toast-error'),"
+        "  shown: [...box.children].map((t) => t.dataset.text)};"
+        " box.lastElementChild.querySelector('.toast-close').click();"
+        " r.after_close = box.children.length; box.remove(); return r; })()"
+    ),
     "ss_colouring_labels": (
         "[ss.colouringLabel({id: 'ffast.force_mae_per_element', label: 'Force Error (per element)', shape: 'N_elements'}),"
         " ss.colouringLabel({id: 'my.el', shape: 'N_elements'}),"
@@ -798,6 +809,7 @@ def results():
         f"  const qs = await import('{origin}/quick_styles.js');\n"
         f"  const ap = await import('{origin}/appearance.js');\n"
         f"  const di = await import('{origin}/dialogs.js');\n"
+        f"  const ts = await import('{origin}/toasts.js');\n"
         f"  const pk = await import('{origin}/peaks.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
@@ -857,6 +869,24 @@ def results():
 def test_a_per_element_colouring_says_this_frame_in_the_list(results):
     assert results["ss_colouring_labels"] == [
         "Force Error (per element, this frame)", "my.el (this frame)", "Force Error (per atom)"]
+
+
+# ── toasts.showWarning ───────────────────────────────────────────────────────
+
+def test_a_repeated_warning_counts_on_its_open_popup(results):
+    assert results["toasts"]["count_after_repeat"] == "×2"
+
+
+def test_an_error_popup_is_drawn_as_an_error(results):
+    assert results["toasts"]["error_class"] is True
+
+
+def test_at_most_four_popups_the_oldest_close_first(results):
+    assert results["toasts"]["shown"] == ["w0", "w1", "w2", "w3"]
+
+
+def test_the_close_button_closes_its_popup(results):
+    assert results["toasts"]["after_close"] == 3
 
 
 # ── theme.plotTheme (ADR 0063) ───────────────────────────────────────────────
