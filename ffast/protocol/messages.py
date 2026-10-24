@@ -511,6 +511,16 @@ class RequestMetricInputsRequest(BaseModel):
     model_fp: Optional[str] = None
 
 
+class TraceRequest(BaseModel):
+    """Typed payload for ``TRACE``: one line the browser reports for the
+    trace file — ``kind`` is ``ui`` or ``error``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    text: str
+
+
 class AddSessionMetricsRequest(BaseModel):
     """Typed payload for ``ADD_SESSION_METRICS``: yes to the offer
     ``SESSION_METRICS`` made (ADR 0057 rule 15)."""

@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import time
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -37,6 +38,7 @@ import numpy as np
 from pydantic import BaseModel, ValidationError
 
 from ffast.protocol import control
+from ffast.session import trace
 from ffast.session.window_feed import WindowFeed
 
 logger = logging.getLogger("FFAST")
@@ -127,6 +129,8 @@ class ServerSession:
 
     def __init__(self, env, outbound: asyncio.Queue, broadcast=None) -> None:
         self.env = env
+        # Who this connection is, for the trace file ("127.0.0.1:50812")
+        self.peer = ""
         self.outbound = outbound
         self.views: dict = {}  # view_id → VisualizationView
         # Sends packed bytes to every connection (the hub, ADR 0044); a
@@ -160,6 +164,7 @@ class ServerSession:
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
             CancelTryMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
+            TraceRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -198,6 +203,7 @@ class ServerSession:
             control.CANCEL_TRY_METRIC:          _Route(self._on_cancel_try_metric, ["try_id"], CancelTryMetricRequest),
             control.ADD_SESSION_METRICS:        _Route(self._on_add_session_metrics, ["offer_id"], AddSessionMetricsRequest),
             control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
+            control.TRACE:                      _Route(self._on_trace, ["kind", "text"], TraceRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -214,6 +220,8 @@ class ServerSession:
         presence-sensitive fields keep their exact pre-validation meaning.
         """
         route = self._handlers.get(event)
+        if event != control.TRACE:
+            trace.record("in", f"{trace.message(event, args, kwargs)}  [{self.peer}]")
         if route is None:
             logger.warning("Unknown client event: %s", event)
             return
@@ -232,7 +240,21 @@ class ServerSession:
                 logger.warning("%s: payload validation failed: %s", event, exc)
                 return
 
-        await route.fn(**resolved, **extra)
+        if not trace.enabled() or event == control.TRACE:
+            await route.fn(**resolved, **extra)
+            return
+        started = time.perf_counter()
+        try:
+            await route.fn(**resolved, **extra)
+        except Exception as exc:
+            trace.record_error(f"{event} failed: {exc!r}", exc)
+            raise
+        trace.record("done", f"{event} {(time.perf_counter() - started) * 1000:.0f} ms")
+
+    async def _on_trace(self, kind, text) -> None:
+        """A line the browser reports: a click, a change, an error in the page."""
+        first, _, rest = str(text).partition("\n")
+        trace.record(kind, f"{first}  [{self.peer}]" + (f"\n{rest}" if rest else ""))
 
     @staticmethod
     def _resolve(arg_names, args, kwargs):

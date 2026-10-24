@@ -57,7 +57,17 @@ ffast-web                # loopback server plus a browser tab
 ffast-web --app          # chromeless window (Chrome, Edge or Chromium)
 ffast-web --no-browser   # print the URL and stop
 ffast-web --ws-port 8765 --web-port 9000    # pin ports instead of taking free ones
+ffast-web --trace        # record a trace, to find the source of a bug
 ```
+
+With `--trace` the server writes one file per run,
+`~/.ffast/logs/trace-<date-time>.log`, and keeps the last 10. It lists, in
+order, what you clicked, changed or pressed, each command the page sent, how
+long the server took to run it (or the error and traceback when it failed),
+each reply, and every error or warning in the page. Reproduce the problem, then
+read the file from the end, or send it with the bug report. Large data is
+shortened to its size, so the file stays small. `ffast-server --trace DIR`
+writes to `DIR` instead.
 
 The page is served on port 8764, so the browser remembers its layout (open
 settings section, sidebar width, recent servers) from one launch to the next;

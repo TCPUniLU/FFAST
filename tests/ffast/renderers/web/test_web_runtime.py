@@ -293,6 +293,40 @@ async def test_web_file_menu_holds_the_session_actions(ffast_web_server):
             await browser.close()
 
 
+async def test_web_trace_records_the_click_the_command_and_page_errors(tmp_path):
+    """ffast-server --trace: one file reads as a timeline — the menu click, the
+    command it sent, its handler's time, the reply, and an error in the page."""
+    async with _spawn_server("--trace", str(tmp_path)) as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1100, "height": 760})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _file_menu(page, "Load Dataset…")
+                await expect(page.locator("#fb-modal")).to_be_visible()
+                await page.evaluate("setTimeout(() => { throw new Error('boom in a handler'); })")
+                (trace_file,) = tmp_path.glob("trace-*.log")
+                for _ in range(50):
+                    if "boom in a handler" in trace_file.read_text():
+                        break
+                    await asyncio.sleep(0.1)
+            finally:
+                await browser.close()
+
+    text = trace_file.read_text()
+    order = [
+        re.search(r'ui     click .*"Load Dataset…"', text),
+        re.search(r"in     LIST_DIR", text),
+        re.search(r"done   LIST_DIR \d+ ms", text),
+        re.search(r"out    DIR_LISTING", text),
+        re.search(r"error  page error .*boom in a handler", text),
+    ]
+    assert all(order), text
+    assert [m.start() for m in order] == sorted(m.start() for m in order), text
+
+
 async def test_web_a_dataset_that_cannot_be_loaded_says_so_in_the_status(ffast_web_server):
     """ADR 0063 follow-up: a text file loaded as a dataset used to leave
     "Loading README.md…" up for good; the status now names the file and why."""

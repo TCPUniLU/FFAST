@@ -19,6 +19,7 @@ launcher's scope.
 from __future__ import annotations
 
 import argparse
+import functools
 import http.server
 import logging
 import os
@@ -174,15 +175,17 @@ def open_browser(
     opener(url)
 
 
-def _spawn_server(ws_port: int, host: str = LOOPBACK) -> subprocess.Popen:
+def _spawn_server(ws_port: int, host: str = LOOPBACK, trace: bool = False) -> subprocess.Popen:
     """Start `ffast-server` on ``host:ws_port`` as a subprocess.
 
     Prefers the installed console script; falls back to ``python -m server``
     so a source checkout works without an editable install. Binds ``host``
     (loopback by default, keeping the RPC local); auto-snapshots are disabled —
-    a throwaway local run does not need them.
+    a throwaway local run does not need them. ``trace`` passes ``--trace``.
     """
     args = ["--host", host, "--port", str(ws_port), "--snapshot-interval", "0"]
+    if trace:
+        args.append("--trace")
     exe = shutil.which("ffast-server")
     cmd = [exe, *args] if exe else [sys.executable, "-m", "server", *args]
     logger.info("Starting ffast-server: %s", " ".join(cmd))
@@ -299,6 +302,12 @@ def main(argv: list | None = None) -> None:
         action="store_true",
         help="Start the servers but do not open a browser (print the URL only).",
     )
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Write a trace of every click, message and handler run to "
+        "~/.ffast/logs/trace-<date-time>.log, to find the source of a bug.",
+    )
     args = parser.parse_args(argv)
 
     opener = (lambda url: logger.info("Web app ready at %s", url)) if args.no_browser else webbrowser.open
@@ -307,6 +316,7 @@ def main(argv: list | None = None) -> None:
             ws_port=args.ws_port,
             web_port=args.web_port,
             app_mode=args.app,
+            spawn_server=functools.partial(_spawn_server, trace=args.trace),
             opener=opener,
         )
     except LauncherError as exc:

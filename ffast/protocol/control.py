@@ -66,6 +66,9 @@ CANCEL_TRY_METRIC = "CANCEL_TRY_METRIC"
 # Answer "Add them?" after a session load offered the user metrics it carries
 # that this server lacks (rule 15).
 ADD_SESSION_METRICS = "ADD_SESSION_METRICS"
+# One line for the server's trace file (ffast-server --trace): what the user
+# clicked or changed, or an error in the page. Ignored while the trace is off.
+TRACE = "TRACE"
 
 CLIENT_TO_SERVER = frozenset(
     {
@@ -78,7 +81,7 @@ CLIENT_TO_SERVER = frozenset(
         SAVE_TAB, DELETE_TAB, HIDE_TAB, EXPORT_TAB,
         REQUEST_USER_METRICS, SAVE_USER_METRIC, DELETE_USER_METRIC, EXPORT_USER_METRIC,
         REQUEST_METRIC_INPUTS, CHECK_METRIC, TRY_METRIC, CANCEL_TRY_METRIC,
-        ADD_SESSION_METRICS,
+        ADD_SESSION_METRICS, TRACE,
     }
 )
 

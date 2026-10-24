@@ -58,6 +58,8 @@ import asyncio
 import logging
 import os
 
+from ffast.session import trace
+
 logger = logging.getLogger("FFAST")
 
 _SERVER_LOG = os.path.join(
@@ -190,6 +192,8 @@ async def _do_hello_handshake(websocket, addr, token_hash: str):
         server_caps = negotiate(client_caps)
         ack_dict = server_caps.model_dump()
         ack_dict["role"] = role.value
+        # Tells the page to report its clicks and errors (ffast-server --trace)
+        ack_dict["trace"] = trace.enabled()
         ack = pack(control.HELLO_ACK, [], ack_dict)
         await websocket.send(ack)
         logger.info("HELLO_ACK → %s: role=%s", addr, role.value)
@@ -249,7 +253,9 @@ async def _handler(
     # (object metadata, deletes, metric catalog) fan out to this client too.
     outbound: asyncio.Queue = asyncio.Queue(maxsize=200)
     session = ServerSession(env, outbound, broadcast=hub.broadcast)
+    session.peer = ":".join(str(p) for p in addr[:2]) if addr else ""
     hub.register(outbound)
+    trace.record("conn", f"connected  [{session.peer}]")
 
     # ── handshake ─────────────────────────────────────────────────────────
     try:
@@ -287,12 +293,18 @@ async def _handler(
                         )
                 except Exception as exc:
                     logger.warning("RPC decode error: %s", exc)
+                    trace.record_error(f"handling a message failed: {exc!r}", exc)
             else:
                 logger.debug("Unexpected text message from %s: %r", addr, message)
 
     async def send_loop():
         while True:
             data = await session.outbound.get()
+            if trace.enabled():
+                try:
+                    trace.record("out", f"{trace.message(*unpack(data))}  [{session.peer}]")
+                except Exception:
+                    trace.record("out", f"<{len(data)} bytes, not a message>  [{session.peer}]")
             try:
                 await websocket.send(data)
             except Exception as exc:
@@ -318,6 +330,7 @@ async def _handler(
         session.close()
         # The role is this connection's own local — there is no registry to ask
         # (ADR 0051); the hub owns liveness and reports what is left.
+        trace.record("conn", f"disconnected graceful={graceful}  [{session.peer}]")
         logger.info(
             "Client disconnected: %s role=%s graceful=%s remaining=%d",
             addr, role and role.value, graceful, hub.count,
@@ -795,7 +808,19 @@ def cli():
              "(default: 0.0.0.0, all interfaces). The `ffast-web` launcher passes "
              "127.0.0.1 to keep a local session loopback-only.",
     )
+    parser.add_argument(
+        "--trace",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="DIR",
+        help="Write a trace of every click, message and handler run to "
+             "DIR/trace-<date-time>.log (default DIR: ~/.ffast/logs), to find "
+             "the source of a bug. The last 10 trace files are kept.",
+    )
     args = parser.parse_args()
+    if args.trace is not None:
+        trace.start(args.trace or None)
 
     # Auto-detect job_id from SLURM environment; fall back to CLI arg or "local"
     job_id = (
