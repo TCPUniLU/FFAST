@@ -331,6 +331,29 @@ class ServerSession:
             return None
         return _PredictionView(forces)
 
+    def get_metric(self, metric_id, params, dataset_fp, model_fp):
+        """``get_metric(...)`` for build_scene: a metric over the whole dataset,
+        stored under the same key as a 2D plot's, so the two compute it once.
+
+        None when it can't be computed from what is loaded: a model or dataset
+        that is gone, or a prediction not made for the dataset (a live model
+        asked for one frame). Atom colouring then uses the frame on screen
+        alone; it never starts a prediction of every frame.
+        """
+        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
+        model = self.env.models.get(model_fp) if model_fp else None
+        if dataset is None or (model_fp and model is None):
+            return None
+        data = self.env.data
+        key = data.make_metric_cache_key(metric_id, params, model, dataset)
+        result = self.env.cache.get(key)
+        if result is not None:
+            return result
+        if data.inputResolver.missing_prediction_keys(metric_id, model=model, dataset=dataset):
+            return None
+        made = data.generateMetric(metric_id, params, model, dataset)
+        return self.env.cache.get(made) if made else None
+
     def get_forces(self, dataset_ref, idx):
         """``get_forces(dataset_ref, idx)`` for build_scene — *ground-truth*
         forces straight from the dataset (the default UI source). Predicted
@@ -938,6 +961,7 @@ class ServerSession:
                 get_prediction=self.get_prediction,
                 get_forces=self.get_forces,
                 executor=self.env.data.metricExecutor,
+                get_metric=self.get_metric,
             )
         except Exception as exc:
             self._log_scene_degrade("OPEN_VIEW", view_id, exc)
@@ -1005,7 +1029,7 @@ class ServerSession:
                 scene = await asyncio.to_thread(
                     build_scene, view_state, self.env.datasets.get,
                     self.get_prediction, self.get_forces,
-                    self.env.data.metricExecutor,
+                    self.env.data.metricExecutor, get_metric=self.get_metric,
                 )
             except Exception as exc:
                 self._log_scene_degrade("VIEW_COMMAND", cmd.view_id, exc)

@@ -9,10 +9,14 @@ is one of:
 
 - ``element`` / unset    → ``None`` (renderer falls back to element colors)
 - ``displacement``       → per-atom RMS displacement over the trajectory
-- ``metric:<metric_id>`` → run the metric over the current frame's inputs
+- ``metric:<metric_id>`` → the metric over the whole dataset, as the 2D plots
+  compute and store it, cut to the frame on screen; the colour range then
+  covers every frame. When the whole dataset can't be computed from what is
+  loaded (a prediction not made for every frame), the metric runs on the
+  current frame's inputs only.
 
-Resolution is frame-scoped: refs map to the *currently displayed* frame
-(``idx``) — distinct from ``ffast/metrics/input_resolver``, which resolves whole-dataset
+The frame-only path maps refs to the *currently displayed* frame (``idx``) —
+distinct from ``ffast/metrics/input_resolver``, which resolves whole-dataset
 arrays for 2D panels. Any failure (missing prediction, metric error, shape
 mismatch) returns ``None`` so coloring degrades to element colors (ADR 0016).
 """
@@ -119,7 +123,50 @@ def frame_colour_label(label: str, shape: str) -> str:
     return label + " (this frame)"
 
 
-def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, executor=None):
+def _metric_parameters(params, schema):
+    """The colouring parameters the metric declares; the rest (source,
+    colour map, limits) would only split its stored result from the plots'."""
+    return {k: v for k, v in params.items() if k in schema.parameters}
+
+
+def _whole_dataset_values(get_metric, metric_id, params, shape, ds, idx, z, dataset_ref,
+                          prediction_ref):
+    """``(values of frame idx, (lowest, highest) over every frame)`` from the
+    metric over the whole dataset, or None when that result isn't available.
+
+    A per-atom result has a row per atom, frame after frame, or one row per
+    atom of a structure when it already averages over frames (every structure
+    has the same atoms). A per-element result has one value per element of
+    the dataset, in sorted order."""
+    if get_metric is None:
+        return None
+    result = get_metric(metric_id, params, dataset_ref, prediction_ref)
+    if result is None:
+        return None
+    vals = np.asarray(result.values, dtype=np.float64).ravel()
+    zarr = np.asarray(z).ravel()
+    if shape == "N_elements":
+        unique_z = np.unique(np.asarray(ds.getAllElements()))
+        if len(vals) != len(unique_z):
+            return None
+        frame = vals[np.searchsorted(unique_z, zarr)]
+    elif shape == "N_atoms":
+        offsets = np.asarray(ds.getOffsets())
+        if len(vals) == offsets[-1]:
+            frame = vals[offsets[idx]:offsets[idx + 1]]
+        elif len(vals) == len(zarr):
+            frame = vals
+        else:
+            return None
+    else:
+        return None
+    finite = vals[np.isfinite(vals)]
+    span = (float(finite.min()), float(finite.max())) if finite.size else None
+    return frame, span
+
+
+def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, executor=None,
+                              get_metric=None):
     """Per-atom values for the active atom-color source, or None for element.
 
     ``executor`` is the injected ``MetricExecutor`` (ADR 0046) — the server
@@ -127,9 +174,15 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
     metric-coloring request with no executor injected falls back to element
     colors, same as any other resolution failure.
 
-    Returns ``(values (N,) float64, label, unit)``. Any failure (missing
-    prediction, metric error, shape mismatch) returns None so the renderer falls
-    back to element colors (ADR 0016).
+    ``get_metric(metric_id, params, dataset_ref, prediction_ref)`` gives the
+    metric's result over the whole dataset, or None when it can't be computed
+    from what is loaded; the colouring then runs on this frame alone.
+
+    Returns ``(values (N,) float64, label, unit, span)``: ``span`` is the
+    ``(lowest, highest)`` value over every frame, or None when only this frame
+    was computed. Any failure (missing prediction, metric error, shape
+    mismatch) returns None so the renderer falls back to element colors
+    (ADR 0016).
     """
     params = state.parameters.get("ffast.atom_color", {})
     source = params.get("source", "element")
@@ -159,7 +212,7 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
                 return None
             d_total, _ = displacement_stats(traj)
             logger.info("atom-color: displacement resolved for %d atoms", len(d_total))
-            return np.asarray(d_total, dtype=np.float64), "displacement", "Å"
+            return np.asarray(d_total, dtype=np.float64), "displacement", "Å", None
         if source.startswith("metric:"):
             # Register built-in metrics (idempotent; mirrors ffast/cli/main.py).
             from ffast.metrics.builtin import (  # noqa: F401
@@ -181,6 +234,19 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
                 logger.warning("atom-color: %s: %s; falling back to element colors",
                                metric_id, problem)
                 return None
+            from ffast.metrics.dims import shape_to_str
+            schema, _ = reg.get(metric_id)
+            shape = shape_to_str(schema.shape)
+            whole = _whole_dataset_values(
+                get_metric, metric_id, _metric_parameters(params, schema), shape, ds, idx, z,
+                state.dataset_ref, prediction_ref,
+            )
+            if whole is not None:
+                vals, span = whole
+                if len(vals) == len(raw_positions):
+                    logger.info("atom-color: metric %s resolved from the whole dataset",
+                                metric_id)
+                    return vals, schema.label or metric_id, schema.unit, span
             if executor is None:
                 logger.warning(
                     "atom-color: no metric executor injected; falling back to "
@@ -197,9 +263,7 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
                 )
                 return None
             vals = np.asarray(result.values, dtype=np.float64).ravel()
-            schema, _ = reg.get(metric_id)
-            from ffast.metrics.dims import shape_to_str
-            if shape_to_str(schema.shape) == "N_elements":
+            if shape == "N_elements":
                 # Broadcast per-element values onto atoms. Per-element metrics
                 # order their output by sorted unique Z (np.unique), so map each
                 # atom's element to its slot the same way.
@@ -226,8 +290,8 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
                 float(np.min(vals)) if len(vals) else 0.0,
                 float(np.max(vals)) if len(vals) else 0.0,
             )
-            label = frame_colour_label(schema.label or metric_id, shape_to_str(schema.shape))
-            return vals, label, schema.unit
+            label = frame_colour_label(schema.label or metric_id, shape)
+            return vals, label, schema.unit, None
         logger.warning(
             "atom-color: unknown source %r; falling back to element colors", source,
         )

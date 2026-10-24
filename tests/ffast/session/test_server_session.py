@@ -1193,6 +1193,52 @@ def test_a_frame_subset_of_structures_of_different_sizes_draws_its_parents_force
     assert [f.shape for f in view.forces] == [(3, 3), (1, 3)]
 
 
+# ── atom colouring reads a metric over the whole dataset ─────────────────────
+class _ColourData(_FakeData):
+    """A DataService double whose prediction may be missing."""
+
+    def __init__(self, cache, missing=()):
+        super().__init__(cache)
+        self.inputResolver = type("R", (), {
+            "missing_prediction_keys": lambda _self, metric_id, model, dataset: list(missing)})()
+
+
+def test_colouring_reads_the_metric_the_plots_stored():
+    from types import SimpleNamespace
+    stored = _make_metric_result(values=np.array([1.0, 2.0]))
+    env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
+                   models={"m1": SimpleNamespace(fingerprint="m1")},
+                   cache={"ffast.force_mae__nil__nil": stored})
+    env.data = _ColourData(env.cache)
+    assert ServerSession(env, asyncio.Queue()).get_metric("ffast.force_mae", {}, "ds1", "m1") is stored
+    assert env.data.generate_metric_calls == []
+
+
+def test_colouring_computes_the_whole_dataset_when_the_prediction_is_there():
+    from types import SimpleNamespace
+    env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
+                   models={"m1": SimpleNamespace(fingerprint="m1")})
+    env.data = _ColourData(env.cache)
+    result = ServerSession(env, asyncio.Queue()).get_metric("ffast.force_mae", {}, "ds1", "m1")
+    assert list(result.values) == [3.0]
+    assert [c[0] for c in env.data.generate_metric_calls] == ["ffast.force_mae"]
+
+
+def test_colouring_never_starts_a_prediction_of_every_frame():
+    """A live model predicts the frame on screen; colouring must not ask it
+    for every frame, so it gets no whole-dataset result (and uses the frame)."""
+    from types import SimpleNamespace
+    env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
+                   models={"m1": SimpleNamespace(fingerprint="m1")})
+    env.data = _ColourData(env.cache, missing=["forces__m1__ds1"])
+    session = ServerSession(env, asyncio.Queue())
+    assert session.get_metric("ffast.force_mae", {}, "ds1", "m1") is None
+    assert env.data.generate_metric_calls == [] and env.data.generate_data_calls == []
+    # A model or dataset that is gone gives nothing either.
+    assert session.get_metric("ffast.force_mae", {}, "ds1", "gone") is None
+    assert session.get_metric("ffast.force_mae", {}, "gone", "m1") is None
+
+
 # ── OPEN_VIEW start_from: a subset opens with its parent's look ─────────────
 def test_a_new_view_can_start_from_another_views_look():
     """Colouring, display, bonds (the view's stage parameters and features)

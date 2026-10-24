@@ -93,7 +93,7 @@ def test_resolve_color_force_mae_returns_per_atom_values():
     )
 
     assert result is not None, "Expected per-atom values, got None (metric failed)"
-    values, label, unit = result
+    values, label, unit, _ = result
     assert values.shape == (n_atoms,), f"Expected ({n_atoms},), got {values.shape}"
     # pred - ref = [1,1,1], l2 norm = sqrt(3); all atoms should be equal
     assert np.all(values > 0), "Expected nonzero force errors"
@@ -142,7 +142,7 @@ def test_resolve_color_prediction_ref_override_wins_over_global():
 
     assert result is not None
     assert override_fp in calls and global_fp not in calls
-    values, _label, _unit = result
+    values, _label, _unit, _ = result
     assert np.all(values > 0)   # resolved from the override prediction's nonzero forces
 
 
@@ -221,7 +221,7 @@ def test_resolve_color_displacement_returns_per_atom_rms():
 
     result = resolve_atom_color_values(state, ds, 0, ds._pos[0], ds._z, None)
     assert result is not None
-    values, label, unit = result
+    values, label, unit, _ = result
     assert (label, unit) == ("displacement", "Å")
     assert values.shape == (3,)
     assert values[0] == pytest.approx(1.0)         # sqrt(mean([1,1,1]**2)) = 1
@@ -244,7 +244,7 @@ def test_displacement_colours_a_file_whose_structures_have_the_same_size():
     state = VisualizationState(view_id="v1")
     state.parameters["ffast.atom_color"] = {"source": "displacement"}
 
-    values, label, _ = resolve_atom_color_values(
+    values, label, _, _ = resolve_atom_color_values(
         state, ds, 0, ds.getCoordinates(0), ds.getElements(0), None)
     assert label == "displacement" and values.shape == (3,)
 
@@ -304,7 +304,7 @@ def test_a_formula_on_such_a_formula_is_refused_too(formula_metrics):
 def test_an_element_filter_still_colours(formula_metrics):
     from ffast.metrics.expr import metric_colour_problem
     assert metric_colour_problem("t64.h_only", formula_metrics) is None
-    values, _label, _unit = _colour("t64.h_only", formula_metrics)
+    values, _label, _unit, _ = _colour("t64.h_only", formula_metrics)
     # elements H, C, O: only the hydrogen keeps its error
     assert values[0] > 0 and values[1] == 0 and values[2] == 0
 

@@ -58,6 +58,7 @@ def build_scene(
     get_forces: Callable | None = None,
     executor: Any | None = None,
     _legacy_forces: bool = False,
+    get_metric: Callable | None = None,
 ) -> RenderScene:
     """Derive a RenderScene from VisualizationState.
 
@@ -65,6 +66,9 @@ def build_scene(
     value-driven atom coloring — the caller's ``DataService.metricExecutor``,
     so coloring and ``REQUEST_METRIC`` share the same server-side executor
     instance instead of each maintaining its own.
+
+    ``get_metric`` gives a metric over the whole dataset for atom colouring
+    (``color_values.resolve_atom_color_values``).
 
     Returns a scene with only camera populated when no dataset is loaded or
     when any data access fails.
@@ -165,18 +169,22 @@ def build_scene(
             logger.warning("scene_builder: atom_labels failed: %s", exc)
 
     # Value-driven atom coloring (ADR 0016): compute per-atom values on the FULL
-    # set and resolve the range here, so the colorbar/scale stay stable across
-    # frames and filtering. The client maps these values to colors.
+    # set and resolve the range here, so the colorbar/scale stay stable under
+    # filtering, and across frames when the values came from the whole dataset.
+    # The client maps these values to colors.
     color_values = None
     color_meta = None
     from ffast.visualization.color_values import resolve_atom_color_values
-    _color_src = resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, executor=executor)
+    _color_src = resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction,
+                                           executor=executor, get_metric=get_metric)
     if _color_src is not None:
-        color_values, _clabel, _cunit = _color_src
+        color_values, _clabel, _cunit, _span = _color_src
         cparams = state.parameters.get("ffast.atom_color", {})
         finite = color_values[np.isfinite(color_values)]
         auto_lo = float(np.min(finite)) if finite.size else 0.0
         auto_hi = float(np.max(finite)) if finite.size else 1.0
+        if _span is not None:
+            auto_lo, auto_hi = _span
         # A limit the user cleared (None) is automatic again.
         lo, hi = cparams.get("vmin"), cparams.get("vmax")
         color_meta = {
