@@ -166,6 +166,19 @@ per element; `by=` alone decides the result's shape, and `where=` picks the
 rows that count (ADR 0064). A bad value
 (non-finite output) raises rather than quietly emitting `nan` (ADR 0042).
 
+### Base metric, keep boxes
+
+A **base metric** is an unreduced error a user reduces with the **keep boxes**:
+Force Difference, Acceleration Difference, Energy Difference, Energy
+Difference (shifted), Net Force Residual. The keep boxes (atom, structure,
+element, x/y/z) say which axes stay separate, as `by=` does; **Combine** (Per
+component | Length) says how unkept x/y/z become one number; **Statistic** is
+MAE, RMSE, Max or Mean (signed). A box setting is written as a formula over the
+base (ADR 0065).
+
+Don't call it: norm, l1 / l2 (replaced by Combine), "average over" boxes
+(the boxes say what is kept).
+
 ### No value
 
 A place in a metric's result that has nothing to show: a group a reduction
