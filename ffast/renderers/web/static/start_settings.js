@@ -21,6 +21,18 @@ const COLOUR = 'ffast.atom_color';
 /** Metric shapes that colour atoms: one value per atom or per element. */
 export const COLORABLE_SHAPES = new Set(['N_atoms', 'N_elements']);
 
+/**
+ * A metric's name in the Coloring list. A per-element metric colours by the
+ * frame on screen, while its 2D plots average all frames, so here its name
+ * says "this frame" (ffast.visualization.color_values.frame_colour_label).
+ * @param {{id: string, label?: string, shape: string}} entry
+ */
+export function colouringLabel(entry) {
+  const label = entry.label || entry.id;
+  if (entry.shape !== 'N_elements') return label;
+  return label.endsWith(')') ? `${label.slice(0, -1)}, this frame)` : `${label} (this frame)`;
+}
+
 /** The keys that are set: the server sends unset ones as null. Null when
  * none are, so two starts compare equal however they were written. */
 export function cleanStart(start) {

@@ -16,7 +16,7 @@
  * show: labels depend on the metric catalog and the loaded predictions.
  */
 
-import { COLORABLE_SHAPES, DEFAULT_LOOK } from '../start_settings.js';
+import { COLORABLE_SHAPES, DEFAULT_LOOK, colouringLabel } from '../start_settings.js';
 import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.js';
 import { gradientCss } from '../colormap.js';
 import { defaultSettings } from '../view_settings.js';
@@ -315,7 +315,7 @@ export function createColorByPane(sidebarEl, callbacks) {
         if (!['Elements', 'Displacement'].includes(opt.value)) opt.remove();
       for (const entry of entries) {
         if (!COLORABLE_SHAPES.has(entry.shape) || entry.colour_problem) continue;
-        const label = entry.label || entry.id;
+        const label = colouringLabel(entry);
         if (labelToMetricId.has(label)) continue;
         labelToMetricId.set(label, entry.id);
         labelToSource.set(label, `metric:${entry.id}`);

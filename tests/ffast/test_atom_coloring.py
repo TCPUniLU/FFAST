@@ -326,7 +326,7 @@ class TestServerMetricColoring:
         assert len(cb.values) == 4                       # one value per atom
         assert cb.values[1] == pytest.approx(cb.values[2])   # both H atoms equal
         assert cb.values[0] != pytest.approx(cb.values[1])   # C differs from H
-        assert cb.label == "Force Error (per element)"        # metric display name
+        assert cb.label == "Force Error (per element, this frame)"   # 3D colours by this frame
 
     def test_accel_metric_resolves_via_ase_mass_fallback(self):
         """Acceleration error needs atomic masses; _DS has no getMasses, so the
@@ -426,3 +426,13 @@ class TestSymbolicRefResolution:
         ds = types.SimpleNamespace(getAtomField=lambda key, indices: np.array([1.0]))
         with pytest.raises(KeyError):
             self._resolve("prediction.atoms.charge", ds, [1])
+
+
+def test_a_per_element_colouring_says_this_frame():
+    """3D colours a per-element metric by the frame on screen, its 2D plots by
+    all frames: the 3D name says so; other shapes keep their name."""
+    from ffast.visualization.color_values import frame_colour_label
+    assert frame_colour_label("Force Error (per element)", "N_elements") == \
+        "Force Error (per element, this frame)"
+    assert frame_colour_label("my.metric", "N_elements") == "my.metric (this frame)"
+    assert frame_colour_label("Force Error (per atom)", "N_atoms") == "Force Error (per atom)"

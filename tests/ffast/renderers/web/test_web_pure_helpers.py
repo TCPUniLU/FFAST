@@ -86,6 +86,11 @@ CASES = {
     # ── cm.gradientCss — the colourbar derives from the atoms' LUT (ADR 0052) ──
     "grad_viridis": "cm.gradientCss('viridis')",
     "grad_unknown": "cm.gradientCss('not_a_colormap')",
+    "ss_colouring_labels": (
+        "[ss.colouringLabel({id: 'ffast.force_mae_per_element', label: 'Force Error (per element)', shape: 'N_elements'}),"
+        " ss.colouringLabel({id: 'my.el', shape: 'N_elements'}),"
+        " ss.colouringLabel({id: 'ffast.force_mae', label: 'Force Error (per atom)', shape: 'N_atoms'})]"
+    ),
     "trap_focus": (
         "(() => { const m = document.createElement('div');"
         " m.innerHTML = '<button id=a>a</button><button id=b>b</button><button id=c disabled>c</button>';"
@@ -847,6 +852,11 @@ def results():
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_a_per_element_colouring_says_this_frame_in_the_list(results):
+    assert results["ss_colouring_labels"] == [
+        "Force Error (per element, this frame)", "my.el (this frame)", "Force Error (per atom)"]
 
 
 # ── theme.plotTheme (ADR 0063) ───────────────────────────────────────────────

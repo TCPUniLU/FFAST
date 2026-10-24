@@ -107,6 +107,18 @@ def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state,
     raise KeyError(ref)
 
 
+def frame_colour_label(label: str, shape: str) -> str:
+    """The name of a colouring as the 3D view shows it. A per-element metric
+    colours by the frame on screen, while its 2D plots average all frames, so
+    in 3D its name says "this frame": "Force Error (per element)" becomes
+    "Force Error (per element, this frame)"."""
+    if shape != "N_elements":
+        return label
+    if label.endswith(")"):
+        return label[:-1] + ", this frame)"
+    return label + " (this frame)"
+
+
 def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, executor=None):
     """Per-atom values for the active atom-color source, or None for element.
 
@@ -214,7 +226,8 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
                 float(np.min(vals)) if len(vals) else 0.0,
                 float(np.max(vals)) if len(vals) else 0.0,
             )
-            return vals, (schema.label or metric_id), schema.unit
+            label = frame_colour_label(schema.label or metric_id, shape_to_str(schema.shape))
+            return vals, label, schema.unit
         logger.warning(
             "atom-color: unknown source %r; falling back to element colors", source,
         )
