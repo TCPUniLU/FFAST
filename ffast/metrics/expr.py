@@ -781,16 +781,25 @@ class _ExprFn:
             if w_bad.any():
                 v = np.where(w_bad.reshape((rows,) + (1,) * k), np.nan, v)
 
-        by = _keyword(node, "by").id
-        order = None
+        by = _by_key(_keyword(node, "by"))
+        order = grid = None
         if by == "structure":
             offsets = framesOrOne(ns.get(_OFFSETS), v)
-        elif by == "element":
+        elif by in ("element", PAIR):
+            # Columns: every element of the dataset, in order of atomic number.
             z = np.asarray(ns[_ELEMENTS])
-            groups = np.unique(z)
-            index = np.searchsorted(groups, z)
+            columns = np.unique(z)
+            index = np.searchsorted(columns, z)
+            size = columns.size
+            if by == PAIR:
+                # One group per (structure, element): structure i's column j
+                # is group i * columns + j.
+                frames = framesOrOne(ns.get(_OFFSETS), v)
+                grid = (frames.size - 1, columns.size)
+                index = np.repeat(np.arange(grid[0]), np.diff(frames)) * columns.size + index
+                size = grid[0] * grid[1]
             order = np.argsort(index, kind="stable")
-            offsets = np.concatenate([[0], np.cumsum(np.bincount(index, minlength=groups.size))])
+            offsets = np.concatenate([[0], np.cumsum(np.bincount(index, minlength=size))])
         else:
             offsets = np.array([0, rows])
         if order is not None:
@@ -824,6 +833,8 @@ class _ExprFn:
                     out = np.sqrt(segmentSums(dev * dev, offsets) / per_group)
         if by == "all":
             out, empty = out[0], empty[0]
+        elif grid is not None:
+            out, empty = out.reshape(grid + out.shape[1:]), empty.reshape(grid)
         return out, k, (empty if np.any(empty) else None)
 
     def _note_ignored(self, v, k, left_out, ns) -> None:

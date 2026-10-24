@@ -118,3 +118,97 @@ def test_the_pair_is_not_refused_for_colouring():
 
 def test_by_element_on_its_own_is_still_refused():
     assert colour_problem(f"{PAIR_ERR} + mean(norm(pF), by=element) * 0") is not None
+
+
+# ── step 2: what the pair computes ───────────────────────────────────────────
+
+import numpy as np  # noqa: E402
+
+from ffast.metrics.execution import FlatInputSource  # noqa: E402
+from ffast.metrics.executor import InProcessExecutor  # noqa: E402
+from ffast.metrics.expr import _ExprFn, compile_expr_metric  # noqa: E402
+from ffast.metrics.models import MetricFailure, WithWarnings  # noqa: E402
+
+# Three structures of 2, 3 and 1 atoms; elements O H | C H H | O, so the
+# columns are H, C, O.
+OFFSETS = np.array([0, 2, 5, 6])
+Z = np.array([8, 1, 6, 1, 1, 8])
+ERR = np.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+F = np.arange(18, dtype=float).reshape(6, 3)
+EVARS = {"err": "reference.atoms.err", "F": "reference.forces"}
+RAW = {"err": ERR, "F": F, "_offsets": OFFSETS, "_elements": Z}
+NAN = np.nan
+
+
+def _values(expr, raw=RAW):
+    inputs, _shape, parts = analyze_expr(expr, EVARS, registry=MetricRegistry())
+    return _ExprFn(expr, inputs, parts)(**{n: raw[n] for n in inputs})
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("mean", [[2.0, NAN, 1.0], [4.5, 3.0, NAN], [NAN, NAN, 6.0]]),
+    ("sum", [[2.0, NAN, 1.0], [9.0, 3.0, NAN], [NAN, NAN, 6.0]]),
+    ("max", [[2.0, NAN, 1.0], [5.0, 3.0, NAN], [NAN, NAN, 6.0]]),
+    ("std", [[0.0, NAN, 0.0], [0.5, 0.0, NAN], [NAN, NAN, 0.0]]),
+])
+def test_a_row_per_structure_and_a_column_per_element(name, expected):
+    np.testing.assert_allclose(_values(f"{name}(err, by=(structure, element))"), expected)
+
+
+def test_structures_of_equal_size():
+    raw = {**RAW, "_offsets": np.array([0, 3, 6])}
+    # O H C | H H O
+    np.testing.assert_allclose(_values("mean(err, by=(structure, element))", raw),
+                               [[2.0, 3.0, 1.0], [4.5, NAN, 6.0]])
+
+
+def test_the_columns_are_every_element_of_the_dataset():
+    # Structure 3 holds only O, yet its row has the H and C columns, empty.
+    out = _values("mean(err, by=(structure, element))")
+    assert out.shape == (3, 3) and np.isnan(out[2, :2]).all()
+
+
+def test_where_empties_the_cells_it_leaves_out():
+    np.testing.assert_allclose(_values('mean(err, by=(structure, element), where=element("H", "O"))'),
+                               [[2.0, NAN, 1.0], [4.5, NAN, NAN], [NAN, NAN, 6.0]])
+    np.testing.assert_allclose(_values("mean(err, by=(structure, element), where=err > 1.5)"),
+                               [[2.0, NAN, NAN], [4.5, 3.0, NAN], [NAN, NAN, 6.0]])
+
+
+def test_the_vector_parts_are_kept():
+    out = _values("sum(F, by=(structure, element))")
+    assert out.shape == (3, 3, 3)
+    np.testing.assert_allclose(out[1, 0], F[3] + F[4])      # structure 2's two H
+
+
+def test_a_table_combines_cell_by_cell():
+    np.testing.assert_allclose(_values("mean(err, by=(structure, element)) * 2 + 1")[1], [10.0, 7.0, NAN])
+
+
+def test_a_bad_value_in_a_counted_cell_fails_the_metric():
+    raw = {**RAW, "err": np.array([1.0, np.inf, 3.0, 4.0, 5.0, 6.0])}
+    with pytest.raises(ValueError, match="non-finite"):
+        _values("mean(err, by=(structure, element))", raw)
+
+
+def test_a_bad_value_where_leaves_out_is_ignored_with_a_warning():
+    raw = {**RAW, "err": np.array([1.0, 2.0, np.inf, 4.0, 5.0, 6.0])}
+    out = _values('mean(err, by=(structure, element), where=element("H"))', raw)
+    assert isinstance(out, WithWarnings) and "frame 1" in out.warnings[0]
+
+
+def test_a_table_from_a_formula_input_keeps_its_empty_cells():
+    r = MetricRegistry()
+    compile_expr_metric("t.table", "mean(err, by=(structure, element))",
+                        {"err": "reference.atoms.err"}, registry=r)
+    mid = compile_expr_metric("t.twice", "t * 2", {"t": "t.table"}, registry=r)
+    out = InProcessExecutor(r).run(mid, FlatInputSource(
+        {"err": ERR, "_offsets": OFFSETS, "_elements": Z}), {})
+    assert not isinstance(out, MetricFailure), getattr(out, "traceback", "")
+    np.testing.assert_allclose(out.values, [[4.0, NAN, 2.0], [9.0, 6.0, NAN], [NAN, NAN, 12.0]])
+
+
+def test_one_structure_without_offsets_is_one_row():
+    # The colouring path runs a metric on the frame on screen, without offsets.
+    raw = {"err": ERR[2:5], "_elements": Z[2:5], "_offsets": None}
+    np.testing.assert_allclose(_values("mean(err, by=(structure, element))", raw), [[4.5, 3.0]])
