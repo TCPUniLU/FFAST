@@ -102,3 +102,22 @@ never run in the suite — the exact trap CONTEXT.md's Metric Worker Pool note w
 - Add **one** end-to-end test that injects a real `WorkerProcessExecutor` and drives a metric-color
   (or `REQUEST_METRIC`) through it, asserting values return — transitively covering registry
   picklability, plan shipping, and shared-memory packing for the real coloring path.
+
+## Amendment — symbolic input names across scopes (2026-10-25; implemented)
+
+The two `InputSource` adapters resolve different amounts of data, but a metric
+input ref has one meaning in both. For example, `reference.positions` means the
+dataset's raw atom coordinates: all frames in the panel path and the displayed
+frame in the colouring fallback. `frame.positions` remains a visualization-stage
+input name; it is not an alternative name for an Expression metric input.
+
+Keep the supported metric input names, shapes and presentation labels in one
+definition. The whole-dataset and frame adapters retain their distinct fetching
+rules, including offsets and missing-input behavior. A ref whose result cannot
+colour atoms, or whose value is unavailable at the current scope, must produce
+an explicit reason through the existing warning path rather than silently
+substituting element colours. Check can still accept formulas that are useful in
+panels but not for atom colouring; this amendment does not make colourability a
+condition for a valid metric.
+
+Implementation brief: [metric inputs across scopes](../implementation/2026-10-25-metric-inputs.md).
