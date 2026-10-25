@@ -606,6 +606,8 @@ CASES = {
     "theme_line": "th.plotTheme().line",
     "theme_grid_follows_line": "pn.baseLayout().xaxis.gridcolor === th.plotTheme().line",
     "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
+    "hint_info": "[0, 1, 2, 3, 4, 9].map(n => hn.toolHint('info', n).map(x => x.join('')).join(' '))",
+    "hint_others": "[hn.toolHint('bonds', 0), hn.toolHint('bonds', 1), hn.toolHint('align', 2), hn.toolHint('forces', 0), hn.toolHint('extract', 3), hn.toolHint('zzz', 0), hn.toolHintKey('info')]",
     "arrow_long": "ar.arrowParts(2, 1)",
     "arrow_thick": "ar.arrowParts(2, 2)",
     "arrow_short": "ar.arrowParts(0.125, 1)",
@@ -851,6 +853,7 @@ def results():
         f"  const so = await import('{origin}/session_ops.js');\n"
         f"  const cm = await import('{origin}/colormap.js');\n"
         f"  const pn = await import('{origin}/panels.js');\n"
+        f"  const hn = await import('{origin}/tool_hints.js');\n"
         f"  const ar = await import('{origin}/arrow_geometry.js');\n"
         f"  const th = await import('{origin}/theme.js');\n"
         f"  const ic = await import('{origin}/icons.js');\n"
@@ -1899,3 +1902,16 @@ def test_force_arrows_have_the_qt_sizes_and_a_short_one_a_smaller_head(results):
     assert short["shaftLength"] == 0 and short["headLength"] == 0.125
     assert short["headRadius"] == pytest.approx(0.06) and short["shaftRadius"] == 0.05
 
+
+def test_pick_tool_hints_follow_the_pick_count(results):
+    info = results["hint_info"]
+    assert info[0] == "Click an atom: its position"
+    assert "2nd atom for the distance" in info[1] and "3rd atom for the angle" in info[2]
+    assert "4th atom for the dihedral" in info[3]
+    assert info[4] == info[5] and info[4].startswith("Dihedral shown")
+    bonds0, bonds1, align2, forces, extract, none, key = results["hint_others"]
+    text = lambda steps: "".join("".join(step) for step in steps)
+    assert text(bonds0).startswith("Click 2 atoms") and "one more atom" in text(bonds1)
+    assert "2 of 3" in text(align2)
+    assert forces == extract == [["Click atoms or drag a box. ", "Esc", " stops"]]
+    assert none is None and key == "tool-info"

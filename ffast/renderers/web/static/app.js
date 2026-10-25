@@ -10,6 +10,7 @@ import { IndependentPanels, independentKey } from './independent_panels.js';
 import { ensureMainView, isLinked3D, MAIN_VIEW_RULE, showsMainView } from './tab_rules.js';
 import { sameConfiguration, predictionApplies } from './frame_links.js';
 import { infoReadout } from './measure.js';
+import { toolHint, toolHintKey } from './tool_hints.js';
 import { MetricClient } from './metrics.js';
 import { AnalysisManager, framesKey } from './analysis.js';
 import { createColorByPane } from './panes/colorby.js';
@@ -774,22 +775,31 @@ export class FFastApp {
    * Dismissals are browser layout state (ADR 0055). */
   _syncHint() {
     const bar = document.getElementById('hint-bar');
-    const key = this._models.size ? 'with-prediction' : 'no-prediction';
+    // An armed pick tool shows its own steps, live by pick count; each tool's
+    // hint is dismissed on its own.
+    const steps = this._activeTool ? toolHint(this._activeTool, this._picked.length) : null;
+    const key = steps ? toolHintKey(this._activeTool) : this._models.size ? 'with-prediction' : 'no-prediction';
+    const lines = steps || HINTS[key];
     const dismissed = loadLayout().hintsDismissed || [];
     const show = this._viewShown && !dismissed.includes(key);
     bar.classList.toggle('hidden', !show);
-    if (!show || bar.dataset.hint === key) return;
+    const shown = JSON.stringify([key, lines]);
+    if (!show || bar.dataset.shown === shown) return;
     bar.dataset.hint = key;
+    bar.dataset.shown = shown;
     const text = document.getElementById('hint-text');
-    text.replaceChildren(...HINTS[key].map(([lead, strong, tail = ''], i) => {
+    text.replaceChildren(...lines.map(([lead, strong, tail = ''], i) => {
       const step = document.createElement('span');
       step.className = 'hint-step';   // kept on one line; the bar wraps between steps
-      const n = document.createElement('span');
-      n.className = 'hint-n';
-      n.textContent = String(i + 1);
+      if (!steps) {
+        const n = document.createElement('span');
+        n.className = 'hint-n';
+        n.textContent = String(i + 1);
+        step.append(n);
+      }
       const b = document.createElement('b');
       b.textContent = strong;
-      step.append(n, lead, b, tail);
+      step.append(lead, b, tail);
       return step;
     }));
   }
@@ -2010,6 +2020,7 @@ export class FFastApp {
   }
 
   _updatePickStrip() {
+    this._syncHint();
     const strip = document.getElementById('pick-strip');
     if (!strip) return;
     if (!this._activeTool) { strip.classList.add('hidden'); return; }

@@ -1590,6 +1590,47 @@ async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
             await browser.close()
 
 
+async def test_web_a_pick_tool_shows_its_steps_live_and_each_can_be_dismissed(ffast_web_server):
+    """An armed pick tool's hint follows the pick count; dismissing one tool's
+    hint is remembered and leaves the other tools' hints alone."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            hint = page.locator("#hint-bar")
+            tool = lambda name: page.locator(f"#pick-toolbar .pick-tool-btn[data-tool='{name}']")
+            pick = lambda i: page.evaluate(
+                "(i) => window.ffastApp._onPick([{displayIndex: i, atomId: i}])", i)
+            await tool("info").click()
+            await expect(hint).to_contain_text("Click an atom: its position")
+            await pick(0)
+            await expect(hint).to_contain_text("Click a 2nd atom for the distance")
+            await pick(1)
+            await expect(hint).to_contain_text("Click a 3rd atom for the angle")
+            await pick(2)
+            await expect(hint).to_contain_text("Click a 4th atom for the dihedral")
+            await pick(3)
+            await expect(hint).to_contain_text("Dihedral shown")
+            await tool("extract").click()
+            await expect(hint).to_contain_text("drag a box")
+            await expect(hint).to_contain_text("Esc stops")
+
+            await hint.locator("#hint-dismiss").click()
+            await expect(hint).to_be_hidden()
+            await tool("info").click()                      # another tool's hint is still there
+            await expect(hint).to_contain_text("Click an atom: its position")
+            await tool("extract").click()                   # and the dismissed one stays gone, after a reload too
+            await expect(hint).to_be_hidden()
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await tool("extract").click()
+            await expect(hint).to_be_hidden()
+        finally:
+            await browser.close()
+
+
 async def test_web_hint_bar_changes_once_a_prediction_is_loaded(ffast_web_server):
     ws_port, web_port = ffast_web_server
     dataset_fp, _model_fp = await _preload_dataset_and_prediction(ws_port)
