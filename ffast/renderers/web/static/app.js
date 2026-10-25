@@ -160,6 +160,7 @@ export class FFastApp {
       getCurrentDatasetFp: () => this._currentDatasetFp,
       setStatus: (text, kind) => this._setStatus(text, kind),
       serverKey: () => document.getElementById('ws-url').value.trim(),
+      setUnit: (fp, dimension, unit) => this._setDatasetUnit(fp, dimension, unit),
     });
     this._sessionOps = new SessionOps({
       send,
@@ -1458,7 +1459,7 @@ export class FFastApp {
     const before = this._datasets.get(fp);
     this._datasets.set(fp, meta);
     if (!before && !meta.is_sub) {
-      this._browser.settled('dataset');   // its "ready" below ends the "Loading…"
+      this._browser.settled('dataset', true, fp);   // its "ready" below ends the "Loading…"
       this._readyStatus = `Dataset "${meta.name || fp.slice(0, 8)}" ready · ${framesText(meta.n)}`;
       // It replaces a "Loading…" that is over, not a result the user should
       // still read, such as "Loaded session from …", which can arrive first.

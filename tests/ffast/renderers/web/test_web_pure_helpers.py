@@ -606,6 +606,8 @@ CASES = {
     "theme_line": "th.plotTheme().line",
     "theme_grid_follows_line": "pn.baseLayout().xaxis.gridcolor === th.plotTheme().line",
     "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
+    "unit_choices": "[ru.unitChoices('energy', []), ru.unitChoices('energy', ['kcal/mol', 'meV']), ru.unitChoices('force', ['eV/Å'])]",
+    "remember_unit": "[ru.rememberUnit(['a', 'b'], 'b'), ru.rememberUnit(['a', 'b'], 'c')]",
     "typed_parts": "[rb.typedParts('/a/b/ca'), rb.typedParts('/a/'), rb.typedParts('/ab'), rb.typedParts('abc')]",
     "match_entries": "rb.matchEntries([{name: 'Alpha'}, {name: 'beta'}, {name: 'alps'}], 'AL').map(e => e.name)",
     "remember_files": (
@@ -860,6 +862,7 @@ def results():
         f"  const so = await import('{origin}/session_ops.js');\n"
         f"  const cm = await import('{origin}/colormap.js');\n"
         f"  const pn = await import('{origin}/panels.js');\n"
+        f"  const ru = await import('{origin}/recent_units.js');\n"
         f"  const rf = await import('{origin}/recent_files.js');\n"
         f"  const hn = await import('{origin}/tool_hints.js');\n"
         f"  const ar = await import('{origin}/arrow_geometry.js');\n"
@@ -1933,3 +1936,11 @@ def test_a_typed_path_splits_into_folder_and_prefix(results):
 
 def test_recent_files_keep_ten_newest_without_duplicates(results):
     assert results["remember_files"] == [10, "x11", False]
+
+
+def test_unit_choices_list_the_last_used_first_without_duplicates(results):
+    assert results["unit_choices"] == [
+        ["eV", "kcal/mol", "Hartree"],
+        ["kcal/mol", "meV", "eV", "Hartree"],
+        ["eV/Å", "kcal/mol/Å", "Hartree/Bohr"]]
+    assert results["remember_unit"] == [["b", "a"], ["c", "a", "b"]]

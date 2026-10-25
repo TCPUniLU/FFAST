@@ -1100,6 +1100,7 @@
     /* Prediction loading has three labelled selects. Give them their own row
        so the Cancel/Load actions cannot be pushed outside the modal. */
     #fb-prediction-fields { flex: 1 1 100%; flex-wrap: wrap; }
+    #fb-dataset-fields { flex: 1 1 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
     #fb-footer label {
       font-size: var(--fs-s); color: var(--muted); font-weight: 600;
  }
@@ -1112,6 +1113,7 @@
     }
     select:focus { outline: none; border-bottom-color: var(--hl2); }
     #fb-type { width: 130px; }
+    #fb-energy-unit, #fb-force-unit { width: 100px; }
 
     /* ── server-side path prompt (issues 20/21) ──────────────────────── */
     #path-modal {
@@ -1365,6 +1367,12 @@
             <option value="ase (auto)">ase (auto)</option>
             <option value="sGDML">sGDML</option>
           </select>
+          <label for="fb-energy-unit">Energy unit</label>
+          <input id="fb-energy-unit" list="fb-energy-units" autocomplete="off" spellcheck="false">
+          <datalist id="fb-energy-units"></datalist>
+          <label for="fb-force-unit">Force unit</label>
+          <input id="fb-force-unit" list="fb-force-units" autocomplete="off" spellcheck="false">
+          <datalist id="fb-force-units"></datalist>
         </span>
         <span id="fb-prediction-fields" style="display:none; align-items:center; gap:6px;">
           <label for="fb-target-ds">For dataset</label>

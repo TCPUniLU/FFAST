@@ -456,6 +456,50 @@ async def test_web_the_loader_lists_the_last_files_loaded_per_server(ffast_web_s
             await browser.close()
 
 
+async def test_web_the_loader_names_units_only_when_asked_and_lists_the_last_used_first(ffast_web_server):
+    """Energy and force unit fields start empty ("[unit]"); what is typed is
+    named on the dataset that loads, and the choices put the last used first.
+    Predictions have no unit fields."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            energy, force = page.locator("#fb-energy-unit"), page.locator("#fb-force-unit")
+            await expect(energy).to_have_value("")
+            await expect(energy).to_have_attribute("placeholder", "[unit]")
+            await expect(force).to_have_attribute("placeholder", "[unit]")
+            options = lambda dim: page.locator(f"#fb-{dim}-units option")
+            assert await options("energy").evaluate_all("(os) => os.map((o) => o.value)") == [
+                "eV", "kcal/mol", "Hartree"]
+            assert await options("force").evaluate_all("(os) => os.map((o) => o.value)") == [
+                "eV/Å", "kcal/mol/Å", "Hartree/Bohr"]
+            await page.locator("#fb-path").fill(str(DATASET_PATH.parent))
+            await page.locator("#fb-path").press("Enter")
+            await page.locator("#fb-list .fb-row", has_text=DATASET_PATH.name).click()
+            await energy.fill("kcal/mol")                    # force left empty: stays unnamed
+            await page.locator("#fb-load").click()
+            await page.wait_for_function(
+                "() => [...window.ffastApp._datasets.values()].some((m) => m.units && m.units.energy === 'kcal/mol')",
+                timeout=30000)
+            units = await page.evaluate("() => [...window.ffastApp._datasets.values()][0].units")
+            assert units == {"energy": "kcal/mol"}, units
+
+            await _file_menu(page, "Load Dataset…")          # last used first, and the field starts empty again
+            await expect(energy).to_have_value("")
+            assert await options("energy").evaluate_all("(os) => os.map((o) => o.value)") == [
+                "kcal/mol", "eV", "Hartree"]
+            await page.locator("#fb-cancel").click()
+            await _file_menu(page, "Load Prediction…")
+            await expect(energy).to_be_hidden()
+        finally:
+            await browser.close()
+
+
 async def test_web_a_server_warning_pops_up_once(ffast_web_server):
     """A warning the server logs pops up in the corner; the same one again
     within a minute does not add a second pop-up."""

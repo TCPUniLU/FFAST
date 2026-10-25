@@ -15,6 +15,8 @@
 import { OUT } from './events.js';
 import { icon as drawIcon } from './icons.js';
 import { trapFocus } from './dialogs.js';
+import { UNIT_PLACEHOLDER } from './units.js';
+import { loadRecentUnits, saveRecentUnit, unitChoices } from './recent_units.js';
 import { loadRecentFiles, rememberFile, saveRecentFiles } from './recent_files.js';
 
 /** Join a server-side directory and an entry name. Posix separators: the paths
@@ -98,6 +100,7 @@ export class RemoteBrowser {
    *   getCurrentDatasetFp: () => string | null,
    *   setStatus: (text: string, kind?: string) => void,
    *   serverKey?: () => string,
+   *   setUnit?: (fp: string, dimension: string, unit: string) => void,
    * }} ports
    */
   constructor(ports) {
@@ -212,6 +215,33 @@ export class RemoteBrowser {
     if (entry.is_dir) this._askSuggestions();
   }
 
+  // ── units of a dataset's energies and forces ────────────────────────────
+
+  /** Drop-down choices: the units this browser used last first. The fields
+   * start empty — a unit is named only when the person types or picks one. */
+  _renderUnitChoices() {
+    for (const dimension of ['energy', 'force']) {
+      const list = $(`fb-${dimension}-units`);
+      list.replaceChildren(...unitChoices(dimension, loadRecentUnits(dimension)).map((u) => {
+        const o = document.createElement('option');
+        o.value = u;
+        return o;
+      }));
+      const field = $(`fb-${dimension}-unit`);
+      field.value = '';
+      field.placeholder = UNIT_PLACEHOLDER;
+    }
+  }
+
+  _unitsTyped() {
+    const units = {};
+    for (const dimension of ['energy', 'force']) {
+      const unit = $(`fb-${dimension}-unit`).value.trim();
+      if (unit) units[dimension] = unit;
+    }
+    return units;
+  }
+
   // ── recent files ────────────────────────────────────────────────────────
 
   _renderRecent() {
@@ -266,6 +296,7 @@ export class RemoteBrowser {
     $('fb-modal').classList.remove('hidden');
     this._hideSuggestions();
     this._renderRecent();
+    this._renderUnitChoices();
     this._untrap ||= trapFocus($('fb-modal'));
     this._focusFirstRow = true;   // once the listing arrives (_render)
     this._selected = null;
@@ -438,9 +469,16 @@ export class RemoteBrowser {
   /** A new dataset or model arrived, or a load failed: the "Loading…" status
    * of a pending load of that `kind` ('dataset' or 'prediction') is replaced,
    * so a later task end must not touch it. True if one was pending. */
-  settled(kind, ok = true) {
+  settled(kind, ok = true, fp = null) {
     if (this._pending?.kind !== kind) return false;
     if (ok) this._remember(this._pending.path, kind);
+    // The units typed in the loader are named on the dataset that arrived.
+    if (ok && kind === 'dataset' && fp) {
+      for (const [dimension, unit] of Object.entries(this._pending.units || {})) {
+        this._ports.setUnit?.(fp, dimension, unit);
+        saveRecentUnit(dimension, unit);
+      }
+    }
     this._pending = null;
     return true;
   }
@@ -477,7 +515,7 @@ export class RemoteBrowser {
       // LOAD_DATASET reads args=[path, datasetType]; "ase (auto)" auto-detects keys
       this._ports.send(OUT.LOAD_DATASET, {}, [path, typ]);
       this._ports.setStatus(`Loading ${this._selected}…`, 'connected');
-      this._pending = { kind: 'dataset', name: this._selected, path };
+      this._pending = { kind: 'dataset', name: this._selected, path, units: this._unitsTyped() };
     }
     this.close();
   }
