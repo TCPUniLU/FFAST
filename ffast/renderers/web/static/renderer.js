@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from './vendor/three/OrbitControls.js';
 import { mapColorBy } from './colormap.js';
+import { arrowParts } from './arrow_geometry.js';
 
 /** Smallest pick target, in CSS pixels, for atoms drawn tinier than this. */
 const MIN_PICK_TARGET_PX = 4;
@@ -130,6 +131,8 @@ export class MoleculeRenderer {
     this._atomMesh     = null;
     this._bondLines    = null;
     this._forceGroup   = null;
+    this._lastForces = null;       // what the arrows were drawn from, to redraw at another thickness
+    this._arrowThickness = 1;      // Arrow thickness slider, as a factor on the Qt radii
     this._unitCellLines = null;
     this._labelSprites = [];           // THREE.Sprite[] for text labels
     this._selectionMeshes = new Map(); // overlay name → THREE.InstancedMesh
@@ -565,14 +568,28 @@ export class MoleculeRenderer {
     this._clearForces();
     if (!forces.starts || forces.starts.length === 0) return;
 
-    const group = new THREE.Group();
-    // No local scale factor: `build_scene` already resolves arrow vectors to
+    // Solid arrows: one instanced rod and one instanced cone, sized in Å as in
+    // the Qt view (arrow_geometry.js). The length and colour are the scene's:
+    // no local scale factor — `build_scene` already resolves arrow vectors to
     // scene length units (FORCE_LENGTH_FACTOR and the normalising divisors in
-    // ffast/visualization/presentation.py). A renderer-side multiplier on top —
-    // this had 0.5 — made the browser draw every arrow at half the Loupe's
-    // length for the same scene, which is the presentation leak ADR 0052 closed
-    // for colour. The Loupe is the reference: it draws `starts + vectors`.
-    for (let i = 0; i < forces.starts.length; i++) {
+    // ffast/visualization/presentation.py). A renderer-side multiplier on top
+    // once made the browser draw every arrow at half the Loupe's length for the
+    // same scene, which is the presentation leak ADR 0052 closed for colour.
+    this._lastForces = { forces, only_forces };
+    const n = forces.starts.length;
+    const rodGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1);
+    rodGeo.translate(0, 0.5, 0);    // base at the origin, along +Y
+    const coneGeo = new THREE.ConeGeometry(1, 1, 12, 1);
+    coneGeo.translate(0, 0.5, 0);
+    const rods = new THREE.InstancedMesh(rodGeo, new THREE.MeshBasicMaterial(), n);
+    const cones = new THREE.InstancedMesh(coneGeo, new THREE.MeshBasicMaterial(), n);
+    rods.frustumCulled = cones.frustumCulled = false;
+    const dummy = new THREE.Object3D();
+    const up = new THREE.Vector3(0, 1, 0);
+    const dir = new THREE.Vector3(), tip = new THREE.Vector3();
+    const color = new THREE.Color();
+    let count = 0;
+    for (let i = 0; i < n; i++) {
       const [ox, oy, oz] = forces.starts[i];
       const [vx, vy, vz] = forces.vectors[i];
       // One RGBA per arrow is a ForceScene invariant (ADR 0052) — no local default.
@@ -580,13 +597,37 @@ export class MoleculeRenderer {
       const [cr, cg, cb] = colors;
       const len = Math.sqrt(vx*vx + vy*vy + vz*vz);
       if (len < 0.001) continue;
-      const dir = new THREE.Vector3(vx, vy, vz).normalize();
-      const origin = new THREE.Vector3(ox, oy, oz);
-      const arrow = new THREE.ArrowHelper(dir, origin, len, sceneColor(cr, cg, cb), 0.3 * len, 0.15 * len);
-      group.add(arrow);
+      dir.set(vx / len, vy / len, vz / len);
+      const part = arrowParts(len, this._arrowThickness);
+      dummy.quaternion.setFromUnitVectors(up, dir);
+      dummy.position.set(ox, oy, oz);
+      dummy.scale.set(part.shaftRadius, part.shaftLength, part.shaftRadius);
+      dummy.updateMatrix();
+      rods.setMatrixAt(count, dummy.matrix);
+      tip.set(ox, oy, oz).addScaledVector(dir, part.shaftLength);
+      dummy.position.copy(tip);
+      dummy.scale.set(part.headRadius, part.headLength, part.headRadius);
+      dummy.updateMatrix();
+      cones.setMatrixAt(count, dummy.matrix);
+      sceneColor(cr, cg, cb, color);
+      rods.setColorAt(count, color);
+      cones.setColorAt(count, color);
+      count++;
     }
+    rods.count = cones.count = count;
+    const group = new THREE.Group();
+    group.add(rods, cones);
     this._forceGroup = group;
     this._scene.add(group);
+  }
+
+  /** @param {number} percent 100 = the Qt arrow radii */
+  setArrowThickness(percent) {
+    const k = Math.max(0.05, (Number(percent) || 100) / 100);
+    if (k === this._arrowThickness) return;
+    this._arrowThickness = k;
+    const last = this._lastForces;
+    if (last) this._updateForces(last.forces, last.only_forces);
   }
 
   /** @param {import('./protocol.js').UnitCellScene|null} unitCell */
@@ -619,7 +660,13 @@ export class MoleculeRenderer {
     this._cachedAtomIds = null;
   }
   _clearBonds()     { if (this._bondLines)    { this._scene.remove(this._bondLines);    this._bondLines.geometry.dispose();     this._bondLines    = null; } this._lastBonds = null; }
-  _clearForces()    { if (this._forceGroup)   { this._scene.remove(this._forceGroup);                                            this._forceGroup   = null; } }
+  _clearForces() {
+    if (!this._forceGroup) return;
+    this._scene.remove(this._forceGroup);
+    for (const m of this._forceGroup.children) { m.geometry.dispose(); m.material.dispose(); m.dispose?.(); }
+    this._forceGroup = null;
+    this._lastForces = null;
+  }
   _clearUnitCell()  { if (this._unitCellLines){ this._scene.remove(this._unitCellLines); this._unitCellLines.geometry.dispose(); this._unitCellLines = null; } }
 
   _clearLabels() {

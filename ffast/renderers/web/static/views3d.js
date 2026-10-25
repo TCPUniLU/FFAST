@@ -115,7 +115,7 @@ export class ViewRenderers {
     this._renderers = [];
     this._scene = null;
     this._camera = null;
-    this._settings = { background: null, gizmo: false, bondStyle: null };
+    this._settings = { background: null, gizmo: false, bondStyle: null, arrowThickness: null };
     this._syncing = false;
     this.onCameraChange = onCameraChange || null;
     /** The Atom size setting, read by the rich look (renderer.atomScale). */
@@ -153,10 +153,11 @@ export class ViewRenderers {
     if (this._renderers.includes(renderer)) return;
     this._renderers.push(renderer);
     renderer.atomScale = () => this.atomScale();
-    const { background, gizmo, bondStyle } = this._settings;
+    const { background, gizmo, bondStyle, arrowThickness } = this._settings;
     if (background) renderer.setBackgroundColor(background);
     renderer.setGizmoEnabled(gizmo);
     if (bondStyle) renderer.setBondStyle(...bondStyle);
+    if (arrowThickness != null) renderer.setArrowThickness(arrowThickness);
     this._quietly(() => {
       if (this._scene) renderer.applyScene(this._scene);
       if (this._camera) renderer._applyCamera(this._camera);
@@ -204,6 +205,12 @@ export class ViewRenderers {
   setGizmoEnabled(enabled) {
     this._settings.gizmo = !!enabled;
     for (const r of this._renderers) r.setGizmoEnabled(enabled);
+  }
+
+  /** Arrow thickness slider value, 100 = the Qt arrow radii. */
+  setArrowThickness(percent) {
+    this._settings.arrowThickness = percent;
+    for (const r of this._renderers) r.setArrowThickness(percent);
   }
 
   setBondStyle(width, color, chosen = false) {

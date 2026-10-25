@@ -2262,6 +2262,7 @@ export class FFastApp {
    * @param {{show: boolean, onlyForces, modelKey: string|null, length: number, normalised: boolean}} state
    */
   _applyForceVectorsState(state) {
+    this._focusedRenderers()?.setArrowThickness(state.thickness ?? 100);   // drawn here, not by the server
     this._sendToggleFeature('forces', state.show);
     if (state.show) {
       this._sendToggleFeature('only_forces', state.onlyForces)

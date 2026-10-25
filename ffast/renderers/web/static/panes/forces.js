@@ -40,7 +40,7 @@ function showOnlyForcesWarning() {
 /**
  * @param {HTMLElement} sidebarEl
  * @param {{
- *   onApply: (state: {show: boolean, onlyForces: boolean, modelKey: string|null, length: number, normalised: boolean, filterEnabled: boolean, atomIndices: number[]}) => void,
+ *   onApply: (state: {show: boolean, onlyForces: boolean, modelKey: string|null, length: number, normalised: boolean, thickness: number, filterEnabled: boolean, atomIndices: number[]}) => void,
  *   getModels: () => Map<string, {name?: string}>,
  * }} callbacks
  */
@@ -48,7 +48,7 @@ export function createForcesPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Force Vectors');
   sidebarEl.appendChild(el);
 
-  const state = { show: false, onlyForces: false, modelKey: null, length: 10, normalised: true, filterEnabled: false, atomIndices: [] };
+  const state = { show: false, onlyForces: false, modelKey: null, length: 10, normalised: true, thickness: 100, filterEnabled: false, atomIndices: [] };
   const apply = () => callbacks.onApply({ ...state, atomIndices: [...state.atomIndices] });
   let keyByLabel = new Map();   // combo label -> model fingerprint
   let hasPredictions = false;   // Source offers only Ground Truth until one loads (ADR 0055)
@@ -64,12 +64,13 @@ export function createForcesPane(sidebarEl, callbacks) {
 
   const normalisedInput = checkboxRow(body, 'Normalised', state.normalised, (v) => { state.normalised = v; apply(); });
   const lengthInput = sliderRow(body, 'Length', state.length, { min: 1, max: 200 }, (v) => { state.length = v; apply(); });
+  const thicknessInput = sliderRow(body, 'Arrow thickness', state.thickness, { min: 20, max: 300 }, (v) => { state.thickness = v; apply(); });
   const filterInput = checkboxRow(body, 'Filter to selection', state.filterEnabled, (v) => { state.filterEnabled = v; apply(); });
 
   function _syncVisibility() {
     const show = state.show;
     const needsShow = show ? '' : 'Turn on "Show force vectors" first';
-    for (const control of [onlyForces, normalisedInput, lengthInput, filterInput]) setRowNeeds(rowElement(control), needsShow);
+    for (const control of [onlyForces, normalisedInput, lengthInput, thicknessInput, filterInput]) setRowNeeds(rowElement(control), needsShow);
     setRowNeeds(rowElement(sourceSelect), hasPredictions ? needsShow : 'Load a prediction first');
   }
   _syncVisibility();
@@ -85,11 +86,12 @@ export function createForcesPane(sidebarEl, callbacks) {
      * onApply (per-dataset and per-panel restore). */
     setState(show, modelKey, extras = {}) {
       const { length = state.length, normalised = state.normalised, onlyForces: only = state.onlyForces,
-        filterEnabled = state.filterEnabled, atomIndices = state.atomIndices } = extras;
-      Object.assign(state, { show, modelKey, length, normalised, onlyForces: only, filterEnabled,
+        filterEnabled = state.filterEnabled, atomIndices = state.atomIndices, thickness = 100 } = extras;
+      Object.assign(state, { show, modelKey, length, normalised, onlyForces: only, filterEnabled, thickness,
         atomIndices: [...(atomIndices || [])] });
       showInput.checked = show;
       setSliderValue(lengthInput, length);
+      setSliderValue(thicknessInput, thickness);
       normalisedInput.checked = normalised;
       onlyForces.checked = only;
       filterInput.checked = filterEnabled;

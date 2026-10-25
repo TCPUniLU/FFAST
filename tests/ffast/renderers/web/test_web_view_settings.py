@@ -95,7 +95,7 @@ def test_defaults_are_todays_defaults(results):
         "export": {"background": "#000000"},
         "align": {"kabsch": False, "heavyOnly": True, "atomAlign": False, "idxInput": "", "indices": []},
         "forces": {"show": False, "modelKey": None, "length": 10, "normalised": True,
-                   "onlyForces": False, "filterEnabled": False, "atomIndices": []},
+                   "onlyForces": False, "thickness": 100, "filterEnabled": False, "atomIndices": []},
         "view": {"originCenterOfMass": True, "videoFPS": 30, "videoSkipFrames": 0},
     }
 

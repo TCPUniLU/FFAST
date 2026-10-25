@@ -606,6 +606,9 @@ CASES = {
     "theme_line": "th.plotTheme().line",
     "theme_grid_follows_line": "pn.baseLayout().xaxis.gridcolor === th.plotTheme().line",
     "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
+    "arrow_long": "ar.arrowParts(2, 1)",
+    "arrow_thick": "ar.arrowParts(2, 2)",
+    "arrow_short": "ar.arrowParts(0.125, 1)",
     "contrast_ink": "[pn.contrastInk('#f0e442'), pn.contrastInk('#0072b2'), pn.contrastInk('#ffffff'), pn.contrastInk('#000000')]",
     "theme_hex_alpha": "th.hexAlpha('#56b4e9', 0.15)",
 
@@ -848,6 +851,7 @@ def results():
         f"  const so = await import('{origin}/session_ops.js');\n"
         f"  const cm = await import('{origin}/colormap.js');\n"
         f"  const pn = await import('{origin}/panels.js');\n"
+        f"  const ar = await import('{origin}/arrow_geometry.js');\n"
         f"  const th = await import('{origin}/theme.js');\n"
         f"  const ic = await import('{origin}/icons.js');\n"
         f"  const fg = await import('{origin}/figure.js');\n"
@@ -1884,3 +1888,14 @@ def test_the_colour_legend_limits_are_in_scientific_notation(results):
 def test_element_button_text_is_black_or_white_by_contrast(results):
     # light yellow → black, dark blue → white
     assert results["contrast_ink"] == ["#000000", "#ffffff", "#000000", "#ffffff"]
+
+
+def test_force_arrows_have_the_qt_sizes_and_a_short_one_a_smaller_head(results):
+    assert results["arrow_long"] == {
+        "shaftLength": 1.75, "headLength": 0.25, "shaftRadius": 0.05, "headRadius": 0.12}
+    assert results["arrow_thick"]["shaftRadius"] == 0.1
+    assert results["arrow_thick"]["headRadius"] == pytest.approx(0.24)
+    short = results["arrow_short"]    # half a head long: half a head, no shaft
+    assert short["shaftLength"] == 0 and short["headLength"] == 0.125
+    assert short["headRadius"] == pytest.approx(0.06) and short["shaftRadius"] == 0.05
+

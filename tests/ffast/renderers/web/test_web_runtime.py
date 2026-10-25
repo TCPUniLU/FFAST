@@ -3857,8 +3857,9 @@ async def test_web_renderer_draws_the_colours_the_scene_specifies(ffast_web_serv
                     R._atomMesh.getColorAt(i, c);
                     return [hex(rgb), c.getHexString()];
                   });
-                  const arrow = R._forceGroup.children[0];
-                  return { atoms, arrow: arrow.cone.material.color.getHexString() };
+                  const cones = R._forceGroup.children[1];   // [rods, cones], one colour per instance
+                  cones.getColorAt(0, c);
+                  return { atoms, arrow: c.getHexString() };
                 }"""
             )
         finally:
@@ -3868,6 +3869,47 @@ async def test_web_renderer_draws_the_colours_the_scene_specifies(ffast_web_serv
     assert not mismatched, f"atoms drawn in a different colour than specified: {mismatched[:5]}"
     # presentation.FORCE_ARROW_COLOR = (0.9, 0.4, 0.1)
     assert drawn["arrow"] == "e6661a"
+
+
+async def test_web_arrow_thickness_slider_scales_the_arrow_radii(ffast_web_server):
+    """Force arrows are solid rods and cones sized in Å (shaft 0.05, head 0.12);
+    the Force Vectors pane's Arrow thickness scales both radii, and only them."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    read = """() => {
+      const R = window.ffastApp.renderer;
+      const [rods, cones] = R._forceGroup.children;
+      const m = new R._atomMesh.matrixWorld.constructor();
+      const scale = (mesh) => { mesh.getMatrixAt(0, m);
+        return [Math.hypot(m.elements[0], m.elements[1], m.elements[2]),
+                Math.hypot(m.elements[4], m.elements[5], m.elements[6])]; };
+      return { rod: scale(rods), cone: scale(cones), count: rods.count };
+    }"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_section(page, "Force Vectors")
+            pane = ".pane[data-pane='Force Vectors']"
+            await page.locator(pane + " .ctl-row[data-label='Show force vectors'] input").check()
+            await page.wait_for_function("() => window.ffastApp.renderer._forceGroup !== null")
+            before = await page.evaluate(read)
+            assert before["count"] > 0
+            assert before["rod"][0] == pytest.approx(0.05, abs=1e-4)
+            assert before["cone"][0] == pytest.approx(0.12, abs=1e-4)
+            slider = page.locator(pane + " .ctl-row[data-label='Arrow thickness'] input")
+            await slider.evaluate("(el) => { el.value = '200'; el.dispatchEvent(new Event('input')); }")
+            await page.wait_for_function(f"() => Math.abs(({read})().cone[0] - 0.24) < 1e-4")
+            after = await page.evaluate(read)
+            assert after["rod"][0] == pytest.approx(0.10, abs=1e-4)
+            assert after["cone"][0] == pytest.approx(0.24, abs=1e-4)
+            assert after["rod"][1] == pytest.approx(before["rod"][1], rel=1e-6)   # lengths are unchanged
+        finally:
+            await browser.close()
 
 
 async def test_web_pick_highlight_does_not_rebuild_a_shader(ffast_web_server):
