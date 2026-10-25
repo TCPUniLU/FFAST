@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from pathlib import Path
 
@@ -47,6 +48,44 @@ pytestmark = [
         reason=f"example prediction not found at {PREDICTION_PATH}",
     ),
 ]
+
+
+TRACE_DIR = REPO_ROOT / "temp" / "playwright-traces"
+
+
+@contextlib.asynccontextmanager
+async def _keep_trace_on_failure(page, name: str):
+    """For a test that fails only now and then (docs/issues/0056-01): when it
+    fails, keep a Playwright trace (every step, with the page as it looked)
+    and a text file with the whole error, its full call log, the browser
+    console, and whether the page still answered.
+
+    Open the trace with ``playwright show-trace <file>.zip``.
+    """
+    console: list[str] = []
+    page.on("console", lambda m: console.append(f"[{m.type}] {m.text}"))
+    page.on("pageerror", lambda e: console.append(f"[pageerror] {e}"))
+    await page.context.tracing.start(screenshots=True, snapshots=True)
+    try:
+        yield
+    except BaseException as exc:
+        TRACE_DIR.mkdir(parents=True, exist_ok=True)
+        stem = TRACE_DIR / f"{name}-{time.strftime('%Y%m%d-%H%M%S')}"
+        try:
+            await asyncio.wait_for(page.evaluate("1"), 5)
+            answers = "the page answered within 5 s"
+        except Exception as probe:
+            answers = f"the page did NOT answer within 5 s ({type(probe).__name__})"
+        stem.with_suffix(".txt").write_text(
+            f"{type(exc).__name__}: {exc}\n\nAfter the failure, {answers}.\n\n"
+            "Browser console:\n" + "\n".join(console) + "\n"
+        )
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(page.context.tracing.stop(path=stem.with_suffix(".zip")), 30)
+        print(f"\nPlaywright trace kept: {stem}.zip and {stem}.txt")
+        raise
+    else:
+        await page.context.tracing.stop()
 
 
 def _free_port() -> int:
@@ -2996,32 +3035,33 @@ async def test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_scree
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1500, "height": 850})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
-                await _open_analysis_tab(page, "Compare")
-                await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
-                await page.locator("#quick-styles button", has_text="Force error").click()
-                await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value(
-                    "Force Difference")
+                async with _keep_trace_on_failure(page, "edit-mode-3d-panel"):
+                    await _open_loupe(page, ws_port, web_port, dataset_fp)
+                    await _open_analysis_tab(page, "Compare")
+                    await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+                    await page.locator("#quick-styles button", has_text="Force error").click()
+                    await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value(
+                        "Force Difference")
 
-                await page.locator("#tab-edit-btn").click()
-                await page.locator(_CHROME).nth(1).locator("[data-edit=panel3d]").click()
-                dialog = page.locator(".edit-modal")
-                await dialog.locator("select[data-field=view]").select_option("independent")
-                await dialog.locator("input[data-field=link_camera]").uncheck()
-                await dialog.locator("[data-edit=use-current]").click()
-                # the Force error style colours by Force Difference's first per-atom setting
-                await expect(dialog.locator("[data-field=start]")).to_contain_text(
-                    "colour_by = ffast.force_difference[atom+structure;component;mae]")
-                await dialog.get_by_role("button", name="Apply").click()
-                await page.locator("[data-edit=save]").click()
-                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                    await page.locator("#tab-edit-btn").click()
+                    await page.locator(_CHROME).nth(1).locator("[data-edit=panel3d]").click()
+                    dialog = page.locator(".edit-modal")
+                    await dialog.locator("select[data-field=view]").select_option("independent")
+                    await dialog.locator("input[data-field=link_camera]").uncheck()
+                    await dialog.locator("[data-edit=use-current]").click()
+                    # the Force error style colours by Force Difference's first per-atom setting
+                    await expect(dialog.locator("[data-field=start]")).to_contain_text(
+                        "colour_by = ffast.force_difference[atom+structure;component;mae]")
+                    await dialog.get_by_role("button", name="Apply").click()
+                    await page.locator("[data-edit=save]").click()
+                    await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
 
-                saved = tomllib.loads((tabs_dir / "compare.toml").read_text())
-                panel = saved["tabs"][0]["panels"][1]
-                assert panel["view"] == "independent" and panel["link_camera"] is False
-                assert panel["start"]["colour_by"] == "ffast.force_difference[atom+structure;component;mae]"
-                # force_error is the default colour map, so the start leaves it out
-                assert "colormap" not in panel["start"]
+                    saved = tomllib.loads((tabs_dir / "compare.toml").read_text())
+                    panel = saved["tabs"][0]["panels"][1]
+                    assert panel["view"] == "independent" and panel["link_camera"] is False
+                    assert panel["start"]["colour_by"] == "ffast.force_difference[atom+structure;component;mae]"
+                    # force_error is the default colour map, so the start leaves it out
+                    assert "colormap" not in panel["start"]
             finally:
                 await browser.close()
 
@@ -4566,21 +4606,22 @@ async def test_web_extract_creates_subset_dataset(ffast_web_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
-            await expect(page.locator("#dataset-list .obj-row")).to_have_count(1)
+            async with _keep_trace_on_failure(page, "extract-subset"):
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await expect(page.locator("#dataset-list .obj-row")).to_have_count(1)
 
-            await _open_section(page, "Extract Subset")
-            indices = page.locator(
-                ".pane[data-pane='Extract Subset'] .ctl-row[data-label='Indices'] input"
-            )
-            await indices.fill("0 1 2")
-            await page.locator(
-                ".pane[data-pane='Extract Subset'] button", has_text="Extract as Subset Dataset"
-            ).click()
+                await _open_section(page, "Extract Subset")
+                indices = page.locator(
+                    ".pane[data-pane='Extract Subset'] .ctl-row[data-label='Indices'] input"
+                )
+                await indices.fill("0 1 2")
+                await page.locator(
+                    ".pane[data-pane='Extract Subset'] button", has_text="Extract as Subset Dataset"
+                ).click()
 
-            # The server materialises an AtomFilteredDataset and announces it via
-            # REMOTE_DATASET_META → a second row appears in the dataset list.
-            await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
+                # The server materialises an AtomFilteredDataset and announces it via
+                # REMOTE_DATASET_META → a second row appears in the dataset list.
+                await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
         finally:
             await browser.close()
 
