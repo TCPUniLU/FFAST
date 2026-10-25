@@ -14,6 +14,36 @@ validated by pattern rather than frozenset membership — see ``is_valid_ref``.
 """
 
 import re
+from dataclasses import dataclass
+
+from ffast.metrics import dims
+
+
+@dataclass(frozen=True)
+class RawInput:
+    """Canonical formula-facing metadata for one fixed raw metric input."""
+
+    ref: str
+    shape: tuple
+    label: str
+    variable: str
+    side: str
+
+
+RAW_INPUTS = (
+    RawInput("reference.energies", (dims.N_frames,), "Energy", "E",
+             "reference"),
+    RawInput("reference.forces", (dims.N_atoms, dims.xyz), "Forces", "F",
+             "reference"),
+    RawInput("reference.positions", (dims.N_atoms, dims.xyz), "Positions", "R",
+             "reference"),
+    RawInput("reference.masses", (dims.N_atoms,), "Masses", "m", "reference"),
+    RawInput("prediction.energies", (dims.N_frames,), "Energy", "E",
+             "prediction"),
+    RawInput("prediction.forces", (dims.N_atoms, dims.xyz), "Forces", "F",
+             "prediction"),
+)
+RAW_INPUT_BY_REF = {item.ref: item for item in RAW_INPUTS}
 
 reference_energies  = "reference.energies"
 reference_forces    = "reference.forces"

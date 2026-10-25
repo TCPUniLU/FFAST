@@ -940,6 +940,12 @@ class DatasetView(DatasetLoader):
         within = np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
         return np.repeat(starts, counts) + within
 
+    def _parentRows(self, frame, atoms):
+        """The parent's frame number and atom rows for one frame's atoms."""
+        if self.atoms is not None:
+            atoms = self._atomIdx()[atoms]
+        return int(self._parentIndex(int(frame))), atoms
+
     # ── per frame ──
 
     def getN(self):

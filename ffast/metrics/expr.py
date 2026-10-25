@@ -58,7 +58,7 @@ import ast
 import numpy as np
 
 from ffast.metrics import dims, units
-from ffast.metrics.inputs import parse_field_ref
+from ffast.metrics.inputs import RAW_INPUT_BY_REF, parse_field_ref
 from ffast.metrics.models import WithWarnings
 from ffast.metrics.registry import default_registry
 from ffast.metrics.segments import framesOrOne, segmentExtremes, segmentSums
@@ -163,14 +163,7 @@ def ignored_warning(count: int, frames) -> str:
 # None), and ``reference.elements`` (integer atomic numbers) is a categorical
 # label, not a continuous quantity — all are intentionally absent and rejected as
 # expr variables in v1.
-_RAW_REF_SHAPE = {
-    "reference.energies":  (dims.N_frames,),
-    "prediction.energies": (dims.N_frames,),
-    "reference.forces":    (dims.N_atoms, dims.xyz),
-    "prediction.forces":   (dims.N_atoms, dims.xyz),
-    "reference.positions": (dims.N_atoms, dims.xyz),
-    "reference.masses":    (dims.N_atoms,),
-}
+_RAW_REF_SHAPE = {ref: item.shape for ref, item in RAW_INPUT_BY_REF.items()}
 
 
 # Part dims → (size of each part axis). A shape ends in at most one part dim;

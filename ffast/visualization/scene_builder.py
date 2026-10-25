@@ -59,6 +59,7 @@ def build_scene(
     executor: Any | None = None,
     _legacy_forces: bool = False,
     get_metric: Callable | None = None,
+    prediction_fields: dict | None = None,
 ) -> RenderScene:
     """Derive a RenderScene from VisualizationState.
 
@@ -175,8 +176,11 @@ def build_scene(
     color_values = None
     color_meta = None
     from ffast.visualization.color_values import resolve_atom_color_values
-    _color_src = resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction,
-                                           executor=executor, get_metric=get_metric)
+    _color_src = resolve_atom_color_values(
+        state, ds, idx, raw_positions, z, get_prediction,
+        executor=executor, get_metric=get_metric,
+        prediction_fields=prediction_fields,
+    )
     if _color_src is not None:
         color_values, _clabel, _cunit, _span = _color_src
         cparams = state.parameters.get("ffast.atom_color", {})

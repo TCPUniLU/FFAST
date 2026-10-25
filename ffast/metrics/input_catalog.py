@@ -14,18 +14,15 @@ from __future__ import annotations
 
 import re
 
+from ffast.metrics import dims
 from ffast.metrics.boxes import parse_box_id
 from ffast.metrics.dims import shape_to_str
+from ffast.metrics.inputs import RAW_INPUT_BY_REF, RAW_INPUTS
 
-# (ref suffix, short name part, label, shape). Only the continuous raw inputs an
-# Expression Metric accepts (ffast.metrics.expr._RAW_REF_SHAPE).
-_RAW = (
-    ("energies", "E", "Energy", "N_frames"),
-    ("forces", "F", "Forces", "(N_atoms, xyz)"),
-    ("positions", "R", "Positions", "(N_atoms, xyz)"),
-    ("masses", "m", "Masses", "N_atoms"),
-)
-_REFERENCE_ONLY = {"positions", "masses"}
+# Raw inputs with no prediction counterpart (positions, masses).
+_REFERENCE_ONLY = {item.ref for item in RAW_INPUTS if item.side == "reference"
+                   and item.ref.replace("reference.", "prediction.", 1)
+                   not in RAW_INPUT_BY_REF}
 
 
 def _ident(text: str) -> str:
@@ -69,19 +66,26 @@ def build_input_catalog(registry, dataset=None, model=None, prediction_fields=No
     variable name to insert; the editor makes it unique."""
     out: list[dict] = []
 
-    for suffix, short, label, shape in _RAW:
-        out.append(_entry(f"reference.{suffix}", "Reference", f"ref_{short}", label, shape,
-                          only="reference" if suffix in _REFERENCE_ONLY else None))
+    for item in RAW_INPUTS:
+        if item.side != "reference":
+            continue
+        ref = item.ref
+        out.append(_entry(ref, "Reference", f"ref_{item.variable}", item.label,
+                          shape_to_str(item.shape),
+                          only=("reference" if ref in _REFERENCE_ONLY
+                                else None)))
     if model is not None:
-        for suffix, short, label, shape in _RAW:
-            if suffix in _REFERENCE_ONLY:
+        for item in RAW_INPUTS:
+            if item.side != "prediction":
                 continue
-            out.append(_entry(f"prediction.{suffix}", "Prediction", f"pred_{short}", label, shape))
+            out.append(_entry(item.ref, "Prediction",
+                              f"pred_{item.variable}", item.label,
+                              shape_to_str(item.shape)))
 
     ref_frame, ref_atoms = _file_keys(dataset) if dataset is not None else ([], [])
     pred_frame, pred_atoms = _prediction_keys(prediction_fields, model, dataset)
     for kind, shape, ref_keys, pred_keys in (
-        ("info", "N_frames", ref_frame, pred_frame),
+        ("info", shape_to_str((dims.N_frames,)), ref_frame, pred_frame),
         ("atoms", "N_atoms", ref_atoms, pred_atoms),
     ):
         for key in sorted(set(ref_keys) | set(pred_keys)):

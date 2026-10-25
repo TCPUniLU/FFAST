@@ -965,6 +965,8 @@ class ServerSession:
                 get_forces=self.get_forces,
                 executor=self.env.data.metricExecutor,
                 get_metric=self.get_metric,
+                prediction_fields=getattr(
+                    self.env.data, "predictionFields", {}),
             )
         except Exception as exc:
             self._log_scene_degrade("OPEN_VIEW", view_id, exc)
@@ -1033,6 +1035,8 @@ class ServerSession:
                     build_scene, view_state, self.env.datasets.get,
                     self.get_prediction, self.get_forces,
                     self.env.data.metricExecutor, get_metric=self.get_metric,
+                    prediction_fields=getattr(
+                        self.env.data, "predictionFields", {}),
                 )
             except Exception as exc:
                 self._log_scene_degrade("VIEW_COMMAND", cmd.view_id, exc)

@@ -144,6 +144,7 @@ def build_loupe_scene_snapshot(
     picked_indices: list[int] | None = None,
     version: int = 0,
     executor: Any | None = None,
+    prediction_fields: dict | None = None,
 ) -> SceneSnapshot:
     """Build the scene-adapter snapshot Loupe needs when no server is attached."""
     state = VisualizationState(
@@ -224,6 +225,7 @@ def build_loupe_scene_snapshot(
     scene = build_scene(
         state, get_dataset, get_prediction, get_forces=get_forces,
         executor=executor, _legacy_forces=False,
+        prediction_fields=prediction_fields,
     )
     return SceneSnapshot(scene=scene)
 

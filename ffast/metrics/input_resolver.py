@@ -174,19 +174,33 @@ class InputResolver:
         Prediction Dataset Fields are eagerly extracted at prediction-load time
         into ``DataService.predictionFields[(model_fp, dataset_fp)]`` (the
         prediction's ASE source is otherwise discarded — ADR 0023). Real-model
-        predictions carry no such entry → ``None``. For a Sub/Atom-filtered
-        dataset the fields were stored against the parent, so walk up to it.
+        predictions carry no such entry → ``None``. A DatasetView may read a
+        parent's stored fields; apply each view's frame and atom mapping before
+        returning the values.
         """
+        from ffast.loaders.dataset import DatasetView
+
         store = getattr(self.env, "predictionFields", None)
         if not store or model is None or dataset is None:
             return None
         model_fp = getattr(model, "fingerprint", None)
         ds = dataset
+        views = []
         while ds is not None:
             by_kind = store.get((model_fp, getattr(ds, "fingerprint", None)))
             if by_kind is not None:
                 value = by_kind.get(kind, {}).get(key)
-                return _flatPerAtom(value, axes=0) if kind == "atoms" else _flatten(value)
+                if value is None:
+                    return None
+                values = (_flatPerAtom(value, axes=0) if kind == "atoms"
+                          else _flatten(value))
+                for view in reversed(views):
+                    indices = (view._flatIndex() if kind == "atoms"
+                               else view._parentFrames())
+                    values = np.asarray(values)[indices]
+                return values
+            if isinstance(ds, DatasetView):
+                views.append(ds)
             ds = getattr(ds, "parent", None)
         return None
 

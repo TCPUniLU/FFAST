@@ -6,6 +6,7 @@ import numpy as np
 
 import ffast.metrics.builtin  # noqa: F401
 from ffast.metrics import dims
+from ffast.metrics.dims import shape_to_str
 from ffast.metrics.input_catalog import build_input_catalog
 from ffast.metrics.registry import MetricRegistry, default_registry
 from ffast.protocol import control
@@ -91,6 +92,95 @@ def test_suggested_names_are_short_and_valid_variable_names():
     assert entries["reference.info.total charge"] == "ref_total_charge"
     assert entries["lab.e"] == "e"
     assert all(n.isidentifier() for n in entries.values())
+
+
+def test_formula_raw_input_definitions_match_catalog_and_expression_shapes():
+    from ffast.metrics.expr import _RAW_REF_SHAPE
+    from ffast.metrics.inputs import (
+        ALL_VALID_REFS, RAW_INPUTS, parse_field_ref,
+    )
+
+    definitions = {entry.ref: entry for entry in RAW_INPUTS}
+    assert set(definitions) == set(_RAW_REF_SHAPE)
+    catalog = {entry["ref"]: entry for entry in build_input_catalog(
+        _registry(), _Dataset(), model=SimpleNamespace(fingerprint="m1"))}
+    for ref, definition in definitions.items():
+        assert catalog[ref]["label"] == definition.label
+        assert catalog[ref]["shape"] == shape_to_str(definition.shape)
+    assert {"reference.stress", "reference.elements",
+            "selection.indices"} <= ALL_VALID_REFS
+    assert parse_field_ref("reference.atoms.extra") == (
+        "reference", "atoms", "extra",
+    )
+
+
+def test_per_atom_inputs_agree_across_whole_dataset_and_frame_adapters():
+    from ffast.metrics.input_resolver import InputResolver
+    from ffast.metrics.inputs import RAW_INPUTS
+    from ffast.visualization.color_values import _resolve_symbolic_ref
+
+    class Dataset:
+        fingerprint = "ds1"
+        positions = np.arange(12, dtype=float).reshape(2, 2, 3)
+        forces = positions + 1
+        charges = np.array([[1., 2.], [3., 4.]])
+        elements = np.array([1, 8])
+
+        def getN(self):
+            return 2
+
+        def getOffsets(self):
+            return np.array([0, 2, 4])
+
+        def getCoordinates(self, idx):
+            return self.positions[idx]
+
+        def getAllCoordinates(self):
+            return self.positions.reshape(-1, 3)
+
+        def getForces(self, idx):
+            return self.forces[idx]
+
+        def getAllForces(self):
+            return self.forces.reshape(-1, 3)
+
+        def getElements(self, idx):
+            return self.elements
+
+        def getAllElements(self):
+            return np.tile(self.elements, 2)
+
+        def getAtomField(self, key, indices=None):
+            if key != "q":
+                return None
+            return self.charges if indices is None else self.charges[indices]
+
+    dataset = Dataset()
+    model = SimpleNamespace(fingerprint="m1")
+    predicted_forces = dataset.forces + 5
+    fields = {("m1", "ds1"): {
+        "atoms": {"q": np.array([[10., 20.], [30., 40.]])},
+        "info": {},
+    }}
+    entity = SimpleNamespace(get=lambda _field: predicted_forces)
+    env = SimpleNamespace(
+        predictionFields=fields,
+        getData=lambda _key, **_kwargs: entity,
+    )
+    resolver = InputResolver(env)
+    prediction = lambda *_args: SimpleNamespace(forces=predicted_forces)
+    state = SimpleNamespace(dataset_ref="ds1")
+    raw_per_atom = [item.ref for item in RAW_INPUTS
+                    if item.shape[0] == dims.N_atoms]
+    refs = raw_per_atom + ["reference.atoms.q", "prediction.atoms.q"]
+
+    for ref in refs:
+        whole = resolver.resolve(ref, model=model, dataset=dataset)
+        frame = _resolve_symbolic_ref(
+            ref, dataset, 1, dataset.getCoordinates(1), dataset.getElements(1),
+            prediction, state, model.fingerprint, fields,
+        )
+        np.testing.assert_allclose(frame, np.asarray(whole)[2:4], err_msg=ref)
 
 
 def test_metrics_are_listed_without_derived_transforms():

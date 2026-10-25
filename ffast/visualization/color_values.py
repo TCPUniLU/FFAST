@@ -55,7 +55,76 @@ class _FrameInputSource(InputSource):
             return True, None
 
 
-def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state, prediction_ref):
+def _frame_layers(ds, idx):
+    """``(dataset, frame, atom rows)`` of the displayed frame in ``ds`` and in
+    each dataset it is cut from, nearest first (a view's parent may be a view)."""
+    from ffast.loaders.dataset import DatasetView
+
+    frame, atoms = int(idx), np.arange(len(ds.getElements(idx)), dtype=np.int64)
+    while True:
+        yield ds, frame, atoms
+        if not isinstance(ds, DatasetView):
+            return
+        frame, atoms = ds._parentRows(frame, atoms)
+        ds = ds.parent
+
+
+def _stored_prediction_field(store, side_dataset, idx, model_fp, kind, key):
+    """Read a stored field at its dataset, mapping through any view layers."""
+    if side_dataset is None:
+        return None
+    fields = (store if isinstance(store, dict)
+              else getattr(store, "predictionFields", {}))
+    for current, frame, atom_rows in _frame_layers(side_dataset, idx):
+        by_kind = fields.get((model_fp, getattr(current, "fingerprint", None)))
+        if by_kind is not None:
+            value = by_kind.get(kind, {}).get(key)
+            if value is None:
+                return None
+            if kind == "info":
+                return np.asarray(value[frame])
+            if isinstance(value, list):
+                return np.asarray(value[frame])[atom_rows]
+            values = np.asarray(value)
+            if values.ndim >= 2 and values.shape[0] == current.getN():
+                return values[frame, atom_rows]
+            offsets = np.asarray(current.getOffsets())
+            end = int(offsets[frame + 1])
+            if values.shape[0] < end:
+                return None
+            return values[int(offsets[frame]) + atom_rows]
+    return None
+
+
+def _prediction_frame_value(
+    get_prediction, ds, idx, model_fp, field, dataset_fp=None,
+):
+    """Use a displayed-view prediction if cached; otherwise read its parent."""
+    direct = get_prediction(dataset_fp, model_fp) if dataset_fp else None
+    if direct is not None:
+        frames = getattr(direct, field, None)
+        if frames is not None:
+            values = np.asarray(frames[idx])
+            if field != "forces" or len(values) == len(ds.getElements(idx)):
+                return values
+    *_, (root, parent_frame, atom_rows) = _frame_layers(ds, idx)
+    root_fp = getattr(root, "fingerprint", None) or dataset_fp
+    pred = get_prediction(root_fp, model_fp)
+    if pred is None:
+        return None
+    frames = getattr(pred, field, None)
+    if frames is None:
+        return None
+    values = np.asarray(frames[parent_frame])
+    if field == "forces":
+        values = values[atom_rows]
+    return values
+
+
+def _resolve_symbolic_ref(
+    ref, ds, idx, raw_positions, z, get_prediction, state, prediction_ref,
+    prediction_fields=None,
+):
     """Map a metric's symbolic input ref to a current-frame array (ADR 0016).
 
     ``prediction_ref`` is the resolved prediction for *this* coloring (the
@@ -63,8 +132,20 @@ def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state,
     the view's global ``state.prediction_ref`` — same override pattern as
     ``ffast.force_arrows``, scene_builder.py's "Option B").
     """
-    if ref == "frame.positions":
+    if ref in ("frame.positions", "reference.positions"):
         return raw_positions
+    if ref == "reference.energies":
+        return np.asarray(ds.getEnergies(idx), dtype=np.float64)
+    if ref == "prediction.energies":
+        if get_prediction is None or not prediction_ref:
+            raise KeyError(ref)
+        value = _prediction_frame_value(
+            get_prediction, ds, idx, prediction_ref, "energies",
+            state.dataset_ref,
+        )
+        if value is None:
+            raise KeyError(ref)
+        return np.asarray(value, dtype=np.float64)
     if ref == "offsets":
         # One frame: its atoms start at 0 (ADR 0058 step 6, flat inputs).
         return np.array([0, len(raw_positions)])
@@ -75,10 +156,13 @@ def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state,
     if ref == "prediction.forces":
         if get_prediction is None or not prediction_ref:
             raise KeyError(ref)
-        pred = get_prediction(state.dataset_ref, prediction_ref)
-        if pred is None:
+        value = _prediction_frame_value(
+            get_prediction, ds, idx, prediction_ref, "forces",
+            state.dataset_ref,
+        )
+        if value is None:
             raise KeyError(ref)
-        return np.asarray(pred.forces[idx], dtype=np.float64)
+        return np.asarray(value, dtype=np.float64)
     if ref == "reference.masses":
         if hasattr(ds, "getMasses"):
             return np.asarray(ds.getMasses(), dtype=np.float64)
@@ -94,16 +178,28 @@ def _resolve_symbolic_ref(ref, ds, idx, raw_positions, z, get_prediction, state,
                 "mass fallback failed: %s", exc,
             )
             raise KeyError(ref)
-    # Dataset Fields (ADR 0023). Only a reference Atom Field is per-atom and thus
-    # colorable; Frame Fields are per-frame (shape N_frames, filtered out of the
-    # color picker) and prediction fields are not sourced in this path → fall
-    # back to element colors via KeyError.
+    # Dataset Fields (ADR 0023). Frame fields are available to formulas that
+    # can combine them; only atom-shaped results pass the colour shape check.
     from ffast.metrics.inputs import parse_field_ref
     parsed = parse_field_ref(ref)
     if parsed is not None:
         side, kind, key = parsed
         if side == "reference" and kind == "atoms":
             val = ds.getAtomField(key, indices=idx)
+            if val is None:
+                raise KeyError(ref)
+            return np.asarray(val, dtype=np.float64)
+        if side == "reference" and kind == "info":
+            val = ds.getFrameField(key, indices=idx)
+            if val is None:
+                raise KeyError(ref)
+            return np.asarray(val, dtype=np.float64)
+        if side == "prediction":
+            if not prediction_ref:
+                raise KeyError(ref)
+            val = _stored_prediction_field(
+                prediction_fields, ds, idx, prediction_ref, kind, key,
+            )
             if val is None:
                 raise KeyError(ref)
             return np.asarray(val, dtype=np.float64)
@@ -174,7 +270,7 @@ def _whole_dataset_values(get_metric, metric_id, params, shape, ds, idx, z, data
 
 
 def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, executor=None,
-                              get_metric=None):
+                              get_metric=None, prediction_fields=None):
     """Per-atom values for the active atom-color source, or None for element.
 
     ``executor`` is the injected ``MetricExecutor`` (ADR 0046) — the server
@@ -263,7 +359,8 @@ def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, 
                 )
                 return None
             resolve = lambda ref: _resolve_symbolic_ref(
-                ref, ds, idx, raw_positions, z, get_prediction, state, prediction_ref
+                ref, ds, idx, raw_positions, z, get_prediction, state,
+                prediction_ref, prediction_fields,
             )
             result = executor.run(metric_id, _FrameInputSource(resolve), params)
             if isinstance(result, MetricFailure):
