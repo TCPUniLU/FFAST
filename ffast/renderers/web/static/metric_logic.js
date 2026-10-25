@@ -393,11 +393,23 @@ function closest(want, allowed) {
   return best ? { ...best, keep: [...best.keep] } : null;
 }
 
-/** The setting a click on keep box `box` gives, or null when the boxes grey it. */
+/** The setting a click on keep box `box` gives, or null when the boxes grey it.
+ * atom and element are an either-or pair (no setting keeps both): ticking one
+ * while the other is ticked unticks the other, and clicking the ticked one
+ * when nothing else would be left to give a value per row switches to the
+ * other. */
 export function toggleBox(setting, box, allowed) {
-  const keep = setting.keep.includes(box) ? setting.keep.filter((k) => k !== box) : [...setting.keep, box];
   const order = KEEP_BOXES.map(([k]) => k);
-  return closest({ ...setting, keep: keep.sort((a, b) => order.indexOf(a) - order.indexOf(b)) }, allowed);
+  const sorted = (keep) => keep.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+  const keep = setting.keep.includes(box) ? setting.keep.filter((k) => k !== box) : [...setting.keep, box];
+  const plain = closest({ ...setting, keep: sorted(keep) }, allowed);
+  if (plain || (box !== 'atom' && box !== 'element')) return plain;
+  const other = box === 'atom' ? 'element' : 'atom';
+  const swapped = setting.keep.includes(box)
+    ? [...setting.keep.filter((k) => k !== box), other]    // the ticked one, with nothing else to give a value
+    : [...setting.keep.filter((k) => k !== other), box];   // ticked beside the other
+  return setting.keep.includes(box) && setting.keep.includes(other)
+    ? null : closest({ ...setting, keep: sorted(swapped) }, allowed);
 }
 
 /** Whether keep box `box` can be clicked. */
@@ -408,8 +420,6 @@ export function boxAvailable(setting, box, allowed) {
 /** Why a box is greyed, in words. */
 export function boxHint(setting, box, hints) {
   if (hints[box]) return hints[box];
-  if (box === 'element' && setting.keep.includes('atom')) return 'element is greyed when atom is ticked';
-  if (box === 'atom' && setting.keep.includes('element')) return 'atom is greyed when element is ticked';
   if (hints.atom_only && (box === 'structure' || box === 'atom')) return hints.atom_only;
   return 'not with the boxes ticked now';
 }

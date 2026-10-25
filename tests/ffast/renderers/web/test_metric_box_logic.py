@@ -35,8 +35,16 @@ CASES = {
     "untick_atom": f"ml.toggleBox({{keep: ['atom', 'structure'], combine: 'length', statistic: null}}, 'atom', {FORCE})",
     # Combine and Statistic carry over when they still apply
     "per_frame_to_element": f"ml.toggleBox({{keep: ['structure'], combine: 'length', statistic: 'rmse'}}, 'element', {FORCE})",
-    "element_off_with_atom": f"ml.boxAvailable({{keep: ['atom', 'structure'], combine: 'length', statistic: null}}, 'element', {FORCE})",
-    "element_hint_with_atom": "ml.boxHint({keep: ['atom'], combine: 'length', statistic: 'mae'}, 'element', {})",
+    # element and atom swap: ticking one unticks the other
+    "element_swaps_atom": f"ml.toggleBox({{keep: ['atom', 'structure'], combine: 'length', statistic: null}}, 'element', {FORCE})",
+    "atom_swaps_element": f"ml.toggleBox({{keep: ['structure', 'element'], combine: 'length', statistic: 'rmse'}}, 'atom', {FORCE})",
+    # Colour by takes only per-atom settings; from its default atom + structure every box can be clicked
+    "colour_clickable": (
+        f"(() => {{ const ok = ml.colourSettings({FORCE});"
+        f" const s = {{keep: ['atom', 'structure'], combine: 'component', statistic: 'mae'}};"
+        f" return Object.fromEntries(['atom', 'element', 'structure', 'xyz'].map((b) => [b, ml.boxAvailable(s, b, ok)])); }})()"),
+    "colour_atom_click": (
+        f"ml.toggleBox({{keep: ['atom', 'structure'], combine: 'component', statistic: 'mae'}}, 'atom', ml.colourSettings({FORCE}))"),
     "energy_atom": f"ml.boxAvailable({{keep: ['structure'], combine: null, statistic: null}}, 'atom', {ENERGY})",
     "energy_atom_hint": f"ml.boxHint({{keep: ['structure'], combine: null, statistic: null}}, 'atom', {HINTS})",
     "energy_structure_off": f"ml.toggleBox({{keep: ['structure'], combine: null, statistic: null}}, 'structure', {ENERGY})",
@@ -116,9 +124,18 @@ def test_combine_and_statistic_carry_over(results):
         "keep": ["structure", "element"], "combine": "length", "statistic": "rmse"}
 
 
-def test_element_is_greyed_while_atom_is_ticked_and_says_so(results):
-    assert results["element_off_with_atom"] is False
-    assert results["element_hint_with_atom"] == "element is greyed when atom is ticked"
+def test_ticking_element_while_atom_is_ticked_swaps_them_and_the_reverse(results):
+    assert results["element_swaps_atom"] == {
+        "keep": ["structure", "element"], "combine": "length", "statistic": "mae"}
+    assert results["atom_swaps_element"] == {
+        "keep": ["atom", "structure"], "combine": "length", "statistic": None}
+
+
+def test_colour_by_lets_atom_element_and_structure_be_clicked(results):
+    # x/y/z is the one box a per-atom colouring can never keep
+    assert results["colour_clickable"] == {"atom": True, "element": True, "structure": True, "xyz": False}
+    assert results["colour_atom_click"] == {
+        "keep": ["structure", "element"], "combine": "component", "statistic": "mae"}
 
 
 def test_a_per_frame_metric_greys_atom_with_the_servers_hint(results):

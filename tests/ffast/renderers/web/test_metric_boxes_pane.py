@@ -34,10 +34,15 @@ async def test_the_boxes_make_a_metric_that_tries_creates_and_plots(tmp_path):
                 for box, ticked in (("atom", True), ("structure", True), ("element", False), ("x/y/z", True)):
                     check = boxes.get_by_label(f"Keep {box}")
                     await (expect(check).to_be_checked() if ticked else expect(check).not_to_be_checked())
-                # element is greyed while atom is ticked, and says why
-                await expect(boxes.get_by_label("Keep element")).to_be_disabled()
-                await expect(boxes.locator(".kb-choice", has_text="element")).to_have_attribute(
-                    "title", "element is greyed when atom is ticked")
+                # element and atom swap: ticking one unticks the other
+                element, atom = boxes.get_by_label("Keep element"), boxes.get_by_label("Keep atom")
+                await expect(element).to_be_enabled()
+                await element.check()
+                await expect(element).to_be_checked()
+                await expect(atom).not_to_be_checked()
+                await atom.check()
+                await expect(atom).to_be_checked()
+                await expect(element).not_to_be_checked()
                 await expect(pane.locator(".mx-boxes-create")).to_be_hidden()
 
                 await boxes.get_by_label("Keep atom").uncheck()
