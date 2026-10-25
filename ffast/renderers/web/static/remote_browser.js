@@ -15,6 +15,7 @@
 import { OUT } from './events.js';
 import { icon as drawIcon } from './icons.js';
 import { trapFocus } from './dialogs.js';
+import { loadRecentFiles, rememberFile, saveRecentFiles } from './recent_files.js';
 
 /** Join a server-side directory and an entry name. Posix separators: the paths
  *  come from the server, so they are formatted in its convention, not the
@@ -36,6 +37,24 @@ export function formatSize(bytes) {
     u += 1;
   }
   return `${u === 0 ? n : n.toFixed(1)} ${units[u]}`;
+}
+
+/**
+ * What a typed path asks to list: the folder before the last `/` and the
+ * name prefix after it. Null when there is no folder to list yet.
+ * @param {string} text
+ * @returns {{dir: string, prefix: string}|null}
+ */
+export function typedParts(text) {
+  const i = text.lastIndexOf('/');
+  if (i < 0) return null;
+  return { dir: i === 0 ? '/' : text.slice(0, i), prefix: text.slice(i + 1) };
+}
+
+/** The listing entries a typed prefix leaves, case-insensitively, at most `limit`. */
+export function matchEntries(entries, prefix, limit = 8) {
+  const p = prefix.toLowerCase();
+  return (entries || []).filter((e) => e.name.toLowerCase().startsWith(p)).slice(0, limit);
 }
 
 /**
@@ -78,6 +97,7 @@ export class RemoteBrowser {
    *   getDatasets: () => Map<string, {name?: string, n?: number}>,
    *   getCurrentDatasetFp: () => string | null,
    *   setStatus: (text: string, kind?: string) => void,
+   *   serverKey?: () => string,
    * }} ports
    */
   constructor(ports) {
@@ -87,7 +107,11 @@ export class RemoteBrowser {
     this._parent = null;      // parent abspath, or null at root
     this._home = null;        // server user's home directory
     this._selected = null;    // selected filename within _path
-    this._pending = null;   // {kind, name}: a load with no outcome yet
+    this._pending = null;   // {kind, name, path}: a load with no outcome yet
+    this._asks = new Map();   // folder asked for suggestions → replies still to come
+    this._suggest = { items: [], active: -1, dir: '' };
+    this._suggestTimer = null;
+    this._selectAfterListing = null;   // a Recent file to select once its folder is listed
   }
 
   /** Wire the modal's own controls. Called once, at app setup. */
@@ -106,12 +130,129 @@ export class RemoteBrowser {
       if (e.key === 'Escape') this.close();
     });
     // The path can be typed: Enter goes there.
-    $('fb-path').addEventListener('keydown', (e) => {
-      if (e.key !== 'Enter') return;
+    $('fb-path').addEventListener('keydown', (e) => this._pathKey(e));
+    $('fb-path').addEventListener('input', () => this._askSuggestions());
+    $('fb-path').addEventListener('blur', () => setTimeout(() => this._hideSuggestions(), 150));
+  }
+
+  // ── path suggestions ────────────────────────────────────────────────────
+
+  _pathKey(e) {
+    const s = this._suggest;
+    const open = s.items.length > 0;
+    if (e.key === 'Enter') {
       e.preventDefault();
+      this._hideSuggestions();
       const path = $('fb-path').value.trim();
       if (path) this._navigate(path);
-    });
+    } else if (open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+      e.preventDefault();
+      const n = s.items.length;
+      s.active = (s.active + (e.key === 'ArrowDown' ? 1 : -1) + n) % n;
+      this._drawSuggestions();
+    } else if (open && e.key === 'Tab') {
+      e.preventDefault();
+      this._complete(s.items[Math.max(s.active, 0)]);
+    } else if (open && e.key === 'Escape') {
+      e.stopPropagation();   // closes the list, not the dialog
+      this._hideSuggestions();
+    }
+  }
+
+  /** After a short pause, list the typed folder. The reply is told apart from
+   * a navigation's by the path it echoes (`onDirListing`). */
+  _askSuggestions() {
+    clearTimeout(this._suggestTimer);
+    this._suggestTimer = setTimeout(() => {
+      const parts = typedParts($('fb-path').value);
+      if (!parts) { this._hideSuggestions(); return; }
+      this._asks.set(parts.dir, (this._asks.get(parts.dir) || 0) + 1);
+      this._ports.send(OUT.LIST_DIR, {}, [parts.dir]);
+    }, 250);
+  }
+
+  /** `dir` is the folder the reply was asked for. */
+  _showSuggestions(kw, dir) {
+    const parts = typedParts($('fb-path').value);
+    // An error (no such folder), or the person typed on to another folder.
+    if (kw.error || !parts || parts.dir !== dir) {
+      this._hideSuggestions();
+      return;
+    }
+    this._suggest = { items: matchEntries(kw.entries, parts.prefix), active: -1, dir };
+    this._drawSuggestions();
+  }
+
+  _drawSuggestions() {
+    const box = $('fb-suggest');
+    const s = this._suggest;
+    box.replaceChildren(...s.items.map((e, i) => {
+      const row = document.createElement('div');
+      row.className = 'fb-suggestion' + (i === s.active ? ' active' : '');
+      row.setAttribute('role', 'option');
+      row.textContent = e.name + (e.is_dir ? '/' : '');
+      row.addEventListener('mousedown', (ev) => { ev.preventDefault(); this._complete(e); });
+      return row;
+    }));
+    box.classList.toggle('hidden', !s.items.length);
+  }
+
+  _hideSuggestions() {
+    clearTimeout(this._suggestTimer);
+    this._suggest = { items: [], active: -1, dir: '' };
+    $('fb-suggest')?.classList.add('hidden');
+  }
+
+  /** Put a suggested name into the box; a folder goes on to its own contents. */
+  _complete(entry) {
+    const field = $('fb-path');
+    field.value = joinPath(this._suggest.dir, entry.name) + (entry.is_dir ? '/' : '');
+    this._hideSuggestions();
+    field.focus();
+    if (entry.is_dir) this._askSuggestions();
+  }
+
+  // ── recent files ────────────────────────────────────────────────────────
+
+  _renderRecent() {
+    const box = $('fb-recent');
+    const server = this._ports.serverKey?.() || '';
+    const list = loadRecentFiles(server).filter((e) => e.kind === this._mode);
+    box.hidden = !list.length;
+    const head = document.createElement('div');
+    head.className = 'fb-recent-head';
+    head.textContent = 'Recent';
+    box.replaceChildren(head, ...list.map((e) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'fb-recent-row';
+      row.textContent = e.path;
+      row.title = e.path;
+      row.addEventListener('click', () => this._useRecent(e.path));
+      return row;
+    }));
+  }
+
+  /** Fill the box with a recent file. A dataset loads at once; a prediction
+   * needs its energy and force keys chosen, so its file is selected for that. */
+  _useRecent(path) {
+    const i = path.lastIndexOf('/');
+    const dir = i <= 0 ? '/' : path.slice(0, i);
+    const name = path.slice(i + 1);
+    $('fb-path').value = path;
+    if (this._mode === 'dataset') {
+      this._path = dir;
+      this._selected = name;
+      this._load();
+    } else {
+      this._selectAfterListing = name;
+      this._navigate(dir);
+    }
+  }
+
+  _remember(path, kind) {
+    const server = this._ports.serverKey?.() || '';
+    saveRecentFiles(server, rememberFile(loadRecentFiles(server), { path, kind }));
   }
 
   /** @param {'dataset'|'prediction'} mode */
@@ -123,6 +264,8 @@ export class RemoteBrowser {
     $('fb-prediction-fields').style.display = isPred ? 'inline-flex' : 'none';
     if (isPred) this._populatePredictionTargets();
     $('fb-modal').classList.remove('hidden');
+    this._hideSuggestions();
+    this._renderRecent();
     this._untrap ||= trapFocus($('fb-modal'));
     this._focusFirstRow = true;   // once the listing arrives (_render)
     this._selected = null;
@@ -138,7 +281,14 @@ export class RemoteBrowser {
   }
 
   /** Server replied to LIST_DIR. */
-  onDirListing(kw) {
+  onDirListing(kw, args = []) {
+    // A reply to a suggestion request, not a navigation.
+    const asked = this._asks.get(args[1]) || 0;
+    if (asked > 0) {
+      if (asked === 1) this._asks.delete(args[1]); else this._asks.set(args[1], asked - 1);
+      this._showSuggestions(kw, args[1]);
+      return;
+    }
     if (kw.error) {
       const err = $('fb-error');
       err.style.display = 'block';
@@ -155,6 +305,13 @@ export class RemoteBrowser {
     $('fb-path').value = kw.path || '';
     $('fb-up').disabled = !kw.parent;
     this._render(kw.entries || []);
+    if (this._selectAfterListing) {
+      const name = this._selectAfterListing;
+      this._selectAfterListing = null;
+      const row = [...document.querySelectorAll('#fb-list .fb-row.file')]
+        .find((r) => r.querySelector('.name')?.textContent === name);
+      if (row) this._selectFile(row, name);
+    }
   }
 
   /** Server replied to PROBE_DATASET_KEYS. Ignored outside prediction mode. */
@@ -281,8 +438,9 @@ export class RemoteBrowser {
   /** A new dataset or model arrived, or a load failed: the "Loading…" status
    * of a pending load of that `kind` ('dataset' or 'prediction') is replaced,
    * so a later task end must not touch it. True if one was pending. */
-  settled(kind) {
+  settled(kind, ok = true) {
     if (this._pending?.kind !== kind) return false;
+    if (ok) this._remember(this._pending.path, kind);
     this._pending = null;
     return true;
   }
@@ -293,6 +451,7 @@ export class RemoteBrowser {
   onTaskDone() {
     if (!this._pending) return;
     this._ports.setStatus(`"${this._pending.name}" is already loaded`, 'connected');
+    this._remember(this._pending.path, this._pending.kind);
     this._pending = null;
   }
 
@@ -312,13 +471,13 @@ export class RemoteBrowser {
         [path, dsFp],
       );
       this._ports.setStatus(`Loading prediction ${this._selected}…`, 'connected');
-      this._pending = { kind: 'prediction', name: this._selected };
+      this._pending = { kind: 'prediction', name: this._selected, path };
     } else {
       const typ = $('fb-type').value;
       // LOAD_DATASET reads args=[path, datasetType]; "ase (auto)" auto-detects keys
       this._ports.send(OUT.LOAD_DATASET, {}, [path, typ]);
       this._ports.setStatus(`Loading ${this._selected}…`, 'connected');
-      this._pending = { kind: 'dataset', name: this._selected };
+      this._pending = { kind: 'dataset', name: this._selected, path };
     }
     this.close();
   }

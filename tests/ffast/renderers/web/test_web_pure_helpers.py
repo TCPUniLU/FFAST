@@ -606,6 +606,13 @@ CASES = {
     "theme_line": "th.plotTheme().line",
     "theme_grid_follows_line": "pn.baseLayout().xaxis.gridcolor === th.plotTheme().line",
     "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
+    "typed_parts": "[rb.typedParts('/a/b/ca'), rb.typedParts('/a/'), rb.typedParts('/ab'), rb.typedParts('abc')]",
+    "match_entries": "rb.matchEntries([{name: 'Alpha'}, {name: 'beta'}, {name: 'alps'}], 'AL').map(e => e.name)",
+    "remember_files": (
+        "(() => { let l = []; for (const p of ['a', 'b', 'a']) l = rf.rememberFile(l, {path: p, kind: 'dataset'});"
+        " l = rf.rememberFile(l, {path: 'a', kind: 'prediction'});"
+        " for (let i = 0; i < 12; i++) l = rf.rememberFile(l, {path: 'x' + i, kind: 'dataset'});"
+        " return [l.length, l[0].path, l.some(e => e.path === 'a')]; })()"),
     "hint_info": "[0, 1, 2, 3, 4, 9].map(n => hn.toolHint('info', n).map(x => x.join('')).join(' '))",
     "hint_others": "[hn.toolHint('bonds', 0), hn.toolHint('bonds', 1), hn.toolHint('align', 2), hn.toolHint('forces', 0), hn.toolHint('extract', 3), hn.toolHint('zzz', 0), hn.toolHintKey('info')]",
     "arrow_long": "ar.arrowParts(2, 1)",
@@ -853,6 +860,7 @@ def results():
         f"  const so = await import('{origin}/session_ops.js');\n"
         f"  const cm = await import('{origin}/colormap.js');\n"
         f"  const pn = await import('{origin}/panels.js');\n"
+        f"  const rf = await import('{origin}/recent_files.js');\n"
         f"  const hn = await import('{origin}/tool_hints.js');\n"
         f"  const ar = await import('{origin}/arrow_geometry.js');\n"
         f"  const th = await import('{origin}/theme.js');\n"
@@ -1915,3 +1923,13 @@ def test_pick_tool_hints_follow_the_pick_count(results):
     assert "2 of 3" in text(align2)
     assert forces == extract == [["Click atoms or drag a box. ", "Esc", " stops"]]
     assert none is None and key == "tool-info"
+
+
+def test_a_typed_path_splits_into_folder_and_prefix(results):
+    assert results["typed_parts"] == [
+        {"dir": "/a/b", "prefix": "ca"}, {"dir": "/a", "prefix": ""}, {"dir": "/", "prefix": "ab"}, None]
+    assert results["match_entries"] == ["Alpha", "alps"]
+
+
+def test_recent_files_keep_ten_newest_without_duplicates(results):
+    assert results["remember_files"] == [10, "x11", False]

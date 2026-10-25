@@ -395,6 +395,67 @@ async def test_web_a_dataset_that_cannot_be_loaded_says_so_in_the_status(ffast_w
             await browser.close()
 
 
+async def test_web_the_loader_suggests_paths_while_typing(ffast_web_server):
+    """After a pause the typed folder is listed and filtered by the typed
+    prefix; the arrows choose, Tab completes, Enter still goes to the path."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            path = page.locator("#fb-path")
+            await path.fill(f"{REPO_ROOT}/exa")
+            options = page.locator("#fb-suggest .fb-suggestion")
+            await expect(options).to_have_text(["examples/"])
+            await path.press("ArrowDown")
+            await expect(options.first).to_have_class(re.compile(r"\bactive\b"))
+            await path.press("Tab")
+            await expect(path).to_have_value(f"{REPO_ROOT}/examples/")
+            await path.fill(f"{REPO_ROOT}/examples/data/data")
+            await expect(options).to_have_text(["dataset.xyz"])
+            await path.press("Enter")                       # today's behaviour: go to the path as typed
+            await expect(page.locator("#fb-suggest")).to_be_hidden()
+            await expect(page.locator("#fb-error")).to_be_visible()   # no such folder
+        finally:
+            await browser.close()
+
+
+async def test_web_the_loader_lists_the_last_files_loaded_per_server(ffast_web_server):
+    """"Recent" holds files actually loaded (not folders browsed), kept in this
+    browser, and a click loads one again."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            await expect(page.locator("#fb-recent")).to_be_hidden()
+            await page.locator("#fb-path").fill(str(DATASET_PATH.parent))
+            await page.locator("#fb-path").press("Enter")
+            await expect(page.locator("#fb-recent")).to_be_hidden()          # browsing is not loading
+            await page.locator("#fb-list .fb-row", has_text=DATASET_PATH.name).click()
+            await page.locator("#fb-load").click()
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(1, timeout=30000)
+
+            await page.reload(wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            recent = page.locator("#fb-recent .fb-recent-row")
+            await expect(recent).to_have_text([str(DATASET_PATH)])
+            await recent.click()                                              # fills the box and loads
+            await expect(page.locator("#fb-modal")).to_be_hidden()
+            await expect(page.locator("#status")).to_contain_text("already loaded", timeout=30000)
+        finally:
+            await browser.close()
+
+
 async def test_web_a_server_warning_pops_up_once(ffast_web_server):
     """A warning the server logs pops up in the corner; the same one again
     within a minute does not add a second pop-up."""

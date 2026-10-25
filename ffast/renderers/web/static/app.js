@@ -159,6 +159,7 @@ export class FFastApp {
       getDatasets: () => this._datasets,
       getCurrentDatasetFp: () => this._currentDatasetFp,
       setStatus: (text, kind) => this._setStatus(text, kind),
+      serverKey: () => document.getElementById('ws-url').value.trim(),
     });
     this._sessionOps = new SessionOps({
       send,
@@ -1344,7 +1345,7 @@ export class FFastApp {
       conn.on(IN.SCENE_SNAPSHOT, (kw) => this._onSceneSnapshot(kw));
       conn.on(IN.SCENE_PATCH,    (kw) => this._onScenePatch(kw));
       conn.on(IN.COMMAND_RESULT, (kw) => this._onCommandResult(kw));
-      conn.on(IN.DIR_LISTING,    (kw) => this._browser.onDirListing(kw));
+      conn.on(IN.DIR_LISTING,    (kw, args) => this._browser.onDirListing(kw, args));
       conn.on(IN.METRIC_CATALOG, (kw) => this._onMetricCatalog(kw));
       conn.on(IN.METRICS_UPDATED, () => this._onMetricsUpdated());
       conn.on(IN.SUBSET_EXPORTED, (kw) => this._sessionOps.onSubsetExported(kw));
@@ -1360,7 +1361,7 @@ export class FFastApp {
       // A load that failed: end the "Loading <file>…" status with the reason.
       conn.on(IN.LOAD_FAILED, (kw) => {
         const name = String(kw.path || '').split(/[\\/]/).pop();
-        this._browser.settled(kw.kind);
+        this._browser.settled(kw.kind, false);
         this._setStatus(`Could not load ${name}: ${kw.error}`, 'error');
       });
 
