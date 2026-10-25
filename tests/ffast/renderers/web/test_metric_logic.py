@@ -55,6 +55,13 @@ CASES = {
     "suggest_in_the_by_pair": (
         "[ml.suggestions('mean(e, by=(s', 13, ['e'], []).map(s => s.text),"
         " ml.suggestions('mean(e, by=(structure, el', 25, ['e'], []).map(s => s.text)]"),
+    "add_table_panel_picker": (
+        "(() => { const cat = [{id: 'user.t', shape: ml.TABLE_SHAPE}, {id: 'user.s', shape: 'N_frames'}];"
+        " const add = (tab, p) => te.addPanelWithPicker(tab, p, cat).selector;"
+        " const t = (id) => ({kind: 'timeline', title: 'T', metrics: {y: id},"
+        "   metric_refs: {y: {metric: id, transform: null, params: {}}}});"
+        " return [add(te.emptyTab('x'), t('user.t')), add(te.emptyTab('x'), t('user.s')),"
+        "   add({...te.emptyTab('x'), selector: 'other'}, t('user.t'))]; })()"),
     "table_shape": (
         "[ml.shortcutFor(ml.TABLE_SHAPE), ml.shapeHint(ml.TABLE_SHAPE),"
         " te.metricPanel({id: 'user.t', label: 'T', shape: ml.TABLE_SHAPE}).kind,"
@@ -300,6 +307,10 @@ def test_a_table_is_plotted_as_a_timeline_with_the_element_picker(results):
     assert results["table_shape"] == [
         "plot", "per structure and element → can be plotted, a line per element, and colour atoms",
         "timeline", "atomic", "other", None, ["N_frames", "(N_frames, N_elements)"]]
+
+
+def test_adding_a_per_element_panel_turns_the_element_picker_on(results):
+    assert results["add_table_panel_picker"] == ["atomic", None, "other"]
 
 
 def test_variable_names_must_be_clean_and_new(results):

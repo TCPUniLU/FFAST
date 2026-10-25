@@ -13,6 +13,7 @@
  */
 
 import { KIND_3D } from './tab_rules.js';
+import { TABLE_SHAPE } from './metric_logic.js';
 
 /**
  * The roles each panel kind binds and the metric shapes each role takes, as
@@ -219,6 +220,34 @@ export function addPanel(tab, panel) {
   const cell = freeCell(next.panels, columnsOf(next));
   next.panels.push({ ...clone(panel), ...cell, rowspan: 1, colspan: 1, scroll_group: null });
   return syncRows(next);
+}
+
+/** Metric ids a panel draws, whether it spells them as ids or as refs. */
+function metricIdsOf(panel) {
+  const ids = [];
+  const walk = (v) => {
+    if (typeof v === 'string') ids.push(v);
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object' && v.metric) ids.push(v.metric);
+  };
+  Object.values(panel.metric_refs || {}).forEach(walk);
+  Object.values(panel.metrics || {}).forEach(walk);
+  return ids;
+}
+
+/**
+ * Add a panel to a tab; a panel that draws a table per structure and element
+ * (one line per element) turns the tab's Element picker on, unless the tab
+ * already has another selector.
+ * @param {object} tab
+ * @param {object} panel
+ * @param {{id: string, shape?: string}[]} catalog METRIC_CATALOG entries
+ */
+export function addPanelWithPicker(tab, panel, catalog) {
+  const next = addPanel(tab, panel);
+  const perElement = metricIdsOf(panel).some(
+    (id) => (catalog || []).find((m) => m.id === id)?.shape === TABLE_SHAPE);
+  return perElement && !next.selector ? { ...next, selector: 'atomic' } : next;
 }
 
 /** Replace panel `index` with `panel`, keeping its place. */

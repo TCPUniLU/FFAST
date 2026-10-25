@@ -18,7 +18,7 @@
 
 import { askDialog, labelBy, trapFocus } from './dialogs.js';
 import {
-  COLUMN_PX, KIND_ROLES, ROW_PX, addPanel, columnsOf, copyOf, dragTrack, emptyTab,
+  COLUMN_PX, KIND_ROLES, ROW_PX, addPanelWithPicker, columnsOf, copyOf, dragTrack, emptyTab,
   fitWidths, metricsFor, movePanel, new3DPanel, onlyPlacesChanged, removePanel, replacePanel,
   resizePanel, rowsOf, setColumns, setPanelStart, setPanelView, sizesOf, toSaved,
 } from './tab_edit.js';
@@ -413,10 +413,11 @@ export class TabEditor {
     }
     const { answer, close } = modal('Add panel', body, ['Cancel', 'Custom panel…']);
     const result = await answer;
-    if (result === 'Add' && chosen) this.change(addPanel(this._draft, chosen));
+    const catalog = this._deps.catalog();
+    if (result === 'Add' && chosen) this.change(addPanelWithPicker(this._draft, chosen, catalog));
     if (result === 'Custom panel…') {
       const panel = await this._builder(null);
-      if (panel) this.change(addPanel(this._draft, panel));
+      if (panel) this.change(addPanelWithPicker(this._draft, panel, catalog));
     }
   }
 
