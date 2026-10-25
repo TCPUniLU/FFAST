@@ -606,6 +606,7 @@ CASES = {
     "theme_line": "th.plotTheme().line",
     "theme_grid_follows_line": "pn.baseLayout().xaxis.gridcolor === th.plotTheme().line",
     "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
+    "contrast_ink": "[pn.contrastInk('#f0e442'), pn.contrastInk('#0072b2'), pn.contrastInk('#ffffff'), pn.contrastInk('#000000')]",
     "theme_hex_alpha": "th.hexAlpha('#56b4e9', 0.15)",
 
     # theme.js DARK, the fallback used before the page's tokens are read, is the
@@ -1878,3 +1879,8 @@ def test_te_kind_roles_match_the_desktop_panel_kinds(results):
 
 def test_the_colour_legend_limits_are_in_scientific_notation(results):
     assert results["pn_scientific"] == ["1.23e-2", "-4.50e3", "0", "1.00e0", "NaN"]
+
+
+def test_element_button_text_is_black_or_white_by_contrast(results):
+    # light yellow → black, dark blue → white
+    assert results["contrast_ink"] == ["#000000", "#ffffff", "#000000", "#ffffff"]

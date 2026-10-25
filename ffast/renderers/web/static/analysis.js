@@ -24,7 +24,7 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, seriesColor, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures } from './panels.js';
 import { showOnce } from './toasts.js';
 import { visitedKey } from './peaks.js';
 import { panelLetters, readingOrder, caption, captionSegments } from './figure.js';
@@ -911,6 +911,16 @@ export class AnalysisManager {
       btn.className = 'elem-btn' + (t.selectedElements.includes(z) ? ' active' : '');
       btn.textContent = z === 'All' ? 'All' : elementSymbol(z);
       btn.dataset.element = String(z);
+      // An element button wears the colour of its curve (panels.js buildTableTimeline).
+      if (z !== 'All') {
+        const colour = seriesColor((this._elementOrder || []).indexOf(z));
+        btn.style.color = colour;
+        btn.style.boxShadow = `inset 0 0 0 2px ${colour}`;
+        if (btn.classList.contains('active')) {
+          btn.style.background = colour;
+          btn.style.color = contrastInk(colour);
+        }
+      }
       btn.addEventListener('click', () => {
         const has = t.selectedElements.includes(z);
         if (has) t.selectedElements = t.selectedElements.filter((x) => x !== z);

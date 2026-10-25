@@ -76,6 +76,18 @@ export function seriesColor(i) {
   return series[i % series.length];
 }
 
+/** Black or white, whichever reads better on the hex colour `bg` (WCAG luminance). */
+export function contrastInk(bg) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(bg).trim());
+  if (!m) return '#000000';
+  const lin = (i) => {
+    const c = parseInt(m[1].slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const lum = 0.2126 * lin(0) + 0.7152 * lin(2) + 0.0722 * lin(4);
+  return lum > 0.179 ? '#000000' : '#ffffff';
+}
+
 // The Plotly theme: the page's tokens, read when a panel is drawn (theme.js).
 export function baseLayout() {
   const t = plotTheme();
