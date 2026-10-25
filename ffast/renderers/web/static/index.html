@@ -418,6 +418,14 @@
     }
     .analysis-panel .panel-title .sub-toggle,
     .analysis-panel .panel-title .panel-warning { color: var(--warn); margin-left: 6px; cursor: help; }
+    .analysis-panel .panel-title .sub-toggle {
+      display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600;
+    }
+    .analysis-panel .panel-title .sub-toggle input { margin: 0; }
+    .analysis-panel .panel-title .sub-freeze {
+      height: auto; padding: 1px 6px; font-size: var(--fs-xs); margin-left: 4px;
+    }
+    .analysis-panel .panel-title .sub-freeze[hidden] { display: none; }
     .analysis-panel .panel-title .peaks-toggle {
       font-size: var(--fs-xs); font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 4px; cursor: pointer;
     }

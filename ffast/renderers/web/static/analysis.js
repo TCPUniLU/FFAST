@@ -162,6 +162,7 @@ export class AnalysisManager {
    *   onSelectTab: (id: string) => void,
    *   onSub: (o: {name: string, series: Array<{parentFp: string, modelFp: string|null}>,
    *     view?: object, active?: boolean, tick?: boolean}) => void,
+   *   onFreeze?: (fp: string) => void,
    *   onPointFrame: (o: {datasetFp: string, modelFp: string|null, frame: number}) => void,
    *   onSetUnit?: (o: {datasetFp: string, dimension: string, unit: string}) => void,
    * }} deps
@@ -173,6 +174,7 @@ export class AnalysisManager {
     this._metrics = deps.metricClient;
     this._onSelectTab = deps.onSelectTab;
     this._onSub = deps.onSub;
+    this._onFreeze = deps.onFreeze;
     this._openFrame = deps.onPointFrame;
     /** Frames the user opened from a plot, "dataset|model|frame"; kept for the page's life. */
     this._visited = new Set();
@@ -1381,8 +1383,18 @@ export class AnalysisManager {
       toggle.append(cb, document.createTextNode('Sub'));
       card.title.appendChild(toggle);
       card.subToggle = cb;
+      const freeze = document.createElement('button');
+      freeze.type = 'button';
+      freeze.className = 'sub-freeze';
+      freeze.textContent = 'Freeze';
+      freeze.title = 'Keep these frames; the subset stops following the zoom';
+      freeze.addEventListener('click', () => this._freezeSubsets(t, spec));
+      card.title.appendChild(freeze);
+      card.subFreeze = freeze;
+      cb.addEventListener('change', () => { freeze.hidden = !cb.checked; });
     }
     card.subToggle.checked = t.subbing.has(key);
+    card.subFreeze.hidden = !card.subToggle.checked;
 
     const el = card.body;   // its relayout listeners were cleared by the caller
     el.on('plotly_relayout', () => {
@@ -1404,6 +1416,17 @@ export class AnalysisManager {
       const i = slot.specs.findIndex((sp) => t.spec.panels.indexOf(sp) === key);
       const toggle = i >= 0 ? slot.cards?.[i]?.subToggle : null;
       if (toggle) toggle.checked = false;
+      if (i >= 0 && slot.cards?.[i]?.subFreeze) slot.cards[i].subFreeze.hidden = true;
+    }
+  }
+
+  /** Freeze the subsets this plot's SUB made (like the rail ⋯ ▸ Freeze). */
+  _freezeSubsets(t, spec) {
+    const key = t.spec.panels.indexOf(spec);
+    const name = this._subName(t, spec);
+    for (const s of t.subbing.get(key) || []) {
+      const fp = this._subsets.get(`${s.parentFp}|${s.modelFp || ''}|${name}`);
+      if (fp) this._onFreeze?.(fp);
     }
   }
 

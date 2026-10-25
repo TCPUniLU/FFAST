@@ -2565,6 +2565,37 @@ async def test_web_a_reloaded_page_shows_what_its_main_view_showed(ffast_web_ser
             await browser.close()
 
 
+async def test_web_a_plots_freeze_button_keeps_its_sub_frames(ffast_web_server):
+    """Freeze sits beside Sub while Sub is ticked, and keeps the frames the plot
+    shows as a frozen subset, like the rail ⋯ menu's Freeze."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+            panel = _sub_panel("Energy MAE timeline")
+            freeze = page.locator(panel + " .sub-freeze")
+            await expect(freeze).to_be_hidden()
+            await page.locator(panel + " .sub-toggle input").check()
+            await expect(freeze).to_be_visible()
+            await expect(freeze).to_have_attribute("title", "Keep these frames; the subset stops following the zoom")
+            await _zoom(page, "Energy MAE timeline", [10, 19.5])
+            await page.wait_for_function(f"() => ({_SUBSETS})().some(s => s.n === 10)", timeout=15000)
+            await freeze.click()
+            await expect(page.locator("#dataset-list .obj-row", has_text="frozen")).to_have_count(1, timeout=15000)
+            await page.locator(panel + " .sub-toggle input").uncheck()
+            await expect(freeze).to_be_hidden()
+        finally:
+            await browser.close()
+
+
 _AXIS_TITLE = """([title, axis]) => document.querySelector(
   `#tabpanels .tabpanel.active .analysis-panel[data-title="${title}"] .g-${axis}title text`)?.textContent"""
 

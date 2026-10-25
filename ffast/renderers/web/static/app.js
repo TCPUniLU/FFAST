@@ -251,6 +251,7 @@ export class FFastApp {
       metricClient: null,
       onSelectTab: (id) => this._selectTab(id),
       onSub: (o) => this._onSub(o),
+      onFreeze: (fp) => this._freezeSubset(fp),
       onPointFrame: (o) => this._onPlotPoint(o),
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
     });
