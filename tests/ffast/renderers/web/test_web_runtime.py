@@ -4771,6 +4771,8 @@ async def test_web_a_timeline_labels_its_five_worst_frames_and_a_label_opens_one
             await _open_analysis_tab(page, "Basic Errors")
             await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
             labels = page.locator(_sub_panel("Forces MAE timeline") + " .panel-plot .annotation")
+            await expect(labels).to_have_count(0)   # peak labels start off
+            await page.locator(_sub_panel("Forces MAE timeline") + " .peaks-toggle input").check()
             await expect(labels).to_have_count(5)
             texts = await labels.evaluate_all("els => els.map((e) => e.textContent)")   # SVG has no innerText
             frames = [int(t.split(" · ")[0]) for t in texts]
@@ -4789,7 +4791,7 @@ async def test_web_a_timeline_labels_its_five_worst_frames_and_a_label_opens_one
             await browser.close()
 
 
-async def test_web_a_timelines_peak_labels_switch_off_and_on(ffast_web_server):
+async def test_web_a_timelines_peak_labels_start_off_and_switch_on(ffast_web_server):
     """Each one-series timeline has a Peaks checkbox that hides its labels, and
     the caption's peak sentence with them; the choice survives a reload."""
     ws_port, web_port = ffast_web_server
@@ -4810,6 +4812,10 @@ async def test_web_a_timelines_peak_labels_switch_off_and_on(ffast_web_server):
             labels = page.locator(panel + " .panel-plot .annotation")
             peaks = page.locator(panel + " .peaks-toggle input")
             caption = page.locator(panel + " .panel-caption-line")
+            await expect(labels).to_have_count(0)   # off until ticked
+            await expect(peaks).not_to_be_checked()
+            await expect(caption).not_to_contain_text("peaks")
+            await peaks.check()
             await expect(labels).to_have_count(5)
             await expect(peaks).to_be_checked()
             await expect(caption).to_contain_text("Top 5 peaks")
@@ -4819,6 +4825,8 @@ async def test_web_a_timelines_peak_labels_switch_off_and_on(ffast_web_server):
             await peaks.uncheck()
             await expect(labels).to_have_count(0)
             await expect(caption).not_to_contain_text("peaks")
+            await peaks.check()
+            await expect(labels).to_have_count(5)
 
             await page.reload(wait_until="networkidle")
             await _expect_connected(page)
@@ -4826,10 +4834,7 @@ async def test_web_a_timelines_peak_labels_switch_off_and_on(ffast_web_server):
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await _open_analysis_tab(page, "Basic Errors")
             await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
-            await expect(peaks).not_to_be_checked()
-            await expect(labels).to_have_count(0)
-
-            await peaks.check()
+            await expect(peaks).to_be_checked()   # the choice to show them is kept
             await expect(labels).to_have_count(5)
         finally:
             await browser.close()
@@ -4863,6 +4868,7 @@ async def test_web_double_clicking_a_labelled_timeline_goes_back_to_its_drawn_ra
             await _open_analysis_tab(page, "Basic Errors")
             await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
             panel = _sub_panel("Forces MAE timeline")
+            await page.locator(panel + " .peaks-toggle input").check()
             await expect(page.locator(panel + " .panel-plot .annotation")).to_have_count(5)
             drawn = await page.evaluate(_Y_RANGE, panel)
             # A freshly drawn plot shows what it was drawn with: not a zoom to keep.
@@ -4965,6 +4971,9 @@ async def test_web_only_the_rows_with_peak_labels_grow(ffast_web_server, width):
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await _open_analysis_tab(page, "Basic Errors")
             await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            # labels start off: tick every timeline's, as they once all were
+            for box in await page.locator(".tabpanel.active .peaks-toggle input").all():
+                await box.check()
             await expect(page.locator(_sub_panel("Forces MAE timeline") + " .panel-plot .annotation")).to_have_count(5)
             slots = await page.evaluate(_SLOT_BOXES, "Basic Errors")
             timeline_tops = {top for kinds, top, _ in slots if "timeline" in kinds}
