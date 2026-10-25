@@ -24,8 +24,9 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, seriesColor, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures } from './panels.js';
 import { showOnce } from './toasts.js';
+import { elementColour } from './element_colours.js';
 import { visitedKey } from './peaks.js';
 import { panelLetters, readingOrder, caption, captionSegments } from './figure.js';
 import { datasetUnits, editableDimension, resolveUnit } from './units.js';
@@ -913,9 +914,9 @@ export class AnalysisManager {
       btn.className = 'elem-btn' + (t.selectedElements.includes(z) ? ' active' : '');
       btn.textContent = z === 'All' ? 'All' : elementSymbol(z);
       btn.dataset.element = String(z);
-      // An element button wears the colour of its curve (panels.js buildTableTimeline).
+      // An element button wears the element's colour in the 3D view (CPK).
       if (z !== 'All') {
-        const colour = seriesColor((this._elementOrder || []).indexOf(z));
+        const colour = elementColour(z);
         btn.style.color = colour;
         btn.style.boxShadow = `inset 0 0 0 2px ${colour}`;
         if (btn.classList.contains('active')) {

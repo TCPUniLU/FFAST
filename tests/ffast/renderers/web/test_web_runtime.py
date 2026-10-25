@@ -500,6 +500,39 @@ async def test_web_the_loader_names_units_only_when_asked_and_lists_the_last_use
             await browser.close()
 
 
+async def test_web_element_picker_buttons_wear_the_3d_element_colours(ffast_web_server):
+    """Each element button's outline and symbol use the element's colour in the
+    3D view; selected, it is filled with that colour and the symbol is black or
+    white. "All" stays neutral."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Atomic Errors")
+            buttons = page.locator(".tabpanel.active .analysis-controls .elem-btn:not([data-element='All'])")
+            await expect(buttons.first).to_be_visible(timeout=25000)
+            z = int(await buttons.first.get_attribute("data-element"))
+            rgb = await page.evaluate(
+                "async (z) => { const m = await import('/element_colours.js'); const h = m.elementColour(z);"
+                " return [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)); }", z)
+            colour = f"rgb({rgb[0]}, {rgb[1]}, {rgb[2]})"
+            await expect(buttons.first).to_have_css("color", colour)
+            await expect(page.locator(".tabpanel.active .analysis-controls .elem-btn[data-element='All']")).not_to_have_attribute("style", re.compile("."))
+            await buttons.first.click()
+            selected = page.locator(f".tabpanel.active .analysis-controls .elem-btn[data-element='{z}']")
+            await expect(selected).to_have_css("background-color", colour)
+            ink = await selected.evaluate("(el) => getComputedStyle(el).color")
+            assert ink in ("rgb(0, 0, 0)", "rgb(255, 255, 255)"), ink
+        finally:
+            await browser.close()
+
+
 async def test_web_a_server_warning_pops_up_once(ffast_web_server):
     """A warning the server logs pops up in the corner; the same one again
     within a minute does not add a second pop-up."""
