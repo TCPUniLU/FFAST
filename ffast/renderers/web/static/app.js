@@ -42,6 +42,8 @@ import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './q
 import { DEFAULT_LOOK, startCommands, startFromCurrent } from './start_settings.js';
 import { addSectionHelp, bindSidebarSearch, checkboxRow, oneSectionOpen, selectRow } from './sidebar.js';
 import { makeResizable } from './resizers.js';
+import { ObjectColours } from './object_colours.js';
+import { plotTheme } from './theme.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 import { pageCodeFingerprint, serverCodeNotice } from './code_fingerprint.js';
 
@@ -175,7 +177,10 @@ export class FFastApp {
       onSelectDataset: (fp) => this._selectDataset(fp),
       onSelectModel: (fp) => this._selectModel(fp),
       rowActions: (kind, fp) => this._railRowActions(kind, fp),
+      colourOf: (kind, fp) => this._objectColour(fp, kind === 'dataset'),
+      onColour: (kind, fp, hex) => { this._colours.set(fp, hex); this._analysis?.rerenderAll(); },
     });
+    this._colours = new ObjectColours(() => plotTheme().series);
     /** Fingerprints this window asked the server to delete. */
     this._deleting = new Set();
     // User tabs on the server (ADR 0056): save, delete, hide, export.
@@ -255,6 +260,7 @@ export class FFastApp {
       onSelectTab: (id) => this._selectTab(id),
       onSub: (o) => this._onSub(o),
       onFreeze: (fp) => this._freezeSubset(fp),
+      objectColour: (fp) => this._objectColour(fp, this._datasets.has(fp), false),
       onPointFrame: (o) => this._onPlotPoint(o),
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
     });
@@ -1525,6 +1531,18 @@ export class FFastApp {
     this._renderObjects();
     this._independent.ensureShown();
     if (this._focusedIndependent) this._syncPanelSection();
+  }
+
+  /** The plot colour of a dataset or prediction (object_colours.js). A live
+   * SUB subset draws in its parent's colour and has none of its own: null for
+   * the rail's swatch (`own`), the parent's for a plot. */
+  _objectColour(fp, isDataset, own = true) {
+    if (!isDataset) return this._colours.get(fp);
+    const meta = this._datasets.get(fp);
+    if (meta?.parent_frames && !meta.frozen) {
+      return own ? null : this._objectColour(meta.parent, true, false);
+    }
+    return this._colours.get(fp);
   }
 
   /** A rail row's ⋯ menu. A live SUB subset belongs to its plot: it can be

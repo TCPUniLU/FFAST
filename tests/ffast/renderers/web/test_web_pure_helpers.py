@@ -606,6 +606,8 @@ CASES = {
     "theme_line": "th.plotTheme().line",
     "theme_grid_follows_line": "pn.baseLayout().xaxis.gridcolor === th.plotTheme().line",
     "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
+    "next_colour": "[oc.nextIndex([], 3), oc.nextIndex([0], 3), oc.nextIndex([1, 0], 3), oc.nextIndex([0, 1, 2, 5], 3)]",
+    "paint": "[pn.paint({seriesColour: (s) => s.c}, {c: '#abc'}, 0), pn.paint({seriesColour: () => null}, {}, 1) === pn.seriesColor(1), pn.paint({}, {}, 2) === pn.seriesColor(2)]",
     "unit_choices": "[ru.unitChoices('energy', []), ru.unitChoices('energy', ['kcal/mol', 'meV']), ru.unitChoices('force', ['eV/Å'])]",
     "remember_unit": "[ru.rememberUnit(['a', 'b'], 'b'), ru.rememberUnit(['a', 'b'], 'c')]",
     "typed_parts": "[rb.typedParts('/a/b/ca'), rb.typedParts('/a/'), rb.typedParts('/ab'), rb.typedParts('abc')]",
@@ -862,6 +864,7 @@ def results():
         f"  const so = await import('{origin}/session_ops.js');\n"
         f"  const cm = await import('{origin}/colormap.js');\n"
         f"  const pn = await import('{origin}/panels.js');\n"
+        f"  const oc = await import('{origin}/object_colours.js');\n"
         f"  const ru = await import('{origin}/recent_units.js');\n"
         f"  const rf = await import('{origin}/recent_files.js');\n"
         f"  const hn = await import('{origin}/tool_hints.js');\n"
@@ -1944,3 +1947,9 @@ def test_unit_choices_list_the_last_used_first_without_duplicates(results):
         ["kcal/mol", "meV", "eV", "Hartree"],
         ["eV/Å", "kcal/mol/Å", "Hartree/Bohr"]]
     assert results["remember_unit"] == [["b", "a"], ["c", "a", "b"]]
+
+
+def test_a_new_object_gets_the_next_unused_palette_colour(results):
+    # the palette starts over when it runs out; a series with no assigned colour keeps its position's
+    assert results["next_colour"] == [0, 1, 2, 1]
+    assert results["paint"] == ["#abc", True, True]

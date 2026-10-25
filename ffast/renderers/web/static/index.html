@@ -223,6 +223,13 @@
     .obj-row.disabled:hover { background: transparent; }
     .obj-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text1); }
     .obj-row.selected .name { color: var(--ink); font-weight: 600; }
+    .obj-row .obj-swatch {
+      width: 14px; height: 14px; padding: 0; border: 0; border-radius: 50%; flex-shrink: 0; align-self: center;
+      background: none; cursor: pointer;
+    }
+    .obj-row .obj-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+    .obj-row .obj-swatch::-webkit-color-swatch { border: 1px solid var(--line); border-radius: 50%; }
+    .obj-row .obj-swatch::-moz-color-swatch { border: 1px solid var(--line); border-radius: 50%; }
     .obj-row .meta { color: var(--muted); font-size: var(--fs-s); flex-shrink: 0; }
 
     /* ── tabbed content ──────────────────────────────────────────────── */

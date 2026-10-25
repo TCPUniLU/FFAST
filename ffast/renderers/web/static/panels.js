@@ -88,6 +88,13 @@ export function contrastInk(bg) {
   return lum > 0.179 ? '#000000' : '#ffffff';
 }
 
+/** The colour of series `s` (at position `i`): its prediction's, or its
+ * dataset's for a Ground Truth series, when the page assigns them (`ctx.seriesColour`);
+ * else its position's palette colour. */
+export function paint(ctx, s, i) {
+  return (ctx && ctx.seriesColour && ctx.seriesColour(s)) || seriesColor(i);
+}
+
 // The Plotly theme: the page's tokens, read when a panel is drawn (theme.js).
 export function baseLayout() {
   const t = plotTheme();
@@ -362,7 +369,7 @@ export function buildTimeline(spec, series, ctx) {
     if (!y.length) return;
     traces.push({
       x: y.map((_, k) => k), y, type: 'scatter', mode: 'lines',
-      line: { color: seriesColor(i), width: 1.5 },
+      line: { color: paint(ctx, s, i), width: 1.5 },
       name: s.name || '',
     });
     curveSeries.push(i);
@@ -405,8 +412,8 @@ export function buildDensity(spec, series, ctx) {
     return {
       x: row(s.data.value, 0), y: row(s.data.value, 1),
       type: 'scatter', mode: 'lines',
-      ...(fill ? { fill: 'tozeroy', fillcolor: hexAlpha(seriesColor(0), 0.15) } : {}),
-      line: { color: seriesColor(i), width: 1.5 },
+      ...(fill ? { fill: 'tozeroy', fillcolor: hexAlpha(paint(ctx, s, i), 0.15) } : {}),
+      line: { color: paint(ctx, s, i), width: 1.5 },
       name: s.name || '',
     };
   });
@@ -430,7 +437,7 @@ export function buildScatter(spec, series, ctx) {
     hi = Math.max(hi, arrMax(x), arrMax(y));
     traces.push({
       x, y, type: 'scattergl', mode: 'markers',
-      marker: { color: seriesColor(i), size: 4, opacity: 0.6 },
+      marker: { color: paint(ctx, s, i), size: 4, opacity: 0.6 },
       name: s.name || '',
     });
     curveSeries.push(i);
@@ -515,7 +522,7 @@ export function buildGroupedDensity(spec, series, ctx) {
       traces.push({
         x: row(s.data.aggregate, 0), y: row(s.data.aggregate, 1),
         type: 'scatter', mode: 'lines', name: `All${suffix(s.name)}`,
-        line: { color: multiElement ? plotTheme().ink2 : seriesColor(si), width: 1.5 },
+        line: { color: multiElement ? plotTheme().ink2 : paint(ctx, s, si), width: 1.5 },
       });
       curveSeries.push(si);
     }
@@ -533,7 +540,7 @@ export function buildGroupedDensity(spec, series, ctx) {
         y: value.nd.values.slice(base + G, base + 2 * G),
         type: 'scatter', mode: 'lines',
         name: `${elementSymbol(z)}${suffix(s.name)}`,
-        line: { color: seriesColor(multiElement ? ri : si), width: 1.5 },
+        line: { color: multiElement ? seriesColor(ri) : paint(ctx, s, si), width: 1.5 },
       });
       curveSeries.push(si);
     }
@@ -564,7 +571,7 @@ export function buildBars(spec, series, ctx) {
     if (!v.length) return;
     traces.push({
       x: labels, y: shown.map((z) => v[order.indexOf(z)] ?? NaN), type: 'bar',
-      marker: { color: seriesColor(i) }, name: s.name || '',
+      marker: { color: paint(ctx, s, i) }, name: s.name || '',
     });
     curveSeries.push(i);
   });

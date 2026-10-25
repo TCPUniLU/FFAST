@@ -14,6 +14,8 @@ import { icon } from './icons.js';
  *   datasetList: HTMLElement, modelList: HTMLElement,
  *   onSelectDataset: (fp: string) => void, onSelectModel: (fp: string) => void,
  *   rowActions: (kind: 'dataset'|'model', fp: string) => import('./actions.js').Action[],
+ *   colourOf?: (kind: 'dataset'|'model', fp: string) => string|null,
+ *   onColour?: (kind: 'dataset'|'model', fp: string, hex: string) => void,
  * }} RailPorts
  */
 
@@ -26,6 +28,22 @@ export class Rail {
     list.setAttribute('role', 'menu');
     document.body.appendChild(list);
     this._menu = sharedMenu(list);
+  }
+
+  /** The colour swatch of a row: a click opens the colour picker, without
+   * picking the row. Null for an object that takes its colour from another. */
+  _swatch(kind, fp) {
+    const colour = this._ports.colourOf?.(kind, fp);
+    if (!colour) return null;
+    const input = document.createElement('input');
+    input.type = 'color';
+    input.className = 'obj-swatch';
+    input.value = colour;
+    input.title = 'Colour in the plots';
+    input.setAttribute('aria-label', 'Colour in the plots');
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('change', () => this._ports.onColour?.(kind, fp, input.value));
+    return input;
   }
 
   /** The ⋯ button that opens a row's menu, without picking the row. */
@@ -71,6 +89,8 @@ export class Rail {
       row.innerHTML =
         `<span class="name">${meta.name || fp.slice(0,8)}</span>` +
         `<span class="meta">${meta.frozen ? 'frozen · ' : ''}${framesText(meta.n)}</span>`;
+      const swatch = this._swatch('dataset', fp);
+      if (swatch) row.prepend(swatch);
       row.appendChild(this._menuButton('dataset', fp));
       row.addEventListener('click', () => this._ports.onSelectDataset(fp));
       makeRowKeyboardOperable(row, fp === datasetFp);
@@ -94,6 +114,8 @@ export class Rail {
         + (ok ? '' : ' disabled');
       row.dataset.fp = fp;
       row.innerHTML = `<span class="name">${meta.name || fp.slice(0,8)}</span>`;
+      const swatch = this._swatch('model', fp);
+      if (swatch) row.prepend(swatch);
       row.appendChild(this._menuButton('model', fp));
       if (ok) row.addEventListener('click', () => this._ports.onSelectModel(fp));
       makeRowKeyboardOperable(row, fp === modelFp, !ok);

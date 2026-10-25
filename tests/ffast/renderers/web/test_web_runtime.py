@@ -533,6 +533,46 @@ async def test_web_element_picker_buttons_wear_the_3d_element_colours(ffast_web_
             await browser.close()
 
 
+async def test_web_rail_swatches_colour_the_same_series_in_every_panel(ffast_web_server):
+    """Each dataset and prediction row has a colour swatch; a plot series is
+    drawn in its prediction's colour (its dataset's for Ground Truth), the
+    same in every panel, and changing the swatch redraws them; the choice is
+    kept in this browser."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    colour = lambda title: page.evaluate(
+        "(t) => document.querySelector(`.tabpanel.active .analysis-panel[data-title=\"${t}\"] .panel-plot`)"
+        ".data[0].line.color", title)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            model_swatch = page.locator(f"#model-list .obj-row[data-fp='{model_fp}'] .obj-swatch")
+            dataset_swatch = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}'] .obj-swatch")
+            first = await model_swatch.input_value()
+            assert first != await dataset_swatch.input_value()      # the next unused palette colour
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            assert await colour("Forces MAE timeline") == first
+
+            await model_swatch.evaluate(
+                "(el) => { el.value = '#123456'; el.dispatchEvent(new Event('change')); }")
+            await page.wait_for_function(
+                "(t) => document.querySelector(`.tabpanel.active .analysis-panel[data-title=\"${t}\"] .panel-plot`)"
+                ".data[0].line.color === '#123456'", arg="Forces MAE timeline", timeout=10000)
+            assert await colour("Energy MAE timeline") == "#123456"      # the same in every panel
+
+            await page.reload(wait_until="networkidle")
+            await _expect_connected(page)
+            await expect(model_swatch).to_have_value("#123456")
+        finally:
+            await browser.close()
+
+
 async def test_web_a_server_warning_pops_up_once(ffast_web_server):
     """A warning the server logs pops up in the corner; the same one again
     within a minute does not add a second pop-up."""
@@ -1142,7 +1182,8 @@ async def test_web_journal_page_whitens_the_figure_area_and_density_scales_the_t
             # the plots were drawn again with the Journal series colour
             line = await page.evaluate(
                 "() => document.querySelector('.tabpanel.active .analysis-panel[data-title=\"Forces MAE timeline\"] .panel-plot').data[0].line.color")
-            assert line == "#0072b2", line
+            # (the prediction's palette position, 1: the dataset has 0; the Journal palette's second colour)
+            assert line == "#e69f00", line
 
             await page.locator("#density").select_option("large")
             await expect(page.locator("body")).to_have_css("font-size", "18.2px")
