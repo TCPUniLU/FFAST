@@ -107,21 +107,32 @@ class TestWheelContents:
     @pytest.fixture(scope="class")
     def wheel_path(self, tmp_path_factory) -> Path:
         out = tmp_path_factory.mktemp("wheel")
-        # As cluster/bootstrap.py does: setuptools never prunes build/lib, so a
-        # file deleted from the source would otherwise still ship.
-        shutil.rmtree(REPO_ROOT / "build" / "lib", ignore_errors=True)
+        # Build from a private copy of the source: the suite runs in parallel
+        # processes, and builds sharing the repo's build/ folder delete and
+        # overwrite each other's files. A fresh copy also has no stale
+        # build/lib, so a file deleted from the source cannot still ship.
+        src = tmp_path_factory.mktemp("src") / "ffast"
+        shutil.copytree(
+            REPO_ROOT,
+            src,
+            ignore=shutil.ignore_patterns(
+                ".git", ".venv", "build", "*.egg-info", "__pycache__",
+                ".pytest_cache", "temp", "results", "private", "examples",
+                "docs", "tests",
+            ),
+        )
         # Build via the PEP 517 backend directly (setuptools.build_meta) rather
         # than `python -m build`: the backend is guaranteed present (it is this
         # project's build-backend) whereas `build`/`pip` may not be installed
-        # in the test env. Run in a subprocess with cwd=REPO_ROOT so the backend
-        # reads pyproject.toml from the source tree without importing it here.
+        # in the test env. Run in a subprocess with cwd=src so the backend
+        # reads pyproject.toml from the copy without importing it here.
         script = (
             "from setuptools import build_meta as b; "
             f"print(b.build_wheel({str(out)!r}))"
         )
         proc = subprocess.run(
             [sys.executable, "-c", script],
-            cwd=REPO_ROOT,
+            cwd=src,
             capture_output=True,
             text=True,
         )
