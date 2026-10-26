@@ -983,10 +983,9 @@ async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server
             await browser.close()
 
 
-async def test_web_the_hint_bar_keeps_clear_of_the_colour_legend(ffast_web_server):
-    """ADR 0063 follow-up: the rule that moves the hint bar aside nested
-    :has() in :has(), which CSS forbids, so the browser dropped it and the bar
-    lay on the legend."""
+async def test_web_the_hint_bar_keeps_clear_of_the_colour_bar(ffast_web_server):
+    """The colour bar's pieces start on the left, clear of the hint bar at the
+    bottom (to_fix 17), and the hint bar stays inside the 3D view."""
     ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
@@ -996,28 +995,19 @@ async def test_web_the_hint_bar_keeps_clear_of_the_colour_legend(ffast_web_serve
             await _open_loupe(page, ws_port, web_port, dataset_fp)
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await page.locator("#quick-styles button", has_text="Force error").click()
-            legend, hint = page.locator("#legend3d"), page.locator("#hint-bar")
-            await expect(legend).to_be_visible()
+            hint = page.locator("#hint-bar")
+            await expect(page.locator("#legend3d .cb-piece-bar")).to_be_visible()
             await expect(hint).to_be_visible()
-            assert await page.evaluate(
-                "() => [...document.styleSheets].some(s => [...s.cssRules]"
-                ".some(r => r.selectorText?.includes('#colorbar:not(.hidden)')))"
-            )
-            a, b = await legend.bounding_box(), await hint.bounding_box()
-            apart = (a["x"] + a["width"] <= b["x"] or b["x"] + b["width"] <= a["x"]
-                     or a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"])
-            assert apart, (a, b)
-            # Beside the legend there is no room for a step at this width, so
-            # the bar goes above it: all of it, and its ×, inside the 3D view.
+            b = await hint.bounding_box()
+            for piece in ("bar", "name", "max", "min"):
+                a = await page.locator(f"#legend3d .cb-piece-{piece}").bounding_box()
+                apart = (a["x"] + a["width"] <= b["x"] or b["x"] + b["width"] <= a["x"]
+                         or a["y"] + a["height"] <= b["y"] or b["y"] + b["height"] <= a["y"])
+                assert apart, (piece, a, b)
             view = await page.locator(".viewport:has(> #hint-bar)").bounding_box()
             close = await page.locator("#hint-dismiss").bounding_box()
             for box in (b, close):
                 assert view["x"] <= box["x"] and box["x"] + box["width"] <= view["x"] + view["width"], (view, box)
-            clipped = await page.evaluate(
-                "() => [...document.querySelectorAll('#hint-bar .hint-step')]"
-                ".some((el) => el.getBoundingClientRect().right > document.getElementById('hint-bar').getBoundingClientRect().right)"
-            )
-            assert not clipped
         finally:
             await browser.close()
 
@@ -1038,7 +1028,7 @@ async def test_web_a_narrow_compare_tab_gives_its_3d_panel_room_and_no_hint_bar(
             await _open_analysis_tab(page, "Compare")
             grid = page.locator(".tabpanel.active .analysis-grid")
             await expect(grid).to_have_class(re.compile(r"\bnarrow\b"))
-            await expect(page.locator("#legend3d")).to_be_visible()
+            await expect(page.locator("#legend3d .cb-piece-bar")).to_be_visible()
             await expect(page.locator("#hint-bar")).to_be_hidden()
             box = await page.locator(".tabpanel.active .panel-3d").bounding_box()
             assert box["height"] >= 460, box
@@ -1301,22 +1291,25 @@ async def test_web_journal_page_draws_the_3d_view_on_white_in_this_browser_only(
             await browser.close()
 
 
-async def test_web_colour_legend_limits_are_typed_and_the_legend_resizes(ffast_web_server):
-    """The 3D colour legend prints its limits in scientific notation; a limit
-    clicked and typed sets the range, an empty one is automatic again; the
-    corner grip makes the legend bigger and a double click gives back the
-    default size."""
+async def test_web_colour_bar_limits_are_typed_and_its_pieces_move(ffast_web_server):
+    """The 3D colour bar prints its limits in scientific notation; a limit
+    clicked and typed sets the range, an empty one is automatic again
+    (to_fix 17: still so with four pieces). A piece dragged stays where it is
+    put, as a fraction of the panel, for every colouring and after a reload;
+    a group moves together, Rotate all 90° gives the horizontal layout, and
+    the wheel over the bar makes it longer."""
     ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        piece = lambda key: page.locator(f"#legend3d .cb-piece-{key}")
         try:
             await _open_loupe(page, ws_port, web_port, dataset_fp)
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await page.locator("#quick-styles button", has_text="Force error").click()
-            legend, cb_min, cb_max = page.locator("#legend3d"), page.locator(".cb-min"), page.locator(".cb-max")
-            await expect(legend).to_be_visible()
+            cb_min, cb_max = page.locator(".cb-min"), page.locator(".cb-max")
+            await expect(piece("bar")).to_be_visible()
             await expect(cb_max).to_have_text(re.compile(r"^-?\d\.\d\de-?\d+$|^0$"))
             auto_max = await cb_max.inner_text()
 
@@ -1329,27 +1322,67 @@ async def test_web_colour_legend_limits_are_typed_and_the_legend_resizes(ffast_w
             await page.keyboard.press("Enter")
             await expect(cb_max).to_have_text(auto_max)
 
-            grip = page.locator("#legend3d .legend-grip")
-            before = await legend.bounding_box()
-            await legend.hover()
-            g = await grip.bounding_box()
-            await page.mouse.move(g["x"] + 7, g["y"] + 7)
+            # drag the name 100 px right: it stays there, and a drag edits nothing
+            name = await piece("name").bounding_box()
+            await page.mouse.move(name["x"] + 5, name["y"] + 5)
             await page.mouse.down()
-            await page.mouse.move(g["x"] + 107, g["y"] - 53, steps=5)
+            await page.mouse.move(name["x"] + 105, name["y"] + 45, steps=6)
             await page.mouse.up()
-            after = await legend.bounding_box()
-            assert after["width"] == pytest.approx(before["width"] + 100, abs=2)
-            assert after["height"] == pytest.approx(before["height"] + 60, abs=2)
-            assert after["y"] + after["height"] == pytest.approx(before["y"] + before["height"], abs=1)
-            gradient = await page.locator("#colorbar-gradient").bounding_box()
-            assert gradient["height"] > 40   # the bar grows with the legend
-            stored = await page.evaluate("() => JSON.parse(localStorage.getItem('ffast.layout')).legend")
-            assert stored["w"] == round(after["width"])
+            moved = await piece("name").bounding_box()
+            assert moved["x"] == pytest.approx(name["x"] + 100, abs=7)
+            await expect(page.locator("#unit-popover")).to_be_hidden()
+            stored = await page.evaluate("() => JSON.parse(localStorage.getItem('ffast.layout')).colourBar")
+            assert 0 < stored["pieces"]["name"]["x"] < 1
 
-            await grip.dblclick()
-            reset = await legend.bounding_box()
-            assert reset["width"] == pytest.approx(before["width"], abs=1)
-            assert reset["height"] == pytest.approx(before["height"], abs=1)
+            # shift-click the min and max, group them: they move together
+            await piece("max").click(modifiers=["Shift"], position={"x": 2, "y": 2})
+            await piece("min").click(modifiers=["Shift"], position={"x": 2, "y": 2})
+            await piece("min").click(button="right", position={"x": 2, "y": 2})
+            await page.locator(".cb-menu [data-action='cb-group']").click()
+            top, low = await piece("max").bounding_box(), await piece("min").bounding_box()
+            await page.mouse.move(top["x"] + 2, top["y"] + 2)
+            await page.mouse.down()
+            await page.mouse.move(top["x"] + 62, top["y"] + 32, steps=6)
+            await page.mouse.up()
+            low_after = await piece("min").bounding_box()
+            assert low_after["y"] - low["y"] == pytest.approx(30, abs=7)
+
+            # Rotate all 90°: a horizontal bar, wider than tall
+            await piece("bar").click(button="right")
+            await page.locator(".cb-menu [data-action='cb-rotate-all']").click()
+            bar = await piece("bar").bounding_box()
+            assert bar["width"] > bar["height"]
+            await page.mouse.move(bar["x"] + bar["width"] / 2, bar["y"] + bar["height"] / 2)
+            await page.mouse.wheel(0, -300)
+            longer = await piece("bar").bounding_box()
+            assert longer["width"] > bar["width"] + 10
+
+            # the PNG export draws the bar where it is on screen
+            pixel = await page.evaluate("""async () => {
+              const app = window.ffastApp;
+              const url = await app._capturePng({transparent: true, background: '#000000'});
+              const img = new Image(); img.src = url; await img.decode();
+              const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+              const ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0);
+              const view = app.renderer._canvas.getBoundingClientRect();
+              const bar = document.querySelector('#legend3d .cb-piece-bar').getBoundingClientRect();
+              const k = img.naturalWidth / view.width;
+              const at = (fx) => [...ctx.getImageData(Math.round((bar.left - view.left + bar.width * fx) * k),
+                Math.round((bar.top - view.top + bar.height / 2) * k), 1, 1).data];
+              return {low: at(0.1), high: at(0.9)};
+            }""")
+            assert pixel["low"][3] == 255 and pixel["high"][3] == 255
+            assert pixel["low"][:3] != pixel["high"][:3]       # a gradient, low to high
+
+            # one layout for every colouring, and it survives a reload
+            await page.reload(wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            await expect(piece("bar")).to_be_visible()
+            again = await piece("bar").bounding_box()
+            assert again["width"] == pytest.approx(longer["width"], abs=2)
         finally:
             await browser.close()
 

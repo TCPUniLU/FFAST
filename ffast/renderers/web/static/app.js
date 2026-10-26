@@ -7,6 +7,7 @@ import { Panel3D, ViewRenderers } from './views3d.js';
 import { MainViews } from './views.js';
 import { defaultSettings, startSettings } from './view_settings.js';
 import { IndependentPanels, independentKey } from './independent_panels.js';
+import { withColourBar } from './colorbar_overlay.js';
 import {
   ensureMainView, isLinked3D, MAIN_VIEW_CHOICE, MAIN_VIEW_RULE, panelChoices, showsMainView, whyPanelStays,
 } from './tab_rules.js';
@@ -171,7 +172,7 @@ export class FFastApp {
       setStatus: (text, kind) => this._setStatus(text, kind),
       getCurrentDatasetFp: () => this._currentDatasetFp,
       getDatasetMeta: (fp) => this._datasets.get(fp),
-      capturePng: (opts) => this.renderer.capturePng(opts),
+      capturePng: (opts) => this._capturePng(opts),
     });
     this._rail = new Rail({
       datasetList: document.getElementById('dataset-list'),
@@ -676,6 +677,16 @@ export class FFastApp {
   _whyNoEdit() {
     if (this._editor.editing) return 'Finish editing the tab first (Save or Cancel)';
     return this._needsControl();
+  }
+
+  /** A PNG of the focused 3D panel, with the colour bar drawn where it is on
+   * screen when it shows on that panel (to_fix 17). */
+  async _capturePng(opts) {
+    const renderer = this.renderer;
+    const url = renderer.capturePng(opts);
+    const colourBar = this._panes?.colorBy.colourBar;
+    const onPanel = this._activePanel?.viewport.contains(colourBar?.el);
+    return colourBar && onPanel ? withColourBar(url, colourBar, renderer._canvas.clientWidth, opts) : url;
   }
 
   /** ✎ and + follow whether this window may edit, and Edit mode. */

@@ -274,6 +274,14 @@ The sidebar panes:
   its predicted forces, and Combine picks the length ("Forces · Magnitude") or
   per component; an error such as Force Difference needs a model, so it offers
   no Ground Truth; a metric of the dataset alone hides Prediction.
+  The colourbar on the 3D view is four pieces: the bar, its name, and the
+  highest and lowest value. Drag any of them; they snap into line with each
+  other, with a guide. Shift-click to select several; right-click a piece to
+  turn it 90°, group the selection (a group moves and turns together), switch
+  the whole bar between upright and lying ("Rotate all 90°"), or reset it.
+  The mouse wheel over the bar makes it longer or shorter. One arrangement
+  serves every colouring, is kept in this browser, and an exported PNG shows
+  the pieces where they are on screen.
 - **Force Vectors** — arrow length, normalised or true length, restricted to a
   selection or not.
 - **Camera** — position and target, field of view, centre-of-mass tracking, saved

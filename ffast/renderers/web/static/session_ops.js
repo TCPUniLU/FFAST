@@ -61,7 +61,7 @@ export class SessionOps {
    *   setStatus: (text: string, kind?: string) => void,
    *   getCurrentDatasetFp: () => string | null,
    *   getDatasetMeta: (fp: string) => {name?: string} | undefined,
-   *   capturePng: (opts: {transparent: boolean, background: string}) => string,
+   *   capturePng: (opts: {transparent: boolean, background: string}) => Promise<string>,
    * }} ports
    */
   constructor(ports) {
@@ -125,8 +125,8 @@ export class SessionOps {
   }
 
   /** @param {{transparent: boolean, background: string}} opts */
-  exportPng({ transparent, background }) {
-    const url = this._ports.capturePng({ transparent, background });
+  async exportPng({ transparent, background }) {
+    const url = await this._ports.capturePng({ transparent, background });
     const fp = this._ports.getCurrentDatasetFp();
     const name = safeName(fp ? this._ports.getDatasetMeta(fp)?.name : null);
     const a = document.createElement('a');

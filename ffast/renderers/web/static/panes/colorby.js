@@ -1,6 +1,6 @@
 /**
  * Colour-by pane (ADR 0045 issue 03): source selector, prediction chooser,
- * colormap, per-metric compute params, and a static colourbar. Mirrors
+ * colormap, per-metric compute params, and the colour bar. Mirrors
  * modules/loupe/loupeAtoms.py.
  *
  * The Prediction selector sets the `ffast.atom_color` stage's own
@@ -36,74 +36,17 @@ import {
 } from '../metric_logic.js';
 import { COLORABLE_SHAPES, DEFAULT_LOOK, colouringLabel } from '../start_settings.js';
 import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.js';
-import { gradientCss } from '../colormap.js';
 import { defaultSettings } from '../view_settings.js';
 import { editableDimension, resolveUnit, withUnit } from '../units.js';
 import { unitPopover } from '../dialogs.js';
 import { formatScientific } from '../panels.js';
-import { loadLayout, saveLayout } from '../layout_state.js';
+import { createColourBar } from '../colorbar_overlay.js';
 
 const COLORMAPS = ['force_error', 'cividis', 'viridis', 'inferno', 'plasma', 'coolwarm', 'hot', 'bwr'];
 // Shared with an independent panel's starting look (start_settings.js).
 
-const LEGEND_MIN = { w: 160, h: 48 };
 // A base with x/y/z per atom (Force Difference): coloured through its boxes.
 const VECTOR_PER_ATOM = '(N_atoms, xyz)';
-
-/** Size the legend (`null`: its default size). The size is a page-wide CSS
- * variable, so the hint bar keeps clear of it, and it is this browser's own
- * choice (layout_state.js), not a view setting. */
-function setLegendSize(size) {
-  const root = document.documentElement.style;
-  if (size) {
-    root.setProperty('--legend-w', `${size.w}px`);
-    root.setProperty('--legend-h', `${size.h}px`);
-  } else {
-    root.removeProperty('--legend-w');
-    root.removeProperty('--legend-h');
-  }
-}
-
-/** The corner grip that resizes the legend: the legend sits in the bottom left
- * corner, so it grows up and to the right. A double click gives back the
- * default size. */
-function legendGrip() {
-  const stored = loadLayout().legend;
-  if (stored && Number.isFinite(stored.w) && Number.isFinite(stored.h)) setLegendSize(stored);
-  const grip = document.createElement('div');
-  grip.className = 'legend-grip';
-  grip.title = 'Drag to resize; double-click for the default size';
-  grip.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const legend = grip.parentElement;
-    const box = legend.getBoundingClientRect();
-    const room = legend.parentElement?.getBoundingClientRect();
-    const start = { x: e.clientX, y: e.clientY, w: box.width, h: box.height };
-    let size = null;
-    const move = (ev) => {
-      const maxW = room ? room.width - 24 : Infinity;
-      const maxH = room ? room.height - 24 : Infinity;
-      size = {
-        w: Math.round(Math.min(maxW, Math.max(LEGEND_MIN.w, start.w + ev.clientX - start.x))),
-        h: Math.round(Math.min(maxH, Math.max(LEGEND_MIN.h, start.h - (ev.clientY - start.y)))),
-      };
-      setLegendSize(size);
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-      if (size) saveLayout({ legend: size });
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-  });
-  grip.addEventListener('dblclick', () => {
-    setLegendSize(null);
-    saveLayout({ legend: null });
-  });
-  return grip;
-}
 
 /**
  * @param {HTMLElement} sidebarEl
@@ -299,25 +242,21 @@ export function createColorByPane(sidebarEl, callbacks) {
   missingNote.hidden = true;
   body.appendChild(missingNote);
 
-  // ── colourbar: static gradient + vmin/vmax + label ──────────────────────
-  const colorbar = document.createElement('div');
-  colorbar.id = 'colorbar';
-  colorbar.className = 'hidden';
+  // ── colour bar: four movable pieces, the bar, the name and the two limits
+  // (colorbar_overlay.js, to_fix 17) ──────────────────────────────────────
   const cbMin = document.createElement('span');
   cbMin.className = 'cb-min';
-  const cbGradient = document.createElement('div');
-  cbGradient.id = 'colorbar-gradient';
   const cbMax = document.createElement('span');
   cbMax.className = 'cb-max';
-  colorbar.append(cbMin, cbGradient, cbMax);
   const cbLabel = document.createElement('div');
   cbLabel.id = 'colorbar-label';
-  // The legend lives on the 3D view, bottom left, not in this section: app.js
-  // puts it into the focused panel's viewport (ADR 0063).
+  const colourBar = createColourBar({ name: cbLabel, max: cbMax, min: cbMin });
+  // The legend lives on the 3D view, not in this section: app.js puts it
+  // into the focused panel's viewport (ADR 0063).
   const legend = document.createElement('div');
   legend.id = 'legend3d';
   legend.className = 'legend3d';
-  legend.append(cbLabel, colorbar, legendGrip());
+  legend.append(colourBar.el);
   editableLimit(cbMin, 'vmin');
   editableLimit(cbMax, 'vmax');
 
@@ -450,8 +389,11 @@ export function createColorByPane(sidebarEl, callbacks) {
   }
 
   return {
-    /** The colour legend (label above the colour bar), for the 3D view. */
+    /** The colour legend (the colour bar's pieces), for the 3D view. */
     legend,
+
+    /** The colour bar, which a PNG export draws on (colorbar_overlay.js). */
+    colourBar,
 
     /** Refresh the Prediction combo from the currently loaded models. */
     refreshModels(models) {
@@ -523,9 +465,9 @@ export function createColorByPane(sidebarEl, callbacks) {
 
     /** @param {import('../protocol.js').AtomColorBy|null} colorBy */
     setColorBy(colorBy) {
-      if (!colorBy) { colorbar.classList.add('hidden'); return; }
-      colorbar.classList.remove('hidden');
-      cbGradient.style.background = `linear-gradient(to right, ${gradientCss(colorBy.colormap)})`;
+      if (!colorBy) { colourBar.setShown(false); return; }
+      colourBar.setShown(true);
+      colourBar.setColormap(colorBy.colormap);
       if (!cbMin.querySelector('input')) cbMin.textContent = formatScientific(colorBy.vmin);
       if (!cbMax.querySelector('input')) cbMax.textContent = formatScientific(colorBy.vmax);
       shownColorBy = colorBy;
