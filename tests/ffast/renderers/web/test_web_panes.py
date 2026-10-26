@@ -25,7 +25,8 @@ STATIC_DIR = (
 )
 
 PRELUDE = r"""
-  const mk = (mod, name, cbs = {}) => {
+  // `defaultPrediction` is a question, not a change: not recorded
+  const mk = (mod, name, cbs = {defaultPrediction: () => null}) => {
     const host = document.createElement('div');
     document.body.append(host);
     const calls = [];
@@ -153,8 +154,8 @@ CASES = {
       const ok = pane.chooseMetric('m.a'); const missing = pane.chooseMetric('zzz');
       return {ok, missing, source: s.source, coloring: val(ctl(host, 'Coloring')), calls}; })()""",
     "color_prediction_helpers": """(() => { const {pane, host} = mk(cb, 'createColorByPane');
-      pane.refreshModels(new Map([['fp1', {name: 'MACE'}]]));
-      const s = {source: 'element', prediction: null, colormap: 'viridis', norm: 'None'}; pane.show(s);
+      pane.setMetricCatalog(FCAT); pane.refreshModels(new Map([['fp1', {name: 'MACE'}]]));
+      const s = {source: 'metric:ffast.force_reference[atom+structure;length]', prediction: null, colormap: 'viridis', norm: 'None'}; pane.show(s);
       pane.setPrediction('fp1'); const set = [s.prediction, pane.predictionOf(), val(ctl(host, 'Prediction'))];
       pane.refreshModels(new Map()); const gone = [s.prediction, pane.predictionOf(), val(ctl(host, 'Prediction'))];
       return {set, gone}; })()""",
@@ -165,6 +166,33 @@ CASES = {
       const t = {source: 'metric:m.a', prediction: null, colormap: 'viridis', norm: 'None'}; pane.show(t);
       fire(ctl(host, 'norm'), 'log');
       return {shown, s, t, calls: calls.filter((c) => c[0] === 'onMetricParam')}; })()""",
+    "color_forces": """(() => { const {pane, host, calls} = mk(cb, 'createColorByPane');
+      pane.setMetricCatalog(FCAT); pane.refreshModels(new Map([['fp1', {name: 'MACE'}]]));
+      const opts = (l) => [...ctl(host, l).options].map((o) => o.value);
+      const s = {source: 'metric:ffast.force_prediction[atom+structure;length]', prediction: 'fp1', colormap: 'viridis', norm: 'None'};
+      pane.show(s);
+      const old = [val(ctl(host, 'Coloring')), val(ctl(host, 'Prediction')), opts('Prediction')];
+      fire(ctl(host, 'Prediction'), 'Ground Truth'); const toTruth = [s.source, s.prediction, calls.splice(0)];
+      fire(ctl(host, 'Prediction'), 'MACE'); const toModel = [s.source, s.prediction, calls.splice(0)];
+      pane.setColorBy({values: [1], colormap: 'viridis', vmin: 0, vmax: 1, label: 'Predicted Forces · per atom · length', unit: ''});
+      const bar = pane.legend.querySelector('#colorbar-label');
+      const t = {source: 'metric:ffast.force_reference[atom+structure;component;mae]', prediction: 'fp1', colormap: 'viridis', norm: 'None'};
+      pane.show(t);
+      return {coloring: opts('Coloring'), old, toTruth, toModel, bar: bar.textContent,
+              truth: val(ctl(host, 'Prediction'))}; })()""",
+    "color_prediction_rows": """(() => { const {pane, host, calls} = mk(cb, 'createColorByPane');
+      pane.setMetricCatalog(FCAT);
+      const opts = () => [...ctl(host, 'Prediction').options].map((o) => o.value);
+      const row = () => ctl(host, 'Prediction').closest('.ctl-row');
+      const hid = () => row().classList.contains('needs');
+      const s = {source: 'element', prediction: null, colormap: 'viridis', norm: 'None'}; pane.show(s);
+      const none = [hid(), row().dataset.needs ?? null];
+      fire(ctl(host, 'Coloring'), 'A metric'); const waiting = [hid(), row().dataset.needs ?? null];
+      pane.refreshModels(new Map([['fp1', {name: 'MACE'}], ['fp2', {name: 'NequIP'}]]));
+      const error = [hid(), opts(), val(ctl(host, 'Prediction'))];
+      fire(ctl(host, 'Coloring'), 'Reference only'); const reference = [hid(), row().dataset.needs];
+      calls.splice(0); fire(ctl(host, 'Coloring'), 'A metric');
+      return {none, waiting, error, reference, picked: calls.filter((c) => c[0] !== 'boxes'), s}; })()""",
     "color_isolated": """(() => { const {pane, host} = mk(cb, 'createColorByPane');
       const s = {source: 'element', prediction: null, colormap: 'viridis', norm: 'None'};
       const t = {source: 'displacement', prediction: null, colormap: 'hot', norm: 'None'};
@@ -192,8 +220,11 @@ def results():
         f"  const bp = await import('{origin}/panes/bonds.js');\n"
         f"  const ap = await import('{origin}/panes/align.js');\n"
         f"  const cb = await import('{origin}/panes/colorby.js');\n"
-        "  const CAT = [{id: 'm.a', label: 'A metric', shape: 'N_atoms',\n"
+        "  const CAT = [{id: 'm.a', label: 'A metric', shape: 'N_atoms', inputs: ['prediction.forces'],\n"
         "    parameters: {norm: {type: 'choice', choices: ['None', 'log'], default: 'None'}}}];\n"
+        "  const FCAT = [...CAT, {id: 'm.ref', label: 'Reference only', shape: 'N_atoms', inputs: ['reference.positions']},\n"
+        "    {id: 'ffast.force_reference', label: 'Reference Forces', shape: '(N_atoms, xyz)', inputs: ['reference.forces']},\n"
+        "    {id: 'ffast.force_prediction', label: 'Predicted Forces', shape: '(N_atoms, xyz)', inputs: ['prediction.forces']}];\n"
         + PRELUDE
         + "  const out = {};\n"
         + "".join(
@@ -358,8 +389,10 @@ def test_color_by_writes_every_change_into_its_settings(results):
     r = results["color_write"]
     assert r["source"] == "metric:m.a"
     assert r["s"] == {"source": "displacement", "prediction": "fp1", "colormap": "inferno", "norm": "None"}
+    # an error gets the first prediction before its source; picking the one
+    # already shown sends it again
     assert [c[0] for c in r["calls"] if c[0] != "boxes"] == [
-        "onSourceChange", "onPredictionChange", "onColormapChange", "onSourceChange"]
+        "onPredictionChange", "onSourceChange", "onPredictionChange", "onColormapChange", "onSourceChange"]
 
 
 def test_color_by_keeps_a_metric_source_until_the_catalog_arrives(results):
@@ -381,7 +414,7 @@ def test_choosing_a_metric_writes_the_source(results):
     assert [c[:2] for c in r["calls"] if c[0] != "boxes"] == [["onSourceChange", "metric:m.a"]]
 
 
-def test_the_prediction_follows_the_settings_and_goes_back_to_ground_truth(results):
+def test_forces_go_back_to_ground_truth_when_their_prediction_goes(results):
     r = results["color_prediction_helpers"]
     assert r["set"] == ["fp1", "fp1", "MACE"]
     assert r["gone"] == ["fp1", None, "Ground Truth"]
@@ -393,6 +426,45 @@ def test_color_by_keeps_the_norm_of_a_metric_in_the_settings(results):
     assert r["s"]["norm"] == "None"
     assert r["t"]["norm"] == "log"
     assert r["calls"] == [["onMetricParam", "norm", "None"], ["onMetricParam", "norm", "log"]]
+
+
+def test_one_forces_entry_replaces_the_two_pass_throughs(results):
+    r = results["color_forces"]
+    assert "Forces" in r["coloring"]
+    assert "Reference Forces" not in r["coloring"] and "Predicted Forces" not in r["coloring"]
+    # an old view coloured by the predicted forces opens as Forces of that model
+    assert r["old"] == ["Forces", "MACE", ["Ground Truth", "MACE"]]
+
+
+def test_the_prediction_chooses_whose_forces(results):
+    r = results["color_forces"]
+    src, pred, calls = r["toTruth"]
+    assert src == "metric:ffast.force_reference[atom+structure;length]" and pred is None
+    # the dataset's own forces need no model: the source goes first
+    assert [c for c in calls if c[0] != "boxes"] == [
+        ["onSourceChange", src], ["onPredictionChange", None]]
+    src, pred, calls = r["toModel"]
+    assert src == "metric:ffast.force_prediction[atom+structure;length]" and pred == "fp1"
+    assert [c for c in calls if c[0] != "boxes"] == [
+        ["onPredictionChange", "fp1"], ["onSourceChange", src]]
+
+
+def test_the_forces_colour_bar_reads_magnitude(results):
+    r = results["color_forces"]
+    assert r["bar"].startswith("Forces · Magnitude")
+    # an old view coloured by the reference forces opens on Ground Truth
+    assert r["truth"] == "Ground Truth"
+
+
+def test_the_prediction_row_offers_what_the_colouring_reads(results):
+    r = results["color_prediction_rows"]
+    # hidden rows wait with a reason, which the sidebar search shows
+    assert r["none"] == [True, "Choose a metric colouring first"]   # elements
+    assert r["waiting"] == [True, "Load a prediction first"]
+    assert r["error"] == [False, ["MACE", "NequIP"], "MACE"]  # an error: no Ground Truth
+    assert r["reference"] == [True, "This colouring reads the dataset alone"]
+    # choosing an error again gives it the prediction it shows, before its source
+    assert [c[:2] for c in r["picked"]] == [["onPredictionChange", "fp1"], ["onSourceChange", "metric:m.a"]]
 
 
 def test_color_by_changes_after_a_new_show_leave_the_old_settings_alone(results):

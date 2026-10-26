@@ -237,3 +237,15 @@ def test_metric_result_fields_match_metricresult():
     assert set(MetricResultMessage.model_fields) == set(
         MetricResult.model_fields
     ) | {"ok", "error"}
+
+
+def test_catalog_entries_list_the_refs_each_metric_reads():
+    # Colour by decides whether a metric needs a prediction from these.
+    import ffast.metrics.builtin  # noqa: F401 — register built-ins
+    from ffast.metrics.catalog import build_metric_catalog
+    from ffast.metrics.registry import _default_registry
+
+    by_id = {e["id"]: e for e in build_metric_catalog(_default_registry)}
+    assert by_id["ffast.force_difference"]["inputs"] == ["prediction.forces", "reference.forces"]
+    assert by_id["ffast.force_reference"]["inputs"] == ["reference.forces"]
+    assert by_id["ffast.force_net_residual"]["inputs"] == ["ffast.force_difference"]

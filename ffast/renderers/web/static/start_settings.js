@@ -6,7 +6,7 @@
  * today's default. Pure functions, so they test without a server.
  */
 
-import { parseBoxId } from './metric_logic.js';
+import { forcesSide, parseBoxId } from './metric_logic.js';
 
 /** Today's look of a new view, which unset keys keep. */
 export const DEFAULT_LOOK = Object.freeze({
@@ -77,8 +77,10 @@ export function startCommands(start, { modelFp, catalog }) {
     set(COLOUR, 'source', source);
     settings.source = source;
     if (source.startsWith('metric:')) {
-      set(COLOUR, 'prediction_ref', modelFp);
-      settings.prediction = modelFp;
+      // the dataset's own forces (Forces, Ground Truth) read no prediction
+      const prediction = forcesSide(source.slice(7)) === 'reference' ? null : modelFp;
+      set(COLOUR, 'prediction_ref', prediction);
+      settings.prediction = prediction;
     }
   }
   if (s.colormap != null) {

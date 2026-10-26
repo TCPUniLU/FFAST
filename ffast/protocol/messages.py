@@ -107,6 +107,8 @@ class MetricCatalogEntry(BaseModel):
     source: Optional[str] = None
     equivalent_expr: Optional[str] = None
     equivalent_vars: Optional[dict[str, str]] = None
+    # The refs it reads: raw inputs (``prediction.forces``) or metric ids.
+    inputs: list[str] = Field(default_factory=list)
 
 
 class MetricCatalog(BaseModel):

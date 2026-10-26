@@ -20,10 +20,20 @@
  * source's box id (`metric:ffast.force_difference[atom;length;mae]`), saved
  * with the view; the list shows it under its base. Save as metric keeps it as
  * a user metric. Only settings with one value per atom are offered.
+ *
+ * Whose numbers: one "Forces" entry stands for the two force pass-throughs
+ * (ffast.force_reference / ffast.force_prediction, which the Forces scatter
+ * also reads), and the Prediction picks which: Ground Truth or a model. An
+ * error offers only models; a metric of reference data alone hides the
+ * Prediction. Which is which comes from the catalog's input lists
+ * (metric_logic.js `predictionChoice`).
  */
 
 import { createKeepBoxes } from '../keep_boxes.js';
-import { colourSettings, firstColourSetting, parseBoxId, sameSetting } from '../metric_logic.js';
+import {
+  FORCES_BASES, FORCES_LABEL, colourSettings, firstColourSetting, forcesId, forcesLabel, forcesSide,
+  parseBoxId, predictionChoice, sameSetting,
+} from '../metric_logic.js';
 import { COLORABLE_SHAPES, DEFAULT_LOOK, colouringLabel } from '../start_settings.js';
 import { createPane, selectRow, row, rowElement, setRowNeeds } from '../sidebar.js';
 import { gradientCss } from '../colormap.js';
@@ -107,8 +117,10 @@ function legendGrip() {
  *   onSetUnit?: (dimension: string, unit: string) => void,
  *   boxes?: (request: {metricId?: string, base?: string, setting?: object}) => Promise<object>,
  *   saveMetric?: (metric: object) => Promise<{ok: boolean, error: string|null}>,
+ *   defaultPrediction?: () => string|null,
  * }} callbacks unitsOf: the units of the shown view's dataset; onSetUnit: name one;
- *   boxes: REQUEST_METRIC_BOXES; saveMetric: Save as metric
+ *   boxes: REQUEST_METRIC_BOXES; saveMetric: Save as metric; defaultPrediction:
+ *   the shown view's own prediction, which an error uses until one is chosen
  */
 export function createColorByPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Colour By');
@@ -122,17 +134,37 @@ export function createColorByPane(sidebarEl, callbacks) {
   let state = defaultSettings().colorBy;   // the shown view's settings
 
   /** The Coloring label of a source, or undefined (a metric the catalog lacks).
-   * A box setting shows as its base. */
+   * A box setting shows as its base; either force pass-through as Forces. */
   const labelOfSource = (source) => {
     const find = (src) => [...labelToSource].find(([, s]) => s === src)?.[0];
-    const box = source?.startsWith('metric:') ? parseBoxId(source.slice(7)) : null;
+    const id = source?.startsWith('metric:') ? source.slice(7) : null;
+    if (id && forcesSide(id)) return labelToSource.has(FORCES_LABEL) ? FORCES_LABEL : undefined;
+    const box = id ? parseBoxId(id) : null;
     return find(source) ?? (box ? find(`metric:${box.base}`) : undefined);
   };
   /** The prediction combo label of a fingerprint (Ground Truth for none or unknown). */
   const labelOfPrediction = (fp) => [...keyByLabel].find(([, key]) => key === fp)?.[0] || 'Ground Truth';
+  const loaded = (fp) => !!fp && [...keyByLabel.values()].includes(fp);
+  /** The view's own prediction when loaded, else the first loaded one. */
+  const fallbackPrediction = () => {
+    const own = callbacks.defaultPrediction?.();
+    return loaded(own) ? own : [...keyByLabel.values()][0] ?? null;
+  };
+  /** The prediction the colouring on show uses: null for Ground Truth (or
+   * when the Prediction is hidden). An error with none chosen uses the view's. */
+  const shownPrediction = () => {
+    const mode = predictionChoice(state.source, metricsById);
+    if (mode === 'none' || (mode === 'forces' && forcesSide(state.source.slice(7)) === 'reference')) return null;
+    return loaded(state.prediction) ? state.prediction : fallbackPrediction();
+  };
 
   const coloringSelect = selectRow(body, 'Coloring', ['Elements', 'Displacement'], 'Elements', (label) => {
     currentLabel = label;
+    if (label === FORCES_LABEL) {
+      // whose forces: the prediction chosen last, else the dataset's own
+      firstSetting(forcesId(FORCES_BASES.reference, loaded(state.prediction) ? state.prediction : null));
+      return;
+    }
     const mid = labelToMetricId.get(label);
     if (mid && metricsById.get(mid)?.shape === VECTOR_PER_ATOM) {
       // A vector base colours through its first per-atom setting.
@@ -163,16 +195,33 @@ export function createColorByPane(sidebarEl, callbacks) {
     boxesNote.textContent = r.ok ? 'Saved: the Metrics pane lists it.' : (r.error || 'Could not save');
   });
 
-  /** Colour by `source` (element, displacement or metric:<id>) now. */
+  /** Colour by `source` (element, displacement or metric:<id>) now. An error
+   * gets a prediction when it has none; Forces of a model with no model
+   * loaded become the dataset's own. The prediction goes first, so the new
+   * colouring is never computed without it. */
   function applySource(source) {
+    if (source.startsWith('metric:') && forcesSide(source.slice(7)) === 'prediction' && !shownPredictionFor(source))
+      source = `metric:${forcesId(source.slice(7), null)}`;
     state.source = source;
     boxesNote.textContent = '';
     missingNote.hidden = true;
+    const want = shownPrediction();
+    if (predictionChoice(source, metricsById) !== 'none' && want !== state.prediction) {
+      state.prediction = want;
+      callbacks.onPredictionChange(want);
+    }
     _syncVisibility();
     clearLimits();
     callbacks.onSourceChange(state.source);
     _rebuildParamControls();
     showBoxes();
+  }
+
+  /** The prediction `source` would use, without choosing it. */
+  function shownPredictionFor(source) {
+    const was = state.source;
+    state.source = source;
+    try { return shownPrediction(); } finally { state.source = was; }
   }
 
   /** Ask the server; only the answer to the latest question counts. */
@@ -222,7 +271,17 @@ export function createColorByPane(sidebarEl, callbacks) {
 
   const predictionSelect = selectRow(body, 'Prediction', ['Ground Truth'], 'Ground Truth', (label) => {
     state.prediction = label === 'Ground Truth' ? null : keyByLabel.get(label) ?? null;
-    callbacks.onPredictionChange(state.prediction);
+    const id = state.source.startsWith('metric:') ? state.source.slice(7) : null;
+    const forces = id && forcesSide(id) ? `metric:${forcesId(id, state.prediction)}` : null;
+    if (!forces || forces === state.source) { callbacks.onPredictionChange(state.prediction); return; }
+    // Forces: the metric follows whose forces. A model's forces need the
+    // model first; the dataset's own need none, so they go first.
+    state.source = forces;
+    if (state.prediction) callbacks.onPredictionChange(state.prediction);
+    callbacks.onSourceChange(forces);
+    if (!state.prediction) callbacks.onPredictionChange(null);
+    _renderLabel();
+    showBoxes();
   });
 
   const colormapSelect = selectRow(body, 'Colormap', COLORMAPS, DEFAULT_LOOK.colormap, (cm) => {
@@ -315,7 +374,9 @@ export function createColorByPane(sidebarEl, callbacks) {
   const _renderLabel = () => {
     if (!shownColorBy) return;
     const units = callbacks.unitsOf?.() || {};
-    cbLabel.textContent = withUnit(shownColorBy.label, resolveUnit(shownColorBy.unit, units));
+    const id = state.source?.startsWith('metric:') ? state.source.slice(7) : '';
+    const name = forcesSide(id) ? forcesLabel(id) : shownColorBy.label;
+    cbLabel.textContent = withUnit(name, resolveUnit(shownColorBy.unit, units));
     cbLabel.classList.toggle('unit-editable', !!editableDimension(shownColorBy.unit));
   };
   // Clicking the label names the unit of an energy or force colouring.
@@ -329,14 +390,25 @@ export function createColorByPane(sidebarEl, callbacks) {
     if (unit !== null) callbacks.onSetUnit(dimension, unit);
   });
 
-  let hasPredictions = false;
   function _syncVisibility() {
     const isElements = currentLabel === 'Elements';
-    // Qt hides Colormap/Prediction until Coloring leaves "Elements" (ADR 0040);
-    // Prediction also waits until there is a prediction to choose (ADR 0055).
-    const needsColouring = isElements ? 'Choose a colouring other than Elements first' : '';
-    setRowNeeds(rowElement(colormapSelect), needsColouring);
-    setRowNeeds(rowElement(predictionSelect), hasPredictions ? needsColouring : 'Load a prediction first');
+    // Qt hides Colormap until Coloring leaves "Elements" (ADR 0040).
+    setRowNeeds(rowElement(colormapSelect), isElements ? 'Choose a colouring other than Elements first' : '');
+    // Prediction: whose numbers. Ground Truth only for Forces, hidden for
+    // reference data alone; an error waits for a prediction (ADR 0055).
+    const mode = predictionChoice(state.source, metricsById);
+    predictionSelect.replaceChildren();
+    const labels = [...(mode === 'forces' ? ['Ground Truth'] : []), ...keyByLabel.keys()];
+    for (const label of labels) {
+      const opt = document.createElement('option');
+      opt.value = opt.textContent = label;
+      predictionSelect.appendChild(opt);
+    }
+    predictionSelect.value = labelOfPrediction(shownPrediction());
+    const metric = state.source?.startsWith('metric:');
+    setRowNeeds(rowElement(predictionSelect), mode === 'none'
+      ? (metric ? 'This colouring reads the dataset alone' : 'Choose a metric colouring first')
+      : mode === 'models' && !keyByLabel.size ? 'Load a prediction first' : '');
   }
   _syncVisibility();
 
@@ -383,20 +455,8 @@ export function createColorByPane(sidebarEl, callbacks) {
 
     /** Refresh the Prediction combo from the currently loaded models. */
     refreshModels(models) {
-      predictionSelect.innerHTML = '';
       keyByLabel = new Map();
-      const gt = document.createElement('option');
-      gt.value = gt.textContent = 'Ground Truth';
-      predictionSelect.appendChild(gt);
-      for (const [fp, meta] of models) {
-        const label = meta.name || fp.slice(0, 8);
-        keyByLabel.set(label, fp);
-        const opt = document.createElement('option');
-        opt.value = opt.textContent = label;
-        predictionSelect.appendChild(opt);
-      }
-      predictionSelect.value = labelOfPrediction(state.prediction);
-      hasPredictions = models.size > 0;
+      for (const [fp, meta] of models) keyByLabel.set(meta.name || fp.slice(0, 8), fp);
       _syncVisibility();
     },
 
@@ -410,9 +470,17 @@ export function createColorByPane(sidebarEl, callbacks) {
       labelToMetricId.clear();
       for (const opt of [...coloringSelect.options])
         if (!['Elements', 'Displacement'].includes(opt.value)) opt.remove();
+      if (metricsById.has(FORCES_BASES.reference)) {
+        // one entry for both force pass-throughs; the Prediction says whose
+        labelToMetricId.set(FORCES_LABEL, FORCES_BASES.reference);
+        labelToSource.set(FORCES_LABEL, `metric:${FORCES_BASES.reference}`);
+        const opt = document.createElement('option');
+        opt.value = opt.textContent = FORCES_LABEL;
+        coloringSelect.appendChild(opt);
+      }
       for (const entry of entries) {
         // a box setting is listed as its base, and chosen with the boxes
-        if (parseBoxId(entry.id)) continue;
+        if (parseBoxId(entry.id) || forcesSide(entry.id)) continue;
         if (!COLORABLE_SHAPES.has(entry.shape) && entry.shape !== VECTOR_PER_ATOM) continue;
         const label = colouringLabel(entry);
         if (labelToMetricId.has(label)) continue;
@@ -426,8 +494,10 @@ export function createColorByPane(sidebarEl, callbacks) {
       // Keep the choice if it is still there; otherwise fall back to the
       // elements and say so.
       const label = labelOfSource(state.source);
-      if (label) coloringSelect.value = currentLabel = label;
-      else {
+      if (label) {
+        coloringSelect.value = currentLabel = label;
+        _syncVisibility();
+      } else {
         coloringSelect.value = currentLabel = 'Elements';
         if (state.source.startsWith('metric:')) state.source = 'element';
         _syncVisibility();
@@ -483,7 +553,6 @@ export function createColorByPane(sidebarEl, callbacks) {
       state = settings;
       const label = labelOfSource(settings.source);
       coloringSelect.value = currentLabel = label || 'Elements';
-      predictionSelect.value = labelOfPrediction(settings.prediction);
       colormapSelect.value = settings.colormap;
       _syncVisibility();
       _rebuildParamControls({ restore: true });

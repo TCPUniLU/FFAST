@@ -33,7 +33,6 @@ export const PUBLICATION_STYLE = [
 export const RESET_STYLE = [
   ['Colour By', 'Coloring', 'Elements'],
   ['Colour By', 'Colormap', 'force_error'],
-  ['Colour By', 'Prediction', 'Ground Truth'],
   ['Camera', 'Background', '#000000'],
   ['Camera', 'Orthographic', false],
   ['Camera', 'Axes gizmo', false],

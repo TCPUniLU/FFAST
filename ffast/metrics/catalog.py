@@ -51,6 +51,10 @@ def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
     comes from and its formula if it is an Expression Metric. Who uses it is a
     message of its own (``METRIC_USERS``, ADR 0062).
 
+    ``inputs`` lists the refs the metric reads (``reference.forces``,
+    ``prediction.energies``, or another metric's id), so a client can tell
+    whether it needs a prediction.
+
     A Python metric also carries its ``source``, and ``equivalent_expr`` /
     ``equivalent_vars`` when a formula computes exactly the same
     (ffast/metrics/builtin/equivalents.py): what Duplicate starts from.
@@ -73,6 +77,7 @@ def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
             "label": schema.label or mid,
             "shape": shape_to_str(schema.shape),
             "unit": schema.unit,
+            "inputs": sorted(set((schema.inputs or {}).values())),
             "parameters": {k: _param_to_dict(p) for k, p in schema.parameters.items()},
         })
     return catalog

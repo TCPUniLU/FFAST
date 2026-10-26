@@ -467,3 +467,66 @@ export function firstColourSetting(allowed) {
   return ok.find((s) => sameKeep(s.keep, ['atom', 'structure']) && s.combine === 'component' && s.statistic === 'mae')
     || ok[0] || null;
 }
+
+// ── Colour by: whose numbers (to_fix 2a/b) ─────────────────────────────────
+
+/** The two pass-through metrics behind Colour by's one "Forces" entry; the
+ * Prediction chooses between them: Ground Truth reads the dataset's forces,
+ * a model its own. */
+export const FORCES_BASES = Object.freeze({ reference: 'ffast.force_reference', prediction: 'ffast.force_prediction' });
+export const FORCES_LABEL = 'Forces';
+
+const baseOf = (id) => parseBoxId(id)?.base ?? id;
+
+/** 'reference' or 'prediction' when `id` (or its box setting) is one of the
+ * Forces pass-throughs; null otherwise. */
+export function forcesSide(id) {
+  const base = baseOf(id);
+  if (base === FORCES_BASES.reference) return 'reference';
+  if (base === FORCES_BASES.prediction) return 'prediction';
+  return null;
+}
+
+/** The Forces metric id for `prediction` (null: Ground Truth), keeping the
+ * box setting of `id`. */
+export function forcesId(id, prediction) {
+  const want = prediction ? FORCES_BASES.prediction : FORCES_BASES.reference;
+  const box = parseBoxId(id);
+  return box ? `${want}[${box.fields}]` : want;
+}
+
+/** Whether metric `id` reads a prediction, directly or through the metrics
+ * it is made of, from the catalog's input lists. A box setting reads what its
+ * base reads; a metric the catalog does not list reads none. */
+export function readsPrediction(id, catalogById, seen = new Set()) {
+  const base = baseOf(id);
+  if (seen.has(base)) return false;
+  seen.add(base);
+  const entry = catalogById.get(base);
+  return !!entry && (entry.inputs || []).some((ref) =>
+    ref.startsWith('prediction.') || readsPrediction(ref, catalogById, seen));
+}
+
+/** What Colour by's Prediction offers for `source`: 'none' (hidden: element,
+ * displacement, or a metric of reference data only), 'models' (an error
+ * needs a prediction, so no Ground Truth) or 'forces' (Ground Truth or a
+ * model: whose forces). */
+export function predictionChoice(source, catalogById) {
+  if (!source?.startsWith('metric:')) return 'none';
+  const id = source.slice(7);
+  if (forcesSide(id)) return 'forces';
+  return readsPrediction(id, catalogById) ? 'models' : 'none';
+}
+
+/** The colour bar's name for a Forces box setting: "Forces · Magnitude" for
+ * each atom's length, "Forces · MAE per component", and the statistic and
+ * grouping when atoms are grouped ("Forces · Max magnitude · per element"). */
+export function forcesLabel(id) {
+  const [keep = '', ...rest] = (parseBoxId(id)?.fields || '').split(';');
+  const statistic = STATISTIC_CHOICES.find(([c]) => rest.includes(c))?.[1];
+  const parts = [FORCES_LABEL, rest.includes('length') ? (statistic ? `${statistic} magnitude` : 'Magnitude')
+    : statistic ? `${statistic} per component` : null];
+  const grouping = { atom: 'per atom, over frames', element: 'per element' }[keep];
+  if (grouping) parts.push(grouping);
+  return parts.filter(Boolean).join(' · ');
+}

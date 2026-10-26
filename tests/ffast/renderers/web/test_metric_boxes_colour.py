@@ -113,3 +113,52 @@ async def test_atom_without_structure_keeps_each_atoms_colour_on_every_frame(tmp
                 await expect(pane.locator(".mx-boxes-note")).to_contain_text("Saved")
             finally:
                 await browser.close()
+
+
+async def test_forces_colour_by_whose_forces_the_prediction_says(tmp_path):
+    """One Forces entry (to_fix 2a/b): Ground Truth colours by the dataset's
+    forces, a model by its own; Combine picks length or per component."""
+    dataset_path, prediction_path = _uniform_files(tmp_path)
+    reference = ase.io.read(dataset_path, index=0).get_forces()
+    predicted = ase.io.read(prediction_path, index=0).arrays["MACE_forces"]
+    cm, _metrics_dir = await _server(tmp_path)
+    async with cm as (ws_port, web_port):
+        dataset_fp, model_fp = await _load(ws_port, dataset_path, prediction_path)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 800})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+                await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+                await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
+                await _open_section(page, "Colour By")
+                await page.evaluate(_RECORD)
+                pane = page.locator(".pane[data-pane='Colour By']")
+                coloring = pane.locator(".ctl-row[data-label='Coloring'] select")
+                prediction = pane.locator(".ctl-row[data-label='Prediction'] select")
+                names = await coloring.locator("option").all_text_contents()
+                assert "Forces" in names and "Reference Forces" not in names
+
+                # Forces start on the dataset's own: each atom, per component
+                truth = await _colours_after(page, lambda: coloring.select_option(label="Forces"))
+                assert truth == pytest.approx(np.abs(reference).mean(axis=1))
+                assert await prediction.input_value() == "Ground Truth"
+                boxes = pane.locator(".colorby-boxes")
+                length = await _colours_after(page, lambda: boxes.get_by_label("Length").check())
+                assert length == pytest.approx(np.linalg.norm(reference, axis=1))
+                await expect(page.locator("#colorbar-label")).to_contain_text("Forces · Magnitude")
+
+                # a model: its forces, same setting
+                model = await _colours_after(page, lambda: prediction.select_option(index=1))
+                assert model == pytest.approx(np.linalg.norm(predicted, axis=1))
+                source = await page.evaluate(
+                    "() => window.ffastApp._focused().settings.colorBy.source")
+                assert source == "metric:ffast.force_prediction[atom+structure;length]"
+
+                # an error offers no Ground Truth
+                await coloring.select_option(label="Force Difference")
+                await expect(prediction.locator("option", has_text="Ground Truth")).to_have_count(0)
+            finally:
+                await browser.close()

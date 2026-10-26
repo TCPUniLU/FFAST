@@ -181,6 +181,7 @@
  * @property {string} [label]
  * @property {string} shape
  * @property {string} [unit]
+ * @property {string[]} [inputs] the refs it reads: raw inputs or metric ids
  * @property {Object<string, MetricCatalogParameter>} [parameters]
  */
 

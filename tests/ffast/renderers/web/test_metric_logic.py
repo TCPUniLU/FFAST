@@ -188,6 +188,20 @@ CASES = {
         "  [{id: 'user.u', label: 'Mine', status: 'ok', shape: 'N_frames'}],"
         "  {'ffast.b': ['tab Basic, panel MAE'], 'user.u': ['metric user.v']});"
         "  return Object.fromEntries([...g['built-in'], ...g.user].map(m => [m.id, m.used_by])); })()"),
+    # ── Colour by: whose numbers ────────────────────────────────────────────
+    "whose_numbers": (
+        "(() => { const cat = new Map([['d', {inputs: ['prediction.forces', 'reference.forces']}],"
+        " ['net', {inputs: ['d']}], ['refonly', {inputs: ['reference.positions']}],"
+        " ['ffast.force_reference', {inputs: ['reference.forces']}],"
+        " ['ffast.force_prediction', {inputs: ['prediction.forces']}], ['loop', {inputs: ['loop']}]]);"
+        " return {reads: ['d', 'net', 'net[structure;mae]', 'refonly', 'nope', 'loop'].map((id) => ml.readsPrediction(id, cat)),"
+        " choice: ['element', 'displacement', 'metric:d[atom+structure;length]', 'metric:refonly',"
+        "   'metric:ffast.force_reference[atom+structure;length]', 'metric:ffast.force_prediction'].map((s) => ml.predictionChoice(s, cat)),"
+        " ids: [ml.forcesId('ffast.force_reference[atom+structure;length]', 'fp1'),"
+        "   ml.forcesId('ffast.force_prediction[atom+structure;component;mae]', null), ml.forcesId('ffast.force_reference', 'fp1')],"
+        " sides: ['ffast.force_reference', 'ffast.force_prediction[atom;length]', 'ffast.force_difference'].map(ml.forcesSide),"
+        " labels: ['ffast.force_reference[atom+structure;length]', 'ffast.force_prediction[atom+structure;component;rmse]',"
+        "   'ffast.force_reference[element;length;max]', 'ffast.force_reference[atom;component;mae]'].map(ml.forcesLabel)}; })()"),
 }
 
 
@@ -491,3 +505,25 @@ def test_duplicating_any_other_python_metric_takes_it_as_the_input(results):
 
 def test_a_per_element_result_can_be_plotted_as_bars(results):
     assert results["element_hint"] == "per element → can be plotted as bars"
+
+
+def test_whose_numbers_comes_from_the_catalog_input_lists(results):
+    r = results["whose_numbers"]
+    # direct, through another metric, through a box setting; reference only,
+    # unknown and a loop read none
+    assert r["reads"] == [True, True, True, False, False, False]
+    assert r["choice"] == ["none", "none", "models", "none", "forces", "forces"]
+
+
+def test_forces_follow_the_prediction_and_keep_their_box_setting(results):
+    r = results["whose_numbers"]
+    assert r["ids"] == ["ffast.force_prediction[atom+structure;length]",
+                        "ffast.force_reference[atom+structure;component;mae]",
+                        "ffast.force_prediction"]
+    assert r["sides"] == ["reference", "prediction", None]
+
+
+def test_the_forces_colour_bar_names_the_magnitude_or_the_component_statistic(results):
+    assert results["whose_numbers"]["labels"] == [
+        "Forces · Magnitude", "Forces · RMSE per component",
+        "Forces · Max magnitude · per element", "Forces · MAE per component · per atom, over frames"]

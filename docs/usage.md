@@ -267,7 +267,11 @@ The sidebar panes:
   Type a minimum or maximum to fix the range yourself. With a prediction that
   covers only the frame on screen, the colouring uses that frame and the
   colourbar says "this frame". Metric parameters appear under the picker when
-  the chosen metric has any.
+  the chosen metric has any. **Prediction** says whose numbers: for
+  **Forces**, Ground Truth colours by the dataset's own forces and a model by
+  its predicted forces, and Combine picks the length ("Forces · Magnitude") or
+  per component; an error such as Force Difference needs a model, so it offers
+  no Ground Truth; a metric of the dataset alone hides Prediction.
 - **Force Vectors** — arrow length, normalised or true length, restricted to a
   selection or not.
 - **Camera** — position and target, field of view, centre-of-mass tracking, saved

@@ -918,7 +918,7 @@ async def test_web_sidebar_search_explains_rows_that_wait_for_something(ffast_we
             row = page.locator(".pane[data-pane='Colour By'] .ctl-row[data-label='Prediction']")
             await expect(row).to_be_visible()
             await expect(row).to_have_class(re.compile(r"\bneeds\b"))
-            assert "Load a prediction first" in await row.get_attribute("data-needs")
+            assert "Choose a metric colouring first" in await row.get_attribute("data-needs")
 
             await page.locator("#sidebar-search").fill("length")
             row = page.locator(".pane[data-pane='Force Vectors'] .ctl-row[data-label='Length']")

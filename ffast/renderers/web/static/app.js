@@ -942,6 +942,7 @@ export class FFastApp {
       // Keep boxes (ADR 0065): the focused view's dataset says whether by=atom applies.
       boxes: (request) => this._metricOps.boxes(request, this._focusedDatasetFp() ?? null),
       saveMetric: (metric) => this._metricOps.save(metric),
+      defaultPrediction: () => this._focusedModelFp(),
     });
 
     const metricsPane = createMetricsPane(document.getElementById('metrics-body'), {
