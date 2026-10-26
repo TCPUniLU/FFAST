@@ -241,11 +241,11 @@ export class TabEditor {
       head.appendChild(gear);
     }
     if (unit.indices.length === 1 && first.kind === KIND_3D) {
-      const gear = iconButton('gear', 'Linked or independent, links and starting look', async () => {
+      const gear = iconButton('gear', 'Main view or own view, links and starting look', async () => {
         const next = await this._panel3d(unit.indices[0], visibleTabs, tabIndex);
         if (next) this.change(next);
       });
-      gear.title = 'Linked or independent, links and starting look';
+      gear.title = 'Main view or own view, links and starting look';
       gear.dataset.edit = 'panel3d';
       head.appendChild(gear);
     }
@@ -513,8 +513,8 @@ export class TabEditor {
     return out;
   }
 
-  /** A 3D panel's settings (ADR 0056 rules 1, 2, 13 and 15): linked or
-   * independent; for an independent one, the two link ticks and its starting
+  /** A 3D panel's settings (ADR 0056 rules 1, 2, 13 and 15): the main view
+   * or its own view (independent; the screen says "Own view"); for an own one, the two link ticks and its starting
    * look, which "Use current 3D settings as start" takes from the screen. */
   async _panel3d(index, visibleTabs, tabIndex) {
     const panel = this._draft.panels[index];
@@ -522,8 +522,7 @@ export class TabEditor {
     body.className = 'panel3d-settings';
     const view = document.createElement('select');
     view.dataset.field = 'view';
-    view.append(new Option('The main view (linked)', 'linked'),
-      new Option('Its own view (independent)', 'independent'));
+    view.append(new Option('Main view', 'linked'), new Option('Own view', 'independent'));
     view.value = panel.view === 'independent' ? 'independent' : 'linked';
     // The last linked panel stays linked (rule 6).
     const stays = view.value === 'linked' ? whyPanelStays(visibleTabs, tabIndex, index) : '';
@@ -551,7 +550,7 @@ export class TabEditor {
     startButtons.append(useCurrent, reset);
     const hint = document.createElement('div');
     hint.className = 'ctl-hint';
-    hint.textContent = stays ? `${stays}, so this panel stays linked.` : '';
+    hint.textContent = stays ? `${stays}, so this panel stays on it.` : '';
     const sync = () => {
       const own = view.value === 'independent';
       for (const control of [frame, camera, useCurrent, reset]) control.disabled = !own;

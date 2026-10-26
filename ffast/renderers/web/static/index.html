@@ -534,7 +534,8 @@
     /* Out of the flow, so the canvas's own pixel size never feeds back into
        the grid's row heights. */
     canvas.view3d { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
-    /* An independent 3D panel names what it shows, and says why it shows no
+    /* A 3D panel's caption chooses what it shows: the main view or a
+       dataset of its own (to_fix 7); an own view also says why it shows no
        frame, greying the last one out (ADR 0056 rules 2 and 3). */
     .panel-caption {
       position: absolute; top: 6px; left: 8px; z-index: 2; max-width: calc(100% - 16px);
@@ -542,6 +543,11 @@
       padding: 2px 6px; border-radius: 4px; pointer-events: none;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
+    .panel-caption .panel-shows {
+      pointer-events: auto; font: inherit; color: inherit; max-width: 22ch;
+      background: transparent; border: 1px solid transparent; border-radius: 3px; padding: 0 2px;
+    }
+    .panel-caption .panel-shows:hover, .panel-caption .panel-shows:focus-visible { border-color: var(--line); }
     .panel-note {
       position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
       max-width: 80%; text-align: center; font-size: var(--fs-m); color: var(--text1);

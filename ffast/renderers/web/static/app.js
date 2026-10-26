@@ -7,7 +7,9 @@ import { Panel3D, ViewRenderers } from './views3d.js';
 import { MainViews } from './views.js';
 import { defaultSettings, startSettings } from './view_settings.js';
 import { IndependentPanels, independentKey } from './independent_panels.js';
-import { ensureMainView, isLinked3D, MAIN_VIEW_RULE, showsMainView } from './tab_rules.js';
+import {
+  ensureMainView, isLinked3D, MAIN_VIEW_CHOICE, MAIN_VIEW_RULE, panelChoices, showsMainView, whyPanelStays,
+} from './tab_rules.js';
 import { sameConfiguration, predictionApplies } from './frame_links.js';
 import { infoReadout } from './measure.js';
 import { toolHint, toolHintKey } from './tool_hints.js';
@@ -26,7 +28,7 @@ import { Rail, framesText } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
-import { metricPanel, plotTarget, toSaved } from './tab_edit.js';
+import { metricPanel, plotTarget, setPanelView, toSaved } from './tab_edit.js';
 import { MetricOps } from './metric_ops.js';
 import { TABLE_SHAPE, sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
@@ -125,7 +127,6 @@ export class FFastApp {
       focused: () => this._focusedIndependent,
       activeTab: () => this._analysis?.tab(this._activeTab),
       tabPairs: (tabId) => this._analysis.tabPairs(tabId),
-      pairName: (datasetFp, modelFp) => this._pairName(datasetFp, modelFp),
       placePanel: (el, panel) => this._panels3d.set(el, panel),
       start: (view) => this._startIndependent(view),
       retired: (view) => {
@@ -138,6 +139,7 @@ export class FFastApp {
         if (this._focusedIndependent === view) this._panes.colorBy.setColorBy(atoms.color_by || null);
         this._trackCameraCOM(atoms.positions, view);
       },
+      caption: (panel) => this._syncCaption(panel),
     });
     /** Whose settings the sidebar shows and acts on: the focused independent
      * panel's view, or null for the main view (rule 8). */
@@ -371,6 +373,7 @@ export class FFastApp {
       let panel = this._panels3d.get(cell.el);
       if (!panel) {
         panel = new Panel3D(cell.spec);
+        panel.onChoose = (value) => this._chooseShown(panel, value);
         panel.independent = independent || null;
         if (independent) independent.panel = panel;
         panel.mount(cell.el);
@@ -465,7 +468,7 @@ export class FFastApp {
     if (!el) return;
     const owner = this._focusedIndependent;
     const shows = this._pairName(this._focusedDatasetFp(), this._focusedModelFp());
-    const which = owner ? 'independent' : 'main view';
+    const which = owner ? 'own view' : 'main view';
     el.textContent = this._activePanel && shows ? `Settings — ${shows} (${which})` : 'Settings';
     el.title = el.textContent;
   }
@@ -684,6 +687,8 @@ export class FFastApp {
     edit.disabled = !!why;
     edit.title = why || 'Edit this tab';
     edit.classList.toggle('active', this._editor.editing);
+    // the caption drop-downs grey what would change a tab that cannot change now
+    this._syncCaptions();
   }
 
   /** Why tab `name` cannot be hidden: the main view needs a visible place. */
@@ -1075,15 +1080,7 @@ export class FFastApp {
     const owner = () => this._focusedIndependent;
     this._panelDataset = selectRow(box, 'Dataset', [], '', (fp) => {
       const view = owner();
-      if (!view) return;
-      this._clearPicks();   // picked atom ids belong to the dataset left
-      view.datasetFp = fp;
-      if (view.modelFp && !predictionApplies(this._models.get(view.modelFp), fp, this._datasets))
-        view.modelFp = null;
-      this._independent.open(view);
-      this._panes.extract.setVisible(canExtractFrom(this._datasets.get(fp)));
-      this._syncPanelSection();
-      this._syncSidebarTitle();
+      if (view) this._setPanelDataset(view, fp);
     });
     this._panelModel = selectRow(box, 'Prediction', [], '', (fp) => {
       const view = owner();
@@ -1114,6 +1111,95 @@ export class FFastApp {
     this._panelNote.className = 'ctl-hint';
     box.appendChild(this._panelNote);
     titleEl.after(box);
+  }
+
+  /** An own view shows dataset `fp` (its Panel section or its caption). */
+  _setPanelDataset(view, fp) {
+    const focused = view === this._focusedIndependent;
+    if (focused) this._clearPicks();   // picked atom ids belong to the dataset left
+    view.datasetFp = fp;
+    if (view.modelFp && !predictionApplies(this._models.get(view.modelFp), fp, this._datasets))
+      view.modelFp = null;
+    this._independent.open(view);
+    if (!focused) return;
+    this._panes.extract.setVisible(canExtractFrom(this._datasets.get(fp)));
+    this._syncPanelSection();
+    this._syncSidebarTitle();
+  }
+
+  // ── what a 3D panel shows: its caption drop-down (to_fix 7) ────────────
+
+  /** Where `panel` sits: its tab on screen, its cell, the visible tabs with
+   * its tab's index and its own index there (for the last-linked-panel rule),
+   * and the server's copy of its tab (null for a tab not from the server). */
+  _panelPlace(panel) {
+    if (!this._analysis) return null;
+    for (const { id } of this._analysis.tabList) {
+      const tab = this._analysis.tab(id);
+      const cell = tab.cells3d.find((c) => c.el === panel.viewport.parentElement);
+      if (!cell) continue;
+      const at = (p) => p.kind === cell.spec.kind && p.row === cell.spec.row && p.col === cell.spec.col;
+      const tabs = this._visibleTabs();
+      const tabIndex = tabs.findIndex((t) => t.name === tab.name);
+      return {
+        tab, cell, tabs, tabIndex,
+        panelIndex: tabs[tabIndex]?.panels.findIndex(at) ?? -1,
+        server: this._layoutTabs.find((t) => t.name === tab.name) || null,
+        serverIndex: (this._layoutTabs.find((t) => t.name === tab.name)?.panels || []).findIndex(at),
+      };
+    }
+    return null;
+  }
+
+  /** Why the caption cannot change `panel`'s tab now, or ''. */
+  _whyNoCaptionSave(place) {
+    return this._whyNoEdit() || (place?.server && place.serverIndex >= 0 ? '' : 'This tab is not from the server');
+  }
+
+  /** Draw a 3D panel's caption drop-down: "Main view" or the dataset of its
+   * own view, the prediction beside it, and why a choice is greyed. */
+  _syncCaption(panel) {
+    const view = panel.independent;
+    const place = this._panelPlace(panel);
+    const stays = panel.linked && place ? whyPanelStays(place.tabs, place.tabIndex, place.panelIndex) : '';
+    const datasets = [...this._listedDatasets()].map(([fp, meta]) => [fp, meta.name || fp.slice(0, 8)]);
+    const model = view?.modelFp ? this._models.get(view.modelFp)?.name || view.modelFp.slice(0, 8) : '';
+    panel.showChoices(panelChoices({
+      linked: panel.linked, shows: view?.datasetFp ?? null, datasets, stays,
+      noSave: this._whyNoCaptionSave(place),
+    }), model, view?.note || '');
+  }
+
+  _syncCaptions() {
+    for (const panel of this._panels3d.values()) this._syncCaption(panel);
+  }
+
+  /** The caption drop-down picked `value`. An own view switches dataset at
+   * once. A linked panel that picks a dataset becomes an own view showing it,
+   * and an own view that picks "Main view" is linked again: either saves the
+   * tab, as Edit mode's "Own view" does. */
+  async _chooseShown(panel, value) {
+    const view = panel.independent;
+    if (value === MAIN_VIEW_CHOICE ? panel.linked : view?.datasetFp === value) return;
+    if (view && value !== MAIN_VIEW_CHOICE) { this._setPanelDataset(view, value); return; }
+    const place = this._panelPlace(panel);
+    const why = this._whyNoCaptionSave(place)
+      || (panel.linked ? whyPanelStays(place.tabs, place.tabIndex, place.panelIndex) : '');
+    if (why) {
+      this._setStatus(why, 'error');
+      this._syncCaption(panel);
+      return;
+    }
+    const own = value !== MAIN_VIEW_CHOICE;
+    const next = setPanelView(place.server, place.serverIndex, { view: own ? 'independent' : 'linked' });
+    if (own) {
+      const modelFp = predictionApplies(this._models.get(this._currentModelFp), value, this._datasets)
+        ? this._currentModelFp : null;
+      this._independent.want(independentKey(next.name, next.panels[place.serverIndex]), { datasetFp: value, modelFp });
+    }
+    const r = await this._tabOps.save(toSaved(next), place.server.name);
+    if (!r.ok) this._syncCaption(panel);
+    this._reportTab(r);
   }
 
   /** The focused panel's prediction changed from `old`: metric colouring and
@@ -1503,6 +1589,7 @@ export class FFastApp {
     if (firstSelect && this._conn && this._activePanel) this._openView();
     this._independent.ensureShown();
     if (this._focusedIndependent) this._syncPanelSection();
+    this._syncCaptions();
   }
 
   _onModelMeta(fp, meta) {
@@ -1532,6 +1619,7 @@ export class FFastApp {
     this._renderObjects();
     this._independent.ensureShown();
     if (this._focusedIndependent) this._syncPanelSection();
+    this._syncCaptions();
   }
 
   /** The plot colour of a dataset or prediction (object_colours.js). A live
@@ -1662,6 +1750,7 @@ export class FFastApp {
       this._renderObjects();
     }
     if (this._focusedIndependent) this._syncPanelSection();
+    this._syncCaptions();
     this._setStatus(this._deletedText(fp, meta), 'connected');
   }
 
@@ -1683,6 +1772,7 @@ export class FFastApp {
     this._panes?.forces.refreshModels();
     this._panes?.colorBy.refreshModels(this._models);
     if (this._focusedIndependent) this._syncPanelSection();
+    this._syncCaptions();
     this._setStatus(this._deletedText(fp, meta), 'connected');
   }
 

@@ -443,6 +443,15 @@ CASES = {
     "independent_panel_can_go": (
         "tr.whyPanelStays([{panels:[{kind:'3d'}, {kind:'3d', view:'independent'}]}], 0, 1)"
     ),
+    # the caption drop-down of a 3D panel (to_fix 7)
+    "panel_choices": (
+        "(() => { const ds = [['A', 'aspirin'], ['S', 'aspirin [0:9]']];"
+        " const lab = (r) => [r.value, r.options.map((o) => [o.value, o.label, o.disabled])];"
+        " return [lab(tr.panelChoices({linked: true, shows: null, datasets: ds})),"
+        "   lab(tr.panelChoices({linked: true, shows: null, datasets: ds, stays: tr.MAIN_VIEW_RULE})),"
+        "   lab(tr.panelChoices({linked: false, shows: 'S', datasets: ds, noSave: 'Finish editing the tab first'})),"
+        "   lab(tr.panelChoices({linked: false, shows: null, datasets: []}))]; })()"
+    ),
 
     # ── fl: same configuration across related datasets (ADR 0056 rule 3) ────
     # P has 10 frames; S = P frames [4, 6, 8]; SS = S frames [2, 0] (P 8, 4);
@@ -1797,6 +1806,22 @@ def test_te_resizing_over_a_neighbour_moves_it_down(results):
 def test_te_a_neighbour_moved_by_a_resize_keeps_its_size(results):
     assert results["te_resize_moved_neighbour_keeps_its_size"] == [
         ["V", 0, 0, 2, 1], ["A", 0, 1, 1, 1], ["B", 2, 0, 1, 2]]
+
+
+def test_a_3d_panel_caption_offers_the_main_view_and_every_dataset(results):
+    linked, last, editing, empty = results["panel_choices"]
+    assert linked == ["main", [["main", "Main view", False], ["A", "aspirin", False],
+                               ["S", "aspirin [0:9]", False]]]
+    # the last linked panel stays: datasets greyed, and the drop-down says why
+    value, options = last
+    assert value == "main" and [o[2] for o in options[1:3]] == [True, True]
+    assert options[-1][1:] == ["At least one tab must show the main view, so this panel stays on it", True]
+    # an own view may change dataset, but not go back to the main view while
+    # the tab cannot be saved
+    value, options = editing
+    assert value == "S" and options[0][2] is True and options[2][2] is False
+    assert options[-1][1:] == ["Finish editing the tab first", True]
+    assert empty == ["", [["main", "Main view", False], ["", "No dataset yet", True]]]
 
 
 def test_te_resizing_stays_inside_the_columns(results):

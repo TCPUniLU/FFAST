@@ -45,12 +45,13 @@ export function independentKey(tabName, spec) {
  *   focusedCamera: (cam: object) => void,
  *   frameShown: (view: IndependentView) => void,
  *   sceneAtoms: (view: IndependentView, atoms: object) => void,
+ *   caption: (panel: import('./views3d.js').Panel3D) => void,
  * }} IndependentPorts
  * `start`: give a newly opened view its starting look.
  * `retired`: a layout dropped the view (the sidebar lets go of it). `chosen`:
  * the focused view's data changed. `focusedCamera`: the focused view's camera
  * moved. `frameShown`: a view was set to a frame. `sceneAtoms`: a view's
- * scene brought atoms.
+ * scene brought atoms. `caption`: draw a panel's caption drop-down.
  */
 
 export class IndependentPanels {
@@ -61,6 +62,8 @@ export class IndependentPanels {
     this._views = new Map();
     this._count = 0;
     this._linkingCameras = false;
+    /** key → the pair a panel shows once it is an own view (`want`) */
+    this._wanted = new Map();
   }
 
   get(key) { return this._views.get(key); }
@@ -126,10 +129,22 @@ export class IndependentPanels {
 
   // ── data ──────────────────────────────────────────────────────────────
 
-  /** A new independent panel shows the first pair its tab's picker has
-   * selected that no other 3D panel in the tab shows; after that it keeps
-   * its choice (rule 7). */
+  /** The panel at `key`, once a saved layout makes it an own view, shows
+   * `pair`: the dataset its caption drop-down picked (to_fix 7). */
+  want(key, pair) {
+    this._wanted.set(key, pair);
+  }
+
+  /** A new independent panel shows the dataset its caption picked, else the
+   * first pair its tab's picker has selected that no other 3D panel in the
+   * tab shows; after that it keeps its choice (rule 7). */
   ensureData(view, tab) {
+    const wanted = this._wanted.get(view.key);
+    if (!view.datasetFp && wanted && this._ports.datasets().has(wanted.datasetFp)) {
+      this._wanted.delete(view.key);
+      view.datasetFp = wanted.datasetFp;
+      view.modelFp = wanted.modelFp;
+    }
     if (!view.datasetFp) {
       const main = this._ports.main();
       const datasets = this._ports.datasets();
@@ -205,11 +220,11 @@ export class IndependentPanels {
     this.syncCaption(view);
   }
 
-  /** An independent panel's caption ('aspirin · MACE') and note. */
+  /** An independent panel's caption drop-down and note. */
   syncCaption(view) {
     const panel = view.panel;
     if (!panel) return;
-    panel.showCaption(view.datasetFp ? this._ports.pairName(view.datasetFp, view.modelFp) : 'No dataset yet', view.note);
+    this._ports.caption(panel);
     panel.showNote(view.missing, { dim: true });
   }
 

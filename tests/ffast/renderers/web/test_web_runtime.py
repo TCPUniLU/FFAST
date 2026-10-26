@@ -3116,12 +3116,16 @@ async def test_web_an_independent_panel_has_its_own_data_and_look(tmp_path):
             coloring = page.locator(_control("Colour By", "Coloring"))
             try:
                 await _open_compare(page, ws_port, web_port, dataset_fp)
-                caption = page.locator(".tabpanel.active .panel-3d .panel-caption:not([hidden])")
-                await expect(caption).to_have_count(1)
-                await expect(caption).to_contain_text("prediction")
+                # every 3D panel's caption says what it shows: the main view, or
+                # the own view's dataset, with its prediction beside it
+                shows = page.locator(".tabpanel.active .panel-3d .panel-shows")
+                await expect(shows).to_have_count(2)
+                await expect(shows.nth(0)).to_have_value("main")
+                await expect(shows.nth(1)).to_have_value(dataset_fp)
+                await expect(page.locator(".tabpanel.active .panel-3d .panel-caption-model").nth(1)).not_to_be_empty()
 
                 await _focus_3d(page, 1)
-                await expect(page.locator("#sidebar-title")).to_contain_text("(independent)")
+                await expect(page.locator("#sidebar-title")).to_contain_text("(own view)")
                 await expect(page.locator(_PANEL)).to_be_visible()
                 await expect(page.locator(_panel_control("Dataset"))).to_have_value(dataset_fp)
                 await expect(page.locator(_panel_control("Prediction"))).to_have_value(model_fp)
@@ -3131,6 +3135,45 @@ async def test_web_an_independent_panel_has_its_own_data_and_look(tmp_path):
                 await expect(page.locator("#sidebar-title")).to_contain_text("(main view)")
                 await expect(page.locator(_PANEL)).to_be_hidden()
                 await expect(coloring).to_have_value("Elements")
+            finally:
+                await browser.close()
+
+
+async def test_web_a_panels_caption_chooses_the_main_view_or_its_own(tmp_path):
+    """to_fix 7: picking a dataset in a linked panel's caption makes it an own
+    view showing it at once, picking "Main view" links it back, and the last
+    panel showing the main view stays on it, saying why."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            shows = page.locator(".tabpanel.active .panel-3d .panel-shows")
+            try:
+                await _open_compare(page, ws_port, web_port, dataset_fp)
+                # the own view goes back to the main view: the tab is saved
+                await shows.nth(1).select_option("main")
+                await expect(shows.nth(1)).to_have_value("main", timeout=15000)
+                await page.wait_for_function(f"() => !{_INDEPENDENT}", timeout=15000)
+
+                # and a linked panel picks a dataset: an own view showing it
+                await shows.nth(1).select_option(dataset_fp)
+                await page.wait_for_function(
+                    f"() => {_INDEPENDENT}?.isOpen && {_INDEPENDENT}.datasetFp === '{dataset_fp}'",
+                    timeout=15000)
+                await expect(shows.nth(1)).to_have_value(dataset_fp)
+
+                # the other panel too: the 3D tab's panel is now the last on the main view
+                await shows.nth(0).select_option(dataset_fp)
+                await page.wait_for_function(
+                    "() => window.ffastApp._independent.get('Compare#0,0')?.isOpen", timeout=15000)
+                await _open_analysis_tab(page, "3D")
+                only = page.locator(".tabpanel.active .panel-3d .panel-shows")
+                await expect(only.locator(f"option[value='{dataset_fp}']")).to_be_disabled()
+                await expect(only.locator("option").last).to_have_text(
+                    "At least one tab must show the main view, so this panel stays on it")
             finally:
                 await browser.close()
 
@@ -3148,7 +3191,7 @@ async def test_web_a_missing_start_colour_metric_shows_elements_and_says_why(tmp
             why = "Colour metric nope.metric is not on this server; showing element colours"
             try:
                 await _open_compare(page, ws_port, web_port, dataset_fp)
-                await expect(page.locator(".tabpanel.active .panel-3d .panel-caption-note")).to_have_text(why)
+                await expect(page.locator(".tabpanel.active .panel-3d .panel-caption-note:not([hidden])")).to_have_text(why)
                 await _focus_3d(page, 1)
                 await expect(page.locator(f"{_PANEL} .ctl-hint")).to_have_text(why)
                 await expect(page.locator(_control("Colour By", "Coloring"))).to_have_value("Elements")

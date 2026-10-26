@@ -60,3 +60,28 @@ export function startPair(tabPairs, shownPairs) {
   const pick = tabPairs.find((p) => !shownPairs.some((s) => same(p, s))) || tabPairs[0];
   return pick ? { datasetFp: pick.datasetFp, modelFp: pick.modelFp || null } : null;
 }
+
+/** The caption drop-down's value for the main view. */
+export const MAIN_VIEW_CHOICE = 'main';
+
+/**
+ * What a 3D panel's caption drop-down offers (to_fix 7): "Main view", then
+ * every dataset and subset. Picking a dataset gives a linked panel a view of
+ * its own; "Main view" links an own view back. Both change the tab, so when
+ * the tab cannot change now (`noSave`), or this is the last panel showing the
+ * main view (`stays`, rule 6), those choices are greyed and the last line,
+ * greyed too, says why. An own view may still switch datasets.
+ * @param {{linked: boolean, shows: string|null,
+ *   datasets: Array<[string, string]>, stays?: string, noSave?: string}} p
+ *   `shows`: the own view's dataset; `datasets`: [fingerprint, name] in rail order
+ * @returns {{options: Array<{value: string, label: string, disabled: boolean}>, value: string}}
+ */
+export function panelChoices({ linked, shows, datasets, stays = '', noSave = '' }) {
+  const why = linked ? (stays ? `${stays}, so this panel stays on it` : noSave) : noSave;
+  const options = [{ value: MAIN_VIEW_CHOICE, label: 'Main view', disabled: !linked && !!noSave }];
+  for (const [fp, name] of datasets) options.push({ value: fp, label: name, disabled: linked && !!why });
+  const value = linked ? MAIN_VIEW_CHOICE : shows || '';
+  if (!linked && !shows) options.push({ value: '', label: 'No dataset yet', disabled: true });
+  if (why) options.push({ value: '\u0000why', label: why, disabled: true });
+  return { options, value };
+}

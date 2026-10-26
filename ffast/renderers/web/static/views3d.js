@@ -36,11 +36,25 @@ export class Panel3D {
     this.pick = null;
     /** @type {IndependentView|null} the view an independent panel shows */
     this.independent = null;
-    // An independent panel names what it shows, and says why it shows no
+    // The caption chooses what the panel shows: the main view, or a dataset
+    // in a view of its own (to_fix 7). The panel also says why it shows no
     // frame when the main view's frame has no counterpart (rule 3).
     this.caption = document.createElement('div');
     this.caption.className = 'panel-caption';
     this.caption.hidden = true;
+    this.choice = document.createElement('select');
+    this.choice.className = 'panel-shows';
+    this.choice.setAttribute('aria-label', 'What this panel shows');
+    this.choice.title = 'What this panel shows: the main view, or a dataset in a view of its own';
+    this.choice.addEventListener('change', () => this.onChoose?.(this.choice.value));
+    this._choiceKey = '';
+    this.captionModel = document.createElement('span');
+    this.captionModel.className = 'panel-caption-model';
+    this.captionNote = document.createElement('div');
+    this.captionNote.className = 'panel-caption-note';
+    this.caption.append(this.choice, this.captionModel, this.captionNote);
+    /** @type {((value: string) => void)|null} the caption drop-down was changed */
+    this.onChoose = null;
     this.noteEl = document.createElement('div');
     this.noteEl.className = 'panel-note';
     this.noteEl.hidden = true;
@@ -49,17 +63,26 @@ export class Panel3D {
 
   get linked() { return isLinked3D(this.spec); }
 
-  /** The read-only caption in the panel's corner ('aspirin · MACE'), and a
-   * note under it (why its starting colour metric was not used). */
-  showCaption(text, note = '') {
-    this.caption.replaceChildren(document.createTextNode(text || ''));
-    if (note) {
-      const line = document.createElement('div');
-      line.className = 'panel-caption-note';
-      line.textContent = note;
-      this.caption.appendChild(line);
+  /** The caption in the panel's corner: the drop-down of what it shows
+   * (tab_rules.js `panelChoices`), the prediction beside it, and a note under
+   * it (why its starting colour metric was not used). The options are built
+   * again only when they change, so an open drop-down stays open while the
+   * panel plays. */
+  showChoices({ options, value }, model = '', note = '') {
+    const key = JSON.stringify(options);
+    if (key !== this._choiceKey) {
+      this._choiceKey = key;
+      this.choice.replaceChildren(...options.map((o) => {
+        const opt = new Option(o.label, o.value);
+        opt.disabled = o.disabled;
+        return opt;
+      }));
     }
-    this.caption.hidden = !text;
+    if (this.choice.value !== value) this.choice.value = value;
+    this.captionModel.textContent = model ? ` · ${model}` : '';
+    this.captionNote.textContent = note || '';
+    this.captionNote.hidden = !note;
+    this.caption.hidden = false;
   }
 
   /** A note over the panel; `dim` greys the panel out, hiding the structure

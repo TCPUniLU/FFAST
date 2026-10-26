@@ -89,11 +89,13 @@ One page rather than a menu bar:
   fills the address in and connects for you.
 - **Left rail.** Datasets and Predictions, each with a `+` to load one. Datasets
   also get a download button that exports the current selection as extxyz.
-- **Independent 3D panels.** A 3D panel can show its own data next to the
-  main view: in Edit mode, open its ⚙ and choose "Its own view
-  (independent)". Click it to focus it; the top of the settings sidebar then
-  picks its dataset and prediction and whether its frame and camera follow
-  the main view. Following, one Play or orbit moves both panels; unticked,
+- **Own views.** A 3D panel can show its own data next to the main view:
+  pick a dataset or subset in the drop-down in its top-left corner, and it
+  becomes an **own view** at once; pick "Main view" to link it back. Either
+  saves the tab, as Edit mode's ⚙ → "Own view" does. The last panel showing
+  the main view stays on it, and its drop-down says so. Click a panel to focus
+  it; the top of the settings sidebar then picks an own view's prediction and
+  whether its frame and camera follow the main view. Following, one Play or orbit moves both panels; unticked,
   you can compare two frames of one trajectory. When the main view's frame
   has no counterpart in the panel's data, the panel greys out and says so.
   "Use current 3D settings as start" saves the panel's look with the tab.
