@@ -2,10 +2,17 @@
  * One colour per loaded dataset and prediction, the same in every panel and
  * tab. Kept in this browser's localStorage by fingerprint — layout state,
  * never the session file. A new object gets the next palette colour not used
- * by another; the rail's swatch changes it.
+ * by another; the rail's swatch changes it. A subset, live or frozen, has a
+ * colour of its own.
  */
 
 const KEY = 'ffast.objectColours';
+
+/** Whose colour a plot series takes: a subset's own (its rail row), else
+ * its prediction's, or its dataset's for Ground Truth. */
+export function seriesColourOwner(datasetFp, modelFp, isSubset) {
+  return isSubset ? datasetFp : modelFp || datasetFp;
+}
 
 /** The first palette position not in `used`; the palette starts over when it runs out. */
 export function nextIndex(used, size) {

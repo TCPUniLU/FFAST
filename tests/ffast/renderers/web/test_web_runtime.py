@@ -5411,6 +5411,14 @@ async def test_web_sub_makes_a_subset_that_follows_the_zoom(ffast_web_server):
             await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
             [sub] = await page.evaluate(_SUBSETS)
             assert sub["name"].startswith("Energy MAE timeline")
+            # the subset has a colour of its own, picked in the rail, not its parent's
+            sub_swatch = page.locator(f"#dataset-list .obj-row[data-fp='{sub['fp']}'] .obj-swatch")
+            parent_swatch = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}'] .obj-swatch")
+            assert await sub_swatch.input_value() != await parent_swatch.input_value()
+            await sub_swatch.evaluate("(el) => { el.value = '#abcdef'; el.dispatchEvent(new Event('change')); }")
+            assert await page.evaluate(
+                "([d, m]) => window.ffastApp._analysis._seriesColour({datasetFp: d, modelFp: m})",
+                [sub["fp"], model_fp]) == "#abcdef"
 
             await _zoom(page, "Energy MAE timeline", [10, 19.5])
             await page.wait_for_function(

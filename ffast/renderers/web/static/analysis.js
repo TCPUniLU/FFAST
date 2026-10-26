@@ -164,7 +164,7 @@ export class AnalysisManager {
    *   onSub: (o: {name: string, series: Array<{parentFp: string, modelFp: string|null}>,
    *     view?: object, active?: boolean, tick?: boolean}) => void,
    *   onFreeze?: (fp: string) => void,
-   *   objectColour?: (fp: string) => string|null,
+   *   seriesColour?: (series: {datasetFp: string, modelFp: string|null}) => string|null,
    *   onPointFrame: (o: {datasetFp: string, modelFp: string|null, frame: number}) => void,
    *   onSetUnit?: (o: {datasetFp: string, dimension: string, unit: string}) => void,
    * }} deps
@@ -177,7 +177,7 @@ export class AnalysisManager {
     this._onSelectTab = deps.onSelectTab;
     this._onSub = deps.onSub;
     this._onFreeze = deps.onFreeze;
-    this._objectColour = deps.objectColour;
+    this._seriesColour = deps.seriesColour;
     this._openFrame = deps.onPointFrame;
     /** Frames the user opened from a plot, "dataset|model|frame"; kept for the page's life. */
     this._visited = new Set();
@@ -1129,7 +1129,7 @@ export class AnalysisManager {
       perFrame: this._isPerFrameScatter(spec),
       elementOrder: this._elementOrder || [],
       selectedElements: t.selectedElements,
-      seriesColour: (s) => this._objectColour?.(s.modelFp || s.datasetFp) || null,
+      seriesColour: (s) => this._seriesColour?.(s) || null,
       visited: this._visited,
       peaks: t.peaksOn.has(panelKey(spec)),
     };

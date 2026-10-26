@@ -616,6 +616,8 @@ CASES = {
     "theme_grid_follows_line": "pn.baseLayout().xaxis.gridcolor === th.plotTheme().line",
     "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
     "next_colour": "[oc.nextIndex([], 3), oc.nextIndex([0], 3), oc.nextIndex([1, 0], 3), oc.nextIndex([0, 1, 2, 5], 3)]",
+    "series_colour_owner": ("[oc.seriesColourOwner('D', 'M', false), oc.seriesColourOwner('D', null, false),"
+                            " oc.seriesColourOwner('S', 'M', true), oc.seriesColourOwner('S', null, true)]"),
     "paint": "[pn.paint({seriesColour: (s) => s.c}, {c: '#abc'}, 0), pn.paint({seriesColour: () => null}, {}, 1) === pn.seriesColor(1), pn.paint({}, {}, 2) === pn.seriesColor(2)]",
     "unit_choices": "[ru.unitChoices('energy', []), ru.unitChoices('energy', ['kcal/mol', 'meV']), ru.unitChoices('force', ['eV/Å'])]",
     "remember_unit": "[ru.rememberUnit(['a', 'b'], 'b'), ru.rememberUnit(['a', 'b'], 'c')]",
@@ -1977,4 +1979,10 @@ def test_unit_choices_list_the_last_used_first_without_duplicates(results):
 def test_a_new_object_gets_the_next_unused_palette_colour(results):
     # the palette starts over when it runs out; a series with no assigned colour keeps its position's
     assert results["next_colour"] == [0, 1, 2, 1]
+
+
+def test_a_subset_series_takes_the_subsets_own_colour(results):
+    # a dataset's series: its prediction's colour (its own for Ground Truth);
+    # a subset's: its own rail colour, with or without a prediction
+    assert results["series_colour_owner"] == ["M", "D", "S", "S"]
     assert results["paint"] == ["#abc", True, True]
