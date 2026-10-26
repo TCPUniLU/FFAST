@@ -1,7 +1,7 @@
 /**
  * Camera pane (ADR 0045 issue 04): presets, projection, manual angle entry,
  * COM tracking, axis gizmo, background colour. Mirrors modules/loupe/loupeCamera.py.
- * The exact azimuth/elevation/distance fields sit behind an "Exact angles"
+ * The exact azimuth/elevation/roll/distance fields sit behind an "Exact angles"
  * link (ADR 0055): dragging and the presets cover most uses. The pane shows one
  * view's `camera` settings (`show`) and writes each change into them.
  */
@@ -14,7 +14,7 @@ import { defaultSettings } from '../view_settings.js';
  * @param {{
  *   onOrtho: (enabled: boolean) => void,
  *   onPreset: (azimuth: number, elevation: number) => void,
- *   onManual: (azimuth: number, elevation: number, distance: number) => void,
+ *   onManual: (azimuth: number, elevation: number, distance: number, roll: number) => void,
  *   onCOM: (enabled: boolean) => void,
  *   onGizmo: (enabled: boolean) => void,
  *   onBackground: (hex: string) => void,
@@ -46,13 +46,16 @@ export function createCameraPane(sidebarEl, callbacks) {
 
   const azInput = numberRow(exact, 'Azimuth (°)', 0, { step: 0.1 }, () => _sendManual());
   const elInput = numberRow(exact, 'Elevation (°)', 30, { step: 0.1 }, () => _sendManual());
+  const rollInput = numberRow(exact, 'Roll (°)', 0, { step: 0.1 }, () => _sendManual());
   const distInput = numberRow(exact, 'Distance', 10, { min: 0.1, step: 0.1 }, () => _sendManual());
 
   function _sendManual() {
-    callbacks.onManual(parseFloat(azInput.value), parseFloat(elInput.value), parseFloat(distInput.value));
+    callbacks.onManual(parseFloat(azInput.value), parseFloat(elInput.value), parseFloat(distInput.value),
+      parseFloat(rollInput.value) || 0);
   }
 
   buttonGroup(body, [
+    // a preset also takes the roll away
     { text: 'XY', title: 'Top view (az 0°, el 90°)', onClick: () => callbacks.onPreset(0, 90) },
     { text: 'XZ', title: 'Front view (az 0°, el 0°)', onClick: () => callbacks.onPreset(0, 0) },
     { text: 'YZ', title: 'Side view (az 90°, el 0°)', onClick: () => callbacks.onPreset(90, 0) },
@@ -65,6 +68,7 @@ export function createCameraPane(sidebarEl, callbacks) {
     syncFromCamera(cam) {
       azInput.value = cam.azimuth.toFixed(1);
       elInput.value = cam.elevation.toFixed(1);
+      rollInput.value = (cam.roll || 0).toFixed(1);
       distInput.value = cam.distance.toFixed(2);
     },
     /** Show or hide the rows behind "Exact angles" (sidebar search opens them). */

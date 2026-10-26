@@ -286,7 +286,10 @@ The sidebar panes:
 - **Force Vectors** — arrow length, normalised or true length, restricted to a
   selection or not.
 - **Camera** — position and target, field of view, centre-of-mass tracking, saved
-  positions, orientation axes.
+  positions, orientation axes. Dragging turns the view freely, over the top
+  and round again, and can tilt it; "Exact angles" shows azimuth, elevation,
+  roll (the tilt about the line of sight) and distance. The XY, XZ and YZ
+  buttons take the tilt away.
 - **Alignment** — Kabsch alignment of every frame onto frame 0 (optionally heavy
   atoms only), or alignment on a three-atom reference frame.
 - **Extract Subset** — build a new dataset from selected atoms.

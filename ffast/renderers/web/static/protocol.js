@@ -18,6 +18,7 @@
  * @property {number} distance
  * @property {number} azimuth
  * @property {number} elevation
+ * @property {number} [roll] degrees about the view direction (camera_angles.js); missing is 0
  * @property {number} fov
  * @property {'perspective'|'orthographic'} projection
  */

@@ -974,8 +974,8 @@ export class FFastApp {
 
     const camera = createCameraPane(sidebarEl, {
       onOrtho: (enabled) => this.renderer?.setOrthographic(enabled),
-      onPreset: (az, el) => this.renderer?.setCameraAngles({ azimuth: az, elevation: el }),
-      onManual: (az, el, dist) => this.renderer?.setCameraAngles({ azimuth: az, elevation: el, distance: dist }),
+      onPreset: (az, el) => this.renderer?.setCameraAngles({ azimuth: az, elevation: el, roll: 0 }),
+      onManual: (az, el, dist, roll) => this.renderer?.setCameraAngles({ azimuth: az, elevation: el, distance: dist, roll }),
       onCOM: (enabled) => { const s = this._focused()?.settings; if (s) s.view.originCenterOfMass = enabled; },
       onGizmo: (enabled) => this._focusedRenderers().setGizmoEnabled(enabled),
       onBackground: (hex) => {

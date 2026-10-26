@@ -843,7 +843,7 @@ async def test_web_camera_exact_angles_wait_behind_a_link(ffast_web_server):
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)
     rows = [f".pane[data-pane='Camera'] .ctl-row[data-label='{label}']"
-            for label in ("Azimuth (°)", "Elevation (°)", "Distance")]
+            for label in ("Azimuth (°)", "Elevation (°)", "Roll (°)", "Distance")]
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
@@ -862,6 +862,53 @@ async def test_web_camera_exact_angles_wait_behind_a_link(ffast_web_server):
             await link.click()
             for row in rows:
                 await expect(page.locator(row)).to_be_hidden()
+        finally:
+            await browser.close()
+
+
+async def test_web_the_camera_turns_freely_over_the_top_and_rolls(ffast_web_server):
+    """to_fix 9: dragging up keeps turning the view past straight overhead
+    (the old turntable stopped there); Roll in Exact angles turns the picture
+    about the view and reaches the server; a preset takes the roll away."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    camera = "() => window.ffastApp.renderer._exportCamera()"
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.evaluate("window.ffastApp.renderer.setCameraAngles({azimuth: 0, elevation: 60, roll: 0})")
+            box = await page.locator(CANVAS).bounding_box()
+            x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.3
+            # drag the view downwards, step by step: the camera climbs over the top
+            await page.mouse.move(x, y)
+            await page.mouse.down()
+            elevations = []
+            for i in range(1, 13):
+                await page.mouse.move(x, y + i * 15)
+                await page.wait_for_timeout(40)
+                elevations.append((await page.evaluate(camera))["elevation"])
+            await page.mouse.up()
+            top = max(elevations)
+            assert top > 85, elevations                       # it reached straight overhead
+            assert elevations[-1] < top - 10, elevations      # and went on, down the other side
+            # past the top the camera is upside down to the old turntable: a roll of about 180
+            assert abs((await page.evaluate(camera))["roll"]) > 90
+
+            await _open_section(page, "Camera")
+            await page.locator("#exact-angles-link").click()
+            roll = page.locator(".pane[data-pane='Camera'] .ctl-row[data-label='Roll (°)'] input")
+            await page.locator(".pane[data-pane='Camera'] .ctl-btn-group button", has_text="XZ").click()
+            await expect(roll).to_have_value("0.0")
+            await roll.fill("45")
+            await roll.dispatch_event("change")
+            await page.wait_for_function(f"() => Math.abs(({camera})().roll - 45) < 0.1")
+            # the server keeps the roll: a new window on the same view gets it
+            view_id = await page.evaluate("() => window.ffastApp._main.current.viewId")
+            assert view_id
+            up = await page.evaluate("() => window.ffastApp.renderer._camera.up.toArray()")
+            assert up[0] == pytest.approx(-(0.5 ** 0.5), abs=1e-3)   # world -x leans up: turned clockwise
         finally:
             await browser.close()
 
@@ -3314,6 +3361,10 @@ async def test_web_an_independent_panel_follows_the_main_camera_while_linked(tmp
                 await _focus_3d(page, 0)
                 await page.evaluate("window.ffastApp.renderer.setCameraAngles({azimuth: 40, elevation: 20})")
                 await page.wait_for_function(f"() => Math.abs(({camera_of})() - 40) < 0.5")
+                # the roll is linked too (to_fix 9)
+                await page.evaluate("window.ffastApp.renderer.setCameraAngles({roll: 30})")
+                await page.wait_for_function(
+                    f"() => Math.abs({_INDEPENDENT}.panel.renderer._exportCamera().roll - 30) < 0.5")
 
                 await _focus_3d(page, 1)
                 await page.locator(_panel_control("Follow main view's camera", "input")).uncheck()

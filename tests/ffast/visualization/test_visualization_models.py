@@ -18,6 +18,13 @@ def test_camera_state_rejects_extra_fields():
         CameraState(unknown_field=1)
 
 
+def test_a_camera_saved_without_a_roll_loads_with_roll_zero():
+    old = {"center": [1, 2, 3], "distance": 5, "azimuth": 30, "elevation": 20,
+           "fov": 60, "projection": "perspective"}
+    assert CameraState.model_validate(old).roll == 0.0
+    assert CameraState.model_validate({**old, "roll": -45}).roll == -45.0
+
+
 # --- SelectionScope ---
 
 def test_selection_scope_values():

@@ -3,7 +3,8 @@
  */
 
 import * as THREE from 'three';
-import { OrbitControls } from './vendor/three/OrbitControls.js';
+import { TrackballControls } from './vendor/three/TrackballControls.js';
+import { anglesFromPose, poseFromAngles } from './camera_angles.js';
 import { mapColorBy } from './colormap.js';
 import { arrowParts } from './arrow_geometry.js';
 
@@ -85,9 +86,19 @@ export class MoleculeRenderer {
     this._scene.add(this._perspCamera, this._orthoCamera);
     this._camera = this._perspCamera;   // active camera (issue 04: orthographic toggle)
 
-    this._controls = new OrbitControls(this._camera, canvas);
-    this._controls.enableDamping = true;
-    this._controls.dampingFactor = 0.1;
+    // Free rotation (to_fix 9): a trackball turns the camera any way, so a
+    // drag never stops at the top or bottom, and it can roll. Its picture of
+    // where the canvas is is refreshed on each press, as panels move without
+    // resizing. Registered first, so it runs before the controls' own press.
+    canvas.addEventListener('pointerdown', () => this._controls.handleResize());
+    this._controls = new TrackballControls(this._camera, canvas);
+    // No coasting: the trackball's would keep turning while the mouse is held
+    // still, and after it lets go, by many times the last step. The speed
+    // turns a drag across half the canvas by about 3 radians, as before.
+    this._controls.staticMoving = true;
+    this._controls.rotateSpeed = 3;
+    this._controls.keys = [];   // no A/S/D drag modes: those keys are the page's
+    this._lastUp = this._camera.up.clone();   // a roll in place moves no position
 
     // Axis orientation gizmo (issue 04): a small AxesHelper rendered into a
     // scissored corner viewport, oriented to mirror the main camera.
@@ -160,12 +171,7 @@ export class MoleculeRenderer {
 
     this._onCameraChange = null; // set by app to send SET_CAMERA commands
 
-    this._controls.addEventListener('change', () => {
-      if (this._onCameraChange) {
-        const cam = this._exportCamera();
-        this._onCameraChange(cam);
-      }
-    });
+    this._controls.addEventListener('change', () => this._cameraMoved());
 
     this._resize();
     this._onWindowResize = () => this._resize();
@@ -175,6 +181,12 @@ export class MoleculeRenderer {
     this._resizeObserver = new ResizeObserver(() => this._resize());
     this._resizeObserver.observe(canvas);
     this._startLoop();
+  }
+
+  /** The camera moved (drag, zoom, a camera command): tell the app. */
+  _cameraMoved() {
+    this._lastUp.copy(this._camera.up);
+    if (this._onCameraChange) this._onCameraChange(this._exportCamera());
   }
 
   /** True while the canvas is on screen; a 3D panel in a tab you are not
@@ -229,6 +241,7 @@ export class MoleculeRenderer {
     const h = this._canvas.clientHeight;
     if (!w || !h) return;   // hidden (another tab); keep the last size
     this._renderer.setSize(w, h, false);
+    this._controls.handleResize();
     this._perspCamera.aspect = w / h;
     this._perspCamera.updateProjectionMatrix();
     this._updateOrthoFrustum(w / h);
@@ -256,13 +269,15 @@ export class MoleculeRenderer {
     const next = enabled ? this._orthoCamera : this._perspCamera;
     if (next === this._camera) return;
     next.position.copy(this._camera.position);
+    next.up.copy(this._camera.up);
+    next.quaternion.copy(this._camera.quaternion);
     next.add(this._cameraLights);
     this._camera = next;
     this._controls.object = this._camera;
     this._updateOrthoFrustum(this._canvas.clientWidth / this._canvas.clientHeight);
     this._controls.update();
 
-    this._controls.dispatch(); // this function calls an event so that the orthorgraphic status is also recorded on the server.
+    this._cameraMoved();   // the server records the projection too
   }
 
   /**
@@ -270,10 +285,11 @@ export class MoleculeRenderer {
    * live value (issue 04: preset buttons + manual az/el/dist entry). Fires
    * the same 'change' event as an interactive drag, so SET_CAMERA sends and
    * the camera pane's fields stay in sync.
-   * @param {{azimuth?: number, elevation?: number, distance?: number}} overrides
+   * @param {{azimuth?: number, elevation?: number, distance?: number, roll?: number}} overrides
    */
   setCameraAngles(overrides) {
     this._applyCamera({ ...this._exportCamera(), ...overrides });
+    this._cameraMoved();   // a roll alone moves no position, so the controls stay quiet
   }
 
   /** @param {string} hex CSS colour, e.g. '#000000' */
@@ -343,6 +359,8 @@ export class MoleculeRenderer {
       this._rafId = requestAnimationFrame(loop);
       if (!this.drawing) return;
       this._controls.update();
+      // the trackball rolling the camera in place says nothing
+      if (this._camera.up.distanceToSquared(this._lastUp) > 1e-12) this._cameraMoved();
       this._renderFrame();
     };
     loop();
@@ -764,46 +782,43 @@ export class MoleculeRenderer {
 
   /** @param {import('./protocol.js').CameraState} cam */
   _applyCamera(cam) {
-    // cam fields: center, distance, azimuth, elevation, fov, projection
-    const { center = [0,0,0], distance = 10, azimuth = 0, elevation = 30, fov = 60, projection = 'perspective' } = cam;
+    // cam fields: center, distance, azimuth, elevation, roll, fov, projection; a
+    // missing roll is 0 (a view saved before free rotation)
+    const { center = [0,0,0], distance = 10, azimuth = 0, elevation = 30, roll = 0, fov = 60, projection = 'perspective' } = cam;
     this.setOrthographic(projection === 'orthographic');
     this._serverFov = fov;
     this._perspCamera.fov = this._look === 'rich' ? RICH_FOV : fov;   // rich lens is browser-only
     this._perspCamera.updateProjectionMatrix();
 
-    const phi   = (90 - elevation) * Math.PI / 180;
-    const theta = azimuth * Math.PI / 180;
-    const x = center[0] + distance * Math.sin(phi) * Math.sin(theta);
-    const y = center[1] + distance * Math.cos(phi);
-    const z = center[2] + distance * Math.sin(phi) * Math.cos(theta);
-    this._camera.position.set(x, y, z);
+    const pose = poseFromAngles({ center, distance, azimuth, elevation, roll });
+    this._camera.position.set(...pose.position);
+    this._camera.up.set(...pose.up);
     this._controls.target.set(center[0], center[1], center[2]);
+    this._camera.lookAt(this._controls.target);
     this._updateOrthoFrustum(this._canvas.clientWidth / this._canvas.clientHeight);
     this._controls.update();
+    this._lastUp.copy(this._camera.up);
   }
 
   /** @returns {import('./protocol.js').CameraState} */
   _exportCamera() {
-    const pos = this._camera.position;
     const target = this._controls.target;
-    const dx = pos.x - target.x;
-    const dy = pos.y - target.y;
-    const dz = pos.z - target.z;
-    const distance = Math.sqrt(dx*dx + dy*dy + dz*dz);
-    const elevation = 90 - Math.atan2(Math.sqrt(dx*dx + dz*dz), dy) * 180 / Math.PI;
-    const azimuth   = Math.atan2(dx, dz) * 180 / Math.PI;
+    const center = [target.x, target.y, target.z];
+    const { distance, azimuth, elevation, roll } = anglesFromPose(
+      this._camera.position.toArray(), center, this._camera.up.toArray());
     return {
-      center: [target.x, target.y, target.z],
+      center,
       distance,
       azimuth,
       elevation,
+      roll,
       fov: this._serverFov,
       projection: this._camera === this._orthoCamera ? 'orthographic' : 'perspective',
     };
   }
 
   resetCamera() {
-    // Re-fit the molecule to view (recenter + frame), not the OrbitControls
+    // Re-fit the molecule to view (recenter + frame), not the controls'
     // initial pose. frameAtoms() calls _controls.update(), which fires the
     // 'change' event → SET_CAMERA syncs the new pose to the server.
     this.frameAtoms();
@@ -816,6 +831,8 @@ export class MoleculeRenderer {
     const size   = box.getSize(new THREE.Vector3()).length();
     this._controls.target.copy(center);
     this._camera.position.copy(center).addScaledVector(new THREE.Vector3(0, 0, 1), size * 1.5);
+    this._camera.up.set(0, 1, 0);   // fitting the atoms takes the roll away
+    this._camera.lookAt(center);
     this._updateOrthoFrustum(this._canvas.clientWidth / this._canvas.clientHeight);
     this._controls.update();
   }
