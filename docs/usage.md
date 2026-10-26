@@ -279,7 +279,8 @@ The sidebar panes:
   other, with a guide. Shift-click to select several; right-click a piece to
   turn it 90°, group the selection (a group moves and turns together), switch
   the whole bar between upright and lying ("Rotate all 90°"), or reset it.
-  The mouse wheel over the bar makes it longer or shorter. One arrangement
+  A selected piece shows a grip in its corner: drag it to resize the piece (a
+  text's font grows with it), or press + and -. One arrangement
   serves every colouring, is kept in this browser, and an exported PNG shows
   the pieces where they are on screen.
 - **Force Vectors** — arrow length, normalised or true length, restricted to a

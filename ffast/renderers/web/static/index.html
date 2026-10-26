@@ -773,13 +773,20 @@
       background: color-mix(in srgb, var(--ground) 70%, transparent);
     }
     #colorbar-gradient.cb-inner { padding: 0; border: 1px solid var(--bg3); box-sizing: border-box; border-radius: 2px; }
-    .cb-min, .cb-max { font-size: var(--fs-xs); color: var(--muted); line-height: 14px; }
+    /* a text's font grows with its piece (colorbar_overlay.js sets --cb-size) */
+    .cb-min, .cb-max { font-size: calc(var(--fs-xs) * var(--cb-size, 1)); color: var(--muted); }
     :is(.cb-min, .cb-max):hover { color: var(--ink-2); }
     .cb-limit-input {
       width: 8ch; font: inherit; color: var(--ink-2); background: var(--surface-2);
       border: 1px solid var(--line); border-radius: 3px; padding: 1px 3px;
     }
-    #colorbar-label { font-size: var(--fs-s); color: var(--text1); }
+    #colorbar-label { font-size: calc(var(--fs-s) * var(--cb-size, 1)); color: var(--text1); }
+    .cb-grip {
+      display: none; position: absolute; right: -5px; bottom: -5px; width: 10px; height: 10px;
+      cursor: nwse-resize; touch-action: none; border-radius: 2px;
+      background: var(--accent, deepskyblue); border: 1px solid var(--ground);
+    }
+    .cb-piece.selected > .cb-grip { display: block; }
     .cb-guide { position: absolute; pointer-events: none; z-index: 1; }
     .cb-guide-v { top: 0; bottom: 0; border-left: 1px dashed var(--accent, deepskyblue); }
     .cb-guide-h { left: 0; right: 0; border-top: 1px dashed var(--accent, deepskyblue); }

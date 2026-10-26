@@ -55,7 +55,12 @@ CASES = {
                " cl.groupSelection(groups, ['min', 'name']), cl.groupSelection(groups, ['name']),"
                " cl.ungroup(groups, 'min')]; })()"),
     "clean": ("[cl.cleanLayout(null), cl.cleanLayout({orientation: 'sideways', scale: 99, groups: [['bar'], ['bar', 'zz'], ['min', 'max', 'max']],"
-              " pieces: {bar: {x: 0.1, y: 0.1, rot: 45}}})]"),
+              " pieces: {bar: {x: 0.1, y: 0.1, rot: 45}}}), cl.cleanLayout({scale: 2, sizes: {name: 1.5, min: 'big'}}).sizes]"),
+    # the grip moves along the diagonal: the piece keeps its shape
+    "resized": ("[cl.resized({w: 30, h: 40}, 1, 30, 40), cl.resized({w: 30, h: 40}, 1, 0, 0),"
+                " cl.resized({w: 30, h: 40}, 1, -300, -400), cl.resized({w: 30, h: 40}, 2, 300, 400),"
+                " cl.resized({w: 30, h: 40}, 1, 40, -30)]"),
+    "bar_size": "[cl.barSize({w: 400, h: 300}, 2, 0), cl.barSize({w: 400, h: 300}, 1, 90)]",
 }
 
 
@@ -173,8 +178,24 @@ def test_selection_and_groups_follow_the_desktop(results):
 
 
 def test_a_stored_layout_from_elsewhere_cannot_break_the_page(results):
-    empty, odd = results["clean"]
+    empty, odd, sizes = results["clean"]
     assert empty["orientation"] == "vertical" and empty["pieces"] is None
-    assert odd["orientation"] == "vertical" and odd["scale"] == 1
+    assert empty["sizes"] == {"bar": 1, "name": 1, "max": 1, "min": 1}
+    assert odd["orientation"] == "vertical" and odd["sizes"]["bar"] == 1     # 99 is out of range
+    # an older layout's bar scale is the bar's size; a bad size is the default
+    assert sizes == {"bar": 2, "name": 1.5, "max": 1, "min": 1}
     assert odd["pieces"] is None                 # incomplete or a 45° turn: the default
     assert odd["groups"] == [["min", "max"]]
+
+
+def test_the_corner_grip_resizes_along_the_diagonal(results):
+    double, same, smallest, largest, sideways = results["resized"]
+    assert double == 2 and same == 1
+    assert smallest == 0.4 and largest == 4       # kept within the size range
+    assert sideways == 1                          # a move across the diagonal changes nothing
+
+
+def test_the_bar_size_scales_thickness_and_length(results):
+    upright, lying = results["bar_size"]
+    assert upright == {"w": 28, "h": 240}         # 2 x (14 px, 40% of the height)
+    assert lying == {"w": 14, "h": 160}           # lying, its length follows the width

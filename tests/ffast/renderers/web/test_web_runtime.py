@@ -1297,7 +1297,7 @@ async def test_web_colour_bar_limits_are_typed_and_its_pieces_move(ffast_web_ser
     (to_fix 17: still so with four pieces). A piece dragged stays where it is
     put, as a fraction of the panel, for every colouring and after a reload;
     a group moves together, Rotate all 90° gives the horizontal layout, and
-    the wheel over the bar makes it longer."""
+    a selected piece's corner grip resizes it, a text's font with it."""
     ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
@@ -1352,10 +1352,33 @@ async def test_web_colour_bar_limits_are_typed_and_its_pieces_move(ffast_web_ser
             await page.locator(".cb-menu [data-action='cb-rotate-all']").click()
             bar = await piece("bar").bounding_box()
             assert bar["width"] > bar["height"]
+            # the wheel over the bar is the camera's again; the grip of the
+            # selected bar resizes it
             await page.mouse.move(bar["x"] + bar["width"] / 2, bar["y"] + bar["height"] / 2)
             await page.mouse.wheel(0, -300)
+            assert (await piece("bar").bounding_box())["width"] == pytest.approx(bar["width"], abs=1)
+            grip = piece("bar").locator(".cb-grip")
+            await expect(grip).to_be_visible()               # the bar is selected
+            await expect(piece("name").locator(".cb-grip")).to_be_hidden()
+            g = await grip.bounding_box()
+            await page.mouse.move(g["x"] + 5, g["y"] + 5)
+            await page.mouse.down()
+            await page.mouse.move(g["x"] + 105, g["y"] + 10, steps=6)
+            await page.mouse.up()
             longer = await piece("bar").bounding_box()
-            assert longer["width"] > bar["width"] + 10
+            assert longer["width"] > bar["width"] + 10 and longer["height"] > bar["height"]
+
+            # a text grows its font with its box
+            font = lambda: piece("name").locator("#colorbar-label").evaluate(
+                "(el) => parseFloat(getComputedStyle(el).fontSize)")
+            before = await font()
+            await piece("name").click(position={"x": 2, "y": 2})
+            g = await piece("name").locator(".cb-grip").bounding_box()
+            await page.mouse.move(g["x"] + 5, g["y"] + 5)
+            await page.mouse.down()
+            await page.mouse.move(g["x"] + 105, g["y"] + 25, steps=6)
+            await page.mouse.up()
+            assert await font() > before * 1.2
 
             # the PNG export draws the bar where it is on screen
             pixel = await page.evaluate("""async () => {

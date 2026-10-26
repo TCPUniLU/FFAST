@@ -12,6 +12,10 @@
  * keeps the arrangement. One layout serves every colouring (the desktop keeps
  * one per metric); the page keeps it in browser storage.
  *
+ * Each piece also has a size, a factor on its default (`sizes`): the bar's
+ * thickness and length, a text's font. It is set with the corner grip a
+ * selected piece shows.
+ *
  * Rotation is 0, 90 or -90 degrees, turning the piece's content clockwise for
  * 90. The bar at 0 is upright with its highest colour on top; at 90 the top
  * turns to the right. A text at -90 reads bottom to top.
@@ -26,16 +30,18 @@ export const SNAP_PX = 6;
  * height (upright) or width (turned), before its own scale. */
 export const BAR_THICKNESS = 14;
 export const BAR_LENGTH_FRAC = 0.4;
-export const SCALE_RANGE = Object.freeze([0.4, 3]);
+export const SCALE_RANGE = Object.freeze([0.4, 4]);
 /** Where a layout with nothing saved puts the bar's corner. */
 const ORIGIN = Object.freeze({ x: 0.03, y: 0.3 });
 
 const NAME_TURNS = [0, -90];
 const OTHER_TURNS = [0, 90, -90];
 
-/** The layout with nothing saved: vertical, at the default place. */
+const defaultSizes = () => Object.fromEntries(PIECES.map((k) => [k, 1]));
+
+/** The layout with nothing saved: vertical, at the default place and size. */
 export function defaultLayout() {
-  return { orientation: 'vertical', scale: 1, origin: { ...ORIGIN }, pieces: null, groups: [] };
+  return { orientation: 'vertical', sizes: defaultSizes(), origin: { ...ORIGIN }, pieces: null, groups: [] };
 }
 
 /** `layout` with anything missing or malformed replaced by the default, so a
@@ -46,7 +52,11 @@ export function cleanLayout(layout) {
   const num = (v, lo, hi) => Number.isFinite(v) && v >= lo && v <= hi;
   const out = {
     orientation: layout.orientation === 'horizontal' ? 'horizontal' : 'vertical',
-    scale: num(layout.scale, ...SCALE_RANGE) ? layout.scale : 1,
+    sizes: Object.fromEntries(PIECES.map((k) => {
+      // a layout from before the grip kept the bar's size as `scale`
+      const v = layout.sizes?.[k] ?? (k === 'bar' ? layout.scale : undefined);
+      return [k, num(v, ...SCALE_RANGE) ? v : 1];
+    })),
     origin: layout.origin && num(layout.origin.x, 0, 1) && num(layout.origin.y, 0, 1)
       ? { x: layout.origin.x, y: layout.origin.y } : d.origin,
     pieces: null,
@@ -129,14 +139,23 @@ export function preset(orientation, origin, sizes) {
 export function boxesFor(layout, panel, textSizes) {
   const placed = layout.pieces || toFractions(preset(layout.orientation,
     { x: layout.origin.x * panel.w, y: layout.origin.y * panel.h },
-    { ...textSizes, bar: barSize(panel, layout.scale, layout.orientation === 'horizontal' ? 90 : 0) }), panel);
+    { ...textSizes, bar: barSize(panel, layout.sizes.bar, layout.orientation === 'horizontal' ? 90 : 0) }), panel);
   const out = {};
   for (const key of PIECES) {
     const { x, y, rot } = placed[key];
-    const upright = key === 'bar' ? barSize(panel, layout.scale, rot) : textSizes[key];
+    const upright = key === 'bar' ? barSize(panel, layout.sizes.bar, rot) : textSizes[key];
     out[key] = keepInside({ x: x * panel.w, y: y * panel.h, ...turned(upright, rot), rot }, panel);
   }
   return out;
+}
+
+/** A piece's size factor after its corner grip moved by (dx, dy) pixels
+ * from where it was pressed, when it was `box` at size `size`: the grip's
+ * move along the box's diagonal, so the piece keeps its shape. */
+export function resized(box, size, dx, dy) {
+  const d2 = box.w * box.w + box.h * box.h;
+  const factor = d2 ? ((box.w + dx) * box.w + (box.h + dy) * box.h) / d2 : 1;
+  return Math.min(SCALE_RANGE[1], Math.max(SCALE_RANGE[0], size * factor));
 }
 
 /** Pixel places as fractions of the panel. */

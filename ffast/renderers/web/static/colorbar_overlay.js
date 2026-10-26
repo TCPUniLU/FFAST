@@ -5,8 +5,9 @@
  * its own. Click selects a piece, shift-click adds to the selection; the
  * right-click menu turns a piece (or its group), groups or ungroups the
  * selection, and switches the whole bar between the vertical and horizontal
- * layouts. Dragging snaps to the other pieces, with guide lines. The mouse
- * wheel over the bar makes it longer or shorter.
+ * layouts. Dragging snaps to the other pieces, with guide lines. A selected
+ * piece shows a grip in its corner that resizes it: the bar's thickness and
+ * length, a text's font.
  *
  * The geometry is colorbar_layout.js; this file only draws it and listens.
  * One layout serves every colouring, kept in this browser (layout_state.js).
@@ -14,8 +15,8 @@
  */
 
 import {
-  PIECES, SCALE_RANGE, barSize, boxesFor, cleanLayout, defaultLayout, groupOf, groupSelection,
-  keepInside, nextRotation, peers, preset, press, rotateBlock, rotateOne, snapDrag, toFractions, ungroup,
+  PIECES, barSize, boxesFor, cleanLayout, defaultLayout, groupOf, groupSelection,
+  keepInside, nextRotation, peers, preset, press, resized, rotateBlock, rotateOne, snapDrag, toFractions, ungroup,
 } from './colorbar_layout.js';
 import { sharedMenu } from './actions.js';
 import { gradientCss } from './colormap.js';
@@ -44,9 +45,13 @@ export function createColourBar(texts) {
     el.className = `cb-piece cb-piece-${key}`;
     el.dataset.piece = key;
     el.tabIndex = 0;
-    el.setAttribute('aria-label', `Colour bar ${NAMES[key]}: drag to move; R turns it; right-click for more`);
+    el.setAttribute('aria-label',
+      `Colour bar ${NAMES[key]}: drag to move; R turns it; + and - resize it; right-click for more`);
     inner[key].classList.add('cb-inner');
-    el.appendChild(inner[key]);
+    const grip = document.createElement('div');
+    grip.className = 'cb-grip';
+    grip.title = 'Drag to resize';
+    el.append(inner[key], grip);
     root.appendChild(el);
     pieceEls[key] = el;
   }
@@ -73,7 +78,7 @@ export function createColourBar(texts) {
   const textSizes = () => Object.fromEntries(['name', 'max', 'min'].map(
     (k) => [k, { w: inner[k].offsetWidth, h: inner[k].offsetHeight }]));
   /** A piece's upright size at rotation `rot`. */
-  const upright = (key, rot) => (key === 'bar' ? barSize(panel(), layout.scale, rot) : textSizes()[key]);
+  const upright = (key, rot) => (key === 'bar' ? barSize(panel(), layout.sizes.bar, rot) : textSizes()[key]);
 
   function save() {
     saveLayout({ [STORE_KEY]: layout });
@@ -102,7 +107,9 @@ export function createColourBar(texts) {
 
   function render() {
     const p = panel();
-    if (root.classList.contains('hidden') || !p.w || !p.h || drag) return;
+    if (root.classList.contains('hidden') || !p.w || !p.h || drag?.moving) return;
+    // a text's font follows its size (index.html: --cb-size)
+    for (const key of PIECES) pieceEls[key].style.setProperty('--cb-size', layout.sizes[key]);
     boxes = boxesFor(layout, p, textSizes());
     for (const key of PIECES) place(key);
   }
@@ -194,8 +201,33 @@ export function createColourBar(texts) {
     commit();
   }
 
+  /** Resize `key` to size factor `size` (its corner stays put). */
+  function resize(key, size) {
+    layout.sizes[key] = size;
+    render();
+  }
+
   for (const key of PIECES) {
     const el = pieceEls[key];
+    el.querySelector('.cb-grip').addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || !boxes) return;
+      e.stopPropagation();
+      e.preventDefault();
+      const start = { box: { ...boxes[key] }, size: layout.sizes[key], x: e.clientX, y: e.clientY };
+      drag = { resizing: key };
+      const step = (ev) => resize(key, resized(start.box, start.size, ev.clientX - start.x, ev.clientY - start.y));
+      const stop = () => {
+        window.removeEventListener('pointermove', step);
+        window.removeEventListener('pointerup', stop);
+        window.removeEventListener('pointercancel', stop);
+        drag = null;
+        render();
+        commit();
+      };
+      window.addEventListener('pointermove', step);
+      window.addEventListener('pointerup', stop);
+      window.addEventListener('pointercancel', stop);
+    });
     el.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 || e.target.closest('input')) return;
       e.stopPropagation();   // not an orbit, a pick or a box selection
@@ -233,6 +265,12 @@ export function createColourBar(texts) {
           place(k);
         }
         commit();
+      } else if (['+', '=', '-'].includes(e.key) && boxes) {
+        e.preventDefault();
+        const start = boxes[key];
+        const grow = e.key === '-' ? -8 : 8;
+        resize(key, resized(start, layout.sizes[key], grow, grow * (start.h / Math.max(1, start.w))));
+        commit();
       } else if (e.key === 'r' || e.key === 'R') {
         e.preventDefault();
         rotate(key);
@@ -243,16 +281,6 @@ export function createColourBar(texts) {
       e.stopPropagation();   // not the 3D view's own keys
     });
   }
-
-  // The mouse wheel over the bar changes its length, not the camera's zoom.
-  pieceEls.bar.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const scale = layout.scale * 1.05 ** (-e.deltaY / 100);
-    layout.scale = Math.min(SCALE_RANGE[1], Math.max(SCALE_RANGE[0], scale));
-    save();
-    render();
-  }, { passive: false });
 
   // A click anywhere else drops the selection (a group stays a group).
   document.addEventListener('pointerdown', (e) => {
