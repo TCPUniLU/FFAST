@@ -1154,7 +1154,7 @@ export class FFastApp {
       view.modelFp = null;
     this._independent.open(view);
     if (!focused) return;
-    this._panes.extract.setDataset(this._datasets.get(fp));
+    this._syncDatasetPanes(this._datasets.get(fp));
     this._syncPanelSection();
     this._syncSidebarTitle();
   }
@@ -1291,7 +1291,7 @@ export class FFastApp {
     } else if (this._main.current) {
       this._showSettings(this._main.current);
     }
-    this._panes.extract.setDataset(this._datasets.get(this._focusedDatasetFp()));
+    this._syncDatasetPanes(this._datasets.get(this._focusedDatasetFp()));
     this._syncPanelSection();
     this._syncSidebarTitle();
     this._syncPlayback();
@@ -1897,8 +1897,7 @@ export class FFastApp {
     document.getElementById('popout-btn').disabled = false;
 
     if (datasetChanged && sidebarIsMain) this._showSettings(view);
-    // Extract only where it makes a fixed dataset (Qt's AtomFilterPaneHiding).
-    if (sidebarIsMain) this._panes.extract.setDataset(this._datasets.get(this._currentDatasetFp));
+    if (sidebarIsMain) this._syncDatasetPanes(this._datasets.get(this._currentDatasetFp));
   }
 
   // ── per-view settings (ADR 0060): each view carries its sidebar settings
@@ -2084,6 +2083,23 @@ export class FFastApp {
     });
     this._pickReadout = '';
     this._updatePickStrip();
+  }
+
+  /** Fit the dataset-bound panes to the focused view's dataset (its
+   * REMOTE_DATASET_META): Extract only where it makes a fixed dataset (Qt's
+   * AtomFilterPaneHiding); Align and its pick tool off where the atoms change
+   * between frames. */
+  _syncDatasetPanes(meta) {
+    this._panes.extract.setDataset(meta);
+    this._panes.align.setDataset(meta);
+    const btn = document.querySelector('#pick-toolbar .pick-tool-btn[data-tool="align"]');
+    if (btn) {
+      btn.disabled = !!meta?.variable;
+      btn.title = meta?.variable
+        ? `${PICK_TOOLS.align.label}: off, this dataset's atoms change between frames`
+        : `${PICK_TOOLS.align.label}: ${PICK_TOOLS.align.tip}`;
+    }
+    if (meta?.variable && this._activeTool === 'align') this._setActiveTool(null);
   }
 
   /** Arm a pick tool (or `null` to return to orbit); toggling the active one disarms. */

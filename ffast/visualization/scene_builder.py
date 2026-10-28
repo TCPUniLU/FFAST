@@ -127,10 +127,13 @@ def build_scene(
     # applied server-side. Explicit state.transforms plus any feature-driven
     # transform stages (e.g. Kabsch alignment) compose here; the client sends
     # only feature toggles, never transform matrices.
+    # Alignment is off on a variable dataset: one frame's atoms cannot be
+    # matched to another's, even when the counts agree.
     transforms = list(state.transforms)
-    if "kabsch_align" in state.enabled_features:
+    variable = bool(getattr(ds, "isVariable", False))
+    if "kabsch_align" in state.enabled_features and not variable:
         transforms = _kabsch_to_frame0(ds, raw_positions, z, state) + transforms
-    if "atom_align" in state.enabled_features:
+    if "atom_align" in state.enabled_features and not variable:
         transforms = transforms + _atom_align_to_reference(ds, raw_positions, state)
 
     try:
@@ -473,8 +476,8 @@ def _kabsch_to_frame0(ds, raw_positions: np.ndarray, z: np.ndarray, state) -> li
     ``view.transforms``. The ``heavy_only`` compute parameter is read from the
     view's stored ``ffast.kabsch_alignment`` parameters (set by the client's
     "Kabsch: heavy atoms only" checkbox); it defaults to the stage default when
-    absent. Returns ``[]`` on atom-count mismatch (variable datasets) or
-    failure, so an unalignable frame renders untransformed.
+    absent. Returns ``[]`` on atom-count mismatch or failure, so an
+    unalignable frame renders untransformed.
     """
     try:
         from ffast.visualization.stages.builtin.transform_stages import (
@@ -497,7 +500,7 @@ def _atom_align_to_reference(ds, raw_positions: np.ndarray, state) -> list:
     Computes translate+rotate transforms via the ``atom_align`` stage so the
     three selected atoms overlap a reference frame, and returns them to append
     to ``view.transforms``. Returns ``[]`` on an invalid selection (not exactly
-    three indices), atom-count mismatch (variable datasets), or failure.
+    three indices), atom-count mismatch, or failure.
     """
     try:
         from ffast.visualization.stages.builtin.transform_stages import atom_align

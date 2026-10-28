@@ -36,6 +36,7 @@ export function createAlignPane(sidebarEl, callbacks) {
   sidebarEl.appendChild(el);
 
   let state = defaultSettings().align;   // the shown view's settings
+  let variable = false;                  // the dataset's atoms change by frame
 
   const kabschInput = checkboxRow(body, 'Kabsch align', state.kabsch, (v) => {
     state.kabsch = v;
@@ -72,6 +73,12 @@ export function createAlignPane(sidebarEl, callbacks) {
   body.appendChild(hint);
 
   function _syncHint() {
+    if (variable) {
+      hint.textContent = 'Off: this dataset\'s atoms change between frames';
+      hint.classList.remove('ok');
+      hint.style.display = '';
+      return;
+    }
     if (!state.atomAlign) { hint.style.display = 'none'; return; }
     const n = state.indices.length;
     const ok = n === 3;
@@ -81,8 +88,11 @@ export function createAlignPane(sidebarEl, callbacks) {
   }
 
   function _syncVisibility() {
-    setRowNeeds(rowElement(heavyInput), state.kabsch ? '' : 'Turn on "Kabsch align" first');
-    setRowNeeds(rowElement(idxInput), state.atomAlign ? '' : 'Turn on "3-atom frame align" first');
+    const off = variable ? 'A dataset with the same atoms in every frame' : '';
+    setRowNeeds(rowElement(kabschInput), off);
+    setRowNeeds(rowElement(atomAlignInput), off);
+    setRowNeeds(rowElement(heavyInput), off || (state.kabsch ? '' : 'Turn on "Kabsch align" first'));
+    setRowNeeds(rowElement(idxInput), off || (state.atomAlign ? '' : 'Turn on "3-atom frame align" first'));
     _syncHint();
   }
   _syncVisibility();
@@ -98,7 +108,7 @@ export function createAlignPane(sidebarEl, callbacks) {
     isAtomAlign() { return state.atomAlign; },
     /** Turn on 3-atom mode when the Align pick tool is armed (Qt parity). */
     enableAtomAlignMode() {
-      if (state.atomAlign) return;
+      if (state.atomAlign || variable) return;
       state.atomAlign = true;
       atomAlignInput.checked = true;
       if (state.kabsch) { state.kabsch = false; kabschInput.checked = false; callbacks.onKabsch(false, state.heavyOnly); }
@@ -107,6 +117,20 @@ export function createAlignPane(sidebarEl, callbacks) {
     /** Commit the current 3-atom reference set (called when the tool has 3). */
     applyAtomAlign() {
       if (state.atomAlign) callbacks.onAtomAlign(state.atomAlign, state.indices);
+    },
+
+    /** Alignment is off where the dataset's atoms change between frames
+     * (its REMOTE_DATASET_META says `variable`): one frame's atoms cannot be
+     * matched to another's. A view that had it on is turned off. */
+    setDataset(meta) {
+      variable = !!meta?.variable;
+      if (variable && state.kabsch) {
+        state.kabsch = false; kabschInput.checked = false; callbacks.onKabsch(false, state.heavyOnly);
+      }
+      if (variable && state.atomAlign) {
+        state.atomAlign = false; atomAlignInput.checked = false; callbacks.onAtomAlign(false, state.indices);
+      }
+      _syncVisibility();
     },
 
     /** Show a view's `align` settings; later changes are written into them.

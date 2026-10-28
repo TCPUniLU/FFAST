@@ -569,6 +569,20 @@ class TestBuildSceneAtomAlign:
         # invalid selection → untransformed frame 1 (atom 0 at x = 0.1)
         assert scene.atoms.positions[0] == pytest.approx([0.1, 0.0, 0.0], abs=1e-9)
 
+    @pytest.mark.parametrize("feature", ["atom_align", "kabsch_align"])
+    def test_alignment_is_off_on_a_variable_dataset(self, feature):
+        # Same atom count in every frame here, but a variable dataset gives no
+        # promise the atoms match, so the frame is drawn as stored.
+        class _VariableDs(_FakeDataset):
+            isVariable = True
+        state = VisualizationState(
+            view_id="v1", dataset_ref="fp", structure_index=1,
+            enabled_features=[feature],
+            parameters={"ffast.atom_align": {"atom_indices": [0, 1, 2], "reference_frame": 0}},
+        )
+        scene = build_scene(state, get_dataset=lambda fp: _VariableDs())
+        assert scene.atoms.positions[0] == pytest.approx([0.1, 0.0, 0.0], abs=1e-9)
+
 
 class TestBuildSceneNoUnitCell:
     """Regression: the 'no_unit_cell' opt-out. The client sends

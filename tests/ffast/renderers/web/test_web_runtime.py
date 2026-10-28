@@ -248,6 +248,28 @@ async def _preload_dataset(ws_port: int) -> str:
         await ws.close()
 
 
+async def _preload_uniform_dataset(ws_port: int, tmp_path) -> str:
+    """A dataset with the same atoms in every frame: the first example frame,
+    shifted a little per frame. The bundled example's atoms change between
+    frames, and some tools (Align) are off on such a dataset."""
+    first = ase.io.read(DATASET_PATH, index=0)
+    frames = []
+    for i in range(5):
+        frame = first.copy()
+        frame.translate([0.1 * i, 0.0, 0.0])
+        frames.append(frame)
+    path = tmp_path / "uniform.xyz"
+    ase.io.write(path, frames, format="extxyz")
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("LOAD_DATASET", (str(path), "ase (auto)"), {}))
+        meta = await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30)
+        return meta["args"][0]
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+
 async def _preload_dataset_and_prediction(ws_port: int) -> tuple[str, str]:
     ws = await _connect_headless_client(ws_port)
     try:
@@ -2022,9 +2044,9 @@ async def test_web_switching_datasets_restores_display_settings_without_errors(f
         assert not errors, errors
 
 
-async def test_web_arming_a_pick_tool_opens_its_section(ffast_web_server):
+async def test_web_arming_a_pick_tool_opens_its_section(ffast_web_server, tmp_path):
     ws_port, web_port = ffast_web_server
-    dataset_fp = await _preload_dataset(ws_port)
+    dataset_fp = await _preload_uniform_dataset(ws_port, tmp_path)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
@@ -5216,15 +5238,13 @@ async def test_web_extract_creates_subset_dataset(ffast_web_server):
             await browser.close()
 
 
-async def test_web_alignment_pane_wires_kabsch_and_exclusive_modes(ffast_web_server):
+async def test_web_alignment_pane_wires_kabsch_and_exclusive_modes(ffast_web_server, tmp_path):
     """ADR 0045 issue 13 gate: the Alignment pane drives the server alignment
     features (a VIEW_COMMAND is issued) and its two modes are mutually
-    exclusive as in Qt. A rendered-orientation diff is not asserted here — the
-    bundled example trajectory is a variable dataset (per-frame atom counts
-    differ), for which Kabsch-to-frame-0 correctly no-ops; the wiring and the
-    mode exclusivity are the parts this data can verify."""
+    exclusive as in Qt. A rendered-orientation diff is not asserted here; the
+    wiring and the mode exclusivity are what this test checks."""
     ws_port, web_port = ffast_web_server
-    dataset_fp = await _preload_dataset(ws_port)
+    dataset_fp = await _preload_uniform_dataset(ws_port, tmp_path)
 
     page_errors: list[str] = []
 
@@ -5266,6 +5286,27 @@ async def test_web_alignment_pane_wires_kabsch_and_exclusive_modes(ffast_web_ser
             await browser.close()
 
     assert not page_errors
+
+
+async def test_web_alignment_is_off_on_a_variable_dataset(ffast_web_server):
+    """On a dataset whose atoms change between frames (the bundled example),
+    one frame's atoms cannot be matched to another's: the Align tool is
+    greyed out and the Alignment section says why instead of offering modes."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(page.locator("#pick-toolbar button[data-tool='align']")).to_be_disabled()
+            await _open_section(page, "Alignment")
+            pane = page.locator(".pane[data-pane='Alignment']")
+            await expect(pane.locator(".ctl-row[data-label='Kabsch align']")).to_be_hidden()
+            await expect(pane.locator(".ctl-row[data-label='3-atom frame align']")).to_be_hidden()
+            await expect(pane.locator(".ctl-hint")).to_contain_text("atoms change between frames")
+        finally:
+            await browser.close()
 
 
 # ── Phase 3: analysis plots + subbing (daily-driver milestone) ───────────────

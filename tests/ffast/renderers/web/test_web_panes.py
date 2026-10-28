@@ -155,6 +155,14 @@ CASES = {
       const s = {kabsch: false, heavyOnly: true, atomAlign: false, idxInput: '', indices: []};
       const t = {kabsch: false, heavyOnly: true, atomAlign: false, idxInput: '', indices: []};
       pane.show(s); pane.show(t); fire(ctl(host, 'Kabsch align'), true); return [s, t]; })()""",
+    "align_variable": """(() => { const {pane, host, calls} = mk(ap, 'createAlignPane');
+      const s = {kabsch: true, heavyOnly: true, atomAlign: false, idxInput: '', indices: []}; pane.show(s);
+      pane.setDataset({variable: true});
+      const rows = ['Kabsch align', '3-atom frame align'].map((l) => ctl(host, l).closest('.ctl-row').classList.contains('needs'));
+      pane.enableAtomAlignMode(); const off = JSON.parse(JSON.stringify(s));
+      pane.setDataset({variable: false});
+      const back = ['Kabsch align', '3-atom frame align'].map((l) => ctl(host, l).closest('.ctl-row').classList.contains('needs'));
+      return {off, rows, back, calls}; })()""",
     # ── colour by ───────────────────────────────────────────────────────────
     "color_show": """(() => { const {pane, host, calls} = mk(cb, 'createColorByPane');
       pane.setMetricCatalog(CAT); pane.refreshModels(new Map([['fp1', {name: 'MACE'}]]));
@@ -416,6 +424,13 @@ def test_align_changes_after_a_new_show_leave_the_old_settings_alone(results):
     s, t = results["align_isolated"]
     assert s["kabsch"] is False and t["kabsch"] is True
 
+
+
+def test_align_is_off_on_a_variable_dataset(results):
+    r = results["align_variable"]
+    assert r["off"]["kabsch"] is False and r["off"]["atomAlign"] is False
+    assert r["rows"] == [True, True] and r["back"] == [False, False]
+    assert ["onKabsch", False, True] in r["calls"]
 
 # ── colour by ───────────────────────────────────────────────────────────────
 
