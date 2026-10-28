@@ -1743,6 +1743,41 @@ async def test_web_the_file_browser_closes_on_escape_and_opens_with_a_row_focuse
             await browser.close()
 
 
+async def test_web_the_file_browser_moves_with_arrow_keys(ffast_web_server):
+    """to_fix_v2: ↓/↑ move between rows, → opens a folder, ← goes up and
+    leaves the cursor on the folder it came from."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator("#add-dataset-btn").click()
+            await expect(page.locator("#fb-list .fb-row").first).to_be_focused()
+            await page.locator("#fb-path").fill(str(REPO_ROOT))
+            await page.locator("#fb-path").press("Enter")
+            rows = page.locator("#fb-list .fb-row")
+            await expect(rows.nth(1)).to_be_visible()
+            await rows.nth(0).focus()
+            await page.keyboard.press("ArrowDown")
+            await expect(rows.nth(1)).to_be_focused()
+            await page.keyboard.press("ArrowUp")
+            await expect(rows.nth(0)).to_be_focused()
+
+            folder = page.locator("#fb-list .fb-row.dir").first
+            name = (await folder.locator(".name").text_content()).strip()
+            await folder.focus()
+            await page.keyboard.press("ArrowRight")
+            await expect(page.locator("#fb-path")).to_have_value(str(REPO_ROOT / name))
+            await page.keyboard.press("ArrowLeft")
+            await expect(page.locator("#fb-path")).to_have_value(str(REPO_ROOT))
+            back = page.locator("#fb-list .fb-row.dir").filter(has=page.get_by_text(name, exact=True))
+            await expect(back).to_be_focused()
+        finally:
+            await browser.close()
+
+
 async def test_web_four_shortcuts_step_frames_search_and_keep_out_of_inputs(ffast_web_server):
     """ADR 0063: ←/→ step a frame, / focuses the settings search; neither fires
     while typing in an input."""

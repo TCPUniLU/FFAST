@@ -27,6 +27,34 @@ export function joinPath(dir, name) {
   return dir.endsWith('/') ? dir + name : dir + '/' + name;
 }
 
+/** The last part of a folder path: `/a/b/` or `C:\a\b` → `b`. */
+export function baseName(path) {
+  return path.replace(/[\\/]+$/, '').split(/[\\/]/).pop();
+}
+
+/**
+ * What a key does in the file list (to_fix_v2). Pure, so it tests without a
+ * page. `null` means the key is not the list's.
+ * @param {string} key a KeyboardEvent.key
+ * @param {{index: number, count: number, isDir: boolean}} at the focused row
+ * @returns {{focus: number}|{open: true}|{load: true}|{select: true}|{up: true}|null}
+ */
+export function listKey(key, { index, count, isDir }) {
+  const last = count - 1;
+  switch (key) {
+    case 'ArrowDown': return count ? { focus: Math.min(index + 1, last) } : null;
+    case 'ArrowUp': return count ? { focus: Math.max(index - 1, 0) } : null;
+    case 'Home': return count ? { focus: 0 } : null;
+    case 'End': return count ? { focus: last } : null;
+    case 'ArrowRight': return isDir ? { open: true } : null;
+    case 'Enter': return isDir ? { open: true } : { load: true };
+    case ' ': return isDir ? { open: true } : { select: true };
+    case 'ArrowLeft':
+    case 'Backspace': return { up: true };
+    default: return null;
+  }
+}
+
 /** Human-readable byte count for the file list. */
 export function formatSize(bytes) {
   if (bytes === null || bytes === undefined) return '';
@@ -115,6 +143,7 @@ export class RemoteBrowser {
     this._suggest = { items: [], active: -1, dir: '' };
     this._suggestTimer = null;
     this._selectAfterListing = null;   // a Recent file to select once its folder is listed
+    this._focusAfterListing = null;    // the folder just left, focused once the parent is listed
   }
 
   /** Wire the modal's own controls. Called once, at app setup. */
@@ -136,6 +165,35 @@ export class RemoteBrowser {
     $('fb-path').addEventListener('keydown', (e) => this._pathKey(e));
     $('fb-path').addEventListener('input', () => this._askSuggestions());
     $('fb-path').addEventListener('blur', () => setTimeout(() => this._hideSuggestions(), 150));
+    // One listener for the whole list: its rows are rebuilt on every folder change.
+    $('fb-list').addEventListener('keydown', (e) => this._listKey(e));
+  }
+
+  /** Arrow keys, Enter, Space and Backspace on a row of the file list (to_fix_v2). */
+  _listKey(e) {
+    const row = e.target.closest('.fb-row');
+    if (!row) return;
+    const rows = [...$('fb-list').querySelectorAll('.fb-row')];
+    const act = listKey(e.key, {
+      index: rows.indexOf(row), count: rows.length, isDir: row.classList.contains('dir'),
+    });
+    if (!act) return;
+    e.preventDefault();
+    if (act.focus !== undefined) {
+      rows[act.focus].focus();
+      rows[act.focus].scrollIntoView({ block: 'nearest' });
+    } else if (act.open) {
+      this._focusFirstRow = true;
+      row.click();
+    } else if (act.select) {
+      row.click();
+    } else if (act.load) {
+      row.click();
+      if (!$('fb-load').disabled) this._load();
+    } else if (act.up && this._parent) {
+      this._focusAfterListing = baseName(this._path);
+      this._navigate(this._parent);
+    }
   }
 
   // ── path suggestions ────────────────────────────────────────────────────
@@ -325,6 +383,7 @@ export class RemoteBrowser {
       err.style.display = 'block';
       err.textContent = kw.error;
       $('fb-list').innerHTML = '';
+      this._focusAfterListing = null;
       // keep the previous path so ↑ still works
       $('fb-path').value = kw.path || '';
       return;
@@ -336,6 +395,14 @@ export class RemoteBrowser {
     $('fb-path').value = kw.path || '';
     $('fb-up').disabled = !kw.parent;
     this._render(kw.entries || []);
+    if (this._focusAfterListing) {
+      // Going up leaves the cursor on the folder we came from.
+      const name = this._focusAfterListing;
+      this._focusAfterListing = null;
+      const row = [...document.querySelectorAll('#fb-list .fb-row.dir')]
+        .find((r) => r.querySelector('.name')?.textContent === name);
+      if (row) { row.focus(); row.scrollIntoView({ block: 'nearest' }); }
+    }
     if (this._selectAfterListing) {
       const name = this._selectAfterListing;
       this._selectAfterListing = null;
@@ -419,9 +486,6 @@ export class RemoteBrowser {
         row.append(size);
       }
       row.tabIndex = 0;
-      row.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); row.click(); }
-      });
       if (e.is_dir) {
         row.addEventListener('click', () => this._navigate(joinPath(this._path, e.name)));
       } else {

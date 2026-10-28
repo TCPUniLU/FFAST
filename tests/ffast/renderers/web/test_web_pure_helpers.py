@@ -69,6 +69,15 @@ CASES = {
         ".map(o => [o.value, o.label])",
     "keys_none_first":
         "rb.keyOptions(['E1'], {allowNone: true}).map(o => o.value)",
+    # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
+    "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
+    "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
+    "list_up_home_end": "[rb.listKey('ArrowUp', {index: 0, count: 3, isDir: false}), rb.listKey('ArrowUp', {index: 2, count: 3, isDir: false}), rb.listKey('Home', {index: 2, count: 3, isDir: false}), rb.listKey('End', {index: 0, count: 3, isDir: true})]",
+    "list_no_rows": "[rb.listKey('ArrowDown', {index: 0, count: 0, isDir: false}), rb.listKey('End', {index: 0, count: 0, isDir: false})]",
+    "list_right": "[rb.listKey('ArrowRight', {index: 0, count: 2, isDir: true}), rb.listKey('ArrowRight', {index: 0, count: 2, isDir: false})]",
+    "list_enter": "[rb.listKey('Enter', {index: 0, count: 2, isDir: true}), rb.listKey('Enter', {index: 0, count: 2, isDir: false})]",
+    "list_space": "[rb.listKey(' ', {index: 0, count: 2, isDir: true}), rb.listKey(' ', {index: 0, count: 2, isDir: false})]",
+    "list_left_back": "[rb.listKey('ArrowLeft', {index: 0, count: 2, isDir: true}), rb.listKey('Backspace', {index: 1, count: 2, isDir: false}), rb.listKey('x', {index: 0, count: 2, isDir: false})]",
 
     # ── so.sessionStatus ────────────────────────────────────────────────────
     "sess_saved": "so.sessionStatus('save', {ok: true, path: '/tmp/s'})",
@@ -1231,6 +1240,55 @@ def test_key_options_offers_the_calculator_when_no_named_keys_exist(results):
     calculator, or such a file looks unloadable.
     """
     assert results["keys_calculator_only"] == [["forces", "calculator (built-in)"]]
+
+
+# ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────
+
+def test_base_name_is_the_last_folder_part_with_either_separator(results):
+    assert results["base_name"] == ["b", "b", "b"]
+
+
+def test_list_arrow_down_moves_one_row_and_stops_at_the_last(results):
+    down_folder, down_last = results["list_down"]
+    assert down_folder == {"focus": 1}
+    assert down_last == {"focus": 2}
+
+
+def test_list_arrow_up_stops_at_the_first_row(results):
+    up_first, up_last, home, end = results["list_up_home_end"]
+    assert up_first == {"focus": 0}
+    assert up_last == {"focus": 1}
+    assert home == {"focus": 0}
+    assert end == {"focus": 2}
+
+
+def test_list_focus_keys_do_nothing_without_rows(results):
+    assert results["list_no_rows"] == [None, None]
+
+
+def test_list_right_opens_a_folder_only(results):
+    on_folder, on_file = results["list_right"]
+    assert on_folder == {"open": True}
+    assert on_file is None
+
+
+def test_list_enter_opens_a_folder_and_loads_a_file(results):
+    on_folder, on_file = results["list_enter"]
+    assert on_folder == {"open": True}
+    assert on_file == {"load": True}
+
+
+def test_list_space_opens_a_folder_and_selects_a_file(results):
+    on_folder, on_file = results["list_space"]
+    assert on_folder == {"open": True}
+    assert on_file == {"select": True}
+
+
+def test_list_left_and_backspace_go_up_and_other_keys_are_ignored(results):
+    left, back, other = results["list_left_back"]
+    assert left == {"up": True}
+    assert back == {"up": True}
+    assert other is None
 
 
 def test_key_options_none_entry_comes_first_when_allowed(results):
