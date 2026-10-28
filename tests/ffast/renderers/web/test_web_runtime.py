@@ -1056,6 +1056,8 @@ async def test_web_the_hint_bar_keeps_clear_of_the_colour_bar(ffast_web_server):
             close = await page.locator("#hint-dismiss").bounding_box()
             for box in (b, close):
                 assert view["x"] <= box["x"] and box["x"] + box["width"] <= view["x"] + view["width"], (view, box)
+            # to_fix_v2: the hint bar sits at the top of the 3D panel
+            assert b["y"] < view["y"] + view["height"] / 3, (view, b)
         finally:
             await browser.close()
 
