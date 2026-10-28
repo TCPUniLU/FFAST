@@ -49,6 +49,14 @@ CASES = {
       pane.armShow(); const shown1 = val(ctl(host, 'Show force vectors'));
       pane.armShow();
       return {shown0, shown1, applies: seen}; })()""",
+    "force_frames": """(() => { const seen = [];
+      const {pane} = mk(fp, 'createForcesPane', {onApply: (s) => seen.push(s), getModels: () => new Map()});
+      pane.setPickedIndices([7]);
+      pane.setPickedIndices([1, 2], 4);
+      const onFour = pane.pickedIndices(4), onFive = pane.pickedIndices(5), shared = pane.pickedIndices();
+      pane.setPickedIndices([], 4);
+      return {onFour, onFive, shared, byFrame: seen[1].atomIndicesByFrame, afterClear: seen[2].atomIndicesByFrame,
+        pickedAfterClear: pane.pickedIndices(4)}; })()""",
     "force_picks": """(() => { const seen = [];
       const {pane} = mk(fp, 'createForcesPane', {onApply: (s) => seen.push(s), getModels: () => new Map()});
       pane.setPickedIndices([3, 5]);
@@ -515,3 +523,9 @@ def test_arming_force_turns_the_arrows_on_once(results):
 def test_force_picks_are_kept_and_turn_the_filter_on(results):
     r = results["force_picks"]
     assert r == {"picked": [3, 5], "filter": True, "atoms": [3, 5]}
+
+
+def test_force_picks_belong_to_their_frame_and_the_shared_set_is_kept(results):
+    r = results["force_frames"]
+    assert r == {"onFour": [1, 2], "onFive": [], "shared": [7], "byFrame": {"4": [1, 2]},
+                 "afterClear": {}, "pickedAfterClear": []}

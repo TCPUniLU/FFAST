@@ -18,7 +18,7 @@ export function defaultSettings() {
     align: { kabsch: false, heavyOnly: true, atomAlign: false, idxInput: '', indices: [] },
     forces: { show: false, modelKey: null, length: DEFAULT_LOOK.forces.length,
       normalised: DEFAULT_LOOK.forces.normalised, onlyForces: false, thickness: 100,
-      filterEnabled: false, atomIndices: [] },
+      filterEnabled: false, atomIndices: [], atomIndicesByFrame: null },
     view: { originCenterOfMass: true, videoFPS: 30, videoSkipFrames: 0 },
   };
 }

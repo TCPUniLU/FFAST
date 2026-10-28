@@ -324,6 +324,7 @@ def build_scene(
                     old_to_new=old_to_new,
                     transforms=transforms,
                     params=force_params,
+                    frame=idx,
                 )
         except Exception as exc:
             logger.debug("scene_builder: force vectors failed: %s", exc)
@@ -402,15 +403,24 @@ def _build_force_scene(
     old_to_new: np.ndarray | None,
     transforms: list,
     params: dict,
+    frame: int = 0,
 ) -> ForceScene | None:
     if keep is not None:
         forces = forces[keep]
 
     force_positions = positions
     if params.get("filter_enabled"):
-        scientific_indices = [int(i) for i in params.get("atom_indices", [])]
-        if not scientific_indices:
-            return None
+        by_frame = params.get("atom_indices_by_frame")
+        if isinstance(by_frame, dict):
+            # a variable dataset: each frame keeps its own picks (to_fix_v2)
+            picked = by_frame.get(str(frame), [])
+        else:
+            picked = params.get("atom_indices", [])
+        scientific_indices = [int(i) for i in picked]
+    else:
+        scientific_indices = []
+    # No picks on this frame means no filter: every atom keeps its arrow.
+    if scientific_indices:
         # atom_indices are scientific (original frame) indices; positions is
         # post-filter compact. Remap via old_to_new when a filter is active.
         if old_to_new is not None:

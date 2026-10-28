@@ -384,6 +384,30 @@ class TestPredictionForces:
         scene = build_scene(state, env.getDataset, self._get_prediction(env))
         assert scene.forces.vectors[0] == pytest.approx([0.3, 0.3, 0.3])
 
+    def _force_arrows(self, params, structure_index):
+        env = _FakeEnvWithPrediction()
+        state = VisualizationState(
+            view_id="v1", dataset_ref=env.DS_FP,
+            prediction_ref=env.MODEL_FP, structure_index=structure_index,
+            enabled_features=["forces"],
+            parameters={"ffast.force_arrows": params},
+        )
+        scene = build_scene(state, env.getDataset, self._get_prediction(env))
+        return scene.forces
+
+    def test_a_frame_keeps_its_own_picks_on_a_variable_dataset(self):
+        # to_fix_v2: the picks are per frame, so frame 2 shows its one pick
+        params = {"filter_enabled": True, "atom_indices_by_frame": {"2": [1]}}
+        assert len(self._force_arrows(params, structure_index=2).vectors) == 1
+        # frame 0 has no picks: every atom keeps its arrow
+        assert len(self._force_arrows(params, structure_index=0).vectors) == 4
+
+    def test_a_filter_with_no_picks_shows_every_arrow(self):
+        assert len(self._force_arrows({"filter_enabled": True, "atom_indices": []}, 0).vectors) == 4
+
+    def test_a_shared_filter_still_keeps_its_picked_atoms(self):
+        assert len(self._force_arrows({"filter_enabled": True, "atom_indices": [0, 3]}, 0).vectors) == 2
+
     def test_snapshot_carries_forces_like_open_view(self):
         # Mirrors _handle_open_view: view.snapshot(get_dataset, get_prediction).
         from ffast.visualization.view import VisualizationView

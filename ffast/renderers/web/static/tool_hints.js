@@ -23,7 +23,7 @@ const INFO = [
  * @param {number} picked atoms picked now
  * @returns {Array<[string, string, string?]>|null} null for a tool without hints
  */
-export function toolHint(tool, picked) {
+export function toolHint(tool, picked, { perFrame = false } = {}) {
   switch (tool) {
     case 'info':
       return INFO[Math.min(Math.max(picked, 0), INFO.length - 1)];
@@ -45,7 +45,7 @@ export function toolHint(tool, picked) {
       return picked === 0
         ? [['Arrows on all atoms. ', 'Click atoms or drag a box', ' to keep arrows only on those'],
           ['', 'Esc', ' stops']]
-        : [[`${picked} atom${picked === 1 ? '' : 's'} with arrows. `, 'Click more', ' to add'],
+        : [[`${picked} atom${picked === 1 ? '' : 's'} with arrows${perFrame ? ' on this frame' : ''}. `, 'Click more', ' to add'],
           ['', 'Esc', ' stops']];
     default:
       return null;

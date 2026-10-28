@@ -645,6 +645,7 @@ CASES = {
     "grouped_density_cpk_expected": "[1, 6].map(z => ec.elementColourOn(z, th.plotTheme().surface))",
     "hint_others": "[hn.toolHint('bonds', 0), hn.toolHint('bonds', 1), hn.toolHint('align', 2), hn.toolHint('forces', 0), hn.toolHint('extract', 3), hn.toolHint('zzz', 0), hn.toolHint('extract', 0), hn.toolHint('extract', 1), hn.toolHintKey('info')]",
     "hint_forces_picked": "hn.toolHint('forces', 2)",
+    "hint_forces_frame": "hn.toolHint('forces', 2, {perFrame: true})",
     "arrow_long": "ar.arrowParts(2, 1)",
     "arrow_thick": "ar.arrowParts(2, 2)",
     "arrow_short": "ar.arrowParts(0.125, 1)",
@@ -2046,6 +2047,8 @@ def test_pick_tool_hints_follow_the_pick_count(results):
     assert forces == [["Arrows on all atoms. ", "Click atoms or drag a box", " to keep arrows only on those"],
                       ["", "Esc", " stops"]]
     assert results["hint_forces_picked"] == [["2 atoms with arrows. ", "Click more", " to add"], ["", "Esc", " stops"]]
+    # on a variable dataset the picks are this frame's
+    assert results["hint_forces_frame"][0][0] == "2 atoms with arrows on this frame. "
     # Extract says what it is for, then how to finish.
     assert text(extract0).startswith("Makes a new dataset with only the atoms you pick")
     assert text(extract).startswith("3 atoms in the Extract box") and "Extract as Subset Dataset" in text(extract)

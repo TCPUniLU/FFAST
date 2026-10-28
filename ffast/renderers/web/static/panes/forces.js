@@ -48,8 +48,10 @@ export function createForcesPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Force Vectors');
   sidebarEl.appendChild(el);
 
-  const state = { show: false, onlyForces: false, modelKey: null, length: 10, normalised: true, thickness: 100, filterEnabled: false, atomIndices: [] };
-  const apply = () => callbacks.onApply({ ...state, atomIndices: [...state.atomIndices] });
+  // atomIndicesByFrame: null = one shared pick set; an object = each frame's own (to_fix_v2).
+  const state = { show: false, onlyForces: false, modelKey: null, length: 10, normalised: true, thickness: 100, filterEnabled: false, atomIndices: [], atomIndicesByFrame: null };
+  const apply = () => callbacks.onApply({ ...state, atomIndices: [...state.atomIndices],
+    atomIndicesByFrame: state.atomIndicesByFrame && { ...state.atomIndicesByFrame } });
   let keyByLabel = new Map();   // combo label -> model fingerprint
   let hasPredictions = false;   // Source offers only Ground Truth until one loads (ADR 0055)
 
@@ -76,9 +78,16 @@ export function createForcesPane(sidebarEl, callbacks) {
   _syncVisibility();
 
   return {
-    /** Fill the filter atom set from the Force pick tool; enable filtering. */
-    setPickedIndices(ids) {
-      state.atomIndices = [...(ids || [])];
+    /** Fill the filter atom set from the Force pick tool; enable filtering.
+     * With a `frame` (a variable dataset), the picks belong to that frame only. */
+    setPickedIndices(ids, frame = null) {
+      if (frame == null) {
+        state.atomIndices = [...(ids || [])];
+      } else {
+        state.atomIndicesByFrame ??= {};
+        if (ids?.length) state.atomIndicesByFrame[String(frame)] = [...ids];
+        else delete state.atomIndicesByFrame[String(frame)];
+      }
       if (!state.filterEnabled) { state.filterEnabled = true; filterInput.checked = true; }
       apply();
     },
@@ -91,15 +100,19 @@ export function createForcesPane(sidebarEl, callbacks) {
       _syncVisibility();
       apply();
     },
-    /** The atoms the filter keeps now. */
-    pickedIndices() { return [...state.atomIndices]; },
+    /** The atoms the filter keeps now, or on `frame` when one is given. */
+    pickedIndices(frame = null) {
+      if (frame == null) return [...state.atomIndices];
+      return [...(state.atomIndicesByFrame?.[String(frame)] || [])];
+    },
     /** Set show/source and, for a view of its own, the rest without firing
      * onApply (per-dataset and per-panel restore). */
     setState(show, modelKey, extras = {}) {
       const { length = state.length, normalised = state.normalised, onlyForces: only = state.onlyForces,
-        filterEnabled = state.filterEnabled, atomIndices = state.atomIndices, thickness = 100 } = extras;
+        filterEnabled = state.filterEnabled, atomIndices = state.atomIndices, thickness = 100,
+        atomIndicesByFrame = null } = extras;
       Object.assign(state, { show, modelKey, length, normalised, onlyForces: only, filterEnabled, thickness,
-        atomIndices: [...(atomIndices || [])] });
+        atomIndices: [...(atomIndices || [])], atomIndicesByFrame: atomIndicesByFrame && { ...atomIndicesByFrame } });
       showInput.checked = show;
       setSliderValue(lengthInput, length);
       setSliderValue(thicknessInput, thickness);

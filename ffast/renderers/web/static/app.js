@@ -494,6 +494,13 @@ export class FFastApp {
 
   /** The dataset, prediction and renderers of the view the sidebar acts on. */
   _focusedDatasetFp() { return this._focusedIndependent ? this._focusedIndependent.datasetFp : this._currentDatasetFp; }
+
+  /** The focused view's frame when its dataset's atoms differ by frame, so
+   * Force picks are kept per frame (to_fix_v2); else null. */
+  _forcePickFrame() {
+    if (!this._datasets.get(this._focusedDatasetFp())?.variable) return null;
+    return this._focused()?.frame ?? 0;
+  }
   _focusedModelFp() { return this._focusedIndependent ? this._focusedIndependent.modelFp : this._currentModelFp; }
   _focusedRenderers() { return this._focused()?.renderers ?? this._mainView; }
 
@@ -811,7 +818,8 @@ export class FFastApp {
     const bar = document.getElementById('hint-bar');
     // An armed pick tool shows its own steps, live by pick count; each tool's
     // hint is dismissed on its own.
-    const steps = this._activeTool ? toolHint(this._activeTool, this._picked.length) : null;
+    const steps = this._activeTool
+      ? toolHint(this._activeTool, this._picked.length, { perFrame: this._forcePickFrame() != null }) : null;
     const key = steps ? toolHintKey(this._activeTool) : this._models.size ? 'with-prediction' : 'no-prediction';
     const lines = steps || HINTS[key];
     const dismissed = loadLayout().hintsDismissed || [];
@@ -1960,7 +1968,11 @@ export class FFastApp {
     }
 
     // Update frame slider
-    if (Number.isInteger(scene.frame_index)) view.frame = scene.frame_index;
+    if (Number.isInteger(scene.frame_index)) {
+      const frameBefore = view.frame;
+      view.frame = scene.frame_index;
+      if (view.frame !== frameBefore && view === this._focused()) this._reloadForcePicks();
+    }
     if (this._getViewDataset(scene)) this._syncPlayback();
     this._independent.syncLinkedFrames();
     // A plot click that had to open the view first (_onPlotPoint): the
@@ -2063,7 +2075,11 @@ export class FFastApp {
       btn.addEventListener('click', () => this._setActiveTool(this._activeTool === id ? null : id));
       toolbar.appendChild(btn);
     }
-    document.getElementById('pick-clear').addEventListener('click', () => this._clearPicks());
+    document.getElementById('pick-clear').addEventListener('click', () => {
+      // Clear the Force picks of this frame too, not only the overlay (to_fix_v2).
+      if (this._activeTool === 'forces') this._panes.forces.setPickedIndices([], this._forcePickFrame());
+      this._clearPicks();
+    });
     this._pickReadout = '';
     this._updatePickStrip();
   }
@@ -2092,9 +2108,19 @@ export class FFastApp {
    * so a click adds to them instead of replacing them (to_fix_v2). */
   _armForces() {
     this._panes.forces.armShow();
-    const ids = this._panes.forces.pickedIndices();
+    const ids = this._panes.forces.pickedIndices(this._forcePickFrame());
     this._picked = ids.map((atomId) => ({ displayIndex: null, atomId }));
     this._sendSetSelection('picked', 'current_structure', ids);
+  }
+
+  /** On a variable dataset the Force picks belong to the frame on screen:
+   * after a frame change the new frame's picks replace the old (to_fix_v2). */
+  _reloadForcePicks() {
+    if (this._activeTool !== 'forces' || this._forcePickFrame() == null) return;
+    const ids = this._panes.forces.pickedIndices(this._forcePickFrame());
+    this._picked = ids.map((atomId) => ({ displayIndex: null, atomId }));
+    this._sendSetSelection('picked', 'current_structure', ids);
+    this._updatePickStrip();
   }
 
   /** Toggle an entry in the picked set (Qt AtomSelectionBase.selectAtom). */
@@ -2129,7 +2155,7 @@ export class FFastApp {
     } else if (id === 'extract') {
       this._panes.extract.setPickedIndices(ids);
     } else if (id === 'forces') {
-      this._panes.forces.setPickedIndices(ids);
+      this._panes.forces.setPickedIndices(ids, this._forcePickFrame());
     } else if (id === 'bonds') {
       if (this._picked.length === 2) {
         this._panes.bonds.toggleBondPair(ids[0], ids[1]);
@@ -2418,6 +2444,7 @@ export class FFastApp {
       this._sendSetParameter('ffast.force_arrows', 'normalised', state.normalised);
       this._sendSetParameter('ffast.force_arrows', 'filter_enabled', !!state.filterEnabled);
       this._sendSetParameter('ffast.force_arrows', 'atom_indices', state.atomIndices || []);
+      this._sendSetParameter('ffast.force_arrows', 'atom_indices_by_frame', state.atomIndicesByFrame ?? null);
     }
   }
 
