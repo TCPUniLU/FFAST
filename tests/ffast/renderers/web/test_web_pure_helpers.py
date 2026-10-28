@@ -631,6 +631,9 @@ CASES = {
         " for (let i = 0; i < 12; i++) l = rf.rememberFile(l, {path: 'x' + i, kind: 'dataset'});"
         " return [l.length, l[0].path, l.some(e => e.path === 'a')]; })()"),
     "hint_info": "[0, 1, 2, 3, 4, 9].map(n => hn.toolHint('info', n).map(x => x.join('')).join(' '))",
+    "element_colour_on": "[ec.elementColourOn(8, '#1a1d21'), ec.elementColourOn(6, '#1a1d21'), ec.elementColourOn(1, '#ffffff'), ec.elementColourOn(1, '#1a1d21'), ec.elementColourOn(8, 'oklch(1 0 0)')]",
+    "grouped_density_cpk": "pn.buildPanel({kind:'grouped_density'}, [{name:'M', data:{value:{nd:{values:[0,1,2,3, 4,5,6,7], shape:[2,2,2]}}}}], {elementOrder:[1,6], selectedElements:[1,6]}).traces.map(t => t.line.color)",
+    "grouped_density_cpk_expected": "[1, 6].map(z => ec.elementColourOn(z, th.plotTheme().surface))",
     "hint_others": "[hn.toolHint('bonds', 0), hn.toolHint('bonds', 1), hn.toolHint('align', 2), hn.toolHint('forces', 0), hn.toolHint('extract', 3), hn.toolHint('zzz', 0), hn.toolHintKey('info')]",
     "arrow_long": "ar.arrowParts(2, 1)",
     "arrow_thick": "ar.arrowParts(2, 2)",
@@ -755,7 +758,7 @@ CASES = {
         "  const carbon = pn.buildPanel({kind: 'timeline'}, [two[0]], {elementOrder: [1, 6], selectedElements: [6]});"
         "  return {all: look(all), carbon: look(carbon), curveSeries: all.subInfo.curveSeries,"
         "    peaks: all.peaksEligible || carbon.peaksEligible, legend: carbon.layout.showlegend,"
-        "    colours: [pn.seriesColor(0), pn.seriesColor(1)]};"
+        "    colours: [ec.elementColourOn(1, th.plotTheme().surface), ec.elementColourOn(6, th.plotTheme().surface)]};"
         "})()"
     ),
 
@@ -898,6 +901,7 @@ def results():
         f"  const te = await import('{origin}/tab_edit.js');\n"
         f"  const ss = await import('{origin}/start_settings.js');\n"
         f"  const ex = await import('{origin}/panes/extract.js');\n"
+        f"  const ec = await import('{origin}/element_colours.js');\n"
         f"  const un = await import('{origin}/units.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
@@ -1416,6 +1420,21 @@ def test_table_shows_a_dash_for_a_pair_that_was_not_computed(results):
         ["MACE", "1.00", "—"],
         ["SchNet", "—", "4.00"],
     ]
+
+
+def test_an_element_keeps_its_3d_colour_unless_it_would_vanish(results):
+    """to_fix_v2: per-element lines and picker buttons wear the CPK colour;
+    only a colour too close to the background (white H on a white page) is
+    shaded until it shows."""
+    oxygen_dark, carbon_dark, h_light, h_dark, unknown_bg = results["element_colour_on"]
+    assert (oxygen_dark, carbon_dark, h_dark, unknown_bg) == ("#ff0d0d", "#909090", "#ffffff", "#ff0d0d")
+    assert h_light != "#ffffff"
+    r, g, b = (int(h_light[i:i + 2], 16) for i in (1, 3, 5))
+    assert r == g == b and r < 200   # still a grey, dark enough to read on white
+
+
+def test_a_per_element_density_draws_each_element_in_its_3d_colour(results):
+    assert results["grouped_density_cpk"] == results["grouped_density_cpk_expected"]
 
 
 def test_a_timeline_draws_a_table_as_a_line_per_element(results):

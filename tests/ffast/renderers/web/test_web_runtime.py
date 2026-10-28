@@ -519,7 +519,8 @@ async def test_web_element_picker_buttons_wear_the_3d_element_colours(ffast_web_
             await expect(buttons.first).to_be_visible(timeout=25000)
             z = int(await buttons.first.get_attribute("data-element"))
             rgb = await page.evaluate(
-                "async (z) => { const m = await import('/element_colours.js'); const h = m.elementColour(z);"
+                "async (z) => { const m = await import('/element_colours.js'); const t = await import('/theme.js');"
+                " const h = m.elementColourOn(z, t.plotTheme().surface);"
                 " return [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)); }", z)
             colour = f"rgb({rgb[0]}, {rgb[1]}, {rgb[2]})"
             await expect(buttons.first).to_have_css("color", colour)

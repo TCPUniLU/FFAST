@@ -38,6 +38,7 @@
 import { withUnit, displayUnit } from './units.js';
 import { pickPeaks, visitedKey } from './peaks.js';
 import { plotTheme, hexAlpha } from './theme.js';
+import { elementColourOn } from './element_colours.js';
 
 /** @typedef {import('./protocol.js').PanelLayout} PanelLayout */
 /** @typedef {import('./metrics.js').MetricResult} MetricResult */
@@ -324,7 +325,7 @@ function isTable(res) {
 
 /**
  * A timeline of tables (ADR 0064 amendment 2026-10-24): one line per element,
- * in the element's colour, and one line style per series. The element picker,
+ * in the element's 3D (CPK) colour, and one line style per series. The element picker,
  * when the tab has one, chooses the lines. An empty cell is NaN, a gap.
  */
 function buildTableTimeline(spec, series, ctx) {
@@ -346,7 +347,7 @@ function buildTableTimeline(spec, series, ctx) {
         x: Array.from({ length: frames }, (_, f) => f),
         y: Array.from({ length: frames }, (_, f) => values[f * columns + col]),
         type: 'scatter', mode: 'lines',
-        line: { color: seriesColor(col), width: 1.5, dash: DASHES[i % DASHES.length] },
+        line: { color: elementColourOn(z, plotTheme().surface), width: 1.5, dash: DASHES[i % DASHES.length] },
         name: `${elementSymbol(z)}${multiSeries && s.name ? ` — ${s.name}` : ''}`,
       });
       curveSeries.push(i);
@@ -540,7 +541,7 @@ export function buildGroupedDensity(spec, series, ctx) {
         y: value.nd.values.slice(base + G, base + 2 * G),
         type: 'scatter', mode: 'lines',
         name: `${elementSymbol(z)}${suffix(s.name)}`,
-        line: { color: multiElement ? seriesColor(ri) : paint(ctx, s, si), width: 1.5 },
+        line: { color: multiElement ? elementColourOn(z, plotTheme().surface) : paint(ctx, s, si), width: 1.5 },
       });
       curveSeries.push(si);
     }

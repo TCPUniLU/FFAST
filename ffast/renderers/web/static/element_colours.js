@@ -25,3 +25,47 @@ export const ELEMENT_COLOURS = [
 export function elementColour(z) {
   return ELEMENT_COLOURS[z] || ELEMENT_COLOURS[0];
 }
+
+/** WCAG relative luminance of `#rrggbb`, or null if it is not one. */
+function luminance(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex).trim());
+  if (!m) return null;
+  const lin = (i) => {
+    const c = parseInt(m[1].slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * lin(0) + 0.7152 * lin(2) + 0.0722 * lin(4);
+}
+
+function contrast(a, b) {
+  const [hi, lo] = a > b ? [a, b] : [b, a];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** `hex` mixed `t` (0..1) of the way to `#000` or `#fff`. */
+function mix(hex, toWhite, t) {
+  const h = String(hex).trim().replace('#', '');
+  const to = toWhite ? 255 : 0;
+  return '#' + [0, 2, 4].map((i) => {
+    const c = parseInt(h.slice(i, i + 2), 16);
+    return Math.round(c + (to - c) * t).toString(16).padStart(2, '0');
+  }).join('');
+}
+
+/**
+ * The CPK colour of `z` as drawn on the background `bg`: unchanged where it
+ * reads, else shaded toward the opposite of `bg` just until it does, so white
+ * hydrogen is still a line on a white page. Plot lines and the element picker
+ * buttons both use it, so a button and its line always match.
+ */
+export function elementColourOn(z, bg, minRatio = 2) {
+  const colour = elementColour(z);
+  const lb = luminance(bg);
+  if (lb === null) return colour;
+  const toWhite = lb < 0.18;
+  for (let t = 0; t <= 1; t += 0.05) {
+    const c = t ? mix(colour, toWhite, t) : colour;
+    if (contrast(luminance(c), lb) >= minRatio) return c;
+  }
+  return toWhite ? '#fff' : '#000';   // short, so the parity test reads only the table
+}
