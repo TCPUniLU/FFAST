@@ -4282,6 +4282,48 @@ async def test_web_arming_force_turns_the_arrows_on_and_says_how_to_narrow_them(
             await browser.close()
 
 
+async def test_web_force_picks_follow_the_frame_on_a_variable_dataset(ffast_web_server):
+    """to_fix_v2: on a variable dataset each frame keeps its own Force picks.
+    Stepping the frame sets ``view.frame`` before the scene arrives, so the
+    picks shown must reload on the step itself — else the old frame's atoms
+    stay picked and the next click copies them into the new frame."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            # The example file has one molecule; say its atoms differ by frame.
+            await page.evaluate(
+                "(fp) => { window.ffastApp._datasets.get(fp).variable = true; }", dataset_fp)
+            hint = page.locator("#hint-bar")
+            picked = lambda: page.evaluate("() => window.ffastApp._picked.map((e) => e.atomId)")
+            pick = lambda i: page.evaluate(
+                "(i) => window.ffastApp._onPick([{displayIndex: i, atomId: i}])", i)
+            await page.locator("#pick-toolbar .pick-tool-btn[data-tool='forces']").click()
+            await pick(1)
+            await pick(2)
+            await expect(hint).to_contain_text("2 atoms with arrows on this frame")
+
+            await page.locator("#next-frame-btn").click()
+            await expect(page.locator("#frame-label")).to_have_text(re.compile(r"^1 / "))
+            await expect(hint).to_contain_text("Arrows on all atoms")
+            assert await picked() == []
+            await pick(7)
+            assert await picked() == [7]
+
+            await page.locator("#prev-frame-btn").click()
+            await expect(page.locator("#frame-label")).to_have_text(re.compile(r"^0 / "))
+            await expect(hint).to_contain_text("2 atoms with arrows on this frame")
+            assert await picked() == [1, 2]
+            stored = await page.evaluate(
+                "() => [0, 1].map((f) => window.ffastApp._panes.forces.pickedIndices(f))")
+            assert stored == [[1, 2], [7]]
+        finally:
+            await browser.close()
+
+
 async def test_web_renderer_draws_the_colours_the_scene_specifies(ffast_web_server):
     """Scene colours are sRGB, like the CSS colour bar (ADR 0052: a renderer
     draws the RGBA it is given). Three.js reads a bare ``setRGB`` as *linear*

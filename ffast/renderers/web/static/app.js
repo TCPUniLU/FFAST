@@ -144,7 +144,10 @@ export class FFastApp {
       },
       chosen: () => { this._syncPanelSection(); this._syncSidebarTitle(); this._syncMetricsContext(); },
       focusedCamera: (cam) => this._panes?.camera.syncFromCamera(cam),
-      frameShown: (view) => { if (this._playbackView() === view) this._syncPlayback(); },
+      frameShown: (view) => {
+        if (this._playbackView() === view) this._syncPlayback();
+        if (view === this._focused()) this._reloadForcePicks();
+      },
       sceneAtoms: (view, atoms) => {
         if (this._focusedIndependent === view) this._panes.colorBy.setColorBy(atoms.color_by || null);
         this._trackCameraCOM(atoms.positions, view);
@@ -1969,9 +1972,8 @@ export class FFastApp {
 
     // Update frame slider
     if (Number.isInteger(scene.frame_index)) {
-      const frameBefore = view.frame;
       view.frame = scene.frame_index;
-      if (view.frame !== frameBefore && view === this._focused()) this._reloadForcePicks();
+      if (view === this._focused()) this._reloadForcePicks();
     }
     if (this._getViewDataset(scene)) this._syncPlayback();
     this._independent.syncLinkedFrames();
@@ -2108,19 +2110,28 @@ export class FFastApp {
    * so a click adds to them instead of replacing them (to_fix_v2). */
   _armForces() {
     this._panes.forces.armShow();
-    const ids = this._panes.forces.pickedIndices(this._forcePickFrame());
-    this._picked = ids.map((atomId) => ({ displayIndex: null, atomId }));
-    this._sendSetSelection('picked', 'current_structure', ids);
+    this._loadForcePicks();
   }
 
   /** On a variable dataset the Force picks belong to the frame on screen:
-   * after a frame change the new frame's picks replace the old (to_fix_v2). */
+   * after a frame change the new frame's picks replace the old (to_fix_v2).
+   * Called on every frame move; does nothing while the picks shown are
+   * already the focused view's frame's. */
   _reloadForcePicks() {
     if (this._activeTool !== 'forces' || this._forcePickFrame() == null) return;
-    const ids = this._panes.forces.pickedIndices(this._forcePickFrame());
+    const at = this._forcePicksAt;
+    if (at && at.view === this._focused() && at.frame === this._forcePickFrame()) return;
+    this._loadForcePicks();
+    this._updatePickStrip();
+  }
+
+  /** Make the Force pane's picks for the focused frame the picked set. */
+  _loadForcePicks() {
+    const frame = this._forcePickFrame();
+    const ids = this._panes.forces.pickedIndices(frame);
     this._picked = ids.map((atomId) => ({ displayIndex: null, atomId }));
     this._sendSetSelection('picked', 'current_structure', ids);
-    this._updatePickStrip();
+    this._forcePicksAt = { view: this._focused(), frame };
   }
 
   /** Toggle an entry in the picked set (Qt AtomSelectionBase.selectAtom). */
@@ -2531,6 +2542,7 @@ export class FFastApp {
       frame_index: frame,
     });
     view.frame = frame;
+    if (view === this._focused()) this._reloadForcePicks();
     this._independent.syncLinkedFrames();
   }
 
