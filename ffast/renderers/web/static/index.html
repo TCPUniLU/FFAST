@@ -294,10 +294,19 @@
       z-index: 7; pointer-events: none; border: 2px solid var(--hl2);
       background: var(--sel); border-radius: 5px;
     }
+    .analysis-grid.editing-grid { grid-auto-columns: 400px; }   /* a column the ◢ corner is adding */
+    /* Always shown, as a thin line, so it is clear where a width or height changes. */
     .edit-divider { position: absolute; z-index: 8; touch-action: none; }
-    .edit-divider.col { width: 8px; cursor: col-resize; }
-    .edit-divider.row { height: 8px; cursor: row-resize; }
+    .edit-divider.col { width: 8px; cursor: col-resize;
+      background: linear-gradient(to right, transparent 3px, var(--hl2) 3px, var(--hl2) 5px, transparent 5px); }
+    .edit-divider.row { height: 8px; cursor: row-resize;
+      background: linear-gradient(to bottom, transparent 3px, var(--hl2) 3px, var(--hl2) 5px, transparent 5px); }
     .edit-divider:hover, .edit-divider.dragging { background: var(--hl1); }
+    .edit-drop {
+      position: absolute; z-index: 8; transform: translate(-50%, 0); height: auto;
+      padding: 2px 8px; font-size: var(--fs-s); white-space: nowrap;
+    }
+    .edit-drop.row { transform: translate(0, -50%); }
     .edit-empty { min-height: 200px; }
     .edit-modal .warning-modal-panel { width: 520px; }
     .edit-modal-body { padding: 10px 12px; max-height: 65vh; overflow-y: auto; }

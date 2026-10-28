@@ -48,6 +48,9 @@ export const ROW_PX = 300;
 
 const GAP_PX = 10;   // between grid cells (index.html .analysis-grid)
 
+/** The most columns a tab has (Tab settings' Columns field too). */
+export const MAX_COLUMNS = 8;
+
 /** The CSS track list for set sizes. */
 export function sizeTemplate(sizes, unit) {
   return sizes.map((size) => `${size * unit}px`).join(' ');
@@ -187,15 +190,18 @@ function freeSpot(panels, columns, size, skip, fromRow) {
   }
 }
 
-/** Set the span of panel `index` (inside the columns). Panels in the way
- * move down to the first free place at or below their row, keeping their
- * size. */
+/** Set the span of panel `index`. It may reach one column past the last,
+ * which adds that column (up to MAX_COLUMNS), as it may a new row. Panels
+ * in the way move down to the first free place at or below their row,
+ * keeping their size. */
 export function resizePanel(tab, index, rowspan, colspan) {
   const next = clone(tab);
   const panels = next.panels = place(next);
-  const columns = columnsOf(next);
   const unit = unitOf(panels, index);
   const box = boxOf(panels, unit);
+  const before = columnsOf(next);
+  const columns = Math.max(before, Math.min(MAX_COLUMNS, box.col + colspan, before + 1));
+  if (columns > before && next.column_widths) next.column_widths = [...next.column_widths, 1];
   setBox(panels, unit, {
     ...box,
     rowspan: Math.max(1, rowspan),
@@ -211,6 +217,44 @@ export function resizePanel(tab, index, rowspan, colspan) {
     other.forEach((i) => pending.delete(i));
   }
   return syncRows(next);
+}
+
+/** Columns (0-based) no panel covers, but never the only column. */
+export function emptyColumns(tab) {
+  const n = columnsOf(tab);
+  if (n < 2) return [];
+  const used = new Set(place(tab).flatMap((p) => Array.from({ length: p.colspan }, (_, i) => p.col + i)));
+  return Array.from({ length: n }, (_, c) => c).filter((c) => !used.has(c));
+}
+
+/** Rows (0-based) no panel covers. */
+export function emptyRows(tab) {
+  const used = new Set(place(tab).flatMap((p) => Array.from({ length: p.rowspan }, (_, i) => p.row + i)));
+  return Array.from({ length: rowsOf(tab) }, (_, r) => r).filter((r) => !used.has(r));
+}
+
+/** Drop empty column `c`: the panels right of it move one column left. */
+export function removeColumn(tab, c) {
+  if (!emptyColumns(tab).includes(c)) return tab;
+  const next = clone(tab);
+  for (const p of next.panels) if (p.col > c) p.col--;
+  if (next.column_widths) {
+    next.column_widths.splice(c, 1);
+    if (!next.column_widths.length) delete next.column_widths;
+  }
+  return next;
+}
+
+/** Drop empty row `r`: the panels below it move one row up. */
+export function removeRow(tab, r) {
+  if (!emptyRows(tab).includes(r)) return tab;
+  const next = clone(tab);
+  for (const p of next.panels) if (p.row > r) p.row--;
+  if (next.row_heights) {
+    next.row_heights.splice(r, 1);
+    if (!next.row_heights.length) delete next.row_heights;
+  }
+  return next;
 }
 
 /** Add a panel at the first free cell (1 x 1). */

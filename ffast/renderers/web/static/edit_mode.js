@@ -18,9 +18,10 @@
 
 import { askDialog, labelBy, trapFocus } from './dialogs.js';
 import {
-  COLUMN_PX, KIND_ROLES, ROW_PX, addPanelWithPicker, columnsOf, copyOf, dragTrack, emptyTab,
-  fitWidths, metricsFor, movePanel, new3DPanel, onlyPlacesChanged, removePanel, replacePanel,
-  resizePanel, rowsOf, setColumns, setPanelStart, setPanelView, sizesOf, toSaved,
+  COLUMN_PX, KIND_ROLES, MAX_COLUMNS, ROW_PX, addPanelWithPicker, columnsOf, copyOf, dragTrack,
+  emptyColumns, emptyRows, emptyTab, fitWidths, metricsFor, movePanel, new3DPanel, onlyPlacesChanged,
+  removeColumn, removePanel, removeRow, replacePanel, resizePanel, rowsOf, setColumns, setPanelStart,
+  setPanelView, sizesOf, toSaved,
 } from './tab_edit.js';
 import { KIND_3D, whyPanelStays } from './tab_rules.js';
 import { cleanStart } from './start_settings.js';
@@ -165,7 +166,7 @@ export class TabEditor {
     const grid = parts.gridEl;
     grid.classList.add('editing-grid');
     grid.hidden = false;
-    grid.querySelectorAll('.edit-chrome, .edit-divider, .edit-ghost, .edit-empty').forEach((el) => el.remove());
+    grid.querySelectorAll('.edit-chrome, .edit-divider, .edit-drop, .edit-ghost, .edit-empty').forEach((el) => el.remove());
 
     const tabIndex = visibleTabs.indexOf(this._draft);
     const units = [
@@ -268,22 +269,26 @@ export class TabEditor {
     const corner = document.createElement('span');
     corner.className = 'edit-resize';
     corner.textContent = '◢';
-    corner.title = 'Drag to change how many cells it spans; panels in the way move down';
+    corner.title = 'Drag to change how many cells it covers; past the last column adds a column.'
+      + ' Panels in the way move down';
     el.append(head, corner);
 
     this._dragOnto(grid, handle, (cell) => movePanel(this._draft, unit.indices[0], cell.row, cell.col),
       (cell) => ({ row: cell.row, col: cell.col, rowspan: first.rowspan || 1, colspan: first.colspan || 1 }));
+    // The corner may reach one column past the last: that adds a column.
+    const lastCol = () => Math.min(columnsOf(this._draft), MAX_COLUMNS - 1);
     this._dragOnto(grid, corner,
       (cell) => resizePanel(this._draft, unit.indices[0], cell.row - first.row + 1, cell.col - first.col + 1),
       (cell) => ({ row: first.row, col: first.col,
         rowspan: Math.max(1, cell.row - first.row + 1),
-        colspan: Math.max(1, Math.min(cell.col, columnsOf(this._draft) - 1) - first.col + 1) }));
+        colspan: Math.max(1, Math.min(cell.col, lastCol()) - first.col + 1) }),
+      { pastEnd: true });
     return el;
   }
 
   /** Drag from `handle` to a grid cell: a ghost shows where `box(cell)`
    * lands; letting go applies `apply(cell)`. */
-  _dragOnto(grid, handle, apply, box) {
+  _dragOnto(grid, handle, apply, box, { pastEnd = false } = {}) {
     handle.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
@@ -293,7 +298,7 @@ export class TabEditor {
       grid.appendChild(ghost);
       let cell = null;
       const move = (ev) => {
-        cell = cellAt(grid, ev.clientX, ev.clientY);
+        cell = cellAt(grid, ev.clientX, ev.clientY, pastEnd);
         const b = box(cell);
         ghost.style.gridColumn = `${b.col + 1} / span ${b.colspan}`;
         ghost.style.gridRow = `${b.row + 1} / span ${b.rowspan}`;
@@ -337,6 +342,33 @@ export class TabEditor {
     };
     for (let k = 1; k <= Math.min(columns, t.cols.length); k++) make('col', k);
     for (let k = 1; k <= Math.min(rows, t.rows.length); k++) make('row', k);
+
+    // An empty column or row gets a button that removes it.
+    const mid = (sizes, gap, pad, k) => pad + sizes.slice(0, k).reduce((a, b) => a + b, 0) + gap * k + sizes[k] / 2;
+    const drop = (axis, k, onClick) => {
+      const b = document.createElement('button');
+      b.className = `edit-drop ${axis}`;
+      b.dataset.edit = `remove-${axis}`;
+      b.dataset.index = String(k);
+      b.textContent = axis === 'col' ? '✕ Empty column' : '✕ Empty row';
+      b.title = axis === 'col' ? 'Remove this empty column; the columns right of it move left'
+        : 'Remove this empty row; the rows below it move up';
+      if (axis === 'col') {
+        b.style.left = `${mid(t.cols, t.gapC, t.padL, k)}px`;
+        b.style.top = `${t.padT + 8}px`;
+      } else {
+        b.style.top = `${mid(t.rows, t.gapR, t.padT, k)}px`;
+        b.style.left = `${t.padL + 8}px`;
+      }
+      b.addEventListener('click', onClick);
+      grid.appendChild(b);
+    };
+    for (const c of emptyColumns(this._draft)) {
+      if (c < t.cols.length) drop('col', c, () => this.change(removeColumn(this._draft, c)));
+    }
+    for (const r of emptyRows(this._draft)) {
+      if (r < t.rows.length) drop('row', r, () => this.change(removeRow(this._draft, r)));
+    }
   }
 
   _dragDivider(grid, divider, axis, k) {
@@ -590,7 +622,7 @@ export class TabEditor {
     const name = Object.assign(document.createElement('input'), { type: 'text', value: draft.name });
     name.dataset.field = 'name';
     const columns = Object.assign(document.createElement('input'), {
-      type: 'number', min: 1, max: 8, value: columnsOf(draft) });
+      type: 'number', min: 1, max: MAX_COLUMNS, value: columnsOf(draft) });
     columns.dataset.field = 'columns';
     const [shiftRow, shift] = checkField('Energy shift', (draft.controls || []).includes('energy_shift'), 'energy_shift');
     const [elemRow, elems] = checkField('Element picker', draft.selector === 'atomic', 'element_picker');
@@ -721,8 +753,9 @@ function cornersInView(grid) {
   }
 }
 
-/** The grid cell under a page point; below the last row is a new row. */
-function cellAt(grid, x, y) {
+/** The grid cell under a page point; below the last row is a new row, and,
+ * `pastEnd`, right of the last column a new column. */
+function cellAt(grid, x, y, pastEnd = false) {
   const t = tracks(grid);
   const r = grid.getBoundingClientRect();
   const index = (sizes, gap, pos) => {
@@ -736,5 +769,6 @@ function cellAt(grid, x, y) {
   };
   const col = index(t.cols, t.gapC, x - r.left - t.padL + grid.scrollLeft);
   const row = index(t.rows, t.gapR, y - r.top - t.padT + grid.scrollTop);
-  return { row: Math.max(0, row), col: Math.max(0, Math.min(col, Math.max(0, t.cols.length - 1))) };
+  const lastCol = Math.max(0, t.cols.length - (pastEnd ? 0 : 1));
+  return { row: Math.max(0, row), col: Math.max(0, Math.min(col, lastCol)) };
 }

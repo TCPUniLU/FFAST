@@ -3903,7 +3903,7 @@ async def test_web_edit_mode_plots_follow_their_cells_while_dragging(tmp_path):
                 gb = await page.locator(".tabpanel.active .analysis-grid").bounding_box()
                 await page.mouse.move(cb["x"] + 4, cb["y"] + 4)
                 await page.mouse.down()
-                await page.mouse.move(gb["x"] + gb["width"] - 40, cb["y"] + 4, steps=6)
+                await page.mouse.move(cb["x"] + 200, cb["y"] + 4, steps=6)   # inside column 2
                 await page.mouse.up()
                 await page.wait_for_function(
                     "() => window.ffastApp._editor.draft.panels.find((p) => p.title === 'Energy MAE distribution').colspan === 2")
@@ -3963,6 +3963,52 @@ async def test_web_edit_mode_resize_corner_stays_in_view(tmp_path):
                 await page.mouse.up()
                 await page.wait_for_function(
                     "() => window.ffastApp._editor.draft.panels[0].colspan === 1")
+            finally:
+                await browser.close()
+
+
+async def test_web_edit_mode_corner_adds_a_column_and_empty_ones_go(tmp_path):
+    """A one-column tab: dragging the ◢ corner past the column adds a second
+    one; shrunk back, the empty column gets a button that removes it."""
+    tabs_dir = tmp_path / "tabs"
+    tabs_dir.mkdir()
+    (tabs_dir / "one.toml").write_text(
+        '[[tabs]]\nname = "One"\ncolumn_widths = [1.5]\n'
+        '[[tabs.panels]]\nkind = "3d"\nrow = 0\ncol = 0\n')
+    config = tmp_path / "ffast.toml"
+    config.write_text("")
+    draft = "window.ffastApp._editor.draft"
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1600, "height": 900})
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _open_analysis_tab(page, "One")
+                await page.locator("#tab-edit-btn").click()
+                await expect(page.locator(".tabpanel.active .edit-drop")).to_have_count(0)
+                corner = page.locator(_CHROME).first.locator(".edit-resize")
+                cb = await corner.bounding_box()
+                await page.mouse.move(cb["x"] + 4, cb["y"] + 4)
+                await page.mouse.down()
+                await page.mouse.move(cb["x"] + 250, cb["y"] + 4, steps=6)
+                await page.mouse.up()
+                await page.wait_for_function(
+                    f"() => {draft}.panels[0].colspan === 2 && {draft}.column_widths.length === 2")
+
+                cb = await corner.bounding_box()
+                gb = await page.locator(".tabpanel.active .analysis-grid").bounding_box()
+                await page.mouse.move(cb["x"] + 4, cb["y"] + 4)
+                await page.mouse.down()
+                await page.mouse.move(gb["x"] + 60, cb["y"] + 4, steps=6)
+                await page.mouse.up()
+                await page.wait_for_function(f"() => {draft}.panels[0].colspan === 1")
+                drop = page.locator(".tabpanel.active .edit-drop[data-edit=remove-col]")
+                await expect(drop).to_have_count(1)
+                await drop.click()
+                await page.wait_for_function(f"() => JSON.stringify({draft}.column_widths) === '[1.5]'")
+                await expect(page.locator(".tabpanel.active .edit-drop")).to_have_count(0)
             finally:
                 await browser.close()
 

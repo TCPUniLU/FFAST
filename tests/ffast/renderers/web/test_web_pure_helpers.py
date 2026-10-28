@@ -572,6 +572,23 @@ CASES = {
         "te.place(te.resizePanel(TE(), 0, 2, 1)).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])"),
     "te_resize_stays_in_the_columns": (
         "te.place(te.resizePanel(TE(), 1, 1, 5)).map(p => [p.title, p.colspan])"),
+    "te_resize_adds_one_column": (
+        "(() => { const t = te.resizePanel({...TE(), column_widths: [1.5, 1]}, 1, 1, 5);"
+        "  return [te.place(t).map(p => [p.title, p.colspan]), t.column_widths]; })()"),
+    "te_resize_stops_at_the_most_columns": (
+        "(() => { const t = te.resizePanel({...TE(), column_widths: Array(8).fill(1)}, 1, 1, 9);"
+        "  return [te.place(t)[1].colspan, t.column_widths.length, te.MAX_COLUMNS]; })()"),
+    "te_empty_columns_and_rows": (
+        "[te.emptyColumns({...TE(), column_widths: [1, 1, 1]}), te.emptyColumns(TE()),"
+        " te.emptyColumns({panels: [], column_widths: [1]}),"
+        " te.emptyRows({panels: [{row: 0, col: 0}, {row: 2, col: 0}]}), te.emptyRows(TE())]"),
+    "te_remove_empty_column": (
+        "(() => { const t = te.removeColumn({panels: [{title: 'X', row: 0, col: 1}], column_widths: [1, 2]}, 0);"
+        "  const kept = te.removeColumn(TE(), 0) === TE() ? 'same' : te.removeColumn(TE(), 0).panels.map(p => p.col);"
+        "  return [t.panels.map(p => p.col), t.column_widths, kept]; })()"),
+    "te_remove_empty_row": (
+        "(() => { const t = te.removeRow({panels: [{row: 0, col: 0}, {row: 2, col: 0}], row_heights: [1, 0.5, 2]}, 1);"
+        "  return [t.panels.map(p => p.row), t.row_heights, te.removeRow(TE(), 0).panels.map(p => p.row)]; })()"),
     "te_add_takes_the_first_free_cell": (
         "te.place(te.addPanel(te.removePanel(TE(), 1), {kind:'table', title:'C'}))"
         ".map(p => [p.title, p.row, p.col])"),
@@ -1915,8 +1932,20 @@ def test_a_3d_panel_caption_offers_the_main_view_and_every_dataset(results):
     assert empty == ["", [["main", "Main view", False], ["", "No dataset yet", True]]]
 
 
-def test_te_resizing_stays_inside_the_columns(results):
-    assert results["te_resize_stays_in_the_columns"] == [["V", 1], ["A", 1], ["B", 2]]
+def test_te_resizing_adds_at_most_one_column(results):
+    """The ◢ corner dragged past the last column adds one column (width 1
+    when the tab sets widths), never more, and never past MAX_COLUMNS."""
+    assert results["te_resize_stays_in_the_columns"] == [["V", 1], ["A", 2], ["B", 2]]
+    assert results["te_resize_adds_one_column"] == [[["V", 1], ["A", 2], ["B", 2]], [1.5, 1, 1]]
+    assert results["te_resize_stops_at_the_most_columns"] == [7, 8, 8]
+
+
+def test_te_empty_columns_and_rows_can_be_removed(results):
+    """A column or row no panel covers can be removed; the panels after it
+    move back, and its set size goes. The only column stays."""
+    assert results["te_empty_columns_and_rows"] == [[2], [], [], [1], []]
+    assert results["te_remove_empty_column"] == [[0], [2], [0, 1, 0]]
+    assert results["te_remove_empty_row"] == [[0, 1], [1, 2], [0, 0, 1]]
 
 
 def test_te_a_new_panel_takes_the_first_free_cell(results):
