@@ -183,9 +183,12 @@ export function resizedBar(box, length, thickness, dx, dy) {
  * another text's height, the bar's thickness, or another piece's edge or
  * centre, when within `threshold` pixels. `others` maps each other piece's
  * key to its box. Returns the size, the guide lines to draw (as snapDrag)
- * and `match`, the piece whose size it took, or null.
+ * and `match`, the piece whose size it took, or null. `edges: false` keeps
+ * only the size matches: in a layout not yet arranged the preset re-places
+ * the pieces as a text grows, so an edge found at press time is not where
+ * the text will end up.
  */
-export function snapTextResize(box, size, dx, dy, others, threshold = SNAP_PX) {
+export function snapTextResize(box, size, dx, dy, others, { edges = true, threshold = SNAP_PX } = {}) {
   const raw = resized(box, size, dx, dy);
   const k = raw / size;
   const across = (b) => (b.rot ? b.w : b.h);
@@ -196,6 +199,7 @@ export function snapTextResize(box, size, dx, dy, others, threshold = SNAP_PX) {
     // the bar's height is its narrow side, whatever its turn
     const target = key === 'bar' ? Math.min(o.w, o.h) : across(o);
     cands.push({ size: size * target / across(box), d: Math.abs(across(box) * k - target), vx: null, hy: null, match: key });
+    if (!edges) continue;
     for (const v of [o.x, o.x + o.w / 2, o.x + o.w]) {
       if (v > box.x) cands.push({ size: size * (v - box.x) / box.w, d: Math.abs(reach - v), vx: v, hy: null, match: null });
     }

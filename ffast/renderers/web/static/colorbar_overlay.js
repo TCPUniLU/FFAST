@@ -237,7 +237,8 @@ export function createColourBar(texts) {
         const dx = ev.clientX - start.x;
         const dy = ev.clientY - start.y;
         if (key !== 'bar') {
-          const snap = snapTextResize(start.box, start.size, dx, dy, others);
+          // edges only once the pieces sit where the user put them (layout.pieces)
+          const snap = snapTextResize(start.box, start.size, dx, dy, others, { edges: !!layout.pieces });
           resize(key, snap.size);
           showGuides(snap.vx, snap.hy);
           showMatch(key, snap.match);
