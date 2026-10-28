@@ -428,7 +428,9 @@ class aseDatasetLoader(FlatDatasetLoader):
     def saveDataset(dataset, path, format=None, taskID=None):
         """Save any dataset (file, subset or atom subset) to an ASE format,
         frame by frame with each frame's own elements, writing the energies
-        and forces it has (ADR 0058 step 6)."""
+        and forces it has (ADR 0058 step 6). A frame with no atoms (an element
+        subset's frame without those elements, ADR 0067) is left out; returns
+        how many were."""
         from ase import Atoms
         from ase.calculators.calculator import Calculator
 
@@ -443,8 +445,12 @@ class aseDatasetLoader(FlatDatasetLoader):
             has_energies = False
 
         atoms = []
+        skipped = 0
         for i in range(dataset.getN()):
             z = dataset.getElements(i)
+            if len(z) == 0:
+                skipped += 1
+                continue
             atom = Atoms(positions=dataset.getCoordinates(i),
                          symbols=[dataset.zIntToZStr[x] for x in z])
             results = {}
@@ -458,3 +464,4 @@ class aseDatasetLoader(FlatDatasetLoader):
             atoms.append(atom)
 
         ase.io.write(path, atoms, format=format)
+        return skipped

@@ -178,9 +178,7 @@ class DataService:
                         dataTypeKey, model=model, dataset=dataset.parent
                     )
                     if data is not None:
-                        return data.getAtomFilteredEntity(
-                            indices=dataset.atoms
-                        )
+                        return data.getAtomFilteredEntity(indices=dataset)
 
                 if dataType.atomConstant:
                     return self.getData(

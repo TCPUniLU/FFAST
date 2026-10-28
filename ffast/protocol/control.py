@@ -144,6 +144,10 @@ TAB_LAYOUT = "TAB_LAYOUT"
 # written path (or an error) so the browser can confirm the export. Only the
 # web client asks for it, so it stays out of REPLY_EVENTS.
 SUBSET_EXPORTED = "SUBSET_EXPORTED"
+# Outcome of CREATE_SUBSET, to the window that asked: {ok, text, error}. text
+# is what was made ("C in 812 of 1000 frames", ADR 0067); error says why
+# nothing was. A one-shot announcement, out of REPLY_EVENTS.
+SUBSET_EXTRACTED = "SUBSET_EXTRACTED"
 # Outcome of SAVE_SESSION / LOAD_SESSION (ADR 0050). Same shape as
 # SUBSET_EXPORTED — {ok, path, error} — and for the same reason: the session
 # write happens in a task, and TASK_DONE carries only a task id that the

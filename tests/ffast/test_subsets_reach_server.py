@@ -116,7 +116,7 @@ def test_a_refused_atom_subset_is_not_sent():
     parent = aseDatasetLoader("var.xyz", atomsList=frames)
     parent.initialise()
     env = _env(parent)
-    with pytest.raises(ValueError, match="missing"):
+    with pytest.raises(ValueError, match="differ"):
         Environment.createAtomFilteredDataset(env, parent, [2])
     assert env.told == []
 

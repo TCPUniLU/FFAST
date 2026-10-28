@@ -5040,10 +5040,14 @@ async def test_web_picking_does_not_resize_the_3d_view(ffast_web_server):
 
 
 async def test_web_extract_creates_subset_dataset(ffast_web_server):
-    """ADR 0045 issue 12 gate: typing indices and extracting creates a new
-    subset dataset that appears in the dataset list."""
+    """ADR 0045 issue 12 gate: extracting creates a new subset dataset that
+    appears in the dataset list. The example's structures differ, so atom
+    numbers are refused and elements are kept frame by frame (ADR 0067); the
+    status line says how many frames hold them."""
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)
+    frames = ase.io.read(str(DATASET_PATH), index=":")
+    with_carbon = sum(1 for f in frames if 6 in f.numbers)
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -5057,14 +5061,23 @@ async def test_web_extract_creates_subset_dataset(ffast_web_server):
                 indices = page.locator(
                     ".pane[data-pane='Extract Subset'] .ctl-row[data-label='Indices'] input"
                 )
-                await indices.fill("0 1 2")
-                await page.locator(
-                    ".pane[data-pane='Extract Subset'] button", has_text="Extract as Subset Dataset"
-                ).click()
+                extract = page.locator(
+                    ".pane[data-pane='Extract Subset'] button", has_text="Extract as Subset Dataset")
+                await expect(indices).to_have_attribute("placeholder", "Elements, e.g. C  or  -H")
 
-                # The server materialises an AtomFilteredDataset and announces it via
+                await indices.fill("0 1 2")
+                await extract.click()
+                await expect(page.locator("#status")).to_contain_text(
+                    "Extract refused: The structures of this dataset differ", timeout=15000)
+                await expect(page.locator("#dataset-list .obj-row")).to_have_count(1)
+
+                await indices.fill("C")
+                await extract.click()
+                # The server makes an element subset and announces it via
                 # REMOTE_DATASET_META → a second row appears in the dataset list.
                 await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
+                await expect(page.locator("#status")).to_have_text(
+                    f"Extracted C in {with_carbon} of {len(frames)} frames")
         finally:
             await browser.close()
 

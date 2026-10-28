@@ -10,7 +10,7 @@ produced scene.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 import numpy as np
 
@@ -518,15 +518,12 @@ def _resolve_filter_indices(raw, z) -> list:
     matched against ``z`` (the *current frame's* atomic numbers), so filtering
     is correct for variable datasets whose composition changes per frame.
     """
-    if not raw:
-        return []
+    tokens = parse_filter_tokens(raw)
     z = np.asarray(z).ravel()
     n = len(z)
-    include: list = []
-    exclude: list = []
     names = None
 
-    def _element_indices(symbol):
+    def _element_indices(symbols):
         nonlocal names
         if names is None:
             try:
@@ -534,31 +531,72 @@ def _resolve_filter_indices(raw, z) -> list:
                 names = [zIntToZStr.get(int(zi), str(int(zi))) for zi in z]
             except Exception:
                 names = [str(int(zi)) for zi in z]
-        return [i for i, nm in enumerate(names) if nm == symbol]
+        return [i for i, nm in enumerate(names) if nm in symbols]
 
-    for tok in raw:
-        if isinstance(tok, bool):
-            continue
-        if isinstance(tok, (int, np.integer)):
-            include.append(int(tok))
-            continue
-        s = str(tok).strip()
-        if not s:
-            continue
-        neg = s.startswith("-")
-        if neg:
-            s = s[1:].strip()
-        try:
-            idx = int(s)
-            (exclude if neg else include).append(idx)
-            continue
-        except ValueError:
-            pass
-        (exclude if neg else include).extend(_element_indices(s))
-
+    include = tokens.keep_atoms + _element_indices(tokens.keep_elements)
+    exclude = tokens.drop_atoms + _element_indices(tokens.drop_elements)
     if not include and exclude:
         return sorted(set(range(n)) - set(exclude))
     return sorted(set(include) - set(exclude))
+
+
+class FilterTokens(NamedTuple):
+    """A mixed atom-filter spec, split: atom numbers and element symbols, each
+    kept or (with a "-") excluded."""
+    keep_atoms: list
+    drop_atoms: list
+    keep_elements: list
+    drop_elements: list
+
+    @property
+    def atoms(self) -> list:
+        return self.keep_atoms + self.drop_atoms
+
+
+def parse_filter_tokens(raw) -> FilterTokens:
+    """Split "0 1 C -H" style tokens (ints or strings) into a FilterTokens. A
+    negative integer excludes, as "-3" does."""
+    tokens = FilterTokens([], [], [], [])
+    for tok in raw or []:
+        if isinstance(tok, bool):
+            continue
+        if isinstance(tok, (int, np.integer)):
+            (tokens.drop_atoms if tok < 0 else tokens.keep_atoms).append(abs(int(tok)))
+            continue
+        s = str(tok).strip()
+        neg = s.startswith("-")
+        if neg:
+            s = s[1:].strip()
+        if not s:
+            continue
+        try:
+            (tokens.drop_atoms if neg else tokens.keep_atoms).append(int(s))
+        except ValueError:
+            (tokens.drop_elements if neg else tokens.keep_elements).append(s)
+    return tokens
+
+
+def resolve_element_tokens(raw, present) -> list:
+    """The atomic numbers an element-only spec keeps, of those in ``present``
+    (ADR 0067). "C" keeps carbon; "-H" keeps every element present but
+    hydrogen; "C -H" keeps carbon. Sorted, so the same elements kept give the
+    same list (and the same fingerprint) however they were typed. Raises
+    ValueError for a symbol that is no element, or when nothing is kept."""
+    from ffast.chemistry import zStrToZInt
+
+    tokens = parse_filter_tokens(raw)
+    unknown = [s for s in tokens.keep_elements + tokens.drop_elements if s not in zStrToZInt]
+    if unknown:
+        raise ValueError(f"{unknown[0]} is not an element or an atom number.")
+    present = {int(z) for z in np.asarray(present).ravel()}
+    wanted = {zStrToZInt[s] for s in tokens.keep_elements} if tokens.keep_elements else present
+    keep = (wanted & present) - {zStrToZInt[s] for s in tokens.drop_elements}
+    if not keep:
+        missing = [s for s in tokens.keep_elements if zStrToZInt[s] not in present]
+        if missing:
+            raise ValueError(f"{', '.join(missing)} is not in this dataset.")
+        raise ValueError("Those elements leave no atoms.")
+    return sorted(keep)
 
 
 def _apply_transforms(positions: np.ndarray, transforms: list) -> np.ndarray:

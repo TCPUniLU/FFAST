@@ -66,13 +66,13 @@ def _variableFile(offsets, elements):
     return parent
 
 
-def test_an_atom_subset_with_the_same_elements_everywhere_shows_their_formula():
-    # methane (C H H H H) then ethane (C C H H H H H H); atoms 0 and 2 are C, H in both
-    parent = _variableFile([0, 5, 13], [6, 1, 1, 1, 1, 6, 6, 1, 1, 1, 1, 1, 1])
-    assert DatasetView.atomSubset(parent, [0, 2]).getChemicalFormula() == "C1H1"
+def test_an_element_subset_with_the_same_atoms_everywhere_shows_their_formula():
+    # methane (C H H H H) then methanol's C, O and H (H C O H)
+    parent = _variableFile([0, 5, 9], [6, 1, 1, 1, 1, 1, 6, 8, 1])
+    assert DatasetView.elementSubset(parent, [6]).getChemicalFormula() == "C1"
 
 
-def test_an_atom_subset_whose_elements_differ_between_frames_shows_the_range():
-    # atom 1 is H in methane but C in ethane
+def test_an_element_subset_whose_counts_differ_between_frames_shows_the_range():
+    # one carbon in methane, two in ethane
     parent = _variableFile([0, 5, 13], [6, 1, 1, 1, 1, 6, 6, 1, 1, 1, 1, 1, 1])
-    assert DatasetView.atomSubset(parent, [0, 1]).getChemicalFormula() == "Variable (2-2 atoms)"
+    assert DatasetView.elementSubset(parent, [6]).getChemicalFormula() == "Variable (1-2 atoms)"

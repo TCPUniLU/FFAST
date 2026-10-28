@@ -46,9 +46,12 @@ def _frame_subset(parent, frames=(3, 0)):
 
 
 def _atom_subset(parent):
-    sub = DatasetView.atomSubset(parent, np.array([0, 2]))
-    sub.initialise()
-    return sub
+    return _initialised(DatasetView.atomSubset(parent, np.array([0, 2])))
+
+
+def _initialised(view):
+    view.initialise()
+    return view
 
 
 def _sgdml(forces=True, energies=True):
@@ -76,7 +79,8 @@ KINDS = {
     "frame subset of uniform": lambda: _frame_subset(_ase(UNIFORM)),
     "frame subset of variable": lambda: _frame_subset(_ase(VARIABLE)),
     "atom subset of uniform": lambda: _atom_subset(_ase(UNIFORM)),
-    "atom subset of variable": lambda: _atom_subset(_ase(VARIABLE)),
+    # Carbon only: frames 0 and 2 hold none and stay, empty (ADR 0067).
+    "element subset of variable": lambda: _initialised(DatasetView.elementSubset(_ase(VARIABLE), [6])),
     "subset of a subset": lambda: _frame_subset(_frame_subset(_ase(VARIABLE)), frames=(1, 0)),
 }
 
@@ -129,9 +133,9 @@ def test_stacking_needs_every_structure_the_same_size():
         stackFrames(differ.getAllCoordinates(), differ.getOffsets())
 
 
-def test_stacking_works_on_an_atom_subset_of_a_variable_file():
-    sub = _atom_subset(_ase(VARIABLE))
-    assert stackFrames(sub.getAllForces(), sub.getOffsets()).shape == (4, 2, 3)
+def test_stacking_works_on_an_element_subset_of_a_variable_file_with_one_count():
+    sub = _initialised(DatasetView.elementSubset(_ase(["CH4", "CH3OH", "HCN"]), [6]))
+    assert stackFrames(sub.getAllForces(), sub.getOffsets()).shape == (3, 1, 3)
 
 
 @pytest.mark.parametrize("formulas", [UNIFORM, VARIABLE])

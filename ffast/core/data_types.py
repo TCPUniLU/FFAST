@@ -83,6 +83,10 @@ class AtomFilteredEntity(DataEntity):
 
     def get(self, key=None):
         d = self.parent.get(key=key)
+        # A dataset view knows which atoms each frame keeps (an element
+        # subset's change from frame to frame, ADR 0067).
+        if hasattr(self.indices, "keepAtoms"):
+            return self.indices.keepAtoms(d)
         # Variable datasets (list of per-frame arrays): the same atoms of each frame
         if isinstance(d, list):
             return [np.asarray(frame)[self.indices] for frame in d]

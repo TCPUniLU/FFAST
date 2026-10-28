@@ -309,6 +309,17 @@ class Environment(EventClass):
             control.CREATE_SUBSET, parent_fingerprint=dataset.fingerprint, indices=idxs
         )
 
+    def createElementSubset(self, dataset, elements):
+        """The atoms of these atomic numbers in every frame of ``dataset``
+        (ADR 0067); the one already made when the same elements were kept."""
+        from ffast.loaders.dataset import DatasetView  # ADR 0047 Phase 5c
+        sub = self.datasets.get(DatasetView.elementSubsetFingerprint(dataset, elements))
+        if sub is None:
+            sub = DatasetView.elementSubset(dataset, elements)
+            sub.initialise()
+            self.datasets.add(sub)
+        return sub
+
     #############
     ## OBJECTS (MODELS & DATASETS)
     #############

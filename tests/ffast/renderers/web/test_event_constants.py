@@ -80,7 +80,7 @@ def test_inbound_events_are_things_the_server_sends(in_events):
         control.REMOTE_DATASET_META, control.REMOTE_MODEL_META,
         control.SCENE_SNAPSHOT, control.SCENE_PATCH, control.COMMAND_RESULT,
         control.METRIC_CATALOG, control.METRICS_UPDATED, control.TAB_LAYOUT,
-        control.SUBSET_EXPORTED, control.SESSION_SAVED, control.SESSION_LOADED,
+        control.SUBSET_EXPORTED, control.SUBSET_EXTRACTED, control.SESSION_SAVED, control.SESSION_LOADED,
         control.LOAD_FAILED, control.TAB_SAVED, control.TAB_EXPORTED, control.SUBSET_DECLARED,
         control.USER_METRICS, control.METRIC_USERS, control.USER_METRIC_SAVED, control.USER_METRIC_EXPORTED,
         control.METRIC_INPUTS, control.METRIC_CHECKED, control.METRIC_TRIED, control.METRIC_BOXES,

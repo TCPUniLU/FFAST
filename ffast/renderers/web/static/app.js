@@ -21,7 +21,7 @@ import { createCameraPane } from './panes/camera.js';
 import { createDisplayPane } from './panes/display.js';
 import { createBondsPane } from './panes/bonds.js';
 import { createForcesPane } from './panes/forces.js';
-import { createExtractPane, canExtractFrom } from './panes/extract.js';
+import { createExtractPane } from './panes/extract.js';
 import { createAlignPane } from './panes/align.js';
 import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
@@ -1134,7 +1134,7 @@ export class FFastApp {
       view.modelFp = null;
     this._independent.open(view);
     if (!focused) return;
-    this._panes.extract.setVisible(canExtractFrom(this._datasets.get(fp)));
+    this._panes.extract.setDataset(this._datasets.get(fp));
     this._syncPanelSection();
     this._syncSidebarTitle();
   }
@@ -1271,7 +1271,7 @@ export class FFastApp {
     } else if (this._main.current) {
       this._showSettings(this._main.current);
     }
-    this._panes.extract.setVisible(canExtractFrom(this._datasets.get(this._focusedDatasetFp())));
+    this._panes.extract.setDataset(this._datasets.get(this._focusedDatasetFp()));
     this._syncPanelSection();
     this._syncSidebarTitle();
     this._syncPlayback();
@@ -1455,6 +1455,12 @@ export class FFastApp {
       conn.on(IN.METRIC_CATALOG, (kw) => this._onMetricCatalog(kw));
       conn.on(IN.METRICS_UPDATED, () => this._onMetricsUpdated());
       conn.on(IN.SUBSET_EXPORTED, (kw) => this._sessionOps.onSubsetExported(kw));
+      // What Extract made ("C in 812 of 1000 frames"), or why it made nothing.
+      conn.on(IN.SUBSET_EXTRACTED, (kw) => {
+        this._panes.extract.showResult(kw);
+        this._setStatus(kw.ok ? `Extracted ${kw.text}` : `Extract refused: ${kw.error}`,
+          kw.ok ? 'connected' : 'error');
+      });
       conn.on(IN.SUBSET_DECLARED, (kw) => this._onSubsetDeclared(kw));
       // Session outcomes are named events now, not a guess from the next
       // TASK_DONE — which resolved a pending save against an unrelated task's
@@ -1872,7 +1878,7 @@ export class FFastApp {
 
     if (datasetChanged && sidebarIsMain) this._showSettings(view);
     // Extract only where it makes a fixed dataset (Qt's AtomFilterPaneHiding).
-    if (sidebarIsMain) this._panes.extract.setVisible(canExtractFrom(this._datasets.get(this._currentDatasetFp)));
+    if (sidebarIsMain) this._panes.extract.setDataset(this._datasets.get(this._currentDatasetFp));
   }
 
   // ── per-view settings (ADR 0060): each view carries its sidebar settings

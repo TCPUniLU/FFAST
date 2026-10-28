@@ -74,8 +74,10 @@ CASES = {
         lambda: _initialised(DatasetView.subset(_initialised(_variable_with_forces()), None, FRAMES, "S")), "dbde3e571cf466753ffb35fcafe95e7e"),
     "frozen subset of variable": (
         lambda: _initialised(DatasetView.frozenSubset(_initialised(_variable_with_forces()), None, FRAMES, "S")), "a0645fcc35cb98dfd6a2029760d1d0fd"),
-    "atom subset of variable": (
-        lambda: _initialised(DatasetView.atomSubset(_initialised(_variable_with_forces()), ATOMS)), "7cb961757a4d4253fd9ff48766939e8c"),
+    # Atom numbers are refused below a variable parent since ADR 0067; its
+    # element subset's formula is new there (2026-10-28).
+    "element subset of variable": (
+        lambda: _initialised(DatasetView.elementSubset(_initialised(_variable_with_forces()), [6])), "a98b28b9203f8875b8917643c63214fb"),
     "same formula, atoms in different order": (
         lambda: _initialised(_same_formula_different_order()), "e7b297e53caa1652933b842080bfb299"),
     }

@@ -79,6 +79,8 @@ CASES = {
     # ── so.exportStatus / so.safeName ───────────────────────────────────────
     "export_ok": "so.exportStatus({ok: true, n: 12, path: '/tmp/a.extxyz'})",
     "export_failed_no_error": "so.exportStatus({ok: false})",
+    "export_skipped": "[so.exportStatus({ok: true, n: 812, skipped: 188, path: '/a'}).text,"
+                      " so.exportStatus({ok: true, n: 2, skipped: 1, path: '/a'}).text]",
     "safe_name_hostile": "so.safeName('my data/set:1.xyz')",
     "safe_name_empty": "so.safeName('///', 'subset')",
     "safe_name_missing": "so.safeName(null)",
@@ -1255,6 +1257,14 @@ def test_export_status_counts_structures(results):
     assert results["export_ok"] == {
         "text": "Exported 12 structure(s) → /tmp/a.extxyz", "kind": "connected",
     }
+
+
+def test_export_status_says_how_many_empty_frames_were_skipped(results):
+    """ADR 0067: an element subset's frames without its elements are not written."""
+    assert results["export_skipped"] == [
+        "Exported 812 structure(s) → /a (188 empty frames skipped)",
+        "Exported 2 structure(s) → /a (1 empty frame skipped)",
+    ]
 
 
 def test_export_status_failure_without_an_error_still_reads_sensibly(results):

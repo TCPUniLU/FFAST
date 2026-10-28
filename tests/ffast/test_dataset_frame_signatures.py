@@ -91,12 +91,16 @@ def _variable():
     return dataset
 
 
-def test_atom_subset_of_a_variable_parent_finds_the_bonds_between_its_atoms():
+def test_element_subset_of_a_variable_parent_finds_the_bonds_between_its_atoms():
+    """Atom subsets are refused there since ADR 0067; an element subset's atoms
+    change from frame to frame, and frames without them have no bonds."""
     parent = _variable()
-    view = DatasetView.atomSubset(parent, np.array([0, 1]))
+    view = DatasetView.elementSubset(parent, [6])
     view.initialise()
     for i in range(view.getN()):
-        np.testing.assert_array_equal(view.getBondMatrix(i), parent.getBondMatrix(i)[:2, :2])
+        kept = np.flatnonzero(np.asarray(parent.getElements(i)) == 6)
+        np.testing.assert_array_equal(view.getBondMatrix(i),
+                                      np.asarray(parent.getBondMatrix(i))[np.ix_(kept, kept)])
 
 
 def test_subset_of_a_variable_parent_packs_its_arrays():
@@ -119,7 +123,7 @@ def _freeze(view):
 
 def test_only_a_subset_that_follows_a_zoom_can_be_frozen():
     parent = _variable()
-    atoms = DatasetView.atomSubset(parent, np.array([0, 1]))
+    atoms = DatasetView.elementSubset(parent, [6])
     frozen = DatasetView.frozenSubset(parent, None, np.array([1]), "Frozen")
     assert _freeze(atoms) == [] and _freeze(frozen) == []
 

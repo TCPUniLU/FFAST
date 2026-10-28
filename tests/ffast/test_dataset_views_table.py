@@ -44,32 +44,39 @@ class Truth:
     """What a dataset *should* hold: a list of structures, a frame map and an
     atom mask. Cutting a view composes the maps; no FFAST code is involved."""
 
-    def __init__(self, structures, frames=None, atoms=None):
+    def __init__(self, structures, frames=None, atoms=None, keep_z=None):
         self.structures = structures
         self.frames = list(range(len(structures))) if frames is None else list(frames)
         self.atoms = atoms  # None = every atom
+        self.keep_z = keep_z  # elements kept, frame by frame (ADR 0067)
 
-    def _mask(self, array):
-        return array if self.atoms is None else array[self.atoms_for()]
+    def _mask(self, array, i):
+        return array[self.atoms_for(i)]
 
-    def atoms_for(self):
-        return np.asarray(self.atoms)
+    def atoms_for(self, i):
+        numbers = self.structures[self.frames[i]].numbers
+        if self.keep_z is not None:
+            return np.flatnonzero(np.isin(numbers, self.keep_z))
+        return np.arange(len(numbers)) if self.atoms is None else np.asarray(self.atoms)
 
     def cut_frames(self, frames):
-        return Truth(self.structures, [self.frames[f] for f in frames], self.atoms)
+        return Truth(self.structures, [self.frames[f] for f in frames], self.atoms, self.keep_z)
 
     def cut_atoms(self, atoms):
         return Truth(self.structures, self.frames, atoms)
+
+    def cut_elements(self, keep_z):
+        return Truth(self.structures, self.frames, keep_z=keep_z)
 
     # the questions
     def n_frames(self):
         return len(self.frames)
 
     def elements(self, i):
-        return self._mask(self.structures[self.frames[i]].numbers)
+        return self._mask(self.structures[self.frames[i]].numbers, i)
 
     def coordinates(self, i):
-        return self._mask(self.structures[self.frames[i]].positions)
+        return self._mask(self.structures[self.frames[i]].positions, i)
 
     def lattice(self, i):
         return np.asarray(self.structures[self.frames[i]].cell)
@@ -129,6 +136,38 @@ def _view_frames_of_atoms(parent, truth):
     return view, inner_truth.cut_frames(frames)
 
 
+OXYGEN = [8]   # in every uniform frame; in two of the six variable ones
+
+
+def _view_elements(parent, truth):
+    view = DatasetView.elementSubset(parent, OXYGEN)
+    view.initialise()
+    return view, truth.cut_elements(OXYGEN)
+
+
+def _view_elements_of_frozen(parent, truth):
+    inner, inner_truth = _view_frozen(parent, truth)
+    view = DatasetView.elementSubset(inner, OXYGEN)
+    view.initialise()
+    return view, inner_truth.cut_elements(OXYGEN)
+
+
+def _view_frames_of_elements(parent, truth):
+    inner, inner_truth = _view_elements(parent, truth)
+    frames = np.array([4, 1, 0])
+    view = DatasetView.subset(inner, None, frames, "Subset")
+    view.initialise()
+    return view, inner_truth.cut_frames(frames)
+
+
+def _view_frozen_of_elements(parent, truth):
+    inner, inner_truth = _view_elements(parent, truth)
+    frames = np.array([0, 5])
+    view = DatasetView.frozenSubset(inner, None, frames, "Frozen")
+    view.initialise()
+    return view, inner_truth.cut_frames(frames)
+
+
 VIEWS = {
     "file": _view_none,
     "subset": _view_frames,
@@ -137,7 +176,15 @@ VIEWS = {
     "subset-of-subset": _view_frames_of_frames,
     "atom-subset-of-subset": _view_atoms_of_frames,
     "subset-of-atom-subset": _view_frames_of_atoms,
+    "element-subset": _view_elements,
+    "element-subset-of-frozen": _view_elements_of_frozen,
+    "subset-of-element-subset": _view_frames_of_elements,
+    "frozen-of-element-subset": _view_frozen_of_elements,
 }
+
+# Atom numbers name a different atom in each structure of a variable parent,
+# so these views are refused there (ADR 0067); their cells are uniform only.
+ATOM_VIEWS = {"atom-subset", "atom-subset-of-subset", "subset-of-atom-subset"}
 
 
 # ---- the questions: each takes (dataset, truth) and asserts --------------
@@ -192,6 +239,8 @@ KNOWN_GAPS = {}
 def _cases():
     for p in PARENTS:
         for v in VIEWS:
+            if p == "variable" and v in ATOM_VIEWS:
+                continue
             for q in QUESTIONS:
                 marks = []
                 if (p, v, q) in KNOWN_GAPS:
@@ -209,15 +258,27 @@ def test_view_answers_per_frame_question(parent_kind, view_kind, question):
     QUESTIONS[question](dataset, truth)
 
 
-def test_an_atom_subset_naming_an_atom_some_structure_lacks_is_refused():
-    """Atoms are picked on frame 0; a smaller structure (H2) may not have
-    them. Such a subset is refused when made, so it never holds a frame it
-    cannot answer (ADR 0058 step 5)."""
+@pytest.mark.parametrize("view_kind", sorted(ATOM_VIEWS))
+def test_an_atom_subset_of_a_variable_parent_is_refused(view_kind):
+    """Atom 0 of one structure is not atom 0 of the next, so a view that keeps
+    atom numbers is refused when made (ADR 0067)."""
     structures = _variable_atoms()
     parent = LoadingCoordinator._aseLoaderFor("variable.xyz", atomsList=structures)
     parent.initialise()
     with pytest.raises(ValueError, match=(
-            r"^Atom 2 is missing from 1 of 6 structures\.\n\n"
+            r"^The structures of this dataset differ, so atom 0 is a different atom "
+            r"in each\.\n\nExtract by element instead \(e\.g\. C or -H\)\.$")):
+        VIEWS[view_kind](parent, Truth(structures))
+
+
+def test_an_atom_subset_naming_an_atom_the_structures_lack_is_refused():
+    """Such a subset is refused when made, so it never holds a frame it cannot
+    answer (ADR 0058 step 5)."""
+    structures = _uniform_atoms()
+    parent = LoadingCoordinator._aseLoaderFor("uniform.xyz", atomsList=structures)
+    parent.initialise()
+    with pytest.raises(ValueError, match=(
+            r"^Atom 3 is missing from 6 of 6 structures\.\n\n"
             r"Every structure must have the atoms you extract\. "
-            r"The smallest has 2 atoms, numbered 0 to 1\.$")):
-        DatasetView.atomSubset(parent, np.array([0, 2]))
+            r"The smallest has 3 atoms, numbered 0 to 2\.$")):
+        DatasetView.atomSubset(parent, np.array([0, 3]))

@@ -255,6 +255,74 @@ def test_dispatch_create_subset_resolves_tokens_and_materializes():
     assert idxs == [0, 1, 3]
 
 
+class _ElementSubsetEnv(_FakeEnv):
+    """Makes real element subsets, as the Environment does."""
+
+    def __init__(self, datasets):
+        super().__init__(datasets=datasets)
+        self.element_calls = []
+
+    def createElementSubset(self, dataset, keep):
+        from ffast.loaders.dataset import DatasetView
+        self.element_calls.append((dataset, keep))
+        view = DatasetView.elementSubset(dataset, keep)
+        view.initialise()
+        return view
+
+
+def _real_parent(*symbols):
+    from ase import Atoms
+    from ffast.loaders.ase import aseDatasetLoader
+    frames = [Atoms(s, positions=np.zeros((len(Atoms(s)), 3))) for s in symbols]
+    parent = aseDatasetLoader("mem.extxyz", atomsList=frames)
+    parent.initialise()
+    return parent
+
+
+def _extract(env, tokens):
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("CREATE_SUBSET", ["ds1", tokens], {})
+        return await _drain(s)
+
+    return _run(scenario())
+
+
+def test_create_subset_of_elements_makes_an_element_subset_and_counts_its_frames():
+    """ADR 0067: elements only make an element subset on any dataset; the
+    window that asked hears how many frames hold them."""
+    env = _ElementSubsetEnv({"ds1": _real_parent("CH4", "H2O", "C2H6", "H2")})
+    [(event, _, kwargs)] = _extract(env, ["C"])
+    assert [keep for _, keep in env.element_calls] == [[6]]
+    assert env.create_subset_calls == []
+    assert event == control.SUBSET_EXTRACTED
+    assert kwargs == {"ok": True, "text": "C in 2 of 4 frames", "error": None}
+
+
+def test_create_subset_names_every_element_kept():
+    env = _ElementSubsetEnv({"ds1": _real_parent("CH3OH", "H2O")})
+    [(_, _, kwargs)] = _extract(env, ["-H"])
+    assert [keep for _, keep in env.element_calls] == [[6, 8]]
+    assert kwargs["text"] == "C, O in 2 of 2 frames"
+
+
+@pytest.mark.parametrize("tokens", [[0], ["C", 3], ["-2"]])
+def test_create_subset_refuses_atom_numbers_on_a_variable_dataset(tokens):
+    env = _ElementSubsetEnv({"ds1": _real_parent("CH4", "H2O")})
+    [(event, _, kwargs)] = _extract(env, tokens)
+    assert env.create_subset_calls == [] and env.element_calls == []
+    assert event == control.SUBSET_EXTRACTED and kwargs["ok"] is False
+    assert "differ" in kwargs["error"] and "element" in kwargs["error"]
+
+
+@pytest.mark.parametrize("tokens, says", [(["Xx"], "Xx"), (["N"], "N")])
+def test_create_subset_refuses_elements_it_cannot_keep(tokens, says):
+    env = _ElementSubsetEnv({"ds1": _real_parent("CH4", "H2O")})
+    [(event, _, kwargs)] = _extract(env, tokens)
+    assert env.element_calls == []
+    assert kwargs["ok"] is False and says in kwargs["error"]
+
+
 def test_dispatch_create_subset_missing_parent_is_dropped():
     env = _FakeEnv(datasets={})
 
@@ -838,7 +906,7 @@ def test_dispatch_export_subset_uses_the_one_ase_saver(tmp_path, is_variable, n)
     env = _FakeEnv(datasets={"ds1": ds})
     target = tmp_path / "out.extxyz"
 
-    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as saver:
+    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset", return_value=0) as saver:
 
         async def scenario():
             s = ServerSession(env, asyncio.Queue())
@@ -848,8 +916,24 @@ def test_dispatch_export_subset_uses_the_one_ase_saver(tmp_path, is_variable, n)
         event, _args, kwargs = unpack(_run(scenario()))
 
     assert event == control.SUBSET_EXPORTED
-    assert kwargs == {"ok": True, "path": str(target), "error": None, "n": n}
+    assert kwargs == {"ok": True, "path": str(target), "error": None, "n": n, "skipped": 0}
     saver.assert_called_once_with(ds, str(target), "extxyz")
+
+
+def test_export_of_an_element_subset_skips_its_empty_frames_and_says_how_many(tmp_path):
+    from ffast.loaders.dataset import DatasetView
+    view = DatasetView.elementSubset(_real_parent("CH4", "H2O", "C2H6"), [6])
+    view.initialise()
+    target = tmp_path / "carbons.extxyz"
+
+    async def scenario():
+        s = ServerSession(_FakeEnv(datasets={"ds1": view}), asyncio.Queue())
+        await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": str(target)})
+        return s.outbound.get_nowait()
+
+    event, _args, kwargs = unpack(_run(scenario()))
+    assert event == control.SUBSET_EXPORTED
+    assert (kwargs["ok"], kwargs["n"], kwargs["skipped"]) == (True, 2, 1)
 
 
 def test_dispatch_export_subset_expands_user_and_relative_path(tmp_path, monkeypatch):

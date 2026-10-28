@@ -41,7 +41,10 @@ export function sessionStatus(kind, result) {
 /** Status line for a finished subset export. Pure. */
 export function exportStatus(result) {
   if (result?.ok) {
-    return { text: `Exported ${result.n} structure(s) → ${result.path}`, kind: 'connected' };
+    // An element subset's frames without its elements are not written (ADR 0067).
+    const skipped = result.skipped
+      ? ` (${result.skipped} empty frame${result.skipped === 1 ? '' : 's'} skipped)` : '';
+    return { text: `Exported ${result.n} structure(s) → ${result.path}${skipped}`, kind: 'connected' };
   }
   return { text: `Export failed: ${result?.error ?? 'unknown error'}`, kind: 'error' };
 }

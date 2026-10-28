@@ -29,16 +29,21 @@ def test_whole_datasets_and_frozen_subsets_offer_extract():
     assert DatasetView.frozenSubset(parent, None, np.array([0, 1]), "E").canExtractAtoms
 
 
-def test_live_and_atom_subsets_do_not():
+def test_live_atom_and_element_subsets_do_not():
     parent = _variable()
     assert not DatasetView.subset(parent, None, np.array([0, 1]), "E").canExtractAtoms
-    assert not DatasetView.atomSubset(parent, [0, 1]).canExtractAtoms
+    assert not DatasetView.elementSubset(parent, [1]).canExtractAtoms
+    uniform = aseDatasetLoader("uni.xyz", atomsList=[Atoms("H2O"), Atoms("H2O")])
+    uniform.initialise()
+    assert not DatasetView.atomSubset(uniform, [0, 1]).canExtractAtoms
 
 
 def test_atoms_extracted_from_a_frozen_subset_need_only_its_structures():
-    # H2 (frame 2) lacks atom 2, but the frozen subset holds frames 0, 1 and 3.
-    parent = _variable()
-    frozen = DatasetView.frozenSubset(parent, None, np.array([0, 1, 3]), "E")
+    # H2 (frame 2) lacks atom 2, but the frozen subset holds frames 0 and 1,
+    # which are both water: the frozen subset's structures do not differ.
+    parent = aseDatasetLoader("mix.xyz", atomsList=[Atoms("H2O"), Atoms("H2O"), Atoms("H2")])
+    parent.initialise()
+    frozen = DatasetView.frozenSubset(parent, None, np.array([0, 1]), "E")
     frozen.initialise()
     told = []
     env = types.SimpleNamespace(
@@ -47,3 +52,13 @@ def test_atoms_extracted_from_a_frozen_subset_need_only_its_structures():
     Environment.createAtomFilteredDataset(env, frozen, [0, 2])
     assert told == [(control.CREATE_SUBSET,
                      {"parent_fingerprint": frozen.fingerprint, "indices": [0, 2]})]
+
+
+def test_elements_extracted_from_a_frozen_subset_keep_its_frames():
+    parent = _variable()
+    frozen = DatasetView.frozenSubset(parent, None, np.array([3, 1]), "E")
+    frozen.initialise()
+    carbons = DatasetView.elementSubset(frozen, [6])
+    carbons.initialise()
+    assert carbons.getN() == 2
+    assert [carbons.getElements(i).tolist() for i in range(2)] == [[], [6]]

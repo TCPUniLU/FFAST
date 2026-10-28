@@ -78,6 +78,8 @@ export const IN = Object.freeze({
   METRICS_UPDATED: 'METRICS_UPDATED',
   TAB_LAYOUT: 'TAB_LAYOUT',
   SUBSET_EXPORTED: 'SUBSET_EXPORTED',
+  // Outcome of CREATE_SUBSET: {ok, text, error} ("C in 812 of 1000 frames").
+  SUBSET_EXTRACTED: 'SUBSET_EXTRACTED',
   // Outcome of SAVE_SESSION / LOAD_SESSION, carrying {ok, path, error}.
   // Replaced guessing from TASK_DONE, which names no operation (ADR 0050).
   SESSION_SAVED: 'SESSION_SAVED',

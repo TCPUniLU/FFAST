@@ -430,35 +430,56 @@ class ServerSession:
             logger.warning("SET_DATASET_UNIT: %s", exc)
 
     async def _on_create_subset(self, parent_fingerprint, indices, **kwargs) -> None:
-        """Extract an atom-filtered subset dataset (ADR 0045 issue 12).
+        """Extract an atom subset or an element subset (ADR 0045 issue 12, ADR 0067).
 
         ``indices`` is the mixed spec the view "hide atoms" filter accepts —
-        integers and element-symbol tokens ("C", "-H"). It is resolved here
-        against the parent's frame-0 composition (the same ``_resolve_filter_indices``
-        the scene builder uses), then materialized through the existing
-        in-process ``createAtomFilteredDataset``. The new dataset announces
-        itself via the ``DATASET_LOADED`` → ``REMOTE_DATASET_META`` subscriber,
-        so there is nothing to emit here.
+        integers and element-symbol tokens ("C", "-H"). Elements alone make an
+        element subset, which tests each atom's own element in every frame.
+        Atom numbers make an atom subset, resolved against frame 0, and are
+        refused when the structures differ: atom 3 is then a different atom in
+        each. The new dataset announces itself via the ``DATASET_LOADED`` →
+        ``REMOTE_DATASET_META`` subscriber; the window that asked hears the
+        outcome (``SUBSET_EXTRACTED``), or why it was refused.
         """
-        from ffast.visualization.scene_builder import _resolve_filter_indices
+        from ffast.loaders.dataset import atomNumbersRefusal, structuresDiffer
+        from ffast.protocol.rpc import pack
+        from ffast.visualization.scene_builder import (
+            _resolve_filter_indices, parse_filter_tokens, resolve_element_tokens)
+
+        async def _reply(text=None, error=None):
+            await self._emit(pack(control.SUBSET_EXTRACTED, (),
+                                  {"ok": error is None, "text": text, "error": error}))
 
         parent = self.env.datasets.get(parent_fingerprint)
         if parent is None:
             logger.warning("CREATE_SUBSET: parent %r not found", parent_fingerprint)
+            await _reply(error="That dataset is no longer loaded.")
             return
+        tokens = parse_filter_tokens(list(indices or []))
         try:
-            z = parent.getElements(0)
-            idxs = _resolve_filter_indices(list(indices or []), z)
-        except Exception as exc:
-            logger.warning("CREATE_SUBSET: index resolution failed: %s", exc)
+            if tokens.atoms and structuresDiffer(parent):
+                raise ValueError(atomNumbersRefusal(tokens.atoms[0]))
+            if tokens.atoms:
+                idxs = _resolve_filter_indices(list(indices), parent.getElements(0))
+                if not idxs:
+                    raise ValueError("Those atoms leave nothing to extract.")
+                self.env.createAtomFilteredDataset(parent, idxs)
+                text = f"{len(idxs)} atom(s) of every frame"
+            else:
+                kept = resolve_element_tokens(list(indices or []),
+                                              np.unique(parent.getAllElements()))
+                view = self.env.createElementSubset(parent, kept)
+                text = (f"{view.elementSymbols()} in {view.framesHoldingAtoms()} "
+                        f"of {view.getN()} frames")
+        except ValueError as exc:
+            logger.info("CREATE_SUBSET refused: %s", exc)
+            await _reply(error=str(exc))
             return
-        if not idxs:
-            logger.warning("CREATE_SUBSET: %r resolved to no atoms", indices)
-            return
-        try:
-            self.env.createAtomFilteredDataset(parent, idxs)
         except Exception as exc:
-            logger.warning("CREATE_SUBSET: createAtomFilteredDataset failed: %s", exc)
+            logger.warning("CREATE_SUBSET: extract failed: %s", exc)
+            await _reply(error=str(exc))
+            return
+        await _reply(text=text)
 
     async def _on_declare_subset(self, parent_fingerprint, indices=None, **kwargs) -> None:
         """Declare, update or hide a frame-index SubDataset (subbing).
@@ -1142,10 +1163,11 @@ class ServerSession:
         import os
         from ffast.protocol.rpc import pack
 
-        async def _reply(ok: bool, resolved: str, error: str | None = None, n: int = 0):
+        async def _reply(ok: bool, resolved: str, error: str | None = None, n: int = 0,
+                         skipped: int = 0):
             data = pack(
                 control.SUBSET_EXPORTED, (),
-                {"ok": ok, "path": resolved, "error": error, "n": n},
+                {"ok": ok, "path": resolved, "error": error, "n": n, "skipped": skipped},
             )
             await self._emit(data)
 
@@ -1169,10 +1191,11 @@ class ServerSession:
             parent = os.path.dirname(resolved)
             if parent and not os.path.exists(parent):
                 os.makedirs(parent, exist_ok=True)
-            await asyncio.to_thread(saver.saveDataset, dataset, resolved, fmt)
-            n = int(dataset.getN())
+            # Frames with no atoms (an element subset's) are left out and counted.
+            skipped = int(await asyncio.to_thread(saver.saveDataset, dataset, resolved, fmt) or 0)
+            n = int(dataset.getN()) - skipped
             logger.info("EXPORT_SUBSET: wrote %d structure(s) → %s", n, resolved)
-            await _reply(True, resolved, n=n)
+            await _reply(True, resolved, n=n, skipped=skipped)
         except Exception as exc:
             logger.warning("EXPORT_SUBSET: write failed for %r: %s", resolved, exc)
             await _reply(False, resolved, error=str(exc))

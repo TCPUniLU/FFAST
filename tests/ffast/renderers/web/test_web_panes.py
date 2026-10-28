@@ -88,6 +88,16 @@ CASES = {
     "extract_isolated": """(() => { const {pane, host} = mk(ep, 'createExtractPane');
       const s = {indices: ''}; const t = {indices: '7'};
       pane.show(s); pane.show(t); pane.setPickedIndices([1]); return [s, t]; })()""",
+    "extract_dataset_and_result": """(() => { const {pane, host} = mk(ep, 'createExtractPane');
+      const box = ctl(host, 'Indices'); const pane_el = host.firstElementChild;
+      const hint = () => { const h = host.querySelector('.ctl-hint');
+        return [h.textContent, h.classList.contains('ok'), h.style.display !== 'none']; };
+      pane.setDataset({is_sub: false, variable: true}); const variable = [box.placeholder, pane_el.style.display];
+      pane.setDataset({is_sub: false}); const uniform = box.placeholder;
+      pane.setDataset({is_sub: true, frozen: false}); const live = pane_el.style.display;
+      pane.showResult({ok: true, text: 'C in 812 of 1000 frames'}); const made = hint();
+      pane.showResult({ok: false, error: 'N is not in this dataset.'}); const refused = hint();
+      return {variable, uniform, live, made, refused}; })()""",
     # ── bonds ───────────────────────────────────────────────────────────────
     "bonds_show": """(() => { const {pane, host, calls} = mk(bp, 'createBondsPane', {getDynamicBondPairs: () => [[0, 1]]});
       pane.show({width: 40, color: '#ff0000', bondType: 'Fixed', fixedIndices: [[0, 1], [2, 3]]});
@@ -321,6 +331,16 @@ def test_extract_shows_writes_and_clears_its_indices(results):
 def test_extract_changes_after_a_new_show_leave_the_old_settings_alone(results):
     s, t = results["extract_isolated"]
     assert s == {"indices": ""} and t == {"indices": "1"}
+
+
+def test_extract_takes_elements_only_where_structures_differ_and_shows_the_answer(results):
+    """ADR 0067: atom numbers are refused there; the server's answer shows."""
+    r = results["extract_dataset_and_result"]
+    assert r["variable"] == ["Elements, e.g. C  or  -H", ""]
+    assert r["uniform"] == "e.g. 0 1 2  or  C  -H"
+    assert r["live"] == "none"
+    assert r["made"] == ["Extracted C in 812 of 1000 frames", True, True]
+    assert r["refused"] == ["N is not in this dataset.", False, True]
 
 
 # ── bonds ───────────────────────────────────────────────────────────────────

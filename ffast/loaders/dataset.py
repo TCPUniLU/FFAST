@@ -749,6 +749,28 @@ class FlatDatasetLoader(DatasetLoader):
         ]
 
 
+def structuresDiffer(dataset):
+    """Whether atom k is not the same element in every structure of
+    ``dataset``: their sizes or their element lists differ. A frozen subset of
+    a variable file may hold structures that do not."""
+    if not getattr(dataset, "isVariable", False):
+        return False
+    counts = np.diff(np.asarray(dataset.getOffsets()))
+    if counts.size == 0:
+        return False
+    if (counts != counts[0]).any():
+        return True
+    z = np.asarray(dataset.getAllElements()).reshape(counts.size, -1)
+    return bool((z != z[0]).any())
+
+
+def atomNumbersRefusal(atom):
+    """Why atom numbers cannot pick atoms of a dataset whose structures
+    differ (ADR 0067)."""
+    return (f"The structures of this dataset differ, so atom {atom} is a different atom "
+            f"in each.\n\nExtract by element instead (e.g. C or -H).")
+
+
 class DatasetView(DatasetLoader):
     """Everything cut from another dataset (ADR 0058, decision 2).
 
@@ -758,12 +780,17 @@ class DatasetView(DatasetLoader):
     translation is written once, here, and holds for any parent, a view
     included: a subset of a subset is a view whose parent is a view.
 
-    The subset, frozen subset and atom subset users see are states of a view:
+    The subset, frozen subset, atom subset and element subset users see are
+    states of a view:
 
     - a subset follows a plot's zoom (``live``): ``setIndices`` moves its frames;
     - a frozen subset keeps the frames it was frozen with;
     - an atom subset keeps the same atoms in every frame. It is refused when a
-      structure lacks one of them, so it never holds a frame it cannot answer.
+      structure lacks one of them, so it never holds a frame it cannot answer,
+      and below a variable parent, where atom 0 is a different atom in each
+      structure;
+    - an element subset (``elements``, ADR 0067) keeps, in every frame, the
+      atoms of those elements. A frame without them stays, empty.
 
     Each state keeps the fingerprint formula it had as a class of its own.
     Answers follow the parent's kind: (frames, atoms, ...) arrays below a
@@ -773,7 +800,8 @@ class DatasetView(DatasetLoader):
     loadeeType = "dataset"
     isSubDataset = True
 
-    def __init__(self, parent, frames=None, atoms=None, model=None, subName=None, live=False):
+    def __init__(self, parent, frames=None, atoms=None, model=None, subName=None, live=False,
+                 elements=None):
         super().__init__("")
         self.parent = parent
         self.model = model
@@ -783,7 +811,13 @@ class DatasetView(DatasetLoader):
         # Kept as given (np.asarray only), since the fingerprint hashes them.
         self.frames = None if frames is None else np.asarray(frames)
         self.atoms = None if atoms is None else np.asarray(atoms)
+        # The atomic numbers an element subset keeps, sorted (the fingerprint
+        # hashes them), and which of the parent's flat atoms that makes.
+        self.elements = None if elements is None else sorted(int(z) for z in elements)
+        self._kept = None
         if self.atoms is not None:
+            if structuresDiffer(self.parent):
+                raise ValueError(atomNumbersRefusal(int(np.min(self.atoms))))
             self._checkEveryStructureHas(self.atoms)
         self.updatePath()
 
@@ -802,6 +836,11 @@ class DatasetView(DatasetLoader):
     def atomSubset(cls, parent, atoms):
         """The same atoms of every frame."""
         return cls(parent, atoms=atoms)
+
+    @classmethod
+    def elementSubset(cls, parent, elements):
+        """The atoms of these atomic numbers, in every frame (ADR 0067)."""
+        return cls(parent, elements=elements)
 
     # ── fingerprints: one formula per state, unchanged from the old classes ──
 
@@ -823,9 +862,18 @@ class DatasetView(DatasetLoader):
     def atomSubsetFingerprint(parent, atoms):
         return md5FromArraysAndStrings(parent.fingerprint, atoms)
 
+    @staticmethod
+    def elementSubsetFingerprint(parent, elements):
+        """Parent and the elements kept: "C" and "C -H" of a carbon and
+        hydrogen dataset keep the same, so they are one subset."""
+        kept = np.asarray(sorted(int(z) for z in elements), dtype=np.int64)
+        return md5FromArraysAndStrings(parent.fingerprint, "elements", kept)
+
     def getFingerprint(self):
         if self.atoms is not None:
             return self.atomSubsetFingerprint(self.parent, self.atoms)
+        if self.elements is not None:
+            return self.elementSubsetFingerprint(self.parent, self.elements)
         if self.live:
             return self.subsetFingerprint(self.parent, self.model, self.subName)
         return self.frozenFingerprint(self.parent, self.model, self.subName, self.frames)
@@ -834,11 +882,11 @@ class DatasetView(DatasetLoader):
 
     @property
     def isAtomFiltered(self):
-        return self.atoms is not None
+        return self.atoms is not None or self.elements is not None
 
     @property
     def frozen(self):
-        return self.atoms is None and not self.live
+        return not self.isAtomFiltered and not self.live
 
     @property
     def isVariable(self):
@@ -848,7 +896,17 @@ class DatasetView(DatasetLoader):
     def datasetName(self):
         if self.atoms is not None:
             return "Atom-Filtered Dataset"
+        if self.elements is not None:
+            return "Element Subset"
         return "SubDataset" if self.live else "SubDataset (frozen)"
+
+    def elementSymbols(self):
+        """The element subset's elements, as "C, O"."""
+        return ", ".join(self.zIntToZStr.get(z, str(z)) for z in self.elements)
+
+    def framesHoldingAtoms(self):
+        """How many frames hold at least one of the view's atoms."""
+        return int(np.count_nonzero(np.diff(np.asarray(self.getOffsets()))))
 
     def setIndices(self, indices):
         """Move a live subset to new parent frames. Other states keep theirs."""
@@ -861,6 +919,8 @@ class DatasetView(DatasetLoader):
     def updatePath(self):
         if self.atoms is not None:
             self.path = f"{self.parent.getName()},atomFilter"
+        elif self.elements is not None:
+            self.path = f"{self.parent.getName()},{self.elementSymbols().replace(', ', ' ')}"
         elif self.model is None:
             self.path = f"{self.subName},{self.parent.getName()}"
         else:
@@ -884,8 +944,29 @@ class DatasetView(DatasetLoader):
     def _frameIdx(self):
         return self.frames.astype(np.int64, copy=False).reshape(-1)
 
-    def _atomIdx(self):
-        return self.atoms.astype(np.int64, copy=False).reshape(-1)
+    def _sameAtoms(self):
+        """The parent atom rows the view keeps in every frame: an atom subset's
+        atoms, or an element subset's below a uniform parent. None when the
+        view keeps every atom, or when its atoms change from frame to frame."""
+        if self.atoms is not None:
+            return self.atoms.astype(np.int64, copy=False).reshape(-1)
+        if self.elements is not None and not self.isVariable:
+            return np.flatnonzero(np.isin(np.asarray(self.parent.getElements()), self.elements))
+        return None
+
+    def _keptFlat(self):
+        """Which of the parent's flat atoms an element subset keeps."""
+        if self._kept is None:
+            self._kept = np.isin(np.asarray(self.parent.getAllElements()), self.elements)
+        return self._kept
+
+    def _atomsOf(self, frame):
+        """The parent atom rows the view keeps in parent frame ``frame``."""
+        same = self._sameAtoms()
+        if same is not None:
+            return same
+        offsets = np.asarray(self.parent.getOffsets())
+        return np.flatnonzero(self._keptFlat()[int(offsets[frame]):int(offsets[frame + 1])])
 
     def _checkEveryStructureHas(self, atoms):
         counts = np.diff(np.asarray(self.parent.getOffsets()))
@@ -918,33 +999,48 @@ class DatasetView(DatasetLoader):
             return int(frames[indices])
         return frames[np.asarray(indices, dtype=np.int64)]
 
-    def _maskAtoms(self, values, oneFrame):
-        """Keep the view's atoms of a per-atom answer, in either kind's shape."""
-        if self.atoms is None or values is None:
+    def _maskAtoms(self, values, indices):
+        """Keep the view's atoms of a per-atom answer for frame(s) ``indices``
+        (one, several, or all when None), in either kind's shape."""
+        if not self.isAtomFiltered or values is None:
             return values
-        atoms = self._atomIdx()
-        if oneFrame:
+        same = self._sameAtoms()
+        if isOneFrame(indices):
+            atoms = same if same is not None else self._atomsOf(int(self._parentIndex(indices)))
             return np.asarray(values)[atoms]
-        if isinstance(values, list):
-            return [np.asarray(v)[atoms] for v in values]
-        return np.asarray(values)[:, atoms]
+        if same is not None:
+            if isinstance(values, list):
+                return [np.asarray(v)[same] for v in values]
+            return np.asarray(values)[:, same]
+        frames = np.atleast_1d(self._parentFrames() if indices is None else self._parentIndex(indices))
+        return [np.asarray(v)[self._atomsOf(int(f))] for v, f in zip(values, frames)]
+
+    def keepAtoms(self, values):
+        """The view's atoms of a per-atom answer over all of the parent's
+        frames, such as the parent's predicted forces."""
+        return self._maskAtoms(values, None)
 
     def _flatIndex(self):
         """Where each of the view's atoms sits in the parent's flat arrays."""
         offsets = np.asarray(self.parent.getOffsets())
         frames = self._parentFrames()
         starts = offsets[frames]
-        if self.atoms is not None:
-            return (starts[:, None] + self._atomIdx()[None, :]).reshape(-1)
+        same = self._sameAtoms()
+        if same is not None:
+            return (starts[:, None] + same[None, :]).reshape(-1)
         counts = offsets[frames + 1] - starts
         within = np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
-        return np.repeat(starts, counts) + within
+        flat = np.repeat(starts, counts) + within
+        if self.elements is not None:
+            flat = flat[self._keptFlat()[flat]]
+        return flat
 
     def _parentRows(self, frame, atoms):
         """The parent's frame number and atom rows for one frame's atoms."""
-        if self.atoms is not None:
-            atoms = self._atomIdx()[atoms]
-        return int(self._parentIndex(int(frame))), atoms
+        parentFrame = int(self._parentIndex(int(frame)))
+        if self.isAtomFiltered:
+            atoms = self._atomsOf(parentFrame)[atoms]
+        return parentFrame, atoms
 
     # ── per frame ──
 
@@ -953,11 +1049,11 @@ class DatasetView(DatasetLoader):
 
     def getCoordinates(self, indices=None):
         values = self.parent.getCoordinates(indices=self._parentIndex(indices))
-        return self._maskAtoms(values, isOneFrame(indices))
+        return self._maskAtoms(values, indices)
 
     def getForces(self, indices=None):
         values = self.parent.getForces(indices=self._parentIndex(indices))
-        return self._maskAtoms(values, isOneFrame(indices))
+        return self._maskAtoms(values, indices)
 
     def getEnergies(self, indices=None):
         return self.parent.getEnergies(indices=self._parentIndex(indices))
@@ -967,31 +1063,34 @@ class DatasetView(DatasetLoader):
 
     def getElements(self, index=None):
         if isOneFrame(index):
-            return self._maskAtoms(self.parent.getElements(self._parentIndex(index)), True)
+            return self._maskAtoms(self.parent.getElements(self._parentIndex(index)), index)
         if self.isVariable:
             return self.getAllElements()
         # Uniform parent: one structure's elements, shared by all frames.
-        return self._maskAtoms(self.parent.getElements(), True)
+        same = self._sameAtoms()
+        elements = self.parent.getElements()
+        return elements if same is None else np.asarray(elements)[same]
 
     def getNAtoms(self, index=None):
         if isOneFrame(index):
-            if self.atoms is not None:
-                return len(self._atomIdx())
+            if self.isAtomFiltered:
+                return len(self._atomsOf(int(self._parentIndex(index))))
             return self.parent.getNAtoms(self._parentIndex(index))
         if self.isVariable:
             return np.diff(np.asarray(self.getOffsets()))
-        return len(self._atomIdx()) if self.atoms is not None else self.parent.getNAtoms()
+        same = self._sameAtoms()
+        return len(same) if same is not None else self.parent.getNAtoms()
 
     def getBondMatrix(self, index):
         """The parent frame's bonds between the view's atoms."""
         bonds = self.parent.getBondMatrix(self._parentIndex(index))
-        if self.atoms is None:
+        if not self.isAtomFiltered:
             return bonds
-        atoms = self._atomIdx()
+        atoms = self._atomsOf(int(self._parentIndex(index)))
         return np.asarray(bonds)[np.ix_(atoms, atoms)]
 
     def getPDist(self, indices=None):
-        if self.atoms is None:
+        if not self.isAtomFiltered:
             return self.parent.getPDist(indices=self._parentIndex(indices))
         if self.isVariable:
             return FlatDatasetLoader.getPDist(self, indices)
@@ -1002,7 +1101,7 @@ class DatasetView(DatasetLoader):
 
     def getAtomField(self, key, indices=None):
         values = self.parent.getAtomField(key, indices=self._parentIndex(indices))
-        return self._maskAtoms(values, isOneFrame(indices))
+        return self._maskAtoms(values, indices)
 
     def availableFieldKeys(self):
         return self.parent.availableFieldKeys()
@@ -1013,12 +1112,19 @@ class DatasetView(DatasetLoader):
     # ── all frames (ADR 0058, decision B): the parent's flat arrays, cut ──
 
     def getOffsets(self):
-        if self.atoms is not None:
-            counts = np.full(self.getN(), len(self._atomIdx()), dtype=np.int64)
+        same = self._sameAtoms()
+        if same is not None:
+            counts = np.full(self.getN(), len(same), dtype=np.int64)
         else:
             offsets = np.asarray(self.parent.getOffsets())
             frames = self._parentFrames()
-            counts = offsets[frames + 1] - offsets[frames]
+            if self.elements is not None:
+                # Kept atoms before each parent atom: a frame's count is the
+                # difference at its two ends, zero for a frame without them.
+                kept = np.concatenate([[0], np.cumsum(self._keptFlat())])
+                counts = kept[offsets[frames + 1]] - kept[offsets[frames]]
+            else:
+                counts = offsets[frames + 1] - offsets[frames]
         return _readOnly(np.concatenate([[0], np.cumsum(counts)]).astype(np.int64))
 
     def getAllElements(self):
@@ -1047,13 +1153,13 @@ class DatasetView(DatasetLoader):
             counts = np.diff(np.asarray(self.getOffsets()))
             if counts.size == 0:
                 return "0 atoms"
-            if self.atoms is not None:
-                # Same atoms in every frame: name them when their elements agree.
+            if self.elements is not None and counts.min() == counts.max() > 0:
+                # The same elements in every frame: name them when they agree.
                 z = np.asarray(self.getAllElements()).reshape(counts.size, -1)
                 if (z == z[0]).all():
                     return self.zToChemicalFormula(z[0])
             return f"Variable ({counts.min()}-{counts.max()} atoms)"
-        if self.atoms is None:
+        if not self.isAtomFiltered:
             return self.parent.getChemicalFormula()
         return self.zToChemicalFormula(self.getElements())
 
@@ -1067,7 +1173,13 @@ class DatasetView(DatasetLoader):
             return [
                 ("Parent", self.parent.getDisplayName()),
                 ("Viewed Elements", ",".join(set(self.getElementsName()))),
-                ("Atoms", ", ".join(str(a) for a in self._atomIdx())),
+                ("Atoms", ", ".join(str(a) for a in self._sameAtoms())),
+            ]
+        if self.elements is not None:
+            return [
+                ("Parent", self.parent.getDisplayName()),
+                ("Elements", self.elementSymbols()),
+                ("Frames holding them", f"{self.framesHoldingAtoms()} of {self.getN()}"),
             ]
         model = "None" if self.model is None else self.model.getDisplayName()
         frames = self._frameIdx()
