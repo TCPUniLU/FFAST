@@ -5170,6 +5170,15 @@ async def test_web_alignment_pane_wires_kabsch_and_exclusive_modes(ffast_web_ser
 
 # JS predicate: the named analysis panel in the active tab has rendered a Plotly
 # plot with at least one plotted data point.
+# A plot drawn at its element's size: not stretched by followSize while a
+# slow plot waits to be drawn again (docs/issues/0063-01).
+_PLOT_SETTLED = """(el) => {
+  const layout = el._fullLayout;
+  return !!layout && [...el.querySelectorAll('.main-svg')].every((svg) => !svg.style.transform)
+    && Math.abs(layout.width - el.clientWidth) < 1 && Math.abs(layout.height - el.clientHeight) < 1;
+}"""
+
+
 _PANEL_HAS_POINTS = """(title) => {
   const el = document.querySelector(
     `#tabpanels .tabpanel.active .analysis-panel[data-title="${title}"] .panel-plot`);
@@ -5251,30 +5260,36 @@ async def test_web_a_timeline_labels_its_five_worst_frames_and_a_label_opens_one
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
-            await _expect_connected(page)
-            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
-            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            # Failed once under full-suite load (docs/issues/0063-01).
+            async with _keep_trace_on_failure(page, "peak-label-click"):
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+                await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
 
-            await _open_analysis_tab(page, "Basic Errors")
-            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
-            labels = page.locator(_sub_panel("Forces MAE timeline") + " .panel-plot .annotation")
-            await expect(labels).to_have_count(0)   # peak labels start off
-            await page.locator(_sub_panel("Forces MAE timeline") + " .peaks-toggle input").check()
-            await expect(labels).to_have_count(5)
-            texts = await labels.evaluate_all("els => els.map((e) => e.textContent)")   # SVG has no innerText
-            frames = [int(t.split(" · ")[0]) for t in texts]
-            assert frames == sorted(frames) and len(set(frames)) == 5, texts
+                await _open_analysis_tab(page, "Basic Errors")
+                await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+                labels = page.locator(_sub_panel("Forces MAE timeline") + " .panel-plot .annotation")
+                await expect(labels).to_have_count(0)   # peak labels start off
+                await page.locator(_sub_panel("Forces MAE timeline") + " .peaks-toggle input").check()
+                await expect(labels).to_have_count(5)
+                texts = await labels.evaluate_all("els => els.map((e) => e.textContent)")   # SVG has no innerText
+                frames = [int(t.split(" · ")[0]) for t in texts]
+                assert frames == sorted(frames) and len(set(frames)) == 5, texts
 
-            target = frames[-1]
-            await labels.nth(4).click()
-            await expect(page.locator("#frame-label")).to_have_text(f"{target} / 99")
-            # Opening a frame moves to the 3D view; back on the tab, the label is ticked.
-            await _open_analysis_tab(page, "Basic Errors")
-            done = await page.locator(
-                _sub_panel("Forces MAE timeline") + " .panel-plot .annotation"
-            ).evaluate_all("els => els.map((e) => e.textContent)")
-            assert done[4].endswith("✓") and not any(t.endswith("✓") for t in done[:4]), done
+                target = frames[-1]
+                # Peaks make the plot taller; a slow machine shows it stretched and
+                # draws it again 150 ms later, moving the labels. Click after that.
+                plot = await page.locator(_sub_panel("Forces MAE timeline") + " .panel-plot").element_handle()
+                await page.wait_for_function(_PLOT_SETTLED, arg=plot, timeout=10000)
+                await labels.nth(4).click()
+                await expect(page.locator("#frame-label")).to_have_text(f"{target} / 99")
+                # Opening a frame moves to the 3D view; back on the tab, the label is ticked.
+                await _open_analysis_tab(page, "Basic Errors")
+                done = await page.locator(
+                    _sub_panel("Forces MAE timeline") + " .panel-plot .annotation"
+                ).evaluate_all("els => els.map((e) => e.textContent)")
+                assert done[4].endswith("✓") and not any(t.endswith("✓") for t in done[:4]), done
         finally:
             await browser.close()
 
