@@ -319,6 +319,9 @@ class TestPredictionForces:
     """Covers the wiring that was missing before predictions reached the web
     renderer: server._make_get_prediction → build_scene → ForceScene."""
 
+    # raw forces, scaled by length / 500 == 1, so the vectors read as the data
+    _UNSCALED = {"ffast.force_arrows": {"normalised": False, "length_factor": 500}}
+
     def _get_prediction(self, env):
         import asyncio
         from ffast.session.server_session import ServerSession
@@ -348,7 +351,7 @@ class TestPredictionForces:
         # Force arrows require explicit opt-in via the "forces" feature flag.
         state = VisualizationState(
             view_id="v1", dataset_ref=env.DS_FP, prediction_ref=env.MODEL_FP,
-            enabled_features=["forces"],
+            enabled_features=["forces"], parameters=self._UNSCALED,
         )
         scene = build_scene(state, env.getDataset, self._get_prediction(env))
         assert scene.forces is not None
@@ -379,7 +382,7 @@ class TestPredictionForces:
         state = VisualizationState(
             view_id="v1", dataset_ref=env.DS_FP,
             prediction_ref=env.MODEL_FP, structure_index=2,
-            enabled_features=["forces"],
+            enabled_features=["forces"], parameters=self._UNSCALED,
         )
         scene = build_scene(state, env.getDataset, self._get_prediction(env))
         assert scene.forces.vectors[0] == pytest.approx([0.3, 0.3, 0.3])
@@ -1085,6 +1088,24 @@ class TestForceSceneFilterRemap:
             params={"filter_enabled": True, "atom_indices": [0]},
         )
         assert scene is None
+
+
+class TestForceSceneDefaultScaling:
+    def test_no_arrow_parameters_still_scales_to_defaults(self):
+        """The first show of the arrows builds a scene before the client's
+        length settings arrive: the arrows must already be at default length,
+        not raw eV/Å drawn as Å (they flashed long, then shrank)."""
+        from ffast.visualization.scene_builder import _build_force_scene
+        scene = _build_force_scene(
+            positions=np.zeros((2, 3)),
+            forces=np.array([[8.0, 0, 0], [4.0, 0, 0]]),
+            keep=None,
+            old_to_new=None,
+            transforms=[],
+            params={},
+        )
+        # normalised by default: the largest force is length 10 / 5 == 2 Å
+        assert scene.vectors == [[2.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
 
 
 class TestBuildSceneElementFilter:

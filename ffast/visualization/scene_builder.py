@@ -446,15 +446,16 @@ def _build_force_scene(
         if transform.ndim == 2:
             forces = forces @ transform
 
-    if params:
-        length = float(params.get("length_factor", FORCE_LENGTH_FACTOR))
-        normalised = bool(params.get("normalised", FORCE_NORMALISED))
-        norms = np.linalg.norm(forces, axis=1)
-        max_norm = float(norms.max()) if len(norms) else 0.0
-        if normalised and max_norm > 1e-10:
-            forces = forces / max_norm * length / FORCE_NORMALISED_DIVISOR
-        else:
-            forces = forces * length / FORCE_RAW_DIVISOR
+    # Scale even with no parameters yet: the first show builds a scene before
+    # the client's length settings arrive, and raw eV/Å drawn as Å flashed long.
+    length = float(params.get("length_factor", FORCE_LENGTH_FACTOR))
+    normalised = bool(params.get("normalised", FORCE_NORMALISED))
+    norms = np.linalg.norm(forces, axis=1)
+    max_norm = float(norms.max()) if len(norms) else 0.0
+    if normalised and max_norm > 1e-10:
+        forces = forces / max_norm * length / FORCE_NORMALISED_DIVISOR
+    else:
+        forces = forces * length / FORCE_RAW_DIVISOR
 
     colors = [list(FORCE_ARROW_COLOR)] * len(force_positions)
     return ForceScene(
