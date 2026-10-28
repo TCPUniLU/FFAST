@@ -82,6 +82,17 @@ export function createForcesPane(sidebarEl, callbacks) {
       if (!state.filterEnabled) { state.filterEnabled = true; filterInput.checked = true; }
       apply();
     },
+    /** The Force tool was armed: arrows go on, on every atom until the
+     * first pick narrows them (to_fix_v2). */
+    armShow() {
+      if (state.show) return;
+      state.show = true;
+      showInput.checked = true;
+      _syncVisibility();
+      apply();
+    },
+    /** The atoms the filter keeps now. */
+    pickedIndices() { return [...state.atomIndices]; },
     /** Set show/source and, for a view of its own, the rest without firing
      * onApply (per-dataset and per-panel restore). */
     setState(show, modelKey, extras = {}) {

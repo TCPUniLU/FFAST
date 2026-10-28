@@ -644,6 +644,7 @@ CASES = {
     "grouped_density_cpk": "pn.buildPanel({kind:'grouped_density'}, [{name:'M', data:{value:{nd:{values:[0,1,2,3, 4,5,6,7], shape:[2,2,2]}}}}], {elementOrder:[1,6], selectedElements:[1,6]}).traces.map(t => t.line.color)",
     "grouped_density_cpk_expected": "[1, 6].map(z => ec.elementColourOn(z, th.plotTheme().surface))",
     "hint_others": "[hn.toolHint('bonds', 0), hn.toolHint('bonds', 1), hn.toolHint('align', 2), hn.toolHint('forces', 0), hn.toolHint('extract', 3), hn.toolHint('zzz', 0), hn.toolHint('extract', 0), hn.toolHint('extract', 1), hn.toolHintKey('info')]",
+    "hint_forces_picked": "hn.toolHint('forces', 2)",
     "arrow_long": "ar.arrowParts(2, 1)",
     "arrow_thick": "ar.arrowParts(2, 2)",
     "arrow_short": "ar.arrowParts(0.125, 1)",
@@ -2041,7 +2042,10 @@ def test_pick_tool_hints_follow_the_pick_count(results):
     text = lambda steps: "".join("".join(step) for step in steps)
     assert text(bonds0).startswith("Click 2 atoms") and "one more atom" in text(bonds1)
     assert "2 of 3" in text(align2)
-    assert forces == [["Click atoms or drag a box. ", "Esc", " stops"]]
+    # to_fix_v2: arming Force says arrows are on, and how to narrow them
+    assert forces == [["Arrows on all atoms. ", "Click atoms or drag a box", " to keep arrows only on those"],
+                      ["", "Esc", " stops"]]
+    assert results["hint_forces_picked"] == [["2 atoms with arrows. ", "Click more", " to add"], ["", "Esc", " stops"]]
     # Extract says what it is for, then how to finish.
     assert text(extract0).startswith("Makes a new dataset with only the atoms you pick")
     assert text(extract).startswith("3 atoms in the Extract box") and "Extract as Subset Dataset" in text(extract)

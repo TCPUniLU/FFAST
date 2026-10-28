@@ -66,7 +66,7 @@ const PICK_TOOLS = {
   align:   { label: 'Align',   icon: 'align', multiselect: 3, section: 'Alignment',
     tip: 'Click three atoms to align every frame on them' },
   forces:  { label: 'Force',   icon: 'force', multiselect: 10000, rectangle: true, section: 'Force Vectors',
-    tip: 'Click atoms or drag a box to show force arrows on those atoms only' },
+    tip: 'Shows force arrows; click atoms or drag a box to keep them on those atoms only' },
   extract: { label: 'Extract', icon: 'scissors', multiselect: 10000, rectangle: true, section: 'Extract Subset',
     tip: 'Pick atoms to make a new dataset with only those atoms' },
 };
@@ -2081,10 +2081,20 @@ export class FFastApp {
       pick?.arm({ id, ...PICK_TOOLS[id] });
       if (PICK_TOOLS[id].section) this._sections.open(PICK_TOOLS[id].section);
       if (id === 'align') this._panes.align.enableAtomAlignMode();
+      if (id === 'forces') this._armForces();
     } else {
       pick?.disarm();
     }
     this._updatePickStrip();
+  }
+
+  /** Arming Force shows the arrows and picks up the atoms picked before,
+   * so a click adds to them instead of replacing them (to_fix_v2). */
+  _armForces() {
+    this._panes.forces.armShow();
+    const ids = this._panes.forces.pickedIndices();
+    this._picked = ids.map((atomId) => ({ displayIndex: null, atomId }));
+    this._sendSetSelection('picked', 'current_structure', ids);
   }
 
   /** Toggle an entry in the picked set (Qt AtomSelectionBase.selectAtom). */

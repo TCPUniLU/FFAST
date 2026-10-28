@@ -42,6 +42,18 @@ PRELUDE = r"""
 """
 
 CASES = {
+    # ── force vectors (to_fix_v2: arming the Force tool) ────────────────────
+    "force_arm": """(() => { const seen = [];
+      const {pane, host} = mk(fp, 'createForcesPane', {onApply: (s) => seen.push(s.show), getModels: () => new Map()});
+      const shown0 = val(ctl(host, 'Show force vectors'));
+      pane.armShow(); const shown1 = val(ctl(host, 'Show force vectors'));
+      pane.armShow();
+      return {shown0, shown1, applies: seen}; })()""",
+    "force_picks": """(() => { const seen = [];
+      const {pane} = mk(fp, 'createForcesPane', {onApply: (s) => seen.push(s), getModels: () => new Map()});
+      pane.setPickedIndices([3, 5]);
+      return {picked: pane.pickedIndices(), filter: seen[0].filterEnabled, atoms: seen[0].atomIndices}; })()""",
+
     # ── display ─────────────────────────────────────────────────────────────
     "display_show": """(() => { const {pane, host, calls} = mk(dp, 'createDisplayPane');
       pane.show({atomSize: 2, hide: 'C', highlight: '0 1', unitCell: false});
@@ -230,6 +242,7 @@ def results():
         f"  const bp = await import('{origin}/panes/bonds.js');\n"
         f"  const ap = await import('{origin}/panes/align.js');\n"
         f"  const cb = await import('{origin}/panes/colorby.js');\n"
+        f"  const fp = await import('{origin}/panes/forces.js');\n"
         "  const CAT = [{id: 'm.a', label: 'A metric', shape: 'N_atoms', inputs: ['prediction.forces'],\n"
         "    parameters: {norm: {type: 'choice', choices: ['None', 'log'], default: 'None'}}}];\n"
         "  const FCAT = [...CAT, {id: 'm.ref', label: 'Reference only', shape: 'N_atoms', inputs: ['reference.positions']},\n"
@@ -490,3 +503,15 @@ def test_the_prediction_row_offers_what_the_colouring_reads(results):
 def test_color_by_changes_after_a_new_show_leave_the_old_settings_alone(results):
     s, t = results["color_isolated"]
     assert s["colormap"] == "viridis" and t["colormap"] == "bwr"
+
+
+# ── force vectors (to_fix_v2) ───────────────────────────────────────────────
+
+def test_arming_force_turns_the_arrows_on_once(results):
+    r = results["force_arm"]
+    assert r == {"shown0": False, "shown1": True, "applies": [True]}
+
+
+def test_force_picks_are_kept_and_turn_the_filter_on(results):
+    r = results["force_picks"]
+    assert r == {"picked": [3, 5], "filter": True, "atoms": [3, 5]}
