@@ -58,11 +58,17 @@ import { pageCodeFingerprint, serverCodeNotice } from './code_fingerprint.js';
  */
 const PICK_TOOLS = {
   // `section`: the sidebar section arming the tool opens (ADR 0055).
-  info:    { label: 'Info',    icon: 'info', multiselect: 4,     cycle: true },
-  bonds:   { label: 'Bonds',   icon: 'bond', multiselect: 2, section: 'Bonds' },
-  align:   { label: 'Align',   icon: 'align', multiselect: 3, section: 'Alignment' },
-  forces:  { label: 'Force',   icon: 'force', multiselect: 10000, rectangle: true, section: 'Force Vectors' },
-  extract: { label: 'Extract', icon: 'scissors', multiselect: 10000, rectangle: true, section: 'Extract Subset' },
+  // `tip`: what the tool does, on its button.
+  info:    { label: 'Info',    icon: 'info', multiselect: 4,     cycle: true,
+    tip: 'Click atoms to read a position, distance, angle or dihedral' },
+  bonds:   { label: 'Bonds',   icon: 'bond', multiselect: 2, section: 'Bonds',
+    tip: 'Click two atoms to add or remove a bond between them' },
+  align:   { label: 'Align',   icon: 'align', multiselect: 3, section: 'Alignment',
+    tip: 'Click three atoms to align every frame on them' },
+  forces:  { label: 'Force',   icon: 'force', multiselect: 10000, rectangle: true, section: 'Force Vectors',
+    tip: 'Click atoms or drag a box to show force arrows on those atoms only' },
+  extract: { label: 'Extract', icon: 'scissors', multiselect: 10000, rectangle: true, section: 'Extract Subset',
+    tip: 'Pick atoms to make a new dataset with only those atoms' },
 };
 
 /** What each sidebar section is for, behind its "?" (ADR 0055). */
@@ -78,8 +84,11 @@ const SECTION_HELP = {
     + 'list of pairs; the Bonds pick tool adds or removes a pair.',
   'Force Vectors': 'Arrows for the force on each atom. Source is the reference data '
     + '(Ground Truth) or a loaded prediction. The Force pick tool limits the arrows to chosen atoms.',
-  'Extract Subset': 'Makes a new dataset from chosen atoms. Type indices or elements, or arm '
-    + 'the Extract pick tool and click atoms.',
+  'Extract Subset': 'Makes a new dataset that keeps only the atoms you choose, in every frame, '
+    + 'for example one molecule out of a solvent box. Type atom numbers (0 1 2) or elements '
+    + '(C keeps carbon, -H drops hydrogen), or arm the Extract pick tool and click atoms. '
+    + 'Then press Extract as Subset Dataset: the new dataset appears in the list on the left, '
+    + 'and it can be plotted, coloured and exported like any other.',
   'Export': 'Saves the current 3D frame as a PNG, on a background colour or transparent.',
   'Alignment': 'Rotates every frame onto a reference so the motion you see is internal. Kabsch '
     + 'aligns the whole structure; 3-atom frame align uses three atoms you pick or type.',
@@ -2049,7 +2058,7 @@ export class FFastApp {
       glyph.className = 'pick-tool-icon';
       glyph.innerHTML = icon(t.icon);
       btn.append(glyph, t.label);
-      btn.title = `${t.label} pick tool`;
+      btn.title = `${t.label}: ${t.tip}`;
       btn.setAttribute('aria-pressed', 'false');   // a toggle: armed or not
       btn.addEventListener('click', () => this._setActiveTool(this._activeTool === id ? null : id));
       toolbar.appendChild(btn);

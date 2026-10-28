@@ -634,7 +634,7 @@ CASES = {
     "element_colour_on": "[ec.elementColourOn(8, '#1a1d21'), ec.elementColourOn(6, '#1a1d21'), ec.elementColourOn(1, '#ffffff'), ec.elementColourOn(1, '#1a1d21'), ec.elementColourOn(8, 'oklch(1 0 0)')]",
     "grouped_density_cpk": "pn.buildPanel({kind:'grouped_density'}, [{name:'M', data:{value:{nd:{values:[0,1,2,3, 4,5,6,7], shape:[2,2,2]}}}}], {elementOrder:[1,6], selectedElements:[1,6]}).traces.map(t => t.line.color)",
     "grouped_density_cpk_expected": "[1, 6].map(z => ec.elementColourOn(z, th.plotTheme().surface))",
-    "hint_others": "[hn.toolHint('bonds', 0), hn.toolHint('bonds', 1), hn.toolHint('align', 2), hn.toolHint('forces', 0), hn.toolHint('extract', 3), hn.toolHint('zzz', 0), hn.toolHintKey('info')]",
+    "hint_others": "[hn.toolHint('bonds', 0), hn.toolHint('bonds', 1), hn.toolHint('align', 2), hn.toolHint('forces', 0), hn.toolHint('extract', 3), hn.toolHint('zzz', 0), hn.toolHint('extract', 0), hn.toolHint('extract', 1), hn.toolHintKey('info')]",
     "arrow_long": "ar.arrowParts(2, 1)",
     "arrow_thick": "ar.arrowParts(2, 2)",
     "arrow_short": "ar.arrowParts(0.125, 1)",
@@ -1979,11 +1979,15 @@ def test_pick_tool_hints_follow_the_pick_count(results):
     assert "2nd atom for the distance" in info[1] and "3rd atom for the angle" in info[2]
     assert "4th atom for the dihedral" in info[3]
     assert info[4] == info[5] and info[4].startswith("Dihedral shown")
-    bonds0, bonds1, align2, forces, extract, none, key = results["hint_others"]
+    bonds0, bonds1, align2, forces, extract, none, extract0, extract1, key = results["hint_others"]
     text = lambda steps: "".join("".join(step) for step in steps)
     assert text(bonds0).startswith("Click 2 atoms") and "one more atom" in text(bonds1)
     assert "2 of 3" in text(align2)
-    assert forces == extract == [["Click atoms or drag a box. ", "Esc", " stops"]]
+    assert forces == [["Click atoms or drag a box. ", "Esc", " stops"]]
+    # Extract says what it is for, then how to finish.
+    assert text(extract0).startswith("Makes a new dataset with only the atoms you pick")
+    assert text(extract).startswith("3 atoms in the Extract box") and "Extract as Subset Dataset" in text(extract)
+    assert text(extract1).startswith("1 atom in the Extract box")
     assert none is None and key == "tool-info"
 
 

@@ -45,6 +45,11 @@ export function createExtractPane(sidebarEl, callbacks) {
   sidebarEl.appendChild(el);
 
   let state = defaultSettings().extract;   // the shown view's settings
+  // Says what the pane is for without opening its "?" (to_fix_v2).
+  const intro = document.createElement('div');
+  intro.className = 'pane-intro';
+  intro.textContent = 'A new dataset with only these atoms, in every frame.';
+  body.appendChild(intro);
   const indices = textRow(body, 'Indices', '', (text) => { state.indices = text; });
   indices.placeholder = ANY_PLACEHOLDER;
 
@@ -66,7 +71,7 @@ export function createExtractPane(sidebarEl, callbacks) {
     hint.style.display = '';
     callbacks.onExtract(tokens);
   });
-  extractBtn.title = 'Create a new atom-filtered dataset from these indices';
+  extractBtn.title = 'Make a new dataset that keeps only these atoms; it appears in the dataset list';
 
   return {
     /** Reflect the current picked atom-id set into the box (pick tool fill). */

@@ -34,6 +34,12 @@ export function toolHint(tool, picked) {
     case 'align':
       return [['Click 3 atoms: ', `${Math.min(picked, 3)} of 3`, ' make the frame']];
     case 'extract':
+      // What the tool is for, then what to do next (to_fix_v2: it did not say).
+      return picked === 0
+        ? [['Makes a new dataset with only the atoms you pick. ', 'Click atoms or drag a box', ''],
+          ['', 'Esc', ' stops']]
+        : [[`${picked} atom${picked === 1 ? '' : 's'} in the Extract box. `, 'Extract as Subset Dataset',
+          ' makes the new dataset'], ['Click more to add, ', 'Esc', ' stops']];
     case 'forces':
       return [['Click atoms or drag a box. ', 'Esc', ' stops']];
     default:
