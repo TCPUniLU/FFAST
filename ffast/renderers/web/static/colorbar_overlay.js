@@ -6,8 +6,8 @@
  * right-click menu turns a piece (or its group), groups or ungroups the
  * selection, and switches the whole bar between the vertical and horizontal
  * layouts. Dragging snaps to the other pieces, with guide lines. A selected
- * piece shows a grip in its corner that resizes it: the bar's thickness and
- * length, a text's font.
+ * piece shows a grip in its corner that resizes it: the bar's thickness
+ * (across) and length (along) each on its own, a text's font.
  *
  * The geometry is colorbar_layout.js; this file only draws it and listens.
  * One layout serves every colouring, kept in this browser (layout_state.js).
@@ -15,8 +15,8 @@
  */
 
 import {
-  PIECES, barSize, boxesFor, cleanLayout, defaultLayout, groupOf, groupSelection,
-  keepInside, nextRotation, peers, preset, press, resized, rotateBlock, rotateOne, snapDrag, toFractions, ungroup,
+  PIECES, SCALE_RANGE, barSize, boxesFor, cleanLayout, defaultLayout, groupOf, groupSelection,
+  keepInside, nextRotation, peers, preset, press, resized, resizedBar, rotateBlock, rotateOne, snapDrag, toFractions, ungroup,
 } from './colorbar_layout.js';
 import { sharedMenu } from './actions.js';
 import { gradientCss } from './colormap.js';
@@ -50,7 +50,7 @@ export function createColourBar(texts) {
     inner[key].classList.add('cb-inner');
     const grip = document.createElement('div');
     grip.className = 'cb-grip';
-    grip.title = 'Drag to resize';
+    grip.title = key === 'bar' ? 'Drag to resize: across for thickness, along for length' : 'Drag to resize';
     el.append(inner[key], grip);
     root.appendChild(el);
     pieceEls[key] = el;
@@ -78,7 +78,8 @@ export function createColourBar(texts) {
   const textSizes = () => Object.fromEntries(['name', 'max', 'min'].map(
     (k) => [k, { w: inner[k].offsetWidth, h: inner[k].offsetHeight }]));
   /** A piece's upright size at rotation `rot`. */
-  const upright = (key, rot) => (key === 'bar' ? barSize(panel(), layout.sizes.bar, rot) : textSizes()[key]);
+  const upright = (key, rot) => (key === 'bar'
+    ? barSize(panel(), layout.sizes.bar, rot, layout.barThickness) : textSizes()[key]);
 
   function save() {
     saveLayout({ [STORE_KEY]: layout });
@@ -213,9 +214,18 @@ export function createColourBar(texts) {
       if (e.button !== 0 || !boxes) return;
       e.stopPropagation();
       e.preventDefault();
-      const start = { box: { ...boxes[key] }, size: layout.sizes[key], x: e.clientX, y: e.clientY };
+      const start = { box: { ...boxes[key] }, size: layout.sizes[key], thickness: layout.barThickness,
+        x: e.clientX, y: e.clientY };
       drag = { resizing: key };
-      const step = (ev) => resize(key, resized(start.box, start.size, ev.clientX - start.x, ev.clientY - start.y));
+      const step = (ev) => {
+        const dx = ev.clientX - start.x;
+        const dy = ev.clientY - start.y;
+        if (key !== 'bar') { resize(key, resized(start.box, start.size, dx, dy)); return; }
+        // the bar stretches in each direction on its own
+        const { length, thickness } = resizedBar(start.box, start.size, start.thickness, dx, dy);
+        layout.barThickness = thickness;
+        resize(key, length);
+      };
       const stop = () => {
         window.removeEventListener('pointermove', step);
         window.removeEventListener('pointerup', stop);
@@ -269,7 +279,11 @@ export function createColourBar(texts) {
         e.preventDefault();
         const start = boxes[key];
         const grow = e.key === '-' ? -8 : 8;
-        resize(key, resized(start, layout.sizes[key], grow, grow * (start.h / Math.max(1, start.w))));
+        const size = resized(start, layout.sizes[key], grow, grow * (start.h / Math.max(1, start.w)));
+        // from the keyboard the bar keeps its shape: both factors by the same ratio
+        if (key === 'bar') layout.barThickness = Math.min(SCALE_RANGE[1], Math.max(SCALE_RANGE[0],
+          layout.barThickness * size / layout.sizes.bar));
+        resize(key, size);
         commit();
       } else if (e.key === 'r' || e.key === 'R') {
         e.preventDefault();

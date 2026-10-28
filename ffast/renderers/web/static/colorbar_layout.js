@@ -13,7 +13,9 @@
  * one per metric); the page keeps it in browser storage.
  *
  * Each piece also has a size, a factor on its default (`sizes`): the bar's
- * thickness and length, a text's font. It is set with the corner grip a
+ * length, a text's font. The bar's thickness has its own factor
+ * (`barThickness`), so the bar stretches in either direction on its own
+ * (to_fix_v2); a text keeps its shape. Both are set with the corner grip a
  * selected piece shows.
  *
  * Rotation is 0, 90 or -90 degrees, turning the piece's content clockwise for
@@ -41,7 +43,7 @@ const defaultSizes = () => Object.fromEntries(PIECES.map((k) => [k, 1]));
 
 /** The layout with nothing saved: vertical, at the default place and size. */
 export function defaultLayout() {
-  return { orientation: 'vertical', sizes: defaultSizes(), origin: { ...ORIGIN }, pieces: null, groups: [] };
+  return { orientation: 'vertical', sizes: defaultSizes(), barThickness: 1, origin: { ...ORIGIN }, pieces: null, groups: [] };
 }
 
 /** `layout` with anything missing or malformed replaced by the default, so a
@@ -57,11 +59,15 @@ export function cleanLayout(layout) {
       const v = layout.sizes?.[k] ?? (k === 'bar' ? layout.scale : undefined);
       return [k, num(v, ...SCALE_RANGE) ? v : 1];
     })),
+    barThickness: 1,
     origin: layout.origin && num(layout.origin.x, 0, 1) && num(layout.origin.y, 0, 1)
       ? { x: layout.origin.x, y: layout.origin.y } : d.origin,
     pieces: null,
     groups: [],
   };
+  // a layout from before the thickness had its own factor: the bar's size was both
+  const thick = layout.barThickness ?? out.sizes.bar;
+  out.barThickness = num(thick, ...SCALE_RANGE) ? thick : 1;
   const pieces = layout.pieces;
   if (pieces && PIECES.every((k) => pieces[k] && num(pieces[k].x, -1, 2) && num(pieces[k].y, -1, 2)
       && turnsOf(k).includes(pieces[k].rot)))
@@ -86,12 +92,13 @@ export function turned(size, rot) {
   return rot ? { w: size.h, h: size.w } : { w: size.w, h: size.h };
 }
 
-/** The bar's upright size in a panel of `panel` pixels. Upright, its length
- * runs along the panel's height; turned, along its width, so a horizontal
- * bar is not squeezed by a short panel. */
-export function barSize(panel, scale = 1, rot = 0) {
+/** The bar's upright size in a panel of `panel` pixels, at length factor
+ * `scale` and thickness factor `thickness`. Upright, its length runs along
+ * the panel's height; turned, along its width, so a horizontal bar is not
+ * squeezed by a short panel. */
+export function barSize(panel, scale = 1, rot = 0, thickness = scale) {
   const along = rot ? panel.w : panel.h;
-  return { w: Math.round(BAR_THICKNESS * scale), h: Math.max(20, Math.round(along * BAR_LENGTH_FRAC * scale)) };
+  return { w: Math.round(BAR_THICKNESS * thickness), h: Math.max(20, Math.round(along * BAR_LENGTH_FRAC * scale)) };
 }
 
 /**
@@ -139,11 +146,11 @@ export function preset(orientation, origin, sizes) {
 export function boxesFor(layout, panel, textSizes) {
   const placed = layout.pieces || toFractions(preset(layout.orientation,
     { x: layout.origin.x * panel.w, y: layout.origin.y * panel.h },
-    { ...textSizes, bar: barSize(panel, layout.sizes.bar, layout.orientation === 'horizontal' ? 90 : 0) }), panel);
+    { ...textSizes, bar: barSize(panel, layout.sizes.bar, layout.orientation === 'horizontal' ? 90 : 0, layout.barThickness) }), panel);
   const out = {};
   for (const key of PIECES) {
     const { x, y, rot } = placed[key];
-    const upright = key === 'bar' ? barSize(panel, layout.sizes.bar, rot) : textSizes[key];
+    const upright = key === 'bar' ? barSize(panel, layout.sizes.bar, rot, layout.barThickness) : textSizes[key];
     out[key] = keepInside({ x: x * panel.w, y: y * panel.h, ...turned(upright, rot), rot }, panel);
   }
   return out;
@@ -156,6 +163,19 @@ export function resized(box, size, dx, dy) {
   const d2 = box.w * box.w + box.h * box.h;
   const factor = d2 ? ((box.w + dx) * box.w + (box.h + dy) * box.h) / d2 : 1;
   return Math.min(SCALE_RANGE[1], Math.max(SCALE_RANGE[0], size * factor));
+}
+
+/** The bar's length and thickness factors after its corner grip moved by
+ * (dx, dy) pixels from where it was pressed, when it was `box`: each
+ * direction on its own. Upright, across is thickness and down is length;
+ * turned, the other way round. */
+export function resizedBar(box, length, thickness, dx, dy) {
+  const clamp = (v) => Math.min(SCALE_RANGE[1], Math.max(SCALE_RANGE[0], v));
+  const [across, along, dAcross, dAlong] = box.rot ? [box.h, box.w, dy, dx] : [box.w, box.h, dx, dy];
+  return {
+    length: clamp(along ? length * (along + dAlong) / along : length),
+    thickness: clamp(across ? thickness * (across + dAcross) / across : thickness),
+  };
 }
 
 /** Pixel places as fractions of the panel. */

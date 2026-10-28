@@ -61,6 +61,14 @@ CASES = {
                 " cl.resized({w: 30, h: 40}, 1, -300, -400), cl.resized({w: 30, h: 40}, 2, 300, 400),"
                 " cl.resized({w: 30, h: 40}, 1, 40, -30)]"),
     "bar_size": "[cl.barSize({w: 400, h: 300}, 2, 0), cl.barSize({w: 400, h: 300}, 1, 90)]",
+    # to_fix_v2: the bar's thickness and length change each on its own
+    "bar_stretch": ("[cl.barSize({w: 400, h: 300}, 1, 0, 3), cl.resizedBar({w: 14, h: 120, rot: 0}, 1, 1, 14, 0),"
+                    " cl.resizedBar({w: 14, h: 120, rot: 0}, 1, 1, 0, 120), cl.resizedBar({w: 160, h: 14, rot: 90}, 1, 1, 0, 14),"
+                    " cl.resizedBar({w: 14, h: 120, rot: 0}, 1, 1, -100, 9999),"
+                    " cl.cleanLayout(null).barThickness, cl.cleanLayout({sizes: {bar: 2}}).barThickness,"
+                    " cl.cleanLayout({sizes: {bar: 2}, barThickness: 0.5}).barThickness,"
+                    " cl.boxesFor(cl.cleanLayout({sizes: {bar: 1}, barThickness: 3}), {w: 400, h: 300},"
+                    "   {name: {w: 80, h: 16}, max: {w: 30, h: 14}, min: {w: 40, h: 14}}).bar]"),
 }
 
 
@@ -199,3 +207,14 @@ def test_the_bar_size_scales_thickness_and_length(results):
     upright, lying = results["bar_size"]
     assert upright == {"w": 28, "h": 240}         # 2 x (14 px, 40% of the height)
     assert lying == {"w": 14, "h": 160}           # lying, its length follows the width
+
+
+def test_the_bar_stretches_in_each_direction_on_its_own(results):
+    thick, across, along, lying_across, clamped, fresh, older, own, box = results["bar_stretch"]
+    assert thick == {"w": 42, "h": 120}                   # 3x thick, length unchanged
+    assert across == {"length": 1, "thickness": 2}        # a sideways drag: only thicker
+    assert along == {"length": 2, "thickness": 1}         # a downward drag: only longer
+    assert lying_across == {"length": 1, "thickness": 2}  # turned, down is across
+    assert clamped == {"length": 4, "thickness": 0.4}     # kept within the size range
+    assert fresh == 1 and older == 2 and own == 0.5       # an older layout keeps its look
+    assert box["w"] == 42 and box["h"] == 120
