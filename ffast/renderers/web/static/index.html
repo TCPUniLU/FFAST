@@ -260,6 +260,10 @@
     #tab-edit-btn.active { color: var(--hl2); box-shadow: inset 0 0 0 1px var(--hl2); }
     /* Edit mode (ADR 0056 rule 15): edit bar, and handles over each panel */
     .tabpanel.editing .analysis-controls { display: none; }
+    /* The edit head names the panel over its title row; the title under it
+       would show through, half covered. Hidden, not removed: plots keep their place. */
+    .tabpanel.editing .analysis-panel .panel-title,
+    .tabpanel.editing .panel-3d .viewport > :is(.panel-letter, .panel-caption) { visibility: hidden; }
     .edit-bar {
       display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 6px 12px;
       background: var(--bg2); border-bottom: 1px solid var(--hl1); font-size: var(--fs-m);

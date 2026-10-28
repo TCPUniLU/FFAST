@@ -3673,6 +3673,37 @@ async def _open_app(page, web_port, ws_port):
 _CHROME = ".tabpanel.active .edit-chrome"
 
 
+async def test_web_edit_mode_head_covers_no_half_hidden_title(tmp_path):
+    """to_fix item 20: in Edit mode each panel's head (handle, title, ⚙, ×)
+    lies over the panel's own title row, a 3D panel's letter and its "Main
+    view" choice. They showed through it, half covered. They are hidden while
+    editing, and come back after."""
+    hidden_under_heads = """() => [...document.querySelectorAll(
+        '.tabpanel.active :is(.analysis-panel .panel-title,'
+        + ' .panel-3d .viewport > .panel-letter, .panel-3d .viewport > .panel-caption)')]
+        .map((el) => getComputedStyle(el).visibility)"""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1280, "height": 900})
+            try:
+                await _open_app(page, web_port, ws_port)
+                for tab, shown in (("3D", 2), ("Gyration", 4)):   # a 3D panel; plots
+                    await _open_analysis_tab(page, tab)
+                    before = await page.evaluate(hidden_under_heads)
+                    assert len(before) == shown and set(before) == {"visible"}, (tab, before)
+
+                    await page.locator("#tab-edit-btn").click()
+                    await expect(page.locator(".tabpanel.active .edit-bar")).to_contain_text(f"Editing {tab}")
+                    assert set(await page.evaluate(hidden_under_heads)) == {"hidden"}, tab
+
+                    await page.get_by_role("button", name="Cancel", exact=True).first.click()
+                    await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                    assert set(await page.evaluate(hidden_under_heads)) == {"visible"}, tab
+            finally:
+                await browser.close()
+
+
 async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
     """ADR 0056 rules 11, 12 and 15. ✎ opens Edit mode: remove a panel, add a
     ready-made 3D panel and a custom one from the builder, drag one onto
