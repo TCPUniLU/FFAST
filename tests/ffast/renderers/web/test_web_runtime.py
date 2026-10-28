@@ -3910,6 +3910,59 @@ async def test_web_edit_mode_plots_follow_their_cells_while_dragging(tmp_path):
                 await page.wait_for_function(
                     f"() => {{ const [cell, drawn] = ({sizes})(); return cell > 700 && Math.abs(cell - drawn) < 3; }}")
                 assert (await page.evaluate(sizes))[2] == "kept"
+
+                # And back to one column.
+                cb = await corner.bounding_box()
+                await page.mouse.move(cb["x"] + 4, cb["y"] + 4)
+                await page.mouse.down()
+                await page.mouse.move(gb["x"] + 60, cb["y"] + 4, steps=6)
+                await page.mouse.up()
+                await page.wait_for_function(
+                    "() => window.ffastApp._editor.draft.panels.find((p) => p.title === 'Energy MAE distribution').colspan === 1")
+            finally:
+                await browser.close()
+
+
+async def test_web_edit_mode_resize_corner_stays_in_view(tmp_path):
+    """A panel wider than the room the tab has (two 1.5-wide columns with the
+    Settings pane open) kept its resize corner past the visible edge, so it
+    could not be made one column again. The corner stays at the visible edge."""
+    tabs_dir = tmp_path / "tabs"
+    tabs_dir.mkdir()
+    (tabs_dir / "wide.toml").write_text(
+        '[[tabs]]\nname = "Wide"\ncolumn_widths = [1.5, 1.5]\n'
+        '[[tabs.panels]]\nkind = "3d"\nrow = 0\ncol = 0\ncolspan = 2\n'
+        '[[tabs.panels]]\nkind = "3d"\nrow = 1\ncol = 0\ncolspan = 2\n'
+        'view = "independent"\nlink_frame = false\nlink_camera = false\n')
+    config = tmp_path / "ffast.toml"
+    config.write_text("")
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _open_analysis_tab(page, "Wide")
+                await page.locator("#tab-edit-btn").click()
+                grid = page.locator(".tabpanel.active .analysis-grid")
+                await page.wait_for_function(
+                    "() => { const g = document.querySelector('.tabpanel.active .analysis-grid');"
+                    " return g.scrollWidth > g.clientWidth; }")   # the panels run past the visible edge
+                corner = page.locator(_CHROME).first.locator(".edit-resize")
+                await page.wait_for_function(
+                    """() => { const g = document.querySelector('.tabpanel.active .analysis-grid');
+                        const c = document.querySelector('.tabpanel.active .edit-chrome .edit-resize');
+                        const r = g.getBoundingClientRect();
+                        return c.getBoundingClientRect().right <= r.left + g.clientWidth; }""")
+                cb = await corner.bounding_box()
+                gb = await grid.bounding_box()
+                await page.mouse.move(cb["x"] + 4, cb["y"] + 4)
+                await page.mouse.down()
+                await page.mouse.move(gb["x"] + 60, cb["y"] + 4, steps=6)
+                await page.mouse.up()
+                await page.wait_for_function(
+                    "() => window.ffastApp._editor.draft.panels[0].colspan === 1")
             finally:
                 await browser.close()
 

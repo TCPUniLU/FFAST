@@ -180,7 +180,12 @@ export class TabEditor {
       empty.style.gridColumn = '1 / -1';
       grid.appendChild(empty);
     }
-    requestAnimationFrame(() => this._dividers(grid));
+    requestAnimationFrame(() => { this._dividers(grid); cornersInView(grid); });
+    if (!grid._cornerWatch) {
+      grid._cornerWatch = new ResizeObserver(() => cornersInView(grid));
+      grid._cornerWatch.observe(grid);
+      grid.addEventListener('scroll', () => cornersInView(grid), { passive: true });
+    }
   }
 
   _editBar() {
@@ -697,6 +702,23 @@ function tracks(grid) {
     gapC: parseFloat(cs.columnGap) || 0, gapR: parseFloat(cs.rowGap) || 0,
     padL: parseFloat(cs.paddingLeft) || 0, padT: parseFloat(cs.paddingTop) || 0,
   };
+}
+
+/** Keep each resize corner ◢ where it can be grabbed: a panel wider or
+ * taller than the grid's visible part has its corner at the visible edge,
+ * not out of sight past it. */
+function cornersInView(grid) {
+  if (!grid.isConnected) return;
+  const g = grid.getBoundingClientRect();
+  const right = Math.min(g.left + grid.clientLeft + grid.clientWidth, window.innerWidth);
+  const bottom = Math.min(g.top + grid.clientTop + grid.clientHeight, window.innerHeight);
+  for (const corner of grid.querySelectorAll('.edit-resize')) {
+    const c = corner.parentElement.getBoundingClientRect();
+    // Never past the chrome's own top-left, so it stays on its panel.
+    const past = (end, edge, size) => Math.max(0, Math.min(end - edge, size - 24));
+    corner.style.right = `${3 + past(c.right, right, c.width)}px`;
+    corner.style.bottom = `${1 + past(c.bottom, bottom, c.height)}px`;
+  }
 }
 
 /** The grid cell under a page point; below the last row is a new row. */
