@@ -1426,7 +1426,9 @@ async def test_web_colour_bar_limits_are_typed_and_its_pieces_move(ffast_web_ser
             g = await piece("name").locator(".cb-grip").bounding_box()
             await page.mouse.move(g["x"] + 5, g["y"] + 5)
             await page.mouse.down()
-            await page.mouse.move(g["x"] + 105, g["y"] + 25, steps=6)
+            # a drag short of the bar's thickness snaps the text's height to it (to_fix_v2),
+            # so this drag goes well past that
+            await page.mouse.move(g["x"] + 200, g["y"] + 2, steps=6)
             await page.mouse.up()
             assert await font() > before * 1.2
 

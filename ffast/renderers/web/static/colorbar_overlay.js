@@ -16,7 +16,8 @@
 
 import {
   PIECES, SCALE_RANGE, barSize, boxesFor, cleanLayout, defaultLayout, groupOf, groupSelection,
-  keepInside, nextRotation, peers, preset, press, resized, resizedBar, rotateBlock, rotateOne, snapDrag, toFractions, ungroup,
+  keepInside, nextRotation, peers, preset, press, resized, resizedBar, rotateBlock, rotateOne, snapDrag, snapTextResize,
+  toFractions, ungroup,
 } from './colorbar_layout.js';
 import { sharedMenu } from './actions.js';
 import { gradientCss } from './colormap.js';
@@ -25,6 +26,8 @@ import { loadLayout, saveLayout } from './layout_state.js';
 const STORE_KEY = 'colourBar';
 const DRAG_PX = 3;   // a smaller move is a click (which edits a value or the unit)
 const NAMES = { bar: 'bar', name: 'name', max: 'highest value', min: 'lowest value' };
+/** The short names on a size label: "= max" says the text is as tall as the max. */
+const SHORT = { bar: 'bar', name: 'name', max: 'max', min: 'min' };
 
 /**
  * @param {{name: HTMLElement, max: HTMLElement, min: HTMLElement}} texts the
@@ -51,7 +54,11 @@ export function createColourBar(texts) {
     const grip = document.createElement('div');
     grip.className = 'cb-grip';
     grip.title = key === 'bar' ? 'Drag to resize: across for thickness, along for length' : 'Drag to resize';
-    el.append(inner[key], grip);
+    // "= max" etc. while a text's size is snapped to another piece (to_fix_v2)
+    const match = document.createElement('div');
+    match.className = 'cb-match';
+    match.hidden = true;
+    el.append(inner[key], grip, match);
     root.appendChild(el);
     pieceEls[key] = el;
   }
@@ -120,6 +127,13 @@ export function createColourBar(texts) {
     guides.h.hidden = hy == null;
     if (vx != null) guides.v.style.left = `${vx}px`;
     if (hy != null) guides.h.style.top = `${hy}px`;
+  };
+
+  /** Show which piece a text's size snapped to, or hide the label (to_fix_v2). */
+  const showMatch = (key, match) => {
+    const label = pieceEls[key].querySelector('.cb-match');
+    label.hidden = !match;
+    if (match) label.textContent = `= ${SHORT[match]}`;
   };
 
   const select = (next) => {
@@ -216,11 +230,19 @@ export function createColourBar(texts) {
       e.preventDefault();
       const start = { box: { ...boxes[key] }, size: layout.sizes[key], thickness: layout.barThickness,
         x: e.clientX, y: e.clientY };
+      // the other pieces as they are at press time: what a text's size snaps to
+      const others = Object.fromEntries(PIECES.filter((k) => k !== key).map((k) => [k, { ...boxes[k] }]));
       drag = { resizing: key };
       const step = (ev) => {
         const dx = ev.clientX - start.x;
         const dy = ev.clientY - start.y;
-        if (key !== 'bar') { resize(key, resized(start.box, start.size, dx, dy)); return; }
+        if (key !== 'bar') {
+          const snap = snapTextResize(start.box, start.size, dx, dy, others);
+          resize(key, snap.size);
+          showGuides(snap.vx, snap.hy);
+          showMatch(key, snap.match);
+          return;
+        }
         // the bar stretches in each direction on its own
         const { length, thickness } = resizedBar(start.box, start.size, start.thickness, dx, dy);
         layout.barThickness = thickness;
@@ -231,6 +253,8 @@ export function createColourBar(texts) {
         window.removeEventListener('pointerup', stop);
         window.removeEventListener('pointercancel', stop);
         drag = null;
+        showGuides(null, null);
+        showMatch(key, null);
         render();
         commit();
       };

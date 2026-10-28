@@ -60,6 +60,15 @@ CASES = {
     "resized": ("[cl.resized({w: 30, h: 40}, 1, 30, 40), cl.resized({w: 30, h: 40}, 1, 0, 0),"
                 " cl.resized({w: 30, h: 40}, 1, -300, -400), cl.resized({w: 30, h: 40}, 2, 300, 400),"
                 " cl.resized({w: 30, h: 40}, 1, 40, -30)]"),
+    # to_fix_v2: a text's size snaps to another text's height, the bar's thickness, or an edge
+    "text_snap": (
+        "[cl.snapTextResize({x: 0, y: 0, w: 80, h: 16, rot: 0}, 1, 0, -50, {max: {x: 200, y: 200, w: 30, h: 14, rot: 0}}),"
+        " cl.snapTextResize({x: 0, y: 0, w: 80, h: 16, rot: 0}, 1, 0, -50, {bar: {x: 0, y: 300, w: 200, h: 14, rot: 90}}),"
+        " cl.snapTextResize({x: 0, y: 0, w: 80, h: 16, rot: 0}, 1, 21, 0, {min: {x: 100, y: 200, w: 20, h: 30, rot: 0}}),"
+        " (() => { const s = cl.snapTextResize({x: 0, y: 0, w: 80, h: 16, rot: 0}, 1, 5, 0,"
+        "   {min: {x: 300, y: 300, w: 20, h: 30, rot: 0}}); return [s.size === cl.resized({x: 0, y: 0, w: 80, h: 16, rot: 0}, 1, 5, 0),"
+        "   s.vx, s.hy, s.match]; })(),"
+        " cl.snapTextResize({x: 0, y: 0, w: 16, h: 80, rot: -90}, 1, 0, -10, {max: {x: 200, y: 200, w: 30, h: 14, rot: 0}})]"),
     "bar_size": "[cl.barSize({w: 400, h: 300}, 2, 0), cl.barSize({w: 400, h: 300}, 1, 90)]",
     # to_fix_v2: the bar's thickness and length change each on its own
     "bar_stretch": ("[cl.barSize({w: 400, h: 300}, 1, 0, 3), cl.resizedBar({w: 14, h: 120, rot: 0}, 1, 1, 14, 0),"
@@ -218,3 +227,31 @@ def test_the_bar_stretches_in_each_direction_on_its_own(results):
     assert clamped == {"length": 4, "thickness": 0.4}     # kept within the size range
     assert fresh == 1 and older == 2 and own == 0.5       # an older layout keeps its look
     assert box["w"] == 42 and box["h"] == 120
+
+
+def test_a_text_snaps_its_height_to_another_texts_height(results):
+    """to_fix_v2: 16 px dragged to 14 px is within reach of the max value's height."""
+    near_max, _bar, _edge, _far, _turned = results["text_snap"]
+    assert near_max == {"size": 0.875, "vx": None, "hy": None, "match": "max"}
+
+
+def test_a_text_snaps_its_height_to_the_bars_thickness(results):
+    """The bar's thickness is its narrow side, whichever way it is turned."""
+    _max, bar, _edge, _far, _turned = results["text_snap"]
+    assert bar == {"size": 0.875, "vx": None, "hy": None, "match": "bar"}
+
+
+def test_a_text_snaps_its_right_edge_onto_another_pieces_edge(results):
+    _max, _bar, edge, _far, _turned = results["text_snap"]
+    assert edge == {"size": 1.25, "vx": 100, "hy": None, "match": None}   # 80 px x 1.25 lands on x = 100
+
+
+def test_a_text_far_from_everything_keeps_the_grip_size(results):
+    _max, _bar, _edge, (same_as_grip, vx, hy, match), _turned = results["text_snap"]
+    assert same_as_grip is True
+    assert (vx, hy, match) == (None, None, None)
+
+
+def test_a_turned_text_measures_its_height_as_its_width(results):
+    _max, _bar, _edge, _far, turned = results["text_snap"]
+    assert turned == {"size": 0.875, "vx": None, "hy": None, "match": "max"}   # 16 px wide reads as 16 px tall

@@ -178,6 +178,41 @@ export function resizedBar(box, length, thickness, dx, dy) {
   };
 }
 
+/**
+ * A text's size after its grip moved by (dx, dy), snapped (to_fix_v2) to
+ * another text's height, the bar's thickness, or another piece's edge or
+ * centre, when within `threshold` pixels. `others` maps each other piece's
+ * key to its box. Returns the size, the guide lines to draw (as snapDrag)
+ * and `match`, the piece whose size it took, or null.
+ */
+export function snapTextResize(box, size, dx, dy, others, threshold = SNAP_PX) {
+  const raw = resized(box, size, dx, dy);
+  const k = raw / size;
+  const across = (b) => (b.rot ? b.w : b.h);
+  const reach = box.x + box.w * k;
+  const low = box.y + box.h * k;
+  const cands = [];
+  for (const [key, o] of Object.entries(others)) {
+    // the bar's height is its narrow side, whatever its turn
+    const target = key === 'bar' ? Math.min(o.w, o.h) : across(o);
+    cands.push({ size: size * target / across(box), d: Math.abs(across(box) * k - target), vx: null, hy: null, match: key });
+    for (const v of [o.x, o.x + o.w / 2, o.x + o.w]) {
+      if (v > box.x) cands.push({ size: size * (v - box.x) / box.w, d: Math.abs(reach - v), vx: v, hy: null, match: null });
+    }
+    for (const v of [o.y, o.y + o.h / 2, o.y + o.h]) {
+      if (v > box.y) cands.push({ size: size * (v - box.y) / box.h, d: Math.abs(low - v), vx: null, hy: v, match: null });
+    }
+  }
+  let best = null;
+  for (const c of cands) {
+    if (c.size < SCALE_RANGE[0] || c.size > SCALE_RANGE[1]) continue;
+    // on a tie a size match wins over an edge
+    if (!best || c.d < best.d || (c.d === best.d && c.match && !best.match)) best = c;
+  }
+  if (best && best.d <= threshold) return { size: best.size, vx: best.vx, hy: best.hy, match: best.match };
+  return { size: raw, vx: null, hy: null, match: null };
+}
+
 /** Pixel places as fractions of the panel. */
 export function toFractions(places, panel) {
   const out = {};

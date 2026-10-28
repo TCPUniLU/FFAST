@@ -794,6 +794,11 @@
       background: var(--accent, deepskyblue); border: 1px solid var(--ground);
     }
     .cb-piece.selected > .cb-grip { display: block; }
+    .cb-match {
+      position: absolute; right: 0; bottom: -16px; font-size: var(--fs-xs); color: var(--accent, deepskyblue);
+      pointer-events: none; white-space: nowrap;
+    }
+    .cb-match[hidden] { display: none; }
     .cb-guide { position: absolute; pointer-events: none; z-index: 1; }
     .cb-guide-v { top: 0; bottom: 0; border-left: 1px dashed var(--accent, deepskyblue); }
     .cb-guide-h { left: 0; right: 0; border-top: 1px dashed var(--accent, deepskyblue); }
