@@ -6602,3 +6602,35 @@ async def test_web_a_table_downloads_as_csv(ffast_web_server):
             assert re.search(r"\d", lines[1])
         finally:
             await browser.close()
+
+
+async def test_web_a_dragged_legend_is_kept_in_the_tab(tmp_path):
+    """Web parity plan 2026-10-29: a plot's legend place is saved in the tab."""
+    tabs_dir = tmp_path / "tabs"
+    async with _spawn_server("--tabs-dir", str(tabs_dir)) as (ws_port, web_port):
+        dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+                await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+                await _open_analysis_tab(page, "Basic Errors")
+                await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+                plot = page.locator(
+                    ".tabpanel.active .analysis-panel[data-title='Energy MAE timeline'] .panel-plot")
+                await plot.evaluate("(el) => Plotly.relayout(el, {'legend.x': 0.2, 'legend.y': 0.8})")
+                saved = tabs_dir / "basic-errors.toml"
+                for _ in range(100):
+                    if saved.exists():
+                        break
+                    await asyncio.sleep(0.1)
+                panels = tomllib.loads(saved.read_text())["tabs"][0]["panels"]
+                panel = next(q for q in panels if q.get("title") == "Energy MAE timeline")
+                assert panel["legend_x"] == 0.2 and panel["legend_y"] == 0.8
+                state = json.loads((tabs_dir / "state.json").read_text())
+                assert state["replaces"]["basic-errors.toml"]["tab"] == "Basic Errors"
+            finally:
+                await browser.close()

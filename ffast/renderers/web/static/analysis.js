@@ -188,6 +188,7 @@ export class AnalysisManager {
     this._onStepTab = deps.onStepTab;
     this._onTabContext = deps.onTabContext;
     this._whyNoMove = deps.whyNoMove;
+    this._onPanelLabels = deps.onPanelLabels;
     /** The name of the tab being dragged in the bar, or null (ADR 0070). */
     this._dragging = null;
     this._onSub = deps.onSub;
@@ -1572,7 +1573,14 @@ export class AnalysisManager {
     const el = card.body;
     if (!PLOT_KINDS.has(spec.kind) || typeof el.on !== 'function') return;
     if (el.removeAllListeners) el.removeAllListeners('plotly_relayout');
-    el.on('plotly_relayout', () => this._noteZoom(t, spec, card));
+    el.on('plotly_relayout', (ev) => {
+      // A dragged legend is saved in the tab (web parity plan 2026-10-29).
+      if (ev && 'legend.x' in ev && 'legend.y' in ev) {
+        const r3 = (v) => Math.round(Number(v) * 1000) / 1000;
+        this._onPanelLabels?.(t.spec.name, spec, { legend_x: r3(ev['legend.x']), legend_y: r3(ev['legend.y']) });
+      }
+      this._noteZoom(t, spec, card);
+    });
     if (SUB_KINDS.has(spec.kind)) this._wireSub(t, spec, card);
     clearTimeout(card.frameTimer);   // a click on the plot this one replaces
     card.frameTimer = null;

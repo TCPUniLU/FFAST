@@ -31,7 +31,7 @@ import { Rail, framesText } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
-import { metricPanel, plotTarget, setPanelView, toFineGrid, toSaved } from './tab_edit.js';
+import { metricPanel, plotTarget, setPanelView, setPanelLabels, toFineGrid, toSaved } from './tab_edit.js';
 import { MetricOps } from './metric_ops.js';
 import { TABLE_SHAPE, sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
@@ -279,6 +279,7 @@ export class FFastApp {
       onTabContext: (id, el) => this._openTabContext(id, el),
       onStepTab: (name, dir, opts) => this._stepTab(name, dir, opts),
       whyNoMove: () => this._whyNoEdit(),
+      onPanelLabels: (tabName, spec, patch) => this._savePanelLabels(tabName, spec, patch),
       onSub: (o) => this._onSub(o),
       onFreeze: (fp) => this._freezeSubset(fp),
       seriesColour: ({ datasetFp, modelFp }) => this._colours.get(
@@ -1296,6 +1297,22 @@ export class FFastApp {
    * once. A linked panel that picks a dataset becomes an own view showing it,
    * and an own view that picks "Main view" is linked again: either saves the
    * tab, as Edit mode's "Own view" does. */
+  /** Save label fields of one plot panel in its tab (web parity plan
+   * 2026-10-29: "Edit labels…" and a dragged legend). A null value
+   * removes the field. A built-in or project tab gets a user tab
+   * replacing it, as an Edit mode save does.
+   * @returns {Promise<{ok: boolean, error?: string|null}>} */
+  async _savePanelLabels(tabName, spec, patch) {
+    const server = this._layoutTabs.find((t) => t.name === tabName);
+    const index = (server?.panels || []).findIndex(
+      (p) => p.kind === spec.kind && p.row === spec.row && p.col === spec.col);
+    const why = this._whyNoEdit() || (index < 0 ? 'This tab is not from the server' : '');
+    if (why) { this._setStatus(why, 'error'); return { ok: false, error: why }; }
+    const r = await this._tabOps.save(toSaved(setPanelLabels(server, index, patch)), server.name);
+    this._reportTab(r);
+    return r;
+  }
+
   async _chooseShown(panel, value) {
     const view = panel.independent;
     if (value === MAIN_VIEW_CHOICE ? panel.linked : view?.datasetFp === value) return;

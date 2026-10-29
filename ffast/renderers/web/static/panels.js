@@ -129,6 +129,33 @@ function withLegend(layout, traceCount) {
 }
 
 /**
+ * Put a panel's label edits (tab fields x_title, y_title, label_size,
+ * legend_size, legend_x, legend_y; web parity plan 2026-10-29) onto a
+ * built plot. Pure. Keeps what they replace in `built.labelDefaults`,
+ * for the "Edit labels…" form. Legend fields count only when the plot
+ * shows a legend.
+ */
+export function applyPanelLabels(spec, built) {
+  const { layout } = built;
+  built.labelDefaults = {
+    x: layout.xaxis?.title?.text || '',
+    y: layout.yaxis?.title?.text || '',
+    labelSize: layout.font?.size ?? null,
+    legendSize: layout.legend?.font?.size ?? null,
+    legend: !!layout.showlegend,
+  };
+  const axes = [layout.xaxis, layout.yaxis].filter(Boolean);
+  if (spec.x_title && layout.xaxis) layout.xaxis.title = { ...layout.xaxis.title, text: spec.x_title };
+  if (spec.y_title && layout.yaxis) layout.yaxis.title = { ...layout.yaxis.title, text: spec.y_title };
+  if (spec.label_size) for (const ax of axes) ax.title = { ...ax.title, font: { ...ax.title?.font, size: spec.label_size } };
+  if (layout.showlegend) {
+    if (spec.legend_size) layout.legend = { ...layout.legend, font: { ...layout.legend?.font, size: spec.legend_size } };
+    if (spec.legend_x != null && spec.legend_y != null) layout.legend = { ...layout.legend, x: spec.legend_x, y: spec.legend_y };
+  }
+  return built;
+}
+
+/**
  * The hover read-out of the desktop's plots (UI/Plots.py formatHoverText):
  * the series, then both values named by the axis titles, and dotted lines
  * from the point to the axes. Helper traces (hoverinfo 'skip') keep none.
@@ -156,6 +183,8 @@ export const PLOT_CONFIG = {
   // Back to the ranges the plot was drawn with, never autorange: a labelled
   // timeline's autorange counts the label arrows and squashes the curve.
   doubleClick: 'reset',
+  // a dragged legend is saved in the tab (web parity plan 2026-10-29)
+  edits: { legendPosition: true },
 };
 
 const Plotly = () => globalThis.Plotly;
@@ -782,7 +811,7 @@ export const PLOT_KINDS = new Set(Object.keys(PLOT_BUILDERS));
  */
 export function buildPanel(spec, series, ctx) {
   const plot = PLOT_BUILDERS[spec.kind];
-  if (plot) return withHoverReadout(plot(spec, series || [], ctx || {}));
+  if (plot) return withHoverReadout(applyPanelLabels(spec, plot(spec, series || [], ctx || {})));
   const table = TABLE_BUILDERS[spec.kind];
   if (table) return { html: table(spec, series || [], ctx || {}) };
   return null;
@@ -806,6 +835,7 @@ export function renderPanel(el, spec, series, ctx) {
     el._subInfo = null;
     el._unitAxes = null;
     el._figureInfo = null;
+    el._labelDefaults = null;
     el._peaks = null;
     el._drawnRange = null;
     el._peaksEligible = false;
@@ -823,6 +853,7 @@ export function renderPanel(el, spec, series, ctx) {
   // The ranges it is drawn with, so a plot showing them is not taken for zoomed.
   el._drawnRange = { x: built.layout.xaxis?.range?.map(Number) || null,
                      y: built.layout.yaxis?.range?.map(Number) || null };
+  el._labelDefaults = built.labelDefaults || null;
   el._figureInfo = {
     xTitle: built.layout.xaxis?.title?.text || '',
     yTitle: built.layout.yaxis?.title?.text || '',

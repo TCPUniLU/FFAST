@@ -241,6 +241,12 @@
  * @property {string|string[]|null} y_label
  * @property {boolean} diagonal
  * @property {number} precision
+ * @property {string|null} [x_title] the user's axis titles (whole title, unit included)
+ * @property {string|null} [y_title]
+ * @property {number|null} [label_size] axis title size in px
+ * @property {number|null} [legend_size] legend text size in px
+ * @property {number|null} [legend_x] legend place, plot-area fractions
+ * @property {number|null} [legend_y]
  * @property {string[]} hidden_params
  * @property {string[]} controls
  * @property {string|null} scroll_group

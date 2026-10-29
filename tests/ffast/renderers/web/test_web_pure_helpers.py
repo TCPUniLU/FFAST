@@ -114,6 +114,9 @@ CASES = {
     "hover_timeline": "(() => { const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u']}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}], {units: {}, peaks: false}); return [b.traces[0].hovertemplate, b.layout.xaxis.showspikes, b.layout.yaxis.spikemode]; })()",
     "hover_scatter_diagonal": "(() => { const b = pn.buildPanel({kind: 'scatter', diagonal: true}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {x: {nd: {values: [1, 2], shape: [2]}}, y: {nd: {values: [1, 2], shape: [2]}}}}], {units: {}}); return [b.traces.length, b.traces[b.traces.length - 1].hovertemplate === undefined, b.traces[0].hovertemplate]; })()",
     "hover_bars": "(() => { const b = pn.buildPanel({kind: 'bars'}, [{name: 'MACE', data: {value: {nd: {values: [0.1, 0.2], shape: [2]}}}}], {elementOrder: [1, 6], selectedElements: ['All']}); return b.traces[0].hovertemplate; })()",
+    "te_set_labels": "(() => { const a = te.setPanelLabels(TE(), 2, {y_title: 'Mine', label_size: 14, colour: 'red'}); const b = te.setPanelLabels(a, 2, {y_title: null}); return [a.panels[2], b.panels[2], te.toSaved(b).panels[2], TE().panels[2]]; })()",
+    "pn_labels_applied": "(() => { const S = (name) => ({datasetFp: 'D', modelFp: name, name, data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}); const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u'], y_title: 'Mine', label_size: 15, legend_size: 9, legend_x: 0.1, legend_y: 0.9}, [S('MACE'), S('SchNet')], {units: {}, peaks: false}); return [b.layout.yaxis.title.text, b.layout.yaxis.title.font.size, b.layout.xaxis.title.font.size, b.layout.legend.font.size, b.layout.legend.x, b.layout.legend.y, b.labelDefaults, b.traces[0].hovertemplate]; })()",
+    "pn_labels_one_series": "(() => { const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u'], y_title: 'Mine', label_size: 15, legend_size: 9, legend_x: 0.1, legend_y: 0.9}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}], {units: {}, peaks: false}); return [b.layout.legend?.x ?? null, b.labelDefaults.legend, b.layout.yaxis.title.text]; })()",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1430,6 +1433,28 @@ def test_the_scatter_diagonal_shows_nothing_on_hover(results):
 
 def test_bar_hover_leaves_the_category_label_unformatted(results):
     assert "= %{x}<br>" in results["hover_bars"]
+
+
+# ── label fields of a panel ─────────────────────────────────────────────────
+
+def test_set_panel_labels_sets_and_removes_only_label_fields(results):
+    a, b, saved, original = results["te_set_labels"]
+    assert a["y_title"] == "Mine" and a["label_size"] == 14 and "colour" not in a
+    assert "y_title" not in b and b["label_size"] == 14
+    assert saved["label_size"] == 14
+    assert "label_size" not in original
+
+
+def test_a_panels_label_fields_are_drawn_and_keep_the_defaults(results):
+    (title, y_size, x_size, legend_size, lx, ly, defaults, template) = results["pn_labels_applied"]
+    assert (title, y_size, x_size, legend_size, lx, ly) == ("Mine", 15, 15, 9, 0.1, 0.9)
+    assert defaults["y"].startswith("Force MAE") and defaults["legend"] is True
+    assert "Mine = %{y:.6g}" in template
+
+
+def test_the_legend_fields_count_only_when_a_legend_shows(results):
+    legend_x, has_legend, title = results["pn_labels_one_series"]
+    assert legend_x is None and has_legend is False and title == "Mine"
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

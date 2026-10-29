@@ -372,6 +372,23 @@ export function setPanelStart(tab, index, start) {
   return next;
 }
 
+/** The panel fields "Edit labels…" and a legend drag write (web parity
+ * plan 2026-10-29; ffast/config/models.py LABEL_FIELDS). */
+export const LABEL_FIELDS = Object.freeze(['x_title', 'y_title', 'label_size', 'legend_size', 'legend_x', 'legend_y']);
+
+/** Set label fields of panel `index`; null or '' removes that field.
+ * Other keys in `patch` are ignored. */
+export function setPanelLabels(tab, index, patch) {
+  const next = clone(tab);
+  const panel = next.panels[index];
+  for (const [key, value] of Object.entries(patch)) {
+    if (!LABEL_FIELDS.includes(key)) continue;
+    if (value == null || value === '') delete panel[key];
+    else panel[key] = value;
+  }
+  return next;
+}
+
 /** A 3D panel to add (linked, ADR 0056 rule 1). */
 export function new3DPanel() {
   return { kind: KIND_3D, title: null, metrics: {}, metric_refs: {} };
