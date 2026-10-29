@@ -103,6 +103,8 @@ Browser only. The Qt desktop gets one small change (point 17).
     moment. (The 400 px minimum was decided during the step 6 trial; the
     sizes kept as set during the step 7 trial, where rows sharing the
     window's height squeezed a five-row tab into one screen.)
+    Replaced by ADR 0069.
+
 13. **A tab file stores layout and starting settings, never data.** For an
     independent panel it stores linked/independent, the two link ticks, and its
     starting colouring, display, bonds and force arrows. It never stores which
