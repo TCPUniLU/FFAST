@@ -85,3 +85,14 @@ export function panelChoices({ linked, shows, datasets, stays = '', noSave = '' 
   if (why) options.push({ value: '\u0000why', label: why, disabled: true });
   return { options, value };
 }
+
+/** The bar order `names` with `name` moved just before `before` (to the
+ * end when `before` is null) (ADR 0070). */
+export function movedBefore(names, name, before) {
+  if (!names.includes(name) || before === name) return [...names];
+  const rest = names.filter((n) => n !== name);
+  const at = before === null ? rest.length : rest.indexOf(before);
+  if (at < 0) return [...names];
+  rest.splice(at, 0, name);
+  return rest;
+}

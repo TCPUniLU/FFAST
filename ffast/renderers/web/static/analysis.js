@@ -163,6 +163,8 @@ export class AnalysisManager {
    *   tabbar: HTMLElement, tabpanels: HTMLElement,
    *   metricClient?: import('./metrics.js').MetricClient|null,
    *   onSelectTab: (id: string) => void,
+   *   onMoveTab?: (name: string, before: string|null) => void,
+   *   whyNoMove?: () => string,
    *   onSub: (o: {name: string, series: Array<{parentFp: string, modelFp: string|null}>,
    *     view?: object, active?: boolean, tick?: boolean}) => void,
    *   onFreeze?: (fp: string) => void,
@@ -177,6 +179,10 @@ export class AnalysisManager {
     this._tabpanels = deps.tabpanels;
     this._metrics = deps.metricClient;
     this._onSelectTab = deps.onSelectTab;
+    this._onMoveTab = deps.onMoveTab;
+    this._whyNoMove = deps.whyNoMove;
+    /** The name of the tab being dragged in the bar, or null (ADR 0070). */
+    this._dragging = null;
     this._onSub = deps.onSub;
     this._onFreeze = deps.onFreeze;
     this._seriesColour = deps.seriesColour;
@@ -392,6 +398,7 @@ export class AnalysisManager {
     tabEl.className = 'tab';
     tabEl.textContent = spec.name;
     tabEl.dataset.tab = id;
+    tabEl.dataset.name = spec.name;
     tabEl.setAttribute('role', 'tab');
     tabEl.setAttribute('aria-selected', 'false');
     tabEl.tabIndex = -1;   // app.js makes the tab on screen the one tab stop
@@ -407,6 +414,41 @@ export class AnalysisManager {
       tabEl.appendChild(mark);
     }
     tabEl.addEventListener('click', () => this._onSelectTab(id));
+    // Drag a tab onto another: left half drops before it, right half after
+    // it (ADR 0070). Nothing moves while the tab cannot change.
+    tabEl.draggable = true;
+    const clearDrop = () => tabEl.classList.remove('drop-before', 'drop-after');
+    tabEl.addEventListener('dragstart', (e) => {
+      if (this._whyNoMove?.()) { e.preventDefault(); return; }
+      e.dataTransfer.setData('text/plain', spec.name);
+      e.dataTransfer.effectAllowed = 'move';
+      this._dragging = spec.name;
+    });
+    tabEl.addEventListener('dragover', (e) => {
+      if (!this._dragging || this._dragging === spec.name) return;
+      e.preventDefault();
+      const before = e.offsetX < tabEl.clientWidth / 2;
+      tabEl.classList.toggle('drop-before', before);
+      tabEl.classList.toggle('drop-after', !before);
+    });
+    tabEl.addEventListener('dragleave', clearDrop);
+    tabEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const dragging = this._dragging;
+      const isBefore = tabEl.classList.contains('drop-before');
+      clearDrop();
+      if (!dragging || dragging === spec.name) return;
+      let before = spec.name;
+      if (!isBefore) {
+        const tabs = [...this._tabbar.querySelectorAll('.tab')];
+        before = tabs[tabs.indexOf(tabEl) + 1]?.dataset.name ?? null;
+      }
+      this._onMoveTab?.(dragging, before);
+    });
+    tabEl.addEventListener('dragend', () => {
+      this._dragging = null;
+      for (const t of this._tabbar.querySelectorAll('.tab')) t.classList.remove('drop-before', 'drop-after');
+    });
     // Left and Right move to the next tab and open it; Home and End go to the ends.
     tabEl.addEventListener('keydown', (e) => {
       const tabs = [...this._tabbar.querySelectorAll('.tab')];

@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import hashlib
 import io
+import json
 import re
 import shutil
 import socket
@@ -3750,6 +3751,51 @@ async def test_web_new_tab_button_follows_the_last_tab(tmp_path):
                 edit = await page.locator("#tab-edit-btn").bounding_box()
                 assert plus["x"] >= 0 and plus["x"] + plus["width"] <= 700
                 assert plus["x"] + plus["width"] <= edit["x"]
+            finally:
+                await browser.close()
+
+
+async def test_web_a_dragged_tab_moves_for_every_window(tmp_path):
+    """ADR 0070. Dropping a tab on the left half of another puts it before
+    that one, for every window, and the order is written to state.json. While
+    a tab is being edited, dragging does nothing."""
+    tabs_dir = tmp_path / "tabs"
+    config = tmp_path / "ffast.toml"
+    config.write_text("")
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            other = await browser.new_page(viewport={"width": 1300, "height": 820})
+            tabbar = page.locator("#tabbar .tab")
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                answer = await _tab_request(ws_port, "SAVE_TAB", {"tab": {
+                    "name": "Mine", "panels": [{"kind": "3d", "row": 0, "col": 0}]}})
+                assert answer["ok"], answer
+                await expect(tabbar.last).to_have_text("Mine")
+
+                await page.drag_and_drop("#tabbar .tab >> text=Mine", "#tabbar .tab >> text=3D",
+                                         target_position={"x": 3, "y": 5})
+                await expect(tabbar.first).to_have_text("Mine")
+                assert json.loads((tabs_dir / "state.json").read_text())["bar_order"][0] == "Mine"
+                await _open_loupe(other, ws_port, web_port, dataset_fp)
+                await expect(other.locator("#tabbar .tab").first).to_have_text("Mine")
+
+                # No dragging while a tab is being edited.
+                await page.locator("#tabbar .tab", has_text="Mine").click()
+                await page.locator("#tab-edit-btn").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_contain_text("Editing Mine")
+                order = json.loads((tabs_dir / "state.json").read_text())["bar_order"]
+                texts = await tabbar.all_inner_texts()
+                await page.drag_and_drop("#tabbar .tab >> text=Basic Errors", "#tabbar .tab >> text=Mine",
+                                         target_position={"x": 3, "y": 5})
+                await page.wait_for_timeout(500)
+                assert await tabbar.all_inner_texts() == texts
+                assert json.loads((tabs_dir / "state.json").read_text())["bar_order"] == order
+                await page.get_by_role("button", name="Cancel", exact=True).first.click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
             finally:
                 await browser.close()
 

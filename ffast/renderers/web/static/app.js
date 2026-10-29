@@ -9,7 +9,8 @@ import { defaultSettings, startSettings } from './view_settings.js';
 import { IndependentPanels, independentKey } from './independent_panels.js';
 import { withColourBar } from './colorbar_overlay.js';
 import {
-  ensureMainView, isLinked3D, MAIN_VIEW_CHOICE, MAIN_VIEW_RULE, panelChoices, showsMainView, whyPanelStays,
+  ensureMainView, isLinked3D, MAIN_VIEW_CHOICE, MAIN_VIEW_RULE, movedBefore, panelChoices, showsMainView,
+  whyPanelStays,
 } from './tab_rules.js';
 import { sameConfiguration, predictionApplies } from './frame_links.js';
 import { infoReadout } from './measure.js';
@@ -273,6 +274,8 @@ export class FFastApp {
       tabpanels: document.getElementById('tabpanels'),
       metricClient: null,
       onSelectTab: (id) => this._selectTab(id),
+      onMoveTab: (name, before) => this._moveTab(name, before),
+      whyNoMove: () => this._whyNoEdit(),
       onSub: (o) => this._onSub(o),
       onFreeze: (fp) => this._freezeSubset(fp),
       seriesColour: ({ datasetFp, modelFp }) => this._colours.get(
@@ -760,9 +763,19 @@ export class FFastApp {
     });
   }
 
+  /** Drag a tab before `before` (null: to the end). The whole order goes to the
+   * server, hidden tabs included, so they keep their places (ADR 0070). */
+  _moveTab(name, before) {
+    const why = this._whyNoEdit();
+    if (why) { this._setStatus(why, 'error'); return; }
+    const names = this._layoutTabs.map((t) => t.name);
+    this._tabOps.setOrder(movedBefore(names, name, before)).then((r) => this._reportTab(r));
+  }
+
   /** Say how a tab change went, in the status label. */
   _reportTab(r, verb) {
     if (!r.ok) { this._setStatus(r.error || 'The tab could not be changed', 'error'); return; }
+    if (r.action === 'order') { this._setStatus('Tab order changed', 'connected'); return; }
     const done = { save: 'Saved', delete: verb || 'Deleted', hide: 'Hid', show: 'Showing' }[r.action];
     this._setStatus(`${done} ${r.name}`, 'connected');
   }

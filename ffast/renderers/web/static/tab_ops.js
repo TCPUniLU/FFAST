@@ -27,6 +27,9 @@ export class TabOps {
 
   setHidden(name, hidden) { return this._ask(this._saved, OUT.HIDE_TAB, { name, hidden }); }
 
+  /** Put the whole tab bar in this order; `[]` brings back the default (ADR 0070). */
+  setOrder(names) { return this._ask(this._saved, OUT.SET_TAB_ORDER, { names }); }
+
   /** @returns {Promise<{name: string, toml: string|null, error: string|null}>} */
   exportToml(name) { return this._ask(this._exported, OUT.EXPORT_TAB, { name }); }
 

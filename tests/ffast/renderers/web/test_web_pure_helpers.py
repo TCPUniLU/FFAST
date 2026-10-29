@@ -509,6 +509,12 @@ CASES = {
     "lf_unrelated_out_of_range": "fl.linkedFrame('P', 9, 'T', FL)",
     "lf_unknown": "fl.linkedFrame('P', 3, 'X', FL)",
 
+    # ── tr.movedBefore: the bar order after a drag (ADR 0070) ───────────────
+    "mb_before_first": "tr.movedBefore(['A','B','C'], 'C', 'A')",
+    "mb_to_end": "tr.movedBefore(['A','B','C'], 'A', null)",
+    "mb_unknown": "tr.movedBefore(['A','B','C'], 'X', 'A')",
+    "mb_onto_itself": "tr.movedBefore(['A','B','C'], 'B', 'B')",
+
     # ── tr.startPair: what a new independent panel shows (rule 7) ───────────
     "sp_first_free": (
         "tr.startPair([{datasetFp:'P', modelFp:'m1'}, {datasetFp:'P', modelFp:'m2'}],"
@@ -1690,6 +1696,10 @@ def test_an_unknown_panel_kind_builds_nothing(results):
 def test_a_layout_without_the_main_view_gets_the_default_3d_tab_first(results):
     """The main view and the Load Dataset… button need a place (rule 6), even
     from a server that predates 3D panels."""
+    assert results["mb_before_first"] == ["C", "A", "B"]
+    assert results["mb_to_end"] == ["B", "C", "A"]
+    assert results["mb_unknown"] == ["A", "B", "C"]
+    assert results["mb_onto_itself"] == ["A", "B", "C"]
     assert results["main_view_added_when_missing"] == [["3D", ["3d"]], ["Plots", ["table"]]]
 
 
