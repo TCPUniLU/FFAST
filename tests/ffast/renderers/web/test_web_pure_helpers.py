@@ -170,6 +170,24 @@ CASES = {
       return { ...shown, opened, cancelled, after: panel.children.length,
         hiddenAfter: menu.hidden, closedAfter: panel.classList.contains('hidden') };
     })()""",
+    # ── cc: cluster client (web parity plan 2026-10-29) ──
+    "cc_profile_from_form": "cc.profileFromForm({name:' m ', cores:'4', memory_mb:'x', modules:'Python, CUDA', provision:true})",
+    "cc_round_trip": "cc.formValues(cc.profileFromForm({modules:'Python, CUDA'})).modules",
+    "cc_latest": "[cc.latestRecord([{profile_name:'a', job_id:'1'}, {profile_name:'b', job_id:'2'}, {profile_name:'a', job_id:'3'}], 'a').job_id, cc.latestRecord([], 'a')]",
+    "cc_launch_id": "[cc.launchId('?port=1&launch=abc'), cc.launchId('?port=1')]",
+    "cc_server_setup": "cc.CLUSTER_FIELDS.filter((f) => f.group === 'Server setup').map((f) => [f.key, Boolean(f.help)])",
+    "cc_empty_defaults": "[cc.emptyProfile().venv_path, cc.emptyProfile().snapshot_interval_minutes, cc.emptyProfile().provision]",
+    "cc_client_request": (
+        "await (async () => {"
+        "  const c = new cc.ClusterClient('s3', async (path, init) => ({ ok: true, status: 200, json: async () => ({ path, init }) }));"
+        "  const { path, init } = await c.connect({name:'m'}, 'J5');"
+        "  return [path, init.method, init.headers['X-FFAST-Launch'], JSON.parse(init.body).reconnect_job_id];"
+        "})()"),
+    "cc_client_error": (
+        "await (async () => {"
+        "  const c = new cc.ClusterClient('s3', async () => ({ ok: false, status: 409, json: async () => ({error: 'busy'}) }));"
+        "  try { await c.stop(); return null; } catch (e) { return [e.message, e.status]; }"
+        "})()"),
     "key_alt_shift_s": "sc.matchShortcut({code: 'KeyS', altKey: true, shiftKey: true})?.action",
     "key_digit_0": "sc.matchShortcut({code: 'Digit0', key: ')', altKey: true, shiftKey: true})?.action",
     "key_needs_both": "[sc.matchShortcut({code: 'KeyD', altKey: true}), sc.matchShortcut({code: 'KeyD', shiftKey: true})]",
@@ -1056,6 +1074,7 @@ def results():
         f"  const oi = await import('{origin}/object_info.js');\n"
         f"  const tk = await import('{origin}/tasks.js');\n"
         f"  const sc = await import('{origin}/shortcuts.js');\n"
+        f"  const cc = await import('{origin}/cluster_client.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -2498,3 +2517,29 @@ def test_a_subset_series_takes_the_subsets_own_colour(results):
     # a subset's: its own rail colour, with or without a prediction
     assert results["series_colour_owner"] == ["M", "D", "S", "S"]
     assert results["paint"] == ["#abc", True, True]
+
+
+# ── cc: cluster client (web parity plan 2026-10-29) ─────────────────────────
+
+def test_the_cluster_form_values_make_a_tidy_profile(results):
+    p = results["cc_profile_from_form"]
+    assert p["name"] == "m" and p["cores"] == 4 and p["memory_mb"] == 4096
+    assert p["modules"] == ["Python", "CUDA"] and p["provision"] is True
+    assert results["cc_round_trip"] == "Python CUDA"
+
+
+def test_the_latest_record_of_a_profile_and_the_launch_id(results):
+    assert results["cc_latest"] == ["3", None]
+    assert results["cc_launch_id"] == ["abc", None]
+
+
+def test_the_server_setup_fields_all_have_help_and_defaults(results):
+    assert results["cc_server_setup"] == [
+        ["provision", True], ["modules", True], ["venv_path", True],
+        ["snapshot_interval_minutes", True]]
+    assert results["cc_empty_defaults"] == ["~/.ffast/venv", 5, False]
+
+
+def test_the_cluster_client_sends_the_launch_id_and_reports_errors(results):
+    assert results["cc_client_request"] == ["/cluster/connect", "POST", "s3", "J5"]
+    assert results["cc_client_error"] == ["busy", 409]
