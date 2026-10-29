@@ -1,0 +1,2138 @@
+"""Unit tests for the web client's pure helpers (ADR 0050).
+
+Before the ``RemoteBrowser`` / ``SessionOps`` extraction, every line of the web
+client was reachable only through the full runtime — a live ffast server, a
+WebSocket, and a WebGL context — so decision rules like "may the Load button be
+pressed?" were testable only by clicking through a browser.
+
+The extracted helpers are pure functions and are exercised here directly. A
+static file server provides an http origin (ES modules cannot be imported from
+``file://``), a blank page imports the modules, and every case is evaluated in
+one batch. No ffast server, no socket, no canvas — and no npm, so ADR 0045's
+zero-build stance is untouched. ``page.evaluate`` is the same mechanism the
+runtime tests already use to read app internals.
+
+All cases run in a single browser launch and the results are asserted
+individually, so one slow launch buys granular failures. The collector is sync
+(``asyncio.run`` inside a module-scoped fixture) because pytest-asyncio's auto
+mode gives each test its own loop, which a module-scoped async fixture cannot
+outlive.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import functools
+import http.server
+import json
+import re
+import threading
+from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.integration
+
+# Shared with the desktop's table test, so both clients format alike.
+TABLE_VALUE_CASES = json.loads(
+    (Path(__file__).resolve().parents[2] / "table_value_cases.json").read_text()
+)
+
+STATIC_DIR = (
+    Path(__file__).resolve().parents[4]
+    / "ffast" / "renderers" / "web" / "static"
+)
+
+# name -> JS expression, evaluated with remote_browser.js as `rb` and
+# session_ops.js as `so`.
+CASES = {
+    # ── rb.joinPath ─────────────────────────────────────────────────────────
+    "join_plain": "rb.joinPath('/data', 'a.xyz')",
+    "join_trailing_sep": "rb.joinPath('/data/', 'a.xyz')",
+    # the server sends path: null before the first listing resolves
+    "join_no_dir": "rb.joinPath(null, 'a.xyz')",
+
+    # ── rb.canLoad ──────────────────────────────────────────────────────────
+    "load_no_selection": "rb.canLoad({selected: null, mode: 'dataset'})",
+    "load_dataset": "rb.canLoad({selected: 'a.xyz', mode: 'dataset'})",
+    "load_pred_no_force_key":
+        "rb.canLoad({selected: 'p.xyz', mode: 'prediction', forceKey: '', targetDataset: 'fp'})",
+    "load_pred_no_target":
+        "rb.canLoad({selected: 'p.xyz', mode: 'prediction', forceKey: 'F', targetDataset: ''})",
+    "load_pred_complete":
+        "rb.canLoad({selected: 'p.xyz', mode: 'prediction', forceKey: 'F', targetDataset: 'fp'})",
+
+    # ── rb.keyOptions ───────────────────────────────────────────────────────
+    "keys_named": "rb.keyOptions(['E1', 'E2']).map(o => o.value)",
+    "keys_calculator_only":
+        "rb.keyOptions([], {calculator: true, calculatorValue: 'forces'})"
+        ".map(o => [o.value, o.label])",
+    "keys_none_first":
+        "rb.keyOptions(['E1'], {allowNone: true}).map(o => o.value)",
+    # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
+    "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
+    "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
+    "list_up_home_end": "[rb.listKey('ArrowUp', {index: 0, count: 3, isDir: false}), rb.listKey('ArrowUp', {index: 2, count: 3, isDir: false}), rb.listKey('Home', {index: 2, count: 3, isDir: false}), rb.listKey('End', {index: 0, count: 3, isDir: true})]",
+    "list_no_rows": "[rb.listKey('ArrowDown', {index: 0, count: 0, isDir: false}), rb.listKey('End', {index: 0, count: 0, isDir: false})]",
+    "list_right": "[rb.listKey('ArrowRight', {index: 0, count: 2, isDir: true}), rb.listKey('ArrowRight', {index: 0, count: 2, isDir: false})]",
+    "list_enter": "[rb.listKey('Enter', {index: 0, count: 2, isDir: true}), rb.listKey('Enter', {index: 0, count: 2, isDir: false})]",
+    "list_space": "[rb.listKey(' ', {index: 0, count: 2, isDir: true}), rb.listKey(' ', {index: 0, count: 2, isDir: false})]",
+    "list_left_back": "[rb.listKey('ArrowLeft', {index: 0, count: 2, isDir: true}), rb.listKey('Backspace', {index: 1, count: 2, isDir: false}), rb.listKey('x', {index: 0, count: 2, isDir: false})]",
+
+    # ── so.sessionStatus ────────────────────────────────────────────────────
+    "sess_saved": "so.sessionStatus('save', {ok: true, path: '/tmp/s'})",
+    "sess_loaded": "so.sessionStatus('load', {ok: true, path: '/tmp/s'})",
+    "sess_save_failed":
+        "so.sessionStatus('save', {ok: false, path: '/tmp/s', error: 'disk full'})",
+
+    # ── so.exportStatus / so.safeName ───────────────────────────────────────
+    "export_ok": "so.exportStatus({ok: true, n: 12, path: '/tmp/a.extxyz'})",
+    "export_failed_no_error": "so.exportStatus({ok: false})",
+    "export_skipped": "[so.exportStatus({ok: true, n: 812, skipped: 188, path: '/a'}).text,"
+                      " so.exportStatus({ok: true, n: 2, skipped: 1, path: '/a'}).text]",
+    "safe_name_hostile": "so.safeName('my data/set:1.xyz')",
+    "safe_name_empty": "so.safeName('///', 'subset')",
+    "safe_name_missing": "so.safeName(null)",
+
+    # ── cm.gradientCss — the colourbar derives from the atoms' LUT (ADR 0052) ──
+    "grad_viridis": "cm.gradientCss('viridis')",
+    "grad_unknown": "cm.gradientCss('not_a_colormap')",
+    "toasts": (
+        "(() => { const a = ts.showWarning('falling back'); ts.showWarning('falling back');"
+        " const b = ts.showWarning('broke', 'error');"
+        " for (let i = 0; i < 4; i++) ts.showWarning(`w${i}`);"
+        " const box = document.getElementById('toasts');"
+        " const r = {count_after_repeat: a.querySelector('.toast-count').textContent,"
+        "  error_class: b.classList.contains('toast-error'),"
+        "  shown: [...box.children].map((t) => t.dataset.text)};"
+        " box.lastElementChild.querySelector('.toast-close').click();"
+        " r.after_close = box.children.length; box.remove(); return r; })()"
+    ),
+    # ADR 0066 rule 4: once per key, even after its pop-up has closed
+    "toasts_once": (
+        "(() => { const a = ts.showOnce('m|d|p|x', 'M: x');"
+        " a.querySelector('.toast-close').click();"
+        " const again = ts.showOnce('m|d|p|x', 'M: x');"
+        " const other = ts.showOnce('m|d|p|y', 'M: y', 'error');"
+        " const box = document.getElementById('toasts');"
+        " const r = {first: !!a, again: again, other: other.classList.contains('toast-error'),"
+        "  shown: [...box.children].map((t) => t.dataset.text)};"
+        " box.remove(); return r; })()"
+    ),
+    "ss_colouring_labels": (
+        "[ss.colouringLabel({id: 'ffast.force_difference[element;component;mae]',"
+        " label: 'Force Difference · MAE · per element · per component', shape: 'N_elements'}),"
+        " ss.colouringLabel({id: 'my.el', shape: 'N_elements'}),"
+        " ss.colouringLabel({id: 'ffast.force_difference[atom+structure;length]',"
+        " label: 'Force Difference · per atom · length', shape: 'N_atoms'})]"
+    ),
+    "trap_focus": (
+        "(() => { const m = document.createElement('div');"
+        " m.innerHTML = '<button id=a>a</button><button id=b>b</button><button id=c disabled>c</button>';"
+        " document.body.appendChild(m);"
+        " const key = (el, shift) => el.dispatchEvent(new KeyboardEvent('keydown',"
+        "   {key: 'Tab', shiftKey: shift, bubbles: true, cancelable: true}));"
+        " const off = di.trapFocus(m);"
+        " const a = m.querySelector('#a'), b = m.querySelector('#b');"
+        " b.focus(); key(b, false); const forward = document.activeElement.id;"
+        " a.focus(); key(a, true); const backward = document.activeElement.id;"
+        " a.focus(); const inside = key(a, false);"
+        " off(); b.focus(); key(b, false); const released = document.activeElement.id;"
+        " m.remove(); return [forward, backward, inside, released]; })()"),
+    "ap_densities": "ap.DENSITIES",
+    "ap_density_names": "['large', 'compact', 'nope', undefined, '__proto__'].map(ap.densityName)",
+    "grad_cividis_first": "cm.gradientCss('cividis').split(', ')[0]",
+    "pn_scientific": "[0.01234, -4500, 0, 1, NaN].map(v => pn.formatScientific(v))",
+    "qs_force_error_colormap": "qs.forceErrorStyle('MACE').find(s => s[1] === 'Colormap')",
+    # Every colormap the colour-by pane offers must produce a bar.
+    "grad_all_offered": (
+        "['cividis','viridis','inferno','plasma','coolwarm','hot','bwr','force_error']"
+        ".map(n => cm.gradientCss(n).split(', ').length)"
+    ),
+    # The bar's stops, sampled through mapColorBy at the same fractions. Equal
+    # ⇒ bar and molecule cannot disagree about what a value looks like.
+    # ── an.pairSeries — dataset x prediction comparison scope ────────────────
+    "pair_one_each":
+        "an.pairSeries([{fp:'d1',name:'aspirin'}], [{fp:'m1',name:'MACE'}])"
+        ".map(s => [s.datasetFp, s.modelFp, s.name])",
+    "pair_three_models_one_dataset":
+        "an.pairSeries([{fp:'d1',name:'aspirin'}],"
+        " [{fp:'m1',name:'MACE'},{fp:'m2',name:'SchNet'},{fp:'m3',name:'NequIP'}])"
+        ".map(s => s.name)",
+    "pair_two_datasets_two_models":
+        "an.pairSeries([{fp:'d1',name:'aspirin'},{fp:'d2',name:'ethanol'}],"
+        " [{fp:'m1',name:'MACE'},{fp:'m2',name:'SchNet'}])"
+        ".map(s => s.name)",
+    "pair_skips_inapplicable":
+        "an.pairSeries([{fp:'d1',name:'aspirin'},{fp:'d2',name:'ethanol'}],"
+        " [{fp:'m1',name:'MACE',datasetFps:['d1']}]).map(s => s.datasetFp)",
+    "pair_empty_dataset_fps_allows_any":
+        "an.pairSeries([{fp:'d1',name:'aspirin'}],"
+        " [{fp:'m1',name:'MACE',datasetFps:[]}]).length",
+    "pair_no_model_is_reference_only":
+        "an.pairSeries([{fp:'d1',name:'aspirin'}], [])"
+        ".map(s => [s.modelFp, s.name])",
+    "pair_null_model_entry":
+        "an.pairSeries([{fp:'d1',name:'aspirin'}], [null]).map(s => s.modelFp)",
+    "pair_no_dataset_is_empty":
+        "an.pairSeries([], [{fp:'m1',name:'MACE'}]).length",
+
+    # ── pn.buildPanel — one trace per series ────────────────────────────────
+    # A tiny per-frame metric result, the shape decodeNdarray produces.
+    "panel_timeline_two_series": (
+        "(() => {"
+        "  const r = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const b = pn.buildPanel({kind:'timeline'}, ["
+        "    {name:'MACE',   datasetFp:'d1', modelFp:'m1', data:{y: r([1,2,3])}},"
+        "    {name:'SchNet', datasetFp:'d1', modelFp:'m2', data:{y: r([4,5,6])}},"
+        "  ], {});"
+        "  return {n: b.traces.length, names: b.traces.map(t => t.name),"
+        "          colors: b.traces.map(t => t.line.color),"
+        "          legend: b.layout.showlegend,"
+        "          curveSeries: b.subInfo.curveSeries};"
+        "})()"
+    ),
+    "panel_timeline_one_series_no_legend": (
+        "(() => {"
+        "  const r = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const b = pn.buildPanel({kind:'timeline'},"
+        "    [{name:'MACE', data:{y: r([1,2,3])}}], {});"
+        "  return {n: b.traces.length, legend: b.layout.showlegend};"
+        "})()"
+    ),
+    "panel_timeline_skips_empty_series": (
+        "(() => {"
+        "  const r = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const b = pn.buildPanel({kind:'timeline'}, ["
+        "    {name:'MACE',   data:{y: r([1,2,3])}},"
+        "    {name:'broken', data:{y: null}},"
+        "    {name:'SchNet', data:{y: r([7,8,9])}},"
+        "  ], {});"
+        "  return {names: b.traces.map(t => t.name),"
+        "          curveSeries: b.subInfo.curveSeries};"
+        "})()"
+    ),
+    "panel_scatter_diagonal_is_last_and_excluded": (
+        "(() => {"
+        "  const r = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const b = pn.buildPanel({kind:'scatter', diagonal:true}, ["
+        "    {name:'MACE',   data:{x: r([0,1]), y: r([0,1])}},"
+        "    {name:'SchNet', data:{x: r([0,2]), y: r([0,2])}},"
+        "  ], {perFrame:true});"
+        "  return {n: b.traces.length,"
+        "          dataCurveCount: b.subInfo.dataCurveCount,"
+        "          lastIsDiagonal: b.traces[2].showlegend === false,"
+        "          diagRange: [b.traces[2].x[0], b.traces[2].x[1]]};"
+        "})()"
+    ),
+    "panel_density_fill_only_when_alone": (
+        "(() => {"
+        "  const r2 = () => ({nd: {values: [0,1,2, 3,4,5], shape: [2,3]}});"
+        "  const one = pn.buildPanel({kind:'density'},"
+        "    [{name:'A', data:{value: r2()}}], {});"
+        "  const two = pn.buildPanel({kind:'density'},"
+        "    [{name:'A', data:{value: r2()}}, {name:'B', data:{value: r2()}}], {});"
+        "  return {oneFill: one.traces[0].fill || null,"
+        "          twoFill: two.traces[0].fill || null,"
+        "          twoNames: two.traces.map(t => t.name)};"
+        "})()"
+    ),
+    # table = the desktop's model x dataset grid (rows predictions, cols datasets)
+    "panel_table_grid": (
+        "(() => {"
+        "  const s = (v) => ({nd: {values: [v], shape: [1]}});"
+        "  const mk = (d,dn,m,mn,v) => ({datasetFp:d, datasetName:dn, modelFp:m,"
+        "     modelName:mn, name:mn, data:{value: s(v)}});"
+        "  const html = pn.buildPanel({kind:'table', precision:2, title:'MAE'}, ["
+        "    mk('d1','aspirin','m1','MACE',1), mk('d2','ethanol','m1','MACE',2),"
+        "    mk('d1','aspirin','m2','SchNet',3), mk('d2','ethanol','m2','SchNet',4),"
+        "  ], {}).html;"
+        "  const doc = new DOMParser().parseFromString(html, 'text/html');"
+        "  return {"
+        "    head: [...doc.querySelectorAll('thead th')].map(e => e.textContent),"
+        "    rows: [...doc.querySelectorAll('tbody tr')].map("
+        "      tr => [...tr.children].map(td => td.textContent)),"
+        "  };"
+        "})()"
+    ),
+    "panel_table_tiny_value": (
+        "(() => {"
+        "  const html = pn.buildPanel({kind:'table', precision:2}, [{datasetFp:'d1',"
+        "     datasetName:'aspirin', modelFp:'m1', modelName:'MACE',"
+        "     data:{value: {nd: {values: [0.002134], shape: [1]}}}}], {}).html;"
+        "  const doc = new DOMParser().parseFromString(html, 'text/html');"
+        "  return [...doc.querySelectorAll('tbody tr')].map("
+        "    tr => [...tr.children].map(td => td.textContent));"
+        "})()"
+    ),
+    "panel_table_missing_pair_is_dashed": (
+        "(() => {"
+        "  const s = (v) => ({nd: {values: [v], shape: [1]}});"
+        "  const mk = (d,dn,m,mn,v) => ({datasetFp:d, datasetName:dn, modelFp:m,"
+        "     modelName:mn, name:mn, data:{value: s(v)}});"
+        "  const html = pn.buildPanel({kind:'table', precision:2}, ["
+        "    mk('d1','aspirin','m1','MACE',1), mk('d2','ethanol','m2','SchNet',4),"
+        "  ], {}).html;"
+        "  const doc = new DOMParser().parseFromString(html, 'text/html');"
+        "  return [...doc.querySelectorAll('tbody tr')].map("
+        "    tr => [...tr.children].map(td => td.textContent));"
+        "})()"
+    ),
+    # grouped_table: one element selected -> rows are the series (compare models)
+    "panel_grouped_table_single_element_rows_are_series": (
+        "(() => {"
+        "  const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const mk = (mn, mae, rmse) => ({name: mn, modelName: mn,"
+        "     data:{mae: a(mae), rmse: a(rmse)}});"
+        "  const html = pn.buildPanel({kind:'grouped_table', precision:2}, ["
+        "    mk('MACE',   [0.1, 0.2], [0.5, 0.6]),"
+        "    mk('SchNet', [0.3, 0.4], [0.7, 0.8]),"
+        "  ], {elementOrder:[1,6], selectedElements:[6]}).html;"
+        "  const doc = new DOMParser().parseFromString(html, 'text/html');"
+        "  return {"
+        "    head: [...doc.querySelectorAll('thead th')].map(e => e.textContent),"
+        "    rows: [...doc.querySelectorAll('tbody tr')].map("
+        "      tr => [...tr.children].map(td => td.textContent)),"
+        "  };"
+        "})()"
+    ),
+    # grouped_table: several elements -> rows are elements, first series only
+    "panel_grouped_table_multi_element_rows_are_elements": (
+        "(() => {"
+        "  const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const html = pn.buildPanel({kind:'grouped_table', precision:2}, ["
+        "    {name:'MACE',   data:{mae: a([0.1,0.2]), rmse: a([0.5,0.6])}},"
+        "    {name:'SchNet', data:{mae: a([9.1,9.2]), rmse: a([9.5,9.6])}},"
+        "  ], {elementOrder:[1,6], selectedElements:[1,6]}).html;"
+        "  const doc = new DOMParser().parseFromString(html, 'text/html');"
+        "  return [...doc.querySelectorAll('tbody tr')].map("
+        "    tr => [...tr.children].map(td => td.textContent));"
+        "})()"
+    ),
+    # grouped_density colour channel: elements when >1 selected, else series
+    "panel_grouped_density_colour_channel": (
+        "(() => {"
+        "  const g = () => ({nd: {values:"
+        "     [0,1, 2,3,  4,5, 6,7], shape: [2,2,2]}});"
+        "  const two = [{name:'MACE', data:{value: g()}},"
+        "               {name:'SchNet', data:{value: g()}}];"
+        "  const byElem = pn.buildPanel({kind:'grouped_density'}, two,"
+        "    {elementOrder:[1,6], selectedElements:[1,6]});"
+        "  const bySeries = pn.buildPanel({kind:'grouped_density'}, two,"
+        "    {elementOrder:[1,6], selectedElements:[6]});"
+        "  return {"
+        "    elemNames: byElem.traces.map(t => t.name),"
+        "    elemColors: byElem.traces.map(t => t.line.color),"
+        "    seriesNames: bySeries.traces.map(t => t.name),"
+        "    seriesColors: bySeries.traces.map(t => t.line.color),"
+        "  };"
+        "})()"
+    ),
+    # ADR 0055: newest first, no duplicates, five at most
+    "recent_servers_remember": (
+        "rs.rememberServer(['a','b','c','d','e'], 'c')"
+    ),
+    "recent_servers_cap": (
+        "rs.rememberServer(['a','b','c','d','e'], 'f')"
+    ),
+    # the server-runs-other-code warning (ffast.session.code_fingerprint)
+    "code_notice_same": "cf.serverCodeNotice('abc', 'abc')",
+    "code_notice_older": "cf.serverCodeNotice(null, 'abc')",
+    "code_notice_different": "cf.serverCodeNotice('abd', 'abc')",
+    # a built-in metric declares a dimension ("energy"), not a unit
+    "units_dimension_tags": "[...un.DIMENSIONS].sort()",
+    "axis_title_units": (
+        "[pn.axisTitle(['Energy MAE', 'energyUnit'], 'energy'),"
+        " pn.axisTitle(['Energy MAE', 'energyUnit'], 'meV'),"
+        " pn.axisTitle(['Energy MAE', 'energyUnit'], ''),"
+        " pn.axisTitle('Density', 'meV'), pn.axisTitle(null, 'meV')]"
+    ),
+    "table_headers_carry_units": (
+        "(() => {"
+        "  const heads = (html) => [...new DOMParser().parseFromString(html, 'text/html')"
+        "    .querySelectorAll('thead th')].map(e => e.textContent);"
+        "  const one = [{datasetFp:'d1', datasetName:'aspirin', modelFp:'m1', modelName:'MACE',"
+        "     data:{value: {nd: {values: [1], shape: [1]}}}}];"
+        "  const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const grouped = [{name:'MACE', data:{mae: a([0.1]), rmse: a([0.5])}}];"
+        "  return {"
+        "    table: heads(pn.buildPanel({kind:'table', title:'Energy MAE'}, one,"
+        "      {units: {value: 'meV'}}).html),"
+        "    tableDim: heads(pn.buildPanel({kind:'table', title:'Energy MAE'}, one,"
+        "      {units: {value: 'energy'}}).html),"
+        "    grouped: heads(pn.buildPanel({kind:'grouped_table'}, grouped,"
+        "      {elementOrder:[6], selectedElements:[6], units: {mae: 'meV/Å', rmse: 'force'}}).html),"
+        "  };"
+        "})()"
+    ),
+    # an energy or force shows the dataset's unit, "[unit]" until the user names it
+    "unit_resolution": (
+        "[un.resolveUnit('energy', {}), un.resolveUnit('energy', {energy: 'eV'}),"
+        " un.resolveUnit('force', {energy: 'eV'}), un.resolveUnit('meV', {}),"
+        " un.resolveUnit('length', {}), un.resolveUnit('energy', undefined),"
+        " un.withUnit('Energy MAE', un.resolveUnit('energy', {})),"
+        " un.withUnit('Energy MAE', un.resolveUnit('energy', {energy: 'kcal/mol'})),"
+        " un.editableDimension(' force '), un.editableDimension('length')]"
+    ),
+    "dataset_units_follow_the_root": (
+        "(() => { const m = new Map([['d1', {units: {energy: 'eV'}}], ['s1', {parent: 'd1', units: {}}],"
+        "  ['s2', {parent: 's1'}], ['c1', {parent: 'c2'}], ['c2', {parent: 'c1', units: {force: 'x'}}]]);"
+        "  return [un.datasetUnits('s2', m), un.datasetUnits('d1', m), un.datasetUnits('nope', m),"
+        "    un.datasetUnits(undefined, m), un.datasetUnits('c1', m)]; })()"
+    ),
+    "unit_headers_are_marked": (
+        "(() => {"
+        "  const doc = (html) => new DOMParser().parseFromString(html, 'text/html');"
+        "  const heads = (html) => [...doc(html).querySelectorAll('thead th')]"
+        "    .map(e => [e.textContent, e.dataset.unitRole || null]);"
+        "  const one = [{datasetFp:'d1', datasetName:'aspirin', modelFp:'m1', modelName:'MACE',"
+        "     data:{value: {nd: {values: [1], shape: [1]}}}}];"
+        "  const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const grouped = [{name:'MACE', data:{mae: a([0.1]), rmse: a([0.5])}}];"
+        "  return {"
+        "    table: heads(pn.buildPanel({kind:'table', title:'Energy MAE'}, one,"
+        "      {units: {value: '[unit]'}, unitDims: {value: 'energy'}}).html),"
+        "    grouped: heads(pn.buildPanel({kind:'grouped_table'}, grouped,"
+        "      {elementOrder:[6], selectedElements:[6], units: {mae: 'eV/Å', rmse: '[unit]'},"
+        "       unitDims: {mae: 'force', rmse: 'force'}}).html),"
+        "    plain: heads(pn.buildPanel({kind:'table', title:'Gyration'}, one, {units: {value: ''}}).html),"
+        "  };"
+        "})()"
+    ),
+    "unit_role_at": (
+        "(() => {"
+        "  const box = document.createElement('div');"
+        "  box.innerHTML = '<table><tr><th data-unit-role=\"mae\"><b>MAE</b></th><th>x</th></tr></table>'"
+        "    + '<svg><g class=\"g-xtitle\"><text>E</text></g><g class=\"g-ytitle\"><text>F</text></g></svg>';"
+        "  const axes = {x: 'value', y: 'y'};"
+        "  return [pn.unitRoleAt(box.querySelector('b'), axes), pn.unitRoleAt(box.querySelectorAll('th')[1], axes),"
+        "    pn.unitRoleAt(box.querySelector('.g-xtitle text'), axes),"
+        "    pn.unitRoleAt(box.querySelector('.g-ytitle text'), axes),"
+        "    pn.unitRoleAt(box.querySelector('.g-xtitle text'), null)];"
+        "})()"
+    ),
+    "plot_unit_axes": (
+        "(() => { const a = (v) => ({nd: {values: v, shape: [v.length]}});"
+        "  const s = [{name: 'm', data: {y: a([1, 2]), x: a([1, 2])}}];"
+        "  return [pn.buildPanel({kind: 'timeline'}, s, {}).unitAxes,"
+        "    pn.buildPanel({kind: 'scatter'}, s, {}).unitAxes,"
+        "    pn.buildPanel({kind: 'timeline', y_label: ['Energy MAE', 'energyUnit']}, s,"
+        "      {units: {y: '[unit]'}}).layout.yaxis.title.text]; })()"
+    ),
+    "panel_unknown_kind_is_null": "pn.buildPanel({kind:'nope'}, [], {})",
+    # ADR 0055 rule 4: decimals, but a non-zero value never prints as zero
+    "table_value_format": (
+        "TABLE_VALUE_CASES.map(([v, p]) => pn.formatTableValue(v, p))"
+    ),
+
+    # ── tr: tab layout rules (ADR 0056) ─────────────────────────────────────
+    "main_view_added_when_missing": (
+        "tr.ensureMainView([{name:'Plots', panels:[{kind:'table', row:0, col:0}]}])"
+        ".map(t => [t.name, t.panels.map(p => p.kind)])"
+    ),
+    "main_view_kept_when_present": (
+        "tr.ensureMainView([{name:'Plots', panels:[{kind:'table'}]},"
+        " {name:'Mine', panels:[{kind:'3d'}]}]).map(t => t.name)"
+    ),
+    "main_view_independent_does_not_count": (
+        "tr.ensureMainView([{name:'Mine', panels:[{kind:'3d', view:'independent'}]}])"
+        ".map(t => t.name)"
+    ),
+    "main_view_default_tab_is_a_copy": (
+        "(() => { const a = tr.ensureMainView([]), b = tr.ensureMainView([]);"
+        "  return a[0] !== b[0] && a[0].panels !== tr.DEFAULT_3D_TAB.panels; })()"
+    ),
+    "last_linked_panel_stays": (
+        "tr.whyPanelStays([{panels:[{kind:'3d'}, {kind:'table'}]}], 0, 0)"
+    ),
+    "linked_panel_with_another_can_go": (
+        "tr.whyPanelStays([{panels:[{kind:'3d'}]}, {panels:[{kind:'3d'}]}], 0, 0)"
+    ),
+    "plot_panel_can_go": (
+        "tr.whyPanelStays([{panels:[{kind:'3d'}, {kind:'table'}]}], 0, 1)"
+    ),
+    "independent_panel_can_go": (
+        "tr.whyPanelStays([{panels:[{kind:'3d'}, {kind:'3d', view:'independent'}]}], 0, 1)"
+    ),
+    # the caption drop-down of a 3D panel (to_fix 7)
+    "panel_choices": (
+        "(() => { const ds = [['A', 'aspirin'], ['S', 'aspirin [0:9]']];"
+        " const lab = (r) => [r.value, r.options.map((o) => [o.value, o.label, o.disabled])];"
+        " return [lab(tr.panelChoices({linked: true, shows: null, datasets: ds})),"
+        "   lab(tr.panelChoices({linked: true, shows: null, datasets: ds, stays: tr.MAIN_VIEW_RULE})),"
+        "   lab(tr.panelChoices({linked: false, shows: 'S', datasets: ds, noSave: 'Finish editing the tab first'})),"
+        "   lab(tr.panelChoices({linked: false, shows: null, datasets: []}))]; })()"
+    ),
+
+    # ── fl: same configuration across related datasets (ADR 0056 rule 3) ────
+    # P has 10 frames; S = P frames [4, 6, 8]; SS = S frames [2, 0] (P 8, 4);
+    # A = atoms of P (every frame); Q is unrelated.
+    "fl_same_dataset": "fl.sameConfiguration('P', 7, 'P', FL)",
+    "fl_subset_to_parent": "fl.sameConfiguration('S', 1, 'P', FL)",
+    "fl_parent_to_subset": "fl.sameConfiguration('P', 8, 'S', FL)",
+    "fl_parent_frame_not_in_subset": "fl.sameConfiguration('P', 5, 'S', FL)",
+    "fl_nested_subset_to_sibling": "fl.sameConfiguration('SS', 0, 'S', FL)",
+    "fl_atom_subset_keeps_frames": "fl.sameConfiguration('A', 3, 'S', FL)",
+    "fl_unrelated": "fl.sameConfiguration('Q', 3, 'P', FL)",
+    "fl_unknown_dataset": "fl.sameConfiguration('X', 3, 'P', FL)",
+    "fl_frame_out_of_range": "fl.sameConfiguration('S', 9, 'P', FL)",
+    "fl_prediction_applies": (
+        "[fl.predictionApplies({dataset_fingerprints: ['P']}, 'P', FL),"
+        " fl.predictionApplies({dataset_fingerprints: ['P']}, 'SS', FL),"
+        " fl.predictionApplies({dataset_fingerprints: ['P']}, 'A', FL),"
+        " fl.predictionApplies({dataset_fingerprints: ['P']}, 'Q', FL),"
+        " fl.predictionApplies({dataset_fingerprints: []}, 'Q', FL),"
+        " fl.predictionApplies({dataset_fingerprints: ['P']}, 'X', FL)]"),
+
+    # ── an: SUB follows the plot's zoom ─────────────────────────────────────
+    "an_plot_range": (
+        "an.plotRange({_fullLayout: {xaxis: {range: [1.5, 7]}, yaxis: {range: [0, 2]}}})"),
+    "an_plot_range_before_drawing": "an.plotRange({})",
+    "an_frames_key_moves_with_the_frames": (
+        "[an.framesKey({n: 3, parent_frames: [4, 6, 8]}), an.framesKey({n: 3, parent_frames: [4, 6, 9]}),"
+        " an.framesKey({n: 10}), an.framesKey(undefined)]"),
+
+    "an_subset_refs": (
+        "an.subsetRefs("
+        " [{datasetFp: 'P', modelFp: 'm', name: 'MACE', datasetName: 'P'},"
+        "  {datasetFp: 'Q', modelFp: 'm', name: 'MACE', datasetName: 'Q'},"
+        "  {datasetFp: 'H', modelFp: null, name: 'H', datasetName: 'H'}],"
+        " new Map([['P|m|Plot', 'S'], ['Q|m|Other', 'T'], ['H||Plot', 'HS']]), 'Plot',"
+        " new Map([['S', {name: 'Plot,P,MACE'}], ['T', {name: 'Other,Q,MACE'}]]))"
+        ".map(r => [r.datasetFp, r.modelFp, r.name, r.datasetName])"),
+
+    # ── fl.linkedFrame: an independent panel following the main view (rule 3)
+    "lf_same_dataset": "fl.linkedFrame('P', 7, 'P', FL)",
+    "lf_parent_to_subset": "fl.linkedFrame('P', 8, 'S', FL)",
+    "lf_subset_left_it_out": "fl.linkedFrame('P', 5, 'S', FL)",
+    "lf_unrelated_by_number": "fl.linkedFrame('P', 3, 'T', FL)",
+    "lf_unrelated_out_of_range": "fl.linkedFrame('P', 9, 'T', FL)",
+    "lf_unknown": "fl.linkedFrame('P', 3, 'X', FL)",
+
+    # ── tr.movedBefore: the bar order after a drag (ADR 0070) ───────────────
+    "mb_before_first": "tr.movedBefore(['A','B','C'], 'C', 'A')",
+    "mb_to_end": "tr.movedBefore(['A','B','C'], 'A', null)",
+    "mb_unknown": "tr.movedBefore(['A','B','C'], 'X', 'A')",
+    "mb_onto_itself": "tr.movedBefore(['A','B','C'], 'B', 'B')",
+
+    # ── tr.steppedOrder: one step left or right, over visible tabs (ADR 0070)
+    "so_left": "tr.steppedOrder(['A','B','C'], new Set(), 'B', -1)",
+    "so_first_left": "tr.steppedOrder(['A','B','C'], new Set(), 'A', -1)",
+    "so_last_right": "tr.steppedOrder(['A','B','C'], new Set(), 'C', 1)",
+    "so_over_hidden_left": "tr.steppedOrder(['A','B','C'], new Set(['B']), 'C', -1)",
+    "so_over_hidden_right": "tr.steppedOrder(['A','B','C'], new Set(['B']), 'A', 1)",
+
+    # ── tr.startPair: what a new independent panel shows (rule 7) ───────────
+    "sp_first_free": (
+        "tr.startPair([{datasetFp:'P', modelFp:'m1'}, {datasetFp:'P', modelFp:'m2'}],"
+        " [{datasetFp:'P', modelFp:'m1'}])"),
+    "sp_all_shown": (
+        "tr.startPair([{datasetFp:'P', modelFp:'m1'}], [{datasetFp:'P', modelFp:'m1'}])"),
+    "sp_none": "tr.startPair([], [])",
+
+    # ── ss: an independent panel's starting look (rule 13) ──────────────────
+    "ss_full": (
+        "ss.startCommands({colour_by: 'ffast.force_difference[atom+structure;length]', colormap: 'force_error', atom_size: 1.2,"
+        " bond_width: 60, bond_colour: '#ff8800', force_arrows: true, force_length: 20,"
+        " force_normalised: false}, {modelFp: 'm1', catalog: [{id: 'ffast.force_difference[atom+structure;length]'}]})"),
+    "ss_missing_metric": (
+        "ss.startCommands({colour_by: 'nope.metric'}, {modelFp: 'm1', catalog: []})"),
+    "ss_plain": "ss.startCommands({colour_by: 'displacement'}, {modelFp: null, catalog: []})",
+    "ss_table": (
+        "ss.startCommands({colour_by: 'user.h_err'},"
+        " {modelFp: 'm1', catalog: [{id: 'user.h_err', shape: '(N_frames, N_elements)'}]}).commands[0].value"),
+    "ss_not_per_atom": (
+        "ss.startCommands({colour_by: 'ffast.energy_difference[dataset;mae]'},"
+        " {modelFp: 'm1', catalog: [{id: 'ffast.energy_difference[dataset;mae]', shape: 'scalar'}]}).note"),
+    "ss_clean": (
+        "[ss.cleanStart({colormap: 'viridis', atom_size: null, bond_width: undefined}),"
+        " ss.cleanStart({atom_size: null}), ss.cleanStart(null)]"),
+    "ss_empty": "ss.startCommands(null, {modelFp: null, catalog: []})",
+    "ss_from_current": (
+        "ss.startFromCurrent({source: 'metric:ffast.force_difference[atom+structure;length]', colormap: 'force_error', atomSize: 1,"
+        " bondWidth: 100, bondColour: '#404040', forces: {show: true, length: 10, normalised: true}})"),
+    "ss_from_current_plain": (
+        "ss.startFromCurrent({source: 'element', colormap: 'viridis', atomSize: 1.5,"
+        " bondWidth: 40, bondColour: '#123456', forces: {show: false, length: 10, normalised: true}})"),
+
+    # ── te.setPanelView / setPanelStart ──────────────────────────────────────
+    "te_make_independent": (
+        "te.setPanelView(TE(), 0, {view: 'independent', link_frame: false, link_camera: true}).panels[0]"),
+    "te_make_linked_drops_the_rest": (
+        "te.setPanelView(te.setPanelStart(te.setPanelView(TE(), 0, {view: 'independent',"
+        " link_frame: false, link_camera: false}), 0, {colormap: 'viridis'}), 0, {view: 'linked'}).panels[0]"),
+    "te_set_start": "te.setPanelStart(TE(), 0, {colormap: 'viridis'}).panels[0].start",
+    "te_saved_keeps_view": (
+        "te.toSaved(te.setPanelView(TE(), 0, {view: 'independent', link_frame: true,"
+        " link_camera: false})).panels[0]"),
+
+    # ── te: editing a tab draft (ADR 0056 rules 6, 11, 14; ADR 0069) ────────
+    # TE() is an old-form 2x2 tab: 3D panel V at (0,0), table A at (0,1), timeline
+    # B at (1,0) spanning 2 columns. TF() is that tab on the fine grid: V and A
+    # 12 columns by 6 rows, B 24 by 6 below them.
+    "te_place": "te.place(TF()).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])",
+    "te_to_fine_grid_shares": (
+        "(() => { const old = (n, extra = {}) => ({panels: Array.from({length: n}, (_, c) =>"
+        "    ({kind: 'table', title: 'P' + c, row: 0, col: c, rowspan: 1, colspan: 1})), ...extra});"
+        "  const at = (t) => te.place(t).map(p => [p.col, p.colspan]);"
+        "  return [at(te.toFineGrid(old(2))), at(te.toFineGrid(old(5))),"
+        "    at(te.toFineGrid(old(2, {column_widths: [2, 1]}))), at(te.toFineGrid(old(3, {column_widths: [1, 1, 1]}))),"
+        "    te.toFineGrid(old(2)).grid]; })()"),
+    "te_to_fine_grid_rows": (
+        "te.place(te.toFineGrid({...TE(), row_heights: [1, 0.5]})).map(p => [p.title, p.row, p.rowspan])"),
+    "te_to_fine_grid_keeps_the_rest": (
+        "(() => { const t = te.toFineGrid({...TE(), column_widths: [2, 1], row_heights: [1, 1],"
+        "    panels: [...TE().panels, {kind: 'table', title: 'S1', row: 1, col: 1, rowspan: 1, colspan: 1, scroll_group: 'g'},"
+        "             {kind: 'table', title: 'S2', row: 1, col: 1, rowspan: 1, colspan: 1, scroll_group: 'g'}]});"
+        "  return [t.grid, 'column_widths' in t, 'row_heights' in t, t.panels.map(p => p.title + (p.scroll_group || '')),"
+        "    t.panels.slice(3).map(p => [p.row, p.col, p.rowspan, p.colspan]), te.toFineGrid(t) === t]; })()"),
+    "te_move_to_a_free_place": (
+        "te.place(te.movePanel(TF(), 1, 12, 12)).map(p => [p.title, p.row, p.col])"),
+    "te_move_pushes_down": (
+        "te.place(te.movePanel(TF(), 0, 0, 12)).map(p => [p.title, p.row, p.col])"),
+    "te_move_stays_in_the_grid": (
+        "[te.movePanel(TF(), 1, 0, 20).panels[1].col, te.movePanel(TF(), 1, 0, -4).panels[1].col,"
+        " te.clampMove(TF(), 0, 3, 99)]"),
+    "te_move_a_strip_as_one": (
+        "(() => { const t = {grid: 24, panels: ["
+        "  {kind: 'table', title: 'X', row: 0, col: 0, rowspan: 6, colspan: 24, scroll_group: 'g'},"
+        "  {kind: 'table', title: 'Y', row: 0, col: 0, rowspan: 6, colspan: 24, scroll_group: 'g'},"
+        "  {kind: 'table', title: 'Z', row: 6, col: 0, rowspan: 6, colspan: 24}]};"
+        "  return te.place(te.movePanel(t, 1, 12, 0)).map(p => [p.title, p.row]); })()"),
+    "te_resize_grows": (
+        "te.place(te.resizePanel(TF(), 1, {w: 8, h: 10})).map(p => [p.title, p.row, p.rowspan, p.colspan])"),
+    "te_resize_pushes_a_neighbour_down": (
+        "te.place(te.resizePanel(TF(), 0, {w: 16, h: 6})).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])"),
+    "te_resize_stops_at_the_minimum_and_the_edge": (
+        "[te.place(te.resizePanel(TF(), 1, {w: 1, h: 1}))[1], te.place(te.resizePanel(TF(), 0, {w: 1, h: 1}))[0],"
+        " te.place(te.resizePanel(TF(), 1, {w: 99, h: 6}))[1].colspan, te.minSize(TF(), 0), te.minSize(TF(), 1)]"),
+    "te_resize_near_the_edge_moves_left": (
+        "(() => { const t = TF(); t.panels[1].col = 20; t.panels[1].colspan = 4;"
+        "  const p = te.place(te.resizePanel(t, 1, {w: 1, h: 6}))[1]; return [p.col, p.colspan]; })()"),
+    "te_resize_a_strip_as_one": (
+        "(() => { const t = {grid: 24, panels: ["
+        "  {kind: 'table', title: 'X', row: 0, col: 0, rowspan: 6, colspan: 24, scroll_group: 'g'},"
+        "  {kind: 'table', title: 'Y', row: 0, col: 0, rowspan: 6, colspan: 24, scroll_group: 'g'}]};"
+        "  return te.place(te.resizePanel(t, 0, {w: 12, h: 8})).map(p => [p.rowspan, p.colspan]); })()"),
+    "te_compact": (
+        "(() => { const t = TF(); t.panels[0].row = 20;"
+        "  return [te.place(te.compact(t)).map(p => [p.title, p.row]),"
+        "    te.place(te.compact({...TF(), panels: [{...TF().panels[2], row: 9}]}))[0].row]; })()"),
+    "te_add_takes_the_first_free_place": (
+        "te.place(te.addPanel(te.removePanel(TF(), 2), {kind:'table', title:'C'}))"
+        ".map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])"),
+    "te_add_opens_a_row_when_full": (
+        "te.place(te.addPanel(TF(), {kind:'table', title:'C'})).map(p => [p.title, p.row, p.col])"),
+    "te_remove_floats_the_rest_up": (
+        "te.place(te.removePanel(te.removePanel(TF(), 1), 0)).map(p => [p.title, p.row])"),
+    "te_save_form": (
+        "te.toSaved({...TF(), source:'user', replaces:'X', revision:'r', hidden:false, original_changed:false})"),
+    "te_copy_of": "te.copyOf(TE(), 'Copy of Mixed').name",
+    "te_only_places_changed": (
+        "[te.onlyPlacesChanged(TF(), {...TF(), grid: 12}),"
+        " te.onlyPlacesChanged(TF(), te.resizePanel(TF(), 1, {w: 6, h: 6})),"
+        " te.onlyPlacesChanged(TF(), te.resizePanel(TF(), 0, {w: 16, h: 6})),"
+        " te.onlyPlacesChanged(TF(), te.movePanel(TF(), 0, 0, 12)),"
+        " te.onlyPlacesChanged(TF(), te.removePanel(TF(), 1)),"
+        " te.onlyPlacesChanged(TF(), {...TF(), name: 'Other'}),"
+        " te.onlyPlacesChanged(TF(), te.replacePanel(TF(), 1, {...TF().panels[1], title: 'Z'}))]"),
+    "te_empty_tab": "te.emptyTab('New')",
+    "te_kinds_offer_metrics_by_shape": (
+        "te.metricsFor('density', 'value', [{id:'a', shape:'(curve_xy, grid)'},"
+        " {id:'b', shape:'N_frames'}]).map(m => m.id)"),
+    "te_kind_roles": "te.KIND_ROLES",
+
+    # ── ex.canExtractFrom: the desktop's DatasetLoader.canExtractAtoms ──────
+    "ex_can_extract": (
+        "[ex.canExtractFrom({is_sub: false}), ex.canExtractFrom({is_sub: true, frozen: true}),"
+        " ex.canExtractFrom({is_sub: true, frozen: false}), ex.canExtractFrom(undefined)]"),
+
+    # ── theme.plotTheme: no document here, so the dark constants ────────────
+    "theme_series_count": "th.plotTheme().series.length",
+    "theme_line": "th.plotTheme().line",
+    "theme_grid_follows_line": "pn.baseLayout().xaxis.gridcolor === th.plotTheme().line",
+    "theme_series_color_wraps": "pn.seriesColor(8) === pn.seriesColor(0)",
+    "next_colour": "[oc.nextIndex([], 3), oc.nextIndex([0], 3), oc.nextIndex([1, 0], 3), oc.nextIndex([0, 1, 2, 5], 3)]",
+    "series_colour_owner": ("[oc.seriesColourOwner('D', 'M', false), oc.seriesColourOwner('D', null, false),"
+                            " oc.seriesColourOwner('S', 'M', true), oc.seriesColourOwner('S', null, true)]"),
+    "paint": "[pn.paint({seriesColour: (s) => s.c}, {c: '#abc'}, 0), pn.paint({seriesColour: () => null}, {}, 1) === pn.seriesColor(1), pn.paint({}, {}, 2) === pn.seriesColor(2)]",
+    "unit_choices": "[ru.unitChoices('energy', []), ru.unitChoices('energy', ['kcal/mol', 'meV']), ru.unitChoices('force', ['eV/Å'])]",
+    "remember_unit": "[ru.rememberUnit(['a', 'b'], 'b'), ru.rememberUnit(['a', 'b'], 'c')]",
+    "typed_parts": "[rb.typedParts('/a/b/ca'), rb.typedParts('/a/'), rb.typedParts('/ab'), rb.typedParts('abc')]",
+    "match_entries": "rb.matchEntries([{name: 'Alpha'}, {name: 'beta'}, {name: 'alps'}], 'AL').map(e => e.name)",
+    "remember_files": (
+        "(() => { let l = []; for (const p of ['a', 'b', 'a']) l = rf.rememberFile(l, {path: p, kind: 'dataset'});"
+        " l = rf.rememberFile(l, {path: 'a', kind: 'prediction'});"
+        " for (let i = 0; i < 12; i++) l = rf.rememberFile(l, {path: 'x' + i, kind: 'dataset'});"
+        " return [l.length, l[0].path, l.some(e => e.path === 'a')]; })()"),
+    "hint_info": "[0, 1, 2, 3, 4, 9].map(n => hn.toolHint('info', n).map(x => x.join('')).join(' '))",
+    "element_colour_on": "[ec.elementColourOn(8, '#1a1d21'), ec.elementColourOn(6, '#1a1d21'), ec.elementColourOn(1, '#ffffff'), ec.elementColourOn(1, '#1a1d21'), ec.elementColourOn(8, 'oklch(1 0 0)')]",
+    "grouped_density_cpk": "pn.buildPanel({kind:'grouped_density'}, [{name:'M', data:{value:{nd:{values:[0,1,2,3, 4,5,6,7], shape:[2,2,2]}}}}], {elementOrder:[1,6], selectedElements:[1,6]}).traces.map(t => t.line.color)",
+    "grouped_density_cpk_expected": "[1, 6].map(z => ec.elementColourOn(z, th.plotTheme().surface))",
+    "hint_others": "[hn.toolHint('bonds', 0), hn.toolHint('bonds', 1), hn.toolHint('align', 2), hn.toolHint('forces', 0), hn.toolHint('extract', 3), hn.toolHint('zzz', 0), hn.toolHint('extract', 0), hn.toolHint('extract', 1), hn.toolHintKey('info')]",
+    "hint_forces_picked": "hn.toolHint('forces', 2)",
+    "hint_forces_frame": "hn.toolHint('forces', 2, {perFrame: true})",
+    "arrow_long": "ar.arrowParts(2, 1)",
+    "arrow_thick": "ar.arrowParts(2, 2)",
+    "arrow_short": "ar.arrowParts(0.125, 1)",
+    "contrast_ink": "[pn.contrastInk('#f0e442'), pn.contrastInk('#0072b2'), pn.contrastInk('#ffffff'), pn.contrastInk('#000000')]",
+    "theme_hex_alpha": "th.hexAlpha('#56b4e9', 0.15)",
+
+    # theme.js DARK, the fallback used before the page's tokens are read, is the
+    # :root column of index.html (read in a frame of the served page).
+    "theme_dark_is_root": (
+        "await (async () => {"
+        "  const frame = document.createElement('iframe');"
+        "  frame.src = 'index.html'; frame.style.cssText = 'width:800px;height:600px';"
+        "  document.body.appendChild(frame);"
+        "  await new Promise((ok) => frame.addEventListener('load', ok, {once: true}));"
+        "  const doc = frame.contentDocument;"
+        "  const css = frame.contentWindow.getComputedStyle(doc.documentElement);"
+        "  const v = (n) => css.getPropertyValue(n).trim();"
+        "  const probe = doc.createElement('span'); probe.style.fontSize = 'var(--fs-plot)';"
+        "  doc.body.appendChild(probe);"
+        "  const root = {surface: v('--surface'), line: v('--line'), ink2: v('--ink-2'), ink3: v('--ink-3'),"
+        "    fsPlot: parseFloat(frame.contentWindow.getComputedStyle(probe).fontSize), font: v('--font'),"
+        "    peak: v('--peak'), peakInk: v('--peak-ink'), median: v('--median'),"
+        "    series: v('--series').split(',').map((c) => c.trim())};"
+        "  frame.remove();"
+        "  const dark = th.plotTheme();"   # no tokens in this page: the DARK values
+        "  dark.fsPlot = 11;"              # (its probe reads this page's 16 px default)
+        "  return {root, dark}; })()"),
+
+    # ── peaks.pickPeaks (ADR 0063) ──────────────────────────────────────────
+    "peaks_five_spikes": (
+        "(() => { const y = new Array(100).fill(0);"
+        " [[22, 3], [41, 2], [58, 2.5], [73, 5], [86, 4]].forEach(([i, v]) => { y[i] = v; });"
+        " return pk.pickPeaks(y); })()"),
+    "peaks_adjacent": (
+        "(() => { const y = new Array(100).fill(0);"
+        " y[73] = 5; y[75] = 4; y[22] = 3; y[41] = 2; y[58] = 2.5;"
+        " return pk.pickPeaks(y).map(p => p.frame); })()"),
+    "peaks_short": "pk.pickPeaks([0, 1, 0, 5, 0, 1, 0, 2, 0])",
+    "peaks_nan": (
+        "(() => { const y = new Array(100).fill(0); y[30] = NaN; y[31] = 1; y[60] = 2;"
+        " return pk.pickPeaks(y, 2).map(p => p.frame); })()"),
+    "peaks_fewer_than_n": (
+        "(() => { const y = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]; return pk.pickPeaks(y).map(p => p.frame); })()"),
+    "peaks_all_zero": "pk.pickPeaks(new Array(100).fill(0))",
+    "peaks_plateau": (
+        "(() => { const y = new Array(20).fill(0); for (let i = 8; i <= 12; i++) y[i] = 5;"
+        " return pk.pickPeaks(y); })()"),
+    "peaks_annotation": (
+        "pn.peakAnnotations([{frame: 73, value: 0.4421}], '[unit]', (f) => f === 73)"
+        ".map(a => [a.text, a.textangle, a.opacity, a.hovertext, a.captureevents])"),
+    "peaks_annotation_unit": (
+        "pn.peakAnnotations([{frame: 5, value: 0.1}], 'eV/Å').map(a => a.text)"),
+    "peaks_annotation_no_unit": (
+        "pn.peakAnnotations([{frame: 5, value: 0.1}], 'energy').map(a => a.text)"),
+    "peaks_timeline_one_series": (
+        "(() => { const y = new Array(100).fill(0); y[22] = 3; y[73] = 5;"
+        " const b = pn.buildTimeline({x_label: null, y_label: ['Force MAE', 'u']},"
+        "   [{datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}}], {units: {y: 'eV'}});"
+        " return [b.layout.annotations.length, b.layout.yaxis.range, b.peaks.map(p => p.frame), b.layout.margin.t, b.extraHeight]; })()"),
+    "peaks_timeline_negative": (
+        "(() => { const y = Array.from({length: 100}, (_, i) => -3300 + (i % 7));"
+        " y[40] = -3078.6;"
+        " const b = pn.buildTimeline({y_label: ['E', 'u']},"
+        "   [{datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}}], {units: {}});"
+        " return [b.layout.yaxis.range, Math.max(...y)]; })()"),
+    "peaks_timeline_switched_off": (
+        "(() => { const y = new Array(100).fill(0); y[22] = 3;"
+        " const s = {datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}};"
+        " const b = pn.buildTimeline({y_label: ['F', 'u']}, [s], {units: {}, peaks: false});"
+        " return [b.layout.annotations === undefined, b.layout.margin.t,"
+        "   b.peaks.length, b.peaksEligible, b.extraHeight]; })()"),
+    "peaks_timeline_two_series": (
+        "(() => { const y = new Array(100).fill(0); y[22] = 3;"
+        " const s = {datasetFp: 'D', modelFp: 'M', data: {y: {nd: {values: y, shape: [100]}}}};"
+        " const b = pn.buildTimeline({y_label: ['F', 'u']}, [s, s], {units: {}});"
+        " return [b.layout.annotations === undefined, b.peaks.length]; })()"),
+
+    # ── figure.js: panel letters and captions (ADR 0063) ────────────────────
+    "fig_letters_2x2": (
+        "[...fg.panelLetters([{index: 0, row: 1, col: 1}, {index: 1, row: 0, col: 1},"
+        " {index: 2, row: 1, col: 0}, {index: 3, row: 0, col: 0}])]"),
+    "fig_letters_tie_by_index": (
+        "[...fg.panelLetters([{index: 1, row: 0, col: 0}, {index: 0, row: 0, col: 0}])]"),
+    "fig_letters_27": (
+        "(() => { const m = fg.panelLetters(Array.from({length: 27}, (_, i) => ({index: i, row: i, col: 0})));"
+        " return [m.get(0), m.get(25), m.get(26)]; })()"),
+    "fig_cap_timeline_peaks": (
+        "fg.caption('timeline', {yTitle: 'Forces MAE [unit]', nSeries: 1, peaks: [{frame: 41}, {frame: 22}, {frame: 58}]})"),
+    "fig_cap_timeline_no_peaks": "fg.caption('timeline', {yTitle: 'Energy MAE', nSeries: 1, peaks: []})",
+    "fig_cap_timeline_series": "fg.caption('timeline', {yTitle: 'Energy MAE', nSeries: 3})",
+    "fig_cap_overlay_series": "fg.caption('overlay_timeline', {yTitle: 'Force', nSeries: 2})",
+    "fig_cap_density": "fg.caption('density', {xTitle: 'Energy MAE [unit]'})",
+    "fig_cap_grouped_density": "fg.caption('grouped_density', {xTitle: 'Distance'})",
+    "fig_cap_scatter": "fg.caption('scatter', {xTitle: 'Reference E', yTitle: 'Predicted E'})",
+    "fig_cap_bars": "fg.caption('bars', {yTitle: 'Force error [unit]'})",
+    "fig_cap_untitled": (
+        "[fg.caption('timeline', {yTitle: ''}), fg.caption('density', {xTitle: ''}),"
+        " fg.caption('scatter', {xTitle: 'x', yTitle: ''})]"),
+    "fig_order": (
+        "[...fg.readingOrder([{index: 0, row: 1, col: 0}, {index: 1, row: 0, col: 1}, {index: 2, row: 0, col: 0}])]"),
+    "fig_cap_none": "['table', 'grouped_table', '3d'].map(k => fg.caption(k, {yTitle: 'x'}))",
+    "fig_segments": (
+        "fg.captionSegments('Predicted E [unit] against Reference E [unit].',"
+        " {xTitle: 'Reference E [unit]', yTitle: 'Predicted E [unit]'})"),
+
+    # ── icons.icon (ADR 0063) ───────────────────────────────────────────────
+    "icon_plus": "ic.icon('plus')",
+    "icon_every_name": "ic.ICON_NAMES.map(n => [n, ic.icon(n).startsWith('<svg') && ic.icon(n).includes('aria-hidden=\"true\"')])",
+    "icon_names": "ic.ICON_NAMES",
+    "icon_unknown": "ic.icon('no-such-icon')",
+
+    # ── a timeline of tables: a line per element (ADR 0064 amendment) ───────
+    "timeline_table": (
+        "(() => {"
+        "  const N = NaN;"
+        "  const table = (values) => ({nd: {values, shape: [3, 2]}});"   # 3 frames x [H, C]
+        "  const ser = (name, values) => ({name, datasetFp: 'D', modelFp: name, data: {y: table(values)}});"
+        "  const two = [ser('MACE', [0.1, N, 0.2, 0.5, N, 0.6]), ser('SchNet', [0.3, 0.4, N, N, 0.7, 0.8])];"
+        "  const look = (b) => b.traces.map(t => [t.name, t.line.color, t.line.dash, t.y.map(v => Number.isFinite(v) ? v : null)]);"
+        "  const all = pn.buildPanel({kind: 'timeline'}, two, {elementOrder: [1, 6], selectedElements: ['All']});"
+        "  const carbon = pn.buildPanel({kind: 'timeline'}, [two[0]], {elementOrder: [1, 6], selectedElements: [6]});"
+        "  return {all: look(all), carbon: look(carbon), curveSeries: all.subInfo.curveSeries,"
+        "    peaks: all.peaksEligible || carbon.peaksEligible, legend: carbon.layout.showlegend,"
+        "    colours: [ec.elementColourOn(1, th.plotTheme().surface), ec.elementColourOn(6, th.plotTheme().surface)]};"
+        "})()"
+    ),
+
+    # ── no value (NaN) in every display (ADR 0064 step 3) ───────────────────
+    # One fixture per panel kind, each holding gaps. The loop runs over the
+    # registries, so a kind added later without a fixture is reported.
+    "no_value_panels": (
+        "(() => {"
+        "  const N = NaN;"
+        "  const nd = (values, shape) => ({nd: {values, shape: shape || [values.length]}});"
+        "  const ser = (data) => ({name: 'S', datasetFp: 'D', modelFp: 'M',"
+        "    datasetName: 'D', modelName: 'M', data});"
+        "  const y = [1, N, 3, 2, 5, N, N, 4, 2, 8, 1, 3];"
+        "  const FIX = {"
+        "    timeline: [{}, [ser({y: nd(y)})], {}],"
+        "    density: [{}, [ser({value: nd([0, 1, 2, 3, 0.1, N, 0.3, 0.2], [2, 4])})], {}],"
+        "    scatter: [{diagonal: true}, [ser({x: nd(y), y: nd(y.map(v => v * 2))})], {perFrame: true}],"
+        "    overlay_timeline: [{options: {series_labels: ['a']}}, [ser({series: [nd(y)]})], {}],"
+        "    grouped_density: [{}, [ser({"
+        "      value: nd([0, 1, 2, 0.1, N, 0.3, 0, 1, 2, 0.5, 0.2, N], [2, 2, 3]),"
+        "      aggregate: nd([0, 1, 2, N, 0.1, 0.2], [2, 3])})],"
+        "      {elementOrder: [1, 6], selectedElements: ['All', 1, 6]}],"
+        "    bars: [{}, [ser({value: nd([0.1, N, 0.3])}), ser({value: nd([0.2, N, N])})],"
+        "      {elementOrder: [1, 6, 8], selectedElements: ['All']}],"
+        "    table: [{}, [ser({value: nd([N])})], {}],"
+        "    grouped_table: [{}, [ser({mae: nd([0.1, N]), rmse: nd([N, 0.2]),"
+        "      mae_all: nd([N]), rmse_all: nd([0.3])})],"
+        "      {elementOrder: [1, 6], selectedElements: [1, 6, 'All']}],"
+        "  };"
+        "  const gapsIn = (series) => series.reduce((n, s) => n + Object.values(s.data)"
+        "    .flatMap(v => Array.isArray(v) ? v : [v])"
+        "    .reduce((k, r) => k + r.nd.values.filter(x => !Number.isFinite(x)).length, 0), 0);"
+        "  const notNumbers = (a) => Array.from(a || []).filter(x => x == null"
+        "    || (typeof x === 'number' && !Number.isFinite(x))).length;"
+        "  const out = {};"
+        "  const kinds = [...Object.keys(pn.PLOT_BUILDERS), ...Object.keys(pn.TABLE_BUILDERS)];"
+        "  for (const kind of kinds) {"
+        "    const fx = FIX[kind];"
+        "    if (!fx) { out[kind] = {fixture: false}; continue; }"
+        "    const [spec, series, ctx] = fx;"
+        "    const b = pn.buildPanel({kind, ...spec}, series, ctx);"
+        "    const r = {fixture: true, gaps: gapsIn(series)};"
+        "    if (b.html !== undefined) {"
+        "      r.shown = (b.html.match(/—/g) || []).length;"
+        "      r.textNaN = b.html.includes('NaN');"
+        "    } else {"
+        "      const data = b.traces.filter(t => t.hoverinfo !== 'skip');"
+        "      r.shown = data.reduce((n, t) => n + notNumbers(t.x) + notNumbers(t.y), 0);"
+        "      r.peaksAtGaps = (b.peaks || []).filter(p => !Number.isFinite(p.value)).length;"
+        "      const range = b.layout.yaxis && b.layout.yaxis.range;"
+        "      r.rangeFinite = !range || range.every(Number.isFinite);"
+        "      r.noValueLabels = (b.layout.annotations || []).filter(a => a.text === 'no value').map(a => a.x);"
+        "    }"
+        "    out[kind] = r;"
+        "  }"
+        "  return out;"
+        "})()"
+    ),
+    "panel_warnings": (
+        "pn.panelWarnings([{data: {y: {warnings: ['a', 'b']}}},"
+        " {data: {y: {warnings: ['a']}, series: [{warnings: ['c']}, null]}}, {data: {y: null}}])"),
+    "panel_popups": (
+        "pn.panelPopups(["
+        "{datasetFp: 'd1', modelFp: 'p1', data: {y: {metricId: 'm', warnings: ['a']},"
+        "  series: [{metricId: 'n', warnings: ['a']}, null]}},"
+        "{datasetFp: 'd1', modelFp: 'p1', data: {y: {metricId: 'm', warnings: ['a']}}},"
+        "{datasetFp: 'd1', modelFp: 'p2', data: {y: {metricId: 'm', warnings: ['a']}}}],"
+        " (id) => id === 'm' ? 'Metric M' : id)"),
+    "panel_failures": (
+        "pn.panelFailures([{datasetFp: 'd1', modelFp: 'p1'}, {datasetFp: 'd2', modelFp: null}],"
+        " [[{nd: null, failed: true, error: 'bad', metricId: 'm'}, {nd: {}}],"
+        "  [{nd: null, failed: true, error: 'bad', metricId: 'm'}, null]],"
+        " (id) => 'Metric M')"),
+    "no_value_colours": (
+        "(() => {"
+        "  const out = {grey: cm.NO_VALUE_RGB};"
+        "  for (const n of ['viridis','plasma','force_error','cividis','inferno','coolwarm','hot','bwr']) {"
+        "    const c = cm.mapColorBy({values: [0, NaN, 1, null], colormap: n, vmin: 0, vmax: 1});"
+        "    const grey = (rgb) => JSON.stringify(rgb) === JSON.stringify(cm.NO_VALUE_RGB);"
+        "    out[n] = [grey(c[0]), grey(c[1]), grey(c[2]), grey(c[3])];"
+        "  }"
+        "  return out;"
+        "})()"
+    ),
+
+    "grad_matches_mapped": (
+        "(() => {"
+        "  const out = {};"
+        "  for (const n of ['viridis','coolwarm','force_error','hot','cividis']) {"
+        "    const bar = cm.gradientCss(n).split(', ');"
+        "    const k = bar.length;"
+        "    const values = Array.from({length: k}, (_, i) => i / (k - 1));"
+        "    const mapped = cm.mapColorBy({values, colormap: n, vmin: 0, vmax: 1})"
+        "      .map(cm.rgbToHex);"
+        "    out[n] = JSON.stringify(bar) === JSON.stringify(mapped);"
+        "  }"
+        "  return out;"
+        "})()"
+    ),
+}
+
+
+@pytest.fixture(scope="module")
+def results():
+    """Evaluate every case once, in one browser, and return {name: value}."""
+    playwright_api = pytest.importorskip("playwright.async_api")
+
+    handler = functools.partial(
+        http.server.SimpleHTTPRequestHandler, directory=str(STATIC_DIR)
+    )
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+
+    script = (
+        "async () => {\n"
+        f"  const rb = await import('{origin}/remote_browser.js');\n"
+        f"  const so = await import('{origin}/session_ops.js');\n"
+        f"  const cm = await import('{origin}/colormap.js');\n"
+        f"  const pn = await import('{origin}/panels.js');\n"
+        f"  const oc = await import('{origin}/object_colours.js');\n"
+        f"  const ru = await import('{origin}/recent_units.js');\n"
+        f"  const rf = await import('{origin}/recent_files.js');\n"
+        f"  const hn = await import('{origin}/tool_hints.js');\n"
+        f"  const ar = await import('{origin}/arrow_geometry.js');\n"
+        f"  const th = await import('{origin}/theme.js');\n"
+        f"  const ic = await import('{origin}/icons.js');\n"
+        f"  const fg = await import('{origin}/figure.js');\n"
+        f"  const qs = await import('{origin}/quick_styles.js');\n"
+        f"  const ap = await import('{origin}/appearance.js');\n"
+        f"  const di = await import('{origin}/dialogs.js');\n"
+        f"  const ts = await import('{origin}/toasts.js');\n"
+        f"  const pk = await import('{origin}/peaks.js');\n"
+        f"  const an = await import('{origin}/analysis.js');\n"
+        f"  const rs = await import('{origin}/recent_servers.js');\n"
+        f"  const cf = await import('{origin}/code_fingerprint.js');\n"
+        f"  const tr = await import('{origin}/tab_rules.js');\n"
+        f"  const fl = await import('{origin}/frame_links.js');\n"
+        f"  const te = await import('{origin}/tab_edit.js');\n"
+        f"  const ss = await import('{origin}/start_settings.js');\n"
+        f"  const ex = await import('{origin}/panes/extract.js');\n"
+        f"  const ec = await import('{origin}/element_colours.js');\n"
+        f"  const un = await import('{origin}/units.js');\n"
+        "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
+        "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
+        "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
+        "      {kind: 'table', row: 0, col: 1, rowspan: 1, colspan: 1, title: 'A',\n"
+        "       metrics: {value: 'm.a__smooth'}, metric_refs: {value: {metric: 'm.a', transform: 'smooth', params: {}}}},\n"
+        "      {kind: 'timeline', row: 1, col: 0, rowspan: 1, colspan: 2, title: 'B',\n"
+        "       metrics: {y: 'm.b'}, metric_refs: {y: {metric: 'm.b', transform: null, params: {}}}},\n"
+        "    ]});\n"
+        "  const TF = () => te.toFineGrid(TE());\n"
+        "  const FL = new Map(Object.entries({\n"
+        "    P: {n: 10, name: 'P'}, Q: {n: 10, name: 'Q'}, T: {n: 5, name: 'ethanol'},\n"
+        "    S: {n: 3, parent: 'P', parent_frames: [4, 6, 8], name: 'S'},\n"
+        "    SS: {n: 2, parent: 'S', parent_frames: [2, 0]},\n"
+        "    A: {n: 10, parent: 'P', parent_frames: null},\n"
+        "  }));\n"
+        f"  const TABLE_VALUE_CASES = {json.dumps(TABLE_VALUE_CASES)};\n"
+        "  const out = {};\n"
+        + "".join(
+            f"  out[{json.dumps(name)}] = {expr};\n" for name, expr in CASES.items()
+        )
+        + "  return out;\n}"
+    )
+
+    async def _collect():
+        async with playwright_api.async_playwright() as p:
+            browser = await p.chromium.launch()
+            page = await browser.new_page()
+            errors: list[str] = []
+            page.on("pageerror", lambda exc: errors.append(str(exc)))
+            # Same-origin document so the dynamic imports are not cross-origin.
+            await page.goto(f"{origin}/events.js")
+            await page.set_content("<!doctype html><title>helpers</title>")
+            try:
+                out = await page.evaluate(script)
+            finally:
+                await browser.close()
+            assert not errors, f"page errors: {errors}"
+            return out
+
+    try:
+        yield asyncio.run(_collect())
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_a_colouring_has_the_plots_name_in_the_list(results):
+    assert results["ss_colouring_labels"] == [
+        "Force Difference · MAE · per element · per component", "my.el",
+        "Force Difference · per atom · length"]
+
+
+# ── toasts.showWarning ───────────────────────────────────────────────────────
+
+def test_a_repeated_warning_counts_on_its_open_popup(results):
+    assert results["toasts"]["count_after_repeat"] == "×2"
+
+
+def test_an_error_popup_is_drawn_as_an_error(results):
+    assert results["toasts"]["error_class"] is True
+
+
+def test_at_most_four_popups_the_oldest_close_first(results):
+    assert results["toasts"]["shown"] == ["w0", "w1", "w2", "w3"]
+
+
+def test_the_close_button_closes_its_popup(results):
+    assert results["toasts"]["after_close"] == 3
+
+
+# ── theme.plotTheme (ADR 0063) ───────────────────────────────────────────────
+
+def test_plot_theme_without_a_page_gives_eight_series_and_the_dark_line(results):
+    assert results["theme_series_count"] == 8
+    assert results["theme_line"] == "#3a4047"
+
+
+def test_base_layout_grid_colour_is_the_theme_line(results):
+    assert results["theme_grid_follows_line"] is True
+
+
+def test_series_colours_wrap_around_the_theme_list(results):
+    assert results["theme_series_color_wraps"] is True
+
+
+# ── peaks.pickPeaks and the labels (ADR 0063) ────────────────────────────────
+
+def test_the_dark_fallback_theme_is_the_pages_root_tokens(results):
+    r = results["theme_dark_is_root"]
+    assert r["dark"] == r["root"]
+
+
+def test_five_spikes_on_a_flat_line_are_the_five_peaks(results):
+    frames = [p["frame"] for p in results["peaks_five_spikes"]]
+    assert frames == [22, 41, 58, 73, 86]
+    assert results["peaks_five_spikes"][3] == {"frame": 73, "value": 5}
+
+
+def test_spikes_closer_than_the_spacing_give_one_peak(results):
+    # 73 and 75 are both peaks by their neighbours (74 is 0); only the
+    # spacing rule (2 frames in 100) drops the lower one
+    frames = results["peaks_adjacent"]
+    assert 73 in frames and 75 not in frames
+
+
+def test_a_flat_line_has_no_peaks(results):
+    assert results["peaks_all_zero"] == []
+
+
+def test_a_plateau_gives_one_peak_at_its_first_frame(results):
+    # the 5s at frames 8-12 give frame 8 only; the zeros before them are a
+    # level stretch too, so they give frame 0
+    assert results["peaks_plateau"] == [{"frame": 0, "value": 0}, {"frame": 8, "value": 5}]
+
+
+def test_fewer_than_ten_frames_have_no_peaks(results):
+    assert results["peaks_short"] == []
+
+
+def test_a_nan_value_is_never_a_peak(results):
+    assert results["peaks_nan"] == [31, 60]
+
+
+def test_a_rising_line_has_one_peak_at_its_end(results):
+    assert results["peaks_fewer_than_n"] == [9]
+
+
+def test_trap_focus_wraps_tab_inside_the_modal_and_lets_go_when_removed(results):
+    forward, backward, inside, released = results["trap_focus"]
+    assert forward == "a"      # Tab from the last enabled button goes to the first
+    assert backward == "b"     # Shift+Tab from the first goes to the last enabled one
+    assert inside is True      # Tab between the two is left to the browser
+    assert released == "b"     # the trap is gone: nothing moves focus now
+
+
+def test_density_scales_are_one_one_fifteen_and_one_four(results):
+    assert results["ap_densities"] == {"compact": 1, "comfortable": 1.15, "large": 1.4}
+
+
+def test_an_unknown_density_name_means_compact(results):
+    assert results["ap_density_names"] == ["large", "compact", "compact", "compact", "compact"]
+
+
+def test_cividis_bar_starts_at_its_first_stop(results):
+    assert results["grad_cividis_first"] == "#00224e"
+
+
+def test_the_force_error_style_uses_the_desktop_force_error_map(results):
+    assert results["qs_force_error_colormap"] == ["Colour By", "Colormap", "force_error"]
+
+
+def test_a_peak_label_has_frame_value_unit_and_a_tick_when_visited(results):
+    assert results["peaks_annotation"] == [
+        ["73 · 0.442 [unit] ✓", -90, 0.55, "Open frame 73 in 3D", True]]
+
+
+def test_a_peak_label_prints_a_real_unit_and_no_bare_dimension(results):
+    assert results["peaks_annotation_unit"] == ["5 · 0.100 eV/Å"]
+    assert results["peaks_annotation_no_unit"] == ["5 · 0.100"]
+
+
+def test_a_one_series_timeline_is_labelled_and_given_a_top_margin_for_the_labels(results):
+    count, y_range, frames, margin_top, extra = results["peaks_timeline_one_series"]
+    # the two spikes, and the level stretch before the first one (a level
+    # stretch gives one peak, at its first frame)
+    assert count == 3 and frames == [0, 22, 73]
+    assert y_range == [0, 5 * 1.04]   # from the data alone, not the labels
+    assert margin_top > 8 + 18   # room for the tick and the longest label
+    assert extra == margin_top - 8   # the plot grows by what the labels take
+
+
+def test_a_timeline_of_negative_values_shows_its_highest_values(results):
+    (lo, hi), top = results["peaks_timeline_negative"]
+    assert lo == -3300   # the lowest value; 0 is above all of them
+    assert top <= hi < 0
+
+
+def test_a_timeline_of_positive_values_keeps_its_four_percent_headroom(results):
+    _count, y_range, *_ = results["peaks_timeline_one_series"]
+    assert y_range[0] == 0 and y_range[1] == pytest.approx(1.04 * 5)
+
+
+def test_a_timeline_with_peaks_switched_off_has_no_labels_but_stays_switchable(results):
+    assert results["peaks_timeline_switched_off"] == [True, 8, 0, True, 0]
+
+
+def test_a_timeline_of_several_series_is_not_labelled(results):
+    assert results["peaks_timeline_two_series"] == [True, 0]
+
+
+# ── figure.js: panel letters and captions (ADR 0063) ─────────────────────────
+
+def test_letters_follow_screen_position_not_file_order(results):
+    # Panels 3, 1, 2, 0 are top-left, top-right, bottom-left, bottom-right.
+    assert results["fig_letters_2x2"] == [[3, "a"], [1, "b"], [2, "c"], [0, "d"]]
+
+
+def test_reading_order_ranks_panels_by_row_then_column(results):
+    assert results["fig_order"] == [[2, 0], [1, 1], [0, 2]]
+
+
+def test_letters_break_a_tie_by_file_order(results):
+    assert results["fig_letters_tie_by_index"] == [[0, "a"], [1, "b"]]
+
+
+def test_letters_run_past_z_into_aa(results):
+    assert results["fig_letters_27"] == ["a", "z", "aa"]
+
+
+def test_a_one_series_timeline_caption_lists_its_peak_frames_in_order(results):
+    assert results["fig_cap_timeline_peaks"] == (
+        "Forces MAE [unit]. Top 3 peaks: frames 22, 41, 58.")
+
+
+def test_a_timeline_caption_without_peaks_is_one_sentence(results):
+    assert results["fig_cap_timeline_no_peaks"] == "Energy MAE."
+
+
+def test_several_series_captions_count_the_series(results):
+    assert results["fig_cap_timeline_series"] == "Energy MAE, 3 series."
+    assert results["fig_cap_overlay_series"] == "Force, 2 series."
+
+
+def test_a_bars_caption_names_the_per_element_quantity(results):
+    assert results["fig_cap_bars"] == "Force error [unit] per element."
+
+
+def test_distribution_and_scatter_captions(results):
+    assert results["fig_cap_density"] == "Distribution of Energy MAE [unit]."
+    assert results["fig_cap_grouped_density"] == "Distribution of Distance."
+    assert results["fig_cap_scatter"] == "Predicted E against Reference E."
+
+
+def test_a_panel_whose_axis_has_no_title_has_no_caption(results):
+    assert results["fig_cap_untitled"] == ["", "", ""]
+
+
+def test_tables_and_3d_panels_have_no_caption(results):
+    assert results["fig_cap_none"] == ["", "", ""]
+
+
+def test_caption_segments_mark_each_unit_with_its_axis(results):
+    assert results["fig_segments"] == [
+        {"text": "Predicted E "}, {"text": "[unit]", "axis": "y"},
+        {"text": " against Reference E "}, {"text": "[unit]", "axis": "x"},
+        {"text": "."},
+    ]
+
+
+# ── icons.icon (ADR 0063) ────────────────────────────────────────────────────
+
+ICON_NAMES = [
+    "pencil", "plus", "more", "play", "pause", "step-back", "step-forward", "gear",
+    "close", "new-window", "chevron-right", "chevron-down", "folder", "file",
+    "arrow-up", "home", "info", "bond", "align", "force", "scissors", "sliders",
+    "help", "check",
+]
+
+
+def test_icon_plus_is_a_hidden_inline_svg(results):
+    assert results["icon_plus"].startswith("<svg")
+    assert 'aria-hidden="true"' in results["icon_plus"]
+
+
+def test_every_listed_icon_name_draws(results):
+    assert sorted(results["icon_names"]) == sorted(ICON_NAMES)
+    assert all(ok for _, ok in results["icon_every_name"])
+
+
+def test_an_unknown_icon_name_draws_nothing(results):
+    assert results["icon_unknown"] == ""
+
+
+def test_hex_alpha_builds_an_rgba(results):
+    assert results["theme_hex_alpha"] == "rgba(86, 180, 233, 0.15)"
+
+
+# ── remote_browser.joinPath ─────────────────────────────────────────────────
+
+def test_join_path_adds_a_separator(results):
+    assert results["join_plain"] == "/data/a.xyz"
+
+
+def test_join_path_does_not_double_a_trailing_separator(results):
+    assert results["join_trailing_sep"] == "/data/a.xyz"
+
+
+def test_join_path_without_a_directory_returns_the_name(results):
+    assert results["join_no_dir"] == "a.xyz"
+
+
+# ── remote_browser.canLoad ──────────────────────────────────────────────────
+
+def test_can_load_needs_a_selection(results):
+    assert results["load_no_selection"] is False
+
+
+def test_can_load_dataset_needs_only_a_selection(results):
+    assert results["load_dataset"] is True
+
+
+def test_can_load_prediction_needs_a_force_key(results):
+    """Force arrows are the point of loading a prediction."""
+    assert results["load_pred_no_force_key"] is False
+
+
+def test_can_load_prediction_needs_a_target_dataset(results):
+    """A prediction attaches to an already-loaded dataset."""
+    assert results["load_pred_no_target"] is False
+
+
+def test_can_load_prediction_with_both(results):
+    assert results["load_pred_complete"] is True
+
+
+# ── remote_browser.keyOptions ───────────────────────────────────────────────
+
+def test_key_options_lists_probed_keys(results):
+    assert results["keys_named"] == ["E1", "E2"]
+
+
+def test_key_options_offers_the_calculator_when_no_named_keys_exist(results):
+    """A plain MACE/DFT extxyz dump probes empty but has_calculator_*=true.
+
+    The option's value must be the literal 'forces' the ASE loader maps to the
+    calculator, or such a file looks unloadable.
+    """
+    assert results["keys_calculator_only"] == [["forces", "calculator (built-in)"]]
+
+
+# ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────
+
+def test_base_name_is_the_last_folder_part_with_either_separator(results):
+    assert results["base_name"] == ["b", "b", "b"]
+
+
+def test_list_arrow_down_moves_one_row_and_stops_at_the_last(results):
+    down_folder, down_last = results["list_down"]
+    assert down_folder == {"focus": 1}
+    assert down_last == {"focus": 2}
+
+
+def test_list_arrow_up_stops_at_the_first_row(results):
+    up_first, up_last, home, end = results["list_up_home_end"]
+    assert up_first == {"focus": 0}
+    assert up_last == {"focus": 1}
+    assert home == {"focus": 0}
+    assert end == {"focus": 2}
+
+
+def test_list_focus_keys_do_nothing_without_rows(results):
+    assert results["list_no_rows"] == [None, None]
+
+
+def test_list_right_opens_a_folder_only(results):
+    on_folder, on_file = results["list_right"]
+    assert on_folder == {"open": True}
+    assert on_file is None
+
+
+def test_list_enter_opens_a_folder_and_loads_a_file(results):
+    on_folder, on_file = results["list_enter"]
+    assert on_folder == {"open": True}
+    assert on_file == {"load": True}
+
+
+def test_list_space_opens_a_folder_and_selects_a_file(results):
+    on_folder, on_file = results["list_space"]
+    assert on_folder == {"open": True}
+    assert on_file == {"select": True}
+
+
+def test_list_left_and_backspace_go_up_and_other_keys_are_ignored(results):
+    left, back, other = results["list_left_back"]
+    assert left == {"up": True}
+    assert back == {"up": True}
+    assert other is None
+
+
+def test_key_options_none_entry_comes_first_when_allowed(results):
+    assert results["keys_none_first"] == ["", "E1"]
+
+
+# ── session_ops.sessionStatus ───────────────────────────────────────────────
+
+def test_session_status_reports_a_successful_save(results):
+    assert results["sess_saved"] == {"text": "Saved session to /tmp/s", "kind": "connected"}
+
+
+def test_session_status_reports_a_successful_load(results):
+    assert results["sess_loaded"] == {"text": "Loaded session from /tmp/s", "kind": "connected"}
+
+
+def test_session_status_surfaces_the_server_error(results):
+    """The replaced TASK_DONE guess had no error to report — only ok/not-ok."""
+    r = results["sess_save_failed"]
+    assert r["kind"] == "error"
+    assert "disk full" in r["text"]
+    assert "/tmp/s" in r["text"]
+
+
+# ── session_ops.exportStatus / safeName ─────────────────────────────────────
+
+def test_export_status_counts_structures(results):
+    assert results["export_ok"] == {
+        "text": "Exported 12 structure(s) → /tmp/a.extxyz", "kind": "connected",
+    }
+
+
+def test_export_status_says_how_many_empty_frames_were_skipped(results):
+    """ADR 0067: an element subset's frames without its elements are not written."""
+    assert results["export_skipped"] == [
+        "Exported 812 structure(s) → /a (188 empty frames skipped)",
+        "Exported 2 structure(s) → /a (1 empty frame skipped)",
+    ]
+
+
+def test_export_status_failure_without_an_error_still_reads_sensibly(results):
+    r = results["export_failed_no_error"]
+    assert r["kind"] == "error"
+    assert "undefined" not in r["text"]
+
+
+def test_safe_name_strips_filesystem_hostile_characters(results):
+    assert results["safe_name_hostile"] == "my_data_set_1.xyz"
+
+
+def test_safe_name_falls_back_when_nothing_survives(results):
+    assert results["safe_name_empty"] == "subset"
+
+
+def test_safe_name_falls_back_on_a_missing_name(results):
+    assert results["safe_name_missing"] == "ffast"
+
+
+# ── colormap.gradientCss (ADR 0052) ─────────────────────────────────────────
+
+def test_gradient_css_is_a_css_colour_stop_list(results):
+    stops = results["grad_viridis"].split(", ")
+    assert len(stops) > 1
+    assert all(re.fullmatch(r"#[0-9a-f]{6}", s) for s in stops)
+
+
+def test_gradient_css_falls_back_to_viridis(results):
+    """A missing colourbar is worse than a wrong-palette one — matches the
+    behaviour of the hand-written table this replaced."""
+    assert results["grad_unknown"] == results["grad_viridis"]
+
+
+def test_gradient_css_covers_every_colormap_the_pane_offers(results):
+    """The pane's dropdown and the LUT are separate lists; a name in one and
+    not the other silently drew a viridis bar for a non-viridis molecule."""
+    assert all(n > 1 for n in results["grad_all_offered"])
+
+
+def test_the_colourbar_matches_the_colours_the_atoms_get(results):
+    """The bar carried the true matplotlib hexes while atoms were drawn from
+    compact approximations, so the two disagreed about what a value looked
+    like. Deriving the bar from the same stops makes that impossible.
+    """
+    assert results["grad_matches_mapped"] == {
+        "viridis": True, "coolwarm": True, "force_error": True, "hot": True, "cividis": True,
+    }
+
+
+# ── analysis.pairSeries — the comparison scope (ADR 0053) ───────────────────
+
+def test_pair_series_one_dataset_one_prediction(results):
+    assert results["pair_one_each"] == [["d1", "m1", "MACE"]]
+
+
+def test_pair_series_names_predictions_alone_against_one_dataset(results):
+    """Four models on one dataset must not be four copies of its name."""
+    assert results["pair_three_models_one_dataset"] == ["MACE", "SchNet", "NequIP"]
+
+
+def test_pair_series_adds_the_dataset_once_several_are_in_play(results):
+    """Dataset-major order, and the name disambiguates — the desktop's rule."""
+    assert results["pair_two_datasets_two_models"] == [
+        "aspirin & MACE", "aspirin & SchNet",
+        "ethanol & MACE", "ethanol & SchNet",
+    ]
+
+
+def test_pair_series_skips_a_prediction_that_does_not_apply(results):
+    """A prediction belongs to the dataset it was computed for."""
+    assert results["pair_skips_inapplicable"] == ["d1"]
+
+
+def test_pair_series_treats_no_declared_datasets_as_applies_to_any(results):
+    assert results["pair_empty_dataset_fps_allows_any"] == 1
+
+
+def test_pair_series_with_no_prediction_is_reference_only(results):
+    """Reference-only metrics still draw; the series is named for the dataset."""
+    assert results["pair_no_model_is_reference_only"] == [[None, "aspirin"]]
+
+
+def test_pair_series_accepts_an_explicit_null_prediction(results):
+    assert results["pair_null_model_entry"] == [None]
+
+
+def test_pair_series_without_a_dataset_draws_nothing(results):
+    assert results["pair_no_dataset_is_empty"] == 0
+
+
+# ── panels.buildPanel — one trace per series ────────────────────────────────
+
+def test_timeline_draws_one_trace_per_series(results):
+    r = results["panel_timeline_two_series"]
+    assert r["n"] == 2
+    assert r["names"] == ["MACE", "SchNet"]
+    assert r["colors"][0] != r["colors"][1]
+    assert r["legend"] is True
+    assert r["curveSeries"] == [0, 1]
+
+
+def test_timeline_with_one_series_keeps_the_legend_off(results):
+    """The single-prediction panel must look exactly as it did before."""
+    r = results["panel_timeline_one_series_no_legend"]
+    assert r == {"n": 1, "legend": False}
+
+
+def test_a_series_with_no_data_is_skipped_not_drawn_as_a_gap(results):
+    """One prediction that cannot compute a panel must not cost the others."""
+    r = results["panel_timeline_skips_empty_series"]
+    assert r["names"] == ["MACE", "SchNet"]
+    # curveSeries still points at the ORIGINAL series indices, so subbing a
+    # curve resolves to the right dataset even with a hole before it.
+    assert r["curveSeries"] == [0, 2]
+
+
+def test_scatter_diagonal_spans_every_series_and_stays_unselectable(results):
+    r = results["panel_scatter_diagonal_is_last_and_excluded"]
+    assert r["n"] == 3                 # two data traces + the diagonal
+    assert r["dataCurveCount"] == 2     # box-select ignores the diagonal
+    assert r["lastIsDiagonal"] is True
+    assert r["diagRange"] == [0, 2]     # combined range, not just series 0's
+
+
+def test_density_fill_is_a_single_series_affordance(results):
+    """Overlapping filled curves read as mud, so the fill drops when comparing."""
+    r = results["panel_density_fill_only_when_alone"]
+    assert r["oneFill"] == "tozeroy"
+    assert r["twoFill"] is None
+    assert r["twoNames"] == ["A", "B"]
+
+
+def test_table_is_a_prediction_by_dataset_grid(results):
+    """The desktop's TableKind: rows are predictions, columns are datasets.
+
+    This replaces a one-cell table whose comment conceded the shortcut.
+    """
+    r = results["panel_table_grid"]
+    assert r["head"] == ["MAE", "aspirin", "ethanol"]
+    assert r["rows"] == [
+        ["MACE", "1.00", "2.00"],
+        ["SchNet", "3.00", "4.00"],
+    ]
+
+
+def test_table_shows_a_dash_for_a_pair_that_was_not_computed(results):
+    assert results["panel_table_missing_pair_is_dashed"] == [
+        ["MACE", "1.00", "—"],
+        ["SchNet", "—", "4.00"],
+    ]
+
+
+def test_an_element_keeps_its_3d_colour_unless_it_would_vanish(results):
+    """to_fix_v2: per-element lines and picker buttons wear the CPK colour;
+    only a colour too close to the background (white H on a white page) is
+    shaded until it shows."""
+    oxygen_dark, carbon_dark, h_light, h_dark, unknown_bg = results["element_colour_on"]
+    assert (oxygen_dark, carbon_dark, h_dark, unknown_bg) == ("#ff0d0d", "#909090", "#ffffff", "#ff0d0d")
+    assert h_light != "#ffffff"
+    r, g, b = (int(h_light[i:i + 2], 16) for i in (1, 3, 5))
+    assert r == g == b and r < 200   # still a grey, dark enough to read on white
+
+
+def test_a_per_element_density_draws_each_element_in_its_3d_colour(results):
+    assert results["grouped_density_cpk"] == results["grouped_density_cpk_expected"]
+
+
+def test_a_timeline_draws_a_table_as_a_line_per_element(results):
+    """ADR 0064 amendment 2026-10-24, point 5: colour means element, the line
+    style means prediction, an empty cell is a gap, and the picker chooses."""
+    r = results["timeline_table"]
+    h, c = r["colours"]
+    assert r["all"] == [
+        ["H — MACE", h, "solid", [0.1, 0.2, None]], ["C — MACE", c, "solid", [None, 0.5, 0.6]],
+        ["H — SchNet", h, "dash", [0.3, None, 0.7]], ["C — SchNet", c, "dash", [0.4, None, 0.8]]]
+    assert r["carbon"] == [["C", c, "solid", [None, 0.5, 0.6]]]
+    assert r["curveSeries"] == [0, 0, 1, 1]
+    assert r["peaks"] is False and r["legend"] is True
+
+
+def test_every_panel_kind_shows_a_gap_as_a_gap_never_a_number(results):
+    """ADR 0064 step 3: each gap is left out (a plot) or a dash (a table)."""
+    for kind, r in results["no_value_panels"].items():
+        assert r["fixture"], f"panel kind {kind!r} has no no-value fixture here; add one"
+        assert r["gaps"] > 0
+        assert r["shown"] == r["gaps"], kind
+        assert not r.get("textNaN"), kind
+        assert r.get("peaksAtGaps", 0) == 0 and r.get("rangeFinite", True), kind
+    # bars: carbon has no value in either series, so it is labelled, not drawn at 0
+    assert results["no_value_panels"]["bars"]["noValueLabels"] == ["C"]
+
+
+def test_a_warning_pops_up_once_per_key_even_after_it_closed(results):
+    assert results["toasts_once"] == {"first": True, "again": None, "other": True,
+                                      "shown": ["M: y"]}
+
+
+def test_a_panels_popups_name_the_metric_once_per_metric_dataset_and_prediction(results):
+    assert results["panel_popups"] == [
+        {"key": "m|d1|p1|a", "text": "Metric M: a"},
+        {"key": "n|d1|p1|a", "text": "n: a"},
+        {"key": "m|d1|p2|a", "text": "Metric M: a"},
+    ]
+
+
+def test_a_panels_failures_say_could_not_compute_per_metric_dataset_and_prediction(results):
+    assert results["panel_failures"] == [
+        {"key": "m|d1|p1|bad", "text": "Could not compute Metric M: bad"},
+        {"key": "m|d2|null|bad", "text": "Could not compute Metric M: bad"},
+    ]
+
+
+def test_a_panel_collects_each_warning_of_its_results_once(results):
+    assert results["panel_warnings"] == ["a", "b", "c"]
+
+
+def test_an_atom_with_no_value_is_grey_in_every_colour_map(results):
+    from ffast.visualization.presentation import NO_VALUE_RGB
+    r = dict(results["no_value_colours"])
+    assert r.pop("grey") == list(NO_VALUE_RGB)
+    for name, greys in r.items():
+        assert greys == [False, True, False, True], name
+
+
+def test_the_code_warning_matches_the_desktop_word_for_word(results):
+    from ffast.session.code_fingerprint import server_code_notice
+
+    assert results["code_notice_same"] is None
+    assert results["code_notice_older"] == server_code_notice(None, "abc")
+    assert results["code_notice_different"] == server_code_notice("abd", "abc")
+
+
+def test_recent_servers_move_a_reconnected_server_to_the_front(results):
+    assert results["recent_servers_remember"] == ["c", "a", "b", "d", "e"]
+
+
+def test_recent_servers_keep_five(results):
+    assert results["recent_servers_cap"] == ["f", "a", "b", "c", "d"]
+
+
+def test_js_dimension_tags_match_the_metric_units_module(results):
+    """units.js hides exactly the dimension tags ffast/metrics/units.py defines."""
+    from ffast.metrics import units
+
+    tags = sorted(v for k, v in vars(units).items()
+                  if not k.startswith("_") and isinstance(v, str))
+    assert results["units_dimension_tags"] == tags
+
+
+def test_axis_title_prints_a_unit_but_not_a_dimension(results):
+    """"Energy MAE (energy)" named the dimension where the unit belongs."""
+    assert results["axis_title_units"] == [
+        "Energy MAE", "Energy MAE (meV)", "Energy MAE", "Density", "",
+    ]
+
+
+def test_table_headers_carry_a_declared_unit(results):
+    r = results["table_headers_carry_units"]
+    assert r["table"] == ["Energy MAE (meV)", "aspirin"]
+    assert r["tableDim"] == ["Energy MAE", "aspirin"]
+    assert r["grouped"] == ["Object", "C MAE (meV/Å)", "C RMSE"]
+
+
+def test_an_energy_or_force_shows_the_datasets_unit_or_unit_placeholder(results):
+    assert results["unit_resolution"] == [
+        "[unit]", "eV", "[unit]", "meV", "", "[unit]",
+        "Energy MAE [unit]", "Energy MAE (kcal/mol)", "force", None,
+    ]
+
+
+def test_a_subset_shows_the_units_of_the_dataset_it_was_cut_from(results):
+    assert results["dataset_units_follow_the_root"] == [
+        {"energy": "eV"}, {"energy": "eV"}, {}, {}, {"force": "x"},
+    ]
+
+
+def test_table_headers_whose_unit_can_be_named_are_marked(results):
+    r = results["unit_headers_are_marked"]
+    assert r["table"] == [["Energy MAE [unit]", "value"], ["aspirin", None]]
+    assert r["grouped"] == [["Object", None], ["C MAE (eV/Å)", "mae"], ["C RMSE [unit]", "rmse"]]
+    assert r["plain"] == [["Gyration", None], ["aspirin", None]]
+
+
+def test_a_click_finds_the_role_of_a_header_or_axis_title(results):
+    assert results["unit_role_at"] == ["mae", None, "value", "y", None]
+
+
+def test_plots_say_which_role_each_axis_shows(results):
+    timeline, scatter, title = results["plot_unit_axes"]
+    assert timeline == {"x": "x", "y": "y"} and scatter == {"x": "x", "y": "y"}
+    assert title == "Energy MAE [unit]"
+
+
+def test_table_value_never_prints_a_non_zero_value_as_zero(results):
+    """ADR 0055 rule 4, shared with the desktop (tests/ffast/test_table_value_format.py)."""
+    assert results["table_value_format"] == [want for _, _, want in TABLE_VALUE_CASES]
+
+
+def test_table_prints_a_tiny_force_error_with_significant_digits(results):
+    assert results["panel_table_tiny_value"] == [["MACE", "0.00213"]]
+
+
+def test_grouped_table_rows_are_series_when_one_element_is_selected(results):
+    """Single-element mode is how you compare predictions per element, so the
+    element moves into the column header (desktop `table_top_header`).
+    """
+    r = results["panel_grouped_table_single_element_rows_are_series"]
+    assert r["head"] == ["Object", "C MAE", "C RMSE"]
+    # Element C is index 1 of elementOrder [1, 6], so each row reads that slot.
+    assert r["rows"] == [
+        ["MACE", "0.20", "0.60"],
+        ["SchNet", "0.40", "0.80"],
+    ]
+
+
+def test_grouped_table_rows_are_elements_when_several_are_selected(results):
+    """Desktop parity: multi-element mode reads the first series only —
+    element x series is not a shape either client has.
+    """
+    assert results["panel_grouped_table_multi_element_rows_are_elements"] == [
+        ["H", "0.10", "0.50"],
+        ["C", "0.20", "0.60"],
+    ]
+
+
+def test_grouped_density_gives_colour_to_elements_or_to_series(results):
+    """`GroupedDensityKind.atom_mode`: >1 element selected → colour means
+    element and the label carries the series; 1 element → colour means series.
+    """
+    r = results["panel_grouped_density_colour_channel"]
+    assert r["elemNames"] == ["H — MACE", "C — MACE", "H — SchNet", "C — SchNet"]
+    assert r["elemColors"][0] == r["elemColors"][2]   # both H
+    assert r["elemColors"][0] != r["elemColors"][1]   # H vs C
+    assert r["seriesNames"] == ["C — MACE", "C — SchNet"]
+    assert r["seriesColors"][0] != r["seriesColors"][1]
+
+
+def test_an_unknown_panel_kind_builds_nothing(results):
+    assert results["panel_unknown_kind_is_null"] is None
+
+
+# ── tab_rules (ADR 0056) ────────────────────────────────────────────────────
+
+def test_a_layout_without_the_main_view_gets_the_default_3d_tab_first(results):
+    """The main view and the Load Dataset… button need a place (rule 6), even
+    from a server that predates 3D panels."""
+    assert results["mb_before_first"] == ["C", "A", "B"]
+    assert results["mb_to_end"] == ["B", "C", "A"]
+    assert results["mb_unknown"] == ["A", "B", "C"]
+    assert results["mb_onto_itself"] == ["A", "B", "C"]
+    assert results["so_left"] == ["B", "A", "C"]
+    assert results["so_first_left"] is None and results["so_last_right"] is None
+    assert results["so_over_hidden_left"] == ["C", "A", "B"]
+    assert results["so_over_hidden_right"] == ["B", "C", "A"]
+    assert results["main_view_added_when_missing"] == [["3D", ["3d"]], ["Plots", ["table"]]]
+
+
+def test_a_layout_with_a_linked_3d_panel_is_left_alone(results):
+    assert results["main_view_kept_when_present"] == ["Plots", "Mine"]
+
+
+def test_an_independent_3d_panel_does_not_show_the_main_view(results):
+    assert results["main_view_independent_does_not_count"] == ["3D", "Mine"]
+
+
+def test_the_default_3d_tab_is_copied_not_shared(results):
+    assert results["main_view_default_tab_is_a_copy"] is True
+
+
+def test_the_last_linked_3d_panel_cannot_be_removed(results):
+    assert results["last_linked_panel_stays"] == "At least one tab must show the main view"
+
+
+def test_a_linked_3d_panel_can_go_while_another_shows_the_main_view(results):
+    assert results["linked_panel_with_another_can_go"] == ""
+
+
+def test_plot_and_independent_panels_can_always_go(results):
+    assert results["plot_panel_can_go"] == ""
+    assert results["independent_panel_can_go"] == ""
+
+
+# ── frame_links (ADR 0056 rule 3) ───────────────────────────────────────────
+
+def test_a_frame_matches_itself_in_the_same_dataset(results):
+    assert results["fl_same_dataset"] == 7
+
+
+def test_a_subset_frame_is_its_parents_configuration(results):
+    assert results["fl_subset_to_parent"] == 6
+
+
+def test_a_parent_frame_is_found_in_the_subset_that_holds_it(results):
+    assert results["fl_parent_to_subset"] == 2
+
+
+def test_a_parent_frame_the_subset_lacks_has_no_counterpart(results):
+    assert results["fl_parent_frame_not_in_subset"] is None
+
+
+def test_nested_subsets_match_through_their_shared_root(results):
+    """SS frame 0 is S frame 2 is P frame 8."""
+    assert results["fl_nested_subset_to_sibling"] == 2
+
+
+def test_an_atom_subset_shares_its_parents_frames(results):
+    """A frame 3 is P frame 3, which S does not hold."""
+    assert results["fl_atom_subset_keeps_frames"] is None
+
+
+def test_unrelated_or_unknown_datasets_share_no_configuration(results):
+    assert results["fl_unrelated"] is None
+    assert results["fl_unknown_dataset"] is None
+
+
+def test_a_frame_past_the_end_of_a_subset_has_no_configuration(results):
+    assert results["fl_frame_out_of_range"] is None
+
+
+# ── tab_edit (ADR 0056 step 6) ──────────────────────────────────────────────
+
+def test_sub_reads_the_visible_ranges(results):
+    assert results["an_plot_range"] == {"x": [1.5, 7], "y": [0, 2]}
+    assert results["an_plot_range_before_drawing"] is None
+
+
+def test_a_tab_drawing_a_subset_redraws_when_its_frames_change(results):
+    """A subset that follows a zoom keeps its name and size but changes its
+    frames; the tabs drawing it must notice."""
+    a, b, plain, missing = results["an_frames_key_moves_with_the_frames"]
+    assert a != b and plain == "10" and missing == ""
+
+
+def test_a_prediction_applies_to_the_subsets_of_its_dataset(results):
+    """Its values for a subset are its values for the parent's frames, so a
+    prediction made for P draws on P's subsets too; an empty list means
+    "unknown, allow it", as the object rail has always read it."""
+    assert results["fl_prediction_applies"] == [True, True, True, False, True, False]
+
+
+def test_the_other_plots_of_a_subbed_tab_draw_each_series_subset(results):
+    """P's subset made by the plot 'Plot' replaces P; Q has a subset only
+    from another plot, and H's subset is not listed (hidden or not announced
+    yet), so both stay as they are. Legend names do not change."""
+    assert results["an_subset_refs"] == [
+        ["S", "m", "MACE", "Plot,P,MACE"], ["Q", "m", "MACE", "Q"], ["H", None, "H", "H"]]
+
+
+def test_a_linked_frame_is_the_same_structure_else_the_same_number(results):
+    assert results["lf_same_dataset"] == {"frame": 7}
+    assert results["lf_parent_to_subset"] == {"frame": 2}
+    assert results["lf_unrelated_by_number"] == {"frame": 3}
+
+
+def test_a_linked_frame_with_no_counterpart_says_so(results):
+    """Rather than show a different structure (rule 3)."""
+    assert results["lf_subset_left_it_out"] == {"missing": "This structure is not in S"}
+    assert results["lf_unrelated_out_of_range"] == {"missing": "No frame 9 (ethanol has 5)"}
+    assert results["lf_unknown"] == {"missing": ""}
+
+
+def test_a_new_independent_panel_shows_the_first_pair_no_other_panel_shows(results):
+    assert results["sp_first_free"] == {"datasetFp": "P", "modelFp": "m2"}
+    assert results["sp_all_shown"] == {"datasetFp": "P", "modelFp": "m1"}
+    assert results["sp_none"] is None
+
+
+def test_a_starting_look_becomes_view_commands_on_the_panels_own_prediction(results):
+    full = results["ss_full"]
+    assert full["commands"] == [
+        {"type": "SET_PARAMETER", "stage_id": "ffast.atom_color", "parameter": "source",
+         "value": "metric:ffast.force_difference[atom+structure;length]"},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.atom_color", "parameter": "prediction_ref",
+         "value": "m1"},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.atom_color", "parameter": "colormap",
+         "value": "force_error"},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.atom_sizes", "parameter": "scale",
+         "value": 1.2},
+        {"type": "TOGGLE_FEATURE", "feature": "forces", "enabled": True},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.force_arrows", "parameter": "prediction_ref",
+         "value": "m1"},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.force_arrows", "parameter": "length_factor",
+         "value": 20},
+        {"type": "SET_PARAMETER", "stage_id": "ffast.force_arrows", "parameter": "normalised",
+         "value": False},
+    ]
+    assert full["bondStyle"] == [60, "#ff8800", True]
+    assert full["note"] == ""
+    assert full["settings"] == {
+        "source": "metric:ffast.force_difference[atom+structure;length]", "colormap": "force_error", "prediction": "m1",
+        "atomSize": 1.2, "bondWidth": 60, "bondColour": "#ff8800",
+        "forces": {"show": True, "length": 20, "normalised": False}}
+
+
+def test_a_missing_colour_metric_falls_back_to_element_colours_and_says_why(results):
+    missing = results["ss_missing_metric"]
+    assert missing["commands"][0]["value"] == "element"
+    assert missing["note"] == "Colour metric nope.metric is not on this server; showing element colours"
+
+
+def test_a_start_colour_metric_without_a_value_per_atom_falls_back_too(results):
+    assert results["ss_not_per_atom"] == (
+        "Colour metric ffast.energy_difference[dataset;mae] has no value per atom; showing element colours")
+
+
+def test_a_table_per_structure_and_element_colours_atoms(results):
+    # ADR 0064 amendment 2026-10-24, point 4: the frame's row colours it.
+    assert results["ss_table"] == "metric:user.h_err"
+
+
+def test_a_start_compares_by_the_keys_that_are_set(results):
+    """The server sends unset keys as null; a start compares equal however
+    it was written, so Save does not restart a panel whose look is the same."""
+    assert results["ss_clean"] == [{"colormap": "viridis"}, None, None]
+
+
+def test_a_start_with_few_keys_sends_only_those(results):
+    assert [c["parameter"] for c in results["ss_plain"]["commands"]] == ["source"]
+    assert results["ss_plain"]["bondStyle"] is None
+    assert results["ss_empty"]["commands"] == [] and results["ss_empty"]["note"] == ""
+
+
+def test_use_current_3d_settings_as_start(results):
+    """Rule 15's "Use current 3D settings as start": the look on screen, as
+    the start keys; defaults are left out."""
+    assert results["ss_from_current"] == {
+        "colour_by": "ffast.force_difference[atom+structure;length]", "force_arrows": True}
+    assert results["ss_from_current_plain"] == {
+        "colormap": "viridis", "atom_size": 1.5, "bond_width": 40, "bond_colour": "#123456"}
+
+
+def test_te_a_3d_panel_can_be_made_independent_and_linked_again(results):
+    made = results["te_make_independent"]
+    assert (made["view"], made["link_frame"], made["link_camera"]) == ("independent", False, True)
+    back = results["te_make_linked_drops_the_rest"]
+    assert back["view"] == "linked"
+    assert not ({"link_frame", "link_camera", "start"} & set(back))
+    assert results["te_set_start"] == {"colormap": "viridis"}
+    saved = results["te_saved_keeps_view"]
+    assert (saved["view"], saved["link_camera"]) == ("independent", False)
+
+
+def test_te_panels_keep_their_places(results):
+    assert results["te_place"] == [["V", 0, 0, 6, 12], ["A", 0, 12, 6, 12], ["B", 6, 0, 6, 24]]
+
+
+def test_te_an_old_tab_becomes_a_tab_on_the_24_column_grid(results):
+    """Each old column gets an equal share of the 24 columns, or a share in
+    proportion to its width, at least one column each."""
+    two, five, widths, thirds, grid = results["te_to_fine_grid_shares"]
+    assert two == [[0, 12], [12, 12]]
+    assert five == [[0, 5], [5, 5], [10, 5], [15, 5], [20, 4]]
+    assert widths == [[0, 16], [16, 8]]
+    assert thirds == [[0, 8], [8, 8], [16, 8]]
+    assert grid == 24
+
+
+def test_te_an_old_rows_height_becomes_50_px_units(results):
+    """A row is 300 px (6 units) unless row_heights sets it: 0.5 is 3 units."""
+    assert results["te_to_fine_grid_rows"] == [["V", 0, 6], ["A", 0, 6], ["B", 6, 3]]
+
+
+def test_te_converting_keeps_order_scroll_groups_and_a_strip_one_row_high(results):
+    grid, widths, heights, titles, strip, same = results["te_to_fine_grid_keeps_the_rest"]
+    assert grid == 24 and widths is False and heights is False
+    assert titles == ["V", "A", "B", "S1g", "S2g"]
+    assert strip == [[6, 16, 6, 8], [6, 16, 6, 8]]   # both at the first member's place
+    assert same is True      # a tab already on the grid comes back as it is
+
+
+def test_te_a_panel_moves_to_a_free_place(results):
+    """A dropped just below B, in column 12; the panels float up but A stops
+    under B."""
+    assert results["te_move_to_a_free_place"] == [["V", 0, 0], ["A", 12, 12], ["B", 6, 0]]
+
+
+def test_te_a_panel_in_the_way_moves_down(results):
+    """V dropped on A pushes A down, below V; B is below them both, so A goes
+    on below B."""
+    assert results["te_move_pushes_down"] == [["V", 0, 12], ["A", 12, 12], ["B", 6, 0]]
+
+
+def test_te_a_panel_stays_inside_the_grid(results):
+    right, left, clamped = results["te_move_stays_in_the_grid"]
+    assert right == 12 and left == 0       # A is 12 wide: 24 - 12
+    assert clamped == {"row": 3, "col": 12}
+
+
+def test_te_a_scroll_strip_moves_as_one(results):
+    assert results["te_move_a_strip_as_one"] == [["X", 6], ["Y", 6], ["Z", 0]]
+
+
+def test_te_resizing_sets_the_width_and_height(results):
+    assert results["te_resize_grows"] == [["V", 0, 6, 12], ["A", 0, 10, 8], ["B", 10, 6, 24]]
+
+
+def test_te_resizing_over_a_neighbour_pushes_it_down(results):
+    assert results["te_resize_pushes_a_neighbour_down"] == [
+        ["V", 0, 0, 6, 16], ["A", 12, 12, 6, 12], ["B", 6, 0, 6, 24]]
+
+
+def test_te_a_panel_has_a_smallest_size_and_stops_at_the_grids_edge(results):
+    """6 x 4 (a 3D panel 8 x 6); A starts at column 12, so it is 12 wide at most."""
+    table, three_d, widest, min_3d, min_2d = results["te_resize_stops_at_the_minimum_and_the_edge"]
+    assert (table["colspan"], table["rowspan"]) == (6, 4)
+    assert (three_d["colspan"], three_d["rowspan"]) == (8, 6)
+    assert widest == 12
+    assert min_3d == {"w": 8, "h": 6} and min_2d == {"w": 6, "h": 4}
+
+
+def test_te_a_panel_at_the_right_edge_moves_left_to_keep_its_minimum(results):
+    """A, at column 20, made as small as it goes (6): 20 + 6 would pass the grid."""
+    assert results["te_resize_near_the_edge_moves_left"] == [18, 6]
+
+
+def test_te_a_scroll_strip_is_resized_as_one(results):
+    assert results["te_resize_a_strip_as_one"] == [[8, 12], [8, 12]]
+
+
+def test_te_panels_float_up_so_no_row_is_empty(results):
+    lifted, alone = results["te_compact"]
+    assert lifted == [["V", 12], ["A", 0], ["B", 6]]
+    assert alone == 0
+
+
+def test_te_a_new_panel_takes_the_first_free_place(results):
+    """Half the width, 400 px high (8 rows), where it first fits."""
+    assert results["te_add_takes_the_first_free_place"][-1] == ["C", 6, 0, 8, 12]
+
+
+def test_te_a_new_panel_opens_a_row_when_the_grid_is_full(results):
+    assert results["te_add_opens_a_row_when_full"][-1] == ["C", 12, 0]
+
+
+def test_te_removing_a_panel_floats_the_rest_up(results):
+    assert results["te_remove_floats_the_rest_up"] == [["B", 0]]
+
+
+def test_a_3d_panel_caption_offers_the_main_view_and_every_dataset(results):
+    linked, last, editing, empty = results["panel_choices"]
+    assert linked == ["main", [["main", "Main view", False], ["A", "aspirin", False],
+                               ["S", "aspirin [0:9]", False]]]
+    # the last linked panel stays: datasets greyed, and the drop-down says why
+    value, options = last
+    assert value == "main" and [o[2] for o in options[1:3]] == [True, True]
+    assert options[-1][1:] == ["At least one tab must show the main view, so this panel stays on it", True]
+    # an own view may change dataset, but not go back to the main view while
+    # the tab cannot be saved
+    value, options = editing
+    assert value == "S" and options[0][2] is True and options[2][2] is False
+    assert options[-1][1:] == ["Finish editing the tab first", True]
+    assert empty == ["", [["main", "Main view", False], ["", "No dataset yet", True]]]
+
+
+def test_te_moving_and_resizing_change_only_places(results):
+    """Edit mode then moves the cells in place and the plots keep drawing;
+    a 3D panel that moves is a different independent panel, so not that."""
+    grid, grow_2d, grow_3d, move_3d, removed, renamed, retitled = results["te_only_places_changed"]
+    assert grid and grow_2d and grow_3d
+    assert not move_3d
+    assert not (removed or renamed or retitled)
+
+
+def test_te_saving_sends_the_authoring_form(results):
+    saved = results["te_save_form"]
+    assert set(saved) == {"name", "controls", "selector", "has_data_selector",
+                          "grid", "column_widths", "row_heights", "panels"}
+    assert saved["grid"] == 24 and saved["column_widths"] is None and saved["row_heights"] is None
+    assert saved["panels"][1]["metrics"] == {
+        "value": {"metric": "m.a", "transform": "smooth", "params": {}}}
+    assert "metric_refs" not in saved["panels"][1]
+
+
+def test_te_new_tabs_from_scratch_or_a_copy(results):
+    assert results["te_copy_of"] == "Copy of Mixed"
+    assert results["te_empty_tab"]["name"] == "New"
+    assert results["te_empty_tab"]["panels"] == []
+    assert results["te_empty_tab"]["grid"] == 24
+    assert "column_widths" not in results["te_empty_tab"]
+
+
+def test_te_the_builder_offers_metrics_of_the_shape_a_role_takes(results):
+    assert results["te_kinds_offer_metrics_by_shape"] == ["a"]
+
+
+def test_ex_extract_is_offered_for_whole_datasets_and_frozen_subsets(results):
+    # A live subset changes with the zoom; an atom subset already chose its atoms.
+    assert results["ex_can_extract"] == [True, True, False, True]
+
+
+def test_te_kind_roles_match_the_desktop_panel_kinds(results):
+    """The browser's builder and the desktop's panel kinds must agree on the
+    roles each kind binds and the shapes they declare."""
+    pytest.importorskip("PySide6")
+    from ffast.metrics.dims import shape_to_str
+    from UI.panels import PANEL_KINDS
+
+    js = results["te_kind_roles"]
+    assert set(js) == set(PANEL_KINDS)          # no kind on one client only
+    for name, kind in PANEL_KINDS.items():
+        assert name in js, name
+        for role in kind.roles:
+            assert role in js[name]["roles"], (name, role)
+        for role, shape in kind.shapes.items():
+            if role in kind.roles:
+                shapes = shape if isinstance(shape, list) else [shape]
+                assert js[name]["roles"][role] == [shape_to_str(s) for s in shapes], (name, role)
+
+
+def test_the_colour_legend_limits_are_in_scientific_notation(results):
+    assert results["pn_scientific"] == ["1.23e-2", "-4.50e3", "0", "1.00e0", "NaN"]
+
+
+def test_element_button_text_is_black_or_white_by_contrast(results):
+    # light yellow → black, dark blue → white
+    assert results["contrast_ink"] == ["#000000", "#ffffff", "#000000", "#ffffff"]
+
+
+def test_force_arrows_have_the_qt_sizes_and_a_short_one_a_smaller_head(results):
+    assert results["arrow_long"] == {
+        "shaftLength": 1.75, "headLength": 0.25, "shaftRadius": 0.05, "headRadius": 0.12}
+    assert results["arrow_thick"]["shaftRadius"] == 0.1
+    assert results["arrow_thick"]["headRadius"] == pytest.approx(0.24)
+    short = results["arrow_short"]    # half a head long: half a head, no shaft
+    assert short["shaftLength"] == 0 and short["headLength"] == 0.125
+    assert short["headRadius"] == pytest.approx(0.06) and short["shaftRadius"] == 0.05
+
+
+def test_pick_tool_hints_follow_the_pick_count(results):
+    info = results["hint_info"]
+    assert info[0] == "Click an atom: its position"
+    assert "2nd atom for the distance" in info[1] and "3rd atom for the angle" in info[2]
+    assert "4th atom for the dihedral" in info[3]
+    assert info[4] == info[5] and info[4].startswith("Dihedral shown")
+    bonds0, bonds1, align2, forces, extract, none, extract0, extract1, key = results["hint_others"]
+    text = lambda steps: "".join("".join(step) for step in steps)
+    assert text(bonds0).startswith("Click 2 atoms") and "one more atom" in text(bonds1)
+    assert "2 of 3" in text(align2)
+    # to_fix_v2: arming Force says arrows are on, and how to narrow them
+    assert forces == [["Arrows on all atoms. ", "Click atoms or drag a box", " to keep arrows only on those"],
+                      ["", "Esc", " stops"]]
+    assert results["hint_forces_picked"] == [["2 atoms with arrows. ", "Click more", " to add"], ["", "Esc", " stops"]]
+    # on a variable dataset the picks are this frame's
+    assert results["hint_forces_frame"][0][0] == "2 atoms with arrows on this frame. "
+    # Extract says what it is for, then how to finish.
+    assert text(extract0).startswith("Makes a new dataset with only the atoms you pick")
+    assert text(extract).startswith("3 atoms in the Extract box") and "Extract as Subset Dataset" in text(extract)
+    assert text(extract1).startswith("1 atom in the Extract box")
+    assert none is None and key == "tool-info"
+
+
+def test_a_typed_path_splits_into_folder_and_prefix(results):
+    assert results["typed_parts"] == [
+        {"dir": "/a/b", "prefix": "ca"}, {"dir": "/a", "prefix": ""}, {"dir": "/", "prefix": "ab"}, None]
+    assert results["match_entries"] == ["Alpha", "alps"]
+
+
+def test_recent_files_keep_ten_newest_without_duplicates(results):
+    assert results["remember_files"] == [10, "x11", False]
+
+
+def test_unit_choices_list_the_last_used_first_without_duplicates(results):
+    assert results["unit_choices"] == [
+        ["eV", "kcal/mol", "Hartree"],
+        ["kcal/mol", "meV", "eV", "Hartree"],
+        ["eV/Å", "kcal/mol/Å", "Hartree/Bohr"]]
+    assert results["remember_unit"] == [["b", "a"], ["c", "a", "b"]]
+
+
+def test_a_new_object_gets_the_next_unused_palette_colour(results):
+    # the palette starts over when it runs out; a series with no assigned colour keeps its position's
+    assert results["next_colour"] == [0, 1, 2, 1]
+
+
+def test_a_subset_series_takes_the_subsets_own_colour(results):
+    # a dataset's series: its prediction's colour (its own for Ground Truth);
+    # a subset's: its own rail colour, with or without a prediction
+    assert results["series_colour_owner"] == ["M", "D", "S", "S"]
+    assert results["paint"] == ["#abc", True, True]

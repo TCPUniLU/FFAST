@@ -1,0 +1,1470 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FFAST Web Viewer</title>
+  <style>
+    /* palette and sizes: the tokens of ADR 0063 in :root below.
+       Layout: object-list rail beside tabbed main content. Every tab is a
+       grid of 2D and 3D panels (ADR 0056); the built-in "3D" tab is one 3D
+       panel filling its tab. */
+:root { color-scheme: dark; }   /* native controls (spinners, pickers) drawn dark */
+    /* Tokens of ADR 0063 (dark column). Journal page swaps them (step 7). The
+       old names below are aliases so older rules keep working. */
+    :root {
+      --ground: #121417; /* app base, 3D-less panel ground */
+      --surface: #1a1d21; /* panels, rail, sidebar, top bar */
+      --surface-2: #22262b; /* inputs, buttons */
+      --surface-3: #2c3137; /* hover */
+      --line: #3a4047; /* hairlines, borders, grid lines */
+      --ink: #f2f3f5; /* strong text, active tab */
+      --ink-2: #c3c8cf; /* default text */
+      --ink-3: #9aa1ab; /* muted text, captions, axis ticks */
+      --accent: #56b4e9; /* active, focus ring, selection, series 1 */
+      --accent-ink: #0b1a24; /* text on an --accent fill */
+      --sel: rgba(86, 180, 233, 0.18);
+      --peak: #d55e00; /* peak tick */
+      --peak-ink: #ff9a55; /* peak label text */
+      --median: #2bbf93; /* median and reference lines */
+      --warn: #e69f00; /* "edited" marks, warnings */
+      --danger: #ff7a6e; /* destructive buttons, errors */
+
+      --scale: 1; /* Compact 1, Comfortable 1.15, Large 1.4 */
+      --fs-xs: calc(11px * var(--scale));
+      --fs-s: calc(12px * var(--scale));
+      --fs-m: calc(13px * var(--scale));
+      --fs-l: calc(15px * var(--scale));
+      --fs-xl: calc(19px * var(--scale));
+      --fs-xxl: calc(22px * var(--scale));
+      --fs-plot: calc(11px * var(--scale));
+      --letter: calc(17px * var(--scale));
+      --series: #56b4e9, #e69f00, #2bbf93, #f0e442, #cc79a7, #d55e00, #8fc3ff, #c3c8cf;
+
+      /* old names */
+      --bg1: var(--ground);
+      --bg2: var(--surface);
+      --bg3: var(--line);
+      --bg4: var(--surface-3);
+      --bg5: var(--surface-3);
+      --text: var(--ink-2);
+      --text1: var(--ink-2);
+      --text2: var(--ink);
+      --text-hover: var(--ink);
+      --hl1: var(--line);
+      --hl2: var(--accent);
+      --muted: var(--ink-3);
+      --success: var(--accent);
+      /* The Qt QSS declares `font-family: monoespace` — a typo Qt can't resolve,
+         so the desktop actually renders in the platform default (San Francisco
+         on macOS), a proportional sans. Match that, not monospace. */
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    /* Journal page (ADR 0063): the figure area becomes a white printed figure by
+       redefining the tokens there. The rail, top bar and sidebar stay dark, so
+       the tokens are not changed on :root (the sidebar sits inside #tabpanels).
+       The old names are written again, as :root resolved them to the dark values. */
+    body.journal .analysis-grid {
+      color-scheme: light;
+      --ground: #ffffff; --surface: #ffffff; --surface-2: #f3f4f6; --surface-3: #e6e8eb;
+      --line: #cfd4da; --ink: #111418; --ink-2: #2b3036; --ink-3: #59616c;
+      --accent: #0072b2; --accent-ink: #ffffff; --sel: rgba(0, 114, 178, 0.12);
+      --peak: #d55e00; --peak-ink: #a84600; --median: #00795a; --warn: #9a6a00; --danger: #c0392b;
+      --series: #0072b2, #e69f00, #009e73, #b8a900, #cc79a7, #d55e00, #56b4e9, #59616c;
+      --bg1: var(--ground); --bg2: var(--surface); --bg3: var(--line); --bg4: var(--surface-3);
+      --bg5: var(--surface-3); --text: var(--ink-2); --text1: var(--ink-2); --text2: var(--ink);
+      --text-hover: var(--ink); --hl1: var(--line); --hl2: var(--accent); --muted: var(--ink-3);
+      --success: var(--accent);
+      background: var(--ground); color: var(--ink-2);
+    }
+    /* ...and prints like one: no controls in it (edit mode keeps what it needs),
+       and a unit is plain text, not a link to name it. */
+    body.journal .tabpanel:not(.editing) :is(
+      .analysis-controls, .panel-params, .modebar-container,
+      .analysis-grid .panel-title :is(input, button, select, label, .help-btn)) { display: none !important; }
+    body.journal .analysis-grid :is(.unit-editable, [data-unit-role], .g-xtitle text, .g-ytitle text) {
+      text-decoration: none !important; cursor: auto !important; pointer-events: none !important;
+    }
+    /* captions set in serif, as under a printed figure */
+    body.journal .analysis-grid .panel-caption-line {
+      font-family: Georgia, "Times New Roman", serif; font-size: var(--fs-s); color: var(--ink);
+    }
+    /* no card round a panel (square, or its corners leave marks), and no 3D
+       pick bar or hint bar; the titles stay */
+    body.journal .tabpanel:not(.editing) .analysis-grid .analysis-panel {
+      border-color: transparent; border-radius: 0;
+    }
+    body.journal .tabpanel:not(.editing) :is(#pick-bar, #hint-bar) { display: none !important; }
+
+    /* drawn icons (icons.js): one stroke, the text colour */
+    .icon { width: 1.1em; height: 1.1em; vertical-align: -0.15em; }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font);
+      font-size: var(--fs-m);
+      background: var(--ground);
+      color: var(--text1);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* thin scrollbars, matching the Qt QScrollBar 8px track */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: var(--ground); }
+    ::-webkit-scrollbar-thumb { background: var(--surface-3); }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+    * { scrollbar-width: thin; scrollbar-color: var(--surface-3) var(--ground); }
+    ::selection { background: var(--sel); color: var(--ink); }
+    ::placeholder { color: var(--ink-3); }
+    input, textarea { caret-color: var(--accent); }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible,
+    [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+    /* ── top bar ─────────────────────────────────────────────────────── */
+    #topbar {
+      display: flex;
+      align-items: center;
+      overflow-x: auto;
+      gap: 8px;
+      padding: 6px 10px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--bg3);
+      flex-shrink: 0;
+    }
+    #topbar h1 {
+      font-size: var(--fs-l); font-weight: 700;
+      color: var(--hl2); margin-right: 6px;
+    }
+
+    button {
+      padding: 4px 10px; border: none; border-radius: 3px;
+      background: var(--surface-2); color: var(--ink-2); cursor: pointer;
+      font-family: var(--font); font-size: var(--fs-m); line-height: 1.2;
+      height: auto;
+    }
+    button:hover { background: var(--surface-3); color: var(--ink); }
+    button:active { background: var(--accent); color: var(--accent-ink); }
+    button:disabled {
+      color: var(--ink-3); background: transparent;
+      box-shadow: inset 0 0 0 2px var(--bg3); cursor: default;
+    }
+
+    .menu { position: relative; }
+    .menu-list {
+      position: absolute; top: calc(100% + 4px); left: 0; z-index: 150;
+      min-width: 220px; padding: 4px; display: flex; flex-direction: column;
+      background: var(--bg2); border: 1px solid var(--bg3); border-radius: 6px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+    }
+    .menu-list.hidden { display: none; }
+    .tab-context-menu { position: fixed; }
+    .menu-list [role=menuitem] {
+      text-align: left; background: transparent; height: auto; padding: 6px 10px;
+    }
+    .menu-list [role=menuitem]:hover:not(:disabled),
+    .menu-list [role=menuitem]:focus-visible { background: var(--bg4); outline: none; }
+    .menu-list [role=menuitem]:disabled { box-shadow: none; }
+    #topbar { overflow: visible; }
+
+    #view-mode { margin-left: auto; display: flex; }
+    #view-mode [role=radio] { border-radius: 0; }
+    #view-mode [role=radio]:first-child { border-radius: 3px 0 0 3px; }
+    #view-mode [role=radio]:last-child { border-radius: 0 3px 3px 0; }
+    #view-mode [role=radio][aria-checked=true] { background: var(--accent); color: var(--accent-ink); }
+    #density { min-width: 0; }
+    #status {
+      margin-left: 0; font-size: var(--fs-s); color: var(--muted);
+      background: transparent; height: auto; padding: 3px 8px;
+    }
+    #status:hover { background: var(--surface-3); }
+    #status.connected { color: var(--success); }
+    #status.error { color: var(--danger); }
+
+    /* ── main layout ─────────────────────────────────────────────────── */
+    #main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── object rail (datasets + predictions) ────────────────────────── */
+    #objectbar {
+      width: 220px;
+      flex-shrink: 0;
+      background: var(--bg2);
+      border-right: 1px solid var(--bg3);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 8px;
+      gap: 14px;
+    }
+    .obj-group { display: flex; flex-direction: column; gap: 4px; }
+    .obj-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding-bottom: 4px; margin-bottom: 2px; border-bottom: 1px solid var(--bg3);
+    }
+    .section-title {
+      font-size: var(--fs-s); font-weight: 600; color: var(--muted);
+    }
+    button.mini {
+      width: calc(1em + 6px); height: auto; min-height: calc(1em + 4px);
+      padding: 0; font-size: var(--fs-l); line-height: 1;
+      border-radius: 3px;
+    }
+    .obj-list { display: flex; flex-direction: column; gap: 2px; }
+    .obj-empty { color: var(--muted); font-size: var(--fs-s); padding: 4px 6px; font-style: italic; }
+    .obj-row {
+      display: flex; align-items: baseline; gap: 6px;
+      padding: 5px 8px; border-radius: 4px; cursor: pointer;
+    }
+    .obj-row:hover { background: var(--surface-3); }
+    .obj-row.selected { background: var(--sel); }
+    .obj-row.disabled { opacity: 0.4; cursor: default; }
+    .obj-row.disabled:hover { background: transparent; }
+    .obj-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text1); }
+    .obj-row.selected .name { color: var(--ink); font-weight: 600; }
+    .obj-row .obj-swatch {
+      width: 14px; height: 14px; padding: 0; border: 0; border-radius: 50%; flex-shrink: 0; align-self: center;
+      background: none; cursor: pointer;
+    }
+    .obj-row .obj-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+    .obj-row .obj-swatch::-webkit-color-swatch { border: 1px solid var(--line); border-radius: 50%; }
+    .obj-row .obj-swatch::-moz-color-swatch { border: 1px solid var(--line); border-radius: 50%; }
+    .obj-row .meta { color: var(--muted); font-size: var(--fs-s); flex-shrink: 0; }
+
+    /* ── tabbed content ──────────────────────────────────────────────── */
+    #content { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg1); }
+    #tabbar-row {
+      display: flex; align-items: stretch; flex-shrink: 0;
+      background: var(--bg1); border-bottom: 1px solid var(--bg3);
+    }
+    #tabbar {
+      display: flex; align-items: stretch; flex: 0 1 auto; min-width: 0;
+      overflow-x: auto;
+    }
+    /* more tabs than fit: the right edge fades (analysis.js sets the class) */
+    #tabbar.overflowing {
+      mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
+    }
+    /* + follows the last tab; the other tab actions stay at the right end of
+       the bar (ADR 0056, ADR 0070) */
+    #tab-new { display: flex; align-items: center; flex-shrink: 0; padding: 0 4px; }
+    #tab-actions { display: flex; align-items: center; gap: 4px; padding: 0 6px; flex-shrink: 0; margin-left: auto; }
+    #tab-actions button, #tab-new button { height: auto; min-width: 28px; padding: 2px 8px; font-size: var(--fs-l); background: transparent; }
+    #tab-actions button:hover, #tab-new button:hover { background: var(--surface-3); }
+    .menu-list.right { left: auto; right: 0; }
+    .menu-sep { height: 1px; margin: 4px 6px; background: var(--bg3); }
+    /* a user tab that replaces a built-in or project one (rule 10) */
+    .tab .tab-mark {
+      margin-left: 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--hl2); opacity: 0.85;
+    }
+    .tab .tab-mark.changed { color: var(--warn); }
+    .tab.drop-before { box-shadow: inset 2px 0 0 var(--hl2); }
+    .tab.drop-after { box-shadow: inset -2px 0 0 var(--hl2); }
+    #tab-edit-btn.active { color: var(--hl2); box-shadow: inset 0 0 0 1px var(--hl2); }
+    /* Edit mode (ADR 0056 rule 15): edit bar, and handles over each panel */
+    .tabpanel.editing .analysis-controls { display: none; }
+    /* The edit head names the panel over its title row; the title under it
+       would show through, half covered. Hidden, not removed: plots keep their place. */
+    .tabpanel.editing .analysis-panel .panel-title,
+    .tabpanel.editing .panel-3d .viewport > :is(.panel-letter, .panel-caption) { visibility: hidden; }
+    .edit-bar {
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0; padding: 6px 12px;
+      background: var(--bg2); border-bottom: 1px solid var(--hl1); font-size: var(--fs-m);
+    }
+    .edit-bar .spacer { flex: 1; }
+    .edit-bar .edit-note { color: var(--warn); font-size: var(--fs-s); }
+    .edit-bar button.primary { background: var(--accent); color: var(--accent-ink); }
+    .analysis-grid.editing-grid { position: relative; }
+    .edit-chrome {
+      position: relative; z-index: 6; min-width: 0; min-height: 0;
+      border: 1px dashed var(--hl2); border-radius: 5px; background: color-mix(in srgb, var(--accent) 7%, transparent);
+    }
+    .edit-head {
+      display: flex; align-items: center; gap: 4px; padding: 2px 4px;
+      background: color-mix(in srgb, var(--ground) 92%, transparent); border-radius: 5px 5px 0 0;
+    }
+    .edit-handle {
+      flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: var(--fs-s); font-weight: 700; color: var(--text1); cursor: grab; user-select: none;
+      padding: 2px 4px; touch-action: none;
+    }
+    .edit-head button { height: auto; min-width: 22px; padding: 2px 5px; font-size: var(--fs-s); }
+    .edit-resize {
+      position: absolute; right: 3px; bottom: 1px; color: var(--hl2); cursor: nwse-resize;
+      user-select: none; font-size: var(--fs-m); touch-action: none; z-index: 2;
+    }
+    /* The panel's own right and bottom edges: thin bars that light up on hover. */
+    .edit-edge { position: absolute; touch-action: none; z-index: 1; }
+    .edit-edge.e { top: 0; bottom: 0; right: -5px; width: 10px; cursor: ew-resize; }
+    .edit-edge.s { left: 0; right: 0; bottom: -5px; height: 10px; cursor: ns-resize; }
+    .edit-edge:hover, .edit-edge.dragging { background: color-mix(in srgb, var(--hl2) 55%, transparent); }
+    .edit-ghost {
+      z-index: 7; pointer-events: none; border: 2px solid var(--hl2);
+      background: var(--sel); border-radius: 5px;
+    }
+    /* While a panel is dragged, every cell of the grid shows (ADR 0069): column
+       and row bands over the grid's content box, a gap's width apart. */
+    .analysis-grid.editing-grid.dragging {
+      --cell-w: calc((100% + 10px) / var(--grid-columns, 24));
+      background-origin: content-box; background-clip: content-box; background-attachment: local;
+      background-image:
+        repeating-linear-gradient(to right, color-mix(in srgb, var(--hl1) 35%, transparent) 0 calc(var(--cell-w) - 10px), transparent calc(var(--cell-w) - 10px) var(--cell-w)),
+        repeating-linear-gradient(to bottom, color-mix(in srgb, var(--hl1) 35%, transparent) 0 50px, transparent 50px 60px);
+    }
+    .edit-empty { min-height: 200px; }
+    .edit-modal .warning-modal-panel { width: 520px; }
+    .edit-modal-body { padding: 10px 12px; max-height: 65vh; overflow-y: auto; }
+    .edit-field { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: var(--fs-m); }
+    .edit-field > span:first-child { min-width: 70px; color: var(--muted); font-size: var(--fs-s); }
+    .edit-field input[type="text"], .edit-field input[type="number"], .edit-field select { flex: 1; height: auto; min-height: calc(1.2em + 8px); }
+    .builder-list { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+    .builder-row { display: flex; gap: 4px; }
+    .builder-row select { flex: 1; }
+    .panel-list { display: flex; flex-direction: column; gap: 2px; }
+    .panel-list-head {
+      margin-top: 8px; font-size: var(--fs-s); font-weight: 600; color: var(--muted);
+    }
+    .panel-choice { text-align: left; height: auto; padding: 5px 8px; background: transparent; }
+    .panel-choice:hover { background: var(--bg4); }
+    /* text to copy or download (Export, rule 9) */
+    .text-dialog-panel { width: 640px; }
+    .text-dialog-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+    .text-dialog-body textarea {
+      width: 100%; height: 50vh; resize: vertical; font-family: ui-monospace, Menlo, monospace;
+      font-size: var(--fs-s); background: var(--surface-2); color: var(--text1);
+      border: 1px solid var(--bg3); border-radius: 4px; padding: 6px 8px; white-space: pre;
+    }
+    .tab {
+      padding: 5px 16px; height: auto; min-height: 30px; display: flex; align-items: center;
+      font-size: var(--fs-s); font-weight: 600; color: var(--muted); cursor: pointer; white-space: nowrap;
+      border-bottom: 2px solid transparent; user-select: none;
+    }
+    .tab:hover { color: var(--text-hover); border-bottom-color: var(--hl1); }
+    .tab.active { color: var(--text2); background: var(--bg2); border-bottom-color: var(--hl2); }
+
+    #tabpanels { flex: 1; position: relative; overflow: hidden; }
+    .tabpanel { position: absolute; inset: 0; display: none; flex-direction: column; }
+    .tabpanel.active { display: flex; }
+
+    /* ── analysis tabs: header controls + panel grid (ADR 0045 Phase 3) ── */
+    /* NB: no `display` here — visibility stays governed by `.tabpanel`/
+       `.tabpanel.active` (a `display:flex` here would override `.tabpanel`'s
+       `display:none` and leave every analysis panel stacked + visible). */
+    .analysis-tab { overflow: hidden; }
+    .analysis-controls {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+      flex-shrink: 0; padding: 6px 12px; min-height: 32px;
+      background: var(--bg2); border-bottom: 1px solid var(--bg3);
+    }
+    .analysis-controls .ac-item { display: flex; align-items: center; gap: 6px; }
+    .analysis-controls label {
+      font-size: var(--fs-s); font-weight: 600; color: var(--muted);
+    }
+    .analysis-controls .ac-empty { color: var(--muted); font-size: var(--fs-s); font-style: italic; }
+    .analysis-controls .elem-btn {
+      min-width: 30px; height: auto; padding: 2px 6px; font-size: var(--fs-s);
+      background: var(--surface-2); border-radius: 3px;
+    }
+    .analysis-controls .elem-btn.active {
+      background: var(--accent); color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent);
+    }
+    /* The tab's own dataset/prediction scope (its comparison selector). Wraps as
+       one group so the Datasets and Predictions rows stay legible with many
+       objects loaded. */
+    .analysis-controls .ac-series {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 12px;
+    }
+    /* "Following the object rail" — active because the rail selected it, not
+       because this tab pinned it. Outlined rather than filled so a tab that has
+       been given its own scope reads differently at a glance. */
+    .analysis-controls .elem-btn.active.following {
+      background: transparent; color: var(--text);
+      box-shadow: inset 0 0 0 1px var(--hl2);
+    }
+    .analysis-controls[hidden] { display: none; }
+    /* A tab: controls row, then the body — the main column (pick bar, grid,
+       playback strip) beside the 3D settings sidebar. app.js moves the 3D
+       controls into the tab on screen when it has a 3D panel (ADR 0056). */
+    .tab-body { flex: 1; display: flex; min-height: 0; overflow: hidden; }
+    .tab-main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+    .tab-msg { flex: 1; }
+    .tab-msg[hidden], .analysis-grid[hidden] { display: none; }
+    #chrome3d { display: none; }
+    .analysis-grid {
+      /* 24 columns that fill the width, rows of 50 px (ADR 0069, analysis.js
+         _sizeGrid and _sizeRows); the tab scrolls down when rows do not fit. */
+      flex: 1; overflow: auto; padding: 10px; min-height: 0;
+      display: grid; gap: 10px; align-content: start;
+      grid-template-columns: repeat(24, minmax(0, 1fr));
+      /* a row a timeline's peak labels cover gets its own size (analysis.js _sizeRows) */
+      grid-auto-rows: 50px;
+    }
+    /* Too narrow for two columns: one column, panels in reading order (analysis.js
+       sets the order); the placements the panels carry are ignored. */
+    .analysis-grid.narrow > * { grid-column: auto !important; grid-row: auto !important; }
+    /* ...and its 3D panel has no room for the hint bar */
+    .analysis-grid.narrow #hint-bar { display: none !important; }
+    /* A tab with one cell gives it the whole height. */
+    .analysis-grid.fill { grid-template-rows: minmax(0, 1fr); align-content: stretch; }
+    .analysis-grid.fill > * { grid-row: 1 !important; }
+    /* ...and a 3D panel alone is the whole tab, edge to edge (the "3D" tab). */
+    .analysis-grid.fill:has(> .panel-3d:not([data-title])) { padding: 0; }
+    .analysis-grid.fill > .panel-3d:not([data-title]) { border: 0; border-radius: 0; }
+    .grid-slot { display: flex; min-width: 0; min-height: 0; }
+    .grid-slot > .analysis-panel { flex: 1 1 auto; }
+    .analysis-panel {
+      background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+      display: flex; flex-direction: column; overflow: auto; min-width: 0; min-height: 0;
+    } /*Changed overflow from hidden to auto to support situations where the whole table doesn't fit entirely inside the allocated space*/
+    /* panel letter and caption (ADR 0063, figure.js) */
+    .panel-letter {
+      font: 700 var(--letter) Georgia, "Times New Roman", serif;
+      color: var(--ink); margin-right: 8px;
+    }
+    .analysis-panel .panel-title > span:not(.panel-letter):not(.sub-toggle) { flex: 1; min-width: 0; }
+    .viewport > .panel-letter {
+      position: absolute; top: 6px; left: 8px; z-index: 3; margin: 0;
+      padding: 0 6px; border-radius: 4px; pointer-events: none;
+      background: color-mix(in srgb, var(--ground) 70%, transparent);
+    }
+    .viewport:has(> .panel-letter) .panel-caption { left: 40px; max-width: calc(100% - 48px); }
+    .panel-caption-line {
+      font-size: var(--fs-s); color: var(--ink-3); padding: 6px 12px 8px;
+      border-top: 1px solid var(--line);
+    }
+    .panel-caption-line[hidden] { display: none; }
+    .panel-caption-line b { font-family: Georgia, "Times New Roman", serif; color: var(--ink); }
+    .panel-caption-line .unit-editable { cursor: pointer; text-decoration: underline dotted; }
+    .analysis-panel .panel-title {
+      font-size: var(--fs-m); font-weight: 600; color: var(--ink); padding: 10px 12px 4px;
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    }
+    .analysis-panel .panel-title .sub-toggle,
+    .analysis-panel .panel-title .panel-warning { color: var(--warn); margin-left: 6px; cursor: help; }
+    .analysis-panel .panel-title .sub-toggle {
+      display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600;
+    }
+    .analysis-panel .panel-title .sub-toggle input { margin: 0; }
+    .analysis-panel .panel-title .sub-freeze {
+      height: auto; padding: 1px 6px; font-size: var(--fs-xs); margin-left: 4px;
+    }
+    .analysis-panel .panel-title .sub-freeze[hidden] { display: none; }
+    .analysis-panel .panel-title .peaks-toggle {
+      font-size: var(--fs-xs); font-weight: 600; color: var(--muted); display: flex; align-items: center; gap: 4px; cursor: pointer;
+    }
+    .analysis-panel .panel-title .peaks-toggle[hidden] { display: none; }
+    .analysis-panel .panel-title .sub-toggle input,
+    .analysis-panel .panel-title .peaks-toggle input { accent-color: var(--hl2); }
+    .analysis-panel .panel-plot { flex: 1; min-height: 180px; }
+    .analysis-panel .panel-params {
+      display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 8px 6px;
+    }
+    .analysis-panel .panel-params .pp-item { display: flex; align-items: center; gap: 4px; }
+    .analysis-panel .panel-params label { font-size: var(--fs-s); color: var(--muted); }
+    .analysis-panel .panel-params input[type=number],
+    .analysis-panel .panel-params select { height: auto; min-height: calc(1.2em + 6px); font-size: var(--fs-s); max-width: 90px; }
+    .analysis-panel .panel-msg {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      color: var(--muted); font-size: var(--fs-s); font-style: italic; padding: 16px; text-align: center;
+      white-space: pre-line;   /* one failed metric per line (ADR 0066) */
+    }
+    /* scroll_group strip: panels laid side-by-side, horizontally scrolling */
+    .analysis-scrollstrip {
+      display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px;
+    }
+    .analysis-scrollstrip .analysis-panel { flex: 0 0 auto; }
+    /* HTML tables for table / grouped_table kinds */
+    table.panel-table { width: 100%; border-collapse: collapse; font-size: var(--fs-s); }
+    table.panel-table th, table.panel-table td {
+      padding: 3px 8px; text-align: right; border-bottom: 1px solid var(--bg3);
+      font-variant-numeric: tabular-nums;
+    }
+    table.panel-table th { color: var(--muted); font-weight: 700; text-align: right; }
+    table.panel-table th:first-child, table.panel-table td:first-child {
+      text-align: left; color: var(--text1);
+    }
+    /* A unit the user names: click an axis title, an error table header or
+       the colourbar label (units.js). Plotly makes its titles click-through. */
+    .panel-plot[data-unit-x] .g-xtitle text,
+    .panel-plot[data-unit-y] .g-ytitle text { pointer-events: all !important; cursor: pointer; }
+    table.panel-table th[data-unit-role], #colorbar-label.unit-editable { cursor: pointer; }
+    #unit-popover {
+      position: fixed; z-index: 1000; padding: 8px 10px;
+      background: var(--bg2); border: 1px solid var(--bg3); border-radius: 6px;
+    }
+    #unit-popover label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
+    #unit-popover input { width: 180px; }
+
+    /* ── pick toolbar + contextual strip (issue 10) ──────────────────── */
+    #pick-bar {
+      display: flex; align-items: center; gap: 10px; flex-shrink: 0;
+      padding: 4px 10px; background: var(--bg2); border-bottom: 1px solid var(--bg3);
+      min-height: 30px; overflow-x: auto;
+    }
+    /* One line, always: a wrapping bar would shrink the 3D view mid-pick and
+       move the molecule under the pointer. A long read-out is cut with "…". */
+    #pick-toolbar { display: flex; gap: 4px; flex-shrink: 0; }
+    .pick-tool-btn {
+      height: auto; padding: 3px 8px; font-size: var(--fs-m); line-height: 1.2;
+      display: inline-flex; align-items: center; gap: 5px;
+      background: var(--surface-2); border-radius: 3px;
+    }
+    .pick-tool-icon { font-size: var(--fs-m); }
+    .pick-tool-btn.active {
+      background: var(--accent); color: var(--accent-ink);
+      box-shadow: inset 0 0 0 1px var(--accent);
+    }
+    #pick-strip {
+      display: flex; align-items: center; gap: 8px; font-size: var(--fs-s); color: var(--text1);
+      flex: 1 1 auto; min-width: 0; white-space: nowrap;
+    }
+    #pick-strip > :not(#pick-readout) { flex-shrink: 0; }
+    #pick-strip.hidden { display: none; }
+    #pick-strip .pick-sep { color: var(--muted); }
+    #pick-strip-tool { color: var(--hl2); font-weight: 600; }
+    #pick-strip-count { color: var(--text1); }
+    #pick-readout {
+      color: var(--text2); font-variant-numeric: tabular-nums;
+      min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    }
+    #pick-clear { width: calc(1em + 6px); height: auto; padding: 2px; font-size: var(--fs-s); }
+
+    /* rubber-band box while dragging a rectangle pick tool */
+    .pick-rect {
+      position: absolute; display: none; z-index: 5; pointer-events: none;
+      border: 1px solid var(--hl2); background: var(--sel);
+    }
+
+    /* ── 3D panels: one viewport and canvas each (ADR 0056) ──────────── */
+    .analysis-panel.panel-3d { overflow: hidden; }
+    /* With several 3D panels in a tab, the focused one — the one the 3D
+       controls act on — is outlined (ADR 0056 rule 8). */
+    .analysis-grid.multi3d > .panel-3d.focused { border-color: var(--hl2); box-shadow: 0 0 0 1px var(--hl2); }
+    .viewport {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      min-height: 0;
+      background: #000; /* Qt loupe default (default.json loupeBGColor) */
+    }
+    /* Out of the flow, so the canvas's own pixel size never feeds back into
+       the grid's row heights. */
+    canvas.view3d { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+    /* A 3D panel's caption chooses what it shows: the main view or a
+       dataset of its own (to_fix 7); an own view also says why it shows no
+       frame, greying the last one out (ADR 0056 rules 2 and 3). */
+    .panel-caption {
+      position: absolute; top: 6px; left: 8px; z-index: 2; max-width: calc(100% - 16px);
+      font-size: var(--fs-s); color: var(--text1); background: color-mix(in srgb, var(--ground) 75%, transparent);
+      padding: 2px 6px; border-radius: 4px; pointer-events: none;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .panel-caption .panel-shows {
+      pointer-events: auto; font: inherit; color: inherit; max-width: 22ch;
+      background: transparent; border: 1px solid transparent; border-radius: 3px; padding: 0 2px;
+    }
+    .panel-caption .panel-shows:hover, .panel-caption .panel-shows:focus-visible { border-color: var(--line); }
+    .panel-note {
+      position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 2;
+      max-width: 80%; text-align: center; font-size: var(--fs-m); color: var(--text1);
+      background: color-mix(in srgb, var(--ground) 85%, transparent); padding: 6px 10px; border-radius: 5px; pointer-events: none;
+    }
+    .panel-caption-note { white-space: normal; color: var(--warn); margin-top: 2px; }
+    .viewport.no-frame { background: var(--bg2); }
+    .viewport.no-frame canvas.view3d { visibility: hidden; }
+    #overlay {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      text-align: center; color: var(--ink-3); pointer-events: none;
+    }
+    #overlay.hidden { display: none; }
+    #empty-load-btn, #empty-example-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: var(--fs-m); }
+    #empty-example-btn { margin-left: 8px; }
+    #content.no-view #loupe-sidebar,
+    #content.no-view #pick-bar,
+    #content.no-view #loupe-controls,
+    #content.sidebar-hidden #loupe-sidebar,
+    #content.no-view #sidebar-resize,
+    #content.sidebar-hidden #sidebar-resize { display: none; }
+
+    /* draggable panel edges (resizers.js) */
+    .resize-handle {
+      flex: 0 0 6px; margin: 0 -3px; position: relative; z-index: 5;
+      cursor: col-resize; background: transparent; transition: background 0.1s;
+    }
+    .resize-handle:hover { background: var(--hl1); }
+    .resize-handle:focus-visible { background: var(--accent); outline: none; }   /* seen from the keyboard */
+    body.resizing, body.resizing * { cursor: col-resize !important; user-select: none; }
+    #sidebar-toggle { margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+    .link-btn {
+      align-self: flex-start; height: auto; padding: 0; background: none;
+      color: var(--hl2); font-size: var(--fs-s); text-decoration: underline;
+    }
+    .link-btn:hover { background: none; color: var(--text-hover); }
+    .exact-angles { display: flex; flex-direction: column; gap: 6px; }
+    .exact-angles.hidden { display: none; }
+    #overlay .big { font-size: var(--fs-xxl); font-weight: 300; margin-bottom: 6px; }
+    #overlay .small { font-size: var(--fs-s); }
+
+    /* loupe control strip (Playback + View, MVP subset) */
+    #loupe-controls {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 10px; flex-shrink: 0;
+      padding: 6px 10px; background: var(--bg2); border-top: 1px solid var(--bg3);
+    }
+    #loupe-controls .ctl-label {
+      font-size: var(--fs-s); font-weight: 600; color: var(--muted);
+    }
+    #frame-slider { flex: 1 1 80px; accent-color: var(--hl2); min-width: 80px; }
+    #frame-label { font-size: var(--fs-s); color: var(--muted); min-width: 64px; text-align: right; }
+    #loupe-controls button.icon-btn { width: calc(1em + 10px); padding: 4px; font-size: var(--fs-m); }
+    #playback-settings { position: relative; }
+    #loupe-controls button#playback-gear { width: calc(1em + 10px); height: auto; font-size: var(--fs-xl); line-height: 1; }
+    #playback-pop {
+      position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+      z-index: 20; display: grid; grid-template-columns: auto auto; gap: 6px 8px; align-items: center;
+      padding: 8px 10px; background: var(--bg2); border: 1px solid var(--bg4); border-radius: 6px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    }
+    #playback-pop.hidden { display: none; }
+    #loupe-controls input.ctl-number {
+      width: 52px; background: var(--surface-2); border: 1px solid var(--bg3);
+      border-radius: 3px; color: var(--text1); padding: 2px 4px; font-size: var(--fs-s);
+    }
+
+    /* ── Metrics drawer (on every tab) ───────────────────────────────── */
+    #metrics-btn[aria-pressed=true] { background: var(--accent); color: var(--accent-ink); }
+    #metrics-drawer {
+      width: 320px; flex-shrink: 0; overflow-y: auto;
+      background: var(--bg2); border-left: 1px solid var(--bg3);
+      padding: 8px; display: flex; flex-direction: column; gap: 6px;
+    }
+    #metrics-drawer[hidden], #metrics-resize[hidden] { display: none; }
+    .md-head { display: flex; align-items: center; justify-content: space-between; }
+    .md-title { font-size: var(--fs-s); font-weight: 600; color: var(--muted); }
+    .md-context { display: flex; align-items: center; gap: 6px; font-size: var(--fs-s); color: var(--muted); }
+    .md-context select { flex: 1 1 0; min-width: 0; }
+    .md-body { display: flex; flex-direction: column; gap: 6px; }
+    #metrics-drawer .mx-list { max-height: 40vh; }
+    .mx-source { font-size: var(--fs-s); color: var(--text1); }
+    .mx-source[hidden] { display: none; }
+    .mx-source summary { cursor: pointer; color: var(--muted); }
+    .mx-source-copy { margin-top: 4px; font-size: var(--fs-xs); padding: 1px 6px; }
+    .mx-source-code {
+      margin: 4px 0 0; padding: 6px; max-height: 260px; overflow: auto; white-space: pre;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: var(--fs-xs);
+      background: var(--surface-2); border: 1px solid var(--line); border-radius: 3px; user-select: text;
+    }
+
+    /* ── 3D settings sidebar ─────────────────────────────────────────── */
+    #loupe-sidebar {
+      width: 250px; flex-shrink: 0;
+      background: var(--bg2); border-left: 1px solid var(--bg3);
+      overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px;
+    }
+    .pane { flex: 0 0 auto; background: var(--bg1); border: 1px solid var(--bg3); border-radius: 4px; overflow: hidden; }
+    .pane-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 6px 8px; cursor: pointer; user-select: none;
+      background: color-mix(in srgb, var(--bg4) 60%, var(--bg1));
+      font-size: var(--fs-s); font-weight: 600; color: var(--muted);
+    }
+    .pane-header:hover { color: var(--text-hover); }
+    .pane-chevron { display: inline-flex; transition: transform 0.15s; font-size: var(--fs-xs); }
+    .pane.collapsed .pane-chevron { transform: rotate(-90deg); }
+    .pane.collapsed .pane-body { display: none; }
+    .pane:not(.collapsed) .pane-header { border-bottom: 1px solid var(--bg3); }
+    .pane-body { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px 8px; }
+
+    .ctl-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 22px; }
+    .ctl-row label { font-size: var(--fs-s); color: var(--text1); flex-shrink: 1; } /* Changed flex-shrink from 0 to 1, because
+    when the scroll bar appears, the side bar is squeezed and some panes rows like "highlight atoms" exceed their designated area.
+    Hence making shrinking possible, so everything stays inside the allocated space*/
+    .ctl-row select, .ctl-row input[type="text"], .ctl-row input[type="number"] {
+      max-width: 130px; font-size: var(--fs-s); line-height: 1.2;
+      height: auto; min-height: calc(1.2em + 6px); padding: 2px 6px;
+    }
+    /* input boxes are dark, not the browser's white (ADR 0055) */
+    input[type="text"], input[type="number"], input[type="search"] {
+      background: var(--surface-2); color: var(--text1); border: 1px solid var(--bg3);
+      border-radius: 3px; font-family: var(--font);
+    }
+    input[type="text"]:focus, input[type="number"]:focus, input[type="search"]:focus {
+      outline: none; border-color: var(--hl2);
+    }
+    .ctl-row input[type="checkbox"] { accent-color: var(--hl2); width: 14px; height: 14px; }
+    .ctl-row input[type="color"] {
+      width: 32px; height: 20px; padding: 0; border: 1px solid var(--bg3);
+      border-radius: 3px; background: transparent; cursor: pointer;
+    }
+    .ctl-slider-wrap { display: flex; align-items: center; gap: 6px; flex: 1; justify-content: flex-end; }
+    .ctl-slider-wrap input[type="range"] { flex: 1; max-width: 90px; accent-color: var(--hl2); }
+    .ctl-slider-value { font-size: var(--fs-s); color: var(--muted); min-width: 26px; text-align: right; }
+    .ctl-btn-group { display: flex; gap: 4px; justify-content: center; padding: 2px 0; }
+    .ctl-btn-group button { flex: 1; }
+    .ctl-row:has(.ctl-textarea) { align-items: flex-start; }
+    /* a row waiting for something (setRowNeeds) — the search still finds it */
+    .ctl-row.needs { display: none; }
+
+    /* names the 3D panel the settings act on (ADR 0056 rule 8) */
+    #sidebar-title {
+      flex: 0 0 auto; font-size: var(--fs-s); font-weight: 700; color: var(--text1);
+      overflow-wrap: anywhere; padding: 0 2px;
+    }
+    /* the focused independent 3D panel's picker and link ticks (ADR 0056) */
+    .panel-section {
+      flex: 0 0 auto; display: flex; flex-direction: column; gap: 4px;
+      padding: 6px 8px; border: 1px solid var(--bg3); border-radius: 5px; background: var(--bg2);
+    }
+    .panel-section[hidden] { display: none; }
+    .panel-section-title {
+      font-size: var(--fs-s); font-weight: 600; color: var(--text1);
+    }
+    /* sidebar search (ADR 0055) */
+    #sidebar-search {
+      flex: 0 0 auto; width: 100%; font-family: var(--font); font-size: var(--fs-m);
+      color: var(--text1); background: var(--surface-2); border: 1px solid var(--bg3);
+      border-radius: 4px; padding: 5px 8px;
+    }
+    #sidebar-search:focus { outline: none; border-color: var(--hl2); }
+    #sidebar-search-empty { font-size: var(--fs-s); color: var(--muted); padding: 2px 4px; }
+    /* help (ADR 0055) */
+    .help-btn {
+      width: 18px; height: 18px; padding: 0; border-radius: 50%; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      line-height: 1; background: transparent; color: var(--ink-3);
+    }
+    .help-btn .icon { width: 16px; height: 16px; vertical-align: 0; }
+    .help-btn[aria-expanded="true"] { color: var(--accent); }
+    .pane-header .help-btn { margin-left: auto; margin-right: 6px; }
+    .help-text { margin: 0 0 4px; font-size: var(--fs-s); line-height: 1.45; color: var(--text1); }
+    .help-text[hidden] { display: none; }
+    .ac-series .help-text { flex-basis: 100%; }
+    #hint-bar {
+      position: absolute; left: 50%; top: 36px; transform: translateX(-50%); max-width: 92%;
+      display: flex; align-items: center; gap: 8px; padding: 5px 6px 5px 12px;
+      background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--bg4); border-radius: 6px;
+      font-size: var(--fs-s); color: var(--text1);
+    }
+    #hint-bar.hidden { display: none; }
+    #hint-bar b { color: var(--text2); font-weight: 600; }
+    #hint-text { display: flex; flex-wrap: wrap; column-gap: 14px; row-gap: 2px; }
+    #hint-bar .hint-step { white-space: nowrap; }
+    #hint-bar .hint-n { color: var(--hl2); font-weight: 700; margin-right: 4px; }
+    #hint-bar button { height: auto; padding: 2px 6px; background: transparent; }
+    body.loupe-only #hint-bar { display: none; }
+    #quick-styles { flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+    #quick-styles .ctl-label { font-size: var(--fs-s); color: var(--muted); margin-right: 2px; white-space: nowrap; }
+    #quick-styles button { flex: 1 1 auto; padding: 3px 4px; font-size: var(--fs-s); white-space: nowrap; }
+    #sidebar-search-empty[hidden] { display: none; }
+    .searching .ctl-row.search-hit {
+      background: var(--sel); border-radius: 3px; margin: 0 -4px; padding: 0 4px;
+    }
+    .searching .ctl-row.needs.search-hit {
+      display: flex; flex-wrap: wrap; opacity: 0.55; pointer-events: none;
+    }
+    .searching .ctl-row.needs.search-hit::after {
+      content: attr(data-needs); flex-basis: 100%; font-size: var(--fs-s); color: var(--muted);
+    }
+    .searching .exact-angles.search-reveal { display: flex; }
+    .ctl-textarea {
+      flex: 1; min-height: 48px; resize: vertical; font-family: var(--font);
+      font-size: var(--fs-s); background: var(--surface-2); color: var(--text1);
+      border: 1px solid var(--bg3); border-radius: 3px; padding: 4px 6px;
+    }
+    .ctl-hint { font-size: var(--fs-s); color: var(--danger); }
+    .ctl-hint.ok { color: var(--success); }
+    .pane-intro { font-size: var(--fs-s); color: var(--ink-3); margin-bottom: 4px; }
+
+    /* The colour bar (to_fix 17): four pieces over the 3D view, each placed
+       by colorbar_overlay.js as a fraction of the panel; the layer itself
+       lets the mouse through to the view. */
+    .legend3d, #colorbar { position: absolute; inset: 0; pointer-events: none; }
+    .legend3d { z-index: 3; }
+    #colorbar.hidden { display: none; }
+    .cb-piece {
+      position: absolute; pointer-events: auto; cursor: grab; touch-action: none;
+      border-radius: 3px; outline: 1px dashed transparent; outline-offset: 1px;
+    }
+    .cb-piece:active { cursor: grabbing; }
+    .cb-piece.selected, .cb-piece:focus-visible { outline-color: var(--accent, deepskyblue); }
+    .cb-piece .cb-inner {
+      position: absolute; left: 0; top: 0; transform-origin: 0 0; white-space: nowrap;
+      padding: 1px 4px; border-radius: 3px;
+      background: color-mix(in srgb, var(--ground) 70%, transparent);
+    }
+    #colorbar-gradient.cb-inner { padding: 0; border: 1px solid var(--bg3); box-sizing: border-box; border-radius: 2px; }
+    /* a text's font grows with its piece (colorbar_overlay.js sets --cb-size) */
+    .cb-min, .cb-max { font-size: calc(var(--fs-xs) * var(--cb-size, 1)); color: var(--muted); }
+    :is(.cb-min, .cb-max):hover { color: var(--ink-2); }
+    .cb-limit-input {
+      width: 8ch; font: inherit; color: var(--ink-2); background: var(--surface-2);
+      border: 1px solid var(--line); border-radius: 3px; padding: 1px 3px;
+    }
+    #colorbar-label { font-size: calc(var(--fs-s) * var(--cb-size, 1)); color: var(--text1); }
+    .cb-grip {
+      display: none; position: absolute; right: -5px; bottom: -5px; width: 10px; height: 10px;
+      cursor: nwse-resize; touch-action: none; border-radius: 2px;
+      background: var(--accent, deepskyblue); border: 1px solid var(--ground);
+    }
+    .cb-piece.selected > .cb-grip { display: block; }
+    .cb-match {
+      position: absolute; right: 0; bottom: -16px; font-size: var(--fs-xs); color: var(--accent, deepskyblue);
+      pointer-events: none; white-space: nowrap;
+    }
+    .cb-match[hidden] { display: none; }
+    .cb-guide { position: absolute; pointer-events: none; z-index: 1; }
+    .cb-guide-v { top: 0; bottom: 0; border-left: 1px dashed var(--accent, deepskyblue); }
+    .cb-guide-h { left: 0; right: 0; border-top: 1px dashed var(--accent, deepskyblue); }
+    .cb-menu { position: fixed; min-width: 180px; }
+    .viewport { container-type: inline-size; }
+    /* Narrower still, a step may wrap rather than be cut off. */
+    @container (width < 420px) {
+      #hint-bar .hint-step { white-space: normal; }
+    }
+
+    /* Metrics pane (ADR 0057): list by origin, editor, inputs, Try */
+    .mx-toolbar { display: flex; gap: 6px; align-items: center; }
+    .mx-toolbar input[type="search"] { flex: 1; min-width: 0; font-size: var(--fs-s); padding: 2px 6px; }
+    .mx-picker { position: relative; }
+    .mx-list {
+      display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto;
+      position: absolute; top: 100%; left: 0; right: 0; z-index: 10;
+      background: var(--bg2); border: 1px solid var(--bg4); border-radius: 3px; padding: 4px;
+    }
+    .mx-list[hidden] { display: none; }
+    .mx-group-title, .mx-subhead {
+      font-size: var(--fs-xs); font-weight: 600; color: var(--muted); padding: 4px 2px 2px;
+    }
+    .mx-empty { font-size: var(--fs-s); color: var(--muted); padding: 2px; }
+    .mx-item, .mx-input, .mx-suggest-item {
+      display: flex; align-items: baseline; gap: 6px; width: 100%; text-align: left;
+      background: transparent; border: 0; border-radius: 3px; padding: 2px 6px;
+      color: var(--text1); font-size: var(--fs-s); cursor: pointer;
+    }
+    .mx-item.active, .mx-item:hover, .mx-input:hover, .mx-suggest-item:hover, .mx-suggest-item.selected { background: var(--bg4); color: var(--text2); }
+    .mx-item.selected { background: var(--sel); color: var(--text2); }
+    .mx-item-label, .mx-input-name { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mx-item-id, .mx-input-ref { flex: 1; min-width: 0; font-size: var(--fs-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mx-badge { font-size: var(--fs-xs); padding: 0 5px; border-radius: 8px; background: var(--bg3); color: var(--text1); white-space: nowrap; }
+    .mx-badge.bad { background: var(--danger); color: var(--text2); }
+    .mx-editor { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--bg3); padding-top: 6px; }
+    .mx-editor[hidden], .mx-editor [hidden] { display: none; }
+    .mx-heading { font-size: var(--fs-m); font-weight: 700; color: var(--text2); overflow-wrap: anywhere; }
+    .mx-notice { font-size: var(--fs-s); color: var(--muted); line-height: 1.4; }
+    .mx-fields { display: flex; flex-direction: column; gap: 4px; }
+    .mx-field { display: flex; align-items: center; gap: 8px; font-size: var(--fs-s); color: var(--text1); }
+    .mx-field span { width: 42px; flex: none; }
+    .mx-field input { flex: 1; min-width: 0; font-size: var(--fs-s); padding: 2px 6px; }
+    .mx-field input[readonly] { opacity: 0.7; }
+    .mx-formula {
+      width: 100%; resize: vertical; background: var(--surface-2); color: var(--text2);
+      border: 1px solid var(--bg3); border-radius: 3px; padding: 4px 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: var(--fs-s);
+    }
+    .mx-formula:focus { outline: none; border-color: var(--hl2); }
+    .mx-suggest { display: flex; flex-direction: column; background: var(--bg2); border: 1px solid var(--bg4); border-radius: 3px; }
+    .mx-vars { display: flex; flex-direction: column; gap: 3px; }
+    .mx-var { display: flex; align-items: center; gap: 6px; font-size: var(--fs-s); }
+    .mx-var input { width: 90px; flex: none; font-size: var(--fs-s); padding: 1px 5px; }
+    .mx-var.unused { opacity: 0.5; }
+    .mx-var-ref { flex: 1; min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .mx-var-arrow { color: var(--muted); }
+    .mx-var-remove { padding: 0 6px; line-height: 1.2; }
+    .mx-check-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .mx-check { font-size: var(--fs-s); color: var(--muted); overflow-wrap: anywhere; }
+    .mx-check-warning { flex-basis: 100%; font-size: var(--fs-s); color: var(--warn); overflow-wrap: anywhere; }
+    .mx-check.bad, .mx-message.bad, .mx-try-head.bad { color: var(--danger); }
+    .mx-check.good, .mx-try-head.good { color: var(--success); }
+    .mx-inputs { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; }
+    .mx-actions, .mx-shortcuts, .mx-conflict { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .mx-actions button.active, .mx-primary { border-color: var(--hl2); }
+    .mx-conflict { font-size: var(--fs-s); color: var(--text2); background: var(--bg2); border-radius: 4px; padding: 4px 6px; }
+    .mx-try { display: flex; flex-direction: column; gap: 4px; font-size: var(--fs-s); }
+    .mx-try progress { width: 100%; accent-color: var(--hl2); }
+    .mx-try-stats { display: flex; gap: 10px; flex-wrap: wrap; color: var(--text1); }
+    .mx-try-note, .mx-try-bad, .mx-usedby { font-size: var(--fs-s); color: var(--muted); }
+    .mx-try-note.mx-try-ignored { color: var(--warn); }
+    .colorby-missing { font-size: var(--fs-s); color: var(--muted); margin-top: 6px; }
+    .mx-link { background: transparent; border: 0; padding: 0 2px; color: var(--hl2); text-decoration: underline; cursor: pointer; font-size: var(--fs-s); }
+    .mx-histogram { width: 100%; height: 40px; fill: var(--hl1); }
+    .mx-message { font-size: var(--fs-s); color: var(--text1); }
+    .mx-export-text { width: 100%; background: var(--surface-2); color: var(--text1); border: 1px solid var(--bg3); border-radius: 3px; font-family: ui-monospace, Menlo, monospace; font-size: var(--fs-m); }
+    /* Keep boxes (ADR 0065): Metrics pane and 3D Color by */
+    .kb { display: flex; flex-direction: column; gap: 3px; font-size: var(--fs-s); color: var(--text1); }
+    .kb-row { display: flex; align-items: center; gap: 4px 10px; flex-wrap: wrap; }
+    .kb-label { width: 58px; flex: none; color: var(--muted); }
+    .kb-choice { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; cursor: pointer; }
+    .kb-choice.off, .kb-row.off { opacity: 0.45; cursor: default; }
+    .kb select { font-size: var(--fs-s); padding: 1px 4px; }
+    .mx-boxes { display: flex; flex-direction: column; gap: 4px; }
+    .colorby-boxes { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; margin: 2px 0 6px; }
+    .colorby-boxes[hidden], .colorby-boxes [hidden] { display: none; }
+    .mx-boxes-note { font-size: var(--fs-s); color: var(--muted); overflow-wrap: anywhere; }
+    .mx-boxes-note.bad { color: var(--danger); }
+    .mx-boxes-create { display: flex; gap: 6px; align-items: center; }
+    .mx-boxes-create input { flex: 1; min-width: 0; font-size: var(--fs-s); padding: 2px 6px; }
+
+    /* popped-out loupe: chrome hidden, viewport fills the window. The pop-out
+       (mode=loupe-live) opens its OWN connection and is a real second
+       controller (ADR 0044 Phase 4). The socket-less BroadcastChannel
+       satellite that also used this class is gone (ADR 0051). */
+    body.loupe-only #objectbar,
+    body.loupe-only .resize-handle,
+    body.loupe-only #tabbar-row,
+    body.loupe-only .analysis-controls,
+    body.loupe-only .grid-slot,
+    body.loupe-only .analysis-scrollstrip,
+    body.loupe-only #popout-btn,
+    body.loupe-only #file-menu,
+    body.loupe-only #loupe-sidebar,
+    body.loupe-only #pick-bar,
+    body.loupe-only #prev-frame-btn,
+    body.loupe-only #play-pause-btn,
+    body.loupe-only #next-frame-btn,
+    body.loupe-only #playback-settings { display: none; }
+
+    @media (max-width: 720px) {
+      #main { flex-direction: column; }
+      #objectbar { width: 100% !important; max-height: 240px; border-right: 0; border-bottom: 1px solid var(--bg3); }
+      #metrics-drawer { width: 100% !important; max-height: 60vh; border-left: 0; border-top: 1px solid var(--bg3); }
+      .resize-handle { display: none; }
+      #topbar { flex-wrap: wrap; }
+    }
+
+    /* ── file browser modal ──────────────────────────────────────────── */
+    #fb-modal {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,0.6);
+      display: flex; align-items: center; justify-content: center;
+    }
+    /* ── warning pop-ups (toasts.js) ─────────────────────────────────── */
+    #toasts {
+      position: fixed; right: 16px; bottom: 16px; z-index: 300;
+      display: flex; flex-direction: column; gap: 8px;
+      width: 380px; max-width: calc(100vw - 32px);
+      pointer-events: none;
+    }
+    .toast {
+      pointer-events: auto;
+      display: flex; align-items: flex-start; gap: 8px;
+      padding: 10px 8px 10px 12px;
+      background: var(--bg2); color: var(--ink);
+      border: 1px solid var(--bg3); border-left: 3px solid var(--warn);
+      border-radius: 6px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      font-size: var(--fs-s); line-height: 1.4;
+    }
+    .toast-error { border-left-color: var(--danger); }
+    .toast-mark { color: var(--warn); }
+    .toast-error .toast-mark { color: var(--danger); }
+    .toast-text { flex: 1; overflow-wrap: anywhere; }
+    .toast-count { color: var(--muted); }
+    .toast-close {
+      background: none; border: 0; color: var(--muted); cursor: pointer;
+      font-size: var(--fs-l); line-height: 1; padding: 0 4px;
+    }
+    .toast-close:hover { color: var(--ink); }
+
+    .warning-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 200;
+
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      background: rgba(0, 0, 0, 0.60);
+    }
+
+    .warning-modal.hidden {
+      display: none;
+    }
+
+    .warning-modal-panel {
+      width: 440px;
+      max-width: calc(100vw - 32px);
+
+      background: var(--bg2);
+      color: var(--text1);
+      border: 1px solid var(--bg3);
+      border-radius: 6px;
+
+      overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.60);
+    }
+
+    .warning-modal-title {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--bg3);
+
+      color: var(--hl2);
+      font-size: var(--fs-m);
+      font-weight: 600;
+       }
+
+    .warning-modal-message {
+      margin: 0;
+      padding: 14px 12px 8px;
+
+      color: var(--text1);
+      font-size: var(--fs-m);
+      line-height: 1.45;
+    }
+
+    .ask-dialog .warning-modal-message { white-space: pre-line; }
+
+    .warning-modal-check {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+
+      padding: 6px 12px 14px;
+      cursor: pointer;
+
+      color: var(--text1);
+      font-size: var(--fs-s);
+    }
+
+    .warning-modal-check input {
+      width: 14px;
+      height: 14px;
+      accent-color: var(--hl2);
+    }
+
+    .warning-modal-footer {
+      display: flex;
+      justify-content: flex-end;
+
+      padding: 8px 10px;
+      border-top: 1px solid var(--bg3);
+    }
+
+    /* connection dialog (ADR 0055) */
+    #conn-body { padding: 12px; display: flex; flex-direction: column; gap: 6px; }
+    #conn-body label {
+      font-size: var(--fs-s); color: var(--muted); font-weight: 600;
+ }
+    #conn-body input[type="text"] {
+      font-family: var(--font); font-size: var(--fs-m);
+      color: var(--text1); background: var(--surface-2); border: 1px solid var(--bg3);
+      border-radius: 4px; padding: 5px 8px; width: 100%;
+    }
+    #conn-body input[type="text"]:focus { outline: none; border-color: var(--hl2); }
+    #conn-body .conn-check {
+      display: flex; align-items: center; gap: 7px; margin-top: 4px;
+ font-weight: 400; font-size: var(--fs-m); color: var(--text1);
+    }
+    #conn-message.hidden, #recent-block.hidden { display: none; }
+    #recent-block { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+    #recent-servers { display: flex; flex-direction: column; gap: 3px; }
+    #recent-servers button { text-align: left; background: var(--surface-2); }
+    .warning-modal-footer .spacer { flex: 1; }
+    .warning-modal-footer { gap: 8px; }
+    body.loupe-only #conn-dialog { display: none; }
+
+    .warning-modal-footer button {
+      min-width: 72px;
+    }
+    /* the button that deletes something (askDialog `danger`, ADR 0063) */
+    .warning-modal-footer button.danger {
+      background: transparent; color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger);
+    }
+    #fb-modal.hidden { display: none; }
+    #fb-panel {
+      width: 640px; max-width: 92vw; height: 70vh; max-height: 600px;
+      background: var(--bg2); border: 1px solid var(--bg3); border-radius: 6px;
+      display: flex; flex-direction: column; overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+    }
+    #fb-header {
+      display: flex; align-items: center; gap: 6px;
+      padding: 8px 10px; border-bottom: 1px solid var(--bg3); flex-shrink: 0;
+    }
+    #fb-header .title {
+      font-size: var(--fs-m); font-weight: 600; color: var(--hl2); margin-right: 4px;
+ }
+    #fb-path {
+      flex: 1; font-family: var(--font); font-size: var(--fs-s);
+      color: var(--text1); background: var(--surface-2); border: 1px solid var(--bg3);
+      border-radius: 4px; padding: 3px 6px; overflow-x: auto; white-space: nowrap;
+    }
+    #fb-list { flex: 1; overflow-y: auto; padding: 4px; }
+    .fb-row {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: var(--fs-m);
+      user-select: none;
+    }
+    .fb-row:hover { background: var(--surface-3); }
+    .fb-row.selected { background: var(--sel); }
+    .fb-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .fb-row .fb-icon { width: 16px; text-align: center; flex-shrink: 0; }
+    .fb-row .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .fb-row .size { color: var(--muted); font-size: var(--fs-s); flex-shrink: 0; }
+    .fb-row.dir .name { color: var(--text1); }
+    .fb-row.file .name { color: var(--ink-3); }
+    #fb-suggest {
+      position: relative; max-height: 180px; overflow-y: auto; padding: 2px 0;
+      border-bottom: 1px solid var(--line); background: var(--surface-2);
+    }
+    #fb-suggest.hidden { display: none; }
+    #fb-suggest .fb-suggestion { padding: 3px 12px; font-size: var(--fs-s); cursor: pointer; }
+    #fb-suggest .fb-suggestion.active, #fb-suggest .fb-suggestion:hover { background: var(--accent); color: var(--accent-ink); }
+    #fb-recent { padding: 4px 12px; border-bottom: 1px solid var(--line); }
+    #fb-recent[hidden] { display: none; }
+    #fb-recent .fb-recent-head { font-size: var(--fs-xs); font-weight: 600; color: var(--muted); }
+    #fb-recent .fb-recent-row {
+      display: block; width: 100%; height: auto; padding: 2px 4px; text-align: left; background: transparent;
+      font-size: var(--fs-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #fb-recent .fb-recent-row:hover { background: var(--surface-2); }
+    #fb-error { color: var(--danger); font-size: var(--fs-s); padding: 8px 12px; }
+    #fb-footer {
+      display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+      padding: 8px 10px; border-top: 1px solid var(--bg3); flex-shrink: 0;
+    }
+    /* Prediction loading has three labelled selects. Give them their own row
+       so the Cancel/Load actions cannot be pushed outside the modal. */
+    #fb-prediction-fields { flex: 1 1 100%; flex-wrap: wrap; }
+    #fb-dataset-fields { flex: 1 1 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    #fb-footer label {
+      font-size: var(--fs-s); color: var(--muted); font-weight: 600;
+ }
+    #fb-footer .spacer { flex: 1; }
+    select {
+      background: var(--surface-2); border: none; border-bottom: 2px solid var(--hl1);
+      border-radius: 4px 4px 0 0; color: var(--hl2); padding: 3px 8px;
+      font-family: var(--font); font-size: var(--fs-m); line-height: 1.2;
+      height: auto; min-height: calc(1.2em + 8px);
+    }
+    select:focus { outline: none; border-bottom-color: var(--hl2); }
+    #fb-type { width: 130px; }
+    #fb-energy-unit, #fb-force-unit { width: 100px; }
+
+    /* ── server-side path prompt (issues 20/21) ──────────────────────── */
+    #path-modal {
+      position: fixed; inset: 0; z-index: 100;
+      background: rgba(0,0,0,0.6);
+      display: flex; align-items: center; justify-content: center;
+    }
+    #path-modal.hidden { display: none; }
+    #path-panel {
+      width: 440px; max-width: 92vw;
+      background: var(--bg2); border: 1px solid var(--bg3); border-radius: 6px;
+      display: flex; flex-direction: column; overflow: hidden;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6);
+    }
+    #path-header {
+      padding: 8px 10px; border-bottom: 1px solid var(--bg3);
+    }
+    #path-header .title {
+      font-size: var(--fs-m); font-weight: 600; color: var(--hl2);
+ }
+    #path-body { padding: 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+    #path-body label {
+      font-size: var(--fs-s); color: var(--muted); font-weight: 600;
+ }
+    #path-input {
+      font-family: var(--font); font-size: var(--fs-m);
+      color: var(--text1); background: var(--surface-2); border: 1px solid var(--bg3);
+      border-radius: 4px; padding: 5px 8px; width: 100%;
+    }
+    #path-input:focus { outline: none; border-color: var(--hl2); }
+    #path-error { color: var(--danger); font-size: var(--fs-s); }
+    #path-footer {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 10px; border-top: 1px solid var(--bg3);
+    }
+    #path-footer .spacer { flex: 1; }
+  </style>
+
+  <!-- Three.js is vendored under vendor/three/ (no CDN — the client must work
+       offline and on a cluster with no outbound network). The import map
+       resolves the bare "three" specifier for both ffast-viewer.js and
+       TrackballControls.js's own internal `from 'three'` import. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./vendor/three/three.module.min.js"
+    }
+  }
+  </script>
+</head>
+<body>
+
+  <div id="topbar">
+    <h1>FFAST</h1>
+    <!-- File menu (ADR 0055), built from the action list in app.js. -->
+    <div id="file-menu" class="menu">
+      <button id="file-menu-btn" aria-haspopup="menu" aria-expanded="false">File</button>
+      <div id="file-menu-list" class="menu-list hidden" role="menu"></div>
+    </div>
+    <!-- Your own metrics, on every tab (app.js _initMetricsDrawer). -->
+    <button id="metrics-btn" type="button" aria-pressed="false" aria-controls="metrics-drawer"
+            title="Define your own metrics as formulas">Metrics</button>
+    <!-- How the figure area looks (ADR 0063): Screen or Journal page, and Density. -->
+    <div id="view-mode" role="radiogroup" aria-label="View mode">
+      <button type="button" role="radio" aria-checked="true" data-mode="screen">Screen</button>
+      <button type="button" role="radio" aria-checked="false" data-mode="journal">Journal page</button>
+    </div>
+    <select id="density" aria-label="Density">
+      <option value="compact">Compact</option>
+      <option value="comfortable">Comfortable</option>
+      <option value="large">Large</option>
+    </select>
+    <!-- The connection status; clicking it opens the connection dialog (ADR 0055). -->
+    <button id="status" type="button" title="Connection…">Disconnected</button>
+  </div>
+
+  <!-- Connection dialog (ADR 0055). Opens from the status label, and by itself
+       when no server is known, a connection fails, or a token is needed. -->
+  <div id="conn-dialog" class="warning-modal hidden" role="dialog" aria-modal="true"
+       aria-labelledby="conn-title">
+    <div class="warning-modal-panel">
+      <div class="warning-modal-title" id="conn-title">Connection</div>
+      <p id="conn-message" class="warning-modal-message hidden"></p>
+      <div id="conn-body">
+        <label for="ws-url">Server</label>
+        <input id="ws-url" type="text" value="ws://localhost:8765" placeholder="ws://host:port">
+        <label for="token-input">Token</label>
+        <input id="token-input" type="text" placeholder="(optional)" autocomplete="off">
+        <!-- Explicit READ_ONLY viewer opt-in (ADR 0044 Phase 2, PRD story 73):
+             drops inbound control server-side but still opens views and sees
+             shared broadcasts — for mirroring a session without driving it. -->
+        <label class="conn-check" for="readonly-toggle">
+          <input id="readonly-toggle" type="checkbox"> Read-only
+        </label>
+        <div id="recent-block" class="hidden">
+          <label>Recent servers</label>
+          <div id="recent-servers"></div>
+        </div>
+      </div>
+      <div class="warning-modal-footer">
+        <button id="disconnect-btn" disabled>Disconnect</button>
+        <span class="spacer"></span>
+        <button id="conn-close">Close</button>
+        <button id="connect-btn">Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="main">
+    <!-- object rail: loaded datasets + predictions, mirroring the Qt SideBar -->
+    <div id="objectbar">
+      <div class="obj-group">
+        <div class="obj-head">
+          <span class="section-title">Datasets</span>
+          <!-- Subset export (ADR 0045 issue 20): writes the SELECTED dataset
+               row — a pick-derived AtomFilteredDataset, a plot-derived
+               SubDataset, or any loaded dataset — to extxyz server-side. -->
+          <button id="add-dataset-btn" class="mini" title="Load dataset" disabled></button>
+        </div>
+        <div id="dataset-list" class="obj-list">
+          <div class="obj-empty">None loaded</div>
+        </div>
+      </div>
+
+      <div class="obj-group">
+        <div class="obj-head">
+          <span class="section-title">Predictions</span>
+          <button id="add-prediction-btn" class="mini" title="Load prediction" disabled></button>
+        </div>
+        <div id="model-list" class="obj-list">
+          <div class="obj-empty">None loaded</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="rail-resize" class="resize-handle"></div>
+    <!-- tabbed main content; every tab is built from the server's tab layout
+         (analysis.js), the built-in "3D" tab included (ADR 0056) -->
+    <div id="content" class="no-view">
+      <div id="tabbar-row">
+        <div id="tabbar" role="tablist"></div>
+        <!-- + follows the last tab (ADR 0070) -->
+        <div id="tab-new" class="menu">
+          <button id="tab-new-btn" aria-haspopup="menu" aria-expanded="false"
+                  title="New tab"></button>
+          <div id="tab-new-list" class="menu-list hidden" role="menu"></div>
+        </div>
+        <!-- Actions on the tab on screen (ADR 0056): export, reset, hide,
+             and the hidden tabs to show again. Right-click on a tab shows
+             the same items, with Edit tab first (ADR 0070). -->
+        <div id="tab-actions">
+          <button id="tab-edit-btn" title="Edit this tab" disabled></button>
+          <div id="tab-menu" class="menu">
+            <button id="tab-menu-btn" aria-haspopup="menu" aria-expanded="false"
+                    title="Tab actions"></button>
+            <div id="tab-menu-list" class="menu-list right hidden" role="menu"></div>
+          </div>
+        </div>
+      </div>
+      <div id="tabpanels"></div>
+    </div>
+
+    <!-- The Metrics drawer: the metric editor (panes/metrics.js), beside any
+         tab, with its own dataset and prediction to list inputs and Try on. -->
+    <div id="metrics-resize" class="resize-handle" hidden></div>
+    <aside id="metrics-drawer" data-pane="Metrics" aria-label="Metrics" hidden>
+      <div class="md-head">
+        <span class="md-title">Metrics</span>
+        <button id="metrics-close" type="button" class="mini" title="Close" aria-label="Close Metrics"></button>
+      </div>
+      <div class="md-context">
+        <span class="md-on">on</span>
+        <select id="metrics-dataset" aria-label="Dataset for the metric editor"></select>
+        <select id="metrics-model" aria-label="Prediction for the metric editor"></select>
+      </div>
+      <div id="metrics-body" class="md-body"></div>
+    </aside>
+  </div>
+
+  <!-- The one set of 3D controls. app.js moves them into the tab on screen
+       when that tab has a 3D panel: pick bar above its grid, playback strip
+       below, sidebar beside; the empty state and hint bar go into the 3D
+       panel they act on (ADR 0056). They wait here otherwise. -->
+  <div id="chrome3d">
+    <!-- pick toolbar + contextual strip (ADR 0045 Phase 2, issue 10):
+         one armed tool at a time, with its live pick count + read-out -->
+    <div id="pick-bar">
+      <div id="pick-toolbar"></div>
+      <div id="pick-strip" class="hidden">
+        <span id="pick-strip-tool"></span>
+        <span class="pick-sep">·</span>
+        <span id="pick-strip-count"></span>
+        <span id="pick-readout"></span>
+        <button id="pick-clear" title="Clear picks"></button>
+      </div>
+      <button id="sidebar-toggle" aria-pressed="false" title="Hide the settings sidebar"></button>
+    </div>
+    <!-- Empty state (ADR 0055): until a view is open, the viewport offers
+         Load Dataset… and the 3D controls stay hidden. -->
+    <div id="overlay">
+      <div class="big">No dataset open</div>
+      <div class="small" id="overlay-hint">Load a dataset to see it here.</div>
+      <button id="empty-load-btn">Load Dataset…</button>
+      <button id="empty-example-btn">Load Example</button>
+    </div>
+    <!-- hint bar (ADR 0055): numbered next steps, dismissable -->
+    <div id="hint-bar" class="hidden" role="note">
+      <span id="hint-text"></span>
+      <button id="hint-dismiss" title="Dismiss this hint"></button>
+    </div>
+    <div id="loupe-controls">
+      <button id="prev-frame-btn" class="icon-btn" title="Previous frame" disabled></button>
+      <button id="play-pause-btn" class="icon-btn" title="Play" aria-label="Play" disabled></button>
+      <button id="next-frame-btn" class="icon-btn" title="Next frame" disabled></button>
+      <span class="ctl-label">Frame</span>
+      <input id="frame-slider" type="range" min="0" max="0" value="0" step="1" disabled>
+      <span id="frame-label">0 / 0</span>
+      <!-- FPS and Skip wait in a gear pop-up (ADR 0055) -->
+      <div id="playback-settings">
+        <button id="playback-gear" class="icon-btn" aria-haspopup="dialog" aria-expanded="false"
+                title="Playback settings (FPS, Skip)"></button>
+        <div id="playback-pop" class="hidden" role="dialog" aria-label="Playback settings">
+          <label class="ctl-label" for="fps-input">FPS</label>
+          <input id="fps-input" class="ctl-number" type="number" min="1" max="5000" value="30">
+          <label class="ctl-label" for="skip-input">Skip</label>
+          <input id="skip-input" class="ctl-number" type="number" min="0" max="99999" value="0">
+        </div>
+      </div>
+      <button id="reset-camera-btn" disabled>Reset Camera</button>
+      <button id="popout-btn" title="Open this 3D view in a new browser tab" disabled></button>
+    </div>
+    <div id="sidebar-resize" class="resize-handle"></div>
+    <div id="loupe-sidebar"></div>
+  </div>
+
+  <!-- ── remote filesystem browser ─────────────────────────────────────── -->
+  <div id="fb-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="fb-title">
+    <div id="fb-panel">
+      <div id="fb-header">
+        <span class="title" id="fb-title">Load Remote Dataset</span>
+        <button id="fb-up" title="Parent directory"></button>
+        <button id="fb-home" title="Home"></button>
+        <input id="fb-path" type="text" aria-label="Path" spellcheck="false" value="">
+      </div>
+      <div id="fb-suggest" class="hidden" role="listbox" aria-label="Path suggestions"></div>
+      <div id="fb-recent" hidden></div>
+      <div id="fb-error" style="display:none"></div>
+      <div id="fb-list"></div>
+      <div id="fb-footer">
+        <span id="fb-dataset-fields">
+          <label for="fb-type">Type</label>
+          <select id="fb-type">
+            <option value="ase (auto)">ase (auto)</option>
+            <option value="sGDML">sGDML</option>
+          </select>
+          <label for="fb-energy-unit">Energy unit</label>
+          <input id="fb-energy-unit" list="fb-energy-units" autocomplete="off" spellcheck="false">
+          <datalist id="fb-energy-units"></datalist>
+          <label for="fb-force-unit">Force unit</label>
+          <input id="fb-force-unit" list="fb-force-units" autocomplete="off" spellcheck="false">
+          <datalist id="fb-force-units"></datalist>
+        </span>
+        <span id="fb-prediction-fields" style="display:none; align-items:center; gap:6px;">
+          <label for="fb-target-ds">For dataset</label>
+          <select id="fb-target-ds" style="width:130px"></select>
+          <label for="fb-energy-key">Energy</label>
+          <select id="fb-energy-key" style="width:90px"></select>
+          <label for="fb-force-key">Force</label>
+          <select id="fb-force-key" style="width:90px"></select>
+        </span>
+        <span class="spacer"></span>
+        <button id="fb-cancel">Cancel</button>
+        <button id="fb-load" disabled>Load</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── server-side path prompt (issues 20/21): session save/load + subset
+       export all write server-side, with no native file dialog reachable
+       from the browser — one small modal collects a path for whichever
+       action armed it. ──────────────────────────────────────────────── -->
+  <div id="path-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="path-title">
+    <div id="path-panel">
+      <div id="path-header">
+        <span class="title" id="path-title">Save Session</span>
+      </div>
+      <div id="path-body">
+        <label for="path-input">Server-side path</label>
+        <input id="path-input" type="text" placeholder="~/ffast-session">
+        <div id="path-error" style="display:none"></div>
+      </div>
+      <div id="path-footer">
+        <span class="spacer"></span>
+        <button id="path-cancel">Cancel</button>
+        <button id="path-ok">Save</button>
+      </div>
+    </div>
+  </div>
+<!-- Warning shown when atoms are hidden by "Only show force vectors". -->
+<div id="only-forces-warning-modal" class="warning-modal hidden" role="dialog"
+     aria-modal="true" aria-labelledby="only-forces-warning-title">
+  <div class="warning-modal-panel">
+    <div id="only-forces-warning-title" class="warning-modal-title">
+      Atoms hidden
+    </div>
+
+    <p class="warning-modal-message">
+      Atoms are hidden while only forces are shown. Turn on atoms in
+      <strong>Display</strong> to see them again.
+    </p>
+
+    <label class="warning-modal-check">
+      <input id="only-forces-warning-dont-show" type="checkbox">
+      Don’t show this warning again
+    </label>
+
+    <div class="warning-modal-footer">
+      <button id="only-forces-warning-ok" type="button">OK</button>
+    </div>
+  </div>
+</div>
+  <!-- Plotly.js is vendored under vendor/plotly/ (basic bundle, UMD → window.Plotly).
+       Loaded as a classic script (not a module) before the app so panels.js can
+       read globalThis.Plotly. No CDN — offline / cluster parity (ADR 0045). -->
+  <script src="vendor/plotly/plotly-basic.min.js"></script>
+  <script type="module" src="ffast-viewer.js"></script>
+</body>
+</html>

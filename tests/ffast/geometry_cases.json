@@ -1,0 +1,21 @@
+{
+  "_about": "Shared answers for atom measurements. Both ffast/chemistry/geometry.py (server + Qt) and ffast/renderers/web/static/measure.js (browser) must match these; expected is in angstrom / degrees, null = undefined. See docs/research/measurement-logic-across-clients.md.",
+  "distance": [
+    {"name": "3-4-5 triangle", "points": [[0, 0, 0], [3, 4, 0]], "expected": 5.0},
+    {"name": "same point", "points": [[1, 2, 3], [1, 2, 3]], "expected": 0.0}
+  ],
+  "angle": [
+    {"name": "right angle", "points": [[1, 0, 0], [0, 0, 0], [0, 1, 0]], "expected": 90.0},
+    {"name": "straight line", "points": [[-1, 0, 0], [0, 0, 0], [2, 0, 0]], "expected": 180.0},
+    {"name": "tetrahedral", "points": [[1, 1, 1], [0, 0, 0], [1, -1, -1]], "expected": 109.47122063449069},
+    {"name": "outer atom on the vertex (undefined)", "points": [[0, 0, 0], [0, 0, 0], [0, 1, 0]], "expected": null}
+  ],
+  "dihedral": [
+    {"name": "90 degrees", "points": [[1, 0, 0], [0, 0, 0], [0, 0, 1], [0, 1, 1]], "expected": 90.0},
+    {"name": "cis", "points": [[1, 0, 0], [0, 0, 0], [0, 0, 1], [1, 0, 1]], "expected": 0.0},
+    {"name": "trans", "points": [[1, 0, 0], [0, 0, 0], [0, 0, 1], [-1, 0, 1]], "expected": 180.0},
+    {"name": "60 degrees", "points": [[1, 0, 0], [0, 0, 0], [0, 0, 1], [0.5, 0.8660254037844386, 1]], "expected": 60.0},
+    {"name": "-60 reads as 60 (unsigned)", "points": [[1, 0, 0], [0, 0, 0], [0, 0, 1], [0.5, -0.8660254037844386, 1]], "expected": 60.0},
+    {"name": "three atoms in a line (undefined)", "points": [[0, 0, 0], [1, 0, 0], [2, 0, 0], [2, 1, 0]], "expected": null}
+  ]
+}

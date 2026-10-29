@@ -1,0 +1,965 @@
+/**
+ * Three.js molecular renderer.
+ */
+
+import * as THREE from 'three';
+import { TrackballControls } from './vendor/three/TrackballControls.js';
+import { anglesFromPose, poseFromAngles } from './camera_angles.js';
+import { mapColorBy } from './colormap.js';
+import { arrowParts } from './arrow_geometry.js';
+
+/** Smallest pick target, in CSS pixels, for atoms drawn tinier than this. */
+const MIN_PICK_TARGET_PX = 4;
+/** The atom a click would pick is drawn this much larger, and lighter. */
+const HOVER_SCALE = 1.3;
+const HOVER_LIGHTEN = 0.55;
+
+/**
+ * Two looks (ADR 0055 "3D drawing"). Structures with fewer atoms than
+ * RICH_LOOK_MAX_ATOMS get the chemistry.alive look the prototype settled:
+ * ball-and-stick atoms (BALL_AND_STICK), thin bonds coloured half-and-half
+ * like their atoms, smoother and glossier meshes, lights that turn with the
+ * camera and a 35-degree lens. Larger structures keep the cheaper look, with
+ * atoms at the server's sizes. No tone mapping: it would shift data colours
+ * away from the colour bar.
+ *
+ * The rich look is browser-only presentation: the server still sends
+ * covalent radius x Atom size (ADR 0052) and keeps its own field of view.
+ */
+// Measured 2026-10-07 (Apple M3 Pro, pixel ratio 2, a bonded grid of atoms):
+// the rich look takes 1.6 ms a frame at 500 atoms, 2.2 ms at 1000, 3.1 ms at
+// 2000 and 6.4 ms at 4000; the plain look 1.0-1.5 ms. At 1000 a GPU five times
+// slower still stays well inside a 60 fps frame (16.7 ms).
+const RICH_LOOK_MAX_ATOMS = 1000;
+const LOOKS = {
+  plain: { sphere: [10, 8], bondSides: 6,
+           atom: { roughness: 0.35, metalness: 0.1 }, bond: { roughness: 0.6, metalness: 0.05 } },
+  rich:  { sphere: [32, 24], bondSides: 20,
+           atom: { roughness: 0.35, metalness: 0.25 }, bond: { roughness: 0.5, metalness: 0.2 } },
+};
+const MAX_PIXEL_RATIO = 2;
+/** Rich-look atom radius: 0.42 x covalent radius, kept within 0.24-0.55 A,
+ *  then times the Atom size setting. */
+const BALL_AND_STICK = { factor: 0.42, min: 0.24, max: 0.55 };
+const RICH_FOV = 35;
+/** Bond radius at full Bond width, per look (world units). */
+const BOND_RADIUS = { plain: 0.12, rich: 0.11 };
+
+/** Map key for a position, tolerant of float noise in the last digits. */
+function positionKey(p) {
+  return `${p[0].toFixed(3)},${p[1].toFixed(3)},${p[2].toFixed(3)}`;
+}
+
+/** Scene colours are sRGB, like CSS and the colour bar. Three.js reads bare
+ *  RGB numbers as linear and brightens them on output, so name the space. */
+function sceneColor(r, g, b, target = new THREE.Color()) {
+  return target.setRGB(r, g, b, THREE.SRGBColorSpace);
+}
+
+export class MoleculeRenderer {
+  constructor(canvas) {
+    this._canvas = canvas;
+
+    // alpha:true + preserveDrawingBuffer:true are for PNG export (ADR 0045
+    // issue 19): a real alpha buffer lets a transparent-background export use
+    // clear-alpha 0 (no near-black→alpha keying the vispy path needed), and
+    // preserving the drawing buffer makes `toDataURL()` read reliable pixels
+    // regardless of the continuous render loop. Normal appearance is unchanged
+    // (clear alpha stays 1 for on-screen rendering).
+    this._renderer = new THREE.WebGLRenderer({
+      canvas, antialias: true, alpha: true, preserveDrawingBuffer: true,
+    });
+    this._renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
+    this._background = '#000000';   // Qt loupe default (default.json loupeBGColor)
+    this._applyBackground();
+    // Journal page (body.journal, appearance.js) draws on white, in this
+    // browser only; the user's own background comes back with Screen.
+    this._journalObserver = new MutationObserver(() => this._applyBackground());
+    this._journalObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+    this._scene   = new THREE.Scene();
+    this._perspCamera = new THREE.PerspectiveCamera(60, 1, 0.01, 5000);
+    this._perspCamera.position.set(0, 0, 20);
+    this._orthoCamera = new THREE.OrthographicCamera(-10, 10, 10, -10, 0.01, 5000);
+    this._orthoCamera.position.set(0, 0, 20);
+    // In the scene so the camera-mounted lights below are part of the graph.
+    this._scene.add(this._perspCamera, this._orthoCamera);
+    this._camera = this._perspCamera;   // active camera (issue 04: orthographic toggle)
+
+    // Free rotation (to_fix 9): a trackball turns the camera any way, so a
+    // drag never stops at the top or bottom, and it can roll. Its picture of
+    // where the canvas is is refreshed on each press, as panels move without
+    // resizing. Registered first, so it runs before the controls' own press.
+    canvas.addEventListener('pointerdown', () => this._controls.handleResize());
+    this._controls = new TrackballControls(this._camera, canvas);
+    // No coasting: the trackball's would keep turning while the mouse is held
+    // still, and after it lets go, by many times the last step. The speed
+    // turns a drag across half the canvas by about 3 radians, as before.
+    this._controls.staticMoving = true;
+    this._controls.rotateSpeed = 3;
+    this._controls.keys = [];   // no A/S/D drag modes: those keys are the page's
+    this._lastUp = this._camera.up.clone();   // a roll in place moves no position
+
+    // Axis orientation gizmo (issue 04): a small AxesHelper rendered into a
+    // scissored corner viewport, oriented to mirror the main camera.
+    this._gizmoEnabled = false;
+    this._gizmoScene = new THREE.Scene();
+    this._gizmoScene.add(new THREE.AxesHelper(1));
+    this._gizmoCamera = new THREE.OrthographicCamera(-1.5, 1.5, 1.5, -1.5, 0.1, 10);
+
+    this._bondWidth = 100;     // Bond width slider, 10..100 (issue 06)
+    this._bondColor  = new THREE.Color(0x888888);
+    this._bondColorChosen = false;   // a chosen Bond colour beats two-tone bonds
+    this._serverFov = 60;      // the field of view the server keeps
+    /** Current Atom size setting; the app wires it to the Display section. */
+    this.atomScale = () => 1;
+    this._lastBonds  = null;  // cached BondScene, for rebuilding on style change
+
+    // Lighting. Plain look: ambient + one light fixed in the world. Rich
+    // look: a sky light + key, fill and rim lights riding on the camera and
+    // aimed at the orbit target, so an atom keeps its shade while you orbit.
+    this._plainLights = new THREE.Group();
+    const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+    dir.position.set(5, 10, 8);
+    this._plainLights.add(new THREE.AmbientLight(0xffffff, 0.4), dir);
+    this._skyLight = new THREE.HemisphereLight(0xbcd0ff, 0x151a26, 0.9);
+    this._lightTarget = new THREE.Object3D();   // follows the orbit target
+    this._cameraLights = new THREE.Group();
+    for (const [color, intensity, pos] of [
+      [0xffffff, 1.6, [1.2, 2.0, 1.6]],     // key
+      [0x88aaff, 0.5, [-1.6, -0.8, 1.2]],   // fill
+      [0xffffff, 0.6, [0, 1.2, -2.0]],      // rim
+    ]) {
+      const light = new THREE.DirectionalLight(color, intensity);
+      light.position.set(...pos);
+      light.target = this._lightTarget;
+      this._cameraLights.add(light);
+    }
+    this._camera.add(this._cameraLights);
+    this._scene.add(this._plainLights, this._skyLight, this._lightTarget);
+
+    // Scene objects (replaced on each snapshot/patch)
+    this._atomMesh     = null;
+    this._bondLines    = null;
+    this._forceGroup   = null;
+    this._lastForces = null;       // what the arrows were drawn from, to redraw at another thickness
+    this._arrowThickness = 1;      // Arrow thickness slider, as a factor on the Qt radii
+    this._unitCellLines = null;
+    this._labelSprites = [];           // THREE.Sprite[] for text labels
+    this._selectionMeshes = new Map(); // overlay name → THREE.InstancedMesh
+    // overlay name → material, kept across patches: a fresh material makes the
+    // GPU recompile its shader, which froze the page ~100 ms on every pick.
+    this._selectionMaterials = new Map();
+    this._cachedAtomPositions = null;  // atoms.positions from last _updateAtoms call
+    this._cachedAtomSizes = null;      // atoms.sizes from last _updateAtoms call
+    this._drawnSizes = null;           // radii as drawn (ball-and-stick in the rich look)
+    this._cachedAtomIds = null;        // atoms.atom_ids (displayed→scientific, ADR 0015)
+    this._hovered = null;              // displayed index under an armed pick tool
+    this._scratchObj = new THREE.Object3D();  // per-instance matrix/colour writes
+    this._scratchColor = new THREE.Color();
+
+    // Sphere templates for atoms and selection overlays, one per look.
+    this._sphereGeos = {};
+    for (const [name, look] of Object.entries(LOOKS))
+      this._sphereGeos[name] = new THREE.SphereGeometry(1, ...look.sphere);
+    this._look = null;
+    this._setLook('rich');
+    // Adding this for adoption of atoms colors, when 'Show only forces' is selected
+    this._atomColors = null;
+    // RAF handle
+    this._rafId = null;
+
+    this._onCameraChange = null; // set by app to send SET_CAMERA commands
+
+    this._controls.addEventListener('change', () => this._cameraMoved());
+
+    this._resize();
+    this._onWindowResize = () => this._resize();
+    window.addEventListener('resize', this._onWindowResize);
+    // The canvas also changes size without the window doing so, e.g. when
+    // the sidebar is hidden or shown.
+    this._resizeObserver = new ResizeObserver(() => this._resize());
+    this._resizeObserver.observe(canvas);
+    this._startLoop();
+  }
+
+  /** The camera moved (drag, zoom, a camera command): tell the app. */
+  _cameraMoved() {
+    this._lastUp.copy(this._camera.up);
+    if (this._onCameraChange) this._onCameraChange(this._exportCamera());
+  }
+
+  /** True while the canvas is on screen; a 3D panel in a tab you are not
+   * looking at has no size and is not drawn (ADR 0056). */
+  get drawing() {
+    return this._canvas.isConnected && this._canvas.clientWidth > 0 && this._canvas.clientHeight > 0;
+  }
+
+  /** Stop drawing for good and give the WebGL context back: browsers allow a
+   * page only a handful, and each 3D panel holds one. */
+  dispose() {
+    cancelAnimationFrame(this._rafId);
+    this._rafId = null;
+    window.removeEventListener('resize', this._onWindowResize);
+    this._resizeObserver.disconnect();
+    this._journalObserver.disconnect();
+    this._controls.dispose();
+    this.clear();
+    this._renderer.dispose();
+    this._renderer.forceContextLoss();
+  }
+
+  /** True while the richer look is drawn (fewer than richLookMaxAtoms atoms). */
+  get richLook() { return this._look === 'rich'; }
+  get richLookMaxAtoms() { return RICH_LOOK_MAX_ATOMS; }
+
+  _setLook(name) {
+    if (name === this._look) return;
+    this._look = name;
+    const rich = name === 'rich';
+    this._plainLights.visible = !rich;
+    this._skyLight.visible = rich;
+    this._cameraLights.visible = rich;
+    this._sphereGeo = this._sphereGeos[name];
+    this._atomMat = new THREE.MeshStandardMaterial(LOOKS[name].atom);
+    this._perspCamera.fov = rich ? RICH_FOV : this._serverFov;
+    this._perspCamera.updateProjectionMatrix();
+  }
+
+  /** Radius each atom is drawn at: the server's size, or ball-and-stick in the
+   * rich look. The server sends covalent radius x Atom size, so the scale is
+   * divided out before the clamp and put back after it. */
+  _computeDrawnSizes(sizes) {
+    if (this._look !== 'rich') return sizes.map((r) => r || 0.5);
+    const scale = this.atomScale() || 1;
+    const { factor, min, max } = BALL_AND_STICK;
+    return sizes.map((r) => Math.min(max, Math.max(min, factor * (r || 0.5) / scale)) * scale);
+  }
+
+  _resize() {
+    const w = this._canvas.clientWidth;
+    const h = this._canvas.clientHeight;
+    if (!w || !h) return;   // hidden (another tab); keep the last size
+    this._renderer.setSize(w, h, false);
+    this._controls.handleResize();
+    this._perspCamera.aspect = w / h;
+    this._perspCamera.updateProjectionMatrix();
+    this._updateOrthoFrustum(w / h);
+    // Resizing wipes the canvas, and a resize arrives after this frame's
+    // draw; without drawing now the browser shows one empty frame, so the
+    // view blinked on every step of a sidebar drag.
+    this._renderFrame();
+  }
+
+  /** Size the ortho frustum from the perspective camera's current distance,
+   * so toggling projection doesn't change the apparent object scale. */
+  _updateOrthoFrustum(aspect) {
+    const dist = this._camera.position.distanceTo(this._controls.target);
+    const halfHeight = Math.max(0.01, dist * Math.tan((this._perspCamera.fov / 2) * Math.PI / 180));
+    const halfWidth = halfHeight * aspect;
+    this._orthoCamera.left = -halfWidth;
+    this._orthoCamera.right = halfWidth;
+    this._orthoCamera.top = halfHeight;
+    this._orthoCamera.bottom = -halfHeight;
+    this._orthoCamera.updateProjectionMatrix();
+  }
+
+  /** @param {boolean} enabled */
+  setOrthographic(enabled) {
+    const next = enabled ? this._orthoCamera : this._perspCamera;
+    if (next === this._camera) return;
+    next.position.copy(this._camera.position);
+    next.up.copy(this._camera.up);
+    next.quaternion.copy(this._camera.quaternion);
+    next.add(this._cameraLights);
+    this._camera = next;
+    this._controls.object = this._camera;
+    this._updateOrthoFrustum(this._canvas.clientWidth / this._canvas.clientHeight);
+    this._controls.update();
+
+    this._cameraMoved();   // the server records the projection too
+  }
+
+  /**
+   * Set one or more camera angles/distance, keeping the rest at their current
+   * live value (issue 04: preset buttons + manual az/el/dist entry). Fires
+   * the same 'change' event as an interactive drag, so SET_CAMERA sends and
+   * the camera pane's fields stay in sync.
+   * @param {{azimuth?: number, elevation?: number, distance?: number, roll?: number}} overrides
+   */
+  setCameraAngles(overrides) {
+    this._applyCamera({ ...this._exportCamera(), ...overrides });
+    this._cameraMoved();   // a roll alone moves no position, so the controls stay quiet
+  }
+
+  /** @param {string} hex CSS colour, e.g. '#000000' */
+  setBackgroundColor(hex) {
+    this._background = hex;
+    this._applyBackground();
+  }
+
+  /** The colour drawn behind the atoms, as `#rrggbb`. */
+  get clearColor() {
+    return `#${this._renderer.getClearColor(new THREE.Color()).getHexString()}`;
+  }
+
+  _applyBackground() {
+    const journal = document.body.classList.contains('journal');
+    const hex = journal ? '#ffffff' : this._background;
+    if (hex === this._drawnBackground) return;   // another class changed
+    this._drawnBackground = hex;
+    this._renderer.setClearColor(new THREE.Color(hex), 1);
+  }
+
+  /**
+   * Render one frame at the requested background and return it as a PNG data
+   * URL (ADR 0045 issue 19). `transparent` clears to alpha 0 (real WebGL
+   * alpha, no colour-keying); otherwise the scene is drawn over `background`.
+   * The orientation gizmo is omitted so the export is a clean figure. The
+   * previous clear colour/alpha is restored so on-screen rendering continues
+   * unchanged.
+   * @param {{transparent?: boolean, background?: string}} [opts]
+   * @returns {string} a `data:image/png;base64,…` URL
+   */
+  capturePng({ transparent = false, background = '#000000' } = {}) {
+    const r = this._renderer;
+    const prevColor = new THREE.Color();
+    r.getClearColor(prevColor);
+    const prevAlpha = r.getClearAlpha();
+
+    if (transparent) r.setClearColor(0x000000, 0);
+    else r.setClearColor(new THREE.Color(background), 1);
+    r.setViewport(0, 0, this._canvas.clientWidth, this._canvas.clientHeight);
+    r.render(this._scene, this._camera);
+    const url = this._canvas.toDataURL('image/png');
+
+    r.setClearColor(prevColor, prevAlpha);
+    return url;
+  }
+
+  /** @param {boolean} enabled */
+  setGizmoEnabled(enabled) {
+    this._gizmoEnabled = enabled;
+  }
+
+  /**
+   * @param {number} width Qt-style 10..100 slider value @param {string} colorHex
+   * @param {boolean} [chosen] the colour was picked by the person, not the
+   *   default — it then replaces the rich look's two-tone bonds
+   */
+  setBondStyle(width, colorHex, chosen = false) {
+    this._bondWidth = width;
+    this._bondColor = new THREE.Color(colorHex);
+    this._bondColorChosen = !!chosen;
+    if (this._lastBonds) this._updateBonds(this._lastBonds);
+  }
+
+  _startLoop() {
+    const loop = () => {
+      this._rafId = requestAnimationFrame(loop);
+      if (!this.drawing) return;
+      this._controls.update();
+      // the trackball rolling the camera in place says nothing
+      if (this._camera.up.distanceToSquared(this._lastUp) > 1e-12) this._cameraMoved();
+      this._renderFrame();
+    };
+    loop();
+  }
+
+  _renderFrame() {
+    this._lightTarget.position.copy(this._controls.target);
+    this._renderer.setViewport(0, 0, this._canvas.clientWidth, this._canvas.clientHeight);
+    this._renderer.render(this._scene, this._camera);
+    if (this._gizmoEnabled) this._renderGizmo();
+  }
+
+  _renderGizmo() {
+    const size = 70, margin = 10;
+    const w = this._canvas.clientWidth, h = this._canvas.clientHeight;
+    const dir = this._camera.position.clone().sub(this._controls.target).normalize();
+    this._gizmoCamera.position.copy(dir).multiplyScalar(3);
+    this._gizmoCamera.up.copy(this._camera.up);
+    this._gizmoCamera.lookAt(0, 0, 0);
+    this._gizmoCamera.updateProjectionMatrix();
+    const r = this._renderer;
+    r.setViewport(w - size - margin, h - size - margin, size, size);
+    r.setScissor(w - size - margin, h - size - margin, size, size);
+    r.setScissorTest(true);
+    r.render(this._gizmoScene, this._gizmoCamera);
+    r.setScissorTest(false);
+  }
+
+  // ── scene update ──────────────────────────────────────────────────────────
+
+  /** @param {import('./protocol.js').RenderScene} scene */
+  applyScene(scene) {
+    //if (scene.only_forces) window.alert("YES!");
+    if (scene.atoms)      this._updateAtoms(scene.atoms, scene.only_forces); else this._clearAtoms();
+    if (scene.bonds)      this._updateBonds(scene.bonds); else this._clearBonds();
+    if (scene.forces)     this._updateForces(scene.forces, scene.only_forces); else this._clearForces();
+    if (scene.unit_cell)  this._updateUnitCell(scene.unit_cell);
+    if (!scene.atoms && !scene.bonds) this._clearAtoms();
+    if (!scene.unit_cell) this._clearUnitCell();
+    this._updateLabels(scene.labels || null);
+    this._updateSelections(scene.selections || []);
+    if (scene.camera)     this._applyCamera(scene.camera);
+  }
+
+  /**
+   * @param {import('./protocol.js').ScenePatchKwargs} patch
+   * @param {string[]} changed
+   */
+  applyPatch(patch, changed) {
+    const c = new Set(Array.isArray(changed) ? changed : Object.keys(changed));
+    //if (c.has('only_forces')) {window.alert("YES")}
+    if (c.has('atoms'))      { if (patch.atoms)      this._updateAtoms(patch.atoms, c.has('only_forces'));         else this._clearAtoms(); }
+    if (c.has('bonds'))      { if (patch.bonds)       this._updateBonds(patch.bonds);         else this._clearBonds(); }
+    // Two-tone bonds take their atoms' colours, so new atoms repaint them.
+    else if (c.has('atoms') && this._lastBonds && this._twoToneBonds()) this._updateBonds(this._lastBonds);
+    if (c.has('forces'))     { if (patch.forces)      this._updateForces(patch.forces, c.has('only_forces'));       else this._clearForces(); }
+    if (c.has('unit_cell'))  { if (patch.unit_cell)   this._updateUnitCell(patch.unit_cell);  else this._clearUnitCell(); }
+    if (c.has('labels'))     this._updateLabels(patch.labels || null);
+    if (c.has('selections')) this._updateSelections(patch.selections || []);
+    // A patch's camera is not applied. Only SET_CAMERA changes a view's
+    // camera, and a view belongs to one connection, so the camera in a patch
+    // is this renderer's own, sent back. Arriving late, it would undo a newer
+    // change: Publication's switch to orthographic, or the last bit of a drag.
+  }
+
+  /** @param {import('./protocol.js').AtomScene} atoms
+   * @param {boolean} only_forces */
+  _updateAtoms(atoms, only_forces=false) {
+    this._clearAtoms();
+    const n = atoms.positions.length;
+    if (n === 0) return;
+    const look = n < RICH_LOOK_MAX_ATOMS ? 'rich' : 'plain';
+    if (look !== this._look) {
+      this._setLook(look);
+      if (this._lastBonds) this._updateBonds(this._lastBonds);   // re-tessellate
+    }
+    this._cachedAtomPositions = atoms.positions;
+    this._cachedAtomSizes = atoms.sizes;
+    this._drawnSizes = this._computeDrawnSizes(atoms.sizes);
+    this._cachedAtomIds = atoms.atom_ids || null;
+
+    // Value-driven coloring (ADR 0016): map color_by.values→RGB client-side;
+    // fall back to the server's baked element colors on an unrecognized
+    // colormap (the browser twin of the vispy adapter's _map_color_by).
+    let colors = atoms.colors;
+    if (atoms.color_by) {
+      const mapped = mapColorBy(atoms.color_by);
+      if (mapped) colors = mapped;
+      else console.warn(`MoleculeRenderer: unknown colormap '${atoms.color_by.colormap}' — using element colors`);
+    }
+
+    this._atomColors = colors
+
+    const mesh = new THREE.InstancedMesh(this._sphereGeo, this._atomMat.clone(), n);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+
+    if (this._hovered != null && this._hovered >= n) this._hovered = null;
+    for (let i = 0; i < n; i++) this._drawAtomInstance(mesh, i, i === this._hovered);
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    if (! only_forces) {
+      this._atomMesh = mesh;
+      this._scene.add(mesh);
+    }
+  }
+
+  /** Write atom `i`'s matrix and colour into `mesh`; a hovered atom is drawn
+   * larger and lighter. Reads the cached positions, sizes and colours. */
+  _drawAtomInstance(mesh, i, hovered) {
+    const [x, y, z] = this._cachedAtomPositions[i];
+    const r = this._drawnSizes[i] * (hovered ? HOVER_SCALE : 1);
+    const d = this._scratchObj;
+    d.position.set(x, y, z);
+    d.scale.setScalar(r);
+    d.updateMatrix();
+    mesh.setMatrixAt(i, d.matrix);
+
+    let [cr, cg, cb] = this._atomColors[i];
+    if (hovered) {
+      cr += (1 - cr) * HOVER_LIGHTEN;
+      cg += (1 - cg) * HOVER_LIGHTEN;
+      cb += (1 - cb) * HOVER_LIGHTEN;
+    }
+    mesh.setColorAt(i, sceneColor(cr, cg, cb, this._scratchColor));
+  }
+
+  /** Displayed index of the atom drawn as hovered, or null. */
+  get hoveredAtom() { return this._hovered; }
+
+  /** Show which atom a click would pick (ADR 0055): only that one instance is
+   * rewritten, so hovering never rebuilds the mesh. `null` clears it. */
+  setHoveredAtom(displayIndex) {
+    const next = displayIndex ?? null;
+    if (next === this._hovered) return;
+    const prev = this._hovered;
+    this._hovered = next;
+    const mesh = this._atomMesh;
+    if (!mesh) return;
+    if (prev != null && prev < mesh.count) this._drawAtomInstance(mesh, prev, false);
+    if (next != null && next < mesh.count) this._drawAtomInstance(mesh, next, true);
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }
+
+  /**
+   * Bonds render as cylinder instances (not THREE.Line) so width/colour
+   * (issue 06) actually change appearance — WebGL's LineBasicMaterial
+   * linewidth is clamped to 1px on most platforms.
+   * @param {import('./protocol.js').BondScene} bonds
+   */
+  _updateBonds(bonds) {
+    this._clearBonds();
+    this._lastBonds = bonds;
+    const segs = bonds.segments;
+    if (!segs || segs.length === 0) return;
+    const n = Math.floor(segs.length / 2);
+
+    // Rich look: each bond is two halves, each coloured like the atom at its
+    // end (chemistry.alive), unless a Bond colour was chosen. The wire sends
+    // bonds as coordinates, so an end's atom is found by its position.
+    const atomAt = this._twoToneBonds() ? this._atomIndexByPosition() : null;
+    const geo = new THREE.CylinderGeometry(1, 1, 1, LOOKS[this._look].bondSides, 1);
+    const mat = new THREE.MeshStandardMaterial({
+      color: atomAt ? 0xffffff : this._bondColor, ...LOOKS[this._look].bond });
+    const mesh = new THREE.InstancedMesh(geo, mat, atomAt ? 2 * n : n);
+    const radius = Math.max(0.01, (this._bondWidth / 100) * BOND_RADIUS[this._look]);
+    const dummy = new THREE.Object3D();
+    const up = new THREE.Vector3(0, 1, 0);
+    const start = new THREE.Vector3(), end = new THREE.Vector3(), mid = new THREE.Vector3();
+    const dir = new THREE.Vector3(), color = new THREE.Color();
+    let count = 0;
+    const place = (from, to, length, atomIndex) => {
+      dummy.position.copy(from).add(to).multiplyScalar(0.5);
+      dummy.quaternion.setFromUnitVectors(up, dir);
+      dummy.scale.set(radius, length, radius);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(count, dummy.matrix);
+      if (atomAt) {
+        const c = atomIndex == null ? null : this._atomColors?.[atomIndex];
+        if (c) sceneColor(c[0], c[1], c[2], color);
+        else color.copy(this._bondColor);
+        mesh.setColorAt(count, color);
+      }
+      count++;
+    };
+    for (let i = 0; i < n; i++) {
+      const a = segs[2 * i], b = segs[2 * i + 1];
+      start.set(a[0], a[1], a[2]);
+      end.set(b[0], b[1], b[2]);
+      dir.copy(end).sub(start);
+      const length = dir.length();
+      if (length < 1e-6) continue;
+      dir.normalize();
+      if (atomAt) {
+        mid.copy(start).add(end).multiplyScalar(0.5);
+        place(start, mid, length / 2, atomAt.get(positionKey(a)));
+        place(mid, end, length / 2, atomAt.get(positionKey(b)));
+      } else {
+        place(start, end, length, null);
+      }
+    }
+    mesh.count = count;
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    this._bondLines = mesh;
+    this._scene.add(mesh);
+  }
+
+  _twoToneBonds() {
+    return this._look === 'rich' && !this._bondColorChosen && !!this._cachedAtomPositions;
+  }
+
+  /** Displayed atom index by position, for finding a bond end's atom. */
+  _atomIndexByPosition() {
+    const map = new Map();
+    this._cachedAtomPositions.forEach((p, i) => map.set(positionKey(p), i));
+    return map;
+  }
+
+  /** @param {import('./protocol.js').ForceScene} forces
+   * @param {boolean} only_forces*/
+  _updateForces(forces, only_forces=false) {
+    this._clearForces();
+    if (!forces.starts || forces.starts.length === 0) return;
+
+    // Solid arrows: one instanced rod and one instanced cone, sized in Å as in
+    // the Qt view (arrow_geometry.js). The length and colour are the scene's:
+    // no local scale factor — `build_scene` already resolves arrow vectors to
+    // scene length units (FORCE_LENGTH_FACTOR and the normalising divisors in
+    // ffast/visualization/presentation.py). A renderer-side multiplier on top
+    // once made the browser draw every arrow at half the Loupe's length for the
+    // same scene, which is the presentation leak ADR 0052 closed for colour.
+    this._lastForces = { forces, only_forces };
+    const n = forces.starts.length;
+    const rodGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1);
+    rodGeo.translate(0, 0.5, 0);    // base at the origin, along +Y
+    const coneGeo = new THREE.ConeGeometry(1, 1, 12, 1);
+    coneGeo.translate(0, 0.5, 0);
+    const rods = new THREE.InstancedMesh(rodGeo, new THREE.MeshBasicMaterial(), n);
+    const cones = new THREE.InstancedMesh(coneGeo, new THREE.MeshBasicMaterial(), n);
+    rods.frustumCulled = cones.frustumCulled = false;
+    const dummy = new THREE.Object3D();
+    const up = new THREE.Vector3(0, 1, 0);
+    const dir = new THREE.Vector3(), tip = new THREE.Vector3();
+    const color = new THREE.Color();
+    let count = 0;
+    for (let i = 0; i < n; i++) {
+      const [ox, oy, oz] = forces.starts[i];
+      const [vx, vy, vz] = forces.vectors[i];
+      // One RGBA per arrow is a ForceScene invariant (ADR 0052) — no local default.
+      const colors = only_forces ? this._atomColors[i] : forces.colors[i];
+      const [cr, cg, cb] = colors;
+      const len = Math.sqrt(vx*vx + vy*vy + vz*vz);
+      if (len < 0.001) continue;
+      dir.set(vx / len, vy / len, vz / len);
+      const part = arrowParts(len, this._arrowThickness);
+      dummy.quaternion.setFromUnitVectors(up, dir);
+      dummy.position.set(ox, oy, oz);
+      dummy.scale.set(part.shaftRadius, part.shaftLength, part.shaftRadius);
+      dummy.updateMatrix();
+      rods.setMatrixAt(count, dummy.matrix);
+      tip.set(ox, oy, oz).addScaledVector(dir, part.shaftLength);
+      dummy.position.copy(tip);
+      dummy.scale.set(part.headRadius, part.headLength, part.headRadius);
+      dummy.updateMatrix();
+      cones.setMatrixAt(count, dummy.matrix);
+      sceneColor(cr, cg, cb, color);
+      rods.setColorAt(count, color);
+      cones.setColorAt(count, color);
+      count++;
+    }
+    rods.count = cones.count = count;
+    const group = new THREE.Group();
+    group.add(rods, cones);
+    this._forceGroup = group;
+    this._scene.add(group);
+  }
+
+  /** @param {number} percent 100 = the Qt arrow radii */
+  setArrowThickness(percent) {
+    const k = Math.max(0.05, (Number(percent) || 100) / 100);
+    if (k === this._arrowThickness) return;
+    this._arrowThickness = k;
+    const last = this._lastForces;
+    if (last) this._updateForces(last.forces, last.only_forces);
+  }
+
+  /** @param {import('./protocol.js').UnitCellScene|null} unitCell */
+  _updateUnitCell(unitCell) {
+    this._clearUnitCell();
+    const segs = unitCell?.segments;
+    if (!segs || segs.length === 0) return;
+    const positions = new Float32Array(segs.length * 3);
+    for (let i = 0; i < segs.length; i++) {
+      positions[i * 3]     = segs[i][0];
+      positions[i * 3 + 1] = segs[i][1];
+      positions[i * 3 + 2] = segs[i][2];
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.LineBasicMaterial({ color: 0x888888, linewidth: 1, opacity: 0.6, transparent: true });
+    this._unitCellLines = new THREE.LineSegments(geo, mat);
+    this._scene.add(this._unitCellLines);
+  }
+
+  _clearAtoms() {
+    if (this._atomMesh) {
+      this._scene.remove(this._atomMesh);
+      this._atomMesh.dispose?.();
+      this._atomMesh = null;
+    }
+    this._cachedAtomPositions = null;
+    this._cachedAtomSizes = null;
+    this._drawnSizes = null;
+    this._cachedAtomIds = null;
+  }
+  _clearBonds()     { if (this._bondLines)    { this._scene.remove(this._bondLines);    this._bondLines.geometry.dispose();     this._bondLines    = null; } this._lastBonds = null; }
+  _clearForces() {
+    if (!this._forceGroup) return;
+    this._scene.remove(this._forceGroup);
+    for (const m of this._forceGroup.children) { m.geometry.dispose(); m.material.dispose(); m.dispose?.(); }
+    this._forceGroup = null;
+    this._lastForces = null;
+  }
+  _clearUnitCell()  { if (this._unitCellLines){ this._scene.remove(this._unitCellLines); this._unitCellLines.geometry.dispose(); this._unitCellLines = null; } }
+
+  _clearLabels() {
+    for (const sprite of this._labelSprites) {
+      this._scene.remove(sprite);
+      sprite.material.map?.dispose();
+      sprite.material.dispose();
+    }
+    this._labelSprites = [];
+  }
+
+  _clearSelections() {
+    for (const mesh of this._selectionMeshes.values()) {
+      this._scene.remove(mesh);
+      mesh.dispose();   // per-pick instance buffer; the material is reused
+    }
+    this._selectionMeshes.clear();
+  }
+
+  clear() {
+    this._clearAtoms();
+    this._clearBonds();
+    this._clearForces();
+    this._clearUnitCell();
+    this._clearLabels();
+    this._clearSelections();
+  }
+
+  /** @param {import('./protocol.js').LabelScene|null} labels */
+  _updateLabels(labels) {
+    this._clearLabels();
+    if (!labels || !labels.texts || labels.texts.length === 0) return;
+
+    for (let i = 0; i < labels.texts.length; i++) {
+      const [x, y, z] = labels.positions[i];
+      const rgba = labels.colors[i] || [1, 1, 1, 1];
+      const text = labels.texts[i];
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      // Keep 3D annotation text aligned with the web UI's 1.4x type scale.
+      ctx.font = 'bold 39.2px sans-serif';
+      const tw = Math.ceil(ctx.measureText(text).width) + 22.4;
+      canvas.width = tw;
+      canvas.height = 50.4;
+      ctx.font = 'bold 39.2px sans-serif';
+      ctx.fillStyle = `rgba(${Math.round(rgba[0]*255)},${Math.round(rgba[1]*255)},${Math.round(rgba[2]*255)},${rgba[3] ?? 1})`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, tw / 2, 25.2);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      const mat = new THREE.SpriteMaterial({ map: texture, depthTest: false, transparent: true });
+      const sprite = new THREE.Sprite(mat);
+      sprite.position.set(x, y, z);
+      sprite.scale.set((tw / 50.4) * 0.7, 0.7, 1);
+      this._scene.add(sprite);
+      this._labelSprites.push(sprite);
+    }
+  }
+
+  /** @param {import('./protocol.js').SelectionOverlay[]} selections */
+  _updateSelections(selections) {
+    this._clearSelections();
+    if (!selections || selections.length === 0 || !this._cachedAtomPositions) return;
+
+    for (const overlay of selections) {
+      const indices = overlay.atom_indices;
+      if (!indices || indices.length === 0) continue;
+      const [cr, cg, cb, ca] = overlay.color || [1, 0, 0, 0.5];
+      const n = indices.length;
+      let mat = this._selectionMaterials.get(overlay.name);
+      if (!mat) {
+        mat = new THREE.MeshStandardMaterial({ transparent: true, roughness: 0.35, metalness: 0.1 });
+        this._selectionMaterials.set(overlay.name, mat);
+      }
+      sceneColor(cr, cg, cb, mat.color);
+      mat.opacity = ca ?? 0.5;
+      const mesh = new THREE.InstancedMesh(this._sphereGeo, mat, n);
+      const dummy = new THREE.Object3D();
+      for (let j = 0; j < n; j++) {
+        const idx = indices[j];
+        const [x, y, z] = this._cachedAtomPositions[idx];
+        const r = (this._drawnSizes?.[idx] || 0.5) * 1.15;
+        dummy.position.set(x, y, z);
+        dummy.scale.setScalar(r);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(j, dummy.matrix);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+      this._scene.add(mesh);
+      this._selectionMeshes.set(overlay.name, mesh);
+    }
+  }
+
+  /** @param {import('./protocol.js').CameraState} cam */
+  _applyCamera(cam) {
+    // cam fields: center, distance, azimuth, elevation, roll, fov, projection; a
+    // missing roll is 0 (a view saved before free rotation)
+    const { center = [0,0,0], distance = 10, azimuth = 0, elevation = 30, roll = 0, fov = 60, projection = 'perspective' } = cam;
+    this.setOrthographic(projection === 'orthographic');
+    this._serverFov = fov;
+    this._perspCamera.fov = this._look === 'rich' ? RICH_FOV : fov;   // rich lens is browser-only
+    this._perspCamera.updateProjectionMatrix();
+
+    const pose = poseFromAngles({ center, distance, azimuth, elevation, roll });
+    this._camera.position.set(...pose.position);
+    this._camera.up.set(...pose.up);
+    this._controls.target.set(center[0], center[1], center[2]);
+    this._camera.lookAt(this._controls.target);
+    this._updateOrthoFrustum(this._canvas.clientWidth / this._canvas.clientHeight);
+    this._controls.update();
+    this._lastUp.copy(this._camera.up);
+  }
+
+  /** @returns {import('./protocol.js').CameraState} */
+  _exportCamera() {
+    const target = this._controls.target;
+    const center = [target.x, target.y, target.z];
+    const { distance, azimuth, elevation, roll } = anglesFromPose(
+      this._camera.position.toArray(), center, this._camera.up.toArray());
+    return {
+      center,
+      distance,
+      azimuth,
+      elevation,
+      roll,
+      fov: this._serverFov,
+      projection: this._camera === this._orthoCamera ? 'orthographic' : 'perspective',
+    };
+  }
+
+  resetCamera() {
+    // Re-fit the molecule to view (recenter + frame), not the controls'
+    // initial pose. frameAtoms() calls _controls.update(), which fires the
+    // 'change' event → SET_CAMERA syncs the new pose to the server.
+    this.frameAtoms();
+  }
+
+  frameAtoms() {
+    if (!this._atomMesh) return;
+    const box = new THREE.Box3().setFromObject(this._atomMesh);
+    const center = box.getCenter(new THREE.Vector3());
+    const size   = box.getSize(new THREE.Vector3()).length();
+    this._controls.target.copy(center);
+    this._camera.position.copy(center).addScaledVector(new THREE.Vector3(0, 0, 1), size * 1.5);
+    this._camera.up.set(0, 1, 0);   // fitting the atoms takes the roll away
+    this._camera.lookAt(center);
+    this._updateOrthoFrustum(this._canvas.clientWidth / this._canvas.clientHeight);
+    this._controls.update();
+  }
+
+  /** Shift the look-at point to `point`, preserving azimuth/elevation/distance
+   * (issue 04: origin-on-centre-of-mass tracking). Fires the 'change' event. */
+  recenterTo(point) {
+    const [x, y, z] = point;
+    const delta = new THREE.Vector3(x, y, z).sub(this._controls.target);
+    if (delta.lengthSq() < 1e-12) return;
+    this._controls.target.add(delta);
+    this._camera.position.add(delta);
+    this._controls.update();
+  }
+
+  // ── picking (ADR 0045 issue 10 / ADR 0015 / ADR 0055) ────────────────────
+  // Project the cached displayed atom centres to canvas pixels through the
+  // live camera. A click picks the atom whose drawn ball is under it, front
+  // surface first; box-select (the twin of the vispy adapter's pick_in_rect)
+  // tests centres only. Displayed indices map to scientific
+  // atom ids via atom_ids (ADR 0015), the same space SET_SELECTION expects.
+
+  /** Suspend/resume orbit while a pick tool owns the pointer. */
+  setControlsEnabled(enabled) {
+    this._controls.enabled = !!enabled;
+  }
+
+  /** Displayed index → scientific atom id (identity when the server ships no map). */
+  atomIdOf(displayIndex) {
+    const ids = this._cachedAtomIds;
+    return ids && ids[displayIndex] != null ? ids[displayIndex] : displayIndex;
+  }
+
+  get atomCount() {
+    return this._cachedAtomPositions ? this._cachedAtomPositions.length : 0;
+  }
+
+  /** Project displayed atom `i` to canvas-local CSS pixels; returns null when
+   * it is behind the camera / outside the clip volume. Also returns its depth
+   * from the camera and its drawn radius, in world units and in pixels.
+   * Call `_camera.updateMatrixWorld()` first. `v` is a scratch vec. */
+  _projectAtom(i, rect, v) {
+    const p = this._cachedAtomPositions[i];
+    const cam = this._camera;
+    v.set(p[0], p[1], p[2]).applyMatrix4(cam.matrixWorldInverse);
+    const depth = -v.z;
+    v.applyMatrix4(cam.projectionMatrix);
+    if (v.z < -1 || v.z > 1) return null;   // clipped (behind camera or beyond far)
+    // projectionMatrix[5] is 1/tan(fov/2) (perspective) or 2/height (ortho).
+    const radius = this._drawnSizes?.[i] || 0.5;
+    const pxPerUnit = cam.projectionMatrix.elements[5] * rect.height / 2
+      / (cam.isPerspectiveCamera ? depth : 1);
+    return {
+      x: (v.x * 0.5 + 0.5) * rect.width,
+      y: (-v.y * 0.5 + 0.5) * rect.height,
+      ndcZ: v.z,
+      depth,
+      radius,
+      radiusPx: radius * pxPerUnit,
+    };
+  }
+
+  /**
+   * Click-pick: the atom whose drawn ball is under the canvas-local point,
+   * nearest surface first, so a click anywhere on a ball picks it. Atoms drawn
+   * smaller than MIN_PICK_TARGET_PX keep that much reach around their centre.
+   * @returns {{displayIndex:number, atomId:number}|null}
+   */
+  pickAtom(px, py) {
+    if (!this._cachedAtomPositions) return null;
+    this._camera.updateMatrixWorld();
+    const rect = this._canvas.getBoundingClientRect();
+    const v = new THREE.Vector3();
+    let best = null, bestDepth = Infinity;
+    for (let i = 0; i < this._cachedAtomPositions.length; i++) {
+      const s = this._projectAtom(i, rect, v);
+      if (!s) continue;
+      const d = Math.hypot(s.x - px, s.y - py);
+      if (d > Math.max(s.radiusPx, MIN_PICK_TARGET_PX)) continue;
+      // Depth of the ball's surface along the click ray (the centre's depth
+      // when only the minimum target was hit).
+      const off = d < s.radiusPx ? (d / s.radiusPx) * s.radius : s.radius;
+      const surface = s.depth - Math.sqrt(Math.max(0, s.radius * s.radius - off * off));
+      if (surface < bestDepth) { bestDepth = surface; best = i; }
+    }
+    return best == null ? null : { displayIndex: best, atomId: this.atomIdOf(best) };
+  }
+
+  /**
+   * Box-select: every atom whose projected centre falls inside the canvas-local
+   * rectangle (mirrors adapter.pick_in_rect). No occlusion test, by design.
+   * @returns {{displayIndex:number, atomId:number}[]}
+   */
+  boxSelect(x0, y0, x1, y1) {
+    if (!this._cachedAtomPositions) return [];
+    this._camera.updateMatrixWorld();
+    const rect = this._canvas.getBoundingClientRect();
+    const v = new THREE.Vector3();
+    const lo = { x: Math.min(x0, x1), y: Math.min(y0, y1) };
+    const hi = { x: Math.max(x0, x1), y: Math.max(y0, y1) };
+    const out = [];
+    for (let i = 0; i < this._cachedAtomPositions.length; i++) {
+      const s = this._projectAtom(i, rect, v);
+      if (!s) continue;
+      if (s.x >= lo.x && s.x <= hi.x && s.y >= lo.y && s.y <= hi.y)
+        out.push({ displayIndex: i, atomId: this.atomIdOf(i) });
+    }
+    return out;
+  }
+
+  /** Canvas-local CSS-pixel position of a displayed atom, for tests/tooltips. */
+  atomScreenPosition(displayIndex) {
+    if (!this._cachedAtomPositions || !this._cachedAtomPositions[displayIndex]) return null;
+    this._camera.updateMatrixWorld();
+    const rect = this._canvas.getBoundingClientRect();
+    return this._projectAtom(displayIndex, rect, new THREE.Vector3());
+  }
+
+  /** Drawn radius of a displayed atom in canvas CSS pixels (as the server
+   * sized it, without the hover enlargement), or null when clipped. */
+  atomScreenRadius(displayIndex) {
+    return this.atomScreenPosition(displayIndex)?.radiusPx ?? null;
+  }
+
+  /** World-space position of a displayed atom (for client-side measurements). */
+  atomPosition(displayIndex) {
+    const p = this._cachedAtomPositions?.[displayIndex];
+    return p ? [p[0], p[1], p[2]] : null;
+  }
+}

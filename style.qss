@@ -204,18 +204,24 @@ QSpinBox::down-button:disabled {
 QPushButton {
   /* text-transform: uppercase; */
   margin: 0px;
-  padding: 1px 4px;
+  padding: 4px 8px;
   height: 24px;
   /* font-weight: bold; */
 
-  border-radius: 4px;
-  color: @TextColor2;
-  
+  border-radius: 3px;
+  border: none;
+  color: @TextColor1;
+  background-color: @BGColor3;
+}
+
+QPushButton:hover {
+  background-color: @BGColor4;
+  color: @TextColorHover;
 }
 
 QPushButton:checked,
 QPushButton:pressed {
-  color: @BGColor2;
+  color: @TextColor2;
   background-color: @HLColor2;
 }
 
@@ -684,6 +690,18 @@ QMenu::indicator:exclusive:checked:selected {
 }
 
 /*  ------------------------------------------------------------------------  */
+/*  Compact context menus -- 2D plot axis-label/legend menus and the Loupe    */
+/*  colorbar's right-click menu. Plain flat action lists (no checkboxes,      */
+/*  radio buttons, or submenus), so they skip QMenu::item's default 24px      */
+/*  right padding reserved for that indicator column -- without this, the    */
+/*  popup is visibly wider than the text it holds. Scoped by objectName so    */
+/*  it doesn't affect the menu bar or any checkable/submenu QMenu elsewhere.  */
+
+QMenu#compactContextMenu::item {
+  padding: 0px 8px 0px 8px;
+}
+
+/*  ------------------------------------------------------------------------  */
 /*  QMenuBar  */
 
 QMenuBar {
@@ -877,6 +895,13 @@ QLineEdit:disabled {
 
 QLabel:disabled {
   color: rgba(255, 255, 255, 0.2)
+}
+
+/* A 3D panel in a project tab: shown in the browser only (ADR 0056) */
+QLabel#browserOnlyPanel {
+  background: @BGColor4;
+  border-radius: 5px;
+  font-size: 14px;
 }
 
 QLabel#plotTitleLabel{

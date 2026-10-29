@@ -10,9 +10,11 @@ from UI.Templates import (
     ProgressBar,
     customFileDialog,
 )
+from UI.Templates.display import showFullTextOnHover
 from config.uiConfig import configStyleSheet
 from utils import rgbToHex
-from events import EventChildClass
+from client.object_info import describe
+from ffast.core.events import EventChildClass
 
 
 class DatasetModelItem(ObjectListItem, EventChildClass):
@@ -71,6 +73,7 @@ class DatasetModelItem(ObjectListItem, EventChildClass):
         self.labelLayout.setSpacing(4)
         self.titleLabel = LineEdit("?", parent=self)
         self.titleLabel.setDisabled(True)
+        showFullTextOnHover(self.titleLabel)
         # self.titleLabel = QtWidgets.QLabel("?", parent=self)
 
         self.titleLabel.setObjectName("titleLabel")
@@ -178,9 +181,9 @@ class DatasetModelItem(ObjectListItem, EventChildClass):
         self.infoButton.setText(label)
 
     def getObject(self):
-        dataset = self.handler.env.getDataset(self.id)
+        dataset = self.handler.env.datasets.get(self.id)
         if dataset is None:
-            return self.handler.env.getModel(self.id)
+            return self.handler.env.models.get(self.id)
         else:
             return dataset
 
@@ -188,30 +191,23 @@ class DatasetModelItem(ObjectListItem, EventChildClass):
         if key is not None:
             if key != self.id:
                 # if subdataset, could care about name changes of parents
-                dataset = self.handler.env.getDataset(self.id)
+                dataset = self.handler.env.datasets.get(self.id)
                 if dataset is None:
                     return
                 obj = self.handler.env.getObject(key)
                 if not dataset.isDependentOn(obj):
                     return
 
-        dataset = self.handler.env.getDataset(self.id)
-        if dataset is not None:
-            self.setName(dataset.getDisplayName())
-            self.setInfoLabel(dataset.datasetName)
-
-            info = dataset.getBaseInfo() + dataset.getInfo()
-            self.infoWidget.setInfo(*info)
-
-        else:
-            model = self.handler.env.getModel(self.id)
-            if model is None:
+        obj = self.handler.env.datasets.get(self.id)
+        if obj is None:
+            obj = self.handler.env.models.get(self.id)
+            if obj is None:
                 return
-            self.setName(model.getDisplayName())
-            self.setInfoLabel(model.modelName)
-
-            info = model.getInfo()
-            self.infoWidget.setInfo(*info)
+        # The same description as the top panel's hover text (client/object_info.py).
+        title, kind, info = describe(obj)
+        self.setName(title)
+        self.setInfoLabel(kind)
+        self.infoWidget.setInfo(*info)
 
     def deleteObject(self):
         self.handler.env.deleteObject(self.id)
@@ -249,7 +245,7 @@ class DatasetModelItem(ObjectListItem, EventChildClass):
         if path is None:
             return
         typ, form = formats[formatName]
-        env.taskSaveDataset(dataset, typ, form, path)
+        env.persistence.taskSaveDataset(dataset, typ, form, path)
 
     def onNameEdited(self):
         self.titleLabel.setDisabled(True)
@@ -362,6 +358,8 @@ class TaskItem(ObjectListItem, EventChildClass):
         prog=None,
         percent=False,
         message="Working...",
+        error=False,
+        title=None,
     ):
         if taskID is not self.id:
             return
@@ -387,6 +385,16 @@ class TaskItem(ObjectListItem, EventChildClass):
         # message
         self.messageLabel.setText(message)
         self.messageLabel.setToolTip(message)
+
+        # title update (e.g. after state change like "connected")
+        if title is not None:
+            self.titleLabel.setText(title)
+
+        # error styling
+        if error:
+            self.messageLabel.setStyleSheet("color: #e05555;")
+        else:
+            self.messageLabel.setStyleSheet("")
 
     def cancel(self):
         taskID = self.id

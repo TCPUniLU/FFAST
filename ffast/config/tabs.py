@@ -1,0 +1,214 @@
+"""Analysis-Tab config: load the bundled + project tab definitions and compile
+their Transform Metrics (ADR 0021, Phase 5).
+
+Pure functions, no Qt — safe to run on the server, the client, and the in-process
+headless thread. The server calls :func:`compile_tabs_metrics` at startup (before
+``registry.freeze()``) so every Panel's compiled metric is registered and
+computable; it never reads Panel Kinds or layout. The client calls the same to
+register the metrics locally, then :func:`resolve_ref` per Panel to turn each
+``{metric, transform, params}`` into the concrete id the engine binds.
+"""
+from __future__ import annotations
+
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from ffast.config.models import AnalysisTabConfig, PanelMetricRef, ProjectConfig
+
+_BUILTIN_TABS_DIR = Path(__file__).with_name("builtin_tabs")
+
+
+def load_builtin_tabs() -> list[AnalysisTabConfig]:
+    """The analysis tabs shipped with FFAST — one TOML file per tab in
+    ``builtin_tabs/`` (Basic/Subsystem/Atomic/Gyration), loaded in filename order
+    (hence the numeric ``NN_`` prefixes, which set tab order). Each file holds one
+    ``[[tabs]]`` block; the parse is identical to a single combined file."""
+    if not _BUILTIN_TABS_DIR.is_dir():
+        return []
+    tabs: list[AnalysisTabConfig] = []
+    for path in sorted(_BUILTIN_TABS_DIR.glob("*.toml")):
+        with open(path, "rb") as f:
+            data = tomllib.load(f)
+        tabs.extend(AnalysisTabConfig.model_validate(t) for t in data.get("tabs", []))
+    return tabs
+
+
+def merge_tabs(project_config: ProjectConfig | None = None) -> list[AnalysisTabConfig]:
+    """Bundled tabs first, then any ``[[visualization.tabs]]`` from the project."""
+    tabs = load_builtin_tabs()
+    if project_config is not None:
+        tabs = tabs + list(project_config.visualization.tabs)
+    return tabs
+
+
+def resolve_ref(ref: PanelMetricRef, *, registry=None) -> str:
+    """Compile a Panel metric ref → the concrete metric id the engine binds.
+
+    No transform → the raw metric id. A single transform / a pipeline list is
+    sent to the compiler (idempotent), which registers it and returns its id."""
+    from ffast.metrics.registry import default_registry
+    from ffast.metrics.retired import retired_message
+    from ffast.metrics.transforms import compile_pipeline, compile_transform
+
+    if not ref.transform:
+        # A box setting (ADR 0065) is registered when a tab names it; a
+        # deleted id is refused with its replacement.
+        if not (registry if registry is not None else default_registry).ensure(ref.metric):
+            if retired_message(ref.metric):
+                raise ValueError(retired_message(ref.metric))
+        return ref.metric
+    if isinstance(ref.transform, list):
+        return compile_pipeline(ref.metric, list(ref.transform), registry=registry)
+    return compile_transform(
+        ref.metric, ref.transform, params=ref.params or None, registry=registry
+    )
+
+
+def _panel_refs(panel) -> list[PanelMetricRef]:
+    refs: list[PanelMetricRef] = []
+    for role in panel.metrics.values():
+        refs.extend(role if isinstance(role, list) else [role])
+    return refs
+
+
+def _panel_layout(panel, *, registry=None) -> dict:
+    """One Panel serialized for the wire (ADR 0045 Phase 3 ``TAB_LAYOUT``).
+
+    Every renderer-side field passes through verbatim (``kind``, grid placement,
+    labels, ``diagonal``, ``hidden_params``, ``controls``, ``scroll_group``,
+    ``options`` …), except each metric role is replaced by its **resolved
+    concrete metric id** (``resolve_ref``) — a single id, or a list of ids for
+    an overlay ``series`` role. Resolving server-side keeps the transform
+    compiler off the browser: the client requests the returned id straight over
+    the metric channel and reads its shape/unit/params from the Metric Catalog.
+    """
+    d = panel.model_dump()
+    resolved: dict = {}
+    unresolved: list[str] = []
+
+    def resolve(ref):
+        # A ref the compiler cannot resolve (its metric is not on this server)
+        # must not take the tab down: the panel keeps the raw id and the
+        # browser says which metric is missing (ADR 0057 rule 15).
+        try:
+            return resolve_ref(ref, registry=registry)
+        except Exception:
+            if ref.metric not in unresolved:
+                unresolved.append(ref.metric)
+            return ref.metric
+
+    for role, val in panel.metrics.items():
+        if isinstance(val, list):
+            resolved[role] = [resolve(r) for r in val]
+        else:
+            resolved[role] = resolve(val)
+    d["unresolved"] = unresolved
+    # The authoring form too, so a tab built or edited in the browser saves
+    # what a person would write (ADR 0056), not the compiled ids.
+    d["metric_refs"] = d["metrics"]
+    d["metrics"] = resolved
+    return d
+
+
+def tab_layout(tab, *, registry=None) -> dict:
+    """One tab serialized for the wire (see :func:`build_tab_layout`)."""
+    return {
+        "name": tab.name,
+        "has_data_selector": tab.has_data_selector,
+        "selector": tab.selector,
+        "controls": list(tab.controls),
+        "panels": [_panel_layout(p, registry=registry) for p in tab.panels],
+        "column_widths": tab.column_widths,
+        "row_heights": tab.row_heights,
+        "grid": tab.grid,
+    }
+
+
+def build_tab_layout(tabs, *, registry=None) -> list[dict]:
+    """Serialize merged Analysis Tabs to JSON-safe dicts for the ``TAB_LAYOUT``
+    wire message (ADR 0045 Phase 3).
+
+    The browser client cannot run the Transform-Metric compiler, so the server
+    resolves every Panel metric ref to its concrete id here (see
+    :func:`_panel_layout`) and ships the whole layout — the same merged
+    ``[[visualization.tabs]]`` both renderers see. Pure and Qt-free; safe to
+    call at server startup (before ``registry.freeze()``) or from the handler.
+    """
+    return [tab_layout(tab, registry=registry) for tab in tabs]
+
+
+def compile_tabs_metrics(tabs, *, registry=None) -> list[str]:
+    """Walk every Panel metric ref across ``tabs`` and compile it. Returns the
+    resolved ids (deduped, order-preserving). Registers the Transform Metrics
+    into ``registry`` (default: the shared ``default_registry``) before freeze."""
+    seen: dict[str, None] = {}
+    for tab in tabs:
+        for panel in tab.panels:
+            for ref in _panel_refs(panel):
+                seen.setdefault(resolve_ref(ref, registry=registry), None)
+    return list(seen)
+
+
+@dataclass
+class MetricCompileResult:
+    """Outcome of compiling a project's declarative metrics before freeze.
+
+    ``ids`` are the successfully-registered metric ids; ``errors`` are
+    ``(context, message)`` pairs — one per config entry that failed to compile,
+    each carrying a precise config-load message (e.g. an Expression Metric shape
+    mismatch). Callers apply the policy: the server refuses to start on any error
+    (like a freeze validation failure), ``ffast-cli metrics validate`` prints and
+    exits non-zero, and the desktop client logs and keeps running (ADR 0042 /
+    ADR 0023: config errors surface at config-load, not at plot time)."""
+
+    ids: list[str] = field(default_factory=list)
+    errors: list[tuple[str, str]] = field(default_factory=list)
+
+
+def compile_project_metrics(project_config, *, registry=None) -> MetricCompileResult:
+    """Compile every declarative metric a project contributes, before freeze.
+
+    Covers Dataset Fields (ADR 0023), Expression Metrics (ADR 0042), and
+    Analysis-Tab Transform Metrics (ADR 0021) plus the bundled tabs. **Fields
+    compile first** because an Expression Variable may bind a Dataset Field id.
+    The base built-ins are registered first so tab/expr metric-id refs resolve.
+
+    Idempotent (safe to run on server, client, and headless thread) and
+    fail-soft: each entry compiles under its own guard, so one bad entry records
+    an error instead of aborting the rest. Returns the registered ids and the
+    per-entry failures for the caller to surface. ``project_config`` may be
+    ``None`` — the bundled tabs still compile.
+    """
+    import ffast.metrics.builtin  # noqa: F401 — register base metrics before compile
+    from ffast.metrics.expr import compile_expr_metric
+    from ffast.metrics.fields import compile_field_metric
+
+    result = MetricCompileResult()
+
+    fields = project_config.metrics.fields if project_config is not None else []
+    for c in fields:
+        try:
+            result.ids.append(compile_field_metric(
+                c.id, c.ref, label=c.label, unit=c.unit, registry=registry))
+        except Exception as exc:
+            result.errors.append((f"[[metrics.fields]] '{c.id}'", str(exc)))
+
+    exprs = project_config.metrics.expr if project_config is not None else []
+    for c in exprs:
+        try:
+            result.ids.append(compile_expr_metric(
+                c.id, c.expr, dict(c.vars), label=c.label, unit=c.unit,
+                registry=registry))
+        except Exception as exc:
+            result.errors.append((f"[[metrics.expr]] '{c.id}'", str(exc)))
+
+    # Bundled + project analysis tabs. compile_tabs_metrics is itself a batch
+    # (a bad Panel ref aborts it), so guard it as one unit.
+    try:
+        result.ids.extend(
+            compile_tabs_metrics(merge_tabs(project_config), registry=registry))
+    except Exception as exc:
+        result.errors.append(("[[visualization.tabs]]", str(exc)))
+
+    return result

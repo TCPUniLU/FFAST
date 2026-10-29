@@ -1,0 +1,439 @@
+"""Regression tests for metric-driven atom coloring end-to-end.
+
+Covers the chain:
+  SET_PARAMETER(ffast.atom_color, source="metric:ffast.force_difference[atom+structure;length]")
+  + view.state.prediction_ref set
+  → resolve_atom_color_values → ffast.force_difference[atom+structure;length]
+    computed → per-atom colors
+
+This is the server-side seam for H4 and H1 from the diagnose session.
+"""
+import numpy as np
+import pytest
+
+from ffast.visualization.models import VisualizationState
+
+
+# ── minimal dataset / prediction stubs ──────────────────────────────────────
+
+class _FakeDataset:
+    def __init__(self, n_atoms=3, n_frames=1):
+        self._n = n_atoms
+        self._n_frames = n_frames
+        self._pos = np.zeros((n_frames, n_atoms, 3), dtype=np.float64)
+        self._z = np.array([1, 6, 8], dtype=np.int32)[:n_atoms]
+        self._forces = np.ones((n_frames, n_atoms, 3), dtype=np.float64)
+
+    def getCoordinates(self, index=None):
+        if index is None:
+            return self._pos
+        return self._pos[index]
+
+    def getAllCoordinates(self):
+        return self._pos.reshape(-1, 3)
+
+    def getOffsets(self):
+        return np.arange(self._n_frames + 1) * self._n
+
+    def getElements(self, index=None):
+        return self._z
+
+    def getForces(self, index=None):
+        if self._n_frames == 1:
+            return self._forces[0]
+        return self._forces[index]
+
+    def getN(self):
+        return self._n_frames
+
+    def getLength(self):
+        return self._n_frames
+
+
+class _PredictionView:
+    def __init__(self, forces):
+        self.forces = forces
+
+
+# ── resolve_atom_color_values tests ──────────────────────────────────────────────
+
+def _make_state_with_metric(metric_id, prediction_ref="pred-fp-001", dataset_ref="ds-fp-001"):
+    state = VisualizationState(view_id="v1")
+    state.dataset_ref = dataset_ref
+    state.prediction_ref = prediction_ref
+    state.parameters["ffast.atom_color"] = {"source": f"metric:{metric_id}"}
+    return state
+
+
+def test_resolve_color_force_mae_returns_per_atom_values():
+    """Core path: force_mae metric produces one value per atom."""
+    # Register built-ins so the metric is in the registry.
+    from ffast.metrics.builtin import force_metrics  # noqa: F401
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    n_atoms = 3
+    ds = _FakeDataset(n_atoms=n_atoms)
+    ref_forces = np.ones((n_atoms, 3), dtype=np.float64)
+    pred_forces = np.ones((n_atoms, 3), dtype=np.float64) * 2.0
+
+    prediction_fp = "pred-fp-001"
+    dataset_fp = "ds-fp-001"
+    state = _make_state_with_metric("ffast.force_difference[atom+structure;length]",
+                                    prediction_ref=prediction_fp)
+
+    def get_prediction(ds_fp, model_fp):
+        if ds_fp == dataset_fp and model_fp == prediction_fp:
+            return _PredictionView(pred_forces[np.newaxis])  # (1, n_atoms, 3)
+        return None
+
+    raw_positions = ref_forces[:, 0:3] * 0  # (n_atoms, 3) dummy coords
+    result = resolve_atom_color_values(
+        state, ds, 0, raw_positions, ds._z, get_prediction,
+        executor=InProcessExecutor(reg),
+    )
+
+    assert result is not None, "Expected per-atom values, got None (metric failed)"
+    values, label, unit, _ = result
+    assert values.shape == (n_atoms,), f"Expected ({n_atoms},), got {values.shape}"
+    # pred - ref = [1,1,1], l2 norm = sqrt(3); all atoms should be equal
+    assert np.all(values > 0), "Expected nonzero force errors"
+
+
+def test_reference_positions_expression_colours_from_raw_current_frame():
+    """Whole-dataset cache miss must use the same canonical position ref.
+
+    The visualization may transform positions for drawing, but a metric input
+    remains the dataset's raw coordinates.
+    """
+    from ffast.metrics.expr import compile_expr_metric
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
+    from ffast.visualization.scene_builder import build_scene
+
+    metric_id = "test.metric_input_positions_norm"
+    if not reg.has(metric_id):
+        compile_expr_metric(metric_id, "norm(R)", {"R": "reference.positions"},
+                            label="Position norm", registry=reg)
+    ds = _FakeDataset(n_atoms=3, n_frames=2)
+    ds._pos[:] = np.array([
+        [[3.0, 4.0, 0.0], [0.0, 0.0, 2.0], [1.0, 2.0, 2.0]],
+        [[100.0, 0.0, 0.0], [0.0, 100.0, 0.0], [0.0, 0.0, 100.0]],
+    ])
+    state = _make_state_with_metric(metric_id, prediction_ref=None)
+    # A scene transform must not be fed back into the metric source.
+    state.transforms = [np.array([50., 0., 0.])]
+
+    scene = build_scene(
+        state, lambda _fp: ds, executor=InProcessExecutor(reg),
+        get_metric=lambda *args: None,
+    )
+    np.testing.assert_allclose(scene.atoms.color_by.values, [5.0, 2.0, 3.0])
+    np.testing.assert_allclose(scene.atoms.positions,
+                               ds.getCoordinates(0) + [50.0, 0.0, 0.0])
+
+
+def test_prediction_atom_field_uses_parent_frame_and_view_atom_mask():
+    from ase import Atoms
+    from ffast.loaders.ase import aseDatasetLoader
+    from ffast.loaders.dataset import DatasetView
+    from ffast.metrics.expr import compile_expr_metric
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    frames = [Atoms("H3", positions=np.zeros((3, 3))),
+              Atoms("H3", positions=np.ones((3, 3)))]
+    frames[0].new_array("charge", np.array([1., 2., 3.]))
+    frames[1].new_array("charge", np.array([4., 5., 6.]))
+    parent = aseDatasetLoader("memory.extxyz", atomsList=frames)
+    parent.initialise()
+    view = DatasetView(parent, frames=np.array([1]), atoms=np.array([2, 0]))
+    view.initialise()
+    metric_id = "test.metric_input_prediction_field_norm"
+    if not reg.has(metric_id):
+        compile_expr_metric(metric_id, "q", {"q": "prediction.atoms.charge"},
+                            label="Prediction charge", registry=reg)
+    state = _make_state_with_metric(metric_id, prediction_ref="model-fp",
+                                    dataset_ref=view.fingerprint)
+    fields = {("model-fp", parent.fingerprint): {
+        "info": {},
+        "atoms": {"charge": np.array([10., 20., 30., 40., 50., 60.])},
+    }}
+
+    result = resolve_atom_color_values(
+        state, view, 0, view.getCoordinates(0), view.getElements(0),
+        lambda *args: None,
+        executor=InProcessExecutor(reg), get_metric=lambda *args: None,
+        prediction_fields=fields,
+    )
+
+    assert result is not None
+    np.testing.assert_allclose(result[0], [60., 40.])
+
+
+def test_missing_frame_metric_input_warns_with_ref_and_reason(caplog):
+    from ffast.metrics.expr import compile_expr_metric
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    metric_id = "test.metric_input_missing_atom_field"
+    if not reg.has(metric_id):
+        compile_expr_metric(metric_id, "q", {"q": "reference.atoms.absent"},
+                            label="Missing field", registry=reg)
+    state = _make_state_with_metric(metric_id, prediction_ref=None)
+    ds = _FakeDataset()
+    result = resolve_atom_color_values(
+        state, ds, 0, ds.getCoordinates(0), ds.getElements(0), None,
+        executor=InProcessExecutor(reg), get_metric=lambda *args: None,
+    )
+    assert result is None
+    assert "reference.atoms.absent" in caplog.text
+    assert "unavailable" in caplog.text
+
+
+def test_non_colourable_formula_warns_why_frame_fallback_is_refused(caplog):
+    from ffast.metrics.expr import compile_expr_metric
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    metric_id = "test.metric_input_non_colourable"
+    if not reg.has(metric_id):
+        compile_expr_metric(
+            metric_id, "mean(E, by=all)", {"E": "reference.energies"},
+            label="Dataset mean", registry=reg,
+        )
+    state = _make_state_with_metric(metric_id, prediction_ref=None)
+    ds = _FakeDataset()
+    result = resolve_atom_color_values(
+        state, ds, 0, ds.getCoordinates(0), ds.getElements(0), None,
+        executor=InProcessExecutor(reg), get_metric=lambda *args: None,
+    )
+    assert result is None
+    assert "by=all" in caplog.text
+    assert "falling back to element colors" in caplog.text
+
+
+def test_resolve_color_prediction_ref_override_wins_over_global():
+    """ADR 0045 issue 03: an explicit ffast.atom_color 'prediction_ref' param
+    overrides the view's global state.prediction_ref — the same Option B
+    pattern as ffast.force_arrows (scene_builder.py) — so coloring by one
+    model's error doesn't force the whole view onto that model."""
+    from ffast.metrics.builtin import force_metrics  # noqa: F401
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    n_atoms = 3
+    ds = _FakeDataset(n_atoms=n_atoms)
+    ref_forces = np.zeros((n_atoms, 3), dtype=np.float64)
+
+    global_fp = "global-pred-fp"
+    override_fp = "override-pred-fp"
+    dataset_fp = "ds-fp-001"
+
+    state = VisualizationState(view_id="v1")
+    state.dataset_ref = dataset_fp
+    state.prediction_ref = global_fp   # the view's overlay prediction
+    state.parameters["ffast.atom_color"] = {
+        "source": "metric:ffast.force_difference[atom+structure;length]",
+        "prediction_ref": override_fp,   # coloring explicitly asks for a different model
+    }
+
+    calls = []
+
+    def get_prediction(ds_fp, model_fp):
+        calls.append(model_fp)
+        if ds_fp == dataset_fp and model_fp == override_fp:
+            return _PredictionView((ref_forces + 5.0)[np.newaxis])
+        if ds_fp == dataset_fp and model_fp == global_fp:
+            return _PredictionView(ref_forces[np.newaxis])
+        return None
+
+    result = resolve_atom_color_values(
+        state, ds, 0, np.zeros((n_atoms, 3)), ds._z, get_prediction,
+        executor=InProcessExecutor(reg),
+    )
+
+    assert result is not None
+    assert override_fp in calls and global_fp not in calls
+    values, _label, _unit, _ = result
+    assert np.all(values > 0)   # resolved from the override prediction's nonzero forces
+
+
+def test_resolve_color_no_prediction_ref_returns_none():
+    """Without prediction_ref, metric coloring falls back to None (element colors)."""
+    from ffast.metrics.builtin import force_metrics  # noqa: F401
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    state = VisualizationState(view_id="v1")
+    state.dataset_ref = "ds-fp-001"
+    state.prediction_ref = None  # not set — the critical case
+    state.parameters["ffast.atom_color"] = {
+        "source": "metric:ffast.force_difference[atom+structure;length]"}
+
+    ds = _FakeDataset(n_atoms=3)
+
+    result = resolve_atom_color_values(
+        state, ds, 0, np.zeros((3, 3)), ds._z, lambda *a: None,
+        executor=InProcessExecutor(reg),
+    )
+    assert result is None, "Should fall back to None when prediction_ref is absent"
+
+
+def test_resolve_color_prediction_lookup_failure_returns_none():
+    """If get_prediction returns None (server cache miss), graceful fallback."""
+    from ffast.metrics.builtin import force_metrics  # noqa: F401
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.metrics.registry import _default_registry as reg
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    state = _make_state_with_metric("ffast.force_difference[atom+structure;length]")
+    ds = _FakeDataset(n_atoms=3)
+
+    result = resolve_atom_color_values(
+        state, ds, 0, np.zeros((3, 3)), ds._z, lambda *a: None,
+        executor=InProcessExecutor(reg),
+    )
+    assert result is None, "Cache miss should return None, not raise"
+
+
+def test_resolve_color_element_source_returns_none():
+    """Source='element' is the no-op sentinel; must return None."""
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    state = VisualizationState(view_id="v1")
+    state.parameters["ffast.atom_color"] = {"source": "element"}
+    ds = _FakeDataset(n_atoms=3)
+
+    result = resolve_atom_color_values(state, ds, 0, np.zeros((3, 3)), ds._z, None)
+    assert result is None
+
+
+def test_resolve_color_unknown_metric_returns_none():
+    """Unregistered metric ID must not raise, just return None."""
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    state = _make_state_with_metric("ffast.nonexistent_metric")
+    ds = _FakeDataset(n_atoms=3)
+
+    result = resolve_atom_color_values(state, ds, 0, np.zeros((3, 3)), ds._z, None)
+    assert result is None
+
+
+def test_resolve_color_displacement_returns_per_atom_rms():
+    """source='displacement' → per-atom RMS displacement over the trajectory,
+    no metric/executor involved (pure-array path, no OpenGL)."""
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    ds = _FakeDataset(n_atoms=3, n_frames=2)
+    ds._pos = np.zeros((2, 3, 3), dtype=np.float64)
+    ds._pos[1, 0] = [1.0, 1.0, 1.0]  # only atom 0 moves between the two frames
+
+    state = VisualizationState(view_id="v1")
+    state.parameters["ffast.atom_color"] = {"source": "displacement"}
+
+    result = resolve_atom_color_values(state, ds, 0, ds._pos[0], ds._z, None)
+    assert result is not None
+    values, label, unit, _ = result
+    assert (label, unit) == ("displacement", "Å")
+    assert values.shape == (3,)
+    assert values[0] == pytest.approx(1.0)         # sqrt(mean([1,1,1]**2)) = 1
+    assert values[1] == 0.0 and values[2] == 0.0   # stationary atoms
+
+
+def _file_dataset(formulas):
+    from ase import Atoms
+    from ffast.loaders.ase import aseDatasetLoader
+
+    rng = np.random.default_rng(5)
+    frames = [Atoms(f, positions=rng.normal(size=(len(Atoms(f)), 3))) for f in formulas]
+    return aseDatasetLoader("x.xyz", atomsList=frames)
+
+
+def test_displacement_colours_a_file_whose_structures_have_the_same_size():
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    ds = _file_dataset(["H2O"] * 3)
+    state = VisualizationState(view_id="v1")
+    state.parameters["ffast.atom_color"] = {"source": "displacement"}
+
+    values, label, _, _ = resolve_atom_color_values(
+        state, ds, 0, ds.getCoordinates(0), ds.getElements(0), None)
+    assert label == "displacement" and values.shape == (3,)
+
+
+def test_displacement_falls_back_to_element_colours_when_structures_differ_in_size():
+    from ffast.visualization.color_values import resolve_atom_color_values
+
+    ds = _file_dataset(["H2O", "CH4"])
+    state = VisualizationState(view_id="v1")
+    state.parameters["ffast.atom_color"] = {"source": "displacement"}
+
+    assert resolve_atom_color_values(
+        state, ds, 0, ds.getCoordinates(0), ds.getElements(0), None) is None
+
+
+# ── ADR 0064: dataset-wide words colour from the whole dataset only ─────────
+
+@pytest.fixture
+def formula_metrics():
+    from ffast.metrics.builtin import force_metrics  # noqa: F401
+    from ffast.metrics.expr import compile_expr_metric
+    from ffast.metrics.registry import _default_registry as reg
+    vars_ = {"p": "prediction.forces", "r": "reference.forces"}
+    compile_expr_metric("t64.scaled", "norm(p - r) / max(norm(p - r), by=all)", vars_, registry=reg)
+    compile_expr_metric("t64.h_only", 'where(element("H"), norm(p - r), 0)', vars_, registry=reg)
+    compile_expr_metric("t64.on_scaled", "2 * s", {"s": "t64.scaled"}, registry=reg)
+    yield reg
+    for mid in ("t64.on_scaled", "t64.scaled", "t64.h_only"):
+        reg.unregister(mid)
+    reg.freeze()
+
+
+def _colour(metric_id, reg, get_metric=None):
+    from ffast.metrics.executor import InProcessExecutor
+    from ffast.visualization.color_values import resolve_atom_color_values
+    ds = _FakeDataset(n_atoms=3)
+    state = _make_state_with_metric(metric_id)
+    pred = np.ones((1, 3, 3)) * np.array([[[2.0], [3.0], [4.0]]])
+    return resolve_atom_color_values(state, ds, 0, np.zeros((3, 3)), ds._z,
+                                     lambda d, m: _PredictionView(pred),
+                                     executor=InProcessExecutor(reg), get_metric=get_metric)
+
+
+def test_a_formula_with_by_all_colours_from_the_whole_dataset(formula_metrics):
+    from types import SimpleNamespace
+    whole = lambda *_: SimpleNamespace(values=np.array([0.25, 0.5, 1.0]))
+    values, label, _unit, span = _colour("t64.scaled", formula_metrics, get_metric=whole)
+    assert list(values) == [0.25, 0.5, 1.0] and span == (0.25, 1.0)
+    assert label == "t64.scaled"
+
+
+def test_a_formula_with_by_all_is_refused_with_only_the_frame_on_screen(formula_metrics):
+    from ffast.metrics.expr import metric_colour_problem
+    assert metric_colour_problem("t64.scaled", formula_metrics) == (
+        "by=all colours atoms only when the prediction covers every frame; "
+        "this one covers the frame on screen")
+    assert _colour("t64.scaled", formula_metrics) is None          # element colours
+    assert _colour("t64.scaled", formula_metrics, get_metric=lambda *_: None) is None
+
+
+def test_a_formula_on_such_a_formula_is_refused_too(formula_metrics):
+    from ffast.metrics.expr import metric_colour_problem
+    assert "by=all" in metric_colour_problem("t64.on_scaled", formula_metrics)
+    assert _colour("t64.on_scaled", formula_metrics) is None
+
+
+def test_an_element_filter_still_colours(formula_metrics):
+    from ffast.metrics.expr import metric_colour_problem
+    assert metric_colour_problem("t64.h_only", formula_metrics) is None
+    values, _label, _unit, _ = _colour("t64.h_only", formula_metrics)
+    # elements H, C, O: only the hydrogen keeps its error
+    assert values[0] > 0 and values[1] == 0 and values[2] == 0
+

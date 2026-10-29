@@ -4,34 +4,77 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ffast"
-version = "0.2.0"
-requires-python = ">=3.9,<3.12"
+version = "2.0.0"
+requires-python = "==3.11.*"
+# Headless core: ffast-server + ffast-cli. No Qt/GUI (see ADR 0026).
 dependencies = [
     "ase>=3.26.0",
     "numpy<2.0.0",
-    "pyopengl>=3.1.10",
-    "pyqtgraph>=0.13.7",
-    "pyside6==6.4.2",
-    "qasync>=0.28.0",
     "scikit-learn>=1.6.1",
     "scipy>=1.13.1",
     "torch>=2.8.0",
-    "vispy>=0.16.1",
+    "msgpack>=1.0.0",
+    "websockets>=12.0",
+    "pydantic>=2.0",
+    "tomli-w>=1.0",
+    "jaxtyping>=0.2.34",
 ]
 
+[project.optional-dependencies]
+# Desktop client: `pip install ffast[gui]` adds the Qt/Vispy renderer.
+gui = [
+    "pyopengl>=3.1.10",
+    "pyqtgraph>=0.13.7",
+    "pyside6>=6.8,<6.9",
+    "qasync>=0.28.0",
+    "vispy>=0.16.1",
+]
+# Server plugins (ADR 0048): each ML-backend model loader in
+# ffast/plugins/models/ pulls its own heavy framework, gated behind its own
+# extra so a base install stays slim. torch itself is already a base
+# dependency above. A backend's module still imports cleanly with its extra
+# absent — the real dependency is lazily imported inside the loader's
+# __init__/predict — so the plugin registers fine either way; a missing
+# backend only surfaces when a user actually loads a model of that type.
+mace = ["mace-torch"]
+nequip = ["nequip"]
+schnetpack = ["schnetpack"]
+sgdml = ["sgdml"]
+# spookynet has no PyPI distribution (vendor ships it as source only, see
+# https://github.com/OUnke/SpookyNet) — no extra to declare; install it
+# manually per the vendor's own instructions if needed.
+# playwright drives the browser-client runtime tests. Without it declared,
+# `pip install -e ".[dev]"` produced an environment that could not even
+# collect the suite. pytest-xdist runs the tests in parallel (`addopts` below).
+dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "pytest-xdist>=3.0", "playwright>=1.40", "pillow>=10.0"]
+zstd = ["zstandard>=0.21"]
+
 [project.scripts]
-ffast = "main:cli"
+# Two clients, one protocol. `ffast` dispatches: the Qt/Vispy desktop when the
+# `gui` extra is installed, the browser client when it isn't (launcher.py). The
+# desktop is the complete client, so the bare command should reach it; a base
+# install has no PySide6 and gets the browser, which is the point of the
+# browser client existing. Both are also addressable directly.
+ffast = "launcher:main"
+ffast-qt = "main:cli"
+ffast-web = "ffast.renderers.web.launcher:main"
+ffast-server = "server:cli"
+ffast-cli = "ffast.cli.main:main"
 
 [tool.setuptools]
-py-modules = ["events", "headless", "headless_lattice", "main", "tasks", "utils"]
+py-modules = ["events", "launcher", "main", "server", "tasks", "utils"]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = [
+    "ffast",
+    "ffast.*",
     "UI",
     "UI.*",
     "client",
     "client.*",
+    "cluster",
+    "cluster.*",
     "config",
     "config.*",
     "datasetLoaders",
@@ -45,6 +88,12 @@ namespaces = true
 
 [tool.setuptools.package-data]
 config = ["default.json"]
+"ffast.config" = ["*.toml", "builtin_tabs/*.toml", "default.json"]
+# Vendored web client assets (ADR 0045): HTML/JS/CSS + vendored Three.js and
+# Plotly under static/. These must ship in the wheel or `ffast` (the web
+# launcher) serves a dead page. The recursive `static/**/*` glob covers the
+# vendor/ and panes/ subdirs (recursive `**` needs the setuptools>=64 we pin).
+"ffast.renderers.web" = ["static/**/*"]
 
 [tool.black]
 line-length = 79
@@ -53,3 +102,14 @@ skip-magic-trailing-comma = 1
 [tool.isort]
 profile = "black"
 line-length = 79
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# Six parallel processes (pytest-xdist): the browser tests take about 3 minutes
+# instead of 9; more workers measured no faster. `-n 0` runs in one process.
+addopts = "-n 6"
+markers = [
+    "integration: end-to-end tests that spawn a real ffast-server subprocess (deselect with '-m \"not integration\"')",
+]

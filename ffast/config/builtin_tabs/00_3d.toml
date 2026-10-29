@@ -1,0 +1,13 @@
+# 3D — the main view in one 3D panel that fills the tab (ADR 0056). The browser
+# used to draw this tab by hand, fixed in first place; it is an ordinary tab
+# now, so it can be edited, moved or renamed like any other. A 3D panel is
+# linked unless it says otherwise: it shows the main view, the one 3D view the
+# object rail drives. Browser only: the desktop skips tabs made only of 3D
+# panels, because it has its own 3D window.
+[[tabs]]
+name = "3D"
+
+[[tabs.panels]]
+kind = "3d"
+row = 0
+col = 0

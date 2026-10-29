@@ -164,6 +164,7 @@ cython_debug/
 .idea/
 test2.py
 config/user.json
+config/clusters.json
 CLAUDE.md
 .DS_Store
 /results
@@ -182,3 +183,21 @@ examples/data/variable-sized periodic/mptrj_sampled_over_200_spk.db
 examples/data/variable-sized periodic/mptrj_sampled_over_200_spk_split.npz
 examples/data/variable-sized periodic/predictions_mptrj_sampled_old.xyz
 datasets_test/add_noise.py
+
+# Internal working docs — not for the public repo (planning scratch, AI-agent
+# workflow config, issue drafts). Kept local only.
+FFAST_v2_plan.md
+ffast_vsize_todo.md
+docs/agents/
+docs/issues/
+docs/legacy-thinning-plan.md
+
+# Local agent/editor state (holds absolute paths from this machine)
+.claude/
+
+# iCloud Drive duplicates ("build 2/", "server 2.py")
+* 2
+* 2.*
+
+# Impeccable design-tool working files (critiques, sketches, briefs); local only
+.impeccable/

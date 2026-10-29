@@ -1,4 +1,4 @@
-from events import EventChildClass
+from ffast.core.events import EventChildClass
 import logging
 
 logger = logging.getLogger("FFAST")
@@ -25,6 +25,8 @@ class DataWatcher(EventChildClass):
         self.eventSubscribe("MODEL_DELETED", self.refreshDependencyList)
 
         self.dataTypeDependencies = []
+        self.metricDependencies = {}  # {metric_id: params_dict}
+        self._metricRequiresModel = False  # True if any metric uses prediction.* inputs
         self.datasetDependencies = []
         self.modelDependencies = []
         self.dependencyList = (
@@ -36,19 +38,42 @@ class DataWatcher(EventChildClass):
         self.currentlyMissingKeys = []
         self.refreshWidgets = []
         self.callbacks = []
-        self.plotName = None
 
     allDatasets = False
     allModels = False
     parentName = None
-
+    autocomputePriority = False
     # updateKey = 0
 
     # def getUpdateKey(self):
     #     return self.updateKey
 
-    def setPlotName(self, name):
-        self.plotName = name
+    def setMetricDependencies(self, metric_deps: dict):
+        """Declare metric dependencies: {metric_id: params_dict}.
+
+        Replaces setDataDependencies for plots that consume MetricResults directly.
+        Plot widgets receive one entry per (model, dataset) pair in getWatchedData(),
+        with dataEntry = {metric_id: MetricResult, ...} (ADR 0019, D5/A1).
+
+        Model-independent metrics (inputs only reference.* / selection.*) produce one
+        entry per dataset with model=None, so they work without any model loaded.
+        """
+        from ffast.metrics.registry import default_registry
+        from ffast.metrics.input_resolver import metric_needs_prediction
+        self.metricDependencies = {}
+        requires_model = False
+        for metric_id, params in metric_deps.items():
+            if not default_registry.has(metric_id):
+                logger.error("setMetricDependencies: unknown metric '%s'", metric_id)
+                continue
+            self.metricDependencies[metric_id] = params
+            # Transitive: a metric whose direct inputs are only other metrics
+            # (e.g. energy_mae → energy_difference) still needs a prediction at
+            # the leaves, so it is model-dependent.
+            if metric_needs_prediction(metric_id, default_registry):
+                requires_model = True
+        self._metricRequiresModel = requires_model
+        self.refreshDependencyList()
 
     def setDataDependencies(self, *args):
         self.dataTypeDependencies = []
@@ -62,7 +87,7 @@ class DataWatcher(EventChildClass):
             args = args[0]
 
         for key in args:
-            if not env.hasDataType(key):
+            if not env.data.hasDataType(key):
                 logger.error(
                     f"Tried to set DataWatcher dependency with key `{key}`,"
                     + ", but this key has not been registered."
@@ -103,7 +128,7 @@ class DataWatcher(EventChildClass):
 
     def isDependentOn(self, key):
         return (key in self.getModelDependencies()) or (
-                key in self.getDatasetDependencies()
+            key in self.getDatasetDependencies()
         )
 
     def setModelDatasetDependencies(self, modelKeys, datasetKeys):
@@ -128,7 +153,7 @@ class DataWatcher(EventChildClass):
                 args = args[0]
 
         for key in args:
-            dataset = self.env.getDataset(key)
+            dataset = self.env.datasets.get(key)
             if (dataset is None) or (not dataset.active):
                 continue
             self.datasetDependencies.append(key)
@@ -149,56 +174,79 @@ class DataWatcher(EventChildClass):
         self.refreshList = []
         env = self.env
 
-        if len(self.dataTypeDependencies) < 1 or (
-                self.dataTypeDependencies[0] is None
-        ):
+        has_dt = len(self.dataTypeDependencies) > 0 and self.dataTypeDependencies[0] is not None
+        has_metric = bool(self.metricDependencies)
+
+        if not has_dt and not has_metric:
             self.refresh()
             return
 
         datasetDependencies = (
-                self.allDatasets
-                and env.getAllDatasetKeys()
-                or self.datasetDependencies
+            self.allDatasets
+            and env.datasets.all_keys()
+            or self.datasetDependencies
         )
         modelDependencies = (
-                self.allModels and env.getAllModelKeys() or self.modelDependencies
+            self.allModels and env.models.all_keys() or self.modelDependencies
         )
 
-        for dataTypeKey in self.dataTypeDependencies:
-            dataType = env.getRegisteredDataType(dataTypeKey)
-            if dataType is None:
-                continue
-
-            mds = modelDependencies
-            if not dataType.modelDependent:
-                mds = [None]
-
-            for modelKey in mds:
-                model = env.getModel(modelKey)
-                if (model is None) and dataType.modelDependent:
+        if has_dt:
+            for dataTypeKey in self.dataTypeDependencies:
+                dataType = env.data.getRegisteredDataType(dataTypeKey)
+                if dataType is None:
                     continue
 
-                dds = datasetDependencies
-                if not dataType.datasetDependent:
-                    dds = [None]
+                mds = modelDependencies
+                if not dataType.modelDependent:
+                    mds = [None]
 
-                for datasetKey in dds:
-                    dataset = env.getDataset(datasetKey)
-
-                    if (dataset is None) and dataType.datasetDependent:
+                for modelKey in mds:
+                    model = env.models.get(modelKey)
+                    if (model is None) and dataType.modelDependent:
                         continue
-                    if (
+
+                    dds = datasetDependencies
+                    if not dataType.datasetDependent:
+                        dds = [None]
+
+                    for datasetKey in dds:
+                        dataset = env.datasets.get(datasetKey)
+
+                        if (dataset is None) and dataType.datasetDependent:
+                            continue
+                        if (
                             dataset.isSubDataset
                             and dataset.isAtomFiltered
                             and (dataType.atomFilterable or dataType.atomConstant)
-                    ):
-                        key = dataType.getCacheKey(
-                            model=model, dataset=dataset.parent
-                        )
-                        self.refreshList.append(key)
+                        ):
+                            key = dataType.getCacheKey(
+                                model=model, dataset=dataset.parent
+                            )
+                            self.refreshList.append(key)
 
-                    key = dataType.getCacheKey(model=model, dataset=dataset)
-                    self.dependencyList.append(key)
+                        key = dataType.getCacheKey(model=model, dataset=dataset)
+                        self.dependencyList.append(key)
+
+        if has_metric:
+            for metric_id, params in self.metricDependencies.items():
+                if not self._metricRequiresModel:
+                    for datasetKey in datasetDependencies:
+                        dataset = env.datasets.get(datasetKey)
+                        if dataset is None or not dataset.active:
+                            continue
+                        key = env.data.registerMetricRequest(metric_id, params, None, dataset)
+                        self.dependencyList.append(key)
+                else:
+                    for modelKey in modelDependencies:
+                        model = env.models.get(modelKey)
+                        if model is None:
+                            continue
+                        for datasetKey in datasetDependencies:
+                            dataset = env.datasets.get(datasetKey)
+                            if dataset is None or not dataset.active:
+                                continue
+                            key = env.data.registerMetricRequest(metric_id, params, model, dataset)
+                            self.dependencyList.append(key)
 
         self.refresh()
 
@@ -207,7 +255,7 @@ class DataWatcher(EventChildClass):
         env = self.env
 
         for key in self.dependencyList:
-            if not env.hasCacheKey(key):
+            if not env.data.hasCacheKey(key):
                 missingKeys.append(key)
 
         return missingKeys
@@ -223,7 +271,7 @@ class DataWatcher(EventChildClass):
 
     def onDataUpdated(self, cacheKey):
         if (cacheKey not in self.dependencyList) and (
-                cacheKey not in self.refreshList
+            cacheKey not in self.refreshList
         ):
             return
 
@@ -249,58 +297,87 @@ class DataWatcher(EventChildClass):
             func()
 
     def getWatchedData(self, dataOnly=False):
+        if self.metricDependencies:
+            return self._getWatchedDataMetric()
+        return self._getWatchedDataLegacy(dataOnly=dataOnly)
+
+    def _getWatchedDataLegacy(self, dataOnly=False):
         env = self.env
         allData = []
 
         for key in self.dependencyList:
-            if env.hasCacheKey(key):
+            if env.data.hasCacheKey(key):
                 if dataOnly:
-                    allData.append(env.getCacheByKey(key))
+                    allData.append(env.data.getCacheByKey(key))
                 else:
-                    (dataTypeKey, model, dataset) = env.cacheKeyToComponents(
-                        key
-                    )
-
-                    dataEntry = env.getCacheByKey(key)
+                    (dataTypeKey, model, dataset) = env.data.cacheKeyToComponents(key)
+                    dataEntry = env.data.getCacheByKey(key)
                     entry = {
                         "dataTypeKey": dataTypeKey,
                         "model": model,
-                        # "modelKey": model is not None and model.fingerprint,
                         "dataset": dataset,
-                        # "datasetKey": dataset is not None and dataset.fingerprint,
                         "dataKey": key,
                         "dataEntry": dataEntry,
                     }
-
                     allData.append(entry)
 
         return allData
+
+    def _getWatchedDataMetric(self):
+        """A1 grouping: one entry per (model, dataset), dataEntry = {metric_id: MetricResult}.
+
+        For model-independent metrics (_metricRequiresModel=False), model is None and
+        entries are keyed per dataset only.
+        """
+        env = self.env
+
+        datasetDeps = (self.allDatasets and env.datasets.all_keys() or self.datasetDependencies)
+        modelDeps = (self.allModels and env.models.all_keys() or self.modelDependencies)
+
+        groups = {}  # (model_fp_or_nil, dataset_fp) → entry dict
+
+        if not self._metricRequiresModel:
+            for datasetKey in datasetDeps:
+                dataset = env.datasets.get(datasetKey)
+                if dataset is None or not dataset.active:
+                    continue
+                gk = ("nil", dataset.fingerprint)
+                if gk not in groups:
+                    groups[gk] = {"model": None, "dataset": dataset, "dataEntry": {}}
+                for metric_id, params in self.metricDependencies.items():
+                    cache_key = env.data.make_metric_cache_key(metric_id, params, None, dataset)
+                    if env.data.hasCacheKey(cache_key, subChecks=False):
+                        groups[gk]["dataEntry"][metric_id] = env.data.getCacheByKey(cache_key, subChecks=False)
+        else:
+            for modelKey in modelDeps:
+                model = env.models.get(modelKey)
+                if model is None:
+                    continue
+                for datasetKey in datasetDeps:
+                    dataset = env.datasets.get(datasetKey)
+                    if dataset is None or not dataset.active:
+                        continue
+                    gk = (model.fingerprint, dataset.fingerprint)
+                    if gk not in groups:
+                        groups[gk] = {"model": model, "dataset": dataset, "dataEntry": {}}
+                    for metric_id, params in self.metricDependencies.items():
+                        cache_key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
+                        if env.data.hasCacheKey(cache_key, subChecks=False):
+                            groups[gk]["dataEntry"][metric_id] = env.data.getCacheByKey(cache_key, subChecks=False)
+
+        n_metrics = len(self.metricDependencies)
+        return [g for g in groups.values() if len(g["dataEntry"]) == n_metrics]
 
     def linkSelectionTo(self, dataWatcher):
         # links this dataWatcher to another
         # everytime the other dataWatcher gets updated, updates this one to the same values
         pass
 
-    def loadContent(self, plot_called=False):
+    def loadContent(self):
         env = self.env
         deps = self.getMissingDependencies()
-        if not plot_called:
-            for dep in deps:
-                env.generationQueue.add(dep)
-            if self.plotName is not None and len(deps) > 0:
-                self.eventPush("PlotLoadPushed", self.plotName)
-                print(f'"PlotLoadPushed" event pushed from {self.plotName}')
-        else:  # plot_called = True -> This method is called by a plot to automatically compute plots' data.
-            # If the dataset is more than 3 GB, according to requirements, it should not be automatically computed.
-            flag = False  # A flag to indicate whether the plot for any dataset/prediction pair is added to the queue
-            for dep in deps:
-                dt, md, dataset = env.cacheKeyToComponents(dep)
-                if dataset.sizeGb < 3:
-                    env.generationQueue.add(dep)
-                    flag = True
-            if self.plotName is not None and len(deps) > 0 and flag:
-                self.eventPush("PlotLoadPushed", self.plotName)
-                print(f'"PlotLoadPushed" event pushed from {self.plotName}')
+        for dep in deps:
+            env.data.generationQueue.add(dep)
 
     def addCallback(self, func):
         self.callbacks.append(func)

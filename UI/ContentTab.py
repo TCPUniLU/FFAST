@@ -7,8 +7,9 @@ from UI.Templates import (
 from PySide6 import QtCore, QtGui, QtWidgets
 from config.uiConfig import configStyleSheet
 from utils import rgbToHex
+from client.object_info import tooltipHtml
 import logging
-from events import EventChildClass
+from ffast.core.events import EventChildClass
 from PySide6.QtWidgets import QSizePolicy
 
 logger = logging.getLogger("FFAST")
@@ -32,6 +33,16 @@ class DatasetModelLabel(ListCheckButton, EventChildClass):
     def getLabel(self):
         return self.env.getModelOrDataset(self.key).getDisplayName()
 
+    def event(self, e):
+        # Built on each hover, so a subset that follows the zoom shows its
+        # frames as they are now.
+        if e.type() == QtCore.QEvent.ToolTip:
+            obj = self.env.getModelOrDataset(self.key)
+            if obj is not None:
+                QtWidgets.QToolTip.showText(e.globalPos(), tooltipHtml(obj), self)
+                return True
+        return super().event(e)
+
     def onDatasetModelChanged(self, key):
         if key != self.key:
             return
@@ -42,7 +53,6 @@ class ContentTab(ExpandingScrollArea):
     def __init__(
         self,
         handler,
-        tabName,
         hasDataSelector=True,
         hasModels=True,
         hasDatasets=True,
@@ -50,7 +60,6 @@ class ContentTab(ExpandingScrollArea):
         **kwargs
     ):
         self.handler = handler
-        self.tabName = tabName
         super().__init__(**kwargs)
         # self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
@@ -83,18 +92,20 @@ class ContentTab(ExpandingScrollArea):
         self.topLayout.addWidget(self.dataSelector)
 
     def addDataSelector(self, **kwargs):
-        ds = DatasetModelSelector(self.handler, tabName=self.tabName, parent=self, **kwargs)
+        ds = DatasetModelSelector(self.handler, parent=self, **kwargs)
         self.setDataSelector(ds)
 
 
 class DatasetModelSelector(Widget, EventChildClass):
 
     quiet = False
+    # A zoom moves a selected subset and drops its results; once it has been
+    # still this long, reselect it so the plots load its new data.
+    SUBSET_SETTLE_MS = 500
 
-    def __init__(self, handler, tabName=None, hasModels=True, hasDatasets=True, **kwargs):
+    def __init__(self, handler, hasModels=True, hasDatasets=True, **kwargs):
         self.handler = handler
         self.env = handler.env
-        self.tabName = tabName
         super().__init__(layout="vertical", **kwargs)
         EventChildClass.__init__(self)
         self.updateCallbacks = []
@@ -104,12 +115,6 @@ class DatasetModelSelector(Widget, EventChildClass):
 
         self.hasModels = hasModels
         self.hasDatasets = hasDatasets
-
-
-        # Check, if the previously selected pairs are identical in the current update function call, then don't push
-        # "DatasetModelPairSelected" event.
-        self.previousModelKeys = set()
-        self.previousDatasetKeys = set()
 
         if hasModels:
             # CREATE LISTS AND ADD THEM TO THE LAYOUTS
@@ -135,6 +140,18 @@ class DatasetModelSelector(Widget, EventChildClass):
                 "DATASET_STATE_CHANGED", self.updateDatasetsList
             )
 
+            self._subsetMoved = QtCore.QTimer(self)
+            self._subsetMoved.setSingleShot(True)
+            self._subsetMoved.setInterval(self.SUBSET_SETTLE_MS)
+            self._subsetMoved.timeout.connect(self.update)
+            self.eventSubscribe("SUBDATASET_INDICES_CHANGED", self.onSubsetMoved)
+
+    def onSubsetMoved(self, key):
+        """Wait for a selected subset to stop moving, then reload (restarts the wait)."""
+        _, datasetKeys = self.getSelectedKeys()
+        if key in datasetKeys:
+            self._subsetMoved.start()
+
     def updateModelsList(self, key):
         if not self.hasModels:
             return
@@ -142,7 +159,7 @@ class DatasetModelSelector(Widget, EventChildClass):
         modelKeys, _ = self.getSelectedKeys()
 
         self.modelsList.removeWidgets(clear=True)
-        keys = self.env.getAllModelKeys()
+        keys = self.env.models.all_keys()
 
         for key in keys:
             w = DatasetModelLabel(self.handler, key, parent=self.modelsList)
@@ -163,7 +180,7 @@ class DatasetModelSelector(Widget, EventChildClass):
         _, datasetKeys = self.getSelectedKeys()
 
         self.datasetsList.removeWidgets(clear=True)
-        keys = self.env.getAllDatasetKeys()
+        keys = self.env.datasets.all_keys()
 
         for key in keys:
             w = DatasetModelLabel(self.handler, key, parent=self.datasetsList)
@@ -193,6 +210,23 @@ class DatasetModelSelector(Widget, EventChildClass):
 
         return modelKeys, datasetKeys
 
+    _LARGE_DATASET_BYTES = 3_000_000_000
+
+    def _isLargeSelection(self, datasetKeys):
+        import os
+        for key in datasetKeys:
+            dataset = self.env.datasets.get(key)
+            if dataset is None:
+                continue
+            path = getattr(dataset, "path", None)
+            if path and os.path.isfile(path):
+                try:
+                    if os.path.getsize(path) >= self._LARGE_DATASET_BYTES:
+                        return True
+                except OSError:
+                    pass
+        return False
+
     def update(self):
         if self.quiet:
             return
@@ -201,9 +235,6 @@ class DatasetModelSelector(Widget, EventChildClass):
         for func in self.updateCallbacks:
             func(modelKeys, datasetKeys)
 
-        if not(set(modelKeys) == self.previousModelKeys and set(datasetKeys) == self.previousDatasetKeys) \
-                and self.tabName is not None:
-            self.eventPush("DatasetModelPairSelected", self.tabName)
-            self.previousModelKeys = set(modelKeys)
-            self.previousDatasetKeys = set(datasetKeys)
-            # print(f'"dataset model pair selection" event by tab {self.tabName}')
+        if modelKeys and datasetKeys:
+            all_plots = not self._isLargeSelection(datasetKeys)
+            self.eventPush("AUTO_COMPUTE_TRIGGERED", all_plots)

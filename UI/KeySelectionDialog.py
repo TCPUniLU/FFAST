@@ -43,7 +43,7 @@ class KeySelectionDialog(QDialog):
         ref_layout.addWidget(QLabel("<b>Reference Data (Ground Truth):</b>"))
 
         # Energy key selection
-        energy_options = ["<Use Energy>"] + (
+        energy_options = ["<Use ASE Calculator>"] + (
             self.energy_keys if self.energy_keys else []
         )
         self.energy_ref_combo = QComboBox()
@@ -57,7 +57,7 @@ class KeySelectionDialog(QDialog):
         ref_layout.addWidget(self.energy_ref_combo)
 
         # Force key selection
-        force_options = ["<Use Force>"] + (
+        force_options = ["<Use ASE Calculator>"] + (
             self.force_keys if self.force_keys else []
         )
         self.force_ref_combo = QComboBox()

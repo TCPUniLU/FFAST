@@ -1,0 +1,101 @@
+/**
+ * Frame links (ADR 0056 rule 3): a linked frame means the same structure,
+ * not the same frame number.
+ *
+ * Datasets are related through their lineage, which the server announces
+ * with each dataset (REMOTE_DATASET_META `parent`, `parent_frames`): a frame
+ * subset's frame i is its parent's frame `parent_frames[i]`; an atom subset
+ * keeps every frame of its parent. Following parents up to the dataset that
+ * was loaded gives each frame its configuration: (root dataset, root frame).
+ * A prediction made for a dataset applies to its subsets: its values for a
+ * subset are its values for the parent's frames. Pure functions over the dataset metadata map, so they test without a server.
+ */
+
+/**
+ * The configuration a frame is: the loaded dataset it comes from, and its
+ * frame there. Null for a frame the dataset does not have.
+ * @param {string} fp @param {number} frame
+ * @param {Map<string, {n?: number, parent?: string|null, parent_frames?: number[]|null}>} datasets
+ * @returns {{root: string, frame: number}|null}
+ */
+export function configurationOf(fp, frame, datasets) {
+  let cur = fp, f = frame;
+  for (let depth = 0; depth < 64; depth++) {
+    const meta = datasets.get(cur);
+    if (!meta) return null;
+    if (!Number.isInteger(f) || f < 0 || (meta.n != null && f >= meta.n)) return null;
+    if (!meta.parent) return { root: cur, frame: f };
+    if (meta.parent_frames) f = meta.parent_frames[f];
+    cur = meta.parent;
+  }
+  return null;   // a lineage this deep is a loop
+}
+
+/**
+ * The frame of `toFp` that is the same configuration as frame `frame` of
+ * `fromFp`, or null when `toFp` does not hold it (unrelated datasets, or a
+ * subset that left that frame out).
+ */
+export function sameConfiguration(fromFp, frame, toFp, datasets) {
+  if (fromFp === toFp) return datasets.has(fromFp) ? frame : null;
+  const want = configurationOf(fromFp, frame, datasets);
+  if (!want) return null;
+  const n = datasets.get(toFp)?.n ?? 0;
+  for (let j = 0; j < n; j++) {
+    const have = configurationOf(toFp, j, datasets);
+    if (!have) return null;   // toFp is not part of any known lineage
+    if (have.root !== want.root) return null;
+    if (have.frame === want.frame) return j;
+  }
+  return null;
+}
+
+/**
+ * Whether a prediction draws on dataset `fp`: it was made for `fp` or for a
+ * dataset `fp` was cut from. An empty `dataset_fingerprints` means unknown,
+ * which allows it, as the object rail has always read it.
+ * @param {{dataset_fingerprints?: string[]}|undefined} modelMeta
+ * @param {string} fp
+ * @param {Map<string, {parent?: string|null}>} datasets
+ */
+export function predictionApplies(modelMeta, fp, datasets) {
+  const fps = modelMeta?.dataset_fingerprints || [];
+  if (!fps.length) return true;
+  let cur = fp;
+  for (let depth = 0; cur && depth < 64; depth++) {
+    if (fps.includes(cur)) return true;
+    cur = datasets.get(cur)?.parent;
+  }
+  return false;
+}
+
+/** The loaded dataset `fp` was cut from (itself if it was loaded), or null. */
+export function rootOf(fp, datasets) {
+  let cur = fp;
+  for (let depth = 0; depth < 64; depth++) {
+    const meta = datasets.get(cur);
+    if (!meta) return null;
+    if (!meta.parent) return cur;
+    cur = meta.parent;
+  }
+  return null;
+}
+
+/**
+ * The frame of `toFp` an independent panel shows while it follows the main
+ * view's frame `frame` of `fromFp` (ADR 0056 rule 3): the same structure
+ * where both are cut from one dataset, else the same frame number. With no
+ * counterpart, `missing` says why, instead of a different structure.
+ * @returns {{frame: number}|{missing: string}}
+ */
+export function linkedFrame(fromFp, frame, toFp, datasets) {
+  const to = datasets.get(toFp);
+  if (!to || !datasets.has(fromFp)) return { missing: '' };
+  const name = to.name || toFp.slice(0, 8);
+  if (rootOf(fromFp, datasets) === rootOf(toFp, datasets)) {
+    const same = sameConfiguration(fromFp, frame, toFp, datasets);
+    return same == null ? { missing: `This structure is not in ${name}` } : { frame: same };
+  }
+  const n = to.n ?? 0;
+  return frame >= 0 && frame < n ? { frame } : { missing: `No frame ${frame} (${name} has ${n})` };
+}

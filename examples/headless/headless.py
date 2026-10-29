@@ -7,7 +7,7 @@ PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 os.chdir(PROJECT_ROOT)
 sys.path.insert(0, PROJECT_ROOT)
 
-from client.environment import startHeadlessEnvironment
+from ffast.core.environment import startHeadlessEnvironment
 
 # Initialize headless environment
 env = startHeadlessEnvironment()
@@ -20,29 +20,48 @@ env.waitForTasks(verbose=True)
 dataset = env.getDatasetFromPath("examples/data/dataset.xyz")
 
 # Load pre-computed predictions (ASE file with energies and forces)
-# The second argument is the dataset fingerprint to match against
 env.loadPrepredictedDataset("examples/data/prediction.xyz", dataset.fingerprint)
 
 # Get the model created from the predictions (ghost model)
-model = env.getAllModels()[0]
+model = env.models.all()[0]
 
-# Queue error computations
-env.addToGenerationQueue("energyError", model=model, dataset=dataset)
-env.addToGenerationQueue("forcesError", model=model, dataset=dataset)
-env.addToGenerationQueue("energyErrorMetrics", model=model, dataset=dataset)
-env.addToGenerationQueue("forcesErrorMetrics", model=model, dataset=dataset)
-env.addToGenerationQueue("energyErrorDist", model=model, dataset=dataset)
-env.addToGenerationQueue("forcesErrorDist", model=model, dataset=dataset)
+# Queue metric computations
+# A base metric plus its keep-box setting names each error (ADR 0065):
+# [kept boxes;combine;statistic], "dataset" when nothing is kept.
+ENERGY_MAE = "ffast.energy_difference[dataset;mae]"
+ENERGY_RMSE = "ffast.energy_difference[dataset;rmse]"
+FORCE_MAE = "ffast.force_difference[dataset;component;mae]"
+FORCE_RMSE = "ffast.force_difference[dataset;component;rmse]"
+metrics = [
+    (ENERGY_MAE, {}),
+    (ENERGY_RMSE, {}),
+    ("ffast.energy_difference_shifted[dataset;mae]", {}),
+    ("ffast.energy_difference_shifted[dataset;rmse]", {}),
+    (FORCE_MAE, {}),
+    (FORCE_RMSE, {}),
+    ("ffast.energy_difference", {}),
+    ("ffast.force_difference[atom+structure;component;mae]", {}),
+]
+for metric_id, params in metrics:
+    key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
+    env.data.taskGenerateMetric(metric_id, params, model, dataset, key)
 env.waitForTasks(verbose=True)
 
-# Retrieve computed metrics
-eMetrics = env.getData("energyErrorMetrics", model=model, dataset=dataset)
-fMetrics = env.getData("forcesErrorMetrics", model=model, dataset=dataset)
+# Retrieve computed metrics from cache
+def get_metric(metric_id, params={}):
+    key = env.data.make_metric_cache_key(metric_id, params, model, dataset)
+    result = env.data.getCacheByKey(key, subChecks=False)
+    return float(result.values) if result is not None else None
 
-print(f"Energy MAE: {eMetrics.get('mae'):.4f}")
-print(f"Energy RMSE: {eMetrics.get('rmse'):.4f}")
-print(f"Force MAE: {fMetrics.get('mae'):.4f}")
-print(f"Force RMSE: {fMetrics.get('rmse'):.4f}")
+e_mae   = get_metric(ENERGY_MAE)
+e_rmse  = get_metric(ENERGY_RMSE)
+f_mae   = get_metric(FORCE_MAE)
+f_rmse  = get_metric(FORCE_RMSE)
+
+print(f"Energy MAE:  {e_mae:.4f}")
+print(f"Energy RMSE: {e_rmse:.4f}")
+print(f"Force MAE:   {f_mae:.4f}")
+print(f"Force RMSE:  {f_rmse:.4f}")
 
 # Save session for later use in the GUI
 # Creates a directory at the given path containing:
@@ -50,7 +69,7 @@ print(f"Force RMSE: {fMetrics.get('rmse'):.4f}")
 #   cache/*.npz    - all computed data (errors, distributions, metrics)
 # Load it in the GUI via File > Load (Ctrl+l).
 savePath = os.path.join(PROJECT_ROOT, "results")
-env.save(savePath)
+env.persistence.save(savePath)
 print(f"\nSession saved to: {savePath}")
 
 # Clean up

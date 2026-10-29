@@ -57,16 +57,6 @@ def getPerpComponent(v, vRef, unitary=False):
     return vPerp
 
 
-def getDihedral(p):
-    # https://stackoverflow.com/questions/20305272/dihedral-torsion-angle-from-four-points-in-cartesian-coordinates-in-python
-    b = p[:-1] - p[1:]
-    b[0] *= -1
-    v = np.array([np.cross(v, b[1]) for v in [b[0], b[2]]])
-    # Normalize vectors
-    v /= np.sqrt(np.einsum("...i,...i", v, v)).reshape(-1, 1)
-    return np.arccos(v[0].dot(v[1]))
-
-
 def alignConfiguration(r, r0, along=[0, 1, 2], com=False):
     n1, n2, n3 = along
 

@@ -1,0 +1,73 @@
+{% set name = "ffast" %}
+{% set version = "2.0.0" %}
+
+# conda-forge recipe for FFAST (ADR 0045 Phase 6, distribution).
+#
+# This packages the headless core + web client. There are NO native GL/Qt
+# libraries to carry — the client is the user's own browser, served the
+# vendored static assets that ship inside the wheel — so the recipe is a plain
+# noarch: python build. The `ffast` command launches the web client; the
+# optional Qt desktop (`ffast[gui]`) is intentionally NOT packaged here (it is
+# the unreliable-on-Linux path this ADR retires).
+#
+# For a real conda-forge submission, replace the `path:` source with the
+# published sdist url + sha256.
+package:
+  name: {{ name|lower }}
+  version: {{ version }}
+
+source:
+  # Local build; swap for `url:`/`sha256:` of the PyPI sdist on release.
+  path: ..
+
+build:
+  noarch: python
+  script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  number: 0
+  entry_points:
+    - ffast = ffast.renderers.web.launcher:main
+    - ffast-web = ffast.renderers.web.launcher:main
+    - ffast-server = server:cli
+    - ffast-cli = ffast.cli.main:main
+    - ffast-qt = main:cli
+
+requirements:
+  host:
+    - python 3.11.*
+    - pip
+    - setuptools >=64
+    - wheel
+  run:
+    # Mirrors `pyproject.toml [project.dependencies]` (the source of truth),
+    # with conda-forge package names (torch→pytorch, msgpack→msgpack-python).
+    - python 3.11.*
+    - ase >=3.26.0
+    - numpy <2.0.0
+    - scikit-learn >=1.6.1
+    - scipy >=1.13.1
+    - pytorch >=2.8.0
+    - msgpack-python >=1.0.0
+    - websockets >=12.0
+    - pydantic >=2.0
+    - tomli-w >=1.0
+    - jaxtyping >=0.2.34
+
+test:
+  imports:
+    - ffast
+    - ffast.renderers.web.launcher
+  commands:
+    # The console scripts must be installed and importable on a clean env with
+    # no system Qt/GL.
+    - ffast-cli --help
+    - ffast-server --help
+    - test -f $SP_DIR/ffast/renderers/web/static/index.html  # [unix]
+
+about:
+  home: https://github.com/TCPUniLU/FFAST
+  license: MIT
+  summary: Force Field Analysis and Screening Tool — web client (no Qt/GL)
+  description: |
+    FFAST analyzes and visualizes Machine Learning Force Field (MLFF) models.
+    The client runs in the browser served by a local (or remote/HPC) Python
+    server over a WebSocket — no native GL/Qt libraries to install.

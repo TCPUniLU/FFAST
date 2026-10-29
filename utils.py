@@ -1,10 +1,10 @@
 import hashlib
 import re
+import sys
 import numpy as np
-import glob
-import importlib
 import os
 import logging
+from collections.abc import Mapping
 
 logger = logging.getLogger("FFAST")
 
@@ -19,196 +19,113 @@ def setupLogger(level=logging.INFO):
             ),
             logging.StreamHandler(),
         ],
+        force=True,  # install our handlers even if logging was already configured
     )
 
 
-def kahnsAlgorithm(graph):
-    degreeMap = {node: 0 for node in graph}
+def deep_getsizeof(obj, seen=None):
+    """
+    Function to calculate the size of an object on memory in bites.
+    :param obj: Desired object
+    :param seen: Flag to avoid double counting of objects.
+    :return: Size of the object in bytes.
+    """
+    if seen is None:
+        seen = set()
 
-    for name, dependencies in graph.items():
-        for dep in dependencies:
-            degreeMap[dep] += 1
+    obj_id = id(obj)
+    if obj_id in seen:
+        return 0
+    seen.add(obj_id)
 
-    queue = [node for node in graph if degreeMap[node] == 0]
-    sortedNodes = []
+    size = sys.getsizeof(obj)
 
-    while queue:
-        node = queue.pop(0)
-        sortedNodes.append(node)
+    if isinstance(obj, Mapping):
+        size += sum(deep_getsizeof(k, seen) + deep_getsizeof(v, seen) for k, v in obj.items())
+    elif isinstance(obj, (list, tuple, set, frozenset)):
+        size += sum(deep_getsizeof(i, seen) for i in obj)
+    elif hasattr(obj, "__dict__"):
+        size += deep_getsizeof(obj.__dict__, seen)
+    elif hasattr(obj, "__slots__"):
+        for slot in obj.__slots__:
+            if hasattr(obj, slot):
+                size += deep_getsizeof(getattr(obj, slot), seen)
 
-        for dep in graph[node]:
-            degreeMap[dep] -= 1
-            if degreeMap[dep] == 0:
-                queue.append(dep)
-
-    sortedNodes.reverse()
-    if len(sortedNodes) == len(graph):
-        return sortedNodes, degreeMap
-    else:
-        return None, degreeMap
-
-
-def checkForInvalidDependencies(graph):
-    validNodes = set(graph.keys())
-    cleanedGraph = {}
-
-    for node, dependencies in graph.items():
-        valid = True
-        for dep in dependencies:
-            if dep not in validNodes:
-                logger.error(
-                    f"Module {node} cannot be loaded due to depending on inexistant module {dep}"
-                )
-                valid = False
-        if valid:
-            cleanedGraph[node] = dependencies
-
-    if len(cleanedGraph) < len(graph):
-        # need to cascade down if a node is removed
-        return checkForInvalidDependencies(cleanedGraph)
-    else:
-        return cleanedGraph
+    return size
 
 
-def cleanBondIdxsArray(arr):
-    try:
-        s = set()
-        for x in arr:
-            if x[0] == x[1]:
-                continue
-            elif x[0] < x[1]:
-                s.add((x[0], x[1]))
-            else:
-                s.add((x[1], x[0]))
-
-    except Exception as e:
-        logger.exception(
-            f"Tried to clean bond arr, but failed for: {e}. Array/List needs to be Nx2"
-        )
-        return False, None
-
-    return True, list(s)
+# Relocated to ffast.cache.fingerprint (ADR 0047); re-exported here so the
+# flat/loader call sites keep working until Phase 6 repoints them.
+from ffast.cache.fingerprint import md5FromArraysAndStrings  # noqa: E402,F401
 
 
-def loadModules(UI, env, headless=False):
-    mods = {}
-    depGraph = {}
-
-    _root = os.path.dirname(os.path.abspath(__file__))
-    for path in glob.glob(os.path.join(_root, "modules", "*.py")):
-        name = os.path.basename(path).replace(".py", "")
-
-        spec = importlib.util.spec_from_file_location(f"module_{name}", path)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-
-        mods[name] = mod
-        if hasattr(mod, "DEPENDENCIES"):
-            depGraph[name] = mod.DEPENDENCIES
-        else:
-            depGraph[name] = []
-
-    depGraph = checkForInvalidDependencies(depGraph)
-    order, degreeMap = kahnsAlgorithm(depGraph)
-    if order is None:
-        logger.error(
-            f"Cycle in module dependency graph. Remaining nodes: {degreeMap}"
-        )
-        return
-
-    for name in order:
-        mod = mods[name]
-        if hasattr(mod, "loadData"):
-            mod.loadData(env)
-        if (not headless) and hasattr(mod, "loadUI"):
-            mod.loadUI(UI, env)
-        if (not headless) and hasattr(mod, "loadLoupe"):
-            UI.registerLoupeModule(mod.loadLoupe)
+# Relocated to ffast.core.util (ADR 0047 Phase 5c); re-exported so flat/UI call
+# sites keep working until Phase 6 repoints them.
+from ffast.core.util import (  # noqa: E402,F401
+    cleanBondIdxsArray,
+    hexToRGB,
+    mixColors,
+    removeExtension,
+    rgbToHex,
+)
 
 
-def md5FromArraysAndStrings(*args):
-    fp = hashlib.md5()
+def _kde_xy(sample, bounds):
+    """Shared skeleton for the error/distribution KDE plots → ``(x, y)``.
 
-    for arg in args:
-        if isinstance(arg, str):
-            d = arg.encode("utf8")
-        elif isinstance(arg, np.ndarray):
-            d = arg.ravel()
-        elif isinstance(arg, list):
-            # Handle list of arrays (variable-sized datasets)
-            # Check if list contains numpy arrays
-            if len(arg) > 0 and isinstance(arg[0], np.ndarray):
-                # Flatten each array and concatenate
-                d = np.concatenate([a.ravel() for a in arg])
-            else:
-                # Regular list - try to convert to array
-                d = np.array(arg).ravel()
+    ``sample`` is the 1-D array fed to the KDE; ``bounds(sample) -> (lo, hi)``
+    gives the x-grid extent and is evaluated only for the non-degenerate case.
+    Degenerate input (fewer than two points or ~zero spread) returns a unit
+    spike at the mean over ``[0, max]`` — identical to the per-module copies
+    this replaces. Number of grid points comes from the ``plotDistNum`` config.
+    """
+    from scipy.stats import gaussian_kde
+    from ffast.config.user import getConfig
 
-        fp.update(hashlib.md5(d).digest())
-
-    return fp.hexdigest()
-
-
-def removeExtension(path):
-    if "." not in path:
-        return path
-
-    if path.startswith("."):
-        return path.replace(".", "")
-
-    match = re.match("^(.*)\.(.*)$", path)
-    if match is None:
-        return path.replace(".", "")
-    else:
-        return match.group(1).replace(".", "")
+    sample = np.asarray(sample, dtype=np.float64).ravel()
+    nPts = getConfig("plotDistNum")
+    if len(sample) < 2 or np.std(sample) < 1e-10:
+        top = max(np.max(sample), 1e-10) if len(sample) else 1e-10
+        x = np.linspace(0, top, nPts)
+        y = np.zeros_like(x)
+        if len(sample):
+            y[np.argmin(np.abs(x - np.mean(sample)))] = 1.0
+        return x, y
+    kde = gaussian_kde(sample)
+    lo, hi = bounds(sample)
+    x = np.linspace(lo, hi, nPts)
+    return x, kde(x)
 
 
-def rgbToHex(r, g, b):
-    return "#{:02x}{:02x}{:02x}".format(r, g, b)
+def mirrorKDE(values):
+    """Symmetric-mirror KDE of ``|values|`` over ``[0, max·1.05]`` → ``(x, y)``.
+
+    Error-distribution shape for the force/energy error panels: reflect the
+    absolute errors about zero so the density is symmetric and starts at 0.
+    """
+    a = np.abs(np.asarray(values, dtype=np.float64).ravel())
+    return _kde_xy(np.concatenate([a, -a]), lambda s: (0.0, np.max(s) * 1.05))
 
 
-def hexToRGB(sHex):
-    sHex = sHex.lstrip("#")
+def absKDE(values):
+    """KDE of ``|values|`` (not mirrored) over ``[min·0.95, max·1.05]``.
 
-    r = int(sHex[0:2], 16)
-    g = int(sHex[2:4], 16)
-    b = int(sHex[4:6], 16)
-
-    # return the RGB tuple as an array with values between 0 and 255
-    return [r, g, b]
+    The per-element atomic-error distribution shape.
+    """
+    a = np.abs(np.asarray(values, dtype=np.float64).ravel())
+    return _kde_xy(a, lambda s: (np.min(s) * 0.95, np.max(s) * 1.05))
 
 
-def mixColors(c1, c2):
-    return np.array((np.array(c1) + np.array(c2)) / 2).astype(int)
+def valueKDE(values):
+    """KDE of raw ``values`` over ``[min, max]`` padded 5% each side.
 
+    Distribution shape for non-error quantities (e.g. gyration radius) that are
+    neither absolute-valued nor mirrored.
+    """
+    v = np.asarray(values, dtype=np.float64).ravel()
 
-class ColorGradient:
-    # DEPRECATED, NOW USING VISPY'S COLORMAP
-    def __init__(self, *args, minValue=0, maxValue=1):
-        self.setMinMax(minValue, maxValue)
-        self.colors = [np.array(x) for x in args]
-        self.nPhases = len(args) - 1
+    def bounds(s):
+        delta = np.max(s) - np.min(s)
+        return (np.min(s) - delta * 0.05, np.max(s) + delta * 0.05)
 
-    def setMinMax(self, minValue, maxValue):
-        self.minValue = float(minValue)
-        self.maxValue = float(maxValue)
-        self.forkValue = self.maxValue - self.minValue
-
-    def __call__(self, v):
-        if isinstance(v, (list, np.ndarray)):
-            return [self.getColor(x) for x in v]
-        else:
-            return self.getColor(v)
-
-    def getColor(self, v):
-        if v <= self.minValue:
-            return self.colors[0]
-        elif v >= self.maxValue:
-            return self.colors[-1]
-
-        normV = (v - self.minValue) / self.forkValue * self.nPhases
-        nFork = int(normV)
-        fact = normV - nFork
-        c1, c2 = (self.colors[nFork], self.colors[nFork + 1])
-
-        return c2 * fact + c1 * (1 - fact)
+    return _kde_xy(v, bounds)

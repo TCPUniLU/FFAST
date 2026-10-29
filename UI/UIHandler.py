@@ -1,3 +1,4 @@
+import logging
 import os
 
 import pyqtgraph
@@ -5,9 +6,11 @@ from PySide6 import QtWidgets
 from PySide6.QtCore import QDir
 from PySide6.QtWidgets import QMessageBox
 
-from events import EventClass
-from UI.Loupe import Loupe
+from ffast.core.events import EventClass
+from UI.loupe.window import Loupe
 from UI.MainWindow import MainWindow
+
+logger = logging.getLogger("FFAST")
 
 
 class UIHandler(EventClass):
@@ -19,8 +22,8 @@ class UIHandler(EventClass):
     env = None
     tabs = []
     loupes = 0
-    loupe_list = []
-    loupeModules = []
+    client_features = []
+    dataset_features = []
     activeLoupe = None  # Currently active Loupe for menu actions
     workdir = None  # Working directory for file dialogs
     energyShiftEnabled = False  # Global toggle for energy shift
@@ -29,8 +32,8 @@ class UIHandler(EventClass):
         super().__init__(*args, **kwargs)
         self.workdir = workdir if workdir else os.getcwd()
         self.eventSubscribe("QUIT_READY", self.setQuitReady)
-        self.eventSubscribe('CLUSTER_FOR_VARIABLE', self.showCLusterVariable)
-        self.eventSubscribe('LoupeClosing', self.onLoupeClosed)
+        self.eventSubscribe("CLUSTER_FOR_VARIABLE", self.showCLusterVariable)
+        self.eventSubscribe("REMOTE_CONNECTED", self._onRemoteConnected)
 
     def quitEvent(self):
         self.eventPush("QUIT_EVENT")
@@ -44,6 +47,11 @@ class UIHandler(EventClass):
 
     def setQuitReady(self):
         self.quitReady = True
+
+    def _onRemoteConnected(self):
+        """Local (or cluster) server connected — enable the New Loupe action."""
+        if hasattr(self, "window") and hasattr(self.window, "menuHandler"):
+            self.window.menuHandler.setNewLoupeEnabled(True)
 
     def showCLusterVariable(self):
         msg = QMessageBox(self.window)
@@ -68,25 +76,24 @@ class UIHandler(EventClass):
     def newLoupe(self):
         loupe = Loupe(self, self.loupes)
 
-        for func in self.loupeModules:
-            func(self, loupe)
+        for feature in self.client_features:
+            if feature.widget_factory is not None:
+                feature.widget_factory(self, loupe)
 
+        loupe.arrangeSidebarGroups()  # ADR 0040: group panes once all are added
         loupe.forceUpdate()
-        self.loupe_list.append(self.loupes)
         self.loupes += 1
+
         loupe.show()
         loupe.setFocus()
 
         self.eventPush("LOUPES_UPDATE")
 
-    def onLoupeClosed(self, id):
-        #print(f"loupe {id} is closed")
-        self.loupe_list.remove(id)
-        if id == self.activeLoupe:
-            self.activeLoupe = self.loupe_list[0] if len(self.loupe_list) != 0 else None
+    def registerClientFeatures(self, features):
+        self.client_features.extend(features)
 
-    def registerLoupeModule(self, func):
-        self.loupeModules.append(func)
+    def registerDatasetFeatures(self, features):
+        self.dataset_features.extend(features)
 
     def setEnvironment(self, env):
         self.env = env
@@ -130,19 +137,17 @@ class UIHandler(EventClass):
         self.window = window
         self.app = app
         self.mainWindow = window
-        self.mainWindow.mainContent.currentChanged.connect(self.onContentTabChanged)
-
-    def onContentTabChanged(self, index):
-        #tab_widget = self.mainWindow.mainContent.widget(index)
-        tab_name = self.mainWindow.mainContent.tabText(index)
-
-        # print(f"Selected tab: {tab_name}")
-        if tab_name == "Subsystem Errors" and self.activeLoupe is None:  # create new loupe only if there is none.
-            self.newLoupe()
-            self.activeLoupe = self.loupes-1
-            #print(f'active loupe: {self.activeLoupe}')
 
     def initialisePlotConfigs(self):
+        # Try OpenGL by default, but verify it's safe first: Apple's
+        # OpenGL-over-Metal shim segfaults in glDrawArrays when ScatterPlotItem
+        # blits its point atlas (drawPixmapFragments). A segfault can't be caught
+        # in-process, so glProbe runs a throwaway child that paints a GL scatter;
+        # if it survives we use GL, otherwise we fall back to software. Cached.
+        from UI.glProbe import opengl_is_safe
+
+        use_gl = opengl_is_safe()
+        logger.info("pyqtgraph rendering: %s", "OpenGL" if use_gl else "software")
         pyqtgraph.setConfigOptions(
             antialias=True,
             leftButtonPan=False,
@@ -150,10 +155,13 @@ class UIHandler(EventClass):
             foreground=self.config["envs"].get("TextColor1"),
             # background=self.config["envs"].get("BGColor2"),
             background=None,
-            useOpenGL=True,
-            enableExperimental=True,
+            useOpenGL=use_gl,
+            enableExperimental=use_gl,
             exitCleanup=True,
         )
 
     def addContentTab(self, widget, name):
+        # Stashed so Panels built inside this tab can read their Analysis Tab
+        # name for the content-based Panel Display Override identity (ADR 0029).
+        widget.tabName = name
         self.mainWindow.mainContent.addTab(widget, name)

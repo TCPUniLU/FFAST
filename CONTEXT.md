@@ -1,0 +1,568 @@
+# Vocabulary
+
+The words this codebase uses, and what they mean here specifically. If a term
+below has a looser everyday meaning, the definition here wins.
+
+This is the glossary, not the architecture. For how the pieces fit together see
+[docs/architecture.md](docs/architecture.md); for why each seam is where it is,
+[docs/adr/](docs/adr/README.md).
+
+Everything in the first two sections exists in the code today. Terms that were
+coined for designs we have not built are quarantined at the bottom, under
+[Vocabulary for things that do not exist yet](#vocabulary-for-things-that-do-not-exist-yet).
+
+## The two halves
+
+### Headless core
+
+The `ffast/` package: engine, server, protocol, renderer-neutral visualization,
+CLI. It imports no Qt and no PySide6, so it runs on a compute node with no
+display. This is the importable, distributable thing (`import ffast.*`, and the
+`ffast` / `ffast-server` / `ffast-cli` entry points).
+
+Membership has a test, not an opinion: a module belongs in the core if the
+`ffast-server` or `ffast-cli` entry points reach it. The msgpack codec is core;
+`UI/panels.py` is not. Code moves *into* the core, never out (ADR 0026).
+
+Don't call it: the library, the backend, `src`.
+
+### Desktop client
+
+The flat top-level directories: `UI/` (Qt widgets), `client/` (what's left of
+client-side orchestration), `cluster/` (SLURM and SSH), `modules/` (plugin
+modules). Together they are the desktop application that drives the headless core
+over a socket. This is the application layer, not leftover rubbish, although some
+of it is now genuinely leftover (see the architecture doc).
+
+Don't call it: the frontend (it holds orchestration, not just widgets), legacy.
+
+## Compute
+
+### Environment
+
+The central compute object: every loaded dataset and model, the fingerprint-keyed
+cache, the task manager. In remote mode it runs on the cluster node and the local
+machine has none of it. It used to be one class doing everything; it is now
+composed of `env.cache`, `env.models`, `env.datasets`, `env.data`, `env.remote`,
+`env.persistence` plus an injected prediction source (ADR 0020).
+
+### Object catalog
+
+The one registry of an Environment's loaded scientific objects, at
+`env.objects`. It replaced a raw dict that a dozen call sites read and mutated,
+which is why deleted objects used to come back after a save and reload.
+
+### TaskManager
+
+Runs heavy work as async tasks, or threads for IO. Emits `TASK_PROGRESS`,
+`TASK_DONE`, `TASK_FAILED`. Every prediction goes through it.
+
+### Dataset
+
+A loaded set of configurations: positions, energies, forces, atomic numbers.
+Identified by a fingerprint, which is an MD5 of the contents. Can be strided at
+load time (`slice_num`).
+
+Everything cut from a dataset is one class, `DatasetView`: a parent, a frame
+map and an atom mask (ADR 0058). A **subset** is a view restricted to some
+frames, created from the region a plot shows when you tick its **Sub** box; it
+follows the plot's zoom, and unticking hides it. It is also how a tractable
+slice of a large remote dataset reaches the local viewer. A **frozen subset**
+keeps its frames: it no longer follows the zoom, but still reads them through
+its parent. An **atom subset** keeps every frame but only some of its atoms;
+it is refused when a structure lacks one of those atoms. A view of a view is
+a subset of a subset. Deleting a dataset deletes everything cut from it; to
+keep some of its frames, export them to a file and load that.
+
+### Model, GhostModel
+
+A model is a trained MLFF (sGDML, MACE, NequIP, SchNet, SpookyNet), identified by
+fingerprint. The real one lives **only inside `ffast-server`** and never in the
+client process (ADR 0030).
+
+What the client holds instead is a **GhostModel**: a fingerprint and a display
+name, no weights. Built from `REMOTE_MODEL_META`. A ghost backed by a real
+server-side model can still get fresh predictions, because the server reruns
+inference; a ghost backed by a prediction file cannot compute anything new.
+
+### Prediction
+
+A (dataset, model) pair. The unit of comparison in every error plot. Inference is
+always server-side. Whether a prediction was computed by a live model or read
+from a file is a server concern the client never sees.
+
+## Metrics
+
+### Metric
+
+A named, deterministic calculation that declares its inputs and returns numbers.
+It decides nothing about how those numbers are drawn. It receives the arrays it
+asked for, never the Environment, a Dataset, a Model or anything from the UI.
+
+### Metric ID
+
+A stable namespaced name: `ffast.force_error`, `my_lab.charge_deviation`. Used by
+config, caches, sessions, dependencies and clients, separately from the human
+label.
+
+### Metric shape
+
+What each output value corresponds to: scalar, per-structure, per-atom,
+per-structure-per-atom, vector-per-structure-per-atom. Consumers validate against
+the shape without knowing the implementation.
+
+### Metric input
+
+A symbolic dependency: reference forces, predicted energies, elements,
+coordinates, a dataset field, or another metric. The server resolves it before
+the metric runs.
+
+### Metric graph
+
+The acyclic graph formed when metric inputs refer to other metrics. The server
+uses it for execution order and rejects cycles and missing dependencies.
+
+### Metric execution context
+
+`ffast/metrics/execution.py`. Resolves a metric's inputs, dependencies and
+compute parameters exactly once into an ordered, picklable execution plan. It is
+the only place optional-input and missing-dependency semantics are defined, which
+is the point: they used to be defined in three places that disagreed (ADR 0035,
+0046).
+
+The executor seam is one method, `run(id, source, parameters)`. Behind it sit two
+adapters that differ only in transport: an in-process one, and the worker pool.
+The executor is injected when the Environment is constructed, so the server gets
+the pool and the desktop gets the in-process one.
+
+### Metric worker pool
+
+Metrics run in separate processes, not in the long-lived server. That buys
+cancellation, timeouts and crash containment.
+
+The catch worth knowing before you write a metric: the whole registry is pickled
+once to each worker, so **every registered metric must be picklable**. Module
+level only, no lambdas, no closures. One unpicklable metric breaks every metric
+on the pool path, not just itself. The in-process executor does not pickle, so
+tests using it hide this.
+
+### Transform metric
+
+A metric whose input is another metric, applying a reduction: KDE, smoothing,
+downsampling. (Averaging per structure, per element or over everything is
+written in an Expression metric with `by=`, ADR 0064.) Its settings are compute parameters, so
+changing one recomputes rather than mutating something client-side. This is why
+panels never reduce: every axis is already a result array.
+
+### Expression metric
+
+A metric compiled from a `[[metrics.expr]]` config entry, evaluating arithmetic
+over named variables. No Python. Arithmetic works value by value: the
+non-scalar operands must share one shape while scalars and literals broadcast.
+Reductions (`mean`, `sum`, `min`, `max`, `rms`, `std`) combine values and must
+say what they combine with `by=structure|element|all`, or
+`by=(structure, element)` for a table with a row per structure and a column
+per element; `by=` alone decides the result's shape, and `where=` picks the
+rows that count (ADR 0064). A bad value
+(non-finite output) raises rather than quietly emitting `nan` (ADR 0042).
+
+### Base metric, keep boxes
+
+A **base metric** is an unreduced error a user reduces with the **keep boxes**:
+Force Difference, Acceleration Difference, Energy Difference, Energy
+Difference (shifted), Net Force Residual. The keep boxes (atom, structure,
+element, x/y/z) say which axes stay separate, as `by=` does; **Combine** (Per
+component | Length) says how unkept x/y/z become one number; **Statistic** is
+MAE, RMSE, Max or Mean (signed). A box setting is written as a formula over the
+base (ADR 0065).
+
+Don't call it: norm, l1 / l2 (replaced by Combine), "average over" boxes
+(the boxes say what is kept).
+
+### No value
+
+A place in a metric's result that has nothing to show: a group a reduction
+left empty, such as a structure without hydrogen under `where=element("H")`.
+Stored as `nan`, shown as a gap, a `—` or a grey atom, and left out of later
+reductions. Not a **bad value**: a bad value fails the metric, no value does
+not. Only a formula's own `by=` / `where=` make one; a `nan` from a Python
+metric is a bad value (ADR 0064).
+
+### Metric origin: built-in, project, user
+
+Where a metric's definition comes from. **Built-in** ships with FFAST.
+**Project** comes from a project's `ffast.toml` (a metric module or a
+`[[metrics.expr]]` entry). **User** is an Expression metric defined in the
+browser and kept by the app on the server machine, one file per metric. Only
+user metrics can be edited or deleted in the app; a user metric never replaces a
+built-in or project metric with the same ID (ADR 0057).
+
+Don't call it: a custom metric (every non-built-in metric is custom), a live
+metric.
+
+### Metrics pane
+
+The browser side pane where user metrics are written, tried, saved, deleted and
+exported, beside the views they affect (ADR 0057).
+
+Don't call it: the metric window, the metric editor dialog.
+
+### Try
+
+Computing a formula in the Metrics pane for the selected dataset and prediction
+without registering it. Shows a summary and the bad frames; no other view or
+browser sees it. Distinct from **Save**, which registers the metric and updates
+every view (ADR 0057).
+
+Don't call it: preview (that suggests the views change), dry run.
+
+### Dataset field
+
+A numeric value carried by a file beyond the core arrays: a per-frame scalar from
+an extxyz `info` key, or a per-atom scalar from an `arrays` key. Referenced by
+key in the ref: `reference.info.<key>`, `prediction.atoms.<key>`. A field is
+either fully valid across the dataset and correctly shaped, or it resolves to
+`None`; partial presence, non-numeric values and wrong widths all resolve `None`
+rather than half working (ADR 0023). Per-atom vector fields are out of scope.
+
+Don't call it: an extra key, a custom column, a property, metadata.
+
+### Compute parameter, presentation parameter
+
+A **compute parameter** changes the numbers, so it participates in cache
+identity. A **presentation parameter** changes only how existing numbers look
+(colormap, range, label format) and reuses the cached result. Confusing the two
+is how you get stale plots or pointless recomputation.
+
+### Metric module
+
+A Python file or importable module named in configuration that registers
+metrics. Distinct from a **plugin module**, which is found by the startup glob
+over `modules/`.
+
+## Plots
+
+### Panel kind
+
+The archetype for one cell of a tab: timeline, density, scatter, table,
+overlay_timeline, grouped_density, grouped_table. It declares what widget it
+builds, how many metric inputs it takes, which shapes those must satisfy, and how
+they map to axes or cells. It assembles and draws. It computes nothing.
+
+One more kind, `3d`, is a [3D panel](#3d-panel): it binds no metrics and shows
+a visualization view instead of a plot.
+
+### Panel
+
+A configured panel kind: bound to specific metric IDs and parameter values,
+drawn as one grid cell. Its interactive controls are generated from the parameter
+schemas of the metrics it binds.
+
+### Analysis tab
+
+A named grid of panels sharing one data selector. In the browser a tab may mix 2D
+panels with 3D panels.
+
+A tab comes from one of three places: **built-in** (shipped with FFAST),
+**project** (`[[visualization.tabs]]` in a project's `ffast.toml`, written by
+hand), or **user** (built in the browser and saved by the app on the server
+machine, one file per tab). All three use the same format, so a tab moves
+between them by copying it.
+
+Editing a built-in or project tab in the browser saves a user tab that
+**replaces** it; resetting deletes that user tab and the original returns. Any
+tab can be **hidden** from the tab bar.
+
+A tab changes only in **Edit mode** (✎ in the browser): the edits go to a
+draft, Save writes it and Cancel drops it, so exploring never rewrites a tab.
+
+Don't call it: overriding a tab ("override" is taken by display overrides).
+
+### 3D panel
+
+A panel that shows a visualization view in a tab's grid, beside 2D panels
+(`kind = "3d"` in a tab file). Browser only: the desktop skips a tab made only
+of 3D panels, the built-in "3D" tab among them, because it has its own 3D
+window. It is either **linked** or **independent**:
+
+- **Linked** (the default): shows the main view. Every linked 3D panel, in any
+  tab, shows the same thing.
+- **Independent**: shows its own visualization view, with its own data,
+  colouring and display. Its frame and camera follow the main view by default;
+  each can be unlinked separately (to compare two frames of one trajectory, or
+  to orbit one side alone). A linked frame means the same configuration where
+  both sides contain it (a prediction and its dataset, a subset and its parent),
+  otherwise the same frame number. When there is no counterpart, the panel says
+  so instead of showing a different structure. Its starting look (colouring,
+  display, bonds, force arrows) can be saved with the tab; which dataset or
+  prediction it shows, and its camera, never are.
+
+The user switches a 3D panel between linked and independent.
+
+**Focused 3D panel**: the one 3D panel in a tab that the tab's 3D controls
+(settings sidebar, pick toolbar, playback strip) act on. The user focuses a panel
+by clicking it.
+
+Don't call it: the selected panel ("selection" already means picked atoms).
+
+### Main view
+
+The one visualization view the rail drives; on the server, one view per
+dataset, reused when the user comes back to that dataset. Linked 3D panels show
+it. At least one linked 3D panel always exists in some tab, so the main view
+always has a place to appear.
+
+### Series
+
+One drawn trace in a panel: the presentation of the panel's metrics for a single
+(model, dataset) pair. A panel draws one per pair the selector covers. Identity is
+`(dataset, model)`, which is what lets a redraw match series up instead of
+clearing and rebuilding (ADR 0022).
+
+Don't call it: a trace, a curve, a line, a plot item.
+
+### Panel display override
+
+A user's client-local cosmetic edit to a panel: axis label text and size, legend
+text, size and position. Keyed by content (tab name, panel kind, bound metric
+IDs) so it survives rebuilds and TOML reordering, and it never touches
+computation identity. The app rewrites this file silently whenever you drag a
+legend, which is exactly why it is kept apart from configuration, which people
+author by hand (ADR 0029). **Colorbar display override** is the same idea applied
+to the 3D view's colourbar.
+
+## The 3D view
+
+### Loupe
+
+The 3D molecular viewer. The name predates everything else and has stuck.
+
+As code it deliberately spans layers: the Qt shell in `UI/loupe/`, pluggable
+features in `modules/loupe/`, the renderer-neutral scene code shared with the web
+client in `ffast/visualization/`, and the vispy adapter in
+`ffast/renderers/vispy/`.
+
+### Renderer client
+
+The process that draws a render scene and owns pointer interaction, camera,
+picking, export, playback and window layout. It holds no scientific state: it
+consumes snapshots and patches, and emits view commands. Both the browser client
+and Loupe are renderer clients.
+
+### Visualization state, visualization view
+
+**Visualization state** is the renderer-neutral description of what is being
+inspected: datasets, predictions, subsets, visual encodings, interaction state.
+The server owns it.
+
+A **visualization view** is one open inspection surface with its own state, so
+several viewers can look at the same data differently.
+
+### Render scene
+
+The backend-ready form of a view: geometry buffers, colours, sizes, line
+segments, labels, camera. Baked colours are resolved server-side and are binding;
+a renderer draws the RGBA it is given and never substitutes its own default
+(ADR 0052).
+
+The deliberate exception is value-driven colouring: under `color_by` the server
+ships scalar values plus a colormap name, and each renderer maps them itself
+(ADR 0016). Default presentation values live in
+`ffast/visualization/presentation.py`.
+
+### Visualization pipeline, pipeline stage
+
+The derivation of a render scene from visualization state. A **stage** is one
+renderer-neutral step declaring its inputs, outputs and tunable parameters.
+
+Composition is ordinary call order in the scene builder, not a generic executor.
+There was an executor; ADR 0049 removed it after measuring that the live graph
+contained exactly one stage-to-stage dependency, and that the stages which
+actually needed orchestration could not use it anyway because they fetch data
+conditionally mid-derivation.
+
+The **stage catalog** survives as a declarative registry: it describes stages and
+does not run them. It is what `ffast-cli stages list/inspect/test` reads.
+
+### View command
+
+A renderer's request to change a view: change frame, select atoms, set a
+parameter, toggle a layer, move the camera. The server applies it and stays the
+source of truth.
+
+### Scene snapshot, scene patch
+
+A **snapshot** is a complete versioned scene, sent on open, reconnect, a change
+of primary data, or recovery from lost sync. A **patch** carries only what
+changed. A renderer that sees a patch version out of order asks for a snapshot.
+
+### Transient vs scientific selection
+
+**Transient** is client-local hover and highlight, never persisted or
+synchronised. **Scientific** is a named server-owned selection used by analysis,
+filtering and alignment; it is persisted and synchronised.
+
+## Sessions and connections
+
+Four things here have similar names and mean different things. This was a real
+source of confusion, so the names were changed deliberately.
+
+### Session
+
+A saved snapshot of an Environment: datasets, models, cache, metadata, written as
+`info.json` plus `cache/*.npz`. This is the bare word "session".
+
+### Server session
+
+The live object on a running `ffast-server` representing one client connection
+(ADR 0044). It owns that connection's open views and outbound queue, dispatches
+its control messages through a handler table built once, and replays current
+state to it on connect or reconnect (the replay comes from the window feed). One per connection; all of them share the
+server's one Environment. A reconnecting client gets a new session, so it gets
+the shared state again but none of its old views.
+
+### Window feed
+
+The one server-side owner of what every window holds (ADR 0062). It builds each
+shared piece (dataset and model announcements, metric catalog, tab layout,
+user-metrics list, "Used by"), replays them on connect, and sends a piece again
+to every window after a change, only if it changed. It also lists the open
+windows' sessions, which "Used by" reads to find views coloured by a metric.
+One per server.
+
+### Server connection
+
+The *client's* transport handle to a server: SSH tunnel, WebSocket, SLURM job ID,
+request/reply correlator, array cache. Carries transport, not science. The
+opposite end of the wire from a server session. Formerly called RemoteSession.
+
+### Session record
+
+Reconnect coordinates, kept client-side in `~/.ffast/sessions.json`: job ID,
+ports, profile, last snapshot. Just enough to rebuild a connection to a server
+session whose connection dropped. Purged on deliberate disconnect and when a job
+is confirmed dead, so a stale record cannot keep offering a reconnect dialog
+forever (ADR 0024).
+
+### Connection manager
+
+Client-side owner of the connection lifecycle, at `env.remote`. Its
+`active_session()` is the single "is a session live?" check that everything else
+resolves through instead of re-deriving it.
+
+### Loading coordinator
+
+The single client-side owner of turning "load this dataset/model/prediction" into
+"and do it here": an in-process task, or a dispatch to the server. It owns the
+routing decision, the load implementations, the probe round-trips and the one
+chokepoint where ghost models are registered.
+
+It is Qt-free on purpose, which is what makes it migratable into the core and
+testable with a fake session. The desktop keeps the dialogs and hands it
+callbacks (ADR 0034).
+
+### RPC channel
+
+The WebSocket, msgpack-encoded, carrying two classes of message. **Control
+messages** have a structured typed payload. **Array messages** are raw numpy for
+plot data and subset transfer. A message with both (`METRIC_RESULT`) is
+classified by its metadata: typed envelope, array riding inside.
+
+Every event name is a constant in `ffast/protocol/control.py`. No send or handle
+site spells one as a string literal (ADR 0033).
+
+### In-process event vs broadcast event
+
+An **in-process event** is on the EventClass bus inside one process. Subscribers
+are held strongly, so a widget's lifetime is bound to an explicit `deleteEvents`
+call; this is deliberate, not a leak.
+
+A **broadcast event** crosses the server-to-client boundary and carries an
+identifier rather than a payload: something happened, go look it up.
+
+### Prediction-only array channel
+
+A sub-protocol for sending prediction arrays without re-sending geometry the
+client already has. Client asks with `REQUEST_PREDICTION_ARRAYS(dataset_fp,
+model_fp)`, server replies with just the energies and forces (ADR 0004).
+
+### Cache key
+
+The identity of one cache entry: an identity token (a metric ID, which may itself
+contain `__`), plus a model fingerprint and a dataset fingerprint, either of
+which may be the sentinel `nil` when the quantity does not depend on it.
+
+It is a structured value (`ffast/cache/keys.py`) and only flattens to the string
+`identity__model__dataset` at the disk and RPC boundaries. Parsing is
+right-anchored: the last two `__`-segments are model then dataset, everything
+before is opaque identity. Each fingerprint slot is validated, so a malformed key
+fails immediately instead of decoding into the wrong entry, which is what used to
+happen. Compute parameters fold into the identity token, never a separate field.
+
+Only the server builds the key of a metric result (`DataService.make_metric_cache_key`),
+and for a formula metric the identity carries a hash of the formula (`__f<token>`),
+so an edit gives a new key. It no longer crosses the RPC boundary: `REQUEST_METRIC`
+carries an opaque `request_id` and the reply (`METRIC_RESULT`) echoes it, so a
+client cannot name or overwrite a stored result (ADR 0061).
+
+### Cluster terms
+
+**ClusterBackend** is the scheduler interface; `SlurmBackend` is the only
+implementation. **JobSpec** is a scheduler-agnostic resource request translated
+into a submission script. **JobStatus** is `PENDING`, `RUNNING`, `FAILED`,
+`COMPLETED`, resolved via `sacct` once a job leaves `squeue`. **Dataset length
+probe** counts frames in a cluster-side file before loading so the stride dialog
+can offer a stride against the true count. **Remote task IDs** are namespaced
+`remote_<n>` so replayed progress events cannot collide with local task IDs.
+
+## Rules that hold everywhere
+
+- Python 3.11 exactly. PySide6 pinned `>=6.8,<6.9`.
+- `ffast/` imports no Qt and no OpenGL. There is a test.
+- Metrics are pure, deterministic and picklable, and never see the Environment,
+  a Dataset or a Model.
+- Metrics raise on non-finite results rather than returning silent `inf`/`nan`.
+- Unknown configuration keys are errors, not ignored.
+- Pipeline stages are deterministic and mutate nothing.
+- Large datasets stay on the cluster. Only selected subsets travel.
+- The server owns visualization state. It does not render pixels.
+- A session token, not the SSH tunnel, is what grants the controlling role.
+- Old saved sessions are not migrated (ADR 0008).
+
+## Two words that trip people up
+
+**"Server-based visualization"** means the server owns the visualization state
+and swappable renderers consume it. It does not mean rendering pixels on the
+cluster.
+
+**"Frame" and "structure"** are the same thing: one configuration in a
+trajectory. Metric shapes say *per-structure*; file and trajectory terms say
+*frame*. One axis, two words, no distinction intended.
+
+## Vocabulary for things that do not exist yet
+
+These terms come from design work that has not been built. They appear in older
+ADRs and in planning documents. None of them has code behind it today, and this
+section exists so nobody goes looking for it.
+
+- **Geometry edit, edit target, edit log, derived dataset, dataset provenance,
+  materialization** — editing atoms in the viewer and saving the result as a new
+  dataset with a reproducibility record.
+- **Trusted metric module** — allow-listing metric modules by content hash, for
+  audit and reproducibility. Today, configured modules are simply loaded.
+- **Presentation preset** — named reusable presentation settings with an
+  `extends` parent.
+- **Unit registry** — server-side registry of dimensions and validated
+  conversions. Metrics do declare units today; there is no conversion registry.
+- **Selection scope** — the rule saying where a scientific selection applies when
+  atom indices are not stable across structures.
+- **Historical metric result** — a cached result whose implementation is gone,
+  usable read-only.
+- **Renderer capability negotiation** — advertised feature sets per renderer.
+- **Metric resource hint, worker buffer** — scheduling hints, and shared-memory
+  inputs to workers.
+- **Result buffer, buffer codec, buffer transfer** — content-addressed array
+  transport with chunking and zstd. These are different from the others: the code
+  exists and is tested, but it is deliberately not wired up, because the
+  WebSocket already compresses and the lazy-proxy design rarely ships bulk arrays
+  (ADR 0031).
