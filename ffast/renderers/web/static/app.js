@@ -40,7 +40,7 @@ import { applyStaticIcons, icon } from './icons.js';
 import { initAppearance } from './appearance.js';
 import { datasetUnits } from './units.js';
 import { TabEditor } from './edit_mode.js';
-import { bindMenu, runAction, whyUnavailable } from './actions.js';
+import { bindMenu, runAction, sharedMenu, whyUnavailable } from './actions.js';
 import { loadLayout, loadMainView, saveLayout, saveMainView } from './layout_state.js';
 import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './quick_styles.js';
 import { DEFAULT_LOOK, startCommands, startFromCurrent } from './start_settings.js';
@@ -275,6 +275,7 @@ export class FFastApp {
       metricClient: null,
       onSelectTab: (id) => this._selectTab(id),
       onMoveTab: (name, before) => this._moveTab(name, before),
+      onTabContext: (id, el) => this._openTabContext(id, el),
       onStepTab: (name, dir, opts) => this._stepTab(name, dir, opts),
       whyNoMove: () => this._whyNoEdit(),
       onSub: (o) => this._onSub(o),
@@ -585,10 +586,14 @@ export class FFastApp {
       document.getElementById('tab-new-list'),
       () => this._newTabActions(),
     );
-    document.getElementById('tab-edit-btn').addEventListener('click', () => {
-      const name = this._analysis.tab(this._activeTab)?.name;
-      if (!this._editor.editing && !this._whyNoEdit()) this._editor.editTab(name);
-    });
+    document.getElementById('tab-edit-btn').addEventListener('click', () => this._editCurrentTab());
+    // Right-click on a tab shows the tab menu under it (ADR 0070).
+    const contextList = document.createElement('div');
+    contextList.id = 'tab-context-list';
+    contextList.className = 'menu-list tab-context-menu hidden';
+    contextList.setAttribute('role', 'menu');
+    document.body.appendChild(contextList);
+    this._tabContext = sharedMenu(contextList);
     document.getElementById('hint-dismiss').addEventListener('click', () => this._dismissHint());
     document.getElementById('empty-load-btn').addEventListener('click',
       () => runAction(this._action('load-dataset')));
@@ -658,7 +663,27 @@ export class FFastApp {
 
   // ── tab actions: the ⋯ menu (ADR 0056 rules 9 and 10) ──────────────────
 
-  /** The ⋯ menu acts on the tab on screen; it also lists hidden tabs. */
+  /** Edit mode on the tab on screen: the ✎ button, and Edit tab in the
+   * right-click menu. */
+  _editCurrentTab() {
+    const name = this._analysis.tab(this._activeTab)?.name;
+    if (!this._editor.editing && !this._whyNoEdit()) this._editor.editTab(name);
+  }
+
+  /** Right-click on a tab: open it, then show the tab menu under it with
+   * Edit tab first (ADR 0070). */
+  _openTabContext(id, tabEl) {
+    this._selectTab(id);   // the tab actions act on the tab on screen
+    this._tabContext.close();
+    this._tabContext.open(tabEl, [
+      { id: 'tab-edit', label: 'Edit tab', run: () => this._editCurrentTab(), unavailable: () => this._whyNoEdit() },
+      { separator: true },
+      ...this._tabMenuActions(),
+    ]);
+  }
+
+  /** The ⋯ menu acts on the tab on screen; it also lists hidden tabs. The
+   * right-click menu on a tab shows the same items (ADR 0070). */
   _tabMenuActions() {
     const spec = this._analysis.tab(this._activeTab)?.spec;
     const name = spec?.name;

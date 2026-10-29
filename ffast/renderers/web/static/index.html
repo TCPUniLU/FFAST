@@ -161,6 +161,7 @@
       box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
     }
     .menu-list.hidden { display: none; }
+    .tab-context-menu { position: fixed; }
     .menu-list [role=menuitem] {
       text-align: left; background: transparent; height: auto; padding: 6px 10px;
     }
@@ -1287,7 +1288,8 @@
           <div id="tab-new-list" class="menu-list hidden" role="menu"></div>
         </div>
         <!-- Actions on the tab on screen (ADR 0056): export, reset, hide,
-             and the hidden tabs to show again. -->
+             and the hidden tabs to show again. Right-click on a tab shows
+             the same items, with Edit tab first (ADR 0070). -->
         <div id="tab-actions">
           <button id="tab-edit-btn" title="Edit this tab" disabled></button>
           <div id="tab-menu" class="menu">

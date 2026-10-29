@@ -3841,6 +3841,38 @@ async def test_web_tabs_move_by_menu_keys_and_reset(tmp_path):
                 await browser.close()
 
 
+async def test_web_right_click_on_a_tab_opens_its_menu(tmp_path):
+    """ADR 0070 rule 6. Right-click opens the tab and shows the tab menu under
+    it, Edit tab first; Escape closes it; Edit tab starts Edit mode."""
+    tabs_dir = tmp_path / "tabs"
+    config = tmp_path / "ffast.toml"
+    config.write_text("")
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                basic = page.locator("#tabbar .tab", has_text="Basic Errors")
+                menu = page.locator("#tab-context-list")
+                await basic.click(button="right")
+                await expect(menu).to_be_visible()
+                await expect(menu.get_by_role("menuitem").first).to_have_text("Edit tab")
+                await expect(basic).to_have_class(re.compile(r"\bactive\b"))
+                await expect(menu.get_by_role("menuitem", name="Hide this tab")).to_be_visible()
+                await page.keyboard.press("Escape")
+                await expect(menu).to_be_hidden()
+
+                await basic.click(button="right")
+                await menu.get_by_role("menuitem", name="Edit tab", exact=True).click()
+                await expect(page.locator("#tab-edit-btn")).to_have_class(re.compile(r"\bactive\b"))
+                await page.get_by_role("button", name="Cancel", exact=True).first.click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+            finally:
+                await browser.close()
+
+
 @contextlib.asynccontextmanager
 async def _tab_server(tmp_path):
     """A server with only built-in tabs (no project config) and an empty tabs

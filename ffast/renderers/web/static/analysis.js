@@ -164,6 +164,7 @@ export class AnalysisManager {
    *   metricClient?: import('./metrics.js').MetricClient|null,
    *   onSelectTab: (id: string) => void,
    *   onMoveTab?: (name: string, before: string|null) => void,
+   *   onTabContext?: (id: string, el: HTMLElement) => void,
    *   onStepTab?: (name: string, dir: number, opts?: {refocus: boolean}) => void,
    *   whyNoMove?: () => string,
    *   onSub: (o: {name: string, series: Array<{parentFp: string, modelFp: string|null}>,
@@ -182,6 +183,7 @@ export class AnalysisManager {
     this._onSelectTab = deps.onSelectTab;
     this._onMoveTab = deps.onMoveTab;
     this._onStepTab = deps.onStepTab;
+    this._onTabContext = deps.onTabContext;
     this._whyNoMove = deps.whyNoMove;
     /** The name of the tab being dragged in the bar, or null (ADR 0070). */
     this._dragging = null;
@@ -416,6 +418,10 @@ export class AnalysisManager {
       tabEl.appendChild(mark);
     }
     tabEl.addEventListener('click', () => this._onSelectTab(id));
+    tabEl.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      this._onTabContext?.(id, tabEl);
+    });
     // Drag a tab onto another: left half drops before it, right half after
     // it (ADR 0070). Nothing moves while the tab cannot change.
     tabEl.draggable = true;
