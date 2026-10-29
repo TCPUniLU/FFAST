@@ -6487,3 +6487,28 @@ async def test_web_atom_index_labels_switch_on_and_off(ffast_web_server):
             await page.wait_for_function("() => window.ffastApp.renderer._labelSprites.length === 0")
         finally:
             await browser.close()
+
+
+async def test_web_three_atom_align_and_origin_com_switch_each_other_off(ffast_web_server, tmp_path):
+    """The desktop keeps 3-atom alignment and Origin COM exclusive (web parity plan 2026-10-29)."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_uniform_dataset(ws_port, tmp_path)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_section(page, "Alignment")
+            await page.locator(
+                ".pane[data-pane='Alignment'] .ctl-row[data-label='3-atom frame align'] input").check()
+            await _open_section(page, "Camera")
+            com = page.locator(".pane[data-pane='Camera'] .ctl-row[data-label='Origin COM'] input")
+            await expect(com).not_to_be_checked()
+            assert await page.evaluate("() => window.ffastApp._focused().settings.view.originCenterOfMass") is False
+            await com.check()
+            await _open_section(page, "Alignment")
+            await expect(page.locator(
+                ".pane[data-pane='Alignment'] .ctl-row[data-label='3-atom frame align'] input")).not_to_be_checked()
+            assert await page.evaluate("() => window.ffastApp._focused().settings.align.atomAlign") is False
+        finally:
+            await browser.close()

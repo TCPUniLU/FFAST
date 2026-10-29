@@ -29,6 +29,7 @@ function parseInts(text) {
  * @param {{
  *   onKabsch: (enabled: boolean, heavyOnly: boolean) => void,
  *   onAtomAlign: (enabled: boolean, indices: number[]) => void,
+ *   onAtomAlignOn: () => void,   // 3-atom mode was just turned on: the camera must stop following the centre of mass
  * }} callbacks
  */
 export function createAlignPane(sidebarEl, callbacks) {
@@ -57,6 +58,7 @@ export function createAlignPane(sidebarEl, callbacks) {
       state.kabsch = false; kabschInput.checked = false; callbacks.onKabsch(false, state.heavyOnly);
     }
     _syncVisibility();
+    if (state.atomAlign) callbacks.onAtomAlignOn();
     callbacks.onAtomAlign(state.atomAlign, state.indices);
   });
   const idxInput = textRow(body, 'Reference atoms', '', (text) => {
@@ -113,6 +115,15 @@ export function createAlignPane(sidebarEl, callbacks) {
       atomAlignInput.checked = true;
       if (state.kabsch) { state.kabsch = false; kabschInput.checked = false; callbacks.onKabsch(false, state.heavyOnly); }
       _syncVisibility();
+      callbacks.onAtomAlignOn();
+    },
+    /** Turn 3-atom mode off (Origin COM was turned on; the desktop keeps the two exclusive). */
+    turnOffAtomAlign() {
+      if (!state.atomAlign) return;
+      state.atomAlign = false;
+      atomAlignInput.checked = false;
+      _syncVisibility();
+      callbacks.onAtomAlign(false, state.indices);
     },
     /** Commit the current 3-atom reference set (called when the tool has 3). */
     applyAtomAlign() {

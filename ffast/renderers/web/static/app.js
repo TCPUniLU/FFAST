@@ -1076,7 +1076,11 @@ export class FFastApp {
       onOrtho: (enabled) => this.renderer?.setOrthographic(enabled),
       onPreset: (az, el) => this.renderer?.setCameraAngles({ azimuth: az, elevation: el, roll: 0 }),
       onManual: (az, el, dist, roll) => this.renderer?.setCameraAngles({ azimuth: az, elevation: el, distance: dist, roll }),
-      onCOM: (enabled) => { const s = this._focused()?.settings; if (s) s.view.originCenterOfMass = enabled; },
+      onCOM: (enabled) => {
+        const s = this._focused()?.settings;
+        if (s) s.view.originCenterOfMass = enabled;
+        if (enabled) this._panes?.align.turnOffAtomAlign();
+      },
       onGizmo: (enabled) => this._focusedRenderers().setGizmoEnabled(enabled),
       onBackground: (hex) => {
         this._focusedRenderers().setBackgroundColor(hex);
@@ -1130,6 +1134,7 @@ export class FFastApp {
           this._sendSetParameter('ffast.atom_align', 'reference_frame', this._focusedFrame());
         }
       },
+      onAtomAlignOn: () => this._setOriginCOM(false),
     });
 
     this._panes = { colorBy, metrics: metricsPane, camera, display, bonds, forces, extract, export: exportPane, align };
@@ -2565,6 +2570,14 @@ export class FFastApp {
       this._sendSetParameter('ffast.force_arrows', 'atom_indices', state.atomIndices || []);
       this._sendSetParameter('ffast.force_arrows', 'atom_indices_by_frame', state.atomIndicesByFrame ?? null);
     }
+  }
+
+  /** Set the focused view's Origin COM and its checkbox, without the
+   * checkbox's own handler (used when 3-atom alignment turns it off). */
+  _setOriginCOM(enabled) {
+    const s = this._focused()?.settings;
+    if (s) s.view.originCenterOfMass = enabled;
+    this._panes.camera.setCOM(enabled);
   }
 
   /** Origin-COM tracking (issue 04): recentre the camera on the atoms'

@@ -145,6 +145,12 @@ CASES = {
       fire(ctl(host, 'Reference atoms'), '4 5 6 7'); const typed = JSON.parse(JSON.stringify(s));
       pane.setPickedIndices([1, 2, 3]);
       return {kabsch, exclusive, typed, picked: s}; })()""",
+    "align_com_link": """(() => { const {pane, host, calls} = mk(ap, 'createAlignPane');
+      const s = {kabsch: false, heavyOnly: true, atomAlign: false, idxInput: '', indices: []}; pane.show(s);
+      fire(ctl(host, '3-atom frame align'), true); const onByBox = calls.map((c) => c[0]);
+      calls.length = 0; pane.turnOffAtomAlign(); const off = {atomAlign: s.atomAlign, box: val(ctl(host, '3-atom frame align')), calls: calls.map((c) => c.slice())};
+      calls.length = 0; pane.enableAtomAlignMode(); const onByTool = calls.map((c) => c[0]);
+      return {onByBox, off, onByTool}; })()""",
     "align_enable_mode": """(() => { const {pane, host} = mk(ap, 'createAlignPane');
       const s = {kabsch: true, heavyOnly: true, atomAlign: false, idxInput: '', indices: []}; pane.show(s);
       pane.enableAtomAlignMode(); return s; })()""",
@@ -408,6 +414,15 @@ def test_align_writes_every_change_into_its_settings(results):
     assert r["exclusive"]["atomAlign"] is True and r["exclusive"]["kabsch"] is False
     assert r["typed"]["indices"] == [4, 5, 6] and r["typed"]["idxInput"] == "4 5 6"
     assert r["picked"]["indices"] == [1, 2, 3] and r["picked"]["idxInput"] == "1 2 3"
+
+
+def test_atom_align_and_origin_com_are_linked(results):
+    r = results["align_com_link"]
+    assert "onAtomAlignOn" in r["onByBox"]
+    assert r["off"]["atomAlign"] is False
+    assert r["off"]["box"] is False
+    assert r["off"]["calls"] == [["onAtomAlign", False, []]]
+    assert "onAtomAlignOn" in r["onByTool"]
 
 
 def test_enabling_atom_align_mode_turns_kabsch_off_in_the_settings(results):
