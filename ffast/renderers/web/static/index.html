@@ -456,6 +456,15 @@
     }
     .analysis-panel .panel-title .sub-toggle,
     .analysis-panel .panel-title .panel-warning { color: var(--warn); margin-left: 6px; cursor: help; }
+    /* hover_tip.js: one box for the page, above everything */
+    #hover-tip {
+      position: fixed; z-index: 400; max-width: 340px; padding: 6px 9px;
+      background: var(--bg2); color: var(--text1); border: 1px solid var(--bg3); border-radius: 4px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+      font-size: var(--fs-s); font-weight: 400; line-height: 1.4; white-space: pre-line;
+      pointer-events: none;
+    }
+    #hover-tip[hidden] { display: none; }
     .analysis-panel .panel-title .sub-toggle {
       display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600;
     }

@@ -7241,3 +7241,59 @@ async def test_web_the_file_browser_starts_in_the_new_servers_workdir_after_swit
                 await expect(page.locator("#fb-path")).to_have_value(str(second))
             finally:
                 await browser.close()
+
+
+async def test_web_a_panel_warning_explains_itself_on_hover(ffast_web_server, tmp_path):
+    """The gyration radius of a periodic dataset carries a warning: hovering
+    the ⚠ beside the title shows the sentence at once. With no prediction,
+    the Gyradius & Forces MAE panel pops up no errors (it just has no MAE)."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    frames = ase.io.read(DATASET_PATH, index=":10")
+    for frame in frames:
+        frame.set_cell([20.0, 20.0, 20.0])
+        frame.set_pbc(True)
+    periodic = tmp_path / "periodic.xyz"
+    ase.io.write(periodic, frames, format="extxyz")
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("LOAD_DATASET", (str(periodic), "ase (auto)"), {}))
+        meta = await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30)
+        dataset_fp = meta["args"][0]
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1440, "height": 860})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await _open_analysis_tab(page, "Gyration")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Total gyration radius", timeout=25000)
+            panel = page.locator('.tabpanel.active .analysis-panel[data-title="Total gyration radius"]')
+            mark = panel.locator(".panel-warning")
+            await expect(mark).to_be_visible()
+            # beside the title, not in the middle of the bar
+            gap = await mark.evaluate("""m => {
+                const name = m.closest('.panel-title').querySelector('.panel-letter').nextElementSibling;
+                const text = document.createRange();   // the title's words, not its stretched box
+                text.selectNodeContents(name.firstChild);
+                return m.getBoundingClientRect().left - text.getBoundingClientRect().right;
+            }""")
+            assert 0 <= gap < 16
+
+            await expect(page.locator("#hover-tip")).to_be_hidden()
+            await mark.hover()
+            await expect(page.locator("#hover-tip")).to_be_visible(timeout=500)
+            await expect(page.locator("#hover-tip")).to_contain_text("not meaningful for periodic systems")
+            await page.mouse.move(5, 5)
+            await expect(page.locator("#hover-tip")).to_be_hidden()
+
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Gyradius & Forces MAE Timeline", timeout=25000)
+            await page.wait_for_timeout(500)
+            await expect(page.locator("#toasts .toast-error")).to_have_count(0)
+        finally:
+            await browser.close()
+

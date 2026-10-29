@@ -681,7 +681,7 @@ async def test_a_bad_value_where_leaves_out_is_ignored_with_a_warning(tmp_path):
                 await _list_shows(pane, ".mx-item[data-id='user.h_ref']")
                 await pane.get_by_role("button", name="Plot it").click()
                 mark = page.locator(".tabpanel.active .analysis-panel .panel-warning")
-                await expect(mark).to_have_attribute("title", sentence)
+                await expect(mark).to_have_attribute("data-tip", sentence)
                 # ADR 0066: and as a pop-up naming the metric, once
                 await expect(page.locator("#toasts .toast", has_text=f"user.h_ref: {sentence}")).to_have_count(1)
             finally:

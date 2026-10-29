@@ -26,6 +26,7 @@
 import { helpToggle } from './help.js';
 import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures } from './panels.js';
 import { showOnce } from './toasts.js';
+import { attachTip } from './hover_tip.js';
 import { elementColourOn } from './element_colours.js';
 import { plotTheme } from './theme.js';
 import { visitedKey } from './peaks.js';
@@ -1297,9 +1298,11 @@ export class AnalysisManager {
       mark.className = 'panel-warning';
       mark.textContent = '⚠';
       mark.tabIndex = 0;
-      card.title.insertBefore(mark, card.title.children[2] || null);
+      attachTip(mark);
+      // In the title's own span, so it sits right after the words.
+      card.title.querySelector('.panel-letter').nextElementSibling.append(mark);
     }
-    mark.title = warnings.join('\n');
+    mark.dataset.tip = warnings.join('\n');
     mark.setAttribute('aria-label', `Warning: ${warnings.join('; ')}`);
   }
 
