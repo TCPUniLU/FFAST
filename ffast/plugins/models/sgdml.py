@@ -119,11 +119,18 @@ class sGDMLDatasetLoader(FlatDatasetLoader):
     datasetFileExtension = "*.npz"
     isVariable = False
 
-    def __init__(self, path, *args, **kwargs):
+    def __init__(self, path, *args, slice_num=0, **kwargs):
         super().__init__(path)
         self.data = np.load(path, allow_pickle=True)
 
         data = {key.lower(): value for key, value in self.data.items()}
+        # A stride (the desktop's large-file dialog) keeps every slice_num-th
+        # frame. Only the per-frame arrays are strided: z and the lattice
+        # describe every frame, and striding them truncates them.
+        if slice_num and slice_num > 0:
+            for key in ("r", "e", "f"):
+                if key in data:
+                    data[key] = data[key][::slice_num]
 
         R = np.asarray(data["r"])
         self.N, nAtoms = R.shape[0], R.shape[1]

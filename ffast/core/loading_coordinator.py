@@ -244,6 +244,11 @@ class LoadingCoordinator:
         if "npz" in path:
             d = np.load(path, allow_pickle=True)
             E, F = d["E"], d["F"]
+            # Sampled like its dataset, as _readPredictionAtomsList does for
+            # ASE files; only the per-frame arrays are read here.
+            slice_num = self._env.datasets.slice_numbers.get(datasetKey)
+            if slice_num is not None and slice_num > 0:
+                E, F = E[::slice_num], F[::slice_num]
             aseObject = None
         else:
             atomsList = self._readPredictionAtomsList(path, datasetKey)
@@ -562,6 +567,8 @@ class LoadingCoordinator:
                 if on_error:
                     on_error(e)
                 return None
+        elif datasetType == "sGDML":
+            result = loaderClass(path, slice_num=slice_num)
         else:
             result = loaderClass(path)
 
