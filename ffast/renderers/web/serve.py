@@ -48,7 +48,49 @@ class _SilentStaticHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, format, *args):  # noqa: A002
         pass
 
+    def _send_json(self, status: int, body: dict) -> None:
+        data = json.dumps(body).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _cluster_request(self, method: str) -> None:
+        """Pass a /cluster/ request to the launcher's cluster broker (web parity
+        plan 2026-10-29). The custom header stops another web site in the same
+        browser from using the broker (a cross-site page cannot send it without
+        a CORS preflight, which this server never allows); the secret stops a
+        DNS-rebinding page."""
+        broker = getattr(self.server, "cluster_broker", None)
+        if broker is None:
+            return self._send_json(404, {
+                "error": "This page was not opened by ffast-web, so it cannot reach a cluster."})
+        secret = getattr(self.server, "cluster_secret", None)
+        if not secret or self.headers.get("X-FFAST-Launch") != secret:
+            return self._send_json(403, {"error": "Not allowed"})
+        body = {}
+        if method == "POST":
+            n = int(self.headers.get("Content-Length") or 0)
+            if n > 65536:
+                return self._send_json(413, {"error": "Request too large"})
+            try:
+                body = json.loads(self.rfile.read(n) or b"{}")
+            except ValueError:
+                return self._send_json(400, {"error": "Not JSON"})
+            if not isinstance(body, dict):
+                return self._send_json(400, {"error": "Not a JSON object"})
+        status, reply = broker.handle(method, self.path.split("?", 1)[0], body)
+        self._send_json(status, reply)
+
+    def do_POST(self):
+        if self.path.startswith("/cluster/"):
+            return self._cluster_request("POST")
+        self.send_error(404)
+
     def do_GET(self):
+        if self.path.startswith("/cluster/"):
+            return self._cluster_request("GET")
         # Which FFAST code served this page, so the page can warn when the
         # server it connects to runs other code (code_fingerprint.js).
         if self.path.split("?", 1)[0] == "/code-fingerprint.json":
@@ -70,7 +112,8 @@ class _SilentStaticHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
 
-def start_static_server(port: int, host: str = "0.0.0.0") -> http.server.HTTPServer:
+def start_static_server(port: int, host: str = "0.0.0.0", *, cluster_broker=None,
+                        cluster_secret=None) -> http.server.HTTPServer:
     """Start an HTTP server serving the web app in a daemon thread.
 
     ``host`` defaults to ``0.0.0.0`` (the cluster/remote case, where a browser
@@ -78,9 +121,14 @@ def start_static_server(port: int, host: str = "0.0.0.0") -> http.server.HTTPSer
     ``127.0.0.1`` to keep the app loopback-only. Returns the HTTPServer so
     callers can shut it down explicitly (the daemon thread dies with the
     process regardless).
+
+    Only the ``ffast-web`` launcher passes a ``cluster_broker``; the secret is
+    the page's ``launch=`` id, which /cluster/ requests must send back.
     """
     #httpd = http.server.HTTPServer((host, port), _SilentStaticHandler)
     httpd = _StaticHTTPServer((host, port), _SilentStaticHandler)
+    httpd.cluster_broker = cluster_broker
+    httpd.cluster_secret = cluster_secret
     thread = threading.Thread(target=httpd.serve_forever, daemon=True, name=f"ffast-web-{port}")
     thread.start()
     logger.info("Web renderer serving at http://%s:%d (static dir: %s)", host, port, STATIC_DIR)

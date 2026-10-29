@@ -13,7 +13,8 @@ Both the web app and the RPC bind loopback (127.0.0.1) by default, so a local
 session is not reachable from the network (ADR 0045 decision #1). Pointed at a
 remote server instead, the same web app drives a Server Connection to that
 server — that path uses `ffast-server --web-port` directly and is out of this
-launcher's scope.
+launcher's scope. The launcher also keeps the cluster broker, so the page can
+reach a cluster (web parity plan 2026-10-29).
 """
 
 from __future__ import annotations
@@ -77,6 +78,7 @@ class LaunchResult:
     ws_port: int
     httpd: http.server.HTTPServer
     proc: subprocess.Popen
+    broker: object = None
 
 
 def app_url(web_port: int, ws_port: int, *, host: str = LOOPBACK, uid=None) -> str:
@@ -93,7 +95,18 @@ def pick_free_port() -> int:
         return sock.getsockname()[1]
 
 
-def _start_web_app(web_port: int, host: str) -> http.server.HTTPServer:
+def _make_cluster_broker():
+    """The cluster broker the page uses to reach a cluster (web parity
+    plan 2026-10-29), or None when the cluster package cannot load."""
+    try:
+        from cluster.web_broker import ClusterBroker
+    except ImportError as exc:
+        logger.info("Cluster connections are off: %s", exc)
+        return None
+    return ClusterBroker()
+
+
+def _start_web_app(web_port: int, host: str, broker=None, secret=None) -> http.server.HTTPServer:
     """Serve the web app on ``web_port``, or on the default port when it is 0.
 
     An explicit port is used as given and fails loudly when taken. The default
@@ -101,16 +114,19 @@ def _start_web_app(web_port: int, host: str) -> http.server.HTTPServer:
     window just does not share the remembered layout.
     """
     if web_port:
-        return start_static_server(web_port, host=host)
+        return start_static_server(web_port, host=host, cluster_broker=broker,
+                                   cluster_secret=secret)
     try:
-        return start_static_server(DEFAULT_WEB_PORT, host=host)
+        return start_static_server(DEFAULT_WEB_PORT, host=host, cluster_broker=broker,
+                                   cluster_secret=secret)
     except OSError:
         logger.info(
             "Port %d is in use (another ffast-web?); serving the web app on a "
             "free port, so this window will not remember its layout",
             DEFAULT_WEB_PORT,
         )
-        return start_static_server(pick_free_port(), host=host)
+        return start_static_server(pick_free_port(), host=host, cluster_broker=broker,
+                                   cluster_secret=secret)
 
 
 def wait_until_ready(
@@ -217,6 +233,7 @@ def run(
     ready_timeout: float = 30.0,
     block: bool = True,
     uid = None,
+    broker_factory: Callable[[], object] = _make_cluster_broker,
 ) -> LaunchResult:
     """Serve the app, start the WS server, open the browser.
 
@@ -227,8 +244,10 @@ def run(
     :class:`LaunchResult`.
     """
     ws_port = ws_port or pick_free_port()
+    uid = uid or uuid.uuid4().hex
+    broker = broker_factory()
 
-    httpd = _start_web_app(web_port, host)
+    httpd = _start_web_app(web_port, host, broker=broker, secret=uid)
     web_port = httpd.server_address[1]
     proc = spawn_server(ws_port, host)
 
@@ -239,6 +258,8 @@ def run(
     ready = False
     while time.monotonic() < deadline:
         if proc.poll() is not None:
+            if broker is not None:
+                broker.shutdown()
             httpd.shutdown()
             raise LauncherError(
                 f"ffast-server exited with code {proc.returncode} during startup; "
@@ -261,7 +282,8 @@ def run(
     logger.info("Opening FFAST web app at %s", url)
     open_browser(url, app_mode=app_mode, opener=opener)
 
-    result = LaunchResult(url=url, web_port=web_port, ws_port=ws_port, httpd=httpd, proc=proc)
+    result = LaunchResult(url=url, web_port=web_port, ws_port=ws_port, httpd=httpd, proc=proc,
+                          broker=broker)
     if not block:
         return result
 
@@ -271,6 +293,8 @@ def run(
         logger.info("Interrupted — shutting down")
     finally:
         _terminate(proc)
+        if broker is not None:
+            broker.shutdown()
         httpd.shutdown()
     return result
 

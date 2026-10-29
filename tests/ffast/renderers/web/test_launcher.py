@@ -9,8 +9,10 @@ app and the browser-open is captured — without spawning the heavy ffast-server
 
 from __future__ import annotations
 
+import json
 import socket
 import threading
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from uuid import uuid4
@@ -122,6 +124,16 @@ class _FakeProc:
         return None
 
 
+class _FakeBroker:
+    """Stands in for the cluster broker; records that the launcher shut it."""
+
+    def __init__(self):
+        self.shut = False
+
+    def shutdown(self):
+        self.shut = True
+
+
 def test_run_serves_the_app_and_opens_browser():
     ws_port = launcher.pick_free_port()
     web_port = launcher.pick_free_port()
@@ -134,6 +146,7 @@ def test_run_serves_the_app_and_opens_browser():
     uid = uuid4().hex
     opened = []
     spawn_calls = []
+    broker = _FakeBroker()
     result = launcher.run(
         ws_port=ws_port,
         web_port=web_port,
@@ -141,9 +154,11 @@ def test_run_serves_the_app_and_opens_browser():
         spawn_server=lambda p, h: spawn_calls.append((p, h)) or fake,
         opener=opened.append,
         block=False,
-        uid=uid
+        uid=uid,
+        broker_factory=lambda: broker,
     )
     try:
+        assert result.broker is broker
         assert spawn_calls == [(ws_port, "127.0.0.1")]  # host threaded to the server
         assert [f"http://127.0.0.1:{web_port}/?port={ws_port}&launch={uid}"][0] == opened[0] # perhaps a better design is required?
         assert result.url == opened[0]
@@ -181,6 +196,7 @@ def test_run_aborts_when_server_dies_during_startup():
     ws_port = launcher.pick_free_port()  # nothing ever listens here
 
     opened = []
+    broker = _FakeBroker()
     with pytest.raises(launcher.LauncherError):
         launcher.run(
             ws_port=ws_port,
@@ -189,7 +205,9 @@ def test_run_aborts_when_server_dies_during_startup():
             opener=opened.append,
             block=False,
             ready_timeout=2.0,
+            broker_factory=lambda: broker,
         )
+    assert broker.shut
     assert opened == []  # never open a browser at a server that already died
     # the static server was torn down, so its port is free to bind again
     with socket.socket() as probe:
@@ -268,3 +286,52 @@ def test_an_explicit_busy_web_port_is_an_error(monkeypatch):
         busy.listen(1)
         with pytest.raises(OSError):
             _run_with_fake_server(web_port=busy.getsockname()[1])
+
+
+def _cluster_call(port, path, *, secret=None, body=None):
+    headers = {"X-FFAST-Launch": secret} if secret else {}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data, headers=headers)
+    with urllib.request.urlopen(req, timeout=3) as resp:
+        return resp.status, json.loads(resp.read())
+
+
+def test_the_page_reaches_the_cluster_broker_only_with_the_launch_id(tmp_path, monkeypatch):
+    import cluster.connection as conn
+    from cluster.config import ClusterConfig
+    from cluster.web_broker import ClusterBroker
+    from ffast.renderers.web.serve import start_static_server
+
+    monkeypatch.setattr(conn, "_SESSIONS_FILE", str(tmp_path / ".ffast" / "sessions.json"))
+    broker = ClusterBroker(ClusterConfig(str(tmp_path / "c.json")))
+    httpd = start_static_server(launcher.pick_free_port(), host="127.0.0.1",
+                                cluster_broker=broker, cluster_secret="s3")
+    port = httpd.server_address[1]
+    try:
+        status, body = _cluster_call(port, "/cluster/state", secret="s3")
+        assert status == 200 and "profiles" in body
+        with pytest.raises(urllib.error.HTTPError) as err:
+            _cluster_call(port, "/cluster/state")
+        assert err.value.code == 403
+        status, body = _cluster_call(port, "/cluster/profile", secret="s3",
+                                     body={"profile": {"name": "m", "host": "h"}})
+        assert status == 200
+        assert [p["name"] for p in body["profiles"]] == ["m"]
+    finally:
+        httpd.shutdown()
+        broker.shutdown()
+
+
+def test_a_server_without_a_broker_answers_404():
+    from ffast.renderers.web.serve import start_static_server
+
+    httpd = start_static_server(launcher.pick_free_port(), host="127.0.0.1")
+    try:
+        with pytest.raises(urllib.error.HTTPError) as err:
+            _cluster_call(httpd.server_address[1], "/cluster/state", secret="any")
+        assert err.value.code == 404
+    finally:
+        httpd.shutdown()
