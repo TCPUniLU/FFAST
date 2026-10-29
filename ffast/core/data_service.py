@@ -332,10 +332,6 @@ class DataService:
         """
         from ffast.metrics.registry import default_registry
 
-        # A box id is compiled on its first lookup (ADR 0065), which raises the
-        # revision; doing that inside the run would read as a change and throw
-        # the run away. Compile it before the revision is read.
-        default_registry.ensure(metric_id)
         given_key = key
         for _attempt in range(3):
             revision = default_registry.revision

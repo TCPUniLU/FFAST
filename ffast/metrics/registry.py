@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import logging
+import threading
+from contextlib import contextmanager
 from typing import Callable
 
 from ffast.metrics.models import MetricSchema, ParameterSchema
 from ffast.metrics.graph import MetricGraph
 
 logger = logging.getLogger("FFAST")
+
+# Set while this thread registers derived ids (see MetricRegistry.derived).
+# Module-level, not on the registry, so the registry stays picklable.
+_deriving = threading.local()
 
 
 class MetricRegistry:
@@ -69,7 +75,8 @@ class MetricRegistry:
                 raise ValueError(f"Metric with id '{mid}' is already registered")
             decl = MetricSchema.model_validate(spec)
             self._metrics[mid] = (decl, fn)
-            self.revision += 1
+            if not getattr(_deriving, "on", False):
+                self.revision += 1
             return fn
 
         # bare @metric          -> func is the function
@@ -86,6 +93,18 @@ class MetricRegistry:
 
     def has(self, id: str) -> bool:
         return id in self._metrics
+
+    @contextmanager
+    def derived(self):
+        """Registrations made by this thread inside are derived ids, such as a
+        box setting over a registered base (ADR 0065). They add an id and change
+        no result that exists, so they leave ``revision`` alone; a change to the
+        base still raises it."""
+        _deriving.on = True
+        try:
+            yield
+        finally:
+            _deriving.on = False
 
     def ensure(self, id: str) -> bool:
         """Whether ``id`` is registered, registering it first when it is a box

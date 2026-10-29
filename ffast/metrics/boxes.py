@@ -272,10 +272,11 @@ def compile_box_metric(metric_id: str, *, registry=None) -> str:
     problem = setting_problem(setting, schema.shape)
     if problem:
         raise ValueError(f"{metric_id}: {problem}")
-    return compile_expr_metric(
-        metric_id, formula(setting, schema.shape), {"D": base},
-        label=box_label(schema.label or base, setting), unit=schema.unit,
-        registry=registry)
+    with registry.derived():
+        return compile_expr_metric(
+            metric_id, formula(setting, schema.shape), {"D": base},
+            label=box_label(schema.label or base, setting), unit=schema.unit,
+            registry=registry)
 
 
 def ensure_metric(metric_id: str, registry=None) -> bool:
