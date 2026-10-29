@@ -32,6 +32,9 @@ import { visitedKey } from './peaks.js';
 import { panelLetters, readingOrder, caption, captionSegments } from './figure.js';
 import { datasetUnits, editableDimension, resolveUnit } from './units.js';
 import { unitPopover } from './dialogs.js';
+import { sharedMenu } from './actions.js';
+import { icon } from './icons.js';
+import { plotCsv, panelFileName, downloadText, downloadPlot } from './panel_export.js';
 import { KIND_3D } from './tab_rules.js';
 import { GRID_COLUMNS, ROW_UNIT_PX, toFineGrid } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
@@ -206,6 +209,14 @@ export class AnalysisManager {
     this._renderToken = 0;
     /** Subsets SUB made: `${parentFp}|${modelFp}|${plot}` → fingerprint. */
     this._subsets = new Map();
+
+    // One ⋯ menu list for every panel (web parity: plot and table export).
+    const panelMenuList = document.createElement('div');
+    panelMenuList.className = 'menu-list panel-menu hidden';
+    panelMenuList.id = 'panel-menu-list';
+    panelMenuList.setAttribute('role', 'menu');
+    document.body.appendChild(panelMenuList);
+    this._panelMenu = sharedMenu(panelMenuList);
   }
 
   /**
@@ -1033,6 +1044,15 @@ export class AnalysisManager {
     name.innerHTML = spec.title || '';
     title.append(letterEl, name);
     if (spec.tooltip) title.title = spec.tooltip;
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.className = 'panel-more';
+    more.innerHTML = icon('more');
+    more.setAttribute('aria-label', `More for ${spec.title || 'this panel'}`);
+    more.setAttribute('aria-haspopup', 'menu');
+    more.setAttribute('aria-expanded', 'false');
+    more.hidden = !PLOT_KINDS.has(spec.kind);   // tables get theirs with the table download
+    title.appendChild(more);
     el.appendChild(title);
 
     const body = document.createElement('div');
@@ -1054,10 +1074,25 @@ export class AnalysisManager {
     captionEl.append(captionLetter, ' | ', captionText);
     el.appendChild(captionEl);
 
-    const card = { el, title, body, params, letter, letterEl, captionEl, captionLetter, captionText };
+    const card = { el, title, more, body, params, letter, letterEl, captionEl, captionLetter, captionText };
+    more.addEventListener('click', () => this._panelMenu.open(more, this._panelActions(t, spec, card)));
     body.addEventListener('click', (e) => this._onUnitClick(card, e));
     captionEl.addEventListener('click', (e) => this._onUnitClick(card, e));
     return card;
+  }
+
+  /** The ⋯ menu of a panel: downloads (web parity plan 2026-10-29). */
+  _panelActions(t, spec, card) {
+    const el = card.body;
+    const stem = panelFileName(spec);
+    if (!PLOT_KINDS.has(spec.kind)) return [];
+    const notDrawn = () => (el.querySelector('.main-svg') ? '' : 'Nothing is drawn yet');
+    return [
+      { id: 'panel-png', label: 'Download PNG', run: () => downloadPlot(el, 'png', stem), unavailable: notDrawn },
+      { id: 'panel-svg', label: 'Download SVG', run: () => downloadPlot(el, 'svg', stem), unavailable: notDrawn },
+      { id: 'panel-csv', label: 'Download data (CSV)', unavailable: notDrawn,
+        run: () => downloadText(plotCsv(el.data, el._figureInfo || {}), `${stem}.csv`) },
+    ];
   }
 
   /** Write the caption line of a drawn panel; a "[unit]" in it that names an
@@ -1244,7 +1279,7 @@ export class AnalysisManager {
       });
       cb.setAttribute('aria-label', `Peaks on ${spec.title || 'this timeline'}`);   // one per panel
       toggle.append(cb, document.createTextNode('Peaks'));
-      card.title.insertBefore(toggle, card.title.querySelector('.sub-toggle'));
+      card.title.insertBefore(toggle, card.title.querySelector('.sub-toggle') || card.more);
       card.peaksToggle = cb;
       card.peaksLabel = toggle;
     }
@@ -1438,7 +1473,7 @@ export class AnalysisManager {
         if (this._activeTab() === t) this._redrawIfChanged(t, before);
       });
       toggle.append(cb, document.createTextNode('Sub'));
-      card.title.appendChild(toggle);
+      card.title.insertBefore(toggle, card.more);
       card.subToggle = cb;
       const freeze = document.createElement('button');
       freeze.type = 'button';
@@ -1446,7 +1481,7 @@ export class AnalysisManager {
       freeze.textContent = 'Freeze';
       freeze.title = 'Keep these frames; the subset stops following the zoom';
       freeze.addEventListener('click', () => this._freezeSubsets(t, spec));
-      card.title.appendChild(freeze);
+      card.title.insertBefore(freeze, card.more);
       card.subFreeze = freeze;
       cb.addEventListener('change', () => { freeze.hidden = !cb.checked; });
     }

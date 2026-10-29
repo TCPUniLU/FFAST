@@ -97,6 +97,10 @@ CASES = {
     "info_one_atom": "ms.infoReadout([[0,0,0]], [3], ['C'])",
     "info_distance_named": "ms.infoReadout([[0,0,0],[1,0,0]], [3,5], ['C','H'])",
     "info_distance_unnamed": "ms.infoReadout([[0,0,0],[1,0,0]], [3,5])",
+    # ── pe: panel downloads (web parity plan 2026-10-29) ────────────────────
+    "csv_quotes": "pe.csvText([['a,b', 'say \"hi\"', 1.5, NaN]])",
+    "plot_csv": "pe.plotCsv([{x: [0, 1], y: [0.5, 0.25], name: 'MACE'}, {x: [0, 9], y: [0, 9], hoverinfo: 'skip'}], {xTitle: 'Configuration index', yTitle: 'Energy MAE (eV)'})",
+    "plot_csv_typed": "pe.plotCsv([{x: new Float64Array([1]), y: new Float64Array([2]), name: ''}])",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -969,6 +973,7 @@ def results():
         f"  const ec = await import('{origin}/element_colours.js');\n"
         f"  const un = await import('{origin}/units.js');\n"
         f"  const ms = await import('{origin}/measure.js');\n"
+        f"  const pe = await import('{origin}/panel_export.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -1369,6 +1374,18 @@ def test_info_readout_distance_names_atoms_and_elements(results):
 
 def test_info_readout_without_symbols_leaves_elements_out(results):
     assert results["info_distance_unnamed"] == "Atoms 3,5 / Distance: 1.00 Å"
+
+
+# ── panel_export ────────────────────────────────────────────────────────────
+
+def test_csv_quotes_what_needs_quoting_and_blanks_non_numbers(results):
+    assert results["csv_quotes"] == '"a,b","say ""hi""",1.5,\n'
+
+
+def test_plot_csv_is_one_row_per_point_without_helper_traces(results):
+    assert results["plot_csv"] == (
+        "series,Configuration index,Energy MAE (eV)\nMACE,0,0.5\nMACE,1,0.25\n")
+    assert results["plot_csv_typed"] == "series,x,y\n,1,2\n"
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

@@ -6534,3 +6534,43 @@ async def test_web_clear_picks_also_clears_the_force_atoms(ffast_web_server):
             assert await page.evaluate("() => window.ffastApp._picked.length") == 0
         finally:
             await browser.close()
+
+
+async def test_web_a_plot_downloads_svg_and_csv(ffast_web_server):
+    """Web parity plan 2026-10-29: a plot's ⋯ menu downloads it as SVG and CSV."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+            panel = page.locator(
+                ".tabpanel.active .analysis-panel[data-title='Energy MAE timeline']")
+            menu = page.locator("#panel-menu-list")
+
+            await panel.locator(".panel-more").click()
+            await expect(menu).to_be_visible()
+            async with page.expect_download() as dl:
+                await menu.locator("[data-action='panel-svg']").click()
+            download = await dl.value
+            assert download.suggested_filename.endswith(".svg")
+            with open(await download.path(), "rb") as f:
+                assert b"<svg" in f.read()
+
+            await panel.locator(".panel-more").click()
+            async with page.expect_download() as dl:
+                await menu.locator("[data-action='panel-csv']").click()
+            download = await dl.value
+            assert download.suggested_filename == "Energy_MAE_timeline.csv"
+            with open(await download.path()) as f:
+                lines = f.read().splitlines()
+            assert lines[0].startswith("series,")
+            assert len(lines) > 2
+        finally:
+            await browser.close()
