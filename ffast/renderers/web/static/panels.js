@@ -128,6 +128,27 @@ function withLegend(layout, traceCount) {
   return layout;
 }
 
+/**
+ * The hover read-out of the desktop's plots (UI/Plots.py formatHoverText):
+ * the series, then both values named by the axis titles, and dotted lines
+ * from the point to the axes. Helper traces (hoverinfo 'skip') keep none.
+ */
+export function withHoverReadout(built) {
+  const name = (t, fallback) => String(t || '').replace(/<[^>]*>/g, '') || fallback;
+  const xName = name(built.layout.xaxis?.title?.text, 'x');
+  const yName = name(built.layout.yaxis?.title?.text, 'y');
+  for (const tr of built.traces) {
+    if (tr.hoverinfo === 'skip' || tr.hovertemplate) continue;
+    const x = tr.type === 'bar' ? '%{x}' : '%{x:.6g}';
+    tr.hovertemplate = `${tr.name ? '<b>%{fullData.name}</b><br>' : ''}${xName} = ${x}<br>${yName} = %{y:.6g}<extra></extra>`;
+  }
+  const spikes = { showspikes: true, spikemode: 'across', spikesnap: 'hovered data',
+    spikethickness: 1, spikedash: 'dot', spikecolor: plotTheme().ink3 };
+  Object.assign(built.layout.xaxis, spikes);
+  Object.assign(built.layout.yaxis, spikes);
+  return built;
+}
+
 export const PLOT_CONFIG = {
   responsive: true,
   displaylogo: false,
@@ -761,7 +782,7 @@ export const PLOT_KINDS = new Set(Object.keys(PLOT_BUILDERS));
  */
 export function buildPanel(spec, series, ctx) {
   const plot = PLOT_BUILDERS[spec.kind];
-  if (plot) return plot(spec, series || [], ctx || {});
+  if (plot) return withHoverReadout(plot(spec, series || [], ctx || {}));
   const table = TABLE_BUILDERS[spec.kind];
   if (table) return { html: table(spec, series || [], ctx || {}) };
   return null;

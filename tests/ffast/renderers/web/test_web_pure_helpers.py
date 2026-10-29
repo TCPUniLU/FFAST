@@ -111,6 +111,9 @@ CASES = {
         {name:'MACE', data:{mae: a([0.1, 0.2]), rmse: a([0.5, 0.6])}}], {elementOrder:[1,6], selectedElements:[1,6]}).html;
       const doc = new DOMParser().parseFromString(html, 'text/html');
       return [pe.tableCsv(doc.querySelector('table')), doc.querySelector('tbody td:nth-child(2)').textContent]; })()""",
+    "hover_timeline": "(() => { const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u']}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}], {units: {}, peaks: false}); return [b.traces[0].hovertemplate, b.layout.xaxis.showspikes, b.layout.yaxis.spikemode]; })()",
+    "hover_scatter_diagonal": "(() => { const b = pn.buildPanel({kind: 'scatter', diagonal: true}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {x: {nd: {values: [1, 2], shape: [2]}}, y: {nd: {values: [1, 2], shape: [2]}}}}], {units: {}}); return [b.traces.length, b.traces[b.traces.length - 1].hovertemplate === undefined, b.traces[0].hovertemplate]; })()",
+    "hover_bars": "(() => { const b = pn.buildPanel({kind: 'bars'}, [{name: 'MACE', data: {value: {nd: {values: [0.1, 0.2], shape: [2]}}}}], {elementOrder: [1, 6], selectedElements: ['All']}); return b.traces[0].hovertemplate; })()",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1408,6 +1411,25 @@ def test_grouped_table_csv_keeps_the_raw_numbers(results):
     csv, shown = results["grouped_table_csv"]
     assert csv.splitlines()[1:] == ["H,0.1,0.5", "C,0.2,0.6"]
     assert shown == "0.10"
+
+
+# ── panels.withHoverReadout ─────────────────────────────────────────────────
+
+def test_hover_names_the_series_and_both_values_with_crosshair_lines(results):
+    template, spikes, mode = results["hover_timeline"]
+    assert "Configuration index = %{x:.6g}" in template
+    assert "%{y:.6g}" in template
+    assert "<b>%{fullData.name}</b>" in template
+    assert spikes is True and mode == "across"
+
+
+def test_the_scatter_diagonal_shows_nothing_on_hover(results):
+    n, last_is_plain, first = results["hover_scatter_diagonal"]
+    assert n == 2 and last_is_plain is True and first
+
+
+def test_bar_hover_leaves_the_category_label_unformatted(results):
+    assert "= %{x}<br>" in results["hover_bars"]
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────
