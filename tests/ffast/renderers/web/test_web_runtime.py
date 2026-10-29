@@ -511,7 +511,8 @@ async def test_web_cluster_connect_hands_the_page_the_tunnel(ffast_web_server, t
     broker, cancelled = _fake_cluster_broker(tmp_path, monkeypatch, connect=connect)
     async with _cluster_page(broker) as page_port, async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page(viewport={"width": 1100, "height": 900})
+        # A laptop-sized window: the progress must show without scrolling the form.
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
             await page.goto(f"http://127.0.0.1:{page_port}/?launch=s3cret", wait_until="networkidle")
             await expect(page.locator("#conn-dialog")).to_be_visible()
@@ -524,6 +525,7 @@ async def test_web_cluster_connect_hands_the_page_the_tunnel(ffast_web_server, t
             await expect(page.locator("#cluster-profile")).to_have_value("m")
             await page.locator("#cluster-connect-btn").click()
             await expect(page.locator("#cluster-progress")).to_contain_text("Submitting SLURM job…")
+            await expect(page.locator("#cluster-progress")).to_be_in_viewport(ratio=1)
             await expect(page.locator("#cluster-connect-btn")).to_have_text("Cancel")
 
             await expect(page.locator("#cluster-dialog")).to_be_hidden(timeout=15000)

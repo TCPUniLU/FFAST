@@ -76,6 +76,7 @@ export class ClusterDialog {
     const text = [(status.messages || []).join('\n'), status.details || ''].filter(Boolean).join('\n\n');
     progress.textContent = text;
     progress.classList.toggle('hidden', !text);
+    progress.scrollTop = progress.scrollHeight;   // newest line in sight
     if (status.state === 'failed') this._message(status.error);
     for (const el of $('cluster-body').querySelectorAll('input, select, button')) el.disabled = busy;
     $('cluster-stop-btn').disabled = !live;
