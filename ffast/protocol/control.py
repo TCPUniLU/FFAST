@@ -49,6 +49,9 @@ EXPORT_SUBSET = "EXPORT_SUBSET"
 SAVE_TAB = "SAVE_TAB"
 DELETE_TAB = "DELETE_TAB"
 HIDE_TAB = "HIDE_TAB"
+# The whole tab bar order, hidden tabs included; [] brings back the default
+# order (ADR 0070).
+SET_TAB_ORDER = "SET_TAB_ORDER"
 EXPORT_TAB = "EXPORT_TAB"
 # User metrics (ADR 0057): list them, save one (a new one, or an edit that keeps
 # the id), delete one, export one as TOML.
@@ -80,7 +83,7 @@ CLIENT_TO_SERVER = frozenset(
         LOAD_EXAMPLE, REQUEST_PREDICTION_ARRAYS, OPEN_VIEW, CLOSE_VIEW, VIEW_COMMAND,
         SAVE_SESSION, LOAD_SESSION, REQUEST_METRIC,
         REQUEST_METRIC_CATALOG, REQUEST_TAB_LAYOUT, EXPORT_SUBSET,
-        SAVE_TAB, DELETE_TAB, HIDE_TAB, EXPORT_TAB,
+        SAVE_TAB, DELETE_TAB, HIDE_TAB, SET_TAB_ORDER, EXPORT_TAB,
         REQUEST_USER_METRICS, SAVE_USER_METRIC, DELETE_USER_METRIC, EXPORT_USER_METRIC,
         REQUEST_METRIC_INPUTS, CHECK_METRIC, TRY_METRIC, CANCEL_TRY_METRIC,
         REQUEST_METRIC_BOXES, ADD_SESSION_METRICS, TRACE,
@@ -96,7 +99,7 @@ MUTATING_CLIENT_EVENTS = frozenset(
     {
         LOAD_DATASET, LOAD_MODEL, DELETE_OBJECT, CREATE_SUBSET, DECLARE_SUBSET,
         FREEZE_SUBSET, SET_DATASET_UNIT, LOAD_PREDICTION, LOAD_EXAMPLE, VIEW_COMMAND, SAVE_SESSION, LOAD_SESSION, EXPORT_SUBSET,
-        SAVE_TAB, DELETE_TAB, HIDE_TAB, SAVE_USER_METRIC, DELETE_USER_METRIC,
+        SAVE_TAB, DELETE_TAB, HIDE_TAB, SET_TAB_ORDER, SAVE_USER_METRIC, DELETE_USER_METRIC,
         ADD_SESSION_METRICS,
     }
 )
@@ -163,7 +166,7 @@ SESSION_LOADED = "SESSION_LOADED"
 # task id, so without this the window's "Loading…" never ended. One-shot
 # announcement, out of REPLY_EVENTS.
 LOAD_FAILED = "LOAD_FAILED"
-# Outcome of SAVE_TAB / DELETE_TAB / HIDE_TAB (ADR 0056): {ok, action, name,
+# Outcome of SAVE_TAB / DELETE_TAB / HIDE_TAB / SET_TAB_ORDER (ADR 0056): {ok, action, name,
 # error}, to the window that asked. On success the new layout then goes to
 # every window as TAB_LAYOUT through the hub. Same shape and reasoning as
 # SESSION_SAVED: a one-shot announcement, out of REPLY_EVENTS.

@@ -305,3 +305,75 @@ def test_write_delete_and_hide_are_seen_at_the_next_call(store):
     assert store.hidden == ["One"]
     store.delete(file, "One")
     assert [t.tab.name for t in store.tabs()] == ["Two"]
+
+
+# ── order (ADR 0070) ────────────────────────────────────────────────────────
+
+def test_a_set_order_is_the_bar_order_and_is_kept_in_state_json(store):
+    sources = _sources(store)
+    sources.set_order(["Gyration", "3D", "Basic"])
+    assert _names(sources) == ["Gyration", "3D", "Basic"]
+    assert _names(_sources(UserTabStore(store.root))) == ["Gyration", "3D", "Basic"]
+
+
+def test_tabs_not_in_the_order_go_after_it(store):
+    sources = _sources(store)
+    sources.set_order(["Basic", "3D"])
+    assert _names(sources) == ["Basic", "3D", "Gyration"]
+    sources.save({"name": "Mine", "panels": [VIEW]})
+    assert _names(sources)[-1] == "Mine"
+
+
+def test_an_empty_order_brings_back_the_default(store):
+    sources = _sources(store)
+    sources.set_order(["Gyration", "Basic", "3D"])
+    sources.set_order([])
+    assert _names(sources) == ["3D", "Basic", "Gyration"]
+
+
+def test_unknown_names_are_dropped_and_a_repeated_name_is_refused(store):
+    sources = _sources(store)
+    sources.set_order(["Gone", "Basic", "3D"])
+    assert store.bar_order == ["Basic", "3D"]
+    with pytest.raises(TabError, match="listed twice"):
+        sources.set_order(["Basic", "Basic"])
+
+
+def test_a_renamed_tab_keeps_its_place(store):
+    sources = _sources(store)
+    sources.save({"name": "Mine", "panels": [VIEW]})
+    sources.set_order(["Mine", "3D", "Basic", "Gyration"])
+    sources.save({"name": "Ours", "panels": [VIEW]}, previous_name="Mine")
+    assert _names(sources) == ["Ours", "3D", "Basic", "Gyration"]
+
+
+def test_reset_to_original_gives_the_place_back(store):
+    sources = _sources(store)
+    sources.save({"name": "Basic 2", "panels": [TABLE]}, previous_name="Basic")
+    sources.set_order(["Basic 2", "3D", "Gyration"])
+    sources.delete("Basic 2")
+    assert _names(sources) == ["Basic", "3D", "Gyration"]
+
+
+def test_deleting_a_tab_drops_it_from_the_order(store):
+    sources = _sources(store)
+    sources.save({"name": "Mine", "panels": [VIEW]})
+    sources.set_order(["Mine", "3D"])
+    sources.delete("Mine")
+    assert store.bar_order == ["3D"]
+
+
+def test_a_hidden_tab_keeps_its_place(store):
+    sources = _sources(store)
+    sources.set_order(["Gyration", "Basic", "3D"])
+    sources.set_hidden("Basic", True)
+    sources.set_hidden("Basic", False)
+    assert _names(sources) == ["Gyration", "Basic", "3D"]
+
+
+def test_hiding_and_ordering_do_not_wipe_each_other(store):
+    sources = _sources(store)
+    sources.set_order(["Basic", "3D"])
+    sources.set_hidden("Gyration", True)
+    state = json.loads((store.root / "state.json").read_text())
+    assert state["bar_order"] == ["Basic", "3D"] and state["hidden"] == ["Gyration"]

@@ -39,6 +39,7 @@ export const OUT = Object.freeze({
   SAVE_TAB: 'SAVE_TAB',
   DELETE_TAB: 'DELETE_TAB',
   HIDE_TAB: 'HIDE_TAB',
+  SET_TAB_ORDER: 'SET_TAB_ORDER',
   EXPORT_TAB: 'EXPORT_TAB',
   // User metrics and the Metrics pane (ADR 0057)
   REQUEST_USER_METRICS: 'REQUEST_USER_METRICS',
@@ -86,7 +87,7 @@ export const IN = Object.freeze({
   SESSION_LOADED: 'SESSION_LOADED',
   // A dataset or prediction load that failed, {kind, path, error}.
   LOAD_FAILED: 'LOAD_FAILED',
-  // Outcome of SAVE_TAB / DELETE_TAB / HIDE_TAB, {ok, action, name, error},
+  // Outcome of SAVE_TAB / DELETE_TAB / HIDE_TAB / SET_TAB_ORDER, {ok, action, name, error},
   // and the TOML for EXPORT_TAB (ADR 0056).
   TAB_SAVED: 'TAB_SAVED',
   TAB_EXPORTED: 'TAB_EXPORTED',

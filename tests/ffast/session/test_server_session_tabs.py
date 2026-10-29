@@ -95,6 +95,12 @@ def test_reset_hide_and_show(env):
     assert own[0][2]["error"] == "At least one tab must show the main view"
 
 
+def test_set_tab_order_reorders_every_window(env):
+    own, everyone = _dispatch(env, control.SET_TAB_ORDER, {"names": ["Basic", "3D"]})
+    assert own[0][2]["ok"] and own[0][2]["action"] == "order"
+    assert [t["name"] for t in _layout(everyone)["tabs"]][:2] == ["Basic", "3D"]
+
+
 def test_export_answers_only_the_window_that_asked(env):
     own, everyone = _dispatch(env, control.EXPORT_TAB, {"name": "Basic"})
     [(event, _, kwargs)] = own
@@ -110,5 +116,5 @@ def test_the_layout_request_reads_the_tab_sources(env):
 
 def test_tab_changes_are_controlling_only():
     """A read-only viewer may export, not change (ADR 0044 Phase 2)."""
-    assert {control.SAVE_TAB, control.DELETE_TAB, control.HIDE_TAB} <= control.MUTATING_CLIENT_EVENTS
+    assert {control.SAVE_TAB, control.DELETE_TAB, control.HIDE_TAB, control.SET_TAB_ORDER} <= control.MUTATING_CLIENT_EVENTS
     assert control.EXPORT_TAB not in control.MUTATING_CLIENT_EVENTS

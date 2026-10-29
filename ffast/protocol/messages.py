@@ -464,6 +464,14 @@ class HideTabRequest(BaseModel):
     hidden: bool
 
 
+class SetTabOrderRequest(BaseModel):
+    """Typed payload for ``SET_TAB_ORDER``: the whole tab bar order (ADR 0070)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    names: list[str]
+
+
 class ExportTabRequest(BaseModel):
     """Typed payload for ``EXPORT_TAB``."""
 

@@ -154,7 +154,7 @@ class ServerSession:
         from ffast.protocol.messages import (
             CloseViewRequest, CreateSubsetRequest, DeclareSubsetRequest,
             DeleteObjectRequest, DeleteTabRequest, FreezeSubsetRequest,
-            EmptyRequest, ExportSubsetRequest, ExportTabRequest, HideTabRequest,
+            EmptyRequest, ExportSubsetRequest, ExportTabRequest, HideTabRequest, SetTabOrderRequest,
             ListDirRequest,
             LoadDatasetRequest, LoadModelRequest,
             LoadPredictionRequest, LoadSessionRequest, OpenViewRequest,
@@ -193,6 +193,7 @@ class ServerSession:
             control.SAVE_TAB:                   _Route(self._on_save_tab, ["tab", "?previous_name"], SaveTabRequest),
             control.DELETE_TAB:                 _Route(self._on_delete_tab, ["name"], DeleteTabRequest),
             control.HIDE_TAB:                   _Route(self._on_hide_tab, ["name", "hidden"], HideTabRequest),
+            control.SET_TAB_ORDER:              _Route(self._on_set_tab_order, ["names"], SetTabOrderRequest),
             control.EXPORT_TAB:                 _Route(self._on_export_tab, ["name"], ExportTabRequest),
             control.REQUEST_USER_METRICS:       _Route(self._on_request_user_metrics, [], EmptyRequest),
             control.SAVE_USER_METRIC:           _Route(self._on_save_user_metric, ["metric", "?previous_id", "?base_revision", "?overwrite"], SaveUserMetricRequest),
@@ -1277,6 +1278,9 @@ class ServerSession:
     async def _on_hide_tab(self, name, hidden, **kwargs) -> None:
         await self._change_tabs("hide" if hidden else "show", name,
                                 lambda sources: sources.set_hidden(name, bool(hidden)))
+
+    async def _on_set_tab_order(self, names, **kwargs) -> None:
+        await self._change_tabs("order", None, lambda sources: sources.set_order(list(names)))
 
     async def _change_tabs(self, action: str, name, change) -> None:
         """Apply a tab change, answer this window with TAB_SAVED, then send the

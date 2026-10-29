@@ -9,7 +9,8 @@ A user tab may **replace** a built-in or project tab: it takes the original's
 place in the tab bar, and deleting it ("Reset to original") brings the
 original back. Which tab a user tab replaces, the original's fingerprint when
 it was edited (so the mark can say the original has changed since), the
-**hidden** list and the order of new user tabs are app state, written by the
+**hidden** list, the order of new user tabs and the tab bar's order
+(ADR 0070) are app state, written by the
 app, so they live in a side file, ``state.json``, and never in a tab file: a
 tab file can be copied into a project, or sent to someone, as it is.
 
@@ -120,6 +121,7 @@ class UserTabStore:
             "replaces": dict(state.get("replaces") or {}),
             "hidden": list(state.get("hidden") or []),
             "order": list(state.get("order") or []),
+            "bar_order": list(state.get("bar_order") or []),
         }
 
     def _write_state(self, state: dict) -> None:
@@ -135,6 +137,24 @@ class UserTabStore:
         state = self._state()
         names = [n for n in state["hidden"] if n != name]
         state["hidden"] = names + [name] if hidden else names
+        self._write_state(state)
+
+    @property
+    def bar_order(self) -> list[str]:
+        return self._state()["bar_order"]
+
+    def set_bar_order(self, names: list[str]) -> None:
+        state = self._state()
+        state["bar_order"] = list(names)
+        self._write_state(state)
+
+    def rename_in_bar_order(self, old: str, new: str | None) -> None:
+        """A renamed tab keeps its place in the bar order; a deleted one
+        (`new` is None) leaves it. Writes only when `old` was listed."""
+        state = self._state()
+        if old not in state["bar_order"]:
+            return
+        state["bar_order"] = [new if n == old else n for n in state["bar_order"] if n != old or new is not None]
         self._write_state(state)
 
     # ── tab files ───────────────────────────────────────────────────────────
@@ -256,8 +276,9 @@ class TabSources:
 
     # ── reading ─────────────────────────────────────────────────────────────
     def entries(self) -> list[TabEntry]:
-        """Built-in, then project, then user tabs in the order they were made;
-        a user tab that replaces another sits in that one's place."""
+        """Built-in, then project, then user tabs in the order they were made,
+        then put in the order the user dragged them to (ADR 0070); a user tab
+        that replaces another sits in that one's place."""
         user = self.store.tabs() if self.store else []
         hidden = set(self.store.hidden) if self.store else set()
         base = [(t, "built-in") for t in self.builtin] + [(t, "project") for t in self.project]
@@ -276,7 +297,8 @@ class TabSources:
         for u in user:
             if u.replaces not in base_names:   # a new tab, or its original is gone
                 out.append(TabEntry(u.tab, "user", u.file, hidden=u.tab.name in hidden))
-        return out
+        rank = {n: i for i, n in enumerate(self.store.bar_order if self.store else [])}
+        return sorted(out, key=lambda e: rank.get(e.tab.name, len(rank)))
 
     def layout(self) -> list[dict]:
         """The TAB_LAYOUT payload: each tab as the browser draws it, plus where
@@ -346,6 +368,8 @@ class TabSources:
                 store.set_hidden(editing.tab.name, False)
         else:
             store.write(tab, replaces=editing.tab.name, original=tab_fingerprint(editing.tab))
+        if editing is not None and editing.tab.name != tab.name:
+            store.rename_in_bar_order(editing.tab.name, tab.name)   # keeps its place
         return tab.name
 
     def delete(self, name: str) -> None:
@@ -363,6 +387,19 @@ class TabSources:
         if not any(_shows_main_view(t) for t in rest):
             raise TabError(MAIN_VIEW_RULE)
         store.delete(entry.file, entry.tab.name)
+        if entry.replaces and entry.replaces != entry.tab.name:
+            store.rename_in_bar_order(entry.tab.name, entry.replaces)   # the original's place
+        elif not entry.replaces:
+            store.rename_in_bar_order(entry.tab.name, None)
+
+    def set_order(self, names: list[str]) -> None:
+        """Put the bar in the order of `names` (ADR 0070); a name no tab has
+        is dropped, and `[]` brings back the default order."""
+        store = self._writable()
+        if len(set(names)) != len(names):
+            raise TabError("A tab is listed twice")
+        known = {e.tab.name for e in self.entries()}
+        store.set_bar_order([n for n in names if n in known])
 
     def set_hidden(self, name: str, hidden: bool) -> None:
         store = self._writable()

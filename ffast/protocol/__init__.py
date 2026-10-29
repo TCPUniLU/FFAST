@@ -25,6 +25,7 @@ from ffast.protocol.messages import (
     ExportSubsetRequest,
     ExportTabRequest,
     HideTabRequest,
+    SetTabOrderRequest,
     ListDirRequest,
     LoadDatasetRequest,
     LoadModelRequest,
@@ -98,6 +99,7 @@ __all__ = [
     "ExportUserMetricRequest",
     "DeleteTabRequest",
     "HideTabRequest",
+    "SetTabOrderRequest",
     "ExportTabRequest",
     "EmptyRequest",
 ]
