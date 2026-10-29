@@ -170,6 +170,15 @@ CASES = {
       return { ...shown, opened, cancelled, after: panel.children.length,
         hiddenAfter: menu.hidden, closedAfter: panel.classList.contains('hidden') };
     })()""",
+    "key_alt_shift_s": "sc.matchShortcut({code: 'KeyS', altKey: true, shiftKey: true})?.action",
+    "key_digit_0": "sc.matchShortcut({code: 'Digit0', key: ')', altKey: true, shiftKey: true})?.action",
+    "key_needs_both": "[sc.matchShortcut({code: 'KeyD', altKey: true}), sc.matchShortcut({code: 'KeyD', shiftKey: true})]",
+    "key_ctrl_free": "[sc.matchShortcut({code: 'KeyS', ctrlKey: true}), sc.matchShortcut({code: 'KeyS', metaKey: true, altKey: true, shiftKey: true})]",
+    "key_in_text": "sc.matchShortcut({code: 'KeyD', altKey: true, shiftKey: true}, {inText: true})",
+    "key_mac_char": "sc.matchShortcut({code: 'KeyD', key: 'Î', altKey: true, shiftKey: true})?.action",
+    "key_cluster": "sc.matchShortcut({code: 'KeyC', altKey: true, shiftKey: true})?.action",
+    "key_labels": "[sc.shortcutLabel(sc.FILE_SHORTCUTS[0]), sc.shortcutLabel(sc.FILE_SHORTCUTS[0], true), sc.shortcutLabel(sc.FILE_SHORTCUTS[5])]",
+    "key_is_mac": "[sc.isMac({platform: 'MacIntel'}), sc.isMac({platform: 'Win32'}), sc.isMac({userAgentData: {platform: 'macOS'}})]",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1046,6 +1055,7 @@ def results():
         f"  const rl = await import('{origin}/rail.js');\n"
         f"  const oi = await import('{origin}/object_info.js');\n"
         f"  const tk = await import('{origin}/tasks.js');\n"
+        f"  const sc = await import('{origin}/shortcuts.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -1601,6 +1611,26 @@ def test_the_task_list_shows_only_visual_tasks_and_cancels_one(results):
         assert word in r["text"]
     assert r["value"] == 2 and r["opened"] is True and r["cancelled"] == [7]
     assert (r["after"], r["hiddenAfter"], r["closedAfter"]) == (0, True, True)
+
+
+# ── shortcuts ───────────────────────────────────────────────────────────────
+
+def test_alt_shift_letters_and_digit_zero_match_by_code(results):
+    assert results["key_alt_shift_s"] == "save-session"
+    assert results["key_digit_0"] == "load-zero-model"
+    assert results["key_mac_char"] == "load-dataset"
+    assert results["key_cluster"] == "connect-cluster"
+
+
+def test_a_shortcut_needs_alt_and_shift_and_no_ctrl_or_meta_or_text_focus(results):
+    assert results["key_needs_both"] == [None, None]
+    assert results["key_ctrl_free"] == [None, None]
+    assert results["key_in_text"] is None
+
+
+def test_shortcut_labels_and_the_mac_check(results):
+    assert results["key_labels"] == ["Alt+Shift+S", "⌥⇧S", "Alt+Shift+0"]
+    assert results["key_is_mac"] == [True, False, True]
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

@@ -6916,3 +6916,62 @@ async def test_web_tasks_button_shows_a_running_task_and_cancels_it(ffast_web_se
             await expect(page.locator("#task-menu")).to_be_hidden()
         finally:
             await browser.close()
+
+
+async def test_web_alt_shift_shortcuts_open_the_file_actions(ffast_web_server):
+    """Alt+Shift+letter opens the file actions (web parity plan 2026-10-29)."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.evaluate("() => document.activeElement.blur()")
+            modal, title = page.locator("#fb-modal"), page.locator("#fb-title")
+
+            await page.keyboard.press("Alt+Shift+KeyD")
+            await expect(modal).to_be_visible()
+            await expect(title).to_have_text("Load Remote Dataset")
+            await page.keyboard.press("Escape")
+            await expect(modal).to_be_hidden()
+            await page.keyboard.press("Alt+Shift+KeyS")
+            await expect(title).to_have_text("Save Session")
+            await page.keyboard.press("Escape")
+            await expect(modal).to_be_hidden()
+            await page.keyboard.press("Alt+Shift+KeyL")
+            await expect(title).to_have_text("Load Session")
+            # with the browser open, another shortcut does not change it
+            await page.keyboard.press("Alt+Shift+KeyS")
+            await expect(title).to_have_text("Load Session")
+            await page.keyboard.press("Escape")
+            await expect(modal).to_be_hidden()
+
+            await page.keyboard.press("Alt+Shift+KeyM")
+            await expect(title).to_have_text("Load Model")
+            await page.keyboard.press("Escape")
+
+            await page.locator("#sidebar-search").focus()
+            await page.keyboard.press("Alt+Shift+KeyD")
+            await expect(modal).to_be_hidden()
+            await page.evaluate("() => document.activeElement.blur()")
+            await page.keyboard.press("Control+KeyD")
+            await expect(modal).to_be_hidden()
+
+            await page.locator("#file-menu-btn").click()
+            save = page.locator("#file-menu-list [data-action='save-session']")
+            assert re.fullmatch(r"Alt\+Shift\+S|⌥⇧S", await save.get_attribute("data-keys"))
+            await expect(save).to_have_attribute("aria-keyshortcuts", "Alt+Shift+S")
+            assert (await save.inner_text()).strip().startswith("Save Session…")
+            await page.keyboard.press("Escape")
+            await page.evaluate("() => document.activeElement.blur()")
+
+            async with page.context.expect_page():
+                await page.keyboard.press("Alt+Shift+KeyN")
+
+            # An action that cannot run now says why (the pop-out waits for an open view).
+            await page.evaluate("() => { document.getElementById('popout-btn').disabled = true; }")
+            await page.keyboard.press("Alt+Shift+KeyN")
+            await expect(page.locator("#status")).to_contain_text("Open a dataset first")
+        finally:
+            await browser.close()

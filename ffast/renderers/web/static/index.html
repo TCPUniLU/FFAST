@@ -262,6 +262,9 @@
     #tab-actions button, #tab-new button { height: auto; min-width: 28px; padding: 2px 8px; font-size: var(--fs-l); background: transparent; }
     #tab-actions button:hover, #tab-new button:hover { background: var(--surface-3); }
     .menu-list.right { left: auto; right: 0; }
+    .menu-list [role=menuitem][data-keys] { display: flex; gap: 16px; }
+    /* The empty alt text keeps the shortcut out of the item's name (aria-keyshortcuts says it). */
+    .menu-list [role=menuitem][data-keys]::after { content: attr(data-keys) / ""; margin-left: auto; color: var(--muted); }
     .menu-sep { height: 1px; margin: 4px 6px; background: var(--bg3); }
     /* a user tab that replaces a built-in or project one (rule 10) */
     .tab .tab-mark {

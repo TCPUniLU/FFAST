@@ -7,7 +7,8 @@
  * first"), which the menu shows on the greyed-out item.
  */
 
-/** @typedef {{id: string, label: string, run: () => void, unavailable?: () => string}} Action */
+/** @typedef {{id: string, label: string, run: () => void, unavailable?: () => string,
+ *   keys?: string, ariaKeys?: string}} Action  `keys` is shown at the item's right edge. */
 
 /** @param {Action} action @returns {string} '' when the action can run */
 export function whyUnavailable(action) {
@@ -102,6 +103,10 @@ function fillMenu(list, entries, close) {
     item.setAttribute('role', 'menuitem');
     item.dataset.action = action.id;
     item.textContent = action.label;
+    if (action.keys) {
+      item.dataset.keys = action.keys;
+      item.setAttribute('aria-keyshortcuts', action.ariaKeys || action.keys);
+    }
     const why = whyUnavailable(action);
     item.disabled = !!why;
     if (why) item.title = why;

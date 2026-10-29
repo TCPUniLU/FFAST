@@ -38,6 +38,7 @@ import { createMetricsPane } from './panes/metrics.js';
 import { askDialog, askText, infoDialog, textDialog, trapFocus } from './dialogs.js';
 import { objectInfo } from './object_info.js';
 import { TaskList } from './tasks.js';
+import { FILE_SHORTCUTS, isMac, matchShortcut, shortcutLabel } from './shortcuts.js';
 import { showWarning } from './toasts.js';
 import { applyStaticIcons, icon } from './icons.js';
 import { initAppearance } from './appearance.js';
@@ -589,6 +590,14 @@ export class FFastApp {
     document.getElementById('add-prediction-btn').addEventListener('click', () => this._browser.open('prediction'));
 
     this._actions = this._buildActions();
+    const mac = isMac();
+    for (const s of FILE_SHORTCUTS) {
+      const a = this._action(s.action);
+      if (!a) continue;   // its plan is not built yet
+      a.keys = shortcutLabel(s, mac);
+      a.ariaKeys = `Alt+Shift+${s.code.replace(/^Key|^Digit/, '')}`;
+    }
+    this._initFileShortcuts();
     bindMenu(
       document.getElementById('file-menu-btn'),
       document.getElementById('file-menu-list'),
@@ -622,8 +631,8 @@ export class FFastApp {
     this._browser.bindControls();
   }
 
-  /** The one action list (ADR 0055): the File menu today; shortcuts and the
-   * command palette read the same entries. Session save/load (issue 21) and
+  /** The one action list (ADR 0055): the File menu today; the Alt+Shift file
+   * shortcuts and the command palette read the same entries. Session save/load (issue 21) and
    * subset export (issue 20) use the file browser — the browser has no
    * native server-side save dialog. */
   /** '' when this window may change the shared session, else why not. */
@@ -660,6 +669,9 @@ export class FFastApp {
         run: () => this._sessionOps.exportSelectedDataset(),
         unavailable: () => needsControl() || (this._currentDatasetFp ? '' : 'Select a dataset first') },
       { id: 'connect', label: 'Connect to Server…', menu: 'file', run: () => this._openConnDialog() },
+      // No `menu`: the File menu does not change; the Alt+Shift+N shortcut runs it.
+      { id: 'open-popout', label: 'Open 3D View in New Window', run: () => this._openPopout(),
+        unavailable: () => (document.getElementById('popout-btn').disabled ? 'Open a dataset first' : '') },
       // Quick styles (ADR 0055): buttons at the top of the sidebar.
       { id: 'style-force', label: 'Quick style: Force error', short: 'Force error',
         title: 'Colour atoms by force error of the selected prediction',
@@ -2775,6 +2787,24 @@ export class FFastApp {
   /** Four shortcuts (ADR 0063): ←/→ step a frame, Space plays or pauses, Esc
    * puts down the armed pick tool, / searches the settings. They are ignored
    * while typing, while a dialog is open, and on a control that uses the key. */
+  /** Alt+Shift file shortcuts from the one action list (ADR 0055). A
+   *  key whose action does not exist yet does nothing; one that cannot
+   *  run now says why. Keys typed in a text field are left alone. */
+  _initFileShortcuts() {
+    document.addEventListener('keydown', (e) => {
+      if (e.defaultPrevented || e.repeat) return;
+      if (document.querySelector('.warning-modal:not(.hidden), #fb-modal:not(.hidden), #unit-popover')) return;
+      const inText = !!e.target.closest?.('input, textarea, select, [contenteditable]');
+      const s = matchShortcut(e, { inText });
+      const action = s && this._action(s.action);
+      if (!action) return;
+      e.preventDefault();
+      const why = whyUnavailable(action);
+      if (why) { this._setStatus(why, 'error'); return; }
+      runAction(action);
+    });
+  }
+
   _initShortcuts() {
     document.addEventListener('keydown', (e) => {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
