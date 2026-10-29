@@ -183,3 +183,34 @@ def test_the_first_run_of_a_box_id_is_stored_under_a_given_key(make):
     finally:
         if default_registry.has(box_id):
             default_registry.unregister(box_id)
+
+
+def test_compiling_a_box_id_leaves_the_revision_alone():
+    """A box id adds an id over a registered base and changes no result that
+    exists, so it is not a change (only the base changing is)."""
+    box_id = "ffast.energy_reference[dataset;mean]"
+    if default_registry.has(box_id):
+        default_registry.unregister(box_id)
+    try:
+        before = default_registry.revision
+        assert default_registry.ensure(box_id)
+        assert default_registry.revision == before
+    finally:
+        if default_registry.has(box_id):
+            default_registry.unregister(box_id)
+
+
+def test_a_box_id_compiled_by_another_run_does_not_discard_this_one(make):
+    """Metrics run in parallel: another run compiling its box id while this one
+    is in flight must not throw this result away."""
+    other = "ffast.force_reference[dataset;length;max]"
+    if default_registry.has(other):
+        default_registry.unregister(other)
+    try:
+        ex = _ChangingExecutor([4.0], on_run={0: lambda: default_registry.ensure(other)})
+        data, _ = make(ex)
+        assert data.generateMetric("ffast.energy_reference", {}, None, _Dataset(), key="k") == "k"
+        assert float(data.cache["k"].values) == 4.0
+    finally:
+        if default_registry.has(other):
+            default_registry.unregister(other)
