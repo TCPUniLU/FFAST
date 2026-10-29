@@ -624,6 +624,8 @@ export class FFastApp {
       { id: 'load-prediction', label: 'Load Prediction…', menu: 'file',
         run: () => this._browser.open('prediction'),
         unavailable: () => needsControl() || (this._datasets.size ? '' : 'Load a dataset first') },
+      { id: 'load-model', label: 'Load Model…', menu: 'file',
+        run: () => this._browser.open('model'), unavailable: needsControl },
       // The example pair in examples/data: the server knows where it lives.
       { id: 'load-example', label: 'Load Example Dataset and Prediction', menu: 'file',
         run: () => {
@@ -1712,12 +1714,17 @@ export class FFastApp {
     // a LOAD_PREDICTION completes (the ghost model registers its forces cache).
     // A model new to this window ends a pending prediction load, wherever it
     // applies; only a duplicate announces nothing (RemoteBrowser.onTaskDone).
-    const loaded = !this._models.has(fp) && this._browser.settled('prediction');
+    // A prediction or a model this window asked for ends its "Loading…".
+    const asked = this._browser.pendingKind();
+    const loaded = !this._models.has(fp)
+      && (asked === 'prediction' || asked === 'model') && this._browser.settled(asked);
     this._models.set(fp, meta || {});
     // Auto-select a freshly loaded prediction that applies to the current
     // dataset and refresh the view so its force overlay appears. A live
     // pop-out with a requested prediction (ADR 0044 Phase 4) only settles on
     // that one, so replay order among several candidates doesn't matter.
+    // A model this window just loaded has no results yet, so it is not selected;
+    // the user picks it in the rail (web parity plan 2026-10-29, decision 5).
     const wantsSpecificModel = this._autoModelFp !== null && fp !== this._autoModelFp;
     if (!wantsSpecificModel && this._currentDatasetFp &&
         (meta?.dataset_fingerprints || []).length
@@ -1727,7 +1734,7 @@ export class FFastApp {
       if (this._activePanel) this._openView();
       this._syncAnalysisContext();
     } else if (loaded) {
-      this._setStatus(`Prediction "${meta?.name || fp.slice(0,8)}" loaded`, 'connected');
+      this._setStatus(`${asked === 'model' ? 'Model' : 'Prediction'} "${meta?.name || fp.slice(0,8)}" loaded`, 'connected');
     }
     this._panes?.forces.refreshModels();
     this._panes?.colorBy.refreshModels(this._models);

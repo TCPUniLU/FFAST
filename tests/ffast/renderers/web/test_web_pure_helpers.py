@@ -92,6 +92,7 @@ CASES = {
     "note_stride": "rb.largeFileNote({size: 3.5e9, n: 100, stride: 10})",
     "load_pred_npz": "rb.canLoad({selected:'p.npz', mode:'prediction', forceKey:'', targetDataset:'fp', isNpz:true})",
     "npz_names": "[rb.isNpzFile('a.NPZ'), rb.isNpzFile('a.xyz')]",
+    "load_model": "[rb.canLoad({selected:'m.model', mode:'model', modelType:'MACE'}), rb.canLoad({selected:'m.model', mode:'model', modelType:''})]",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1341,6 +1342,10 @@ def test_the_large_file_note_counts_then_estimates(results):
 def test_an_npz_prediction_needs_no_key(results):
     assert results["load_pred_npz"] is True
     assert results["npz_names"] == [True, False]
+
+
+def test_a_model_needs_a_file_and_a_type(results):
+    assert results["load_model"] == [True, False]
 
 
 def test_a_dataset_waits_for_its_key_check(results):

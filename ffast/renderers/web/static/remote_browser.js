@@ -95,8 +95,11 @@ export function matchEntries(entries, prefix, limit = 8) {
  * of loading one; an .npz prediction carries its own E and F, so it needs no
  * key) and a target dataset to attach to. A dataset waits for its key check.
  */
-export function canLoad({ selected, mode, forceKey, targetDataset, probing = false, isNpz = false }) {
+export function canLoad({
+  selected, mode, forceKey, targetDataset, probing = false, isNpz = false, modelType = '',
+}) {
   if (!selected) return false;
+  if (mode === 'model') return Boolean(modelType);
   if (mode === 'prediction') return Boolean(targetDataset && (forceKey || isNpz));
   if (mode === 'dataset') return !probing;
   return true;
@@ -282,6 +285,7 @@ export class RemoteBrowser {
     if (!this._types.datasets.length) this._types.datasets = [{ name: 'ase (auto)', extension: '*' }];
     this._fillSelect($('fb-type'), this._types.datasets.map((t) => ({ value: t.name, label: t.name })));
     $('fb-type').value = typeForFile('', this._types.datasets);
+    this._fillSelect($('fb-model-type'), this._types.models.map((t) => ({ value: t.name, label: t.name })));
   }
 
   /** Arrow keys, Enter, Space and Backspace on a row of the file list (to_fix_v2). */
@@ -465,13 +469,15 @@ export class RemoteBrowser {
     saveRecentFiles(server, rememberFile(loadRecentFiles(server), { path, kind }));
   }
 
-  /** @param {'dataset'|'prediction'} mode */
+  /** @param {'dataset'|'prediction'|'model'} mode */
   open(mode = 'dataset') {
     this._mode = mode;
+    const titles = { dataset: 'Load Remote Dataset', prediction: 'Load Prediction', model: 'Load Model' };
+    $('fb-title').textContent = titles[mode];
+    $('fb-dataset-fields').style.display = mode === 'dataset' ? '' : 'none';
+    $('fb-prediction-fields').style.display = mode === 'prediction' ? 'inline-flex' : 'none';
+    $('fb-model-fields').style.display = mode === 'model' ? 'inline-flex' : 'none';
     const isPred = mode === 'prediction';
-    $('fb-title').textContent = isPred ? 'Load Prediction' : 'Load Remote Dataset';
-    $('fb-dataset-fields').style.display = isPred ? 'none' : '';
-    $('fb-prediction-fields').style.display = isPred ? 'inline-flex' : 'none';
     if (isPred) this._populatePredictionTargets();
     $('fb-modal').classList.remove('hidden');
     this._hideSuggestions();
@@ -763,6 +769,7 @@ export class RemoteBrowser {
       this._refreshDatasetKeys();
       this._refreshLarge(Number(row.dataset.size || 0));
     }
+    if (this._mode === 'model') $('fb-model-type').value = typeForFile(name, this._types.models, '');
     this._refreshLoadEnabled();
   }
 
@@ -800,11 +807,17 @@ export class RemoteBrowser {
       targetDataset: $('fb-target-ds').value,
       probing: this._mode === 'dataset' && Boolean(this._probing),
       isNpz: this._mode === 'prediction' && isNpzFile(this._selected),
+      modelType: $('fb-model-type').value,
     });
   }
 
+  /** Which load this window is waiting for: 'dataset', 'prediction', 'model' or null. */
+  pendingKind() {
+    return this._pending?.kind ?? null;
+  }
+
   /** A new dataset or model arrived, or a load failed: the "Loading…" status
-   * of a pending load of that `kind` ('dataset' or 'prediction') is replaced,
+   * of a pending load of that `kind` ('dataset', 'prediction' or 'model') is replaced,
    * so a later task end must not touch it. True if one was pending. */
   settled(kind, ok = true, fp = null) {
     if (this._pending?.kind !== kind) return false;
@@ -847,6 +860,12 @@ export class RemoteBrowser {
       );
       this._ports.setStatus(`Loading prediction ${this._selected}…`, 'connected');
       this._pending = { kind: 'prediction', name: this._selected, path };
+    } else if (this._mode === 'model') {
+      const typ = $('fb-model-type').value;
+      // LOAD_MODEL reads args=[path, model_type]; the model runs on the server (ADR 0030).
+      this._ports.send(OUT.LOAD_MODEL, {}, [path, typ]);
+      this._ports.setStatus(`Loading model ${this._selected}…`, 'connected');
+      this._pending = { kind: 'model', name: this._selected, path };
     } else {
       const typ = $('fb-type').value;
       // LOAD_DATASET reads args=[path, datasetType]; the keys travel as kwargs

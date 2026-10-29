@@ -14,7 +14,7 @@ export function rememberFile(list, entry) {
   return [entry, ...list.filter((e) => !same(e))].slice(0, MAX_RECENT_FILES);
 }
 
-const valid = (e) => e && typeof e.path === 'string' && (e.kind === 'dataset' || e.kind === 'prediction');
+const valid = (e) => e && typeof e.path === 'string' && (e.kind === 'dataset' || e.kind === 'prediction' || e.kind === 'model');
 
 function readAll() {
   try {

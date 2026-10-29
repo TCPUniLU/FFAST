@@ -216,3 +216,32 @@ async def test_web_an_npz_prediction_loads(ffast_web_server, tmp_path):
             assert await _sent(page, "PROBE_DATASET_KEYS") == []
         finally:
             await browser.close()
+
+
+async def test_web_a_model_that_cannot_load_says_why(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.evaluate(_RECORD_SENDS)
+            await _file_menu(page, "Load Model…")
+            await expect(page.locator("#fb-title")).to_have_text("Load Model")
+            values = await page.locator("#fb-model-type option").evaluate_all(
+                "(os) => os.map((o) => o.value)")
+            assert "sGDML" in values
+            await _go_to(page, REPO_ROOT)
+            await page.locator("#fb-list .fb-row", has_text="README.md").click()
+            await page.locator("#fb-model-type").select_option("sGDML")
+            await page.locator("#fb-load").click()
+            status = page.locator("#status")
+            await expect(status).to_contain_text("Could not load README.md", timeout=30000)
+            await expect(status).to_have_class(re.compile(r"\berror\b"))
+            assert await _sent(page, "LOAD_MODEL") == [{}]
+            await page.wait_for_timeout(1500)
+            await expect(page.locator("#toasts .toast")).to_have_count(1)
+        finally:
+            await browser.close()

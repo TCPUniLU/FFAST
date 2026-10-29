@@ -1134,7 +1134,7 @@
     }
     /* Prediction loading has three labelled selects. Give them their own row
        so the Cancel/Load actions cannot be pushed outside the modal. */
-    #fb-prediction-fields { flex: 1 1 100%; flex-wrap: wrap; }
+    #fb-prediction-fields, #fb-model-fields { flex: 1 1 100%; flex-wrap: wrap; }
     #fb-dataset-fields { flex: 1 1 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
     #fb-footer label {
       font-size: var(--fs-s); color: var(--muted); font-weight: 600;
@@ -1433,6 +1433,10 @@
           <select id="fb-energy-key" style="width:90px"></select>
           <label for="fb-force-key">Force</label>
           <select id="fb-force-key" style="width:90px"></select>
+        </span>
+        <span id="fb-model-fields" style="display:none; align-items:center; gap:6px;">
+          <label for="fb-model-type">Model type</label>
+          <select id="fb-model-type" style="width:130px"></select>
         </span>
         <span class="spacer"></span>
         <button id="fb-cancel">Cancel</button>
