@@ -313,6 +313,7 @@ async def _file_menu(page, label):
 FILE_MENU = [
     "Load Dataset…", "Load Prediction…", "Load Model…", "Load Zero Model", "Load Example Dataset and Prediction",
     "Save Session…", "Load Session…", "Export Selected Dataset…", "Connect to Server…",
+    "Connect to Cluster…",
 ]
 
 
@@ -344,7 +345,22 @@ async def test_web_file_menu_holds_the_session_actions(ffast_web_server):
             await expect(prediction).to_be_disabled()
             await expect(prediction).to_have_attribute("title", re.compile("Load a dataset"))
             await expect(items.filter(has_text="Save Session…")).to_be_enabled()
+            # This page comes from ffast-server --web-port, which has no cluster broker.
+            cluster = page.locator("#file-menu-list [data-action='connect-cluster']")
+            await expect(cluster).to_be_disabled()
+            await expect(cluster).to_have_attribute("title", re.compile("ffast-web"))
+            assert re.fullmatch(r"Alt\+Shift\+C|⌥⇧C", await cluster.get_attribute("data-keys"))
+            await expect(cluster).to_have_attribute("aria-keyshortcuts", "Alt+Shift+C")
 
+            await page.keyboard.press("Escape")
+            await expect(page.locator("#file-menu-list")).to_be_hidden()
+            await page.locator("#tabbar").click()
+            await page.keyboard.press("Alt+Shift+KeyC")
+            await expect(page.locator("#cluster-dialog")).to_have_count(1)
+            await expect(page.locator("#cluster-dialog")).to_be_hidden()
+            await expect(page.locator("#status")).to_contain_text(
+                "Start FFAST with ffast-web to reach a cluster")
+            await page.locator("#file-menu-btn").click()
             await page.keyboard.press("Escape")
             await expect(page.locator("#file-menu-list")).to_be_hidden()
             await page.locator("#file-menu-btn").click()
@@ -358,6 +374,86 @@ async def test_web_file_menu_holds_the_session_actions(ffast_web_server):
 
             await _file_menu(page, "Load Dataset…")
             await expect(page.locator("#fb-modal")).to_be_visible()
+        finally:
+            await browser.close()
+
+
+@contextlib.asynccontextmanager
+async def _cluster_page(broker, secret="s3cret"):
+    """Serve the web app with a cluster broker, as ffast-web does (web parity
+    plan 2026-10-29). Yields the page's port."""
+    from ffast.renderers.web.serve import start_static_server
+    httpd = start_static_server(_free_port(), host="127.0.0.1",
+                                cluster_broker=broker, cluster_secret=secret)
+    try:
+        yield httpd.server_address[1]
+    finally:
+        httpd.shutdown()
+        broker.shutdown()
+
+
+async def test_web_cluster_dialog_saves_and_deletes_profiles(ffast_web_server, tmp_path, monkeypatch):
+    """Web parity plan 2026-10-29: File > Connect to Cluster… lists the
+    launcher's profiles, shows the defaults, keeps Server setup folded."""
+    import cluster.connection as cluster_conn
+    from cluster.config import ClusterConfig
+    from cluster.web_broker import ClusterBroker
+
+    monkeypatch.setattr(cluster_conn, "_SESSIONS_FILE", str(tmp_path / ".ffast" / "sessions.json"))
+    ws_port, _ = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    broker = ClusterBroker(ClusterConfig(str(tmp_path / "clusters.json")))
+    async with _cluster_page(broker) as page_port, async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 900})
+        try:
+            await page.goto(f"http://127.0.0.1:{page_port}/?port={ws_port}&launch=s3cret",
+                            wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Connect to Cluster…")
+            await expect(page.locator("#cluster-dialog")).to_be_visible()
+            await expect(page.locator("#cluster-profile option")).to_have_text(["New profile"])
+
+            await expect(page.locator("#cl-server-setup")).not_to_have_attribute("open", "")
+            await expect(page.locator("#cl-venv_path")).to_be_hidden()
+            await page.locator("#cl-server-setup summary").click()
+            await expect(page.locator("#cl-venv_path")).to_be_visible()
+            await expect(page.locator("#cl-venv_path")).to_have_value("~/.ffast/venv")
+            await expect(page.locator("#cl-snapshot_interval_minutes")).to_have_value("5")
+            await expect(page.locator("#cl-provision")).not_to_be_checked()
+            await expect(page.locator("#cl-provision-help")).to_contain_text("installs it in the job")
+
+            await page.locator("#cl-name").fill("meluxina")
+            await page.locator("#cl-host").fill("login.lxp.lu")
+            await page.locator("#cl-cores").fill("8")
+            await page.locator("#cl-modules").fill("Python CUDA")
+            await page.locator("#cl-provision").check()
+            await page.locator("#cluster-save-btn").click()
+            await expect(page.locator("#cluster-profile")).to_have_value("meluxina")
+            saved = json.loads((tmp_path / "clusters.json").read_text())["profiles"][0]
+            assert saved["cores"] == 8
+            assert saved["modules"] == ["Python", "CUDA"]
+            assert saved["provision"] is True
+            assert saved["venv_path"] == "~/.ffast/venv"
+
+            await page.locator("#cluster-profile").select_option("")
+            await expect(page.locator("#cl-host")).to_have_value("")
+            await page.locator("#cluster-profile").select_option("meluxina")
+            await expect(page.locator("#cl-host")).to_have_value("login.lxp.lu")
+
+            await page.locator("#cluster-delete-btn").click()
+            await page.locator(".ask-dialog").get_by_role("button", name="Delete", exact=True).click()
+            await expect(page.locator("#cluster-profile option")).to_have_text(["New profile"])
+
+            await page.locator("#cl-name").fill("")
+            await page.locator("#cluster-save-btn").click()
+            await expect(page.locator("#cluster-message")).to_contain_text("Give the profile a name")
+
+            await page.locator("#cluster-close").click()
+            await expect(page.locator("#cluster-dialog")).to_be_hidden()
+            await page.locator("#tabbar").click()
+            await page.keyboard.press("Alt+Shift+KeyC")
+            await expect(page.locator("#cluster-dialog")).to_be_visible()
         finally:
             await browser.close()
 

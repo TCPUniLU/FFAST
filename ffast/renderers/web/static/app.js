@@ -38,6 +38,8 @@ import { createMetricsPane } from './panes/metrics.js';
 import { askDialog, askText, infoDialog, textDialog, trapFocus } from './dialogs.js';
 import { objectInfo } from './object_info.js';
 import { TaskList } from './tasks.js';
+import { ClusterClient, launchId } from './cluster_client.js';
+import { ClusterDialog } from './cluster_dialog.js';
 import { FILE_SHORTCUTS, isMac, matchShortcut, shortcutLabel } from './shortcuts.js';
 import { showWarning } from './toasts.js';
 import { applyStaticIcons, icon } from './icons.js';
@@ -264,6 +266,12 @@ export class FFastApp {
     // "no prediction", null "whichever applies".
     this._autoDatasetFp = null;
     this._autoModelFp = null;
+
+    // The cluster broker lives in the ffast-web launcher; a page it did not
+    // open has no launch id and no way to a cluster (web parity plan 2026-10-29).
+    const launch = launchId(window.location.search);
+    this._clusterClient = launch ? new ClusterClient(launch) : null;
+    this._clusterReady = false;   // true once the launcher answered
 
     this._initViews();
     this._initUI();
@@ -565,6 +573,8 @@ export class FFastApp {
     document.getElementById('disconnect-btn').addEventListener('click', () => this._disconnect());
     document.getElementById('status').addEventListener('click', () => this._openConnDialog());
     document.getElementById('conn-close').addEventListener('click', () => this._closeConnDialog());
+    this._clusterDialog = this._clusterClient ? new ClusterDialog({ client: this._clusterClient }) : null;
+    document.getElementById('cluster-close').addEventListener('click', () => this._clusterDialog?.close());
     const dialog = document.getElementById('conn-dialog');
     dialog.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this._closeConnDialog();
@@ -669,6 +679,9 @@ export class FFastApp {
         run: () => this._sessionOps.exportSelectedDataset(),
         unavailable: () => needsControl() || (this._currentDatasetFp ? '' : 'Select a dataset first') },
       { id: 'connect', label: 'Connect to Server…', menu: 'file', run: () => this._openConnDialog() },
+      { id: 'connect-cluster', label: 'Connect to Cluster…', menu: 'file',
+        run: () => this._clusterDialog.open(),
+        unavailable: () => (this._clusterReady ? '' : 'Start FFAST with ffast-web to reach a cluster') },
       // No `menu`: the File menu does not change; the Alt+Shift+N shortcut runs it.
       { id: 'open-popout', label: 'Open 3D View in New Window', run: () => this._openPopout(),
         unavailable: () => (document.getElementById('popout-btn').disabled ? 'Open a dataset first' : '') },
@@ -1472,6 +1485,7 @@ export class FFastApp {
    * launcher's `launch=` id, are ignored. With no port the dialog opens,
    * offering the most recent server (ADR 0055). */
   _applyUrlParams() {
+    this._clusterClient?.state().then(() => { this._clusterReady = true; }).catch(() => {});
     const p = new URLSearchParams(window.location.search);
     const port  = p.get('port');
     const token = p.get('token');

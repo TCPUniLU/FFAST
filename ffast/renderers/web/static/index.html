@@ -1079,6 +1079,24 @@
     .warning-modal-footer .spacer { flex: 1; }
     .warning-modal-footer { gap: 8px; }
     body.loupe-only #conn-dialog { display: none; }
+    body.loupe-only #cluster-dialog { display: none; }
+
+    /* cluster dialog (web parity plan 2026-10-29) */
+    #cluster-body { padding: 12px; display: flex; flex-direction: column; gap: 6px;
+      max-height: 70vh; overflow-y: auto; }
+    #cluster-body label { font-size: var(--fs-s); color: var(--muted); font-weight: 600; }
+    #cluster-body input[type="text"] {
+      font-family: var(--font); font-size: var(--fs-m);
+      color: var(--text1); background: var(--surface-2); border: 1px solid var(--bg3);
+      border-radius: 4px; padding: 5px 8px; width: 100%;
+    }
+    #cluster-body input[type="text"]:focus { outline: none; border-color: var(--hl2); }
+    #cluster-message.hidden { display: none; }
+    .cluster-row { display: flex; gap: 6px; align-items: center; }
+    #cluster-form fieldset, #cluster-form details { border: 1px solid var(--bg3); border-radius: 4px; margin: 4px 0; padding: 6px; }
+    #cluster-form fieldset, #cluster-form details[open] .cl-grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 8px; }
+    #cluster-form summary { cursor: pointer; font-weight: 600; }
+    #cluster-form .cl-help { grid-column: 2; font-size: var(--fs-s); color: var(--muted); margin-top: -2px; }
 
     .warning-modal-footer button {
       min-width: 72px;
@@ -1245,6 +1263,29 @@
         <span class="spacer"></span>
         <button id="conn-close">Close</button>
         <button id="connect-btn">Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Cluster dialog (web parity plan 2026-10-29): the ffast-web launcher
+       does the SSH and SLURM work; this page only fills in a profile. -->
+  <div id="cluster-dialog" class="warning-modal edit-modal hidden" role="dialog"
+       aria-modal="true" aria-labelledby="cluster-title">
+    <div class="warning-modal-panel">
+      <div class="warning-modal-title" id="cluster-title">Connect to Cluster</div>
+      <p id="cluster-message" class="warning-modal-message hidden"></p>
+      <div id="cluster-body">
+        <div class="cluster-row">
+          <label for="cluster-profile">Profile</label>
+          <select id="cluster-profile"></select>
+          <button id="cluster-save-btn">Save profile</button>
+          <button id="cluster-delete-btn">Delete</button>
+        </div>
+        <div id="cluster-form"></div>
+      </div>
+      <div class="warning-modal-footer">
+        <span class="spacer"></span>
+        <button id="cluster-close">Close</button>
       </div>
     </div>
   </div>
