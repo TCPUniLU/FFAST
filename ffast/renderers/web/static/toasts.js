@@ -10,6 +10,8 @@
  * shows each key once per page load, open or closed since (ADR 0066 rule 4).
  */
 
+import { remember } from './notifications.js';
+
 const HIDE_AFTER_MS = 10000;
 const MAX_SHOWN = 4;
 
@@ -35,6 +37,7 @@ function stack() {
 export function showWarning(message, level = 'warning') {
   const box = stack();
   const text = String(message);
+  remember(text, level);   // the bell keeps it after the pop-up closes
   const open = [...box.children].find((t) => t.dataset.text === text);
   if (open) {
     const n = Number(open.dataset.count) + 1;

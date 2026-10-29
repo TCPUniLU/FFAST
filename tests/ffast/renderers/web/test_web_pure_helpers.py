@@ -247,6 +247,22 @@ CASES = {
         "  shown: [...box.children].map((t) => t.dataset.text)};"
         " box.remove(); return r; })()"
     ),
+    # ── nt: the bell's list of warnings and errors ──────────────────────────
+    "notices": (
+        "(() => { let l = [];"
+        " l = nt.addNotice(l, {text: 'a', level: 'warning', time: 1});"
+        " l = nt.addNotice(l, {text: 'b', level: 'error', time: 2});"
+        " l = nt.addNotice(l, {text: 'a', level: 'warning', time: 3});"
+        " const order = l.map((n) => [n.text, n.count, n.time]);"
+        " const before = nt.unreadSummary(l);"
+        " const read = nt.markRead(l);"
+        " const after = nt.unreadSummary(read);"
+        " const again = nt.unreadSummary(nt.addNotice(read, {text: 'c', level: 'warning', time: 4}));"
+        " let many = [];"
+        " for (let i = 0; i < nt.MAX_NOTICES + 5; i++) many = nt.addNotice(many, {text: `m${i}`, level: 'warning', time: i});"
+        " return {order, before, after, again, kept: many.length, newest: many[0].text,"
+        "   critical: nt.addNotice([], {text: 'x', level: 'critical', time: 0})[0].level}; })()"
+    ),
     "ss_colouring_labels": (
         "[ss.colouringLabel({id: 'ffast.force_difference[element;component;mae]',"
         " label: 'Force Difference · MAE · per element · per component', shape: 'N_elements'}),"
@@ -1057,6 +1073,7 @@ def results():
         f"  const ap = await import('{origin}/appearance.js');\n"
         f"  const di = await import('{origin}/dialogs.js');\n"
         f"  const ts = await import('{origin}/toasts.js');\n"
+        f"  const nt = await import('{origin}/notifications.js');\n"
         f"  const pk = await import('{origin}/peaks.js');\n"
         f"  const an = await import('{origin}/analysis.js');\n"
         f"  const rs = await import('{origin}/recent_servers.js');\n"
@@ -1126,6 +1143,27 @@ def test_a_colouring_has_the_plots_name_in_the_list(results):
     assert results["ss_colouring_labels"] == [
         "Force Difference · MAE · per element · per component", "my.el",
         "Force Difference · per atom · length"]
+
+
+# ── notifications: the bell's list ───────────────────────────────────────────
+
+def test_a_repeated_notice_counts_and_moves_to_the_top(results):
+    assert results["notices"]["order"] == [["a", 2, 3], ["b", 1, 2]]
+
+
+def test_unread_notices_are_counted_and_an_error_makes_the_badge_red(results):
+    assert results["notices"]["before"] == {"count": 2, "level": "error"}
+    assert results["notices"]["after"] == {"count": 0, "level": None}
+    assert results["notices"]["again"] == {"count": 1, "level": "warning"}
+
+
+def test_the_bell_keeps_only_the_newest_notices(results):
+    assert results["notices"]["kept"] == 200
+    assert results["notices"]["newest"] == "m204"
+
+
+def test_a_critical_message_is_kept_as_an_error(results):
+    assert results["notices"]["critical"] == "error"
 
 
 # ── toasts.showWarning ───────────────────────────────────────────────────────
@@ -1331,7 +1369,7 @@ ICON_NAMES = [
     "pencil", "plus", "more", "play", "pause", "step-back", "step-forward", "gear",
     "close", "new-window", "chevron-right", "chevron-down", "folder", "file",
     "arrow-up", "home", "info", "bond", "align", "force", "scissors", "sliders",
-    "help", "check",
+    "help", "check", "bell",
 ]
 
 

@@ -7297,3 +7297,49 @@ async def test_web_a_panel_warning_explains_itself_on_hover(ffast_web_server, tm
         finally:
             await browser.close()
 
+
+async def test_web_the_bell_keeps_warnings_and_errors_after_their_popups_close(ffast_web_server):
+    """Pop-ups close by themselves; the bell in the bottom-right corner keeps
+    every warning and error, newest first, across a reload of the page."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    pop = "([t, l]) => import('/toasts.js').then((m) => { m.showWarning(t, l); })"
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            bell = page.locator("#notif-bell")
+            badge = bell.locator(".notif-badge")
+            await expect(bell).to_be_visible()
+            await expect(badge).to_be_hidden()
+
+            await page.evaluate(pop, ["Test warning A", "warning"])
+            await page.evaluate(pop, ["Test error B", "error"])
+            await expect(badge).to_have_text("2")
+            await expect(badge).to_have_class(re.compile("notif-error"))
+            # the pop-ups sit above the bell, not on it
+            toasts_bottom = await page.locator("#toasts").evaluate("el => el.getBoundingClientRect().bottom")
+            bell_top = await bell.evaluate("el => el.getBoundingClientRect().top")
+            assert toasts_bottom <= bell_top
+
+            await page.evaluate("() => document.querySelectorAll('#toasts .toast').forEach((t) => t.remove())")
+            await bell.click()
+            panel = page.locator("#notif-panel")
+            await expect(panel).to_be_visible()
+            await expect(panel.locator(".notif-text")).to_have_text(["Test error B", "Test warning A"])
+            await expect(badge).to_be_hidden()
+            await page.keyboard.press("Escape")
+            await expect(panel).to_be_hidden()
+
+            await page.reload(wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator("#notif-bell").click()
+            await expect(page.locator("#notif-panel .notif-text")).to_have_text(["Test error B", "Test warning A"])
+            await page.locator("#notif-clear").click()
+            await expect(page.locator("#notif-panel .notif-text")).to_have_count(0)
+            await expect(page.locator("#notif-panel")).to_contain_text("No warnings or errors")
+        finally:
+            await browser.close()
+

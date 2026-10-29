@@ -966,7 +966,7 @@
     }
     /* ── warning pop-ups (toasts.js) ─────────────────────────────────── */
     #toasts {
-      position: fixed; right: 16px; bottom: 16px; z-index: 300;
+      position: fixed; right: 16px; bottom: 56px; z-index: 300;   /* above the bell */
       display: flex; flex-direction: column; gap: 8px;
       width: 380px; max-width: calc(100vw - 32px);
       pointer-events: none;
@@ -990,6 +990,42 @@
       font-size: var(--fs-l); line-height: 1; padding: 0 4px;
     }
     .toast-close:hover { color: var(--ink); }
+
+    /* the bell (notification_bell.js): every warning and error, kept */
+    #notif-bell {
+      position: fixed; right: 16px; bottom: 16px; z-index: 300;
+      width: 30px; height: 30px; padding: 0; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg2); color: var(--muted); border: 1px solid var(--bg3);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35); cursor: pointer;
+    }
+    #notif-bell:hover, #notif-bell[aria-expanded="true"] { color: var(--ink); }
+    #notif-bell .notif-badge {
+      position: absolute; top: -5px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px;
+      border-radius: 8px; font-size: 10px; font-weight: 700; line-height: 16px; text-align: center;
+      color: #000; background: var(--warn);
+    }
+    #notif-bell .notif-badge.notif-error { color: #fff; background: var(--danger); }
+    #notif-bell .notif-badge[hidden] { display: none; }
+    #notif-panel {
+      position: fixed; right: 16px; bottom: 56px; z-index: 310;
+      width: 400px; max-width: calc(100vw - 32px); max-height: 60vh;
+      display: flex; flex-direction: column;
+      background: var(--bg2); color: var(--ink); border: 1px solid var(--bg3); border-radius: 6px;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55); font-size: var(--fs-s);
+    }
+    #notif-panel[hidden] { display: none; }
+    .notif-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 10px; border-bottom: 1px solid var(--bg3); font-weight: 600;
+    }
+    #notif-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; }
+    .notif-item { display: flex; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--bg3); }
+    .notif-item .notif-mark { color: var(--warn); }
+    .notif-item.notif-error .notif-mark { color: var(--danger); }
+    .notif-text { overflow-wrap: anywhere; line-height: 1.4; }
+    .notif-meta { color: var(--muted); font-size: var(--fs-xs); margin-top: 2px; }
+    .notif-empty { margin: 0; padding: 16px 10px; color: var(--muted); }
 
     .warning-modal {
       position: fixed;
