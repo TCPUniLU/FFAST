@@ -159,3 +159,27 @@ def test_an_unchanged_run_stores_and_returns_the_key(make):
     key = data.generateMetric("ffast.energy_reference", {}, None, _Dataset())
     assert float(data.cache[key].values) == 5.0
     assert ("DATA_UPDATED", key) in events.pushed
+
+
+class _EnsuringExecutor(_ChangingExecutor):
+    """Looks the metric up the way the real executors' plan does, which compiles
+    a box id on first use (ADR 0065)."""
+
+    def run(self, id, source, parameters):
+        default_registry.get(id)
+        return super().run(id, source, parameters)
+
+
+def test_the_first_run_of_a_box_id_is_stored_under_a_given_key(make):
+    """Compiling a box id on first use is not a change: nothing computed before
+    can depend on an id that did not exist, so the run must be kept."""
+    box_id = "ffast.energy_reference[dataset;max]"
+    if default_registry.has(box_id):
+        default_registry.unregister(box_id)
+    try:
+        data, _ = make(_EnsuringExecutor([3.0]))
+        assert data.generateMetric(box_id, {}, None, _Dataset(), key="k") == "k"
+        assert float(data.cache["k"].values) == 3.0
+    finally:
+        if default_registry.has(box_id):
+            default_registry.unregister(box_id)
