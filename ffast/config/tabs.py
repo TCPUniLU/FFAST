@@ -121,6 +121,7 @@ def tab_layout(tab, *, registry=None) -> dict:
         "panels": [_panel_layout(p, registry=registry) for p in tab.panels],
         "column_widths": tab.column_widths,
         "row_heights": tab.row_heights,
+        "grid": tab.grid,
     }
 
 

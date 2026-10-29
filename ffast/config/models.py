@@ -197,8 +197,15 @@ class AnalysisTabConfig(BaseModel):
     names tab-level control widgets from the registry (e.g. the energy-shift
     toggle) that drive a shared compute-param across the tab's Panels.
 
-    ``column_widths`` and ``row_heights`` (ADR 0056) are sizes kept as set, one
-    per column and one per row: a width of 1 is 400 px and a height of 1 is
+    ``grid`` (ADR 0069) lays the tab out on that many columns (24 in tabs the
+    browser saves) that always fill the window, with rows of 50 px: ``col`` and
+    ``colspan`` then count grid columns and ``row`` and ``rowspan`` count 50 px
+    units, and ``column_widths`` and ``row_heights`` are refused. Without
+    ``grid`` a tab is in the old form, read as below; the browser converts it
+    when it draws it, and the desktop reads only the old form.
+
+    ``column_widths`` and ``row_heights`` (ADR 0056, the old form) are sizes
+    kept as set, one per column and one per row: a width of 1 is 400 px and a height of 1 is
     300 px, so ``[2, 1]`` makes columns 800 and 400 px wide. A list may be
     longer than the panels reach, for columns or rows left empty, never
     shorter. Without them columns share the window's width, none narrower
@@ -212,9 +219,23 @@ class AnalysisTabConfig(BaseModel):
     panels: list[PanelConfig] = Field(default_factory=list)
     column_widths: list[float] | None = None
     row_heights: list[float] | None = None
+    grid: int | None = None
 
     @model_validator(mode="after")
     def _sizes_fit_the_grid(self) -> "AnalysisTabConfig":
+        if self.grid is not None:
+            if self.grid < 1:
+                raise ValueError("grid must be at least 1")
+            if self.column_widths is not None or self.row_heights is not None:
+                raise ValueError(
+                    "a tab with 'grid' sizes its panels by cells; "
+                    "'column_widths' and 'row_heights' are for a tab without it")
+            for p in self.panels:
+                if p.col + p.colspan > self.grid:
+                    raise ValueError(
+                        f"a panel reaches column {p.col + p.colspan}; "
+                        f"the tab's grid has {self.grid} columns")
+            return self
         columns = max((p.col + p.colspan for p in self.panels), default=0)
         rows = max((p.row + p.rowspan for p in self.panels), default=0)
         for field, sizes, count, what in (

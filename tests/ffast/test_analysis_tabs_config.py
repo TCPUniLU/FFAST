@@ -416,3 +416,37 @@ def test_tab_sizes_are_positive():
 def test_tab_sizes_reach_the_browser():
     layout = build_tab_layout([_sized_tab(column_widths=[2, 1])])[0]
     assert layout["column_widths"] == [2, 1] and layout["row_heights"] is None
+
+
+# --- grid (ADR 0069) --------------------------------------------------------- #
+def _gridded(grid, panels=None, **extra):
+    return AnalysisTabConfig.model_validate({
+        "name": "Fine", "grid": grid, **extra,
+        "panels": panels if panels is not None else [
+            {"kind": "3d", "row": 0, "col": 0, "rowspan": 8, "colspan": 12},
+            {"kind": "table", "row": 0, "col": 12, "rowspan": 4, "colspan": 12},
+        ]})
+
+
+def test_a_fine_grid_tab_loads_and_reaches_the_browser():
+    tab = _gridded(24)
+    assert tab.grid == 24 and tab.column_widths is None
+    assert build_tab_layout([tab])[0]["grid"] == 24
+
+
+def test_a_fine_grid_tab_takes_no_set_sizes():
+    with pytest.raises(ValidationError, match="column_widths"):
+        _gridded(24, column_widths=[1, 1])
+    with pytest.raises(ValidationError, match="row_heights"):
+        _gridded(24, row_heights=[1])
+
+
+def test_a_panel_cannot_reach_past_the_grid():
+    with pytest.raises(ValidationError, match="reaches column 25; the tab's grid has 24 columns"):
+        _gridded(24, panels=[{"kind": "3d", "row": 0, "col": 20, "colspan": 5}])
+
+
+def test_a_tab_without_grid_is_the_old_form():
+    tab = _sized_tab(column_widths=[2, 1])
+    assert tab.grid is None
+    assert build_tab_layout([tab])[0]["grid"] is None
