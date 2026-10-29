@@ -19,16 +19,13 @@
 
 import { askDialog, labelBy, trapFocus } from './dialogs.js';
 import {
-  KIND_ROLES, addPanelWithPicker, clampMove, clampSize, copyOf, emptyTab, metricsFor, movePanel,
+  KIND_ROLES, ROW_UNIT_PX, addPanelWithPicker, clampMove, clampSize, copyOf, emptyTab, gridOf, metricsFor, movePanel,
   new3DPanel, onlyPlacesChanged, place, removePanel, replacePanel, resizePanel, setPanelStart,
   setPanelView, toFineGrid, toSaved,
 } from './tab_edit.js';
 import { KIND_3D, whyPanelStays } from './tab_rules.js';
 import { cleanStart } from './start_settings.js';
 import { icon } from './icons.js';
-
-/** The height of one row unit and the gap between cells, in px (index.html). */
-const ROW_UNIT_PX = 50;
 
 export class TabEditor {
   /**
@@ -231,7 +228,7 @@ export class TabEditor {
     head.className = 'edit-head';
     const handle = document.createElement('span');
     handle.className = 'edit-handle';
-    handle.title = 'Drag to move; drop on another panel to swap the two';
+    handle.title = 'Drag to move; a panel in the way moves down';
     const label = unit.indices.length > 1
       ? `${unit.indices.length} panels side by side`
       : first.kind === KIND_3D ? (first.title || '3D panel') : (first.title || KIND_ROLES[first.kind]?.label || first.kind);
@@ -293,7 +290,7 @@ export class TabEditor {
       box: (cell) => { const p = at();
         const s = clampSize(this._draft, index, { w: cols ? cell.col - p.col + 1 : p.colspan,
           h: rows ? cell.row - p.row + 1 : p.rowspan });
-        return { row: p.row, col: p.col, rowspan: s.h, colspan: s.w }; },
+        return { row: p.row, col: Math.min(p.col, gridOf(this._draft) - s.w), rowspan: s.h, colspan: s.w }; },
       apply: (cell) => { const p = at();
         return resizePanel(this._draft, index, { w: cols ? cell.col - p.col + 1 : p.colspan,
           h: rows ? cell.row - p.row + 1 : p.rowspan }); },

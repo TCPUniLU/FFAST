@@ -593,6 +593,9 @@ CASES = {
     "te_resize_stops_at_the_minimum_and_the_edge": (
         "[te.place(te.resizePanel(TF(), 1, {w: 1, h: 1}))[1], te.place(te.resizePanel(TF(), 0, {w: 1, h: 1}))[0],"
         " te.place(te.resizePanel(TF(), 1, {w: 99, h: 6}))[1].colspan, te.minSize(TF(), 0), te.minSize(TF(), 1)]"),
+    "te_resize_near_the_edge_moves_left": (
+        "(() => { const t = TF(); t.panels[1].col = 20; t.panels[1].colspan = 4;"
+        "  const p = te.place(te.resizePanel(t, 1, {w: 1, h: 6}))[1]; return [p.col, p.colspan]; })()"),
     "te_resize_a_strip_as_one": (
         "(() => { const t = {grid: 24, panels: ["
         "  {kind: 'table', title: 'X', row: 0, col: 0, rowspan: 6, colspan: 24, scroll_group: 'g'},"
@@ -1941,6 +1944,11 @@ def test_te_a_panel_has_a_smallest_size_and_stops_at_the_grids_edge(results):
     assert (three_d["colspan"], three_d["rowspan"]) == (8, 6)
     assert widest == 12
     assert min_3d == {"w": 8, "h": 6} and min_2d == {"w": 6, "h": 4}
+
+
+def test_te_a_panel_at_the_right_edge_moves_left_to_keep_its_minimum(results):
+    """A, at column 20, made as small as it goes (6): 20 + 6 would pass the grid."""
+    assert results["te_resize_near_the_edge_moves_left"] == [18, 6]
 
 
 def test_te_a_scroll_strip_is_resized_as_one(results):

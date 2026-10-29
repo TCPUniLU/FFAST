@@ -156,6 +156,7 @@ function setBox(panels, unit, box) {
 
 const overlaps = (a, b) => a.row < b.row + b.rowspan && b.row < a.row + a.rowspan
   && a.col < b.col + b.colspan && b.col < a.col + a.colspan;
+/** Order by place on the screen: row, then column. */
 const reading = (a, b) => a.row - b.row || a.col - b.col;
 
 /** The smallest a panel gets, in cells: 3 of every 12 columns by 4 rows (a
@@ -232,7 +233,10 @@ export function resizePanel(tab, index, { w, h }) {
   const next = clone(tab);
   const panels = next.panels = place(next);
   const size = clampSize(next, index, { w, h });
-  setBox(panels, unitOf(panels, index), { ...boxOf(panels, unitOf(panels, index)), colspan: size.w, rowspan: size.h });
+  const unit = unitOf(panels, index);
+  // A panel whose minimum is wider than the room right of it moves left to fit.
+  setBox(panels, unit, { ...boxOf(panels, unit), col: Math.min(panels[index].col, gridOf(next) - size.w),
+    colspan: size.w, rowspan: size.h });
   settle(panels, index);
   return next;
 }
