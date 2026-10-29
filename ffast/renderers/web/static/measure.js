@@ -60,17 +60,23 @@ const degrees = (v) => (Number.isNaN(v) ? 'undefined (atoms in a line)' : `${v.t
 
 /**
  * Format the Info read-out for a set of picked world-space positions
- * (1→position, 2→distance, 3→angle, 4→dihedral).
+ * (1→position, 2→distance, 3→angle, 4→dihedral), naming the atoms and their
+ * elements as the desktop does (modules/loupe/loupeInfoSelect.py).
  * @param {number[][]} pts world-space coordinates of the picked atoms, in pick order
  * @param {number[]} ids scientific atom ids, parallel to `pts`
+ * @param {(string|null)[]} [symbols] element symbols, parallel to `ids`;
+ *   left out of the text unless every atom has one
  */
-export function infoReadout(pts, ids) {
+export function infoReadout(pts, ids, symbols = []) {
   if (!pts || pts.length === 0) return '';
+  const named = symbols.length === ids.length && symbols.every(Boolean);
   if (pts.length === 1) {
     const [x, y, z] = pts[0];
-    return `Atom ${ids[0]}: (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`;
+    const el = named ? ` / Element ${symbols[0]}` : '';
+    return `Atom ${ids[0]}${el} / (${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)})`;
   }
-  if (pts.length === 2) return `Distance: ${distance(pts[0], pts[1]).toFixed(2)} Å`;
-  if (pts.length === 3) return `Angle: ${degrees(angle(pts[0], pts[1], pts[2]))}`;
-  return `Dihedral: ${degrees(dihedral(pts[0], pts[1], pts[2], pts[3]))}`;
+  const head = `Atoms ${ids.join(',')}${named ? ` / Elements ${symbols.join(',')}` : ''} / `;
+  if (pts.length === 2) return `${head}Distance: ${distance(pts[0], pts[1]).toFixed(2)} Å`;
+  if (pts.length === 3) return `${head}Angle: ${degrees(angle(pts[0], pts[1], pts[2]))}`;
+  return `${head}Dihedral: ${degrees(dihedral(pts[0], pts[1], pts[2], pts[3]))}`;
 }

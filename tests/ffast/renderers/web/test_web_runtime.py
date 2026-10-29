@@ -5233,6 +5233,7 @@ async def test_web_info_tool_reports_distance(ffast_web_server):
             await page.mouse.click(far["b"]["x"], far["b"]["y"])
             await expect(page.locator("#pick-strip-count")).to_contain_text("2 picked")
             await expect(page.locator("#pick-readout")).to_contain_text("Distance")
+            await expect(page.locator("#pick-readout")).to_contain_text("Elements")
         finally:
             await browser.close()
 

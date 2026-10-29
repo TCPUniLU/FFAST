@@ -154,6 +154,7 @@ export class MoleculeRenderer {
     this._cachedAtomSizes = null;      // atoms.sizes from last _updateAtoms call
     this._drawnSizes = null;           // radii as drawn (ball-and-stick in the rich look)
     this._cachedAtomIds = null;        // atoms.atom_ids (displayed→scientific, ADR 0015)
+    this._cachedElements = null;       // atoms.elements (atomic numbers per displayed atom)
     this._hovered = null;              // displayed index under an armed pick tool
     this._scratchObj = new THREE.Object3D();  // per-instance matrix/colour writes
     this._scratchColor = new THREE.Color();
@@ -441,6 +442,7 @@ export class MoleculeRenderer {
     this._cachedAtomSizes = atoms.sizes;
     this._drawnSizes = this._computeDrawnSizes(atoms.sizes);
     this._cachedAtomIds = atoms.atom_ids || null;
+    this._cachedElements = atoms.elements || null;
 
     // Value-driven coloring (ADR 0016): map color_by.values→RGB client-side;
     // fall back to the server's baked element colors on an unrecognized
@@ -961,5 +963,11 @@ export class MoleculeRenderer {
   atomPosition(displayIndex) {
     const p = this._cachedAtomPositions?.[displayIndex];
     return p ? [p[0], p[1], p[2]] : null;
+  }
+
+  /** Atomic number of a displayed atom, or null when the server sent none. */
+  atomElement(displayIndex) {
+    const z = this._cachedElements?.[displayIndex];
+    return z == null ? null : z;
   }
 }

@@ -93,6 +93,10 @@ CASES = {
     "load_pred_npz": "rb.canLoad({selected:'p.npz', mode:'prediction', forceKey:'', targetDataset:'fp', isNpz:true})",
     "npz_names": "[rb.isNpzFile('a.NPZ'), rb.isNpzFile('a.xyz')]",
     "load_model": "[rb.canLoad({selected:'m.model', mode:'model', modelType:'MACE'}), rb.canLoad({selected:'m.model', mode:'model', modelType:''})]",
+    # ── ms.infoReadout (web parity plan 2026-10-29) ─────────────────────────
+    "info_one_atom": "ms.infoReadout([[0,0,0]], [3], ['C'])",
+    "info_distance_named": "ms.infoReadout([[0,0,0],[1,0,0]], [3,5], ['C','H'])",
+    "info_distance_unnamed": "ms.infoReadout([[0,0,0],[1,0,0]], [3,5])",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -964,6 +968,7 @@ def results():
         f"  const ex = await import('{origin}/panes/extract.js');\n"
         f"  const ec = await import('{origin}/element_colours.js');\n"
         f"  const un = await import('{origin}/units.js');\n"
+        f"  const ms = await import('{origin}/measure.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -1350,6 +1355,20 @@ def test_a_model_needs_a_file_and_a_type(results):
 
 def test_a_dataset_waits_for_its_key_check(results):
     assert results["load_probing"] is False
+
+
+# ── measure.infoReadout ─────────────────────────────────────────────────────
+
+def test_info_readout_one_atom_names_its_element(results):
+    assert results["info_one_atom"] == "Atom 3 / Element C / (0.00, 0.00, 0.00)"
+
+
+def test_info_readout_distance_names_atoms_and_elements(results):
+    assert results["info_distance_named"] == "Atoms 3,5 / Elements C,H / Distance: 1.00 Å"
+
+
+def test_info_readout_without_symbols_leaves_elements_out(results):
+    assert results["info_distance_unnamed"] == "Atoms 3,5 / Distance: 1.00 Å"
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

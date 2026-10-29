@@ -14,6 +14,7 @@ import {
 } from './tab_rules.js';
 import { sameConfiguration, predictionApplies } from './frame_links.js';
 import { infoReadout } from './measure.js';
+import { elementSymbol } from './panels.js';
 import { toolHint, toolHintKey } from './tool_hints.js';
 import { MetricClient } from './metrics.js';
 import { AnalysisManager, framesKey } from './analysis.js';
@@ -2265,7 +2266,11 @@ export class FFastApp {
     this._sendSetSelection('picked', 'current_structure', ids);
     if (id === 'info') {
       const pts = this._picked.map((e) => this.renderer.atomPosition(e.displayIndex)).filter(Boolean);
-      this._pickReadout = infoReadout(pts, ids);
+      const symbols = this._picked.map((e) => {
+        const z = this.renderer.atomElement(e.displayIndex);
+        return z == null ? null : elementSymbol(z);
+      });
+      this._pickReadout = infoReadout(pts, ids, symbols);
     } else if (id === 'extract') {
       this._panes.extract.setPickedIndices(ids);
     } else if (id === 'forces') {
