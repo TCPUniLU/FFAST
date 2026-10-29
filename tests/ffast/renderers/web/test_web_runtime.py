@@ -6512,3 +6512,25 @@ async def test_web_three_atom_align_and_origin_com_switch_each_other_off(ffast_w
             assert await page.evaluate("() => window.ffastApp._focused().settings.align.atomAlign") is False
         finally:
             await browser.close()
+
+
+async def test_web_clear_picks_also_clears_the_force_atoms(ffast_web_server):
+    """Guards the Clear button: with the Force tool armed it clears the Force
+    atom picks as well as the overlay (web parity plan 2026-10-29)."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator("#pick-toolbar .pick-tool-btn[data-tool='forces']").click()
+            for i in (1, 2):
+                await page.evaluate(
+                    "(i) => window.ffastApp._onPick([{displayIndex: i, atomId: i}])", i)
+            assert await page.evaluate("() => window.ffastApp._panes.forces.pickedIndices(0)") == [1, 2]
+            await page.locator("#pick-clear").click()
+            assert await page.evaluate("() => window.ffastApp._panes.forces.pickedIndices(0)") == []
+            assert await page.evaluate("() => window.ffastApp._picked.length") == 0
+        finally:
+            await browser.close()
