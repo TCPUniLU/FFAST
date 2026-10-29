@@ -296,6 +296,24 @@ def test_export_writes_every_frame_with_the_results_it_has(tmp_path, formulas, r
             assert np.isclose(frame.get_potential_energy(), dataset.getEnergies(i), atol=1e-6)
 
 
+@pytest.mark.parametrize("fmt, name", [
+    ("extxyz", "o.extxyz"), ("xyz", "o.xyz"), ("db", "o.db"), ("traj", "o.traj")])
+def test_export_writes_every_ase_format_the_web_offers(tmp_path, fmt, name):
+    import ase.io
+
+    dataset = _ase(UNIFORM, forces=True, energies=True)
+    out = tmp_path / name
+    aseDatasetLoader.saveDataset(dataset, str(out), fmt)
+    assert len(ase.io.read(str(out), index=":")) == dataset.getN()
+
+
+def test_export_writes_a_dftb_gen_file_for_one_structure(tmp_path):
+    dataset = _ase(UNIFORM[:1], forces=True, energies=True)
+    out = tmp_path / "o.gen"
+    aseDatasetLoader.saveDataset(dataset, str(out), "dftb")
+    assert out.stat().st_size > 0
+
+
 @pytest.mark.parametrize("kind", ["uniform file", "sGDML file", "frame subset of uniform",
                                   "atom subset of uniform"])
 def test_a_dataset_with_the_same_atoms_in_every_frame_saves_as_sgdml(kind, tmp_path):

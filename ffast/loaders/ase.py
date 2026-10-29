@@ -436,7 +436,7 @@ class aseDatasetLoader(FlatDatasetLoader):
 
         class FakeCalc(Calculator):
             def __init__(self):
-                pass
+                super().__init__()   # the .traj and .db writers read `parameters`
 
         has_forces = dataset.hasForces()
         try:
