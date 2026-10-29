@@ -146,6 +146,30 @@ CASES = {
     "info_variable": "oi.objectInfo('dataset', 'v1', {name: 'v', n: 2, elements: [1,1,8,6,1,1,1,1], offsets: [0,3,8], variable: true, has_forces: false}, new Map()).rows",
     "info_subset": "oi.objectInfo('dataset', 'S', FL.get('S'), FL).rows",
     "info_prediction": "oi.objectInfo('model', 'm1', {name: 'MACE', dataset_fingerprints: ['T']}, FL).rows",
+    "progress_count": "tk.progressText({prog: 3, progMax: 10})",
+    "progress_percent": "tk.progressText({prog: 1, progMax: 4, percent: true})",
+    "progress_none": "tk.progressText({message: 'x'})",
+    "task_list": """(() => {
+      const menu = document.createElement('div'); menu.hidden = true;
+      const button = document.createElement('button');
+      const panel = document.createElement('div'); panel.className = 'hidden';
+      menu.append(button, panel); document.body.appendChild(menu);
+      const cancelled = [];
+      const t = new tk.TaskList({ menu, button, panel, onCancel: (id) => cancelled.push(id), whyNoCancel: () => '' });
+      t.info(7, { name: 'Loading save', visual: true });
+      t.info(8, { name: 'metric', visual: false });
+      t.progress('try-1', { message: 'ignored' });
+      t.progress(7, { prog: 2, progMax: 5, message: 'Reading' });
+      const row = panel.querySelector('.task-row');
+      const shown = { rows: panel.children.length, hidden: menu.hidden, label: button.textContent,
+        text: row.textContent, value: row.querySelector('progress').value };
+      button.click();
+      const opened = !panel.classList.contains('hidden');
+      row.querySelector('.task-cancel').click();
+      t.done(7);
+      return { ...shown, opened, cancelled, after: panel.children.length,
+        hiddenAfter: menu.hidden, closedAfter: panel.classList.contains('hidden') };
+    })()""",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1021,6 +1045,7 @@ def results():
         f"  const pe = await import('{origin}/panel_export.js');\n"
         f"  const rl = await import('{origin}/rail.js');\n"
         f"  const oi = await import('{origin}/object_info.js');\n"
+        f"  const tk = await import('{origin}/tasks.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -1559,6 +1584,23 @@ def test_info_of_a_frozen_subset_names_where_it_was_cut_from(results):
 
 def test_info_of_a_prediction_names_its_datasets(results):
     assert ["Results for", "ethanol"] in results["info_prediction"]
+
+
+# ── tasks ───────────────────────────────────────────────────────────────────
+
+def test_progress_text_counts_or_gives_a_percent_or_nothing(results):
+    assert results["progress_count"] == "3/10"
+    assert results["progress_percent"] == "25%"
+    assert results["progress_none"] == ""
+
+
+def test_the_task_list_shows_only_visual_tasks_and_cancels_one(results):
+    r = results["task_list"]
+    assert (r["rows"], r["hidden"], r["label"]) == (1, False, "Tasks (1)")
+    for word in ("Loading save", "Reading", "2/5"):
+        assert word in r["text"]
+    assert r["value"] == 2 and r["opened"] is True and r["cancelled"] == [7]
+    assert (r["after"], r["hiddenAfter"], r["closedAfter"]) == (0, True, True)
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

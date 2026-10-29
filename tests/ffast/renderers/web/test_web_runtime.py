@@ -6887,3 +6887,32 @@ async def test_the_server_names_each_task(ffast_web_server, tmp_path):
     finally:
         await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
         await ws.close()
+
+
+async def test_web_tasks_button_shows_a_running_task_and_cancels_it(ffast_web_server):
+    """The Tasks button lists a running task and its Cancel asks the server (web parity plan 2026-10-29)."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await expect(page.locator("#task-menu")).to_be_hidden()
+            await page.evaluate(_RECORD_SENDS)
+            await page.evaluate(
+                "() => window.ffastApp._tasks.info(99, {name: 'Saving session', visual: true})")
+            await expect(page.locator("#task-btn")).to_be_visible()
+            await expect(page.locator("#task-btn")).to_have_text("Tasks (1)")
+            await expect(page.locator("#task-panel")).to_be_hidden()
+            await page.locator("#task-btn").click()
+            await expect(page.locator("#task-panel .task-row", has_text="Saving session")).to_be_visible()
+            await page.locator("#task-panel .task-cancel").click()
+            sent = await page.evaluate(
+                "() => window.__sent.filter(([name]) => name === 'CANCEL_TASK').map(([, kw]) => kw)")
+            assert sent == [{"task_id": 99}]
+            await page.evaluate("() => window.ffastApp._tasks.done(99)")
+            await expect(page.locator("#task-menu")).to_be_hidden()
+        finally:
+            await browser.close()

@@ -181,6 +181,14 @@
       background: transparent; height: auto; padding: 3px 8px;
     }
     #status:hover { background: var(--surface-3); }
+    .task-panel { width: 300px; max-height: 60vh; overflow-y: auto; gap: 2px; }
+    .task-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 2px 6px; padding: 5px 8px; }
+    .task-row .task-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .task-row .task-count { color: var(--muted); font-size: var(--fs-s); }
+    .task-row .task-cancel { padding: 2px 4px; background: transparent; }
+    .task-row .task-message { grid-column: 1 / -1; color: var(--muted); font-size: var(--fs-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .task-row .task-message.error { color: var(--danger); }
+    .task-row progress { grid-column: 1 / -1; width: 100%; height: 6px; accent-color: var(--hl2); }
     #status.connected { color: var(--success); }
     #status.error { color: var(--danger); }
 
@@ -1195,6 +1203,13 @@
       <option value="comfortable">Comfortable</option>
       <option value="large">Large</option>
     </select>
+    <!-- Running tasks with progress and Cancel (web parity; the desktop's
+         Tasks list). Shown only while a task runs (tasks.js). -->
+    <div id="task-menu" class="menu" hidden>
+      <button id="task-btn" type="button" aria-expanded="false" aria-controls="task-panel"
+              title="Running tasks">Tasks</button>
+      <div id="task-panel" class="menu-list right task-panel hidden" role="list" aria-label="Running tasks"></div>
+    </div>
     <!-- The connection status; clicking it opens the connection dialog (ADR 0055). -->
     <button id="status" type="button" title="Connection…">Disconnected</button>
   </div>

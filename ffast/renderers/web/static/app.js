@@ -37,6 +37,7 @@ import { TABLE_SHAPE, sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
 import { askDialog, askText, infoDialog, textDialog, trapFocus } from './dialogs.js';
 import { objectInfo } from './object_info.js';
+import { TaskList } from './tasks.js';
 import { showWarning } from './toasts.js';
 import { applyStaticIcons, icon } from './icons.js';
 import { initAppearance } from './appearance.js';
@@ -195,6 +196,13 @@ export class FFastApp {
       getDatasetMeta: (fp) => this._datasets.get(fp),
       capturePng: (opts) => this._capturePng(opts),
       pick: (opts) => this._browser.pick(opts),
+    });
+    this._tasks = new TaskList({
+      menu: document.getElementById('task-menu'),
+      button: document.getElementById('task-btn'),
+      panel: document.getElementById('task-panel'),
+      onCancel: (id) => { if (!this._needsControl()) this._conn.send(OUT.CANCEL_TASK, { task_id: id }); },
+      whyNoCancel: () => this._needsControl(),
     });
     this._rail = new Rail({
       datasetList: document.getElementById('dataset-list'),
@@ -1569,14 +1577,19 @@ export class FFastApp {
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.DATASET_LENGTH_RESPONSE, (kw, args) => this._browser.onDatasetLength(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
-      conn.on(IN.TASK_PROGRESS, (kw, args) => { this._metricOps.onProgress(kw, args); console.debug('TASK_PROGRESS', kw); });
-      // No per-task correlation id travels back to the browser today (Qt's
-      // equivalent is a generic "Tasks" sidebar list, out of scope here), so
-      // a pending save/load session is resolved by the next TASK_DONE/FAILED
-      // to arrive — good enough for a single-user session (ADR 0044: shared
-      // workspace, not multi-tenant) and gives issue 21 a real completion
-      // signal instead of the previous silent console.debug-only handling.
-      conn.on(IN.TASK_DONE,    (kw) => { console.debug('TASK_DONE', kw); this._browser.onTaskDone(); });
+      conn.on(IN.TASK_INFO, (kw, args) => this._tasks.info(args[0], kw));
+      conn.on(IN.TASK_PROGRESS, (kw, args) => {
+        this._metricOps.onProgress(kw, args);
+        this._tasks.progress(args[0], kw);
+        console.debug('TASK_PROGRESS', kw);
+      });
+      // The Tasks button lists running tasks; _browser.onTaskDone still ends a
+      // pending save/load status.
+      conn.on(IN.TASK_DONE,    (kw, args) => {
+        console.debug('TASK_DONE', kw);
+        this._tasks.done(args[0]);
+        this._browser.onTaskDone();
+      });
       conn.on(IN.TASK_FAILED,  (kw) => console.warn('TASK_FAILED', kw));
       conn.on(IN.DATASET_LOADED, () => {});
       conn.on(IN.MODEL_LOADED,   () => {});
@@ -1678,6 +1691,7 @@ export class FFastApp {
     this._deleting.clear();
     this._playing = false;
     this._pendingSessionOp = null;
+    this._tasks.reset();
     this._setActiveTool(null);   // release any armed pick tool
     this._applyLayout([]);       // back to the default 3D tab
     this._renderObjects();
