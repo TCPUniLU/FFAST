@@ -94,6 +94,16 @@ def _metric_compute_pool() -> ThreadPoolExecutor:
         )
     return _METRIC_COMPUTE_POOL
 
+
+def _needs_prediction(metric_id) -> bool:
+    """True when the metric needs a prediction; an unknown id is left to the
+    compute path, which says why it failed."""
+    from ffast.metrics.input_resolver import metric_needs_prediction
+    try:
+        return metric_needs_prediction(metric_id)
+    except KeyError:
+        return False
+
 # A table row: the handler method, the ordered names it binds from
 # (args, kwargs) — a leading "?" marks an optional name (resolves to None) —
 # and the typed request model that validates the resolved payload. ``model``
@@ -1269,6 +1279,11 @@ class ServerSession:
         # A model-dependent metric whose model isn't on the server (a real,
         # client-only model) can't be computed here — signal fallback.
         server_can_compute = not (model_fp and model is None)
+        # A prediction metric asked for with no prediction (a panel mixing it
+        # with a dataset metric, before one is chosen) has nothing to compute:
+        # "no data" at once, not a run that logs errors the page pops up.
+        if model is None and _needs_prediction(metric_id):
+            server_can_compute = False
 
         if result is None and server_can_compute:
             try:

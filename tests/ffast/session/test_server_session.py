@@ -645,20 +645,40 @@ def test_request_metric_computes_on_cache_miss_and_replies_with_request_id():
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;length;rmse]", "m3"], {"dataset_fp": "ds1"})
+        await s.dispatch("REQUEST_METRIC", ["ffast.gyradius", "m3"], {"dataset_fp": "ds1"})
         return s.outbound.get_nowait()
 
     event, args, kwargs = unpack(_run(scenario()))
-    stored_key = "ffast.force_difference[structure;length;rmse]__f1234abcd__nil__nil"  # carries the formula hash
+    stored_key = "ffast.gyradius__f1234abcd__nil__nil"  # carries the formula hash
     assert event == control.METRIC_RESULT
-    assert args == ["m3", "ffast.force_difference[structure;length;rmse]"]
+    assert args == ["m3", "ffast.gyradius"]
     assert env.data.make_key_calls, "make_metric_cache_key should be used"
-    assert env.data.generate_metric_calls == [("ffast.force_difference[structure;length;rmse]", stored_key)]
+    assert env.data.generate_metric_calls == [("ffast.gyradius", stored_key)]
     assert list(env.cache._entries) == [stored_key]   # nothing stored under the request id
     recovered = unpack_metric_result(kwargs)
     assert recovered is not None
-    assert recovered.metric_id == "ffast.force_difference[structure;length;rmse]"
+    assert recovered.metric_id == "ffast.gyradius"
     np.testing.assert_array_equal(recovered.values, np.array([3.0]))
+
+
+def test_request_metric_needing_a_prediction_without_one_is_not_computed():
+    """A panel that mixes a dataset metric with a prediction metric asks for
+    both before a prediction is chosen; the prediction one replies "no data"
+    at once instead of running and logging errors the page pops up."""
+    env = _FakeEnv(datasets={"ds1": object()}, cache={})
+    env.data = _FakeData(env.cache)
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;component;mae]", "m5"],
+                         {"dataset_fp": "ds1"})
+        return s.outbound.get_nowait()
+
+    event, args, kwargs = unpack(_run(scenario()))
+    assert event == control.METRIC_RESULT
+    assert args == ["m5", "ffast.force_difference[structure;component;mae]"]
+    assert kwargs["ok"] is False
+    assert env.data.generate_metric_calls == []
 
 
 # ── _on_request_subdataset_arrays ─────────────────────────────────────────────
