@@ -532,6 +532,15 @@ async def test_web_cluster_connect_hands_the_page_the_tunnel(ffast_web_server, t
             recent = await page.evaluate("() => window.localStorage.getItem('ffast.recentServers') || ''")
             assert f"ws://127.0.0.1:{ws_port}" not in recent
 
+            # A reloaded page (or a new window) goes back to the live cluster
+            # connection, not to the URL's local server (port 1: nothing listens).
+            page2 = await browser.new_page(viewport={"width": 1100, "height": 900})
+            await page2.goto(f"http://127.0.0.1:{page_port}/?port=1&launch=s3cret",
+                             wait_until="networkidle")
+            await _expect_connected(page2)
+            await expect(page2.locator("#ws-url")).to_have_value(f"ws://127.0.0.1:{ws_port}")
+            await page2.close()
+
             await _file_menu(page, "Connect to Cluster…")
             await expect(page.locator("#cluster-stop-btn")).to_be_enabled()
             await page.locator("#cluster-stop-btn").click()

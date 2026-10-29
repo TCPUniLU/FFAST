@@ -1489,7 +1489,6 @@ export class FFastApp {
    * launcher's `launch=` id, are ignored. With no port the dialog opens,
    * offering the most recent server (ADR 0055). */
   _applyUrlParams() {
-    this._clusterClient?.state().then(() => { this._clusterReady = true; }).catch(() => {});
     const p = new URLSearchParams(window.location.search);
     const port  = p.get('port');
     const token = p.get('token');
@@ -1517,8 +1516,15 @@ export class FFastApp {
         this._autoModelFp = shown.modelFp || '';
       }
     }
-    if (port) this._connect();
-    else this._openConnDialog();
+    // A live cluster connection wins over the URL's local server, so a reload
+    // goes back to the cluster (web parity plan 2026-10-29).
+    const fallback = () => (port ? this._connect() : this._openConnDialog());
+    if (!this._clusterClient) { fallback(); return; }
+    this._clusterClient.state().then((s) => {
+      this._clusterReady = true;
+      if (s.status?.state === 'connected') this._useCluster(s.status);
+      else fallback();
+    }).catch(fallback);
   }
 
   // ── connection dialog (ADR 0055) ────────────────────────────────────────
