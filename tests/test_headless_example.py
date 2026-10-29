@@ -32,14 +32,14 @@ _CASES = {
         "variable-sized-molecular/prediction.xyz",
         None,
         {"Energy MAE": 0.0218, "Energy RMSE": 0.0318,
-         "Force MAE": 0.0293, "Force RMSE": 0.0534},
+         "Force MAE": 0.0147, "Force RMSE": 0.0308},
     ),
     "fixed-sized-molecular": (
         "fixed-sized-molecular/md22_stachyose_sampled.xyz",
         "fixed-sized-molecular/predictions_md22_stachyose.xyz",
         None,
         {"Energy MAE": 3.4917, "Energy RMSE": 4.5126,
-         "Force MAE": 5.3341, "Force RMSE": 6.1890},
+         "Force MAE": 2.6664, "Force RMSE": 3.5732},
     ),
     # AM26 and MPtrj hold several energy-like keys, and the one the loader would
     # pick unaided (energy_per_at / energy_per_atom) is copied verbatim into the
@@ -51,17 +51,17 @@ _CASES = {
         "fixed-sized-periodic/predictions_am26_subbed.xyz",
         "energy",
         {"Energy MAE": 6.2916, "Energy RMSE": 8.0942,
-         "Force MAE": 1.9337, "Force RMSE": 2.1457},
+         "Force MAE": 0.9675, "Force RMSE": 1.2388},
     ),
     "variable-sized-periodic": (
         "variable-sized-periodic/mptrj_sampled_over_200.extxyz",
         "variable-sized-periodic/predictions_mptrj_sampled.xyz",
         "energy",
         {"Energy MAE": 0.1132, "Energy RMSE": 0.1914,
-         "Force MAE": 0.0928, "Force RMSE": 0.2250},
+         "Force MAE": 0.0458, "Force RMSE": 0.1299},
     ),
     # An npz prediction, read by the sGDML loader. The huge energy error and the
-    # 44 eV/A force error are real: this prediction is in eV while its reference
+    # 22 eV/A force error are real: this prediction is in eV while its reference
     # is in kcal/mol (README, "Two defects"). Pinned as-is so that if anyone ever
     # converts the file, this test says so instead of quietly agreeing.
     "fixed-sized-subsystem": (
@@ -69,7 +69,7 @@ _CASES = {
         "fixed-sized-subsystem/graphene_prediction.npz",
         None,
         {"Energy MAE": 2489612.9584, "Energy RMSE": 2489612.9585,
-         "Force MAE": 44.3516, "Force RMSE": 49.3268},
+         "Force MAE": 21.6538, "Force RMSE": 28.4788},
     ),
 }
 
