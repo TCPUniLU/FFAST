@@ -14,13 +14,21 @@ import numpy as np
 
 from ffast.chemistry import geometry
 from ffast.metrics import metric, dims, inputs as I, units
+from ffast.metrics.models import WithWarnings
 from ffast.metrics.segments import segmentSums
+
+# Ported from dev (b746f06): the old Gyration tab warned the same way.
+PERIODIC_WARNING = (
+    "The radius of gyration is not meaningful for periodic systems: it "
+    "measures the unwrapped coordinates in the cell, not a molecule."
+)
 
 
 @metric(
     id="ffast.gyradius",
-    inputs={"positions": I.reference_positions, "elements": I.reference_elements},
-    optional_inputs=["offsets"],
+    inputs={"positions": I.reference_positions, "elements": I.reference_elements,
+            "periodic": I.reference_periodic},
+    optional_inputs=["offsets", "periodic"],
     shape=(dims.N_frames,),
     unit=units.length,
     tests=[
@@ -48,13 +56,19 @@ from ffast.metrics.segments import segmentSums
         },
     ],
 )
-def gyradius(positions, elements, offsets=None):
+def gyradius(positions, elements, offsets=None, periodic=False):
     """Atomic-number-weighted radius of gyration per structure.
 
     Positions are flat ``(atoms, 3)`` and elements every atom's z, as the
     InputResolver supplies them (ADR 0058 step 6): with ``offsets`` → ``(N,)``,
-    one radius per structure; without, one structure → a scalar.
+    one radius per structure; without, one structure → a scalar. On
+    periodic data the values come with a warning.
     """
+    values = _gyradius(positions, elements, offsets)
+    return WithWarnings(values, [PERIODIC_WARNING]) if periodic else values
+
+
+def _gyradius(positions, elements, offsets):
     R = np.asarray(positions, dtype=np.float64)
     z = np.asarray(elements, dtype=np.float64)
 

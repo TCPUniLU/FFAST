@@ -34,6 +34,15 @@ if "QT_PLUGIN_PATH" not in os.environ:
                 os.environ["QT_QPA_PLATFORM"] = "cocoa"
                 break
 
+# On Windows, PyTorch and Qt ship DLLs of the same name and the first loaded
+# wins; torch fails to load its own if Qt came first. A model plugin imports
+# torch later, so load it before Qt when it is installed.
+if sys.platform == "win32":
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        pass
+
 from PySide6.QtWidgets import QApplication
 from qasync import QEventLoop
 

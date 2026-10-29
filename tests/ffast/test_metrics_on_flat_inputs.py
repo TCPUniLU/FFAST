@@ -45,6 +45,7 @@ def _uniform():
         "reference.energies": rng.normal(size=N_FRAMES),
         "prediction.energies": rng.normal(size=N_FRAMES),
         "n_atoms": np.full(N_FRAMES, N_ATOMS),
+        "reference.periodic": False,
     }
 
 
