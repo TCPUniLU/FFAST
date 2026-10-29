@@ -553,81 +553,74 @@ CASES = {
         "te.toSaved(te.setPanelView(TE(), 0, {view: 'independent', link_frame: true,"
         " link_camera: false})).panels[0]"),
 
-    # ── te: editing a tab draft (ADR 0056 rules 6, 11, 12, 14) ──────────────
-    # A 2x2 tab: 3D panel at (0,0), table A at (0,1), timeline B at (1,0)
-    # spanning 2 columns.
-    "te_place": "te.place(TE()).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])",
-    "te_move_to_free_cell": (
-        "te.place(te.movePanel(TE(), 1, 2, 1)).map(p => [p.title, p.row, p.col])"),
-    "te_move_swaps": (
-        "te.place(te.movePanel(TE(), 1, 0, 0)).map(p => [p.title, p.row, p.col, p.colspan])"),
-    "te_move_swap_shrinks_to_fit": (
-        "te.place(te.movePanel(TE(), 2, 0, 1)).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])"),
+    # ── te: editing a tab draft (ADR 0056 rules 6, 11, 14; ADR 0069) ────────
+    # TE() is an old-form 2x2 tab: 3D panel V at (0,0), table A at (0,1), timeline
+    # B at (1,0) spanning 2 columns. TF() is that tab on the fine grid: V and A
+    # 12 columns by 6 rows, B 24 by 6 below them.
+    "te_place": "te.place(TF()).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])",
+    "te_to_fine_grid_shares": (
+        "(() => { const old = (n, extra = {}) => ({panels: Array.from({length: n}, (_, c) =>"
+        "    ({kind: 'table', title: 'P' + c, row: 0, col: c, rowspan: 1, colspan: 1})), ...extra});"
+        "  const at = (t) => te.place(t).map(p => [p.col, p.colspan]);"
+        "  return [at(te.toFineGrid(old(2))), at(te.toFineGrid(old(5))),"
+        "    at(te.toFineGrid(old(2, {column_widths: [2, 1]}))), at(te.toFineGrid(old(3, {column_widths: [1, 1, 1]}))),"
+        "    te.toFineGrid(old(2)).grid]; })()"),
+    "te_to_fine_grid_rows": (
+        "te.place(te.toFineGrid({...TE(), row_heights: [1, 0.5]})).map(p => [p.title, p.row, p.rowspan])"),
+    "te_to_fine_grid_keeps_the_rest": (
+        "(() => { const t = te.toFineGrid({...TE(), column_widths: [2, 1], row_heights: [1, 1],"
+        "    panels: [...TE().panels, {kind: 'table', title: 'S1', row: 1, col: 1, rowspan: 1, colspan: 1, scroll_group: 'g'},"
+        "             {kind: 'table', title: 'S2', row: 1, col: 1, rowspan: 1, colspan: 1, scroll_group: 'g'}]});"
+        "  return [t.grid, 'column_widths' in t, 'row_heights' in t, t.panels.map(p => p.title + (p.scroll_group || '')),"
+        "    t.panels.slice(3).map(p => [p.row, p.col, p.rowspan, p.colspan]), te.toFineGrid(t) === t]; })()"),
+    "te_move_to_a_free_place": (
+        "te.place(te.movePanel(TF(), 1, 12, 12)).map(p => [p.title, p.row, p.col])"),
+    "te_move_pushes_down": (
+        "te.place(te.movePanel(TF(), 0, 0, 12)).map(p => [p.title, p.row, p.col])"),
+    "te_move_stays_in_the_grid": (
+        "[te.movePanel(TF(), 1, 0, 20).panels[1].col, te.movePanel(TF(), 1, 0, -4).panels[1].col,"
+        " te.clampMove(TF(), 0, 3, 99)]"),
+    "te_move_a_strip_as_one": (
+        "(() => { const t = {grid: 24, panels: ["
+        "  {kind: 'table', title: 'X', row: 0, col: 0, rowspan: 6, colspan: 24, scroll_group: 'g'},"
+        "  {kind: 'table', title: 'Y', row: 0, col: 0, rowspan: 6, colspan: 24, scroll_group: 'g'},"
+        "  {kind: 'table', title: 'Z', row: 6, col: 0, rowspan: 6, colspan: 24}]};"
+        "  return te.place(te.movePanel(t, 1, 12, 0)).map(p => [p.title, p.row]); })()"),
     "te_resize_grows": (
-        "te.place(te.resizePanel(te.movePanel(TE(), 2, 2, 0), 0, 2, 1))"
-        ".map(p => [p.title, p.rowspan, p.colspan])"),
-    "te_resize_moves_a_neighbour_down": (
-        "te.place(te.resizePanel(TE(), 0, 1, 2)).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])"),
-    "te_resize_moved_neighbour_keeps_its_size": (
-        "te.place(te.resizePanel(TE(), 0, 2, 1)).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])"),
-    "te_resize_stays_in_the_columns": (
-        "te.place(te.resizePanel(TE(), 1, 1, 5)).map(p => [p.title, p.colspan])"),
-    "te_resize_adds_one_column": (
-        "(() => { const t = te.resizePanel({...TE(), column_widths: [1.5, 1]}, 1, 1, 5);"
-        "  return [te.place(t).map(p => [p.title, p.colspan]), t.column_widths]; })()"),
-    "te_resize_stops_at_the_most_columns": (
-        "(() => { const t = te.resizePanel({...TE(), column_widths: Array(8).fill(1)}, 1, 1, 9);"
-        "  return [te.place(t)[1].colspan, t.column_widths.length, te.MAX_COLUMNS]; })()"),
-    "te_empty_columns_and_rows": (
-        "[te.emptyColumns({...TE(), column_widths: [1, 1, 1]}), te.emptyColumns(TE()),"
-        " te.emptyColumns({panels: [], column_widths: [1]}),"
-        " te.emptyRows({panels: [{row: 0, col: 0}, {row: 2, col: 0}]}), te.emptyRows(TE())]"),
-    "te_remove_empty_column": (
-        "(() => { const t = te.removeColumn({panels: [{title: 'X', row: 0, col: 1}], column_widths: [1, 2]}, 0);"
-        "  const kept = te.removeColumn(TE(), 0) === TE() ? 'same' : te.removeColumn(TE(), 0).panels.map(p => p.col);"
-        "  return [t.panels.map(p => p.col), t.column_widths, kept]; })()"),
-    "te_remove_empty_row": (
-        "(() => { const t = te.removeRow({panels: [{row: 0, col: 0}, {row: 2, col: 0}], row_heights: [1, 0.5, 2]}, 1);"
-        "  return [t.panels.map(p => p.row), t.row_heights, te.removeRow(TE(), 0).panels.map(p => p.row)]; })()"),
-    "te_add_takes_the_first_free_cell": (
-        "te.place(te.addPanel(te.removePanel(TE(), 1), {kind:'table', title:'C'}))"
-        ".map(p => [p.title, p.row, p.col])"),
+        "te.place(te.resizePanel(TF(), 1, {w: 8, h: 10})).map(p => [p.title, p.row, p.rowspan, p.colspan])"),
+    "te_resize_pushes_a_neighbour_down": (
+        "te.place(te.resizePanel(TF(), 0, {w: 16, h: 6})).map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])"),
+    "te_resize_stops_at_the_minimum_and_the_edge": (
+        "[te.place(te.resizePanel(TF(), 1, {w: 1, h: 1}))[1], te.place(te.resizePanel(TF(), 0, {w: 1, h: 1}))[0],"
+        " te.place(te.resizePanel(TF(), 1, {w: 99, h: 6}))[1].colspan, te.minSize(TF(), 0), te.minSize(TF(), 1)]"),
+    "te_resize_a_strip_as_one": (
+        "(() => { const t = {grid: 24, panels: ["
+        "  {kind: 'table', title: 'X', row: 0, col: 0, rowspan: 6, colspan: 24, scroll_group: 'g'},"
+        "  {kind: 'table', title: 'Y', row: 0, col: 0, rowspan: 6, colspan: 24, scroll_group: 'g'}]};"
+        "  return te.place(te.resizePanel(t, 0, {w: 12, h: 8})).map(p => [p.rowspan, p.colspan]); })()"),
+    "te_compact": (
+        "(() => { const t = TF(); t.panels[0].row = 20;"
+        "  return [te.place(te.compact(t)).map(p => [p.title, p.row]),"
+        "    te.place(te.compact({...TF(), panels: [{...TF().panels[2], row: 9}]}))[0].row]; })()"),
+    "te_add_takes_the_first_free_place": (
+        "te.place(te.addPanel(te.removePanel(TF(), 2), {kind:'table', title:'C'}))"
+        ".map(p => [p.title, p.row, p.col, p.rowspan, p.colspan])"),
     "te_add_opens_a_row_when_full": (
-        "te.place(te.addPanel(TE(), {kind:'table', title:'C'})).map(p => [p.title, p.row, p.col])"),
-    "te_columns_fewer_moves_panels_down": (
-        "(() => { const t = te.setColumns(TE(), 1);"
-        "  return [t.panels.map(p => [p.title, p.row, p.col, p.colspan]), t.column_widths]; })()"),
-    "te_columns_keep_widths_in_step": (
-        "te.setColumns({...TE(), column_widths: [2, 1]}, 3).column_widths"),
-    "te_rows_keep_heights_in_step": (
-        "te.addPanel({...TE(), row_heights: [3, 1]}, {kind:'table', title:'C'}).row_heights"),
-    "te_remove_drops_empty_rows": (
-        "(() => { const t = te.removePanel({...TE(), row_heights: [3, 1]}, 2);"
-        "  return [t.panels.length, t.row_heights]; })()"),
-    "te_sizes_are_pixels": (
-        "[te.COLUMN_PX, te.ROW_PX, te.sizeTemplate([1.5, 1], te.COLUMN_PX), te.sizeTemplate([0.5, 2], te.ROW_PX)]"),
-    "te_sizes_of_pixels": "te.sizesOf([620, 400, 133.333], 400)",
-    "te_drag_changes_one_track": (
-        "[te.dragTrack([500, 400, 400], 1, 120, 400), te.dragTrack([500, 400], 1, -300, 400),"
-        " te.dragTrack([300, 300, 300], 2, -250, 80)]"),
-    "te_fit_widths": "[te.fitWidths(2, 1180), te.fitWidths(4, 1180), te.fitWidths(1, 1300)]",
-    "te_columns_refit_when_the_count_changes": (
-        "[te.setColumns({...TE(), column_widths: [2, 1]}, 3, 1300).column_widths,"
-        " te.setColumns({...TE(), column_widths: [2, 1]}, 2, 1300).column_widths,"
-        " te.setColumns(TE(), 2, 1300).column_widths]"),
+        "te.place(te.addPanel(TF(), {kind:'table', title:'C'})).map(p => [p.title, p.row, p.col])"),
+    "te_remove_floats_the_rest_up": (
+        "te.place(te.removePanel(te.removePanel(TF(), 1), 0)).map(p => [p.title, p.row])"),
     "te_save_form": (
-        "te.toSaved({...TE(), source:'user', replaces:'X', revision:'r', hidden:false, original_changed:false})"),
+        "te.toSaved({...TF(), source:'user', replaces:'X', revision:'r', hidden:false, original_changed:false})"),
     "te_copy_of": "te.copyOf(TE(), 'Copy of Mixed').name",
     "te_only_places_changed": (
-        "[te.onlyPlacesChanged(TE(), {...TE(), column_widths: [2, 1], row_heights: [1, 0.5]}),"
-        " te.onlyPlacesChanged(TE(), te.resizePanel(TE(), 1, 2, 1)),"
-        " te.onlyPlacesChanged(TE(), te.resizePanel(TE(), 0, 2, 1)),"
-        " te.onlyPlacesChanged(TE(), te.movePanel(TE(), 0, 0, 1)),"
-        " te.onlyPlacesChanged(TE(), te.removePanel(TE(), 1)),"
-        " te.onlyPlacesChanged(TE(), {...TE(), name: 'Other'}),"
-        " te.onlyPlacesChanged(TE(), te.replacePanel(TE(), 1, {...TE().panels[1], title: 'Z'}))]"),
+        "[te.onlyPlacesChanged(TF(), {...TF(), grid: 12}),"
+        " te.onlyPlacesChanged(TF(), te.resizePanel(TF(), 1, {w: 6, h: 6})),"
+        " te.onlyPlacesChanged(TF(), te.resizePanel(TF(), 0, {w: 16, h: 6})),"
+        " te.onlyPlacesChanged(TF(), te.movePanel(TF(), 0, 0, 12)),"
+        " te.onlyPlacesChanged(TF(), te.removePanel(TF(), 1)),"
+        " te.onlyPlacesChanged(TF(), {...TF(), name: 'Other'}),"
+        " te.onlyPlacesChanged(TF(), te.replacePanel(TF(), 1, {...TF().panels[1], title: 'Z'}))]"),
     "te_empty_tab": "te.emptyTab('New')",
-    "te_empty_tab_fits": "te.emptyTab('New', [1.46, 1.46]).column_widths",
     "te_kinds_offer_metrics_by_shape": (
         "te.metricsFor('density', 'value', [{id:'a', shape:'(curve_xy, grid)'},"
         " {id:'b', shape:'N_frames'}]).map(m => m.id)"),
@@ -939,6 +932,7 @@ def results():
         "      {kind: 'timeline', row: 1, col: 0, rowspan: 1, colspan: 2, title: 'B',\n"
         "       metrics: {y: 'm.b'}, metric_refs: {y: {metric: 'm.b', transform: null, params: {}}}},\n"
         "    ]});\n"
+        "  const TF = () => te.toFineGrid(TE());\n"
         "  const FL = new Map(Object.entries({\n"
         "    P: {n: 10, name: 'P'}, Q: {n: 10, name: 'Q'}, T: {n: 5, name: 'ethanol'},\n"
         "    S: {n: 3, parent: 'P', parent_frames: [4, 6, 8], name: 'S'},\n"
@@ -1882,38 +1876,94 @@ def test_te_a_3d_panel_can_be_made_independent_and_linked_again(results):
 
 
 def test_te_panels_keep_their_places(results):
-    assert results["te_place"] == [["V", 0, 0, 1, 1], ["A", 0, 1, 1, 1], ["B", 1, 0, 1, 2]]
+    assert results["te_place"] == [["V", 0, 0, 6, 12], ["A", 0, 12, 6, 12], ["B", 6, 0, 6, 24]]
 
 
-def test_te_a_panel_moves_to_a_free_cell(results):
-    assert results["te_move_to_free_cell"] == [["V", 0, 0], ["A", 2, 1], ["B", 1, 0]]
+def test_te_an_old_tab_becomes_a_tab_on_the_24_column_grid(results):
+    """Each old column gets an equal share of the 24 columns, or a share in
+    proportion to its width, at least one column each."""
+    two, five, widths, thirds, grid = results["te_to_fine_grid_shares"]
+    assert two == [[0, 12], [12, 12]]
+    assert five == [[0, 5], [5, 5], [10, 5], [15, 5], [20, 4]]
+    assert widths == [[0, 16], [16, 8]]
+    assert thirds == [[0, 8], [8, 8], [16, 8]]
+    assert grid == 24
 
 
-def test_te_dropping_on_a_panel_swaps_the_two(results):
-    assert results["te_move_swaps"] == [["V", 0, 1, 1], ["A", 0, 0, 1], ["B", 1, 0, 2]]
+def test_te_an_old_rows_height_becomes_50_px_units(results):
+    """A row is 300 px (6 units) unless row_heights sets it: 0.5 is 3 units."""
+    assert results["te_to_fine_grid_rows"] == [["V", 0, 6], ["A", 0, 6], ["B", 6, 3]]
 
 
-def test_te_a_swapped_panel_shrinks_to_fit(results):
-    """B (two columns wide) dropped on A's cell: B would stick out of the
-    grid, so it narrows; A takes B's old place."""
-    assert results["te_move_swap_shrinks_to_fit"] == [
-        ["V", 0, 0, 1, 1], ["A", 1, 0, 1, 1], ["B", 0, 1, 1, 1]]
+def test_te_converting_keeps_order_scroll_groups_and_a_strip_one_row_high(results):
+    grid, widths, heights, titles, strip, same = results["te_to_fine_grid_keeps_the_rest"]
+    assert grid == 24 and widths is False and heights is False
+    assert titles == ["V", "A", "B", "S1g", "S2g"]
+    assert strip == [[6, 16, 6, 8], [6, 16, 6, 8]]   # both at the first member's place
+    assert same is True      # a tab already on the grid comes back as it is
 
 
-def test_te_resizing_grows_a_span(results):
-    assert results["te_resize_grows"] == [["V", 2, 1], ["A", 1, 1], ["B", 1, 2]]
+def test_te_a_panel_moves_to_a_free_place(results):
+    """A dropped just below B, in column 12; the panels float up but A stops
+    under B."""
+    assert results["te_move_to_a_free_place"] == [["V", 0, 0], ["A", 12, 12], ["B", 6, 0]]
 
 
-def test_te_resizing_over_a_neighbour_moves_it_down(results):
-    """The panel gets the size drawn; A, in the way, goes to the first free
-    cell at or below its row (row 0 is now V's, row 1 is B's)."""
-    assert results["te_resize_moves_a_neighbour_down"] == [
-        ["V", 0, 0, 1, 2], ["A", 2, 0, 1, 1], ["B", 1, 0, 1, 2]]
+def test_te_a_panel_in_the_way_moves_down(results):
+    """V dropped on A pushes A down, below V; B is below them both, so A goes
+    on below B."""
+    assert results["te_move_pushes_down"] == [["V", 0, 12], ["A", 12, 12], ["B", 6, 0]]
 
 
-def test_te_a_neighbour_moved_by_a_resize_keeps_its_size(results):
-    assert results["te_resize_moved_neighbour_keeps_its_size"] == [
-        ["V", 0, 0, 2, 1], ["A", 0, 1, 1, 1], ["B", 2, 0, 1, 2]]
+def test_te_a_panel_stays_inside_the_grid(results):
+    right, left, clamped = results["te_move_stays_in_the_grid"]
+    assert right == 12 and left == 0       # A is 12 wide: 24 - 12
+    assert clamped == {"row": 3, "col": 12}
+
+
+def test_te_a_scroll_strip_moves_as_one(results):
+    assert results["te_move_a_strip_as_one"] == [["X", 6], ["Y", 6], ["Z", 0]]
+
+
+def test_te_resizing_sets_the_width_and_height(results):
+    assert results["te_resize_grows"] == [["V", 0, 6, 12], ["A", 0, 10, 8], ["B", 10, 6, 24]]
+
+
+def test_te_resizing_over_a_neighbour_pushes_it_down(results):
+    assert results["te_resize_pushes_a_neighbour_down"] == [
+        ["V", 0, 0, 6, 16], ["A", 12, 12, 6, 12], ["B", 6, 0, 6, 24]]
+
+
+def test_te_a_panel_has_a_smallest_size_and_stops_at_the_grids_edge(results):
+    """6 x 4 (a 3D panel 8 x 6); A starts at column 12, so it is 12 wide at most."""
+    table, three_d, widest, min_3d, min_2d = results["te_resize_stops_at_the_minimum_and_the_edge"]
+    assert (table["colspan"], table["rowspan"]) == (6, 4)
+    assert (three_d["colspan"], three_d["rowspan"]) == (8, 6)
+    assert widest == 12
+    assert min_3d == {"w": 8, "h": 6} and min_2d == {"w": 6, "h": 4}
+
+
+def test_te_a_scroll_strip_is_resized_as_one(results):
+    assert results["te_resize_a_strip_as_one"] == [[8, 12], [8, 12]]
+
+
+def test_te_panels_float_up_so_no_row_is_empty(results):
+    lifted, alone = results["te_compact"]
+    assert lifted == [["V", 12], ["A", 0], ["B", 6]]
+    assert alone == 0
+
+
+def test_te_a_new_panel_takes_the_first_free_place(results):
+    """Half the width, 400 px high (8 rows), where it first fits."""
+    assert results["te_add_takes_the_first_free_place"][-1] == ["C", 6, 0, 8, 12]
+
+
+def test_te_a_new_panel_opens_a_row_when_the_grid_is_full(results):
+    assert results["te_add_opens_a_row_when_full"][-1] == ["C", 12, 0]
+
+
+def test_te_removing_a_panel_floats_the_rest_up(results):
+    assert results["te_remove_floats_the_rest_up"] == [["B", 0]]
 
 
 def test_a_3d_panel_caption_offers_the_main_view_and_every_dataset(results):
@@ -1932,76 +1982,20 @@ def test_a_3d_panel_caption_offers_the_main_view_and_every_dataset(results):
     assert empty == ["", [["main", "Main view", False], ["", "No dataset yet", True]]]
 
 
-def test_te_resizing_adds_at_most_one_column(results):
-    """The ◢ corner dragged past the last column adds one column (width 1
-    when the tab sets widths), never more, and never past MAX_COLUMNS."""
-    assert results["te_resize_stays_in_the_columns"] == [["V", 1], ["A", 2], ["B", 2]]
-    assert results["te_resize_adds_one_column"] == [[["V", 1], ["A", 2], ["B", 2]], [1.5, 1, 1]]
-    assert results["te_resize_stops_at_the_most_columns"] == [7, 8, 8]
-
-
-def test_te_empty_columns_and_rows_can_be_removed(results):
-    """A column or row no panel covers can be removed; the panels after it
-    move back, and its set size goes. The only column stays."""
-    assert results["te_empty_columns_and_rows"] == [[2], [], [], [1], []]
-    assert results["te_remove_empty_column"] == [[0], [2], [0, 1, 0]]
-    assert results["te_remove_empty_row"] == [[0, 1], [1, 2], [0, 0, 1]]
-
-
-def test_te_a_new_panel_takes_the_first_free_cell(results):
-    assert results["te_add_takes_the_first_free_cell"] == [["V", 0, 0], ["B", 1, 0], ["C", 0, 1]]
-
-
-def test_te_a_new_panel_opens_a_row_when_the_grid_is_full(results):
-    assert results["te_add_opens_a_row_when_full"][-1] == ["C", 2, 0]
-
-
-def test_te_fewer_columns_move_the_panels_down(results):
-    panels, widths = results["te_columns_fewer_moves_panels_down"]
-    assert panels == [["V", 0, 0, 1], ["A", 2, 0, 1], ["B", 1, 0, 1]]
-    assert widths is None
-
-
-def test_te_sizes_follow_the_columns_and_rows(results):
-    assert results["te_columns_keep_widths_in_step"] == [2, 1, 1]
-    assert results["te_rows_keep_heights_in_step"] == [3, 1, 1]
-    assert results["te_remove_drops_empty_rows"] == [2, [3]]
-
-
-def test_te_a_size_of_1_is_400_px_wide_or_300_px_high(results):
-    """Dragged sizes are kept as they are, never shared out (step 7 trial)."""
-    assert results["te_sizes_are_pixels"] == [400, 300, "600px 400px", "150px 600px"]
-    assert results["te_sizes_of_pixels"] == [1.55, 1, 0.33]
-
-
-def test_te_a_divider_changes_only_the_track_before_it(results):
-    grown, floored, row = results["te_drag_changes_one_track"]
-    assert grown == [620, 400, 400]
-    assert floored == [400, 400]
-    assert row == [300, 80, 300]
-
-
 def test_te_moving_and_resizing_change_only_places(results):
     """Edit mode then moves the cells in place and the plots keep drawing;
     a 3D panel that moves is a different independent panel, so not that."""
-    sizes, grow_2d, grow_3d, move_3d, removed, renamed, retitled = results["te_only_places_changed"]
-    assert sizes and grow_2d and grow_3d
+    grid, grow_2d, grow_3d, move_3d, removed, renamed, retitled = results["te_only_places_changed"]
+    assert grid and grow_2d and grow_3d
     assert not move_3d
     assert not (removed or renamed or retitled)
-
-
-def test_te_new_columns_fill_the_window_when_made(results):
-    assert results["te_fit_widths"] == [[1.46, 1.46], [1, 1, 1, 1], [3.25]]
-    refit, same, unchanged = results["te_columns_refit_when_the_count_changes"]
-    assert refit == [1.06, 1.06, 1.06]
-    assert same == [2, 1]
-    assert unchanged is None      # the panels reach 2 columns: still sharing
 
 
 def test_te_saving_sends_the_authoring_form(results):
     saved = results["te_save_form"]
     assert set(saved) == {"name", "controls", "selector", "has_data_selector",
-                          "column_widths", "row_heights", "panels"}
+                          "grid", "column_widths", "row_heights", "panels"}
+    assert saved["grid"] == 24 and saved["column_widths"] is None and saved["row_heights"] is None
     assert saved["panels"][1]["metrics"] == {
         "value": {"metric": "m.a", "transform": "smooth", "params": {}}}
     assert "metric_refs" not in saved["panels"][1]
@@ -2011,8 +2005,8 @@ def test_te_new_tabs_from_scratch_or_a_copy(results):
     assert results["te_copy_of"] == "Copy of Mixed"
     assert results["te_empty_tab"]["name"] == "New"
     assert results["te_empty_tab"]["panels"] == []
-    assert results["te_empty_tab"]["column_widths"] == [1, 1]
-    assert results["te_empty_tab_fits"] == [1.46, 1.46]
+    assert results["te_empty_tab"]["grid"] == 24
+    assert "column_widths" not in results["te_empty_tab"]
 
 
 def test_te_the_builder_offers_metrics_of_the_shape_a_role_takes(results):

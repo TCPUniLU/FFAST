@@ -464,11 +464,11 @@ def test_a_per_element_metric_plots_as_bars(results):
 def test_plot_it_always_makes_or_uses_my_metrics_never_another_tab(results):
     # a new My metrics tab holds the main view too, so the pane stays beside the plot
     assert results["plot_makes_my_metrics_with_the_main_view"] == [
-        None, "My metrics", [["3d", None, 0, 0], ["timeline", "A", 0, 1]]]
+        None, "My metrics", [["3d", None, 0, 0], ["timeline", "A", 0, 12]]]
 
 
 def test_plot_it_adds_to_my_metrics_when_it_exists(results):
-    assert results["plot_reuses_an_existing_my_metrics"] == ["My metrics", [["B", 0, 0], ["A", 1, 0]]]
+    assert results["plot_reuses_an_existing_my_metrics"] == ["My metrics", [["B", 0, 0], ["A", 6, 0]]]   # B (old form) is a full-width row of 6 units
 
 
 # ── sessions ────────────────────────────────────────────────────────────────

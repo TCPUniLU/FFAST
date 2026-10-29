@@ -1861,7 +1861,9 @@ async def test_web_status_says_when_a_dataset_is_ready_and_the_rail_spells_frame
 async def test_web_a_narrow_window_stacks_the_plots_instead_of_scrolling_sideways(ffast_web_server):
     """ADR 0063: at 1024 px two plot columns fit and nothing scrolls sideways;
     narrower, the grid is one column; wide again, two. (The ADR names 1024 px
-    for one column, but its own rule, two 360 px columns, fits there.)"""
+    for one column, but its own rule, two 360 px columns, fits there.) A tab's
+    two plot columns are 12 + 12 of the 24 grid columns (ADR 0069), so the
+    wide grid has 24 tracks, not 2."""
     ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
@@ -1878,7 +1880,7 @@ async def test_web_a_narrow_window_stacks_the_plots_instead_of_scrolling_sideway
             tracks = "(g) => getComputedStyle(g).gridTemplateColumns.split(' ').length"
             scrolls = "(g) => g.scrollWidth > g.clientWidth + 1"
 
-            assert await grid.evaluate(tracks) == 2
+            assert await grid.evaluate(tracks) == 24
             assert not await grid.evaluate(scrolls)
 
             await page.set_viewport_size({"width": 900, "height": 768})
@@ -1895,7 +1897,7 @@ async def test_web_a_narrow_window_stacks_the_plots_instead_of_scrolling_sideway
 
             await page.set_viewport_size({"width": 1200, "height": 768})
             await expect(grid).not_to_have_class(re.compile(r"\bnarrow\b"))
-            assert await grid.evaluate(tracks) == 2
+            assert await grid.evaluate(tracks) == 24
         finally:
             await browser.close()
 
@@ -3248,7 +3250,9 @@ view = "independent"
   colormap = "force_error"
 """
 
-_INDEPENDENT = "window.ffastApp._independent.get('Compare#0,1')"
+# An independent panel is known by its cell; the tab's second column starts at
+# column 12 of the 24-column grid (ADR 0069).
+_INDEPENDENT = "window.ffastApp._independent.get('Compare#0,12')"
 _PANEL = "#panel-section"
 
 
@@ -3559,10 +3563,11 @@ title = "Bottom"
 """
 
 
-async def test_web_tab_sizes_are_kept_as_set(tmp_path):
-    """ADR 0056 rule 12 (changed in the step 7 trial): a set size is kept as
-    it is, never shared out. A column width of 1 is 400 px and a row height
-    of 1 is 300 px; a tab they do not fit scrolls."""
+async def test_web_a_tabs_set_sizes_become_cells_of_the_fine_grid(tmp_path):
+    """ADR 0069 (replacing ADR 0056 rule 12): a tab of the old form, with
+    column_widths [3, 1] and row_heights [2, 1], is drawn on the 24-column grid
+    with 50 px rows: columns 18 + 6 filling the window, rows 12 and 6 units. A
+    cell of n units is n x 50 px and n - 1 gaps of 10 px."""
     config = tmp_path / "ffast.toml"
     config.write_text(_SIZED_TAB_TOML)
     async with _spawn_server("--config", str(config)) as (ws_port, web_port):
@@ -3577,15 +3582,19 @@ async def test_web_tab_sizes_are_kept_as_set(tmp_path):
                 view = await grid.locator(".panel-3d").bounding_box()
                 top = await grid.locator("[data-title='Top']").bounding_box()
                 bottom = await grid.locator("[data-title='Bottom']").bounding_box()
+                box = await grid.bounding_box()
                 gap = 10
-                assert view["width"] == pytest.approx(1200, abs=2)
-                assert top["width"] == pytest.approx(400, abs=2)
-                assert top["height"] == pytest.approx(600, abs=2)
-                assert bottom["height"] == pytest.approx(300, abs=2)
-                assert view["height"] == pytest.approx(900 + gap, abs=2)
+                # fills the window: the two columns and their gap are the grid's content width
+                assert view["width"] + gap + top["width"] == pytest.approx(box["width"] - 2 * gap, abs=2)
+                cell = (view["width"] - 17 * gap) / 18      # 18 columns and 17 gaps
+                assert top["width"] == pytest.approx(6 * cell + 5 * gap, abs=2)
+                assert top["height"] == pytest.approx(12 * 50 + 11 * gap, abs=2)
+                assert bottom["height"] == pytest.approx(6 * 50 + 5 * gap, abs=2)
+                assert view["height"] == pytest.approx(18 * 50 + 17 * gap, abs=2)
                 assert await grid.evaluate("(el) => el.scrollHeight > el.clientHeight")
             finally:
                 await browser.close()
+
 
 
 _WIDE_TAB_TOML = "[[visualization.tabs]]\nname = \"Wide\"\n" + "".join(
@@ -3600,10 +3609,10 @@ title = "T{col}"
 """ for col in range(4))
 
 
-async def test_web_columns_keep_a_minimum_width_and_the_tab_scrolls_sideways(tmp_path):
-    """Columns are never narrower than 360 px (400 before ADR 0063); when they
-    do not fit, the tab scrolls sideways, as it scrolls down for rows. Columns
-    that fit share the window as before."""
+async def test_web_columns_share_the_window_and_the_tab_never_scrolls_sideways(tmp_path):
+    """ADR 0069: the grid always fills the window width. Four columns of the
+    old form are 6 of the 24 grid columns each and share the width; nothing
+    scrolls sideways, however many columns a tab has."""
     config = tmp_path / "ffast.toml"
     config.write_text(_WIDE_TAB_TOML)
     async with _spawn_server("--config", str(config)) as (ws_port, web_port):
@@ -3618,16 +3627,13 @@ async def test_web_columns_keep_a_minimum_width_and_the_tab_scrolls_sideways(tmp
                 await expect(grid.locator(".analysis-panel")).to_have_count(4)
                 widths = [(await grid.locator(f"[data-title='T{c}']").bounding_box())["width"]
                           for c in range(4)]
-                assert min(widths) >= 360 - 1
-                assert await grid.evaluate("(el) => el.scrollWidth > el.clientWidth")
+                assert max(widths) - min(widths) < 2
+                assert await grid.evaluate("(el) => el.scrollWidth <= el.clientWidth")
                 assert await page.evaluate(
                     "() => document.documentElement.scrollWidth <= window.innerWidth")
-
-                await _open_analysis_tab(page, "Basic Errors")
-                basic = page.locator(".tabpanel.active .analysis-grid")
-                assert await basic.evaluate("(el) => el.scrollWidth <= el.clientWidth")
             finally:
                 await browser.close()
+
 
 
 async def _tab_request(ws_port, event, kwargs):
@@ -3768,8 +3774,8 @@ async def test_web_edit_mode_head_covers_no_half_hidden_title(tmp_path):
 
 async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
     """ADR 0056 rules 11, 12 and 15. ✎ opens Edit mode: remove a panel, add a
-    ready-made 3D panel and a custom one from the builder, drag one onto
-    another to swap them, drag a column and a row divider. Cancel drops all of it and
+    ready-made 3D panel and a custom one from the builder, drag one to the top
+    left, drag a panel's right edge to widen it. Cancel drops all of it and
     nothing is written; Save writes the tab, which is then marked edited."""
     async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
         async with async_playwright() as p:
@@ -3801,49 +3807,34 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
                 await page.get_by_role("button", name="Add", exact=True).click()
                 await expect(page.locator(_CHROME)).to_have_count(5)
 
-                # Drag the 3D panel onto the first panel: the two swap.
+                # Drag the 3D panel's title to the grid's top left: it moves
+                # there and the panels in its way go down.
                 handle = page.locator(_CHROME, has_text="3D panel").locator(".edit-handle")
                 hb = await handle.bounding_box()
                 gb = await page.locator(".tabpanel.active .analysis-grid").bounding_box()
                 await page.mouse.move(hb["x"] + 10, hb["y"] + 5)
                 await page.mouse.down()
-                await page.mouse.move(gb["x"] + 60, gb["y"] + 60, steps=8)
+                await page.mouse.move(gb["x"] + 20, gb["y"] + 20, steps=8)
                 await page.mouse.up()
                 await page.wait_for_function(
                     "() => window.ffastApp._editor.draft.panels.some((p) => p.kind === '3d' && p.row === 0 && p.col === 0)")
-                assert ["timeline", "Total gyration radius", 1, 0] in await page.evaluate(draft)
 
-                # A divider changes only the track before it; the next one
-                # keeps its size and the tab scrolls instead of squeezing.
-                grid = page.locator(".tabpanel.active .analysis-grid")
-                track = "(el, [axis, i]) => parseFloat(getComputedStyle(el)[axis].split(' ')[i])"
-                right = await grid.evaluate(track, ["gridTemplateColumns", 1])
-                # One after each column, the last too, so every column can change.
-                await expect(page.locator(".tabpanel.active .edit-divider.col")).to_have_count(2)
-                divider = await page.locator(".tabpanel.active .edit-divider.col").first.bounding_box()
-                await page.mouse.move(divider["x"] + 4, divider["y"] + 100)
+                # The panel's own right edge sets its width, in whole columns of
+                # the 24; there are no column or row bars any more.
+                await expect(page.locator(".tabpanel.active .edit-divider")).to_have_count(0)
+                wide = "() => window.ffastApp._editor.draft.panels.find((p) => p.kind === '3d').colspan"
+                before = await page.evaluate(wide)
+                edge = page.locator(_CHROME, has_text="3D panel").locator(".edit-edge.e")
+                eb = await edge.bounding_box()
+                x, y = eb["x"] + eb["width"] / 2, eb["y"] + eb["height"] / 2
+                await page.mouse.move(x, y)
                 await page.mouse.down()
-                await page.mouse.move(divider["x"] + 150, divider["y"] + 100, steps=6)
+                await page.mouse.move(x + 200, y, steps=6)
+                await expect(page.locator(".tabpanel.active .edit-ghost")).to_have_count(1)
                 await page.mouse.up()
-                widths = await page.evaluate("() => window.ffastApp._editor.draft.column_widths")
-                assert len(widths) == 2 and widths[0] > widths[1]
-                assert widths[1] * 400 == pytest.approx(right, abs=2)
-                assert await grid.evaluate(track, ["gridTemplateColumns", 1]) == pytest.approx(right, abs=2)
-
-                below = await grid.evaluate(track, ["gridTemplateRows", 1])
-                divider = await page.locator(".tabpanel.active .edit-divider.row").first.bounding_box()
-                await page.mouse.move(divider["x"] + 300, divider["y"] + 4)
-                await page.mouse.down()
-                await page.mouse.move(divider["x"] + 300, divider["y"] + 154, steps=6)
-                await page.mouse.up()
-                heights = await page.evaluate("() => window.ffastApp._editor.draft.row_heights")
-                assert heights[0] > 1.4
-                # The row below is drawn taller than its set height by its peak
-                # labels' room, which is not saved into the height.
-                room = await grid.evaluate("(el) => el._rowExtra[1] || 0")
-                assert heights[1] * 300 + room == pytest.approx(below, abs=2)
-                assert await grid.evaluate(track, ["gridTemplateRows", 1]) == pytest.approx(below, abs=2)
-                assert await grid.evaluate("(el) => el.scrollHeight > el.clientHeight")
+                await page.wait_for_function(f"() => ({wide})() > {before}")
+                draft_tab = await page.evaluate("() => window.ffastApp._editor.draft")
+                assert draft_tab["grid"] == 24 and "column_widths" not in draft_tab
 
                 # Cancel: the tab as it was, and nothing written.
                 await page.locator("[data-edit=cancel]").click()
@@ -3865,9 +3856,9 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
 
 
 async def test_web_edit_mode_plots_follow_their_cells_while_dragging(tmp_path):
-    """Step 7 trial: a plot changes size with its cell as a divider is
-    dragged, not in one jump when it is let go, and moving or resizing panels
-    keeps the plots drawn instead of drawing them again."""
+    """Step 7 trial, redone for ADR 0069: resizing a panel by its corner shows
+    a ghost, then the plot follows its cell in one step, not drawn again: moving
+    or resizing panels keeps the plots drawn."""
     async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -3876,63 +3867,55 @@ async def test_web_edit_mode_plots_follow_their_cells_while_dragging(tmp_path):
             sizes = f"""() => {{ const el = document.querySelector("{plot}");
                 const svg = el.querySelector('.main-svg');
                 return [el.clientWidth, svg.getBoundingClientRect().width, el.dataset.mark || null]; }}"""
+            span = ("() => window.ffastApp._editor.draft.panels"
+                    ".find((p) => p.title === 'Energy MAE distribution').colspan")
             try:
                 await _open_app(page, web_port, ws_port)
                 await _open_analysis_tab(page, "Basic Errors")
                 await page.wait_for_function(f"() => document.querySelector(\"{plot} .main-svg\")")
                 await page.locator("#tab-edit-btn").click()
                 await page.evaluate(f"() => {{ document.querySelector(\"{plot}\").dataset.mark = 'kept'; }}")
+                assert await page.evaluate(span) == 12      # half of the 24 columns
+                wide, _, _ = await page.evaluate(sizes)
 
-                divider = await page.locator(".tabpanel.active .edit-divider.col").first.bounding_box()
-                await page.mouse.move(divider["x"] + 4, divider["y"] + 100)
-                await page.mouse.down()
-                await page.mouse.move(divider["x"] - 250, divider["y"] + 100, steps=6)
-                # Still dragging: the plot has already followed its cell,
-                # down to the narrowest a column gets.
-                await page.wait_for_function(
-                    f"() => {{ const [cell, drawn] = ({sizes})(); return Math.abs(cell - drawn) < 3; }}")
-                cell, _, _ = await page.evaluate(sizes)
-                assert cell == pytest.approx(400 - 2, abs=4)
-                await page.mouse.up()
-                await page.wait_for_function("() => window.ffastApp._editor.draft.column_widths")
-                assert (await page.evaluate(sizes))[2] == "kept"   # not drawn again
-
-                # Growing a panel over two columns moves cells in place too.
+                # Narrower: a ghost shows while dragging, the plot follows on release.
                 corner = page.locator(_CHROME, has_text="Energy MAE distribution").locator(".edit-resize")
                 cb = await corner.bounding_box()
-                gb = await page.locator(".tabpanel.active .analysis-grid").bounding_box()
                 await page.mouse.move(cb["x"] + 4, cb["y"] + 4)
                 await page.mouse.down()
-                await page.mouse.move(cb["x"] + 200, cb["y"] + 4, steps=6)   # inside column 2
+                await page.mouse.move(cb["x"] - 250, cb["y"] + 4, steps=6)
+                await expect(page.locator(".tabpanel.active .edit-ghost")).to_have_count(1)
                 await page.mouse.up()
+                await page.wait_for_function(f"() => ({span})() < 12 && ({span})() >= 6")
                 await page.wait_for_function(
-                    "() => window.ffastApp._editor.draft.panels.find((p) => p.title === 'Energy MAE distribution').colspan === 2")
-                await page.wait_for_function(
-                    f"() => {{ const [cell, drawn] = ({sizes})(); return cell > 700 && Math.abs(cell - drawn) < 3; }}")
-                assert (await page.evaluate(sizes))[2] == "kept"
+                    f"() => {{ const [cell, drawn] = ({sizes})(); return cell < {wide} - 100 && Math.abs(cell - drawn) < 3; }}")
+                assert (await page.evaluate(sizes))[2] == "kept"   # not drawn again
 
-                # And back to one column.
+                # And wider again.
+                narrow = (await page.evaluate(sizes))[0]
                 cb = await corner.bounding_box()
                 await page.mouse.move(cb["x"] + 4, cb["y"] + 4)
                 await page.mouse.down()
-                await page.mouse.move(gb["x"] + 60, cb["y"] + 4, steps=6)
+                await page.mouse.move(cb["x"] + 250, cb["y"] + 4, steps=6)
                 await page.mouse.up()
                 await page.wait_for_function(
-                    "() => window.ffastApp._editor.draft.panels.find((p) => p.title === 'Energy MAE distribution').colspan === 1")
+                    f"() => {{ const [cell, drawn] = ({sizes})(); return cell > {narrow} + 100 && Math.abs(cell - drawn) < 3; }}")
+                assert (await page.evaluate(sizes))[2] == "kept"
             finally:
                 await browser.close()
 
 
-async def test_web_edit_mode_resize_corner_stays_in_view(tmp_path):
-    """A panel wider than the room the tab has (two 1.5-wide columns with the
-    Settings pane open) kept its resize corner past the visible edge, so it
-    could not be made one column again. The corner stays at the visible edge."""
+
+async def test_web_edit_mode_resize_handles_stay_in_view(tmp_path):
+    """A panel taller than the room the tab has (here 40 rows, 2000 px, in a
+    900 px window) kept its resize corner below the visible edge, so it could
+    not be made shorter. The corner and the bottom edge stay at the visible edge."""
     tabs_dir = tmp_path / "tabs"
     tabs_dir.mkdir()
-    (tabs_dir / "wide.toml").write_text(
-        '[[tabs]]\nname = "Wide"\ncolumn_widths = [1.5, 1.5]\n'
-        '[[tabs.panels]]\nkind = "3d"\nrow = 0\ncol = 0\ncolspan = 2\n'
-        '[[tabs.panels]]\nkind = "3d"\nrow = 1\ncol = 0\ncolspan = 2\n'
+    (tabs_dir / "tall.toml").write_text(
+        '[[tabs]]\nname = "Tall"\ngrid = 24\n'
+        '[[tabs.panels]]\nkind = "3d"\nrow = 0\ncol = 0\nrowspan = 40\ncolspan = 24\n'
+        '[[tabs.panels]]\nkind = "3d"\nrow = 40\ncol = 0\nrowspan = 6\ncolspan = 24\n'
         'view = "independent"\nlink_frame = false\nlink_camera = false\n')
     config = tmp_path / "ffast.toml"
     config.write_text("")
@@ -3943,38 +3926,45 @@ async def test_web_edit_mode_resize_corner_stays_in_view(tmp_path):
             page = await browser.new_page(viewport={"width": 1400, "height": 900})
             try:
                 await _open_app(page, web_port, ws_port)
-                await _open_analysis_tab(page, "Wide")
+                await _open_analysis_tab(page, "Tall")
                 await page.locator("#tab-edit-btn").click()
                 grid = page.locator(".tabpanel.active .analysis-grid")
                 await page.wait_for_function(
                     "() => { const g = document.querySelector('.tabpanel.active .analysis-grid');"
-                    " return g.scrollWidth > g.clientWidth; }")   # the panels run past the visible edge
+                    " return g.scrollHeight > g.clientHeight + 500; }")   # the panel runs past the visible edge
+                for handle in (".edit-resize", ".edit-edge.s"):
+                    await page.wait_for_function(
+                        """(sel) => { const g = document.querySelector('.tabpanel.active .analysis-grid');
+                            const c = document.querySelector('.tabpanel.active .edit-chrome ' + sel);
+                            const r = g.getBoundingClientRect();
+                            return c.getBoundingClientRect().bottom <= Math.min(r.top + g.clientHeight, window.innerHeight) + 6; }""",
+                        arg=handle)
                 corner = page.locator(_CHROME).first.locator(".edit-resize")
-                await page.wait_for_function(
-                    """() => { const g = document.querySelector('.tabpanel.active .analysis-grid');
-                        const c = document.querySelector('.tabpanel.active .edit-chrome .edit-resize');
-                        const r = g.getBoundingClientRect();
-                        return c.getBoundingClientRect().right <= r.left + g.clientWidth; }""")
                 cb = await corner.bounding_box()
                 gb = await grid.bounding_box()
                 await page.mouse.move(cb["x"] + 4, cb["y"] + 4)
                 await page.mouse.down()
-                await page.mouse.move(gb["x"] + 60, cb["y"] + 4, steps=6)
+                await page.mouse.move(cb["x"] + 4, gb["y"] + 200, steps=6)
                 await page.mouse.up()
                 await page.wait_for_function(
-                    "() => window.ffastApp._editor.draft.panels[0].colspan === 1")
+                    "() => window.ffastApp._editor.draft.panels[0].rowspan < 40")
             finally:
                 await browser.close()
 
 
-async def test_web_edit_mode_corner_adds_a_column_and_empty_ones_go(tmp_path):
-    """A one-column tab: dragging the ◢ corner past the column adds a second
-    one; shrunk back, the empty column gets a button that removes it."""
+
+async def test_web_edit_mode_a_right_edge_sets_half_the_width_and_save_writes_the_grid(tmp_path):
+    """ADR 0069: an old one-column tab (column_widths = [1.5], two 3D panels)
+    is converted when Edit mode opens. Dragging the first panel's right edge to
+    half the width gives colspan 12 of the 24, and Save writes `grid = 24`
+    with no column_widths."""
     tabs_dir = tmp_path / "tabs"
     tabs_dir.mkdir()
     (tabs_dir / "one.toml").write_text(
         '[[tabs]]\nname = "One"\ncolumn_widths = [1.5]\n'
-        '[[tabs.panels]]\nkind = "3d"\nrow = 0\ncol = 0\n')
+        '[[tabs.panels]]\nkind = "3d"\nrow = 0\ncol = 0\n'
+        '[[tabs.panels]]\nkind = "3d"\nrow = 1\ncol = 0\n'
+        'view = "independent"\nlink_frame = false\nlink_camera = false\n')
     config = tmp_path / "ffast.toml"
     config.write_text("")
     draft = "window.ffastApp._editor.draft"
@@ -3987,30 +3977,28 @@ async def test_web_edit_mode_corner_adds_a_column_and_empty_ones_go(tmp_path):
                 await _open_app(page, web_port, ws_port)
                 await _open_analysis_tab(page, "One")
                 await page.locator("#tab-edit-btn").click()
+                await page.wait_for_function(f"() => {draft}.grid === 24 && {draft}.panels[0].colspan === 24")
                 await expect(page.locator(".tabpanel.active .edit-drop")).to_have_count(0)
-                corner = page.locator(_CHROME).first.locator(".edit-resize")
-                cb = await corner.bounding_box()
-                await page.mouse.move(cb["x"] + 4, cb["y"] + 4)
+                grid = page.locator(".tabpanel.active .analysis-grid")
+                gb = await grid.bounding_box()
+                edge = page.locator(_CHROME).first.locator(".edit-edge.e")
+                eb = await edge.bounding_box()
+                x, y = eb["x"] + eb["width"] / 2, eb["y"] + eb["height"] / 2
+                await page.mouse.move(x, y)
                 await page.mouse.down()
-                await page.mouse.move(cb["x"] + 250, cb["y"] + 4, steps=6)
+                # the middle of the grid's content, a few px left of it: column 12 of 24 ends there
+                await page.mouse.move(gb["x"] + gb["width"] / 2 - 8, y, steps=8)
                 await page.mouse.up()
-                await page.wait_for_function(
-                    f"() => {draft}.panels[0].colspan === 2 && {draft}.column_widths.length === 2")
-
-                cb = await corner.bounding_box()
-                gb = await page.locator(".tabpanel.active .analysis-grid").bounding_box()
-                await page.mouse.move(cb["x"] + 4, cb["y"] + 4)
-                await page.mouse.down()
-                await page.mouse.move(gb["x"] + 60, cb["y"] + 4, steps=6)
-                await page.mouse.up()
-                await page.wait_for_function(f"() => {draft}.panels[0].colspan === 1")
-                drop = page.locator(".tabpanel.active .edit-drop[data-edit=remove-col]")
-                await expect(drop).to_have_count(1)
-                await drop.click()
-                await page.wait_for_function(f"() => JSON.stringify({draft}.column_widths) === '[1.5]'")
-                await expect(page.locator(".tabpanel.active .edit-drop")).to_have_count(0)
+                await page.wait_for_function(f"() => {draft}.panels[0].colspan === 12")
+                await page.locator("[data-edit=save]").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                saved = tomllib.loads((tabs_dir / "one.toml").read_text())["tabs"][0]
+                assert saved["grid"] == 24
+                assert "column_widths" not in saved and "row_heights" not in saved
+                assert saved["panels"][0]["colspan"] == 12
             finally:
                 await browser.close()
+
 
 
 async def test_web_new_tabs_and_the_main_view_rule(tmp_path):
@@ -4037,8 +4025,7 @@ async def test_web_new_tabs_and_the_main_view_rule(tmp_path):
                 await expect(page.locator(".edit-modal .ctl-hint")).to_have_text(
                     "A tab named Basic Errors already exists")
                 await page.locator(".edit-modal input[data-field=name]").fill("Fresh")
-                await page.locator(".edit-modal input[data-field=columns]").fill("2")
-                space = await page.evaluate("() => document.querySelector('#tabpanels').clientWidth - 20")
+                await expect(page.locator(".edit-modal input[data-field=columns]")).to_have_count(0)
                 await page.get_by_role("button", name="Create").click()
                 await expect(page.locator("#tabbar .tab.active")).to_have_text("Fresh")
                 await expect(page.locator(".tabpanel.active .edit-bar")).to_contain_text("Editing Fresh")
@@ -4048,10 +4035,9 @@ async def test_web_new_tabs_and_the_main_view_rule(tmp_path):
                 await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
                 await expect(page.locator("#tabbar .tab.active")).to_have_text("Fresh")
                 data = tomllib.loads((tabs_dir / "fresh.toml").read_text())
-                # The new columns fill the window as it was when the tab was made.
-                widths = data["tabs"][0]["column_widths"]
-                assert len(widths) == 2 and widths[0] == widths[1] > 1
-                assert 2 * widths[0] * 400 + 10 == pytest.approx(space, abs=8)
+                # A new tab is on the fine grid, which fills the window (ADR 0069).
+                assert data["tabs"][0]["grid"] == 24
+                assert "column_widths" not in data["tabs"][0]
 
                 # Now a second tab shows the main view, so the 3D tab's panel can go.
                 await page.locator("#tabbar .tab", has_text="3D").first.click()
@@ -5703,7 +5689,9 @@ _SLOT_BOXES = """(name) => window.ffastApp._analysis._tabs.find((t) => t.spec.na
 @pytest.mark.parametrize("width", [1440, 900])
 async def test_web_only_the_rows_with_peak_labels_grow(ffast_web_server, width):
     """ADR 0063 follow-up: a labelled timeline made every row of its tab taller
-    by its labels' height, leaving the tables' rows mostly empty."""
+    by its labels' height, leaving the tables' rows mostly empty. (A 300 px row
+    of the old form is 6 units on the fine grid, 6 x 50 px and 5 gaps: 350 px; a
+    narrow window stacks the panels in 300 px rows.)"""
     ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
@@ -5727,7 +5715,7 @@ async def test_web_only_the_rows_with_peak_labels_grow(ffast_web_server, width):
                 if "timeline" in kinds:
                     assert height > 300, slots
                 elif top not in timeline_tops:
-                    assert abs(height - 300) <= 2, (kinds, slots)
+                    assert abs(height - (300 if width < 1000 else 350)) <= 2, (kinds, slots)
             assert any("table" in kinds for kinds, top, _ in slots if top not in timeline_tops)
             # and every row holds its panels: none reaches into the row below
             for _, top, height in slots:

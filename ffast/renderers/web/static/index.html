@@ -288,25 +288,26 @@
     .edit-head button { height: auto; min-width: 22px; padding: 2px 5px; font-size: var(--fs-s); }
     .edit-resize {
       position: absolute; right: 3px; bottom: 1px; color: var(--hl2); cursor: nwse-resize;
-      user-select: none; font-size: var(--fs-m); touch-action: none;
+      user-select: none; font-size: var(--fs-m); touch-action: none; z-index: 2;
     }
+    /* The panel's own right and bottom edges: thin bars that light up on hover. */
+    .edit-edge { position: absolute; touch-action: none; z-index: 1; }
+    .edit-edge.e { top: 0; bottom: 0; right: -5px; width: 10px; cursor: ew-resize; }
+    .edit-edge.s { left: 0; right: 0; bottom: -5px; height: 10px; cursor: ns-resize; }
+    .edit-edge:hover, .edit-edge.dragging { background: color-mix(in srgb, var(--hl2) 55%, transparent); }
     .edit-ghost {
       z-index: 7; pointer-events: none; border: 2px solid var(--hl2);
       background: var(--sel); border-radius: 5px;
     }
-    .analysis-grid.editing-grid { grid-auto-columns: 400px; }   /* a column the ◢ corner is adding */
-    /* Always shown, as a thin line, so it is clear where a width or height changes. */
-    .edit-divider { position: absolute; z-index: 8; touch-action: none; }
-    .edit-divider.col { width: 8px; cursor: col-resize;
-      background: linear-gradient(to right, transparent 3px, var(--hl2) 3px, var(--hl2) 5px, transparent 5px); }
-    .edit-divider.row { height: 8px; cursor: row-resize;
-      background: linear-gradient(to bottom, transparent 3px, var(--hl2) 3px, var(--hl2) 5px, transparent 5px); }
-    .edit-divider:hover, .edit-divider.dragging { background: var(--hl1); }
-    .edit-drop {
-      position: absolute; z-index: 8; transform: translate(-50%, 0); height: auto;
-      padding: 2px 8px; font-size: var(--fs-s); white-space: nowrap;
+    /* While a panel is dragged, every cell of the grid shows (ADR 0069): column
+       and row bands over the grid's content box, a gap's width apart. */
+    .analysis-grid.editing-grid.dragging {
+      --cell-w: calc((100% + 10px) / var(--grid-columns, 24));
+      background-origin: content-box; background-clip: content-box; background-attachment: local;
+      background-image:
+        repeating-linear-gradient(to right, color-mix(in srgb, var(--hl1) 35%, transparent) 0 calc(var(--cell-w) - 10px), transparent calc(var(--cell-w) - 10px) var(--cell-w)),
+        repeating-linear-gradient(to bottom, color-mix(in srgb, var(--hl1) 35%, transparent) 0 50px, transparent 50px 60px);
     }
-    .edit-drop.row { transform: translate(0, -50%); }
     .edit-empty { min-height: 200px; }
     .edit-modal .warning-modal-panel { width: 520px; }
     .edit-modal-body { padding: 10px 12px; max-height: 65vh; overflow-y: auto; }
@@ -387,15 +388,13 @@
     .tab-msg[hidden], .analysis-grid[hidden] { display: none; }
     #chrome3d { display: none; }
     .analysis-grid {
-      /* Columns are never narrower than the desktop's smallest plot; when
-         they do not fit, the tab scrolls sideways, as it scrolls down for
-         rows. A single column still fits a narrow window. */
-      --col-min: min(360px, 100%);
+      /* 24 columns that fill the width, rows of 50 px (ADR 0069, analysis.js
+         _sizeGrid and _sizeRows); the tab scrolls down when rows do not fit. */
       flex: 1; overflow: auto; padding: 10px; min-height: 0;
       display: grid; gap: 10px; align-content: start;
-      grid-template-columns: repeat(2, minmax(var(--col-min), 1fr));
-      /* a row with peak labels, or a tab that sets heights, gets its own size (analysis.js _sizeRows) */
-      grid-auto-rows: minmax(300px, auto);
+      grid-template-columns: repeat(24, minmax(0, 1fr));
+      /* a row a timeline's peak labels cover gets its own size (analysis.js _sizeRows) */
+      grid-auto-rows: 50px;
     }
     /* Too narrow for two columns: one column, panels in reading order (analysis.js
        sets the order); the placements the panels carry are ignored. */
@@ -404,6 +403,7 @@
     .analysis-grid.narrow #hint-bar { display: none !important; }
     /* A tab with one cell gives it the whole height. */
     .analysis-grid.fill { grid-template-rows: minmax(0, 1fr); align-content: stretch; }
+    .analysis-grid.fill > * { grid-row: 1 !important; }
     /* ...and a 3D panel alone is the whole tab, edge to edge (the "3D" tab). */
     .analysis-grid.fill:has(> .panel-3d:not([data-title])) { padding: 0; }
     .analysis-grid.fill > .panel-3d:not([data-title]) { border: 0; border-radius: 0; }

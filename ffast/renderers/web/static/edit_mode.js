@@ -1,16 +1,17 @@
 /**
- * Edit mode (ADR 0056 rules 11, 12, 14, 15, 16): the one place a tab
+ * Edit mode (ADR 0056 rules 11, 14, 15, 16; ADR 0069): the one place a tab
  * changes. ✎ starts editing the tab on screen; "+" starts a new tab. The
  * edits go to a draft (tab_edit.js), drawn live in place of the tab; Save
  * sends it to the server, Cancel drops it. Outside Edit mode nothing you do
  * is written, so exploring never rewrites a tab.
  *
  * While a tab is edited its controls row gives way to an edit bar, and each
- * panel gets a handle strip laid over it: drag ⠿ to move it (onto another
- * panel to swap the two), drag the corner ◢ to change its span (panels in
- * the way move down), ⚙ opens it in the builder, ✕ removes it. Dragging the thin dividers between columns and
- * rows sets their sizes. The handles are grid items of their own, covering
- * the panels' cells, so redrawing a plot never wipes them.
+ * panel gets a handle strip laid over it: drag ⠿ to move it (a panel in the
+ * way moves down, and panels float up), drag its right edge, bottom edge or
+ * the corner ◢ to size it, snapping to the grid's 24 columns and 50 px
+ * rows; ⚙ opens it in the builder, ✕ removes it. While one is dragged the
+ * grid's cells show. The handles are grid items of their own, covering the
+ * panels' cells, so redrawing a plot never wipes them.
  *
  * If another window saves the same tab meanwhile, Save asks whether to
  * overwrite it or discard these edits (rule 16).
@@ -18,17 +19,16 @@
 
 import { askDialog, labelBy, trapFocus } from './dialogs.js';
 import {
-  COLUMN_PX, KIND_ROLES, MAX_COLUMNS, ROW_PX, addPanelWithPicker, columnsOf, copyOf, dragTrack,
-  emptyColumns, emptyRows, emptyTab, fitWidths, metricsFor, movePanel, new3DPanel, onlyPlacesChanged,
-  removeColumn, removePanel, removeRow, replacePanel, resizePanel, rowsOf, setColumns, setPanelStart,
-  setPanelView, sizesOf, toSaved,
+  KIND_ROLES, addPanelWithPicker, clampMove, clampSize, copyOf, emptyTab, metricsFor, movePanel,
+  new3DPanel, onlyPlacesChanged, place, removePanel, replacePanel, resizePanel, setPanelStart,
+  setPanelView, toFineGrid, toSaved,
 } from './tab_edit.js';
 import { KIND_3D, whyPanelStays } from './tab_rules.js';
 import { cleanStart } from './start_settings.js';
 import { icon } from './icons.js';
 
-/** The shortest a dragged row gets: room for a table's header and a line. */
-const ROW_MIN_PX = 80;
+/** The height of one row unit and the gap between cells, in px (index.html). */
+const ROW_UNIT_PX = 50;
 
 export class TabEditor {
   /**
@@ -65,7 +65,7 @@ export class TabEditor {
   editTab(name) {
     const tab = this._deps.serverTabs().find((t) => t.name === name);
     if (!tab) return;
-    this._begin(structuredClone(tab), name, tab.revision);
+    this._begin(toFineGrid(structuredClone(tab)), name, tab.revision);
   }
 
   /** "+" ▸ Empty tab / Copy of…: Tab settings first, then Edit mode on a tab
@@ -74,7 +74,7 @@ export class TabEditor {
     const names = this._deps.serverTabs().map((t) => t.name);
     let name = from ? `Copy of ${from.name}` : 'New tab';
     for (let n = 2; names.includes(name); n++) name = from ? `Copy of ${from.name} (${n})` : `New tab ${n}`;
-    const draft = from ? copyOf(from, name) : emptyTab(name, fitWidths(2, this._columnSpace(false)));
+    const draft = from ? toFineGrid(copyOf(from, name)) : emptyTab(name);
     const settled = await this._tabSettings(draft, { title: 'New tab', ok: 'Create' });
     if (settled) this._begin(settled, null, null);
   }
@@ -166,7 +166,7 @@ export class TabEditor {
     const grid = parts.gridEl;
     grid.classList.add('editing-grid');
     grid.hidden = false;
-    grid.querySelectorAll('.edit-chrome, .edit-divider, .edit-drop, .edit-ghost, .edit-empty').forEach((el) => el.remove());
+    grid.querySelectorAll('.edit-chrome, .edit-ghost, .edit-empty').forEach((el) => el.remove());
 
     const tabIndex = visibleTabs.indexOf(this._draft);
     const units = [
@@ -181,7 +181,7 @@ export class TabEditor {
       empty.style.gridColumn = '1 / -1';
       grid.appendChild(empty);
     }
-    requestAnimationFrame(() => { this._dividers(grid); cornersInView(grid); });
+    requestAnimationFrame(() => cornersInView(grid));
     if (!grid._cornerWatch) {
       grid._cornerWatch = new ResizeObserver(() => cornersInView(grid));
       grid._cornerWatch.observe(grid);
@@ -269,36 +269,64 @@ export class TabEditor {
     const corner = document.createElement('span');
     corner.className = 'edit-resize';
     corner.textContent = '◢';
-    corner.title = 'Drag to change how many cells it covers; past the last column adds a column.'
-      + ' Panels in the way move down';
-    el.append(head, corner);
+    corner.title = 'Drag to change the width and height';
+    const edgeE = document.createElement('span');
+    edgeE.className = 'edit-edge e';
+    edgeE.title = 'Drag to change the width';
+    const edgeS = document.createElement('span');
+    edgeS.className = 'edit-edge s';
+    edgeS.title = 'Drag to change the height';
+    el.append(head, edgeE, edgeS, corner);
 
-    this._dragOnto(grid, handle, (cell) => movePanel(this._draft, unit.indices[0], cell.row, cell.col),
-      (cell) => ({ row: cell.row, col: cell.col, rowspan: first.rowspan || 1, colspan: first.colspan || 1 }));
-    // The corner may reach one column past the last: that adds a column.
-    const lastCol = () => Math.min(columnsOf(this._draft), MAX_COLUMNS - 1);
-    this._dragOnto(grid, corner,
-      (cell) => resizePanel(this._draft, unit.indices[0], cell.row - first.row + 1, cell.col - first.col + 1),
-      (cell) => ({ row: first.row, col: first.col,
-        rowspan: Math.max(1, cell.row - first.row + 1),
-        colspan: Math.max(1, Math.min(cell.col, lastCol()) - first.col + 1) }),
-      { pastEnd: true });
+    const index = unit.indices[0];
+    const at = () => place(this._draft)[index];
+    // Moving: the panel keeps the spot you grabbed it by, so the cell under
+    // the pointer, less where it was grabbed, is its top-left cell.
+    this._dragOnto(grid, handle, {
+      grab: () => ({ row: at().row, col: at().col }),
+      box: (cell) => { const m = clampMove(this._draft, index, cell.row, cell.col);
+        return { ...m, rowspan: at().rowspan, colspan: at().colspan }; },
+      apply: (cell) => movePanel(this._draft, index, cell.row, cell.col),
+    });
+    // Sizing: the cell under the pointer becomes the panel's last column and row.
+    const sizing = (cols, rows) => ({
+      box: (cell) => { const p = at();
+        const s = clampSize(this._draft, index, { w: cols ? cell.col - p.col + 1 : p.colspan,
+          h: rows ? cell.row - p.row + 1 : p.rowspan });
+        return { row: p.row, col: p.col, rowspan: s.h, colspan: s.w }; },
+      apply: (cell) => { const p = at();
+        return resizePanel(this._draft, index, { w: cols ? cell.col - p.col + 1 : p.colspan,
+          h: rows ? cell.row - p.row + 1 : p.rowspan }); },
+    });
+    this._dragOnto(grid, corner, sizing(true, true));
+    this._dragOnto(grid, edgeE, sizing(true, false));
+    this._dragOnto(grid, edgeS, sizing(false, true));
     return el;
   }
 
-  /** Drag from `handle` to a grid cell: a ghost shows where `box(cell)`
-   * lands; letting go applies `apply(cell)`. */
-  _dragOnto(grid, handle, apply, box, { pastEnd = false } = {}) {
+  /** Drag from `handle` across the grid: a ghost shows where `box(cell)`
+   * lands; letting go applies `apply(cell)`. The grid's cells show while it
+   * is dragged. `grab` (moving) gives the panel's top-left cell, so the panel
+   * moves by the distance dragged instead of jumping under the pointer. */
+  _dragOnto(grid, handle, { box, apply, grab = null }) {
     handle.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
       handle.setPointerCapture(e.pointerId);
+      handle.classList.add('dragging');
+      grid.classList.add('dragging');
       const ghost = document.createElement('div');
       ghost.className = 'edit-ghost';
       grid.appendChild(ghost);
+      const from = grab ? cellAt(grid, e.clientX, e.clientY) : null;
+      const origin = grab ? grab() : null;
       let cell = null;
+      const target = (ev) => {
+        const c = cellAt(grid, ev.clientX, ev.clientY);
+        return grab ? { row: origin.row + c.row - from.row, col: origin.col + c.col - from.col } : c;
+      };
       const move = (ev) => {
-        cell = cellAt(grid, ev.clientX, ev.clientY, pastEnd);
+        cell = target(ev);
         const b = box(cell);
         ghost.style.gridColumn = `${b.col + 1} / span ${b.colspan}`;
         ghost.style.gridRow = `${b.row + 1} / span ${b.rowspan}`;
@@ -306,117 +334,14 @@ export class TabEditor {
       const up = () => {
         handle.removeEventListener('pointermove', move);
         handle.removeEventListener('pointerup', up);
+        handle.classList.remove('dragging');
+        grid.classList.remove('dragging');
         ghost.remove();
         if (cell) this.change(apply(cell));
       };
       handle.addEventListener('pointermove', move);
       handle.addEventListener('pointerup', up);
       move(e);
-    });
-  }
-
-  /** A divider after each column and each row, the last ones too;
-   * dragging one sets the size of the column or row before it. */
-  _dividers(grid) {
-    if (!this._draft || !grid.isConnected) return;
-    const t = tracks(grid);
-    const columns = columnsOf(this._draft), rows = rowsOf(this._draft);
-    const make = (axis, k) => {
-      const d = document.createElement('div');
-      d.className = `edit-divider ${axis}`;
-      d.dataset.index = String(k);
-      d.title = axis === 'col' ? 'Drag to change the width of the column on the left'
-        : 'Drag to change the height of the row above';
-      const at = (sizes, gap, pad) => pad + sizes.slice(0, k).reduce((a, b) => a + b, 0) + gap * (k - 0.5);
-      if (axis === 'col') {
-        d.style.left = `${at(t.cols, t.gapC, t.padL) - 4}px`;
-        d.style.top = '0';
-        d.style.height = `${grid.scrollHeight}px`;
-      } else {
-        d.style.top = `${at(t.rows, t.gapR, t.padT) - 4}px`;
-        d.style.left = '0';
-        d.style.width = `${grid.scrollWidth}px`;
-      }
-      this._dragDivider(grid, d, axis, k);
-      grid.appendChild(d);
-    };
-    for (let k = 1; k <= Math.min(columns, t.cols.length); k++) make('col', k);
-    for (let k = 1; k <= Math.min(rows, t.rows.length); k++) make('row', k);
-
-    // An empty column or row gets a button that removes it.
-    const mid = (sizes, gap, pad, k) => pad + sizes.slice(0, k).reduce((a, b) => a + b, 0) + gap * k + sizes[k] / 2;
-    const drop = (axis, k, onClick) => {
-      const b = document.createElement('button');
-      b.className = `edit-drop ${axis}`;
-      b.dataset.edit = `remove-${axis}`;
-      b.dataset.index = String(k);
-      b.textContent = axis === 'col' ? '✕ Empty column' : '✕ Empty row';
-      b.title = axis === 'col' ? 'Remove this empty column; the columns right of it move left'
-        : 'Remove this empty row; the rows below it move up';
-      if (axis === 'col') {
-        b.style.left = `${mid(t.cols, t.gapC, t.padL, k)}px`;
-        b.style.top = `${t.padT + 8}px`;
-      } else {
-        b.style.top = `${mid(t.rows, t.gapR, t.padT, k)}px`;
-        b.style.left = `${t.padL + 8}px`;
-      }
-      b.addEventListener('click', onClick);
-      grid.appendChild(b);
-    };
-    for (const c of emptyColumns(this._draft)) {
-      if (c < t.cols.length) drop('col', c, () => this.change(removeColumn(this._draft, c)));
-    }
-    for (const r of emptyRows(this._draft)) {
-      if (r < t.rows.length) drop('row', r, () => this.change(removeRow(this._draft, r)));
-    }
-  }
-
-  _dragDivider(grid, divider, axis, k) {
-    divider.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
-      e.preventDefault();
-      divider.setPointerCapture(e.pointerId);
-      divider.classList.add('dragging');
-      const t = tracks(grid);
-      const sizes = (axis === 'col' ? t.cols : t.rows).slice();
-      const start = axis === 'col' ? e.clientX : e.clientY;
-      // Only the track before the divider changes; the ones after move
-      // along, with their dividers, and the tab scrolls when it outgrows
-      // the window (rule 12).
-      const min = axis === 'col' ? COLUMN_PX : ROW_MIN_PX;
-      const later = [...grid.querySelectorAll(`.edit-divider.${axis}`)]
-        .filter((d) => Number(d.dataset.index) >= k)
-        .map((d) => [d, parseFloat(axis === 'col' ? d.style.left : d.style.top)]);
-      let next = sizes;
-      const move = (ev) => {
-        next = dragTrack(sizes, k, (axis === 'col' ? ev.clientX : ev.clientY) - start, min);
-        // A row height is a minimum, as analysis.js sets it (peak labels grow a row).
-        if (axis === 'col') grid.style.gridTemplateColumns = next.map((px) => `${px}px`).join(' ');
-        else grid.style.gridTemplateRows = next.map((px) => `minmax(${px}px, auto)`).join(' ');
-        const shift = next[k - 1] - sizes[k - 1];
-        for (const [d, at] of later) d.style[axis === 'col' ? 'left' : 'top'] = `${at + shift}px`;
-      };
-      const up = () => {
-        divider.removeEventListener('pointermove', move);
-        divider.removeEventListener('pointerup', up);
-        divider.classList.remove('dragging');
-        if (axis === 'col') {
-          const widths = sizesOf(next, COLUMN_PX).slice(0, columnsOf(this._draft));
-          this.change({ ...this._draft, column_widths: widths });
-        } else {
-          // Rows are read as drawn, and a row with peak labels is drawn taller
-          // than its set height by their room (analysis.js _sizeRows): the
-          // dragged row is saved without it, the others keep their set height.
-          const set = this._draft.row_heights || [];
-          const room = grid._rowExtra || [];
-          const drawn = next.map((px, i) => px - (room[i] || 0));
-          const heights = sizesOf(drawn, ROW_PX).slice(0, Math.max(1, rowsOf(this._draft)))
-            .map((h, i) => (i !== k - 1 && set[i] != null ? set[i] : h));
-          this.change({ ...this._draft, row_heights: heights });
-        }
-      };
-      divider.addEventListener('pointermove', move);
-      divider.addEventListener('pointerup', up);
     });
   }
 
@@ -603,32 +528,17 @@ export class TabEditor {
     return view.value === 'independent' ? setPanelStart(next, index, start) : next;
   }
 
-  /** Pixels the columns of a tab have: the tab being edited's grid, or for
-   * a new tab the whole tab area. */
-  _columnSpace(editing) {
-    const grid = editing && document.querySelector('.tabpanel.active .analysis-grid');
-    if (grid) {
-      const cs = getComputedStyle(grid);
-      return grid.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
-    }
-    return (document.getElementById('tabpanels')?.clientWidth || 0) - 20;   // the grid's padding
-  }
-
-  /** Tab settings (rule 14): name, column count and the tab controls. A new
-   * column count fills the window (step 7 trial). */
+  /** Tab settings (rule 14): name and the tab controls. */
   async _tabSettings(draft, { title, ok }) {
     const body = document.createElement('div');
     body.className = 'tab-settings';
     const name = Object.assign(document.createElement('input'), { type: 'text', value: draft.name });
     name.dataset.field = 'name';
-    const columns = Object.assign(document.createElement('input'), {
-      type: 'number', min: 1, max: MAX_COLUMNS, value: columnsOf(draft) });
-    columns.dataset.field = 'columns';
     const [shiftRow, shift] = checkField('Energy shift', (draft.controls || []).includes('energy_shift'), 'energy_shift');
     const [elemRow, elems] = checkField('Element picker', draft.selector === 'atomic', 'element_picker');
     const why = document.createElement('div');
     why.className = 'ctl-hint';
-    body.append(field('Name', name), field('Columns', columns), shiftRow, elemRow, why);
+    body.append(field('Name', name), shiftRow, elemRow, why);
     // The tab being edited may keep its own name; every other name is taken.
     const own = draft === this._draft ? this._previous : null;
     const taken = this._deps.serverTabs().map((t) => t.name).filter((n) => n !== own);
@@ -643,8 +553,7 @@ export class TabEditor {
     name.addEventListener('input', validate);
     validate();
     if ((await answer) !== ok) return null;
-    const next = setColumns({ ...draft, name: name.value.trim() }, Number(columns.value) || 1,
-      this._columnSpace(draft === this._draft));
+    const next = { ...draft, name: name.value.trim() };
     const controls = (next.controls || []).filter((c) => c !== 'energy_shift');
     return { ...next, controls: shift.checked ? [...controls, 'energy_shift'] : controls,
       selector: elems.checked ? 'atomic' : (next.selector === 'atomic' ? null : next.selector) };
@@ -736,39 +645,39 @@ function tracks(grid) {
   };
 }
 
-/** Keep each resize corner ◢ where it can be grabbed: a panel wider or
- * taller than the grid's visible part has its corner at the visible edge,
- * not out of sight past it. */
+/** Keep each resize corner ◢ and bottom edge where they can be grabbed: a
+ * panel taller than the grid's visible part has them at the visible edge,
+ * not out of sight below it. */
 function cornersInView(grid) {
   if (!grid.isConnected) return;
   const g = grid.getBoundingClientRect();
   const right = Math.min(g.left + grid.clientLeft + grid.clientWidth, window.innerWidth);
   const bottom = Math.min(g.top + grid.clientTop + grid.clientHeight, window.innerHeight);
-  for (const corner of grid.querySelectorAll('.edit-resize')) {
-    const c = corner.parentElement.getBoundingClientRect();
+  for (const handle of grid.querySelectorAll('.edit-resize, .edit-edge.s')) {
+    const c = handle.parentElement.getBoundingClientRect();
     // Never past the chrome's own top-left, so it stays on its panel.
     const past = (end, edge, size) => Math.max(0, Math.min(end - edge, size - 24));
-    corner.style.right = `${3 + past(c.right, right, c.width)}px`;
-    corner.style.bottom = `${1 + past(c.bottom, bottom, c.height)}px`;
+    const corner = handle.classList.contains('edit-resize');
+    if (corner) handle.style.right = `${3 + past(c.right, right, c.width)}px`;
+    handle.style.bottom = `${(corner ? 1 : -5) + past(c.bottom, bottom, c.height)}px`;
   }
 }
 
-/** The grid cell under a page point; below the last row is a new row, and,
- * `pastEnd`, right of the last column a new column. */
-function cellAt(grid, x, y, pastEnd = false) {
+/** The grid cell under a page point. Columns stay inside the grid; rows go
+ * on below the last row, a unit high each, so a panel can be dragged down. */
+function cellAt(grid, x, y) {
   const t = tracks(grid);
   const r = grid.getBoundingClientRect();
-  const index = (sizes, gap, pos) => {
+  const index = (sizes, gap, pos, unit = 0) => {
     let edge = 0;
     for (let i = 0; i < sizes.length; i++) {
       edge += sizes[i];
       if (pos < edge + gap / 2) return i;
       edge += gap;
     }
-    return sizes.length;
+    return unit ? sizes.length + Math.floor((pos - edge + gap / 2) / (unit + gap)) : sizes.length - 1;
   };
   const col = index(t.cols, t.gapC, x - r.left - t.padL + grid.scrollLeft);
-  const row = index(t.rows, t.gapR, y - r.top - t.padT + grid.scrollTop);
-  const lastCol = Math.max(0, t.cols.length - (pastEnd ? 0 : 1));
-  return { row: Math.max(0, row), col: Math.max(0, Math.min(col, lastCol)) };
+  const row = index(t.rows, t.gapR, y - r.top - t.padT + grid.scrollTop, ROW_UNIT_PX);
+  return { row: Math.max(0, row), col: Math.max(0, col) };
 }

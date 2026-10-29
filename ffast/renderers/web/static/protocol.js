@@ -254,8 +254,10 @@
  * @property {string|null} selector 'atomic' → the element-picker tab selector
  * @property {string[]} controls tab-level controls ('energy_shift', …)
  * @property {PanelLayout[]} panels
- * @property {number[]|null} column_widths one per column, 1 = 400 px (ADR 0056)
- * @property {number[]|null} row_heights one per row, 1 = 300 px
+ * @property {number|null} grid columns of the fine grid (ADR 0069): col/colspan count them,
+ *   row/rowspan count 50 px units; null = the old form below
+ * @property {number[]|null} column_widths old form: one per column, 1 = 400 px (ADR 0056)
+ * @property {number[]|null} row_heights old form: one per row, 1 = 300 px
  */
 
 /**

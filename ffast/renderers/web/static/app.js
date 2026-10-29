@@ -29,7 +29,7 @@ import { Rail, framesText } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
-import { metricPanel, plotTarget, setPanelView, toSaved } from './tab_edit.js';
+import { metricPanel, plotTarget, setPanelView, toFineGrid, toSaved } from './tab_edit.js';
 import { MetricOps } from './metric_ops.js';
 import { TABLE_SHAPE, sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
@@ -287,8 +287,13 @@ export class FFastApp {
    * the new layout's linked cells, keeping their renderer and scene; the rest
    * are given back. The tab on screen stays on screen when it still exists. */
   _applyLayout(tabs, { show } = {}) {
-    if (tabs !== this._layoutTabs) this._editor.noteLayout(tabs || []);
-    this._layoutTabs = tabs || [];
+    // Every tab is held on the fine grid (ADR 0069), so places found in one
+    // (a panel's cell, a saved edit) mean the same in all.
+    const redraw = tabs === this._layoutTabs;
+    const fine = redraw ? tabs : (tabs || []).map((t) => toFineGrid(t));
+    if (!redraw) this._editor.noteLayout(fine);
+    this._layoutTabs = fine;
+    tabs = fine;
     // A tab asked for (`show`) may only arrive with the next layout: a saved
     // new tab is announced just after the save's answer.
     const currentName = this._analysis.tab(this._activeTab)?.name;

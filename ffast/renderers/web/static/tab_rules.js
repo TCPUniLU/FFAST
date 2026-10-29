@@ -22,9 +22,9 @@ export const DEFAULT_3D_TAB = Object.freeze({
   has_data_selector: true,
   selector: null,
   controls: [],
-  panels: [{ kind: KIND_3D, row: 0, col: 0, rowspan: 1, colspan: 1, metrics: {} }],
-  column_widths: null,
-  row_heights: null,
+  // The whole 24-column grid; analysis.js gives a lone cell the whole height.
+  panels: [{ kind: KIND_3D, row: 0, col: 0, rowspan: 6, colspan: 24, metrics: {} }],
+  grid: 24,
 });
 
 /** @param {{panels?: object[]}} tab */

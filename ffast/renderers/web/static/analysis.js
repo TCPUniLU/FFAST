@@ -33,15 +33,17 @@ import { panelLetters, readingOrder, caption, captionSegments } from './figure.j
 import { datasetUnits, editableDimension, resolveUnit } from './units.js';
 import { unitPopover } from './dialogs.js';
 import { KIND_3D } from './tab_rules.js';
-import { COLUMN_PX, ROW_PX, sizeTemplate } from './tab_edit.js';
+import { GRID_COLUMNS, ROW_UNIT_PX, toFineGrid } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState } from './layout_state.js';
 
-/** The smallest a plot column gets, and the gap between cells, in px (--col-min and the grid gap in index.html). */
+/** Two columns of the smallest plot, and the gap between cells, in px (the grid gap in index.html). */
 const COLUMN_MIN = 360;
 const GRID_GAP = 10;
 /** A 3D panel's row in a narrow grid, in px: at 300 px the colour legend covers the molecule. */
 const NARROW_3D_PX = 460;
+/** A row of a narrow grid is at least this high, in px: one panel of the stack. */
+const NARROW_ROW_PX = 300;
 
 const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
   + 'Outlined buttons follow the selection in the left list; click one to pin this '
@@ -149,11 +151,10 @@ export function pairSeries(datasets, models) {
   return out;
 }
 
-/** Put a grid cell where its panel sits; a scroll strip is one row high. */
+/** Put a grid cell where its panel sits. */
 function placeCell(el, spec) {
   el.style.gridColumn = `${spec.col + 1} / span ${spec.colspan || 1}`;
-  el.style.gridRow = el.classList.contains('analysis-scrollstrip')
-    ? String(spec.row + 1) : `${spec.row + 1} / span ${spec.rowspan || 1}`;
+  el.style.gridRow = `${spec.row + 1} / span ${spec.rowspan || 1}`;
 }
 
 export class AnalysisManager {
@@ -385,6 +386,7 @@ export class AnalysisManager {
 
   // ── tab construction ────────────────────────────────────────────────────
   _buildTab(spec, index) {
+    spec = toFineGrid(spec);   // an old-form tab is drawn on the fine grid too (ADR 0069)
     const id = `tab-${index}`;
     const tabEl = document.createElement('div');
     tabEl.className = 'tab';
@@ -541,11 +543,9 @@ export class AnalysisManager {
   /**
    * Make the grid cells once: honour row/col/span, fold scroll_group members
    * into one horizontal strip at the first member's cell, and leave each 3D
-   * panel an empty cell. A tab's `column_widths` and `row_heights` are
-   * kept as set, 1 being 400 px wide or 300 px high (ADR 0056 rule 12).
-   * Without them columns share the width, at least 400 px each; a tab with a
-   * single cell gives it the whole height (the built-in "3D" tab); otherwise
-   * rows are at least 300 px. The grid scrolls what does not fit.
+   * panel an empty cell. The grid has `grid` columns (24) that fill the width
+   * and rows of 50 px (ADR 0069); a tab with a single cell gives it the whole
+   * height (the built-in "3D" tab). The grid scrolls what does not fit.
    */
   _layoutGrid(t) {
     const grid = t.gridEl;
@@ -622,33 +622,29 @@ export class AnalysisManager {
     this._applyOrder(t);
   }
 
-  /** The grid's column and row sizes, from the tab's spec. Set sizes are
-   * kept as they are; columns without them share the width but keep a
-   * minimum (--col-min, index.html). Either way the tab scrolls when they
-   * do not fit. */
+  /** The grid's columns and rows (ADR 0069): `grid` equal columns that fill
+   * the width, rows of 50 px. A grid too narrow for two columns of the
+   * smallest plot stacks its panels in one column, in reading order, instead
+   * of squeezing them; a tab whose panels are all full width stays as it is.
+   * An unmeasured (hidden) grid keeps its state. */
   _sizeGrid(t) {
     const panels = t.spec.panels || [];
-    const widths = t.spec.column_widths, heights = t.spec.row_heights;
-    const maxCol = Math.max(1, widths?.length || 0, ...panels.map((p) => p.col + (p.colspan || 1)));
-    const fixed = widths?.length === maxCol;
-    // A grid too narrow for two columns of the smallest plot stacks its panels
-    // in one column, in reading order, instead of scrolling sideways. Sizes the
-    // tab sets are kept as they are. An unmeasured (hidden) grid keeps its state.
+    const grid = t.spec.grid || GRID_COLUMNS;
+    const multi = panels.some((p) => (p.colspan || 1) < grid);
     const width = t.gridEl.clientWidth;
-    if (width) t.narrow = !fixed && maxCol > 1 && width < 2 * COLUMN_MIN + GRID_GAP;
+    if (width) t.narrow = multi && width < 2 * COLUMN_MIN + GRID_GAP;
     t.gridEl.classList.toggle('narrow', !!t.narrow);
-    t.gridEl.style.gridTemplateColumns = t.narrow ? 'minmax(0, 1fr)'
-      : fixed ? sizeTemplate(widths, COLUMN_PX) : `repeat(${maxCol}, minmax(var(--col-min), 1fr))`;
+    t.gridEl.style.setProperty('--grid-columns', String(grid));
+    t.gridEl.style.gridTemplateColumns = t.narrow ? 'minmax(0, 1fr)' : `repeat(${grid}, minmax(0, 1fr))`;
     this._sizeRows(t);
   }
 
-  /** Each row's height: 300 px, or the height the tab sets, plus the room
-   * the peak labels of a timeline in it take, so its plot keeps its size.
-   * Written per row because the grid has a set height and scrolls: there a
-   * row grows only by its minimum, never to fit what is in it. A narrow
-   * grid's rows are its panels in reading order, a 3D panel's 460 px. */
+  /** Each row's height: 50 px, plus the room the peak labels of a timeline
+   * covering it take, so its plot keeps its size; the room goes to the last
+   * row the timeline covers. Written per row because the grid has a set
+   * height and scrolls. A narrow grid's rows are its panels in reading
+   * order, at least 300 px, a 3D panel's 460 px. */
   _sizeRows(t) {
-    const heights = t.narrow ? null : t.spec.row_heights;
     const rank = readingOrder((t.spec.panels || []).map((p, index) => ({ index, row: p.row, col: p.col })));
     const items = [
       ...(t.slots || []).map((slot) => ({ spec: slot.specs[0], index: slot.indices[0],
@@ -657,23 +653,24 @@ export class AnalysisManager {
         min: t.narrow ? NARROW_3D_PX : 0 })),
     ];
     if (t.narrow) items.sort((a, b) => rank.get(a.index) - rank.get(b.index));
-    const rowOf = (item, i) => (t.narrow ? i : item.spec.row);
+    const rowOf = (item, i) => (t.narrow ? i : item.spec.row + (item.spec.rowspan || 1) - 1);
     const extra = [], min = [];
     items.forEach((item, i) => {
       const r = rowOf(item, i);
       extra[r] = Math.max(extra[r] || 0, item.extra);
       min[r] = Math.max(min[r] || 0, item.min || 0);
     });
-    t.gridEl._rowExtra = extra;   // edit mode saves a dragged row without it
-    if (t.gridEl.classList.contains('fill')
-        || (!heights?.length && !extra.some(Boolean) && !min.some(Boolean))) {
-      t.gridEl.style.gridTemplateRows = '';   // index.html's rows: 300 px, or one whole-height cell
+    if (t.gridEl.classList.contains('fill') || !items.length) {
+      t.gridEl.style.gridTemplateRows = '';   // index.html's rows: one whole-height cell, or none
       return;
     }
-    const n = Math.max(heights?.length || 0, extra.length);
-    t.gridEl.style.gridTemplateRows = Array.from({ length: n }, (_, i) =>
-      `minmax(${Math.max(heights?.[i] != null ? heights[i] * ROW_PX : ROW_PX, min[i] || 0)
-        + (extra[i] || 0)}px, auto)`).join(' ');
+    if (t.narrow) {
+      t.gridEl.style.gridTemplateRows = Array.from({ length: extra.length }, (_, i) =>
+        `minmax(${Math.max(NARROW_ROW_PX, min[i] || 0) + (extra[i] || 0)}px, auto)`).join(' ');
+      return;
+    }
+    t.gridEl.style.gridTemplateRows = Array.from({ length: extra.length }, (_, i) =>
+      `${ROW_UNIT_PX + (extra[i] || 0)}px`).join(' ');
   }
 
   /** Stack order for a narrow grid: reading order, whatever the file order is. */
@@ -703,8 +700,7 @@ export class AnalysisManager {
       const { row, col, rowspan, colspan } = spec.panels[i];
       Object.assign(panel, { row, col, rowspan, colspan });
     });
-    t.spec.column_widths = spec.column_widths;
-    t.spec.row_heights = spec.row_heights;
+    t.spec.grid = spec.grid;
     this._sizeGrid(t);
     for (const slot of t.slots) placeCell(slot.el, slot.specs[0]);
     for (const cell of t.cells3d) placeCell(cell.el, cell.spec);

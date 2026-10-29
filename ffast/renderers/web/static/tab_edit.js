@@ -1,15 +1,16 @@
 /**
- * Editing a tab (ADR 0056 rules 11, 12 and 14): pure functions over a tab
- * draft, the tab as TAB_LAYOUT describes it. Each returns a new draft and
+ * Editing a tab (ADR 0056 rules 11 and 14, ADR 0069): pure functions over a
+ * tab draft, the tab as TAB_LAYOUT describes it. Each returns a new draft and
  * leaves its input alone, so Cancel is simply dropping the draft. Edit mode
- * (app.js) calls these from the gestures; Save sends `toSaved(draft)`.
+ * (edit_mode.js) calls these from the gestures; Save sends `toSaved(draft)`.
  *
- * The grid: a panel sits at (row, col) and spans rowspan x colspan cells.
- * Panels sharing a `scroll_group` form one strip that moves and resizes as a
- * unit. A tab has as many columns as its panels reach or its `column_widths`
- * list, whichever is more (a column may be empty); rows likewise. A set size
- * is kept as it is, never shared out: a column width of 1 is 400 px, a row
- * height of 1 is 300 px, and a tab that does not fit scrolls.
+ * The grid: a tab is laid out on `grid` columns (24) that always fill the
+ * window, and rows of 50 px. A panel sits at (row, col) and covers rowspan
+ * rows by colspan columns; you size it by its own edges. Panels sharing a
+ * `scroll_group` form one strip that moves and resizes as a unit. A panel put
+ * on another pushes it down, and panels float up, so no row stays empty.
+ * `toFineGrid` turns a tab of the old form (column_widths, row_heights) into
+ * this one.
  */
 
 import { KIND_3D } from './tab_rules.js';
@@ -40,52 +41,81 @@ export function metricsFor(kind, role, catalog) {
 const clone = (x) => structuredClone(x);
 const span = (p, key) => p[key] || 1;
 
-/** Pixels a column width of 1 stands for: the desktop's smallest plot,
- * and the narrowest a column gets. */
-export const COLUMN_PX = 400;
-/** Pixels a row height of 1 stands for: a row of a tab without set heights. */
-export const ROW_PX = 300;
+/** Columns of the fine grid a tab is laid out on (ADR 0069). */
+export const GRID_COLUMNS = 24;
+/** Height of one row unit, in px (analysis.js sizes the grid's rows with it). */
+export const ROW_UNIT_PX = 50;
+/** Pixels an old row height of 1 stands for (ADR 0056, before the fine grid). */
+const OLD_ROW_PX = 300;
+/** Size a new panel starts with, in cells: half the width, 400 px high. */
+const NEW_PANEL = Object.freeze({ colspan: GRID_COLUMNS / 2, rowspan: 8 });
 
-const GAP_PX = 10;   // between grid cells (index.html .analysis-grid)
+/** The columns of a tab's grid. */
+export const gridOf = (tab) => tab.grid || GRID_COLUMNS;
 
-/** The most columns a tab has (Tab settings' Columns field too). */
-export const MAX_COLUMNS = 8;
-
-/** The CSS track list for set sizes. */
-export function sizeTemplate(sizes, unit) {
-  return sizes.map((size) => `${size * unit}px`).join(' ');
-}
-
-/** Pixel sizes as set sizes, to two decimals. */
-export function sizesOf(px, unit) {
-  return px.map((v) => Math.round((v / unit) * 100) / 100);
-}
-
-/** Track sizes after dragging divider `k` (between tracks k-1 and k) by
- * `delta` px: only the track before it changes, never below `min`; the
- * tracks after it move along. */
-export function dragTrack(sizes, k, delta, min) {
-  const next = sizes.slice();
-  next[k - 1] = Math.max(min, sizes[k - 1] + delta);
-  return next;
-}
-
-/** Widths for `n` columns that fill `px` pixels, never under 1. */
-export function fitWidths(n, px) {
-  const each = (px - GAP_PX * (n - 1)) / n / COLUMN_PX;
-  return Array(n).fill(Math.max(1, Math.floor(each * 100) / 100));
-}
-
-/** Number of columns: what the panels reach, or `column_widths`, if more. */
+/** Number of columns of an old-form tab: what the panels reach, or
+ * `column_widths`, if more. */
 export function columnsOf(tab) {
   const used = Math.max(0, ...(tab.panels || []).map((p) => p.col + span(p, 'colspan')));
   return Math.max(1, used, tab.column_widths?.length || 0);
 }
 
-/** Number of rows: what the panels reach, or `row_heights`, if more. */
+/** Number of rows of an old-form tab: what the panels reach, or
+ * `row_heights`, if more. */
 export function rowsOf(tab) {
   const used = Math.max(0, ...(tab.panels || []).map((p) => p.row + span(p, 'rowspan')));
   return Math.max(used, tab.row_heights?.length || 0);
+}
+
+/** Where `n` old columns start on a grid of `grid` columns, plus the end:
+ * equal shares, or shares in proportion to `widths`, at least one column each. */
+function columnEdges(n, grid, widths) {
+  if (!widths) return Array.from({ length: n + 1 }, (_, i) => Math.ceil((i * grid) / n));
+  const total = widths.slice(0, n).reduce((a, b) => a + b, 0);
+  const edges = [0];
+  let sum = 0;
+  for (let i = 1; i <= n; i++) {
+    sum += widths[i - 1];
+    const at = Math.round((sum / total) * grid);
+    edges.push(i === n ? grid : Math.min(grid - (n - i), Math.max(edges[i - 1] + 1, at)));
+  }
+  return edges;
+}
+
+/**
+ * An old-form tab (column_widths, row_heights, cells) as a tab on the fine
+ * grid (ADR 0069). Each old column becomes an equal share of the grid's
+ * columns, or a share in proportion to its width; each old row becomes
+ * height / 50 px units (300 px when not set). Panels keep their order and
+ * scroll groups. A tab already on the grid comes back as it is.
+ */
+export function toFineGrid(tab, grid = GRID_COLUMNS) {
+  if (tab.grid) return tab;
+  const n = Math.min(columnsOf(tab), grid);
+  const cols = columnEdges(n, grid, tab.column_widths);
+  const rows = [0];
+  for (let r = 0; r < rowsOf(tab); r++) {
+    const px = (tab.row_heights?.[r] ?? 1) * OLD_ROW_PX;
+    rows.push(rows[r] + Math.max(1, Math.round(px / ROW_UNIT_PX)));
+  }
+  const { column_widths, row_heights, ...rest } = clone(tab);
+  const box = (p, strip) => {
+    const col = Math.min(p.col, n - 1), colspan = Math.min(span(p, 'colspan'), n - col);
+    const last = strip ? p.row + 1 : p.row + span(p, 'rowspan');
+    return { row: rows[p.row], col: cols[col], rowspan: rows[last] - rows[p.row],
+      colspan: cols[col + colspan] - cols[col] };
+  };
+  // A scroll strip sits at its first member's place, one old row high.
+  const first = new Map();
+  for (const p of rest.panels || []) {
+    if (p.scroll_group && !first.has(p.scroll_group)) first.set(p.scroll_group, p);
+  }
+  return {
+    ...rest, grid,
+    panels: (rest.panels || []).map((p) => (p.scroll_group
+      ? { ...p, ...box(first.get(p.scroll_group), true) }
+      : { ...p, ...box(p, false) })),
+  };
 }
 
 /** The panels with their place filled in (row, col, rowspan, colspan). */
@@ -102,6 +132,18 @@ function unitOf(panels, index) {
   return panels.map((p, i) => (p.scroll_group === group ? i : -1)).filter((i) => i >= 0);
 }
 
+/** Every unit (a panel, or a scroll strip as one), by its first member. */
+function allUnits(panels) {
+  const seen = new Set(), out = [];
+  panels.forEach((_, i) => {
+    if (seen.has(i)) return;
+    const unit = unitOf(panels, i);
+    unit.forEach((j) => seen.add(j));
+    out.push(unit);
+  });
+  return out;
+}
+
 /** The box a unit covers; a strip sits at its first member's place. */
 function boxOf(panels, unit) {
   const p = panels[unit[0]];
@@ -114,156 +156,112 @@ function setBox(panels, unit, box) {
 
 const overlaps = (a, b) => a.row < b.row + b.rowspan && b.row < a.row + a.rowspan
   && a.col < b.col + b.colspan && b.col < a.col + a.colspan;
+const reading = (a, b) => a.row - b.row || a.col - b.col;
 
-/** Units other than `skip` that a box would overlap. */
-function hits(panels, box, skip) {
-  const seen = new Set(), out = [];
-  panels.forEach((_, i) => {
-    if (skip.includes(i) || seen.has(i)) return;
-    const unit = unitOf(panels, i);
-    unit.forEach((j) => seen.add(j));
-    if (overlaps(box, boxOf(panels, unit))) out.push(unit);
-  });
-  return out;
+/** The smallest a panel gets, in cells: 3 of every 12 columns by 4 rows (a
+ * 3D panel 4 of 12 by 6), so a tab always fits three panels in a row. */
+export function minSize(tab, index) {
+  const grid = gridOf(tab);
+  const is3d = tab.panels[index]?.kind === KIND_3D;
+  return { w: Math.min(grid, Math.ceil(((is3d ? 4 : 3) * grid) / 12)), h: is3d ? 6 : 4 };
 }
 
-/** Shrink a unit's spans until it overlaps nothing and fits the columns;
- * false when not even one cell is free. */
-function fit(panels, unit, columns) {
-  const box = boxOf(panels, unit);
-  box.colspan = Math.max(1, Math.min(box.colspan, columns - box.col));
-  while (hits(panels, box, unit).length) {
-    if (box.colspan > 1) box.colspan--;
-    else if (box.rowspan > 1) box.rowspan--;
-    else return false;
-  }
-  setBox(panels, unit, box);
-  return true;
+/** `{w, h}` for panel `index`, held between its minimum and the grid's edge. */
+export function clampSize(tab, index, { w, h }) {
+  const min = minSize(tab, index);
+  const col = tab.panels[index].col;
+  return { w: Math.max(min.w, Math.min(Math.round(w), gridOf(tab) - col)), h: Math.max(min.h, Math.round(h)) };
 }
 
-/** The first free cell, row by row; a new row when the grid is full. */
-function freeCell(panels, columns, skip = []) {
-  for (let row = 0; ; row++) {
-    for (let col = 0; col < columns; col++) {
-      if (!hits(panels, { row, col, rowspan: 1, colspan: 1 }, skip).length) return { row, col };
-    }
-  }
-}
-
-/** Keep `row_heights` one per row when it is set. */
-function syncRows(tab) {
-  if (!tab.row_heights) return tab;
-  const used = Math.max(1, ...tab.panels.map((p) => p.row + span(p, 'rowspan')));
-  const heights = tab.row_heights.slice(0, used);
-  while (heights.length < used) heights.push(1);
-  tab.row_heights = heights;
-  return tab;
+/** The (row, col) panel `index` lands on when asked for (row, col): inside
+ * the grid on the left and right. */
+export function clampMove(tab, index, row, col) {
+  const { colspan } = place(tab)[index];
+  return { row: Math.max(0, Math.round(row)), col: Math.max(0, Math.min(Math.round(col), gridOf(tab) - colspan)) };
 }
 
 /**
- * Move panel `index` (with its strip) so its top-left cell is (row, col).
- * A panel already there swaps places with it; each keeps its size where it
- * fits and shrinks where it does not. A move that cannot fit is ignored.
+ * Settle the units after a change: while two overlap, the one the user did
+ * not touch (`active`) moves down to just below the other; then every unit
+ * floats up as far as it goes, in reading order, so no row stays empty.
+ */
+function settle(panels, active) {
+  const units = allUnits(panels);
+  const boxes = () => units.map((u) => boxOf(panels, u));
+  for (let guard = 0; guard < 1000; guard++) {
+    const b = boxes();
+    let moved = false;
+    for (let i = 0; i < units.length && !moved; i++) {
+      for (let j = i + 1; j < units.length && !moved; j++) {
+        if (!overlaps(b[i], b[j])) continue;
+        const [stay, go] = units[j].includes(active) ? [j, i]
+          : units[i].includes(active) ? [i, j]
+            : (reading(b[i], b[j]) <= 0 ? [i, j] : [j, i]);
+        setBox(panels, units[go], { ...b[go], row: b[stay].row + b[stay].rowspan });
+        moved = true;
+      }
+    }
+    if (!moved) break;
+  }
+  const placed = [];
+  [...units].sort((x, y) => reading(boxOf(panels, x), boxOf(panels, y))).forEach((unit) => {
+    const box = boxOf(panels, unit);
+    while (box.row > 0 && !placed.some((q) => overlaps({ ...box, row: box.row - 1 }, q))) box.row--;
+    setBox(panels, unit, box);
+    placed.push(box);
+  });
+}
+
+/**
+ * Move panel `index` (with its strip) so its top-left cell is (row, col),
+ * kept inside the grid. A panel in the way moves down, just below it; then
+ * the panels float up (see `settle`).
  */
 export function movePanel(tab, index, row, col) {
   const next = clone(tab);
   const panels = next.panels = place(next);
-  const columns = columnsOf(next);
   const unit = unitOf(panels, index);
-  const from = boxOf(panels, unit);
-  const to = { ...from, row: Math.max(0, row), col: Math.max(0, Math.min(col, columns - 1)) };
-  const [other] = hits(panels, { row: to.row, col: to.col, rowspan: 1, colspan: 1 }, unit);
-  setBox(panels, unit, to);
-  if (other) setBox(panels, other, { ...boxOf(panels, other), row: from.row, col: from.col });
-  const ok = fit(panels, unit, columns) && (!other || fit(panels, other, columns));
-  return ok ? syncRows(next) : tab;
+  setBox(panels, unit, { ...boxOf(panels, unit), ...clampMove(next, index, row, col) });
+  settle(panels, index);
+  return next;
 }
 
-/** The first place, at or below `fromRow`, where a box of this size overlaps
- * nothing; rows below every panel are always free. */
-function freeSpot(panels, columns, size, skip, fromRow) {
-  for (let row = fromRow; ; row++) {
-    for (let col = 0; col + size.colspan <= columns; col++) {
-      const box = { row, col, ...size };
-      if (!hits(panels, box, skip).length) return box;
-    }
-  }
-}
-
-/** Set the span of panel `index`. It may reach one column past the last,
- * which adds that column (up to MAX_COLUMNS), as it may a new row. Panels
- * in the way move down to the first free place at or below their row,
- * keeping their size. */
-export function resizePanel(tab, index, rowspan, colspan) {
+/** Set the size of panel `index` to `w` columns by `h` rows, between its
+ * minimum and the grid's edge. Panels in the way move down (see `settle`). */
+export function resizePanel(tab, index, { w, h }) {
   const next = clone(tab);
   const panels = next.panels = place(next);
-  const unit = unitOf(panels, index);
-  const box = boxOf(panels, unit);
-  const before = columnsOf(next);
-  const columns = Math.max(before, Math.min(MAX_COLUMNS, box.col + colspan, before + 1));
-  if (columns > before && next.column_widths) next.column_widths = [...next.column_widths, 1];
-  setBox(panels, unit, {
-    ...box,
-    rowspan: Math.max(1, rowspan),
-    colspan: Math.max(1, Math.min(colspan, columns - box.col)),
-  });
-  const moving = hits(panels, boxOf(panels, unit), unit);
-  // Panels still waiting to move do not block a place.
-  const pending = new Set(moving.flat());
-  for (const other of moving) {
-    const { row, rowspan: rs, colspan: cs } = boxOf(panels, other);
-    const size = { rowspan: rs, colspan: Math.min(cs, columns) };
-    setBox(panels, other, freeSpot(panels, columns, size, [...pending], row));
-    other.forEach((i) => pending.delete(i));
-  }
-  return syncRows(next);
-}
-
-/** Columns (0-based) no panel covers, but never the only column. */
-export function emptyColumns(tab) {
-  const n = columnsOf(tab);
-  if (n < 2) return [];
-  const used = new Set(place(tab).flatMap((p) => Array.from({ length: p.colspan }, (_, i) => p.col + i)));
-  return Array.from({ length: n }, (_, c) => c).filter((c) => !used.has(c));
-}
-
-/** Rows (0-based) no panel covers. */
-export function emptyRows(tab) {
-  const used = new Set(place(tab).flatMap((p) => Array.from({ length: p.rowspan }, (_, i) => p.row + i)));
-  return Array.from({ length: rowsOf(tab) }, (_, r) => r).filter((r) => !used.has(r));
-}
-
-/** Drop empty column `c`: the panels right of it move one column left. */
-export function removeColumn(tab, c) {
-  if (!emptyColumns(tab).includes(c)) return tab;
-  const next = clone(tab);
-  for (const p of next.panels) if (p.col > c) p.col--;
-  if (next.column_widths) {
-    next.column_widths.splice(c, 1);
-    if (!next.column_widths.length) delete next.column_widths;
-  }
+  const size = clampSize(next, index, { w, h });
+  setBox(panels, unitOf(panels, index), { ...boxOf(panels, unitOf(panels, index)), colspan: size.w, rowspan: size.h });
+  settle(panels, index);
   return next;
 }
 
-/** Drop empty row `r`: the panels below it move one row up. */
-export function removeRow(tab, r) {
-  if (!emptyRows(tab).includes(r)) return tab;
-  const next = clone(tab);
-  for (const p of next.panels) if (p.row > r) p.row--;
-  if (next.row_heights) {
-    next.row_heights.splice(r, 1);
-    if (!next.row_heights.length) delete next.row_heights;
-  }
-  return next;
-}
-
-/** Add a panel at the first free cell (1 x 1). */
-export function addPanel(tab, panel) {
+/** Float every panel up as far as it goes without overlapping, as after any edit. */
+export function compact(tab) {
   const next = clone(tab);
   next.panels = place(next);
-  const cell = freeCell(next.panels, columnsOf(next));
-  next.panels.push({ ...clone(panel), ...cell, rowspan: 1, colspan: 1, scroll_group: null });
-  return syncRows(next);
+  settle(next.panels, null);
+  return next;
+}
+
+/** Add a panel at the first free place that fits it (half the width, 400 px
+ * high), row by row; below every panel when none is free. */
+export function addPanel(tab, panel) {
+  const next = clone(toFineGrid(tab));   // a tab of the old form is put on the grid first
+  next.panels = place(next);
+  const grid = gridOf(next);
+  const size = { rowspan: NEW_PANEL.rowspan, colspan: Math.min(NEW_PANEL.colspan, grid) };
+  const others = allUnits(next.panels).map((u) => boxOf(next.panels, u));
+  let spot = null;
+  for (let row = 0; !spot; row++) {
+    for (let col = 0; col + size.colspan <= grid && !spot; col++) {
+      const box = { row, col, ...size };
+      if (!others.some((o) => overlaps(box, o))) spot = box;
+    }
+  }
+  next.panels.push({ ...clone(panel), ...spot, scroll_group: null });
+  return next;
 }
 
 /** Metric ids a panel draws, whether it spells them as ids or as refs. */
@@ -305,44 +303,9 @@ export function replacePanel(tab, index, panel) {
 export function removePanel(tab, index) {
   const next = clone(tab);
   next.panels.splice(index, 1);
-  return syncRows(next);
-}
-
-/** Set the number of columns. Panels in columns that go move down to the
- * first free cells; spans are clipped. Given the pixels the columns have
- * (`fitPx`), a new count gets widths that fill them. */
-export function setColumns(tab, columns, fitPx = null) {
-  const n = Math.max(1, Math.floor(columns));
-  const next = clone(tab);
-  const panels = next.panels = place(next);
-  const moving = [];
-  const seen = new Set();
-  panels.forEach((_, i) => {
-    if (seen.has(i)) return;
-    const unit = unitOf(panels, i);
-    unit.forEach((j) => seen.add(j));
-    const box = boxOf(panels, unit);
-    if (box.col >= n) moving.push(unit);
-    else setBox(panels, unit, { ...box, colspan: Math.min(box.colspan, n - box.col) });
-  });
-  // Panels still waiting to move do not block a cell.
-  const pending = new Set(moving.flat());
-  for (const unit of moving) {
-    const cell = freeCell(panels, n, [...pending]);
-    setBox(panels, unit, { ...boxOf(panels, unit), ...cell, colspan: 1, rowspan: 1 });
-    unit.forEach((i) => pending.delete(i));
-  }
-  const used = Math.max(0, ...panels.map((p) => p.col + p.colspan));
-  if (fitPx != null && n !== columnsOf(tab)) {
-    next.column_widths = fitWidths(n, fitPx);
-  } else if (next.column_widths) {
-    const widths = next.column_widths.slice(0, n);
-    while (widths.length < n) widths.push(1);
-    next.column_widths = widths;
-  } else if (n !== used) {
-    next.column_widths = Array(n).fill(1);   // keeps empty columns when saved
-  }
-  return syncRows(next);
+  next.panels = place(next);
+  settle(next.panels, null);
+  return next;
 }
 
 /** JSON with object keys sorted, so equal drafts compare equal however
@@ -359,7 +322,7 @@ function canonical(x) {
  * cells in place, and the plots keep drawing. */
 export function onlyPlacesChanged(before, after) {
   if (!before || !after || (before.panels || []).length !== (after.panels || []).length) return false;
-  const content = ({ column_widths, row_heights, panels, ...tab }) => ({
+  const content = ({ column_widths, row_heights, grid, panels, ...tab }) => ({
     ...tab, panels: (panels || []).map(({ row, col, rowspan, colspan, ...panel }) => panel),
   });
   if (canonical(content(before)) !== canonical(content(after))) return false;
@@ -367,11 +330,11 @@ export function onlyPlacesChanged(before, after) {
     || (p.row === after.panels[i].row && p.col === after.panels[i].col));
 }
 
-/** A new tab with nothing in it; `widths` keeps its columns while empty. */
-export function emptyTab(name, widths = [1, 1]) {
+/** A new tab with nothing in it, on the fine grid. */
+export function emptyTab(name) {
   return {
     name, has_data_selector: true, selector: null, controls: [], panels: [],
-    column_widths: [...widths], row_heights: null,
+    grid: GRID_COLUMNS,
   };
 }
 
@@ -417,8 +380,9 @@ export function toSaved(tab) {
     has_data_selector: tab.has_data_selector ?? true,
     selector: tab.selector ?? null,
     controls: [...(tab.controls || [])],
-    column_widths: tab.column_widths ?? null,
-    row_heights: tab.row_heights ?? null,
+    grid: tab.grid ?? null,
+    column_widths: tab.grid ? null : tab.column_widths ?? null,
+    row_heights: tab.grid ? null : tab.row_heights ?? null,
     panels: (tab.panels || []).map(({ metric_refs, metrics, unresolved, ...panel }) => ({
       ...panel,
       metrics: metric_refs ?? Object.fromEntries(Object.entries(metrics || {}).map(
