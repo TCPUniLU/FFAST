@@ -89,7 +89,7 @@ def test_defaults_are_todays_defaults(results):
         "colorBy": {"source": "element", "prediction": None, "colormap": "force_error", "norm": "None",
                     "vmin": None, "vmax": None},
         "camera": {"ortho": False, "gizmo": False, "background": "#000000"},
-        "display": {"atomSize": 1, "hide": "", "highlight": "", "unitCell": True},
+        "display": {"atomSize": 1, "labels": False, "hide": "", "highlight": "", "unitCell": True},
         "bonds": {"width": 100, "color": "#404040", "bondType": "Dynamic", "fixedIndices": []},
         "extract": {"indices": ""},
         "export": {"background": "#000000"},

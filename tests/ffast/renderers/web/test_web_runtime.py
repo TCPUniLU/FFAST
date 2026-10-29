@@ -6467,3 +6467,22 @@ async def test_web_the_page_does_not_ask_for_what_the_server_pushes(ffast_web_se
     assert sent, "the page sent nothing at all"
     for event in ("REQUEST_TAB_LAYOUT", "REQUEST_USER_METRICS", "REQUEST_METRIC_CATALOG"):
         assert event not in sent
+
+
+async def test_web_atom_index_labels_switch_on_and_off(ffast_web_server):
+    """Display ▸ Atom index labels writes each atom's index next to it (web parity plan 2026-10-29)."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_section(page, "Display")
+            box = page.locator(".pane[data-pane='Display'] .ctl-row[data-label='Atom index labels'] input")
+            await box.check()
+            await page.wait_for_function("() => window.ffastApp.renderer._labelSprites.length > 0")
+            await box.uncheck()
+            await page.wait_for_function("() => window.ffastApp.renderer._labelSprites.length === 0")
+        finally:
+            await browser.close()

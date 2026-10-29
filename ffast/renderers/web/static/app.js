@@ -1085,6 +1085,7 @@ export class FFastApp {
 
     const display = createDisplayPane(sidebarEl, {
       onAtomSize: (scale) => this._sendSetParameter('ffast.atom_sizes', 'scale', scale),
+      onLabels: (on) => this._sendToggleFeature('labels', on),
       onHideAtoms: (tokens) => this._sendSetParameter('ffast.atom_filter', 'indices', tokens),
       onHighlight: (indices) => this._sendSetSelection('picked', 'current_structure', indices),
       onUnitCell: (visible) => this._sendToggleFeature('no_unit_cell', !visible),

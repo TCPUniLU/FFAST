@@ -1,5 +1,5 @@
 /**
- * Display + Unit Cell pane (ADR 0045 issue 05). Mirrors the DISPLAY schema in
+ * Display + Unit Cell pane (ADR 0045 issue 05), also the atom index labels. Mirrors the DISPLAY schema in
  * modules/loupe/loupeViewSettings.py. Hide-atoms/highlight token specs are
  * resolved server-side (ffast.atom_filter / SET_SELECTION); the client just
  * tokenizes text into ints or element-symbol strings. The pane shows one
@@ -32,6 +32,7 @@ function parseIndexList(text) {
  * @param {HTMLElement} sidebarEl
  * @param {{
  *   onAtomSize: (scale: number) => void,
+ *   onLabels: (on: boolean) => void,
  *   onHideAtoms: (tokens: (number|string)[]) => void,
  *   onHighlight: (indices: number[]) => void,
  *   onUnitCell: (visible: boolean) => void,
@@ -46,6 +47,10 @@ export function createDisplayPane(sidebarEl, callbacks) {
   const atomSizeRow = numberRow(body, 'Atom size', 1.0, { min: 0.1, max: 10, step: 0.1 }, (v) => {
     state.atomSize = v || 1;
     callbacks.onAtomSize(v);
+  });
+  const labelsRow = checkboxRow(body, 'Atom index labels', false, (v) => {
+    state.labels = v;
+    callbacks.onLabels(v);
   });
   const atomHideRow = textRow(body, 'Hide atoms', '', (text) => {
     state.hide = text;
@@ -71,6 +76,7 @@ export function createDisplayPane(sidebarEl, callbacks) {
     show(settings) {
       state = settings;
       atomSizeRow.value = String(settings.atomSize);
+      labelsRow.checked = !!settings.labels;
       atomHideRow.value = settings.hide;
       highlightAtomRow.value = settings.highlight;
       showUnitRow.checked = settings.unitCell;

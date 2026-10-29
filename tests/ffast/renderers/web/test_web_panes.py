@@ -64,17 +64,17 @@ CASES = {
 
     # ── display ─────────────────────────────────────────────────────────────
     "display_show": """(() => { const {pane, host, calls} = mk(dp, 'createDisplayPane');
-      pane.show({atomSize: 2, hide: 'C', highlight: '0 1', unitCell: false});
-      return {controls: ['Atom size', 'Hide atoms', 'Highlight atoms', 'Show unit cell'].map((l) => val(ctl(host, l))),
+      pane.show({atomSize: 2, labels: true, hide: 'C', highlight: '0 1', unitCell: false});
+      return {controls: ['Atom size', 'Atom index labels', 'Hide atoms', 'Highlight atoms', 'Show unit cell'].map((l) => val(ctl(host, l))),
               calls: calls.length, scale: pane.atomScale()}; })()""",
     "display_write": """(() => { const {pane, host, calls} = mk(dp, 'createDisplayPane');
-      const s = {atomSize: 1, hide: '', highlight: '', unitCell: true}; pane.show(s);
-      fire(ctl(host, 'Atom size'), '3'); fire(ctl(host, 'Hide atoms'), 'H'); fire(ctl(host, 'Highlight atoms'), '0 4');
+      const s = {atomSize: 1, labels: false, hide: '', highlight: '', unitCell: true}; pane.show(s);
+      fire(ctl(host, 'Atom size'), '3'); fire(ctl(host, 'Atom index labels'), true); fire(ctl(host, 'Hide atoms'), 'H'); fire(ctl(host, 'Highlight atoms'), '0 4');
       fire(ctl(host, 'Show unit cell'), false);
       return {s, calls, scale: pane.atomScale()}; })()""",
     "display_isolated": """(() => { const {pane, host} = mk(dp, 'createDisplayPane');
-      const s = {atomSize: 1, hide: '', highlight: '', unitCell: true};
-      const t = {atomSize: 2, hide: 'C', highlight: '', unitCell: true};
+      const s = {atomSize: 1, labels: false, hide: '', highlight: '', unitCell: true};
+      const t = {atomSize: 2, labels: false, hide: 'C', highlight: '', unitCell: true};
       pane.show(s); pane.show(t); fire(ctl(host, 'Atom size'), '5'); fire(ctl(host, 'Hide atoms'), 'N');
       return [s, t]; })()""",
     # ── camera ──────────────────────────────────────────────────────────────
@@ -301,21 +301,21 @@ def results():
 
 def test_display_shows_its_settings_without_sending_anything(results):
     r = results["display_show"]
-    assert r["controls"] == ["2", "C", "0 1", False]
+    assert r["controls"] == ["2", True, "C", "0 1", False]
     assert r["calls"] == 0
     assert r["scale"] == 2
 
 
 def test_display_writes_every_change_into_its_settings(results):
     r = results["display_write"]
-    assert r["s"] == {"atomSize": 3, "hide": "H", "highlight": "0 4", "unitCell": False}
-    assert [c[0] for c in r["calls"]] == ["onAtomSize", "onHideAtoms", "onHighlight", "onUnitCell"]
+    assert r["s"] == {"atomSize": 3, "labels": True, "hide": "H", "highlight": "0 4", "unitCell": False}
+    assert [c[0] for c in r["calls"]] == ["onAtomSize", "onLabels", "onHideAtoms", "onHighlight", "onUnitCell"]
     assert r["scale"] == 3
 
 
 def test_display_changes_after_a_new_show_leave_the_old_settings_alone(results):
     s, t = results["display_isolated"]
-    assert s == {"atomSize": 1, "hide": "", "highlight": "", "unitCell": True}
+    assert s == {"atomSize": 1, "labels": False, "hide": "", "highlight": "", "unitCell": True}
     assert t["atomSize"] == 5 and t["hide"] == "N"
 
 

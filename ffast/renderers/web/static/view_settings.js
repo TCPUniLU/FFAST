@@ -11,7 +11,7 @@ export function defaultSettings() {
   return {
     colorBy: { source: 'element', prediction: null, colormap: DEFAULT_LOOK.colormap, norm: 'None', vmin: null, vmax: null },
     camera: { ortho: false, gizmo: false, background: '#000000' },
-    display: { atomSize: 1, hide: '', highlight: '', unitCell: true },
+    display: { atomSize: 1, labels: false, hide: '', highlight: '', unitCell: true },
     bonds: { width: 100, color: DEFAULT_LOOK.bondColour, bondType: 'Dynamic', fixedIndices: [] },
     extract: { indices: '' },
     export: { background: '#000000' },
