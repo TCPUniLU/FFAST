@@ -118,6 +118,23 @@ export function keyOptions(keys, { allowNone = false, calculator = false, calcul
   return out;
 }
 
+/**
+ * The loader type a file most likely needs: the first type whose
+ * extension pattern (`*.npz`) the name ends with, else the catch-all
+ * `fallback` when it is offered, else the first type. The desktop's
+ * file dialog does this with its filter list.
+ * @param {string} name @param {{name: string, extension: string}[]} types
+ * @param {string} fallback @returns {string}
+ */
+export function typeForFile(name, types, fallback = 'ase (auto)') {
+  const lower = name.toLowerCase();
+  const hit = (types || []).find((t) => t.extension && t.extension !== '*'
+    && lower.endsWith(t.extension.replace(/^\*/, '').toLowerCase()));
+  if (hit) return hit.name;
+  if ((types || []).some((t) => t.name === fallback)) return fallback;
+  return types?.[0]?.name ?? fallback;
+}
+
 const $ = (id) => document.getElementById(id);
 
 export class RemoteBrowser {
@@ -138,6 +155,7 @@ export class RemoteBrowser {
     this._parent = null;      // parent abspath, or null at root
     this._home = null;        // server user's home directory
     this._selected = null;    // selected filename within _path
+    this._types = { datasets: [{ name: 'ase (auto)', extension: '*' }], models: [] };
     this._pending = null;   // {kind, name, path}: a load with no outcome yet
     this._asks = new Map();   // folder asked for suggestions → replies still to come
     this._suggest = { items: [], active: -1, dir: '' };
@@ -167,6 +185,14 @@ export class RemoteBrowser {
     $('fb-path').addEventListener('blur', () => setTimeout(() => this._hideSuggestions(), 150));
     // One listener for the whole list: its rows are rebuilt on every folder change.
     $('fb-list').addEventListener('keydown', (e) => this._listKey(e));
+  }
+
+  /** The server's loaders (LOADER_TYPES, on connect): fill the Type list. */
+  setLoaderTypes(kw) {
+    this._types = { datasets: kw.datasets || [], models: kw.models || [] };
+    if (!this._types.datasets.length) this._types.datasets = [{ name: 'ase (auto)', extension: '*' }];
+    this._fillSelect($('fb-type'), this._types.datasets.map((t) => ({ value: t.name, label: t.name })));
+    $('fb-type').value = typeForFile('', this._types.datasets);
   }
 
   /** Arrow keys, Enter, Space and Backspace on a row of the file list (to_fix_v2). */
@@ -331,6 +357,7 @@ export class RemoteBrowser {
     if (this._mode === 'dataset') {
       this._path = dir;
       this._selected = name;
+      $('fb-type').value = typeForFile(name, this._types.datasets);   // guessed from the extension (decision 1)
       this._load();
     } else {
       this._selectAfterListing = name;
@@ -518,6 +545,7 @@ export class RemoteBrowser {
       // Server route requires (path, dataset_type); ASE auto-detect reads the keys.
       this._ports.send(OUT.PROBE_DATASET_KEYS, {}, [path, 'ase (auto)']);
     }
+    if (this._mode === 'dataset') $('fb-type').value = typeForFile(name, this._types.datasets);
     this._refreshLoadEnabled();
   }
 

@@ -69,6 +69,11 @@ CASES = {
         ".map(o => [o.value, o.label])",
     "keys_none_first":
         "rb.keyOptions(['E1'], {allowNone: true}).map(o => o.value)",
+    # ── rb.typeForFile (web parity plan 2026-10-29) ─────────────────────────
+    "type_npz": "rb.typeForFile('m.NPZ', [{name:'ase (auto)',extension:'*'},{name:'sGDML',extension:'*.npz'}])",
+    "type_xyz": "rb.typeForFile('a.xyz', [{name:'ase (auto)',extension:'*'},{name:'sGDML',extension:'*.npz'}])",
+    "type_first": "rb.typeForFile('a.xyz', [{name:'X', extension:'*.x'}])",
+    "type_none": "rb.typeForFile('a', [])",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1269,6 +1274,15 @@ def test_key_options_offers_the_calculator_when_no_named_keys_exist(results):
     calculator, or such a file looks unloadable.
     """
     assert results["keys_calculator_only"] == [["forces", "calculator (built-in)"]]
+
+
+# ── remote_browser.typeForFile ──────────────────────────────────────────────
+
+def test_the_loader_type_follows_the_file_extension(results):
+    assert results["type_npz"] == "sGDML"
+    assert results["type_xyz"] == "ase (auto)"
+    assert results["type_first"] == "X"
+    assert results["type_none"] == "ase (auto)"
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

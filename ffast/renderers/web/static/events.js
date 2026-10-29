@@ -78,6 +78,8 @@ export const IN = Object.freeze({
   METRIC_CATALOG: 'METRIC_CATALOG',
   METRICS_UPDATED: 'METRICS_UPDATED',
   TAB_LAYOUT: 'TAB_LAYOUT',
+  // The dataset and model loaders the server has, on connect (web parity plan 2026-10-29).
+  LOADER_TYPES: 'LOADER_TYPES',
   SUBSET_EXPORTED: 'SUBSET_EXPORTED',
   // Outcome of CREATE_SUBSET: {ok, text, error} ("C in 812 of 1000 frames").
   SUBSET_EXTRACTED: 'SUBSET_EXTRACTED',

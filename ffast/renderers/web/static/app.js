@@ -1530,6 +1530,7 @@ export class FFastApp {
       conn.on(IN.REMOTE_MODEL_META,   (kw, args) => this._onModelMeta(args[0], kw));
       conn.on(IN.DATASET_DELETED,     (kw, args) => this._onDatasetDeleted(args[0]));
       conn.on(IN.MODEL_DELETED,       (kw, args) => this._onModelDeleted(args[0]));
+      conn.on(IN.LOADER_TYPES, (kw) => this._browser.setLoaderTypes(kw));
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
       conn.on(IN.TASK_PROGRESS, (kw, args) => { this._metricOps.onProgress(kw, args); console.debug('TASK_PROGRESS', kw); });
