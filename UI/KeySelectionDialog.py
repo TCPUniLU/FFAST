@@ -13,6 +13,12 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 
 
+# The first option of each combo: take the value the file's ASE calculator
+# holds (what ase.io reads as energy / forces) instead of a named key.
+_CALCULATOR_ENERGY = "<Use Energy>"
+_CALCULATOR_FORCE = "<Use Force>"
+
+
 class KeySelectionDialog(QDialog):
     """Dialog for selecting reference and prediction keys from ASE datasets."""
 
@@ -43,7 +49,7 @@ class KeySelectionDialog(QDialog):
         ref_layout.addWidget(QLabel("<b>Reference Data (Ground Truth):</b>"))
 
         # Energy key selection
-        energy_options = ["<Use ASE Calculator>"] + (
+        energy_options = [_CALCULATOR_ENERGY] + (
             self.energy_keys if self.energy_keys else []
         )
         self.energy_ref_combo = QComboBox()
@@ -57,7 +63,7 @@ class KeySelectionDialog(QDialog):
         ref_layout.addWidget(self.energy_ref_combo)
 
         # Force key selection
-        force_options = ["<Use ASE Calculator>"] + (
+        force_options = [_CALCULATOR_FORCE] + (
             self.force_keys if self.force_keys else []
         )
         self.force_ref_combo = QComboBox()
@@ -113,14 +119,14 @@ class KeySelectionDialog(QDialog):
         row_layout = QHBoxLayout()
 
         # Energy combo box
-        energy_options = ["<Use ASE Calculator>"] + (
+        energy_options = [_CALCULATOR_ENERGY] + (
             self.energy_keys if self.energy_keys else []
         )
         energy_combo = QComboBox()
         energy_combo.addItems(energy_options)
 
         # Force combo box
-        force_options = ["<Use ASE Calculator>"] + (
+        force_options = [_CALCULATOR_FORCE] + (
             self.force_keys if self.force_keys else []
         )
         force_combo = QComboBox()
@@ -240,13 +246,13 @@ class KeySelectionDialog(QDialog):
         """
         # Get reference selections
         selected_energy = self.energy_ref_combo.currentText()
-        if selected_energy == "<Use ASE Calculator>":
+        if selected_energy == _CALCULATOR_ENERGY:
             selected_energy = ""
         elif selected_energy == "" or not self.energy_keys:
             selected_energy = None
 
         selected_force = self.force_ref_combo.currentText()
-        if selected_force == "<Use ASE Calculator>":
+        if selected_force == _CALCULATOR_FORCE:
             selected_force = ""
         elif selected_force == "" or not self.force_keys:
             selected_force = None
@@ -255,11 +261,11 @@ class KeySelectionDialog(QDialog):
         predictions = []
         for energy_combo, force_combo, name_edit, row_layout, remove_button in self.pred_rows:
             selected_pred_energy = energy_combo.currentText()
-            if selected_pred_energy == "<Use ASE Calculator>":
+            if selected_pred_energy == _CALCULATOR_ENERGY:
                 selected_pred_energy = ""
 
             selected_pred_force = force_combo.currentText()
-            if selected_pred_force == "<Use ASE Calculator>":
+            if selected_pred_force == _CALCULATOR_FORCE:
                 selected_pred_force = ""
 
             model_name = name_edit.text() or "Model"
