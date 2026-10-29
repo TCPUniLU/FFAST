@@ -11,7 +11,11 @@ class CameraState(BaseModel):
     center: tuple[float, float, float] = (0.0, 0.0, 0.0)
     distance: float = 10.0
     azimuth: float = 0.0
-    elevation: float = 30.0
+    elevation: float = 0.0
+    # Degrees about the view direction; a positive roll turns the picture
+    # clockwise (camera_angles.js holds the convention). Missing means 0, so a
+    # camera saved before free rotation still loads.
+    roll: float = 0.0
     fov: float = 60.0
     projection: Literal["perspective", "orthographic"] = "perspective"
 

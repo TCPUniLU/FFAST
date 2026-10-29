@@ -45,8 +45,8 @@ sgdml = ["sgdml"]
 # manually per the vendor's own instructions if needed.
 # playwright drives the browser-client runtime tests. Without it declared,
 # `pip install -e ".[dev]"` produced an environment that could not even
-# collect the suite.
-dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "playwright>=1.40", "pillow>=10.0"]
+# collect the suite. pytest-xdist runs the tests in parallel (`addopts` below).
+dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "pytest-xdist>=3.0", "playwright>=1.40", "pillow>=10.0"]
 zstd = ["zstandard>=0.21"]
 
 [project.scripts]
@@ -88,7 +88,7 @@ namespaces = true
 
 [tool.setuptools.package-data]
 config = ["default.json"]
-"ffast.config" = ["*.toml", "builtin_tabs/*.toml"]
+"ffast.config" = ["*.toml", "builtin_tabs/*.toml", "default.json"]
 # Vendored web client assets (ADR 0045): HTML/JS/CSS + vendored Three.js and
 # Plotly under static/. These must ship in the wheel or `ffast` (the web
 # launcher) serves a dead page. The recursive `static/**/*` glob covers the
@@ -107,6 +107,9 @@ line-length = 79
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Six parallel processes (pytest-xdist): the browser tests take about 3 minutes
+# instead of 9; more workers measured no faster. `-n 0` runs in one process.
+addopts = "-n 6"
 markers = [
     "integration: end-to-end tests that spawn a real subprocess — ffast-server, or the headless example (deselect with '-m \"not integration\"')",
 ]

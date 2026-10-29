@@ -1,3 +1,4 @@
+from ffast.loaders.dataset import framesShaped
 from ffast.loaders.model import ModelLoader
 import numpy as np
 
@@ -12,17 +13,10 @@ class ZeroModelLoader(ModelLoader):
         self.name = "Zero Model"
 
     def predict(self, dataset, indices=None, batchSize=50, taskID=None):
-        R = dataset.getCoordinates()
-
-        # Handle variable-sized datasets (R is list of arrays)
-        if isinstance(R, list):
-            n_molecules = len(R)
-            energies = np.zeros(n_molecules)
-            forces = [np.zeros_like(r) for r in R]
-            return energies, forces
-
-        # Handle uniform datasets (R is numpy array)
-        return np.zeros(R.shape[0]), np.zeros_like(R)
+        # Zeros in the shape cached predictions keep (ADR 0058 step 6).
+        offsets = dataset.getOffsets()
+        forces = framesShaped(np.zeros((int(offsets[-1]), 3)), offsets, dataset.isVariable)
+        return np.zeros(len(offsets) - 1), forces
 
     def getFingerprint(self):
         return self.fingerprint

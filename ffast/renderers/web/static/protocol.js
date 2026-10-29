@@ -18,6 +18,7 @@
  * @property {number} distance
  * @property {number} azimuth
  * @property {number} elevation
+ * @property {number} [roll] degrees about the view direction (camera_angles.js); missing is 0
  * @property {number} fov
  * @property {'perspective'|'orthographic'} projection
  */
@@ -72,6 +73,7 @@
 /**
  * Renderer-neutral description of one Visualization View's scene.
  * @typedef {Object} RenderScene
+ * @property {boolean} only_forces
  * @property {string} view_id
  * @property {number} version
  * @property {AtomScene|null} atoms
@@ -81,6 +83,7 @@
  * @property {UnitCellScene|null} unit_cell
  * @property {SelectionOverlay[]} selections
  * @property {CameraState} camera
+ * @property {number} frame_index
  */
 
 /**
@@ -172,13 +175,14 @@
 
 /**
  * One metric in the METRIC_CATALOG message (ffast/protocol/messages.py
- * `MetricCatalogEntry`) — filtered to `shape` in `("N_atoms","N_elements")`
+ * `MetricCatalogEntry`) — filtered to `COLORABLE_SHAPES` (start_settings.js)
  * for atom-colorable metrics (ADR 0016).
  * @typedef {Object} MetricCatalogEntry
  * @property {string} id
  * @property {string} [label]
  * @property {string} shape
  * @property {string} [unit]
+ * @property {string[]} [inputs] the refs it reads: raw inputs or metric ids
  * @property {Object<string, MetricCatalogParameter>} [parameters]
  */
 
@@ -186,6 +190,13 @@
  * METRIC_CATALOG kwargs (ffast/protocol/messages.py `MetricCatalog`).
  * @typedef {Object} MetricCatalogKwargs
  * @property {MetricCatalogEntry[]} metrics
+ */
+
+/**
+ * METRIC_USERS kwargs: who uses each metric, for the Metrics pane's "Used by"
+ * (ADR 0062). Only metrics with a user are listed.
+ * @typedef {Object} MetricUsersKwargs
+ * @property {Object<string, string[]>} users  metric id → "tab Basic, panel MAE", …
  */
 
 /**
@@ -199,7 +210,7 @@
  */
 
 /**
- * METRIC_RESULT: `args = [key, metric_id]`, kwargs = this
+ * METRIC_RESULT: `args = [request_id, metric_id]`, kwargs = this
  * (ffast/protocol/messages.py `MetricResultMessage`). `ok:false` means the
  * server can't compute it (a client-only model); `values` is absent then.
  * @typedef {Object} MetricResultKwargs
@@ -216,7 +227,7 @@
  * `ffast/config/tabs.py` `build_tab_layout` — every metric role is a *concrete
  * metric id* (or a list, for the overlay `series` role), not an authoring ref.
  * @typedef {Object} PanelLayout
- * @property {string} kind timeline|density|scatter|table|grouped_density|grouped_table|overlay_timeline
+ * @property {string} kind timeline|density|scatter|table|grouped_density|grouped_table|overlay_timeline|3d
  * @property {number} row
  * @property {number} col
  * @property {number} rowspan
@@ -243,6 +254,10 @@
  * @property {string|null} selector 'atomic' → the element-picker tab selector
  * @property {string[]} controls tab-level controls ('energy_shift', …)
  * @property {PanelLayout[]} panels
+ * @property {number|null} grid columns of the fine grid (ADR 0069): col/colspan count them,
+ *   row/rowspan count 50 px units; null = the old form below
+ * @property {number[]|null} column_widths old form: one per column, 1 = 400 px (ADR 0056)
+ * @property {number[]|null} row_heights old form: one per row, 1 = 300 px
  */
 
 /**

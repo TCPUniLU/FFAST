@@ -93,11 +93,18 @@ class VisualizationView:
         # Scientific (undoable) commands.
         return self._apply_scientific(command)
 
-    def snapshot(self, get_dataset=None, get_prediction=None, get_forces=None, executor=None) -> "SceneSnapshot":
+    def snapshot(
+        self, get_dataset=None, get_prediction=None, get_forces=None,
+        executor=None, get_metric=None, prediction_fields=None,
+    ) -> "SceneSnapshot":
         from ffast.visualization.scene import RenderScene, SceneSnapshot
         if get_dataset is not None:
             from ffast.visualization.scene_builder import build_scene
-            scene = build_scene(self._state, get_dataset, get_prediction, get_forces=get_forces, executor=executor)
+            scene = build_scene(
+                self._state, get_dataset, get_prediction,
+                get_forces=get_forces, executor=executor,
+                get_metric=get_metric, prediction_fields=prediction_fields,
+            )
         else:
             scene = RenderScene(
                 view_id=self._state.view_id,

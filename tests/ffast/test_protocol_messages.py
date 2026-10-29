@@ -13,17 +13,21 @@ from ffast.protocol import (
 
 
 # Representative payloads exactly as DatasetLoader.toMetaDict (uniform) and
-# VariableDatasetLoader.toMetaDict (variable) emit them — see
+# FlatDatasetLoader.toMetaDict (variable) emit them — see
 # datasetLoaders/loader.py:208 and :332.
 UNIFORM = {
     "name": "aspirin", "n": 100, "has_forces": True, "is_sub": False,
     "variable": False, "elements": [6, 1, 1, 8], "offsets": None,
     "path": "/data/aspirin.xyz", "source_type": "ASE",
+    "parent": None, "parent_frames": None, "active": True, "frozen": False,
+    "units": {"energy": "eV"},
 }
 VARIABLE = {
     "name": "mixed", "n": 50, "has_forces": False, "is_sub": True,
     "variable": True, "elements": [6, 1, 8], "offsets": [0, 2, 3],
     "path": "/data/mixed.xyz", "source_type": "Variable ASE",
+    "parent": "aspirinfp", "parent_frames": [4, 9], "active": False,
+    "frozen": True, "units": {},
 }
 
 
@@ -42,6 +46,7 @@ def test_model_fields_match_tometadict_keys():
     assert set(DatasetMeta.model_fields) == {
         "name", "n", "has_forces", "is_sub", "variable",
         "elements", "offsets", "path", "source_type",
+        "parent", "parent_frames", "active", "frozen", "units",
     }
 
 
@@ -172,7 +177,7 @@ def _sample_metric_result():
     from ffast.metrics.models import MetricResult
 
     return MetricResult(
-        metric_id="ffast.force_rmse", shape="per_structure", dtype="float64",
+        metric_id="ffast.force_difference[structure;length;rmse]", shape="per_structure", dtype="float64",
         unit="eV/Angstrom", compute_parameters={"order": 1},
         implementation_hash="impl-abc", checksum="chk-def",
         values=np.array([1.0, 2.0, 3.0]),
@@ -187,7 +192,7 @@ def test_metric_result_ok_wire_shape_and_roundtrip():
     event, args, kw = unpack(pack_metric_result("k1", r.metric_id, True, r))
 
     assert event == "METRIC_RESULT"
-    assert args == ["k1", "ffast.force_rmse"]
+    assert args == ["k1", "ffast.force_difference[structure;length;rmse]"]
     # exact key set — metadata + encoded array, no extra/None keys (parity with
     # the pre-typing hand-rolled payload)
     assert set(kw) == {
@@ -225,9 +230,22 @@ def test_metric_result_extra_key_rejected():
 
 def test_metric_result_fields_match_metricresult():
     # Drift guard: the message's metadata fields are exactly MetricResult's
-    # fields plus the transport-only `ok` flag.
+    # fields plus the transport-only `ok` flag and `error` (why a failed
+    # metric failed, ADR 0066).
     from ffast.metrics.models import MetricResult
 
     assert set(MetricResultMessage.model_fields) == set(
         MetricResult.model_fields
-    ) | {"ok"}
+    ) | {"ok", "error"}
+
+
+def test_catalog_entries_list_the_refs_each_metric_reads():
+    # Colour by decides whether a metric needs a prediction from these.
+    import ffast.metrics.builtin  # noqa: F401 — register built-ins
+    from ffast.metrics.catalog import build_metric_catalog
+    from ffast.metrics.registry import _default_registry
+
+    by_id = {e["id"]: e for e in build_metric_catalog(_default_registry)}
+    assert by_id["ffast.force_difference"]["inputs"] == ["prediction.forces", "reference.forces"]
+    assert by_id["ffast.force_reference"]["inputs"] == ["reference.forces"]
+    assert by_id["ffast.force_net_residual"]["inputs"] == ["ffast.force_difference"]

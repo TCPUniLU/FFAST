@@ -6,9 +6,11 @@
  * The image is produced entirely in the browser from the WebGL canvas
  * (renderer.capturePng → toDataURL); the near-black→alpha keying the vispy
  * path used is unnecessary here (a real alpha buffer, ADR 0045 issue 19).
+ * The pane shows one view's `export` settings (`show`) and writes into them.
  */
 
 import { createPane, colorRow, buttonRow } from '../sidebar.js';
+import { defaultSettings } from '../view_settings.js';
 
 /**
  * @param {HTMLElement} sidebarEl
@@ -21,7 +23,8 @@ export function createExportPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Export');
   sidebarEl.appendChild(el);
 
-  const bg = colorRow(body, 'Background', '#000000', () => {});
+  let state = defaultSettings().export;   // the shown view's settings
+  const bg = colorRow(body, 'Background', '#000000', (hex) => { state.background = hex; });
 
   buttonRow(body, '', 'Export PNG (opaque)', () => {
     callbacks.onExport({ transparent: false, background: bg.value });
@@ -35,7 +38,15 @@ export function createExportPane(sidebarEl, callbacks) {
     /** Reflect the live viewport background into the picker (keeps parity with
      * the Camera pane's background control). */
     setBackground(hex) {
-      if (hex) bg.value = hex;
+      if (!hex) return;
+      bg.value = hex;
+      state.background = hex;
+    },
+
+    /** Show a view's `export` settings; later changes are written into them. */
+    show(settings) {
+      state = settings;
+      bg.value = settings.background;
     },
   };
 }

@@ -67,10 +67,18 @@ class DatasetRegistry:
         self._events.eventPush("DATASET_LOADED", dataset.fingerprint)
 
     def delete(self, key):
-        """Remove a dataset and invalidate every cached artifact derived from it."""
+        """Remove a dataset and invalidate every cached artifact derived from it.
+
+        Everything cut from it (subsets, frozen subsets, atom subsets, hidden
+        or not) reads its frames through it, so it goes first, each announced
+        as deleted on its own (CONTEXT.md, Dataset)."""
         dataset = self.get(key)
         if dataset is None:
             return
+
+        for child in [fp for fp, ds in self._datasets.items()
+                      if getattr(ds, "parent", None) is dataset]:
+            self.delete(child)
 
         # Prune every cached artifact derived from this dataset. matches_dataset
         # holds regardless of the identity token's "__" count, so params /

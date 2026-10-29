@@ -5,6 +5,8 @@ compiler, the strict loader readers, prediction-side declared-key discovery, the
 InputResolver branches, and the TOML config model. Isolated registries keep the
 global default_registry clean (mirrors test_transform_compiler.py).
 """
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 from ase import Atoms
@@ -211,7 +213,9 @@ def test_resolver_reference_fields():
     from ffast.metrics.input_resolver import InputResolver
     r = InputResolver(_FakeEnv())
     ds, m = _FakeDS(), _FakeModel()
-    assert r.resolve("reference.atoms.charges", model=m, dataset=ds).shape == (2, 2)
+    # Flat on every kind (ADR 0058 step 6): one value per atom, frame after frame.
+    np.testing.assert_allclose(r.resolve("reference.atoms.charges", model=m, dataset=ds),
+                               [0.1, -0.1, 0.2, -0.2])
     np.testing.assert_allclose(r.resolve("reference.info.temperature", model=m, dataset=ds), [300.0, 310.0])
     assert r.resolve("reference.atoms.nope", model=m, dataset=ds) is None
 
@@ -221,7 +225,7 @@ def test_resolver_prediction_field():
     env = _FakeEnv({("m1", "ds1"): {"atoms": {"q": np.array([[1.0, 2.0], [3.0, 4.0]])}, "info": {}}})
     r = InputResolver(env)
     ds, m = _FakeDS(), _FakeModel()
-    assert r.resolve("prediction.atoms.q", model=m, dataset=ds).shape == (2, 2)
+    np.testing.assert_allclose(r.resolve("prediction.atoms.q", model=m, dataset=ds), [1.0, 2.0, 3.0, 4.0])
     assert r.resolve("prediction.atoms.absent", model=m, dataset=ds) is None
     assert r.resolve("prediction.info.t", model=m, dataset=ds) is None  # empty store kind
 
@@ -237,7 +241,50 @@ def test_resolver_prediction_field_walks_to_parent():
 
     r = InputResolver(env)
     out = r.resolve("prediction.atoms.q", model=_FakeModel(), dataset=_Sub())
-    np.testing.assert_allclose(out, [[5.0], [6.0]])
+    np.testing.assert_allclose(out, [5.0, 6.0])
+
+
+def test_resolver_prediction_fields_follow_nested_dataset_view_order():
+    from ffast.loaders.ase import aseDatasetLoader
+    from ffast.loaders.dataset import DatasetView
+    from ffast.metrics.input_resolver import InputResolver
+    from ffast.visualization.color_values import _resolve_symbolic_ref
+
+    frames = [Atoms("H3", positions=np.zeros((3, 3))) for _ in range(3)]
+    root = aseDatasetLoader("memory.extxyz", atomsList=frames)
+    root.initialise()
+    frame_view = DatasetView(root, frames=np.array([2, 0]), subName="frames")
+    frame_view.initialise()
+    view = DatasetView(
+        frame_view, frames=np.array([0]), atoms=np.array([2, 0, 1]),
+    )
+    view.initialise()
+
+    fields = {("m1", root.fingerprint): {
+        "atoms": {"q": np.arange(9, dtype=float)},
+        "info": {"t": np.array([100., 200., 300.])},
+    }}
+    resolver = InputResolver(_FakeEnv(fields))
+
+    np.testing.assert_allclose(
+        resolver.resolve(
+            "prediction.atoms.q", model=_FakeModel(), dataset=view,
+        ),
+        [8., 6., 7.],
+    )
+    np.testing.assert_allclose(
+        resolver.resolve(
+            "prediction.info.t", model=_FakeModel(), dataset=view,
+        ),
+        [300.],
+    )
+    frame = _resolve_symbolic_ref(
+        "prediction.atoms.q", view, 0, view.getCoordinates(0),
+        view.getElements(0), None,
+        SimpleNamespace(dataset_ref=view.fingerprint),
+        "m1", fields,
+    )
+    np.testing.assert_allclose(frame, [8., 6., 7.])
 
 
 def test_metric_needs_prediction_counts_prediction_fields():

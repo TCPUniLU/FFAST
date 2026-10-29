@@ -4,7 +4,8 @@ Use via:
     from ffast.metrics import inputs as I
     @metric(..., inputs={"reference": I.reference_forces, ...})
 
-offsets is declared via optional_inputs=["offsets"], not inputs.
+A Python metric declares offsets via optional_inputs=["offsets"]; a formula
+that groups by structure (ADR 0064) names it as a required input.
 
 Beyond the closed set below, a metric may reference an arbitrary **Dataset
 Field** by key-in-the-ref (ADR 0023): ``{reference,prediction}.{info,atoms}.<key>``
@@ -13,6 +14,36 @@ validated by pattern rather than frozenset membership — see ``is_valid_ref``.
 """
 
 import re
+from dataclasses import dataclass
+
+from ffast.metrics import dims
+
+
+@dataclass(frozen=True)
+class RawInput:
+    """Canonical formula-facing metadata for one fixed raw metric input."""
+
+    ref: str
+    shape: tuple
+    label: str
+    variable: str
+    side: str
+
+
+RAW_INPUTS = (
+    RawInput("reference.energies", (dims.N_frames,), "Energy", "E",
+             "reference"),
+    RawInput("reference.forces", (dims.N_atoms, dims.xyz), "Forces", "F",
+             "reference"),
+    RawInput("reference.positions", (dims.N_atoms, dims.xyz), "Positions", "R",
+             "reference"),
+    RawInput("reference.masses", (dims.N_atoms,), "Masses", "m", "reference"),
+    RawInput("prediction.energies", (dims.N_frames,), "Energy", "E",
+             "prediction"),
+    RawInput("prediction.forces", (dims.N_atoms, dims.xyz), "Forces", "F",
+             "prediction"),
+)
+RAW_INPUT_BY_REF = {item.ref: item for item in RAW_INPUTS}
 
 reference_energies  = "reference.energies"
 reference_forces    = "reference.forces"
@@ -33,6 +64,10 @@ selection_indices   = "selection.indices"
 # count-per-structure for uniform).
 n_atoms = "n_atoms"
 
+# Where each structure's atoms start (ADR 0058 step 6); a formula that groups
+# by structure gets it without naming it (ADR 0064 section 6).
+offsets = "offsets"
+
 ALL_VALID_REFS: frozenset = frozenset({
     reference_energies,
     reference_forces,
@@ -45,6 +80,7 @@ ALL_VALID_REFS: frozenset = frozenset({
     prediction_stress,
     selection_indices,
     n_atoms,
+    offsets,
 })
 
 # Dataset Field refs (ADR 0023): {reference,prediction}.{info,atoms}.<key>.

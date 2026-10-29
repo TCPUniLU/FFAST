@@ -2,6 +2,7 @@
  * WebSocket connection with HELLO handshake.
  */
 import { OUT } from './events.js';
+import { traceTo } from './trace.js';
 
 
 import { msgpack } from './msgpack.js';
@@ -14,6 +15,10 @@ export class FFastConnection {
     this._ws = null;
     this._handlers = new Map();
     this.role = 'READ_ONLY';
+    /** The server's code fingerprint from HELLO_ACK; null from an older server. */
+    this.serverCodeFingerprint = null;
+    /** Whether the server writes a trace this page should report to. */
+    this.trace = false;
   }
 
   connect() {
@@ -41,6 +46,7 @@ export class FFastConnection {
           // process any messages that arrived during handshake
           for (const data of buf) this._dispatch(data);
           buf.length = 0;
+          if (this.trace) traceTo(this);
           resolve(this.role);
         } catch (e) {
           reject(e);
@@ -80,6 +86,8 @@ export class FFastConnection {
       );
       const ack = msgpack.decode(ackData)?.kwargs || {};
       role = ack.role || 'READ_ONLY';
+      this.serverCodeFingerprint = ack.code_fingerprint || null;
+      this.trace = !!ack.trace;
     } catch (_) {
       console.warn('FFAST: no HELLO_ACK received — using READ_ONLY (backward compat)');
     }
@@ -100,15 +108,17 @@ export class FFastConnection {
   }
 
   _dispatch(data) {
+    let event = '?';
     try {
       const msg = data instanceof ArrayBuffer
         ? msgpack.decode(data)
         : null;
       if (!msg || !msg.event) return;
+      event = msg.event;
       const h = this._handlers.get(msg.event);
       if (h) h(msg.kwargs || {}, msg.args || []);
     } catch (e) {
-      console.warn('FFAST: dispatch error', e);
+      console.warn(`FFAST: dispatch error in the ${event} handler`, e);
     }
   }
 
@@ -121,6 +131,7 @@ export class FFastConnection {
   off(event)           { this._handlers.delete(event); }
 
   close() {
+    if (this.trace) traceTo(null);
     this.send(OUT.GRACEFUL_DISCONNECT, {});
     this._ws?.close();
   }

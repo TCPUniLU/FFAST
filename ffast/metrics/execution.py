@@ -41,7 +41,7 @@ import numpy as np
 
 from ffast.metrics.cache import MetricCache, function_hash
 from ffast.metrics.dims import shape_to_str
-from ffast.metrics.models import MetricFailure, MetricResult
+from ffast.metrics.models import MetricFailure, MetricResult, WithWarnings
 
 
 # ── Input bindings ──────────────────────────────────────────────────────────
@@ -160,6 +160,8 @@ def build_execution_plan(
     steps: list[PlanStep] = []
     seen: set[str] = set()
     visiting: set[str] = set()
+    # A box id (ADR 0065) is registered the first time it is asked for.
+    ensure = getattr(registry, "ensure", registry.has)
 
     def visit(metric_id: str) -> None:
         if metric_id in visiting:
@@ -168,13 +170,14 @@ def build_execution_plan(
             return
         visiting.add(metric_id)
         seen.add(metric_id)
+        ensure(metric_id)
         schema, _ = registry.get(metric_id)
 
         bindings: dict[str, Binding] = {}
         failure: str | None = None
 
         for local_key, ref in schema.inputs.items():
-            if registry.has(ref):
+            if ensure(ref):
                 visit(ref)  # dependency first → post-order gives a valid run order
                 bindings[local_key] = DepInput(ref)
                 continue
@@ -258,6 +261,7 @@ def run_plan(
 
         # Assemble kwargs from raw values + already-computed dependency outputs.
         kwargs: dict[str, Any] = {}
+        warnings: list[str] = []          # a dependency's warnings are passed on
         dep_failure: tuple[str, MetricFailure] | None = None
         for key, binding in step.bindings.items():
             if isinstance(binding, DepInput):
@@ -266,6 +270,7 @@ def run_plan(
                     dep_failure = (binding.metric_id, dep)
                     break
                 kwargs[key] = dep.values
+                warnings.extend(dep.warnings)
             else:
                 kwargs[key] = binding.value
 
@@ -289,6 +294,9 @@ def run_plan(
             results[metric_id] = raw
             continue
 
+        if isinstance(raw, WithWarnings):
+            warnings.extend(raw.warnings)
+            raw = raw.values
         arr = np.asarray(raw)
         checksum = hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()
         result = MetricResult(
@@ -300,6 +308,7 @@ def run_plan(
             implementation_hash=function_hash(fn),
             checksum=checksum,
             values=arr,
+            warnings=list(dict.fromkeys(warnings)),
         )
         cache.put(cache_key, result)
         results[metric_id] = result

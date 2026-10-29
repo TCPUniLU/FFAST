@@ -1,4 +1,4 @@
-from ffast.loaders.model import ModelLoader
+from ffast.loaders.model import ModelLoader, uniformFrames
 import torch
 import numpy as np
 
@@ -128,12 +128,10 @@ class SpookyNetModelLoader(ModelLoader):
         return fp
 
     def predict(self, dataset, indices=None, batchSize=50, taskID=None):
-        R = dataset.getCoordinates()
-        if indices is not None:
-            R = R[indices]
+        R, z = uniformFrames(dataset, indices)
 
         batcher = SpookyNetBatcher(
-            R, dataset.getElements(), batchSize=batchSize, cutoff=self.cutoff
+            R, z, batchSize=batchSize, cutoff=self.cutoff
         )
 
         E, F, i = [], [], 0

@@ -319,6 +319,9 @@ class TestPredictionForces:
     """Covers the wiring that was missing before predictions reached the web
     renderer: server._make_get_prediction → build_scene → ForceScene."""
 
+    # raw forces, scaled by length / 500 == 1, so the vectors read as the data
+    _UNSCALED = {"ffast.force_arrows": {"normalised": False, "length_factor": 500}}
+
     def _get_prediction(self, env):
         import asyncio
         from ffast.session.server_session import ServerSession
@@ -348,7 +351,7 @@ class TestPredictionForces:
         # Force arrows require explicit opt-in via the "forces" feature flag.
         state = VisualizationState(
             view_id="v1", dataset_ref=env.DS_FP, prediction_ref=env.MODEL_FP,
-            enabled_features=["forces"],
+            enabled_features=["forces"], parameters=self._UNSCALED,
         )
         scene = build_scene(state, env.getDataset, self._get_prediction(env))
         assert scene.forces is not None
@@ -379,10 +382,34 @@ class TestPredictionForces:
         state = VisualizationState(
             view_id="v1", dataset_ref=env.DS_FP,
             prediction_ref=env.MODEL_FP, structure_index=2,
-            enabled_features=["forces"],
+            enabled_features=["forces"], parameters=self._UNSCALED,
         )
         scene = build_scene(state, env.getDataset, self._get_prediction(env))
         assert scene.forces.vectors[0] == pytest.approx([0.3, 0.3, 0.3])
+
+    def _force_arrows(self, params, structure_index):
+        env = _FakeEnvWithPrediction()
+        state = VisualizationState(
+            view_id="v1", dataset_ref=env.DS_FP,
+            prediction_ref=env.MODEL_FP, structure_index=structure_index,
+            enabled_features=["forces"],
+            parameters={"ffast.force_arrows": params},
+        )
+        scene = build_scene(state, env.getDataset, self._get_prediction(env))
+        return scene.forces
+
+    def test_a_frame_keeps_its_own_picks_on_a_variable_dataset(self):
+        # to_fix_v2: the picks are per frame, so frame 2 shows its one pick
+        params = {"filter_enabled": True, "atom_indices_by_frame": {"2": [1]}}
+        assert len(self._force_arrows(params, structure_index=2).vectors) == 1
+        # frame 0 has no picks: every atom keeps its arrow
+        assert len(self._force_arrows(params, structure_index=0).vectors) == 4
+
+    def test_a_filter_with_no_picks_shows_every_arrow(self):
+        assert len(self._force_arrows({"filter_enabled": True, "atom_indices": []}, 0).vectors) == 4
+
+    def test_a_shared_filter_still_keeps_its_picked_atoms(self):
+        assert len(self._force_arrows({"filter_enabled": True, "atom_indices": [0, 3]}, 0).vectors) == 2
 
     def test_snapshot_carries_forces_like_open_view(self):
         # Mirrors _handle_open_view: view.snapshot(get_dataset, get_prediction).
@@ -540,6 +567,20 @@ class TestBuildSceneAtomAlign:
         )
         scene = build_scene(state, get_dataset=lambda fp: ds)
         # invalid selection → untransformed frame 1 (atom 0 at x = 0.1)
+        assert scene.atoms.positions[0] == pytest.approx([0.1, 0.0, 0.0], abs=1e-9)
+
+    @pytest.mark.parametrize("feature", ["atom_align", "kabsch_align"])
+    def test_alignment_is_off_on_a_variable_dataset(self, feature):
+        # Same atom count in every frame here, but a variable dataset gives no
+        # promise the atoms match, so the frame is drawn as stored.
+        class _VariableDs(_FakeDataset):
+            isVariable = True
+        state = VisualizationState(
+            view_id="v1", dataset_ref="fp", structure_index=1,
+            enabled_features=[feature],
+            parameters={"ffast.atom_align": {"atom_indices": [0, 1, 2], "reference_frame": 0}},
+        )
+        scene = build_scene(state, get_dataset=lambda fp: _VariableDs())
         assert scene.atoms.positions[0] == pytest.approx([0.1, 0.0, 0.0], abs=1e-9)
 
 
@@ -737,6 +778,12 @@ class _FakeColorDataset(_FakeDataset):
     def getCoordinates(self, indices=None):
         return self._R if indices is None else self._R[indices]
 
+    def getAllCoordinates(self):
+        return self._R.reshape(-1, 3)
+
+    def getOffsets(self):
+        return np.arange(len(self._R) + 1) * self._R.shape[1]
+
     def getForces(self, indices=None):
         # reference forces, distinct per frame
         F = np.stack([
@@ -748,6 +795,9 @@ class _FakeColorDataset(_FakeDataset):
 
     def getElementsName(self):
         return ["C", "H", "H", "H"]
+
+    def getAllElements(self):
+        return np.tile(self._z, 3)
 
 
 class _Pred:
@@ -794,6 +844,21 @@ class TestBuildSceneColorBy:
         assert scene.atoms.color_by.vmin == 0.0
         assert scene.atoms.color_by.vmax == 10.0
 
+    def test_a_cleared_limit_is_automatic_again(self, ds):
+        auto = build_scene(VisualizationState(
+            view_id="v1", dataset_ref="fp",
+            parameters={"ffast.atom_color": {"source": "displacement"}},
+        ), get_dataset=lambda fp: ds).atoms.color_by
+        state = VisualizationState(
+            view_id="v1", dataset_ref="fp",
+            parameters={"ffast.atom_color": {
+                "source": "displacement", "vmin": None, "vmax": 10.0,
+            }},
+        )
+        scene = build_scene(state, get_dataset=lambda fp: ds)
+        assert scene.atoms.color_by.vmin == auto.vmin
+        assert scene.atoms.color_by.vmax == 10.0
+
     def test_metric_source_force_mae(self, ds):
         from ffast.metrics.executor import InProcessExecutor
         from ffast.metrics.registry import default_registry
@@ -801,7 +866,7 @@ class TestBuildSceneColorBy:
         pred = np.stack([np.full((4, 3), 0.5)] * 3)  # predicted forces
         state = VisualizationState(
             view_id="v1", dataset_ref="DS", prediction_ref="M", structure_index=1,
-            parameters={"ffast.atom_color": {"source": "metric:ffast.force_mae"}},
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[atom+structure;length]"}},
         )
         scene = build_scene(
             state, get_dataset=lambda fp: ds,
@@ -809,18 +874,85 @@ class TestBuildSceneColorBy:
             executor=InProcessExecutor(default_registry),
         )
         assert scene.atoms.color_by is not None
-        assert scene.atoms.color_by.label == "Force Error (per atom)"  # metric display name
+        assert scene.atoms.color_by.label == "Force Difference · per atom · length"  # metric display name
         assert len(scene.atoms.color_by.values) == 4
+
+    def _whole(self, values, calls=None):
+        """A get_metric giving ``values`` as the metric over the whole dataset."""
+        from types import SimpleNamespace
+
+        def get_metric(metric_id, params, dataset_ref, prediction_ref):
+            if calls is not None:
+                calls.append((metric_id, params, dataset_ref, prediction_ref))
+            return None if values is None else SimpleNamespace(values=np.asarray(values))
+        return get_metric
+
+    def test_a_metric_over_the_whole_dataset_colours_this_frame_on_every_frame_s_range(self, ds):
+        calls = []
+        state = VisualizationState(
+            view_id="v1", dataset_ref="DS", prediction_ref="M", structure_index=1,
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[atom+structure;length]",
+                                             "colormap": "viridis"}},
+        )
+        scene = build_scene(state, get_dataset=lambda fp: ds,
+                            get_metric=self._whole(np.arange(12.0), calls))
+        cb = scene.atoms.color_by
+        assert list(cb.values) == [4.0, 5.0, 6.0, 7.0]      # frame 1 of 3, 4 atoms each
+        assert (cb.vmin, cb.vmax) == (0.0, 11.0)             # every frame
+        assert cb.label == "Force Difference · per atom · length"
+        # Only the metric's own parameters: the plots' stored result is reused.
+        assert calls == [("ffast.force_difference[atom+structure;length]", {}, "DS", "M")]
+
+    def test_a_per_element_metric_over_the_whole_dataset_is_not_this_frame(self, ds):
+        state = VisualizationState(
+            view_id="v1", dataset_ref="DS", prediction_ref="M",
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[element;component;mae]"}},
+        )
+        # Elements in sorted order: H (1), then C (6).
+        scene = build_scene(state, get_dataset=lambda fp: ds,
+                            get_metric=self._whole([0.3, 0.9]))
+        cb = scene.atoms.color_by
+        assert list(cb.values) == [0.9, 0.3, 0.3, 0.3]       # C H H H
+        assert (cb.vmin, cb.vmax) == (0.3, 0.9)
+        assert cb.label == "Force Difference · MAE · per element · per component"
+
+    def test_a_typed_limit_wins_over_the_whole_dataset_range(self, ds):
+        state = VisualizationState(
+            view_id="v1", dataset_ref="DS", prediction_ref="M",
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[atom+structure;length]", "vmax": 2.0}},
+        )
+        cb = build_scene(state, get_dataset=lambda fp: ds,
+                         get_metric=self._whole(np.arange(12.0))).atoms.color_by
+        assert (cb.vmin, cb.vmax) == (0.0, 2.0)
+
+    def test_without_the_whole_dataset_a_per_element_setting_is_not_coloured(self, ds):
+        # A by=element setting is a formula: over this frame alone it would
+        # mean something else, so it falls back to element colours (ADR 0064).
+        from ffast.metrics.executor import InProcessExecutor
+        from ffast.metrics.registry import default_registry
+
+        pred = np.stack([np.full((4, 3), 0.5)] * 3)
+        state = VisualizationState(
+            view_id="v1", dataset_ref="DS", prediction_ref="M", structure_index=2,
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[element;component;mae]"}},
+        )
+        cb = build_scene(
+            state, get_dataset=lambda fp: ds,
+            get_prediction=lambda dfp, mfp: _Pred(pred),
+            executor=InProcessExecutor(default_registry),
+            get_metric=self._whole(None),
+        ).atoms.color_by
+        assert cb is None
 
     def test_metric_source_falls_back_without_prediction(self, ds, caplog):
         # No prediction_ref → prediction.forces unresolvable → graceful None.
         state = VisualizationState(
             view_id="v1", dataset_ref="DS",
-            parameters={"ffast.atom_color": {"source": "metric:ffast.force_mae"}},
+            parameters={"ffast.atom_color": {"source": "metric:ffast.force_difference[atom+structure;length]"}},
         )
         scene = build_scene(state, get_dataset=lambda fp: ds)
         assert scene.atoms.color_by is None
-        assert "color source 'metric:ffast.force_mae' failed" not in caplog.text
+        assert "color source 'metric:ffast.force_difference[atom+structure;length]' failed" not in caplog.text
 
     def test_unknown_metric_falls_back(self, ds):
         state = VisualizationState(
@@ -970,6 +1102,24 @@ class TestForceSceneFilterRemap:
             params={"filter_enabled": True, "atom_indices": [0]},
         )
         assert scene is None
+
+
+class TestForceSceneDefaultScaling:
+    def test_no_arrow_parameters_still_scales_to_defaults(self):
+        """The first show of the arrows builds a scene before the client's
+        length settings arrive: the arrows must already be at default length,
+        not raw eV/Å drawn as Å (they flashed long, then shrank)."""
+        from ffast.visualization.scene_builder import _build_force_scene
+        scene = _build_force_scene(
+            positions=np.zeros((2, 3)),
+            forces=np.array([[8.0, 0, 0], [4.0, 0, 0]]),
+            keep=None,
+            old_to_new=None,
+            transforms=[],
+            params={},
+        )
+        # normalised by default: the largest force is length 10 / 5 == 2 Å
+        assert scene.vectors == [[2.0, 0.0, 0.0], [1.0, 0.0, 0.0]]
 
 
 class TestBuildSceneElementFilter:

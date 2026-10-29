@@ -14,10 +14,8 @@ import types
 import numpy as np
 
 from ffast.core.connection_manager import ConnectionManager
-from ffast.core.loading_coordinator import (
-    LoadingCoordinator,
-    _isUniformAtomsList,
-)
+from ffast.core.loading_coordinator import LoadingCoordinator
+from ffast.loaders.ase import isUniformAtomsList
 from ffast.protocol import control
 
 
@@ -210,6 +208,23 @@ def test_requestDatasetLoad_no_session_falls_back_to_local_task():
     )]
 
 
+def test_a_queued_load_that_raises_reports_the_error_and_still_fails():
+    env = _fake_env()
+    coord = LoadingCoordinator(env)
+
+    def boom(path, datasetType, taskID=None, **kw):
+        raise IndexError("no frames")
+
+    coord.loadDataset = boom
+    errors = []
+    coord.taskLoadDataset("/d.xyz", "ase (auto)", on_error=errors.append)
+
+    (task_args, task_kwargs), = env._calls["tasks"]
+    with pytest.raises(IndexError):
+        task_args[0](*task_kwargs["args"], **task_kwargs["kwargs"], taskID=1)
+    assert [str(e) for e in errors] == ["no frames"]
+
+
 def test_remoteSession_returns_none_without_loop():
     env = _fake_env()
     env.remote.serverConnection = _FakeSession()
@@ -381,14 +396,14 @@ class _LazyAtomsList:
 
 
 def test_isUniform_trivial_lists_are_uniform():
-    assert _isUniformAtomsList(_LazyAtomsList([])) is True
-    assert _isUniformAtomsList(_LazyAtomsList(["CH4"])) is True
+    assert isUniformAtomsList(_LazyAtomsList([])) is True
+    assert isUniformAtomsList(_LazyAtomsList(["CH4"])) is True
 
 
 def test_isUniform_two_frames_does_not_raise():
     """The replaced check sampled 3 random frames and raised below 3 frames."""
-    assert _isUniformAtomsList(_LazyAtomsList(["CH4", "CH4"])) is True
-    assert _isUniformAtomsList(_LazyAtomsList(["CH4", "NH3"])) is False
+    assert isUniformAtomsList(_LazyAtomsList(["CH4", "CH4"])) is True
+    assert isUniformAtomsList(_LazyAtomsList(["CH4", "NH3"])) is False
 
 
 def test_isUniform_same_atom_count_different_elements_is_variable():
@@ -397,18 +412,18 @@ def test_isUniform_same_atom_count_different_elements_is_variable():
     ``CH4`` and ``SiH4`` are both 5 atoms, so the replaced
     ``len(set(atom_counts)) == 1`` check accepted them into the uniform loader.
     """
-    assert _isUniformAtomsList(_LazyAtomsList(["CH4", "SiH4"])) is False
+    assert isUniformAtomsList(_LazyAtomsList(["CH4", "SiH4"])) is False
 
 
 def test_isUniform_samples_large_lists_without_full_materialisation():
     frames = _LazyAtomsList(["CH4"] * 5000)
-    assert _isUniformAtomsList(frames) is True
+    assert isUniformAtomsList(frames) is True
     assert frames.reads <= 61, "sampled check should not walk every frame"
 
 
 def test_isUniform_sample_always_includes_the_last_frame():
     frames = _LazyAtomsList(["CH4"] * 4999 + ["NH3"])
-    assert _isUniformAtomsList(frames) is False
+    assert isUniformAtomsList(frames) is False
 
 
 # ── shape validation ────────────────────────────────────────────────────────
@@ -421,6 +436,9 @@ class _FakeDataset:
 
     def getEnergies(self):
         return self._E
+
+    def getN(self):
+        return len(self._E)
 
     def getName(self):
         return self._name
@@ -594,6 +612,10 @@ class _StubPredictionLoader:
     def getAtomField(self, key, indices=None):
         return self._fields.get(("atoms", key))
 
+    def availableFieldKeys(self):
+        return (sorted(k for kind, k in self._fields if kind == "info"),
+                sorted(k for kind, k in self._fields if kind == "atoms"))
+
 
 def test_loadPredictionsFromKeys_now_extracts_adr0023_prediction_fields(monkeypatch):
     """In-file prediction columns used to skip ADR 0023 field extraction entirely.
@@ -636,6 +658,29 @@ def test_loadPredictionsFromKeys_now_extracts_adr0023_prediction_fields(monkeypa
     assert env.objects.registered[ghost_fp]["name"] == "my-model"
 
 
+def test_prediction_fields_no_metric_declares_are_extracted_too(monkeypatch):
+    """ADR 0061 decision 5: a metric saved later over a new prediction field must
+    find it, so every numeric scalar the file holds is kept at load."""
+    monkeypatch.setattr(
+        "ffast.metrics.fields.declared_field_keys",
+        lambda side, registry=None: {"info": set(), "atoms": set()},
+    )
+    loader = _StubPredictionLoader(
+        E=np.array([1.0, 2.0]), F=np.ones((2, 3, 3)),
+        fields={("info", "dipole"): np.array([0.1, 0.2]),
+                ("atoms", "charge"): np.zeros((2, 3))},
+    )
+    monkeypatch.setattr(LoadingCoordinator, "_aseLoaderFor", staticmethod(lambda *a, **k: loader))
+    env = _ingest_env()
+    coord = LoadingCoordinator(env)
+    coord._loadPredictionsFromKeys(
+        _FakeDataset(np.zeros((2,)), fingerprint="ds-fp"), "/data.xyz",
+        [("E_pred", "F_pred", "my-model")], atomsList=_LazyAtomsList(["CH4", "CH4"]),
+    )
+    [(_, store)] = env.data.predictionFields.items()
+    assert set(store["info"]) == {"dipole"} and set(store["atoms"]) == {"charge"}
+
+
 def test_loadPredictionsFromKeys_skips_a_mismatched_column_and_keeps_going():
     good = _StubPredictionLoader(np.array([1.0, 2.0]), np.ones((2, 3, 3)), {})
     bad = _StubPredictionLoader(np.array([1.0]), np.ones((1, 3, 3)), {})
@@ -666,7 +711,7 @@ import pytest
 
 ase = pytest.importorskip("ase")
 from ase import Atoms
-from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader
+from ffast.loaders.ase import aseDatasetLoader
 
 
 def _frame(symbols, *, energy, seed=0.0):
@@ -715,7 +760,7 @@ def test_aseLoaderFor_picks_uniform_for_identical_frames():
     frames = [_frame("CH4", energy=-1.0, seed=i) for i in range(4)]
     loader = LoadingCoordinator._aseLoaderFor(
         "mem.extxyz", frames, energy_key="ref_energy", force_key="ref_forces")
-    assert isinstance(loader, aseDatasetLoader)
+    assert loader.isVariable is False
     assert loader.getEnergies().shape == (4,)
 
 
@@ -723,7 +768,7 @@ def test_aseLoaderFor_picks_variable_for_differing_atom_counts():
     frames = [_frame("CH4", energy=-1.0), _frame("C2H6", energy=-2.0)]
     loader = LoadingCoordinator._aseLoaderFor(
         "mem.extxyz", frames, energy_key="ref_energy", force_key="ref_forces")
-    assert isinstance(loader, VariableASEDatasetLoader)
+    assert loader.isVariable is True
 
 
 def test_aseLoaderFor_picks_variable_for_same_count_different_elements():
@@ -736,7 +781,7 @@ def test_aseLoaderFor_picks_variable_for_same_count_different_elements():
     frames = [_frame("CH4", energy=-1.0), _frame("SiH4", energy=-2.0)]
     loader = LoadingCoordinator._aseLoaderFor(
         "mem.extxyz", frames, energy_key="ref_energy", force_key="ref_forces")
-    assert isinstance(loader, VariableASEDatasetLoader)
+    assert loader.isVariable is True
 
 
 def test_aseLoaderFor_handles_a_two_frame_file():
@@ -744,7 +789,7 @@ def test_aseLoaderFor_handles_a_two_frame_file():
     frames = [_frame("CH4", energy=-1.0, seed=i) for i in range(2)]
     loader = LoadingCoordinator._aseLoaderFor(
         "mem.extxyz", frames, energy_key="ref_energy", force_key="ref_forces")
-    assert isinstance(loader, aseDatasetLoader)
+    assert loader.isVariable is False
     assert loader.getEnergies().shape == (2,)
 
 
@@ -774,15 +819,15 @@ def test_loadPrepredictedDataset_uniform_file_end_to_end(tmp_path):
 def test_loadPrepredictedDataset_variable_file_end_to_end(tmp_path):
     """A variable-sized prediction file loads through the real variable loader.
 
-    Frames of differing composition, so ``_aseLoaderFor`` must route to
-    ``VariableASEDatasetLoader`` and its ``getForces()`` (a list of per-frame
-    arrays, unlike the uniform loader's stacked ndarray) must survive ingest.
+    Frames of differing composition, so the loader is variable and its
+    ``getForces()`` (a list of per-frame arrays, unlike a uniform dataset's
+    stacked ndarray) must survive ingest.
     """
     frames = [_frame("CH4", energy=-1.0), _frame("C2H6", energy=-2.0),
               _frame("CH4", energy=-3.0, seed=2.0)]
     path = _write(tmp_path, frames, name="var.extxyz")
 
-    reference = VariableASEDatasetLoader(
+    reference = aseDatasetLoader(
         path, atomsList=frames,
         selected_energy_key="ref_energy", selected_force_key="ref_forces")
     ds = _FakeDataset(reference.getEnergies())
@@ -804,12 +849,17 @@ def test_loadPrepredictedDataset_wrong_file_length_is_rejected(tmp_path):
     ds = _FakeDataset(np.zeros((10,)))          # dataset has 10 frames, file has 3
     env = _file_env(ds)
 
+    errors = []
     LoadingCoordinator(env).loadPrepredictedDataset(
         path, "ds-fp",
-        selected_energy_key="ref_energy", selected_force_key="ref_forces")
+        selected_energy_key="ref_energy", selected_force_key="ref_forces",
+        on_error=errors.append)
 
     assert env.data.stored == []
     assert env.objects.registered == {}
+    # The failure is logged and returned from, not raised; the caller still
+    # hears of it (the server tells the window that asked).
+    assert errors == ["it does not match the selected dataset"]
 
 
 # ── in-file prediction columns over a real file ─────────────────────────────

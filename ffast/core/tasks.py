@@ -26,7 +26,6 @@ class TaskManager(EventClass):
 
         self.runningTasks = {}
         self.taskQueue = queue.SimpleQueue()
-        self._loop = asyncio.get_event_loop()
 
         self.eventSubscribe("TASK_DONE", self.onTaskDone)
         self.eventSubscribe("QUIT_EVENT", self.quit, asynchronous=True)
@@ -171,8 +170,13 @@ class TaskManager(EventClass):
         except asyncio.CancelledError:
             pass  # Task cancellation should not be logged as an error.
 
-        except Exception:  # pylint: disable=broad-except
-            logging.exception("Exception raised by task = %r", task)
+        except Exception as exc:  # pylint: disable=broad-except
+            # A sentence, as the warning relay shows it to the user (ADR 0066
+            # rule 7). An error the window was already told of (a load's
+            # on_error) stays in the log.
+            info = self.runningTasks.get(getattr(task, "taskID", None)) or {}
+            logger.error("%s failed: %s", info.get("name") or "A task", exc, exc_info=exc,
+                         extra={"popup": not getattr(exc, "ffast_reported", False)})
 
             if task.taskID is not None:
                 self.eventPush("TASK_DONE", task.taskID)
@@ -224,14 +228,12 @@ class TaskManager(EventClass):
         self.taskQueue.put((args, kwargs))
 
     async def handleTaskQueue(self):
+        # Every waiting task, not one per turn: a turn lasts 0.1 s, and a
+        # plot's metric requests are one task each.
         q = self.taskQueue
-
-        if q.empty():
-            return
-
-        args, kwargs = q.get()
-
-        self.newTask(*args, **kwargs)
+        while not q.empty():
+            args, kwargs = q.get()
+            self.newTask(*args, **kwargs)
 
     async def setTaskProgress(
         self,

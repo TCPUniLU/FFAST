@@ -22,6 +22,7 @@ Phase-1 scope: the engine + four kinds + the catalog + the Python
   **TOML** schema (Phase 5). This module takes already-named metric IDs.
 """
 import logging
+import math
 
 import numpy as np
 from PySide6 import QtCore, QtWidgets
@@ -41,6 +42,35 @@ def _metric_value(env, metric_id, model, dataset, params=None):
     key = env.data.make_metric_cache_key(metric_id, params or {}, model, dataset)
     result = env.data.getCacheByKey(key, subChecks=False)
     return None if result is None else result.values
+
+
+def format_significant(v, digits=3):
+    """``v`` with ``digits`` significant digits in plain notation, never
+    scientific (``0.000921``, ``0.0908``, ``12.3``, ``1235``)."""
+    v = float(v)
+    if not math.isfinite(v):
+        return str(v)
+    if v == 0:
+        return f"{v:.{digits - 1}f}"
+    decimals = max(0, digits - 1 - math.floor(math.log10(abs(v))))
+    return f"{v:.{decimals}f}"
+
+
+def format_table_value(v, precision=None):
+    """A table cell: ``precision`` decimal places, but never a false zero.
+
+    A non-zero value that would round to zero shows three significant digits
+    instead (``0.00213``, not ``0.00``). With ``precision`` unset the cell shows
+    three significant digits throughout, so an error of 0.0134 is not cut to
+    0.01. The browser's ``formatTableValue`` follows the same rule (ADR 0055).
+    """
+    if precision is None:
+        return format_significant(v)
+    v = float(v)
+    text = f"{v:.{precision}f}"
+    if v != 0 and float(text) == 0:
+        return f"{v:#.3g}"
+    return text
 
 
 def _resolve_unit(unit):
@@ -127,14 +157,10 @@ def _metric_is_per_atom(metric_id):
 
 
 def _flat_to_config(flat_indices, dataset):
-    """Map flat force-component indices → configuration indices: variable datasets
-    use molecule_offsetsx3, uniform datasets divide by components-per-config."""
-    flat_indices = np.asarray(flat_indices)
-    if getattr(dataset, "isVariable", False):
-        offsets = np.asarray(dataset.molecule_offsets) * 3  # 3 components / atom
-        return np.unique(np.searchsorted(offsets[1:], flat_indices, side="right"))
-    n_atoms = dataset.getNAtoms()
-    return np.unique(flat_indices // (n_atoms * 3))
+    """Map flat force-component indices → configuration indices through the
+    dataset's offsets, on every kind (ADR 0058 step 6), as browser SUB does."""
+    from ffast.session.subbing import flat_to_frames
+    return flat_to_frames(flat_indices, offsets=dataset.getOffsets())
 
 
 # --------------------------------------------------------------------------- #
@@ -358,6 +384,16 @@ class _ParamControls:
         return box
 
 
+def result_warnings(data_list):
+    """Every warning of the results drawn from ``data_list``, once each."""
+    out = {}
+    for data in data_list:
+        for result in (data.get("dataEntry") or {}).values():
+            for w in getattr(result, "warnings", None) or []:
+                out[w] = None
+    return list(out)
+
+
 class MetricPlotPanel(_ParamControls, BasicPlotWidget):
     """Generic plot Panel; all chart behaviour is delegated to its PanelKind."""
 
@@ -391,6 +427,15 @@ class MetricPlotPanel(_ParamControls, BasicPlotWidget):
         for data in data_list:
             self._kind.draw(self, data, self._spec)
         self._kind.draw_overlay(self, data_list, self._spec)
+        self._showWarnings(data_list)
+
+    def _showWarnings(self, data_list):
+        """⚠ after the title when a drawn result carries a warning, the
+        sentences on hover (ADR 0064 amendment); the browser does the same."""
+        warnings = result_warnings(data_list)
+        base = self._spec.get("title", self._spec["name"])
+        self.titleLabel.setText(f"{base} ⚠" if warnings else base)
+        self.titleLabel.setToolTip("\n".join(warnings))
 
     def getDatasetSubIndices(self, dataset, model):
         idx = self._kind.sub_indices(self, dataset, model, self._spec)
@@ -434,19 +479,32 @@ class MetricTablePanel(_ParamControls, Table):
 # Built-in Panel Kinds
 # --------------------------------------------------------------------------- #
 import ffast.metrics.dims as dims  # noqa: E402  (after BasicPlotWidget import block)
+import pyqtgraph  # noqa: E402
+
+# Line styles that tell series apart where colour means element.
+_LINE_STYLES = (QtCore.Qt.PenStyle.SolidLine, QtCore.Qt.PenStyle.DashLine,
+                QtCore.Qt.PenStyle.DotLine, QtCore.Qt.PenStyle.DashDotLine)
 
 
 class TimelineKind(PanelKind):
-    """X = configuration index, Y = a per-frame Metric. Subbable (x-range → frames)."""
+    """X = configuration index, Y = a per-frame Metric. Subbable (x-range → frames).
+
+    A table per structure and element (ADR 0064 amendment 2026-10-24) draws a
+    line per element in the element's colour, one line style per series; the
+    tab's element picker, when it has one, chooses the lines. The browser's
+    ``buildTimeline`` (panels.js) draws the same."""
 
     name = "timeline"
     subbable = True
     roles = ("y",)
-    shapes = {"y": dims.N_frames}
+    shapes = {"y": [dims.N_frames, (dims.N_frames, dims.N_elements)]}
     x_default = "Configuration index"
 
     def draw(self, panel, data, spec):
-        y = np.asarray(data["dataEntry"][spec["y"]].values).ravel()
+        y = np.asarray(data["dataEntry"][spec["y"]].values)
+        if y.ndim == 2:
+            return  # a table: every series at once, in draw_overlay (each needs its line style)
+        y = y.ravel()
         # antialias=False: a timeline is a long per-frame signal; zoomed in, its
         # off-screen points reach million-pixel device coords and AA coverage
         # math over segments that large is what stalls the software raster
@@ -456,6 +514,30 @@ class TimelineKind(PanelKind):
             np.arange(y.shape[0]), y, autoColor=data, autoLabel=data,
             antialias=False,
         )
+
+    def draw_overlay(self, panel, data_list, spec):
+        from ffast.chemistry import atomColors
+        from ase.data import chemical_symbols
+        tables = [d for d in data_list
+                  if d["dataEntry"].get(spec["y"]) is not None
+                  and np.ndim(d["dataEntry"][spec["y"]].values) == 2]
+        selector = spec.get("selector_obj")
+        atom_types = selector.getSelectedAtomInfo() if selector else {"All": {}}
+        picked = {info["index"] for name, info in atom_types.items() if name != "All"}
+        for i, data in enumerate(tables):
+            table = np.asarray(data["dataEntry"][spec["y"]].values, dtype=float)
+            order = [int(z) for z in _element_order(data["dataset"])]
+            shown = order if "All" in atom_types or not picked else [z for z in order if z in picked]
+            style = _LINE_STYLES[i % len(_LINE_STYLES)]
+            for z in shown:
+                col = order.index(z)
+                if col >= table.shape[1]:
+                    continue
+                pen = pyqtgraph.mkPen(atomColors[z], width=float(getConfig("plotPenWidth")), style=style)
+                # connect="finite": an empty cell (NaN) is a gap in its line.
+                label = f"{chemical_symbols[z]} — __NAME__" if len(tables) > 1 else chemical_symbols[z]
+                panel.plot(np.arange(table.shape[0]), table[:, col], pen=pen, autoColor=data,
+                           label=label, autoLabel=data, antialias=False, connect="finite")
 
     def sub_indices(self, panel, dataset, model, spec):
         # Phase 1: drawn-index ≈ frame index. The smoothing-window offset that a
@@ -606,7 +688,7 @@ class TableKind(PanelKind):
         v = _metric_value(panel.env, mid, model, dataset, params)
         if v is None:
             return ""
-        return f"{float(v):.{panel._spec.get('precision', 2)}f}"
+        return format_table_value(v, panel._spec.get("precision"))
 
 
 # --------------------------------------------------------------------------- #
@@ -678,6 +760,45 @@ class GroupedDensityKind(PanelKind):
                 panel.plot(c[0], c[1], color=info["color"], autoLabel=data)
             else:
                 panel.plot(c[0], c[1], autoColor=data, autoLabel=data)
+
+
+class BarsKind(PanelKind):
+    """One value per element as bars (ADR 0064 amendment): a group per element
+    in order of atomic number (``_element_order``), a bar per series. The tab's
+    element picker, when it has one, chooses the groups. An element with no
+    value (NaN) gets no bar; when no series has one, its label says so. The
+    browser's ``buildBars`` (panels.js) draws the same."""
+
+    name = "bars"
+    roles = ("value",)
+    shapes = {"value": dims.N_elements}
+    x_default = "Element"
+
+    def draw(self, panel, data, spec):
+        pass  # every series at once, in draw_overlay: each needs its offset
+
+    def draw_overlay(self, panel, data_list, spec):
+        from ase.data import chemical_symbols
+        drawn = [d for d in data_list if d["dataEntry"].get(spec["value"]) is not None]
+        if not drawn:
+            return
+        order = [int(z) for z in _element_order(drawn[0]["dataset"])]
+        selector = spec.get("selector_obj")
+        atom_types = selector.getSelectedAtomInfo() if selector else {"All": {}}
+        picked = {info["index"] for name, info in atom_types.items() if name != "All"}
+        shown = order if "All" in atom_types or not picked else [z for z in order if z in picked]
+        width = 0.8 / len(drawn)
+        values = []
+        for i, data in enumerate(drawn):
+            v = np.asarray(data["dataEntry"][spec["value"]].values, dtype=float).ravel()
+            y = np.array([v[order.index(z)] if order.index(z) < v.size else np.nan for z in shown])
+            values.append(y)
+            x = np.arange(len(shown)) + (i - (len(drawn) - 1) / 2) * width
+            has = np.isfinite(y)
+            panel.plot(x[has], y[has], bars=True, width=width, autoColor=data, autoLabel=data)
+        labels = [chemical_symbols[z] + ("\n(no value)" if all(np.isnan(y[k]) for y in values) else "")
+                  for k, z in enumerate(shown)]
+        panel.setXTicks(list(range(len(shown))), labels)
 
 
 class GroupedTableKind(TableKind):
@@ -778,7 +899,7 @@ class GroupedTableKind(TableKind):
             if mid is None:
                 return ""
             v = _metric_value(env, mid, model, dataset)
-            return "" if v is None else f"{float(v):.2f}"
+            return "" if v is None else format_table_value(v, spec.get("precision"))
 
         mid = spec["mae"] if j == 0 else spec["rmse"]
         vals = _metric_value(env, mid, model, dataset)
@@ -788,7 +909,7 @@ class GroupedTableKind(TableKind):
         zi = infos[atom]["index"]
         if zi not in order:
             return ""
-        return f"{float(vals[order.index(zi)]):.2f}"
+        return format_table_value(vals[order.index(zi)], spec.get("precision"))
 
 
 class OverlayTimelineKind(PanelKind):
@@ -849,7 +970,7 @@ def register_panel_kind(kind):
 
 
 for _kind in (TimelineKind(), DensityKind(), ScatterKind(), TableKind(),
-              GroupedDensityKind(), GroupedTableKind(), OverlayTimelineKind()):
+              GroupedDensityKind(), GroupedTableKind(), OverlayTimelineKind(), BarsKind()):
     register_panel_kind(_kind)
 
 

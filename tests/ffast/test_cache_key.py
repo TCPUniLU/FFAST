@@ -20,7 +20,7 @@ from ffast.cache import CacheKey, PredictionArrayKey
     CacheKey("energy", None, "d1"),                 # model-independent
     CacheKey("gyration", "m1", None),               # dataset-independent
     CacheKey("constant", None, None),               # both independent
-    CacheKey("ffast.force_mae__kde__p1a2b3c4", "m1", "d1"),   # transform metric id with __
+    CacheKey("ffast.force_difference[atom+structure;length]__kde__p1a2b3c4", "m1", "d1"),  # transform metric id with __
     CacheKey("forces", "zeroModel", "d1"),          # non-hex fingerprint (zero baseline)
 ])
 def test_format_parse_round_trip(key):
@@ -40,8 +40,8 @@ def test_nil_in_string_parses_back_to_none():
 
 def test_right_anchor_keeps_double_underscore_identity_intact():
     # The Metric ID itself contains __ ; model/dataset are the last two segments.
-    k = CacheKey.parse("ffast.force_mae__kde__p1a2b3c4__MODELFP__DATASETFP")
-    assert k.dtype == "ffast.force_mae__kde__p1a2b3c4"
+    k = CacheKey.parse("ffast.force_difference[atom+structure;length]__kde__p1a2b3c4__MODELFP__DATASETFP")
+    assert k.dtype == "ffast.force_difference[atom+structure;length]__kde__p1a2b3c4"
     assert k.model_fp == "MODELFP"
     assert k.dataset_fp == "DATASETFP"
 
@@ -49,16 +49,16 @@ def test_right_anchor_keeps_double_underscore_identity_intact():
 def test_legacy_four_field_params_key_decodes_correctly():
     # Old make_metric_cache_key params branch: identity__paramshash__model__dataset.
     # Right-anchoring folds the hash into the identity; model/dataset still recovered.
-    k = CacheKey.parse("ffast.force_mae__abcd1234__MODELFP__DATASETFP")
+    k = CacheKey.parse("ffast.force_difference[atom+structure;length]__abcd1234__MODELFP__DATASETFP")
     assert k.model_fp == "MODELFP"
     assert k.dataset_fp == "DATASETFP"
-    assert k.dtype == "ffast.force_mae__abcd1234"
+    assert k.dtype == "ffast.force_difference[atom+structure;length]__abcd1234"
 
 
 # ── the questions callers ask (prune-leak regression) ─────────────────────────
 
 def test_matches_model_and_dataset_on_underscore_laden_key():
-    k = CacheKey.parse("ffast.force_mae__kde__p1__MODELFP__DATASETFP")
+    k = CacheKey.parse("ffast.force_difference[atom+structure;length]__kde__p1__MODELFP__DATASETFP")
     assert k.matches_model("MODELFP")
     assert not k.matches_model("OTHER")
     assert k.matches_dataset("DATASETFP")

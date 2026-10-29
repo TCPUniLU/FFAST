@@ -15,6 +15,7 @@
  */
 
 import { OUT } from './events.js';
+import { trapFocus } from './dialogs.js';
 
 /**
  * Status line for a finished session operation.
@@ -40,7 +41,10 @@ export function sessionStatus(kind, result) {
 /** Status line for a finished subset export. Pure. */
 export function exportStatus(result) {
   if (result?.ok) {
-    return { text: `Exported ${result.n} structure(s) → ${result.path}`, kind: 'connected' };
+    // An element subset's frames without its elements are not written (ADR 0067).
+    const skipped = result.skipped
+      ? ` (${result.skipped} empty frame${result.skipped === 1 ? '' : 's'} skipped)` : '';
+    return { text: `Exported ${result.n} structure(s) → ${result.path}${skipped}`, kind: 'connected' };
   }
   return { text: `Export failed: ${result?.error ?? 'unknown error'}`, kind: 'error' };
 }
@@ -60,7 +64,7 @@ export class SessionOps {
    *   setStatus: (text: string, kind?: string) => void,
    *   getCurrentDatasetFp: () => string | null,
    *   getDatasetMeta: (fp: string) => {name?: string} | undefined,
-   *   capturePng: (opts: {transparent: boolean, background: string}) => string,
+   *   capturePng: (opts: {transparent: boolean, background: string}) => Promise<string>,
    * }} ports
    */
   constructor(ports) {
@@ -77,6 +81,8 @@ export class SessionOps {
     });
     $('path-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this._confirmPathModal();
+    });
+    $('path-modal').addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this._closePathModal();
     });
   }
@@ -122,8 +128,8 @@ export class SessionOps {
   }
 
   /** @param {{transparent: boolean, background: string}} opts */
-  exportPng({ transparent, background }) {
-    const url = this._ports.capturePng({ transparent, background });
+  async exportPng({ transparent, background }) {
+    const url = await this._ports.capturePng({ transparent, background });
     const fp = this._ports.getCurrentDatasetFp();
     const name = safeName(fp ? this._ports.getDatasetMeta(fp)?.name : null);
     const a = document.createElement('a');
@@ -159,11 +165,14 @@ export class SessionOps {
     const input = $('path-input');
     input.value = defaultValue;
     $('path-modal').classList.remove('hidden');
+    this._untrap ||= trapFocus($('path-modal'));
     input.focus();
     input.select();
   }
 
   _closePathModal() {
+    this._untrap?.();
+    this._untrap = null;
     $('path-modal').classList.add('hidden');
     this._onConfirm = null;
   }

@@ -14,6 +14,20 @@ logger = logging.getLogger("FFAST")
 GLOBAL_MODELS_COUNTER = 0
 
 
+def uniformFrames(dataset, indices=None):
+    """Positions as one ``(frames, atoms, 3)`` array and one structure's
+    elements, for models that need every frame the same size (ADR 0058,
+    decision B). ``indices`` picks frames. Raises ``ValueError`` when the
+    dataset's structures differ in size."""
+    from ffast.loaders.dataset import stackFrames
+
+    offsets = dataset.getOffsets()
+    R = stackFrames(dataset.getAllCoordinates(), offsets)
+    if indices is not None:
+        R = R[indices]
+    return R, dataset.getAllElements()[:offsets[1]]
+
+
 class ModelLoader(EventClass):
     """
     Base class for any model. Contains all model-agnostic methods such as
@@ -91,18 +105,14 @@ class ModelLoaderACE(ModelLoader):
     def predict(self, dataset, indices=None, batchSize=1, taskID=None):
         from ase import Atoms
 
-        if indices is None:
-            R = dataset.getCoordinates()
-        else:
-            R = dataset.getCoordinates(indices=indices)
-
-        z = dataset.getElements()
-        lattice = dataset.getLattice()
+        R, z = uniformFrames(dataset, indices)
+        frames = np.arange(len(R)) if indices is None else np.asarray(indices)
 
         E, F = [], []
         for i in range(len(R)):
             r = R[i]
-            if lattice is not None:
+            lattice = dataset.getLattice(int(frames[i]))   # this frame's own cell
+            if lattice is not None and np.any(lattice):   # a molecule's cell is all zeros
                 atoms = Atoms(
                     numbers=z, positions=r, cell=lattice, pbc=[True] * 3
                 )

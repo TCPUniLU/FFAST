@@ -29,6 +29,19 @@ from ffast.protocol import control
 logger = logging.getLogger("FFAST")
 
 
+def _connected_progress(session, message: str) -> dict:
+    """The sidebar fields for a fresh connection: ``message``, plus a warning
+    in red when the server runs other FFAST code than this app (its HELLO_ACK
+    fingerprint differs, or it sends none: ffast.session.code_fingerprint)."""
+    from ffast.session.code_fingerprint import code_fingerprint, server_code_notice
+
+    notice = server_code_notice(session.server_code_fingerprint, code_fingerprint())
+    if notice is None:
+        return {"message": message}
+    logger.warning("%s", notice)
+    return {"message": f"{message}. {notice}", "error": True}
+
+
 class ConnectionManager:
     """Owns the ffast-server session lifecycle and transport (ADR 0020)."""
 
@@ -102,6 +115,28 @@ class ConnectionManager:
         if self.serverConnection is None or self._event_loop is None:
             return None, None
         return self.serverConnection, self._event_loop
+
+    def tellServer(self, event, *args, **kwargs):
+        """Repeat a change this window made on the server, so the server's
+        views (the 3D view) know the same objects. Thread-safe; returns the
+        send's future. No-op without a live session, which is always so on
+        the server's own Environment.
+
+        On the loop's own thread the send starts at once, as the 3D view's
+        own sends do, so messages leave in the order they were made: a zoom's
+        new frames before the scene request that follows them.
+        """
+        session, loop = self.active_session()
+        if session is None:
+            return None
+        coro = session.push_event(event, *args, **kwargs)
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            return loop.create_task(coro)
+        return asyncio.run_coroutine_threadsafe(coro, loop)
 
     # ── local-server push ─────────────────────────────────────────────────
     def _sync_to_local_server(self, event, *args, **kwargs):
@@ -206,7 +241,7 @@ class ConnectionManager:
                 "TASK_PROGRESS",
                 taskID,
                 title=f"Cluster: {profile.host} [{session.job_id}]",
-                message="Connected — ✕ to disconnect",
+                **_connected_progress(session, "Connected — ✕ to disconnect"),
             )
 
             # Keep task alive so the sidebar item stays as a
@@ -349,7 +384,7 @@ class ConnectionManager:
                 "TASK_PROGRESS",
                 taskID,
                 title=f"Local server {host}:{port}",
-                message="Connected — ✕ to disconnect",
+                **_connected_progress(session, "Connected — ✕ to disconnect"),
             )
 
             try:
@@ -455,7 +490,7 @@ class ConnectionManager:
             self.eventPush(
                 "TASK_PROGRESS", taskID,
                 title="Local server",
-                message="Running — ✕ to stop",
+                **_connected_progress(session, "Running — ✕ to stop"),
             )
             logger.info("Local server ready on port %d", port)
 
@@ -491,6 +526,10 @@ class ConnectionManager:
         offsets=None,
         path=None,
         source_type=None,
+        parent=None,
+        parent_frames=None,
+        active=True,
+        frozen=False,
     ):
         """Create a local CachedRemoteDataset proxy when the server loads a dataset.
 
@@ -520,6 +559,8 @@ class ConnectionManager:
                 name=name, n=n, has_forces=has_forces, is_sub=is_sub,
                 variable=variable, elements=elements, offsets=offsets,
                 path=path, source_type=source_type,
+                parent=parent, parent_frames=parent_frames, active=active,
+                frozen=frozen,
             )
         except ValidationError as exc:
             logger.warning(
@@ -608,7 +649,7 @@ class ConnectionManager:
     def _onMetricCatalog(self, metrics=None):
         """Store the server's metric catalog (ADR 0016) and notify listeners.
 
-        Sent on connect / state-sync. Clients (e.g. the Loupe ATOMS pane) build
+        Sent on connect. Clients (e.g. the Loupe ATOMS pane) build
         their metric controls from this, keyed by metric id.
         """
         from ffast.protocol import MetricCatalog
@@ -1023,7 +1064,7 @@ class ConnectionManager:
         try:
             fut = _asyncio.run_coroutine_threadsafe(
                 session.request_metric(
-                    metric_id, params, model_fp, dataset_fp, key
+                    metric_id, params, model_fp, dataset_fp
                 ),
                 loop,
             )

@@ -41,6 +41,18 @@ class _Dataset:
     def getForces(self, indices=None):
         return self._f
 
+    def getAllEnergies(self):
+        return self._e
+
+    def getAllForces(self):
+        return self._f.reshape(-1, 3)
+
+    def getAllElements(self):
+        return np.array([6, 1], dtype=np.int64)
+
+    def getOffsets(self):
+        return np.array([0, len(self._f.reshape(-1, 3))])
+
     def getElements(self, index=None):
         return np.array([6, 1], dtype=np.int64)
 
@@ -119,7 +131,8 @@ def test_resolve_reference_refs():
         r.resolve("reference.forces", dataset=ds), [[1.0, 0, 0], [0, 0, 0]]
     )
     assert r.resolve("reference.stress", dataset=ds) is None
-    assert r.resolve("offsets", dataset=ds) is None  # uniform dataset
+    # Offsets on every kind (ADR 0058 step 6): here one frame of two atoms.
+    np.testing.assert_array_equal(r.resolve("offsets", dataset=ds), [0, 2])
 
 
 def test_resolve_prediction_requires_generated_data():
@@ -142,10 +155,10 @@ def test_metric_needs_prediction_is_transitive():
     """Regression: energy_mae's direct input is a metric ref, but it still needs
     a prediction at the leaves → must be detected as model-dependent."""
     assert metric_needs_prediction("ffast.energy_difference") is True
-    assert metric_needs_prediction("ffast.energy_mae") is True       # metric-ref input
-    assert metric_needs_prediction("ffast.energy_rmse_shifted") is True
-    assert metric_needs_prediction("ffast.force_mae") is True        # metric-ref input
-    assert metric_needs_prediction("ffast.force_rmse") is True
+    assert metric_needs_prediction("ffast.energy_difference[dataset;mae]") is True       # metric-ref input
+    assert metric_needs_prediction("ffast.energy_difference_shifted[dataset;rmse]") is True
+    assert metric_needs_prediction("ffast.force_difference[atom+structure;length]") is True        # metric-ref input
+    assert metric_needs_prediction("ffast.force_difference[structure;length;rmse]") is True
 
 
 def test_missing_prediction_keys():
@@ -154,12 +167,12 @@ def test_missing_prediction_keys():
     env = _FakeEnv(ds)
     r = InputResolver(env)
     # force_mae needs prediction.forces → "forces" missing
-    assert r.missing_prediction_keys("ffast.force_mae", model=model, dataset=ds) == ["forces"]
+    assert r.missing_prediction_keys("ffast.force_difference[atom+structure;length]", model=model, dataset=ds) == ["forces"]
     # energy_difference needs prediction.energies → "energy" missing
     assert r.missing_prediction_keys("ffast.energy_difference", model=model, dataset=ds) == ["energy"]
     # supply forces → no longer missing
     env._predictions[("forces", "model-fp", "ds-fp")] = _Entity(forces=np.zeros((1, 3)))
-    assert r.missing_prediction_keys("ffast.force_mae", model=model, dataset=ds) == []
+    assert r.missing_prediction_keys("ffast.force_difference[atom+structure;length]", model=model, dataset=ds) == []
 
 
 # ── generateMetric (compute → cache → DATA_UPDATED) ─────────────────────────────
@@ -175,8 +188,8 @@ def test_generate_metric_caches_result_and_fires_event():
             )
         },
     )
-    key = env.registerMetricRequest("ffast.force_mae", {}, model, ds)
-    ok = env.generateMetric("ffast.force_mae", {}, model, ds, key=key)
+    key = env.registerMetricRequest("ffast.force_difference[atom+structure;length]", {}, model, ds)
+    ok = env.generateMetric("ffast.force_difference[atom+structure;length]", {}, model, ds, key=key)
 
     assert ok is True
     assert key in env.cache
@@ -191,17 +204,17 @@ def test_generate_metric_failure_returns_false():
     ds = _Dataset(energies=[1.0], forces=[[0, 0, 0]])
     model = _Model()
     env = _FakeEnv(ds)  # no prediction → prediction.forces resolves None → metric fails
-    key = env.registerMetricRequest("ffast.force_mae", {}, model, ds)
-    ok = env.generateMetric("ffast.force_mae", {}, model, ds, key=key)
+    key = env.registerMetricRequest("ffast.force_difference[atom+structure;length]", {}, model, ds)
+    ok = env.generateMetric("ffast.force_difference[atom+structure;length]", {}, model, ds, key=key)
     assert ok is False
     assert key not in env.cache
 
 
-def test_norm_parameter_changes_cache_identity():
+def test_window_parameter_changes_cache_identity():
     """Different compute params → different cache keys (D7)."""
     ds = _Dataset(energies=[0.0], forces=[[0, 0, 0]])
     model = _Model()
     env = _FakeEnv(ds)
-    k_l2 = env.registerMetricRequest("ffast.force_mae", {"norm": "l2"}, model, ds)
-    k_l1 = env.registerMetricRequest("ffast.force_mae", {"norm": "l1"}, model, ds)
-    assert k_l2 != k_l1
+    k_1 = env.registerMetricRequest("ffast.force_rmse_smoothed", {"window": 1}, model, ds)
+    k_5 = env.registerMetricRequest("ffast.force_rmse_smoothed", {"window": 5}, model, ds)
+    assert k_1 != k_5

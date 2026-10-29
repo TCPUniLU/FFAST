@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any, Union
+from typing import Any, Literal, Union
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 class MetricModuleConfig(BaseModel):
@@ -84,7 +84,7 @@ class MetricsConfig(BaseModel):
 class AtomColorPresentation(BaseModel):
     model_config = ConfigDict(extra="forbid")
     metric_id: str
-    colormap: str = "viridis"
+    colormap: str = "force_error"  # ffast.visualization.scene.DEFAULT_COLORMAP
     vmin: float | None = None
     vmax: float | None = None
 
@@ -98,6 +98,31 @@ class PanelMetricRef(BaseModel):
     metric: str
     transform: Union[str, list[str], None] = None
     params: dict[str, Any] = Field(default_factory=dict)
+
+
+# The panel kind of a 3D panel (ADR 0056): a view, not a plot.
+PANEL_KIND_3D = "3d"
+
+
+class StartSettings(BaseModel):
+    """How an independent 3D panel looks when it opens (ADR 0056 rule 13): its
+    colouring, display, bonds and force arrows. Never which dataset or
+    prediction it shows, nor its camera. Colouring by a metric and force
+    arrows use the panel's own prediction. A key left out keeps today's
+    default. If ``colour_by`` names a metric the server lacks, the browser
+    shows element colours and says why."""
+    model_config = ConfigDict(extra="forbid")
+    # "element", "displacement", or a per-atom metric id
+    # ("ffast.force_difference[atom+structure;length]").
+    colour_by: str | None = None
+    colormap: str | None = None
+    atom_size: float | None = Field(default=None, gt=0)
+    bond_width: int | None = Field(default=None, ge=10, le=100)   # percent
+    bond_colour: str | None = Field(
+        default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    force_arrows: bool | None = None
+    force_length: float | None = Field(default=None, ge=1, le=200)
+    force_normalised: bool | None = None
 
 
 # An axis label is null | "label" | ["label", "<userConfig unit key>"].
@@ -118,7 +143,15 @@ class PanelConfig(BaseModel):
     ``scroll_group`` is a layout-only hint: panels sharing a non-null group name
     are placed together in one horizontal scroll strip (the table row of the
     legacy error tabs) at the *first* member's ``row``/``col``/span, instead of
-    each taking its own grid cell."""
+    each taking its own grid cell.
+
+    ``kind = "3d"`` is a **3D panel** (ADR 0056): a cell showing a visualization
+    view instead of plotting metrics. Browser only; it binds no metric roles.
+    It is ``view = "linked"`` (the default: it shows the main view) or
+    ``"independent"``; an independent panel also has ``link_frame`` and
+    ``link_camera`` (follow the main view's frame and camera; both on by
+    default) and its starting look, ``start``. A linked panel stores only its
+    place."""
     model_config = ConfigDict(extra="forbid")
     kind: str
     row: int
@@ -132,11 +165,29 @@ class PanelConfig(BaseModel):
     x_label: AxisLabel = None
     y_label: AxisLabel = None
     diagonal: bool = False
-    precision: int = 2
+    precision: int | None = None   # table decimals; unset = 3 significant digits
     hidden_params: list[str] = Field(default_factory=list)
     controls: list[str] = Field(default_factory=list)
     scroll_group: str | None = None
     options: dict[str, Any] = Field(default_factory=dict)
+    view: Literal["linked", "independent"] = "linked"
+    link_frame: bool = True
+    link_camera: bool = True
+    start: StartSettings | None = None
+
+    @model_validator(mode="after")
+    def _3d_panel_binds_no_metrics(self) -> "PanelConfig":
+        if self.kind == PANEL_KIND_3D and self.metrics:
+            raise ValueError("a 3D panel shows a 3D view and takes no 'metrics'")
+        if self.kind != PANEL_KIND_3D and self.view != "linked":
+            raise ValueError("only a 3D panel has a 'view'")
+        unlinked = not self.link_frame or not self.link_camera
+        if self.view == "linked" and (unlinked or self.start is not None):
+            raise ValueError(
+                "'link_frame', 'link_camera' and 'start' are for an "
+                "independent 3D panel (view = \"independent\"); a linked "
+                "one shows the main view")
+        return self
 
 
 class AnalysisTabConfig(BaseModel):
@@ -144,13 +195,62 @@ class AnalysisTabConfig(BaseModel):
     names a bespoke tab-level data selector from the control registry (e.g. the
     element picker); null uses the default model/dataset selector. ``controls``
     names tab-level control widgets from the registry (e.g. the energy-shift
-    toggle) that drive a shared compute-param across the tab's Panels."""
+    toggle) that drive a shared compute-param across the tab's Panels.
+
+    ``grid`` (ADR 0069) lays the tab out on that many columns (24 in tabs the
+    browser saves) that always fill the window, with rows of 50 px: ``col`` and
+    ``colspan`` then count grid columns and ``row`` and ``rowspan`` count 50 px
+    units, and ``column_widths`` and ``row_heights`` are refused. Without
+    ``grid`` a tab is in the old form, read as below; the browser converts it
+    when it draws it, and the desktop reads only the old form.
+
+    ``column_widths`` and ``row_heights`` (ADR 0056, the old form) are sizes
+    kept as set, one per column and one per row: a width of 1 is 400 px and a height of 1 is
+    300 px, so ``[2, 1]`` makes columns 800 and 400 px wide. A list may be
+    longer than the panels reach, for columns or rows left empty, never
+    shorter. Without them columns share the window's width, none narrower
+    than 400 px, and rows are at least 300 px. The tab scrolls what does not
+    fit. The browser reads them; the desktop ignores them."""
     model_config = ConfigDict(extra="forbid")
     name: str
     has_data_selector: bool = True
     selector: str | None = None
     controls: list[str] = Field(default_factory=list)
     panels: list[PanelConfig] = Field(default_factory=list)
+    column_widths: list[float] | None = None
+    row_heights: list[float] | None = None
+    grid: int | None = None
+
+    @model_validator(mode="after")
+    def _sizes_fit_the_grid(self) -> "AnalysisTabConfig":
+        if self.grid is not None:
+            if self.grid < 1:
+                raise ValueError("grid must be at least 1")
+            if self.column_widths is not None or self.row_heights is not None:
+                raise ValueError(
+                    "a tab with 'grid' sizes its panels by cells; "
+                    "'column_widths' and 'row_heights' are for a tab without it")
+            for p in self.panels:
+                if p.col + p.colspan > self.grid:
+                    raise ValueError(
+                        f"a panel reaches column {p.col + p.colspan}; "
+                        f"the tab's grid has {self.grid} columns")
+            return self
+        columns = max((p.col + p.colspan for p in self.panels), default=0)
+        rows = max((p.row + p.rowspan for p in self.panels), default=0)
+        for field, sizes, count, what in (
+            ("column_widths", self.column_widths, columns, "columns"),
+            ("row_heights", self.row_heights, rows, "rows"),
+        ):
+            if sizes is None:
+                continue
+            if len(sizes) < count:
+                entries = "entry" if len(sizes) == 1 else "entries"
+                raise ValueError(
+                    f"{field} has {len(sizes)} {entries}; the tab has {count} {what}")
+            if any(size <= 0 for size in sizes):
+                raise ValueError(f"{field} must be positive")
+        return self
 
 
 class VisualizationConfig(BaseModel):

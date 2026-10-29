@@ -63,10 +63,16 @@ A loaded set of configurations: positions, energies, forces, atomic numbers.
 Identified by a fingerprint, which is an MD5 of the contents. Can be strided at
 load time (`slice_num`).
 
-**SubDataset** is a view onto a parent restricted to some indices, created when
-you select a region of a plot. It is also how a tractable slice of a large remote
-dataset reaches the local viewer. **FrozenSubDataset** is one that has been
-snapshotted and now stands on its own.
+Everything cut from a dataset is one class, `DatasetView`: a parent, a frame
+map and an atom mask (ADR 0058). A **subset** is a view restricted to some
+frames, created from the region a plot shows when you tick its **Sub** box; it
+follows the plot's zoom, and unticking hides it. It is also how a tractable
+slice of a large remote dataset reaches the local viewer. A **frozen subset**
+keeps its frames: it no longer follows the zoom, but still reads them through
+its parent. An **atom subset** keeps every frame but only some of its atoms;
+it is refused when a structure lacks one of those atoms. A view of a view is
+a subset of a subset. Deleting a dataset deletes everything cut from it; to
+keep some of its frames, export them to a file and load that.
 
 ### Model, GhostModel
 
@@ -143,17 +149,72 @@ tests using it hide this.
 ### Transform metric
 
 A metric whose input is another metric, applying a reduction: KDE, smoothing,
-downsampling, per-structure reduction. Its settings are compute parameters, so
+downsampling. (Averaging per structure, per element or over everything is
+written in an Expression metric with `by=`, ADR 0064.) Its settings are compute parameters, so
 changing one recomputes rather than mutating something client-side. This is why
 panels never reduce: every axis is already a result array.
 
 ### Expression metric
 
-A metric compiled from a `[[metrics.expr]]` config entry, evaluating element-wise
-arithmetic over named variables. No Python. Unlike a transform metric it
-preserves shape, so all its non-scalar variables must share one shape while
-scalars and literals broadcast. Non-finite output raises rather than quietly
-emitting `nan` (ADR 0042).
+A metric compiled from a `[[metrics.expr]]` config entry, evaluating arithmetic
+over named variables. No Python. Arithmetic works value by value: the
+non-scalar operands must share one shape while scalars and literals broadcast.
+Reductions (`mean`, `sum`, `min`, `max`, `rms`, `std`) combine values and must
+say what they combine with `by=structure|element|all`, or
+`by=(structure, element)` for a table with a row per structure and a column
+per element; `by=` alone decides the result's shape, and `where=` picks the
+rows that count (ADR 0064). A bad value
+(non-finite output) raises rather than quietly emitting `nan` (ADR 0042).
+
+### Base metric, keep boxes
+
+A **base metric** is an unreduced error a user reduces with the **keep boxes**:
+Force Difference, Acceleration Difference, Energy Difference, Energy
+Difference (shifted), Net Force Residual. The keep boxes (atom, structure,
+element, x/y/z) say which axes stay separate, as `by=` does; **Combine** (Per
+component | Length) says how unkept x/y/z become one number; **Statistic** is
+MAE, RMSE, Max or Mean (signed). A box setting is written as a formula over the
+base (ADR 0065).
+
+Don't call it: norm, l1 / l2 (replaced by Combine), "average over" boxes
+(the boxes say what is kept).
+
+### No value
+
+A place in a metric's result that has nothing to show: a group a reduction
+left empty, such as a structure without hydrogen under `where=element("H")`.
+Stored as `nan`, shown as a gap, a `—` or a grey atom, and left out of later
+reductions. Not a **bad value**: a bad value fails the metric, no value does
+not. Only a formula's own `by=` / `where=` make one; a `nan` from a Python
+metric is a bad value (ADR 0064).
+
+### Metric origin: built-in, project, user
+
+Where a metric's definition comes from. **Built-in** ships with FFAST.
+**Project** comes from a project's `ffast.toml` (a metric module or a
+`[[metrics.expr]]` entry). **User** is an Expression metric defined in the
+browser and kept by the app on the server machine, one file per metric. Only
+user metrics can be edited or deleted in the app; a user metric never replaces a
+built-in or project metric with the same ID (ADR 0057).
+
+Don't call it: a custom metric (every non-built-in metric is custom), a live
+metric.
+
+### Metrics pane
+
+The browser side pane where user metrics are written, tried, saved, deleted and
+exported, beside the views they affect (ADR 0057).
+
+Don't call it: the metric window, the metric editor dialog.
+
+### Try
+
+Computing a formula in the Metrics pane for the selected dataset and prediction
+without registering it. Shows a summary and the bad frames; no other view or
+browser sees it. Distinct from **Save**, which registers the metric and updates
+every view (ADR 0057).
+
+Don't call it: preview (that suggests the views change), dry run.
 
 ### Dataset field
 
@@ -188,6 +249,9 @@ overlay_timeline, grouped_density, grouped_table. It declares what widget it
 builds, how many metric inputs it takes, which shapes those must satisfy, and how
 they map to axes or cells. It assembles and draws. It computes nothing.
 
+One more kind, `3d`, is a [3D panel](#3d-panel): it binds no metrics and shows
+a visualization view instead of a plot.
+
 ### Panel
 
 A configured panel kind: bound to specific metric IDs and parameter values,
@@ -196,7 +260,57 @@ schemas of the metrics it binds.
 
 ### Analysis tab
 
-A named grid of panels sharing one data selector.
+A named grid of panels sharing one data selector. In the browser a tab may mix 2D
+panels with 3D panels.
+
+A tab comes from one of three places: **built-in** (shipped with FFAST),
+**project** (`[[visualization.tabs]]` in a project's `ffast.toml`, written by
+hand), or **user** (built in the browser and saved by the app on the server
+machine, one file per tab). All three use the same format, so a tab moves
+between them by copying it.
+
+Editing a built-in or project tab in the browser saves a user tab that
+**replaces** it; resetting deletes that user tab and the original returns. Any
+tab can be **hidden** from the tab bar.
+
+A tab changes only in **Edit mode** (✎ in the browser): the edits go to a
+draft, Save writes it and Cancel drops it, so exploring never rewrites a tab.
+
+Don't call it: overriding a tab ("override" is taken by display overrides).
+
+### 3D panel
+
+A panel that shows a visualization view in a tab's grid, beside 2D panels
+(`kind = "3d"` in a tab file). Browser only: the desktop skips a tab made only
+of 3D panels, the built-in "3D" tab among them, because it has its own 3D
+window. It is either **linked** or **independent**:
+
+- **Linked** (the default): shows the main view. Every linked 3D panel, in any
+  tab, shows the same thing.
+- **Independent**: shows its own visualization view, with its own data,
+  colouring and display. Its frame and camera follow the main view by default;
+  each can be unlinked separately (to compare two frames of one trajectory, or
+  to orbit one side alone). A linked frame means the same configuration where
+  both sides contain it (a prediction and its dataset, a subset and its parent),
+  otherwise the same frame number. When there is no counterpart, the panel says
+  so instead of showing a different structure. Its starting look (colouring,
+  display, bonds, force arrows) can be saved with the tab; which dataset or
+  prediction it shows, and its camera, never are.
+
+The user switches a 3D panel between linked and independent.
+
+**Focused 3D panel**: the one 3D panel in a tab that the tab's 3D controls
+(settings sidebar, pick toolbar, playback strip) act on. The user focuses a panel
+by clicking it.
+
+Don't call it: the selected panel ("selection" already means picked atoms).
+
+### Main view
+
+The one visualization view the rail drives; on the server, one view per
+dataset, reused when the user comes back to that dataset. Linked 3D panels show
+it. At least one linked 3D panel always exists in some tab, so the main view
+always has a place to appear.
 
 ### Series
 
@@ -300,11 +414,21 @@ A saved snapshot of an Environment: datasets, models, cache, metadata, written a
 
 ### Server session
 
-The live object on a running `ffast-server` representing the controlling
-session. It owns the open views and the outbound queue, dispatches control
-messages through a handler table built once, and replays current state to a
-client on connect or reconnect. One per server process; several clients may
-attach but only the controlling one drives it.
+The live object on a running `ffast-server` representing one client connection
+(ADR 0044). It owns that connection's open views and outbound queue, dispatches
+its control messages through a handler table built once, and replays current
+state to it on connect or reconnect (the replay comes from the window feed). One per connection; all of them share the
+server's one Environment. A reconnecting client gets a new session, so it gets
+the shared state again but none of its old views.
+
+### Window feed
+
+The one server-side owner of what every window holds (ADR 0062). It builds each
+shared piece (dataset and model announcements, metric catalog, tab layout,
+user-metrics list, "Used by"), replays them on connect, and sends a piece again
+to every window after a change, only if it changed. It also lists the open
+windows' sessions, which "Used by" reads to find views coloured by a metric.
+One per server.
 
 ### Server connection
 
@@ -374,6 +498,12 @@ right-anchored: the last two `__`-segments are model then dataset, everything
 before is opaque identity. Each fingerprint slot is validated, so a malformed key
 fails immediately instead of decoding into the wrong entry, which is what used to
 happen. Compute parameters fold into the identity token, never a separate field.
+
+Only the server builds the key of a metric result (`DataService.make_metric_cache_key`),
+and for a formula metric the identity carries a hash of the formula (`__f<token>`),
+so an edit gives a new key. It no longer crosses the RPC boundary: `REQUEST_METRIC`
+carries an opaque `request_id` and the reply (`METRIC_RESULT`) echoes it, so a
+client cannot name or overwrite a stored result (ADR 0061).
 
 ### Cluster terms
 

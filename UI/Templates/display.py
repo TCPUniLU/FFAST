@@ -5,6 +5,44 @@ from UI.Templates.base import Widget
 logger = logging.getLogger("FFAST")
 
 
+def cutText(widget):
+    """A label's or line edit's whole text when it is wider than the room the
+    widget has, so some of it is hidden; None when all of it shows."""
+    text = widget.text()
+    if not text:
+        return None
+    room = widget.contentsRect().width()
+    if isinstance(widget, QtWidgets.QLineEdit):
+        margins = widget.textMargins()
+        room -= margins.left() + margins.right() + 4  # the frame's own padding
+    return text if widget.fontMetrics().horizontalAdvance(text) > room else None
+
+
+class _FullTextOnHover(QtCore.QObject):
+    """Hover text with the whole text, only while some of it is cut."""
+
+    def eventFilter(self, obj, event):
+        if event.type() != QtCore.QEvent.ToolTip:
+            return False
+        text = cutText(obj)
+        if text is None:
+            QtWidgets.QToolTip.hideText()
+        else:
+            QtWidgets.QToolTip.showText(event.globalPos(), text, obj)
+        return True
+
+
+_fullTextOnHover = None
+
+
+def showFullTextOnHover(widget):
+    """Let hovering over ``widget`` show its whole text when it is cut."""
+    global _fullTextOnHover
+    if _fullTextOnHover is None:
+        _fullTextOnHover = _FullTextOnHover()
+    widget.installEventFilter(_fullTextOnHover)
+
+
 class BasicLabelWidget(Widget):
     def __init__(self, spacing=0, **kwargs):
         super().__init__(layout="vertical", **kwargs)
@@ -41,10 +79,12 @@ class InfoWidget(Widget):
         for i in range(self.nRows, nRows):
             labelLeft = QtWidgets.QLabel("", parent=self)
             labelLeft.setObjectName("LeftLabel")
+            showFullTextOnHover(labelLeft)
             self.layout.addWidget(labelLeft, i, 0)
 
             labelRight = QtWidgets.QLabel("", parent=self)
             labelRight.setObjectName("RightLabel")
+            showFullTextOnHover(labelRight)
             self.layout.addWidget(labelRight, i, 1)
 
         # REMOVE LABELS

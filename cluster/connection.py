@@ -265,6 +265,9 @@ class ServerConnection:
     local_port: int
     remote_port: int
     token_plaintext: str = ""  # plaintext sent in HELLO; "" = no token / READ_ONLY
+    # The server's code fingerprint from HELLO_ACK; None from a server older
+    # than the field (ffast.session.code_fingerprint).
+    server_code_fingerprint: Optional[str] = None
 
     # ── array transfer cache ─────────────────────────────────────────────────
     # fingerprint → {R, F, z, n} dicts of numpy arrays
@@ -471,7 +474,7 @@ class ServerConnection:
         )
 
     async def request_metric(
-        self, metric_id, params, model_fp, dataset_fp, key, timeout: float = 120.0
+        self, metric_id, params, model_fp, dataset_fp, timeout: float = 120.0
     ):
         """Ask the server to compute a metric and return its MetricResult (4a).
 
@@ -480,11 +483,16 @@ class ServerConnection:
         with ``METRIC_RESULT``.  Returns the reconstructed ``MetricResult`` or
         ``None`` when the server couldn't compute it (e.g. a real client-only
         model), in which case the caller falls back to in-process computation.
+
+        The reply is matched by a fresh ``request_id``; the server builds the
+        cache key itself and it never crosses the wire (ADR 0061).
         """
+        import uuid
+        request_id = uuid.uuid4().hex
         return await self._pending.request(
-            control.METRIC_RESULT, key,
+            control.METRIC_RESULT, request_id,
             lambda: self.push_event(
-                control.REQUEST_METRIC, metric_id, key,
+                control.REQUEST_METRIC, metric_id, request_id,
                 params=params or {}, model_fp=model_fp, dataset_fp=dataset_fp,
             ),
             timeout=timeout,
@@ -598,11 +606,12 @@ class ServerConnection:
         )
 
 
-async def _do_hello(websocket, token: str = "", renderer: str = "vispy") -> None:
+async def _do_hello(websocket, token: str = "", renderer: str = "vispy") -> dict:
     """Send HELLO and await HELLO_ACK after ping/pong completes.
 
     Called by both connect_direct and _establish_connection once the WebSocket
-    is open and ping/pong has already been exchanged.
+    is open and ping/pong has already been exchanged. Returns the HELLO_ACK
+    fields ({} when none arrived).
     """
     from ffast.protocol.rpc import pack, unpack
     from ffast.visualization.protocol import ClientCapabilities, PROTOCOL_VERSION
@@ -621,12 +630,14 @@ async def _do_hello(websocket, token: str = "", renderer: str = "vispy") -> None
             ack_event, _, ack_kwargs = unpack(ack_msg)
             if ack_event == control.HELLO_ACK:
                 logger.info("HELLO_ACK received: role=%s", ack_kwargs.get("role"))
+                return dict(ack_kwargs)
             else:
                 logger.warning("Expected HELLO_ACK, got %r", ack_event)
         else:
             logger.warning("Expected binary HELLO_ACK, got text: %r", ack_msg)
     except asyncio.TimeoutError:
         logger.warning("HELLO_ACK not received within 10s — continuing as READ_ONLY")
+    return {}
 
 
 async def connect_direct(
@@ -660,7 +671,7 @@ async def connect_direct(
         raise OSError(f"Unexpected ping reply: {reply!r}")
 
     # HELLO/HELLO_ACK
-    await _do_hello(websocket, token, renderer)
+    ack = await _do_hello(websocket, token, renderer)
 
     logger.info("connect_direct: connected to %s", url)
     return ServerConnection(
@@ -671,6 +682,7 @@ async def connect_direct(
         local_port=port,
         remote_port=port,
         token_plaintext=token,
+        server_code_fingerprint=ack.get("code_fingerprint"),
     )
 
 
@@ -814,7 +826,7 @@ async def _establish_connection(
         raise OSError(f"Unexpected ping reply: {reply!r}")
 
     # ── HELLO/HELLO_ACK ───────────────────────────────────────────────────
-    await _do_hello(websocket, token)
+    ack = await _do_hello(websocket, token)
 
     _progress("Connected!")
     logger.info(
@@ -832,6 +844,7 @@ async def _establish_connection(
         local_port=local_port,
         remote_port=remote_port,
         token_plaintext=token,
+        server_code_fingerprint=ack.get("code_fingerprint"),
     )
 
 

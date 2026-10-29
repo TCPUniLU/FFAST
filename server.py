@@ -58,6 +58,8 @@ import asyncio
 import logging
 import os
 
+from ffast.session import trace
+
 logger = logging.getLogger("FFAST")
 
 _SERVER_LOG = os.path.join(
@@ -75,6 +77,30 @@ def _setupServerLogger():
             logging.StreamHandler(),
         ],
     )
+
+
+class _QuietPortProbes(logging.Filter):
+    """Drop websockets' handshake error for a connection that sent nothing.
+
+    The web launcher waits for this server by opening a TCP connection and
+    closing it without a word (``wait_until_ready``). websockets logs that as
+    ``ERROR opening handshake failed`` with a full traceback, which read like
+    a crash in every launch log. A connection that sends a bad request still
+    logs: that one is a real problem.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.getMessage() != "opening handshake failed" or not record.exc_info:
+            return True
+        exc = record.exc_info[1]
+        while exc is not None:
+            if isinstance(exc, EOFError) and "after 0 bytes" in str(exc):
+                return False
+            exc = exc.__cause__
+        return True
+
+
+_QUIET_PORT_PROBES = _QuietPortProbes()
 
 
 async def _auto_snapshot_loop(
@@ -166,6 +192,8 @@ async def _do_hello_handshake(websocket, addr, token_hash: str):
         server_caps = negotiate(client_caps)
         ack_dict = server_caps.model_dump()
         ack_dict["role"] = role.value
+        # Tells the page to report its clicks and errors (ffast-server --trace)
+        ack_dict["trace"] = trace.enabled()
         ack = pack(control.HELLO_ACK, [], ack_dict)
         await websocket.send(ack)
         logger.info("HELLO_ACK → %s: role=%s", addr, role.value)
@@ -224,11 +252,20 @@ async def _handler(
     # Per-connection queue + session; register with the hub so shared events
     # (object metadata, deletes, metric catalog) fan out to this client too.
     outbound: asyncio.Queue = asyncio.Queue(maxsize=200)
-    session = ServerSession(env, outbound)
+    session = ServerSession(env, outbound, broadcast=hub.broadcast)
+    session.peer = ":".join(str(p) for p in addr[:2]) if addr else ""
     hub.register(outbound)
+    trace.record("conn", f"connected  [{session.peer}]")
 
     # ── handshake ─────────────────────────────────────────────────────────
-    role = await _do_hello_handshake(websocket, addr, token_hash)
+    try:
+        role = await _do_hello_handshake(websocket, addr, token_hash)
+    except BaseException:
+        # The client went away mid-handshake: leave the hub and the window
+        # feed, which holds its sessions until they close (ADR 0062).
+        hub.deregister(outbound)
+        session.close()
+        raise
 
     # ── state replay ──────────────────────────────────────────────────────
     session.replay()
@@ -256,12 +293,18 @@ async def _handler(
                         )
                 except Exception as exc:
                     logger.warning("RPC decode error: %s", exc)
+                    trace.record_error(f"handling a message failed: {exc!r}", exc)
             else:
                 logger.debug("Unexpected text message from %s: %r", addr, message)
 
     async def send_loop():
         while True:
             data = await session.outbound.get()
+            if trace.enabled():
+                try:
+                    trace.record("out", f"{trace.message(*unpack(data))}  [{session.peer}]")
+                except Exception:
+                    trace.record("out", f"<{len(data)} bytes, not a message>  [{session.peer}]")
             try:
                 await websocket.send(data)
             except Exception as exc:
@@ -281,9 +324,13 @@ async def _handler(
         except asyncio.CancelledError:
             pass
 
+        # Leave the hub first, so the session's last "Used by" goes only to
+        # the windows still open (ADR 0062).
         hub.deregister(outbound)
+        session.close()
         # The role is this connection's own local — there is no registry to ask
         # (ADR 0051); the hub owns liveness and reports what is left.
+        trace.record("conn", f"disconnected graceful={graceful}  [{session.peer}]")
         logger.info(
             "Client disconnected: %s role=%s graceful=%s remaining=%d",
             addr, role and role.value, graceful, hub.count,
@@ -321,6 +368,9 @@ async def _serve(
             recovery_window=recovery_window,
             quit_event=quit_event,
         )
+
+    # addFilter ignores a filter it already holds, so repeat _serve calls are fine.
+    logging.getLogger("websockets.server").addFilter(_QUIET_PORT_PROBES)
 
     logger.info("Starting ffast-server on port %d", port)
     async with websockets.serve(
@@ -391,7 +441,7 @@ def _load_project_metric_modules(config_arg: str | None = None) -> None:
 def _discover_project_config(config_arg: str | None):
     """Discover + parse the project ``ffast.toml`` (ADR 0007) once, fail-soft.
 
-    Shared by ``_compile_project_metrics`` and ``_build_analysis_tab_layout`` so
+    Shared by ``_compile_project_metrics`` and ``_build_tab_sources`` so
     the discover→exists→parse block lives in one place. Returns the
     ``ProjectConfig`` or ``None`` (no config found, or unparseable — logged once
     here); callers treat ``None`` as "built-ins only".
@@ -451,33 +501,56 @@ def _compile_project_metrics(config_arg: str | None) -> None:
     logger.info("Compiled %d declarative metric(s) from project config.", len(result.ids))
 
 
-def _build_analysis_tab_layout(config_arg: str | None) -> list:
-    """Resolve the merged Analysis-Tab layout once at startup (ADR 0045 Phase 3).
+def _build_tab_sources(config_arg: str | None, tabs_dir: str | None = None):
+    """The browser's tabs: built-in, project and user (ADR 0056), merged.
 
-    The web client fetches this over ``REQUEST_TAB_LAYOUT`` instead of running
-    the Transform-Metric compiler in the browser, so the resolution happens here
-    — after ``_compile_project_metrics`` has registered every Panel's transform
-    metric and *before* the registry is frozen, so ``resolve_ref`` only looks
-    ids up (idempotent). Fail-soft: any config problem falls back to the bundled
-    tabs, matching ``_compile_project_metrics``' policy (the built-in analyses
-    stay available even when a project config is broken).
+    The web client fetches the layout over ``REQUEST_TAB_LAYOUT`` instead of
+    running the Transform-Metric compiler in the browser, and saves, deletes,
+    hides and exports user tabs through the same object. User tabs are files
+    in ``tabs_dir`` (default ``~/.ffast/tabs``) on this machine. Their metrics
+    are compiled here, after ``_compile_project_metrics`` and *before* the
+    registry is frozen, like the project's. Fail-soft: a tab that does not
+    compile is logged and left out of the layout; the rest stay.
     """
-    try:
-        from ffast.config.tabs import build_tab_layout, merge_tabs
-    except Exception as exc:
-        logger.warning("Config loader unavailable; analysis tabs skipped: %s", exc)
-        return []
+    from ffast.config.user_tabs import DEFAULT_DIR, TabSources, UserTabStore
 
     # Reuses the shared discover/parse (config already logged once there).
     project_config = _discover_project_config(config_arg)
+    store = UserTabStore(tabs_dir or DEFAULT_DIR)
     try:
-        return build_tab_layout(merge_tabs(project_config))
+        sources = TabSources.for_project(project_config, store)
     except Exception as exc:
-        logger.warning("Analysis tab layout build failed (%s); using bundled tabs", exc)
-        try:
-            return build_tab_layout(merge_tabs(None))
-        except Exception:
-            return []
+        logger.warning("Project tabs unusable (%s); using bundled and user tabs", exc)
+        sources = TabSources.for_project(None, store)
+    for name, msg in sources.compile():
+        logger.error("Tab %r does not compile and is left out: %s", name, msg)
+    for file, msg in store.errors:
+        logger.error("User tab file %s skipped: %s", store.root / file, msg)
+    logger.info("User tabs folder: %s", store.root)
+    return sources
+
+
+def _build_user_metrics(builtin_ids, metrics_dir: str | None = None):
+    """The user metrics: formulas saved by the browser, one TOML file each in
+    ``metrics_dir`` (default ``~/.ffast/metrics``) on this machine (ADR 0057).
+
+    Registered after the project's metrics, so an id the project (or a built-in)
+    already holds wins and the user file is listed as hidden. ``builtin_ids`` is
+    the registry as it was before the project's metrics, to label the origin of
+    each. Fail-soft: a file that does not compile is logged and stays listed
+    with its reason; the rest load. Must run before the tabs are built (a user
+    tab may plot a user metric) and before the freeze.
+    """
+    from ffast.config.user_metrics import DEFAULT_DIR, UserMetrics, UserMetricStore
+
+    store = UserMetricStore(metrics_dir or DEFAULT_DIR)
+    user_metrics = UserMetrics(store, builtin_ids=builtin_ids)
+    for metric_id, msg in user_metrics.load():
+        logger.error("User metric %r does not compile and is left out: %s", metric_id, msg)
+    for file, msg in store.errors:
+        logger.error("User metric file %s skipped: %s", store.root / file, msg)
+    logger.info("User metrics folder: %s", store.root)
+    return user_metrics
 
 
 def _validate_metric_registry() -> None:
@@ -519,6 +592,8 @@ async def _main(
     web_port: int = 0,
     config: str | None = None,
     host: str = "0.0.0.0",
+    tabs_dir: str | None = None,
+    metrics_dir: str | None = None,
 ):
     """Bootstrap env, wire RPC subscriptions, run server + event loop."""
     from ffast.core.environment import HeadlessEnvironment
@@ -532,6 +607,9 @@ async def _main(
     # Register external Trusted Metric Modules from project config (ADR 0011) so
     # they appear in METRIC_CATALOG and can be computed. Done before any client
     # connects / first metric runs, so the worker pool pickles the full registry.
+    import ffast.metrics.builtin  # noqa: F401 — register the built-ins first
+    from ffast.metrics.registry import default_registry as _registry
+    builtin_ids = set(_registry.list_metrics())
     _load_project_metric_modules(config)
 
     # Compile the project's declarative metrics (Dataset Fields, Expression
@@ -540,11 +618,12 @@ async def _main(
     # stop the server.
     _compile_project_metrics(config)
 
-    # Resolve the Analysis-Tab layout for the web client (ADR 0045 Phase 3) now
-    # that every Panel transform metric is registered, but before the freeze —
-    # resolve_ref only looks ids up here. Cached on the Environment so each
-    # per-connection ServerSession serves it from REQUEST_TAB_LAYOUT.
-    env.analysis_tab_layout = _build_analysis_tab_layout(config)
+    # The web client's tabs (ADR 0045 Phase 3, ADR 0056): built-in, project and
+    # user tabs, with the user tabs' metrics compiled now — before the freeze.
+    # Kept on the Environment so each per-connection ServerSession serves the
+    # layout from REQUEST_TAB_LAYOUT and changes it on SAVE_TAB and friends.
+    env.user_metrics = _build_user_metrics(builtin_ids, metrics_dir)
+    env.tab_sources = _build_tab_sources(config, tabs_dir)
 
     # Validate the full metric graph once, after builtins + external modules are
     # registered. Refuses to start on unknown refs, cycles, or legacy shapes.
@@ -554,8 +633,18 @@ async def _main(
     # 0044). Per-connection replies stay on each connection's own queue; these
     # Environment-level signals fan out through the hub. One global
     # eventSubscribe (the bus has no unsubscribe), pointed at the hub.
-    from ffast.session import ConnectionHub
+    from ffast.session import ConnectionHub, WindowFeed
     hub = ConnectionHub()
+
+    # What every window holds, built in one place (ADR 0062).
+    env.window_feed = WindowFeed(env, hub.broadcast)
+
+    # Who uses a metric, for "Used by" and for refusing to delete one in use
+    # (ADR 0057 rule 7): the tabs' panels, and any open view's colouring.
+    env.user_metrics.usage_providers += [
+        env.tab_sources.metric_users,
+        env.window_feed.view_colouring_users,
+    ]
 
     for evt in SERVER_TO_CLIENT:
 
@@ -571,59 +660,43 @@ async def _main(
     # This lets the client create a RemoteDatasetProxy for Loupe without
     # transferring the full arrays.
     def _on_dataset_loaded_meta(fingerprint):
-        from ffast.protocol import DatasetMeta
         dataset = env.datasets.get(fingerprint)
         if dataset is None:
             return
         try:
-            data = pack(
-                control.REMOTE_DATASET_META,
-                (fingerprint,),
-                DatasetMeta.model_validate(dataset.toMetaDict()).model_dump(),
-            )
-            hub.broadcast(data)
-            logger.debug("REMOTE_DATASET_META sent for %r", fingerprint)
+            data = env.window_feed.dataset_meta(dataset)
+            if data is not None:
+                hub.broadcast(data)
+                logger.debug("REMOTE_DATASET_META sent for %r", fingerprint)
         except Exception as exc:
             logger.warning("REMOTE_DATASET_META error: %s", exc)
 
     env.eventSubscribe("DATASET_LOADED", _on_dataset_loaded_meta)
+    # A subset that follows a plot's zoom changes its frames, and unticking
+    # SUB hides it: announce it again so every window sees the change.
+    env.eventSubscribe("SUBDATASET_INDICES_CHANGED", _on_dataset_loaded_meta)
+    env.eventSubscribe("DATASET_STATE_CHANGED", _on_dataset_loaded_meta)
 
     # Send lightweight model metadata when a ghost model is registered.
     # MODEL_LOADED fires AFTER _loadPredictionsFromKeys + lookForGhosts(),
     # so prediction arrays are already in env.cache at this point.
     def _on_model_loaded_meta(model_fp):
-        from ffast.protocol import ModelMeta
         model = env.models.get(model_fp)
         if model is None:
             return
         # Stage 2: real server-side models are metaed too (not just ghosts) — the
         # client holds a proxy and the server generates predictions on demand.
         try:
-            name = getattr(model, "name", None) or model_fp[:8]
-
-            # Find which dataset fingerprints this model has predictions for
-            dataset_fps = []
-            from ffast.cache import CacheKey
-            for cache_key in list(env.cache.keys()):
-                ck = CacheKey.try_parse(cache_key)
-                if ck is not None and ck.matches_model(model_fp) and ck.dataset_fp:
-                    if ck.dataset_fp not in dataset_fps:
-                        dataset_fps.append(ck.dataset_fp)
-
-            data = pack(
-                control.REMOTE_MODEL_META,
-                (model_fp,),
-                ModelMeta(name=name, dataset_fingerprints=dataset_fps).model_dump(),
-            )
-            hub.broadcast(data)
-            logger.info(
-                "REMOTE_MODEL_META sent: model=%r name=%r datasets=%r",
-                model_fp[:8], name, dataset_fps,
-            )
+            hub.broadcast(env.window_feed.model_meta(model_fp, model))
+            logger.info("REMOTE_MODEL_META sent: model=%r", model_fp[:8])
         except Exception as exc:
             logger.warning("REMOTE_MODEL_META error: %s", exc)
 
     env.eventSubscribe("MODEL_LOADED", _on_model_loaded_meta)
+
+    # Every warning the server logs from here on also pops up in every window.
+    from ffast.session.warning_relay import WarningRelay
+    logging.getLogger().addHandler(WarningRelay(asyncio.get_running_loop(), hub.broadcast))
 
     logger.info("Environment ready (job_id=%s)", job_id)
 
@@ -711,6 +784,22 @@ def cli():
              "directory; built-in metrics are always available.",
     )
     parser.add_argument(
+        "--tabs-dir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Folder of the browser's user tabs, one TOML file per tab "
+             "(default: ~/.ffast/tabs on this machine).",
+    )
+    parser.add_argument(
+        "--metrics-dir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Folder of the browser's user metrics, one TOML file per metric "
+             "(default: ~/.ffast/metrics on this machine).",
+    )
+    parser.add_argument(
         "--host",
         type=str,
         default="0.0.0.0",
@@ -719,7 +808,19 @@ def cli():
              "(default: 0.0.0.0, all interfaces). The `ffast-web` launcher passes "
              "127.0.0.1 to keep a local session loopback-only.",
     )
+    parser.add_argument(
+        "--trace",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="DIR",
+        help="Write a trace of every click, message and handler run to "
+             "DIR/trace-<date-time>.log (default DIR: ~/.ffast/logs), to find "
+             "the source of a bug. The last 10 trace files are kept.",
+    )
     args = parser.parse_args()
+    if args.trace is not None:
+        trace.start(args.trace or None)
 
     # Auto-detect job_id from SLURM environment; fall back to CLI arg or "local"
     job_id = (
@@ -738,6 +839,8 @@ def cli():
             web_port=args.web_port,
             config=args.config,
             host=args.host,
+            tabs_dir=args.tabs_dir,
+            metrics_dir=args.metrics_dir,
         ))
     except KeyboardInterrupt:
         logger.info("Interrupted — shutting down")

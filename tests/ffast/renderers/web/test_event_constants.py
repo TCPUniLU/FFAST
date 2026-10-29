@@ -80,7 +80,11 @@ def test_inbound_events_are_things_the_server_sends(in_events):
         control.REMOTE_DATASET_META, control.REMOTE_MODEL_META,
         control.SCENE_SNAPSHOT, control.SCENE_PATCH, control.COMMAND_RESULT,
         control.METRIC_CATALOG, control.METRICS_UPDATED, control.TAB_LAYOUT,
-        control.SUBSET_EXPORTED, control.SESSION_SAVED, control.SESSION_LOADED,
+        control.SUBSET_EXPORTED, control.SUBSET_EXTRACTED, control.SESSION_SAVED, control.SESSION_LOADED,
+        control.LOAD_FAILED, control.TAB_SAVED, control.TAB_EXPORTED, control.SUBSET_DECLARED,
+        control.USER_METRICS, control.METRIC_USERS, control.USER_METRIC_SAVED, control.USER_METRIC_EXPORTED,
+        control.METRIC_INPUTS, control.METRIC_CHECKED, control.METRIC_TRIED, control.METRIC_BOXES,
+        control.SESSION_METRICS, control.SERVER_WARNING,
     }
     known = set(SERVER_TO_CLIENT) | set(control.REPLY_EVENTS) | announcements
     unknown = sorted(set(in_events.values()) - known)
@@ -96,6 +100,21 @@ def test_session_acks_are_declared_both_sides(out_events, in_events):
     assert control.LOAD_SESSION in out_events.values()
     assert control.SESSION_SAVED in in_events.values()
     assert control.SESSION_LOADED in in_events.values()
+
+
+def test_every_event_the_web_client_uses_is_declared(out_events, in_events):
+    """`OUT.FOO` / `IN.FOO` with no FOO in events.js is `undefined` at run time:
+    the message goes out nameless, or the handler waits for a name never sent
+    (a dropped independent panel's CLOSE_VIEW never reached the server)."""
+    static = EVENTS_JS.parent
+    declared = {"OUT": set(out_events), "IN": set(in_events)}
+    offenders = []
+    for js in sorted(static.glob("*.js")) + sorted(static.glob("panes/*.js")):
+        for i, line in enumerate(js.read_text().splitlines(), 1):
+            for side, name in re.findall(r"\b(OUT|IN)\.([A-Z_]+)\b", line):
+                if name not in declared[side]:
+                    offenders.append(f"{js.relative_to(static)}:{i}: {side}.{name}")
+    assert not offenders, "events used but not declared in events.js:\n" + "\n".join(offenders)
 
 
 def test_no_bare_event_strings_left_in_the_web_client():

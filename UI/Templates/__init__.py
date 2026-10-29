@@ -15,6 +15,7 @@ from UI.Templates.interactive import (
     ToolCheckButton,
     ToolButton,
     InfoToolButton,
+    RedoToolButton,
 )
 from UI.Templates.layout import (
     ExpandingScrollArea,

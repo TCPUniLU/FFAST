@@ -16,6 +16,7 @@ the whole module is marked ``integration``. The pure-metadata checks
 """
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -104,28 +105,61 @@ class TestWheelContents:
     launcher that 404s every asset."""
 
     @pytest.fixture(scope="class")
-    def wheel_names(self, tmp_path_factory) -> list[str]:
+    def wheel_path(self, tmp_path_factory) -> Path:
         out = tmp_path_factory.mktemp("wheel")
+        # Build from a private copy of the source: the suite runs in parallel
+        # processes, and builds sharing the repo's build/ folder delete and
+        # overwrite each other's files. A fresh copy also has no stale
+        # build/lib, so a file deleted from the source cannot still ship.
+        src = tmp_path_factory.mktemp("src") / "ffast"
+        shutil.copytree(
+            REPO_ROOT,
+            src,
+            ignore=shutil.ignore_patterns(
+                ".git", ".venv", "build", "*.egg-info", "__pycache__",
+                ".pytest_cache", "temp", "results", "private", "examples",
+                "docs", "tests",
+            ),
+        )
         # Build via the PEP 517 backend directly (setuptools.build_meta) rather
         # than `python -m build`: the backend is guaranteed present (it is this
         # project's build-backend) whereas `build`/`pip` may not be installed
-        # in the test env. Run in a subprocess with cwd=REPO_ROOT so the backend
-        # reads pyproject.toml from the source tree without importing it here.
+        # in the test env. Run in a subprocess with cwd=src so the backend
+        # reads pyproject.toml from the copy without importing it here.
         script = (
             "from setuptools import build_meta as b; "
             f"print(b.build_wheel({str(out)!r}))"
         )
         proc = subprocess.run(
             [sys.executable, "-c", script],
-            cwd=REPO_ROOT,
+            cwd=src,
             capture_output=True,
             text=True,
         )
         assert proc.returncode == 0, f"wheel build failed:\n{proc.stderr}"
         wheels = list(out.glob("*.whl"))
         assert len(wheels) == 1, f"expected exactly one wheel, got {wheels}"
-        with zipfile.ZipFile(wheels[0]) as zf:
+        return wheels[0]
+
+    @pytest.fixture(scope="class")
+    def wheel_names(self, wheel_path) -> list[str]:
+        with zipfile.ZipFile(wheel_path) as zf:
             return zf.namelist()
+
+    def test_default_config_ships(self, wheel_names):
+        # ffast/config/user.py opens it at import; without it the dataset and
+        # model loaders cannot import on an installed server.
+        assert "ffast/config/default.json" in wheel_names
+
+    def test_installed_code_has_the_checkout_fingerprint(self, wheel_path, tmp_path):
+        """A server installed from this wheel reports the same code fingerprint
+        as this checkout, so a fresh install never shows the "server runs
+        different code" warning."""
+        from ffast.session.code_fingerprint import code_fingerprint, fingerprint_of
+
+        with zipfile.ZipFile(wheel_path) as zf:
+            zf.extractall(tmp_path)
+        assert fingerprint_of(tmp_path) == code_fingerprint()
 
     def test_index_html_ships(self, wheel_names):
         assert "ffast/renderers/web/static/index.html" in wheel_names

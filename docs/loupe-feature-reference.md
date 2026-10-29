@@ -30,8 +30,8 @@ control drives it.
 |------|------------------------|-------------|
 | By element (CPK) | `"element"` | Coloring → Elements |
 | By metric (per-atom shape) | `"metric:<metric_id>"` | Coloring → Metric |
-| Force MAE (mean or per-frame) | `"metric:ffast.force_mae"` | Coloring → Mean/Force Error |
-| Acceleration norm error | `"metric:ffast.accel_mae_per_atom"` | Coloring → Acceleration Norm Error |
+| Force error length (per atom) | `"metric:ffast.force_difference[atom+structure;length]"` | Coloring → Force Difference · per atom · length |
+| Acceleration error averaged per atom | `"metric:ffast.accel_difference[atom;length;mae]"` | Coloring → Acceleration Difference · MAE · per atom, over frames · length |
 | Displacement (total / mean) | `"metric:ffast.displacement_stats"` | Coloring → Total/Mean Displacement |
 
 Colormaps: `viridis`, `inferno`, `plasma`, `coolwarm`, `hot`, `bwr`, `force_error`.

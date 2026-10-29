@@ -35,11 +35,13 @@ DATASET = "examples/data/variable-sized-molecular/dataset.xyz"
 PREDICTION = "examples/data/variable-sized-molecular/prediction.xyz"
 
 # Metrics reported at the end; the rest are their dependencies.
+# A base metric plus its keep-box setting names each error (ADR 0065):
+# [kept boxes;combine;statistic], "dataset" when nothing is kept.
 REPORTED = {
-    "Energy MAE":  "ffast.energy_mae",
-    "Energy RMSE": "ffast.energy_rmse",
-    "Force MAE":   "ffast.force_mae_global",
-    "Force RMSE":  "ffast.force_rmse_global",
+    "Energy MAE":  "ffast.energy_difference[dataset;mae]",
+    "Energy RMSE": "ffast.energy_difference[dataset;rmse]",
+    "Force MAE":   "ffast.force_difference[dataset;component;mae]",
+    "Force RMSE":  "ffast.force_difference[dataset;component;rmse]",
 }
 
 
@@ -85,14 +87,11 @@ def main(datasetPath=DATASET, predictionPath=PREDICTION, savePath="results",
 
     # Queue metric computations
     metrics = [
-        ("ffast.energy_mae",        {}),
-        ("ffast.energy_rmse",       {}),
-        ("ffast.energy_mae_shifted",  {}),
-        ("ffast.energy_rmse_shifted", {}),
-        ("ffast.force_mae_global",  {}),
-        ("ffast.force_rmse_global", {}),
+        *((metric_id, {}) for metric_id in REPORTED.values()),
+        ("ffast.energy_difference_shifted[dataset;mae]", {}),
+        ("ffast.energy_difference_shifted[dataset;rmse]", {}),
         ("ffast.energy_difference", {}),
-        ("ffast.force_mae",         {"norm": "l1"}),
+        ("ffast.force_difference[atom+structure;component;mae]", {}),
     ]
     for metric_id, params in metrics:
         key = env.data.make_metric_cache_key(metric_id, params, model, dataset)

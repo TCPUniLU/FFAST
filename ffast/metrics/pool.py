@@ -2,11 +2,10 @@
 
 Architecture
 ------------
-WorkerProcessExecutor owns a pool of lazily-spawned worker subprocesses, at most
-policy.max_workers of them.  A worker is checked out for the whole send/recv
-exchange, so its pipe is only ever touched by the thread holding it — callers
-(the TaskManager runs each metric via asyncio.to_thread) therefore run in
-parallel rather than queueing behind one another.
+WorkerProcessExecutor keeps a pool of lazily-spawned worker subprocesses, at
+most policy.max_workers.  A caller checks a worker out for its whole send/recv
+exchange, so each pipe is used by one thread at a time and N metrics run at
+once (ADR 0071).
 
 Large numpy inputs (>= policy.shm_threshold_bytes) are passed via
 multiprocessing.shared_memory.SharedMemory (Worker Buffers) to avoid
@@ -14,12 +13,13 @@ inter-process array copies.
 
 Worker lifecycle
 - Self-terminates after policy.max_tasks_per_worker tasks.
-- Parent detects crash (BrokenPipeError / EOFError) and spawns a replacement.
+- Parent detects crash (BrokenPipeError / EOFError) and retires the worker;
+  the next checkout spawns a replacement.
 - If the hard time limit (effective_timeout) is exceeded, the parent
   terminates the worker process and returns a MetricFailure.
   effective_timeout = min(schema.hints.max_runtime_s, policy.max_runtime_s)
   when the metric declares a hint; otherwise policy.max_runtime_s.
-- A freshly-spawned worker signals readiness (after import + registry unpickle)
+- A freshly-spawned worker signals readiness (after import)
   via the _READY sentinel; the parent consumes it before arming the deadline,
   so worker cold-start (bounded separately by policy.spawn_timeout_s) is never
   charged to a metric's runtime.
@@ -68,8 +68,8 @@ class PoolPolicy:
     max_runtime_s: float = 300.0
     grace_period_s: float = 5.0
     shm_threshold_bytes: int = 1_048_576  # arrays >= 1 MiB use SharedMemory
-    # Budget for a fresh worker to boot (interpreter start + imports + registry
-    # unpickle) and reach its recv loop. Cold-start is NOT a metric's runtime,
+    # Budget for a fresh worker to boot (interpreter start + imports)
+    # and reach its recv loop. Cold-start is NOT a metric's runtime,
     # so it is bounded separately and excluded from max_runtime_s.
     spawn_timeout_s: float = 30.0
     # How many metrics may run at once. None leaves cores for the parent process
@@ -91,9 +91,27 @@ def _default_worker_count() -> int:
     return max(1, available - 2)
 
 
-# Sentinel a freshly-booted worker sends once it has unpickled the registry and
-# is about to block on recv — see _await_ready.
+# Sentinel a freshly-booted worker sends once it is
+# about to block on recv — see _await_ready.
 _READY = "__worker_ready__"
+
+
+# The failure a task gets when its worker process ends without answering.
+WORKER_DIED = "Worker process died unexpectedly"
+
+
+class WorkerCallError(RuntimeError):
+    """A function run with ``WorkerProcessExecutor.call`` failed; the message
+    says why in a sentence."""
+
+
+def _failure_message(traceback: str) -> str:
+    """One line for a failed call: the error it raised, or what became of
+    the worker."""
+    if traceback == WORKER_DIED:
+        return "the worker process stopped (it may have run out of memory); it restarts on its own"
+    lines = [ln for ln in traceback.strip().splitlines() if ln.strip()]
+    return lines[-1] if lines else traceback
 
 
 # ── Shared-memory helpers (Worker Buffers) ────────────────────────────────────
@@ -148,24 +166,23 @@ def _unpack_inputs(packed: dict[str, Any]) -> tuple[dict[str, Any], list[SharedM
 
 def _worker_main(
     conn: "mp.connection.Connection",
-    registry_bytes: bytes,
     policy: PoolPolicy,
 ) -> None:
     """Entry point for each worker subprocess.
 
-    Receives pre-resolved inputs and pre-computed compute_params from the
-    parent — no dependency resolution or parameter filtering needed here.
+    Receives the function to run, pre-resolved inputs and pre-computed
+    compute_params from the parent — no registry, no dependency resolution or
+    parameter filtering needed here (ADR 0061).
 
     Runs until:
     - parent sends the shutdown sentinel (None msg);
     - pipe is closed (EOFError);
     - max_tasks_per_worker reached (clean self-exit).
     """
-    registry: MetricRegistry = pickle.loads(registry_bytes)
     task_count = 0
 
     # Announce readiness: the parent's per-metric deadline only starts once it
-    # has consumed this, so interpreter boot + imports + unpickle above don't
+    # has consumed this, so interpreter boot + imports above don't
     # eat into a metric's hard time limit.
     conn.send(_READY)
 
@@ -186,8 +203,7 @@ def _worker_main(
 
             inputs, shm_list = _unpack_inputs(packed_inputs)
             try:
-                _, fn = registry.get(metric_id)
-                value = fn(**inputs, **compute_params)
+                value = msg["fn"](**inputs, **compute_params)
                 conn.send({"task_id": task_id, "value": value})
             except Exception:
                 conn.send({
@@ -250,11 +266,10 @@ class WorkerProcessExecutor(MetricExecutor):
     compute_params and returns only the raw function output.
 
     Large numpy inputs use shared memory (Worker Buffers).
+    Up to policy.max_workers workers run at once; a caller checks one out for
+    its whole exchange and hands it back afterwards.
     Workers self-recycle after policy.max_tasks_per_worker tasks.
-    Crashed workers are transparently replaced on the next run() call.
-
-    Thread-safe: concurrent run() calls each check out their own worker and
-    execute in parallel, up to policy.max_workers.  Beyond that they queue.
+    Crashed workers are transparently replaced on the next checkout.
 
     Effective timeout per metric:
         min(schema.hints.max_runtime_s, policy.max_runtime_s)
@@ -270,7 +285,6 @@ class WorkerProcessExecutor(MetricExecutor):
         self._registry = registry
         self._policy = policy or PoolPolicy()
         self._cache = cache if cache is not None else MetricCache()
-        self._registry_bytes = pickle.dumps(registry)
         self._max_workers = self._policy.max_workers or _default_worker_count()
         # Workers are checked out for the whole send/recv exchange, so a pipe is
         # only ever used by the one thread holding it. The lock guards the two
@@ -291,7 +305,7 @@ class WorkerProcessExecutor(MetricExecutor):
         parent_conn, child_conn = mp.Pipe(duplex=True)
         process = mp.Process(
             target=_worker_main,
-            args=(child_conn, self._registry_bytes, self._policy),
+            args=(child_conn, self._policy),
             daemon=True,
         )
         process.start()
@@ -349,7 +363,7 @@ class WorkerProcessExecutor(MetricExecutor):
     def _await_ready(self, worker: _Worker) -> bool:
         """Block until a freshly-spawned worker has booted and is in its recv
         loop. Returns False if it never signals ready within spawn_timeout_s
-        (slow boot under load, or a crash during import/unpickle).
+        (slow boot under load, or a crash during import).
 
         Consuming the readiness sentinel here — before the per-metric deadline
         starts — keeps worker cold-start out of the metric's hard time limit.
@@ -381,7 +395,7 @@ class WorkerProcessExecutor(MetricExecutor):
             self._registry,
             self._cache,
             lambda mid, schema, fn, kwargs, cparams: self._ship_to_worker(
-                mid, schema, kwargs, cparams, parameters
+                mid, schema, fn, kwargs, cparams, parameters
             ),
         )
         return results[id]
@@ -390,16 +404,13 @@ class WorkerProcessExecutor(MetricExecutor):
         self,
         id: str,
         schema: Any,
+        fn: Any,
         resolved: dict[str, Any],
         compute_params: dict[str, Any],
         parameters: dict[str, Any],
     ) -> Any:
         """Transport: run one metric in a worker subprocess, returning its raw
         output (or a ``MetricFailure`` on timeout / crash / worker-side error).
-
-        The worker is checked out for the whole exchange, so concurrent callers
-        (the TaskManager runs each metric via ``asyncio.to_thread``) each get
-        their own worker and pipe and run in parallel, up to policy.max_workers.
 
         Large numpy inputs travel via shared memory (Worker Buffers).  The worker
         cold-start deadline (``spawn_timeout_s``) is consumed before the metric's
@@ -412,12 +423,23 @@ class WorkerProcessExecutor(MetricExecutor):
             if hint is not None
             else self._policy.max_runtime_s
         )
+        return self._send(id, fn, resolved, compute_params, parameters, effective_timeout)
 
+    def call(self, fn: Any, kwargs: dict[str, Any], label: str = "formula") -> Any:
+        """``fn(**kwargs)`` in the worker, under the policy's time limit. A
+        failure raises ``WorkerCallError``; a worker that dies (e.g. out of
+        memory) is replaced on the next call, and this process carries on."""
+        out = self._send(label, fn, kwargs, {}, {}, self._policy.max_runtime_s)
+        if isinstance(out, MetricFailure):
+            raise WorkerCallError(_failure_message(out.traceback))
+        return out
+
+    def _send(self, id, fn, resolved, compute_params, parameters, effective_timeout):
+        """One task on a checked-out worker; its raw output, or a ``MetricFailure``."""
         task_id = next(self._task_ids)
         worker = self._checkout()
         reuse = False  # Only a clean round-trip earns the worker its place back
         shm_list: list[SharedMemory] = []
-
         try:
             # Wait for the worker to finish booting BEFORE arming the deadline, so a
             # slow cold-start (common under load) can't falsely time out a fast metric.
@@ -433,12 +455,23 @@ class WorkerProcessExecutor(MetricExecutor):
 
             packed_inputs, shm_list = _pack_inputs(resolved, self._policy.shm_threshold_bytes)
 
-            worker.conn.send({
-                "task_id": task_id,
-                "metric_id": id,
-                "packed_inputs": packed_inputs,
-                "compute_params": compute_params,
-            })
+            try:
+                worker.conn.send({
+                    "task_id": task_id,
+                    "metric_id": id,
+                    "fn": fn,
+                    "packed_inputs": packed_inputs,
+                    "compute_params": compute_params,
+                })
+            except (pickle.PicklingError, AttributeError, TypeError) as exc:
+                # Pickling happens before anything is written, so the pipe
+                # is still clean and the worker keeps serving (ADR 0061).
+                reuse = True
+                return MetricFailure(
+                    metric_id=id,
+                    traceback=f"The metric's task cannot be sent to the worker: {exc!r}",
+                    parameters=parameters,
+                )
 
             deadline = time.monotonic() + effective_timeout
             while True:
@@ -465,7 +498,7 @@ class WorkerProcessExecutor(MetricExecutor):
         except (BrokenPipeError, EOFError, OSError):
             return MetricFailure(
                 metric_id=id,
-                traceback="Worker process died unexpectedly",
+                traceback=WORKER_DIED,
                 parameters=parameters,
             )
         finally:
@@ -489,7 +522,6 @@ class WorkerProcessExecutor(MetricExecutor):
             workers = list(self._live)
             self._live.clear()
             self._idle.clear()
-
         for worker in workers:
             try:
                 worker.conn.send(None)

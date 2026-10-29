@@ -18,7 +18,7 @@ class DatasetMeta(BaseModel):
     The server announces each loaded dataset to connected renderer clients
     without transferring coordinate arrays (Stage 4c lazy proxy). This is the
     single typed contract for that payload — it mirrors the dict returned by
-    ``DatasetLoader.toMetaDict`` / ``VariableDatasetLoader.toMetaDict`` so the
+    ``DatasetLoader.toMetaDict`` / ``FlatDatasetLoader.toMetaDict`` so the
     wire shape is identical, while ``extra="forbid"`` makes any future drift in
     those producers a loud validation error instead of a silently untyped dict.
 
@@ -37,6 +37,18 @@ class DatasetMeta(BaseModel):
     offsets: Optional[list[int]] = None
     path: Optional[str] = None
     source_type: Optional[str] = None
+    # Lineage (ADR 0056): the dataset this one was cut from, and for a frame
+    # subset which parent frame each of its frames is (None: the same frame).
+    parent: Optional[str] = None
+    parent_frames: Optional[list[int]] = None
+    # False for a subset whose SUB box was unticked: kept, but not listed.
+    active: bool = True
+    # A frozen subset: its frames are fixed, it no longer follows the zoom.
+    frozen: bool = False
+    # The units the user gave this dataset's numbers, {"energy": "eV", ...}.
+    # Only a loaded dataset carries them; a view cut from it reads its root's
+    # (follow ``parent``), so a unit change announces one dataset, not each view.
+    units: dict[str, str] = Field(default_factory=dict)
 
 
 class ModelMeta(BaseModel):
@@ -85,6 +97,18 @@ class MetricCatalogEntry(BaseModel):
     shape: str
     unit: Optional[str] = None
     parameters: dict[str, MetricParameter] = Field(default_factory=dict)
+    # ADR 0057: where the metric comes from ("built-in" | "project" | "user"),
+    # and its formula when it is one (so a read-only metric can be duplicated).
+    origin: str = "built-in"
+    expr: Optional[str] = None
+    vars: Optional[dict[str, str]] = None
+    # A Python metric's code, and the formula that computes exactly the same
+    # when there is one (what Duplicate starts from; ADR 0057 amendment).
+    source: Optional[str] = None
+    equivalent_expr: Optional[str] = None
+    equivalent_vars: Optional[dict[str, str]] = None
+    # The refs it reads: raw inputs (``prediction.forces``) or metric ids.
+    inputs: list[str] = Field(default_factory=list)
 
 
 class MetricCatalog(BaseModel):
@@ -196,6 +220,12 @@ class MetricResultMessage(BaseModel):
     implementation_hash: Optional[str] = None
     checksum: Optional[str] = None
     values: Optional[dict] = None
+    # Sentences about what the result left out (ADR 0064 amendment); sent only
+    # when there are some, so the message is unchanged for a clean result.
+    warnings: Optional[list[str]] = None
+    # Why the metric failed, in words, when ``ok`` is False because it failed
+    # (ADR 0066 rule 6); None when it could not be computed for lack of data.
+    error: Optional[str] = None
 
 
 # ── Control message requests (client→server) ─────────────────────────────────
@@ -235,6 +265,26 @@ class DeleteObjectRequest(BaseModel):
     fingerprint: str
 
 
+class FreezeSubsetRequest(BaseModel):
+    """Typed payload for ``FREEZE_SUBSET``: the live subset to freeze."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+
+
+class SetDatasetUnitRequest(BaseModel):
+    """Typed payload for ``SET_DATASET_UNIT``: name the unit of one dimension of
+    a dataset's numbers (an empty unit removes it). A subset's fingerprint sets
+    the unit of the dataset it was cut from."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+    dimension: str
+    unit: str
+
+
 class CreateSubsetRequest(BaseModel):
     """Typed payload for ``CREATE_SUBSET`` (ADR 0045 issue 12).
 
@@ -250,24 +300,43 @@ class CreateSubsetRequest(BaseModel):
     indices: list[Union[int, str]]
 
 
+class SubsetView(BaseModel):
+    """What a plot shows, for subbing: its panel kind, the metric each role
+    binds (a list for ``series``), each metric's compute params, and the
+    visible x and y ranges. See ``ffast.session.subbing``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    metrics: dict[str, Union[str, list[str]]] = Field(default_factory=dict)
+    params: dict[str, dict] = Field(default_factory=dict)
+    x: list[float]
+    y: Optional[list[float]] = None
+
+
 class DeclareSubsetRequest(BaseModel):
     """Typed payload for ``DECLARE_SUBSET`` (ADR 0045 Phase 3 subbing).
 
     Where ``CREATE_SUBSET`` filters *atoms within* each frame, this declares a
-    frame-index subset: ``indices`` are parent **configuration** indices (the
-    points a plot box-select covered), materialised server-side into a live
-    ``SubDataset`` via ``env.declareSubDataset``. ``model_fp`` (optional) is the
-    prediction the subbing panel was bound to — part of the SubDataset identity,
-    matching the desktop ``declareSubDataset(parent, model, idx, name)`` call.
-    ``name`` labels the subset (defaults to the originating panel/tab name).
+    frame-index subset, materialised server-side into a live ``SubDataset``
+    via ``env.declareSubDataset``. Its frames are either ``indices``, parent
+    **configuration** indices, or the frames a plot's ``view`` covers: while
+    SUB is ticked on a browser plot, the browser sends the view on every zoom
+    and the subset follows it. ``active=False`` hides the subset (SUB
+    unticked); declaring it again shows it. ``model_fp`` (optional) is the
+    prediction the subbing panel was bound to — part of the SubDataset
+    identity, matching the desktop ``declareSubDataset(parent, model, idx,
+    name)`` call. ``name`` labels the subset (the plot's title).
     """
 
     model_config = ConfigDict(extra="forbid")
 
     parent_fingerprint: str
-    indices: list[int]
+    indices: Optional[list[int]] = None
+    view: Optional[SubsetView] = None
     model_fp: Optional[str] = None
     name: str = "Subset"
+    active: bool = True
 
 
 class RequestSubdatasetArraysRequest(BaseModel):
@@ -338,6 +407,9 @@ class OpenViewRequest(BaseModel):
     view_id: Optional[str] = None
     dataset_ref: Optional[str] = None
     prediction_ref: Optional[str] = None
+    # A view to take the look of (colouring, display, bonds, camera) when this
+    # one is made: a frame subset opens looking like its parent.
+    start_from: Optional[str] = None
 
 
 class CloseViewRequest(BaseModel):
@@ -355,10 +427,164 @@ class RequestMetricRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metric_id: str
-    key: Optional[str] = None
+    # Opaque label the reply echoes. The server never parses it and never stores
+    # anything under it; it builds the cache key itself (ADR 0061).
+    request_id: str
     params: Optional[dict[str, Any]] = None
     model_fp: Optional[str] = None
     dataset_fp: Optional[str] = None
+
+
+class SaveTabRequest(BaseModel):
+    """Typed payload for ``SAVE_TAB`` (ADR 0056). ``tab`` is the tab in the
+    authoring form of a tab file; ``previous_name`` the tab it was edited from
+    (a built-in or project one gets a user tab replacing it), or None for a
+    new tab."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tab: dict
+    previous_name: Optional[str] = None
+
+
+class DeleteTabRequest(BaseModel):
+    """Typed payload for ``DELETE_TAB``: a user tab, by name."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+
+
+class HideTabRequest(BaseModel):
+    """Typed payload for ``HIDE_TAB``: hide (or show again) any tab."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    hidden: bool
+
+
+class SetTabOrderRequest(BaseModel):
+    """Typed payload for ``SET_TAB_ORDER``: the whole tab bar order (ADR 0070)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    names: list[str]
+
+
+class ExportTabRequest(BaseModel):
+    """Typed payload for ``EXPORT_TAB``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+
+
+class SaveUserMetricRequest(BaseModel):
+    """Typed payload for ``SAVE_USER_METRIC`` (ADR 0057). ``metric`` is the
+    metric in the authoring form of a ``[[metrics.expr]]`` entry. ``previous_id``
+    is set when editing (the id cannot change); ``base_revision`` is the version
+    the editor started from, checked against the server's copy unless
+    ``overwrite`` is set."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    metric: dict
+    previous_id: Optional[str] = None
+    base_revision: Optional[str] = None
+    overwrite: Optional[bool] = None
+
+
+class DeleteUserMetricRequest(BaseModel):
+    """Typed payload for ``DELETE_USER_METRIC``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+
+
+class ExportUserMetricRequest(BaseModel):
+    """Typed payload for ``EXPORT_USER_METRIC``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+
+
+class RequestMetricInputsRequest(BaseModel):
+    """Typed payload for ``REQUEST_METRIC_INPUTS`` (ADR 0057 rule 10): the
+    dataset and prediction whose inputs the Metrics pane lists."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_fp: Optional[str] = None
+    model_fp: Optional[str] = None
+
+
+class TraceRequest(BaseModel):
+    """Typed payload for ``TRACE``: one line the browser reports for the
+    trace file — ``kind`` is ``ui`` or ``error``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str
+    text: str
+
+
+class AddSessionMetricsRequest(BaseModel):
+    """Typed payload for ``ADD_SESSION_METRICS``: yes to the offer
+    ``SESSION_METRICS`` made (ADR 0057 rule 15)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    offer_id: str
+
+
+class CheckMetricRequest(BaseModel):
+    """Typed payload for ``CHECK_METRIC`` (ADR 0057 rule 11). ``check_id`` is
+    echoed in the reply so the editor can ignore an answer to a stale edit."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    metric: dict
+    check_id: Optional[str] = None
+    # The dataset open in the pane, for Check's warnings (ADR 0066 rule 5).
+    dataset_fp: Optional[str] = None
+
+
+class RequestMetricBoxesRequest(BaseModel):
+    """Typed payload for ``REQUEST_METRIC_BOXES`` (ADR 0065): the keep boxes of
+    ``metric_id``, or of ``base`` with ``setting`` after a box change.
+    ``dataset_fp`` says whether by=atom is allowed (uniform structures);
+    ``request_id`` is echoed so the pane can drop a stale answer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    metric_id: Optional[str] = None
+    base: Optional[str] = None
+    setting: Optional[dict] = None
+    dataset_fp: Optional[str] = None
+
+
+class TryMetricRequest(BaseModel):
+    """Typed payload for ``TRY_METRIC`` (rule 12): compute the formula over all
+    frames of this dataset and prediction, without saving."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    metric: dict
+    try_id: str
+    dataset_fp: Optional[str] = None
+    model_fp: Optional[str] = None
+
+
+class CancelTryMetricRequest(BaseModel):
+    """Typed payload for ``CANCEL_TRY_METRIC``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    try_id: str
 
 
 class SaveSessionRequest(BaseModel):
@@ -398,7 +624,7 @@ class ExportSubsetRequest(BaseModel):
 
 class EmptyRequest(BaseModel):
     """Typed payload for Control messages that carry no fields at all
-    (``REQUEST_STATE_SYNC``, ``REQUEST_METRIC_CATALOG``) — ``extra="forbid"``
+    (``REQUEST_METRIC_CATALOG``, ``REQUEST_TAB_LAYOUT``) — ``extra="forbid"``
     still catches an unexpected stray kwarg."""
 
     model_config = ConfigDict(extra="forbid")

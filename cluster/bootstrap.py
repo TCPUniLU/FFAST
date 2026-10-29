@@ -14,6 +14,7 @@ import hashlib
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -92,6 +93,10 @@ def build_server_wheel(project_root: Path, out_dir: Path) -> Path:
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # setuptools copies the package into build/lib and never removes from it,
+    # so a file deleted from the source would still ship in the wheel (and keep
+    # the server's code fingerprint from matching the client's).
+    shutil.rmtree(Path(project_root) / "build" / "lib", ignore_errors=True)
     root = str(project_root)
     candidates = [
         ["uv", "build", "--wheel", "--out-dir", str(out_dir), root],

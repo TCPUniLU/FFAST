@@ -6,41 +6,33 @@
  * The analysis panels use it to fetch each Panel's computed metric array for the
  * current dataset/prediction.
  *
- * Correlation & caching: we send the request's **cache key** as `key`, in the
- * server's `CacheKey` format `identity__model__dataset` (SEP `__`, NIL `nil`;
- * see ffast/cache/keys.py). The server rejects a malformed key, uses it as both
- * the compute cache slot and the correlation id (echoed back as `METRIC_RESULT`
- * `args[0]`). The metric id + params travel separately, so the key's identity
- * token is just a deterministic slot label — we fold params into it the same
- * shape the desktop does (`metric__p<...>`), without needing an md5 in the
- * browser. Because the key is deterministic per (metric, params, model,
- * dataset), two windows issuing the same request share it and the second hits
- * the cache (PRD story 71); and two identical in-flight requests within one
- * window share it, so each key holds a *list* of waiters resolved together.
- * Replies are per-connection (server `_emit` → this socket), so a window only
- * ever sees its own results.
+ * Correlation: every request carries a `request_id` (a counter: "m1", "m2", ...)
+ * and the reply echoes it as `METRIC_RESULT` `args[0]`. The id is an opaque
+ * label. The server builds the cache key itself and it never crosses the wire
+ * (ADR 0061), so the browser cannot name — or overwrite — a stored result.
+ *
+ * Merging: two identical requests in flight at the same time (same metric,
+ * params, model and dataset) share one message and one promise. On
+ * `METRICS_UPDATED` the app calls `forgetInFlight()`, so a request made after a
+ * metric change never joins one made before it; the earlier reply still
+ * resolves the earlier request. Replies are per-connection (server `_emit` →
+ * this socket), so a window only ever sees its own results.
  */
 
 import { decodeNdarray } from './ndarray.js';
 import { IN, OUT } from './events.js';
 
-const NIL = 'nil';
-
-/** Build the server-format cache key `identity__model__dataset`. Params fold
- * into the identity as a deterministic, sorted `metric__p<k=v,...>` token — the
- * server only requires a valid 3-segment key and uses it as an opaque slot. */
-function cacheKey(metricId, params, modelFp, datasetFp) {
-  let identity = metricId;
-  const names = Object.keys(params || {}).sort();
-  if (names.length) {
-    const enc = names.map((k) => `${k}=${JSON.stringify(params[k])}`).join(',');
-    identity = `${metricId}__p${enc}`;
-  }
-  return `${identity}__${modelFp || NIL}__${datasetFp || NIL}`;
+/** The label identical in-flight requests are merged by. */
+function requestLabel(metricId, params, modelFp, datasetFp) {
+  const p = params || {};
+  const sorted = Object.keys(p).sort().map((k) => [k, p[k]]);
+  return JSON.stringify([metricId, sorted, modelFp || null, datasetFp || null]);
 }
 
 /** @typedef {{values: number[], shape: number[]}} DecodedArray */
-/** @typedef {{nd: DecodedArray|null, shape: string, unit: string, dtype: string}} MetricResult */
+/** @typedef {{nd: DecodedArray|null, shape: string, unit: string, dtype: string, warnings: string[], metricId: string}} MetricResult */
+/** A metric that failed, and why (ADR 0066 rule 6).
+ * @typedef {{nd: null, failed: true, error: string, metricId: string}} MetricFailure */
 
 const _TIMEOUT_MS = 120000;
 
@@ -48,8 +40,11 @@ export class MetricClient {
   /** @param {import('./connection.js').FFastConnection} conn */
   constructor(conn) {
     this._conn = conn;
-    /** @type {Map<string, Array<{resolve: Function, timer: any}>>} */
-    this._waiters = new Map();
+    this._nextId = 0;
+    /** @type {Map<string, {resolve: Function, timer: any}>} */
+    this._byId = new Map();
+    /** @type {Map<string, Promise<MetricResult|MetricFailure|null>>} */
+    this._inFlight = new Map();
     conn.on(IN.METRIC_RESULT, (kw, args) => this._onResult(kw, args));
   }
 
@@ -57,48 +52,56 @@ export class MetricClient {
    * Request a metric's computed array.
    * @param {string} metricId concrete (already resolved) metric id
    * @param {{params?: object, modelFp?: string|null, datasetFp?: string|null}} [opts]
-   * @returns {Promise<MetricResult|null>} null when the server can't compute it
-   *   (e.g. a client-only model — `ok:false`) or the request times out.
+   * @returns {Promise<MetricResult|MetricFailure|null>} a failure when the
+   *   metric ran and failed; null when the server can't compute it (e.g. a
+   *   client-only model, no data — `ok:false` without an error) or the
+   *   request times out.
    */
   request(metricId, { params = {}, modelFp = null, datasetFp = null } = {}) {
-    return new Promise((resolve) => {
-      const key = cacheKey(metricId, params, modelFp, datasetFp);
+    const label = requestLabel(metricId, params, modelFp, datasetFp);
+    const joined = this._inFlight.get(label);
+    if (joined) return joined;
+
+    const requestId = `m${++this._nextId}`;
+    const promise = new Promise((resolve) => {
       const timer = setTimeout(() => {
-        this._drop(key, resolve);
+        this._byId.delete(requestId);
         resolve(null);
       }, _TIMEOUT_MS);
-      const list = this._waiters.get(key) || [];
-      list.push({ resolve, timer });
-      this._waiters.set(key, list);
-      this._conn.send(OUT.REQUEST_METRIC, {
-        metric_id: metricId,
-        key,                      // echoed back as args[0] → 1:1 correlation
-        params,
-        model_fp: modelFp,
-        dataset_fp: datasetFp,
-      });
+      this._byId.set(requestId, { resolve, timer });
+    }).finally(() => {
+      if (this._inFlight.get(label) === promise) this._inFlight.delete(label);
     });
+    this._inFlight.set(label, promise);
+    this._conn.send(OUT.REQUEST_METRIC, {
+      metric_id: metricId,
+      request_id: requestId,    // echoed back as args[0] → 1:1 correlation
+      params,
+      model_fp: modelFp,
+      dataset_fp: datasetFp,
+    });
+    return promise;
   }
 
-  _drop(key, resolve) {
-    const list = this._waiters.get(key);
-    if (!list) return;
-    const i = list.findIndex((w) => w.resolve === resolve);
-    if (i >= 0) list.splice(i, 1);
-    if (list.length === 0) this._waiters.delete(key);
+  /** Stop merging new requests into ones already sent. Replies still resolve
+   * through their request id. Call when the metric table changed. */
+  forgetInFlight() {
+    this._inFlight.clear();
   }
 
   _onResult(kw, args) {
-    const key = args && args[0];
-    const list = key != null ? this._waiters.get(key) : null;
-    if (!list || list.length === 0) return;
-    this._waiters.delete(key);
-    const payload = kw.ok
-      ? { nd: decodeNdarray(kw.values), shape: kw.shape, unit: kw.unit, dtype: kw.dtype }
-      : null;
-    for (const w of list) {
-      clearTimeout(w.timer);
-      w.resolve(payload);
-    }
+    const requestId = args && args[0];
+    const waiter = requestId != null ? this._byId.get(requestId) : null;
+    if (!waiter) return;
+    this._byId.delete(requestId);
+    clearTimeout(waiter.timer);
+    waiter.resolve(
+      kw.ok
+        ? { nd: decodeNdarray(kw.values), shape: kw.shape, unit: kw.unit, dtype: kw.dtype,
+            warnings: kw.warnings || [], metricId: kw.metric_id }
+        : kw.error
+          ? { nd: null, failed: true, error: kw.error, metricId: args[1] }
+          : null,
+    );
   }
 }

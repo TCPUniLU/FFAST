@@ -1,4 +1,4 @@
-from UI.Templates import Widget, ToolButton, ToolCheckButton, PushButton, TableView, InfoToolButton
+from UI.Templates import Widget, ToolButton, ToolCheckButton, PushButton, TableView, InfoToolButton, RedoToolButton
 from PySide6 import QtCore, QtGui, QtWidgets
 from config.uiConfig import config, configStyleSheet
 from PySide6.QtCore import QEvent, Qt
@@ -11,7 +11,7 @@ import logging
 from client.dataWatcher import DataWatcher
 from client import display_overrides
 import numpy as np
-from ffast.loaders.dataset import SubDataset
+from ffast.loaders.dataset import DatasetView
 from ffast.config.user import getConfig
 from UI import plot_profiler
 
@@ -317,6 +317,33 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         # PLOTWIDGET
         self.plotWidget = pyqtgraph.PlotWidget(name=f"{name}PlotWidget")
         self.plotItem = self.plotWidget.getPlotItem()
+        # Added for hover text functionality.
+        self.plotItem.hideButtons()
+        self.plotData = []
+
+        self.hoverVLine = pyqtgraph.InfiniteLine(angle=90, movable=False, pen=pyqtgraph.mkPen((180, 180, 180, 120)))
+        self.hoverHLine = pyqtgraph.InfiniteLine(angle=0, movable=False, pen=pyqtgraph.mkPen((180, 180, 180, 120)))
+        self.hoverText = pyqtgraph.TextItem(
+            html="",
+            anchor=(0, 1),
+            border=pyqtgraph.mkPen(180, 180, 180, 220),
+            fill=pyqtgraph.mkBrush(20, 20, 20, 235),
+        )
+        self.hoverText.setZValue(1e6)
+        self.plotItem.addItem(self.hoverVLine, ignoreBounds=True)
+        self.plotItem.addItem(self.hoverHLine, ignoreBounds=True)
+        self.plotItem.addItem(self.hoverText)
+
+        self.hoverVLine.hide()
+        self.hoverHLine.hide()
+        self.hoverText.hide()
+
+        self.mouseProxy = pyqtgraph.SignalProxy(
+            self.plotWidget.scene().sigMouseMoved,
+            rateLimit=60,
+            slot=self.onMouseMoved,
+        )
+
         self.layout.addWidget(self.plotWidget)
         self.applyPlotWidget()
         self.applyToolbar(title=title)  # needs the plotwidget to exist
@@ -356,6 +383,13 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self.infoButton = InfoToolButton()
         layout.addWidget(self.infoButton)
 
+        self.resetViewButton = RedoToolButton(
+            func=self.resetPlotView,
+        )
+        self.resetViewButton.setToolTip("Reset plot view")
+        layout.addWidget(self.resetViewButton)
+
+
         if self.hasLegend:
             self.legendCheckBox = ToolCheckButton(
                 self.handler, self.updateLegend, icon="legend"
@@ -375,6 +409,11 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
 
         self.loadButton = DataloaderButton(self.handler, self.dataWatcher)
         layout.addWidget(self.loadButton)
+
+    def resetPlotView(self):
+        """Reset plot view, function linked to redo button"""
+        self.plotItem.enableAutoRange()
+        self.plotItem.autoRange()
 
     def applyPlotWidget(self):
         pi = self.plotItem
@@ -673,30 +712,19 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
 
     def getValidSubDatasets(self, asFingerprint=False):
         subs = []
-        env = self.env
 
-        # datasetKeys = self.dataWatcher.getDatasetDependencies()
-        # modelKeys = self.dataWatcher.getModelDependencies()
-
-        # for datasetKey in datasetKeys:
-        #     dataset = env.datasets.get(datasetKey)
-
-        #     # dont do subdatasets of subdatasets
-        #     if dataset.isSubDataset and not dataset.isAtomFiltered:
-        #         continue
-
-        #     for modelKey in modelKeys:
-        #         model = env.models.get(modelKey)
         for de in self.getWatchedData():
             dataset, model = de["dataset"], de["model"]
+            # Not of a live subset (this plot's own SUB among them): it changes
+            # with the zoom, so frames worked out against it go stale.
+            if getattr(dataset, "live", False):
+                continue
             idx = self.getDatasetSubIndices(dataset, model)
             if (idx is None) or (len(idx) == 0):
                 idx = None
 
             if asFingerprint:
-                fp = SubDataset.getFingerprint(
-                    SubDataset, dataset, model, self.name
-                )
+                fp = DatasetView.subsetFingerprint(dataset, model, self.name)
                 subs.append(fp)
             else:
                 subs.append((dataset, model, idx))
@@ -1006,7 +1034,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         self._visitedKeys = set()
         self.plotItems = []
 
-    def _seriesKey(self, scatter, autoColor):
+    def _seriesKey(self, scatter, autoColor, kind=None):
         """Stable identity for a drawn Series across refreshes (ADR 0022).
 
         Content-based: (dataset_fp, model_fp, kind) plus a sub-index that
@@ -1014,7 +1042,7 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         draws (the y=x overlay) get a "__static__" base. Same draw order each
         refresh → same key → the item is matched and updated in place.
         """
-        kind = "scatter" if scatter else "line"
+        kind = kind or ("scatter" if scatter else "line")
         if isinstance(autoColor, dict):
             ds = autoColor.get("dataset")
             m = autoColor.get("model")
@@ -1051,11 +1079,14 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         autoLabel=None,
         label=None,
         ignoreBounds=False,
+        bars=False,
+        width=0.8,
         **kwargs,
     ):
+        # bars=True draws y as bars of ``width`` centred on x (ADR 0064 amendment).
         self.plotItem.disableAutoRange()
-        kind = "scatter" if scatter else "line"
-        key = self._seriesKey(scatter, autoColor)
+        kind = "bars" if bars else "scatter" if scatter else "line"
+        key = self._seriesKey(scatter, autoColor, kind)
         self._visitedKeys.add(key)
         self._visitOrder.append(key)
 
@@ -1089,12 +1120,17 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
             c.setAlpha(255)
             brush = pyqtgraph.mkBrush(c)
 
-        sig = self._dataSignature(x, y) + (repr(color), symbol, bool(ignoreBounds))
+        if bars:
+            brush = pyqtgraph.mkBrush(color)
+        sig = self._dataSignature(x, y) + (repr(color), symbol, bool(ignoreBounds), width)
 
         prev = self._series.get(key)
         if prev is not None and prev["kind"] == kind:
             item = prev["item"]
-            if prev["sig"] != sig:
+            if prev["sig"] != sig and bars:
+                item.setOpts(x=x, height=y, width=width, brush=brush)
+                self._changedThisRefresh = True
+            elif prev["sig"] != sig:
                 # Same Series, changed data/style → update in place (no teardown).
                 item.setData(x, y)
                 if scatter:
@@ -1107,7 +1143,9 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
         else:
             if prev is not None:  # kind flipped at this key → replace the item
                 self.plotWidget.removeItem(prev["item"])
-            if scatter:
+            if bars:
+                item = pyqtgraph.BarGraphItem(x=x, height=y, width=width, brush=brush, pen=None)
+            elif scatter:
                 item = pyqtgraph.ScatterPlotItem(
                     x, y, brush=brush, pen=None, size=5, symbol=symbol,
                     antialias=False,
@@ -1137,12 +1175,137 @@ class BasicPlotWidget(Widget, EventChildClass, DataDependentObject):
             self.plotItem.addItem(item, ignoreBounds=ignoreBounds)
             self._changedThisRefresh = True
 
+        # Added for hover text functionality.
+        self.plotData.append({
+            "item": item,
+            "x": np.asarray(x),
+            "y": np.asarray(y),
+            "scatter": scatter,
+            "label": label,
+            "autoLabel": autoLabel,
+        })
+
         self._series[key] = {
             "item": item,
             "sig": sig,
             "kind": kind,
             "label": (label, autoLabel),
         }
+
+    def hideHoverReadout(self):
+        # Added for hover text functionality.
+        self.hoverVLine.hide()
+        self.hoverHLine.hide()
+        self.hoverText.hide()
+
+    def getNearestPlotPoint(self, mx, my):
+        # Added for hover text functionality.
+        #TODO: probably can find the nearest point faster with binary search!!
+        viewRange = self.plotItem.vb.viewRange()
+        xRange = viewRange[0][1] - viewRange[0][0]
+        yRange = viewRange[1][1] - viewRange[1][0]
+
+        if xRange == 0 or yRange == 0:
+            return None
+
+        best = None
+        bestDist = None
+
+        for entry in self.plotData:
+            x = entry["x"]
+            y = entry["y"]
+
+            if len(x) == 0:
+                continue
+
+            dx = (x - mx) / xRange
+            dy = (y - my) / yRange
+            dist2 = dx * dx + dy * dy
+            idx = int(np.argmin(dist2))
+            d = float(dist2[idx])
+
+            if bestDist is None or d < bestDist:
+                bestDist = d
+                best = {
+                    "entry": entry,
+                    "index": idx,
+                    "x": float(x[idx]),
+                    "y": float(y[idx]),
+                }
+
+        if bestDist is None:
+            return None
+
+        # Optional: hide readout if cursor is too far from any point
+        if bestDist > 0.02:
+            return None
+
+        return best
+
+    def formatHoverText(self, best):
+        # Added for hover text functionality.
+        entry = best["entry"]
+        idx = best["index"]
+        x = best["x"]
+        y = best["y"]
+
+        label = entry["label"]
+        if label is None and entry["autoLabel"] is not None:
+            label = self.getLabelFromData(entry["autoLabel"])
+
+        lines = []
+        if label:
+            lines.append(f"<b>{label}</b>")
+        lines.append(f"x = {x:.6g}")
+        lines.append(f"y = {y:.6g}")
+
+        hoverData = entry.get("hoverData")
+        if hoverData is not None:
+            error = hoverData.get("error")
+            if error is not None:
+                lines.append(f"error = {float(error[idx]):.6g}")
+
+        body = "<br>".join(lines)
+
+        return (
+            "<div style='"
+            "background-color: rgba(20, 20, 20, 235);"
+            "color: white;"
+            "padding: 6px 8px;"
+            "border: 1px solid rgba(180, 180, 180, 220);"
+            "border-radius: 4px;"
+            "font-size: 11pt;"
+            "'>"
+            f"{body}"
+            "</div>"
+        )
+
+    def onMouseMoved(self, evt):
+        # Added for hover text functionality.
+        pos = evt[0]
+        if not self.plotWidget.sceneBoundingRect().contains(pos):
+            self.hideHoverReadout()
+            return
+
+        mousePoint = self.plotItem.vb.mapSceneToView(pos)
+        mx, my = mousePoint.x(), mousePoint.y()
+
+        best = self.getNearestPlotPoint(mx, my)
+        if best is None:
+            self.hideHoverReadout()
+            return
+
+        x = best["x"]
+        y = best["y"]
+
+        self.hoverVLine.setPos(x)
+        self.hoverHLine.setPos(y)
+        self.hoverVLine.show()
+        self.hoverHLine.show()
+
+        self.hoverText.setHtml(self.formatHoverText(best))
+        self.hoverText.setPos(x, y)
+        self.hoverText.show()
 
     def stepPlot(self, x, y, width=1, **kwargs):
         xLeft, xRight = (x - width / 2, x + width / 2)

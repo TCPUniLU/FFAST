@@ -117,3 +117,66 @@ class TestRecoveryWindowLastClient:
         _run(server._recovery_window_task(hub, 0, quit_event))
 
         assert not quit_event.is_set()
+
+
+# ── a connection that ends leaves the hub and the window feed (ADR 0062) ────
+
+class _ClosingWebSocket(_FakeWebSocket):
+    """Sends the given messages, then the client goes away."""
+
+    async def recv(self):
+        if not self._to_recv:
+            raise ConnectionError("client gone")
+        return self._to_recv.pop(0)
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        raise StopAsyncIteration
+
+
+class _FeedEnv:
+    def __init__(self, hub):
+        from ffast.session.window_feed import WindowFeed
+        self.window_feed = WindowFeed(self, hub.broadcast)
+
+
+def _handle(ws):
+    hub = ConnectionHub()
+    env = _FeedEnv(hub)
+    try:
+        _run(server._handler(ws, env, hub, "", 0, asyncio.Event()))
+    except ConnectionError:
+        pass
+    return hub, env.window_feed
+
+
+class TestConnectionEnd:
+    def test_a_client_gone_during_the_handshake_leaves_hub_and_feed(self):
+        hub, feed = _handle(_ClosingWebSocket([]))
+        assert hub.is_empty
+        assert feed.sessions == set()
+
+    def test_a_client_gone_after_the_handshake_leaves_hub_and_feed(self):
+        hub, feed = _handle(_ClosingWebSocket(_hello_messages()))
+        assert hub.is_empty
+        assert feed.sessions == set()
+
+    def test_a_closing_window_is_not_sent_its_own_metric_users(self, monkeypatch):
+        from ffast.session.server_session import ServerSession
+        hub = ConnectionHub()
+        env = _FeedEnv(hub)
+        hub.register(asyncio.Queue())       # another window, still open
+        counts = []
+        real_close = ServerSession.close
+
+        def close(session):
+            counts.append(hub.count)
+            real_close(session)
+
+        monkeypatch.setattr(ServerSession, "close", close)
+        _run(server._handler(_ClosingWebSocket(_hello_messages()), env, hub,
+                             "", 0, asyncio.Event()))
+        # Only the other window is registered when the session closes.
+        assert counts == [1]

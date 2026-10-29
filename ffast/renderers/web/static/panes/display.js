@@ -2,10 +2,12 @@
  * Display + Unit Cell pane (ADR 0045 issue 05). Mirrors the DISPLAY schema in
  * modules/loupe/loupeViewSettings.py. Hide-atoms/highlight token specs are
  * resolved server-side (ffast.atom_filter / SET_SELECTION); the client just
- * tokenizes text into ints or element-symbol strings.
+ * tokenizes text into ints or element-symbol strings. The pane shows one
+ * view's `display` settings (`show`) and writes each change into them.
  */
 
 import { createPane, numberRow, textRow, checkboxRow } from '../sidebar.js';
+import { defaultSettings } from '../view_settings.js';
 
 /** Tokenize "0 1 2", "C", "-H" into ints/strings — integers (incl. "-3") stay
  * ints; everything else (incl. "-H") stays a string. Server resolves both. */
@@ -32,7 +34,6 @@ function parseIndexList(text) {
  *   onAtomSize: (scale: number) => void,
  *   onHideAtoms: (tokens: (number|string)[]) => void,
  *   onHighlight: (indices: number[]) => void,
- *   onPickRadius: (px: number) => void,
  *   onUnitCell: (visible: boolean) => void,
  * }} callbacks
  */
@@ -40,11 +41,39 @@ export function createDisplayPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Display');
   sidebarEl.appendChild(el);
 
-  numberRow(body, 'Atom size', 1.0, { min: 0.1, max: 10, step: 0.1 }, callbacks.onAtomSize);
-  textRow(body, 'Hide atoms', '', (text) => callbacks.onHideAtoms(parseFilterTokens(text)));
-  textRow(body, 'Highlight atoms', '', (text) => callbacks.onHighlight(parseIndexList(text)));
-  numberRow(body, 'Pick radius (px)', 12, { min: 4, max: 40, step: 1 }, callbacks.onPickRadius);
-  checkboxRow(body, 'Show unit cell', true, callbacks.onUnitCell);
+  let state = defaultSettings().display;   // the shown view's settings
 
-  return {};
+  const atomSizeRow = numberRow(body, 'Atom size', 1.0, { min: 0.1, max: 10, step: 0.1 }, (v) => {
+    state.atomSize = v || 1;
+    callbacks.onAtomSize(v);
+  });
+  const atomHideRow = textRow(body, 'Hide atoms', '', (text) => {
+    state.hide = text;
+    callbacks.onHideAtoms(parseFilterTokens(text));
+  });
+  const highlightAtomRow = textRow(body, 'Highlight atoms', '', (text) => {
+    state.highlight = text;
+    callbacks.onHighlight(parseIndexList(text));
+  });
+  const showUnitRow = checkboxRow(body, 'Show unit cell', true, (v) => {
+    state.unitCell = v;
+    callbacks.onUnitCell(v);
+  });
+
+  return {
+    /** The Atom size setting, as the server scales sizes by it. */
+    atomScale() {
+      return state.atomSize || 1;
+    },
+
+    /** Show a view's `display` settings; later changes are written into them.
+     * Nothing is sent: the view's own server state already holds its look. */
+    show(settings) {
+      state = settings;
+      atomSizeRow.value = String(settings.atomSize);
+      atomHideRow.value = settings.hide;
+      highlightAtomRow.value = settings.highlight;
+      showUnitRow.checked = settings.unitCell;
+    },
+  };
 }

@@ -47,6 +47,15 @@ class _Dataset:
             return self._r
         return self._r[indices]
 
+    def getAllCoordinates(self):
+        return self._r.reshape(-1, 3)
+
+    def getAllForces(self):
+        return self._f.reshape(-1, 3)
+
+    def getOffsets(self):
+        return np.arange(len(self._f) + 1) * self._f.shape[1]
+
     def getElements(self, index=None):
         return self._z
 
@@ -179,14 +188,15 @@ def test_build_loupe_scene_snapshot_metric_coloring_uses_prediction_without_forc
         dataset_ref=ds.fingerprint,
         structure_index=1,
         get_dataset=env.getDataset,
-        settings=_Settings(atomColorSource="metric:ffast.force_mae"),
+        settings=_Settings(
+            atomColorSource="metric:ffast.force_difference[atom+structure;length]"),
         prediction_ref="mace",
         get_prediction=make_cache_prediction_resolver(env),
         executor=InProcessExecutor(default_registry),
     )
 
     assert snapshot.scene.atoms.color_by is not None
-    assert snapshot.scene.atoms.color_by.label == "Force Error (per atom)"  # metric display name
+    assert snapshot.scene.atoms.color_by.label == "Force Difference · per atom · length"  # metric display name
     assert snapshot.scene.forces is None
 
 
@@ -356,3 +366,28 @@ def test_build_loupe_scene_snapshot_applies_local_adapter_settings():
     assert snapshot.scene.atoms.color_by is not None
     assert snapshot.scene.atoms.color_by.colormap == "plasma"
     assert [s.name for s in snapshot.scene.selections] == ["highlight", "picked"]
+
+
+@pytest.mark.parametrize("formulas", [["H2O"] * 3, ["H2O", "CH4", "NH3"]])
+def test_predicted_forces_are_reference_plus_difference_for_every_frame(formulas):
+    from ase import Atoms
+    from ase.calculators.singlepoint import SinglePointCalculator
+    from ffast.loaders.ase import aseDatasetLoader
+    from ffast.renderers.vispy.local_scene import _prediction_forces_from_difference
+
+    rng = np.random.default_rng(1)
+    frames = []
+    for formula in formulas:
+        atoms = Atoms(formula, positions=np.zeros((len(Atoms(formula)), 3)))
+        atoms.calc = SinglePointCalculator(atoms, forces=rng.normal(size=(len(atoms), 3)))
+        frames.append(atoms)
+    dataset = aseDatasetLoader("x.xyz", atomsList=frames)
+    diff = rng.normal(size=(int(dataset.getOffsets()[-1]), 3))
+
+    predicted = _prediction_forces_from_difference(dataset, _MetricResult(diff))
+
+    offsets = dataset.getOffsets()
+    assert len(predicted) == len(formulas)
+    for i in range(len(formulas)):
+        expected = dataset.getForces(i) + diff[offsets[i]:offsets[i + 1]]
+        assert np.allclose(predicted[i], expected)

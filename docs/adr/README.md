@@ -27,6 +27,7 @@ things came up.
 - [0032](0032-inbound-event-router-client-handler-table.md) One handler table for server-to-client messages
 - [0033](0033-complete-typed-control-messages.md) Finish typing the control messages
 - [0031](0031-result-buffers-and-zstd-codec-deferred.md) Result buffers and zstd stay dormant, and why that is right
+- [0062](0062-the-server-pushes-each-window-its-shared-state.md) The server pushes each window its shared state, from one window feed (built)
 
 ## The headless core
 
@@ -46,7 +47,12 @@ things came up.
 - [0021](0021-client-side-2d-panels-with-transform-metrics.md) Panels, panel kinds, reductions as transform metrics
 - [0022](0022-incremental-keyed-panel-refresh.md) Refresh by diffing series instead of clear-and-rebuild
 - [0023](0023-dataset-fields-key-in-ref.md) Any extxyz key becomes a metric, no Python
+- [0058](0058-one-storage-form-and-one-view-for-datasets.md) One storage form for every dataset, one view for every subset (the Qt client's proxy is GitHub issue #22)
 - [0042](0042-expression-metrics.md) Element-wise algebra over metrics, in the config file
+- [0057](0057-user-metrics-defined-live-in-a-metrics-pane.md) Users define formula metrics while the app runs, in a Metrics pane
+- [0064](0064-formulas-can-average-by-structure-element-or-all.md) Formulas can average, total and take extremes by structure, element or all, over chosen atoms (built)
+- [0065](0065-errors-are-a-base-metric-plus-keep-boxes.md) Errors are a base metric plus keep boxes, not a list of fixed variants (built)
+- [0061](0061-only-the-server-names-metric-results.md) Only the server names metric results, and a metric change cannot mix formulas (built)
 - [0035](0035-metric-execution-context.md) Resolve metric inputs once instead of three times
 - [0046](0046-finish-metric-execution-context.md) Finishing that: one seam, one injected executor
 - [0036](0036-datawatcher-configure-once.md) DataWatcher configures once (proposed)
@@ -81,6 +87,12 @@ things came up.
 - [0050](0050-web-client-seams.md) Carving modules out of a 1300-line app object
 - [0051](0051-retire-hollowed-shells.md) Deleting three abstractions that had stopped abstracting
 - [0053](0053-compare-predictions-in-the-web-analysis-tabs.md) Multiple predictions per panel
+- [0055](0055-browser-client-gets-its-own-layout.md) Its own layout instead of a copy of the desktop; layout state stays out of sessions
+- [0056](0056-browser-tabs-mix-2d-and-3d-and-users-build-them.md) Tabs mix plots and 3D panels; users build, edit and save their own tabs
+- [0069](0069-panels-size-on-a-fine-grid.md) A panel is sized by its own edges on a 24-column grid that fills the window (replaces rule 12 of 0056)
+- [0060](0060-every-browser-3d-view-is-one-view-object.md) Every 3D view in the browser is one view object, carrying its own sidebar settings (accepted)
+- [0063](0063-the-web-client-looks-like-a-journal-figure.md) The web client looks like a journal figure: panel letters and captions, labelled peaks, one set of tokens (built)
+- [0066](0066-every-warning-and-error-is-also-a-pop-up.md) Every warning and error is also a pop-up (built)
 
 ## Running on a cluster
 

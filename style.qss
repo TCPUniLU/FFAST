@@ -897,6 +897,13 @@ QLabel:disabled {
   color: rgba(255, 255, 255, 0.2)
 }
 
+/* A 3D panel in a project tab: shown in the browser only (ADR 0056) */
+QLabel#browserOnlyPanel {
+  background: @BGColor4;
+  border-radius: 5px;
+  font-size: 14px;
+}
+
 QLabel#plotTitleLabel{
   font-weight: bold;
   font-size: 18px;

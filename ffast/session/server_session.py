@@ -1,10 +1,11 @@
 """ServerSession: the live, server-scoped core of a running ``ffast-server``.
 
-One ``ServerSession`` exists per server process. It owns the open Visualization
-Views and the server→client outbound queue, dispatches the controlling client's
-Control messages to the Environment through a built-once event→handler table,
-and replays current state to a client on connect or reconnect. It holds a
-reference to the Environment rather than owning it.
+One ``ServerSession`` exists per client connection (ADR 0044). It owns that
+connection's open Visualization Views and its server→client outbound queue,
+dispatches the client's Control messages to the Environment through a
+built-once event→handler table, and replays current state to the client on
+connect or reconnect. Every session holds a reference to the one shared
+Environment rather than owning it.
 
 Connection lifecycle — handshake, Client Role gating, recovery window, the
 receive/send loops — stays in ``server.py``; this object assumes ``dispatch`` is
@@ -25,15 +26,20 @@ validate inside the handler instead.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
+import time
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
 from pydantic import BaseModel, ValidationError
 
 from ffast.protocol import control
+from ffast.session import trace
+from ffast.session.window_feed import WindowFeed
 
 logger = logging.getLogger("FFAST")
 
@@ -121,46 +127,85 @@ class ServerSession:
     thread in the loop.
     """
 
-    def __init__(self, env, outbound: asyncio.Queue) -> None:
+    def __init__(self, env, outbound: asyncio.Queue, broadcast=None) -> None:
         self.env = env
+        # Who this connection is, for the trace file ("127.0.0.1:50812")
+        self.peer = ""
         self.outbound = outbound
         self.views: dict = {}  # view_id → VisualizationView
+        # Sends packed bytes to every connection (the hub, ADR 0044); a
+        # session on its own, as in a test, has only itself to tell.
+        self._broadcast = broadcast or (lambda data: self._emit_or_drop(data, "broadcast"))
+        # The one owner of what every window holds (ADR 0062). A session on its
+        # own, as in a test, gets a feed of its own.
+        self.feed = getattr(env, "window_feed", None) or WindowFeed(env, self._broadcast)
+        self.feed.attach(self)
+        # The (dataset_fp, model_fp) this window last asked METRIC_INPUTS for
+        self._inputs_for: tuple | None = None
+        # Running Tries of this connection (ADR 0057 rule 12): try_id → (stop
+        # flag, task). The task is held here so it is not garbage-collected.
+        self._tries: dict = {}
+        # Offers made after a session load, waiting for "Add them?" (rule 15)
+        self._session_offers: dict = {}
 
         # event → (handler, ordered arg-name list, request model). Built once;
         # the table IS the documented RPC surface. "?name" marks an optional
         # parameter.
         from ffast.protocol.messages import (
             CloseViewRequest, CreateSubsetRequest, DeclareSubsetRequest,
-            DeleteObjectRequest,
-            EmptyRequest, ExportSubsetRequest, ListDirRequest,
+            DeleteObjectRequest, DeleteTabRequest, FreezeSubsetRequest,
+            EmptyRequest, ExportSubsetRequest, ExportTabRequest, HideTabRequest, SetTabOrderRequest,
+            ListDirRequest,
             LoadDatasetRequest, LoadModelRequest,
             LoadPredictionRequest, LoadSessionRequest, OpenViewRequest,
             ProbeDatasetKeysRequest, ProbeDatasetLengthRequest,
             RequestMetricRequest, RequestPredictionArraysRequest,
-            RequestSubdatasetArraysRequest, SaveSessionRequest,
+            RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
+            DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
+            RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
+            CancelTryMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
+            TraceRequest, RequestMetricBoxesRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
             control.LOAD_MODEL:                 _Route(self._on_load_model, ["path", "model_type"], LoadModelRequest),
             control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint"], DeleteObjectRequest),
+            control.FREEZE_SUBSET:              _Route(self._on_freeze_subset, ["fingerprint"], FreezeSubsetRequest),
+            control.SET_DATASET_UNIT:           _Route(self._on_set_dataset_unit, ["fingerprint", "dimension", "unit"], SetDatasetUnitRequest),
             control.CREATE_SUBSET:              _Route(self._on_create_subset, ["parent_fingerprint", "indices"], CreateSubsetRequest),
-            control.DECLARE_SUBSET:             _Route(self._on_declare_subset, ["parent_fingerprint", "indices"], DeclareSubsetRequest),
+            control.DECLARE_SUBSET:             _Route(self._on_declare_subset, ["parent_fingerprint", "?indices"], DeclareSubsetRequest),
             control.REQUEST_SUBDATASET_ARRAYS:  _Route(self._on_request_subdataset_arrays, ["fingerprint"], RequestSubdatasetArraysRequest),
             control.PROBE_DATASET_KEYS:         _Route(self._on_probe_dataset_keys, ["path", "dataset_type"], ProbeDatasetKeysRequest),
             control.PROBE_DATASET_LENGTH:       _Route(self._on_probe_dataset_length, ["path"], ProbeDatasetLengthRequest),
             control.LIST_DIR:                   _Route(self._on_list_dir, ["?path"], ListDirRequest),
             control.LOAD_PREDICTION:            _Route(self._on_load_prediction, ["path", "dataset_fp"], LoadPredictionRequest),
+            control.LOAD_EXAMPLE:               _Route(self._on_load_example, [], EmptyRequest),
             control.REQUEST_PREDICTION_ARRAYS:  _Route(self._on_request_prediction_arrays, ["dataset_fp", "model_fp"], RequestPredictionArraysRequest),
             control.OPEN_VIEW:                  _Route(self._on_open_view, [], OpenViewRequest),
             control.CLOSE_VIEW:                 _Route(self._on_close_view, ["view_id"], CloseViewRequest),
             control.VIEW_COMMAND:               _Route(self._on_view_command, []),
-            control.REQUEST_STATE_SYNC:         _Route(self._on_request_state_sync, [], EmptyRequest),
             control.SAVE_SESSION:               _Route(self._on_save_session, ["path"], SaveSessionRequest),
             control.LOAD_SESSION:               _Route(self._on_load_session, ["path"], LoadSessionRequest),
-            control.REQUEST_METRIC:             _Route(self._on_request_metric, ["metric_id", "?key"], RequestMetricRequest),
+            control.REQUEST_METRIC:             _Route(self._on_request_metric, ["metric_id", "request_id"], RequestMetricRequest),
             control.REQUEST_METRIC_CATALOG:     _Route(self._on_request_metric_catalog, [], EmptyRequest),
             control.REQUEST_TAB_LAYOUT:         _Route(self._on_request_tab_layout, [], EmptyRequest),
             control.EXPORT_SUBSET:              _Route(self._on_export_subset, ["fingerprint", "path"], ExportSubsetRequest),
+            control.SAVE_TAB:                   _Route(self._on_save_tab, ["tab", "?previous_name"], SaveTabRequest),
+            control.DELETE_TAB:                 _Route(self._on_delete_tab, ["name"], DeleteTabRequest),
+            control.HIDE_TAB:                   _Route(self._on_hide_tab, ["name", "hidden"], HideTabRequest),
+            control.SET_TAB_ORDER:              _Route(self._on_set_tab_order, ["names"], SetTabOrderRequest),
+            control.EXPORT_TAB:                 _Route(self._on_export_tab, ["name"], ExportTabRequest),
+            control.REQUEST_USER_METRICS:       _Route(self._on_request_user_metrics, [], EmptyRequest),
+            control.SAVE_USER_METRIC:           _Route(self._on_save_user_metric, ["metric", "?previous_id", "?base_revision", "?overwrite"], SaveUserMetricRequest),
+            control.DELETE_USER_METRIC:         _Route(self._on_delete_user_metric, ["id"], DeleteUserMetricRequest),
+            control.REQUEST_METRIC_INPUTS:      _Route(self._on_request_metric_inputs, ["?dataset_fp", "?model_fp"], RequestMetricInputsRequest),
+            control.CHECK_METRIC:               _Route(self._on_check_metric, ["metric", "?check_id", "?dataset_fp"], CheckMetricRequest),
+            control.TRY_METRIC:                 _Route(self._on_try_metric, ["metric", "try_id", "?dataset_fp", "?model_fp"], TryMetricRequest),
+            control.CANCEL_TRY_METRIC:          _Route(self._on_cancel_try_metric, ["try_id"], CancelTryMetricRequest),
+            control.REQUEST_METRIC_BOXES:       _Route(self._on_request_metric_boxes, ["request_id", "?metric_id", "?base", "?setting", "?dataset_fp"], RequestMetricBoxesRequest),
+            control.ADD_SESSION_METRICS:        _Route(self._on_add_session_metrics, ["offer_id"], AddSessionMetricsRequest),
+            control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
+            control.TRACE:                      _Route(self._on_trace, ["kind", "text"], TraceRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -177,6 +222,8 @@ class ServerSession:
         presence-sensitive fields keep their exact pre-validation meaning.
         """
         route = self._handlers.get(event)
+        if event != control.TRACE:
+            trace.record("in", f"{trace.message(event, args, kwargs)}  [{self.peer}]")
         if route is None:
             logger.warning("Unknown client event: %s", event)
             return
@@ -195,7 +242,21 @@ class ServerSession:
                 logger.warning("%s: payload validation failed: %s", event, exc)
                 return
 
-        await route.fn(**resolved, **extra)
+        if not trace.enabled() or event == control.TRACE:
+            await route.fn(**resolved, **extra)
+            return
+        started = time.perf_counter()
+        try:
+            await route.fn(**resolved, **extra)
+        except Exception as exc:
+            trace.record_error(f"{event} failed: {exc!r}", exc)
+            raise
+        trace.record("done", f"{event} {(time.perf_counter() - started) * 1000:.0f} ms")
+
+    async def _on_trace(self, kind, text) -> None:
+        """A line the browser reports: a click, a change, an error in the page."""
+        first, _, rest = str(text).partition("\n")
+        trace.record(kind, f"{first}  [{self.peer}]" + (f"\n{rest}" if rest else ""))
 
     @staticmethod
     def _resolve(arg_names, args, kwargs):
@@ -232,7 +293,7 @@ class ServerSession:
 
     def _emit_or_drop(self, data, what: str) -> None:
         """Enqueue a state-replay message; drop with a warning if the queue is
-        full (replay is best-effort — a reconnect or REQUEST_STATE_SYNC retries)."""
+        full (replay is best-effort — a reconnect retries)."""
         try:
             self.outbound.put_nowait(data)
         except asyncio.QueueFull:
@@ -253,11 +314,47 @@ class ServerSession:
             return None
         de = self.env.cache.get(f"forces__{model_fp}__{dataset_fp}")
         if de is None:
+            # A frame subset's predicted forces are its parent's, at the
+            # parent frames it holds (a subset made with SUB, say).
+            dataset = self.env.datasets.get(dataset_fp)
+            if (getattr(dataset, "isSubDataset", False) and not getattr(dataset, "isAtomFiltered", False)
+                    and getattr(dataset, "parent", None) is not None):
+                parent = self.get_prediction(dataset.parent.fingerprint, model_fp)
+                if parent is not None:
+                    frames = [int(i) for i in np.asarray(dataset.frames).ravel()]
+                    forces = parent.forces
+                    # Structures of different sizes come as a list of arrays.
+                    if isinstance(forces, list):
+                        return _PredictionView([forces[i] for i in frames])
+                    return _PredictionView(np.asarray(forces)[frames])
             return None
         forces = de.get("forces")
         if forces is None:
             return None
         return _PredictionView(forces)
+
+    def get_metric(self, metric_id, params, dataset_fp, model_fp):
+        """``get_metric(...)`` for build_scene: a metric over the whole dataset,
+        stored under the same key as a 2D plot's, so the two compute it once.
+
+        None when it can't be computed from what is loaded: a model or dataset
+        that is gone, or a prediction not made for the dataset (a live model
+        asked for one frame). Atom colouring then uses the frame on screen
+        alone; it never starts a prediction of every frame.
+        """
+        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
+        model = self.env.models.get(model_fp) if model_fp else None
+        if dataset is None or (model_fp and model is None):
+            return None
+        data = self.env.data
+        key = data.make_metric_cache_key(metric_id, params, model, dataset)
+        result = self.env.cache.get(key)
+        if result is not None:
+            return result
+        if data.inputResolver.missing_prediction_keys(metric_id, model=model, dataset=dataset):
+            return None
+        made = data.generateMetric(metric_id, params, model, dataset)
+        return self.env.cache.get(made) if made else None
 
     def get_forces(self, dataset_ref, idx):
         """``get_forces(dataset_ref, idx)`` for build_scene — *ground-truth*
@@ -289,110 +386,12 @@ class ServerSession:
     # ── state replay ──────────────────────────────────────────────────────────
 
     def replay(self) -> None:
-        """Push the current server state to a (re)connecting client.
-
-        The degenerate (one-shot full push) case of the sync protocol: dataset
-        and model metadata, the Metric Catalog, and a snapshot of every open
-        view. Future incremental sync would replace this with delta events.
-        """
-        self._replay_state()
-        self._replay_metric_catalog()
-        if self.views:
-            self._replay_views()
-
-    def _replay_state(self) -> None:
-        """Enqueue REMOTE_DATASET_META + REMOTE_MODEL_META for all objects."""
-        from ffast.protocol.rpc import pack
-        from ffast.protocol import DatasetMeta, ModelMeta
-
-        # ── datasets ──────────────────────────────────────────────────────────
-        try:
-            datasets = self.env.datasets.all(excludeSubs=True)
-        except Exception:
-            datasets = []
-
-        for dataset in datasets:
-            fingerprint = getattr(dataset, "fingerprint", None)
-            if fingerprint is None:
-                continue
-            try:
-                data = pack(
-                    control.REMOTE_DATASET_META,
-                    (fingerprint,),
-                    DatasetMeta.model_validate(dataset.toMetaDict()).model_dump(),
-                )
-                self._emit_or_drop(data, f"dataset {fingerprint!r}")
-                logger.info(
-                    "State replay: REMOTE_DATASET_META queued for %r", fingerprint
-                )
-            except Exception as exc:
-                logger.warning(
-                    "State replay: dataset %r error: %s", fingerprint, exc
-                )
-
-        # ── models (ghost predictions + real server-side models, Stage 2) ───────
-        for model_fp, model in list(self.env.models.items()):
-            try:
-                name = getattr(model, "name", None) or model_fp[:8]
-                dataset_fps = []
-                from ffast.cache import CacheKey
-                for cache_key in list(self.env.cache.keys()):
-                    ck = CacheKey.try_parse(cache_key)
-                    if ck is not None and ck.matches_model(model_fp) and ck.dataset_fp:
-                        if ck.dataset_fp not in dataset_fps:
-                            dataset_fps.append(ck.dataset_fp)
-                data = pack(
-                    control.REMOTE_MODEL_META,
-                    (model_fp,),
-                    ModelMeta(name=name, dataset_fingerprints=dataset_fps).model_dump(),
-                )
-                self._emit_or_drop(data, f"model {model_fp[:8]!r}")
-                logger.info(
-                    "State replay: REMOTE_MODEL_META queued for model=%r name=%r",
-                    model_fp[:8], name,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "State replay: model %r error: %s", model_fp[:8], exc
-                )
-
-    def _replay_metric_catalog(self) -> None:
-        """Enqueue METRIC_CATALOG so the client builds metric controls from the
-        server's registry (ADR 0016) rather than its own local one.
-
-        Ensures the built-in metrics are registered first. (External Trusted
-        Metric Modules appear here too once the server loads them from config.)
-        """
-        from ffast.protocol.rpc import pack
-        try:
-            import ffast.metrics.builtin  # noqa: F401 — register built-in metrics
-            from ffast.metrics.catalog import build_metric_catalog
-            from ffast.metrics.registry import _default_registry
-            from ffast.protocol import MetricCatalog
-            catalog = build_metric_catalog(_default_registry)
-            data = pack(control.METRIC_CATALOG, [], MetricCatalog(metrics=catalog).model_dump())
-            self._emit_or_drop(data, "METRIC_CATALOG")
-            logger.info("State replay: METRIC_CATALOG queued (%d metrics)", len(catalog))
-        except Exception as exc:
-            logger.warning("State replay: METRIC_CATALOG error: %s", exc)
-
-    def _replay_views(self) -> None:
-        """Send a SCENE_SNAPSHOT for each open view on reconnect."""
-        from ffast.protocol.rpc import pack
-
-        for view in self.views.values():
-            try:
-                snapshot = view.snapshot(
-                    get_dataset=self.env.datasets.get,
-                    get_prediction=self.get_prediction,
-                    get_forces=self.get_forces,
-                    executor=self.env.data.metricExecutor,
-                )
-                data = pack(control.SCENE_SNAPSHOT, [], snapshot.model_dump())
-                self._emit_or_drop(data, f"SCENE_SNAPSHOT view={view.state.view_id!r}")
-                logger.debug("State replay: SCENE_SNAPSHOT queued for view=%r", view.state.view_id)
-            except Exception as exc:
-                logger.warning("State replay: SCENE_SNAPSHOT error for view=%r: %s", view.state.view_id, exc)
+        """Push the current server state to a (re)connecting client: what the
+        window feed holds for a new window. A new connection has a new session
+        with no views yet, so there are no views to send."""
+        for data, label in self.feed.replay():
+            self._emit_or_drop(data, label)
+            logger.info("State replay: %s queued", label)
 
     # ── handlers ────────────────────────────────────────────────────────────
 
@@ -402,7 +401,9 @@ class ServerSession:
             kwargs["prediction_keys"] = [
                 tuple(k) for k in kwargs["prediction_keys"]
             ]
-        self.env.taskLoadDataset(path, dataset_type, **kwargs)
+        self.env.taskLoadDataset(
+            path, dataset_type, on_error=self._load_failed("dataset", path), **kwargs
+        )
 
     async def _on_load_model(self, path, model_type, **kwargs) -> None:
         self.env.taskLoadModel(path, model_type)
@@ -410,65 +411,157 @@ class ServerSession:
     async def _on_delete_object(self, fingerprint, **kwargs) -> None:
         self.env.deleteObject(fingerprint)
 
+    async def _on_freeze_subset(self, fingerprint, **kwargs) -> None:
+        """Freeze a live subset's frames as a frozen subset, as the desktop's
+        freeze button does. The frozen subset announces itself to every
+        window like any new dataset; the live one carries on with its plot."""
+        self.env.freezeSubDataset(fingerprint)
+
+    async def _on_set_dataset_unit(self, fingerprint, dimension, unit, **kwargs) -> None:
+        """Name the unit of a dataset's energies or forces. The dataset (the
+        one a subset was cut from) announces itself again to every window
+        through ``DATASET_STATE_CHANGED`` → ``REMOTE_DATASET_META``."""
+        dataset = self.env.datasets.get(fingerprint)
+        if dataset is None:
+            logger.warning("SET_DATASET_UNIT: dataset %r not found", fingerprint)
+            return
+        try:
+            dataset.setUnit(dimension, unit)
+        except ValueError as exc:
+            logger.warning("SET_DATASET_UNIT: %s", exc)
+
     async def _on_create_subset(self, parent_fingerprint, indices, **kwargs) -> None:
-        """Extract an atom-filtered subset dataset (ADR 0045 issue 12).
+        """Extract an atom subset or an element subset (ADR 0045 issue 12, ADR 0067).
 
         ``indices`` is the mixed spec the view "hide atoms" filter accepts —
-        integers and element-symbol tokens ("C", "-H"). It is resolved here
-        against the parent's frame-0 composition (the same ``_resolve_filter_indices``
-        the scene builder uses), then materialized through the existing
-        in-process ``createAtomFilteredDataset``. The new dataset announces
-        itself via the ``DATASET_LOADED`` → ``REMOTE_DATASET_META`` subscriber,
-        so there is nothing to emit here.
+        integers and element-symbol tokens ("C", "-H"). Elements alone make an
+        element subset, which tests each atom's own element in every frame.
+        Atom numbers make an atom subset, resolved against frame 0, and are
+        refused when the structures differ: atom 3 is then a different atom in
+        each. The new dataset announces itself via the ``DATASET_LOADED`` →
+        ``REMOTE_DATASET_META`` subscriber; the window that asked hears the
+        outcome (``SUBSET_EXTRACTED``), or why it was refused.
         """
-        from ffast.visualization.scene_builder import _resolve_filter_indices
+        from ffast.loaders.dataset import atomNumbersRefusal, structuresDiffer
+        from ffast.protocol.rpc import pack
+        from ffast.visualization.scene_builder import (
+            _resolve_filter_indices, parse_filter_tokens, resolve_element_tokens)
+
+        async def _reply(text=None, error=None):
+            await self._emit(pack(control.SUBSET_EXTRACTED, (),
+                                  {"ok": error is None, "text": text, "error": error}))
 
         parent = self.env.datasets.get(parent_fingerprint)
         if parent is None:
             logger.warning("CREATE_SUBSET: parent %r not found", parent_fingerprint)
+            await _reply(error="That dataset is no longer loaded.")
             return
+        tokens = parse_filter_tokens(list(indices or []))
         try:
-            z = parent.getElements(0)
-            idxs = _resolve_filter_indices(list(indices or []), z)
-        except Exception as exc:
-            logger.warning("CREATE_SUBSET: index resolution failed: %s", exc)
+            if tokens.atoms and structuresDiffer(parent):
+                raise ValueError(atomNumbersRefusal(tokens.atoms[0]))
+            if tokens.atoms:
+                idxs = _resolve_filter_indices(list(indices), parent.getElements(0))
+                if not idxs:
+                    raise ValueError("Those atoms leave nothing to extract.")
+                self.env.createAtomFilteredDataset(parent, idxs)
+                text = f"{len(idxs)} atom(s) of every frame"
+            else:
+                kept = resolve_element_tokens(list(indices or []),
+                                              np.unique(parent.getAllElements()))
+                view = self.env.createElementSubset(parent, kept)
+                text = (f"{view.elementSymbols()} in {view.framesHoldingAtoms()} "
+                        f"of {view.getN()} frames")
+        except ValueError as exc:
+            logger.info("CREATE_SUBSET refused: %s", exc)
+            await _reply(error=str(exc))
             return
-        if not idxs:
-            logger.warning("CREATE_SUBSET: %r resolved to no atoms", indices)
-            return
-        try:
-            self.env.createAtomFilteredDataset(parent, idxs)
         except Exception as exc:
-            logger.warning("CREATE_SUBSET: createAtomFilteredDataset failed: %s", exc)
+            logger.warning("CREATE_SUBSET: extract failed: %s", exc)
+            await _reply(error=str(exc))
+            return
+        await _reply(text=text)
 
-    async def _on_declare_subset(self, parent_fingerprint, indices, **kwargs) -> None:
-        """Declare a frame-index SubDataset from a plot box-select (subbing).
+    async def _on_declare_subset(self, parent_fingerprint, indices=None, **kwargs) -> None:
+        """Declare, update or hide a frame-index SubDataset (subbing).
 
-        The desktop's ``BasicPlotWidget`` turns a plot viewport/selection into a
-        set of parent **configuration** indices and calls
+        The desktop's ``BasicPlotWidget`` turns a plot viewport into a set of
+        parent **configuration** indices and calls
         ``env.declareSubDataset(parent, model, idx, name)`` in-process (ADR 0021
-        subbing). The browser has no in-process Environment, so it ships the
-        covered indices here; this is the server-side twin of that call. The new
-        (or refreshed) ``SubDataset`` announces itself via ``DATASET_LOADED`` →
-        ``REMOTE_DATASET_META``, so — like ``CREATE_SUBSET`` — nothing is emitted
-        directly, and the subset becomes usable by the 3D view and other tabs
-        (PRD stories 61-62).
+        subbing). The browser has no in-process Environment, so it ships either
+        the ``indices`` or the plot's ``view`` here — while SUB is ticked it
+        sends the view on every zoom, and ``ffast.session.subbing`` works out
+        the frames it covers. ``active=False`` (SUB unticked) hides the subset.
+        The new or changed ``SubDataset`` announces itself to every window via
+        ``REMOTE_DATASET_META`` (server.py), and is usable by the 3D view and
+        other tabs (PRD stories 61-62). The window that sent this is told which
+        subset it made (``SUBSET_DECLARED``), so it can show it.
         """
+        from ffast.loaders.dataset import DatasetView  # ADR 0047 Phase 5c
+        from ffast.protocol.rpc import pack
+
         parent = self.env.datasets.get(parent_fingerprint)
         if parent is None:
             logger.warning("DECLARE_SUBSET: parent %r not found", parent_fingerprint)
             return
         model_fp = kwargs.get("model_fp")
         model = self.env.models.get(model_fp) if model_fp else None
-        name = kwargs.get("name") or "Subset"
-        idx = [int(i) for i in (indices or [])]
-        if not idx:
-            logger.warning("DECLARE_SUBSET: empty index set for %r", parent_fingerprint)
+        if model_fp and model is None:
+            # A model only the window holds (the zero model): a subset without
+            # it would have another fingerprint than the window's.
+            logger.warning("DECLARE_SUBSET: model %r not found", model_fp)
             return
-        try:
-            self.env.declareSubDataset(parent, model, idx, name)
-        except Exception as exc:
-            logger.warning("DECLARE_SUBSET: declareSubDataset failed: %s", exc)
+        name = kwargs.get("name") or "Subset"
+        existing = self.env.datasets.get(DatasetView.subsetFingerprint(parent, model, name))
+
+        if kwargs.get("active", True) is False:
+            if existing is not None:
+                existing.setActive(False)
+            return
+
+        view = kwargs.get("view")
+        if view is not None:
+            try:
+                idx = await asyncio.get_running_loop().run_in_executor(
+                    _metric_compute_pool(), self._frames_in_view, view, parent, model)
+            except Exception as exc:
+                logger.warning("DECLARE_SUBSET: view of %r failed: %s", parent_fingerprint, exc)
+                return
+        else:
+            idx = [int(i) for i in (indices or [])]
+        if not idx:
+            # Zoomed onto no frames: the subset keeps the frames it had.
+            logger.info("DECLARE_SUBSET: no frames for %r", parent_fingerprint)
+            return
+        unchanged = (existing is not None and getattr(existing, "active", True)
+                     and list(existing.frames) == idx)
+        if not unchanged:   # the same frames: nothing to rebuild or announce
+            try:
+                self.env.declareSubDataset(parent, model, idx, name)
+            except Exception as exc:
+                logger.warning("DECLARE_SUBSET: declareSubDataset failed: %s", exc)
+                return
+        await self._emit(pack(control.SUBSET_DECLARED, [], {
+            "fingerprint": DatasetView.subsetFingerprint(parent, model, name),
+            "parent_fingerprint": parent_fingerprint, "model_fp": model_fp, "name": name,
+        }))
+
+    def _frames_in_view(self, view, parent, model) -> list[int]:
+        """The parent frames a plot's view covers, computing the metrics it
+        reads if they are not cached yet (runs in the metric pool)."""
+        from ffast.metrics.registry import default_registry
+        from ffast.session.subbing import frames_in_view
+
+        def value_of(metric_id, params):
+            key = self.env.data.make_metric_cache_key(metric_id, params, model, parent)
+            result = self.env.cache.get(key)
+            if result is None:
+                made = self.env.data.generateMetric(metric_id, params, model, parent)
+                result = self.env.cache.get(made) if made else None
+            return None if result is None else result.values
+
+        return frames_in_view(view, n_frames=parent.getN(), value_of=value_of,
+                              registry=default_registry, dataset=parent)
 
     async def _on_request_subdataset_arrays(self, fingerprint, **kwargs) -> None:
         """Serialize SubDataset arrays and push them onto the outbound queue.
@@ -708,7 +801,76 @@ class ServerSession:
             path, dataset_fp,
             selected_energy_key=selected_energy_key,
             selected_force_key=selected_force_key,
+            on_error=self._load_failed("prediction", path),
         )
+
+    async def _on_load_example(self, **kwargs) -> None:
+        """Load the example pair in ``examples/data/variable-sized-molecular``:
+        the dataset, then the prediction against it, in one task so the
+        prediction waits for the dataset. Both announce themselves like any
+        other load. A server installed without the repository has no examples;
+        the window is told."""
+        data = Path(__file__).resolve().parents[2] / "examples" / "data" / "variable-sized-molecular"
+        dataset_path = str(data / "dataset.xyz")
+        prediction_path = str(data / "prediction.xyz")
+        if not (data / "dataset.xyz").is_file() or not (data / "prediction.xyz").is_file():
+            self._load_failed("dataset", dataset_path)(
+                "this server has no examples (it was installed without the repository)"
+            )
+            return
+        env = self.env
+        dataset_failed = self._load_failed("dataset", dataset_path)
+        prediction_failed = self._load_failed("prediction", prediction_path)
+
+        def load(taskID=None):
+            # The Loading Coordinator's load* take on_error; the Environment's
+            # delegates do not pass it on.
+            if env.getDatasetFromPath(dataset_path) is None:
+                try:
+                    env.loading.loadDataset(dataset_path, "ase (auto)", on_error=dataset_failed)
+                except Exception as exc:
+                    dataset_failed(exc)
+                    raise
+            dataset_fp = env.getKeyFromPath(dataset_path)
+            if dataset_fp is None:
+                return
+            if env.getKeyFromPath(prediction_path) is None:
+                try:
+                    env.loading.loadPrepredictedDataset(
+                        prediction_path, dataset_fp,
+                        selected_energy_key="MACE_energy",
+                        selected_force_key="MACE_forces",
+                        on_error=prediction_failed,
+                    )
+                except Exception as exc:
+                    prediction_failed(exc)
+                    raise
+
+        env.newTask(load, visual=True, name="Loading example", threaded=True)
+
+    def _load_failed(self, kind: str, path: str):
+        """An ``on_error`` callback that tells this window its load failed.
+
+        A failed load task only pushes ``TASK_FAILED`` with a task id, which the
+        window cannot tie to its request, so its status stayed on "Loading…".
+        The callback runs in the task's worker thread, hence the hand-back to
+        this session's loop.
+        """
+        loop = asyncio.get_running_loop()
+
+        def report(exc):
+            from ffast.protocol.rpc import pack
+
+            # The window that asked shows it (LOAD_FAILED), not every window.
+            logger.warning("Loading %s %r failed: %s", kind, path, exc,
+                           extra={"popup": False})
+            data = pack(
+                control.LOAD_FAILED, (),
+                {"kind": kind, "path": path, "error": str(exc)},
+            )
+            loop.call_soon_threadsafe(self._emit_or_drop, data, "load failed")
+
+        return report
 
     async def _on_request_prediction_arrays(self, dataset_fp, model_fp, **kwargs) -> None:
         """Pack only cached prediction arrays for (dataset_fp, model_fp) and push.
@@ -784,14 +946,28 @@ class ServerSession:
         from ffast.protocol.rpc import pack
         from ffast.visualization.view import VisualizationView
 
+        #print("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
+
+        copied_metric = False
         view_id = kwargs.get("view_id") or str(uuid.uuid4())
+        #print(view_id)
         dataset_ref = kwargs.get("dataset_ref") or None
 
         if view_id not in self.views:
             view = VisualizationView(view_id)
             self.views[view_id] = view
+            # A frame subset opens looking like its parent: the stage
+            # parameters and features (colouring, display, bonds) and the
+            # camera. Picks name atoms of one view, so they stay behind.
+            like = self.views.get(kwargs.get("start_from"))
+            if like is not None:
+                view.state.parameters = copy.deepcopy(like.state.parameters)
+                view.state.enabled_features = list(like.state.enabled_features)
+                view.state.camera = like.state.camera.model_copy()
+                copied_metric = (self._colour_source(view) or "").startswith("metric:")
         else:
             view = self.views[view_id]
+        #print('only_forces' in view.state.enabled_features)
 
         if dataset_ref is not None:
             view.state.dataset_ref = dataset_ref
@@ -811,20 +987,31 @@ class ServerSession:
                 get_prediction=self.get_prediction,
                 get_forces=self.get_forces,
                 executor=self.env.data.metricExecutor,
+                get_metric=self.get_metric,
+                prediction_fields=getattr(
+                    self.env.data, "predictionFields", {}),
             )
         except Exception as exc:
             self._log_scene_degrade("OPEN_VIEW", view_id, exc)
             snapshot = view.snapshot()
         data = pack(control.SCENE_SNAPSHOT, [], snapshot.model_dump())
+        #if snapshot.scene.only_forces: print("only forces sent!")
         await self._emit(data)
         logger.info(
             "OPEN_VIEW: view_id=%r dataset_ref=%r prediction_ref=%r scene_version=%d",
             view_id, dataset_ref, view.state.prediction_ref, view.version,
         )
+        if copied_metric:
+            # The copied colouring is one more view coloured by a metric.
+            self.feed.changed(control.METRIC_USERS)
 
     async def _on_close_view(self, view_id, **kwargs) -> None:
         self.views.pop(view_id, None)
         logger.info("CLOSE_VIEW: view_id=%r", view_id)
+        self.feed.changed(control.METRIC_USERS)
+
+    def _colour_source(self, view) -> str | None:
+        return view.state.parameters.get("ffast.atom_color", {}).get("source")
 
     async def _on_view_command(self, **kwargs) -> None:
         """Apply a ViewCommand and send COMMAND_RESULT plus an optional SCENE_PATCH."""
@@ -845,7 +1032,12 @@ class ServerSession:
             logger.warning("VIEW_COMMAND for unknown view_id=%r", cmd.view_id)
             return
 
+        before = self._colour_source(view)
         result = view.apply_command(cmd)
+        if self._colour_source(view) != before:
+            # Who uses a metric can change, so Delete is neither blocked nor
+            # allowed on old news (ADR 0057 rule 7).
+            self.feed.changed(control.METRIC_USERS)
 
         # Rebuild scene components that changed. build_scene is synchronous and
         # may block while the worker-process executor communicates with its
@@ -860,11 +1052,14 @@ class ServerSession:
         # than the COMMAND_RESULT/SCENE_PATCH never reaching the client.
         if result.success and result.patch and result.patch.changed:
             view_state = view.state
+            only_forces_selected = "only_forces" in view_state.enabled_features
             try:
                 scene = await asyncio.to_thread(
                     build_scene, view_state, self.env.datasets.get,
                     self.get_prediction, self.get_forces,
-                    self.env.data.metricExecutor,
+                    self.env.data.metricExecutor, get_metric=self.get_metric,
+                    prediction_fields=getattr(
+                        self.env.data, "predictionFields", {}),
                 )
             except Exception as exc:
                 self._log_scene_degrade("VIEW_COMMAND", cmd.view_id, exc)
@@ -875,8 +1070,13 @@ class ServerSession:
                     camera=view_state.camera,
                 )
             fill_patch_from_scene(result.patch, scene)
+            if only_forces_selected:
+                result.patch.changed.add("only_forces")
+                #print("server says yes!") # Debugging purposes
 
-        result_data = pack(control.COMMAND_RESULT, [], result.model_dump())
+        # Several views share a connection (independent 3D panels, ADR 0056),
+        # and a failed result carries no patch, so the result names its view.
+        result_data = pack(control.COMMAND_RESULT, [], {**result.model_dump(), "view_id": cmd.view_id})
         await self._emit(result_data)
 
         if result.success and result.patch:
@@ -887,13 +1087,6 @@ class ServerSession:
             "VIEW_COMMAND %s → success=%s new_version=%d",
             kwargs.get("type", "?"), result.success, result.new_version,
         )
-
-    async def _on_request_state_sync(self, **kwargs) -> None:
-        # Client explicitly requests a full state replay (e.g. after reconnect).
-        # The server also replays state automatically on every new connection
-        # (see server._handler), so this is a fallback for explicit re-sync.
-        logger.info("REQUEST_STATE_SYNC received — replaying state to client")
-        self.replay()
 
     async def _on_save_session(self, path, **kwargs) -> None:
         # Stage 5: save runs on the server, which owns the real datasets +
@@ -940,6 +1133,8 @@ class ServerSession:
                 self._ack_from_thread(loop, event, False, path, error=str(exc))
                 raise
             self._ack_from_thread(loop, event, True, path)
+            if not saving:
+                self._offer_session_metrics(loop, path)
 
         self.env.newTask(
             _work,
@@ -970,10 +1165,11 @@ class ServerSession:
         import os
         from ffast.protocol.rpc import pack
 
-        async def _reply(ok: bool, resolved: str, error: str | None = None, n: int = 0):
+        async def _reply(ok: bool, resolved: str, error: str | None = None, n: int = 0,
+                         skipped: int = 0):
             data = pack(
                 control.SUBSET_EXPORTED, (),
-                {"ok": ok, "path": resolved, "error": error, "n": n},
+                {"ok": ok, "path": resolved, "error": error, "n": n, "skipped": skipped},
             )
             await self._emit(data)
 
@@ -990,28 +1186,23 @@ class ServerSession:
             # .xyz too → extxyz so energies/forces survive (plain xyz drops them).
             fmt = "extxyz" if ext in (".xyz", ".extxyz", "") else None
 
-        # Uniform vs variable picks the serializer, exactly as the desktop
-        # SideBar export does. A SubDataset forwards its parent's isVariable;
-        # an AtomFilteredDataset is atom-filtering, always the uniform path.
-        from ffast.loaders.ase import (
-            VariableASEDatasetLoader, aseDatasetLoader,
-        )
-        is_variable = bool(getattr(dataset, "isVariable", False))
-        saver = VariableASEDatasetLoader if is_variable else aseDatasetLoader
+        # One saver, frame by frame, each frame with its own elements.
+        from ffast.loaders.ase import aseDatasetLoader as saver
 
         try:
             parent = os.path.dirname(resolved)
             if parent and not os.path.exists(parent):
                 os.makedirs(parent, exist_ok=True)
-            await asyncio.to_thread(saver.saveDataset, dataset, resolved, fmt)
-            n = int(dataset.getN())
+            # Frames with no atoms (an element subset's) are left out and counted.
+            skipped = int(await asyncio.to_thread(saver.saveDataset, dataset, resolved, fmt) or 0)
+            n = int(dataset.getN()) - skipped
             logger.info("EXPORT_SUBSET: wrote %d structure(s) → %s", n, resolved)
-            await _reply(True, resolved, n=n)
+            await _reply(True, resolved, n=n, skipped=skipped)
         except Exception as exc:
             logger.warning("EXPORT_SUBSET: write failed for %r: %s", resolved, exc)
             await _reply(False, resolved, error=str(exc))
 
-    async def _on_request_metric(self, metric_id, key=None, **kwargs) -> None:
+    async def _on_request_metric(self, metric_id, request_id, **kwargs) -> None:
         """Compute a metric server-side and reply with METRIC_RESULT (Stage 4a).
 
         Reuses the same in-process metric spine the client has — the server owns
@@ -1028,9 +1219,9 @@ class ServerSession:
 
         model = self.env.models.get(model_fp) if model_fp else None
         dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
-        if key is None:
-            key = self.env.data.make_metric_cache_key(metric_id, params, model, dataset)
-
+        # The server alone names the stored result; ``request_id`` is only the
+        # label the reply carries back (ADR 0061).
+        key = self.env.data.make_metric_cache_key(metric_id, params, model, dataset)
         result = self.env.cache.get(key)
 
         # A model-dependent metric whose model isn't on the server (a real,
@@ -1040,41 +1231,394 @@ class ServerSession:
         if result is None and server_can_compute:
             try:
                 loop = asyncio.get_running_loop()
-                ok = await loop.run_in_executor(
+                made = await loop.run_in_executor(
                     _metric_compute_pool(),
-                    self.env.data.generateMetric, metric_id, params, model, dataset, key,
+                    self.env.data.generateMetric, metric_id, params, model, dataset,
                 )
             except Exception as exc:
                 logger.error("REQUEST_METRIC compute failed %s: %s", metric_id, exc)
-                ok = False
-            result = self.env.cache.get(key) if ok else None
+                made = None
+            result = self.env.cache.get(made) if made else None
 
-        data = pack_metric_result(key, metric_id, result is not None, result)
+        # Why it failed, when it did (ADR 0066 rule 6); not for missing data.
+        error = (None if result is not None else
+                 getattr(self.env.data, "metric_failures", {}).pop(key, None))
+        data = pack_metric_result(request_id, metric_id, result is not None, result, error)
         await self._emit(data)
         logger.info(
-            "METRIC_RESULT queued: metric=%r ok=%s key=%r",
-            metric_id, result is not None, key,
+            "METRIC_RESULT queued: metric=%r ok=%s request_id=%r",
+            metric_id, result is not None, request_id,
         )
 
     async def _on_request_metric_catalog(self, **kwargs) -> None:
-        self._replay_metric_catalog()
+        try:
+            await self._emit(self.feed.metric_catalog())
+        except Exception as exc:
+            logger.warning("METRIC_CATALOG error: %s", exc)
 
     async def _on_request_tab_layout(self, **kwargs) -> None:
-        """Reply with TAB_LAYOUT: the merged Analysis-Tab layout (ADR 0045
-        Phase 3). Mirrors ``_on_request_metric_catalog`` — a dedicated
-        announcement, not a correlated reply. The layout is resolved once at
-        server startup and cached on the Environment (``analysis_tab_layout``);
-        if it isn't there (e.g. a unit test with a bare env), fall back to the
-        bundled tabs so the built-in analyses are always available."""
-        from ffast.protocol.rpc import pack
+        """Reply with TAB_LAYOUT: the merged tab layout (ADR 0045 Phase 3,
+        ADR 0056). Mirrors ``_on_request_metric_catalog`` — a dedicated
+        announcement, not a correlated reply. See ``WindowFeed.tab_layout``."""
         try:
-            from ffast.protocol import TabLayout
-            tabs = getattr(self.env, "analysis_tab_layout", None)
-            if tabs is None:
-                from ffast.config.tabs import build_tab_layout, merge_tabs
-                tabs = build_tab_layout(merge_tabs())
-            data = pack(control.TAB_LAYOUT, [], TabLayout(tabs=tabs).model_dump())
+            data = self.feed.tab_layout()
             await self._emit(data)
-            logger.info("TAB_LAYOUT queued (%d tab(s))", len(tabs))
+            logger.info("TAB_LAYOUT queued")
         except Exception as exc:
             logger.warning("TAB_LAYOUT error: %s", exc)
+
+    # ── user tabs (ADR 0056) ────────────────────────────────────────────────
+
+    async def _on_save_tab(self, tab, previous_name=None, **kwargs) -> None:
+        await self._change_tabs("save", tab.get("name"),
+                                lambda sources: sources.save(tab, previous_name))
+
+    async def _on_delete_tab(self, name, **kwargs) -> None:
+        await self._change_tabs("delete", name, lambda sources: sources.delete(name))
+
+    async def _on_hide_tab(self, name, hidden, **kwargs) -> None:
+        await self._change_tabs("hide" if hidden else "show", name,
+                                lambda sources: sources.set_hidden(name, bool(hidden)))
+
+    async def _on_set_tab_order(self, names, **kwargs) -> None:
+        await self._change_tabs("order", None, lambda sources: sources.set_order(list(names)))
+
+    async def _change_tabs(self, action: str, name, change) -> None:
+        """Apply a tab change, answer this window with TAB_SAVED, then send the
+        new layout to every window — in that order, so the window that saved
+        hears its own outcome before the layout it caused."""
+        from ffast.config.user_tabs import TabError
+        from ffast.protocol.rpc import pack
+        sources = getattr(self.env, "tab_sources", None)
+        error = None
+        try:
+            if sources is None:
+                raise TabError("This server keeps no user tabs")
+            saved = await asyncio.to_thread(change, sources)
+            if isinstance(saved, str):
+                name = saved
+        except TabError as exc:
+            error = str(exc)
+        except Exception as exc:
+            logger.warning("Tab %s of %r failed: %s", action, name, exc)
+            error = f"Could not {action} the tab: {exc}"
+        await self._emit(pack(control.TAB_SAVED, [], {
+            "ok": error is None, "action": action, "name": name, "error": error}))
+        if error is None:
+            logger.info("Tab %s: %r; sending the layout to every window", action, name)
+            self.feed.changed(control.METRIC_CATALOG, control.TAB_LAYOUT, control.METRIC_USERS)
+
+    async def _on_export_tab(self, name, **kwargs) -> None:
+        from ffast.config.user_tabs import TabError
+        from ffast.protocol.rpc import pack
+        sources = getattr(self.env, "tab_sources", None)
+        toml = error = None
+        try:
+            if sources is None:
+                raise TabError("This server keeps no user tabs")
+            toml = sources.export(name)
+        except TabError as exc:
+            error = str(exc)
+        await self._emit(pack(control.TAB_EXPORTED, [], {"name": name, "toml": toml, "error": error}))
+
+    # ── user metrics (ADR 0057) ─────────────────────────────────────────────
+
+    async def _on_request_user_metrics(self, **kwargs) -> None:
+        await self._emit(self.feed.user_metrics())
+
+    async def _on_save_user_metric(self, metric, previous_id=None, base_revision=None,
+                                   overwrite=False, **kwargs) -> None:
+        await self._change_metrics(
+            "save", metric.get("id"),
+            lambda um: um.save(metric, previous_id, base_revision, bool(overwrite)))
+
+    async def _on_delete_user_metric(self, id, **kwargs) -> None:
+        await self._change_metrics("delete", id, lambda um: um.delete(id))
+
+    async def _change_metrics(self, action: str, id, change) -> None:
+        """Apply a metric change, answer this window with USER_METRIC_SAVED,
+        then tell every window (METRICS_UPDATED, then the new list) — in that
+        order, so the window that saved hears its own outcome first.
+
+        Before anyone is told, results cached under the changed metrics are
+        dropped (rule 5). Correctness does not depend on it: the formula is in
+        the cache key and a run that overlapped the change is discarded
+        (ADR 0061), so dropping only frees memory."""
+        from ffast.config.user_metrics import MetricConflict, MetricError
+        from ffast.protocol.rpc import pack
+        um = getattr(self.env, "user_metrics", None)
+        error, conflict, change_result = None, False, None
+        try:
+            if um is None:
+                raise MetricError("This server keeps no user metrics")
+            # One thread call, so no other task runs between the change and the
+            # drop of old results (ADR 0061).
+            change_result = await asyncio.to_thread(self._change_and_invalidate, um, change)
+            if change_result.id:
+                id = change_result.id
+        except MetricConflict as exc:
+            error, conflict = str(exc), True
+        except MetricError as exc:
+            error = str(exc)
+        except Exception as exc:
+            logger.warning("User metric %s of %r failed: %s", action, id, exc)
+            error = f"Could not {action} the metric: {exc}"
+        await self._emit(pack(control.USER_METRIC_SAVED, [], {
+            "ok": error is None, "action": action, "id": id,
+            "error": error, "conflict": conflict}))
+        if error is None:
+            logger.info("User metric %s: %r; telling every window", action, id)
+            self._broadcast(pack(control.METRICS_UPDATED, [], {}))
+            self.feed.changed(control.METRIC_CATALOG, control.TAB_LAYOUT,
+                              control.USER_METRICS, control.METRIC_USERS)
+            await self.feed.resend_inputs()
+
+    def _change_and_invalidate(self, um, change):
+        """Run the metric change, then drop the results of what it affected."""
+        result = change(um)
+        self._apply_metric_change(result.affected)
+        return result
+
+    def _apply_metric_change(self, affected) -> None:
+        """Drop cached results of the changed metrics."""
+        data = getattr(self.env, "data", None)
+        if data is None:
+            return
+        dropped = data.invalidate_metrics(affected)
+        logger.info("Metrics %s changed: %d cached result(s) dropped", sorted(affected), len(dropped))
+
+    async def _on_export_user_metric(self, id, **kwargs) -> None:
+        from ffast.config.user_metrics import MetricError
+        from ffast.protocol.rpc import pack
+        um = getattr(self.env, "user_metrics", None)
+        toml = error = None
+        try:
+            if um is None:
+                raise MetricError("This server keeps no user metrics")
+            toml = um.export(id)
+        except MetricError as exc:
+            error = str(exc)
+        await self._emit(pack(control.USER_METRIC_EXPORTED, [], {"id": id, "toml": toml, "error": error}))
+
+    async def _on_request_metric_inputs(self, dataset_fp=None, model_fp=None, **kwargs) -> None:
+        """Reply with METRIC_INPUTS, and remember the pair: it is the dataset
+        and prediction this window is looking at, so after a metric change the
+        window is sent a fresh list for it (ADR 0062)."""
+        self._inputs_for = (dataset_fp, model_fp)
+        await self.send_inputs()
+
+    async def send_inputs(self, drop_if_full: bool = False) -> None:
+        """METRIC_INPUTS for the pair this window last asked about: what a
+        formula can use for that dataset and prediction, extra file keys
+        included (rule 10). Does nothing for a window that never asked."""
+        if self._inputs_for is None:
+            return
+        dataset_fp, model_fp = self._inputs_for
+        from ffast.metrics.input_catalog import build_input_catalog
+        from ffast.metrics.registry import default_registry
+        from ffast.protocol.rpc import pack
+        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
+        model = self.env.models.get(model_fp) if model_fp else None
+        data = getattr(self.env, "data", None)
+        inputs = await asyncio.to_thread(
+            build_input_catalog, default_registry, dataset, model,
+            getattr(data, "predictionFields", None),
+            getattr(self.env, "user_metrics", None))
+        message = pack(control.METRIC_INPUTS, [], {
+            "dataset_fp": dataset_fp, "model_fp": model_fp, "inputs": inputs})
+        if drop_if_full:
+            self._emit_or_drop(message, "METRIC_INPUTS")
+        else:
+            await self._emit(message)
+
+    # ── check and try a formula (ADR 0057 rules 11, 12) ─────────────────────
+
+    def _uniform(self, dataset_fp) -> bool | None:
+        """Whether every structure of a dataset has the same atoms in the same
+        order (ADR 0058), as by=atom needs; None when no dataset is named."""
+        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
+        return None if dataset is None else not getattr(dataset, "isVariable", False)
+
+    async def _on_check_metric(self, metric, check_id=None, dataset_fp=None, **kwargs) -> None:
+        """Reply with METRIC_CHECKED: the formula's error or result shape, and
+        warnings for the pane's dataset (ADR 0066). Touches no data and
+        changes nothing, so it runs on every keystroke."""
+        from ffast.config.user_metrics import MetricError
+        from ffast.protocol.rpc import pack
+        um = getattr(self.env, "user_metrics", None)
+        if um is None:
+            out = {"ok": False, "error": "This server keeps no user metrics", "shape": None,
+                   "warnings": []}
+        else:
+            out = um.check(metric, uniform=self._uniform(dataset_fp))
+        await self._emit(pack(control.METRIC_CHECKED, [], {"check_id": check_id, **out}))
+
+    async def _on_request_metric_boxes(self, request_id, metric_id=None, base=None,
+                                       setting=None, dataset_fp=None, **kwargs) -> None:
+        """Reply with METRIC_BOXES: the keep boxes of a metric, or the formula,
+        id and name a box change gives (ADR 0065). Touches no data; the
+        dataset is asked only whether its structures have the same atoms."""
+        from ffast.metrics.boxes import box_state
+        from ffast.metrics.registry import default_registry
+        from ffast.protocol.rpc import pack
+        uniform = self._uniform(dataset_fp)
+        um = getattr(self.env, "user_metrics", None)
+        revision = default_registry.revision
+        try:
+            out = box_state(default_registry, metric_id=metric_id, base=base,
+                            setting=setting, uniform=uniform,
+                            saved=lambda i: um is not None and um.origin(i) == "user")
+        except (KeyError, ValueError) as exc:
+            out = {"error": str(exc).strip("'\"")}
+        await self._emit(pack(control.METRIC_BOXES, [], {"request_id": request_id, **out}))
+        if default_registry.revision != revision:
+            # Opening a box id registered it: other panels may now name it.
+            self.feed.changed(control.METRIC_CATALOG)
+
+    async def _on_try_metric(self, metric, try_id, dataset_fp=None, model_fp=None, **kwargs) -> None:
+        """Start a Try and return at once: it runs as its own task so a
+        CANCEL_TRY_METRIC from the same window can be heard while it runs."""
+        import threading
+        stop = threading.Event()
+        cancelled = asyncio.Event()
+        task = asyncio.create_task(self._run_try(metric, try_id, dataset_fp, model_fp, stop, cancelled))
+        self._tries[try_id] = (stop, task, cancelled)
+        task.add_done_callback(lambda _t: self._tries.pop(try_id, None))
+
+    async def _on_cancel_try_metric(self, try_id, **kwargs) -> None:
+        running = self._tries.get(try_id)
+        if running is not None:
+            running[0].set()
+            running[2].set()
+
+    def close(self) -> None:
+        """The window has gone: stop its Tries, drop its views, and leave the
+        feed, so its colourings stop counting as users of a metric (ADR 0062)."""
+        self.cancel_tries()
+        coloured = any((self._colour_source(v) or "").startswith("metric:")
+                       for v in self.views.values())
+        self.views.clear()
+        self.feed.detach(self)
+        if coloured:
+            self.feed.changed(control.METRIC_USERS)
+
+    def cancel_tries(self) -> None:
+        """Stop every Try of this connection (it has gone away)."""
+        for stop, _task, _cancelled in list(self._tries.values()):
+            stop.set()
+
+    async def _run_try(self, metric, try_id, dataset_fp, model_fp, stop, cancelled) -> None:
+        from ffast.metrics.try_formula import TryError, TryResult, try_formula
+        from ffast.protocol.rpc import pack
+        loop = asyncio.get_running_loop()
+
+        def progress(done, total):
+            data = pack("TASK_PROGRESS", [try_id], {
+                "message": f"Trying the formula: {done} of {total} frames",
+                "progress": done / total if total else 1.0, "error": False})
+            loop.call_soon_threadsafe(self._emit_or_drop, data, "TASK_PROGRESS")
+
+        try:
+            work = asyncio.ensure_future(asyncio.to_thread(
+                self._try_blocking, metric, dataset_fp, model_fp, progress, stop.is_set))
+            heard = asyncio.ensure_future(cancelled.wait())
+            await asyncio.wait({work, heard}, return_when=asyncio.FIRST_COMPLETED)
+            heard.cancel()
+            if not work.done():
+                # Answer Cancel at once. The thread may still be computing an
+                # input (a metric on the worker); it finishes in the background,
+                # the result stays in the cache, and it then sees the stop and exits.
+                work.add_done_callback(lambda f: f.cancelled() or f.exception())
+                out = {"ok": True, "error": None, **TryResult(cancelled=True).to_dict()}
+            else:
+                out = {"ok": True, "error": None, **work.result()}
+        except TryError as exc:
+            out = {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            logger.warning("TRY_METRIC %s failed: %s", try_id, exc)
+            out = {"ok": False, "error": f"Could not try the formula: {exc}"}
+        out.setdefault("cancelled", False)
+        await self._emit(pack(control.METRIC_TRIED, [], {"try_id": try_id, **out}))
+
+    def _try_blocking(self, metric, dataset_fp, model_fp, progress, cancelled) -> dict:
+        """The Try itself, on a thread: resolve the inputs for the selected
+        dataset and prediction, then evaluate in chunks on the metric worker."""
+        from pydantic import ValidationError
+
+        from ffast.config.models import ExprMetricConfig
+        from ffast.metrics.input_resolver import _ResolverSource
+        from ffast.metrics.models import MetricResult
+        from ffast.metrics.registry import default_registry
+        from ffast.metrics.try_formula import TryError, try_formula
+
+        um = getattr(self.env, "user_metrics", None)
+        if um is None:
+            raise TryError("This server keeps no user metrics")
+        try:
+            cfg = ExprMetricConfig.model_validate(metric)
+        except ValidationError as exc:
+            raise TryError(str(exc.errors()[0].get("msg", exc)).removeprefix("Value error, ")) from None
+        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
+        model = self.env.models.get(model_fp) if model_fp else None
+        if dataset is None:
+            raise TryError("Select a dataset to try the formula on")
+        data = self.env.data
+        resolver = data.inputResolver
+
+        def resolve(ref):
+            if default_registry.has(ref):
+                result = data.metricExecutor.run(ref, _ResolverSource(resolver, model, dataset), {})
+                if isinstance(result, MetricResult):
+                    return result.values
+                raise TryError(f"{ref} could not be computed here")
+            return resolver.resolve(ref, model=model, dataset=dataset)
+
+        n_atoms = resolver.resolve("n_atoms", dataset=dataset)
+        if n_atoms is None:
+            raise TryError("The dataset's atom counts are not available")
+        # The formula runs where saved metrics run, in the metric worker: one
+        # that uses up memory or time then stops the worker, not the server.
+        executor = data.metricExecutor
+        result = try_formula(
+            cfg.expr, dict(cfg.vars), um.registry_without(cfg.id), resolve, n_atoms,
+            on_progress=progress, cancelled=cancelled,
+            compute=lambda fn, kwargs: executor.call(fn, kwargs, label=cfg.id))
+        return result.to_dict()
+
+    # ── user metrics a session carries (ADR 0057 rules 15, 16) ──────────────
+
+    def _offer_session_metrics(self, loop, path) -> None:
+        """After a session load: if it carries user metrics this server lacks
+        (or has under another formula), ask the window that loaded whether to add
+        them. Runs on the task's worker thread. Declining is just not answering:
+        the session then behaves as if it had carried nothing."""
+        import os
+        import uuid
+
+        from ffast.config.user_metrics import SESSION_FILE, read_formulas
+        from ffast.protocol.rpc import pack
+
+        um = getattr(self.env, "user_metrics", None)
+        if um is None:
+            return
+        try:
+            plan = um.plan_session(read_formulas(os.path.join(path, SESSION_FILE)))
+        except Exception as exc:
+            logger.warning("Session metrics of %r unreadable: %s", path, exc)
+            return
+        if not plan:
+            return
+        offer_id = f"offer-{uuid.uuid4().hex[:12]}"
+        self._session_offers = {offer_id: plan}      # only the latest offer stays open
+        data = pack(control.SESSION_METRICS, [], {"offer_id": offer_id, "metrics": plan.describe()})
+        loop.call_soon_threadsafe(self._emit_or_drop, data, "SESSION_METRICS")
+
+    async def _on_add_session_metrics(self, offer_id, **kwargs) -> None:
+        plan = self._session_offers.pop(offer_id, None)
+        if plan is None:
+            from ffast.protocol.rpc import pack
+            await self._emit(pack(control.USER_METRIC_SAVED, [], {
+                "ok": False, "action": "add-session", "id": None,
+                "error": "That offer is no longer open; load the session again", "conflict": False}))
+            return
+        await self._change_metrics("add-session", None, lambda um: um.add_session(plan))

@@ -4,6 +4,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ffast.session.code_fingerprint import code_fingerprint
 from ffast.session.token import ClientRole
 
 PROTOCOL_VERSION = "1.0"
@@ -41,6 +42,10 @@ class ServerCapabilities(BaseModel):
     supported_codecs: list[str]
     features: list[str] = Field(default_factory=list)
     role: ClientRole = ClientRole.READ_ONLY
+    # Which FFAST code the server runs (``ffast.session.code_fingerprint``), so
+    # a client can warn when it differs from its own. A server older than this
+    # field sends none.
+    code_fingerprint: Optional[str] = None
 
 
 def negotiate(client: ClientCapabilities) -> ServerCapabilities:
@@ -59,4 +64,5 @@ def negotiate(client: ClientCapabilities) -> ServerCapabilities:
         accepted_client_version=client.protocol_version,
         supported_codecs=shared_codecs,
         features=shared_features,
+        code_fingerprint=code_fingerprint(),
     )

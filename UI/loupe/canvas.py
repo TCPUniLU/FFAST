@@ -338,7 +338,7 @@ class InteractiveCanvas(Widget):
     def setDataset(self, dataset):
         self.hasBeenInited = False
         self.dataset = dataset
-        self.nAtoms = dataset.getNAtoms() if not getattr(dataset, "isVariable", False) else dataset.getNAtoms(getattr(self, "index", 0))
+        self.nAtoms = dataset.getNAtoms(getattr(self, "index", 0))  # the shown frame's
 
         for prop in self.props.values():
             prop.onDatasetInit()

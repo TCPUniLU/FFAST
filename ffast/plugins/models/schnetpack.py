@@ -1,4 +1,4 @@
-from ffast.loaders.model import ModelLoader
+from ffast.loaders.model import ModelLoader, uniformFrames
 import numpy as np
 from ffast.cache.fingerprint import md5FromArraysAndStrings
 
@@ -55,11 +55,7 @@ class SchNetModelLoader(ModelLoader):
         # except it doesnt work :)
         from ase import Atoms
 
-        if indices is None:
-            R = dataset.getCoordinates()
-        else:
-            R = dataset.getCoordinates(indices=indices)
-        z = dataset.getElements()
+        R, z = uniformFrames(dataset, indices)
 
         E, F = [], []
         molecules, props = ([], [])

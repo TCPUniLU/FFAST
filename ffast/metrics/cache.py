@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -11,7 +13,12 @@ from ffast.metrics.models import MetricResult
 
 
 def _array_fingerprint(arr: np.ndarray) -> str:
-    return hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()[:16]
+    # Shape and type too: (frames, atoms, 3) and its flat (atoms, 3) copy hold
+    # the same bytes but give a metric different answers.
+    arr = np.ascontiguousarray(arr)
+    digest = hashlib.sha256(f"{arr.dtype.str}{arr.shape}".encode())
+    digest.update(arr.tobytes())
+    return digest.hexdigest()[:16]
 
 
 def function_hash(fn: Callable) -> str:
@@ -24,6 +31,31 @@ def function_hash(fn: Callable) -> str:
         impl = getattr(fn, "implementation_source", None)
         src = impl() if callable(impl) else repr(fn)
     return hashlib.sha256(src.encode()).hexdigest()[:16]
+
+
+def formula_token(registry, metric_id: str) -> str | None:
+    """Short identity of the formulas behind a metric, or None when it has none.
+
+    Formula metrics (user, project, transform) describe themselves by
+    ``implementation_source``; a built-in's code cannot change while the server
+    runs. A formula built on other formulas takes theirs in too, so editing one
+    changes the token of everything above it (ADR 0057 rule 5).
+    """
+    parts: dict[str, str] = {}
+
+    def walk(mid: str) -> None:
+        if mid in parts or not registry.has(mid):
+            return
+        schema, fn = registry.get(mid)
+        parts[mid] = function_hash(fn) if hasattr(fn, "implementation_source") else ""
+        for ref in schema.inputs.values():
+            walk(ref)
+
+    walk(metric_id)
+    seen = [f"{m}:{h}" for m, h in sorted(parts.items()) if h]
+    if not seen:
+        return None
+    return hashlib.sha256("|".join(seen).encode()).hexdigest()[:8]
 
 
 def _value_fingerprint(v: Any) -> str:
@@ -40,9 +72,22 @@ class CacheKey:
     input_fingerprints: frozenset
 
 
+DEFAULT_MAX_BYTES = 1 << 30   # 1 GiB; change here, there is no setting (ADR 0061)
+
+
 class MetricCache:
-    def __init__(self) -> None:
-        self._store: dict[CacheKey, MetricResult] = {}
+    """Computed metric results, bounded by the memory their arrays hold.
+
+    Least recently used entries are dropped first when a new one would take the
+    total past ``max_bytes``. Several threads share one cache, so every access
+    holds a lock.
+    """
+
+    def __init__(self, max_bytes: int = DEFAULT_MAX_BYTES) -> None:
+        self._max_bytes = max_bytes
+        self._store: OrderedDict[CacheKey, tuple[MetricResult, int]] = OrderedDict()
+        self._total = 0
+        self._lock = threading.Lock()
 
     def make_key(
         self,
@@ -63,10 +108,28 @@ class MetricCache:
         )
 
     def get(self, key: CacheKey) -> MetricResult | None:
-        return self._store.get(key)
+        with self._lock:
+            entry = self._store.get(key)
+            if entry is None:
+                return None
+            self._store.move_to_end(key)
+            return entry[0]
 
     def put(self, key: CacheKey, result: MetricResult) -> None:
-        self._store[key] = result
+        size = int(np.asarray(result.values).nbytes)
+        with self._lock:
+            old = self._store.pop(key, None)
+            if old is not None:
+                self._total -= old[1]
+            if size > self._max_bytes:
+                return
+            self._store[key] = (result, size)
+            self._total += size
+            while self._total > self._max_bytes:
+                _, (_, dropped) = self._store.popitem(last=False)
+                self._total -= dropped
 
     def clear(self) -> None:
-        self._store.clear()
+        with self._lock:
+            self._store.clear()
+            self._total = 0

@@ -14,7 +14,7 @@ title = "Forces MAE distribution"
 x_label = ["Forces MAE", "forceUnit"]
 tooltip = "Difference (MAE) between predicted and ab-initio net force on the system."
   [tabs.panels.metrics.value]
-  metric = "ffast.force_net_mae_per_structure"
+  metric = "ffast.force_net_residual[structure;component;mae]"
   transform = "mirror_kde"
 
 [[tabs.panels]]
@@ -23,7 +23,7 @@ row = 1
 col = 0
 title = "Forces MAE"
   [tabs.panels.metrics.value]
-  metric = "ffast.force_net_mae"
+  metric = "ffast.force_net_residual[dataset;component;mae]"
 
 [[tabs.panels]]
 kind = "table"
@@ -31,4 +31,4 @@ row = 1
 col = 1
 title = "Forces RMSE"
   [tabs.panels.metrics.value]
-  metric = "ffast.force_net_rmse"
+  metric = "ffast.force_net_residual[dataset;component;rmse]"

@@ -7,6 +7,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from ffast.visualization.models import CameraState, DatasetProvenance
 
 
+# The colour map atoms are coloured with until the user picks another: the
+# desktop app's blue → green → yellow → red, whose red end reads on both the
+# black and the white (Journal) background.
+DEFAULT_COLORMAP = "force_error"
+
+
 class AtomColorBy(BaseModel):
     """Value-driven atom coloring descriptor (ADR 0016).
 
@@ -16,7 +22,7 @@ class AtomColorBy(BaseModel):
     """
     model_config = ConfigDict(extra="forbid")
     values: list[float]            # (N,) one scalar per displayed atom
-    colormap: str = "viridis"
+    colormap: str = DEFAULT_COLORMAP
     vmin: float = 0.0
     vmax: float = 1.0
     label: str = ""
@@ -95,6 +101,7 @@ class RenderScene(BaseModel):
     Renderer-neutral description of one Visualization View's scene.
     Renderer adapters translate these primitives to Vispy or WebGL objects.
     """
+    only_forces: bool = False
     model_config = ConfigDict(extra="forbid")
     view_id: str
     version: int
@@ -105,6 +112,7 @@ class RenderScene(BaseModel):
     unit_cell: UnitCellScene | None = None
     selections: list[SelectionOverlay] = Field(default_factory=list)
     camera: CameraState = Field(default_factory=CameraState)
+    frame_index: int = 0
 
 
 class SceneSnapshot(BaseModel):

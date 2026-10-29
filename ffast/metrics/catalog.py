@@ -26,22 +26,58 @@ def _param_to_dict(p) -> dict:
     }
 
 
-def build_metric_catalog(registry) -> list[dict]:
+def python_source(fn) -> str | None:
+    """The function behind a Python metric, from its ``def`` line (the
+    decorator, with its tests, is left out); None when it has no source file."""
+    import inspect
+    try:
+        lines = inspect.getsource(inspect.unwrap(fn)).splitlines()
+    except (OSError, TypeError):
+        return None
+    start = next((i for i, line in enumerate(lines) if line.lstrip().startswith("def ")), 0)
+    return inspect.cleandoc("\n".join(lines[start:])) if lines else None
+
+
+def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
     """Catalog of every registered metric as plain dicts.
 
     Each entry: ``{id, label, shape, unit, parameters}`` where ``shape`` is the
     string form (e.g. ``"N_atoms"``, ``"N_elements"``, ``"scalar"``) and
     ``parameters`` maps name → flattened ParameterSchema. Clients filter by
-    ``shape`` for their use (atom coloring keeps ``N_atoms`` / ``N_elements``).
+    ``shape`` for their use (atom coloring keeps ``N_atoms`` / ``N_elements`` /
+    ``(N_frames, N_elements)``).
+
+    With ``user_metrics`` (ADR 0057) each entry also says where the metric
+    comes from and its formula if it is an Expression Metric. Who uses it is a
+    message of its own (``METRIC_USERS``, ADR 0062).
+
+    ``inputs`` lists the refs the metric reads (``reference.forces``,
+    ``prediction.energies``, or another metric's id), so a client can tell
+    whether it needs a prediction.
+
+    A Python metric also carries its ``source``, and ``equivalent_expr`` /
+    ``equivalent_vars`` when a formula computes exactly the same
+    (ffast/metrics/builtin/equivalents.py): what Duplicate starts from.
     """
+    from ffast.metrics.builtin.equivalents import equivalent_of
+    from ffast.metrics.expr import _ExprFn
     catalog = []
     for mid in sorted(registry.list_metrics()):
-        schema, _ = registry.get(mid)
+        schema, fn = registry.get(mid)
+        is_formula = isinstance(fn, _ExprFn)
+        equivalent = None if is_formula else equivalent_of(mid)
         catalog.append({
+            "source": None if is_formula else python_source(fn),
+            "equivalent_expr": equivalent[0] if equivalent else None,
+            "equivalent_vars": equivalent[1] if equivalent else None,
+            "origin": user_metrics.origin(mid) if user_metrics is not None else "built-in",
+            "expr": fn.expr if is_formula else None,
+            "vars": fn.user_vars if is_formula else None,
             "id": mid,
             "label": schema.label or mid,
             "shape": shape_to_str(schema.shape),
             "unit": schema.unit,
+            "inputs": sorted(set((schema.inputs or {}).values())),
             "parameters": {k: _param_to_dict(p) for k, p in schema.parameters.items()},
         })
     return catalog

@@ -70,13 +70,13 @@ def test_load_dataset_request_requires_path_and_type():
 
 def test_open_view_request_all_optional():
     assert OpenViewRequest.model_validate({}).model_dump() == {
-        "view_id": None, "dataset_ref": None, "prediction_ref": None,
+        "view_id": None, "dataset_ref": None, "prediction_ref": None, "start_from": None,
     }
 
 
 def test_request_metric_request_shape():
     payload = {
-        "metric_id": "ffast.force_rmse", "key": "k1",
+        "metric_id": "ffast.force_difference[structure;length;rmse]", "request_id": "k1",
         "params": {"order": 1}, "model_fp": "m1", "dataset_fp": "d1",
     }
     assert RequestMetricRequest.model_validate(payload).model_dump() == payload

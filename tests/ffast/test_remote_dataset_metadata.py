@@ -1,7 +1,7 @@
 import numpy as np
 
 from cluster.remote_dataset import CachedRemoteDataset
-from ffast.loaders.dataset import DatasetLoader, VariableDatasetLoader
+from ffast.loaders.dataset import DatasetLoader, DatasetView, FlatDatasetLoader
 from ffast.protocol import DatasetMeta
 
 
@@ -11,6 +11,9 @@ class _UniformDataset(DatasetLoader):
     def getN(self):
         return 2
 
+    def getNAtoms(self, index=None):
+        return 3
+
     def getForces(self):
         return np.zeros((2, 3, 3))
 
@@ -18,11 +21,14 @@ class _UniformDataset(DatasetLoader):
         return np.array([8, 1, 1])
 
 
-class _VariableDataset(VariableDatasetLoader):
+class _VariableDataset(FlatDatasetLoader):
     datasetName = "fake variable"
 
     def getForces(self):
         return [np.zeros((2, 3)), np.zeros((3, 3))]
+
+    def hasForces(self):
+        return True
 
 
 def _make_uniform():
@@ -77,3 +83,67 @@ def test_legacy_variable_metadata_carries_flat_elements_and_offsets():
     assert np.array_equal(proxy.getElements(), np.array([6, 1, 8, 1, 1]))
     assert np.array_equal(proxy.getElements(1), np.array([8, 1, 1]))
     assert np.array_equal(proxy.getNAtoms(), np.array([2, 3]))
+
+
+# ── lineage: which configurations a subset shares with its parent (ADR 0056) ──
+# The browser matches a frame of one dataset to the same configuration in a
+# related one (a subset and its parent), so the announcement names the parent
+# and, for a frame subset, which parent frame each of its frames is.
+
+def _parent():
+    parent = _make_uniform()
+    parent.fingerprint = "parentfp"
+    parent.loaded = True
+    parent.getName = lambda: "water"
+    return parent
+
+
+def test_a_loaded_dataset_has_no_parent():
+    meta = DatasetMeta.model_validate(_make_uniform().toMetaDict())
+    assert meta.parent is None and meta.parent_frames is None
+
+
+def test_a_frame_subset_names_its_parent_and_parent_frames():
+    sub = DatasetView.subset(_parent(), None, np.array([3, 5, 8]), "picked")
+    sub.getN = lambda: 3
+    meta = DatasetMeta.model_validate(sub.toMetaDict())
+    assert meta.parent == "parentfp"
+    assert meta.parent_frames == [3, 5, 8]
+
+
+def test_an_atom_subset_shares_every_frame_with_its_parent():
+    """Its indices are atoms, not frames: frame i is the parent's frame i."""
+    sub = DatasetView.atomSubset(_parent(), np.array([0, 2]))
+    meta = DatasetMeta.model_validate(sub.toMetaDict())
+    assert meta.parent == "parentfp"
+    assert meta.parent_frames is None
+
+
+def test_the_desktop_accepts_lineage_in_the_announcement(monkeypatch):
+    """The desktop's handler names every field it takes; new ones must not
+    break it."""
+    from ffast.core.connection_manager import ConnectionManager
+
+    seen = {}
+    manager = ConnectionManager.__new__(ConnectionManager)
+    manager.getDataset = lambda fp: seen.setdefault("fp", fp) and None
+    monkeypatch.setattr("cluster.remote_dataset.CachedRemoteDataset.__init__",
+                        lambda self, *a, **k: (_ for _ in ()).throw(RuntimeError("stop")))
+    try:
+        manager._onRemoteDatasetMeta("subfp", name="s", n=3, is_sub=True,
+                                     parent="parentfp", parent_frames=[3, 5, 8],
+                                     active=False)
+    except RuntimeError as exc:
+        assert str(exc) == "stop"   # got past the signature and validation
+    assert seen["fp"] == "subfp"
+
+
+def test_a_hidden_subset_says_so():
+    """A subset whose SUB box was unticked is kept but marked inactive, so the
+    browser stops listing it."""
+    sub = DatasetView.subset(_parent(), None, np.array([3, 5]), "Plot")
+    sub.getN = lambda: 2
+    sub.fingerprint = "subfp"
+    assert DatasetMeta.model_validate(sub.toMetaDict()).active is True
+    sub.setActive(False)
+    assert DatasetMeta.model_validate(sub.toMetaDict()).active is False

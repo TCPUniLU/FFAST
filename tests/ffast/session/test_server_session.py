@@ -15,6 +15,7 @@ import os
 from unittest.mock import patch
 
 import numpy as np
+import pytest
 
 from ffast.cache import CacheKey, PredictionArrayKey
 from ffast.metrics.models import MetricResult
@@ -27,7 +28,7 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def _make_metric_result(metric_id="ffast.force_mae", values=None):
+def _make_metric_result(metric_id="ffast.force_difference[atom+structure;length]", values=None):
     """A real MetricResult so pack_metric_result reads its actual fields."""
     return MetricResult(
         metric_id=metric_id,
@@ -121,12 +122,14 @@ class _FakeData:
         # Format-valid CacheKey string (identity__model__dataset).
         return f"{metric_id}__nil__nil"
 
-    def generateMetric(self, metric_id, params, model, dataset, key):
+    def generateMetric(self, metric_id, params, model, dataset, key=None):
+        assert key is None, "the server builds the key itself (ADR 0061)"
+        key = f"{metric_id}__f1234abcd__nil__nil"   # as a user metric's key is: has the formula hash
         self.generate_metric_calls.append((metric_id, key))
         self._cache._entries[key] = _make_metric_result(
             metric_id=metric_id, values=np.array([3.0])
         )
-        return True
+        return key
 
     def generateData(self, dt_key, model, dataset):
         self.generate_data_calls.append(dt_key)
@@ -252,6 +255,74 @@ def test_dispatch_create_subset_resolves_tokens_and_materializes():
     assert idxs == [0, 1, 3]
 
 
+class _ElementSubsetEnv(_FakeEnv):
+    """Makes real element subsets, as the Environment does."""
+
+    def __init__(self, datasets):
+        super().__init__(datasets=datasets)
+        self.element_calls = []
+
+    def createElementSubset(self, dataset, keep):
+        from ffast.loaders.dataset import DatasetView
+        self.element_calls.append((dataset, keep))
+        view = DatasetView.elementSubset(dataset, keep)
+        view.initialise()
+        return view
+
+
+def _real_parent(*symbols):
+    from ase import Atoms
+    from ffast.loaders.ase import aseDatasetLoader
+    frames = [Atoms(s, positions=np.zeros((len(Atoms(s)), 3))) for s in symbols]
+    parent = aseDatasetLoader("mem.extxyz", atomsList=frames)
+    parent.initialise()
+    return parent
+
+
+def _extract(env, tokens):
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("CREATE_SUBSET", ["ds1", tokens], {})
+        return await _drain(s)
+
+    return _run(scenario())
+
+
+def test_create_subset_of_elements_makes_an_element_subset_and_counts_its_frames():
+    """ADR 0067: elements only make an element subset on any dataset; the
+    window that asked hears how many frames hold them."""
+    env = _ElementSubsetEnv({"ds1": _real_parent("CH4", "H2O", "C2H6", "H2")})
+    [(event, _, kwargs)] = _extract(env, ["C"])
+    assert [keep for _, keep in env.element_calls] == [[6]]
+    assert env.create_subset_calls == []
+    assert event == control.SUBSET_EXTRACTED
+    assert kwargs == {"ok": True, "text": "C in 2 of 4 frames", "error": None}
+
+
+def test_create_subset_names_every_element_kept():
+    env = _ElementSubsetEnv({"ds1": _real_parent("CH3OH", "H2O")})
+    [(_, _, kwargs)] = _extract(env, ["-H"])
+    assert [keep for _, keep in env.element_calls] == [[6, 8]]
+    assert kwargs["text"] == "C, O in 2 of 2 frames"
+
+
+@pytest.mark.parametrize("tokens", [[0], ["C", 3], ["-2"]])
+def test_create_subset_refuses_atom_numbers_on_a_variable_dataset(tokens):
+    env = _ElementSubsetEnv({"ds1": _real_parent("CH4", "H2O")})
+    [(event, _, kwargs)] = _extract(env, tokens)
+    assert env.create_subset_calls == [] and env.element_calls == []
+    assert event == control.SUBSET_EXTRACTED and kwargs["ok"] is False
+    assert "differ" in kwargs["error"] and "element" in kwargs["error"]
+
+
+@pytest.mark.parametrize("tokens, says", [(["Xx"], "Xx"), (["N"], "N")])
+def test_create_subset_refuses_elements_it_cannot_keep(tokens, says):
+    env = _ElementSubsetEnv({"ds1": _real_parent("CH4", "H2O")})
+    [(event, _, kwargs)] = _extract(env, tokens)
+    assert env.element_calls == []
+    assert kwargs["ok"] is False and says in kwargs["error"]
+
+
 def test_dispatch_create_subset_missing_parent_is_dropped():
     env = _FakeEnv(datasets={})
 
@@ -267,8 +338,8 @@ def test_dispatch_create_subset_missing_parent_is_dropped():
 def test_dispatch_declare_subset_materializes_frame_subset():
     """DECLARE_SUBSET turns a covered configuration-index list into a live
     SubDataset via declareSubDataset (parent, model, idx, name)."""
-    parent = _FakeParentDataset([6, 6, 1, 1])
-    model = object()
+    parent = _FakeFrames()
+    model = _FakeModel()
     env = _FakeEnv(datasets={"ds1": parent}, models={"m1": model})
 
     async def scenario():
@@ -285,7 +356,7 @@ def test_dispatch_declare_subset_materializes_frame_subset():
 
 
 def test_dispatch_declare_subset_without_model_uses_none():
-    parent = _FakeParentDataset([1, 1])
+    parent = _FakeFrames()
     env = _FakeEnv(datasets={"ds1": parent})
 
     async def scenario():
@@ -298,8 +369,21 @@ def test_dispatch_declare_subset_without_model_uses_none():
     assert mdl is None and idx == [0, 1] and name == "Subset"
 
 
+def test_dispatch_declare_subset_with_an_unknown_model_is_dropped():
+    """A model only the window holds (the zero model) is not swapped for no
+    model: that subset would have another fingerprint than the window's."""
+    env = _FakeEnv(datasets={"ds1": _FakeFrames()})
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("DECLARE_SUBSET", ["ds1", [0, 1]], {"model_fp": "zero"})
+
+    _run(scenario())
+    assert env.declare_subset_calls == []
+
+
 def test_dispatch_declare_subset_empty_indices_is_dropped():
-    parent = _FakeParentDataset([1, 1])
+    parent = _FakeFrames()
     env = _FakeEnv(datasets={"ds1": parent})
 
     async def scenario():
@@ -380,6 +464,77 @@ def test_dispatch_load_dataset_restores_prediction_key_tuples():
     assert kwargs["slice_num"] == 3
 
 
+class _FailingLoadEnv(_FakeEnv):
+    """A load that raises, as a non-dataset file does inside the load task."""
+
+    def taskLoadDataset(self, path, dataset_type, on_error=None, **kwargs):
+        on_error(IndexError("list index out of range"))
+
+    def taskLoadPrepredictedDataset(self, path, dataset_fp, on_error=None, **kwargs):
+        on_error(ValueError("no forces"))
+
+
+@pytest.mark.parametrize("event, args, kind", [
+    ("LOAD_DATASET", ["/x/README.md", "ase"], "dataset"),
+    ("LOAD_PREDICTION", ["/x/pred.xyz", "abcdef123456"], "prediction"),
+])
+def test_a_failed_load_tells_the_window_which_file_and_why(event, args, kind):
+    async def scenario():
+        s = ServerSession(_FailingLoadEnv(), asyncio.Queue())
+        await s.dispatch(event, args, {})
+        return await _drain(s)
+
+    messages = _run(scenario())
+
+    name, _, kwargs = messages[0]
+    assert name == control.LOAD_FAILED
+    assert kwargs["kind"] == kind
+    assert kwargs["path"] == args[0]
+    assert kwargs["error"] in ("list index out of range", "no forces")
+
+
+class _ExampleEnv:
+    """Runs a queued load at once and remembers which paths it loaded."""
+
+    def __init__(self):
+        self.calls = []
+        self._loaded = {}
+        self.loading = self   # the Loading Coordinator's load* methods
+
+    def newTask(self, func, **kwargs):
+        func(taskID=1)
+
+    def getDatasetFromPath(self, path):
+        return self._loaded.get(path)
+
+    def getKeyFromPath(self, path):
+        return self._loaded.get(path)
+
+    def loadDataset(self, path, dataset_type, on_error=None):
+        self.calls.append(("dataset", os.path.basename(path), dataset_type))
+        self._loaded[path] = "ds-fp"
+
+    def loadPrepredictedDataset(self, path, dataset_fp, on_error=None, **keys):
+        self.calls.append(("prediction", os.path.basename(path), dataset_fp, keys))
+        self._loaded[path] = "model-fp"
+
+
+def test_load_example_loads_the_dataset_then_its_prediction_once():
+    env = _ExampleEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("LOAD_EXAMPLE", [], {})
+        await s.dispatch("LOAD_EXAMPLE", [], {})   # a second click loads nothing
+
+    _run(scenario())
+    assert env.calls == [
+        ("dataset", "dataset.xyz", "ase (auto)"),
+        ("prediction", "prediction.xyz", "ds-fp",
+         {"selected_energy_key": "MACE_energy", "selected_force_key": "MACE_forces"}),
+    ]
+
+
 # ── handler enqueue, end-to-end through dispatch ──────────────────────────────
 
 def test_dispatch_list_dir_enqueues_listing(tmp_path):
@@ -401,23 +556,15 @@ def test_dispatch_list_dir_enqueues_listing(tmp_path):
 
 # ── replay ─────────────────────────────────────────────────────────────────────
 
-def test_replay_empty_env_enqueues_only_metric_catalog():
+def test_replay_empty_env_enqueues_only_the_shared_pieces():
     # replay() is synchronous and uses put_nowait, so no loop needed.
     s = ServerSession(_FakeEnv(), asyncio.Queue())
     s.replay()
-    event, _args, _kwargs = unpack(s.outbound.get_nowait())
-    assert event == "METRIC_CATALOG"
-    assert s.outbound.empty()   # no datasets, no models, no open views
-
-
-def test_request_state_sync_triggers_replay():
-    async def scenario():
-        s = ServerSession(_FakeEnv(), asyncio.Queue())
-        await s.dispatch("REQUEST_STATE_SYNC", [], {})
-        return s.outbound.get_nowait()
-
-    event, _args, _kwargs = unpack(_run(scenario()))
-    assert event == "METRIC_CATALOG"
+    sent = [unpack(s.outbound.get_nowait()) for _ in range(s.outbound.qsize())]
+    assert [e for e, _, _ in sent] == [
+        "METRIC_CATALOG", "TAB_LAYOUT", "USER_METRICS", "METRIC_USERS"]
+    assert sent[-1][2] == {"users": {}}
+    assert s.outbound.empty()   # no datasets, no models, no open views   # no datasets, no models, no open views
 
 
 # ── _on_request_metric ────────────────────────────────────────────────────────
@@ -425,69 +572,70 @@ def test_request_state_sync_triggers_replay():
 def test_request_metric_cache_hit_returns_result_without_computing():
     """A cached MetricResult is served straight back as an ok=True
     METRIC_RESULT — the compute path (env.data) is never touched."""
-    key = "ffast.force_mae__nil__ds1"
+    key = "ffast.force_difference[atom+structure;length]__nil__nil"  # what the server's own key builder gives
     result = _make_metric_result(values=np.array([1.5, 2.5]))
-    env = _FakeEnv(datasets={"ds1": object()}, cache={key: result})  # data=None
+    env = _FakeEnv(datasets={"ds1": object()}, cache={key: result})
+    env.data = _FakeData(env.cache)
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
         await s.dispatch(
-            "REQUEST_METRIC", ["ffast.force_mae", key], {"dataset_fp": "ds1"}
+            "REQUEST_METRIC", ["ffast.force_difference[atom+structure;length]", "m1"], {"dataset_fp": "ds1"}
         )
         return s.outbound.get_nowait()
 
     event, args, kwargs = unpack(_run(scenario()))
     assert event == control.METRIC_RESULT
-    assert args == [key, "ffast.force_mae"]        # (key, metric_id) positional
+    assert args == ["m1", "ffast.force_difference[atom+structure;length]"]  # (request_id, metric_id) positional
     recovered = unpack_metric_result(kwargs)
     assert recovered is not None
-    assert recovered.metric_id == "ffast.force_mae"
+    assert recovered.metric_id == "ffast.force_difference[atom+structure;length]"
     np.testing.assert_array_equal(recovered.values, np.array([1.5, 2.5]))
 
 
 def test_request_metric_missing_model_signals_client_fallback():
     """A model-dependent metric whose model isn't on the server replies ok=False
     (server_can_compute=False), so the client falls back to in-process compute."""
-    key = "ffast.energy_mae__realmodel__ds1"
     env = _FakeEnv(datasets={"ds1": object()}, cache={})   # empty cache, no models
+    env.data = _FakeData(env.cache)
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
         await s.dispatch(
-            "REQUEST_METRIC", ["ffast.energy_mae", key],
+            "REQUEST_METRIC", ["ffast.energy_difference[dataset;mae]", "m2"],
             {"model_fp": "realmodel", "dataset_fp": "ds1"},
         )
         return s.outbound.get_nowait()
 
     event, args, kwargs = unpack(_run(scenario()))
     assert event == control.METRIC_RESULT
-    assert args == [key, "ffast.energy_mae"]
+    assert args == ["m2", "ffast.energy_difference[dataset;mae]"]
     assert kwargs["ok"] is False
     assert unpack_metric_result(kwargs) is None
 
 
-def test_request_metric_computes_on_cache_miss_and_derives_key():
-    """No key + cache miss: the handler derives the key via
-    make_metric_cache_key, computes through env.data.generateMetric, and returns
-    the freshly cached result."""
+def test_request_metric_computes_on_cache_miss_and_replies_with_request_id():
+    """Cache miss: the handler looks the key up through make_metric_cache_key,
+    computes through env.data.generateMetric (which builds and returns the key it
+    stored under), and replies with the request id, not the key (ADR 0061)."""
     env = _FakeEnv(datasets={"ds1": object()}, cache={})
     env.data = _FakeData(env.cache)
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
-        # No positional key → the ?key slot resolves to None.
-        await s.dispatch("REQUEST_METRIC", ["ffast.force_rmse"], {"dataset_fp": "ds1"})
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;length;rmse]", "m3"], {"dataset_fp": "ds1"})
         return s.outbound.get_nowait()
 
     event, args, kwargs = unpack(_run(scenario()))
-    expected_key = "ffast.force_rmse__nil__nil"    # from make_metric_cache_key
+    stored_key = "ffast.force_difference[structure;length;rmse]__f1234abcd__nil__nil"  # carries the formula hash
     assert event == control.METRIC_RESULT
-    assert args == [expected_key, "ffast.force_rmse"]
+    assert args == ["m3", "ffast.force_difference[structure;length;rmse]"]
     assert env.data.make_key_calls, "make_metric_cache_key should be used"
-    assert env.data.generate_metric_calls == [("ffast.force_rmse", expected_key)]
+    assert env.data.generate_metric_calls == [("ffast.force_difference[structure;length;rmse]", stored_key)]
+    assert list(env.cache._entries) == [stored_key]   # nothing stored under the request id
     recovered = unpack_metric_result(kwargs)
     assert recovered is not None
-    assert recovered.metric_id == "ffast.force_rmse"
+    assert recovered.metric_id == "ffast.force_difference[structure;length;rmse]"
     np.testing.assert_array_equal(recovered.values, np.array([3.0]))
 
 
@@ -618,6 +766,9 @@ def test_view_command_applies_and_emits_command_result_then_scene_patch():
     assert result_event == control.COMMAND_RESULT
     assert result_kwargs["success"] is True
     assert result_kwargs["new_version"] == 1
+    # Several views share a connection (ADR 0056 independent 3D panels), so
+    # the result names the view it answers.
+    assert result_kwargs["view_id"] == "v1"
 
     patch_event, _, patch_kwargs = unpack(s.outbound.get_nowait())
     assert patch_event == control.SCENE_PATCH
@@ -721,8 +872,7 @@ def test_open_view_snapshot_exception_degrades_to_bare_scene():
 
 class _FakeExportDataset:
     """Stands in for whatever dataset object EXPORT_SUBSET resolves — the
-    handler only reads ``isVariable`` (routing) and ``getN()`` (reported
-    count); the actual write goes through the mocked ASE loader static
+    handler only reads ``getN()`` (reported count); the actual write goes through the mocked ASE loader static
     methods below, so this fake never needs real coordinate arrays."""
 
     def __init__(self, n=3, is_variable=False):
@@ -747,15 +897,16 @@ def test_dispatch_export_subset_missing_dataset_emits_error():
     assert "not found" in kwargs["error"]
 
 
-def test_dispatch_export_subset_uniform_dataset_uses_ase_saver(tmp_path):
-    """A non-variable dataset (plain or AtomFilteredDataset) routes to the
-    uniform ``aseDatasetLoader.saveDataset`` and reports getN() structures."""
-    ds = _FakeExportDataset(n=5, is_variable=False)
+@pytest.mark.parametrize("is_variable, n", [(False, 5), (True, 2)], ids=["uniform", "variable"])
+def test_dispatch_export_subset_uses_the_one_ase_saver(tmp_path, is_variable, n):
+    """Uniform and variable datasets (plain, SubDataset or AtomFilteredDataset)
+    go to the one ``aseDatasetLoader.saveDataset``, which writes frame by
+    frame, and the reply reports getN() structures."""
+    ds = _FakeExportDataset(n=n, is_variable=is_variable)
     env = _FakeEnv(datasets={"ds1": ds})
     target = tmp_path / "out.extxyz"
 
-    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as uniform, \
-         patch("ffast.loaders.ase.VariableASEDatasetLoader.saveDataset") as variable:
+    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset", return_value=0) as saver:
 
         async def scenario():
             s = ServerSession(env, asyncio.Queue())
@@ -765,32 +916,24 @@ def test_dispatch_export_subset_uniform_dataset_uses_ase_saver(tmp_path):
         event, _args, kwargs = unpack(_run(scenario()))
 
     assert event == control.SUBSET_EXPORTED
-    assert kwargs == {"ok": True, "path": str(target), "error": None, "n": 5}
-    uniform.assert_called_once_with(ds, str(target), "extxyz")
-    variable.assert_not_called()
+    assert kwargs == {"ok": True, "path": str(target), "error": None, "n": n, "skipped": 0}
+    saver.assert_called_once_with(ds, str(target), "extxyz")
 
 
-def test_dispatch_export_subset_variable_dataset_uses_variable_saver(tmp_path):
-    """A variable dataset (a SubDataset forwarding isVariable from a variable
-    parent, or a loaded variable dataset) routes to the variable saver."""
-    ds = _FakeExportDataset(n=2, is_variable=True)
-    env = _FakeEnv(datasets={"ds1": ds})
-    target = tmp_path / "out.extxyz"
+def test_export_of_an_element_subset_skips_its_empty_frames_and_says_how_many(tmp_path):
+    from ffast.loaders.dataset import DatasetView
+    view = DatasetView.elementSubset(_real_parent("CH4", "H2O", "C2H6"), [6])
+    view.initialise()
+    target = tmp_path / "carbons.extxyz"
 
-    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as uniform, \
-         patch("ffast.loaders.ase.VariableASEDatasetLoader.saveDataset") as variable:
+    async def scenario():
+        s = ServerSession(_FakeEnv(datasets={"ds1": view}), asyncio.Queue())
+        await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": str(target)})
+        return s.outbound.get_nowait()
 
-        async def scenario():
-            s = ServerSession(env, asyncio.Queue())
-            await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": str(target)})
-            return s.outbound.get_nowait()
-
-        event, _args, kwargs = unpack(_run(scenario()))
-
+    event, _args, kwargs = unpack(_run(scenario()))
     assert event == control.SUBSET_EXPORTED
-    assert kwargs == {"ok": True, "path": str(target), "error": None, "n": 2}
-    variable.assert_called_once_with(ds, str(target), "extxyz")
-    uniform.assert_not_called()
+    assert (kwargs["ok"], kwargs["n"], kwargs["skipped"]) == (True, 2, 1)
 
 
 def test_dispatch_export_subset_expands_user_and_relative_path(tmp_path, monkeypatch):
@@ -983,3 +1126,254 @@ def test_session_tasks_keep_their_desktop_visible_names():
 
     _run(scenario())
     assert env.task_names == ["Saving session", "Loading save"]
+
+
+# ── DECLARE_SUBSET from a plot's view: SUB follows the zoom ─────────────────
+class _FakeFrames:
+    """A parent dataset with a fingerprint and a frame count."""
+
+    def __init__(self, fp="ds1", n=10):
+        self.fingerprint = fp
+        self._n = n
+
+    def getN(self):
+        return self._n
+
+
+class _FakeSub:
+    def __init__(self, frames, active=True):
+        self.frames = frames
+        self.active = active
+
+    def setActive(self, state):
+        self.active = state
+
+
+class _FakeModel:
+    fingerprint = "m1"
+
+
+def _sub_fp(parent, model, name):
+    from ffast.loaders.dataset import DatasetView
+    return DatasetView.subsetFingerprint(parent, model, name)
+
+
+def _declare(env, **kwargs):
+    async def scenario():
+        await ServerSession(env, asyncio.Queue()).dispatch("DECLARE_SUBSET", [], kwargs)
+    _run(scenario())
+
+
+TIMELINE_VIEW = {"kind": "timeline", "metrics": {"y": "ffast.energy_difference"},
+                 "x": [0.6, 3.2]}
+
+
+def test_declare_subset_from_a_view_covers_the_frames_on_screen():
+    parent, model = _FakeFrames(), _FakeModel()
+    env = _FakeEnv(datasets={"ds1": parent}, models={"m1": model})
+    _declare(env, parent_fingerprint="ds1", model_fp="m1", name="Energy MAE timeline",
+             view=TIMELINE_VIEW)
+    assert env.declare_subset_calls == [(parent, model, [1, 2, 3], "Energy MAE timeline")]
+
+
+def test_a_view_with_the_same_frames_changes_nothing():
+    """A zoom that keeps the same frames does not rebuild the subset (and so
+    does not make every window reload it)."""
+    parent, model = _FakeFrames(), _FakeModel()
+    sub = _FakeSub([1, 2, 3])
+    env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, model, "T"): sub},
+                   models={"m1": model})
+    _declare(env, parent_fingerprint="ds1", model_fp="m1", name="T", view=TIMELINE_VIEW)
+    assert env.declare_subset_calls == []
+
+
+def test_a_view_with_no_frames_keeps_the_last_ones():
+    env = _FakeEnv(datasets={"ds1": _FakeFrames()})
+    _declare(env, parent_fingerprint="ds1", name="T",
+             view={**TIMELINE_VIEW, "x": [40, 50]})
+    assert env.declare_subset_calls == []
+
+
+def test_unticking_sub_hides_the_subset():
+    parent = _FakeFrames()
+    sub = _FakeSub([1, 2, 3])
+    env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, None, "T"): sub})
+    _declare(env, parent_fingerprint="ds1", name="T", active=False)
+    assert sub.active is False and env.declare_subset_calls == []
+
+
+def test_ticking_sub_again_shows_the_hidden_subset():
+    parent = _FakeFrames()
+    sub = _FakeSub([1, 2, 3], active=False)
+    env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, None, "T"): sub})
+    _declare(env, parent_fingerprint="ds1", name="T", view=TIMELINE_VIEW)
+    assert env.declare_subset_calls == [(parent, None, [1, 2, 3], "T")]
+
+
+def _declare_and_read(env, **kwargs):
+    async def scenario():
+        session = ServerSession(env, asyncio.Queue())
+        await session.dispatch("DECLARE_SUBSET", [], kwargs)
+        out = []
+        while not session.outbound.empty():
+            out.append(unpack(session.outbound.get_nowait()))
+        return out
+    return _run(scenario())
+
+
+def test_the_window_that_ticked_sub_is_told_which_subset_it_made():
+    """So that window can show the subset in its main view."""
+    parent = _FakeFrames()
+    env = _FakeEnv(datasets={"ds1": parent})
+    [(event, _, kwargs)] = _declare_and_read(
+        env, parent_fingerprint="ds1", name="T", view=TIMELINE_VIEW)
+    assert event == control.SUBSET_DECLARED
+    assert kwargs == {"fingerprint": _sub_fp(parent, None, "T"), "parent_fingerprint": "ds1",
+                      "model_fp": None, "name": "T"}
+
+
+def test_it_is_told_even_when_the_frames_did_not_change():
+    parent = _FakeFrames()
+    env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, None, "T"): _FakeSub([1, 2, 3])})
+    [(event, _, _)] = _declare_and_read(env, parent_fingerprint="ds1", name="T", view=TIMELINE_VIEW)
+    assert event == control.SUBSET_DECLARED
+
+
+def test_hiding_a_subset_or_finding_no_frames_tells_nothing():
+    parent = _FakeFrames()
+    env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, None, "T"): _FakeSub([1, 2, 3])})
+    assert _declare_and_read(env, parent_fingerprint="ds1", name="T", active=False) == []
+    assert _declare_and_read(env, parent_fingerprint="ds1", name="U",
+                             view={**TIMELINE_VIEW, "x": [40, 50]}) == []
+
+
+class _FakeFrameSubset:
+    isSubDataset = True
+    isAtomFiltered = False
+
+    def __init__(self, parent, frames):
+        self.parent = parent
+        self.frames = frames
+
+
+def test_a_frame_subset_draws_its_parents_predicted_forces():
+    """A prediction's forces for a subset are its forces for the parent's
+    frames, so the 3D view of a subset keeps its force arrows."""
+    forces = np.arange(4 * 2 * 3, dtype=float).reshape(4, 2, 3)
+    parent = _FakeFrames("ds1", n=4)
+    env = _FakeEnv(datasets={"ds1": parent, "sub": _FakeFrameSubset(parent, [3, 1])},
+                   cache={"forces__m1__ds1": {"forces": forces}})
+    view = ServerSession(env, asyncio.Queue()).get_prediction("sub", "m1")
+    assert np.array_equal(view.forces[0], forces[3]) and np.array_equal(view.forces[1], forces[1])
+    assert ServerSession(env, asyncio.Queue()).get_prediction("ds1", "nope") is None
+
+
+def test_a_frame_subset_of_structures_of_different_sizes_draws_its_parents_forces():
+    forces = [np.zeros((1, 3)), np.ones((2, 3)), np.full((3, 3), 2.0)]
+    parent = _FakeFrames("ds1", n=3)
+    env = _FakeEnv(datasets={"ds1": parent, "sub": _FakeFrameSubset(parent, [2, 0])},
+                   cache={"forces__m1__ds1": {"forces": forces}})
+    view = ServerSession(env, asyncio.Queue()).get_prediction("sub", "m1")
+    assert [f.shape for f in view.forces] == [(3, 3), (1, 3)]
+
+
+# ── atom colouring reads a metric over the whole dataset ─────────────────────
+class _ColourData(_FakeData):
+    """A DataService double whose prediction may be missing."""
+
+    def __init__(self, cache, missing=()):
+        super().__init__(cache)
+        self.inputResolver = type("R", (), {
+            "missing_prediction_keys": lambda _self, metric_id, model, dataset: list(missing)})()
+
+
+def test_colouring_reads_the_metric_the_plots_stored():
+    from types import SimpleNamespace
+    stored = _make_metric_result(values=np.array([1.0, 2.0]))
+    env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
+                   models={"m1": SimpleNamespace(fingerprint="m1")},
+                   cache={"ffast.force_difference[atom+structure;length]__nil__nil": stored})
+    env.data = _ColourData(env.cache)
+    assert ServerSession(env, asyncio.Queue()).get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "m1") is stored
+    assert env.data.generate_metric_calls == []
+
+
+def test_colouring_computes_the_whole_dataset_when_the_prediction_is_there():
+    from types import SimpleNamespace
+    env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
+                   models={"m1": SimpleNamespace(fingerprint="m1")})
+    env.data = _ColourData(env.cache)
+    result = ServerSession(env, asyncio.Queue()).get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "m1")
+    assert list(result.values) == [3.0]
+    assert [c[0] for c in env.data.generate_metric_calls] == ["ffast.force_difference[atom+structure;length]"]
+
+
+def test_colouring_never_starts_a_prediction_of_every_frame():
+    """A live model predicts the frame on screen; colouring must not ask it
+    for every frame, so it gets no whole-dataset result (and uses the frame)."""
+    from types import SimpleNamespace
+    env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
+                   models={"m1": SimpleNamespace(fingerprint="m1")})
+    env.data = _ColourData(env.cache, missing=["forces__m1__ds1"])
+    session = ServerSession(env, asyncio.Queue())
+    assert session.get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "m1") is None
+    assert env.data.generate_metric_calls == [] and env.data.generate_data_calls == []
+    # A model or dataset that is gone gives nothing either.
+    assert session.get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "gone") is None
+    assert session.get_metric("ffast.force_difference[atom+structure;length]", {}, "gone", "m1") is None
+
+
+# ── OPEN_VIEW start_from: a subset opens with its parent's look ─────────────
+def test_a_new_view_can_start_from_another_views_look():
+    """Colouring, display, bonds (the view's stage parameters and features)
+    and the camera are copied when the view is made; picks are not."""
+    env = _FakeEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("OPEN_VIEW", [], {"view_id": "parent"})
+        parent = s.views["parent"].state
+        parent.parameters = {"ffast.bonds": {"style": "sticks"}}
+        parent.enabled_features = ["forces"]
+        parent.camera = parent.camera.model_copy(update={"distance": 3.0})
+        parent.selections = {"picked": None}
+        await s.dispatch("OPEN_VIEW", [], {"view_id": "sub", "start_from": "parent"})
+        sub = s.views["sub"].state
+        assert sub.parameters == {"ffast.bonds": {"style": "sticks"}}
+        assert sub.parameters is not parent.parameters
+        assert sub.enabled_features == ["forces"] and sub.camera.distance == 3.0
+        assert sub.selections == {}
+
+        # Reopening a view keeps its own look.
+        sub.parameters = {"ffast.bonds": {"style": "lines"}}
+        await s.dispatch("OPEN_VIEW", [], {"view_id": "sub", "start_from": "parent"})
+        assert s.views["sub"].state.parameters == {"ffast.bonds": {"style": "lines"}}
+
+    _run(scenario())
+
+
+def test_request_metric_with_a_key_is_rejected():
+    """ADR 0061: the wire has no `key`; a client that still sends one is dropped."""
+    env = _FakeEnv(datasets={"ds1": object()}, cache={})
+    env.data = _FakeData(env.cache)
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;length;rmse]", "m4"],
+                         {"dataset_fp": "ds1", "key": "ffast.force_difference[structure;length;rmse]__nil__nil"})
+        return s.outbound.empty()
+
+    assert _run(scenario())
+    assert env.data.generate_metric_calls == []
+
+
+def test_request_metric_without_a_request_id_is_dropped():
+    env = _FakeEnv(datasets={"ds1": object()}, cache={})
+    env.data = _FakeData(env.cache)
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;length;rmse]"], {"dataset_fp": "ds1"})
+        return s.outbound.empty()
+
+    assert _run(scenario())

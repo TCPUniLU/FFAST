@@ -1,9 +1,11 @@
 import os
+import hashlib
 import logging
 import numpy as np
-from ffast.loaders.dataset import DatasetLoader, VariableDatasetLoader
+from ffast.cache.fingerprint import md5FromParts
+from ffast.loaders.dataset import FlatDatasetLoader, isOneFrame
 import ase.io
-from collections.abc import Iterable
+from ase.calculators.calculator import PropertyNotImplementedError
 
 # The discoverable plugin (loadData/SmartASELoader, registered under the
 # "ase (auto)" datasetName) lives in ffast.plugins.loaders.ase (ADR 0048); this
@@ -16,6 +18,44 @@ logger = logging.getLogger("FFAST")
 _RESERVED_ARRAY_KEYS = {"positions", "numbers", "momenta"}
 
 
+def isUniformAtomsList(atomsList, sampleSize=60):
+    """Decide whether every frame in ``atomsList`` has the same chemical formula.
+
+    The rule that chooses :class:`aseDatasetLoader`'s fingerprint formula, for
+    datasets and predictions alike: frame 0's elements only when the formulas
+    agree, every frame's otherwise. It keeps the fingerprints files had before
+    the two ASE loaders merged (ADR 0058, decision A). It no longer sets
+    ``isVariable``, which asks for the same atoms in the same order in every
+    frame (ADR 0058 step 6).
+
+    Full scans are avoided: ``atomsList`` is routinely a lazy ``AtomsList`` /
+    ``Trajectory`` where materialising every frame costs a re-read of the whole
+    file.  Lists at or below ``sampleSize`` are checked exhaustively; larger
+    ones on an evenly-spaced sample that always includes the first and last
+    frame.  The spacing is deterministic on purpose — a random sample can
+    classify the same file differently between runs, which changes the
+    dataset's fingerprint.
+    """
+    n = len(atomsList)
+    if n < 2:
+        return True
+
+    if n <= sampleSize:
+        indices = range(n)
+    else:
+        step = (n - 1) / (sampleSize - 1)
+        indices = sorted({int(round(i * step)) for i in range(sampleSize)} | {0, n - 1})
+
+    reference = None
+    for i in indices:
+        formula = atomsList[i].get_chemical_formula()
+        if reference is None:
+            reference = formula
+        elif formula != reference:
+            return False
+    return True
+
+
 def _atoms_subset(atomsList, indices):
     """Resolve a frame-index selector to (list_of_atoms, is_scalar).
 
@@ -24,7 +64,7 @@ def _atoms_subset(atomsList, indices):
     """
     if indices is None:
         return [atomsList[i] for i in range(len(atomsList))], False
-    if not isinstance(indices, np.ndarray) and not hasattr(indices, "__iter__"):
+    if isOneFrame(indices):
         return [atomsList[indices]], True
     return [atomsList[i] for i in indices], False
 
@@ -104,7 +144,18 @@ def available_field_keys(atomsList):
     return sorted(frame_keys), sorted(atom_keys)
 
 
-class aseDatasetLoader(DatasetLoader):
+class aseDatasetLoader(FlatDatasetLoader):
+    """The one loader for ASE-readable files (ADR 0058, step 3).
+
+    Uniform (every frame the same atoms in the same order) or variable is
+    decided from the frames and kept in ``isVariable``. One frame is read
+    from the file on request; all-frames arrays are joined on the first
+    request and kept. The getAll* methods answer the same way on both kinds;
+    the older no-argument calls keep each kind's shape until their last
+    callers move (ADR 0058, steps 4 and 6): (frames, atoms, ...) arrays for
+    uniform data, lists for variable.
+    """
+
     datasetName = "ase"
     datasetFileExtension = "*"
     saveFormats = ["db", "xyz", "extxyz", "traj", "vasp", "dftb"]
@@ -123,224 +174,13 @@ class aseDatasetLoader(DatasetLoader):
         _, self.file_extension = os.path.splitext(path)
         self.N = len(self.atomsList)
 
-        exAtoms = self.atomsList[0]  # assumes all the same molecule!!
-
-        self.nAtoms = len(exAtoms)
-        self.z = exAtoms.get_atomic_numbers()
-
-        if hasattr(exAtoms, "cell"):
-            self.lattice = exAtoms.cell
-        else:
-            self.lattice = None
-
-        self.chem = self.zToChemicalFormula(self.z)
-
         # Store key selections
         self.selected_energy_key = selected_energy_key
         self.selected_force_key = selected_force_key
 
-    def ForceKeys(self):
-        exAtoms = self.atomsList[0]
-        num_key = 0
-        forcekeys = []
-        for key in exAtoms.arrays.keys():
-            if "force" in key.lower():
-                logger.debug(f"Found forces in array '{key}' for index 0.")
-                num_key += 1
-                forcekeys.append(key)
-
-        return forcekeys
-
-    def EneregyKeys(self):
-        exAtoms = self.atomsList[0]
-        num_key = 0
-        energykeys = []
-        for key in exAtoms.info.keys():
-            if "energy" in key.lower():
-                logger.info(f"Found energy in array '{key}' for index 0.")
-                num_key += 1
-                energykeys.append(key)
-
-        return energykeys
-
-    def getN(self):
-        return self.N
-
-    def getNAtoms(self):
-        return self.nAtoms
-
-    def getChemicalFormula(self):
-        return self.chem
-
-    def getCoordinates(self, indices=None):
-        # probably should just do it once at the start and save it as np arrays?
-        if indices is None:
-            indices = np.arange(self.N)
-        elif not isinstance(indices, Iterable):
-            return self.atomsList[indices].get_positions()
-
-        R = []
-        for idx in indices:
-            R.append(self.atomsList[idx].get_positions())
-
-        return np.array(R)
-
-    def getEnergies(self, indices=None):
-        # probably should just do it once at the start and save it as np arrays?
-        keys = self.EneregyKeys()
-
-        # Determine which key to use
-        if hasattr(self, 'selected_energy_key') and self.selected_energy_key is not None:
-            selected_key = self.selected_energy_key
-        elif len(keys) > 0:
-            selected_key = keys[0]  # Default to first key
-        else:
-            selected_key = ""  # No keys, use calculator
-
-        # Check if calculator should be used:
-        # - Empty string explicitly selected (calculator chosen in dialog), OR
-        # - Key is literally 'energy' (standard ASE calculator result key), OR
-        # - No keys available
-        use_calculator = (selected_key == "" or selected_key == "energy")
-
-        if use_calculator:
-            if indices is None:
-                indices = np.arange(self.N)
-            elif not isinstance(indices, Iterable):
-                return self.atomsList[indices].get_potential_energy()
-
-            R = []
-            for idx in indices:
-                R.append(self.atomsList[idx].get_potential_energy())
-        else:
-            # Use the selected key from info dictionary
-            logger.info(f"Using energy key '{selected_key}' from {keys}")
-            if indices is None:
-                indices = np.arange(self.N)
-            elif not isinstance(indices, Iterable):
-                return self.atomsList[indices].info[selected_key]
-
-            R = []
-            for idx in indices:
-                R.append(self.atomsList[idx].info[selected_key])
-        return np.array(R)
-
-    def getForces(self, indices=None):
-        # probably should just do it once at the start and save it as np arrays?
-        keys = self.ForceKeys()
-
-        # Determine which key to use
-        if hasattr(self, 'selected_force_key') and self.selected_force_key is not None:
-            selected_key = self.selected_force_key
-        elif len(keys) > 0:
-            selected_key = keys[0]  # Default to first key
-        else:
-            selected_key = ""  # No keys, use calculator
-
-        # Check if calculator should be used:
-        # - Empty string explicitly selected (calculator chosen in dialog), OR
-        # - Key is literally 'forces' (standard ASE calculator result key), OR
-        # - No keys available
-        use_calculator = (selected_key == "" or selected_key == "forces")
-
-        if use_calculator:
-            if indices is None:
-                indices = np.arange(self.N)
-            elif not isinstance(indices, Iterable):
-                return self.atomsList[indices].get_forces()
-
-            R = []
-            for idx in indices:
-                R.append(self.atomsList[idx].get_forces())
-        else:
-            # Use the selected key from arrays dictionary
-            logger.info(f"Using force key '{selected_key}' from {keys}")
-            if indices is None:
-                indices = np.arange(self.N)
-            elif not isinstance(indices, Iterable):
-                return self.atomsList[indices].arrays[selected_key]
-
-            R = []
-            for idx in indices:
-                R.append(self.atomsList[idx].arrays[selected_key])
-
-        return np.array(R)
-
-    def getElements(self):
-        return self.z
-
-    def getFrameField(self, key, indices=None):
-        return read_frame_field(self.atomsList, key, indices=indices)
-
-    def getAtomField(self, key, indices=None):
-        return read_atom_field(self.atomsList, key, variable=False, indices=indices)
-
-    def availableFieldKeys(self):
-        return available_field_keys(self.atomsList)
-
-    def getLattice(self, indices=None):
-        """Return the unit cell/lattice for specified frame(s)."""
-        if indices is None:
-            indices = np.arange(self.N)
-        elif not isinstance(indices, Iterable):
-            return self.atomsList[indices].get_cell()
-
-        R = []
-        for idx in indices:
-            R.append(self.atomsList[idx].get_cell())
-        return np.array(R)
-
-    @staticmethod
-    def saveDataset(dataset, path, format=None, taskID=None):
-        from ase import Atoms
-        from ase.calculators.calculator import Calculator
-
-        R, F = dataset.getCoordinates(), dataset.getForces()
-        E, zStr = dataset.getEnergies(), dataset.getElementsName()
-
-        atoms = []
-
-        class FakeCalc(Calculator):
-            def __init__(self):
-                pass
-
-        for i in range(R.shape[0]):
-            atom = Atoms(positions=R[i], symbols=zStr)
-            atom.calc = FakeCalc()
-            atom.calc.results = {"forces": F[i], "energy": E[i]}
-            atoms.append(atom)
-
-        ase.io.write(path, atoms, format=format)
-
-
-class VariableASEDatasetLoader(VariableDatasetLoader):
-    """Loader for ASE datasets with variable-sized molecules."""
-
-    datasetName = "ase (variable)"
-    datasetFileExtension = "*"
-    saveFormats = ["db", "xyz", "extxyz", "traj", "vasp", "dftb"]
-
-    def __init__(self, path, atomsList=None, selected_energy_key=None, selected_force_key=None, *args, **kwargs):
-        super().__init__(path)
-
-        # Read file only if atomsList not provided (avoid double-read)
-        if atomsList is None:
-            logger.warning("atomsList was none, hence loading the entire dataset.")
-            from ffast.io.xyz import read_ase_or_explain
-            self.atomsList = read_ase_or_explain(path, index=':')
-        else:
-            self.atomsList = atomsList
-
-        _, self.file_extension = os.path.splitext(path)
-        self.N = len(self.atomsList)
-
-        # Store key selections
-        self.selected_energy_key = selected_energy_key
-        self.selected_force_key = selected_force_key
-
-        # Build flat arrays
-        R_list, F_list, E_list, z_list = [], [], [], []
-        offsets = [0]
+        # Joined arrays of all frames, built on the first request (see _joined)
+        self._z_flat = None
+        self._joinedArrays = None
 
         # Detect force and energy keys from first frame
         force_keys = self._detectForceKeys()
@@ -352,60 +192,54 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         # - Specific key string means use that key from arrays/info
         # - None or not set means use first available key (legacy behavior)
         if self.selected_energy_key == "":
-            selected_energy_key = None  # Use calculator
+            self._energy_key = None  # Use calculator
         elif self.selected_energy_key == "energy":
-            selected_energy_key = None  # Standard ASE key, use calculator
+            self._energy_key = None  # Standard ASE key, use calculator
         elif self.selected_energy_key:
-            selected_energy_key = self.selected_energy_key
+            self._energy_key = self.selected_energy_key
         else:
-            selected_energy_key = energy_keys[0] if energy_keys else None
+            self._energy_key = energy_keys[0] if energy_keys else None
 
         if self.selected_force_key == "":
-            selected_force_key = None  # Use calculator
+            self._force_key = None  # Use calculator
         elif self.selected_force_key == "forces":
-            selected_force_key = None  # Standard ASE key, use calculator
+            self._force_key = None  # Standard ASE key, use calculator
         elif self.selected_force_key:
-            selected_force_key = self.selected_force_key
+            self._force_key = self.selected_force_key
         else:
-            selected_force_key = force_keys[0] if force_keys else None
+            self._force_key = force_keys[0] if force_keys else None
 
+        # Only what one frame cannot tell is kept: where each frame's atoms
+        # start, whether every frame has forces and energies (ADR 0058,
+        # decision B), and whether every frame lists the same atoms in the same
+        # order. Positions and forces are read per frame or joined later.
+        counts = []
+        forces_missing = energies_missing = False
+        first, same_atoms = None, True
         for atoms in self.atomsList:
-            n_atoms = len(atoms)
-            R_list.append(atoms.get_positions())
+            counts.append(len(atoms))
+            if same_atoms:
+                numbers = atoms.get_atomic_numbers()
+                if first is None:
+                    first = numbers
+                elif not np.array_equal(numbers, first):
+                    same_atoms = False
+            if not forces_missing and self._readForces(atoms) is None:
+                forces_missing = True
+            if not energies_missing and self._readEnergy(atoms) is None:
+                energies_missing = True
+        self.molecule_offsets = np.concatenate([[0], np.cumsum(counts)]).astype(int)
+        self._has_forces = not forces_missing
+        self._has_energies = not energies_missing
 
-            # Handle forces
-            if selected_force_key:
-                # Use specific key from arrays
-                F_list.append(atoms.arrays[selected_force_key])
-            else:
-                # Use calculator
-                try:
-                    F_list.append(atoms.get_forces())
-                except:
-                    # If forces not available, use zeros
-                    F_list.append(np.zeros((n_atoms, 3)))
-
-            # Handle energies
-            if selected_energy_key:
-                # Use specific key from info
-                E_list.append(atoms.info[selected_energy_key])
-            else:
-                # Use calculator
-                try:
-                    E_list.append(atoms.get_potential_energy())
-                except:
-                    # If energy not available, use zero
-                    E_list.append(0.0)
-
-            z_list.append(atoms.get_atomic_numbers())
-            offsets.append(offsets[-1] + n_atoms)
-
-        # Convert to flat arrays
-        self.R_flat = np.vstack(R_list)
-        self.F_flat = np.vstack(F_list)
-        self.E = np.array(E_list)
-        self.z_flat = np.concatenate(z_list)
-        self.molecule_offsets = np.array(offsets)
+        # Uniform means every frame lists the same atoms in the same order
+        # (decided 2026-10-20, ADR 0058 step 6). It sets the shape of cached
+        # predictions and of what the Qt proxy receives: (frames, atoms, ...)
+        # arrays and one element list, or per-frame lists. The fingerprint
+        # keeps its own rule, isUniformAtomsList, so saved sessions and caches
+        # still match (ADR 0058 section 3).
+        self.isVariable = not same_atoms
+        self._fingerprintOneFrameOfElements = isUniformAtomsList(self.atomsList)
 
         # Store lattice info if present
         if hasattr(self.atomsList[0], "cell"):
@@ -413,9 +247,129 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         else:
             self.lattice = None
 
-        # Chemical formula: show range
-        atom_counts = self.getNAtoms()
-        self.chem = f"Variable ({atom_counts.min()}-{atom_counts.max()} atoms)"
+        self.chem = self.getChemicalFormula()
+
+    def _readForces(self, atoms):
+        """One frame's forces, or None when the frame has none."""
+        if self._force_key:
+            return atoms.arrays[self._force_key]
+        try:
+            return atoms.get_forces()
+        except (PropertyNotImplementedError, RuntimeError):
+            return None
+
+    def _readEnergy(self, atoms):
+        """One frame's energy, or None when the frame has none."""
+        if self._energy_key:
+            return atoms.info[self._energy_key]
+        try:
+            return atoms.get_potential_energy()
+        except (PropertyNotImplementedError, RuntimeError):
+            return None
+
+    def getFingerprint(self):
+        """md5 of (elements, positions, energies, forces), read one frame at a
+        time so all frames are never held at once (ADR 0058, decision B).
+        Same recipe and result as md5FromArraysAndStrings (see md5FromParts).
+
+        The two formulas in use before the loaders merged are kept, so saved
+        sessions and caches still match (ADR 0058 section 3): a variable
+        dataset hashes every frame's elements, a uniform one only frame 0's.
+        """
+        z_hash, r_hash, f_hash = hashlib.md5(), hashlib.md5(), hashlib.md5()
+        energies = []
+        forces_missing = energies_missing = False
+
+        for i, atoms in enumerate(self.atomsList):
+            if i == 0 or not self._fingerprintOneFrameOfElements:
+                z_hash.update(np.ascontiguousarray(atoms.get_atomic_numbers()))
+            r_hash.update(np.ascontiguousarray(atoms.get_positions()))
+            if not forces_missing:
+                forces = self._readForces(atoms)
+                if forces is None:
+                    forces_missing = True
+                else:
+                    f_hash.update(np.ascontiguousarray(forces))
+            if not energies_missing:
+                energy = self._readEnergy(atoms)
+                if energy is None:
+                    energies_missing = True
+                else:
+                    energies.append(energy)
+
+        parts = [z_hash, r_hash]
+        if not energies_missing:
+            parts.append(hashlib.md5(np.array(energies)))
+        if not forces_missing:
+            parts.append(f_hash)
+        return md5FromParts(parts)
+
+    # All frames: the joined arrays FlatDatasetLoader reads, built on the
+    # first request and kept, since rebuilding them reads the whole file
+    # (ADR 0058, decision B).
+
+    def hasForces(self):
+        return self._has_forces
+
+    @property
+    def z_flat(self):
+        """Every atom's element, frame after frame. One small number per
+        atom, and every dataset summary sends it, so it is joined apart from
+        the large positions and forces."""
+        if self._z_flat is None:
+            self._z_flat = np.concatenate([atoms.get_atomic_numbers() for atoms in self.atomsList])
+        return self._z_flat
+
+    @property
+    def R_flat(self):
+        return self._joined()[0]
+
+    @property
+    def F_flat(self):
+        return self._joined()[1]
+
+    @property
+    def E(self):
+        return self._joined()[2]
+
+    def _joined(self):
+        """Positions, forces (None if absent) and energies (None if absent)
+        of all frames, read once on the first request."""
+        if self._joinedArrays is None:
+            frames = self.atomsList
+            R = np.vstack([atoms.get_positions() for atoms in frames])
+            F = np.vstack([self._readForces(atoms) for atoms in frames]) if self._has_forces else None
+            E = np.array([self._readEnergy(atoms) for atoms in frames]) if self._has_energies else None
+            self._joinedArrays = (R, F, E)
+        return self._joinedArrays
+
+    # One frame is read from the file (ADR 0058, decision B); all or several
+    # frames come from the joined arrays above, in the shape of the kind
+    # (FlatDatasetLoader).
+
+    def getCoordinates(self, indices=None):
+        if isOneFrame(indices):
+            return self.atomsList[indices].get_positions()
+        return super().getCoordinates(indices)
+
+    def getElements(self, index=None):
+        if isOneFrame(index):
+            return self.atomsList[index].get_atomic_numbers()
+        return super().getElements(index)
+
+    def getForces(self, indices=None):
+        if not self._has_forces:
+            raise RuntimeError("Forces are not available for this dataset.")
+        if isOneFrame(indices):
+            return self._readForces(self.atomsList[indices])
+        return super().getForces(indices)
+
+    def getEnergies(self, indices=None):
+        if isOneFrame(indices):
+            if not self._has_energies:
+                raise RuntimeError("Energies are not available for this dataset.")
+            return self._readEnergy(self.atomsList[indices])
+        return super().getEnergies(indices)
 
     def _detectForceKeys(self):
         """Detect force keys in the first atoms object."""
@@ -448,7 +402,7 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
 
         if indices is None:
             return np.array(self.lattice)
-        elif not isinstance(indices, Iterable):
+        elif isOneFrame(indices):
             return self.lattice[indices]
 
         return np.array([self.lattice[i] for i in indices])
@@ -465,37 +419,49 @@ class VariableASEDatasetLoader(VariableDatasetLoader):
         return read_frame_field(self.atomsList, key, indices=indices)
 
     def getAtomField(self, key, indices=None):
-        return read_atom_field(self.atomsList, key, variable=True, indices=indices)
+        return read_atom_field(self.atomsList, key, variable=self.isVariable, indices=indices)
 
     def availableFieldKeys(self):
         return available_field_keys(self.atomsList)
 
     @staticmethod
     def saveDataset(dataset, path, format=None, taskID=None):
-        """Save variable dataset to ASE format."""
+        """Save any dataset (file, subset or atom subset) to an ASE format,
+        frame by frame with each frame's own elements, writing the energies
+        and forces it has (ADR 0058 step 6). A frame with no atoms (an element
+        subset's frame without those elements, ADR 0067) is left out; returns
+        how many were."""
         from ase import Atoms
         from ase.calculators.calculator import Calculator
-
-        if not dataset.isVariable:
-            # Fall back to uniform saver
-            return aseDatasetLoader.saveDataset(dataset, path, format, taskID)
-
-        atoms = []
 
         class FakeCalc(Calculator):
             def __init__(self):
                 pass
 
-        for i in range(dataset.getN()):
-            r = dataset.getCoordinates(i)  # (n_atoms_i, 3)
-            f = dataset.getForces(i)  # (n_atoms_i, 3)
-            e = dataset.getEnergies(i)  # scalar
-            z = dataset.getElements(i)  # (n_atoms_i,)
-            zStr = [dataset.zIntToZStr[x] for x in z]
+        has_forces = dataset.hasForces()
+        try:
+            has_energies = dataset.getN() > 0 and dataset.getEnergies(0) is not None
+        except RuntimeError:
+            has_energies = False
 
-            atom = Atoms(positions=r, symbols=zStr)
-            atom.calc = FakeCalc()
-            atom.calc.results = {"forces": f, "energy": e}
+        atoms = []
+        skipped = 0
+        for i in range(dataset.getN()):
+            z = dataset.getElements(i)
+            if len(z) == 0:
+                skipped += 1
+                continue
+            atom = Atoms(positions=dataset.getCoordinates(i),
+                         symbols=[dataset.zIntToZStr[x] for x in z])
+            results = {}
+            if has_forces:
+                results["forces"] = dataset.getForces(i)
+            if has_energies:
+                results["energy"] = dataset.getEnergies(i)
+            if results:
+                atom.calc = FakeCalc()
+                atom.calc.results = results
             atoms.append(atom)
 
         ase.io.write(path, atoms, format=format)
+        return skipped

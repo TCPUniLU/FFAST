@@ -37,8 +37,119 @@ def test_builtin_tabs_are_one_file_per_tab():
         with open(path, "rb") as f:
             assert len(tomllib.load(f).get("tabs", [])) == 1, path.name
 
-    # First file (01_*) is Basic Errors → first tab returned.
-    assert load_builtin_tabs()[0].name == "Basic Errors"
+    # First file (00_*) is the 3D tab, then 01_* Basic Errors.
+    assert [t.name for t in load_builtin_tabs()[:2]] == ["3D", "Basic Errors"]
+
+
+def test_builtin_3d_tab_holds_one_linked_3d_panel():
+    """The fixed 3D tab of the browser is an ordinary built-in tab now
+    (ADR 0056 rule 6): one 3D panel filling it, showing the main view."""
+    tab = load_builtin_tabs()[0]
+    assert tab.name == "3D"
+    assert [(p.kind, p.row, p.col, p.rowspan, p.colspan) for p in tab.panels] == [
+        ("3d", 0, 0, 1, 1)]
+    assert tab.panels[0].metrics == {}
+
+
+def test_3d_panel_takes_no_metrics():
+    """A 3D panel shows a visualization view; it binds no metric roles."""
+    with pytest.raises(ValidationError, match="3D panel"):
+        AnalysisTabConfig.model_validate({"name": "T", "panels": [{
+            "kind": "3d", "row": 0, "col": 0,
+            "metrics": {"y": {"metric": "ffast.gyradius"}},
+        }]})
+
+
+INDEPENDENT = """
+[[tabs]]
+name = "Compare"
+
+[[tabs.panels]]
+kind = "3d"
+row = 0
+col = 0
+
+[[tabs.panels]]
+kind = "3d"
+row = 0
+col = 1
+view = "independent"
+link_frame = false
+  [tabs.panels.start]
+  colour_by = "ffast.force_difference[atom+structure;length]"
+  colormap = "force_error"
+  atom_size = 1.2
+  bond_width = 60
+  bond_colour = "#ff8800"
+  force_arrows = true
+  force_length = 20
+  force_normalised = false
+"""
+
+
+def test_an_independent_3d_panel_stores_its_links_and_starting_look():
+    """ADR 0056 rule 13: an independent panel stores linked/independent, the
+    two link ticks and its starting look, never data or camera."""
+    tab = AnalysisTabConfig.model_validate(tomllib.loads(INDEPENDENT)["tabs"][0])
+    linked, independent = tab.panels
+    assert (linked.view, linked.link_frame, linked.link_camera, linked.start) == (
+        "linked", True, True, None)
+    assert (independent.view, independent.link_frame, independent.link_camera) == (
+        "independent", False, True)
+    assert independent.start.model_dump() == {
+        "colour_by": "ffast.force_difference[atom+structure;length]", "colormap": "force_error", "atom_size": 1.2,
+        "bond_width": 60, "bond_colour": "#ff8800", "force_arrows": True,
+        "force_length": 20, "force_normalised": False}
+
+
+def test_start_keys_left_out_keep_todays_defaults():
+    panel = AnalysisTabConfig.model_validate({"name": "T", "panels": [
+        {"kind": "3d", "row": 0, "col": 0, "view": "independent",
+         "start": {"colour_by": "displacement"}}]}).panels[0]
+    assert panel.start.model_dump(exclude_none=True) == {"colour_by": "displacement"}
+
+
+@pytest.mark.parametrize("panel, error", [
+    ({"kind": "3d", "view": "sideways"}, "view"),
+    ({"kind": "timeline", "view": "independent", "metrics": {"y": {"metric": "m"}}}, "3D panel"),
+    ({"kind": "3d", "link_frame": False}, "independent"),
+    ({"kind": "3d", "start": {"colormap": "viridis"}}, "independent"),
+    ({"kind": "3d", "view": "independent", "start": {"dataset": "aspirin"}}, "dataset"),
+    ({"kind": "3d", "view": "independent", "start": {"bond_width": 5}}, "bond_width"),
+    ({"kind": "3d", "view": "independent", "start": {"bond_colour": "orange"}}, "bond_colour"),
+    ({"kind": "3d", "view": "independent", "start": {"atom_size": 0}}, "atom_size"),
+    ({"kind": "3d", "view": "independent", "start": {"force_length": 500}}, "force_length"),
+])
+def test_3d_panel_fields_that_do_not_fit_are_config_errors(panel, error):
+    with pytest.raises(ValidationError, match=error):
+        AnalysisTabConfig.model_validate(
+            {"name": "T", "panels": [{"row": 0, "col": 0, **panel}]})
+
+
+def test_a_linked_panel_is_written_as_its_place_only():
+    """Defaults are not written, so a linked panel's file entry stays the
+    place alone, as rule 13 says."""
+    from ffast.config.user_tabs import _authoring
+    tab = AnalysisTabConfig.model_validate(tomllib.loads(INDEPENDENT)["tabs"][0])
+    linked, independent = _authoring(tab)["panels"]
+    assert linked == {"kind": "3d", "row": 0, "col": 0}
+    assert independent["view"] == "independent" and independent["link_frame"] is False
+    assert "link_camera" not in independent and independent["start"]["bond_width"] == 60
+
+
+def test_3d_panels_compile_no_metrics_and_reach_the_layout():
+    """compile and layout skip over 3D panels' empty metrics; the panel still
+    travels to the browser with its place."""
+    import ffast.metrics.builtin  # noqa: F401
+
+    tab = AnalysisTabConfig.model_validate({"name": "Mixed", "panels": [
+        {"kind": "3d", "row": 0, "col": 0},
+        {"kind": "timeline", "row": 0, "col": 1,
+         "metrics": {"y": {"metric": "ffast.gyradius", "transform": "smooth"}}},
+    ]})
+    assert compile_tabs_metrics([tab]) == ["ffast.gyradius__smooth"]
+    panels = build_tab_layout([tab])[0]["panels"]
+    assert panels[0]["kind"] == "3d" and panels[0]["metrics"] == {}
 
 
 def test_basic_errors_tab_is_declarative():
@@ -127,11 +238,11 @@ def test_metric_ref_forms():
         "name": "T",
         "panels": [{
             "kind": "density", "row": 0, "col": 0,
-            "metrics": {"value": {"metric": "ffast.force_rmse", "transform": "mirror_kde"}},
+            "metrics": {"value": {"metric": "ffast.force_difference[structure;length;rmse]", "transform": "mirror_kde"}},
         }],
     })
     ref = tab.panels[0].metrics["value"]
-    assert ref.metric == "ffast.force_rmse" and ref.transform == "mirror_kde"
+    assert ref.metric == "ffast.force_difference[structure;length;rmse]" and ref.transform == "mirror_kde"
 
 
 def test_compile_tabs_registers_transform_metrics():
@@ -141,7 +252,7 @@ def test_compile_tabs_registers_transform_metrics():
     from ffast.metrics.registry import default_registry
 
     ids = compile_tabs_metrics(load_builtin_tabs())
-    assert "ffast.force_net_mae_per_structure__mirror_kde" in ids
+    assert "ffast.force_net_residual[structure;component;mae]__mirror_kde" in ids
     for mid in ids:
         assert default_registry.has(mid)
 
@@ -150,8 +261,8 @@ def test_resolve_ref_raw_vs_transform():
     import ffast.metrics.builtin  # noqa: F401
     from ffast.config.models import PanelMetricRef
 
-    raw = PanelMetricRef(metric="ffast.force_net_mae")
-    assert resolve_ref(raw) == "ffast.force_net_mae"  # no transform → raw id
+    raw = PanelMetricRef(metric="ffast.force_net_residual[dataset;component;mae]")
+    assert resolve_ref(raw) == "ffast.force_net_residual[dataset;component;mae]"  # no transform → raw id
 
     smoothed = PanelMetricRef(metric="ffast.gyradius", transform="smooth")
     assert resolve_ref(smoothed) == "ffast.gyradius__smooth"
@@ -165,7 +276,7 @@ def test_build_tab_layout_shape_and_resolved_ids():
 
     layout = build_tab_layout(load_builtin_tabs())
     names = [t["name"] for t in layout]
-    assert names[0] == "Basic Errors" and "Gyration" in names
+    assert names[:2] == ["3D", "Basic Errors"] and "Gyration" in names
 
     by_name = {t["name"]: t for t in layout}
     basic = by_name["Basic Errors"]
@@ -181,7 +292,7 @@ def test_build_tab_layout_shape_and_resolved_ids():
     # A transform role resolves to the compiled `{source}__{transform}` id.
     subsystem = by_name["Subsystem Errors"]
     density = next(p for p in subsystem["panels"] if p["kind"] == "density")
-    assert density["metrics"]["value"] == "ffast.force_net_mae_per_structure__mirror_kde"
+    assert density["metrics"]["value"] == "ffast.force_net_residual[structure;component;mae]__mirror_kde"
 
     # An overlay `series` list role resolves to a list of ids.
     gyration = by_name["Gyration"]
@@ -210,8 +321,8 @@ def test_build_tab_layout_appends_custom_tab_identically():
     custom = layout[-1]
     assert custom["name"] == "Custom"
     # Same keys as a built-in tab and its panels.
-    assert set(custom) == set(layout[0])
-    assert set(custom["panels"][0]) == set(layout[0]["panels"][0])
+    assert set(custom) == set(layout[1])
+    assert set(custom["panels"][0]) == set(layout[1]["panels"][0])
     assert custom["panels"][0]["metrics"]["y"] == "ffast.energy_prediction"
 
 
@@ -267,3 +378,75 @@ def test_compile_project_metrics_fields_before_expr():
     result = compile_project_metrics(project)
     assert "projtest.q" in result.ids and "projtest.absq" in result.ids
     assert result.errors == []
+
+
+# --- column_widths / row_heights (ADR 0056 rule 12) -------------------------- #
+def _sized_tab(**sizes):
+    return AnalysisTabConfig.model_validate({"name": "Sized", **sizes, "panels": [
+        {"kind": "3d", "row": 0, "col": 0, "rowspan": 2},
+        {"kind": "table", "row": 0, "col": 1},
+        {"kind": "table", "row": 1, "col": 1},
+    ]})
+
+
+def test_tab_sizes_are_relative_and_optional():
+    assert _sized_tab().column_widths is None and _sized_tab().row_heights is None
+    tab = _sized_tab(column_widths=[2, 1], row_heights=[3, 1.5])
+    assert tab.column_widths == [2, 1] and tab.row_heights == [3, 1.5]
+
+
+def test_tab_sizes_cover_every_column_and_row():
+    """A list too short for the grid is a config error naming the count it
+    needs, like any other config mistake; a longer one leaves columns or rows
+    empty (a column count set in the browser survives a save)."""
+    with pytest.raises(ValidationError, match="column_widths has 1 entry; the tab has 2 columns"):
+        _sized_tab(column_widths=[1])
+    with pytest.raises(ValidationError, match="row_heights has 1 entry; the tab has 2 rows"):
+        _sized_tab(row_heights=[1])
+    assert _sized_tab(column_widths=[1, 1, 1], row_heights=[1, 1, 1]).column_widths == [1, 1, 1]
+
+
+def test_tab_sizes_are_positive():
+    with pytest.raises(ValidationError, match="column_widths must be positive"):
+        _sized_tab(column_widths=[1, 0])
+    with pytest.raises(ValidationError, match="row_heights must be positive"):
+        _sized_tab(row_heights=[-1, 1])
+
+
+def test_tab_sizes_reach_the_browser():
+    layout = build_tab_layout([_sized_tab(column_widths=[2, 1])])[0]
+    assert layout["column_widths"] == [2, 1] and layout["row_heights"] is None
+
+
+# --- grid (ADR 0069) --------------------------------------------------------- #
+def _gridded(grid, panels=None, **extra):
+    return AnalysisTabConfig.model_validate({
+        "name": "Fine", "grid": grid, **extra,
+        "panels": panels if panels is not None else [
+            {"kind": "3d", "row": 0, "col": 0, "rowspan": 8, "colspan": 12},
+            {"kind": "table", "row": 0, "col": 12, "rowspan": 4, "colspan": 12},
+        ]})
+
+
+def test_a_fine_grid_tab_loads_and_reaches_the_browser():
+    tab = _gridded(24)
+    assert tab.grid == 24 and tab.column_widths is None
+    assert build_tab_layout([tab])[0]["grid"] == 24
+
+
+def test_a_fine_grid_tab_takes_no_set_sizes():
+    with pytest.raises(ValidationError, match="column_widths"):
+        _gridded(24, column_widths=[1, 1])
+    with pytest.raises(ValidationError, match="row_heights"):
+        _gridded(24, row_heights=[1])
+
+
+def test_a_panel_cannot_reach_past_the_grid():
+    with pytest.raises(ValidationError, match="reaches column 25; the tab's grid has 24 columns"):
+        _gridded(24, panels=[{"kind": "3d", "row": 0, "col": 20, "colspan": 5}])
+
+
+def test_a_tab_without_grid_is_the_old_form():
+    tab = _sized_tab(column_widths=[2, 1])
+    assert tab.grid is None
+    assert build_tab_layout([tab])[0]["grid"] is None

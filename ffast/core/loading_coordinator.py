@@ -26,47 +26,19 @@ from ase.io.trajectory import Trajectory
 from ffast.core.data_types import AtomsList
 from ffast.protocol import control
 from ffast.loaders.ghost import GhostModelLoader
+from ffast.loaders.dataset import framesShaped
 from ffast.cache.fingerprint import md5FromArraysAndStrings
 
 logger = logging.getLogger("FFAST")
 
 
-def _isUniformAtomsList(atomsList, sampleSize=60):
-    """Decide whether every frame in ``atomsList`` is the same molecule.
+def _resultOrNone(read):
+    """``read()``, or ``None`` when the file has no such result (ADR 0058)."""
+    try:
+        return read()
+    except (PropertyNotImplementedError, RuntimeError):
+        return None
 
-    Picks which ASE loader flavour a prediction needs.  The uniform
-    :class:`aseDatasetLoader` reads frame 0's atom count *and* atomic numbers
-    and applies them to every frame, so "uniform" has to mean same
-    *composition* — comparing atom counts alone would accept frames that share
-    a count but not their elements, and silently stamp frame 0's ``z`` onto all
-    of them.  Hence chemical formulas.
-
-    Full scans are avoided: ``atomsList`` is routinely a lazy ``AtomsList`` /
-    ``Trajectory`` where materialising every frame costs a re-read of the whole
-    file.  Lists at or below ``sampleSize`` are checked exhaustively; larger
-    ones on an evenly-spaced sample that always includes the first and last
-    frame.  The spacing is deterministic on purpose — a random sample can
-    classify the same file differently between runs, which changes the loader
-    class and therefore the dataset's identity.
-    """
-    n = len(atomsList)
-    if n < 2:
-        return True
-
-    if n <= sampleSize:
-        indices = range(n)
-    else:
-        step = (n - 1) / (sampleSize - 1)
-        indices = sorted({int(round(i * step)) for i in range(sampleSize)} | {0, n - 1})
-
-    reference = None
-    for i in indices:
-        formula = atomsList[i].get_chemical_formula()
-        if reference is None:
-            reference = formula
-        elif formula != reference:
-            return False
-    return True
 
 
 class LoadingCoordinator:
@@ -91,13 +63,30 @@ class LoadingCoordinator:
         """
         return self._env.remote.active_session()
 
-    def _queueLoad(self, fn, name, args=(), kwargs=None):
+    def _queueLoad(self, fn, name, args=(), kwargs=None, on_error=None):
         """Queue an in-process load so disk I/O and setup stay off the main loop.
 
         Every ``taskLoad*`` entry point wants the same task shape — visual,
         threaded, named "Loading <thing>" — so that shape lives here rather than
         being spelled out at each of them.
+
+        ``on_error(exc)`` lets the caller report a failed load (the server tells
+        the window that asked); an error that is raised is still raised, so the
+        task fails as before. The ``load*`` methods also take ``on_error``, for
+        the failures they log and return from.
         """
+        if on_error is not None:
+            load = fn
+            kwargs = {**(kwargs or {}), "on_error": on_error}
+
+            def fn(*a, **kw):
+                try:
+                    return load(*a, **kw)
+                except Exception as exc:
+                    on_error(exc)
+                    exc.ffast_reported = True   # no second pop-up (ADR 0066)
+                    raise
+
         return self._env.newTask(
             fn,
             args=args,
@@ -211,7 +200,8 @@ class LoadingCoordinator:
     ## PREDICTIONS
     #############
 
-    def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None, selected_force_key=None):
+    def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None,
+                                    selected_force_key=None, on_error=None):
         """Queue import of external predictions as cached model outputs for a dataset."""
         self._queueLoad(
             self.loadPrepredictedDataset,
@@ -221,6 +211,7 @@ class LoadingCoordinator:
                 'selected_energy_key': selected_energy_key,
                 'selected_force_key': selected_force_key
             },
+            on_error=on_error,
         )
 
     def requestPredictionLoad(self, path, datasetKey, selected_energy_key=None,
@@ -252,7 +243,8 @@ class LoadingCoordinator:
             loop,
         )
 
-    def loadPrepredictedDataset(self, path, datasetKey, taskID=None, selected_energy_key=None, selected_force_key=None):
+    def loadPrepredictedDataset(self, path, datasetKey, taskID=None, selected_energy_key=None,
+                                selected_force_key=None, on_error=None):
         """Attach precomputed energies and forces to a dataset as a ghost model."""
         if "npz" in path:
             d = np.load(path, allow_pickle=True)
@@ -266,7 +258,7 @@ class LoadingCoordinator:
             )
 
             try:
-                E = aseObject.getEnergies()
+                E = np.array(aseObject.getAllEnergies())
             except (PropertyNotImplementedError, RuntimeError):
                 logger.warning(
                     "Energy not available in prediction file. "
@@ -274,7 +266,8 @@ class LoadingCoordinator:
                 )
                 E = None
             try:
-                F = aseObject.getForces()
+                F = framesShaped(aseObject.getAllForces(), aseObject.getOffsets(),
+                                 aseObject.isVariable)
             except (PropertyNotImplementedError, RuntimeError):
                 logger.warning(
                     "Forces not available in prediction file. "
@@ -305,8 +298,11 @@ class LoadingCoordinator:
                 logger.error(
                     "Prediction load failed, you have probably selected the wrong prediction for the designated dataset. "
                     "Please try again and choose the correct prediction file according to the dataset selected "
-                    "in the file filter dropdown."
+                    "in the file filter dropdown.",
+                    extra={"popup": on_error is None},   # else the window says it
                 )
+                if on_error:
+                    on_error("it does not match the selected dataset")
                 return
 
             self.lookForGhosts()
@@ -341,11 +337,13 @@ class LoadingCoordinator:
         # method means no server was available, so there is nothing to mirror to.
 
     def _extractPredictionFields(self, aseObject, modelKey, dataset):
-        """Eagerly extract the declared prediction Dataset Fields (ADR 0023).
+        """Eagerly extract the prediction Dataset Fields (ADR 0023, ADR 0061).
 
-        The prediction's ASE loader is discarded once E/F are pulled, so any
-        prediction.{info,atoms}.<key> a registered metric declares must be read
-        now and stashed in ``DataService.predictionFields`` keyed by
+        The prediction's ASE loader is discarded once E/F are pulled, so every
+        prediction.{info,atoms}.<key> a registered metric declares, plus every
+        numeric scalar the file itself holds (``availableFieldKeys``: one number
+        per frame or per atom), must be read now, so a metric saved later over a
+        new field finds it. They are stashed in ``DataService.predictionFields`` keyed by
         ``(modelKey, dataset_fp)`` (modelKey == the GhostModel fingerprint, so
         the resolver finds it from the model object). Strict per-field: an
         unavailable key just stays absent (resolves to None later).
@@ -353,9 +351,12 @@ class LoadingCoordinator:
         try:
             from ffast.metrics.fields import declared_field_keys
             wanted = declared_field_keys("prediction")
+            frame_keys, atom_keys = aseObject.availableFieldKeys()
         except Exception:
             logger.exception("Prediction fields: failed to read declared keys")
             return
+        wanted = {"info": set(wanted["info"]) | set(frame_keys),
+                  "atoms": set(wanted["atoms"]) | set(atom_keys)}
         if not wanted["info"] and not wanted["atoms"]:
             return
         store = {"info": {}, "atoms": {}}
@@ -379,57 +380,42 @@ class LoadingCoordinator:
     #############
 
     @staticmethod
-    def _aseLoaderFor(path, atomsList, *, energy_key=None, force_key=None, uniform=None):
-        """Build the ASE loader flavour ``atomsList``'s homogeneity calls for.
+    def _aseLoaderFor(path, atomsList, *, energy_key=None, force_key=None):
+        """Build the ASE loader for ``atomsList``. There is one; it decides
+        uniform or variable from the frames itself (ADR 0058)."""
+        from ffast.loaders.ase import aseDatasetLoader
 
-        ``uniform`` lets a caller reuse an already-made decision — it is
-        loop-invariant when several prediction columns are read off one
-        ``atomsList``, and deciding it walks a sample of the frames.
-        """
-        from ffast.loaders.ase import aseDatasetLoader, VariableASEDatasetLoader
-
-        if uniform is None:
-            uniform = _isUniformAtomsList(atomsList)
-        loaderClass = aseDatasetLoader if uniform else VariableASEDatasetLoader
-        logger.info(
-            "Loading prediction as %s ASE dataset: %d molecules",
-            "uniform" if uniform else "variable", len(atomsList),
-        )
-        return loaderClass(
+        loader = aseDatasetLoader(
             path,
             atomsList=atomsList,
             selected_energy_key=energy_key,
             selected_force_key=force_key,
         )
+        logger.info(
+            "Loading prediction as %s ASE dataset: %d molecules",
+            "variable" if loader.isVariable else "uniform", len(atomsList),
+        )
+        return loader
 
     @staticmethod
     def _predictionMatchesDataset(E, dataset, name):
-        """Check a prediction's energies line up with the dataset's, frame for frame.
+        """Check a prediction has one energy per dataset frame.
 
-        Handles both dataset flavours: a variable dataset returns a list of
-        per-frame scalars (compare lengths), a uniform one a numpy array
-        (compare shapes).  The array-shape branch on its own — all the
-        standalone-prediction-file path used to do — raises ``AttributeError``
-        against a variable dataset.
+        Counts frames with ``getN()``, which every dataset answers, rather than
+        reading the dataset's own energies, which a file of bare geometries
+        does not have (ADR 0058: absent, not zeros).
         """
         if E is None:
             return True
 
-        dataset_E = dataset.getEnergies()
-        if isinstance(E, list) or isinstance(dataset_E, list):
-            if len(E) != len(dataset_E):
-                logger.error(
-                    f"Shape mismatch for prediction '{name}'. "
-                    f"Expected {len(dataset_E)} molecules, got {len(E)}."
-                )
-                return False
-        elif hasattr(E, "shape") and hasattr(dataset_E, "shape"):
-            if E.shape != dataset_E.shape:
-                logger.error(
-                    f"Shape mismatch for prediction '{name}'. "
-                    f"Expected {dataset_E.shape}, got {E.shape}."
-                )
-                return False
+        n_predicted = np.asarray(E).reshape(-1).size
+        n_frames = dataset.getN()
+        if n_predicted != n_frames:
+            logger.error(
+                f"Frame count mismatch for prediction '{name}'. "
+                f"Expected {n_frames} frames, got {n_predicted}."
+            )
+            return False
         return True
 
     def _ingestPrediction(self, dataset, E, F, *, path, name, fingerprint,
@@ -491,7 +477,8 @@ class LoadingCoordinator:
     #############
 
     def taskLoadDataset(self, path, datasetType, selected_energy_key=None,
-                       selected_force_key=None, prediction_keys=None, slice_num=0):
+                       selected_force_key=None, prediction_keys=None, slice_num=0,
+                       on_error=None):
         """Load dataset and optionally load predictions from same file.
 
         Args:
@@ -512,6 +499,7 @@ class LoadingCoordinator:
                 'prediction_keys': prediction_keys,
                 'slice_num': slice_num
             },
+            on_error=on_error,
         )
 
     def requestDatasetLoad(self, path, datasetType, selected_energy_key=None,
@@ -555,7 +543,8 @@ class LoadingCoordinator:
         )
 
     def loadDataset(self, path, datasetType, taskID=None, selected_energy_key=None,
-                   selected_force_key=None, prediction_keys=None, slice_num=0):
+                   selected_force_key=None, prediction_keys=None, slice_num=0,
+                   on_error=None):
         """Load dataset and create ghost models for prediction keys."""
         loaderClass = self._resolveLoad("dataset", path, datasetType)
         if loaderClass is None:
@@ -575,7 +564,10 @@ class LoadingCoordinator:
                     slice_num=slice_num
                 )
             except Exception as e:
-                logger.error(f"Failed to load dataset {path} in method 'loadDataset'")
+                logger.exception(f"Failed to load dataset {path} in method 'loadDataset'",
+                                 extra={"popup": on_error is None})
+                if on_error:
+                    on_error(e)
                 return None
         else:
             result = loaderClass(path)
@@ -599,7 +591,10 @@ class LoadingCoordinator:
             dataset = result
 
         if dataset is None:
-            logging.warn(f"Dataset `{path}` did not load successfully")
+            logger.warning(f"Dataset `{path}` did not load successfully",
+                           extra={"popup": on_error is None})
+            if on_error:
+                on_error("no dataset could be read from it")
             return
 
         self._progress(taskID, "Indexing dataset…")
@@ -659,20 +654,21 @@ class LoadingCoordinator:
             from ffast.io.xyz import read_ase_or_explain
             atomsList = read_ase_or_explain(path, index=":")
 
-        # Loop-invariant: every column is read off this one atomsList.
-        is_uniform = _isUniformAtomsList(atomsList)
-
         for energy_key, force_key, model_name in prediction_keys:
             try:
                 temp_loader = self._aseLoaderFor(
                     path, atomsList,
                     energy_key=energy_key, force_key=force_key,
-                    uniform=is_uniform,
                 )
 
-                E = temp_loader.getEnergies()
-                F = temp_loader.getForces()
-                ghost_fp = md5FromArraysAndStrings(E, F, model_name)
+                E = _resultOrNone(temp_loader.getEnergies)
+                F = _resultOrNone(temp_loader.getForces)
+                if E is None and F is None:
+                    logger.warning(f"Prediction '{model_name}' has neither energies nor forces; skipped.")
+                    continue
+                available = [x for x in (E, F) if x is not None]
+                ghost_fp = md5FromArraysAndStrings(*available, model_name)
+
 
                 if not self._ingestPrediction(
                     dataset, E, F, path=path, name=model_name,

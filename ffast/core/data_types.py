@@ -2,6 +2,7 @@ import logging
 import os
 import time
 import ase.io
+import numpy as np
 from collections import UserList
 from ffast.core.events import EventClass
 
@@ -82,6 +83,13 @@ class AtomFilteredEntity(DataEntity):
 
     def get(self, key=None):
         d = self.parent.get(key=key)
+        # A dataset view knows which atoms each frame keeps (an element
+        # subset's change from frame to frame, ADR 0067).
+        if hasattr(self.indices, "keepAtoms"):
+            return self.indices.keepAtoms(d)
+        # Variable datasets (list of per-frame arrays): the same atoms of each frame
+        if isinstance(d, list):
+            return [np.asarray(frame)[self.indices] for frame in d]
         if len(d.shape) == 1:
             return d[self.indices]
         else:
@@ -371,7 +379,8 @@ class AtomsList(UserList):
         number_of_slice_chunks = len(atoms)
 
         if number_of_slice_chunks == 0:
-            logger.error(f"Dataset ({self.path}) has no entries!!!")
+            # The load that asked reports its failure (ADR 0066): log only.
+            logger.error(f"Dataset ({self.path}) has no entries!!!", extra={"popup": False})
             return 0
 
         remaining_atoms = ase.io.read(self.path, index=slice(slice_size*(number_of_slice_chunks-1), None))
@@ -406,7 +415,8 @@ class AtomsList(UserList):
         number_of_slice_chunks = len(atoms)
 
         if number_of_slice_chunks == 0:
-            logger.error(f"Dataset ({path}) has no entries!!!")
+            # The load that asked reports its failure (ADR 0066): log only.
+            logger.error(f"Dataset ({path}) has no entries!!!", extra={"popup": False})
             return 0
 
         remaining_atoms = ase.io.read(path, index=slice(slice_size * (number_of_slice_chunks - 1), None))

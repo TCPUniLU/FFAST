@@ -47,9 +47,16 @@ def resolve_ref(ref: PanelMetricRef, *, registry=None) -> str:
 
     No transform → the raw metric id. A single transform / a pipeline list is
     sent to the compiler (idempotent), which registers it and returns its id."""
+    from ffast.metrics.registry import default_registry
+    from ffast.metrics.retired import retired_message
     from ffast.metrics.transforms import compile_pipeline, compile_transform
 
     if not ref.transform:
+        # A box setting (ADR 0065) is registered when a tab names it; a
+        # deleted id is refused with its replacement.
+        if not (registry if registry is not None else default_registry).ensure(ref.metric):
+            if retired_message(ref.metric):
+                raise ValueError(retired_message(ref.metric))
         return ref.metric
     if isinstance(ref.transform, list):
         return compile_pipeline(ref.metric, list(ref.transform), registry=registry)
@@ -78,13 +85,44 @@ def _panel_layout(panel, *, registry=None) -> dict:
     """
     d = panel.model_dump()
     resolved: dict = {}
+    unresolved: list[str] = []
+
+    def resolve(ref):
+        # A ref the compiler cannot resolve (its metric is not on this server)
+        # must not take the tab down: the panel keeps the raw id and the
+        # browser says which metric is missing (ADR 0057 rule 15).
+        try:
+            return resolve_ref(ref, registry=registry)
+        except Exception:
+            if ref.metric not in unresolved:
+                unresolved.append(ref.metric)
+            return ref.metric
+
     for role, val in panel.metrics.items():
         if isinstance(val, list):
-            resolved[role] = [resolve_ref(r, registry=registry) for r in val]
+            resolved[role] = [resolve(r) for r in val]
         else:
-            resolved[role] = resolve_ref(val, registry=registry)
+            resolved[role] = resolve(val)
+    d["unresolved"] = unresolved
+    # The authoring form too, so a tab built or edited in the browser saves
+    # what a person would write (ADR 0056), not the compiled ids.
+    d["metric_refs"] = d["metrics"]
     d["metrics"] = resolved
     return d
+
+
+def tab_layout(tab, *, registry=None) -> dict:
+    """One tab serialized for the wire (see :func:`build_tab_layout`)."""
+    return {
+        "name": tab.name,
+        "has_data_selector": tab.has_data_selector,
+        "selector": tab.selector,
+        "controls": list(tab.controls),
+        "panels": [_panel_layout(p, registry=registry) for p in tab.panels],
+        "column_widths": tab.column_widths,
+        "row_heights": tab.row_heights,
+        "grid": tab.grid,
+    }
 
 
 def build_tab_layout(tabs, *, registry=None) -> list[dict]:
@@ -97,16 +135,7 @@ def build_tab_layout(tabs, *, registry=None) -> list[dict]:
     ``[[visualization.tabs]]`` both renderers see. Pure and Qt-free; safe to
     call at server startup (before ``registry.freeze()``) or from the handler.
     """
-    return [
-        {
-            "name": tab.name,
-            "has_data_selector": tab.has_data_selector,
-            "selector": tab.selector,
-            "controls": list(tab.controls),
-            "panels": [_panel_layout(p, registry=registry) for p in tab.panels],
-        }
-        for tab in tabs
-    ]
+    return [tab_layout(tab, registry=registry) for tab in tabs]
 
 
 def compile_tabs_metrics(tabs, *, registry=None) -> list[str]:

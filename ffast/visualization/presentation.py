@@ -24,6 +24,11 @@ from __future__ import annotations
 #: rather than as a real element colour.
 NEUTRAL_ATOM_COLOR: tuple[float, float, float, float] = (0.7, 0.7, 0.7, 1.0)
 
+#: RGB of an atom whose colouring value is "no value" (NaN, ADR 0064): a mid
+#: grey, so a gap is never read as one end of the colour scale. The browser's
+#: colormap.js ``NO_VALUE_RGB`` is the same.
+NO_VALUE_RGB: tuple[float, float, float] = (0.55, 0.55, 0.55)
+
 #: Atom size for the same fallback path, in the units of ``AtomScene.sizes``.
 NEUTRAL_ATOM_SIZE: float = 0.5
 

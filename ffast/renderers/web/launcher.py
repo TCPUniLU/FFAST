@@ -19,6 +19,7 @@ launcher's scope.
 from __future__ import annotations
 
 import argparse
+import functools
 import http.server
 import logging
 import os
@@ -30,12 +31,19 @@ import time
 import webbrowser
 from dataclasses import dataclass
 from typing import Callable
+import uuid
 
 from ffast.renderers.web.serve import start_static_server
 
 logger = logging.getLogger(__name__)
 
 LOOPBACK = "127.0.0.1"
+
+# The web app's port when none is asked for. Browser storage belongs to the
+# page's address, port included, so a fixed port is what lets the browser
+# remember its layout across launches (ADR 0055 rule 3, ADR 0056). Next to
+# ffast-server's default 8765.
+DEFAULT_WEB_PORT = 8764
 
 
 class LauncherError(RuntimeError):
@@ -71,9 +79,11 @@ class LaunchResult:
     proc: subprocess.Popen
 
 
-def app_url(web_port: int, ws_port: int, *, host: str = LOOPBACK) -> str:
+def app_url(web_port: int, ws_port: int, *, host: str = LOOPBACK, uid=None) -> str:
     """URL of the web app, carrying the WebSocket RPC port as a query arg."""
-    return f"http://{host}:{web_port}/?port={ws_port}"
+    if uid is None:# This parameter exists only to make every FFAST Web launch URL unique.
+        uid = uuid.uuid4().hex
+    return f"http://{host}:{web_port}/?port={ws_port}&launch={uid}"
 
 
 def pick_free_port() -> int:
@@ -81,6 +91,26 @@ def pick_free_port() -> int:
     with socket.socket() as sock:
         sock.bind((LOOPBACK, 0))
         return sock.getsockname()[1]
+
+
+def _start_web_app(web_port: int, host: str) -> http.server.HTTPServer:
+    """Serve the web app on ``web_port``, or on the default port when it is 0.
+
+    An explicit port is used as given and fails loudly when taken. The default
+    port falls back to a free one, so a second ``ffast-web`` still starts; that
+    window just does not share the remembered layout.
+    """
+    if web_port:
+        return start_static_server(web_port, host=host)
+    try:
+        return start_static_server(DEFAULT_WEB_PORT, host=host)
+    except OSError:
+        logger.info(
+            "Port %d is in use (another ffast-web?); serving the web app on a "
+            "free port, so this window will not remember its layout",
+            DEFAULT_WEB_PORT,
+        )
+        return start_static_server(pick_free_port(), host=host)
 
 
 def wait_until_ready(
@@ -145,15 +175,17 @@ def open_browser(
     opener(url)
 
 
-def _spawn_server(ws_port: int, host: str = LOOPBACK) -> subprocess.Popen:
+def _spawn_server(ws_port: int, host: str = LOOPBACK, trace: bool = False) -> subprocess.Popen:
     """Start `ffast-server` on ``host:ws_port`` as a subprocess.
 
     Prefers the installed console script; falls back to ``python -m server``
     so a source checkout works without an editable install. Binds ``host``
     (loopback by default, keeping the RPC local); auto-snapshots are disabled —
-    a throwaway local run does not need them.
+    a throwaway local run does not need them. ``trace`` passes ``--trace``.
     """
     args = ["--host", host, "--port", str(ws_port), "--snapshot-interval", "0"]
+    if trace:
+        args.append("--trace")
     exe = shutil.which("ffast-server")
     cmd = [exe, *args] if exe else [sys.executable, "-m", "server", *args]
     logger.info("Starting ffast-server: %s", " ".join(cmd))
@@ -178,17 +210,20 @@ def run(
     opener: Callable[[str], object] = webbrowser.open,
     ready_timeout: float = 30.0,
     block: bool = True,
+    uid = None,
 ) -> LaunchResult:
     """Serve the app, start the WS server, open the browser.
 
-    Ports default to 0 → an OS-assigned free port. With ``block`` (the CLI
-    default) the call blocks until the WS server exits or Ctrl-C; tests pass
-    ``block=False`` and drive teardown via the returned :class:`LaunchResult`.
+    ``ws_port`` 0 means an OS-assigned free port; ``web_port`` 0 means
+    :data:`DEFAULT_WEB_PORT`, or a free port when that one is taken. With
+    ``block`` (the CLI default) the call blocks until the WS server exits or
+    Ctrl-C; tests pass ``block=False`` and drive teardown via the returned
+    :class:`LaunchResult`.
     """
     ws_port = ws_port or pick_free_port()
-    web_port = web_port or pick_free_port()
 
-    httpd = start_static_server(web_port, host=host)
+    httpd = _start_web_app(web_port, host)
+    web_port = httpd.server_address[1]
     proc = spawn_server(ws_port, host)
 
     # Wait for the WS server to accept connections, but fail fast if it exits
@@ -216,7 +251,7 @@ def run(
             ready_timeout,
         )
 
-    url = app_url(web_port, ws_port, host=host)
+    url = app_url(web_port, ws_port, host=host, uid=uid)
     logger.info("Opening FFAST web app at %s", url)
     open_browser(url, app_mode=app_mode, opener=opener)
 
@@ -253,7 +288,8 @@ def main(argv: list | None = None) -> None:
         type=int,
         default=0,
         metavar="PORT",
-        help="HTTP port for the web app (default: an OS-assigned free port).",
+        help=f"HTTP port for the web app (default: {DEFAULT_WEB_PORT}, or a free "
+        "port when that one is taken). The browser remembers its layout per port.",
     )
     parser.add_argument(
         "--app",
@@ -266,6 +302,12 @@ def main(argv: list | None = None) -> None:
         action="store_true",
         help="Start the servers but do not open a browser (print the URL only).",
     )
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Write a trace of every click, message and handler run to "
+        "~/.ffast/logs/trace-<date-time>.log, to find the source of a bug.",
+    )
     args = parser.parse_args(argv)
 
     opener = (lambda url: logger.info("Web app ready at %s", url)) if args.no_browser else webbrowser.open
@@ -274,6 +316,7 @@ def main(argv: list | None = None) -> None:
             ws_port=args.ws_port,
             web_port=args.web_port,
             app_mode=args.app,
+            spawn_server=functools.partial(_spawn_server, trace=args.trace),
             opener=opener,
         )
     except LauncherError as exc:

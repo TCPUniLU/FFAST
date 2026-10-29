@@ -10,7 +10,7 @@ produced scene.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, NamedTuple
 
 import numpy as np
 
@@ -27,6 +27,7 @@ from ffast.visualization.presentation import (
     SELECTION_OVERLAY_COLOR,
 )
 from ffast.visualization.scene import (
+    DEFAULT_COLORMAP,
     AtomColorBy,
     AtomScene,
     BondScene,
@@ -57,6 +58,8 @@ def build_scene(
     get_forces: Callable | None = None,
     executor: Any | None = None,
     _legacy_forces: bool = False,
+    get_metric: Callable | None = None,
+    prediction_fields: dict | None = None,
 ) -> RenderScene:
     """Derive a RenderScene from VisualizationState.
 
@@ -64,6 +67,9 @@ def build_scene(
     value-driven atom coloring — the caller's ``DataService.metricExecutor``,
     so coloring and ``REQUEST_METRIC`` share the same server-side executor
     instance instead of each maintaining its own.
+
+    ``get_metric`` gives a metric over the whole dataset for atom colouring
+    (``color_values.resolve_atom_color_values``).
 
     Returns a scene with only camera populated when no dataset is loaded or
     when any data access fails.
@@ -84,6 +90,12 @@ def build_scene(
         version=state.version,
         camera=state.camera,
     )
+    # RenderScenes should also contain their structure index... for the web client to know which index is this structure for.
+    scene.frame_index = state.structure_index
+    if "only_forces" in state.enabled_features:
+        scene.only_forces = True
+    else:
+        scene.only_forces = False
 
     if state.dataset_ref is None:
         return scene
@@ -100,27 +112,28 @@ def build_scene(
         raw_positions = np.asarray(ds.getCoordinates(idx), dtype=np.float64)
     except Exception as exc:
         logger.warning("scene_builder: getCoordinates(%d) failed: %s", idx, exc)
+        logger.warning("As a result, 'Only show forces' option may not work properly.")
         return scene
 
     # Elements
     try:
-        is_variable = getattr(ds, "isVariable", False)
-        if is_variable:
-            z = np.asarray(ds.getElements(idx), dtype=np.int64)
-        else:
-            z = np.asarray(ds.getElements(), dtype=np.int64)
+        z = np.asarray(ds.getElements(idx), dtype=np.int64)
     except Exception as exc:
         logger.warning("scene_builder: getElements failed: %s", exc)
+        logger.warning("As a result, 'Only show forces' option may not work properly.")
         return scene
 
     # View transforms (ADR 0014, gate item 2): transforms are computed AND
     # applied server-side. Explicit state.transforms plus any feature-driven
     # transform stages (e.g. Kabsch alignment) compose here; the client sends
     # only feature toggles, never transform matrices.
+    # Alignment is off on a variable dataset: one frame's atoms cannot be
+    # matched to another's, even when the counts agree.
     transforms = list(state.transforms)
-    if "kabsch_align" in state.enabled_features:
+    variable = bool(getattr(ds, "isVariable", False))
+    if "kabsch_align" in state.enabled_features and not variable:
         transforms = _kabsch_to_frame0(ds, raw_positions, z, state) + transforms
-    if "atom_align" in state.enabled_features:
+    if "atom_align" in state.enabled_features and not variable:
         transforms = transforms + _atom_align_to_reference(ds, raw_positions, state)
 
     try:
@@ -137,6 +150,7 @@ def build_scene(
         # config/atoms (element radii/colors) may be unavailable; positions still
         # render with neutral styling.
         logger.warning("scene_builder: atom stages failed: %s", exc)
+        logger.warning("As a result, 'Only show forces' option may not work properly.")
         positions = _apply_transforms(raw_positions, transforms)
         n_atoms = len(positions)
         sizes = [NEUTRAL_ATOM_SIZE] * n_atoms
@@ -159,22 +173,31 @@ def build_scene(
             logger.warning("scene_builder: atom_labels failed: %s", exc)
 
     # Value-driven atom coloring (ADR 0016): compute per-atom values on the FULL
-    # set and resolve the range here, so the colorbar/scale stay stable across
-    # frames and filtering. The client maps these values to colors.
+    # set and resolve the range here, so the colorbar/scale stay stable under
+    # filtering, and across frames when the values came from the whole dataset.
+    # The client maps these values to colors.
     color_values = None
     color_meta = None
     from ffast.visualization.color_values import resolve_atom_color_values
-    _color_src = resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, executor=executor)
+    _color_src = resolve_atom_color_values(
+        state, ds, idx, raw_positions, z, get_prediction,
+        executor=executor, get_metric=get_metric,
+        prediction_fields=prediction_fields,
+    )
     if _color_src is not None:
-        color_values, _clabel, _cunit = _color_src
+        color_values, _clabel, _cunit, _span = _color_src
         cparams = state.parameters.get("ffast.atom_color", {})
         finite = color_values[np.isfinite(color_values)]
         auto_lo = float(np.min(finite)) if finite.size else 0.0
         auto_hi = float(np.max(finite)) if finite.size else 1.0
+        if _span is not None:
+            auto_lo, auto_hi = _span
+        # A limit the user cleared (None) is automatic again.
+        lo, hi = cparams.get("vmin"), cparams.get("vmax")
         color_meta = {
-            "colormap": cparams.get("colormap", "viridis"),
-            "vmin": float(cparams.get("vmin", auto_lo)),
-            "vmax": float(cparams.get("vmax", auto_hi)),
+            "colormap": cparams.get("colormap", DEFAULT_COLORMAP),
+            "vmin": float(auto_lo if lo is None else lo),
+            "vmax": float(auto_hi if hi is None else hi),
             "label": _clabel,
             "unit": _cunit,
         }
@@ -208,6 +231,7 @@ def build_scene(
                 color_values = color_values[keep]
         except Exception as exc:
             logger.warning("scene_builder: atom filter failed: %s", exc)
+            logger.warning("As a result, 'Only show forces' option may not work properly.")
             keep = None
 
     # atom_ids (ADR 0015): map each displayed atom to its scientific index so a
@@ -303,9 +327,11 @@ def build_scene(
                     old_to_new=old_to_new,
                     transforms=transforms,
                     params=force_params,
+                    frame=idx,
                 )
         except Exception as exc:
             logger.debug("scene_builder: force vectors failed: %s", exc)
+            logger.warning("As a result, 'Only show forces' option may not work properly.")
 
     # Unit cell (pipeline stage; origin derived from transformed positions).
     # Shown by default when lattice data is available; the client opts out by
@@ -380,15 +406,24 @@ def _build_force_scene(
     old_to_new: np.ndarray | None,
     transforms: list,
     params: dict,
+    frame: int = 0,
 ) -> ForceScene | None:
     if keep is not None:
         forces = forces[keep]
 
     force_positions = positions
     if params.get("filter_enabled"):
-        scientific_indices = [int(i) for i in params.get("atom_indices", [])]
-        if not scientific_indices:
-            return None
+        by_frame = params.get("atom_indices_by_frame")
+        if isinstance(by_frame, dict):
+            # a variable dataset: each frame keeps its own picks (to_fix_v2)
+            picked = by_frame.get(str(frame), [])
+        else:
+            picked = params.get("atom_indices", [])
+        scientific_indices = [int(i) for i in picked]
+    else:
+        scientific_indices = []
+    # No picks on this frame means no filter: every atom keeps its arrow.
+    if scientific_indices:
         # atom_indices are scientific (original frame) indices; positions is
         # post-filter compact. Remap via old_to_new when a filter is active.
         if old_to_new is not None:
@@ -414,15 +449,16 @@ def _build_force_scene(
         if transform.ndim == 2:
             forces = forces @ transform
 
-    if params:
-        length = float(params.get("length_factor", FORCE_LENGTH_FACTOR))
-        normalised = bool(params.get("normalised", FORCE_NORMALISED))
-        norms = np.linalg.norm(forces, axis=1)
-        max_norm = float(norms.max()) if len(norms) else 0.0
-        if normalised and max_norm > 1e-10:
-            forces = forces / max_norm * length / FORCE_NORMALISED_DIVISOR
-        else:
-            forces = forces * length / FORCE_RAW_DIVISOR
+    # Scale even with no parameters yet: the first show builds a scene before
+    # the client's length settings arrive, and raw eV/Å drawn as Å flashed long.
+    length = float(params.get("length_factor", FORCE_LENGTH_FACTOR))
+    normalised = bool(params.get("normalised", FORCE_NORMALISED))
+    norms = np.linalg.norm(forces, axis=1)
+    max_norm = float(norms.max()) if len(norms) else 0.0
+    if normalised and max_norm > 1e-10:
+        forces = forces / max_norm * length / FORCE_NORMALISED_DIVISOR
+    else:
+        forces = forces * length / FORCE_RAW_DIVISOR
 
     colors = [list(FORCE_ARROW_COLOR)] * len(force_positions)
     return ForceScene(
@@ -440,8 +476,8 @@ def _kabsch_to_frame0(ds, raw_positions: np.ndarray, z: np.ndarray, state) -> li
     ``view.transforms``. The ``heavy_only`` compute parameter is read from the
     view's stored ``ffast.kabsch_alignment`` parameters (set by the client's
     "Kabsch: heavy atoms only" checkbox); it defaults to the stage default when
-    absent. Returns ``[]`` on atom-count mismatch (variable datasets) or
-    failure, so an unalignable frame renders untransformed.
+    absent. Returns ``[]`` on atom-count mismatch or failure, so an
+    unalignable frame renders untransformed.
     """
     try:
         from ffast.visualization.stages.builtin.transform_stages import (
@@ -464,7 +500,7 @@ def _atom_align_to_reference(ds, raw_positions: np.ndarray, state) -> list:
     Computes translate+rotate transforms via the ``atom_align`` stage so the
     three selected atoms overlap a reference frame, and returns them to append
     to ``view.transforms``. Returns ``[]`` on an invalid selection (not exactly
-    three indices), atom-count mismatch (variable datasets), or failure.
+    three indices), atom-count mismatch, or failure.
     """
     try:
         from ffast.visualization.stages.builtin.transform_stages import atom_align
@@ -496,15 +532,12 @@ def _resolve_filter_indices(raw, z) -> list:
     matched against ``z`` (the *current frame's* atomic numbers), so filtering
     is correct for variable datasets whose composition changes per frame.
     """
-    if not raw:
-        return []
+    tokens = parse_filter_tokens(raw)
     z = np.asarray(z).ravel()
     n = len(z)
-    include: list = []
-    exclude: list = []
     names = None
 
-    def _element_indices(symbol):
+    def _element_indices(symbols):
         nonlocal names
         if names is None:
             try:
@@ -512,31 +545,72 @@ def _resolve_filter_indices(raw, z) -> list:
                 names = [zIntToZStr.get(int(zi), str(int(zi))) for zi in z]
             except Exception:
                 names = [str(int(zi)) for zi in z]
-        return [i for i, nm in enumerate(names) if nm == symbol]
+        return [i for i, nm in enumerate(names) if nm in symbols]
 
-    for tok in raw:
-        if isinstance(tok, bool):
-            continue
-        if isinstance(tok, (int, np.integer)):
-            include.append(int(tok))
-            continue
-        s = str(tok).strip()
-        if not s:
-            continue
-        neg = s.startswith("-")
-        if neg:
-            s = s[1:].strip()
-        try:
-            idx = int(s)
-            (exclude if neg else include).append(idx)
-            continue
-        except ValueError:
-            pass
-        (exclude if neg else include).extend(_element_indices(s))
-
+    include = tokens.keep_atoms + _element_indices(tokens.keep_elements)
+    exclude = tokens.drop_atoms + _element_indices(tokens.drop_elements)
     if not include and exclude:
         return sorted(set(range(n)) - set(exclude))
     return sorted(set(include) - set(exclude))
+
+
+class FilterTokens(NamedTuple):
+    """A mixed atom-filter spec, split: atom numbers and element symbols, each
+    kept or (with a "-") excluded."""
+    keep_atoms: list
+    drop_atoms: list
+    keep_elements: list
+    drop_elements: list
+
+    @property
+    def atoms(self) -> list:
+        return self.keep_atoms + self.drop_atoms
+
+
+def parse_filter_tokens(raw) -> FilterTokens:
+    """Split "0 1 C -H" style tokens (ints or strings) into a FilterTokens. A
+    negative integer excludes, as "-3" does."""
+    tokens = FilterTokens([], [], [], [])
+    for tok in raw or []:
+        if isinstance(tok, bool):
+            continue
+        if isinstance(tok, (int, np.integer)):
+            (tokens.drop_atoms if tok < 0 else tokens.keep_atoms).append(abs(int(tok)))
+            continue
+        s = str(tok).strip()
+        neg = s.startswith("-")
+        if neg:
+            s = s[1:].strip()
+        if not s:
+            continue
+        try:
+            (tokens.drop_atoms if neg else tokens.keep_atoms).append(int(s))
+        except ValueError:
+            (tokens.drop_elements if neg else tokens.keep_elements).append(s)
+    return tokens
+
+
+def resolve_element_tokens(raw, present) -> list:
+    """The atomic numbers an element-only spec keeps, of those in ``present``
+    (ADR 0067). "C" keeps carbon; "-H" keeps every element present but
+    hydrogen; "C -H" keeps carbon. Sorted, so the same elements kept give the
+    same list (and the same fingerprint) however they were typed. Raises
+    ValueError for a symbol that is no element, or when nothing is kept."""
+    from ffast.chemistry import zStrToZInt
+
+    tokens = parse_filter_tokens(raw)
+    unknown = [s for s in tokens.keep_elements + tokens.drop_elements if s not in zStrToZInt]
+    if unknown:
+        raise ValueError(f"{unknown[0]} is not an element or an atom number.")
+    present = {int(z) for z in np.asarray(present).ravel()}
+    wanted = {zStrToZInt[s] for s in tokens.keep_elements} if tokens.keep_elements else present
+    keep = (wanted & present) - {zStrToZInt[s] for s in tokens.drop_elements}
+    if not keep:
+        missing = [s for s in tokens.keep_elements if zStrToZInt[s] not in present]
+        if missing:
+            raise ValueError(f"{', '.join(missing)} is not in this dataset.")
+        raise ValueError("Those elements leave no atoms.")
+    return sorted(keep)
 
 
 def _apply_transforms(positions: np.ndarray, transforms: list) -> np.ndarray:

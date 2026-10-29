@@ -240,11 +240,13 @@ class CodeTextEdit(QtWidgets.QTextEdit):
 
     def getValue(self):
         t = self.toPlainText()
+        if not t.strip():
+            return None  # nothing entered: not an error
         code = None
         try:
             code = ast.literal_eval(t)
-        except (TypeError, MemoryError, SyntaxError, ValueError):
-            logger.exception("Input cannot be evaluated")
+        except (TypeError, MemoryError, SyntaxError, ValueError) as exc:
+            logger.warning("Input cannot be evaluated: %r (%s)", t, exc)
 
         return code
 
@@ -314,6 +316,26 @@ class InfoToolButton(ToolButton):
 
     def __init__(self, **kwargs):
         super().__init__(self._showTooltip, icon="info", **kwargs)
+
+    def _showTooltip(self, _checked=False):
+        tip = self.toolTip()
+        if tip and tip != "information":
+            pos = self.mapToGlobal(self.rect().bottomLeft())
+            QtWidgets.QToolTip.showText(pos, tip, self)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self._showTooltip()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        QtWidgets.QToolTip.hideText()
+
+class RedoToolButton(ToolButton):
+    """Redo button: Auto ranges the plot and shows tooltip immediately on hover."""
+
+    def __init__(self, func, **kwargs):
+        super().__init__(func=func, icon="redo", **kwargs)
 
     def _showTooltip(self, _checked=False):
         tip = self.toolTip()

@@ -7,11 +7,14 @@
   scientific ``selection`` (atom indices) as input, matching the decision to
   make interactive measurements server-owned Metrics.
 
-All are pure geometry: no model, no prediction.
+All are pure geometry: no model, no prediction. The measurement maths itself
+lives in ``ffast.chemistry.geometry``, shared with the Qt Info tool.
 """
 import numpy as np
 
+from ffast.chemistry import geometry
 from ffast.metrics import metric, dims, inputs as I, units
+from ffast.metrics.segments import segmentSums
 
 
 @metric(
@@ -31,13 +34,14 @@ from ffast.metrics import metric, dims, inputs as I, units
             "atol": 1e-10,
         },
         {
-            # uniform: 2 frames × 2 atoms; second frame at ±2 → Rg = 1, 2
+            # 2 frames × 2 atoms, flat; second frame at ±2 → Rg = 1, 2
             "inputs": {
                 "positions": [
-                    [[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]],
-                    [[2.0, 0.0, 0.0], [-2.0, 0.0, 0.0]],
+                    [1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
+                    [2.0, 0.0, 0.0], [-2.0, 0.0, 0.0],
                 ],
-                "elements": [1, 1],
+                "elements": [1, 1, 1, 1],
+                "offsets": [0, 2, 4],
             },
             "expected": [1.0, 2.0],
             "atol": 1e-10,
@@ -47,38 +51,20 @@ from ffast.metrics import metric, dims, inputs as I, units
 def gyradius(positions, elements, offsets=None):
     """Atomic-number-weighted radius of gyration per structure.
 
-    Accepts three input shapes (matching what the InputResolver supplies):
-    - uniform trajectory ``positions (N, M, 3)`` + ``elements (M,)`` → ``(N,)``;
-    - variable dataset ``positions (total, 3)`` + ``elements (total,)`` plus
-      ``offsets`` (molecule boundaries) → ``(N,)``;
-    - a single structure ``positions (n, 3)`` (no offsets) → scalar.
+    Positions are flat ``(atoms, 3)`` and elements every atom's z, as the
+    InputResolver supplies them (ADR 0058 step 6): with ``offsets`` → ``(N,)``,
+    one radius per structure; without, one structure → a scalar.
     """
     R = np.asarray(positions, dtype=np.float64)
     z = np.asarray(elements, dtype=np.float64)
 
-    if R.ndim == 3:
-        # (N, M, 3) uniform; z is (M,)
-        total_z = np.sum(z)
-        if total_z == 0:
-            raise ValueError("gyradius: total atomic-number weight is zero")
-        w = z / total_z
-        com = np.einsum("a,nax->nx", w, R)            # (N, 3) weighted COM
-        s2 = np.sum((R - com[:, None, :]) ** 2, axis=2)  # (N, M)
-        return np.sqrt(s2 @ w)                         # (N,)
-
     if offsets is not None:
-        offs = np.asarray(offsets)
-        out = np.empty(len(offs) - 1, dtype=np.float64)
-        for i in range(len(offs) - 1):
-            r = R[offs[i]:offs[i + 1]]
-            zi = z[offs[i]:offs[i + 1]]
-            sw = np.sum(zi)
-            if sw == 0:
-                raise ValueError("gyradius: total atomic-number weight is zero")
-            com = np.sum(zi[:, None] * r, axis=0) / sw
-            s2 = np.sum((r - com) ** 2, axis=1)
-            out[i] = np.sqrt(np.sum(zi * s2) / sw)
-        return out
+        sw = segmentSums(z, offsets)
+        if np.any(sw == 0):
+            raise ValueError("gyradius: total atomic-number weight is zero")
+        com = segmentSums(z[:, None] * R, offsets) / sw[:, None]
+        s2 = np.sum((R - np.repeat(com, np.diff(np.asarray(offsets, dtype=np.intp)), axis=0)) ** 2, axis=1)
+        return np.sqrt(segmentSums(z * s2, offsets) / sw)
 
     # single structure (n_atoms, 3) → scalar
     sw = np.sum(z)
@@ -108,8 +94,7 @@ def gyradius(positions, elements, offsets=None):
 def distance(positions, selection):
     """Distance between the first two selected atoms."""
     R = np.asarray(positions, dtype=np.float64)
-    i, j = int(selection[0]), int(selection[1])
-    return np.sqrt(np.sum((R[i] - R[j]) ** 2))
+    return geometry.distance(*R[[int(s) for s in selection[:2]]])
 
 
 @metric(
@@ -132,11 +117,7 @@ def distance(positions, selection):
 def angle(positions, selection):
     """Angle (degrees) at the middle of three selected atoms i-j-k."""
     R = np.asarray(positions, dtype=np.float64)
-    i, j, k = int(selection[0]), int(selection[1]), int(selection[2])
-    v, v0 = R[k] - R[j], R[i] - R[j]
-    u = v / np.linalg.norm(v)
-    u0 = v0 / np.linalg.norm(v0)
-    return np.degrees(np.arccos(np.clip(np.dot(u, u0), -1.0, 1.0)))
+    return geometry.angle(*R[[int(s) for s in selection[:3]]])
 
 
 @metric(
@@ -162,11 +143,4 @@ def angle(positions, selection):
 def dihedral(positions, selection):
     """Dihedral (degrees, unsigned) of four selected atoms i-j-k-l."""
     R = np.asarray(positions, dtype=np.float64)
-    p = R[[int(selection[0]), int(selection[1]), int(selection[2]), int(selection[3])]]
-    b = (p[:-1] - p[1:]).copy()
-    b[0] *= -1.0
-    v0 = np.cross(b[0], b[1])
-    v2 = np.cross(b[2], b[1])
-    v0 /= np.linalg.norm(v0)
-    v2 /= np.linalg.norm(v2)
-    return np.degrees(np.arccos(np.clip(np.dot(v0, v2), -1.0, 1.0)))
+    return geometry.dihedral(*R[[int(s) for s in selection[:4]]])

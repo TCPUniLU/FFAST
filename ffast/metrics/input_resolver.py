@@ -85,6 +85,22 @@ def _flatten(value):
     return np.asarray(value)
 
 
+def _flatPerAtom(value, axes):
+    """Per-atom values of all frames as one ``(atoms, ...)`` array (ADR 0058
+    step 6). Predictions and atom fields are kept in each kind's shape: a list
+    of per-frame arrays, or ``(frames, atoms, ...)``. ``axes`` is how many axes
+    one atom's value has (1 for a force, 0 for a scalar field); an array with
+    two more still has its frame axis."""
+    if isinstance(value, list):
+        return _flatten(value)
+    if value is None:
+        return None
+    value = np.asarray(value)
+    if value.ndim == axes + 2:
+        return value.reshape(-1, *value.shape[2:])
+    return value
+
+
 class _ResolverSource(InputSource):
     """Metric Execution Context input source backed by an ``InputResolver``.
 
@@ -111,13 +127,15 @@ class InputResolver:
         """Map one symbolic ref to a full-dataset array, or ``None`` if unavailable."""
         try:
             if ref == "reference.energies":
-                return _flatten(dataset.getEnergies())
+                return dataset.getAllEnergies()
+            # Per-atom inputs are flat on every kind: one row per atom, frame
+            # after frame, with offsets saying where each frame starts.
             if ref == "reference.forces":
-                return _flatten(dataset.getForces())
+                return dataset.getAllForces()
             if ref == "reference.positions":
-                return _flatten(dataset.getCoordinates())
+                return dataset.getAllCoordinates()
             if ref == "reference.elements":
-                return np.asarray(dataset.getElements())
+                return dataset.getAllElements()
             if ref == "reference.masses":
                 return self._masses(dataset)
             if ref in _PREDICTION_REFS:
@@ -125,6 +143,8 @@ class InputResolver:
                 entity = self.env.getData(dt_key, model=model, dataset=dataset)
                 if entity is None:
                     return None
+                if field == "forces":
+                    return _flatPerAtom(entity.get(field), axes=1)
                 return _flatten(entity.get(field))
             if ref == "offsets":
                 return self._offsets(dataset)
@@ -136,7 +156,7 @@ class InputResolver:
                 side, kind, key = parsed
                 if side == "reference":
                     if kind == "atoms":
-                        return _flatten(dataset.getAtomField(key))
+                        return _flatPerAtom(dataset.getAtomField(key), axes=0)
                     return _flatten(dataset.getFrameField(key))
                 return self._prediction_field(model, dataset, kind, key)
             # stress / selection not sourced yet — treated as optional/None
@@ -154,18 +174,33 @@ class InputResolver:
         Prediction Dataset Fields are eagerly extracted at prediction-load time
         into ``DataService.predictionFields[(model_fp, dataset_fp)]`` (the
         prediction's ASE source is otherwise discarded — ADR 0023). Real-model
-        predictions carry no such entry → ``None``. For a Sub/Atom-filtered
-        dataset the fields were stored against the parent, so walk up to it.
+        predictions carry no such entry → ``None``. A DatasetView may read a
+        parent's stored fields; apply each view's frame and atom mapping before
+        returning the values.
         """
+        from ffast.loaders.dataset import DatasetView
+
         store = getattr(self.env, "predictionFields", None)
         if not store or model is None or dataset is None:
             return None
         model_fp = getattr(model, "fingerprint", None)
         ds = dataset
+        views = []
         while ds is not None:
             by_kind = store.get((model_fp, getattr(ds, "fingerprint", None)))
             if by_kind is not None:
-                return _flatten(by_kind.get(kind, {}).get(key))
+                value = by_kind.get(kind, {}).get(key)
+                if value is None:
+                    return None
+                values = (_flatPerAtom(value, axes=0) if kind == "atoms"
+                          else _flatten(value))
+                for view in reversed(views):
+                    indices = (view._flatIndex() if kind == "atoms"
+                               else view._parentFrames())
+                    values = np.asarray(values)[indices]
+                return values
+            if isinstance(ds, DatasetView):
+                views.append(ds)
             ds = getattr(ds, "parent", None)
         return None
 
@@ -178,29 +213,25 @@ class InputResolver:
         # Fall back to standard atomic masses from the elements (Z).
         try:
             from ase.data import atomic_masses
-            z = np.asarray(dataset.getElements(), dtype=int)
+            z = np.asarray(dataset.getAllElements(), dtype=int)
             return np.asarray(atomic_masses[z], dtype=np.float64)
         except Exception as exc:
             logger.warning("InputResolver: reference.masses unavailable: %s", exc)
             return None
 
     def _offsets(self, dataset):
-        if getattr(dataset, "isVariable", False):
-            return np.asarray(dataset.molecule_offsets)
-        return None
+        return np.asarray(dataset.getOffsets())
 
     def _n_atoms(self, dataset):
         """Per-structure atom count (the reserved Expression Variable, ADR 0042).
 
-        Variable datasets: ``np.diff(molecule_offsets)``. Uniform datasets: the
-        constant per-frame count repeated over all frames — a ``(N_frames,)``
-        array so per-atom normalisation lines up with per-structure quantities.
+        ``np.diff`` of the dataset's offsets: one count per frame, whether or
+        not the frames differ in size, so per-atom normalisation lines up with
+        per-structure quantities.
         """
         if dataset is None:
             return None
-        if getattr(dataset, "isVariable", False):
-            return np.diff(np.asarray(dataset.molecule_offsets))
-        return np.full(int(dataset.getN()), int(dataset.getNAtoms()), dtype=np.int64)
+        return np.diff(np.asarray(dataset.getOffsets()))
 
     # ── metric input assembly ──────────────────────────────────────────────
 
