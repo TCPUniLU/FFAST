@@ -823,7 +823,8 @@ async def test_web_rail_swatches_colour_the_same_series_in_every_panel(ffast_web
                 "(el) => { el.value = '#123456'; el.dispatchEvent(new Event('change')); }")
             await page.wait_for_function(
                 "(t) => document.querySelector(`.tabpanel.active .analysis-panel[data-title=\"${t}\"] .panel-plot`)"
-                ".data[0].line.color === '#123456'", arg="Forces MAE timeline", timeout=10000)
+                # ?.: the plot is redrawn for the new colour and may briefly have no series
+                "?.data?.[0]?.line?.color === '#123456'", arg="Forces MAE timeline", timeout=10000)
             assert await colour("Energy MAE timeline") == "#123456"      # the same in every panel
 
             await page.reload(wait_until="networkidle")
