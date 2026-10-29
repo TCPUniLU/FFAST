@@ -5343,9 +5343,9 @@ async def test_web_tiny_atoms_keep_a_minimum_pick_target(ffast_web_server):
             await browser.close()
 
 
-async def test_web_armed_tool_highlights_the_atom_under_the_pointer(ffast_web_server):
-    """ADR 0055: while a tool is armed, the atom a click would pick is drawn
-    larger and lighter; nothing is highlighted with no tool armed."""
+async def test_web_the_atom_under_the_pointer_is_highlighted(ffast_web_server):
+    """The atom under the pointer is drawn larger and lighter, with or without
+    a tool armed (as the desktop does); an orbit drag does not highlight."""
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)
 
@@ -5365,9 +5365,19 @@ async def test_web_armed_tool_highlights_the_atom_under_the_pointer(ffast_web_se
             atom = await _front_atom(page)
             base = await page.evaluate(drawn, atom["index"])
 
-            # No tool armed: hovering does nothing.
+            # No tool armed: the atom under the pointer is still lit.
             await page.mouse.move(atom["x"], atom["y"])
-            assert (await page.evaluate(drawn, atom["index"]))["hovered"] is None
+            await page.wait_for_function(
+                f"() => window.ffastApp.renderer.hoveredAtom === {atom['index']}"
+            )
+            # An orbit drag, then off the molecule: nothing is lit.
+            await page.mouse.down()
+            await page.mouse.move(atom["x"] + 30, atom["y"])
+            await page.mouse.up()
+            rect = await page.locator(CANVAS).bounding_box()
+            await page.mouse.move(rect["x"] + 3, rect["y"] + 3)
+            await page.wait_for_function("() => window.ffastApp.renderer.hoveredAtom === null")
+            atom = await _front_atom(page)
 
             await page.locator("#pick-toolbar button[data-tool='info']").click()
             await page.mouse.move(atom["x"] + 1, atom["y"])

@@ -6,8 +6,9 @@
  * modal-tool model, mirrored from the Qt loupe's single shared select
  * toolbar): arming disables orbit and shows a crosshair; a click resolves the
  * nearest visible atom; a drag with a rectangle-capable tool rubber-bands a
- * box. While armed, the atom a click would pick is highlighted under the
- * pointer (ADR 0055). With no tool armed the pointer stays camera-orbit. The
+ * box. The atom under the pointer is highlighted whether or not a tool is
+ * armed, as on the desktop (ADR 0055; dragging to orbit does not highlight).
+ * With no tool armed the pointer stays camera-orbit. The
  * geometry itself lives on the renderer (pickAtom/boxSelect/setHoveredAtom);
  * this class is just gesture + arming state.
  */
@@ -91,12 +92,12 @@ export class PickController {
   }
 
   _onHoverMove(e) {
-    if (!this._tool || e.buttons) return;   // no tool, or mid-drag
+    if (e.buttons) return;   // mid-drag (orbiting)
     this._hoverAt = this._canvasXY(e);
     if (this._hoverFrame != null) return;
     this._hoverFrame = requestAnimationFrame(() => {
       this._hoverFrame = null;
-      if (!this._tool || !this._hoverAt) return;
+      if (!this._hoverAt) return;
       const hit = this._renderer.pickAtom(this._hoverAt.x, this._hoverAt.y);
       this._renderer.setHoveredAtom(hit ? hit.displayIndex : null);
     });
