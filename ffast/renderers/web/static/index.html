@@ -1091,7 +1091,11 @@
       border-radius: 4px; padding: 5px 8px; width: 100%;
     }
     #cluster-body input[type="text"]:focus { outline: none; border-color: var(--hl2); }
-    #cluster-message.hidden { display: none; }
+    #cluster-message.hidden, #cluster-record.hidden, #cluster-progress.hidden { display: none; }
+    #cluster-message { color: var(--danger); }
+    #cluster-record { display: flex; align-items: center; gap: 8px; font-size: var(--fs-s); }
+    #cluster-progress { max-height: 160px; overflow-y: auto; white-space: pre-wrap;
+      font-size: var(--fs-s); margin: 0; padding: 6px; border: 1px solid var(--bg3); border-radius: 4px; }
     .cluster-row { display: flex; gap: 6px; align-items: center; }
     #cluster-form fieldset, #cluster-form details { border: 1px solid var(--bg3); border-radius: 4px; margin: 4px 0; padding: 6px; }
     #cluster-form fieldset, #cluster-form details[open] .cl-grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 8px; }
@@ -1282,10 +1286,17 @@
           <button id="cluster-delete-btn">Delete</button>
         </div>
         <div id="cluster-form"></div>
+        <div id="cluster-record" class="hidden">
+          <span id="cluster-record-text"></span>
+          <button id="cluster-reconnect-btn"></button>
+        </div>
+        <pre id="cluster-progress" class="hidden"></pre>
       </div>
       <div class="warning-modal-footer">
+        <button id="cluster-stop-btn" disabled>End cluster job</button>
         <span class="spacer"></span>
         <button id="cluster-close">Close</button>
+        <button id="cluster-connect-btn">Connect</button>
       </div>
     </div>
   </div>

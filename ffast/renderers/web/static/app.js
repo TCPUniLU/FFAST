@@ -573,7 +573,11 @@ export class FFastApp {
     document.getElementById('disconnect-btn').addEventListener('click', () => this._disconnect());
     document.getElementById('status').addEventListener('click', () => this._openConnDialog());
     document.getElementById('conn-close').addEventListener('click', () => this._closeConnDialog());
-    this._clusterDialog = this._clusterClient ? new ClusterDialog({ client: this._clusterClient }) : null;
+    this._clusterDialog = this._clusterClient ? new ClusterDialog({
+      client: this._clusterClient,
+      onConnected: (s) => this._useCluster(s),
+      onEnded: () => this._leaveCluster(),
+    }) : null;
     document.getElementById('cluster-close').addEventListener('click', () => this._clusterDialog?.close());
     const dialog = document.getElementById('conn-dialog');
     dialog.addEventListener('keydown', (e) => {
@@ -1491,8 +1495,7 @@ export class FFastApp {
     const token = p.get('token');
     const recent = loadRecentServers();
     if (port) {
-      const host = window.location.hostname || 'localhost';
-      document.getElementById('ws-url').value = `ws://${host}:${port}`;
+      document.getElementById('ws-url').value = this._localServerUrl();
     } else if (recent.length) {
       document.getElementById('ws-url').value = recent[0];
     }
@@ -1532,6 +1535,32 @@ export class FFastApp {
     document.getElementById(focus).focus();
   }
 
+  /** Connect the page to the cluster's server through the launcher's
+   * tunnel (web parity plan 2026-10-29). Not a recent server: the port
+   * changes every time. */
+  _useCluster(status) {
+    document.getElementById('ws-url').value = status.ws_url;
+    document.getElementById('token-input').value = status.token || '';
+    this._connect({ remember: false });
+  }
+
+  /** The launcher's own local server named by the URL's `port`, or null. */
+  _localServerUrl() {
+    const port = new URLSearchParams(window.location.search).get('port');
+    return port ? `ws://${window.location.hostname || 'localhost'}:${port}` : null;
+  }
+
+  /** The cluster job ended: let go of its tunnel and go back to the
+   * launcher's local server, when the URL names one. */
+  _leaveCluster() {
+    this._disconnect();
+    const url = this._localServerUrl();
+    if (!url) return;
+    document.getElementById('ws-url').value = url;
+    document.getElementById('token-input').value = new URLSearchParams(window.location.search).get('token') || '';
+    this._connect();
+  }
+
   _closeConnDialog() {
     this._connUntrap?.();
     this._connUntrap = null;
@@ -1554,7 +1583,7 @@ export class FFastApp {
     document.getElementById('recent-block').classList.toggle('hidden', list.length === 0);
   }
 
-  async _connect() {
+  async _connect({ remember = true } = {}) {
     const wsUrl = document.getElementById('ws-url').value.trim();
     const token = document.getElementById('token-input').value.trim() || null;
     // Explicit READ_ONLY viewer opt-in (ADR 0044 Phase 2, PRD story 73): drops
@@ -1656,7 +1685,7 @@ export class FFastApp {
       // stays. The role is in the button's title.
       this._setStatus(this._readyStatus || 'Connected', 'connected');
       document.getElementById('disconnect-btn').disabled = false;
-      saveRecentServers(rememberServer(loadRecentServers(), wsUrl));   // never the token
+      if (remember) saveRecentServers(rememberServer(loadRecentServers(), wsUrl));   // never the token
       this._syncEmptyState();
       // A server that needs a token gives a client without a valid one the
       // read-only role rather than refusing it.

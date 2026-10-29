@@ -458,6 +458,128 @@ async def test_web_cluster_dialog_saves_and_deletes_profiles(ffast_web_server, t
             await browser.close()
 
 
+class _FakeClusterSession:
+    """A cluster connection whose tunnel is the test server's own port."""
+
+    def __init__(self, job_id, local_port, token=""):
+        from unittest import mock
+        self.job_id, self.local_port, self.token_plaintext = job_id, local_port, token
+        self.ssh_proc = mock.MagicMock()
+        self.ssh_proc.poll.return_value = None
+        self.disconnected = False
+
+    async def close_websocket(self):
+        pass
+
+    async def disconnect(self):
+        self.disconnected = True
+
+
+def _fake_cluster_broker(tmp_path, monkeypatch, **fakes):
+    import cluster.connection as cluster_conn
+    from cluster.config import ClusterConfig
+    from cluster.web_broker import ClusterBroker
+
+    monkeypatch.setattr(cluster_conn, "_SESSIONS_FILE", str(tmp_path / ".ffast" / "sessions.json"))
+    cancelled = []
+
+    async def cancel_job(profile, job_id):
+        cancelled.append(job_id)
+
+    async def job_log(profile, job_id):
+        return ""
+
+    broker = ClusterBroker(ClusterConfig(str(tmp_path / "clusters.json")),
+                           cancel_job=cancel_job, job_log=job_log, **fakes)
+    return broker, cancelled
+
+
+async def test_web_cluster_connect_hands_the_page_the_tunnel(ffast_web_server, tmp_path, monkeypatch):
+    """Web parity plan 2026-10-29: Connect shows progress, then the page
+    connects through the tunnel (here, the test server stands in for the
+    cluster's); End cluster job lets go and cancels the job."""
+    ws_port, _ = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    session = _FakeClusterSession("J1", ws_port)
+
+    async def connect(profile, progress_cb=None, on_job_submitted=None):
+        on_job_submitted("J1")
+        progress_cb("Submitting SLURM job…")
+        await asyncio.sleep(1.5)
+        return session
+
+    broker, cancelled = _fake_cluster_broker(tmp_path, monkeypatch, connect=connect)
+    async with _cluster_page(broker) as page_port, async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 900})
+        try:
+            await page.goto(f"http://127.0.0.1:{page_port}/?launch=s3cret", wait_until="networkidle")
+            await expect(page.locator("#conn-dialog")).to_be_visible()
+            await page.locator("#conn-close").click()
+
+            await _file_menu(page, "Connect to Cluster…")
+            await page.locator("#cl-name").fill("m")
+            await page.locator("#cl-host").fill("h")
+            await page.locator("#cluster-save-btn").click()
+            await expect(page.locator("#cluster-profile")).to_have_value("m")
+            await page.locator("#cluster-connect-btn").click()
+            await expect(page.locator("#cluster-progress")).to_contain_text("Submitting SLURM job…")
+            await expect(page.locator("#cluster-connect-btn")).to_have_text("Cancel")
+
+            await expect(page.locator("#cluster-dialog")).to_be_hidden(timeout=15000)
+            await _expect_connected(page)
+            await expect(page.locator("#ws-url")).to_have_value(f"ws://127.0.0.1:{ws_port}")
+            recent = await page.evaluate("() => window.localStorage.getItem('ffast.recentServers') || ''")
+            assert f"ws://127.0.0.1:{ws_port}" not in recent
+
+            await _file_menu(page, "Connect to Cluster…")
+            await expect(page.locator("#cluster-stop-btn")).to_be_enabled()
+            await page.locator("#cluster-stop-btn").click()
+            await page.locator(".ask-dialog").get_by_role("button", name="End job", exact=True).click()
+            await expect(page.locator("#status")).to_contain_text("Disconnected")
+            for _ in range(100):   # the dialog's stop request is still on its way
+                if cancelled:
+                    break
+                await asyncio.sleep(0.05)
+            assert cancelled == ["J1"]
+            assert session.disconnected
+        finally:
+            await browser.close()
+
+
+async def test_web_cluster_dialog_offers_to_reconnect_a_recorded_job(ffast_web_server, tmp_path, monkeypatch):
+    """A profile with a Session Record offers Reconnect; a dead job purges it."""
+    import cluster.connection as cluster_conn
+    from cluster.backend import ClusterError
+
+    ws_port, _ = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+
+    async def reconnect(profile, job_id, progress_cb=None):
+        raise ClusterError("Job J5 is no longer running")
+
+    broker, _ = _fake_cluster_broker(tmp_path, monkeypatch, reconnect=reconnect)
+    broker.save_profile({"name": "m", "host": "h"})
+    cluster_conn.save_session_record("J5", "m", "node1", 8765)
+    async with _cluster_page(broker) as page_port, async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 900})
+        try:
+            await page.goto(f"http://127.0.0.1:{page_port}/?port={ws_port}&launch=s3cret",
+                            wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Connect to Cluster…")
+            await page.locator("#cluster-profile").select_option("m")
+            await expect(page.locator("#cluster-record-text")).to_contain_text("J5")
+            await expect(page.locator("#cluster-reconnect-btn")).to_have_text("Reconnect to J5")
+            await expect(page.locator("#cluster-connect-btn")).to_have_text("Submit new job")
+            await page.locator("#cluster-reconnect-btn").click()
+            await expect(page.locator("#cluster-message")).to_contain_text("no longer running")
+            await expect(page.locator("#cluster-record")).to_be_hidden()
+        finally:
+            await browser.close()
+
+
 async def test_web_trace_records_the_click_the_command_and_page_errors(tmp_path):
     """ffast-server --trace: one file reads as a timeline — the menu click, the
     command it sent, its handler's time, the reply, and an error in the page."""
