@@ -153,16 +153,33 @@ export function defaultKey(keys, calculator, calculatorValue) {
   return calculator ? calculatorValue : '';
 }
 
+/** A prediction's default name from its key: the part before the first
+ * `_`, `-` or `.` (MACE_energy → MACE), else 'Model' (the desktop's
+ * KeySelectionDialog prefix rule). */
+export function keyPrefix(key) {
+  const m = /^([^_.\-]+)[_.\-]/.exec(key || '');
+  return m ? m[1] : 'Model';
+}
+
 /**
  * The LOAD_DATASET kwargs the loader's choices make. Empty when nothing
- * was chosen, so a plain file sends what it always sent.
- * @param {{keysShown?: boolean, energyKey?: string, forceKey?: string}} c
+ * was chosen, so a plain file sends what it always sent. Extra key pairs
+ * (`predictions`) go as `prediction_keys` [energy, force, name]; an empty key
+ * means "calculator" to the server, as on the desktop.
+ * @param {{keysShown?: boolean, energyKey?: string, forceKey?: string,
+ *   predictions?: {energyKey: string, forceKey: string, name: string}[]}} c
  */
-export function datasetLoadKwargs({ keysShown = false, energyKey = '', forceKey = '' } = {}) {
+export function datasetLoadKwargs({
+  keysShown = false, energyKey = '', forceKey = '', predictions = [],
+} = {}) {
   const kw = {};
   if (keysShown) {
     kw.selected_energy_key = energyKey || null;
     kw.selected_force_key = forceKey || null;
+  }
+  if (keysShown && predictions.length) {
+    kw.prediction_keys = predictions.map(
+      ({ energyKey: e, forceKey: f, name }) => [e || '', f || '', name || 'Model']);
   }
   return kw;
 }
@@ -188,6 +205,7 @@ export class RemoteBrowser {
     this._home = null;        // server user's home directory
     this._selected = null;    // selected filename within _path
     this._types = { datasets: [{ name: 'ase (auto)', extension: '*' }], models: [] };
+    this._probe = null;   // the last key check's answer, for new prediction lines
     this._probing = null;   // the path whose key check is still out
     this._loadWhenReady = false;   // load once the key check is back
     this._pending = null;   // {kind, name, path}: a load with no outcome yet
@@ -204,6 +222,7 @@ export class RemoteBrowser {
     $('fb-load').addEventListener('click', () => this._load());
     $('fb-force-key').addEventListener('change', () => this._refreshLoadEnabled());
     $('fb-type').addEventListener('change', () => this._refreshDatasetKeys());
+    $('fb-add-pred').addEventListener('click', () => this._addPredictionRow());
     $('fb-up').addEventListener('click', () => {
       if (this._parent) this._navigate(this._parent);
     });
@@ -430,6 +449,7 @@ export class RemoteBrowser {
     this._loadWhenReady = false;
     this._probing = null;
     $('fb-keys').hidden = true;
+    $('fb-pred-rows').replaceChildren();
     // null path → server starts at its home directory
     this._navigate(this._path || null);
   }
@@ -517,6 +537,8 @@ export class RemoteBrowser {
   /** Show the Keys row when the file offers a choice; a failed check
    * shows nothing here (the load itself says why it failed). */
   _showDatasetKeys(kw) {
+    $('fb-pred-rows').replaceChildren();
+    this._probe = kw;
     const choice = !kw.error && needsKeyChoice(kw);
     $('fb-keys').hidden = !choice;
     if (!choice) return;
@@ -526,6 +548,46 @@ export class RemoteBrowser {
       calculator: kw.has_calculator_forces, calculatorValue: 'forces' }));
     $('fb-ds-energy-key').value = defaultKey(kw.energy_keys, kw.has_calculator_energy, 'energy');
     $('fb-ds-force-key').value = defaultKey(kw.force_keys, kw.has_calculator_forces, 'forces');
+  }
+
+  /** One more key pair to load as a prediction (as the desktop's
+   * "Add Prediction"). Starts on the first keys the reference is not using. */
+  _addPredictionRow() {
+    const kw = this._probe || {};
+    const row = document.createElement('div');
+    row.className = 'fb-pred-row';
+    const pick = (keys, calc, calcValue, taken, cls, label) => {
+      const sel = document.createElement('select');
+      sel.className = cls;
+      sel.setAttribute('aria-label', label);
+      this._fillSelect(sel, keyOptions(keys, { calculator: calc, calculatorValue: calcValue }));
+      sel.value = (keys || []).find((k) => k !== taken) ?? defaultKey(keys, calc, calcValue);
+      return sel;
+    };
+    const energy = pick(kw.energy_keys, kw.has_calculator_energy, 'energy',
+      $('fb-ds-energy-key').value, 'fb-pred-energy', 'Prediction energy key');
+    const force = pick(kw.force_keys, kw.has_calculator_forces, 'forces',
+      $('fb-ds-force-key').value, 'fb-pred-force', 'Prediction force key');
+    const name = document.createElement('input');
+    name.className = 'fb-pred-name';
+    name.placeholder = 'Model';
+    name.setAttribute('aria-label', 'Prediction name');
+    name.value = keyPrefix(energy.value);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = 'Remove';
+    remove.addEventListener('click', () => row.remove());
+    row.append('Energy', energy, 'Force', force, 'Name', name, remove);
+    $('fb-pred-rows').appendChild(row);
+  }
+
+  /** The prediction lines, as datasetLoadKwargs reads them. */
+  _predictionRows() {
+    return [...document.querySelectorAll('#fb-pred-rows .fb-pred-row')].map((row) => ({
+      energyKey: row.querySelector('.fb-pred-energy').value,
+      forceKey: row.querySelector('.fb-pred-force').value,
+      name: row.querySelector('.fb-pred-name').value.trim(),
+    }));
   }
 
   /** Load now if it can, else as soon as the key check is back (a
@@ -717,6 +779,7 @@ export class RemoteBrowser {
         keysShown: !$('fb-keys').hidden,
         energyKey: $('fb-ds-energy-key').value,
         forceKey: $('fb-ds-force-key').value,
+        predictions: this._predictionRows(),
       });
       this._ports.send(OUT.LOAD_DATASET, kwargs, [path, typ]);
       this._ports.setStatus(`Loading ${this._selected}…`, 'connected');

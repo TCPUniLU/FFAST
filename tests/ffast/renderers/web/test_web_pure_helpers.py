@@ -83,6 +83,9 @@ CASES = {
     "kwargs_none": "rb.datasetLoadKwargs({})",
     "kwargs_keys": "rb.datasetLoadKwargs({keysShown:true, energyKey:'energy', forceKey:'MACE_forces'})",
     "load_probing": "rb.canLoad({selected:'a.xyz', mode:'dataset', probing:true})",
+    "prefix_key": "[rb.keyPrefix('MACE_energy'), rb.keyPrefix('energy')]",
+    "kwargs_preds": "rb.datasetLoadKwargs({keysShown:true, energyKey:'REF_energy', forceKey:'REF_forces', predictions:[{energyKey:'MACE_energy', forceKey:'MACE_forces', name:''}]}).prediction_keys",
+    "kwargs_preds_hidden": "rb.datasetLoadKwargs({keysShown:false, predictions:[{energyKey:'E', forceKey:'F', name:'X'}]})",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1311,6 +1314,12 @@ def test_the_dataset_load_sends_keys_only_when_they_were_chosen(results):
     assert results["kwargs_none"] == {}
     assert results["kwargs_keys"] == {
         "selected_energy_key": "energy", "selected_force_key": "MACE_forces"}
+
+
+def test_extra_key_pairs_become_named_predictions(results):
+    assert results["prefix_key"] == ["MACE", "Model"]
+    assert results["kwargs_preds"] == [["MACE_energy", "MACE_forces", "Model"]]
+    assert results["kwargs_preds_hidden"] == {}
 
 
 def test_a_dataset_waits_for_its_key_check(results):

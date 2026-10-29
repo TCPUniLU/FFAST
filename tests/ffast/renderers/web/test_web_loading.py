@@ -134,3 +134,36 @@ async def test_web_a_recent_dataset_loads_at_once_with_default_keys(ffast_web_se
             assert len(await _sent(page, "PROBE_DATASET_KEYS")) == 1
         finally:
             await browser.close()
+
+
+async def test_web_more_keys_of_a_file_load_as_predictions(ffast_web_server, tmp_path):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    _two_key_file(tmp_path)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 900})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.evaluate(_RECORD_SENDS)
+            await _file_menu(page, "Load Dataset…")
+            await _go_to(page, tmp_path)
+            await page.locator("#fb-list .fb-row", has_text="two_keys.xyz").click()
+            await expect(page.locator("#fb-keys")).to_be_visible()
+            await page.locator("#fb-add-pred").click()
+            rows = page.locator("#fb-pred-rows .fb-pred-row")
+            await expect(rows.locator(".fb-pred-energy")).to_have_value("MACE_energy")
+            await expect(rows.locator(".fb-pred-force")).to_have_value("MACE_forces")
+            await expect(rows.locator(".fb-pred-name")).to_have_value("MACE")
+            await page.locator("#fb-add-pred").click()
+            await expect(rows).to_have_count(2)
+            await rows.nth(1).get_by_role("button", name="Remove").click()
+            await expect(rows).to_have_count(1)
+            await page.locator("#fb-load").click()
+            await expect(page.locator("#model-list .obj-row", has_text="MACE")).to_be_visible(timeout=30000)
+            assert await _sent(page, "LOAD_DATASET") == [{
+                "selected_energy_key": "REF_energy", "selected_force_key": "REF_forces",
+                "prediction_keys": [["MACE_energy", "MACE_forces", "MACE"]]}]
+        finally:
+            await browser.close()
