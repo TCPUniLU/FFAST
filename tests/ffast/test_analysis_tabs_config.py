@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 import ffast.config.tabs as tabs_mod
-from ffast.config.models import AnalysisTabConfig, ProjectConfig
+from ffast.config.models import LABEL_FIELDS, AnalysisTabConfig, ProjectConfig
 from ffast.config.tabs import (
     build_tab_layout,
     compile_tabs_metrics,
@@ -135,6 +135,44 @@ def test_a_linked_panel_is_written_as_its_place_only():
     assert linked == {"kind": "3d", "row": 0, "col": 0}
     assert independent["view"] == "independent" and independent["link_frame"] is False
     assert "link_camera" not in independent and independent["start"]["bond_width"] == 60
+
+
+PLAIN = {"kind": "timeline", "row": 0, "col": 0, "title": "T",
+         "metrics": {"y": {"metric": "ffast.gyradius"}}}
+LABELLED = {**PLAIN, "x_title": "Frame", "y_title": "Rg (Å)", "label_size": 14,
+            "legend_size": 12, "legend_x": 0.1, "legend_y": 0.9}
+
+
+def test_label_edits_parse_and_reach_the_browser():
+    import ffast.metrics.builtin  # noqa: F401
+
+    tab = AnalysisTabConfig.model_validate({"name": "T", "panels": [LABELLED]})
+    panel = build_tab_layout([tab])[0]["panels"][0]
+    assert {k: panel[k] for k in LABEL_FIELDS} == {k: LABELLED[k] for k in LABEL_FIELDS}
+
+
+def test_a_panel_without_label_edits_writes_none():
+    from ffast.config.user_tabs import _authoring
+    tab = AnalysisTabConfig.model_validate({"name": "T", "panels": [PLAIN]})
+    assert not set(LABEL_FIELDS) & set(_authoring(tab)["panels"][0])
+
+
+@pytest.mark.parametrize("extra, error", [
+    ({"label_size": 2}, "label_size"),
+    ({"legend_size": 99}, "legend_size"),
+    ({"legend_x": 9, "legend_y": 0}, "legend_x"),
+    ({"legend_x": 0.5}, "set together"),
+    ({"y_title": ""}, "y_title"),
+])
+def test_label_edits_that_do_not_fit_are_config_errors(extra, error):
+    with pytest.raises(ValidationError, match=error):
+        AnalysisTabConfig.model_validate({"name": "T", "panels": [{**PLAIN, **extra}]})
+
+
+def test_a_3d_panel_takes_no_label_fields():
+    with pytest.raises(ValidationError, match="3D panel"):
+        AnalysisTabConfig.model_validate({"name": "T", "panels": [
+            {"kind": "3d", "row": 0, "col": 0, "y_title": "x"}]})
 
 
 def test_3d_panels_compile_no_metrics_and_reach_the_layout():

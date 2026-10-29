@@ -129,6 +129,9 @@ class StartSettings(BaseModel):
 AxisLabel = Union[str, list[str], None]
 # A panel role binds one metric, or (overlay kinds) a list of series.
 PanelRole = Union[PanelMetricRef, list[PanelMetricRef]]
+# The panel fields the browser's "Edit labels…" writes (web parity plan
+# 2026-10-29); the desktop keeps the same edits in display_overrides.json.
+LABEL_FIELDS = ("x_title", "y_title", "label_size", "legend_size", "legend_x", "legend_y")
 
 
 class PanelConfig(BaseModel):
@@ -139,6 +142,9 @@ class PanelConfig(BaseModel):
     renderer-side keys (``x_label`` … ``options``) pass straight through to the
     engine spec; ``controls`` names panel-level control widgets and the server
     ignores everything but the metric refs (server stays plot-ignorant).
+
+    ``x_title`` … ``legend_y`` are the user's label edits from the browser (axis
+    title text, text sizes, legend place); the desktop ignores them.
 
     ``scroll_group`` is a layout-only hint: panels sharing a non-null group name
     are placed together in one horizontal scroll strip (the table row of the
@@ -166,6 +172,14 @@ class PanelConfig(BaseModel):
     y_label: AxisLabel = None
     diagonal: bool = False
     precision: int | None = None   # table decimals; unset = 3 significant digits
+    # Label edits made in the browser (web parity plan 2026-10-29). Each
+    # replaces what the panel draws by default; unset = the default.
+    x_title: str | None = Field(default=None, min_length=1)   # the whole x axis title, unit included
+    y_title: str | None = Field(default=None, min_length=1)
+    label_size: int | None = Field(default=None, ge=6, le=40)    # px, both axis titles
+    legend_size: int | None = Field(default=None, ge=6, le=40)   # px, the legend's text
+    legend_x: float | None = Field(default=None, ge=-2, le=3)    # legend place, plot-area fractions
+    legend_y: float | None = Field(default=None, ge=-2, le=3)
     hidden_params: list[str] = Field(default_factory=list)
     controls: list[str] = Field(default_factory=list)
     scroll_group: str | None = None
@@ -187,6 +201,15 @@ class PanelConfig(BaseModel):
                 "'link_frame', 'link_camera' and 'start' are for an "
                 "independent 3D panel (view = \"independent\"); a linked "
                 "one shows the main view")
+        return self
+
+    @model_validator(mode="after")
+    def _label_edits_fit(self) -> "PanelConfig":
+        """A 3D panel has no axes or legend; a legend place needs both x and y."""
+        if self.kind == PANEL_KIND_3D and any(getattr(self, f) is not None for f in LABEL_FIELDS):
+            raise ValueError("a 3D panel draws no axes or legend; it takes no label fields")
+        if (self.legend_x is None) != (self.legend_y is None):
+            raise ValueError("'legend_x' and 'legend_y' are set together")
         return self
 
 

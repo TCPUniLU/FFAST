@@ -76,7 +76,7 @@ def _panel_layout(panel, *, registry=None) -> dict:
     """One Panel serialized for the wire (ADR 0045 Phase 3 ``TAB_LAYOUT``).
 
     Every renderer-side field passes through verbatim (``kind``, grid placement,
-    labels, ``diagonal``, ``hidden_params``, ``controls``, ``scroll_group``,
+    labels, label edits (``x_title`` … ``legend_y``), ``diagonal``, ``hidden_params``, ``controls``, ``scroll_group``,
     ``options`` …), except each metric role is replaced by its **resolved
     concrete metric id** (``resolve_ref``) — a single id, or a list of ids for
     an overlay ``series`` role. Resolving server-side keeps the transform

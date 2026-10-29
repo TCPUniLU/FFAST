@@ -6,14 +6,15 @@ original's fingerprint at edit time, the hidden list and the order of new tabs
 live in a side file, state.json, so a tab file can be copied into a project
 as it is. These tests point the store at a temporary folder.
 """
+import hashlib
 import json
 import tomllib
 
 import pytest
 
 import ffast.metrics.builtin  # noqa: F401  (registers the metrics the tabs bind)
-from ffast.config.models import AnalysisTabConfig, ProjectConfig
-from ffast.config.user_tabs import TabError, TabSources, UserTabStore
+from ffast.config.models import LABEL_FIELDS, AnalysisTabConfig, ProjectConfig
+from ffast.config.user_tabs import TabError, TabSources, UserTabStore, tab_fingerprint
 
 
 def _tab(name, *panels):
@@ -377,3 +378,33 @@ def test_hiding_and_ordering_do_not_wipe_each_other(store):
     sources.set_hidden("Gyration", True)
     state = json.loads((store.root / "state.json").read_text())
     assert state["bar_order"] == ["Basic", "3D"] and state["hidden"] == ["Gyration"]
+
+
+def test_label_edits_are_saved_in_the_tab_file_and_go_with_export(store, tmp_path):
+    sources = _sources(store)
+    sources.save({"name": "Gyration", "panels": [
+        {**SMOOTH, "y_title": "Rg (Å)", "label_size": 14, "legend_x": 0.1, "legend_y": 0.9}]},
+        previous_name="Gyration")
+    panel = tomllib.loads((tmp_path / "tabs" / "gyration.toml").read_text())["tabs"][0]["panels"][0]
+    assert (panel["y_title"], panel["label_size"], panel["legend_x"], panel["legend_y"]) == (
+        "Rg (Å)", 14, 0.1, 0.9)
+    assert "legend_size" not in panel and "x_title" not in panel
+    exported = ProjectConfig.model_validate(tomllib.loads(sources.export("Gyration")))
+    assert exported.visualization.tabs[0].panels[0].y_title == "Rg (Å)"
+    assert exported.visualization.tabs[0].panels[0].legend_y == 0.9
+
+    # what "Reset labels" sends: the panel without the fields
+    sources.save({"name": "Gyration", "panels": [SMOOTH]}, previous_name="Gyration")
+    panel = tomllib.loads((tmp_path / "tabs" / "gyration.toml").read_text())["tabs"][0]["panels"][0]
+    assert not set(LABEL_FIELDS) & set(panel)
+
+
+def test_a_tab_without_label_edits_keeps_its_fingerprint():
+    tab = _tab("Gyration", SMOOTH)
+    data = tab.model_dump(mode="json")
+    for panel in data["panels"]:
+        for key in LABEL_FIELDS:
+            del panel[key]
+    old = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
+    assert old == tab_fingerprint(tab)
+    assert tab_fingerprint(_tab("Gyration", {**SMOOTH, "y_title": "Rg"})) != old

@@ -118,3 +118,9 @@ def test_tab_changes_are_controlling_only():
     """A read-only viewer may export, not change (ADR 0044 Phase 2)."""
     assert {control.SAVE_TAB, control.DELETE_TAB, control.HIDE_TAB, control.SET_TAB_ORDER} <= control.MUTATING_CLIENT_EVENTS
     assert control.EXPORT_TAB not in control.MUTATING_CLIENT_EVENTS
+
+
+def test_label_edits_reach_every_window(env):
+    _, everyone = _dispatch(env, control.SAVE_TAB, {
+        "tab": {"name": "Basic", "panels": [{**TABLE, "y_title": "Mine"}]}, "previous_name": "Basic"})
+    assert _layout(everyone)["tabs"][1]["panels"][0]["y_title"] == "Mine"
