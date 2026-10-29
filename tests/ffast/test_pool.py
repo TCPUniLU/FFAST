@@ -268,10 +268,15 @@ def test_hard_time_limit_returns_metric_failure(registry):
 
 
 def test_executor_recovers_after_time_limit(registry):
-    policy = PoolPolicy(max_runtime_s=0.3, grace_period_s=0.1)
+    # Only the slow metric is held to 0.3s: the replacement worker's first task
+    # unpickles its function by importing this module, which alone can pass
+    # 0.3s on a loaded machine and failed the recovery run at random.
+    registry.metric(id="test.slow_limited", inputs={"x": "ref.x"}, shape="scalar",
+                    unit="energy", hints={"max_runtime_s": 0.3})(_pool_slow)
+    policy = PoolPolicy(max_runtime_s=30.0, grace_period_s=0.1)
     executor = WorkerProcessExecutor(registry, policy)
     try:
-        result1 = executor.run("test.slow", FlatInputSource({"x": 0.0}), {})
+        result1 = executor.run("test.slow_limited", FlatInputSource({"x": 0.0}), {})
         assert isinstance(result1, MetricFailure)
 
         result2 = executor.run("test.identity", FlatInputSource({"x": 99.0}), {})
