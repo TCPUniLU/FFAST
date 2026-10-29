@@ -34,7 +34,7 @@ import { datasetUnits, editableDimension, resolveUnit } from './units.js';
 import { unitPopover } from './dialogs.js';
 import { sharedMenu } from './actions.js';
 import { icon } from './icons.js';
-import { plotCsv, panelFileName, downloadText, downloadPlot } from './panel_export.js';
+import { plotCsv, tableCsv, panelFileName, downloadText, downloadPlot } from './panel_export.js';
 import { KIND_3D } from './tab_rules.js';
 import { GRID_COLUMNS, ROW_UNIT_PX, toFineGrid } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
@@ -1051,7 +1051,6 @@ export class AnalysisManager {
     more.setAttribute('aria-label', `More for ${spec.title || 'this panel'}`);
     more.setAttribute('aria-haspopup', 'menu');
     more.setAttribute('aria-expanded', 'false');
-    more.hidden = !PLOT_KINDS.has(spec.kind);   // tables get theirs with the table download
     title.appendChild(more);
     el.appendChild(title);
 
@@ -1085,7 +1084,12 @@ export class AnalysisManager {
   _panelActions(t, spec, card) {
     const el = card.body;
     const stem = panelFileName(spec);
-    if (!PLOT_KINDS.has(spec.kind)) return [];
+    if (!PLOT_KINDS.has(spec.kind)) {
+      const table = () => el.querySelector('table.panel-table');
+      return [{ id: 'panel-table-csv', label: 'Download table (CSV)',
+        unavailable: () => (table() ? '' : 'Nothing is drawn yet'),
+        run: () => downloadText(tableCsv(table()), `${stem}.csv`) }];
+    }
     const notDrawn = () => (el.querySelector('.main-svg') ? '' : 'Nothing is drawn yet');
     return [
       { id: 'panel-png', label: 'Download PNG', run: () => downloadPlot(el, 'png', stem), unavailable: notDrawn },

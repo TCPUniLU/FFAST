@@ -101,6 +101,16 @@ CASES = {
     "csv_quotes": "pe.csvText([['a,b', 'say \"hi\"', 1.5, NaN]])",
     "plot_csv": "pe.plotCsv([{x: [0, 1], y: [0.5, 0.25], name: 'MACE'}, {x: [0, 9], y: [0, 9], hoverinfo: 'skip'}], {xTitle: 'Configuration index', yTitle: 'Energy MAE (eV)'})",
     "plot_csv_typed": "pe.plotCsv([{x: new Float64Array([1]), y: new Float64Array([2]), name: ''}])",
+    "table_csv": """(() => { const s = (v) => ({nd: {values: [v], shape: [1]}});
+      const html = pn.buildPanel({kind:'table', precision:2, title:'MAE'}, [{datasetFp:'d1', datasetName:'aspirin',
+        modelFp:'m1', modelName:'MACE', name:'MACE', data:{value: s(0.123456)}}], {}).html;
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      return [pe.tableCsv(doc.querySelector('table')), doc.querySelector('td[data-value]').textContent]; })()""",
+    "grouped_table_csv": """(() => { const a = (v) => ({nd: {values: v, shape: [v.length]}});
+      const html = pn.buildPanel({kind:'grouped_table', precision:2}, [
+        {name:'MACE', data:{mae: a([0.1, 0.2]), rmse: a([0.5, 0.6])}}], {elementOrder:[1,6], selectedElements:[1,6]}).html;
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      return [pe.tableCsv(doc.querySelector('table')), doc.querySelector('tbody td:nth-child(2)').textContent]; })()""",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1386,6 +1396,18 @@ def test_plot_csv_is_one_row_per_point_without_helper_traces(results):
     assert results["plot_csv"] == (
         "series,Configuration index,Energy MAE (eV)\nMACE,0,0.5\nMACE,1,0.25\n")
     assert results["plot_csv_typed"] == "series,x,y\n,1,2\n"
+
+
+def test_table_csv_keeps_the_full_number_the_screen_rounds(results):
+    csv, shown = results["table_csv"]
+    assert csv == "MAE,aspirin\nMACE,0.123456\n"
+    assert shown == "0.12"
+
+
+def test_grouped_table_csv_keeps_the_raw_numbers(results):
+    csv, shown = results["grouped_table_csv"]
+    assert csv.splitlines()[1:] == ["H,0.1,0.5", "C,0.2,0.6"]
+    assert shown == "0.10"
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

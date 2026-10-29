@@ -6574,3 +6574,31 @@ async def test_web_a_plot_downloads_svg_and_csv(ffast_web_server):
             assert len(lines) > 2
         finally:
             await browser.close()
+
+
+async def test_web_a_table_downloads_as_csv(ffast_web_server):
+    """Web parity plan 2026-10-29: a table's ⋯ menu downloads it as CSV."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            panel = page.locator(".tabpanel.active .analysis-panel[data-title='Energy MAE']")
+            await expect(panel.locator("table.panel-table")).to_be_visible(timeout=25000)
+            await panel.locator(".panel-more").click()
+            async with page.expect_download() as dl:
+                await page.locator("#panel-menu-list [data-action='panel-table-csv']").click()
+            download = await dl.value
+            assert download.suggested_filename == "Energy_MAE.csv"
+            with open(await download.path()) as f:
+                lines = f.read().splitlines()
+            assert len(lines) >= 2
+            assert re.search(r"\d", lines[1])
+        finally:
+            await browser.close()

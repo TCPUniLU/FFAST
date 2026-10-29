@@ -637,6 +637,13 @@ function esc(s) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
 
+/** A table cell showing `v` rounded, with the full number kept in
+ * `data-value` for the CSV download (panel_export.js). */
+function valueCell(v, precision) {
+  const raw = typeof v === 'number' && Number.isFinite(v) ? ` data-value="${v}"` : '';
+  return `<td${raw}>${v === undefined ? '—' : fmt(v, precision)}</td>`;
+}
+
 /**
  * Scalar metric over the dataset × prediction grid — the desktop's
  * `TableKind` (rows are predictions, columns are datasets).
@@ -671,7 +678,7 @@ export function buildTable(spec, series, ctx) {
   const body = '<tbody>' + rows.map((r) =>
     `<tr><td>${esc(r.label)}</td>` + cols.map((c) => {
       const v = cellOf.get(`${r.key}|${c.key}`);
-      return `<td>${v === undefined ? '—' : fmt(v, spec.precision)}</td>`;
+      return valueCell(v, spec.precision);
     }).join('') + '</tr>').join('') + '</tbody>';
   return `<table class="panel-table">${head}${body}</table>`;
 }
@@ -695,11 +702,10 @@ export function buildGroupedTable(spec, series, ctx) {
   const list = series || [];
   if (!list.length) return '<div class="panel-msg">No data for this selection.</div>';
 
-  const cell = (s, z, role, allRole) => {
-    if (z === 'All') return fmt(scalarOf(s.data[allRole]), spec.precision);
+  const rawCell = (s, z, role, allRole) => {
+    if (z === 'All') return scalarOf(s.data[allRole]);
     const ri = order.indexOf(z);
-    if (ri < 0) return '—';
-    return fmt(values1d(s.data[role])[ri], spec.precision);
+    return ri < 0 ? undefined : values1d(s.data[role])[ri];
   };
 
   if (selected.length > 1) {
@@ -709,8 +715,8 @@ export function buildGroupedTable(spec, series, ctx) {
       + `<th${unitAttr(ctx, 'rmse')}>${esc(rmse)}</th></tr></thead>`;
     const body = '<tbody>' + shown.map((z) =>
       `<tr><td>${z === 'All' ? 'All' : esc(elementSymbol(z))}</td>`
-      + `<td>${cell(s, z, 'mae', 'mae_all')}</td>`
-      + `<td>${cell(s, z, 'rmse', 'rmse_all')}</td></tr>`).join('') + '</tbody>';
+      + valueCell(rawCell(s, z, 'mae', 'mae_all'), spec.precision)
+      + valueCell(rawCell(s, z, 'rmse', 'rmse_all'), spec.precision) + '</tr>').join('') + '</tbody>';
     return `<table class="panel-table">${head}${body}</table>`;
   }
 
@@ -722,8 +728,8 @@ export function buildGroupedTable(spec, series, ctx) {
     + `<th${unitAttr(ctx, 'rmse')}>${esc(label)} ${esc(rmse)}</th></tr></thead>`;
   const body = '<tbody>' + list.map((s) =>
     `<tr><td>${esc(s.name || 'Reference')}</td>`
-    + `<td>${cell(s, z, 'mae', 'mae_all')}</td>`
-    + `<td>${cell(s, z, 'rmse', 'rmse_all')}</td></tr>`).join('') + '</tbody>';
+    + valueCell(rawCell(s, z, 'mae', 'mae_all'), spec.precision)
+    + valueCell(rawCell(s, z, 'rmse', 'rmse_all'), spec.precision) + '</tr>').join('') + '</tbody>';
   return `<table class="panel-table">${head}${body}</table>`;
 }
 
