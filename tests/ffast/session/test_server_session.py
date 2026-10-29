@@ -464,6 +464,24 @@ def test_dispatch_load_dataset_restores_prediction_key_tuples():
     assert kwargs["slice_num"] == 3
 
 
+class _ZeroEnv(_FakeEnv):
+    zero_calls = 0
+
+    def taskLoadZeroModel(self):
+        self.zero_calls += 1
+
+
+def test_load_zero_model_asks_the_env_once_per_request():
+    env = _ZeroEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("LOAD_ZERO_MODEL", [], {})
+
+    _run(scenario())
+    assert env.zero_calls == 1
+
+
 class _FailingLoadEnv(_FakeEnv):
     """A load that raises, as a non-dataset file does inside the load task."""
 

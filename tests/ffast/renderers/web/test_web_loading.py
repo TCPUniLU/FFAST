@@ -245,3 +245,29 @@ async def test_web_a_model_that_cannot_load_says_why(ffast_web_server):
             await expect(page.locator("#toasts .toast")).to_have_count(1)
         finally:
             await browser.close()
+
+
+async def test_web_the_zero_model_loads_only_when_asked(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(page.locator("#model-list .obj-row")).to_have_count(0)
+            await _file_menu(page, "Load Zero Model")
+            row = page.locator("#model-list .obj-row", has_text="Zero Model")
+            await expect(row).to_be_visible(timeout=30000)
+            await expect(row).not_to_have_class(re.compile(r"\bselected\b"))
+            await expect(row).not_to_have_class(re.compile(r"\bdisabled\b"))
+            assert await page.evaluate("() => window.ffastApp._currentModelFp") is None
+            await expect(page.locator("#status")).to_contain_text('Model "Zero Model" loaded')
+            await row.click()
+            await expect(row).to_have_class(re.compile(r"\bselected\b"))
+            await _file_menu(page, "Load Zero Model")
+            await expect(page.locator("#status")).to_have_text(
+                '"Zero Model" is already loaded', timeout=15000)
+        finally:
+            await browser.close()

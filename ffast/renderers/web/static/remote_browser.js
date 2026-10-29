@@ -811,6 +811,14 @@ export class RemoteBrowser {
     });
   }
 
+  /** File ▸ Load Zero Model: no file to pick. Its "Loading…" ends like a
+   * model's (REMOTE_MODEL_META, or "already loaded" when the task ends). */
+  loadZeroModel() {
+    this._ports.send(OUT.LOAD_ZERO_MODEL, {}, []);
+    this._ports.setStatus('Loading Zero Model…', 'connected');
+    this._pending = { kind: 'model', name: 'Zero Model', path: null };
+  }
+
   /** Which load this window is waiting for: 'dataset', 'prediction', 'model' or null. */
   pendingKind() {
     return this._pending?.kind ?? null;
@@ -821,7 +829,7 @@ export class RemoteBrowser {
    * so a later task end must not touch it. True if one was pending. */
   settled(kind, ok = true, fp = null) {
     if (this._pending?.kind !== kind) return false;
-    if (ok) this._remember(this._pending.path, kind);
+    if (ok && this._pending.path) this._remember(this._pending.path, kind);
     // The units typed in the loader are named on the dataset that arrived.
     if (ok && kind === 'dataset' && fp) {
       for (const [dimension, unit] of Object.entries(this._pending.units || {})) {
@@ -839,7 +847,7 @@ export class RemoteBrowser {
   onTaskDone() {
     if (!this._pending) return;
     this._ports.setStatus(`"${this._pending.name}" is already loaded`, 'connected');
-    this._remember(this._pending.path, this._pending.kind);
+    if (this._pending.path) this._remember(this._pending.path, this._pending.kind);
     this._pending = null;
   }
 

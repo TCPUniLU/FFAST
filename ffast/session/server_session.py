@@ -180,6 +180,7 @@ class ServerSession:
             control.LIST_DIR:                   _Route(self._on_list_dir, ["?path"], ListDirRequest),
             control.LOAD_PREDICTION:            _Route(self._on_load_prediction, ["path", "dataset_fp"], LoadPredictionRequest),
             control.LOAD_EXAMPLE:               _Route(self._on_load_example, [], EmptyRequest),
+            control.LOAD_ZERO_MODEL:            _Route(self._on_load_zero_model, [], EmptyRequest),
             control.REQUEST_PREDICTION_ARRAYS:  _Route(self._on_request_prediction_arrays, ["dataset_fp", "model_fp"], RequestPredictionArraysRequest),
             control.OPEN_VIEW:                  _Route(self._on_open_view, [], OpenViewRequest),
             control.CLOSE_VIEW:                 _Route(self._on_close_view, ["view_id"], CloseViewRequest),
@@ -803,6 +804,11 @@ class ServerSession:
             selected_force_key=selected_force_key,
             on_error=self._load_failed("prediction", path),
         )
+
+    async def _on_load_zero_model(self, **kwargs) -> None:
+        """Load the zero baseline model; a second request loads nothing
+        (the window then reads "already loaded" from the task's end)."""
+        self.env.taskLoadZeroModel()
 
     async def _on_load_example(self, **kwargs) -> None:
         """Load the example pair in ``examples/data``: the dataset, then the

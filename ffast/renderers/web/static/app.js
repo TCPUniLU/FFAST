@@ -626,6 +626,8 @@ export class FFastApp {
         unavailable: () => needsControl() || (this._datasets.size ? '' : 'Load a dataset first') },
       { id: 'load-model', label: 'Load Model…', menu: 'file',
         run: () => this._browser.open('model'), unavailable: needsControl },
+      { id: 'load-zero-model', label: 'Load Zero Model', menu: 'file',
+        run: () => this._browser.loadZeroModel(), unavailable: needsControl },
       // The example pair in examples/data: the server knows where it lives.
       { id: 'load-example', label: 'Load Example Dataset and Prediction', menu: 'file',
         run: () => {
