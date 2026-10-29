@@ -923,7 +923,9 @@ async def test_web_file_menu_greys_out_server_actions_while_disconnected(ffast_w
             await page.locator("#conn-close").click()
             await page.locator("#file-menu-btn").click()
             items = page.locator("#file-menu-list [role=menuitem]")
-            for label in FILE_MENU[:-1]:
+            for label in FILE_MENU:
+                if label.startswith("Connect to"):
+                    continue
                 item = items.filter(has_text=label)
                 await expect(item).to_be_disabled()
                 await expect(item).to_have_attribute("title", re.compile("Connect to a server"))
