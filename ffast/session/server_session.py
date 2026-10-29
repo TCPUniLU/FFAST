@@ -406,7 +406,7 @@ class ServerSession:
         )
 
     async def _on_load_model(self, path, model_type, **kwargs) -> None:
-        self.env.taskLoadModel(path, model_type)
+        self.env.taskLoadModel(path, model_type, on_error=self._load_failed("model", path))
 
     async def _on_delete_object(self, fingerprint, **kwargs) -> None:
         self.env.deleteObject(fingerprint)

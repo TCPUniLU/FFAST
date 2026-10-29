@@ -131,9 +131,10 @@ class LoadingCoordinator:
     ## MODELS
     #############
 
-    def taskLoadModel(self, path, modelType):
+    def taskLoadModel(self, path, modelType, on_error=None):
         """Queue model loading so disk I/O and setup do not block the main loop."""
-        self._queueLoad(self.loadModel, "Loading model", args=(path, modelType))
+        self._queueLoad(self.loadModel, "Loading model", args=(path, modelType),
+                        on_error=on_error)
 
     def requestModelLoad(self, path, modelType):
         """Dispatch a model load through the server, or in-process as fallback.
@@ -153,10 +154,13 @@ class LoadingCoordinator:
             loop,
         )
 
-    def loadModel(self, path, modelType, taskID=None):
+    def loadModel(self, path, modelType, taskID=None, on_error=None):
         """Validate and instantiate a concrete model from disk."""
         loaderClass = self._resolveLoad("model", path, modelType)
         if loaderClass is None:
+            if on_error:
+                on_error(f"no file at {path}" if not os.path.exists(path)
+                         else f"this server has no model type {modelType!r}")
             return None
 
         # Instantiating a concrete predicting ModelLoader triggers its heavy ML
@@ -166,7 +170,10 @@ class LoadingCoordinator:
         try:
             model = loaderClass(self._env, path)
             if model is None:
-                logger.warning(f"Model `{path}` did not load successfully")
+                logger.warning(f"Model `{path}` did not load successfully",
+                               extra={"popup": on_error is None})
+                if on_error:
+                    on_error("the model loader returned nothing")
                 return
             model.initialise()
         except (ImportError, ModuleNotFoundError) as exc:
@@ -175,13 +182,19 @@ class LoadingCoordinator:
                 f"backend is not available in this ffast-server environment "
                 f"({exc}). Install the backend where the server runs "
                 f"(local venv or cluster). Predictions require server-side "
-                f"inference (ADR 0030)."
+                f"inference (ADR 0030).",
+                extra={"popup": on_error is None},
             )
+            if on_error:
+                on_error(exc)
             return None
         except Exception as exc:
             logger.error(
-                f"Failed to load model `{path}` of type `{modelType}`: {exc}"
+                f"Failed to load model `{path}` of type `{modelType}`: {exc}",
+                extra={"popup": on_error is None},
             )
+            if on_error:
+                on_error(exc)
             return None
 
         # Registry mutation serialized against concurrent loads/deletes from

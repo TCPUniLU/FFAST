@@ -167,7 +167,7 @@ SUBSET_EXTRACTED = "SUBSET_EXTRACTED"
 # generic broadcast loop).
 SESSION_SAVED = "SESSION_SAVED"
 SESSION_LOADED = "SESSION_LOADED"
-# A LOAD_DATASET / LOAD_PREDICTION that failed: {kind, path, error}, to the
+# A LOAD_DATASET / LOAD_PREDICTION / LOAD_MODEL that failed: {kind, path, error}, to the
 # window that asked. The load runs in a task whose TASK_FAILED carries only a
 # task id, so without this the window's "Loading…" never ended. One-shot
 # announcement, out of REPLY_EVENTS.

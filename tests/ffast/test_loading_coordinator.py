@@ -978,3 +978,32 @@ def test_resolveLoad_dataset_kind_reads_the_dataset_registry(tmp_path):
         _resolve_env(datasetTypes={"ase (auto)": sentinel}, modelTypes={"ase (auto)": object()}))
 
     assert coord._resolveLoad("dataset", str(path), "ase (auto)") is sentinel
+
+
+# ── a model that fails to load says why (web parity plan 2026-10-29) ──────
+
+def _model_env(model_types):
+    env = _fake_env()
+    env.modelTypes = model_types
+    env.datasetTypes = {}
+    return env
+
+
+def test_a_model_that_fails_to_load_reports_why(tmp_path):
+    class Broken:
+        def __init__(self, env, path):
+            raise ValueError("bad file")
+
+    (tmp_path / "m.bin").write_bytes(b"x")
+    errors = []
+    LoadingCoordinator(_model_env({"Broken": Broken})).loadModel(
+        str(tmp_path / "m.bin"), "Broken", on_error=errors.append)
+    assert [str(e) for e in errors] == ["bad file"]
+
+
+def test_a_missing_model_file_reports_why(tmp_path):
+    errors = []
+    LoadingCoordinator(_model_env({})).loadModel(
+        str(tmp_path / "nope.bin"), "Broken", on_error=errors.append)
+    assert len(errors) == 1
+    assert "no file at" in str(errors[0])

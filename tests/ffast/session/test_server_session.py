@@ -473,10 +473,14 @@ class _FailingLoadEnv(_FakeEnv):
     def taskLoadPrepredictedDataset(self, path, dataset_fp, on_error=None, **kwargs):
         on_error(ValueError("no forces"))
 
+    def taskLoadModel(self, path, model_type, on_error=None):
+        on_error(ImportError("no module named mace"))
+
 
 @pytest.mark.parametrize("event, args, kind", [
     ("LOAD_DATASET", ["/x/README.md", "ase"], "dataset"),
     ("LOAD_PREDICTION", ["/x/pred.xyz", "abcdef123456"], "prediction"),
+    ("LOAD_MODEL", ["/x/m.model", "MACE"], "model"),
 ])
 def test_a_failed_load_tells_the_window_which_file_and_why(event, args, kind):
     async def scenario():
@@ -490,7 +494,7 @@ def test_a_failed_load_tells_the_window_which_file_and_why(event, args, kind):
     assert name == control.LOAD_FAILED
     assert kwargs["kind"] == kind
     assert kwargs["path"] == args[0]
-    assert kwargs["error"] in ("list index out of range", "no forces")
+    assert kwargs["error"] in ("list index out of range", "no forces", "no module named mace")
 
 
 class _ExampleEnv:

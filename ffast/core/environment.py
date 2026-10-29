@@ -144,9 +144,9 @@ class Environment(EventClass):
         return self.models.get(self.getKeyFromPath(path))
 
 
-    def taskLoadModel(self, path, modelType):
+    def taskLoadModel(self, path, modelType, on_error=None):
         """Delegate to the Loading Coordinator (ADR 0034)."""
-        return self.loading.taskLoadModel(path, modelType)
+        return self.loading.taskLoadModel(path, modelType, on_error=on_error)
 
     def requestModelLoad(self, path, modelType):
         """Delegate to the Loading Coordinator (ADR 0034)."""
