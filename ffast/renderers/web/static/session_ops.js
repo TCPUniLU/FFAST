@@ -1,10 +1,10 @@
 /**
- * Server-side write operations: save session, load session, export subset,
- * plus the path prompt they share (ADR 0050).
+ * Server-side write operations: save session, load session, export subset
+ * (ADR 0050).
  *
  * All three write on the *server*, which has no native file dialog reachable
- * from a browser, so each collects a path through one small modal and then
- * reports the outcome the server sends back. PNG export is here too, as the one
+ * from a browser, so each chooses its place in the file browser (the ports'
+ * `pick`) and then reports the outcome the server sends back. PNG export is here too, as the one
  * export that is genuinely client-side (the canvas is local).
  *
  * These were five methods and two fields on `FFastApp`, and the session half
@@ -15,7 +15,6 @@
  */
 
 import { OUT } from './events.js';
-import { trapFocus } from './dialogs.js';
 
 /**
  * Status line for a finished session operation.
@@ -55,8 +54,6 @@ export function safeName(name, fallback = 'ffast') {
   return cleaned || fallback;
 }
 
-const $ = (id) => document.getElementById(id);
-
 export class SessionOps {
   /**
    * @param {{
@@ -65,34 +62,20 @@ export class SessionOps {
    *   getCurrentDatasetFp: () => string | null,
    *   getDatasetMeta: (fp: string) => {name?: string} | undefined,
    *   capturePng: (opts: {transparent: boolean, background: string}) => Promise<string>,
+   *   pick: (opts: object) => void,
    * }} ports
    */
   constructor(ports) {
     this._ports = ports;
-    this._onConfirm = null;
-  }
-
-  /** Wire the shared path modal's own controls. Called once, at app setup. */
-  bindControls() {
-    $('path-cancel').addEventListener('click', () => this._closePathModal());
-    $('path-ok').addEventListener('click', () => this._confirmPathModal());
-    $('path-modal').addEventListener('click', (e) => {
-      if (e.target.id === 'path-modal') this._closePathModal();
-    });
-    $('path-input').addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') this._confirmPathModal();
-    });
-    $('path-modal').addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') this._closePathModal();
-    });
   }
 
   saveSession() {
-    this._openPathModal({
+    this._ports.pick({
+      mode: 'save-folder',
       title: 'Save Session',
       okLabel: 'Save',
-      defaultValue: '~/ffast-session',
-      onConfirm: (path) => {
+      name: 'ffast-session',
+      onPick: (path) => {
         this._ports.send(OUT.SAVE_SESSION, { path });
         this._ports.setStatus(`Saving session to ${path}…`, 'connected');
       },
@@ -100,11 +83,11 @@ export class SessionOps {
   }
 
   loadSession() {
-    this._openPathModal({
+    this._ports.pick({
+      mode: 'open-folder',
       title: 'Load Session',
       okLabel: 'Load',
-      defaultValue: '~/ffast-session',
-      onConfirm: (path) => {
+      onPick: (path) => {
         this._ports.send(OUT.LOAD_SESSION, { path });
         this._ports.setStatus(`Loading session from ${path}…`, 'connected');
       },
@@ -116,11 +99,12 @@ export class SessionOps {
     const fp = this._ports.getCurrentDatasetFp();
     if (!fp) return;
     const base = safeName(this._ports.getDatasetMeta(fp)?.name, 'subset');
-    this._openPathModal({
-      title: 'Export Subset (extxyz)',
+    this._ports.pick({
+      mode: 'save-file',
+      title: 'Export Dataset',
       okLabel: 'Export',
-      defaultValue: `~/${base}.extxyz`,
-      onConfirm: (path) => {
+      name: `${base}.extxyz`,
+      onPick: (path) => {
         this._ports.send(OUT.EXPORT_SUBSET, { fingerprint: fp, path });
         this._ports.setStatus(`Exporting to ${path}…`, 'connected');
       },
@@ -148,45 +132,5 @@ export class SessionOps {
   onSubsetExported(kw) {
     const { text, kind } = exportStatus(kw);
     this._ports.setStatus(text, kind);
-  }
-
-  /** Close the modal without acting — used when the connection drops. */
-  reset() {
-    this._closePathModal();
-  }
-
-  // ── internals ───────────────────────────────────────────────────────────
-
-  _openPathModal({ title, okLabel, defaultValue = '', onConfirm }) {
-    this._onConfirm = onConfirm;
-    $('path-title').textContent = title;
-    $('path-ok').textContent = okLabel;
-    $('path-error').style.display = 'none';
-    const input = $('path-input');
-    input.value = defaultValue;
-    $('path-modal').classList.remove('hidden');
-    this._untrap ||= trapFocus($('path-modal'));
-    input.focus();
-    input.select();
-  }
-
-  _closePathModal() {
-    this._untrap?.();
-    this._untrap = null;
-    $('path-modal').classList.add('hidden');
-    this._onConfirm = null;
-  }
-
-  _confirmPathModal() {
-    const path = $('path-input').value.trim();
-    if (!path) {
-      const err = $('path-error');
-      err.textContent = 'Enter a path first';
-      err.style.display = 'block';
-      return;
-    }
-    const onConfirm = this._onConfirm;
-    this._closePathModal();
-    onConfirm?.(path);
   }
 }

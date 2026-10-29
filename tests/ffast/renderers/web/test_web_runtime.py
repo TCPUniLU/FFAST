@@ -297,6 +297,13 @@ async def _preload_dataset_and_prediction(ws_port: int) -> tuple[str, str]:
         await ws.close()
 
 
+async def _go_to_in_browser(page, folder):
+    """In the open file browser, list `folder` and wait until it is shown."""
+    await page.locator("#fb-path").fill(str(folder))
+    await page.locator("#fb-path").press("Enter")
+    await expect(page.locator("#fb-path")).to_have_value(str(folder))
+
+
 async def _file_menu(page, label):
     """Run a File menu action by its label."""
     await page.locator("#file-menu-btn").click()
@@ -2753,10 +2760,10 @@ async def test_web_dialogs_and_repeated_controls_have_their_own_names(ffast_web_
             await page.keyboard.press("Escape")
 
             await _file_menu(page, "Save Session…")
-            path = page.locator("#path-modal")
+            path = page.locator("#fb-modal")
             await expect(path).to_have_attribute("role", "dialog")
             await expect(path).to_have_attribute("aria-modal", "true")
-            await expect(path).to_have_attribute("aria-labelledby", "path-title")
+            await expect(path).to_have_attribute("aria-labelledby", "fb-title")
             await page.keyboard.press("Escape")
 
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
@@ -2843,9 +2850,9 @@ async def test_web_closing_a_dialog_gives_focus_back_to_what_opened_it(ffast_web
             await page.keyboard.press("Enter")
             await page.locator("#file-menu-list").get_by_role("menuitem", name="Save Session…").focus()
             await page.keyboard.press("Enter")
-            await expect(page.locator("#path-input")).to_be_focused()
+            await expect(page.locator("#fb-name")).to_be_focused()
             await page.keyboard.press("Escape")
-            await expect(page.locator("#path-modal")).to_be_hidden()
+            await expect(page.locator("#fb-modal")).to_be_hidden()
             await expect(file_btn).to_be_focused()
         finally:
             await browser.close()
@@ -6077,8 +6084,9 @@ async def test_web_export_subset_writes_extxyz_and_reports_path(ffast_web_server
 
             target = tmp_path / "sub.extxyz"
             await _file_menu(page, "Export Selected Dataset…")
-            await page.locator("#path-input").fill(str(target))
-            await page.locator("#path-ok").click()
+            await _go_to_in_browser(page, tmp_path)
+            await page.locator("#fb-name").fill("sub.extxyz")
+            await page.locator("#fb-load").click()
 
             await expect(page.locator("#status")).to_contain_text(str(target), timeout=15000)
             await expect(page.locator("#status")).not_to_contain_text("failed")
@@ -6150,8 +6158,10 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
                 await _open_loupe(page, ws_port_a, web_port_a, dataset_fp)
 
                 await _file_menu(page, "Save Session…")
-                await page.locator("#path-input").fill(str(session_dir))
-                await page.locator("#path-ok").click()
+                await expect(page.locator("#fb-title")).to_have_text("Save Session")
+                await _go_to_in_browser(page, tmp_path)
+                await page.locator("#fb-name").fill("session")
+                await page.locator("#fb-load").click()
 
                 # SESSION_SAVED carries {ok, path} and is what produces this
                 # status (ADR 0050). It replaced inferring completion from the
@@ -6182,8 +6192,8 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
                 await expect(page.locator("#dataset-list .obj-row")).to_have_count(0)
 
                 await _file_menu(page, "Load Session…")
-                await page.locator("#path-input").fill(str(session_dir))
-                await page.locator("#path-ok").click()
+                await _go_to_in_browser(page, session_dir)
+                await page.locator("#fb-load").click()
 
                 await expect(page.locator("#dataset-list .obj-row")).to_have_count(1, timeout=15000)
                 await expect(page.locator("#status")).to_contain_text("Loaded session")
@@ -6197,7 +6207,7 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
                 await browser.close()
 
 
-async def test_web_loading_a_session_that_does_not_exist_shows_an_error(ffast_web_server):
+async def test_web_loading_a_session_that_does_not_exist_shows_an_error(ffast_web_server, tmp_path):
     """ADR 0063 follow-up: a missing session folder used to report "Loaded session"."""
     ws_port, web_port = ffast_web_server
     await _wait_for_server_ready(ws_port)
@@ -6208,11 +6218,11 @@ async def test_web_loading_a_session_that_does_not_exist_shows_an_error(ffast_we
             await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
             await _expect_connected(page)
             await _file_menu(page, "Load Session…")
-            await page.locator("#path-input").fill("/nonexistent/x")
-            await page.locator("#path-ok").click()
+            await _go_to_in_browser(page, tmp_path)
+            await page.locator("#fb-load").click()
             status = page.locator("#status")
             await expect(status).to_contain_text("Session load failed", timeout=15000)
-            await expect(status).to_contain_text("No saved session at /nonexistent/x")
+            await expect(status).to_contain_text(f"No saved session at {tmp_path}")
             await expect(status).to_have_class(re.compile(r"\berror\b"))
             await expect(status).not_to_contain_text("Loaded session")
         finally:
@@ -6741,5 +6751,27 @@ async def test_web_the_file_browser_starts_where_the_server_started(ffast_web_se
             await _expect_connected(page)
             await _file_menu(page, "Load Dataset…")
             await expect(page.locator("#fb-path")).to_have_value(str(REPO_ROOT))
+        finally:
+            await browser.close()
+
+
+async def test_web_export_overwrites_a_file_clicked_in_the_list(ffast_web_server, tmp_path):
+    """Export Dataset: clicking a file puts its name in the box (web parity plan 2026-10-29)."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    target = tmp_path / "old.extxyz"
+    target.write_text("")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _file_menu(page, "Export Selected Dataset…")
+            await _go_to_in_browser(page, tmp_path)
+            await page.locator("#fb-list .fb-row", has_text="old.extxyz").click()
+            await expect(page.locator("#fb-name")).to_have_value("old.extxyz")
+            await page.locator("#fb-load").click()
+            await expect(page.locator("#status")).to_contain_text("old.extxyz", timeout=15000)
+            assert len(ase.io.read(str(target), index=":")) == len(ase.io.read(DATASET_PATH, index=":"))
         finally:
             await browser.close()

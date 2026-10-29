@@ -8,6 +8,8 @@
  * selected filename, dataset-vs-prediction mode — which lived as five `_fb*`
  * fields on `FFastApp` alongside everything else.
  *
+ * The same browser also picks where a session or an export goes (`pick`).
+ *
  * Two pure helpers (`joinPath`, `formatSize`) are exported for direct unit
  * testing; the rest needs the modal's DOM.
  */
@@ -87,6 +89,18 @@ export function matchEntries(entries, prefix, limit = 8) {
   return (entries || []).filter((e) => e.name.toLowerCase().startsWith(p)).slice(0, limit);
 }
 
+/** The browser also chooses where a session or an export goes (web parity). */
+export const PICK_MODES = new Set(['save-folder', 'open-folder', 'save-file']);
+
+/** The server path a pick mode returns, or null while there is none:
+ *  the folder on screen for 'open-folder', a name inside it otherwise. */
+export function pickPath({ mode, dir, name }) {
+  if (!dir) return null;
+  if (mode === 'open-folder') return dir;
+  const n = String(name ?? '').trim();
+  return n ? joinPath(dir, n) : null;
+}
+
 /**
  * Decide whether the modal's Load button can be pressed.
  *
@@ -97,7 +111,9 @@ export function matchEntries(entries, prefix, limit = 8) {
  */
 export function canLoad({
   selected, mode, forceKey, targetDataset, probing = false, isNpz = false, modelType = '',
+  dir = null, name = '',
 }) {
+  if (PICK_MODES.has(mode)) return pickPath({ mode, dir, name }) !== null;
   if (!selected) return false;
   if (mode === 'model') return Boolean(modelType);
   if (mode === 'prediction') return Boolean(targetDataset && (forceKey || isNpz));
@@ -245,6 +261,7 @@ export class RemoteBrowser {
     this._probe = null;   // the last key check's answer, for new prediction lines
     this._probing = null;   // the path whose key check is still out
     this._loadWhenReady = false;   // load once the key check is back
+    this._pick = null;   // {onPick}: the browser is choosing where a session or export goes
     this._pending = null;   // {kind, name, path}: a load with no outcome yet
     this._asks = new Map();   // folder asked for suggestions → replies still to come
     this._suggest = { items: [], active: -1, dir: '' };
@@ -259,6 +276,12 @@ export class RemoteBrowser {
     $('fb-load').addEventListener('click', () => this._load());
     $('fb-force-key').addEventListener('change', () => this._refreshLoadEnabled());
     $('fb-type').addEventListener('change', () => this._refreshDatasetKeys());
+    $('fb-name').addEventListener('input', () => this._refreshLoadEnabled());
+    $('fb-name').addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (!$('fb-load').disabled) this._load();
+    });
     $('fb-stride').addEventListener('input', () => this._drawLarge());
     $('fb-add-pred').addEventListener('click', () => this._addPredictionRow());
     $('fb-up').addEventListener('click', () => {
@@ -477,12 +500,47 @@ export class RemoteBrowser {
     $('fb-dataset-fields').style.display = mode === 'dataset' ? '' : 'none';
     $('fb-prediction-fields').style.display = mode === 'prediction' ? 'inline-flex' : 'none';
     $('fb-model-fields').style.display = mode === 'model' ? 'inline-flex' : 'none';
+    $('fb-pick-fields').hidden = true;
+    $('fb-load').textContent = 'Load';
+    this._pick = null;
     const isPred = mode === 'prediction';
     if (isPred) this._populatePredictionTargets();
-    $('fb-modal').classList.remove('hidden');
-    this._hideSuggestions();
     this._renderRecent();
     this._renderUnitChoices();
+    this._show();
+  }
+
+  /**
+   * Choose where a session or an export goes, in the same browser: a folder
+   * to save into with a name ('save-folder'), a folder to open
+   * ('open-folder'), or a file name ('save-file', clicking a file puts its name
+   * in the box).
+   * @param {{mode: 'save-folder'|'open-folder'|'save-file', title: string, okLabel: string,
+   *   name?: string, onPick: (path: string) => void}} o
+   */
+  pick({ mode, title, okLabel, name = '', onPick }) {
+    this._mode = mode;
+    this._pick = { onPick };
+    $('fb-title').textContent = title;
+    $('fb-load').textContent = okLabel;
+    $('fb-dataset-fields').style.display = 'none';
+    $('fb-prediction-fields').style.display = 'none';
+    $('fb-model-fields').style.display = 'none';
+    $('fb-recent').hidden = true;
+    $('fb-pick-fields').hidden = mode === 'open-folder';
+    $('fb-name').value = name;
+    this._show();
+    this._focusFirstRow = mode === 'open-folder';
+    if (mode !== 'open-folder') {
+      $('fb-name').focus();
+      $('fb-name').select();
+    }
+  }
+
+  /** The part of opening the modal every mode shares. */
+  _show() {
+    $('fb-modal').classList.remove('hidden');
+    this._hideSuggestions();
     this._untrap ||= trapFocus($('fb-modal'));
     this._focusFirstRow = true;   // once the listing arrives (_render)
     this._selected = null;
@@ -494,7 +552,7 @@ export class RemoteBrowser {
     $('fb-stride').value = '1';
     $('fb-large').hidden = true;
     this._large = null;
-    // null path → server starts at its home directory
+    // null path → server starts at its work folder (--workdir, else its start folder)
     this._navigate(this._path || null);
   }
 
@@ -532,6 +590,7 @@ export class RemoteBrowser {
     $('fb-path').value = kw.path || '';
     $('fb-up').disabled = !kw.parent;
     this._render(kw.entries || []);
+    this._refreshLoadEnabled();   // in a pick mode the folder on screen enables the button
     if (this._focusAfterListing) {
       // Going up leaves the cursor on the folder we came from.
       const name = this._focusAfterListing;
@@ -770,6 +829,7 @@ export class RemoteBrowser {
       this._refreshLarge(Number(row.dataset.size || 0));
     }
     if (this._mode === 'model') $('fb-model-type').value = typeForFile(name, this._types.models, '');
+    if (this._mode === 'save-file') $('fb-name').value = name;
     this._refreshLoadEnabled();
   }
 
@@ -808,6 +868,8 @@ export class RemoteBrowser {
       probing: this._mode === 'dataset' && Boolean(this._probing),
       isNpz: this._mode === 'prediction' && isNpzFile(this._selected),
       modelType: $('fb-model-type').value,
+      dir: this._path,
+      name: $('fb-name').value,
     });
   }
 
@@ -852,6 +914,15 @@ export class RemoteBrowser {
   }
 
   _load() {
+    if (this._pick) {
+      const path = pickPath({ mode: this._mode, dir: this._path, name: $('fb-name').value });
+      if (!path) return;
+      const { onPick } = this._pick;
+      this._pick = null;
+      this.close();
+      onPick(path);
+      return;
+    }
     if (!this._selected) return;
     const path = joinPath(this._path, this._selected);
     if (this._mode === 'prediction') {

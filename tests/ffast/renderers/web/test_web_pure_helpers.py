@@ -129,6 +129,11 @@ CASES = {
         "  return [await p, ...meta];"
         "})()"
     ),
+    "pick_open_folder": "rb.pickPath({mode: 'open-folder', dir: '/runs', name: 'x'})",
+    "pick_save_folder": "rb.pickPath({mode: 'save-folder', dir: '/runs/', name: ' s1 '})",
+    "pick_no_name": "rb.pickPath({mode: 'save-file', dir: '/runs', name: ''})",
+    "pick_no_dir": "rb.pickPath({mode: 'save-file', dir: null, name: 'a'})",
+    "load_pick_mode": "rb.canLoad({selected: null, mode: 'open-folder', dir: '/runs'})",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1473,6 +1478,25 @@ def test_the_legend_fields_count_only_when_a_legend_shows(results):
 
 def test_a_fields_dialog_answers_with_the_boxes_text_in_order(results):
     assert results["fields_dialog"] == [["a", "b", "12"], "number", "6"]
+
+
+# ── remote_browser.pickPath ─────────────────────────────────────────────────
+
+def test_open_folder_returns_the_folder_on_screen(results):
+    assert results["pick_open_folder"] == "/runs"
+
+
+def test_save_folder_joins_the_trimmed_name_to_the_folder(results):
+    assert results["pick_save_folder"] == "/runs/s1"
+
+
+def test_a_pick_without_a_name_or_a_folder_returns_nothing(results):
+    assert results["pick_no_name"] is None
+    assert results["pick_no_dir"] is None
+
+
+def test_a_pick_mode_loads_with_only_a_folder(results):
+    assert results["load_pick_mode"] is True
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

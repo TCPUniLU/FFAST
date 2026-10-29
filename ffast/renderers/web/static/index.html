@@ -1152,43 +1152,11 @@
     }
     select:focus { outline: none; border-bottom-color: var(--hl2); }
     #fb-type { width: 130px; }
+    #fb-pick-fields { display: inline-flex; align-items: center; gap: 6px; }
+    #fb-pick-fields[hidden] { display: none; }
+    #fb-name { width: 220px; }
     #fb-energy-unit, #fb-force-unit { width: 100px; }
 
-    /* ── server-side path prompt (issues 20/21) ──────────────────────── */
-    #path-modal {
-      position: fixed; inset: 0; z-index: 100;
-      background: rgba(0,0,0,0.6);
-      display: flex; align-items: center; justify-content: center;
-    }
-    #path-modal.hidden { display: none; }
-    #path-panel {
-      width: 440px; max-width: 92vw;
-      background: var(--bg2); border: 1px solid var(--bg3); border-radius: 6px;
-      display: flex; flex-direction: column; overflow: hidden;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.6);
-    }
-    #path-header {
-      padding: 8px 10px; border-bottom: 1px solid var(--bg3);
-    }
-    #path-header .title {
-      font-size: var(--fs-m); font-weight: 600; color: var(--hl2);
- }
-    #path-body { padding: 12px 10px; display: flex; flex-direction: column; gap: 6px; }
-    #path-body label {
-      font-size: var(--fs-s); color: var(--muted); font-weight: 600;
- }
-    #path-input {
-      font-family: var(--font); font-size: var(--fs-m);
-      color: var(--text1); background: var(--surface-2); border: 1px solid var(--bg3);
-      border-radius: 4px; padding: 5px 8px; width: 100%;
-    }
-    #path-input:focus { outline: none; border-color: var(--hl2); }
-    #path-error { color: var(--danger); font-size: var(--fs-s); }
-    #path-footer {
-      display: flex; align-items: center; gap: 8px;
-      padding: 8px 10px; border-top: 1px solid var(--bg3);
-    }
-    #path-footer .spacer { flex: 1; }
   </style>
 
   <!-- Three.js is vendored under vendor/three/ (no CDN — the client must work
@@ -1442,6 +1410,10 @@
           <label for="fb-model-type">Model type</label>
           <select id="fb-model-type" style="width:130px"></select>
         </span>
+        <span id="fb-pick-fields" hidden>
+          <label for="fb-name">Name</label>
+          <input id="fb-name" type="text" spellcheck="false" autocomplete="off">
+        </span>
         <span class="spacer"></span>
         <button id="fb-cancel">Cancel</button>
         <button id="fb-load" disabled>Load</button>
@@ -1449,27 +1421,6 @@
     </div>
   </div>
 
-  <!-- ── server-side path prompt (issues 20/21): session save/load + subset
-       export all write server-side, with no native file dialog reachable
-       from the browser — one small modal collects a path for whichever
-       action armed it. ──────────────────────────────────────────────── -->
-  <div id="path-modal" class="hidden" role="dialog" aria-modal="true" aria-labelledby="path-title">
-    <div id="path-panel">
-      <div id="path-header">
-        <span class="title" id="path-title">Save Session</span>
-      </div>
-      <div id="path-body">
-        <label for="path-input">Server-side path</label>
-        <input id="path-input" type="text" placeholder="~/ffast-session">
-        <div id="path-error" style="display:none"></div>
-      </div>
-      <div id="path-footer">
-        <span class="spacer"></span>
-        <button id="path-cancel">Cancel</button>
-        <button id="path-ok">Save</button>
-      </div>
-    </div>
-  </div>
 <!-- Warning shown when atoms are hidden by "Only show force vectors". -->
 <div id="only-forces-warning-modal" class="warning-modal hidden" role="dialog"
      aria-modal="true" aria-labelledby="only-forces-warning-title">

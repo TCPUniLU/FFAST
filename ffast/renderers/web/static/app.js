@@ -187,6 +187,7 @@ export class FFastApp {
       getCurrentDatasetFp: () => this._currentDatasetFp,
       getDatasetMeta: (fp) => this._datasets.get(fp),
       capturePng: (opts) => this._capturePng(opts),
+      pick: (opts) => this._browser.pick(opts),
     });
     this._rail = new Rail({
       datasetList: document.getElementById('dataset-list'),
@@ -603,13 +604,12 @@ export class FFastApp {
       () => runAction(this._action('load-example')));
     this._syncEmptyState();
     // Each modal owns its own controls (ADR 0050).
-    this._sessionOps.bindControls();
     this._browser.bindControls();
   }
 
   /** The one action list (ADR 0055): the File menu today; shortcuts and the
    * command palette read the same entries. Session save/load (issue 21) and
-   * subset export (issue 20) reuse one path prompt — the browser has no
+   * subset export (issue 20) use the file browser — the browser has no
    * native server-side save dialog. */
   /** '' when this window may change the shared session, else why not. */
   _needsControl() {
@@ -1682,7 +1682,6 @@ export class FFastApp {
     document.getElementById('frame-slider').disabled = true;
     for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = true;
     this._browser.close();
-    this._sessionOps.reset();
     this._tabOps.reset();
     this._metricOps.reset();
     this._panes.metrics.disconnected();
@@ -2727,7 +2726,7 @@ export class FFastApp {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
       const el = e.target;
       if (el.closest?.('input, textarea, select, [contenteditable]')) return;
-      if (document.querySelector('.warning-modal:not(.hidden), #fb-modal:not(.hidden), #path-modal:not(.hidden), #unit-popover')) return;
+      if (document.querySelector('.warning-modal:not(.hidden), #fb-modal:not(.hidden), #unit-popover')) return;
       const click = (id) => { e.preventDefault(); document.getElementById(id).click(); };
       // The frame, play and search keys act on the 3D controls, which a tab
       // without a 3D panel keeps parked out of sight (_parkChrome).
