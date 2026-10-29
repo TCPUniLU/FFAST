@@ -92,12 +92,12 @@ export function matchEntries(entries, prefix, limit = 8) {
  *
  * Pure so the rule is testable without the DOM. A dataset needs only a selected
  * file; a prediction additionally needs a force key (force arrows are the point
- * of loading one) and a target dataset to attach to. A dataset waits for its
- * key check.
+ * of loading one; an .npz prediction carries its own E and F, so it needs no
+ * key) and a target dataset to attach to. A dataset waits for its key check.
  */
-export function canLoad({ selected, mode, forceKey, targetDataset, probing = false }) {
+export function canLoad({ selected, mode, forceKey, targetDataset, probing = false, isNpz = false }) {
   if (!selected) return false;
-  if (mode === 'prediction') return Boolean(forceKey && targetDataset);
+  if (mode === 'prediction') return Boolean(targetDataset && (forceKey || isNpz));
   if (mode === 'dataset') return !probing;
   return true;
 }
@@ -175,6 +175,11 @@ export function largeFileNote({ size, n = null, stride = 1, error = null }) {
   const all = `${head}: ${n.toLocaleString('en-US')} frames.`;
   if (!step) return `${all} Set "Every Nth frame" to load fewer.`;
   return `${all} Every ${step}th frame: ~${Math.max(1, Math.ceil(n / step)).toLocaleString('en-US')}.`;
+}
+
+/** Whether a file name is an .npz file. */
+export function isNpzFile(name) {
+  return /\.npz$/i.test(name || '');
 }
 
 /** A prediction's default name from its key: the part before the first
@@ -739,11 +744,19 @@ export class RemoteBrowser {
     }
     row.classList.add('selected');
     if (this._mode === 'prediction') {
-      // Probe the chosen file for the energy/force keys it actually contains.
-      const path = joinPath(this._path, name);
-      $('fb-energy-key').innerHTML = '<option value="">…probing…</option>';
-      $('fb-force-key').innerHTML = '<option value="">…probing…</option>';
-      this._probeKeys(path);
+      if (isNpzFile(name)) {
+        // An .npz prediction holds its own E and F: nothing to probe or choose.
+        const only = [{ value: '', label: 'from the .npz file' }];
+        this._fillSelect($('fb-energy-key'), only);
+        this._fillSelect($('fb-force-key'), only);
+        this._probing = null;
+      } else {
+        // Probe the chosen file for the energy/force keys it actually contains.
+        const path = joinPath(this._path, name);
+        $('fb-energy-key').innerHTML = '<option value="">…probing…</option>';
+        $('fb-force-key').innerHTML = '<option value="">…probing…</option>';
+        this._probeKeys(path);
+      }
     }
     if (this._mode === 'dataset') {
       $('fb-type').value = typeForFile(name, this._types.datasets);
@@ -786,6 +799,7 @@ export class RemoteBrowser {
       forceKey: $('fb-force-key').value,
       targetDataset: $('fb-target-ds').value,
       probing: this._mode === 'dataset' && Boolean(this._probing),
+      isNpz: this._mode === 'prediction' && isNpzFile(this._selected),
     });
   }
 
@@ -823,7 +837,7 @@ export class RemoteBrowser {
       const dsFp = $('fb-target-ds').value;
       const eKey = $('fb-energy-key').value || null;
       const fKey = $('fb-force-key').value || null;
-      if (!dsFp || !fKey) return;
+      if (!dsFp || (!fKey && !isNpzFile(this._selected))) return;
       // LOAD_PREDICTION reads args=[path, dataset_fp] + key kwargs; on success
       // the server fires REMOTE_MODEL_META → _onModelMeta selects it.
       this._ports.send(

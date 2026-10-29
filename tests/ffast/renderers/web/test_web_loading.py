@@ -192,3 +192,27 @@ async def test_web_every_nth_frame_and_the_large_file_note(ffast_web_server):
                 "() => [...window.ffastApp._datasets.values()].some((m) => m.n === 10)", timeout=30000)
         finally:
             await browser.close()
+
+
+async def test_web_an_npz_prediction_loads(ffast_web_server, tmp_path):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    dataset_fp = await _preload_uniform_dataset(ws_port, tmp_path)
+    n_atoms = len(ase.io.read(DATASET_PATH, index=0))
+    np.savez(tmp_path / "pred.npz", E=np.zeros(5), F=np.zeros((5, n_atoms, 3)))
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.evaluate(_RECORD_SENDS)
+            await _file_menu(page, "Load Prediction…")
+            await _go_to(page, tmp_path)
+            await page.locator("#fb-list .fb-row", has_text="pred.npz").click()
+            await expect(page.locator("#fb-force-key")).to_have_text("from the .npz file")
+            await expect(page.locator("#fb-load")).to_be_enabled()
+            await page.locator("#fb-load").click()
+            await expect(page.locator("#model-list .obj-row", has_text="pred.npz")).to_be_visible(timeout=30000)
+            assert await _sent(page, "PROBE_DATASET_KEYS") == []
+        finally:
+            await browser.close()
