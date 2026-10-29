@@ -1611,6 +1611,7 @@ export class FFastApp {
       // and the view would never open.
       this._conn = conn;
       this._readyStatus = null;
+      this._browser.forgetFolder();
 
       // Metric channel (ADR 0045 Phase 3). The metric client registers the
       // METRIC_RESULT handler; build it before connect so buffered

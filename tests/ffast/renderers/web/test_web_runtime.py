@@ -7204,3 +7204,37 @@ async def test_web_alt_shift_shortcuts_open_the_file_actions(ffast_web_server):
             await expect(page.locator("#status")).to_contain_text("Open a dataset first")
         finally:
             await browser.close()
+
+
+async def test_web_the_file_browser_starts_in_the_new_servers_workdir_after_switching(tmp_path):
+    """A folder from one server means nothing on another (e.g. a laptop path
+    on a cluster): after connecting elsewhere the browser starts in the new
+    server's work folder, not where it was last."""
+    first, second = tmp_path / "laptop", tmp_path / "cluster"
+    first.mkdir()
+    second.mkdir()
+    (first / "inner").mkdir()
+    async with _spawn_server("--workdir", str(first)) as (ws1, web1), \
+            _spawn_server("--workdir", str(second)) as (ws2, _):
+        await _wait_for_server_ready(ws1)
+        await _wait_for_server_ready(ws2)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+            try:
+                await page.goto(f"http://127.0.0.1:{web1}/?port={ws1}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _file_menu(page, "Load Dataset…")
+                await expect(page.locator("#fb-path")).to_have_value(str(first))
+                await page.locator("#fb-list .fb-row.dir", has_text="inner").dblclick()
+                await expect(page.locator("#fb-path")).to_have_value(str(first / "inner"))
+                await page.locator("#fb-cancel").click()
+
+                await page.locator("#status").click()
+                await page.locator("#ws-url").fill(f"ws://127.0.0.1:{ws2}")
+                await page.locator("#connect-btn").click()
+                await _expect_connected(page)
+                await _file_menu(page, "Load Dataset…")
+                await expect(page.locator("#fb-path")).to_have_value(str(second))
+            finally:
+                await browser.close()

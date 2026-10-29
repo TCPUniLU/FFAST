@@ -568,6 +568,14 @@ export class RemoteBrowser {
     this._navigate(this._path || null);
   }
 
+  /** A new server: its folders are not the last one's (a laptop path means
+   * nothing on a cluster), so the next open starts in its work folder. */
+  forgetFolder() {
+    this._path = null;
+    this._parent = null;
+    this._home = null;
+  }
+
   close() {
     this._loadWhenReady = false;
     this._probing = null;
