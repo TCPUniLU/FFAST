@@ -138,6 +138,8 @@ class InputResolver:
                 return dataset.getAllElements()
             if ref == "reference.masses":
                 return self._masses(dataset)
+            if ref == "reference.periodic":
+                return self._periodic(dataset)
             if ref in _PREDICTION_REFS:
                 dt_key, field = _PREDICTION_REFS[ref]
                 entity = self.env.getData(dt_key, model=model, dataset=dataset)
@@ -221,6 +223,14 @@ class InputResolver:
 
     def _offsets(self, dataset):
         return np.asarray(dataset.getOffsets())
+
+    def _periodic(self, dataset):
+        """Whether any frame has a unit cell. ASE stores a zero cell for a
+        molecule, and an sGDML file without a lattice has none at all."""
+        lattice = dataset.getLattice() if hasattr(dataset, "getLattice") else None
+        if lattice is None:
+            return False
+        return bool(np.any(np.asarray(lattice, dtype=float) != 0))
 
     def _n_atoms(self, dataset):
         """Per-structure atom count (the reserved Expression Variable, ADR 0042).

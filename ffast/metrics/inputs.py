@@ -51,6 +51,8 @@ reference_stress    = "reference.stress"
 reference_positions = "reference.positions"
 reference_elements  = "reference.elements"
 reference_masses    = "reference.masses"
+# Whether the dataset has a unit cell: one bool for the whole dataset.
+reference_periodic  = "reference.periodic"
 
 prediction_energies = "prediction.energies"
 prediction_forces   = "prediction.forces"
@@ -75,6 +77,7 @@ ALL_VALID_REFS: frozenset = frozenset({
     reference_positions,
     reference_elements,
     reference_masses,
+    reference_periodic,
     prediction_energies,
     prediction_forces,
     prediction_stress,
