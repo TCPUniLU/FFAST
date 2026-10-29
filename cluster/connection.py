@@ -575,6 +575,23 @@ class ServerConnection:
             timeout=timeout,
         )
 
+    async def close_websocket(self) -> None:
+        """Say goodbye and close the WebSocket, but keep the SSH tunnel open.
+
+        The web launcher's broker connects only to check the server answers;
+        the page then makes its own connection through the same tunnel
+        (web parity plan 2026-10-29). GRACEFUL_DISCONNECT tells the server this
+        close is on purpose. Best-effort, like disconnect().
+        """
+        try:
+            await self.push_event(control.GRACEFUL_DISCONNECT)
+        except Exception:
+            pass
+        try:
+            await self.websocket.close()
+        except Exception:
+            pass
+
     async def disconnect(self) -> None:
         """
         Close WebSocket and kill SSH tunnel.
@@ -586,14 +603,7 @@ class ServerConnection:
         unexpected drop never reaches here; the socket just dies). Best-effort:
         a send failure on an already-dead socket must not block the close.
         """
-        try:
-            await self.push_event(control.GRACEFUL_DISCONNECT)
-        except Exception:
-            pass
-        try:
-            await self.websocket.close()
-        except Exception:
-            pass
+        await self.close_websocket()
         try:
             self.ssh_proc.terminate()
             self.ssh_proc.wait(timeout=5)
