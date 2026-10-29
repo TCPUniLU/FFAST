@@ -9,6 +9,33 @@ from collections.abc import Mapping
 logger = logging.getLogger("FFAST")
 
 
+def macosQtEnv(platform, environ, site_dirs):
+    """The Qt variables main.py sets before importing PySide6, as a dict.
+
+    macOS only: they point Qt at PySide6's own plugins and pick the cocoa
+    display platform, which exists nowhere else. Nothing is set when the user
+    set QT_PLUGIN_PATH, and a QT_QPA_PLATFORM the user chose (offscreen, say)
+    is kept.
+    """
+    if platform != "darwin" or "QT_PLUGIN_PATH" in environ:
+        return {}
+    for site_dir in site_dirs:
+        qt = os.path.join(site_dir, "PySide6", "Qt")
+        plugins = os.path.join(qt, "plugins")
+        if os.path.isdir(plugins):
+            lib = os.path.join(qt, "lib")
+            env = {
+                "QT_PLUGIN_PATH": plugins,
+                "QT_QPA_PLATFORM_PLUGIN_PATH": os.path.join(plugins, "platforms"),
+                "DYLD_LIBRARY_PATH": lib,
+                "DYLD_FRAMEWORK_PATH": lib,
+            }
+            if "QT_QPA_PLATFORM" not in environ:
+                env["QT_QPA_PLATFORM"] = "cocoa"
+            return env
+    return {}
+
+
 def setupLogger(level=logging.INFO):
     logging.basicConfig(
         level=level,
