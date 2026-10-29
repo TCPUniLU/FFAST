@@ -2838,7 +2838,7 @@ async def test_web_closing_a_dialog_gives_focus_back_to_what_opened_it(ffast_web
             menu = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}'] .obj-menu-btn")
             await menu.focus()
             await page.keyboard.press("Enter")
-            await expect(page.locator(".rail-menu [data-action='dataset-rename']")).to_be_focused()
+            await expect(page.locator(".rail-menu [data-action='dataset-info']")).to_be_focused()
             await page.keyboard.press("ArrowUp")   # wraps to the last item
             await expect(page.locator(".rail-menu [data-action='dataset-delete']")).to_be_focused()
             await page.keyboard.press("Enter")
@@ -6840,5 +6840,34 @@ async def test_web_the_rail_menu_renames_for_every_window(ffast_web_server):
             await box.press("Enter")
             await expect(ds_row.locator(".name")).to_have_text("<i>x")
             assert await ds_row.locator(".name i").count() == 0
+        finally:
+            await browser.close()
+
+
+async def test_web_the_rail_menu_shows_info(ffast_web_server):
+    """Info in a rail row's ⋯ menu says what the dataset or prediction is."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            info = page.locator("#info-dialog")
+            for list_id, fp in (("dataset-list", dataset_fp), ("model-list", model_fp)):
+                await page.locator(f"#{list_id} .obj-row[data-fp='{fp}'] .obj-menu-btn").click()
+                await page.locator(".rail-menu [data-action$='-info']").click()
+                await expect(info).to_be_visible()
+                await expect(info).to_contain_text("Fingerprint")
+                await expect(info).to_contain_text(fp)
+                if list_id == "dataset-list":
+                    await expect(info).to_contain_text("Frames")
+                    await expect(info).to_contain_text("100 frames")
+                else:
+                    await expect(info).to_contain_text("Results for")
+                    await expect(info).to_contain_text("dataset")
+                await page.keyboard.press("Escape")
+                await expect(info).to_have_count(0)
         finally:
             await browser.close()

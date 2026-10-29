@@ -140,6 +140,12 @@ CASES = {
     "name_ok": "rl.nameProblem(' water ')",
     "name_empty": "rl.nameProblem('  ')",
     "name_dot": "rl.nameProblem('a.b')",
+    "formula_aspirin": "oi.chemicalFormula([6,6,6,6,6,6,6,6,6,1,1,1,1,1,1,1,1,8,8,8,8])",
+    "formula_water": "oi.chemicalFormula([1,1,8])",
+    "info_uniform": "oi.objectInfo('dataset', 'abcdef0123', {name: 'w', n: 4, elements: [1,1,8], variable: false, has_forces: true, source_type: 'ase', path: '/d/w.xyz', units: {energy: 'eV'}}, new Map([['abcdef0123', {units: {energy: 'eV'}}]])).rows",
+    "info_variable": "oi.objectInfo('dataset', 'v1', {name: 'v', n: 2, elements: [1,1,8,6,1,1,1,1], offsets: [0,3,8], variable: true, has_forces: false}, new Map()).rows",
+    "info_subset": "oi.objectInfo('dataset', 'S', FL.get('S'), FL).rows",
+    "info_prediction": "oi.objectInfo('model', 'm1', {name: 'MACE', dataset_fingerprints: ['T']}, FL).rows",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1014,6 +1020,7 @@ def results():
         f"  const ms = await import('{origin}/measure.js');\n"
         f"  const pe = await import('{origin}/panel_export.js');\n"
         f"  const rl = await import('{origin}/rail.js');\n"
+        f"  const oi = await import('{origin}/object_info.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -1523,6 +1530,35 @@ def test_a_name_needs_a_character_and_no_dot_or_slash(results):
     assert results["name_ok"] == ""
     assert results["name_empty"] == "Type a name"
     assert results["name_dot"]
+
+
+# ── object_info ─────────────────────────────────────────────────────────────
+
+def test_a_formula_puts_carbon_then_hydrogen_then_the_rest(results):
+    assert results["formula_aspirin"] == "C9H8O4"
+    assert results["formula_water"] == "H2O"
+
+
+def test_info_of_a_uniform_dataset(results):
+    rows = results["info_uniform"]
+    for row in (["Atoms per structure", "3"], ["Formula", "H2O"],
+                ["Energy unit", "eV"], ["Kind", "ase file"]):
+        assert row in rows
+
+
+def test_info_of_a_variable_dataset_gives_the_range_and_the_first_formula(results):
+    rows = results["info_variable"]
+    assert ["Atoms per structure", "3–5"] in rows
+    assert ["Formula", "varies (first: H2O)"] in rows
+
+
+def test_info_of_a_frozen_subset_names_where_it_was_cut_from(results):
+    rows = results["info_subset"]
+    assert ["Kind", "Subset"] in rows and ["Cut from", "P"] in rows
+
+
+def test_info_of_a_prediction_names_its_datasets(results):
+    assert ["Results for", "ethanol"] in results["info_prediction"]
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

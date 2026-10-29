@@ -89,6 +89,49 @@ export function askDialog({ title, message, buttons, danger = '' }) {
 }
 
 /**
+ * Show a short table of facts about something, with a Close button.
+ * @param {{title: string, rows: Array<[string, string]>}} o
+ */
+export function infoDialog({ title, rows }) {
+  document.getElementById('info-dialog')?.remove();
+  const modal = document.createElement('div');
+  modal.id = 'info-dialog';
+  modal.className = 'warning-modal';
+  modal.setAttribute('role', 'dialog');
+  modal.setAttribute('aria-modal', 'true');
+  const panel = document.createElement('div');
+  panel.className = 'warning-modal-panel';
+  const head = document.createElement('div');
+  head.className = 'warning-modal-title';
+  head.textContent = title;
+  labelBy(modal, head);
+  const table = document.createElement('table');
+  for (const [label, value] of rows) {
+    const tr = document.createElement('tr');
+    const th = document.createElement('th');
+    th.textContent = label;
+    const td = document.createElement('td');
+    td.textContent = value;
+    tr.append(th, td);
+    table.appendChild(tr);
+  }
+  const foot = document.createElement('div');
+  foot.className = 'warning-modal-footer';
+  let untrap = () => {};
+  const close = () => { modal.remove(); untrap(); };
+  const button = document.createElement('button');
+  button.textContent = 'Close';
+  button.addEventListener('click', close);
+  foot.appendChild(button);
+  modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  panel.append(head, table, foot);
+  modal.appendChild(panel);
+  untrap = trapFocus(modal);
+  document.body.appendChild(modal);
+  button.focus();
+}
+
+/**
  * Ask for one line of text. `problem(text)` names what is wrong with it ('' when
  * fine); OK waits while there is one. Resolves with the trimmed text, or null on
  * Cancel or Escape.

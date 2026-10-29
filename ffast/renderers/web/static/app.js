@@ -35,7 +35,8 @@ import { metricPanel, plotTarget, setPanelView, setPanelLabels, toFineGrid, toSa
 import { MetricOps } from './metric_ops.js';
 import { TABLE_SHAPE, sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
-import { askDialog, askText, textDialog, trapFocus } from './dialogs.js';
+import { askDialog, askText, infoDialog, textDialog, trapFocus } from './dialogs.js';
+import { objectInfo } from './object_info.js';
 import { showWarning } from './toasts.js';
 import { applyStaticIcons, icon } from './icons.js';
 import { initAppearance } from './appearance.js';
@@ -1794,7 +1795,15 @@ export class FFastApp {
     const main = meta?.parent_frames && !meta.frozen
       ? { id: 'dataset-freeze', label: 'Freeze', run: () => this._freezeSubset(fp), unavailable: why }
       : { id: `${kind}-delete`, label: 'Delete…', run: () => this._deleteObject(kind, fp), unavailable: why };
-    return [rename, { separator: true }, main];
+    const info = { id: `${kind}-info`, label: 'Info', run: () => this._showInfo(kind, fp) };
+    return [info, rename, { separator: true }, main];
+  }
+
+  /** The Info dialog: what a dataset or prediction is, from the metadata this window holds. */
+  _showInfo(kind, fp) {
+    const meta = (kind === 'dataset' ? this._datasets : this._models).get(fp);
+    if (!meta) return;
+    infoDialog(objectInfo(kind, fp, meta, this._datasets));
   }
 
   /** Rename a dataset or prediction on the server; every window then gets
