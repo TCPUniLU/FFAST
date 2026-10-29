@@ -666,6 +666,14 @@ class TestBuildSceneAtomFilter:
         assert scene.atoms.positions[0] == pytest.approx([0.0, 0.0, 0.0])  # atom 0
         assert scene.atoms.positions[1] == pytest.approx([0.0, 1.0, 0.0])  # atom 2
 
+    def test_atoms_carry_their_elements(self, ds):
+        scene = self._filtered(ds, [])
+        assert scene.atoms.elements == [6, 1, 1, 1]
+
+    def test_filtered_atoms_carry_their_elements(self, ds):
+        scene = self._filtered(ds, [0, 2])
+        assert scene.atoms.elements == [6, 1]
+
     def test_filter_sets_atom_ids_to_kept_originals(self, ds):
         scene = self._filtered(ds, [0, 2])
         assert scene.atoms.atom_ids == [0, 2]

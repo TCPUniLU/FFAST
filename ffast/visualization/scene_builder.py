@@ -242,11 +242,13 @@ def build_scene(
     if color_values is not None and color_meta is not None:
         color_by = AtomColorBy(values=color_values.tolist(), **color_meta)
 
+    elements = (z[keep] if keep is not None else z).astype(int).tolist()
     scene.atoms = AtomScene(
         positions=positions.tolist(),
         sizes=sizes,
         colors=colors,
         atom_ids=atom_ids,
+        elements=elements,
         color_by=color_by,
     )
 

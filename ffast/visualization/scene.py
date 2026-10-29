@@ -39,6 +39,9 @@ class AtomScene(BaseModel):
     # Lets a renderer map a picked displayed-atom back to a server-side index
     # under filtering/reordering. None means identity (displayed index == id).
     atom_ids: list[int] | None = None
+    # Atomic number of each displayed atom, so a client can name the atoms it
+    # measures without a dataset of its own (web Info read-out).
+    elements: list[int] | None = None
     # Value-driven coloring (ADR 0016). When present the renderer maps these
     # values to colors; when None it uses ``colors``.
     color_by: AtomColorBy | None = None

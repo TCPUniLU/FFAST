@@ -41,6 +41,7 @@
  * @property {number[]} sizes (N,)
  * @property {number[][]} colors (N, 4) RGBA — element/default fallback
  * @property {number[]|null} [atom_ids] original structure index per displayed atom (ADR 0015)
+ * @property {number[]|null} [elements] atomic number per displayed atom
  * @property {AtomColorBy|null} [color_by] present → map values to colors; absent → use colors
  */
 
