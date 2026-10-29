@@ -24,7 +24,7 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, clearPlot } from './panels.js';
 import { showOnce } from './toasts.js';
 import { attachTip } from './hover_tip.js';
 import { elementColourOn } from './element_colours.js';
@@ -347,7 +347,7 @@ export class AnalysisManager {
   _redrawIfChanged(t, before) {
     if (!t) return;
     const now = this._drawnKeys(t);
-    if (now.all !== before.all) this._renderTab(t);
+    if (now.all !== before.all) this._refreshTab(t);
     else if (now.subbed !== before.subbed) this._refreshSubbed(t);
   }
 
@@ -390,7 +390,7 @@ export class AnalysisManager {
   activate(id) {
     this._activeId = id;
     const t = this._tabs.find((x) => x.id === id);
-    if (t) this._renderTab(t);
+    if (t) this._refreshTab(t);
   }
 
   /** Remove every tab (on relayout). */
@@ -798,7 +798,7 @@ export class AnalysisManager {
       cb.addEventListener('change', () => {
         if (cb.checked) t.sharedParams.shifted = true;
         else delete t.sharedParams.shifted;
-        this._renderTab(t);
+        this._refreshTab(t);
       });
       const lbl = document.createElement('label');
       lbl.textContent = 'Energy shift';
@@ -823,7 +823,7 @@ export class AnalysisManager {
         const w = parseInt(range.value, 10);
         if (w > 1) t.sharedParams.window = w;
         else delete t.sharedParams.window;
-        this._renderTab(t);
+        this._refreshTab(t);
       });
       item.append(lbl, range, out);
       el.appendChild(item);
@@ -968,7 +968,7 @@ export class AnalysisManager {
     t[key] = list;
     this._keep(t);
     this._renderSeriesSelector(t);
-    this._renderTab(t);
+    this._refreshTab(t);
   }
 
   _renderElementPicker(t) {
@@ -998,7 +998,7 @@ export class AnalysisManager {
         else t.selectedElements = [...t.selectedElements, z];
         if (!t.selectedElements.length) t.selectedElements = ['All'];
         this._renderElementPicker(t);
-        this._renderTab(t);
+        this._refreshTab(t);
       });
       holder.appendChild(btn);
     }
@@ -1028,6 +1028,22 @@ export class AnalysisManager {
         if (msg) card.body.innerHTML = `<div class="panel-msg">${msg}</div>`;
         else this._fetchAndRenderPanel(t, slot.specs[i], card, token);
       });
+    }
+  }
+
+  /** New numbers for the same panels (energy shift, smoothing): each plot
+   * stays on screen and is redrawn in place when its values arrive, instead
+   * of every card being rebuilt empty. Before the first draw: `_renderTab`. */
+  _refreshTab(t) {
+    const drawn = t.has2d && this._metrics && this._catalog.size && this._tabDatasets(t).length
+      && !t.gridEl.hidden && t.slots.length && t.slots.every((slot) => slot.cards);
+    if (!drawn) {
+      this._renderTab(t);
+      return;
+    }
+    const token = ++this._renderToken;
+    for (const slot of t.slots) {
+      slot.cards.forEach((card, i) => this._fetchAndRenderPanel(t, slot.specs[i], card, token));
     }
   }
 
@@ -1202,6 +1218,7 @@ export class AnalysisManager {
       msg.className = 'panel-msg';
       msg.textContent = `${missing.length === 1 ? 'Metric' : 'Metrics'} ${missing.join(', ')} ` +
         `${missing.length === 1 ? 'is' : 'are'} not on this server.`;
+      clearPlot(card.body);
       card.body.replaceChildren(msg);
       card.captionEl.hidden = true;
       card.params.innerHTML = '';
@@ -1246,6 +1263,7 @@ export class AnalysisManager {
       msg.className = 'panel-msg';
       msg.textContent = failures.length ? failures.map((f) => f.text).join('\n')
         : anyModel ? 'No data for this selection.' : 'Select a prediction to compute this panel.';
+      clearPlot(card.body);
       card.body.replaceChildren(msg);
       card.captionEl.hidden = true;
       card.params.innerHTML = '';

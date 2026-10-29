@@ -824,6 +824,13 @@ export function buildPanel(spec, series, ctx) {
  * @param {PanelSeries[]} series
  * @param {Object} ctx render context (units, perFrame, element picker state)
  */
+/** Let go of the plot drawn in `el`, before a message takes its place: a
+ * panel is redrawn in place, and Plotly would otherwise update a plot whose
+ * elements are gone. */
+export function clearPlot(el) {
+  if (el._fullLayout) Plotly().purge(el);
+}
+
 export function renderPanel(el, spec, series, ctx) {
   const built = buildPanel(spec, series, ctx);
   if (!built) {

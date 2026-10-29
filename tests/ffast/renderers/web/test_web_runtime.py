@@ -7343,3 +7343,87 @@ async def test_web_the_bell_keeps_warnings_and_errors_after_their_popups_close(f
         finally:
             await browser.close()
 
+
+_WATCH_REMOVED_PANELS = """() => {
+    window.__removedPanels = 0;
+    new MutationObserver((records) => {
+        for (const r of records) for (const n of r.removedNodes)
+            if (n.classList?.contains('analysis-panel')) window.__removedPanels++;
+    }).observe(document.querySelector('.tabpanel.active'), {childList: true, subtree: true});
+}"""
+_PLOT_Y = """(t) => JSON.stringify(document.querySelector(
+    `.tabpanel.active .analysis-panel[data-title="${t}"] .panel-plot`)?.data?.map((d) => Array.from(d.y || [])))"""
+
+
+async def test_web_a_tab_control_redraws_its_plots_in_place(ffast_web_server):
+    """Energy shift and smoothing change the numbers, not the panels: each
+    plot stays on screen and is redrawn when its new values arrive, instead
+    of every panel being rebuilt empty."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1400, "height": 900})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            energy = page.locator('.tabpanel.active .analysis-panel[data-title="Energy MAE timeline"]')
+            await expect(energy.locator(".panel-msg")).to_contain_text("Select a prediction")
+
+            # A prediction loaded now is listed, not chosen.
+            ws = await _connect_headless_client(ws_port)
+            try:
+                await ws.send(pack("LOAD_PREDICTION", (str(PREDICTION_PATH), dataset_fp), {
+                    "selected_energy_key": "MACE_energy", "selected_force_key": "MACE_forces"}))
+                model_fp = (await _wait_for_event(ws, "REMOTE_MODEL_META", timeout=30))["args"][0]
+            finally:
+                await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+                await ws.close()
+            await expect(page.locator(f"#model-list .obj-row[data-fp='{model_fp}']")).to_be_visible()
+
+            # Choosing a prediction fills the same panels.
+            await page.evaluate(_WATCH_REMOVED_PANELS)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+            await expect(energy.locator(".main-svg").first).to_be_visible()
+            await expect(energy.locator(".scatterlayer .trace")).not_to_have_count(0)
+            assert await page.evaluate("() => window.__removedPanels") == 0
+
+            before = await page.evaluate(_PLOT_Y, "Energy MAE timeline")
+            await page.evaluate(_WATCH_REMOVED_PANELS)
+            await page.locator(".tabpanel.active [data-control='energy_shift'] input").check()
+            await page.wait_for_function(f"(t) => ({_PLOT_Y})(t) !== {json.dumps(before)}",
+                                         arg="Energy MAE timeline", timeout=25000)
+            assert await page.evaluate("() => window.__removedPanels") == 0
+
+            # The tab's own picker: pinning the dataset redraws in place too.
+            await page.locator(
+                f".tabpanel.active [data-series='datasets'] button[data-fp='{dataset_fp}']").click()
+            await expect(page.locator(
+                f".tabpanel.active [data-series='datasets'] button[data-fp='{dataset_fp}']")).not_to_have_class(
+                re.compile("following"))
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+            assert await page.evaluate("() => window.__removedPanels") == 0
+
+            await _open_analysis_tab(page, "Gyration")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Total gyration radius", timeout=25000)
+            before = await page.evaluate(_PLOT_Y, "Total gyration radius")
+            await page.evaluate(_WATCH_REMOVED_PANELS)
+            await page.locator(".tabpanel.active [data-control='smoothing'] input").evaluate(
+                "(el) => { el.value = '5'; el.dispatchEvent(new Event('change')); }")
+            await page.wait_for_function(f"(t) => ({_PLOT_Y})(t) !== {json.dumps(before)}",
+                                         arg="Total gyration radius", timeout=25000)
+            assert await page.evaluate("() => window.__removedPanels") == 0
+
+            # Back to a tab already drawn: its plots stay, nothing is rebuilt.
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.evaluate(_WATCH_REMOVED_PANELS)
+            await _open_analysis_tab(page, "Gyration")
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
+            await page.wait_for_timeout(300)
+            assert await page.evaluate("() => window.__removedPanels") == 0
+        finally:
+            await browser.close()
