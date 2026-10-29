@@ -137,6 +137,9 @@ CASES = {
     "ext_swap": "so.withExtension('water.extxyz', '.db')",
     "ext_none": "so.withExtension('water', '.traj')",
     "export_formats": "so.EXPORT_FORMATS.map(f => f.format)",
+    "name_ok": "rl.nameProblem(' water ')",
+    "name_empty": "rl.nameProblem('  ')",
+    "name_dot": "rl.nameProblem('a.b')",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1010,6 +1013,7 @@ def results():
         f"  const un = await import('{origin}/units.js');\n"
         f"  const ms = await import('{origin}/measure.js');\n"
         f"  const pe = await import('{origin}/panel_export.js');\n"
+        f"  const rl = await import('{origin}/rail.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -1511,6 +1515,14 @@ def test_a_format_change_swaps_only_the_ending(results):
 
 def test_export_offers_the_desktops_formats_plus_sgdml(results):
     assert results["export_formats"] == ["extxyz", "xyz", "db", "traj", "vasp", "dftb", "sgdml"]
+
+
+# ── rail.nameProblem ────────────────────────────────────────────────────────
+
+def test_a_name_needs_a_character_and_no_dot_or_slash(results):
+    assert results["name_ok"] == ""
+    assert results["name_empty"] == "Type a name"
+    assert results["name_dot"]
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

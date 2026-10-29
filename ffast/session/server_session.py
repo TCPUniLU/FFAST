@@ -153,7 +153,7 @@ class ServerSession:
         # parameter.
         from ffast.protocol.messages import (
             CloseViewRequest, CreateSubsetRequest, DeclareSubsetRequest,
-            DeleteObjectRequest, DeleteTabRequest, FreezeSubsetRequest,
+            DeleteObjectRequest, DeleteTabRequest, FreezeSubsetRequest, RenameObjectRequest,
             EmptyRequest, ExportSubsetRequest, ExportTabRequest, HideTabRequest, SetTabOrderRequest,
             ListDirRequest,
             LoadDatasetRequest, LoadModelRequest,
@@ -171,6 +171,7 @@ class ServerSession:
             control.LOAD_MODEL:                 _Route(self._on_load_model, ["path", "model_type"], LoadModelRequest),
             control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint"], DeleteObjectRequest),
             control.FREEZE_SUBSET:              _Route(self._on_freeze_subset, ["fingerprint"], FreezeSubsetRequest),
+            control.RENAME_OBJECT:              _Route(self._on_rename_object, ["fingerprint", "name"], RenameObjectRequest),
             control.SET_DATASET_UNIT:           _Route(self._on_set_dataset_unit, ["fingerprint", "dimension", "unit"], SetDatasetUnitRequest),
             control.CREATE_SUBSET:              _Route(self._on_create_subset, ["parent_fingerprint", "indices"], CreateSubsetRequest),
             control.DECLARE_SUBSET:             _Route(self._on_declare_subset, ["parent_fingerprint", "?indices"], DeclareSubsetRequest),
@@ -417,6 +418,20 @@ class ServerSession:
         freeze button does. The frozen subset announces itself to every
         window like any new dataset; the live one carries on with its plot."""
         self.env.freezeSubDataset(fingerprint)
+
+    async def _on_rename_object(self, fingerprint, name, **kwargs) -> None:
+        """Rename a dataset or prediction, as the desktop's rename does. The
+        name follows the desktop's rule (no ".", "/" or "\\"). setName pushes
+        OBJECT_NAME_CHANGED, which server.py turns into a new announcement."""
+        obj = self.env.datasets.get(fingerprint) or self.env.models.get(fingerprint)
+        if obj is None:
+            logger.warning("RENAME_OBJECT: %r not found", fingerprint)
+            return
+        name = (name or "").strip()
+        if not name or any(c in name for c in "./\\"):
+            logger.warning("Cannot rename to %r: a name needs a character and no '.', '/' or '\\'", name)
+            return
+        obj.setName(name)
 
     async def _on_set_dataset_unit(self, fingerprint, dimension, unit, **kwargs) -> None:
         """Name the unit of a dataset's energies or forces. The dataset (the

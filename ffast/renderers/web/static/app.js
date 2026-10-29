@@ -27,7 +27,7 @@ import { createExtractPane } from './panes/extract.js';
 import { createAlignPane } from './panes/align.js';
 import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
-import { Rail, framesText } from './rail.js';
+import { Rail, framesText, nameProblem } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
 import { TabOps } from './tab_ops.js';
@@ -35,7 +35,7 @@ import { metricPanel, plotTarget, setPanelView, setPanelLabels, toFineGrid, toSa
 import { MetricOps } from './metric_ops.js';
 import { TABLE_SHAPE, sessionMetricsQuestion } from './metric_logic.js';
 import { createMetricsPane } from './panes/metrics.js';
-import { askDialog, textDialog, trapFocus } from './dialogs.js';
+import { askDialog, askText, textDialog, trapFocus } from './dialogs.js';
 import { showWarning } from './toasts.js';
 import { applyStaticIcons, icon } from './icons.js';
 import { initAppearance } from './appearance.js';
@@ -109,6 +109,12 @@ const HINTS = {
     ['Find any setting with the search box', ''],
   ],
 };
+
+/** Same length and the same items in order; both missing counts as equal. */
+function sameItems(a, b) {
+  const x = a || [], y = b || [];
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
 
 export class FFastApp {
   constructor() {
@@ -1735,6 +1741,16 @@ export class FFastApp {
   }
 
   _onModelMeta(fp, meta) {
+    const before = this._models.get(fp);
+    // A rename announces a known prediction again with the same datasets:
+    // only the name changes, and the main view's choice stays.
+    if (before && before.name !== meta?.name && sameItems(before.dataset_fingerprints, meta?.dataset_fingerprints)) {
+      this._models.set(fp, meta || {});
+      this._panes?.colorBy.refreshModels(this._models);
+      this._renderObjects();
+      this._syncCaptions();
+      return;
+    }
     // meta = {name, dataset_fingerprints}. Fired on connect-replay and after
     // a LOAD_PREDICTION completes (the ghost model registers its forces cache).
     // A model new to this window ends a pending prediction load, wherever it
@@ -1774,9 +1790,24 @@ export class FFastApp {
   _railRowActions(kind, fp) {
     const meta = kind === 'dataset' ? this._datasets.get(fp) : null;
     const why = () => this._needsControl();
-    if (meta?.parent_frames && !meta.frozen)
-      return [{ id: 'dataset-freeze', label: 'Freeze', run: () => this._freezeSubset(fp), unavailable: why }];
-    return [{ id: `${kind}-delete`, label: 'Delete…', run: () => this._deleteObject(kind, fp), unavailable: why }];
+    const rename = { id: `${kind}-rename`, label: 'Rename…', run: () => this._renameObject(kind, fp), unavailable: why };
+    const main = meta?.parent_frames && !meta.frozen
+      ? { id: 'dataset-freeze', label: 'Freeze', run: () => this._freezeSubset(fp), unavailable: why }
+      : { id: `${kind}-delete`, label: 'Delete…', run: () => this._deleteObject(kind, fp), unavailable: why };
+    return [rename, { separator: true }, main];
+  }
+
+  /** Rename a dataset or prediction on the server; every window then gets
+   * it announced again with the new name. */
+  async _renameObject(kind, fp) {
+    const meta = (kind === 'dataset' ? this._datasets : this._models).get(fp);
+    if (!meta) return;
+    const name = await askText({
+      title: kind === 'dataset' ? 'Rename dataset' : 'Rename prediction',
+      label: 'Name', value: meta.name || '', problem: nameProblem, okLabel: 'Rename',
+    });
+    if (name === null || name === meta.name || this._needsControl()) return;
+    this._conn.send(OUT.RENAME_OBJECT, { fingerprint: fp, name });
   }
 
   /** Name the unit of a dataset's energies or forces (a subset names its

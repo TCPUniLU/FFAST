@@ -265,6 +265,15 @@ class DeleteObjectRequest(BaseModel):
     fingerprint: str
 
 
+class RenameObjectRequest(BaseModel):
+    """Typed payload for ``RENAME_OBJECT``: a dataset or prediction and its new name."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+    name: str
+
+
 class FreezeSubsetRequest(BaseModel):
     """Typed payload for ``FREEZE_SUBSET``: the live subset to freeze."""
 

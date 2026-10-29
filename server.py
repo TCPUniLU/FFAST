@@ -697,6 +697,15 @@ async def _main(
 
     env.eventSubscribe("MODEL_LOADED", _on_model_loaded_meta)
 
+    # A rename (RENAME_OBJECT) announces the object again with its new name.
+    def _on_name_changed(fingerprint):
+        if env.datasets.get(fingerprint) is not None:
+            _on_dataset_loaded_meta(fingerprint)
+        elif env.models.get(fingerprint) is not None:
+            _on_model_loaded_meta(fingerprint)
+
+    env.eventSubscribe("OBJECT_NAME_CHANGED", _on_name_changed)
+
     # Every warning the server logs from here on also pops up in every window.
     from ffast.session.warning_relay import WarningRelay
     logging.getLogger().addHandler(WarningRelay(asyncio.get_running_loop(), hub.broadcast))

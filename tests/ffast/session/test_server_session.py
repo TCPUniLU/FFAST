@@ -930,6 +930,41 @@ def test_list_dir_without_workdir_starts_in_the_current_folder(tmp_path, monkeyp
     assert os.path.realpath(kwargs["path"]) == os.path.realpath(tmp_path)
 
 
+class _Named:
+    def __init__(self):
+        self.names = []
+
+    def setName(self, name):
+        self.names.append(name)
+
+
+def _rename(env, fingerprint, name):
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("RENAME_OBJECT", [], {"fingerprint": fingerprint, "name": name})
+
+    _run(scenario())
+
+
+def test_rename_object_renames_a_dataset_or_prediction():
+    ds, model = _Named(), _Named()
+    env = _FakeEnv(datasets={"d": ds}, models={"m": model})
+    _rename(env, "d", "  water ")
+    _rename(env, "m", "MACE")
+    assert ds.names == ["water"] and model.names == ["MACE"]
+
+
+@pytest.mark.parametrize("bad", ["", "a.b", "a/b"])
+def test_rename_object_refuses_an_empty_or_dotted_name(bad):
+    ds = _Named()
+    _rename(_FakeEnv(datasets={"d": ds}), "d", bad)
+    assert ds.names == []
+
+
+def test_rename_object_is_a_change_a_viewer_may_not_make():
+    assert control.RENAME_OBJECT in control.MUTATING_CLIENT_EVENTS
+
+
 def test_dispatch_export_subset_missing_dataset_emits_error():
     env = _FakeEnv(datasets={})
 

@@ -75,6 +75,14 @@ export class Rail {
     this._renderModels(state);
   }
 
+  /** A span of plain text: names are typed by the user, so never HTML. */
+  _text(className, text) {
+    const span = document.createElement('span');
+    span.className = className;
+    span.textContent = text;
+    return span;
+  }
+
   _renderDatasets({ datasets, datasetFp }) {
     const list = this._ports.datasetList;
     list.innerHTML = '';
@@ -86,9 +94,9 @@ export class Rail {
       const row = document.createElement('div');
       row.className = 'obj-row' + (fp === datasetFp ? ' selected' : '');
       row.dataset.fp = fp;
-      row.innerHTML =
-        `<span class="name">${meta.name || fp.slice(0,8)}</span>` +
-        `<span class="meta">${meta.frozen ? 'frozen · ' : ''}${framesText(meta.n)}</span>`;
+      row.append(
+        this._text('name', meta.name || fp.slice(0, 8)),
+        this._text('meta', `${meta.frozen ? 'frozen · ' : ''}${framesText(meta.n)}`));
       const swatch = this._swatch('dataset', fp);
       if (swatch) row.prepend(swatch);
       row.appendChild(this._menuButton('dataset', fp));
@@ -113,7 +121,7 @@ export class Rail {
         + (fp === modelFp ? ' selected' : '')
         + (ok ? '' : ' disabled');
       row.dataset.fp = fp;
-      row.innerHTML = `<span class="name">${meta.name || fp.slice(0,8)}</span>`;
+      row.append(this._text('name', meta.name || fp.slice(0, 8)));
       const swatch = this._swatch('model', fp);
       if (swatch) row.prepend(swatch);
       row.appendChild(this._menuButton('model', fp));
@@ -141,6 +149,14 @@ function makeRowKeyboardOperable(row, selected, disabled = false) {
     e.preventDefault();
     row.click();
   });
+}
+
+/** Why `name` cannot name a dataset or prediction, or '' (the desktop's rule). */
+export function nameProblem(name) {
+  const n = String(name ?? '').trim();
+  if (!n) return 'Type a name';
+  if (/[./\\]/.test(n)) return 'A name cannot contain ".", "/" or "\\"';
+  return '';
 }
 
 /** "100 frames", or "1 frame". */

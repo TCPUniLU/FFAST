@@ -89,6 +89,68 @@ export function askDialog({ title, message, buttons, danger = '' }) {
 }
 
 /**
+ * Ask for one line of text. `problem(text)` names what is wrong with it ('' when
+ * fine); OK waits while there is one. Resolves with the trimmed text, or null on
+ * Cancel or Escape.
+ * @param {{title: string, label: string, value?: string,
+ *   problem?: (text: string) => string, okLabel?: string}} o
+ * @returns {Promise<string|null>}
+ */
+export function askText({ title, label, value = '', problem = () => '', okLabel = 'OK' }) {
+  return new Promise((resolve) => {
+    const modal = document.createElement('div');
+    modal.id = 'text-ask';
+    modal.className = 'warning-modal ask-dialog';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    const panel = document.createElement('div');
+    panel.className = 'warning-modal-panel';
+    const head = document.createElement('div');
+    head.className = 'warning-modal-title';
+    head.textContent = title;
+    labelBy(modal, head);
+    const field = document.createElement('label');
+    field.append(label);
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = value;
+    input.spellcheck = false;
+    field.appendChild(input);
+    const help = document.createElement('p');
+    help.className = 'help-text';
+    const foot = document.createElement('div');
+    foot.className = 'warning-modal-footer';
+    let untrap = () => {};
+    const done = (answer) => { modal.remove(); untrap(); resolve(answer); };
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Cancel';
+    cancel.addEventListener('click', () => done(null));
+    const ok = document.createElement('button');
+    ok.textContent = okLabel;
+    const accept = () => { if (!ok.disabled) done(input.value.trim()); };
+    ok.addEventListener('click', accept);
+    const check = () => {
+      const why = problem(input.value);
+      help.textContent = why;
+      ok.disabled = !!why;
+    };
+    input.addEventListener('input', check);
+    modal.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') done(null);
+      else if (e.key === 'Enter' && e.target === input) { e.preventDefault(); accept(); }
+    });
+    foot.append(cancel, ok);
+    panel.append(head, field, help, foot);
+    modal.appendChild(panel);
+    check();
+    untrap = trapFocus(modal);
+    document.body.appendChild(modal);
+    input.focus();
+    input.select();
+  });
+}
+
+/**
  * A small form: one box per field. Resolves with the boxes' text in field
  * order when the last button is chosen (or Enter is pressed in a box), and
  * null otherwise (another button, Escape).

@@ -2838,6 +2838,8 @@ async def test_web_closing_a_dialog_gives_focus_back_to_what_opened_it(ffast_web
             menu = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}'] .obj-menu-btn")
             await menu.focus()
             await page.keyboard.press("Enter")
+            await expect(page.locator(".rail-menu [data-action='dataset-rename']")).to_be_focused()
+            await page.keyboard.press("ArrowUp")   # wraps to the last item
             await expect(page.locator(".rail-menu [data-action='dataset-delete']")).to_be_focused()
             await page.keyboard.press("Enter")
             await expect(page.locator(".ask-dialog")).to_be_visible()
@@ -6795,5 +6797,48 @@ async def test_web_export_writes_the_chosen_format(ffast_web_server, tmp_path):
             await expect(page.locator("#status")).to_contain_text(".traj", timeout=15000)
             frames = ase.io.read(str(tmp_path / name), index=":")
             assert len(frames) == len(ase.io.read(DATASET_PATH, index=":"))
+        finally:
+            await browser.close()
+
+
+async def test_web_the_rail_menu_renames_for_every_window(ffast_web_server):
+    """Rename… in a rail row's ⋯ menu renames a dataset or prediction for every window."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            ds_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
+            model_row = page.locator(f"#model-list .obj-row[data-fp='{model_fp}']")
+
+            async def rename(row, text):
+                await row.locator(".obj-menu-btn").click()
+                await page.locator(".rail-menu [data-action$='-rename']").click()
+                box = page.locator("#text-ask input")
+                await box.fill(text)
+                return box
+
+            box = await rename(ds_row, "a.b")
+            await expect(page.locator("#text-ask button", has_text="Rename")).to_be_disabled()
+            await box.fill("water")
+            await box.press("Enter")
+            await expect(ds_row.locator(".name")).to_have_text("water")
+            assert (await _replayed_datasets(ws_port))[dataset_fp]["name"] == "water"
+
+            selected = await page.evaluate("() => window.ffastApp._currentModelFp")
+            box = await rename(model_row, "MACE")
+            await box.press("Enter")
+            await expect(model_row.locator(".name")).to_have_text("MACE")
+            assert await page.evaluate("() => window.ffastApp._currentModelFp") == selected
+
+            box = await rename(ds_row, "<i>x")
+            await box.press("Enter")
+            await expect(ds_row.locator(".name")).to_have_text("<i>x")
+            assert await ds_row.locator(".name i").count() == 0
         finally:
             await browser.close()
