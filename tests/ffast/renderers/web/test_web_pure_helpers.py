@@ -134,6 +134,9 @@ CASES = {
     "pick_no_name": "rb.pickPath({mode: 'save-file', dir: '/runs', name: ''})",
     "pick_no_dir": "rb.pickPath({mode: 'save-file', dir: null, name: 'a'})",
     "load_pick_mode": "rb.canLoad({selected: null, mode: 'open-folder', dir: '/runs'})",
+    "ext_swap": "so.withExtension('water.extxyz', '.db')",
+    "ext_none": "so.withExtension('water', '.traj')",
+    "export_formats": "so.EXPORT_FORMATS.map(f => f.format)",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1497,6 +1500,17 @@ def test_a_pick_without_a_name_or_a_folder_returns_nothing(results):
 
 def test_a_pick_mode_loads_with_only_a_folder(results):
     assert results["load_pick_mode"] is True
+
+
+# ── session_ops: export formats ─────────────────────────────────────────────
+
+def test_a_format_change_swaps_only_the_ending(results):
+    assert results["ext_swap"] == "water.db"
+    assert results["ext_none"] == "water.traj"
+
+
+def test_export_offers_the_desktops_formats_plus_sgdml(results):
+    assert results["export_formats"] == ["extxyz", "xyz", "db", "traj", "vasp", "dftb", "sgdml"]
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

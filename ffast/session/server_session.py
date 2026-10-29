@@ -1167,7 +1167,9 @@ class ServerSession:
         "save dataset" path uses), write it off the event loop, and report the
         resolved path — or an error — back over ``SUBSET_EXPORTED``. Any loaded
         dataset is valid; the common cases are a pick-derived
-        ``AtomFilteredDataset`` and a plot-derived ``SubDataset``.
+        ``AtomFilteredDataset`` and a plot-derived ``SubDataset``. The format
+        names are ASE's (``extxyz``, ``xyz``, ``db``, ``traj``, ``vasp``,
+        ``dftb``), plus ``sgdml``.
         """
         import os
         from ffast.protocol.rpc import pack
@@ -1193,8 +1195,15 @@ class ServerSession:
             # .xyz too → extxyz so energies/forces survive (plain xyz drops them).
             fmt = "extxyz" if ext in (".xyz", ".extxyz", "") else None
 
-        # One saver, frame by frame, each frame with its own elements.
-        from ffast.loaders.ase import aseDatasetLoader as saver
+        if fmt == "sgdml":
+            saver = getattr(self.env, "datasetTypes", {}).get("sGDML")
+            fmt = None
+            if saver is None:
+                await _reply(False, resolved, error="this server cannot write sGDML files")
+                return
+        else:
+            # One saver, frame by frame, each frame with its own elements.
+            from ffast.loaders.ase import aseDatasetLoader as saver
 
         try:
             parent = os.path.dirname(resolved)

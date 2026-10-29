@@ -48,6 +48,23 @@ export function exportStatus(result) {
   return { text: `Export failed: ${result?.error ?? 'unknown error'}`, kind: 'error' };
 }
 
+/** What Export can write (the desktop's list, UI/SideBar.py saveDataset). */
+export const EXPORT_FORMATS = [
+  { format: 'extxyz', label: 'Extended XYZ', ext: '.extxyz' },
+  { format: 'xyz', label: 'XYZ', ext: '.xyz' },
+  { format: 'db', label: 'ASE database', ext: '.db' },
+  { format: 'traj', label: 'ASE trajectory', ext: '.traj' },
+  { format: 'vasp', label: 'VASP POSCAR (one structure)', ext: '.vasp' },
+  { format: 'dftb', label: 'DFTB+ gen (one structure)', ext: '.gen' },
+  { format: 'sgdml', label: 'sGDML', ext: '.npz' },
+];
+
+/** `name` with its ending replaced by `ext` (one ending only). Pure. */
+export function withExtension(name, ext) {
+  const stem = String(name ?? '').replace(/\.[A-Za-z0-9]+$/, '');
+  return stem + ext;
+}
+
 /** Filesystem-safe stem for a downloaded/exported file. Pure. */
 export function safeName(name, fallback = 'ffast') {
   const cleaned = String(name ?? '').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '');
@@ -104,8 +121,10 @@ export class SessionOps {
       title: 'Export Dataset',
       okLabel: 'Export',
       name: `${base}.extxyz`,
-      onPick: (path) => {
-        this._ports.send(OUT.EXPORT_SUBSET, { fingerprint: fp, path });
+      formats: EXPORT_FORMATS,
+      format: 'extxyz',
+      onPick: (path, { format }) => {
+        this._ports.send(OUT.EXPORT_SUBSET, { fingerprint: fp, path, format });
         this._ports.setStatus(`Exporting to ${path}…`, 'connected');
       },
     });

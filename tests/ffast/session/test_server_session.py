@@ -967,6 +967,38 @@ def test_dispatch_export_subset_uses_the_one_ase_saver(tmp_path, is_variable, n)
     saver.assert_called_once_with(ds, str(target), "extxyz")
 
 
+def test_dispatch_export_subset_writes_sgdml_with_the_sgdml_saver(tmp_path):
+    from unittest.mock import MagicMock
+    ds = _FakeExportDataset()
+    env = _FakeEnv(datasets={"ds1": ds})
+    saver = MagicMock()
+    saver.saveDataset.return_value = None
+    env.datasetTypes = {"sGDML": saver}
+    target = tmp_path / "out.npz"
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": str(target), "format": "sgdml"})
+        return s.outbound.get_nowait()
+
+    _, _, kwargs = unpack(_run(scenario()))
+    saver.saveDataset.assert_called_once_with(ds, str(target), None)
+    assert kwargs["ok"] is True
+
+
+def test_dispatch_export_subset_without_sgdml_says_so(tmp_path):
+    env = _FakeEnv(datasets={"ds1": _FakeExportDataset()})
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("EXPORT_SUBSET", [], {
+            "fingerprint": "ds1", "path": str(tmp_path / "o.npz"), "format": "sgdml"})
+        return s.outbound.get_nowait()
+
+    _, _, kwargs = unpack(_run(scenario()))
+    assert kwargs["ok"] is False and "sGDML" in kwargs["error"]
+
+
 def test_export_of_an_element_subset_skips_its_empty_frames_and_says_how_many(tmp_path):
     from ffast.loaders.dataset import DatasetView
     view = DatasetView.elementSubset(_real_parent("CH4", "H2O", "C2H6"), [6])

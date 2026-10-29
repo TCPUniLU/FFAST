@@ -19,6 +19,7 @@ import { icon as drawIcon } from './icons.js';
 import { trapFocus } from './dialogs.js';
 import { UNIT_PLACEHOLDER } from './units.js';
 import { loadRecentUnits, saveRecentUnit, unitChoices } from './recent_units.js';
+import { withExtension, EXPORT_FORMATS } from './session_ops.js';
 import { loadRecentFiles, rememberFile, saveRecentFiles } from './recent_files.js';
 
 /** Join a server-side directory and an entry name. Posix separators: the paths
@@ -277,6 +278,11 @@ export class RemoteBrowser {
     $('fb-force-key').addEventListener('change', () => this._refreshLoadEnabled());
     $('fb-type').addEventListener('change', () => this._refreshDatasetKeys());
     $('fb-name').addEventListener('input', () => this._refreshLoadEnabled());
+    $('fb-format').addEventListener('change', () => {
+      const chosen = (this._pick?.formats || EXPORT_FORMATS).find((f) => f.format === $('fb-format').value);
+      if (chosen) $('fb-name').value = withExtension($('fb-name').value, chosen.ext);
+      this._refreshLoadEnabled();
+    });
     $('fb-name').addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
       e.preventDefault();
@@ -516,11 +522,12 @@ export class RemoteBrowser {
    * ('open-folder'), or a file name ('save-file', clicking a file puts its name
    * in the box).
    * @param {{mode: 'save-folder'|'open-folder'|'save-file', title: string, okLabel: string,
-   *   name?: string, onPick: (path: string) => void}} o
+   *   name?: string, formats?: Array<{format: string, label: string, ext: string}>,
+   *   format?: string, onPick: (path: string, choice: {format: string|null}) => void}} o
    */
-  pick({ mode, title, okLabel, name = '', onPick }) {
+  pick({ mode, title, okLabel, name = '', formats = null, format = null, onPick }) {
     this._mode = mode;
-    this._pick = { onPick };
+    this._pick = { onPick, formats };
     $('fb-title').textContent = title;
     $('fb-load').textContent = okLabel;
     $('fb-dataset-fields').style.display = 'none';
@@ -529,6 +536,11 @@ export class RemoteBrowser {
     $('fb-recent').hidden = true;
     $('fb-pick-fields').hidden = mode === 'open-folder';
     $('fb-name').value = name;
+    $('fb-format').hidden = $('fb-format-label').hidden = !formats;
+    if (formats) {
+      this._fillSelect($('fb-format'), formats.map((f) => ({ value: f.format, label: f.label })));
+      $('fb-format').value = format;
+    }
     this._show();
     this._focusFirstRow = mode === 'open-folder';
     if (mode !== 'open-folder') {
@@ -917,10 +929,11 @@ export class RemoteBrowser {
     if (this._pick) {
       const path = pickPath({ mode: this._mode, dir: this._path, name: $('fb-name').value });
       if (!path) return;
-      const { onPick } = this._pick;
+      const { onPick, formats } = this._pick;
+      const format = formats ? $('fb-format').value : null;
       this._pick = null;
       this.close();
-      onPick(path);
+      onPick(path, { format });
       return;
     }
     if (!this._selected) return;

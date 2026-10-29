@@ -6775,3 +6775,25 @@ async def test_web_export_overwrites_a_file_clicked_in_the_list(ffast_web_server
             assert len(ase.io.read(str(target), index=":")) == len(ase.io.read(DATASET_PATH, index=":"))
         finally:
             await browser.close()
+
+
+async def test_web_export_writes_the_chosen_format(ffast_web_server, tmp_path):
+    """Export Dataset asks for the format and the file is written in it (web parity plan 2026-10-29)."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _file_menu(page, "Export Selected Dataset…")
+            await _go_to_in_browser(page, tmp_path)
+            await page.locator("#fb-format").select_option("traj")
+            await expect(page.locator("#fb-name")).to_have_value(re.compile(r"\.traj$"))
+            name = await page.locator("#fb-name").input_value()
+            await page.locator("#fb-load").click()
+            await expect(page.locator("#status")).to_contain_text(".traj", timeout=15000)
+            frames = ase.io.read(str(tmp_path / name), index=":")
+            assert len(frames) == len(ase.io.read(DATASET_PATH, index=":"))
+        finally:
+            await browser.close()
