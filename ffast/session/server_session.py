@@ -686,10 +686,10 @@ class ServerSession:
                 path, energy_keys, force_keys,
             )
         except Exception as exc:
-            logger.warning("PROBE_DATASET_KEYS error for %r: %s", path, exc)
+            logger.warning("PROBE_DATASET_KEYS error for %r: %s", path, exc, extra={"popup": False})
             logger.warning(
                 "  server view: host=%s cwd=%s exists=%s parent_exists=%s",
-                *_probe_path_diagnostics(path),
+                *_probe_path_diagnostics(path), extra={"popup": False},
             )
             error = str(exc)
 
@@ -719,10 +719,10 @@ class ServerSession:
             n = AtomsList.calc_dataset_length_static(path)
             logger.info("PROBE_DATASET_LENGTH %r: n=%d", path, n)
         except Exception as exc:
-            logger.warning("PROBE_DATASET_LENGTH error for %r: %s", path, exc)
+            logger.warning("PROBE_DATASET_LENGTH error for %r: %s", path, exc, extra={"popup": False})
             logger.warning(
                 "  server view: host=%s cwd=%s exists=%s parent_exists=%s",
-                *_probe_path_diagnostics(path),
+                *_probe_path_diagnostics(path), extra={"popup": False},
             )
             error = str(exc)
 

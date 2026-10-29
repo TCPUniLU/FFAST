@@ -92,11 +92,13 @@ export function matchEntries(entries, prefix, limit = 8) {
  *
  * Pure so the rule is testable without the DOM. A dataset needs only a selected
  * file; a prediction additionally needs a force key (force arrows are the point
- * of loading one) and a target dataset to attach to.
+ * of loading one) and a target dataset to attach to. A dataset waits for its
+ * key check.
  */
-export function canLoad({ selected, mode, forceKey, targetDataset }) {
+export function canLoad({ selected, mode, forceKey, targetDataset, probing = false }) {
   if (!selected) return false;
   if (mode === 'prediction') return Boolean(forceKey && targetDataset);
+  if (mode === 'dataset') return !probing;
   return true;
 }
 
@@ -135,6 +137,36 @@ export function typeForFile(name, types, fallback = 'ase (auto)') {
   return types?.[0]?.name ?? fallback;
 }
 
+/** Whether a probed file offers a key choice: more than one energy
+ * option or more than one force option, the calculator counting as one
+ * (the desktop's resolve_key_options, UI/menuLogic.py). */
+export function needsKeyChoice(probe) {
+  const e = (probe?.energy_keys || []).length + (probe?.has_calculator_energy ? 1 : 0);
+  const f = (probe?.force_keys || []).length + (probe?.has_calculator_forces ? 1 : 0);
+  return e > 1 || f > 1;
+}
+
+/** The key a picker starts on: the first named key, else the calculator,
+ * else '' (as the desktop's key dialog). */
+export function defaultKey(keys, calculator, calculatorValue) {
+  if ((keys || []).length) return keys[0];
+  return calculator ? calculatorValue : '';
+}
+
+/**
+ * The LOAD_DATASET kwargs the loader's choices make. Empty when nothing
+ * was chosen, so a plain file sends what it always sent.
+ * @param {{keysShown?: boolean, energyKey?: string, forceKey?: string}} c
+ */
+export function datasetLoadKwargs({ keysShown = false, energyKey = '', forceKey = '' } = {}) {
+  const kw = {};
+  if (keysShown) {
+    kw.selected_energy_key = energyKey || null;
+    kw.selected_force_key = forceKey || null;
+  }
+  return kw;
+}
+
 const $ = (id) => document.getElementById(id);
 
 export class RemoteBrowser {
@@ -156,6 +188,8 @@ export class RemoteBrowser {
     this._home = null;        // server user's home directory
     this._selected = null;    // selected filename within _path
     this._types = { datasets: [{ name: 'ase (auto)', extension: '*' }], models: [] };
+    this._probing = null;   // the path whose key check is still out
+    this._loadWhenReady = false;   // load once the key check is back
     this._pending = null;   // {kind, name, path}: a load with no outcome yet
     this._asks = new Map();   // folder asked for suggestions → replies still to come
     this._suggest = { items: [], active: -1, dir: '' };
@@ -169,6 +203,7 @@ export class RemoteBrowser {
     $('fb-cancel').addEventListener('click', () => this.close());
     $('fb-load').addEventListener('click', () => this._load());
     $('fb-force-key').addEventListener('change', () => this._refreshLoadEnabled());
+    $('fb-type').addEventListener('change', () => this._refreshDatasetKeys());
     $('fb-up').addEventListener('click', () => {
       if (this._parent) this._navigate(this._parent);
     });
@@ -215,7 +250,7 @@ export class RemoteBrowser {
       row.click();
     } else if (act.load) {
       row.click();
-      if (!$('fb-load').disabled) this._load();
+      this._loadWhenPossible();
     } else if (act.up && this._parent) {
       this._focusAfterListing = baseName(this._path);
       this._navigate(this._parent);
@@ -347,7 +382,8 @@ export class RemoteBrowser {
     }));
   }
 
-  /** Fill the box with a recent file. A dataset loads at once; a prediction
+  /** Fill the box with a recent file. A dataset loads at once, with the
+   * server's default keys; a prediction
    * needs its energy and force keys chosen, so its file is selected for that. */
   _useRecent(path) {
     const i = path.lastIndexOf('/');
@@ -358,6 +394,11 @@ export class RemoteBrowser {
       this._path = dir;
       this._selected = name;
       $('fb-type').value = typeForFile(name, this._types.datasets);   // guessed from the extension (decision 1)
+      // A Recent dataset loads with its default keys, no key check
+      // (decision 4): drop any Keys row left from a file clicked before.
+      $('fb-keys').hidden = true;
+      this._probing = null;
+      this._loadWhenReady = false;
       this._load();
     } else {
       this._selectAfterListing = name;
@@ -386,11 +427,16 @@ export class RemoteBrowser {
     this._focusFirstRow = true;   // once the listing arrives (_render)
     this._selected = null;
     $('fb-load').disabled = true;
+    this._loadWhenReady = false;
+    this._probing = null;
+    $('fb-keys').hidden = true;
     // null path → server starts at its home directory
     this._navigate(this._path || null);
   }
 
   close() {
+    this._loadWhenReady = false;
+    this._probing = null;
     this._untrap?.();
     this._untrap = null;
     $('fb-modal').classList.add('hidden');
@@ -439,9 +485,20 @@ export class RemoteBrowser {
     }
   }
 
-  /** Server replied to PROBE_DATASET_KEYS. Ignored outside prediction mode. */
+  /** Server replied to PROBE_DATASET_KEYS for `path`. */
   onDatasetKeys(path, kw) {
-    if (this._mode !== 'prediction') return;
+    if (path !== this._probing) return;   // a file no longer selected
+    this._probing = null;
+    if (this._mode === 'prediction') {
+      this._fillPredictionKeys(kw);
+    } else if (this._mode === 'dataset') {
+      this._showDatasetKeys(kw);
+    }
+    this._refreshLoadEnabled();
+    this._loadIfReady();
+  }
+
+  _fillPredictionKeys(kw) {
     this._fillSelect(
       $('fb-energy-key'),
       keyOptions(kw.energy_keys, {
@@ -455,6 +512,53 @@ export class RemoteBrowser {
       }),
     );
     if (kw.error) this._ports.setStatus(`Probe error: ${kw.error}`, 'error');
+  }
+
+  /** Show the Keys row when the file offers a choice; a failed check
+   * shows nothing here (the load itself says why it failed). */
+  _showDatasetKeys(kw) {
+    const choice = !kw.error && needsKeyChoice(kw);
+    $('fb-keys').hidden = !choice;
+    if (!choice) return;
+    this._fillSelect($('fb-ds-energy-key'), keyOptions(kw.energy_keys, {
+      calculator: kw.has_calculator_energy, calculatorValue: 'energy' }));
+    this._fillSelect($('fb-ds-force-key'), keyOptions(kw.force_keys, {
+      calculator: kw.has_calculator_forces, calculatorValue: 'forces' }));
+    $('fb-ds-energy-key').value = defaultKey(kw.energy_keys, kw.has_calculator_energy, 'energy');
+    $('fb-ds-force-key').value = defaultKey(kw.force_keys, kw.has_calculator_forces, 'forces');
+  }
+
+  /** Load now if it can, else as soon as the key check is back (a
+   * double-click or Enter on a file row). */
+  _loadWhenPossible() {
+    if (!$('fb-load').disabled) this._load();
+    else if (this._probing) this._loadWhenReady = true;
+  }
+
+  /** A load that waited for the key check goes ahead only when there is
+   * nothing left to choose. */
+  _loadIfReady() {
+    if (!this._loadWhenReady) return;
+    this._loadWhenReady = false;
+    if (this._mode === 'dataset' && $('fb-keys').hidden && !$('fb-load').disabled) this._load();
+  }
+
+  /** Ask the server which energy/force keys `path` has; its answer is
+   * matched to the path (a quicker click on another file wins). */
+  _probeKeys(path) {
+    this._probing = path;
+    // Server route requires (path, dataset_type); ASE auto-detect reads the keys.
+    this._ports.send(OUT.PROBE_DATASET_KEYS, {}, [path, 'ase (auto)']);
+  }
+
+  /** The Keys row follows the selected file and the Type: only an ASE
+   * file is probed; any other type has no keys to choose. */
+  _refreshDatasetKeys() {
+    $('fb-keys').hidden = true;
+    this._probing = null;
+    if (this._selected && $('fb-type').value === 'ase (auto)') {
+      this._probeKeys(joinPath(this._path, this._selected));
+    }
     this._refreshLoadEnabled();
   }
 
@@ -519,7 +623,7 @@ export class RemoteBrowser {
         row.addEventListener('click', () => this._selectFile(row, e.name));
         row.addEventListener('dblclick', () => {
           this._selectFile(row, e.name);
-          if (!$('fb-load').disabled) this._load();
+          this._loadWhenPossible();
         });
       }
       list.appendChild(row);
@@ -542,10 +646,12 @@ export class RemoteBrowser {
       const path = joinPath(this._path, name);
       $('fb-energy-key').innerHTML = '<option value="">…probing…</option>';
       $('fb-force-key').innerHTML = '<option value="">…probing…</option>';
-      // Server route requires (path, dataset_type); ASE auto-detect reads the keys.
-      this._ports.send(OUT.PROBE_DATASET_KEYS, {}, [path, 'ase (auto)']);
+      this._probeKeys(path);
     }
-    if (this._mode === 'dataset') $('fb-type').value = typeForFile(name, this._types.datasets);
+    if (this._mode === 'dataset') {
+      $('fb-type').value = typeForFile(name, this._types.datasets);
+      this._refreshDatasetKeys();
+    }
     this._refreshLoadEnabled();
   }
 
@@ -555,6 +661,7 @@ export class RemoteBrowser {
       mode: this._mode,
       forceKey: $('fb-force-key').value,
       targetDataset: $('fb-target-ds').value,
+      probing: this._mode === 'dataset' && Boolean(this._probing),
     });
   }
 
@@ -604,8 +711,14 @@ export class RemoteBrowser {
       this._pending = { kind: 'prediction', name: this._selected, path };
     } else {
       const typ = $('fb-type').value;
-      // LOAD_DATASET reads args=[path, datasetType]; "ase (auto)" auto-detects keys
-      this._ports.send(OUT.LOAD_DATASET, {}, [path, typ]);
+      // LOAD_DATASET reads args=[path, datasetType]; the keys travel as kwargs
+      // when the file offered a choice, else the server's default keys apply.
+      const kwargs = datasetLoadKwargs({
+        keysShown: !$('fb-keys').hidden,
+        energyKey: $('fb-ds-energy-key').value,
+        forceKey: $('fb-ds-force-key').value,
+      });
+      this._ports.send(OUT.LOAD_DATASET, kwargs, [path, typ]);
       this._ports.setStatus(`Loading ${this._selected}…`, 'connected');
       this._pending = { kind: 'dataset', name: this._selected, path, units: this._unitsTyped() };
     }

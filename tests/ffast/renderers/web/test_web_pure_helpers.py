@@ -74,6 +74,15 @@ CASES = {
     "type_xyz": "rb.typeForFile('a.xyz', [{name:'ase (auto)',extension:'*'},{name:'sGDML',extension:'*.npz'}])",
     "type_first": "rb.typeForFile('a.xyz', [{name:'X', extension:'*.x'}])",
     "type_none": "rb.typeForFile('a', [])",
+    # ── dataset key choice (web parity plan 2026-10-29) ─────────────────────
+    "need_one_each": "rb.needsKeyChoice({energy_keys:['E'], force_keys:['F']})",
+    "need_two_energy": "rb.needsKeyChoice({energy_keys:['E1','E2'], force_keys:['F']})",
+    "need_calc_plus_none": "rb.needsKeyChoice({energy_keys:['E'], force_keys:[], has_calculator_energy:true, has_calculator_forces:true})",
+    "default_named": "rb.defaultKey(['E1','E2'], true, 'energy')",
+    "default_calc": "rb.defaultKey([], true, 'energy')",
+    "kwargs_none": "rb.datasetLoadKwargs({})",
+    "kwargs_keys": "rb.datasetLoadKwargs({keysShown:true, energyKey:'energy', forceKey:'MACE_forces'})",
+    "load_probing": "rb.canLoad({selected:'a.xyz', mode:'dataset', probing:true})",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1283,6 +1292,29 @@ def test_the_loader_type_follows_the_file_extension(results):
     assert results["type_xyz"] == "ase (auto)"
     assert results["type_first"] == "X"
     assert results["type_none"] == "ase (auto)"
+
+
+# ── remote_browser: the dataset key choice ──────────────────────────────────
+
+def test_a_file_asks_for_keys_only_when_it_offers_a_choice(results):
+    assert results["need_one_each"] is False
+    assert results["need_two_energy"] is True
+    assert results["need_calc_plus_none"] is True
+
+
+def test_a_key_picker_starts_on_the_first_named_key_else_the_calculator(results):
+    assert results["default_named"] == "E1"
+    assert results["default_calc"] == "energy"
+
+
+def test_the_dataset_load_sends_keys_only_when_they_were_chosen(results):
+    assert results["kwargs_none"] == {}
+    assert results["kwargs_keys"] == {
+        "selected_energy_key": "energy", "selected_force_key": "MACE_forces"}
+
+
+def test_a_dataset_waits_for_its_key_check(results):
+    assert results["load_probing"] is False
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────
