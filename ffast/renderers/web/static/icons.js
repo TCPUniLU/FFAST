@@ -43,7 +43,7 @@ export function icon(name) {
 
 /** Ids of the buttons index.html declares, with their icon, label and text. */
 const STATIC_BUTTONS = {
-  'tab-edit-btn': ['pencil', 'Edit tab layout'],
+  'tab-edit-btn': ['pencil', 'Edit this tab', 'Edit tab'],
   'tab-new-btn': ['plus', 'New tab'],
   'tab-menu-btn': ['more', 'More'],
   'add-dataset-btn': ['plus', 'Load dataset'],

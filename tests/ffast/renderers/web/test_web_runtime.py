@@ -3739,6 +3739,8 @@ async def test_web_new_tab_button_follows_the_last_tab(tmp_path):
                 edit = await page.locator("#tab-edit-btn").bounding_box()
                 assert 0 <= plus["x"] - (last["x"] + last["width"]) < 16
                 assert edit["x"] - plus["x"] > 100
+                await expect(page.locator("#tab-edit-btn")).to_contain_text("Edit tab")
+                assert edit["height"] < 40   # the text does not wrap
 
                 for i in range(8):
                     answer = await _tab_request(ws_port, "SAVE_TAB", {"tab": {
