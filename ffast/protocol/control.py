@@ -24,6 +24,8 @@ DECLARE_SUBSET = "DECLARE_SUBSET"
 FREEZE_SUBSET = "FREEZE_SUBSET"
 # Rename a dataset or prediction; it is announced again to every window.
 RENAME_OBJECT = "RENAME_OBJECT"
+# Cancel a running task, as the desktop Tasks list's Cancel does.
+CANCEL_TASK = "CANCEL_TASK"
 # Name the unit of a dataset's energies or forces, which no file declares. The
 # dataset is announced again (REMOTE_DATASET_META) to every window.
 SET_DATASET_UNIT = "SET_DATASET_UNIT"
@@ -83,7 +85,7 @@ TRACE = "TRACE"
 CLIENT_TO_SERVER = frozenset(
     {
         LOAD_DATASET, LOAD_MODEL, DELETE_OBJECT, CREATE_SUBSET, DECLARE_SUBSET,
-        FREEZE_SUBSET, RENAME_OBJECT, SET_DATASET_UNIT, REQUEST_SUBDATASET_ARRAYS,
+        FREEZE_SUBSET, RENAME_OBJECT, CANCEL_TASK, SET_DATASET_UNIT, REQUEST_SUBDATASET_ARRAYS,
         PROBE_DATASET_KEYS, PROBE_DATASET_LENGTH, LIST_DIR, LOAD_PREDICTION,
         LOAD_EXAMPLE, LOAD_ZERO_MODEL, REQUEST_PREDICTION_ARRAYS, OPEN_VIEW, CLOSE_VIEW, VIEW_COMMAND,
         SAVE_SESSION, LOAD_SESSION, REQUEST_METRIC,
@@ -103,7 +105,7 @@ CLIENT_TO_SERVER = frozenset(
 MUTATING_CLIENT_EVENTS = frozenset(
     {
         LOAD_DATASET, LOAD_MODEL, DELETE_OBJECT, CREATE_SUBSET, DECLARE_SUBSET,
-        FREEZE_SUBSET, RENAME_OBJECT, SET_DATASET_UNIT, LOAD_PREDICTION, LOAD_EXAMPLE, LOAD_ZERO_MODEL, VIEW_COMMAND, SAVE_SESSION, LOAD_SESSION, EXPORT_SUBSET,
+        FREEZE_SUBSET, RENAME_OBJECT, CANCEL_TASK, SET_DATASET_UNIT, LOAD_PREDICTION, LOAD_EXAMPLE, LOAD_ZERO_MODEL, VIEW_COMMAND, SAVE_SESSION, LOAD_SESSION, EXPORT_SUBSET,
         SAVE_TAB, DELETE_TAB, HIDE_TAB, SET_TAB_ORDER, SAVE_USER_METRIC, DELETE_USER_METRIC,
         ADD_SESSION_METRICS,
     }
@@ -177,6 +179,10 @@ SESSION_LOADED = "SESSION_LOADED"
 # task id, so without this the window's "Loading…" never ended. One-shot
 # announcement, out of REPLY_EVENTS.
 LOAD_FAILED = "LOAD_FAILED"
+# Sent to every window right after TASK_CREATED: args=(task_id,),
+# {name, visual}. TASK_CREATED carries only the id; the Tasks list shows
+# visual tasks by name. One-shot announcement, out of REPLY_EVENTS.
+TASK_INFO = "TASK_INFO"
 # Outcome of SAVE_TAB / DELETE_TAB / HIDE_TAB / SET_TAB_ORDER (ADR 0056): {ok, action, name,
 # error}, to the window that asked. On success the new layout then goes to
 # every window as TAB_LAYOUT through the hub. Same shape and reasoning as

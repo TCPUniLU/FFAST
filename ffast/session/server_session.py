@@ -153,7 +153,7 @@ class ServerSession:
         # parameter.
         from ffast.protocol.messages import (
             CloseViewRequest, CreateSubsetRequest, DeclareSubsetRequest,
-            DeleteObjectRequest, DeleteTabRequest, FreezeSubsetRequest, RenameObjectRequest,
+            DeleteObjectRequest, DeleteTabRequest, FreezeSubsetRequest, RenameObjectRequest, CancelTaskRequest,
             EmptyRequest, ExportSubsetRequest, ExportTabRequest, HideTabRequest, SetTabOrderRequest,
             ListDirRequest,
             LoadDatasetRequest, LoadModelRequest,
@@ -172,6 +172,7 @@ class ServerSession:
             control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint"], DeleteObjectRequest),
             control.FREEZE_SUBSET:              _Route(self._on_freeze_subset, ["fingerprint"], FreezeSubsetRequest),
             control.RENAME_OBJECT:              _Route(self._on_rename_object, ["fingerprint", "name"], RenameObjectRequest),
+            control.CANCEL_TASK:                _Route(self._on_cancel_task, ["task_id"], CancelTaskRequest),
             control.SET_DATASET_UNIT:           _Route(self._on_set_dataset_unit, ["fingerprint", "dimension", "unit"], SetDatasetUnitRequest),
             control.CREATE_SUBSET:              _Route(self._on_create_subset, ["parent_fingerprint", "indices"], CreateSubsetRequest),
             control.DECLARE_SUBSET:             _Route(self._on_declare_subset, ["parent_fingerprint", "?indices"], DeclareSubsetRequest),
@@ -432,6 +433,16 @@ class ServerSession:
             logger.warning("Cannot rename to %r: a name needs a character and no '.', '/' or '\\'", name)
             return
         obj.setName(name)
+
+    async def _on_cancel_task(self, task_id, **kwargs) -> None:
+        """Cancel a running task (the Tasks list's Cancel). The task manager
+        cancels it and sends TASK_DONE, so every window drops its row. Work
+        already running in a thread finishes in the background, as on the
+        desktop."""
+        if self.env.getTask(task_id) is None:
+            logger.info("CANCEL_TASK: task %r is not running", task_id)
+            return
+        self.env.eventPush("TASK_CANCEL", task_id)
 
     async def _on_set_dataset_unit(self, fingerprint, dimension, unit, **kwargs) -> None:
         """Name the unit of a dataset's energies or forces. The dataset (the

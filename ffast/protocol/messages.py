@@ -265,6 +265,14 @@ class DeleteObjectRequest(BaseModel):
     fingerprint: str
 
 
+class CancelTaskRequest(BaseModel):
+    """Typed payload for ``CANCEL_TASK``: the task to cancel."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: Union[int, str]
+
+
 class RenameObjectRequest(BaseModel):
     """Typed payload for ``RENAME_OBJECT``: a dataset or prediction and its new name."""
 

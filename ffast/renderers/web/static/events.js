@@ -35,6 +35,8 @@ export const OUT = Object.freeze({
   DECLARE_SUBSET: 'DECLARE_SUBSET',
   FREEZE_SUBSET: 'FREEZE_SUBSET',
   RENAME_OBJECT: 'RENAME_OBJECT',
+  // Cancel a running task from the Tasks list (web parity plan 2026-10-29).
+  CANCEL_TASK: 'CANCEL_TASK',
   SET_DATASET_UNIT: 'SET_DATASET_UNIT',
   REQUEST_METRIC_CATALOG: 'REQUEST_METRIC_CATALOG',
   REQUEST_TAB_LAYOUT: 'REQUEST_TAB_LAYOUT',
@@ -85,6 +87,8 @@ export const IN = Object.freeze({
   TAB_LAYOUT: 'TAB_LAYOUT',
   // The dataset and model loaders the server has, on connect (web parity plan 2026-10-29).
   LOADER_TYPES: 'LOADER_TYPES',
+  // A task's name, right after TASK_CREATED (which carries only its id).
+  TASK_INFO: 'TASK_INFO',
   SUBSET_EXPORTED: 'SUBSET_EXPORTED',
   // Outcome of CREATE_SUBSET: {ok, text, error} ("C in 812 of 1000 frames").
   SUBSET_EXTRACTED: 'SUBSET_EXTRACTED',

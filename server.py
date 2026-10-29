@@ -659,6 +659,16 @@ async def _main(
 
         env.eventSubscribe(evt, make_sender(evt))
 
+    # Tasks by name (web Tasks list): TASK_CREATED carries only the id.
+    def _on_task_created_info(task_id):
+        task = env.getTask(task_id) or {}
+        hub.broadcast(pack(control.TASK_INFO, (task_id,), {
+            "name": str(task.get("name") or "Task"),
+            "visual": bool(task.get("visual")),
+        }))
+
+    env.eventSubscribe("TASK_CREATED", _on_task_created_info)
+
     # Send lightweight dataset metadata to the client when any dataset loads.
     # This lets the client create a RemoteDatasetProxy for Loupe without
     # transferring the full arrays.

@@ -965,6 +965,27 @@ def test_rename_object_is_a_change_a_viewer_may_not_make():
     assert control.RENAME_OBJECT in control.MUTATING_CLIENT_EVENTS
 
 
+def test_cancel_task_asks_the_task_manager():
+    import types
+    pushed = []
+    env = types.SimpleNamespace(
+        getTask=lambda i: {"name": "x"} if i == 7 else None,
+        eventPush=lambda event, *args: pushed.append((event, args)),
+    )
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("CANCEL_TASK", [], {"task_id": 7})
+        await s.dispatch("CANCEL_TASK", [], {"task_id": 8})
+
+    _run(scenario())
+    assert pushed == [("TASK_CANCEL", (7,))]
+
+
+def test_cancel_task_is_a_change_a_viewer_may_not_make():
+    assert control.CANCEL_TASK in control.MUTATING_CLIENT_EVENTS
+
+
 def test_dispatch_export_subset_missing_dataset_emits_error():
     env = _FakeEnv(datasets={})
 

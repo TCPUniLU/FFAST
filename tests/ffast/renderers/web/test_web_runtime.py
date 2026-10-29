@@ -6871,3 +6871,19 @@ async def test_web_the_rail_menu_shows_info(ffast_web_server):
                 await expect(info).to_have_count(0)
         finally:
             await browser.close()
+
+
+async def test_the_server_names_each_task(ffast_web_server, tmp_path):
+    """TASK_INFO follows TASK_CREATED with the task's name (web parity plan 2026-10-29)."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("SAVE_SESSION", (), {"path": str(tmp_path / "s")}))
+        created = await _wait_for_event(ws, "TASK_CREATED")
+        info = await _wait_for_event(ws, "TASK_INFO")
+        assert info["kwargs"] == {"name": "Saving session", "visual": True}
+        assert info["args"][0] == created["args"][0]
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
