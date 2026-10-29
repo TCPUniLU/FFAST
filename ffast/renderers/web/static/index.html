@@ -1124,6 +1124,9 @@
     #fb-keys .fb-keys-head, #fb-keys label { font-size: var(--fs-s); color: var(--muted); font-weight: 600; }
     #fb-pred-rows .fb-pred-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
     #fb-add-pred { margin-top: 4px; }
+    #fb-stride { width: 70px; }
+    #fb-large { padding: 6px 12px; font-size: var(--fs-s); color: var(--muted); border-top: 1px solid var(--line); }
+    #fb-large[hidden] { display: none; }
     #fb-error { color: var(--danger); font-size: var(--fs-s); padding: 8px 12px; }
     #fb-footer {
       display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
@@ -1407,12 +1410,15 @@
         <div id="fb-pred-rows"></div>
         <button id="fb-add-pred" type="button">Also load a prediction from this file</button>
       </div>
+      <div id="fb-large" hidden></div>
       <div id="fb-footer">
         <span id="fb-dataset-fields">
           <label for="fb-type">Type</label>
           <select id="fb-type">
             <option value="ase (auto)">ase (auto)</option>
           </select>
+          <label for="fb-stride">Every Nth frame</label>
+          <input id="fb-stride" type="number" min="1" step="1" value="1">
           <label for="fb-energy-unit">Energy unit</label>
           <input id="fb-energy-unit" list="fb-energy-units" autocomplete="off" spellcheck="false">
           <datalist id="fb-energy-units"></datalist>

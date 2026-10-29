@@ -153,6 +153,30 @@ export function defaultKey(keys, calculator, calculatorValue) {
   return calculator ? calculatorValue : '';
 }
 
+/** From this size on (bytes) a file gets the large-file note, as the
+ * desktop's BigDatasetWarningDialog (UI/mainMenu.py, 3 GB). */
+export const LARGE_FILE_BYTES = 3_000_000_000;
+
+/** The loader's stride number for "every Nth frame": 1 (or less, or not
+ * a number) means all frames, which the loader spells 0 (the desktop's
+ * stride_to_slice_num). */
+export function strideToSliceNum(stride) {
+  const n = Math.floor(Number(stride));
+  return Number.isFinite(n) && n > 1 ? n : 0;
+}
+
+/** The large-file note: size, frame count when known, and what every
+ * Nth frame keeps (the desktop's RemoteStrideDialog estimate). */
+export function largeFileNote({ size, n = null, stride = 1, error = null }) {
+  const head = `This file is ${formatSize(size)}`;
+  if (error) return `${head}. The frames could not be counted (${error}).`;
+  if (n === null || n === undefined) return `${head}. Counting frames…`;
+  const step = strideToSliceNum(stride);
+  const all = `${head}: ${n.toLocaleString('en-US')} frames.`;
+  if (!step) return `${all} Set "Every Nth frame" to load fewer.`;
+  return `${all} Every ${step}th frame: ~${Math.max(1, Math.ceil(n / step)).toLocaleString('en-US')}.`;
+}
+
 /** A prediction's default name from its key: the part before the first
  * `_`, `-` or `.` (MACE_energy → MACE), else 'Model' (the desktop's
  * KeySelectionDialog prefix rule). */
@@ -167,10 +191,11 @@ export function keyPrefix(key) {
  * (`predictions`) go as `prediction_keys` [energy, force, name]; an empty key
  * means "calculator" to the server, as on the desktop.
  * @param {{keysShown?: boolean, energyKey?: string, forceKey?: string,
- *   predictions?: {energyKey: string, forceKey: string, name: string}[]}} c
+ *   predictions?: {energyKey: string, forceKey: string, name: string}[],
+ *   stride?: number|string}} c  `stride` > 1 sends `slice_num`, keys shown or not.
  */
 export function datasetLoadKwargs({
-  keysShown = false, energyKey = '', forceKey = '', predictions = [],
+  keysShown = false, energyKey = '', forceKey = '', predictions = [], stride = 1,
 } = {}) {
   const kw = {};
   if (keysShown) {
@@ -181,6 +206,8 @@ export function datasetLoadKwargs({
     kw.prediction_keys = predictions.map(
       ({ energyKey: e, forceKey: f, name }) => [e || '', f || '', name || 'Model']);
   }
+  const sliceNum = strideToSliceNum(stride);
+  if (sliceNum) kw.slice_num = sliceNum;
   return kw;
 }
 
@@ -205,6 +232,8 @@ export class RemoteBrowser {
     this._home = null;        // server user's home directory
     this._selected = null;    // selected filename within _path
     this._types = { datasets: [{ name: 'ase (auto)', extension: '*' }], models: [] };
+    this._largeBytes = LARGE_FILE_BYTES;   // tests lower it
+    this._large = null;   // {path, size, n, error} of a large selected file
     this._probe = null;   // the last key check's answer, for new prediction lines
     this._probing = null;   // the path whose key check is still out
     this._loadWhenReady = false;   // load once the key check is back
@@ -222,6 +251,7 @@ export class RemoteBrowser {
     $('fb-load').addEventListener('click', () => this._load());
     $('fb-force-key').addEventListener('change', () => this._refreshLoadEnabled());
     $('fb-type').addEventListener('change', () => this._refreshDatasetKeys());
+    $('fb-stride').addEventListener('input', () => this._drawLarge());
     $('fb-add-pred').addEventListener('click', () => this._addPredictionRow());
     $('fb-up').addEventListener('click', () => {
       if (this._parent) this._navigate(this._parent);
@@ -450,6 +480,9 @@ export class RemoteBrowser {
     this._probing = null;
     $('fb-keys').hidden = true;
     $('fb-pred-rows').replaceChildren();
+    $('fb-stride').value = '1';
+    $('fb-large').hidden = true;
+    this._large = null;
     // null path → server starts at its home directory
     this._navigate(this._path || null);
   }
@@ -602,7 +635,8 @@ export class RemoteBrowser {
   _loadIfReady() {
     if (!this._loadWhenReady) return;
     this._loadWhenReady = false;
-    if (this._mode === 'dataset' && $('fb-keys').hidden && !$('fb-load').disabled) this._load();
+    if (this._mode === 'dataset' && $('fb-keys').hidden && $('fb-large').hidden
+        && !$('fb-load').disabled) this._load();
   }
 
   /** Ask the server which energy/force keys `path` has; its answer is
@@ -665,6 +699,7 @@ export class RemoteBrowser {
     for (const e of entries) {
       const row = document.createElement('div');
       row.className = `fb-row ${e.is_dir ? 'dir' : 'file'}`;
+      if (!e.is_dir) row.dataset.size = String(e.size ?? 0);
       const icon = document.createElement('span');
       icon.className = 'fb-icon';
       icon.innerHTML = drawIcon(e.is_dir ? 'folder' : 'file');
@@ -713,8 +748,35 @@ export class RemoteBrowser {
     if (this._mode === 'dataset') {
       $('fb-type').value = typeForFile(name, this._types.datasets);
       this._refreshDatasetKeys();
+      this._refreshLarge(Number(row.dataset.size || 0));
     }
     this._refreshLoadEnabled();
+  }
+
+  /** A file of 3 GB or more shows its size and frame count (counted by
+   * the server, ASE files only) so "Every Nth frame" can be chosen. */
+  _refreshLarge(size) {
+    const big = this._mode === 'dataset' && size >= this._largeBytes;
+    const path = this._selected ? joinPath(this._path, this._selected) : null;
+    this._large = big ? { path, size, n: null, error: null } : null;
+    $('fb-large').hidden = !big;
+    if (!big) return;
+    if ($('fb-type').value === 'ase (auto)') this._ports.send(OUT.PROBE_DATASET_LENGTH, {}, [path]);
+    else this._large.error = 'only ASE files are counted';
+    this._drawLarge();
+  }
+
+  _drawLarge() {
+    if (!this._large) return;
+    $('fb-large').textContent = largeFileNote({ ...this._large, stride: $('fb-stride').value });
+  }
+
+  /** Server replied to PROBE_DATASET_LENGTH. */
+  onDatasetLength(path, kw) {
+    if (!this._large || this._large.path !== path) return;
+    this._large.n = kw.n ?? null;
+    this._large.error = kw.error || null;
+    this._drawLarge();
   }
 
   _refreshLoadEnabled() {
@@ -780,6 +842,7 @@ export class RemoteBrowser {
         energyKey: $('fb-ds-energy-key').value,
         forceKey: $('fb-ds-force-key').value,
         predictions: this._predictionRows(),
+        stride: $('fb-stride').value,
       });
       this._ports.send(OUT.LOAD_DATASET, kwargs, [path, typ]);
       this._ports.setStatus(`Loading ${this._selected}…`, 'connected');

@@ -86,6 +86,10 @@ CASES = {
     "prefix_key": "[rb.keyPrefix('MACE_energy'), rb.keyPrefix('energy')]",
     "kwargs_preds": "rb.datasetLoadKwargs({keysShown:true, energyKey:'REF_energy', forceKey:'REF_forces', predictions:[{energyKey:'MACE_energy', forceKey:'MACE_forces', name:''}]}).prediction_keys",
     "kwargs_preds_hidden": "rb.datasetLoadKwargs({keysShown:false, predictions:[{energyKey:'E', forceKey:'F', name:'X'}]})",
+    "stride_cases": "[rb.strideToSliceNum(1), rb.strideToSliceNum('10'), rb.strideToSliceNum('x')]",
+    "kwargs_stride": "rb.datasetLoadKwargs({stride: 10})",
+    "note_counting": "rb.largeFileNote({size: 3.5e9})",
+    "note_stride": "rb.largeFileNote({size: 3.5e9, n: 100, stride: 10})",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1320,6 +1324,16 @@ def test_extra_key_pairs_become_named_predictions(results):
     assert results["prefix_key"] == ["MACE", "Model"]
     assert results["kwargs_preds"] == [["MACE_energy", "MACE_forces", "Model"]]
     assert results["kwargs_preds_hidden"] == {}
+
+
+def test_every_nth_frame_becomes_the_loaders_stride_number(results):
+    assert results["stride_cases"] == [0, 10, 0]
+    assert results["kwargs_stride"] == {"slice_num": 10}
+
+
+def test_the_large_file_note_counts_then_estimates(results):
+    assert "Counting frames" in results["note_counting"]
+    assert results["note_stride"].endswith("Every 10th frame: ~10.")
 
 
 def test_a_dataset_waits_for_its_key_check(results):
