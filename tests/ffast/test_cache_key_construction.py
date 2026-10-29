@@ -145,3 +145,23 @@ def test_a_box_id_key_keeps_its_brackets_and_round_trips():
     parsed = CacheKey.parse(_key(box))
     assert parsed.dtype.startswith(f"{box}__f")
     assert (parsed.model_fp, parsed.dataset_fp) == ("M", "D")
+
+
+def test_a_box_id_key_is_the_same_before_and_after_its_first_run():
+    """A box id is compiled on its first lookup, and a compiled one carries a
+    formula token in its key. A key built before the first run must equal the
+    one built after it, or a script that rebuilds the key finds nothing."""
+    import ffast.metrics.builtin  # noqa: F401 — registers the built-ins
+    from ffast.metrics.registry import default_registry
+
+    box_id = "ffast.energy_reference[dataset;rmse]"
+    if default_registry.has(box_id):
+        default_registry.unregister(box_id)
+    try:
+        before = DataService.make_metric_cache_key(None, box_id, {}, None, _obj("D"))
+        default_registry.get(box_id)          # what the run's plan does
+        after = DataService.make_metric_cache_key(None, box_id, {}, None, _obj("D"))
+        assert before == after
+    finally:
+        if default_registry.has(box_id):
+            default_registry.unregister(box_id)

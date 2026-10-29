@@ -41,6 +41,10 @@ def formula_token(registry, metric_id: str) -> str | None:
     runs. A formula built on other formulas takes theirs in too, so editing one
     changes the token of everything above it (ADR 0057 rule 5).
     """
+    # A box id is a formula once compiled (ADR 0065). Compile it here, so a key
+    # built before its first run carries the same token as one built after.
+    if hasattr(registry, "ensure"):
+        registry.ensure(metric_id)
     parts: dict[str, str] = {}
 
     def walk(mid: str) -> None:
