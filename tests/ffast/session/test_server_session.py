@@ -562,7 +562,7 @@ def test_replay_empty_env_enqueues_only_the_shared_pieces():
     s.replay()
     sent = [unpack(s.outbound.get_nowait()) for _ in range(s.outbound.qsize())]
     assert [e for e, _, _ in sent] == [
-        "METRIC_CATALOG", "TAB_LAYOUT", "USER_METRICS", "METRIC_USERS"]
+        "LOADER_TYPES", "METRIC_CATALOG", "TAB_LAYOUT", "USER_METRICS", "METRIC_USERS"]
     assert sent[-1][2] == {"users": {}}
     assert s.outbound.empty()   # no datasets, no models, no open views   # no datasets, no models, no open views
 

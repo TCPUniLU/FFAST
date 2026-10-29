@@ -142,6 +142,12 @@ METRICS_UPDATED = "METRICS_UPDATED"
 # asks for it, and it carries the whole layout in one shot, so it stays out of
 # REPLY_EVENTS (no cluster.connection correlator entry).
 TAB_LAYOUT = "TAB_LAYOUT"
+# Which dataset and model loaders this server has (its plugins):
+# {datasets: [{name, extension}], models: [{name, extension}]}, names sorted
+# case-blind. Pushed to a window on connect only: plugins load once, at
+# start (web parity plan 2026-10-29). A dedicated announcement, out of
+# REPLY_EVENTS.
+LOADER_TYPES = "LOADER_TYPES"
 # Reply to EXPORT_SUBSET (ADR 0045 Phase 4, issue 20). A dedicated one-shot
 # announcement (like TAB_LAYOUT): the server writes the extxyz and reports the
 # written path (or an error) so the browser can confirm the export. Only the

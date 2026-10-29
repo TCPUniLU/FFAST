@@ -139,6 +139,21 @@ class WindowFeed:
                     users[mid] = found
         return pack(control.METRIC_USERS, [], {"users": users})
 
+    def loader_types(self) -> bytes:
+        """LOADER_TYPES: the dataset and model loaders the plugins registered,
+        so the web loader lists the server's types instead of a fixed pair."""
+        from ffast.protocol.rpc import pack
+
+        def rows(registry, attr):
+            items = sorted((registry or {}).items(), key=lambda kv: kv[0].lower())
+            return [{"name": name, "extension": getattr(cls, attr, None) or "*"}
+                    for name, cls in items]
+
+        return pack(control.LOADER_TYPES, [], {
+            "datasets": rows(getattr(self.env, "datasetTypes", None), "datasetFileExtension"),
+            "models": rows(getattr(self.env, "modelTypes", None), "modelFileExtension"),
+        })
+
     # ── sending again after a change ────────────────────────────────────────
 
     # The shared pieces that follow the datasets and models, in replay order.
@@ -184,7 +199,7 @@ class WindowFeed:
 
     def replay(self) -> list[tuple[bytes, str]]:
         """The messages a new window gets, each with a label for the log: each
-        dataset announcement, each model announcement, the catalog. A piece
+        dataset announcement, each model announcement, the loader types, the catalog. A piece
         that fails to build is logged as a warning and left out."""
         out: list[tuple[bytes, str]] = []
 
@@ -213,6 +228,12 @@ class WindowFeed:
                 out.append((self.model_meta(model_fp, model), f"model {model_fp[:8]!r}"))
             except Exception as exc:
                 logger.warning("State replay: model %r error: %s", model_fp[:8], exc)
+
+        # ── the loaders this server has (they never change while it runs) ──
+        try:
+            out.append((self.loader_types(), control.LOADER_TYPES))
+        except Exception as exc:
+            logger.warning("State replay: LOADER_TYPES error: %s", exc)
 
         # ── the catalog ─────────────────────────────────────────────────────
         try:

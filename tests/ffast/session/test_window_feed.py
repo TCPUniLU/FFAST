@@ -46,8 +46,32 @@ def test_replay_order():
     feed = WindowFeed(_Env(), lambda data: None)
     events = [unpack(data)[0] for data, _label in feed.replay()]
     assert events == [control.REMOTE_DATASET_META, control.REMOTE_MODEL_META,
-                      control.METRIC_CATALOG, control.TAB_LAYOUT,
+                      control.LOADER_TYPES, control.METRIC_CATALOG, control.TAB_LAYOUT,
                       control.USER_METRICS, control.METRIC_USERS]
+
+
+def test_loader_types_lists_the_registered_loaders_sorted():
+    class _E(_Env):
+        datasetTypes = {
+            "sGDML": type("S", (), {"datasetFileExtension": "*.npz"}),
+            "ase (auto)": type("A", (), {"datasetFileExtension": "*"})(),
+        }
+        modelTypes = {
+            "MACE": type("M", (), {"modelFileExtension": "*.model"}),
+            "SchNet": type("N", (), {}),
+        }
+
+    event, _, kw = unpack(WindowFeed(_E(), lambda d: None).loader_types())
+    assert event == control.LOADER_TYPES
+    assert kw["datasets"] == [{"name": "ase (auto)", "extension": "*"},
+                              {"name": "sGDML", "extension": "*.npz"}]
+    assert kw["models"] == [{"name": "MACE", "extension": "*.model"},
+                            {"name": "SchNet", "extension": "*"}]
+
+
+def test_loader_types_without_an_env_is_empty():
+    _, _, kw = unpack(WindowFeed(None, lambda d: None).loader_types())
+    assert kw == {"datasets": [], "models": []}
 
 
 def test_a_piece_is_broadcast_once_until_it_changes():
