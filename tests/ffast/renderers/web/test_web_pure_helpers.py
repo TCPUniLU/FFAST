@@ -515,6 +515,13 @@ CASES = {
     "mb_unknown": "tr.movedBefore(['A','B','C'], 'X', 'A')",
     "mb_onto_itself": "tr.movedBefore(['A','B','C'], 'B', 'B')",
 
+    # ── tr.steppedOrder: one step left or right, over visible tabs (ADR 0070)
+    "so_left": "tr.steppedOrder(['A','B','C'], new Set(), 'B', -1)",
+    "so_first_left": "tr.steppedOrder(['A','B','C'], new Set(), 'A', -1)",
+    "so_last_right": "tr.steppedOrder(['A','B','C'], new Set(), 'C', 1)",
+    "so_over_hidden_left": "tr.steppedOrder(['A','B','C'], new Set(['B']), 'C', -1)",
+    "so_over_hidden_right": "tr.steppedOrder(['A','B','C'], new Set(['B']), 'A', 1)",
+
     # ── tr.startPair: what a new independent panel shows (rule 7) ───────────
     "sp_first_free": (
         "tr.startPair([{datasetFp:'P', modelFp:'m1'}, {datasetFp:'P', modelFp:'m2'}],"
@@ -1700,6 +1707,10 @@ def test_a_layout_without_the_main_view_gets_the_default_3d_tab_first(results):
     assert results["mb_to_end"] == ["B", "C", "A"]
     assert results["mb_unknown"] == ["A", "B", "C"]
     assert results["mb_onto_itself"] == ["A", "B", "C"]
+    assert results["so_left"] == ["B", "A", "C"]
+    assert results["so_first_left"] is None and results["so_last_right"] is None
+    assert results["so_over_hidden_left"] == ["C", "A", "B"]
+    assert results["so_over_hidden_right"] == ["B", "C", "A"]
     assert results["main_view_added_when_missing"] == [["3D", ["3d"]], ["Plots", ["table"]]]
 
 

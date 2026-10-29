@@ -96,3 +96,17 @@ export function movedBefore(names, name, before) {
   rest.splice(at, 0, name);
   return rest;
 }
+
+/** The bar order with `name` swapped past the next visible tab in
+ * direction `dir` (-1 left, +1 right), or null at that end (ADR 0070).
+ * Hidden tabs (a `Set` of names) stay where they are in the list. */
+export function steppedOrder(names, hidden, name, dir) {
+  const here = names.indexOf(name);
+  if (here < 0) return null;
+  let at = here + dir;
+  while (at >= 0 && at < names.length && hidden.has(names[at])) at += dir;
+  if (at < 0 || at >= names.length) return null;
+  const rest = names.filter((n) => n !== name);
+  rest.splice(rest.indexOf(names[at]) + (dir > 0 ? 1 : 0), 0, name);
+  return rest;
+}

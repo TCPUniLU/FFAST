@@ -164,6 +164,7 @@ export class AnalysisManager {
    *   metricClient?: import('./metrics.js').MetricClient|null,
    *   onSelectTab: (id: string) => void,
    *   onMoveTab?: (name: string, before: string|null) => void,
+   *   onStepTab?: (name: string, dir: number, opts?: {refocus: boolean}) => void,
    *   whyNoMove?: () => string,
    *   onSub: (o: {name: string, series: Array<{parentFp: string, modelFp: string|null}>,
    *     view?: object, active?: boolean, tick?: boolean}) => void,
@@ -180,6 +181,7 @@ export class AnalysisManager {
     this._metrics = deps.metricClient;
     this._onSelectTab = deps.onSelectTab;
     this._onMoveTab = deps.onMoveTab;
+    this._onStepTab = deps.onStepTab;
     this._whyNoMove = deps.whyNoMove;
     /** The name of the tab being dragged in the bar, or null (ADR 0070). */
     this._dragging = null;
@@ -451,6 +453,11 @@ export class AnalysisManager {
     });
     // Left and Right move to the next tab and open it; Home and End go to the ends.
     tabEl.addEventListener('keydown', (e) => {
+      if (e.ctrlKey && e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        this._onStepTab?.(spec.name, e.key === 'ArrowLeft' ? -1 : 1, { refocus: true });
+        return;
+      }
       const tabs = [...this._tabbar.querySelectorAll('.tab')];
       const here = tabs.indexOf(tabEl);
       const to = { ArrowRight: here + 1, ArrowLeft: here - 1, Home: 0, End: tabs.length - 1 }[e.key];

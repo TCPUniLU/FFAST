@@ -10,7 +10,7 @@ import { IndependentPanels, independentKey } from './independent_panels.js';
 import { withColourBar } from './colorbar_overlay.js';
 import {
   ensureMainView, isLinked3D, MAIN_VIEW_CHOICE, MAIN_VIEW_RULE, movedBefore, panelChoices, showsMainView,
-  whyPanelStays,
+  steppedOrder, whyPanelStays,
 } from './tab_rules.js';
 import { sameConfiguration, predictionApplies } from './frame_links.js';
 import { infoReadout } from './measure.js';
@@ -275,6 +275,7 @@ export class FFastApp {
       metricClient: null,
       onSelectTab: (id) => this._selectTab(id),
       onMoveTab: (name, before) => this._moveTab(name, before),
+      onStepTab: (name, dir, opts) => this._stepTab(name, dir, opts),
       whyNoMove: () => this._whyNoEdit(),
       onSub: (o) => this._onSub(o),
       onFreeze: (fp) => this._freezeSubset(fp),
@@ -342,6 +343,10 @@ export class FFastApp {
       this._editor.decorate(this._analysis.tab(id), visible);
     }
     this._syncTabButtons();
+    if (this._refocusTab) {
+      this._refocusTab = false;
+      document.querySelector('#tabbar .tab.active')?.focus();
+    }
   }
 
   /** The tabs in the bar. Hidden tabs stay out; the tab menu offers them
@@ -673,6 +678,16 @@ export class FFastApp {
     actions.push({ id: 'tab-hide', label: 'Hide this tab',
       run: () => this._tabOps.setHidden(name, true).then((r) => this._reportTab(r)),
       unavailable: () => needsControl() || this._whyTabStays(name) });
+    const stepAction = (dir, label, end) => ({
+      id: dir < 0 ? 'tab-move-left' : 'tab-move-right', label,
+      run: () => this._stepTab(name, dir),
+      unavailable: () => this._whyNoEdit() || (this._steppedOrder(name, dir) ? '' : end),
+    });
+    actions.push(stepAction(-1, 'Move left', 'Already first'), stepAction(1, 'Move right', 'Already last'),
+      { separator: true },
+      { id: 'tab-order-reset', label: 'Reset tab order',
+        run: () => this._tabOps.setOrder([]).then((r) => this._reportTab(r)),
+        unavailable: () => this._whyNoEdit() });
     const hidden = this._layoutTabs.filter((t) => t.hidden);
     if (hidden.length) actions.push({ separator: true });
     for (const t of hidden) {
@@ -770,6 +785,23 @@ export class FFastApp {
     if (why) { this._setStatus(why, 'error'); return; }
     const names = this._layoutTabs.map((t) => t.name);
     this._tabOps.setOrder(movedBefore(names, name, before)).then((r) => this._reportTab(r));
+  }
+
+  /** The bar order with `name` moved one visible tab in direction `dir`, or
+   * null at that end (ADR 0070). */
+  _steppedOrder(name, dir) {
+    const hidden = new Set(this._layoutTabs.filter((t) => t.hidden).map((t) => t.name));
+    return steppedOrder(this._layoutTabs.map((t) => t.name), hidden, name, dir);
+  }
+
+  /** Move a tab one place left (-1) or right (+1), skipping hidden tabs. */
+  _stepTab(name, dir, { refocus = false } = {}) {
+    const why = this._whyNoEdit();
+    if (why) { this._setStatus(why, 'error'); return; }
+    const order = this._steppedOrder(name, dir);
+    if (!order) return;
+    this._refocusTab = refocus;   // the layout that follows rebuilds the tab elements
+    this._tabOps.setOrder(order).then((r) => this._reportTab(r));
   }
 
   /** Say how a tab change went, in the status label. */

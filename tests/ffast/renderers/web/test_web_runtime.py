@@ -3800,6 +3800,45 @@ async def test_web_a_dragged_tab_moves_for_every_window(tmp_path):
                 await browser.close()
 
 
+async def test_web_tabs_move_by_menu_keys_and_reset(tmp_path):
+    """ADR 0070 rule 4. Move left / Move right in the tab menu, Ctrl+Shift+
+    arrows on a focused tab, and Reset tab order."""
+    tabs_dir = tmp_path / "tabs"
+    config = tmp_path / "ffast.toml"
+    config.write_text("")
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            tabbar = page.locator("#tabbar .tab")
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await expect(tabbar.first).to_have_text("3D")
+                basic = page.locator("#tabbar .tab", has_text="Basic Errors")
+                await basic.click()
+                await _tab_menu(page, "Move left")
+                await expect(tabbar.first).to_have_text("Basic Errors")
+
+                # On the first tab, Move left is greyed.
+                await page.locator("#tab-menu-btn").click()
+                left = page.locator("#tab-menu-list").get_by_role("menuitem", name="Move left", exact=True)
+                await expect(left).to_be_disabled()
+                assert await left.get_attribute("title") == "Already first"
+                await page.keyboard.press("Escape")
+
+                await page.locator("#tabbar .tab.active").focus()
+                await page.keyboard.press("Control+Shift+ArrowRight")
+                await expect(tabbar.nth(1)).to_have_text("Basic Errors")
+                await expect(page.locator("#tabbar .tab.active")).to_be_focused()
+
+                await _tab_menu(page, "Reset tab order")
+                await expect(tabbar.first).to_have_text("3D")
+                assert json.loads((tabs_dir / "state.json").read_text())["bar_order"] == []
+            finally:
+                await browser.close()
+
+
 @contextlib.asynccontextmanager
 async def _tab_server(tmp_path):
     """A server with only built-in tabs (no project config) and an empty tabs
