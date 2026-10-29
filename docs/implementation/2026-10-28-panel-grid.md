@@ -4,6 +4,18 @@ Decided with the user on 2026-10-28. Written for an agent running Sonnet 5.5 at
 medium effort. Do the parts **in order**. **Part 2 starts only after the user
 has tried the prototype and answered the questions in Part 1, Task 3.**
 
+## Answers (2026-10-29)
+
+1. **24 columns.** Every "12" in Part 2 becomes 24: `grid = 24`, `toFineGrid`
+   shares 24 columns, `repeat(24, ...)`, minimum panel 6 × 4 (a 3D panel 8 × 6),
+   `colspan 12` for half the width in the Task 4 test.
+2. **50 px rows.** The user was unsure; 50 px chosen (finer height control).
+   Changing it later is one constant.
+3. **Edges + corner.**
+4. **Compaction on.** Panels only float up, never sideways. Three panels in one
+   row work: 8 + 8 + 8 columns (the minimum of 6 even allows four).
+5. **Always fill the window width.** No fixed pixel widths.
+
 ## Why
 
 In Edit mode a panel's size is set by two separate things:
