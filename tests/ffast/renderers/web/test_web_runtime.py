@@ -3719,6 +3719,41 @@ async def test_web_user_tabs_reach_every_window_and_can_be_reset_hidden_exported
                 await browser.close()
 
 
+async def test_web_new_tab_button_follows_the_last_tab(tmp_path):
+    """ADR 0070 rule 1. + sits right after the last tab; with more tabs than
+    fit, the tabs scroll and + stays inside the window, left of ✎ and ⋯."""
+    tabs_dir = tmp_path / "tabs"
+    config = tmp_path / "ffast.toml"
+    config.write_text("")
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                before = await page.locator("#tabbar .tab").count()
+                last = await page.locator("#tabbar .tab").last.bounding_box()
+                plus = await page.locator("#tab-new-btn").bounding_box()
+                edit = await page.locator("#tab-edit-btn").bounding_box()
+                assert 0 <= plus["x"] - (last["x"] + last["width"]) < 16
+                assert edit["x"] - plus["x"] > 100
+
+                for i in range(8):
+                    answer = await _tab_request(ws_port, "SAVE_TAB", {"tab": {
+                        "name": f"Tab {i}", "panels": [{"kind": "3d", "row": 0, "col": 0}]}})
+                    assert answer["ok"], answer
+                await expect(page.locator("#tabbar .tab")).to_have_count(before + 8)
+                await page.set_viewport_size({"width": 700, "height": 820})
+                await expect(page.locator("#tabbar")).to_have_class(re.compile(r"\boverflowing\b"))
+                plus = await page.locator("#tab-new-btn").bounding_box()
+                edit = await page.locator("#tab-edit-btn").bounding_box()
+                assert plus["x"] >= 0 and plus["x"] + plus["width"] <= 700
+                assert plus["x"] + plus["width"] <= edit["x"]
+            finally:
+                await browser.close()
+
+
 @contextlib.asynccontextmanager
 async def _tab_server(tmp_path):
     """A server with only built-in tabs (no project config) and an empty tabs

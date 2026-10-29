@@ -239,17 +239,19 @@
       background: var(--bg1); border-bottom: 1px solid var(--bg3);
     }
     #tabbar {
-      display: flex; align-items: stretch; flex: 1; min-width: 0;
+      display: flex; align-items: stretch; flex: 0 1 auto; min-width: 0;
       overflow-x: auto;
     }
     /* more tabs than fit: the right edge fades (analysis.js sets the class) */
     #tabbar.overflowing {
       mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
     }
-    /* tab actions at the right end of the bar (ADR 0056) */
-    #tab-actions { display: flex; align-items: center; gap: 4px; padding: 0 6px; flex-shrink: 0; }
-    #tab-actions button { height: auto; min-width: 28px; padding: 2px 8px; font-size: var(--fs-l); background: transparent; }
-    #tab-actions button:hover { background: var(--surface-3); }
+    /* + follows the last tab; the other tab actions stay at the right end of
+       the bar (ADR 0056, ADR 0070) */
+    #tab-new { display: flex; align-items: center; flex-shrink: 0; padding: 0 4px; }
+    #tab-actions { display: flex; align-items: center; gap: 4px; padding: 0 6px; flex-shrink: 0; margin-left: auto; }
+    #tab-actions button, #tab-new button { height: auto; min-width: 28px; padding: 2px 8px; font-size: var(--fs-l); background: transparent; }
+    #tab-actions button:hover, #tab-new button:hover { background: var(--surface-3); }
     .menu-list.right { left: auto; right: 0; }
     .menu-sep { height: 1px; margin: 4px 6px; background: var(--bg3); }
     /* a user tab that replaces a built-in or project one (rule 10) */
@@ -1276,15 +1278,16 @@
     <div id="content" class="no-view">
       <div id="tabbar-row">
         <div id="tabbar" role="tablist"></div>
+        <!-- + follows the last tab (ADR 0070) -->
+        <div id="tab-new" class="menu">
+          <button id="tab-new-btn" aria-haspopup="menu" aria-expanded="false"
+                  title="New tab"></button>
+          <div id="tab-new-list" class="menu-list hidden" role="menu"></div>
+        </div>
         <!-- Actions on the tab on screen (ADR 0056): export, reset, hide,
              and the hidden tabs to show again. -->
         <div id="tab-actions">
           <button id="tab-edit-btn" title="Edit this tab" disabled></button>
-          <div id="tab-new" class="menu">
-            <button id="tab-new-btn" aria-haspopup="menu" aria-expanded="false"
-                    title="New tab"></button>
-            <div id="tab-new-list" class="menu-list right hidden" role="menu"></div>
-          </div>
           <div id="tab-menu" class="menu">
             <button id="tab-menu-btn" aria-haspopup="menu" aria-expanded="false"
                     title="Tab actions"></button>
