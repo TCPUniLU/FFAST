@@ -3,7 +3,6 @@ import argparse
 import logging
 import os
 import sys
-from pathlib import Path
 import site
 
 # Redirect Python's bytecode cache out of the (iCloud-synced) repo BEFORE any
@@ -16,23 +15,11 @@ import site
 os.environ.setdefault("PYTHONPYCACHEPREFIX", os.path.expanduser("~/.cache/ffast-pyc"))
 sys.pycache_prefix = os.environ["PYTHONPYCACHEPREFIX"]
 
-# Fix Qt plugin path issue - must be set before importing PySide6
-if "QT_PLUGIN_PATH" not in os.environ:
-    # Find PySide6 without importing it (to avoid triggering Qt init)
-    for site_dir in site.getsitepackages():
-        pyside6_path = Path(site_dir) / "PySide6"
-        if pyside6_path.exists():
-            plugin_path = pyside6_path / "Qt" / "plugins"
-            lib_path = pyside6_path / "Qt" / "lib"
-            if plugin_path.exists():
-                # Set multiple Qt environment variables for maximum compatibility
-                os.environ["QT_PLUGIN_PATH"] = str(plugin_path)
-                os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = str(plugin_path / "platforms")
-                os.environ["DYLD_LIBRARY_PATH"] = str(lib_path)
-                os.environ["DYLD_FRAMEWORK_PATH"] = str(lib_path)
-                # Explicitly set platform to cocoa on macOS
-                os.environ["QT_QPA_PLATFORM"] = "cocoa"
-                break
+# Fix Qt plugin path issue on macOS - must be set before importing PySide6.
+# Found without importing PySide6, which would start Qt.
+from utils import macosQtEnv
+
+os.environ.update(macosQtEnv(sys.platform, os.environ, site.getsitepackages()))
 
 # On Windows, PyTorch and Qt ship DLLs of the same name and the first loaded
 # wins; torch fails to load its own if Qt came first. A model plugin imports
