@@ -6710,3 +6710,36 @@ async def test_web_a_plots_labels_are_edited_saved_and_reset(tmp_path):
                 assert not {"x_title", "y_title", "label_size", "legend_size", "legend_x", "legend_y"} & set(toml_panel())
             finally:
                 await browser.close()
+
+
+async def test_web_the_file_browser_starts_in_the_workdir(tmp_path):
+    """--workdir sets where the file browser opens (web parity plan 2026-10-29)."""
+    (tmp_path / "start-here.xyz").write_text("")
+    async with _spawn_server("--workdir", str(tmp_path)) as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _file_menu(page, "Load Dataset…")
+                await expect(page.locator("#fb-path")).to_have_value(str(tmp_path))
+                await expect(page.locator("#fb-list")).to_contain_text("start-here.xyz")
+            finally:
+                await browser.close()
+
+
+async def test_web_the_file_browser_starts_where_the_server_started(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            await expect(page.locator("#fb-path")).to_have_value(str(REPO_ROOT))
+        finally:
+            await browser.close()

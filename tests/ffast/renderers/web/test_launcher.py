@@ -93,6 +93,17 @@ def test_spawn_server_binds_the_given_host(monkeypatch):
     assert "--port" in cmd and "8765" in cmd
 
 
+def test_spawn_server_passes_the_workdir(monkeypatch):
+    captured = []
+    monkeypatch.setattr(launcher.shutil, "which", lambda name: "/usr/bin/ffast-server")
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda cmd, *a, **k: captured.append(cmd))
+    launcher._spawn_server(8765, host="127.0.0.1", workdir="/data/runs")
+    launcher._spawn_server(8765, host="127.0.0.1")
+    with_dir, without = captured
+    assert with_dir[with_dir.index("--workdir") + 1] == "/data/runs"
+    assert "--workdir" not in without
+
+
 @dataclass
 class _FakeProc:
     """Stands in for the ffast-server subprocess in tests."""

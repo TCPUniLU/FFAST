@@ -175,17 +175,23 @@ def open_browser(
     opener(url)
 
 
-def _spawn_server(ws_port: int, host: str = LOOPBACK, trace: bool = False) -> subprocess.Popen:
+def _spawn_server(ws_port: int, host: str = LOOPBACK, trace: bool = False,
+                  workdir: str | None = None) -> subprocess.Popen:
     """Start `ffast-server` on ``host:ws_port`` as a subprocess.
 
     Prefers the installed console script; falls back to ``python -m server``
     so a source checkout works without an editable install. Binds ``host``
     (loopback by default, keeping the RPC local); auto-snapshots are disabled —
     a throwaway local run does not need them. ``trace`` passes ``--trace``.
+    ``workdir`` passes ``--workdir``; without it the server starts in this
+    process's folder (no ``cwd`` is passed), which is where the file browser
+    then starts.
     """
     args = ["--host", host, "--port", str(ws_port), "--snapshot-interval", "0"]
     if trace:
         args.append("--trace")
+    if workdir:
+        args += ["--workdir", workdir]
     exe = shutil.which("ffast-server")
     cmd = [exe, *args] if exe else [sys.executable, "-m", "server", *args]
     logger.info("Starting ffast-server: %s", " ".join(cmd))
@@ -308,6 +314,13 @@ def main(argv: list | None = None) -> None:
         help="Write a trace of every click, message and handler run to "
         "~/.ffast/logs/trace-<date-time>.log, to find the source of a bug.",
     )
+    parser.add_argument(
+        "--workdir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Folder the web file browser starts in (default: the folder the server was started from).",
+    )
     args = parser.parse_args(argv)
 
     opener = (lambda url: logger.info("Web app ready at %s", url)) if args.no_browser else webbrowser.open
@@ -316,7 +329,9 @@ def main(argv: list | None = None) -> None:
             ws_port=args.ws_port,
             web_port=args.web_port,
             app_mode=args.app,
-            spawn_server=functools.partial(_spawn_server, trace=args.trace),
+            spawn_server=functools.partial(
+                _spawn_server, trace=args.trace,
+                workdir=os.path.abspath(os.path.expanduser(args.workdir)) if args.workdir else None),
             opener=opener,
         )
     except LauncherError as exc:

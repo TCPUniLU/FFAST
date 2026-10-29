@@ -905,6 +905,31 @@ class _FakeExportDataset:
         return self._n
 
 
+def _list_dir_reply(env):
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("LIST_DIR", [None], {})
+        return s.outbound.get_nowait()
+
+    return unpack(_run(scenario()))[2]
+
+
+def test_list_dir_starts_in_the_workdir(tmp_path):
+    env = _FakeEnv()
+    env.workdir = str(tmp_path)
+    (tmp_path / "a.xyz").write_text("")
+    kwargs = _list_dir_reply(env)
+    assert kwargs["path"] == str(tmp_path)
+    assert "a.xyz" in [e["name"] for e in kwargs["entries"]]
+    assert kwargs["home"] == os.path.expanduser("~")
+
+
+def test_list_dir_without_workdir_starts_in_the_current_folder(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    kwargs = _list_dir_reply(_FakeEnv())
+    assert os.path.realpath(kwargs["path"]) == os.path.realpath(tmp_path)
+
+
 def test_dispatch_export_subset_missing_dataset_emits_error():
     env = _FakeEnv(datasets={})
 

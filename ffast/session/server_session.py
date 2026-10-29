@@ -740,7 +740,8 @@ class ServerSession:
         """List a server-side directory and push DIR_LISTING.
 
         Full-filesystem browse backing the web file picker. An empty/None
-        ``path`` starts at the server user's home directory. Each entry is
+        ``path`` starts at ``env.workdir`` (``--workdir``, else the folder the
+        server was started from); ``home`` is sent back for the ⌂ button. Each entry is
         ``{name, is_dir, size}``; directories sort first, then files, both
         case-insensitive. ``parent`` is None at the filesystem root.
         """
@@ -748,7 +749,8 @@ class ServerSession:
         from ffast.protocol.rpc import pack
 
         home = os.path.expanduser("~")
-        abspath = os.path.abspath(os.path.expanduser(path)) if path else home
+        start = getattr(self.env, "workdir", None) or os.getcwd()
+        abspath = os.path.abspath(os.path.expanduser(path)) if path else start
 
         entries: list = []
         error: str | None = None

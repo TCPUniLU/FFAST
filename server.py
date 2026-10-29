@@ -594,6 +594,7 @@ async def _main(
     host: str = "0.0.0.0",
     tabs_dir: str | None = None,
     metrics_dir: str | None = None,
+    workdir: str | None = None,
 ):
     """Bootstrap env, wire RPC subscriptions, run server + event loop."""
     from ffast.core.environment import HeadlessEnvironment
@@ -602,6 +603,8 @@ async def _main(
     from ffast.core.plugin_discovery import loadModules
 
     env = HeadlessEnvironment()
+    # Where the web file browser starts: the start folder by default, as on the desktop.
+    env.workdir = workdir or os.getcwd()
     loadModules(None, env, headless=True)
 
     # Register external Trusted Metric Modules from project config (ADR 0011) so
@@ -800,6 +803,14 @@ def cli():
              "(default: ~/.ffast/metrics on this machine).",
     )
     parser.add_argument(
+        "--workdir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Folder the web file browser starts in "
+             "(default: the folder the server was started from).",
+    )
+    parser.add_argument(
         "--host",
         type=str,
         default="0.0.0.0",
@@ -822,6 +833,14 @@ def cli():
     if args.trace is not None:
         trace.start(args.trace or None)
 
+    workdir = None
+    if args.workdir:
+        workdir = os.path.abspath(os.path.expanduser(args.workdir))
+        if not os.path.isdir(workdir):
+            logger.warning("--workdir %s is not a folder; the file browser starts in %s",
+                           workdir, os.getcwd())
+            workdir = None
+
     # Auto-detect job_id from SLURM environment; fall back to CLI arg or "local"
     job_id = (
         os.environ.get("SLURM_JOB_ID")
@@ -841,6 +860,7 @@ def cli():
             host=args.host,
             tabs_dir=args.tabs_dir,
             metrics_dir=args.metrics_dir,
+            workdir=workdir,
         ))
     except KeyboardInterrupt:
         logger.info("Interrupted — shutting down")
