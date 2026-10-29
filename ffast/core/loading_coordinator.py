@@ -105,7 +105,7 @@ class LoadingCoordinator:
         """
         self._env.eventPush("TASK_PROGRESS", taskID, message=message, error=error)
 
-    def _resolveLoad(self, kind, path, typeName):
+    def _resolveLoad(self, kind, path, typeName, popup=True):
         """Validate a load request and resolve the plugin class that serves it.
 
         Both in-process load paths open with the same two checks — the file is
@@ -113,17 +113,20 @@ class LoadingCoordinator:
         failure as a *dataset* problem, so a missing model file or an
         unrecognised model type logged "Tried to load dataset".  ``kind`` is
         ``"model"`` or ``"dataset"``; returns the loader class, or ``None`` when
-        the request is not loadable (already logged).
+        the request is not loadable (already logged). ``popup=False`` keeps the log
+        line out of the pop-ups when the caller reports the failure itself.
         """
         if not os.path.exists(path):
-            logger.error(f"Tried to load {kind}, but path `{path}` not found")
+            logger.error(f"Tried to load {kind}, but path `{path}` not found",
+                         extra={"popup": popup})
             return None
 
         registry = self._env.modelTypes if kind == "model" else self._env.datasetTypes
         loaderClass = registry.get(typeName)
         if loaderClass is None:
             logger.error(
-                f"Tried to load {kind}, but {kind} type `{typeName}` not recognised"
+                f"Tried to load {kind}, but {kind} type `{typeName}` not recognised",
+                extra={"popup": popup},
             )
         return loaderClass
 
@@ -156,7 +159,7 @@ class LoadingCoordinator:
 
     def loadModel(self, path, modelType, taskID=None, on_error=None):
         """Validate and instantiate a concrete model from disk."""
-        loaderClass = self._resolveLoad("model", path, modelType)
+        loaderClass = self._resolveLoad("model", path, modelType, popup=on_error is None)
         if loaderClass is None:
             if on_error:
                 on_error(f"no file at {path}" if not os.path.exists(path)
