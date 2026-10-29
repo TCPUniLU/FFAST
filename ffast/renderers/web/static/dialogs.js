@@ -89,6 +89,70 @@ export function askDialog({ title, message, buttons, danger = '' }) {
 }
 
 /**
+ * A small form: one box per field. Resolves with the boxes' text in field
+ * order when the last button is chosen (or Enter is pressed in a box), and
+ * null otherwise (another button, Escape).
+ * @param {{title: string, note?: string, buttons?: string[],
+ *   fields: Array<{label: string, value: string, placeholder?: string,
+ *   type?: 'text'|'number', min?: number, max?: number}>}} o
+ * @returns {Promise<string[]|null>}
+ */
+export function fieldsDialog({ title, note = '', fields, buttons = ['Cancel', 'Save'] }) {
+  return new Promise((resolve) => {
+    const modal = document.createElement('div');
+    modal.className = 'warning-modal ask-dialog fields-dialog';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    const panel = document.createElement('div');
+    panel.className = 'warning-modal-panel';
+    const head = document.createElement('div');
+    head.className = 'warning-modal-title';
+    head.textContent = title;
+    labelBy(modal, head);
+    panel.appendChild(head);
+    if (note) {
+      const text = document.createElement('p');
+      text.className = 'warning-modal-message';
+      text.textContent = note;
+      panel.appendChild(text);
+    }
+    const inputs = fields.map((f) => {
+      const label = document.createElement('label');
+      label.append(f.label);
+      const input = document.createElement('input');
+      input.type = f.type || 'text';
+      input.value = f.value ?? '';
+      if (f.placeholder) input.placeholder = f.placeholder;
+      if (f.min != null) input.min = String(f.min);
+      if (f.max != null) input.max = String(f.max);
+      label.appendChild(input);
+      panel.appendChild(label);
+      return input;
+    });
+    const foot = document.createElement('div');
+    foot.className = 'warning-modal-footer';
+    let untrap = () => {};
+    const done = (answer) => { modal.remove(); untrap(); resolve(answer); };
+    const accept = () => done(inputs.map((i) => i.value));
+    buttons.forEach((label, i) => {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      btn.addEventListener('click', () => (i === buttons.length - 1 ? accept() : done(null)));
+      foot.appendChild(btn);
+    });
+    modal.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') done(null);
+      else if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); accept(); }
+    });
+    untrap = trapFocus(modal);
+    panel.appendChild(foot);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
+    inputs[0]?.focus();
+  });
+}
+
+/**
  * Ask for the unit of a dataset's energies or forces, in a small box at the
  * click. Enter keeps what is typed (empty: no unit), Escape or a click
  * elsewhere keeps the old one.

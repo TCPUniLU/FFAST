@@ -6634,3 +6634,69 @@ async def test_web_a_dragged_legend_is_kept_in_the_tab(tmp_path):
                 assert state["replaces"]["basic-errors.toml"]["tab"] == "Basic Errors"
             finally:
                 await browser.close()
+
+
+async def test_web_a_plots_labels_are_edited_saved_and_reset(tmp_path):
+    """Web parity plan 2026-10-29: Edit labels… and Reset labels in a plot's ⋯ menu."""
+    tabs_dir = tmp_path / "tabs"
+    title = "Energy MAE timeline"
+    sel = f".tabpanel.active .analysis-panel[data-title='{title}']"
+    plot_ready = (
+        "() => { const el = document.querySelector(\"" + sel + " .panel-plot\");"
+        " return el?.layout?.yaxis?.title?.text === 'My energy' && el.layout.yaxis.title.font.size === 16; }")
+    saved = tabs_dir / "basic-errors.toml"
+
+    def toml_panel():
+        panels = tomllib.loads(saved.read_text())["tabs"][0]["panels"]
+        return next(q for q in panels if q.get("title") == title)
+
+    async with _spawn_server("--tabs-dir", str(tabs_dir)) as (ws_port, web_port):
+        dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+
+            async def open_tab():
+                await _expect_connected(page)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+                await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+                await _open_analysis_tab(page, "Basic Errors")
+                await page.wait_for_function(_PANEL_HAS_POINTS, arg=title, timeout=25000)
+
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await open_tab()
+                panel = page.locator(sel)
+                await panel.locator(".panel-more").click()
+                await page.locator("#panel-menu-list [data-action='panel-labels']").click()
+                dialog = page.locator(".fields-dialog")
+                await expect(dialog).to_be_visible()
+                await dialog.locator("label", has_text="Y axis title").locator("input").fill("My energy")
+                await dialog.locator("label", has_text="Axis title size").locator("input").fill("16")
+                await dialog.get_by_role("button", name="Save").click()
+                await page.wait_for_function(plot_ready, timeout=15000)
+                for _ in range(50):
+                    if saved.exists():
+                        break
+                    await asyncio.sleep(0.1)
+                edited = toml_panel()
+                assert edited["y_title"] == "My energy" and edited["label_size"] == 16
+                assert "x_title" not in edited
+                await expect(page.locator(sel + " .panel-caption-line")).to_contain_text("My energy")
+
+                await page.reload(wait_until="networkidle")
+                await open_tab()
+                await page.wait_for_function(plot_ready, timeout=15000)
+
+                await page.locator(sel + " .panel-more").click()
+                await page.locator("#panel-menu-list [data-action='panel-labels-reset']").click()
+                await page.wait_for_function(
+                    "() => document.querySelector(\"" + sel + " .panel-plot\")?.layout?.yaxis?.title?.text !== 'My energy'",
+                    timeout=15000)
+                for _ in range(50):
+                    if not {"x_title", "y_title", "label_size", "legend_size", "legend_x", "legend_y"} & set(toml_panel()):
+                        break
+                    await asyncio.sleep(0.1)
+                assert not {"x_title", "y_title", "label_size", "legend_size", "legend_x", "legend_y"} & set(toml_panel())
+            finally:
+                await browser.close()

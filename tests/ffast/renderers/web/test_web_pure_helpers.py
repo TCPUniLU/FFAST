@@ -117,6 +117,18 @@ CASES = {
     "te_set_labels": "(() => { const a = te.setPanelLabels(TE(), 2, {y_title: 'Mine', label_size: 14, colour: 'red'}); const b = te.setPanelLabels(a, 2, {y_title: null}); return [a.panels[2], b.panels[2], te.toSaved(b).panels[2], TE().panels[2]]; })()",
     "pn_labels_applied": "(() => { const S = (name) => ({datasetFp: 'D', modelFp: name, name, data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}); const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u'], y_title: 'Mine', label_size: 15, legend_size: 9, legend_x: 0.1, legend_y: 0.9}, [S('MACE'), S('SchNet')], {units: {}, peaks: false}); return [b.layout.yaxis.title.text, b.layout.yaxis.title.font.size, b.layout.xaxis.title.font.size, b.layout.legend.font.size, b.layout.legend.x, b.layout.legend.y, b.labelDefaults, b.traces[0].hovertemplate]; })()",
     "pn_labels_one_series": "(() => { const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u'], y_title: 'Mine', label_size: 15, legend_size: 9, legend_x: 0.1, legend_y: 0.9}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}], {units: {}, peaks: false}); return [b.layout.legend?.x ?? null, b.labelDefaults.legend, b.layout.yaxis.title.text]; })()",
+    "fields_dialog": (
+        "await (async () => {"
+        "  const p = di.fieldsDialog({title: 'T', fields: [{label: 'A', value: 'a'}, {label: 'B', value: ''},"
+        "    {label: 'N', value: '', type: 'number', min: 6, max: 40}]});"
+        "  const inputs = [...document.querySelectorAll('.fields-dialog input')];"
+        "  const meta = [inputs[2].type, inputs[2].min];"
+        "  inputs[1].value = 'b'; inputs[2].value = '12';"
+        "  const buttons = document.querySelectorAll('.fields-dialog .warning-modal-footer button');"
+        "  buttons[buttons.length - 1].click();"
+        "  return [await p, ...meta];"
+        "})()"
+    ),
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
     "base_name": "[rb.baseName('/a/b'), rb.baseName('/a/b/'), rb.baseName('C:\\\\a\\\\b')]",
     "list_down": "[rb.listKey('ArrowDown', {index: 0, count: 3, isDir: true}), rb.listKey('ArrowDown', {index: 2, count: 3, isDir: false})]",
@@ -1455,6 +1467,12 @@ def test_a_panels_label_fields_are_drawn_and_keep_the_defaults(results):
 def test_the_legend_fields_count_only_when_a_legend_shows(results):
     legend_x, has_legend, title = results["pn_labels_one_series"]
     assert legend_x is None and has_legend is False and title == "Mine"
+
+
+# ── dialogs.fieldsDialog ────────────────────────────────────────────────────
+
+def test_a_fields_dialog_answers_with_the_boxes_text_in_order(results):
+    assert results["fields_dialog"] == [["a", "b", "12"], "number", "6"]
 
 
 # ── remote_browser.baseName / listKey (to_fix_v2) ───────────────────────────

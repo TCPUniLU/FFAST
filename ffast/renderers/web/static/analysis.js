@@ -31,12 +31,12 @@ import { plotTheme } from './theme.js';
 import { visitedKey } from './peaks.js';
 import { panelLetters, readingOrder, caption, captionSegments } from './figure.js';
 import { datasetUnits, editableDimension, resolveUnit } from './units.js';
-import { unitPopover } from './dialogs.js';
+import { unitPopover, fieldsDialog } from './dialogs.js';
 import { sharedMenu } from './actions.js';
 import { icon } from './icons.js';
 import { plotCsv, tableCsv, panelFileName, downloadText, downloadPlot } from './panel_export.js';
 import { KIND_3D } from './tab_rules.js';
-import { GRID_COLUMNS, ROW_UNIT_PX, toFineGrid } from './tab_edit.js';
+import { GRID_COLUMNS, ROW_UNIT_PX, LABEL_FIELDS, toFineGrid } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState } from './layout_state.js';
 
@@ -1097,7 +1097,43 @@ export class AnalysisManager {
       { id: 'panel-svg', label: 'Download SVG', run: () => downloadPlot(el, 'svg', stem), unavailable: notDrawn },
       { id: 'panel-csv', label: 'Download data (CSV)', unavailable: notDrawn,
         run: () => downloadText(plotCsv(el.data, el._figureInfo || {}), `${stem}.csv`) },
+      { separator: true },
+      { id: 'panel-labels', label: 'Edit labels…',
+        unavailable: () => notDrawn() || this._whyNoMove?.() || '',
+        run: () => this._editLabels(t, spec, card) },
+      { id: 'panel-labels-reset', label: 'Reset labels',
+        unavailable: () => this._whyNoMove?.()
+          || (LABEL_FIELDS.some((k) => spec[k] != null) ? '' : 'No labels changed'),
+        run: () => this._onPanelLabels?.(t.spec.name, spec,
+          Object.fromEntries(LABEL_FIELDS.map((k) => [k, null]))) },
     ];
+  }
+
+  /** Edit a plot's axis titles and text sizes (web parity plan
+   * 2026-10-29, decisions 4-6); saved in the tab. */
+  async _editLabels(t, spec, card) {
+    const d = card.body._labelDefaults || { x: '', y: '', labelSize: null, legendSize: null, legend: false };
+    const strip = (s) => String(s ?? '').replace(/<[^>]*>/g, '');
+    const sizeBox = (label, value, fallback) => ({
+      label, type: 'number', min: 6, max: 40, value: String(value ?? ''), placeholder: strip(fallback) });
+    const fields = [
+      { label: 'X axis title', value: spec.x_title || '', placeholder: strip(d.x) },
+      { label: 'Y axis title', value: spec.y_title || '', placeholder: strip(d.y) },
+      sizeBox('Axis title size', spec.label_size, d.labelSize),
+    ];
+    if (d.legend) fields.push(sizeBox('Legend text size', spec.legend_size, d.legendSize));
+    const values = await fieldsDialog({
+      title: `Labels of ${strip(spec.title) || 'this plot'}`,
+      note: 'Leave a box empty for the default. A typed axis title replaces the whole title, unit included.'
+        + (d.legend ? ' Drag the legend to move it.' : ''),
+      fields,
+    });
+    if (!values) return;
+    const text = (v) => v.trim() || null;
+    const size = (v) => { const n = Number(v); return v.trim() && Number.isFinite(n) ? Math.round(n) : null; };
+    const patch = { x_title: text(values[0]), y_title: text(values[1]), label_size: size(values[2]) };
+    if (d.legend) patch.legend_size = size(values[3]);
+    await this._onPanelLabels?.(t.spec.name, spec, patch);
   }
 
   /** Write the caption line of a drawn panel; a "[unit]" in it that names an
