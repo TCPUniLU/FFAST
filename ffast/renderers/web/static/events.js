@@ -61,6 +61,8 @@ export const OUT = Object.freeze({
   REQUEST_METRIC_BOXES: 'REQUEST_METRIC_BOXES',
   ADD_SESSION_METRICS: 'ADD_SESSION_METRICS',
   GRACEFUL_DISCONNECT: 'GRACEFUL_DISCONNECT',
+  // Ask the server's clock, for the timing log (ADR 0072)
+  TIMING_PING: 'TIMING_PING',
 });
 
 /** Server → client notifications and one-shot announcements. */
@@ -78,6 +80,8 @@ export const IN = Object.freeze({
   REMOTE_MODEL_META: 'REMOTE_MODEL_META',
   SCENE_SNAPSHOT: 'SCENE_SNAPSHOT',
   SCENE_PATCH: 'SCENE_PATCH',
+  // When a message was read, handled and sent, for the timing log (ADR 0072)
+  TIMING: 'TIMING',
   COMMAND_RESULT: 'COMMAND_RESULT',
   DIR_LISTING: 'DIR_LISTING',
   DATASET_KEYS_RESPONSE: 'DATASET_KEYS_RESPONSE',

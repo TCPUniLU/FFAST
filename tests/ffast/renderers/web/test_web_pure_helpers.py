@@ -1041,6 +1041,72 @@ CASES = {
     ),
 }
 
+# ── timing.js: the timing log's bookkeeping (ADR 0072) ─────────────────────
+# One click, with the server's clock 5000 ms ahead and a 20 ms round trip:
+# the message reaches the server 310 ms after it was sent (10 network, 300
+# waiting behind other work), is handled in 600 ms, and its 2 KB reply is
+# queued at +900, sent 20 ms later, travels 80 ms and is on screen at +1040.
+_TIMING_LOG = (
+    "const out = []; const log = new tm.TimingLog((l) => out.push(l)); log.serverTimed = true;"
+    " log.note({kind: 'pong', t0: 1000, server: 6010}, 1020);"
+)
+CASES.update({
+    "timing_one_click": (
+        "(() => {" + _TIMING_LOG +
+        "  log.input('click A', 2000);"
+        "  const id = log.sent('REQUEST_METRIC', 2000);"
+        "  log.note({kind: 'handled', id, read: 7310, done: 7910}, 2950);"
+        "  const rep = log.received('METRIC_RESULT', 100, 3000);"
+        "  log.note({kind: 'sent', cause: id, queued: 7900, sent: 7920, bytes: 2048}, 3001);"
+        "  log.handled(rep, 3010); log.drawn(rep, 3040);"
+        "  log.tick(3500); const early = out.length;"
+        "  log.tick(4100);"
+        "  return {early, lines: out[0].map((l) => l.replace(/^\\S+ /, ''))};"
+        "})()"
+    ),
+    # A reply to the first click that comes after the second click.
+    "timing_late_reply": (
+        "(() => {" + _TIMING_LOG +
+        "  log.input('click A', 2000); const a = log.sent('A', 2000);"
+        "  log.input('click B', 2100); log.sent('B', 2100);"
+        "  log.received('A_REPLY', 10, 2500);"
+        "  log.note({kind: 'sent', cause: a, queued: 7400, sent: 7400, bytes: 10}, 2500);"
+        "  for (const id of [1, 2]) log.note({kind: 'handled', id, read: 7100, done: 7200}, 2500);"
+        "  log.tick(9000);"
+        "  return out.map((b) => [b[0].replace(/^\\S+ /, '').split(':')[0], b.filter((l) => l.includes('←')).length]);"
+        "})()"
+    ),
+    # An input with nothing after it gives way to the next one.
+    "timing_empty_input_replaced": (
+        "(() => {" + _TIMING_LOG +
+        "  log.input('click A', 2000); log.input('click B', 2100); log.sent('B', 2100);"
+        "  log.note({kind: 'handled', id: 1, read: 7200, done: 7200}, 2200);"
+        "  log.tick(9000);"
+        "  return out.map((b) => b[0].replace(/^\\S+ /, '').split(':')[0]);"
+        "})()"
+    ),
+    # Still being handled on the server: not quiet, however long.
+    "timing_waits_for_the_server": (
+        "(() => {" + _TIMING_LOG +
+        "  log.input('click A', 2000); const id = log.sent('A', 2000);"
+        "  log.tick(9000); const before = out.length;"
+        "  log.note({kind: 'handled', id, read: 7100, done: 13000}, 9000);"
+        "  log.tick(10100);"
+        "  return [before, out.length];"
+        "})()"
+    ),
+    # A server without timing notes: the page's own times only.
+    "timing_old_server": (
+        "(() => { const out = []; const log = new tm.TimingLog((l) => out.push(l));"
+        "  log.input('click A', 2000); log.sent('A', 2000);"
+        "  const rep = log.received('A_REPLY', 512, 2300); log.handled(rep, 2310);"
+        "  log.tick(3400);"
+        "  return out[0].slice(1);"
+        "})()"
+    ),
+    "timing_bytes": "[tm.fmtBytes(512), tm.fmtBytes(2048), tm.fmtBytes(3355443)]",
+})
+
 
 @pytest.fixture(scope="module")
 def results():
@@ -1092,6 +1158,7 @@ def results():
         f"  const tk = await import('{origin}/tasks.js');\n"
         f"  const sc = await import('{origin}/shortcuts.js');\n"
         f"  const cc = await import('{origin}/cluster_client.js');\n"
+        f"  const tm = await import('{origin}/timing.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -2581,3 +2648,40 @@ def test_the_server_setup_fields_all_have_help_and_defaults(results):
 def test_the_cluster_client_sends_the_launch_id_and_reports_errors(results):
     assert results["cc_client_request"] == ["/cluster/connect", "POST", "s3", "J5"]
     assert results["cc_client_error"] == ["busy", 409]
+
+
+# ── timing.js (ADR 0072) ─────────────────────────────────────────────────────
+
+def test_timing_splits_one_click_into_its_stages(results):
+    r = results["timing_one_click"]
+    assert r["early"] == 0, "written before the click went quiet"
+    assert r["lines"] == [
+        "click A: 1040 ms until the last reply was on screen",
+        "    sent 1, received 1 (2 KB) · round trip 20 ms",
+        "    → REQUEST_METRIC #1  at server +310 ms (≈10 network, ≈300 waiting) · handled in 600 ms",
+        "    ← METRIC_RESULT for #1 (2 KB)  queued +900 · sent after 20 · reached page after 80 · page 10 · on screen +1040",
+    ]
+
+
+def test_timing_a_late_reply_goes_to_the_click_that_asked(results):
+    assert results["timing_late_reply"] == [["click A", 1], ["click B", 0]]
+
+
+def test_timing_an_input_with_nothing_after_it_gives_way(results):
+    assert results["timing_empty_input_replaced"] == ["click B"]
+
+
+def test_timing_waits_while_the_server_still_handles_a_message(results):
+    assert results["timing_waits_for_the_server"] == [0, 1]
+
+
+def test_timing_without_server_notes_uses_the_pages_times(results):
+    assert results["timing_old_server"] == [
+        "    sent 1, received 1 (512 B)",
+        "    → A #1  sent +0",
+        "    ← A_REPLY (512 B)  arrived +300 · page 10",
+    ]
+
+
+def test_timing_sizes_read_plainly(results):
+    assert results["timing_bytes"] == ["512 B", "2 KB", "3.2 MB"]

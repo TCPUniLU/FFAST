@@ -39,6 +39,7 @@ import { askDialog, askText, infoDialog, textDialog, trapFocus } from './dialogs
 import { objectInfo } from './object_info.js';
 import { TaskList } from './tasks.js';
 import { ClusterClient, launchId } from './cluster_client.js';
+import { setTimingSink } from './timing.js';
 import { ClusterDialog } from './cluster_dialog.js';
 import { FILE_SHORTCUTS, isMac, matchShortcut, shortcutLabel } from './shortcuts.js';
 import { showWarning } from './toasts.js';
@@ -273,6 +274,8 @@ export class FFastApp {
     // open has no launch id and no way to a cluster (web parity plan 2026-10-29).
     const launch = launchId(window.location.search);
     this._clusterClient = launch ? new ClusterClient(launch) : null;
+    // The launcher also writes the timing log (ADR 0072).
+    setTimingSink(launch);
     this._clusterReady = false;   // true once the launcher answered
 
     this._initViews();

@@ -83,9 +83,31 @@ class _SilentStaticHandler(http.server.SimpleHTTPRequestHandler):
         status, reply = broker.handle(method, self.path.split("?", 1)[0], body)
         self._send_json(status, reply)
 
+    def _timing_request(self) -> None:
+        """Append the page's timing lines to the log file (ADR 0072). Only a
+        page the launcher opened may write: same guard as /cluster/."""
+        log = getattr(self.server, "timing_log", None)
+        if log is None:
+            return self._send_json(404, {"error": "No timing log here"})
+        secret = getattr(self.server, "cluster_secret", None)
+        if not secret or self.headers.get("X-FFAST-Launch") != secret:
+            return self._send_json(403, {"error": "Not allowed"})
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > 1048576:
+            return self._send_json(413, {"error": "Request too large"})
+        try:
+            body = json.loads(self.rfile.read(n) or b"{}")
+        except ValueError:
+            return self._send_json(400, {"error": "Not JSON"})
+        if not isinstance(body, dict) or not log.write(body.get("lines")):
+            return self._send_json(400, {"error": "Expected {lines: [str]}"})
+        self._send_json(200, {})
+
     def do_POST(self):
         if self.path.startswith("/cluster/"):
             return self._cluster_request("POST")
+        if self.path.split("?", 1)[0] == "/timing":
+            return self._timing_request()
         self.send_error(404)
 
     def do_GET(self):
@@ -123,12 +145,17 @@ def start_static_server(port: int, host: str = "0.0.0.0", *, cluster_broker=None
     process regardless).
 
     Only the ``ffast-web`` launcher passes a ``cluster_broker``; the secret is
-    the page's ``launch=`` id, which /cluster/ requests must send back.
+    the page's ``launch=`` id, which /cluster/ and /timing requests must send
+    back. With a secret the server also keeps the page's timing log (ADR 0072).
     """
     #httpd = http.server.HTTPServer((host, port), _SilentStaticHandler)
     httpd = _StaticHTTPServer((host, port), _SilentStaticHandler)
     httpd.cluster_broker = cluster_broker
     httpd.cluster_secret = cluster_secret
+    if cluster_secret:
+        from ffast.renderers.web.timing_log import TimingLogFile
+
+        httpd.timing_log = TimingLogFile()
     thread = threading.Thread(target=httpd.serve_forever, daemon=True, name=f"ffast-web-{port}")
     thread.start()
     logger.info("Web renderer serving at http://%s:%d (static dir: %s)", host, port, STATIC_DIR)

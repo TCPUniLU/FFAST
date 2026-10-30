@@ -1,8 +1,9 @@
 /**
  * WebSocket connection with HELLO handshake.
  */
-import { OUT } from './events.js';
+import { IN, OUT } from './events.js';
 import { traceTo } from './trace.js';
+import { now, startTiming, stopTiming, timingWanted } from './timing.js';
 
 
 import { msgpack } from './msgpack.js';
@@ -19,6 +20,9 @@ export class FFastConnection {
     this.serverCodeFingerprint = null;
     /** Whether the server writes a trace this page should report to. */
     this.trace = false;
+    /** The timing log (ADR 0072), or null when this page keeps none. */
+    this.timing = null;
+    this._pingTimer = null;
   }
 
   connect() {
@@ -32,7 +36,7 @@ export class FFastConnection {
       let handshakeDone = false;
 
       ws.onmessage = (evt) => {
-        if (handshakeDone) this._dispatch(evt.data);
+        if (handshakeDone) this._dispatch(evt.data, now());
         else buf.push(evt.data);
       };
       ws.onerror = () => { if (!handshakeDone) reject(new Error('WebSocket error')); };
@@ -44,7 +48,7 @@ export class FFastConnection {
           handshakeDone = true;
           ws.onclose = null;
           // process any messages that arrived during handshake
-          for (const data of buf) this._dispatch(data);
+          for (const data of buf) this._dispatch(data, now());
           buf.length = 0;
           if (this.trace) traceTo(this);
           resolve(this.role);
@@ -67,7 +71,7 @@ export class FFastConnection {
         renderer: 'webgl',
         session_token: this._token,
         supported_codecs: ['raw'],
-        features: [],
+        features: timingWanted() ? ['timing'] : [],
         read_only: this._readOnly,
       },
     }));
@@ -88,6 +92,7 @@ export class FFastConnection {
       role = ack.role || 'READ_ONLY';
       this.serverCodeFingerprint = ack.code_fingerprint || null;
       this.trace = !!ack.trace;
+      if (timingWanted()) this._startTiming((ack.features || []).includes('timing'));
     } catch (_) {
       console.warn('FFAST: no HELLO_ACK received — using READ_ONLY (backward compat)');
     }
@@ -107,24 +112,60 @@ export class FFastConnection {
     });
   }
 
-  _dispatch(data) {
+  _dispatch(data, received) {
     let event = '?';
+    let reply = null;
     try {
       const msg = data instanceof ArrayBuffer
         ? msgpack.decode(data)
         : null;
       if (!msg || !msg.event) return;
       event = msg.event;
+      if (this.timing) {
+        if (event === IN.TIMING) { this.timing.note(msg.kwargs || {}, received); return; }
+        reply = this.timing.received(event, data.byteLength, received);
+      }
       const h = this._handlers.get(msg.event);
       if (h) h(msg.kwargs || {}, msg.args || []);
     } catch (e) {
       console.warn(`FFAST: dispatch error in the ${event} handler`, e);
+    } finally {
+      if (reply) {
+        const log = this.timing;
+        log.handled(reply, now());
+        // Two frames: the first runs before the browser paints the change.
+        requestAnimationFrame(() => requestAnimationFrame(() => log.drawn(reply, now())));
+      }
     }
   }
 
   send(event, kwargs = {}, args = []) {
-    if (this._ws?.readyState === WebSocket.OPEN)
+    if (this._ws?.readyState !== WebSocket.OPEN) return;
+    // The trace's own lines are not timed: they follow every click.
+    if (this.timing && event !== OUT.TRACE) {
+      const id = this.timing.sent(event, now());
+      this._ws.send(msgpack.encode({ event, args, kwargs, id }));
+    } else {
       this._ws.send(msgpack.encode({ event, args, kwargs }));
+    }
+  }
+
+  /** Keep a timing log; with ``serverTimed`` also number messages and ask the
+   * server's clock: five times now, then every ten seconds (the quickest
+   * answer lines the clocks up best). */
+  _startTiming(serverTimed) {
+    this.timing = startTiming();
+    this.timing.serverTimed = serverTimed;
+    this.timing.input(`connected to ${this._url}`
+      + (serverTimed ? '' : ' (this server sends no timing notes)'), now());
+    if (!serverTimed) return;
+    const ping = () => {
+      if (this._ws?.readyState === WebSocket.OPEN)
+        this._ws.send(msgpack.encode({ event: OUT.TIMING_PING, args: [], kwargs: { t0: now() } }));
+    };
+    let first = 5;
+    const early = setInterval(() => { ping(); if (--first <= 0) clearInterval(early); }, 200);
+    this._pingTimer = setInterval(ping, 10000);
   }
 
   on(event, handler)   { this._handlers.set(event, handler); }
@@ -132,6 +173,9 @@ export class FFastConnection {
 
   close() {
     if (this.trace) traceTo(null);
+    clearInterval(this._pingTimer);
+    stopTiming(this.timing);
+    this.timing = null;
     this.send(OUT.GRACEFUL_DISCONNECT, {});
     this._ws?.close();
   }
