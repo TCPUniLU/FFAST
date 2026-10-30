@@ -141,6 +141,24 @@ def _unpack_inputs(packed: dict[str, Any]) -> tuple[dict[str, Any], list[SharedM
 
 # ── Worker subprocess entry point ─────────────────────────────────────────────
 
+# Modules a worker imports while it boots, before it says it is ready, so the
+# first metric that needs one does not wait for the import (scipy.stats alone
+# took ~500 ms on the first tab opened).
+_PRELOAD = ("scipy.stats", "ffast.metrics.builtin")
+
+
+def _preload() -> None:
+    """Import ``_PRELOAD``. One that fails is left for the metric that needs
+    it to report."""
+    import importlib
+
+    for name in _PRELOAD:
+        try:
+            importlib.import_module(name)
+        except Exception:
+            pass
+
+
 def _worker_main(
     conn: "mp.connection.Connection",
     policy: PoolPolicy,
@@ -157,6 +175,7 @@ def _worker_main(
     - max_tasks_per_worker reached (clean self-exit).
     """
     task_count = 0
+    _preload()
 
     # Announce readiness: the parent's per-metric deadline only starts once it
     # has consumed this, so interpreter boot + imports above don't

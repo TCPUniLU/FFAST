@@ -60,6 +60,11 @@ def _pool_dep_outer(y):
     return y + 1.0
 
 
+def _pool_loaded(names):
+    import sys
+    return [n for n in names if n in sys.modules]
+
+
 # Source for a compiled transform metric (returns a per-atom-style vector).
 def _pool_vec(x):
     return np.asarray(x, dtype=float)
@@ -236,6 +241,13 @@ def test_worker_recycles_after_max_tasks(registry):
         assert pid_before != pid_after
     finally:
         executor.shutdown()
+
+
+def test_a_new_worker_has_the_slow_imports_done_before_its_first_task(executor):
+    # Importing scipy.stats took ~500 ms inside the first metric that used it,
+    # so the first tab opened waited for it (2026-10-30 timing log).
+    slow = ["scipy.stats", "ffast.metrics.builtin"]
+    assert executor.call(_pool_loaded, {"names": slow}) == slow
 
 
 def test_worker_spawns_replacement_after_crash(registry):
