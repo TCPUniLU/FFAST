@@ -20,6 +20,10 @@ class MetricExecutor(ABC):
     def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
         ...
 
+    def start(self) -> None:
+        """Get ready for the first metric now, so no request waits for it.
+        Nothing to do when metrics run in this process."""
+
     def call(self, fn: Any, kwargs: dict[str, Any], label: str = "formula") -> Any:
         """``fn(**kwargs)`` where this executor runs metric code; raises if it
         fails. Try computes a formula this way (ADR 0064 step 1)."""

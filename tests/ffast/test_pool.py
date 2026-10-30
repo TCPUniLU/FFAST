@@ -250,6 +250,18 @@ def test_a_new_worker_has_the_slow_imports_done_before_its_first_task(executor):
     assert executor.call(_pool_loaded, {"names": slow}) == slow
 
 
+def test_start_boots_the_worker_before_the_first_task(executor):
+    executor.start()
+    worker = executor._worker
+    assert worker is not None and worker.alive
+
+    executor.start()
+    assert executor._worker is worker
+
+    executor.run("test.identity", FlatInputSource({"x": 1.0}), {})
+    assert executor._worker is worker
+
+
 def test_worker_spawns_replacement_after_crash(registry):
     executor = WorkerProcessExecutor(registry)
     try:

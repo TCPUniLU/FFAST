@@ -296,6 +296,12 @@ class WorkerProcessExecutor(MetricExecutor):
         child_conn.close()  # Parent only uses the parent end
         return _Worker(conn=parent_conn, process=process)
 
+    def start(self) -> None:
+        """Boot the worker now and return without waiting for it, so the first
+        metric finds it ready instead of paying its start-up (~700 ms)."""
+        with self._lock:
+            self._get_worker()
+
     def _get_worker(self) -> _Worker:
         """The worker for the next task. Caller holds ``self._lock``."""
         if self._worker is None or not self._worker.alive:

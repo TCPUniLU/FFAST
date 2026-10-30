@@ -738,6 +738,10 @@ async def _main(
     from ffast.session.warning_relay import WarningRelay
     logging.getLogger().addHandler(WarningRelay(asyncio.get_running_loop(), hub.broadcast))
 
+    # The metric worker boots while the user loads data, not inside the first
+    # metric they ask for.
+    env.data.metricExecutor.start()
+
     logger.info("Environment ready (job_id=%s)", job_id)
 
     if web_port > 0:
