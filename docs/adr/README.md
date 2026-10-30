@@ -98,6 +98,7 @@ things came up.
 - [0028](0028-cluster-server-auto-bootstrap.md) The server installs itself on the cluster on first connect
 - [0024](0024-cluster-session-reconnect-lifecycle.md) Reconnecting to a job that is still running
 - [0030](0030-server-side-live-inference.md) Inference runs server-side, the client holds a ghost model
+- [0072](0072-the-page-logs-where-each-clicks-time-goes.md) The page logs where each click's time goes: numbered messages, server timing notes, a file the launcher writes (built)
 
 ## Environment structure
 
