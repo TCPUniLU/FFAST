@@ -60,6 +60,10 @@ def _pool_dep_outer(y):
     return y + 1.0
 
 
+def _pool_pid():
+    return os.getpid()
+
+
 def _pool_loaded(names):
     import sys
     return [n for n in names if n in sys.modules]
@@ -233,12 +237,32 @@ def test_worker_recycles_after_max_tasks(registry):
 
         executor.run("test.identity", FlatInputSource({"x": 1.0}), {})
         executor.run("test.identity", FlatInputSource({"x": 2.0}), {})
-        # After 2 tasks, parent clears worker reference
-
-        executor.run("test.identity", FlatInputSource({"x": 3.0}), {})  # Spawns fresh worker
+        # After 2 tasks a replacement boots; the next task once it is ready
+        # goes to it, and the retired worker exits.
+        executor._await_ready(executor._next)
+        executor.run("test.identity", FlatInputSource({"x": 3.0}), {})
         pid_after = executor._get_worker().process.pid
 
         assert pid_before != pid_after
+    finally:
+        executor.shutdown()
+
+
+def test_a_retiring_worker_serves_until_its_replacement_is_ready(registry):
+    # A replacement booted inside the next task made that click wait ~700 ms,
+    # every max_tasks_per_worker tasks.
+    executor = WorkerProcessExecutor(registry, PoolPolicy(max_tasks_per_worker=2))
+    try:
+        retiring = executor.call(_pool_pid, {})
+        executor.call(_pool_pid, {})
+
+        # The replacement is still booting (imports take hundreds of ms).
+        assert executor.call(_pool_pid, {}) == retiring
+
+        deadline = time.monotonic() + 30
+        while executor.call(_pool_pid, {}) == retiring:
+            assert time.monotonic() < deadline, "the replacement never took over"
+            time.sleep(0.05)
     finally:
         executor.shutdown()
 

@@ -9,7 +9,9 @@ multiprocessing.shared_memory.SharedMemory (Worker Buffers) to avoid
 inter-process array copies.
 
 Worker lifecycle
-- Self-terminates after policy.max_tasks_per_worker tasks.
+- Retires after policy.max_tasks_per_worker tasks: the parent boots a
+  replacement, and the old worker keeps serving until the replacement says it
+  is ready, so no task waits for a worker to boot.
 - Parent detects crash (BrokenPipeError / EOFError) and spawns a replacement.
 - If the hard time limit (effective_timeout) is exceeded, the parent
   terminates the worker process and returns a MetricFailure.
@@ -170,11 +172,10 @@ def _worker_main(
     parameter filtering needed here (ADR 0061).
 
     Runs until:
-    - parent sends the shutdown sentinel (None msg);
-    - pipe is closed (EOFError);
-    - max_tasks_per_worker reached (clean self-exit).
+    - parent sends the shutdown sentinel (None msg), as it does when the
+      worker retires;
+    - pipe is closed (EOFError).
     """
-    task_count = 0
     _preload()
 
     # Announce readiness: the parent's per-metric deadline only starts once it
@@ -213,10 +214,6 @@ def _worker_main(
             finally:
                 for shm in shm_list:
                     shm.close()
-
-            task_count += 1
-            if task_count >= policy.max_tasks_per_worker:
-                break  # Self-terminate; parent spawns a replacement on next call
 
     finally:
         conn.close()
@@ -262,7 +259,8 @@ class WorkerProcessExecutor(MetricExecutor):
     compute_params and returns only the raw function output.
 
     Large numpy inputs use shared memory (Worker Buffers).
-    Workers self-recycle after policy.max_tasks_per_worker tasks.
+    Workers retire after policy.max_tasks_per_worker tasks, handing over to a
+    replacement once it has booted.
     Crashed workers are transparently replaced on the next run() call.
 
     Effective timeout per metric:
@@ -280,6 +278,9 @@ class WorkerProcessExecutor(MetricExecutor):
         self._policy = policy or PoolPolicy()
         self._cache = cache if cache is not None else MetricCache()
         self._worker: _Worker | None = None
+        # The retiring worker's replacement while it boots; it takes over once
+        # it has said it is ready.
+        self._next: _Worker | None = None
         self._task_counter = 0
         # One task at a time on the worker: threads (metric pool, scene builds)
         # share a single pipe, and a thread discards replies it did not ask for.
@@ -304,14 +305,35 @@ class WorkerProcessExecutor(MetricExecutor):
 
     def _get_worker(self) -> _Worker:
         """The worker for the next task. Caller holds ``self._lock``."""
+        if self._next is not None:
+            if self._await_ready(self._next, timeout=0):
+                self._retire(self._worker)
+                self._worker, self._next = self._next, None
+            elif not self._next.alive:
+                self._next = None  # died booting; the next task asks for another
         if self._worker is None or not self._worker.alive:
-            self._worker = self._spawn_worker()
+            if self._next is not None:
+                self._worker, self._next = self._next, None
+            else:
+                self._worker = self._spawn_worker()
         return self._worker
 
-    def _await_ready(self, worker: _Worker) -> bool:
+    @staticmethod
+    def _retire(worker: _Worker | None) -> None:
+        """Ask a worker to exit once it has finished; does not wait for it."""
+        if worker is None:
+            return
+        try:
+            worker.conn.send(None)
+            worker.conn.close()
+        except Exception:
+            pass
+
+    def _await_ready(self, worker: _Worker, timeout: float | None = None) -> bool:
         """Block until a freshly-spawned worker has booted and is in its recv
-        loop. Returns False if it never signals ready within spawn_timeout_s
-        (slow boot under load, or a crash during import).
+        loop. Returns False if it does not signal ready within ``timeout``
+        (default spawn_timeout_s: slow boot under load, or a crash during
+        import); ``timeout=0`` only checks.
 
         Consuming the readiness sentinel here — before the per-metric deadline
         starts — keeps worker cold-start out of the metric's hard time limit.
@@ -319,8 +341,10 @@ class WorkerProcessExecutor(MetricExecutor):
         """
         if worker.ready:
             return True
+        if timeout is None:
+            timeout = self._policy.spawn_timeout_s
         try:
-            if worker.conn.poll(self._policy.spawn_timeout_s):
+            if worker.conn.poll(timeout):
                 if worker.conn.recv() == _READY:
                     worker.ready = True
                     return True
@@ -445,8 +469,9 @@ class WorkerProcessExecutor(MetricExecutor):
                     msg = worker.conn.recv()
                     if msg["task_id"] == task_id:
                         worker.task_count += 1
-                        if worker.task_count >= self._policy.max_tasks_per_worker:
-                            self._worker = None
+                        if (worker.task_count >= self._policy.max_tasks_per_worker
+                                and self._next is None):
+                            self._next = self._spawn_worker()
                         return msg["value"]
 
             except (BrokenPipeError, EOFError, OSError):
@@ -471,6 +496,9 @@ class WorkerProcessExecutor(MetricExecutor):
             self._shutdown_locked()
 
     def _shutdown_locked(self) -> None:
+        if self._next is not None:
+            self._next.terminate()
+            self._next = None
         if self._worker is not None:
             try:
                 self._worker.conn.send(None)
