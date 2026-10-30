@@ -90,6 +90,13 @@ def unpack(data: bytes) -> tuple:
     return msg["event"], msg["args"], msg["kwargs"]
 
 
+def unpack_with_id(data: bytes) -> tuple:
+    """Deserialize msgpack bytes → (event, args, kwargs, id). ``id`` numbers
+    the message for the page's timing log (ADR 0072); None when it has none."""
+    msg = msgpack.unpackb(data, raw=False)
+    return msg["event"], msg["args"], msg["kwargs"], msg.get("id")
+
+
 # ── numpy array transfer ──────────────────────────────────────────────────────
 
 def _encode_array(arr):

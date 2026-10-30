@@ -58,7 +58,7 @@ import asyncio
 import logging
 import os
 
-from ffast.session import trace
+from ffast.session import timing, trace
 
 logger = logging.getLogger("FFAST")
 
@@ -125,8 +125,10 @@ async def _auto_snapshot_loop(
             logger.warning("Auto-snapshot failed: %s", exc)
 
 
-async def _do_hello_handshake(websocket, addr, token_hash: str):
-    """Ping/pong then HELLO/HELLO_ACK. Returns the assigned ClientRole."""
+async def _do_hello_handshake(websocket, addr, token_hash: str, session=None):
+    """Ping/pong then HELLO/HELLO_ACK. Returns the assigned ClientRole.
+
+    Sets ``session.timing`` when the page asked for timing notes (ADR 0072)."""
     from ffast.protocol import control
     from ffast.protocol.rpc import pack, unpack
     from ffast.session.registry import decide_role
@@ -194,6 +196,8 @@ async def _do_hello_handshake(websocket, addr, token_hash: str):
         ack_dict["role"] = role.value
         # Tells the page to report its clicks and errors (ffast-server --trace)
         ack_dict["trace"] = trace.enabled()
+        if session is not None:
+            session.timing = timing.FEATURE in server_caps.features
         ack = pack(control.HELLO_ACK, [], ack_dict)
         await websocket.send(ack)
         logger.info("HELLO_ACK → %s: role=%s", addr, role.value)
@@ -251,7 +255,7 @@ async def _handler(
 
     # Per-connection queue + session; register with the hub so shared events
     # (object metadata, deletes, metric catalog) fan out to this client too.
-    outbound: asyncio.Queue = asyncio.Queue(maxsize=200)
+    outbound: asyncio.Queue = timing.TimedQueue(maxsize=200)
     session = ServerSession(env, outbound, broadcast=hub.broadcast)
     session.peer = ":".join(str(p) for p in addr[:2]) if addr else ""
     hub.register(outbound)
@@ -259,7 +263,7 @@ async def _handler(
 
     # ── handshake ─────────────────────────────────────────────────────────
     try:
-        role = await _do_hello_handshake(websocket, addr, token_hash)
+        role = await _do_hello_handshake(websocket, addr, token_hash, session)
     except BaseException:
         # The client went away mid-handshake: leave the hub and the window
         # feed, which holds its sessions until they close (ADR 0062).
@@ -272,7 +276,7 @@ async def _handler(
 
     # ── receive / send loops ──────────────────────────────────────────────
     from ffast.protocol import control
-    from ffast.protocol.rpc import unpack
+    from ffast.protocol.rpc import unpack, unpack_with_id
     graceful = False
 
     async def receive_loop():
@@ -280,12 +284,17 @@ async def _handler(
         async for message in websocket:
             if isinstance(message, bytes):
                 try:
-                    event, args, kwargs = unpack(message)
+                    event, args, kwargs, msg_id = unpack_with_id(message)
                     if event == control.GRACEFUL_DISCONNECT:
                         graceful = True
                         logger.info("GRACEFUL_DISCONNECT from %s", addr)
+                    elif event == control.TIMING_PING:
+                        if session.timing:
+                            timing.put_note(session.outbound, timing.pong(kwargs))
                     elif _may_dispatch(role, event):
-                        await session.dispatch(event, args, kwargs)
+                        await session.dispatch(
+                            event, args, kwargs, msg_id=msg_id if session.timing else None
+                        )
                     else:
                         logger.debug(
                             "READ_ONLY client %s sent mutating event %s — ignored",
@@ -300,7 +309,8 @@ async def _handler(
     async def send_loop():
         while True:
             data = await session.outbound.get()
-            if trace.enabled():
+            cause, queued = session.outbound.last_meta
+            if trace.enabled() and not isinstance(data, timing.Note):
                 try:
                     trace.record("out", f"{trace.message(*unpack(data))}  [{session.peer}]")
                 except Exception:
@@ -309,6 +319,14 @@ async def _handler(
                 await websocket.send(data)
             except Exception as exc:
                 logger.warning("Send error to %s: %s", addr, exc)
+                continue
+            # Straight after the message it describes, not through the queue:
+            # the page pairs each note with the message received just before.
+            if session.timing and not isinstance(data, timing.Note):
+                try:
+                    await websocket.send(timing.sent(cause, queued, timing.now_ms(), len(data)))
+                except Exception:
+                    pass
 
     receive_task = asyncio.create_task(receive_loop())
     send_task = asyncio.create_task(send_loop())

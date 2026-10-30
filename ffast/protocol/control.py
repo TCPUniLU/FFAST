@@ -116,6 +116,10 @@ MUTATING_CLIENT_EVENTS = frozenset(
 HELLO = "HELLO"
 HELLO_ACK = "HELLO_ACK"
 GRACEFUL_DISCONNECT = "GRACEFUL_DISCONNECT"
+# The page's timing log (ADR 0072): the page asks for the server's clock, the
+# server answers and reports, per message, when it was read, handled and sent.
+TIMING_PING = "TIMING_PING"
+TIMING = "TIMING"
 
 # ── server → client replies (cluster.connection._REPLY_CHANNELS) ────────────
 DATASET_KEYS_RESPONSE = "DATASET_KEYS_RESPONSE"

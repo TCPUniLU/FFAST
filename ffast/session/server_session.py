@@ -38,7 +38,7 @@ import numpy as np
 from pydantic import BaseModel, ValidationError
 
 from ffast.protocol import control
-from ffast.session import trace
+from ffast.session import timing, trace
 from ffast.session.window_feed import WindowFeed
 
 logger = logging.getLogger("FFAST")
@@ -141,6 +141,8 @@ class ServerSession:
         self.env = env
         # Who this connection is, for the trace file ("127.0.0.1:50812")
         self.peer = ""
+        # Whether the page asked for timing notes (ADR 0072); set by the handshake
+        self.timing = False
         self.outbound = outbound
         self.views: dict = {}  # view_id → VisualizationView
         # Sends packed bytes to every connection (the hub, ADR 0044); a
@@ -223,7 +225,24 @@ class ServerSession:
 
     # ── dispatch ────────────────────────────────────────────────────────────
 
-    async def dispatch(self, event: str, args, kwargs) -> None:
+    async def dispatch(self, event: str, args, kwargs, msg_id=None) -> None:
+        """Route one authorized client event to its handler.
+
+        A ``msg_id`` (the page numbered the message for its timing log,
+        ADR 0072) links what the handler queues to that message, and a TIMING
+        note after the handler ends tells the page when it was read and done.
+        """
+        if msg_id is None:
+            return await self._dispatch(event, args, kwargs)
+        read = timing.now_ms()
+        token = timing.handling(self.outbound, msg_id)
+        try:
+            await self._dispatch(event, args, kwargs)
+        finally:
+            timing.done(token)
+            timing.put_note(self.outbound, timing.handled(msg_id, read))
+
+    async def _dispatch(self, event: str, args, kwargs) -> None:
         """Route one authorized client event to its handler.
 
         Resolves the route's named parameters from ``args``/``kwargs``,

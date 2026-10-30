@@ -10,7 +10,7 @@ from ffast.session.token import ClientRole
 PROTOCOL_VERSION = "1.0"
 
 _SUPPORTED_CODECS = ["raw"]
-_KNOWN_FEATURES = ["zstd_buffers", "result_buffers", "worker_pool"]
+_KNOWN_FEATURES = ["zstd_buffers", "result_buffers", "worker_pool", "timing"]
 # Server-declared (not client-negotiated) capability: every connection gets its
 # own outbound queue, ServerSession, and view namespace over the shared
 # Environment (ADR 0044). The web pop-out reads this off HELLO_ACK to decide
