@@ -1,5 +1,4 @@
 from ffast.loaders.model import ModelLoaderACE
-import torch
 import logging
 
 logger = logging.getLogger("FFAST")
@@ -14,6 +13,10 @@ class MACEModelLoader(ModelLoaderACE):
         super().__init__(env, path)
         self.path = path
 
+        # torch is imported here, not at the top: the server imports every
+        # plugin at start, and a cold torch import takes ~1 min on a cluster
+        # file system (ADR 0074).
+        import torch
         from mace.calculators.mace import MACECalculator
 
         # NOTE: This is *terrible* practice but the only way I have found
@@ -50,6 +53,7 @@ class MACEModelLoader(ModelLoaderACE):
             self.dtype = "float32"
 
     def getFingerprint(self):
+        import torch
         from ffast.cache.fingerprint import md5FromArraysAndStrings
 
         # NOTE: This is *terrible* practice but the only way I have found

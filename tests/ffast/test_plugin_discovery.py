@@ -348,3 +348,22 @@ def test_initialise_model_type_raises_on_duplicate_name():
     env.initialiseModelType(ModelA)
     with pytest.raises(ValueError, match="dup"):
         env.initialiseModelType(ModelB)
+
+
+def test_a_headless_start_does_not_import_torch():
+    """The server imports every bundled plugin at start. A cold `import torch`
+    took 58 s on a cluster file system (ADR 0074), so the plugins import it
+    only when a model loads. A fresh process, since this one may hold torch."""
+    import subprocess
+    import sys
+
+    code = (
+        "import sys\n"
+        "from ffast.core.environment import startHeadlessEnvironment\n"
+        "startHeadlessEnvironment()\n"
+        "print('torch' in sys.modules, flush=True)\n"
+        "import os; os._exit(0)\n"  # the event thread would keep it alive
+    )
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                         text=True, check=True, timeout=60)
+    assert out.stdout.strip().splitlines()[-1] == "False"

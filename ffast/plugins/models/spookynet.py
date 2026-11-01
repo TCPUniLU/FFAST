@@ -1,10 +1,15 @@
 from ffast.loaders.model import ModelLoader, uniformFrames
-import torch
 import numpy as np
+
+# torch is imported inside each method, not here: the server imports every
+# plugin at start, and a cold torch import takes ~1 min on a cluster file
+# system (ADR 0074).
 
 
 class SpookyNetBatcher:
     def __init__(self, R, z, batchSize=50, cutoff=5):
+        import torch
+
         self.cutoff = cutoff
 
         N, nAtoms, _ = R.shape
@@ -52,6 +57,8 @@ class SpookyNetBatcher:
         self.segs = np.array(segs)
 
     def batches(self, dump=False):
+        import torch
+
         N = self.R.shape[0]
         nBatches = self.nBatches
         if N % self.batchSize == 0:
@@ -108,6 +115,8 @@ class SpookyNetModelLoader(ModelLoader):
 
     def __init__(self, env, path):
         super().__init__(env, path)
+        import torch
+
         self.data = torch.load(path, map_location="cpu")
         self.cutoff = self.data["cutoff"]
 

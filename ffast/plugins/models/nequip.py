@@ -1,7 +1,6 @@
 from ffast.loaders.model import ModelLoaderACE
 import numpy as np
 from ffast.cache.fingerprint import md5FromArraysAndStrings
-import torch
 
 
 class NequipModelLoader(ModelLoaderACE):
@@ -19,6 +18,10 @@ class NequipModelLoader(ModelLoaderACE):
         self.calculator = calc
 
     def getFingerprint(self):
+        # torch is imported here, not at the top: the server imports every
+        # plugin at start, and a cold torch import takes ~1 min on a cluster
+        # file system (ADR 0074).
+        import torch
         from nequip.scripts.deploy import _ALL_METADATA_KEYS
 
         metadata = {k: "" for k in _ALL_METADATA_KEYS}
