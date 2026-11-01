@@ -489,6 +489,10 @@ def _fake_cluster_broker(tmp_path, monkeypatch, **fakes):
     async def job_log(profile, job_id):
         return ""
 
+    async def job_ids(profile):   # every recorded job still runs
+        return {str(r["job_id"]) for r in cluster_conn.load_session_records()}
+
+    fakes.setdefault("job_ids", job_ids)
     broker = ClusterBroker(ClusterConfig(str(tmp_path / "clusters.json")),
                            cancel_job=cancel_job, job_log=job_log, **fakes)
     return broker, cancelled
@@ -587,6 +591,36 @@ async def test_web_cluster_dialog_offers_to_reconnect_a_recorded_job(ffast_web_s
             await page.locator("#cluster-reconnect-btn").click()
             await expect(page.locator("#cluster-message")).to_contain_text("no longer running")
             await expect(page.locator("#cluster-record")).to_be_hidden()
+        finally:
+            await browser.close()
+
+
+async def test_web_cluster_dialog_drops_the_offer_for_an_ended_job(ffast_web_server, tmp_path, monkeypatch):
+    """Opening the dialog asks SLURM which recorded jobs still exist; an ended
+    job's Reconnect offer goes away without a failed reconnect (ADR 0074)."""
+    import cluster.connection as cluster_conn
+
+    ws_port, _ = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+
+    async def job_ids(profile):
+        return set()   # J5 has ended
+
+    broker, _ = _fake_cluster_broker(tmp_path, monkeypatch, job_ids=job_ids)
+    broker.save_profile({"name": "m", "host": "h"})
+    cluster_conn.save_session_record("J5", "m", "node1", 8765)
+    async with _cluster_page(broker) as page_port, async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 900})
+        try:
+            await page.goto(f"http://127.0.0.1:{page_port}/?port={ws_port}&launch=s3cret",
+                            wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Connect to Cluster…")
+            await page.locator("#cluster-profile").select_option("m")
+            await expect(page.locator("#cluster-record")).to_be_hidden()
+            await expect(page.locator("#cluster-connect-btn")).to_have_text("Connect")
+            assert cluster_conn.load_session_records() == []
         finally:
             await browser.close()
 

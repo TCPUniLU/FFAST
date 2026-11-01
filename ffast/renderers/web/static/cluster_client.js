@@ -103,6 +103,8 @@ export class ClusterClient {
 
   /** GET /cluster/state; rejects with the server's error text. */
   state() { return this._ask('GET', '/cluster/state'); }
+  /** Ask SLURM which recorded jobs still exist; the launcher forgets the rest. */
+  checkRecords() { return this._ask('POST', '/cluster/records/check', {}); }
   saveProfile(profile) { return this._ask('POST', '/cluster/profile', { profile }); }
   deleteProfile(name) { return this._ask('POST', '/cluster/profile/delete', { name }); }
   connect(profile, reconnectJobId = null) {

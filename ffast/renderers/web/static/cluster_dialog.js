@@ -42,10 +42,24 @@ export class ClusterDialog {
     try {
       await this.refresh();
       if (this._state.status.state === 'connecting') this._poll();
+      else if (this._state.records.length) this._checkRecords();
     } catch (err) {
       this._message(err.message);
     }
     $('cluster-profile').focus();
+  }
+
+  /** Drop "Reconnect" offers for jobs that have ended. Runs after the dialog
+   * shows (one SSH call per profile); a failed check keeps the offers. */
+  async _checkRecords() {
+    try {
+      const s = await this._client.checkRecords();
+      if (this._state.status.state === 'connecting') return;   // a click won the race
+      this._state = { ...this._state, records: s.records };
+      this._renderStatus();
+    } catch (err) {
+      // The offer stays; a reconnect to an ended job still clears it.
+    }
   }
 
   close() {

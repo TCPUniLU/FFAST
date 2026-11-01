@@ -290,3 +290,58 @@ def test_a_dead_tunnel_shows_as_failed(make):
     session.ssh_proc.poll.return_value = 255
     s = b.state()["status"]
     assert s["state"] == "failed" and "tunnel" in s["error"]
+
+
+def _jobs_listed(listed):
+    """A fake `squeue --me`: these job ids are still pending or running."""
+    asked = []
+
+    async def job_ids(profile):
+        asked.append(profile.name)
+        if isinstance(listed, Exception):
+            raise listed
+        return set(listed)
+
+    job_ids.asked = asked
+    return job_ids
+
+
+def test_opening_the_dialog_forgets_records_of_ended_jobs(make):
+    job_ids = _jobs_listed({"J2"})
+    b = make(job_ids=job_ids)
+    b.handle("POST", "/cluster/profile", {"profile": _PROFILE})
+    conn.save_session_record("J1", "m", "node1", 8765)
+    conn.save_session_record("J2", "m", "node2", 8765)
+    status, body = b.handle("POST", "/cluster/records/check", {})
+    assert status == 200
+    assert [r["job_id"] for r in body["records"]] == ["J2"]
+    assert job_ids.asked == ["m"]          # one squeue per profile, not per job
+
+
+def test_records_stay_when_the_login_node_cannot_be_asked(make):
+    b = make(job_ids=_jobs_listed(ClusterError("ssh: connect timed out")))
+    b.handle("POST", "/cluster/profile", {"profile": _PROFILE})
+    conn.save_session_record("J1", "m", "node1", 8765)
+    _, body = b.handle("POST", "/cluster/records/check", {})
+    assert [r["job_id"] for r in body["records"]] == ["J1"]
+
+
+def test_records_of_a_deleted_profile_stay(make):
+    job_ids = _jobs_listed(set())
+    b = make(job_ids=job_ids)
+    conn.save_session_record("J1", "gone", "node1", 8765)
+    _, body = b.handle("POST", "/cluster/records/check", {})
+    assert [r["job_id"] for r in body["records"]] == ["J1"]
+    assert job_ids.asked == []
+
+
+def test_the_job_being_connected_keeps_its_record(make):
+    async def reconnect(profile, job_id, progress_cb=None):
+        await asyncio.sleep(10)
+
+    b = make(reconnect=reconnect, job_ids=_jobs_listed(set()))
+    b.handle("POST", "/cluster/profile", {"profile": _PROFILE})
+    conn.save_session_record("J5", "m", "node1", 8765)
+    b.handle("POST", "/cluster/connect", {"profile": _PROFILE, "reconnect_job_id": "J5"})
+    _, body = b.handle("POST", "/cluster/records/check", {})
+    assert [r["job_id"] for r in body["records"]] == ["J5"]

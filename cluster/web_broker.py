@@ -95,6 +95,12 @@ async def _job_log(profile, job_id) -> str:
         return ""
 
 
+async def _my_job_ids(profile) -> set[str]:
+    """The job ids SLURM still lists for this profile's user; raises when the
+    login node cannot be asked."""
+    return await _conn._build_backend(profile).my_job_ids()
+
+
 def _idle_status() -> dict:
     return {"state": "idle", "profile_name": "", "job_id": None, "reconnect": False,
             "messages": [], "error": "", "details": "", "ws_url": "", "token": ""}
@@ -106,7 +112,7 @@ class ClusterBroker:
     request threads."""
 
     def __init__(self, config: ClusterConfig | None = None, *, connect=None,
-                 reconnect=None, cancel_job=None, job_log=None):
+                 reconnect=None, cancel_job=None, job_log=None, job_ids=None):
         self._config = config if config is not None else ClusterConfig()
         self._lock = threading.Lock()
         self._status = _idle_status()
@@ -114,6 +120,7 @@ class ClusterBroker:
         self._reconnect = reconnect or _conn.reconnect_to_cluster
         self._cancel_job = cancel_job or _scancel
         self._job_log = job_log or _job_log
+        self._job_ids = job_ids or _my_job_ids
         self._session = None   # the ServerConnection whose tunnel is open
         self._profile = None
         self._future = None
@@ -157,6 +164,32 @@ class ClusterBroker:
             status = dict(self._status, messages=list(self._status["messages"]))
         return {"profiles": [dataclasses.asdict(p) for p in self._config.all_profiles()],
                 "records": records, "status": status}
+
+    def check_records(self) -> dict:
+        """Forget the Session Records of jobs SLURM no longer lists, then
+        return the state. Asked once when the dialog opens: a record of an
+        ended job offered "Reconnect", which failed only after ~5 s. Records
+        whose login node cannot be asked, or whose profile is gone, stay."""
+        with self._lock:
+            in_use = self._status["job_id"] if self._status["state"] != "idle" else None
+        by_profile: dict[str, list[str]] = {}
+        for r in _conn.load_session_records():
+            if str(r.get("job_id")) != str(in_use):
+                by_profile.setdefault(r.get("profile_name", ""), []).append(str(r.get("job_id")))
+        for name, job_ids in by_profile.items():
+            profile = self._config.get(name)
+            if profile is None:
+                continue
+            try:
+                listed = asyncio.run_coroutine_threadsafe(
+                    self._job_ids(profile), self._loop).result(timeout=30)
+            except Exception as exc:
+                logger.warning("Could not check jobs of profile %s: %s", name, exc)
+                continue
+            for job_id in job_ids:
+                if job_id not in listed:
+                    _conn.delete_session_record(job_id)
+        return self.state()
 
     def save_profile(self, fields: dict) -> None:
         self._config.add(profile_from_fields(fields, need_name=True))
@@ -273,6 +306,8 @@ class ClusterBroker:
         try:
             if method == "GET" and path == "/cluster/state":
                 return 200, self.state()
+            if method == "POST" and path == "/cluster/records/check":
+                return 200, self.check_records()
             if method == "POST" and path == "/cluster/profile":
                 self.save_profile(body.get("profile") or {})
                 return 200, self.state()

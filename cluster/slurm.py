@@ -101,6 +101,22 @@ class SlurmBackend(ClusterBackend):
 
         return self._parse_first_node(output)
 
+    async def my_job_ids(self) -> set[str]:
+        """Ids of this user's jobs that SLURM still lists (pending or running).
+
+        Raises ClusterError when squeue itself fails, so a caller can tell
+        "no jobs" from "could not ask".
+        """
+        proc = await asyncio.create_subprocess_exec(
+            "squeue", "--me", "--noheader", "-o", "%i",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise ClusterError("squeue failed", stderr.decode())
+        return set(stdout.decode().split())
+
     async def cancel_job(self, job_id: str) -> None:
         proc = await asyncio.create_subprocess_exec(
             "scancel",
@@ -259,6 +275,14 @@ class RemoteSlurmBackend(SlurmBackend):
                 "Could not parse job ID from sbatch output", stdout
             )
         return match.group(1)
+
+    async def my_job_ids(self) -> set[str]:
+        stdout, stderr, rc = await self._run_remote(
+            "squeue", "--me", "--noheader", "-o", "%i"
+        )
+        if rc != 0:
+            raise ClusterError(f"squeue on {self._host} failed", stderr)
+        return set(stdout.split())
 
     async def poll_status(self, job_id: str) -> JobStatus:
         stdout, _, _ = await self._run_remote(
