@@ -196,8 +196,9 @@ def provision_launch_cmd(
     """Job command that provisions the venv *then* launches the server (ADR 0028).
 
     Run as the SLURM job on the allocated node: load modules, create a
-    ``--system-site-packages`` venv (once), install the staged ``ffast`` wheel
-    (``--no-deps``) plus the light pure-Python deps, write the install marker, and
+    ``--system-site-packages`` venv (once), add ``uv`` to it (once), install the
+    staged ``ffast`` wheel (``--no-deps``) plus the light pure-Python deps with
+    ``uv``, write the install marker, and
     exec ``ffast-server``. ``&&``-chained so any failure aborts before launch;
     the marker is written last so a failed install never marks the node current.
     Ends with ``ffast-server`` so connect's ``--port`` etc. attach to it.
@@ -208,12 +209,18 @@ def provision_launch_cmd(
         f"([ -d {venv_path} ] || python -m venv --system-site-packages {venv_path})",
     ))
     parts.append(timed("activate", f"source {venv_path}/bin/activate"))
+    # uv installs the wheel in ~1.5 s where pip took 7-13 s on MeluXina
+    # (ADR 0074). Copy mode: the uv cache in ~ and the venv are often on
+    # different file systems, where hard links fail.
     parts.append(timed(
-        "install ffast",
-        f"python -m pip install --no-deps --force-reinstall {remote_wheel}",
+        "install uv", f"([ -x {venv_path}/bin/uv ] || python -m pip install uv)"
+    ))
+    parts.append("export UV_LINK_MODE=copy")
+    parts.append(timed(
+        "install ffast", f"uv pip install --no-deps --reinstall {remote_wheel}"
     ))
     if light_deps:
-        parts.append(timed("install deps", "python -m pip install " + " ".join(light_deps)))
+        parts.append(timed("install deps", "uv pip install " + " ".join(light_deps)))
     # Verify the just-installed server is compatible BEFORE writing the marker,
     # so a bad install is never recorded as current.
     parts.append(timed("check server", _VERIFY_SERVER))

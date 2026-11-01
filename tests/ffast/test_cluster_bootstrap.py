@@ -141,8 +141,11 @@ def test_provision_launch_cmd():
     assert s.startswith(timed("module load Python/3.11", "module load Python/3.11") + " && ")
     assert "([ -d ~/.ffast/venv ] || python -m venv --system-site-packages ~/.ffast/venv)" in s
     assert "source ~/.ffast/venv/bin/activate" in s
-    assert "--no-deps --force-reinstall ~/.ffast/ffast-2.0.0-py3-none-any.whl" in s
-    assert "python -m pip install msgpack websockets" in s
+    # uv is added to the venv once, then installs the wheel and the deps.
+    assert "([ -x ~/.ffast/venv/bin/uv ] || python -m pip install uv)" in s
+    assert s.index("bin/uv ]") < s.index("uv pip install --no-deps")
+    assert "uv pip install --no-deps --reinstall ~/.ffast/ffast-2.0.0-py3-none-any.whl" in s
+    assert "uv pip install msgpack websockets" in s
     # Compatibility gate runs AFTER install but BEFORE the marker, so a bad
     # install is never recorded as current.
     assert "grep -qe '--token-hash'" in s
@@ -155,8 +158,8 @@ def test_provision_launch_cmd():
 
 def test_provision_launch_cmd_no_light_deps():
     s = provision_launch_cmd("~/v", "~/w.whl", [], [], "~/m", "sha")
-    assert s.count("python -m pip install") == 1  # only the wheel, no light-deps step
-    assert "--no-deps --force-reinstall" in s
+    assert s.count("uv pip install") == 1  # only the wheel, no light-deps step
+    assert "--no-deps --reinstall" in s
     assert "'install deps'" not in s
 
 
@@ -246,7 +249,7 @@ async def test_provision_node_builds_and_records_the_marker_when_stale(tmp_path,
     cmd = await provision_node(profile, project_root=tmp_path)
     assert len(builds) == 1
     assert f"printf '%s' {marker} > ~/v/.ffast-install.sha256" in cmd
-    assert "python -m pip install msgpack>=1.0" in cmd
+    assert "uv pip install msgpack>=1.0" in cmd
 
 
 async def test_provision_node_mkdir_failure_raises_clustererror(tmp_path, monkeypatch):
