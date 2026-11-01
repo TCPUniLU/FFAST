@@ -90,6 +90,15 @@ CASES = {
     "kwargs_stride": "rb.datasetLoadKwargs({stride: 10})",
     "note_counting": "rb.largeFileNote({size: 3.5e9})",
     "note_stride": "rb.largeFileNote({size: 3.5e9, n: 100, stride: 10})",
+    # ── live frame count (frame index plan 2026-11-01) ──────────────────────
+    "note_partial": "rb.largeFileNote({size: 3.5e9, n: 412000, done: false})",
+    "note_done_default": "rb.largeFileNote({size: 3.5e9, n: 100})",
+    "count_pending": (
+        "typeof rb.countPending !== 'function' ? 'missing' : ["
+        "rb.countPending(null), rb.countPending({n: null, error: null, done: false}),"
+        "rb.countPending({n: 5, error: null, done: false}), rb.countPending({n: 5, error: null, done: true}),"
+        "rb.countPending({n: null, error: 'x', done: true})]"
+    ),
     "load_pred_npz": "rb.canLoad({selected:'p.npz', mode:'prediction', forceKey:'', targetDataset:'fp', isNpz:true})",
     "npz_names": "[rb.isNpzFile('a.NPZ'), rb.isNpzFile('a.xyz')]",
     "load_model": "[rb.canLoad({selected:'m.model', mode:'model', modelType:'MACE'}), rb.canLoad({selected:'m.model', mode:'model', modelType:''})]",
@@ -1553,6 +1562,16 @@ def test_every_nth_frame_becomes_the_loaders_stride_number(results):
 def test_the_large_file_note_counts_then_estimates(results):
     assert "Counting frames" in results["note_counting"]
     assert results["note_stride"].endswith("Every 10th frame: ~10.")
+
+
+def test_the_large_file_note_shows_the_count_as_it_grows(results):
+    assert results["note_partial"].endswith("Counting frames… 412,000 so far.")
+    assert "100 frames" in results["note_done_default"]
+
+
+def test_a_count_is_pending_until_its_last_reply(results):
+    """Picking another file cancels a pending count; a finished one needs no cancel."""
+    assert results["count_pending"] == [False, True, True, False, False]
 
 
 def test_an_npz_prediction_needs_no_key(results):

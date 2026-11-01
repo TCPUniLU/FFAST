@@ -187,14 +187,20 @@ export function strideToSliceNum(stride) {
 
 /** The large-file note: size, frame count when known, and what every
  * Nth frame keeps (the desktop's RemoteStrideDialog estimate). */
-export function largeFileNote({ size, n = null, stride = 1, error = null }) {
+export function largeFileNote({ size, n = null, stride = 1, error = null, done = true }) {
   const head = `This file is ${formatSize(size)}`;
   if (error) return `${head}. The frames could not be counted (${error}).`;
   if (n === null || n === undefined) return `${head}. Counting frames…`;
+  if (!done) return `${head}. Counting frames… ${n.toLocaleString('en-US')} so far.`;
   const step = strideToSliceNum(stride);
   const all = `${head}: ${n.toLocaleString('en-US')} frames.`;
   if (!step) return `${all} Set "Every Nth frame" to load fewer.`;
   return `${all} Every ${step}th frame: ~${Math.max(1, Math.ceil(n / step)).toLocaleString('en-US')}.`;
+}
+
+/** Whether a count is still running: asked, not yet answered for good. */
+export function countPending(large) {
+  return Boolean(large) && !large.error && !large.done;
 }
 
 /** Whether a file name is an .npz file. */
@@ -258,7 +264,7 @@ export class RemoteBrowser {
     this._selected = null;    // selected filename within _path
     this._types = { datasets: [{ name: 'ase (auto)', extension: '*' }], models: [] };
     this._largeBytes = LARGE_FILE_BYTES;   // tests lower it
-    this._large = null;   // {path, size, n, error} of a large selected file
+    this._large = null;   // {path, size, n, error, done} of a large selected file
     this._probe = null;   // the last key check's answer, for new prediction lines
     this._probing = null;   // the path whose key check is still out
     this._loadWhenReady = false;   // load once the key check is back
@@ -563,7 +569,7 @@ export class RemoteBrowser {
     $('fb-pred-rows').replaceChildren();
     $('fb-stride').value = '1';
     $('fb-large').hidden = true;
-    this._large = null;
+    this._dropCount();
     // null path → server starts at its work folder (--workdir, else its start folder)
     this._navigate(this._path || null);
   }
@@ -577,6 +583,7 @@ export class RemoteBrowser {
   }
 
   close() {
+    this._dropCount();
     this._loadWhenReady = false;
     this._probing = null;
     this._untrap?.();
@@ -858,12 +865,19 @@ export class RemoteBrowser {
   _refreshLarge(size) {
     const big = this._mode === 'dataset' && size >= this._largeBytes;
     const path = this._selected ? joinPath(this._path, this._selected) : null;
-    this._large = big ? { path, size, n: null, error: null } : null;
+    this._dropCount();
+    this._large = big ? { path, size, n: null, error: null, done: false } : null;
     $('fb-large').hidden = !big;
     if (!big) return;
     if ($('fb-type').value === 'ase (auto)') this._ports.send(OUT.PROBE_DATASET_LENGTH, {}, [path]);
     else this._large.error = 'only ASE files are counted';
     this._drawLarge();
+  }
+
+  /** Forget the dialog's count; one still running on the server is stopped. */
+  _dropCount() {
+    if (countPending(this._large)) this._ports.send(OUT.CANCEL_PROBE_DATASET_LENGTH, {}, []);
+    this._large = null;
   }
 
   _drawLarge() {
@@ -876,6 +890,7 @@ export class RemoteBrowser {
     if (!this._large || this._large.path !== path) return;
     this._large.n = kw.n ?? null;
     this._large.error = kw.error || null;
+    this._large.done = kw.done ?? true;
     this._drawLarge();
   }
 
@@ -981,6 +996,8 @@ export class RemoteBrowser {
       this._ports.setStatus(`Loading ${this._selected}…`, 'connected');
       this._pending = { kind: 'dataset', name: this._selected, path, units: this._unitsTyped() };
     }
+    // The load joins a count still running on the server; cancelling would not stop it.
+    this._large = null;
     this.close();
   }
 }
