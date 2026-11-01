@@ -100,6 +100,7 @@ things came up.
 - [0030](0030-server-side-live-inference.md) Inference runs server-side, the client holds a ghost model
 - [0072](0072-the-page-logs-where-each-clicks-time-goes.md) The page logs where each click's time goes: numbered messages, server timing notes, a file the launcher writes (built)
 - [0073](0073-the-metric-worker-is-ready-before-anyone-asks.md) The metric worker is ready before anyone asks: starts with the server, imports scipy as it boots, hands over only when its replacement is ready (built)
+- [0074](0074-a-cluster-connect-pays-only-for-what-changed.md) A cluster connect pays only for what changed: install marker from the checkout, step timings in the job log, torch imported late, uv installs (accepted)
 
 ## Environment structure
 
