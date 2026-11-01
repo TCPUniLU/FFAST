@@ -17,7 +17,8 @@ import numpy as np
 logger = logging.getLogger("FFAST")
 
 INDEXED_SUFFIXES = (".xyz", ".extxyz")
-CACHE_DIR = Path("~/.ffast/frame-index")
+# FFAST_FRAME_INDEX_DIR lets the tests point servers they spawn at a temp folder.
+CACHE_DIR = Path(os.environ.get("FFAST_FRAME_INDEX_DIR", "~/.ffast/frame-index"))
 PROGRESS_EVERY = 50_000
 READ_BATCH = 1_000
 MEMORY_SLOTS = 8
@@ -78,6 +79,14 @@ class FrameIndex:
         return self.read(i, i + 1)[0]
 
 
+def _more_frames_follow(f):
+    """Whether anything but blank lines is left (reads until the first such line)."""
+    for line in f:
+        if line.strip():
+            return True
+    return False
+
+
 def scan(path, *, progress=None, should_stop=None):
     """One pass over the file. A blank line between frames is an error (ASE
     would silently drop the rest); trailing blank lines are fine."""
@@ -93,8 +102,7 @@ def scan(path, *, progress=None, should_stop=None):
             line_no += 1
             text = line.strip()
             if not text:
-                rest = f.read()
-                if rest.strip():
+                if _more_frames_follow(f):
                     raise FrameIndexError(
                         f"Frame {len(starts) + 1:,} (line {line_no:,}) is not a valid frame: "
                         f"expected an atom count, found {text.decode(errors='replace')!r}.")
@@ -170,10 +178,13 @@ class _Build:
         self.waiters = []  # (progress, cancel)
         self.result = None
         self.error = None
+        self.dead = False
 
     def should_stop(self):
         with _lock:
-            return not any(c is None or not c.is_set() for _, c in self.waiters)
+            if not any(c is None or not c.is_set() for _, c in self.waiters):
+                self.dead = True   # a later caller must not join a scan that is stopping
+            return self.dead
 
     def progress(self, n):
         with _lock:
@@ -204,7 +215,7 @@ def get_frame_index(path, *, progress=None, cancel=None):
     me = (progress, cancel)
     with _lock:
         build = _builds.get(key)
-        start = build is None
+        start = build is None or build.dead
         if start:
             build = _builds[key] = _Build()
         build.waiters.append(me)
@@ -222,7 +233,8 @@ def get_frame_index(path, *, progress=None, cancel=None):
                 build.error = exc
             finally:
                 with _lock:
-                    _builds.pop(key, None)
+                    if _builds.get(key) is build:
+                        del _builds[key]
                 build.done.set()
         threading.Thread(target=run, name="frame-index", daemon=True).start()
     try:

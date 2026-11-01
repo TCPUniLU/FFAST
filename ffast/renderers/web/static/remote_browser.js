@@ -888,6 +888,8 @@ export class RemoteBrowser {
   /** Server replied to PROBE_DATASET_LENGTH. */
   onDatasetLength(path, kw) {
     if (!this._large || this._large.path !== path) return;
+    // A late progress reply must not undo the final one.
+    if (this._large.done && kw.done === false) return;
     this._large.n = kw.n ?? null;
     this._large.error = kw.error || null;
     this._large.done = kw.done ?? true;

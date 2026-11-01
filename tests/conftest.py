@@ -11,5 +11,8 @@ def _frame_index_cache_in_tmp(tmp_path_factory, monkeypatch):
     except ImportError:          # before the frame index exists
         yield
         return
-    monkeypatch.setattr(frame_index, "CACHE_DIR", tmp_path_factory.mktemp("frame-index"))
+    folder = tmp_path_factory.mktemp("frame-index")
+    monkeypatch.setattr(frame_index, "CACHE_DIR", folder)
+    # Servers the test spawns start from this environment; they read the folder too.
+    monkeypatch.setenv("FFAST_FRAME_INDEX_DIR", str(folder))
     yield

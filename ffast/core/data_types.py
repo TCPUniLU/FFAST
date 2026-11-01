@@ -324,6 +324,10 @@ class AtomsList(UserList):
 
     This way we can work with large datasets without occupying several Gigabytes of RAM.
 
+    An .xyz/.extxyz file is read through its frame index (ffast/io/frame_index.py):
+    the count is exact and a chunk is read by seeking. Only other formats count by
+    reading every Nth frame, as described below.
+
     It can require more computational time in some occasions, like when we encounter a cash miss (atom i is not inside
     cache), but it surpasses the heavy memory read at the beginning of each dataset load, and uses the memory much more
     efficiently.
