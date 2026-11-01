@@ -105,6 +105,17 @@ class LoadingCoordinator:
         """
         self._env.eventPush("TASK_PROGRESS", taskID, message=message, error=error)
 
+    def prepareFrameIndex(self, path, taskID=None):
+        """Make (or reuse) an .xyz file's frame index, telling the task how far
+        the scan is; joins a scan the Load dialog already started. None for
+        other formats."""
+        from ffast.io import frame_index
+        if not frame_index.is_indexable(path):
+            return None
+        name = os.path.basename(path)
+        return frame_index.get_frame_index(
+            path, progress=lambda n: self._progress(taskID, f"Indexing {name}: {n:,} frames…"))
+
     def _resolveLoad(self, kind, path, typeName, popup=True):
         """Validate a load request and resolve the plugin class that serves it.
 
@@ -267,6 +278,7 @@ class LoadingCoordinator:
                 E, F = E[::slice_num], F[::slice_num]
             aseObject = None
         else:
+            self.prepareFrameIndex(path, taskID)
             atomsList = self._readPredictionAtomsList(path, datasetKey)
             aseObject = self._aseLoaderFor(
                 path, atomsList,
@@ -333,11 +345,12 @@ class LoadingCoordinator:
         for ``.traj``) instead of held in RAM.
         """
         import ase.io
+        from ffast.io.frame_index import read_every
 
         slice_num = self._env.datasets.slice_numbers.get(datasetKey)
         if slice_num is not None and slice_num > 0:
             logger.info(f"Loading dataset with slice number of: {slice_num}")
-            return ase.io.read(path, index=slice(0, None, slice_num))
+            return read_every(path, slice_num)
         if slice_num is not None and slice_num == 0:
             logger.info("Loading prediction dataset with caching.")
             if path.endswith(".traj"):
@@ -569,6 +582,8 @@ class LoadingCoordinator:
         # Load dataset - pass selected keys to ASE loader
         if datasetType == "ase (auto)":
             try:
+                if slice_num != -1:
+                    self.prepareFrameIndex(path, taskID)
                 result = loaderClass(
                     path,
                     selected_energy_key=selected_energy_key,

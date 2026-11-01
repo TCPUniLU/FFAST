@@ -121,7 +121,8 @@ class TestLoadDatasetKeepsFileReadOutsideTheLock:
 
     def test_atomslist_resolution_happens_before_lock_is_entered(self, tmp_path):
         dataset_path = tmp_path / "dataset.xyz"
-        dataset_path.write_text("x")
+        # A real one-frame file: the load now indexes an .xyz file before reading it.
+        dataset_path.write_text("1\n\nH 0 0 0\n")
         events = []
 
         class _FakeDataset:

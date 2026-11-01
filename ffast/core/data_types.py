@@ -338,9 +338,10 @@ class AtomsList(UserList):
         self.start_index = 0
         self.path = path
         self.data = []
-        # First we need to calculate the length of the dataset without reading it completely.
-
-        self.N = self.calc_dataset_length()
+        # One scan, saved (frame index plan 2026-11-01); other formats count as before.
+        from ffast.io import frame_index
+        self._index = frame_index.get_frame_index(path) if frame_index.is_indexable(path) else None
+        self.N = len(self._index) if self._index is not None else self.calc_dataset_length()
 
         # Then, we need to load the first chunk of data.
 
@@ -358,8 +359,14 @@ class AtomsList(UserList):
 
         Therefore, all we have to do to get the correct length of the whole dataset is to sum A and B.
 
+        An .xyz/.extxyz file is not counted this way: its frame index gives the
+        count exactly (ffast/io/frame_index.py).
+
         :return: length of the dataset.
         """
+        from ffast.io import frame_index
+        if frame_index.is_indexable(self.path):
+            return len(frame_index.get_frame_index(self.path))
         size_gb = os.path.getsize(self.path) // 1_000_000_000
         slice_size = 0
         if size_gb < 1:
@@ -393,9 +400,13 @@ class AtomsList(UserList):
         """
         This method gets the path to a dataset and returns its length without reading the entire dataset.
         For detailed explanation see the documentation for AtomsList.calc_dataset_length(self, path)...
+        An .xyz/.extxyz file is counted by its frame index instead.
         :param path: Path to the dataset.
         :return: length of the dataset.
         """
+        from ffast.io import frame_index
+        if frame_index.is_indexable(path):
+            return len(frame_index.get_frame_index(path))
         size_gb = os.path.getsize(path) // 1_000_000_000
         slice_size = 0
         if size_gb < 1:
@@ -432,6 +443,9 @@ class AtomsList(UserList):
         """
         self.start_index = start
         del self.data
+        if self._index is not None:
+            self.data = self._index.read(self.start_index, self.start_index + self.offset)
+            return
         self.data = ase.io.read(self.path, index=slice(self.start_index, self.start_index+self.offset))
 
     def __len__(self):

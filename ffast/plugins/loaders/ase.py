@@ -12,6 +12,7 @@ import ase.io
 from ase.io.trajectory import Trajectory
 
 from ffast.core.data_types import AtomsList
+from ffast.io.frame_index import read_every
 from ffast.loaders.ase import aseDatasetLoader
 
 logger = logging.getLogger("FFAST")
@@ -49,7 +50,7 @@ def loadData(env):
             elif slice_num == -1:
                 atomsList = ase.io.read(path, index=':')
             else:
-                atomsList = ase.io.read(path, index=slice(0, None, slice_num))
+                atomsList = read_every(path, slice_num)
 
             # Handle key selection first (if dialog needed)
             if show_dialog and (selected_energy_key is None or selected_force_key is None):
