@@ -14,6 +14,7 @@ import hashlib
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -220,7 +221,9 @@ def provision_launch_cmd(
         "install ffast", f"uv pip install --no-deps --reinstall {remote_wheel}"
     ))
     if light_deps:
-        parts.append(timed("install deps", "uv pip install " + " ".join(light_deps)))
+        # Quoted: unquoted, `msgpack>=1.0` is a shell redirect to a file `=1.0`.
+        deps = " ".join(shlex.quote(d) for d in light_deps)
+        parts.append(timed("install deps", f"uv pip install {deps}"))
     # Verify the just-installed server is compatible BEFORE writing the marker,
     # so a bad install is never recorded as current.
     parts.append(timed("check server", _VERIFY_SERVER))

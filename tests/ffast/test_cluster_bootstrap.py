@@ -249,7 +249,8 @@ async def test_provision_node_builds_and_records_the_marker_when_stale(tmp_path,
     cmd = await provision_node(profile, project_root=tmp_path)
     assert len(builds) == 1
     assert f"printf '%s' {marker} > ~/v/.ffast-install.sha256" in cmd
-    assert "uv pip install msgpack>=1.0" in cmd
+    # Quoted, or the shell reads `>=1.0` as a redirect to a file `=1.0`.
+    assert "uv pip install 'msgpack>=1.0'" in cmd
 
 
 async def test_provision_node_mkdir_failure_raises_clustererror(tmp_path, monkeypatch):
