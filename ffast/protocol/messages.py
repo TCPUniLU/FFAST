@@ -160,6 +160,9 @@ class DatasetLengthResponse(BaseModel):
 
     n: Optional[int] = None
     error: Optional[str] = None
+    # A count still running sends done=False with the count so far; an older
+    # server's single reply is the total.
+    done: bool = True
 
 
 class DirEntry(BaseModel):

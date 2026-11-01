@@ -166,6 +166,9 @@ async def _spawn_server(*extra_args: str):
     tabs_dir = tempfile.mkdtemp(prefix="ffast-tabs-")
     if "--tabs-dir" not in extra_args:
         extra_args = (*extra_args, "--tabs-dir", tabs_dir)
+    index_dir = tempfile.mkdtemp(prefix="ffast-frame-index-")
+    if "--frame-index-dir" not in extra_args:
+        extra_args = (*extra_args, "--frame-index-dir", index_dir)
     metrics_dir = tempfile.mkdtemp(prefix="ffast-metrics-")
     if "--metrics-dir" not in extra_args:
         extra_args = (*extra_args, "--metrics-dir", metrics_dir)

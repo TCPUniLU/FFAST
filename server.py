@@ -12,7 +12,8 @@ Client → server events:
                                   prediction_keys, slice_num}
     LOAD_MODEL            args=[path, modelType]
     DELETE_OBJECT         args=[fingerprint]
-    PROBE_DATASET_LENGTH  args=[path]  → DATASET_LENGTH_RESPONSE
+    PROBE_DATASET_LENGTH  args=[path]  → DATASET_LENGTH_RESPONSE (repeated while counting, last has done=True)
+    CANCEL_PROBE_DATASET_LENGTH  (no args) — stop the running count
     LIST_DIR              args=[path?] → DIR_LISTING   (server-side filesystem browse)
     GRACEFUL_DISCONNECT   (no args) — signals intentional client shutdown
     OPEN_VIEW             kwargs={view_id?, dataset_ref?}  → SCENE_SNAPSHOT
@@ -836,6 +837,14 @@ def cli():
              "(default: ~/.ffast/tabs on this machine).",
     )
     parser.add_argument(
+        "--frame-index-dir",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Folder of saved frame indexes (default: ~/.ffast/frame-index "
+             "on this machine).",
+    )
+    parser.add_argument(
         "--metrics-dir",
         type=str,
         default=None,
@@ -871,6 +880,11 @@ def cli():
              "the source of a bug. The last 10 trace files are kept.",
     )
     args = parser.parse_args()
+    if args.frame_index_dir:
+        from pathlib import Path
+
+        from ffast.io import frame_index
+        frame_index.CACHE_DIR = Path(args.frame_index_dir)
     if args.trace is not None:
         trace.start(args.trace or None)
 

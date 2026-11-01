@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
@@ -144,6 +145,9 @@ class ServerSession:
         # Whether the page asked for timing notes (ADR 0072); set by the handshake
         self.timing = False
         self.outbound = outbound
+        # The running frame count of the Load dialog (frame index plan 2026-11-01)
+        self._length_probe_cancel: threading.Event | None = None
+        self._length_probe_task: asyncio.Task | None = None
         self.views: dict = {}  # view_id → VisualizationView
         # Sends packed bytes to every connection (the hub, ADR 0044); a
         # session on its own, as in a test, has only itself to tell.
@@ -191,6 +195,7 @@ class ServerSession:
             control.REQUEST_SUBDATASET_ARRAYS:  _Route(self._on_request_subdataset_arrays, ["fingerprint"], RequestSubdatasetArraysRequest),
             control.PROBE_DATASET_KEYS:         _Route(self._on_probe_dataset_keys, ["path", "dataset_type"], ProbeDatasetKeysRequest),
             control.PROBE_DATASET_LENGTH:       _Route(self._on_probe_dataset_length, ["path"], ProbeDatasetLengthRequest),
+            control.CANCEL_PROBE_DATASET_LENGTH: _Route(self._on_cancel_probe_dataset_length, [], EmptyRequest),
             control.LIST_DIR:                   _Route(self._on_list_dir, ["?path"], ListDirRequest),
             control.LOAD_PREDICTION:            _Route(self._on_load_prediction, ["path", "dataset_fp"], LoadPredictionRequest),
             control.LOAD_EXAMPLE:               _Route(self._on_load_example, [], EmptyRequest),
@@ -718,10 +723,10 @@ class ServerSession:
         error: str | None = None
 
         try:
-            from ffast.io.xyz import read_ase_or_explain
+            from ffast.io.frame_index import read_first_frame
             from ffast.loaders.ase import aseDatasetLoader
 
-            first_atoms = read_ase_or_explain(path, index=0)
+            first_atoms = read_first_frame(path)
             temp_loader = aseDatasetLoader(path, atomsList=[first_atoms])
             energy_keys = list(temp_loader.EneregyKeys())
             force_keys = list(temp_loader.ForceKeys())
@@ -765,31 +770,63 @@ class ServerSession:
         logger.debug("DATASET_KEYS_RESPONSE queued for %r", path)
 
     async def _on_probe_dataset_length(self, path, **kwargs) -> None:
-        """Count frames in a dataset file and push DATASET_LENGTH_RESPONSE."""
+        """Count frames in the background; reply as it grows, then once with done=True.
+
+        Returns at once: a count of a big file must not hold up the message
+        loop (frame index plan 2026-11-01). A newer count cancels the older.
+        """
+        from ffast.io import frame_index as fi
+        from ffast.protocol import DatasetLengthResponse
         from ffast.protocol.rpc import pack
 
-        n: int | None = None
-        error: str | None = None
-        try:
-            from ffast.core.data_types import AtomsList
-            n = AtomsList.calc_dataset_length_static(path)
-            logger.info("PROBE_DATASET_LENGTH %r: n=%d", path, n)
-        except Exception as exc:
-            logger.warning("PROBE_DATASET_LENGTH error for %r: %s", path, exc, extra={"popup": False})
-            logger.warning(
-                "  server view: host=%s cwd=%s exists=%s parent_exists=%s",
-                *_probe_path_diagnostics(path), extra={"popup": False},
-            )
-            error = str(exc)
+        self._stop_length_probe()
+        cancel = threading.Event()
+        self._length_probe_cancel = cancel
+        loop = asyncio.get_running_loop()
 
-        from ffast.protocol import DatasetLengthResponse
-        data = pack(
-            control.DATASET_LENGTH_RESPONSE,
-            (path,),
-            DatasetLengthResponse(n=n, error=error).model_dump(),
-        )
-        await self._emit(data)
-        logger.debug("DATASET_LENGTH_RESPONSE queued for %r", path)
+        async def send(n, error=None, done=False):
+            if cancel.is_set():
+                return
+            await self._emit(pack(
+                control.DATASET_LENGTH_RESPONSE, (path,),
+                DatasetLengthResponse(n=n, error=error, done=done).model_dump(),
+            ))
+
+        async def run():
+            n: int | None = None
+            error: str | None = None
+            try:
+                if fi.is_indexable(path):
+                    index = await asyncio.to_thread(
+                        fi.get_frame_index, path, cancel=cancel,
+                        progress=lambda k: asyncio.run_coroutine_threadsafe(send(k), loop),
+                    )
+                    n = len(index)
+                else:
+                    from ffast.core.data_types import AtomsList
+                    n = await asyncio.to_thread(AtomsList.calc_dataset_length_static, path)
+                logger.info("PROBE_DATASET_LENGTH %r: n=%d", path, n)
+            except fi.FrameIndexCancelled:
+                return
+            except Exception as exc:
+                logger.warning("PROBE_DATASET_LENGTH error for %r: %s", path, exc, extra={"popup": False})
+                logger.warning(
+                    "  server view: host=%s cwd=%s exists=%s parent_exists=%s",
+                    *_probe_path_diagnostics(path), extra={"popup": False},
+                )
+                error = str(exc)
+            await send(n, error, done=True)
+            logger.debug("DATASET_LENGTH_RESPONSE queued for %r", path)
+
+        self._length_probe_task = asyncio.create_task(run())
+
+    def _stop_length_probe(self) -> None:
+        if self._length_probe_cancel is not None:
+            self._length_probe_cancel.set()
+
+    async def _on_cancel_probe_dataset_length(self, **kwargs) -> None:
+        """The Load dialog moved on to another file, or closed without Load."""
+        self._stop_length_probe()
 
     async def _on_list_dir(self, path=None, **kwargs) -> None:
         """List a server-side directory and push DIR_LISTING.

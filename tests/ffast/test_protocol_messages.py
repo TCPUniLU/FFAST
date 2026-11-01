@@ -117,8 +117,10 @@ KEYS_OK = {"energy_keys": ["energy"], "force_keys": ["forces"],
 KEYS_ERR = {"energy_keys": [], "force_keys": [],
             "has_calculator_energy": False, "has_calculator_forces": False,
             "error": "bad file"}
-LENGTH_OK = {"n": 1000, "error": None}
-LENGTH_ERR = {"n": None, "error": "not found"}
+LENGTH_OK = {"n": 1000, "error": None, "done": True}
+LENGTH_ERR = {"n": None, "error": "not found", "done": True}
+# A count still running sends what it has so far (frame index plan 2026-11-01).
+LENGTH_PARTIAL = {"n": 50000, "error": None, "done": False}
 DIR_OK = {
     "path": "/data", "parent": "/", "home": "/home/u",
     "entries": [{"name": "sub", "is_dir": True, "size": 0},
@@ -133,9 +135,14 @@ def test_dataset_keys_roundtrip(payload):
     assert DatasetKeysResponse.model_validate(payload).model_dump() == payload
 
 
-@pytest.mark.parametrize("payload", [LENGTH_OK, LENGTH_ERR])
+@pytest.mark.parametrize("payload", [LENGTH_OK, LENGTH_ERR, LENGTH_PARTIAL])
 def test_dataset_length_roundtrip(payload):
     assert DatasetLengthResponse.model_validate(payload).model_dump() == payload
+
+
+def test_a_length_reply_without_done_is_a_finished_count():
+    """An older server sends no ``done``: its one reply is the total."""
+    assert DatasetLengthResponse.model_validate({"n": 7}).done is True
 
 
 @pytest.mark.parametrize("payload", [DIR_OK, DIR_ROOT])
