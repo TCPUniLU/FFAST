@@ -7,11 +7,15 @@ but reconnecting to a job that is still running, or a profile with its own
 ``ffast_server_cmd`` (e.g. a container), can run older code with no sign of it.
 
 The hash covers what a server runs and what the wheel ships: the code files of
-the ``ffast`` package (Python, the web client, TOML configs) and the top-level
-``server.py``. Both sit at the same place relative to each other in
-an editable checkout and in an installed wheel, so the two give the same hash
-for the same code. Caches and dotfiles (``__pycache__``, ``.DS_Store``) are
-left out.
+the ``ffast`` package (Python, the web client, TOML configs), the ``modules/``
+plugin folder (the server imports it at start, e.g. ``modules/tabs/configTabs.py``)
+and the top-level ``server.py``. They sit at the same place relative to each
+other in an editable checkout and in an installed wheel, so the two give the
+same hash for the same code. Caches and dotfiles (``__pycache__``,
+``.DS_Store``) are left out.
+
+A cluster job also reads it to decide whether the venv already holds this code
+(``cluster/bootstrap.py`` ``install_marker``).
 """
 from __future__ import annotations
 
@@ -25,10 +29,14 @@ from typing import Optional
 _SUFFIXES = {".py", ".js", ".mjs", ".html", ".css", ".toml"}
 
 
+# Folders under the root whose code the server runs.
+_FOLDERS = ("ffast", "modules")
+
+
 def _files(root: Path) -> list[Path]:
     """The files the fingerprint covers under ``root`` (the dir holding ffast/)."""
     files = [
-        p for p in (root / "ffast").rglob("*")
+        p for folder in _FOLDERS for p in (root / folder).rglob("*")
         if p.is_file()
         and p.suffix in _SUFFIXES
         and "__pycache__" not in p.parts

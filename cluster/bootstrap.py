@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from cluster.backend import ClusterError
+from ffast.session.code_fingerprint import fingerprint_of
 
 logger = logging.getLogger("FFAST")
 
@@ -32,11 +33,14 @@ logger = logging.getLogger("FFAST")
 # pip-installed on top of the module-provided base (ADR 0028).
 HEAVY_DEPS = frozenset({"torch", "numpy", "scipy", "scikit-learn", "ase"})
 
-# On-node layout (ADR 0028): a stable ~/.ffast holds the venv, pushed wheel, and
-# the sha256 marker of the currently installed wheel.
+# On-node layout (ADR 0028): a stable ~/.ffast holds the venv and the pushed
+# wheel; the install marker lives inside the venv (see provision_node).
 NODE_DIR = "~/.ffast"
-NODE_MARKER = "~/.ffast/installed.sha256"
 DEFAULT_VENV = "~/.ffast/venv"
+
+# Data files the wheel ships next to the code (pyproject package-data). The code
+# fingerprint leaves JSON out, so the install marker adds them.
+_SHIPPED_JSON = ("config/default.json", "ffast/config/default.json")
 
 _REQ_NAME = re.compile(r"^[A-Za-z0-9._-]+")
 
@@ -63,24 +67,36 @@ def light_dependencies(dependencies: list[str]) -> list[str]:
     return [d for d in dependencies if _dist_name(d) not in HEAVY_DEPS]
 
 
-def wheel_sha256(wheel_path: Path) -> str:
-    """Hex sha256 of a built wheel — the provisioning identity marker (ADR 0028)."""
+def install_marker(project_root: Path, light_deps: list[str]) -> str:
+    """Hex sha256 naming what a venv installed from this checkout holds.
+
+    It covers the code the server runs (the code fingerprint), the JSON files
+    the wheel ships, and the light dependencies. It is read from the checkout
+    without building anything, and it ignores file timestamps: a built wheel's
+    own sha256 changes on every build, so it never matched and every connect
+    reinstalled (ADR 0074).
+    """
+    root = Path(project_root)
     h = hashlib.sha256()
-    with open(wheel_path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
+    h.update(fingerprint_of(root).encode() + b"\0")
+    for rel in _SHIPPED_JSON:
+        p = root / rel
+        if p.is_file():
+            h.update(rel.encode() + b"\0" + p.read_bytes() + b"\0")
+    for dep in light_deps:
+        h.update(dep.encode() + b"\0")
     return h.hexdigest()
 
 
-def needs_provision(local_sha: str, node_marker: str | None) -> bool:
+def needs_provision(local_marker: str, node_marker: str | None) -> bool:
     """True iff the node must be (re)provisioned.
 
     ``node_marker`` is the contents of the on-node marker file (or ``None`` when
-    absent). Re-provision when it is missing or its hash differs from the locally
-    built wheel — so a code change without a version bump still reinstalls, while
-    an unchanged wheel makes reconnects a no-op.
+    absent). Re-provision when it is missing or differs from this checkout's
+    :func:`install_marker` — so a code change without a version bump still
+    reinstalls, while unchanged code makes reconnects a no-op.
     """
-    return node_marker is None or node_marker.strip() != local_sha
+    return node_marker is None or node_marker.strip() != local_marker
 
 
 def build_server_wheel(project_root: Path, out_dir: Path) -> Path:
@@ -159,13 +175,13 @@ def provision_launch_cmd(
     light_deps: list[str],
     modules: list[str],
     marker_path: str,
-    wheel_sha: str,
+    marker: str,
 ) -> str:
     """Job command that provisions the venv *then* launches the server (ADR 0028).
 
     Run as the SLURM job on the allocated node: load modules, create a
     ``--system-site-packages`` venv (once), install the staged ``ffast`` wheel
-    (``--no-deps``) plus the light pure-Python deps, write the sha256 marker, and
+    (``--no-deps``) plus the light pure-Python deps, write the install marker, and
     exec ``ffast-server``. ``&&``-chained so any failure aborts before launch;
     the marker is written last so a failed install never marks the node current.
     Ends with ``ffast-server`` so connect's ``--port`` etc. attach to it.
@@ -181,7 +197,7 @@ def provision_launch_cmd(
     # Verify the just-installed server is compatible BEFORE writing the marker,
     # so a bad install is never recorded as current.
     parts.append(_VERIFY_SERVER)
-    parts.append(f"printf '%s' {wheel_sha} > {marker_path}")
+    parts.append(f"printf '%s' {marker} > {marker_path}")
     parts.append("ffast-server")
     return " && ".join(parts)
 
@@ -272,7 +288,7 @@ async def provision_node(
     """Stage the ffast wheel on the login node; return the SLURM job command.
 
     The login node only does light, policy-safe work — read the marker, and on a
-    hash mismatch ``mkdir`` + ``scp`` the freshly built wheel. The heavy work
+    mismatch build the wheel, ``mkdir`` + ``scp`` it. A match builds nothing. The heavy work
     (venv creation + ``pip install``) is deferred into the returned *job* command
     so it runs under the SLURM allocation, not on the login node (ADR 0028).
     Integration-level (needs a reachable login node); not unit-tested.
@@ -290,6 +306,30 @@ async def provision_node(
         profile.host, venv, modules, root,
     )
 
+    try:
+        light = light_dependencies(read_dependencies(root / "pyproject.toml"))
+        marker = install_marker(root, light)
+    except Exception as exc:  # not a repo checkout
+        logger.exception("auto-bootstrap: reading the checkout failed")
+        raise ClusterError(
+            f"Could not read the ffast checkout at {root}: {exc}. "
+            f"Run from a repo checkout.",
+            str(exc),
+        )
+
+    # Marker lives INSIDE the venv, not a global path — so switching
+    # venv_path (or replacing the venv) always re-provisions correctly.
+    marker_path = f"{venv}/.ffast-install.sha256"
+    marker_out, _, marker_rc = await _ssh_run(profile, "cat", marker_path)
+    node_marker = marker_out if marker_rc == 0 else None
+
+    if not needs_provision(marker, node_marker):
+        _progress(
+            f"Server up to date on {profile.host} (marker {marker[:12]}); "
+            f"job will launch the existing venv"
+        )
+        return server_launch_cmd(venv, modules)
+
     with tempfile.TemporaryDirectory(prefix="ffast-wheel-") as tmp:
         _progress("Building ffast wheel…")
         try:
@@ -301,21 +341,7 @@ async def provision_node(
                 f"Run from a repo checkout with uv/build/pip available.",
                 str(exc),
             )
-        sha = wheel_sha256(wheel)
-        logger.info("auto-bootstrap: built %s (sha %s)", wheel.name, sha[:12])
-
-        # Marker lives INSIDE the venv, not a global path — so switching
-        # venv_path (or replacing the venv) always re-provisions correctly.
-        marker_path = f"{venv}/.ffast-wheel.sha256"
-        marker_out, _, marker_rc = await _ssh_run(profile, "cat", marker_path)
-        node_marker = marker_out if marker_rc == 0 else None
-
-        if not needs_provision(sha, node_marker):
-            _progress(
-                f"Server up to date on {profile.host} (sha {sha[:12]}); "
-                f"job will launch the existing venv"
-            )
-            return server_launch_cmd(venv, modules)
+        logger.info("auto-bootstrap: built %s", wheel.name)
 
         _progress(f"Staging ffast wheel to {profile.host}…")
         remote_wheel = f"{NODE_DIR}/{wheel.name}"
@@ -329,7 +355,6 @@ async def provision_node(
         await _scp_push(profile, wheel, remote_wheel)
         _progress("Wheel staged; venv build + install will run inside the SLURM job")
 
-    light = light_dependencies(read_dependencies(root / "pyproject.toml"))
-    cmd = provision_launch_cmd(venv, remote_wheel, light, modules, marker_path, sha)
+    cmd = provision_launch_cmd(venv, remote_wheel, light, modules, marker_path, marker)
     logger.info("auto-bootstrap: job will provision-and-launch: %s", cmd)
     return cmd

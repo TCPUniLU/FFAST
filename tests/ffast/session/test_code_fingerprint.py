@@ -45,6 +45,13 @@ def test_a_changed_web_file_or_server_py_changes_it(tmp_path):
     assert len({fingerprint_of(a), fingerprint_of(b), fingerprint_of(c)}) == 3
 
 
+def test_a_changed_plugin_in_modules_changes_it(tmp_path):
+    """The server imports modules/ at start (e.g. modules/tabs/configTabs.py)."""
+    a = _tree(tmp_path / "a", {**BASE, "modules/tabs/configTabs.py": "N = 1\n"})
+    b = _tree(tmp_path / "b", {**BASE, "modules/tabs/configTabs.py": "N = 2\n"})
+    assert fingerprint_of(a) != fingerprint_of(b)
+
+
 def test_a_renamed_file_changes_it(tmp_path):
     a = _tree(tmp_path / "a", BASE)
     moved = {k.replace("expr.py", "expr2.py"): v for k, v in BASE.items()}

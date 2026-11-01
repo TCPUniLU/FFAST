@@ -1,6 +1,5 @@
 """Stage 1 of cluster auto-bootstrap (ADR 0028): the pure decision helpers."""
 
-import hashlib
 from pathlib import Path
 
 import pytest
@@ -13,12 +12,12 @@ from cluster.bootstrap import (
     HEAVY_DEPS,
     NODE_DIR,
     _dist_name,
+    install_marker,
     light_dependencies,
     needs_provision,
     provision_launch_cmd,
     read_dependencies,
     server_launch_cmd,
-    wheel_sha256,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -53,11 +52,45 @@ def test_light_dependencies_matches_real_pyproject():
     assert {"msgpack", "websockets", "pydantic"} <= light
 
 
-def test_wheel_sha256_matches_hashlib(tmp_path):
-    p = tmp_path / "ffast-2.0.0-py3-none-any.whl"
-    payload = b"not-a-real-wheel" * 100_000  # exceeds the 1 MiB read chunk
-    p.write_bytes(payload)
-    assert wheel_sha256(p) == hashlib.sha256(payload).hexdigest()
+def _checkout(root: Path, files: dict | None = None) -> Path:
+    """A minimal checkout: a pyproject plus the given files."""
+    files = {
+        "pyproject.toml": '[project]\ndependencies = ["torch>=2.8", "msgpack>=1.0"]\n',
+        "ffast/__init__.py": "",
+        "server.py": "def cli(): pass\n",
+        "ffast/config/default.json": "{}",
+        **(files or {}),
+    }
+    for rel, text in files.items():
+        f = root / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(text)
+    return root
+
+
+def test_install_marker_is_the_same_for_the_same_checkout(tmp_path):
+    a = _checkout(tmp_path / "a")
+    b = _checkout(tmp_path / "b")
+    assert install_marker(a, ["msgpack"]) == install_marker(b, ["msgpack"])
+    # File times do not count: touching a file keeps the marker.
+    (b / "server.py").touch()
+    assert install_marker(a, ["msgpack"]) == install_marker(b, ["msgpack"])
+
+
+def test_install_marker_changes_with_code_json_or_deps(tmp_path):
+    base = install_marker(_checkout(tmp_path / "a"), ["msgpack"])
+    code = install_marker(_checkout(tmp_path / "b", {"server.py": "X = 1\n"}), ["msgpack"])
+    plugin = install_marker(
+        _checkout(tmp_path / "c", {"modules/tabs/configTabs.py": "N = 1\n"}), ["msgpack"])
+    json_ = install_marker(
+        _checkout(tmp_path / "d", {"ffast/config/default.json": '{"a": 1}'}), ["msgpack"])
+    deps = install_marker(_checkout(tmp_path / "e"), ["msgpack", "pydantic"])
+    assert len({base, code, plugin, json_, deps}) == 5
+
+
+def test_install_marker_of_this_checkout_is_stable():
+    light = light_dependencies(read_dependencies(REPO_ROOT / "pyproject.toml"))
+    assert install_marker(REPO_ROOT, light) == install_marker(REPO_ROOT, light)
 
 
 def test_needs_provision():
@@ -89,7 +122,7 @@ def test_provision_launch_cmd():
         light_deps=["msgpack", "websockets"],
         modules=["Python/3.11"],
         marker_path="~/.ffast/installed.sha256",
-        wheel_sha="deadbeef",
+        marker="deadbeef",
     )
     # One &&-chained command run AS the SLURM job (venv+install on the node).
     assert s.startswith("module load Python/3.11 && ")
@@ -114,10 +147,10 @@ def test_provision_launch_cmd_no_light_deps():
     assert "--no-deps --force-reinstall" in installs[0]
 
 
-async def test_provision_node_build_failure_raises_clustererror(tmp_path):
-    """A wheel-build failure surfaces as ClusterError (the type connect handles
-    and logs), not an unhandled RuntimeError. tmp_path has no pyproject.toml, so
-    the build fails before any SSH — cluster-free."""
+async def test_provision_node_not_a_checkout_raises_clustererror(tmp_path):
+    """A folder that is not a checkout surfaces as ClusterError (the type connect
+    handles and logs). tmp_path has no pyproject.toml, so it fails before any
+    SSH — cluster-free."""
     profile = ClusterProfile(name="x", host="nonexistent.invalid", provision=True)
     with pytest.raises(ClusterError):
         await provision_node(profile, project_root=tmp_path)
@@ -127,33 +160,35 @@ async def test_provision_node_build_failure_raises_clustererror(tmp_path):
 #
 # These exercise the *login-node* logic without a real cluster by stubbing the
 # three module-level SSH/subprocess entry points (build_server_wheel, _ssh_run,
-# _scp_push). The build is faked to emit a wheel with known bytes, so the local
-# sha256 is deterministic and the "already up to date" marker can be matched.
-
-_FAKE_WHEEL_BYTES = b"fake-wheel-bytes-for-provision-tests"
-_FAKE_WHEEL_SHA = hashlib.sha256(_FAKE_WHEEL_BYTES).hexdigest()
-
+# _scp_push). The checkout is a minimal tree, so its install marker is known and
+# the "already up to date" marker can be matched.
 
 def _install_fake_build(monkeypatch):
+    builds = []
+
     def _fake_build(project_root, out_dir):
         p = Path(out_dir) / "ffast-2.0.0-py3-none-any.whl"
-        p.write_bytes(_FAKE_WHEEL_BYTES)
+        p.write_bytes(b"fake-wheel")
+        builds.append(p)
         return p
 
     monkeypatch.setattr(bootstrap, "build_server_wheel", _fake_build)
+    return builds
 
 
 async def test_provision_node_skips_when_node_up_to_date(tmp_path, monkeypatch):
-    """When the on-node marker already matches the freshly built wheel,
-    provisioning is skipped: no mkdir, no scp — just the plain launch command."""
-    _install_fake_build(monkeypatch)
+    """When the on-node marker already matches this checkout, provisioning is
+    skipped: no build, no mkdir, no scp — just the plain launch command."""
+    builds = _install_fake_build(monkeypatch)
+    _checkout(tmp_path)
+    marker = install_marker(tmp_path, ["msgpack>=1.0"])
     ssh_calls = []
     scp_calls = []
 
     async def _fake_ssh_run(profile, *args, stdin=None):
         ssh_calls.append(args)
         if args[0] == "cat":                     # marker read → matches local sha
-            return (_FAKE_WHEEL_SHA, "", 0)
+            return (marker, "", 0)
         return ("", "", 0)
 
     async def _fake_scp(profile, local, remote):
@@ -170,13 +205,41 @@ async def test_provision_node_skips_when_node_up_to_date(tmp_path, monkeypatch):
 
     # Skip path returns the "activate existing venv" launch command verbatim.
     assert cmd == server_launch_cmd("~/.ffast/venv", ["Python/3.11"])
+    assert builds == []                                      # nothing built
     assert scp_calls == []                                   # nothing staged
     assert all(a[0] != "mkdir" for a in ssh_calls)           # no provisioning
+
+
+async def test_provision_node_builds_and_records_the_marker_when_stale(tmp_path, monkeypatch):
+    """An old marker (e.g. a wheel sha256 from before ADR 0074) reinstalls, and
+    the job records this checkout's marker."""
+    builds = _install_fake_build(monkeypatch)
+    _checkout(tmp_path)
+    marker = install_marker(tmp_path, ["msgpack>=1.0"])
+
+    async def _fake_ssh_run(profile, *args, stdin=None):
+        if args[0] == "cat":
+            return ("an-old-wheel-sha256", "", 0)
+        return ("", "", 0)
+
+    async def _fake_scp(profile, local, remote):
+        pass
+
+    monkeypatch.setattr(bootstrap, "_ssh_run", _fake_ssh_run)
+    monkeypatch.setattr(bootstrap, "_scp_push", _fake_scp)
+
+    profile = ClusterProfile(name="x", host="login.fake", provision=True,
+                             venv_path="~/v")
+    cmd = await provision_node(profile, project_root=tmp_path)
+    assert len(builds) == 1
+    assert f"printf '%s' {marker} > ~/v/.ffast-install.sha256" in cmd
+    assert "python -m pip install msgpack>=1.0" in cmd
 
 
 async def test_provision_node_mkdir_failure_raises_clustererror(tmp_path, monkeypatch):
     """A failed remote mkdir (bad SSH auth / wrong host) surfaces as ClusterError."""
     _install_fake_build(monkeypatch)
+    _checkout(tmp_path)
 
     async def _fake_ssh_run(profile, *args, stdin=None):
         if args[0] == "cat":
@@ -195,6 +258,7 @@ async def test_provision_node_mkdir_failure_raises_clustererror(tmp_path, monkey
 async def test_provision_node_scp_failure_raises_clustererror(tmp_path, monkeypatch):
     """A failed wheel scp propagates the ClusterError raised by _scp_push."""
     _install_fake_build(monkeypatch)
+    _checkout(tmp_path)
 
     async def _fake_ssh_run(profile, *args, stdin=None):
         if args[0] == "cat":
