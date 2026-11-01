@@ -18,6 +18,7 @@ from cluster.bootstrap import (
     provision_launch_cmd,
     read_dependencies,
     server_launch_cmd,
+    timed,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -100,18 +101,30 @@ def test_needs_provision():
     assert needs_provision("abc", "def") is True           # code changed
 
 
+def test_timed_wraps_a_step_in_the_jobs_own_shell():
+    s = timed("activate", "source ~/v/bin/activate")
+    # A { ...; } group, not a ( ... ) subshell, so `source` / `module load`
+    # still apply to the later steps.
+    assert s.startswith("{ ") and s.endswith("; }")
+    assert "&& source ~/v/bin/activate &&" in s
+    assert "printf 'ffast-bootstrap step %s %d.%d s\\n' 'activate'" in s
+
+
 def test_server_launch_cmd():
     s = server_launch_cmd("~/.ffast/venv", ["Python/3.11", "PyTorch"])
-    assert s.startswith(
-        "module load Python/3.11 && module load PyTorch"
-        " && source ~/.ffast/venv/bin/activate && "
-    )
+    assert s == " && ".join([
+        timed("module load Python/3.11", "module load Python/3.11"),
+        timed("module load PyTorch", "module load PyTorch"),
+        timed("activate", "source ~/.ffast/venv/bin/activate"),
+        timed("check server", bootstrap._VERIFY_SERVER),
+        "ffast-server",
+    ])
     # Compatibility gate runs before the real launch.
     assert "grep -qe '--token-hash'" in s
     assert s.endswith("&& ffast-server")
     # No modules -> just activate + verify + run.
     assert server_launch_cmd("~/.ffast/venv", []).startswith(
-        "source ~/.ffast/venv/bin/activate && "
+        timed("activate", "source ~/.ffast/venv/bin/activate") + " && "
     )
 
 
@@ -125,7 +138,7 @@ def test_provision_launch_cmd():
         marker="deadbeef",
     )
     # One &&-chained command run AS the SLURM job (venv+install on the node).
-    assert s.startswith("module load Python/3.11 && ")
+    assert s.startswith(timed("module load Python/3.11", "module load Python/3.11") + " && ")
     assert "([ -d ~/.ffast/venv ] || python -m venv --system-site-packages ~/.ffast/venv)" in s
     assert "source ~/.ffast/venv/bin/activate" in s
     assert "--no-deps --force-reinstall ~/.ffast/ffast-2.0.0-py3-none-any.whl" in s
@@ -142,9 +155,9 @@ def test_provision_launch_cmd():
 
 def test_provision_launch_cmd_no_light_deps():
     s = provision_launch_cmd("~/v", "~/w.whl", [], [], "~/m", "sha")
-    installs = [p for p in s.split(" && ") if p.startswith("python -m pip install")]
-    assert len(installs) == 1  # only the wheel install, no light-deps step
-    assert "--no-deps --force-reinstall" in installs[0]
+    assert s.count("python -m pip install") == 1  # only the wheel, no light-deps step
+    assert "--no-deps --force-reinstall" in s
+    assert "'install deps'" not in s
 
 
 async def test_provision_node_not_a_checkout_raises_clustererror(tmp_path):

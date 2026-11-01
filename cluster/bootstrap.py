@@ -156,15 +156,31 @@ _VERIFY_SERVER = (
 )
 
 
+def timed(name: str, cmd: str) -> str:
+    """``cmd``, then a job-log line saying how long it took (ADR 0074).
+
+    The line reads ``ffast-bootstrap step <name> 2.8 s`` and lands in
+    ``~/slurm-<job>.out``, so a slow connect can be split into its steps. The
+    ``{ ...; }`` group runs in the job's shell, so ``module load`` and
+    ``source`` still take effect; the arithmetic is bash's own (no ``bc``).
+    """
+    return (
+        f"{{ _t=$(date +%s%N) && {cmd}"
+        f" && _ms=$(( ($(date +%s%N) - _t) / 1000000 ))"
+        f" && printf 'ffast-bootstrap step %s %d.%d s\\n' '{name}'"
+        f" $((_ms / 1000)) $((_ms % 1000 / 100)); }}"
+    )
+
+
 def server_launch_cmd(venv_path: str, modules: list[str]) -> str:
     """Job command for an already-provisioned node: modules → activate → run.
 
     Used when the on-node marker already matches the local wheel, so no install
     is needed — the SLURM job just activates the existing venv (ADR 0028).
     """
-    parts = [f"module load {m}" for m in modules]
-    parts.append(f"source {venv_path}/bin/activate")
-    parts.append(_VERIFY_SERVER)
+    parts = [timed(f"module load {m}", f"module load {m}") for m in modules]
+    parts.append(timed("activate", f"source {venv_path}/bin/activate"))
+    parts.append(timed("check server", _VERIFY_SERVER))
     parts.append("ffast-server")
     return " && ".join(parts)
 
@@ -186,17 +202,21 @@ def provision_launch_cmd(
     the marker is written last so a failed install never marks the node current.
     Ends with ``ffast-server`` so connect's ``--port`` etc. attach to it.
     """
-    parts = [f"module load {m}" for m in modules]
-    parts.append(
-        f"([ -d {venv_path} ] || python -m venv --system-site-packages {venv_path})"
-    )
-    parts.append(f"source {venv_path}/bin/activate")
-    parts.append(f"python -m pip install --no-deps --force-reinstall {remote_wheel}")
+    parts = [timed(f"module load {m}", f"module load {m}") for m in modules]
+    parts.append(timed(
+        "create venv",
+        f"([ -d {venv_path} ] || python -m venv --system-site-packages {venv_path})",
+    ))
+    parts.append(timed("activate", f"source {venv_path}/bin/activate"))
+    parts.append(timed(
+        "install ffast",
+        f"python -m pip install --no-deps --force-reinstall {remote_wheel}",
+    ))
     if light_deps:
-        parts.append("python -m pip install " + " ".join(light_deps))
+        parts.append(timed("install deps", "python -m pip install " + " ".join(light_deps)))
     # Verify the just-installed server is compatible BEFORE writing the marker,
     # so a bad install is never recorded as current.
-    parts.append(_VERIFY_SERVER)
+    parts.append(timed("check server", _VERIFY_SERVER))
     parts.append(f"printf '%s' {marker} > {marker_path}")
     parts.append("ffast-server")
     return " && ".join(parts)
