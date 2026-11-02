@@ -228,7 +228,7 @@
  * `ffast/config/tabs.py` `build_tab_layout` — every metric role is a *concrete
  * metric id* (or a list, for the overlay `series` role), not an authoring ref.
  * @typedef {Object} PanelLayout
- * @property {string} kind timeline|density|scatter|table|grouped_density|grouped_table|overlay_timeline|3d
+ * @property {string} kind timeline|density|scatter|parity|table|grouped_density|grouped_table|overlay_timeline|3d
  * @property {number} row
  * @property {number} col
  * @property {number} rowspan

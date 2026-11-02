@@ -129,8 +129,10 @@ hidden_params = ["shifted"]
   metric = "ffast.energy_prediction"
   transform = "shift"
 
+# Every force component as a density, the worst as dots (ADR 0078). x and y
+# are not drawn: the server reads them to make a subset from a box.
 [[tabs.panels]]
-kind = "scatter"
+kind = "parity"
 row = 4
 col = 1
 title = "Forces Scatter"
@@ -141,3 +143,7 @@ y_label = ["Predicted Forces", "forcesUnit"]
   metric = "ffast.force_reference"
   [tabs.panels.metrics.y]
   metric = "ffast.force_prediction"
+  [tabs.panels.metrics.density]
+  metric = "ffast.force_parity_density"
+  [tabs.panels.metrics.outliers]
+  metric = "ffast.force_parity_outliers"

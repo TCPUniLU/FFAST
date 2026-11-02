@@ -92,7 +92,11 @@ def build_analysis_tab(UIHandler, env, tab):
             ct.addWidget(_browser_only_box(), *_cell(pcfg))
             continue
         spec = _panel_spec(pcfg, selector_obj)
-        panel = make_panel(ct.handler, pcfg.kind, parent=ct, **spec)
+        kind = pcfg.kind
+        if kind == "parity":    # the browser's density + dots (ADR 0078); here the scatter it was
+            kind = "scatter"
+            spec = {k: v for k, v in spec.items() if k not in ("density", "outliers")}
+        panel = make_panel(ct.handler, kind, parent=ct, **spec)
         panels.append(panel)
 
         if pcfg.scroll_group:

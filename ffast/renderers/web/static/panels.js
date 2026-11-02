@@ -39,6 +39,7 @@ import { withUnit, displayUnit } from './units.js';
 import { pickPeaks, visitedKey } from './peaks.js';
 import { plotTheme, hexAlpha } from './theme.js';
 import { elementColourOn } from './element_colours.js';
+import { gradientCss, mapColorBy } from './colormap.js';
 
 /** @typedef {import('./protocol.js').PanelLayout} PanelLayout */
 /** @typedef {import('./metrics.js').MetricResult} MetricResult */
@@ -517,6 +518,137 @@ export function buildScatter(spec, series, ctx) {
   };
 }
 
+/**
+ * RGBA pixels of a density, one per bin: log₁₀ of the count through viridis,
+ * an empty bin clear. The first row of pixels is the last row of `counts`
+ * (the highest predicted bin), since an image is drawn from its top.
+ * @param {number[][]} counts [predicted bin][true bin]
+ * @returns {Uint8ClampedArray}
+ */
+export function densityPixels(counts) {
+  const g = counts.length;
+  const w = g ? counts[0].length : 0;
+  const logs = counts.flat().map((c) => (c > 0 ? Math.log10(c) : NaN));
+  const top = logs.reduce((m, v) => (v > m ? v : m), 0);
+  const rgb = mapColorBy({ colormap: 'viridis', values: logs, vmin: 0, vmax: top || 1 });
+  const px = new Uint8ClampedArray(g * w * 4);
+  for (let r = 0; r < g; r++) {
+    for (let c = 0; c < w; c++) {
+      const from = r * w + c;
+      const to = ((g - 1 - r) * w + c) * 4;
+      if (!Number.isFinite(logs[from])) continue;     // left clear
+      const [red, green, blue] = rgb[from];
+      px.set([red * 255, green * 255, blue * 255, 255], to);
+    }
+  }
+  return px;
+}
+
+/** A density as a PNG data URL (see `densityPixels`). */
+function densityImage(counts) {
+  const canvas = document.createElement('canvas');
+  canvas.height = counts.length;
+  canvas.width = counts.length ? counts[0].length : 0;
+  const ctx2d = canvas.getContext('2d');
+  ctx2d.putImageData(new ImageData(densityPixels(counts), canvas.width, canvas.height), 0, 0);
+  return canvas.toDataURL('image/png');
+}
+
+/**
+ * A force parity plot (ADR 0078): every component counted on a grid, drawn
+ * as a log-coloured density, and the worst components as dots that name
+ * their structure and atom. `density` is (G+1, G): row 0 the bin centres of
+ * both axes, then the counts [predicted bin][true bin]. `outliers` is
+ * (K, 5): true, predicted, structure, atom, component. Plotting every
+ * component sent >4 GB for 1.77M structures.
+ */
+export function buildParity(spec, series, ctx) {
+  const u = ctx.units || {};
+  const traces = [];
+  const curveSeries = [];
+  const single = seriesWith(series, 'outliers').length === 1;
+  (series || []).forEach((s, i) => {
+    const o = s.data && s.data.outliers;
+    if (!o || !o.nd || !o.nd.values.length) return;
+    const n = o.nd.shape[0];
+    const v = o.nd.values;
+    const col = (c) => Array.from({ length: n }, (_, k) => v[k * 5 + c]);
+    const [structure, atom, comp] = [col(2), col(3), col(4)];
+    traces.push({
+      x: col(0), y: col(1), type: 'scattergl', mode: 'markers',
+      customdata: structure.map((f, k) => [f, atom[k], 'xyz'[comp[k]]]),
+      marker: { color: single ? plotTheme().peak : paint(ctx, s, i), size: 4 },
+      name: s.name || '',
+    });
+    curveSeries.push(i);
+  });
+  const dataCurveCount = traces.length;
+  // One density: several would cover each other. The first series' is drawn.
+  // The page's Plotly build has no heatmap (vendor/plotly: scatter, bar, pie
+  // only), so the density is an image under the axes and its colour bar
+  // comes from a scatter with no points.
+  const first = seriesWith(series, 'density')[0];
+  let edges = null;
+  let image = null;
+  if (first) {
+    const centres = row(first.data.density, 0);
+    const g = centres.length;
+    const half = g > 1 ? (centres[1] - centres[0]) / 2 : 0.5;
+    const counts = Array.from({ length: g }, (_, r) => row(first.data.density, r + 1));
+    edges = [centres[0] - half, centres[g - 1] + half];
+    const top = Math.log10(Math.max(1, ...counts.map((r) => arrMax(r))));
+    const stops = gradientCss('viridis').split(', ');
+    const decades = Array.from({ length: Math.floor(top) + 1 }, (_, k) => k);
+    traces.push({
+      x: [null], y: [null], type: 'scatter', mode: 'markers',
+      marker: {
+        color: [0, top], cmin: 0, cmax: top, showscale: true,
+        colorscale: stops.map((c, k) => [k / (stops.length - 1), c]),
+        colorbar: {
+          title: { text: 'Components', side: 'right' }, thickness: 12,
+          tickvals: decades, ticktext: decades.map((k) => (10 ** k).toLocaleString('en')),
+        },
+      },
+      hoverinfo: 'skip', showlegend: false,
+    });
+    image = {
+      source: densityImage(counts), xref: 'x', yref: 'y',
+      x: edges[0], y: edges[1], sizex: edges[1] - edges[0], sizey: edges[1] - edges[0],
+      sizing: 'stretch', layer: 'below',
+    };
+  }
+  if (spec.diagonal && edges) {
+    traces.push({
+      x: edges, y: edges, type: 'scatter', mode: 'lines',
+      line: { color: plotTheme().ink3, width: 1, dash: 'dash' },
+      hoverinfo: 'skip', showlegend: false,
+    });
+  }
+  const layout = withLegend(baseLayout(), dataCurveCount);
+  layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.x) };
+  layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) };
+  const xName = String(layout.xaxis.title.text || 'x').replace(/<[^>]*>/g, '');
+  const yName = String(layout.yaxis.title.text || 'y').replace(/<[^>]*>/g, '');
+  for (const tr of traces.slice(0, dataCurveCount)) {
+    tr.hovertemplate = `${tr.name ? '<b>%{fullData.name}</b><br>' : ''}`
+      + 'Structure %{customdata[0]}, atom %{customdata[1]}, %{customdata[2]}<br>'
+      + `${xName} = %{x:.6g}<br>${yName} = %{y:.6g}<extra></extra>`;
+  }
+  if (image) {
+    layout.images = [image];
+    // An image does not count towards the axis range: the grid's edges do.
+    layout.xaxis.range = [...edges];
+    layout.yaxis.range = [...edges];
+  }
+  // A dot is one component, so its structure is in its data (field 0), not
+  // its index; a box covers every component on the server (subbing.py).
+  return {
+    traces, layout,
+    subInfo: { perFrame: true, dataCurveCount, curveSeries, frameField: 0 },
+    unitAxes: { x: 'x', y: 'y' },
+  };
+}
+
 export function buildOverlayTimeline(spec, series, ctx) {
   const labels = (spec.options && spec.options.series_labels) || [];
   const traces = [];
@@ -789,6 +921,7 @@ export const PLOT_BUILDERS = {
   timeline: buildTimeline,
   density: buildDensity,
   scatter: buildScatter,
+  parity: buildParity,
   overlay_timeline: buildOverlayTimeline,
   grouped_density: buildGroupedDensity,
   bars: buildBars,

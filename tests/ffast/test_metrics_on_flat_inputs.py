@@ -89,8 +89,10 @@ AVAILABLE = set(_uniform()) | {"offsets"}
 # registered are not among them.
 METRICS = sorted(m for m in default_registry.list_metrics()
                  if parse_box_id(m) is None and "__" not in m and _leaves(m) <= AVAILABLE)
-# Added by ADR 0065, after the numbers were saved.
-NOT_SAVED = {"ffast.energy_difference_shifted"}
+# Added by ADR 0065 and ADR 0078, after the numbers were saved; the parity
+# metrics are checked in test_builtin_force_metrics.py.
+NOT_SAVED = {"ffast.energy_difference_shifted",
+             "ffast.force_parity_density", "ffast.force_parity_outliers"}
 
 BEFORE = np.load(Path(__file__).parent / "data" / "metrics_on_uniform_before_flat.npz")
 

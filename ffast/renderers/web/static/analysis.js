@@ -57,7 +57,11 @@ const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions 
 const CONTROL_PARAM = { energy_shift: 'shifted', smoothing: 'window' };
 
 /** Plot kinds whose view picks out structures, so SUB can make a subset. */
-const SUB_KINDS = new Set(['timeline', 'overlay_timeline', 'scatter', 'density']);
+const SUB_KINDS = new Set(['timeline', 'overlay_timeline', 'scatter', 'parity', 'density']);
+// Roles a kind draws, when it names others too. A parity panel's x and y are
+// every force component (>4 GB on a large dataset): only the server reads
+// them, to make a subset from a box (ADR 0078).
+const DRAWN_ROLES = { parity: new Set(['density', 'outliers']) };
 
 /** A panel's name in a tab's kept state (a reload): what it is and where,
  * so an edit that changes or moves it does not hand it another's zoom. */
@@ -1199,7 +1203,9 @@ export class AnalysisManager {
     // (metric, params, model, dataset), so two series sharing a reference-only
     // metric hit one cache slot rather than computing it twice.
     const jobs = [];
+    const drawn = DRAWN_ROLES[spec.kind];
     for (const [role, val] of Object.entries(spec.metrics || {})) {
+      if (drawn && !drawn.has(role)) continue;
       if (Array.isArray(val)) val.forEach((id, k) => jobs.push({ role, id, k }));
       else jobs.push({ role, id: val });
     }
@@ -1654,8 +1660,10 @@ export class AnalysisManager {
       if (!pt || !info) return;
       if (info.dataCurveCount != null && pt.curveNumber >= info.dataCurveCount) return;
       const src = (card.series || [])[(info.curveSeries || [])[pt.curveNumber] ?? 0];
-      if (pt.pointIndex == null || !src) return;
-      const frame = { datasetFp: src.datasetFp, modelFp: src.modelFp, frame: pt.pointIndex };
+      // A point that is not a frame carries its frame in its data (a parity dot).
+      const index = info.frameField != null ? pt.customdata?.[info.frameField] : pt.pointIndex;
+      if (index == null || !src) return;
+      const frame = { datasetFp: src.datasetFp, modelFp: src.modelFp, frame: index };
       clearTimeout(card.frameTimer);
       card.frameTimer = null;
       // Plotly reports a double-click's second click too, after plotly_doubleclick.

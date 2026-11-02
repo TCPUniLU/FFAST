@@ -46,3 +46,10 @@ tensor_3x3 = Dim("tensor_3x3", fixed_size=(3, 3))
 # Kind draws it without recomputing. ``grid`` resolution is runtime-determined.
 curve_xy   = Dim("curve_xy",   fixed_size=2)
 grid       = Dim("grid",       fixed_size=None)
+
+# Force parity plot (ADR 0078). A ``(parity_rows, grid)`` density: row 0 the
+# bin centres of both axes, rows 1.. the counts, [predicted bin][true bin].
+# ``(N_outliers, outlier_fields)``: true, predicted, structure, atom, component.
+parity_rows    = Dim("parity_rows",    fixed_size=None)
+N_outliers     = Dim("N_outliers",     fixed_size=None)
+outlier_fields = Dim("outlier_fields", fixed_size=5)

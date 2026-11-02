@@ -102,6 +102,7 @@ things came up.
 - [0073](0073-the-metric-worker-is-ready-before-anyone-asks.md) The metric worker is ready before anyone asks: starts with the server, imports scipy as it boots, hands over only when its replacement is ready (built)
 - [0074](0074-a-cluster-connect-pays-only-for-what-changed.md) A cluster connect pays only for what changed: install marker from the checkout, step timings in the job log, torch imported late, uv installs (accepted)
 - [0077](0077-metric-requests-run-beside-other-messages.md) Metric requests run beside other messages: slider and view clicks no longer wait for minute-long metrics; the same metric asked twice computes once (built)
+- [0078](0078-the-force-scatter-is-a-density-with-the-worst-as-dots.md) The force scatter is a density of every component with the worst 50,000 as dots you can hover, click and Sub; the density is an image, since the vendored Plotly has no heatmap (built)
 
 ## Environment structure
 

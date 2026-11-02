@@ -61,6 +61,9 @@ export function caption(kind, info = {}) {
     case 'scatter':
       if (!xTitle || !yTitle) return '';
       return `${yTitle} against ${xTitle}.`;
+    case 'parity':
+      if (!xTitle || !yTitle) return '';
+      return `${yTitle} against ${xTitle}: density of every component, the worst as dots.`;
     default:
       return '';
   }

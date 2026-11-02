@@ -8,9 +8,9 @@ configuration indices with the desktop's rules (``UI/panels.py``,
 ``PanelKind.sub_indices``):
 
 - timeline, overlay_timeline: x is the frame index, so the frames on screen.
-- scatter: the points inside the box, over the full arrays (drawing may thin
-  them; subbing does not). Per-atom metrics (force components) map each
-  component back to its frame.
+- scatter, parity: the points inside the box, over the full arrays (drawing
+  may thin or bin them; subbing does not). Per-atom metrics (force
+  components) map each component back to its frame.
 - density: the curve has no frame index, so the per-frame values it was drawn
   from (its ``src`` input) are filtered by the x range. The x axis is
   ``|value|``, minus the energy shift when the curve is shifted.
@@ -105,7 +105,9 @@ def frames_in_view(view: dict, *, n_frames: int, value_of, registry, dataset=Non
     if kind in FRAME_KINDS:
         return frames_in_x_range(x_range, n_frames)
 
-    if kind == "scatter":
+    # A parity plot draws a density and dots (ADR 0078); its box covers the
+    # components of its x and y metrics, as a scatter's does.
+    if kind in ("scatter", "parity"):
         xs = value_of(metrics["x"], params.get(metrics["x"], {}))
         ys = value_of(metrics["y"], params.get(metrics["y"], {}))
         if xs is None or ys is None or y_range is None:

@@ -122,6 +122,8 @@ CASES = {
       return [pe.tableCsv(doc.querySelector('table')), doc.querySelector('tbody td:nth-child(2)').textContent]; })()""",
     "hover_timeline": "(() => { const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u']}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}], {units: {}, peaks: false}); return [b.traces[0].hovertemplate, b.layout.xaxis.showspikes, b.layout.yaxis.spikemode]; })()",
     "hover_scatter_diagonal": "(() => { const b = pn.buildPanel({kind: 'scatter', diagonal: true}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {x: {nd: {values: [1, 2], shape: [2]}}, y: {nd: {values: [1, 2], shape: [2]}}}}], {units: {}}); return [b.traces.length, b.traces[b.traces.length - 1].hovertemplate === undefined, b.traces[0].hovertemplate]; })()",
+    # A force parity panel (ADR 0078): density (row 0 centres, then counts) + worst components.
+    "parity": "(() => { const b = pn.buildPanel({kind: 'parity', diagonal: true}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {density: {nd: {values: [0.5, 1.5, 3, 0, 1, 7], shape: [3, 2]}}, outliers: {nd: {values: [0, -3, 1, 1, 0, 0, 1, 1, 0, 1], shape: [2, 5]}}}}], {units: {}}); const [dots, bar, diag] = b.traces; const im = b.layout.images[0]; const px = pn.densityPixels([[3, 0], [1, 7]]); return [b.traces.map((t) => t.type), dots.x, dots.y, dots.customdata, bar.marker.cmax, bar.marker.colorbar.ticktext, im.source.slice(0, 21), [im.x, im.y, im.sizex, im.sizey, im.layer], b.layout.xaxis.range, diag.x, b.subInfo, Array.from(px.slice(0, 8)), px[15]]; })()",
     "hover_bars": "(() => { const b = pn.buildPanel({kind: 'bars'}, [{name: 'MACE', data: {value: {nd: {values: [0.1, 0.2], shape: [2]}}}}], {elementOrder: [1, 6], selectedElements: ['All']}); return b.traces[0].hovertemplate; })()",
     "te_set_labels": "(() => { const a = te.setPanelLabels(TE(), 2, {y_title: 'Mine', label_size: 14, colour: 'red'}); const b = te.setPanelLabels(a, 2, {y_title: null}); return [a.panels[2], b.panels[2], te.toSaved(b).panels[2], TE().panels[2]]; })()",
     "pn_labels_applied": "(() => { const S = (name) => ({datasetFp: 'D', modelFp: name, name, data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}); const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u'], y_title: 'Mine', label_size: 15, legend_size: 9, legend_x: 0.1, legend_y: 0.9}, [S('MACE'), S('SchNet')], {units: {}, peaks: false}); return [b.layout.yaxis.title.text, b.layout.yaxis.title.font.size, b.layout.xaxis.title.font.size, b.layout.legend.font.size, b.layout.legend.x, b.layout.legend.y, b.labelDefaults, b.traces[0].hovertemplate]; })()",
@@ -966,6 +968,8 @@ CASES = {
         "    timeline: [{}, [ser({y: nd(y)})], {}],"
         "    density: [{}, [ser({value: nd([0, 1, 2, 3, 0.1, N, 0.3, 0.2], [2, 4])})], {}],"
         "    scatter: [{diagonal: true}, [ser({x: nd(y), y: nd(y.map(v => v * 2))})], {perFrame: true}],"
+        "    parity: [{diagonal: true}, [ser({density: nd([0.5, 1.5, 3, 0, 1, 7], [3, 2]),"
+        "      outliers: nd([N, 1, 0, 0, 0, 2, 0, 1, 1, 2], [2, 5])})], {}],"
         "    overlay_timeline: [{options: {series_labels: ['a']}}, [ser({series: [nd(y)]})], {}],"
         "    grouped_density: [{}, [ser({"
         "      value: nd([0, 1, 2, 0.1, N, 0.3, 0, 1, 2, 0.5, 0.2, N], [2, 2, 3]),"
@@ -1642,6 +1646,28 @@ def test_the_scatter_diagonal_shows_nothing_on_hover(results):
 
 def test_bar_hover_leaves_the_category_label_unformatted(results):
     assert "= %{x}<br>" in results["hover_bars"]
+
+
+# ── panels.buildParity (ADR 0078) ───────────────────────────────────────────
+
+def test_a_parity_panel_draws_the_worst_dots_over_a_log_density(results):
+    (types, x, y, custom, cmax, ticks, source, place, xrange, diag_x, sub,
+     top_row, empty_alpha) = results["parity"]
+    # The page's Plotly build draws only scatter, bar and pie: the density is
+    # an image under the axes, its colour bar a hidden scatter (ADR 0078).
+    assert types == ["scattergl", "scatter", "scatter"]      # dots first: clicks map to series
+    assert (x, y) == ([0, 0], [-3, 1])
+    assert custom == [[1, 1, "x"], [1, 0, "y"]]              # structure, atom, component
+    assert cmax == pytest.approx(0.84510, abs=1e-4)          # log10 of the fullest bin, 7
+    assert ticks == ["1"]
+    assert source == "data:image/png;base64"
+    assert place == [0, 2, 2, 2, "below"]                    # over the grid's edges, top-left corner
+    assert xrange == [0, 2] and diag_x == [0, 2]
+    assert sub["perFrame"] is True and sub["dataCurveCount"] == 1 and sub["frameField"] == 0
+    # The image's top row is the highest predicted bin: counts [1, 7]; an empty bin is clear.
+    assert top_row[3] == 255 and top_row[7] == 255
+    assert top_row[4:7] == [253, 231, 37]                    # 7, the fullest: viridis' last stop
+    assert empty_alpha == 0                                  # [3, 0]'s second bin
 
 
 # ── label fields of a panel ─────────────────────────────────────────────────
