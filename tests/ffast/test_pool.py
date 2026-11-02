@@ -559,3 +559,83 @@ def test_concurrent_runs_each_get_their_own_answer(registry):
     for i in range(1, 7):
         assert isinstance(results[i], MetricResult), results[i]
         assert np.isclose(results[i].values, 2.0 * i)
+
+
+# ── Several workers (ADR 0079 decision 5) ─────────────────────────────────────
+
+def _pool_nap_pid(seconds):
+    time.sleep(seconds)
+    return os.getpid()
+
+
+def _at_once(*jobs):
+    """Run each job in a thread; return ``(results, seconds)``."""
+    import threading
+
+    results = [None] * len(jobs)
+
+    def go(i, job):
+        results[i] = job()
+
+    threads = [threading.Thread(target=go, args=(i, j)) for i, j in enumerate(jobs)]
+    start = time.monotonic()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    return results, time.monotonic() - start
+
+
+def _warm(executor, n):
+    """Have ``n`` workers booted and ready, so a timing test measures tasks."""
+    _at_once(*[lambda: executor.call(_pool_nap_pid, {"seconds": 0.5}) for _ in range(n)])
+
+
+def test_two_tasks_run_on_two_workers_at_once(registry):
+    executor = WorkerProcessExecutor(registry, PoolPolicy(max_workers=2))
+    try:
+        _warm(executor, 2)
+        pids, took = _at_once(*[lambda: executor.call(_pool_nap_pid, {"seconds": 1.5}) for _ in range(2)])
+        assert took < 2.6
+        assert pids[0] != pids[1]
+    finally:
+        executor.shutdown()
+
+
+def test_max_workers_caps_the_workers(registry):
+    executor = WorkerProcessExecutor(registry, PoolPolicy(max_workers=1))
+    try:
+        executor.start()
+        _, took = _at_once(*[lambda: executor.call(_pool_nap_pid, {"seconds": 1.5}) for _ in range(2)])
+        assert took >= 3.0
+        assert len(executor._slots) == 1
+    finally:
+        executor.shutdown()
+
+
+def test_a_crash_on_one_worker_does_not_touch_a_task_on_another(registry):
+    executor = WorkerProcessExecutor(registry, PoolPolicy(max_workers=2))
+    try:
+        _warm(executor, 2)
+        results, _ = _at_once(
+            lambda: executor.run("test.crash", FlatInputSource({"x": 1.0}), {}),
+            lambda: executor.run("test.nap", FlatInputSource({"x": 5.0}), {}),
+        )
+        assert isinstance(results[0], MetricFailure)
+        assert isinstance(results[1], MetricResult)
+        assert np.isclose(results[1].values, 5.0)
+    finally:
+        executor.shutdown()
+
+
+def test_an_extra_idle_worker_exits_and_one_stays(registry):
+    executor = WorkerProcessExecutor(registry, PoolPolicy(max_workers=2, idle_retire_s=0.2))
+    try:
+        _warm(executor, 2)
+        assert len(executor._slots) == 2
+        time.sleep(0.5)
+        executor.call(_pool_pid, {})
+        assert len(executor._slots) == 1
+        assert executor._worker.alive
+    finally:
+        executor.shutdown()

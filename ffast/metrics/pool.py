@@ -5,7 +5,10 @@ runs in the server (``ffast.metrics.server_executor``).
 
 Architecture
 ------------
-WorkerProcessExecutor wraps one lazily-spawned worker subprocess at a time.
+WorkerProcessExecutor runs tasks on a small set of worker subprocesses, one
+task per worker at a time. A worker boots when every worker is busy (up to
+``policy.max_workers``); extra workers idle for ``policy.idle_retire_s`` exit,
+and one stays. Each worker is held by a _Slot.
 
 Large numpy inputs (>= policy.shm_threshold_bytes) are passed via
 multiprocessing.shared_memory.SharedMemory (Worker Buffers) to avoid
@@ -55,6 +58,7 @@ from ffast.metrics.execution import InputSource, build_execution_plan, run_plan
 from ffast.metrics.executor import MetricExecutor
 from ffast.metrics.models import MetricFailure, MetricResult
 from ffast.metrics.registry import MetricRegistry
+from ffast.metrics.resources import cores
 
 
 # ── Policy ─────────────────────────────────────────────────────────────────────
@@ -71,6 +75,11 @@ class PoolPolicy:
     # and reach its recv loop. Cold-start is NOT a metric's runtime,
     # so it is bounded separately and excluded from max_runtime_s.
     spawn_timeout_s: float = 30.0
+    # Most workers at once: when every worker is busy another boots, up to
+    # this many (ADR 0079). None: max(2, min(8, cores // 4)).
+    max_workers: int | None = None
+    # An extra worker idle this long exits; one always stays.
+    idle_retire_s: float = 300.0
 
 
 # Sentinel a freshly-booted worker sends once it is
@@ -273,6 +282,17 @@ class _Worker:
             pass
 
 
+class _Slot:
+    """One place for a worker: the worker, the replacement booting for it, and
+    whether a task holds it."""
+
+    def __init__(self) -> None:
+        self.worker: _Worker | None = None
+        self.next: _Worker | None = None
+        self.busy = False
+        self.last_used = time.monotonic()
+
+
 # ── WorkerProcessExecutor ─────────────────────────────────────────────────────
 
 class WorkerProcessExecutor(MetricExecutor):
@@ -306,14 +326,26 @@ class WorkerProcessExecutor(MetricExecutor):
         self._registry = registry
         self._policy = policy or PoolPolicy()
         self._cache = cache if cache is not None else MetricCache()
-        self._worker: _Worker | None = None
-        # The retiring worker's replacement while it boots; it takes over once
-        # it has said it is ready.
-        self._next: _Worker | None = None
+        self._slots: list[_Slot] = []
         self._task_counter = 0
-        # One task at a time on the worker: threads (metric pool, scene builds)
-        # share a single pipe, and a thread discards replies it did not ask for.
+        # Guards the slot list and each slot's ``busy``; held only briefly, never
+        # while a task runs. A task owns its busy slot alone.
         self._lock = threading.RLock()
+        self._free = threading.Condition(self._lock)
+
+    @property
+    def _worker(self) -> "_Worker | None":
+        """The first slot's worker."""
+        return self._slots[0].worker if self._slots else None
+
+    @property
+    def _next(self) -> "_Worker | None":
+        """The first slot's replacement while it boots."""
+        return self._slots[0].next if self._slots else None
+
+    def _max_workers(self) -> int:
+        limit = self._policy.max_workers
+        return limit if limit is not None else max(2, min(8, cores() // 4))
 
     def _spawn_worker(self) -> _Worker:
         parent_conn, child_conn = mp.Pipe(duplex=True)
@@ -327,25 +359,34 @@ class WorkerProcessExecutor(MetricExecutor):
         return _Worker(conn=parent_conn, process=process)
 
     def start(self) -> None:
-        """Boot the worker now and return without waiting for it, so the first
-        metric finds it ready instead of paying its start-up (~700 ms)."""
+        """Boot the first worker now and return without waiting for it, so the
+        first metric finds it ready instead of paying its start-up (~700 ms)."""
         with self._lock:
-            self._get_worker()
+            if not self._slots:
+                self._slots.append(_Slot())
+            if not self._slots[0].busy:
+                self._get_worker(self._slots[0])
 
-    def _get_worker(self) -> _Worker:
-        """The worker for the next task. Caller holds ``self._lock``."""
-        if self._next is not None:
-            if self._await_ready(self._next, timeout=0):
-                self._retire(self._worker)
-                self._worker, self._next = self._next, None
-            elif not self._next.alive:
-                self._next = None  # died booting; the next task asks for another
-        if self._worker is None or not self._worker.alive:
-            if self._next is not None:
-                self._worker, self._next = self._next, None
+    def _get_worker(self, slot: _Slot | None = None) -> _Worker:
+        """The worker for the next task on ``slot`` (default: the first). The
+        caller owns the slot."""
+        if slot is None:
+            with self._lock:
+                if not self._slots:
+                    self._slots.append(_Slot())
+                slot = self._slots[0]
+        if slot.next is not None:
+            if self._await_ready(slot.next, timeout=0):
+                self._retire(slot.worker)
+                slot.worker, slot.next = slot.next, None
+            elif not slot.next.alive:
+                slot.next = None  # died booting; the next task asks for another
+        if slot.worker is None or not slot.worker.alive:
+            if slot.next is not None:
+                slot.worker, slot.next = slot.next, None
             else:
-                self._worker = self._spawn_worker()
-        return self._worker
+                slot.worker = self._spawn_worker()
+        return slot.worker
 
     @staticmethod
     def _retire(worker: _Worker | None) -> None:
@@ -380,6 +421,44 @@ class WorkerProcessExecutor(MetricExecutor):
         except (EOFError, OSError):
             pass
         return False
+
+    def _acquire_slot(self) -> _Slot:
+        """A slot for one task, held until ``_release_slot``: an idle one, else
+        a new one while under ``max_workers``, else wait for a release. Extra
+        workers idle past ``idle_retire_s`` exit first."""
+        with self._free:
+            self._retire_idle()
+            while True:
+                for slot in self._slots:
+                    if not slot.busy:
+                        slot.busy = True
+                        return slot
+                if len(self._slots) < self._max_workers():
+                    slot = _Slot()
+                    slot.busy = True
+                    self._slots.append(slot)
+                    return slot
+                self._free.wait()
+
+    def _release_slot(self, slot: _Slot) -> None:
+        with self._free:
+            slot.busy = False
+            slot.last_used = time.monotonic()
+            self._free.notify()
+
+    def _retire_idle(self) -> None:
+        """Let extra idle workers go, stalest first, keeping at least one. The
+        caller holds ``self._lock``."""
+        limit = time.monotonic() - self._policy.idle_retire_s
+        while len(self._slots) > 1:
+            stale = [sl for sl in self._slots if not sl.busy and sl.last_used < limit]
+            if not stale:
+                return
+            slot = min(stale, key=lambda sl: sl.last_used)
+            self._slots.remove(slot)
+            if slot.next is not None:
+                slot.next.terminate()
+            self._retire(slot.worker)
 
     def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
         """Run a single metric and its dependencies.
@@ -437,103 +516,112 @@ class WorkerProcessExecutor(MetricExecutor):
         return out
 
     def _send(self, id, fn, resolved, compute_params, parameters, effective_timeout):
-        """One task on the worker; its raw output, or a ``MetricFailure``."""
+        """One task on a worker; its raw output, or a ``MetricFailure``."""
+        slot = self._acquire_slot()
+        try:
+            return self._send_on(slot, id, fn, resolved, compute_params, parameters,
+                                 effective_timeout)
+        finally:
+            self._release_slot(slot)
+
+    def _send_on(self, slot, id, fn, resolved, compute_params, parameters, effective_timeout):
         with self._lock:
             self._task_counter += 1
             task_id = self._task_counter
 
-            worker = self._get_worker()
+        worker = self._get_worker(slot)
 
-            # Wait for the worker to finish booting BEFORE arming the deadline, so a
-            # slow cold-start (common under load) can't falsely time out a fast metric.
-            if not self._await_ready(worker):
-                worker.terminate()
-                self._worker = None
+        # Wait for the worker to finish booting BEFORE arming the deadline, so a
+        # slow cold-start (common under load) can't falsely time out a fast metric.
+        if not self._await_ready(worker):
+            worker.terminate()
+            slot.worker = None
+            return MetricFailure(
+                metric_id=id,
+                traceback=(
+                    f"Worker failed to start within "
+                    f"{self._policy.spawn_timeout_s:.1f}s"
+                ),
+                parameters=parameters,
+            )
+
+        packed_inputs, shm_list = _pack_inputs(resolved, self._policy.shm_threshold_bytes)
+
+        try:
+            try:
+                worker.conn.send({
+                    "task_id": task_id,
+                    "metric_id": id,
+                    "fn": fn,
+                    "packed_inputs": packed_inputs,
+                    "compute_params": compute_params,
+                })
+            except (pickle.PicklingError, AttributeError, TypeError) as exc:
+                # Pickling happens before anything is written, so the pipe
+                # is still clean and the worker keeps serving (ADR 0061).
                 return MetricFailure(
                     metric_id=id,
-                    traceback=(
-                        f"Worker failed to start within "
-                        f"{self._policy.spawn_timeout_s:.1f}s"
-                    ),
+                    traceback=f"The metric's task cannot be sent to the worker: {exc!r}",
                     parameters=parameters,
                 )
 
-            packed_inputs, shm_list = _pack_inputs(resolved, self._policy.shm_threshold_bytes)
-
-            try:
-                try:
-                    worker.conn.send({
-                        "task_id": task_id,
-                        "metric_id": id,
-                        "fn": fn,
-                        "packed_inputs": packed_inputs,
-                        "compute_params": compute_params,
-                    })
-                except (pickle.PicklingError, AttributeError, TypeError) as exc:
-                    # Pickling happens before anything is written, so the pipe
-                    # is still clean and the worker keeps serving (ADR 0061).
+            deadline = time.monotonic() + effective_timeout
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    worker.terminate()
+                    slot.worker = None
                     return MetricFailure(
                         metric_id=id,
-                        traceback=f"The metric's task cannot be sent to the worker: {exc!r}",
+                        traceback=(
+                            f"Metric exceeded hard time limit "
+                            f"({effective_timeout:.1f}s)"
+                        ),
                         parameters=parameters,
                     )
 
-                deadline = time.monotonic() + effective_timeout
-                while True:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        worker.terminate()
-                        self._worker = None
-                        return MetricFailure(
-                            metric_id=id,
-                            traceback=(
-                                f"Metric exceeded hard time limit "
-                                f"({effective_timeout:.1f}s)"
-                            ),
-                            parameters=parameters,
-                        )
+                if not worker.conn.poll(min(remaining, 1.0)):
+                    continue
 
-                    if not worker.conn.poll(min(remaining, 1.0)):
-                        continue
+                msg = worker.conn.recv()
+                if msg["task_id"] == task_id:
+                    worker.task_count += 1
+                    if (worker.task_count >= self._policy.max_tasks_per_worker
+                            and slot.next is None):
+                        slot.next = self._spawn_worker()
+                    return _take_result(msg["value"])
 
-                    msg = worker.conn.recv()
-                    if msg["task_id"] == task_id:
-                        worker.task_count += 1
-                        if (worker.task_count >= self._policy.max_tasks_per_worker
-                                and self._next is None):
-                            self._next = self._spawn_worker()
-                        return _take_result(msg["value"])
-
-            except (BrokenPipeError, EOFError, OSError):
-                worker.terminate()
-                self._worker = None
-                return MetricFailure(
-                    metric_id=id,
-                    traceback=WORKER_DIED,
-                    parameters=parameters,
-                )
-            finally:
-                for shm in shm_list:
-                    try:
-                        shm.close()
-                        shm.unlink()
-                    except Exception:
-                        pass
+        except (BrokenPipeError, EOFError, OSError):
+            worker.terminate()
+            slot.worker = None
+            return MetricFailure(
+                metric_id=id,
+                traceback=WORKER_DIED,
+                parameters=parameters,
+            )
+        finally:
+            for shm in shm_list:
+                try:
+                    shm.close()
+                    shm.unlink()
+                except Exception:
+                    pass
 
     def shutdown(self) -> None:
-        """Gracefully stop the worker: cooperative sentinel then forced terminate."""
+        """Gracefully stop every worker: cooperative sentinel then forced terminate."""
         with self._lock:
-            self._shutdown_locked()
-
-    def _shutdown_locked(self) -> None:
-        if self._next is not None:
-            self._next.terminate()
-            self._next = None
-        if self._worker is not None:
-            try:
-                self._worker.conn.send(None)
-            except Exception:
-                pass
-            self._worker.process.join(timeout=self._policy.grace_period_s)
-            self._worker.terminate()
-            self._worker = None
+            slots, self._slots = self._slots, []
+        for slot in slots:
+            if slot.next is not None:
+                slot.next.terminate()
+                slot.next = None
+            if slot.worker is not None:
+                try:
+                    slot.worker.conn.send(None)
+                except Exception:
+                    pass
+        for slot in slots:
+            if slot.worker is not None:
+                slot.worker.process.join(timeout=self._policy.grace_period_s)
+                slot.worker.terminate()
+                slot.worker = None
