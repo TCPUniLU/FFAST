@@ -127,18 +127,38 @@ def _pack_inputs(
 
 
 def _unpack_inputs(packed: dict[str, Any]) -> tuple[dict[str, Any], list[SharedMemory]]:
-    """Materialise ShmDescriptors to numpy arrays; return opened SharedMemory blocks."""
+    """Numpy arrays reading the ShmDescriptors' blocks in place (no copy: the
+    parent made the blocks for this task alone); return the opened blocks."""
     inputs: dict[str, Any] = {}
     shm_list: list[SharedMemory] = []
     for key, value in packed.items():
         if isinstance(value, _ShmDescriptor):
             shm = SharedMemory(name=value.shm_name, create=False)
-            arr = np.ndarray(value.shape, dtype=np.dtype(value.dtype), buffer=shm.buf).copy()
-            inputs[key] = arr
+            inputs[key] = np.ndarray(value.shape, dtype=np.dtype(value.dtype), buffer=shm.buf)
             shm_list.append(shm)
         else:
             inputs[key] = value
     return inputs, shm_list
+
+
+def _take_result(value: Any) -> Any:
+    """A result the worker left in shared memory, copied out, its block freed."""
+    if not isinstance(value, _ShmDescriptor):
+        return value
+    shm = SharedMemory(name=value.shm_name, create=False)
+    try:
+        return np.array(np.ndarray(value.shape, dtype=np.dtype(value.dtype), buffer=shm.buf))
+    finally:
+        shm.close()
+        shm.unlink()
+
+
+def _close_all(shm_list: list[SharedMemory]) -> None:
+    for shm in shm_list:
+        try:
+            shm.close()
+        except BufferError:     # a metric kept a view of its input; the
+            pass                # mapping goes when the worker retires
 
 
 # ── Worker subprocess entry point ─────────────────────────────────────────────
@@ -201,7 +221,13 @@ def _worker_main(
             inputs, shm_list = _unpack_inputs(packed_inputs)
             try:
                 value = msg["fn"](**inputs, **compute_params)
-                conn.send({"task_id": task_id, "value": value})
+                # A large result goes back through shared memory, not pickled
+                # through the pipe (~90% of a force metric's time, 2026-11-02).
+                # Copied into a block of its own: it may be a view of an input.
+                packed, made = _pack_inputs({"value": value}, policy.shm_threshold_bytes)
+                inputs = value = None
+                _close_all(made)        # the parent frees them
+                conn.send({"task_id": task_id, "value": packed["value"]})
             except Exception:
                 conn.send({
                     "task_id": task_id,
@@ -212,8 +238,8 @@ def _worker_main(
                     ),
                 })
             finally:
-                for shm in shm_list:
-                    shm.close()
+                inputs = value = None
+                _close_all(shm_list)
 
     finally:
         conn.close()
@@ -472,7 +498,7 @@ class WorkerProcessExecutor(MetricExecutor):
                         if (worker.task_count >= self._policy.max_tasks_per_worker
                                 and self._next is None):
                             self._next = self._spawn_worker()
-                        return msg["value"]
+                        return _take_result(msg["value"])
 
             except (BrokenPipeError, EOFError, OSError):
                 worker.terminate()

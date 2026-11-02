@@ -215,6 +215,45 @@ def test_large_array_via_shared_memory(registry):
         executor.shutdown()
 
 
+class _CountingConn:
+    """The parent's end of the worker pipe, recording how many bytes each
+    message from the worker took."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.sizes = []
+
+    def recv(self):
+        import pickle
+        data = self._conn.recv_bytes()
+        self.sizes.append(len(data))
+        return pickle.loads(data)
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+@pytest.mark.parametrize("metric_id, expected", [
+    ("test.double", lambda arr: arr * 2),
+    # Returns its own input, which lives in a block freed after the task.
+    ("test.identity", lambda arr: arr),
+])
+def test_a_large_result_comes_back_through_shared_memory(registry, metric_id, expected):
+    """2026-11-02: a force metric spent ~90% of its time sending its result
+    back through the pipe (4.0 s vs 0.36 s for the subtraction, 425 MB)."""
+    executor = WorkerProcessExecutor(registry)
+    try:
+        executor.start()
+        conn = executor._worker.conn = _CountingConn(executor._worker.conn)
+        arr = np.arange(1_000_000, dtype=np.float64)        # 8 MB
+        result = executor.run(metric_id, FlatInputSource({"x": arr}), {})
+        assert isinstance(result, MetricResult)
+        np.testing.assert_array_equal(result.values, expected(arr))
+        assert max(conn.sizes) < 100_000
+    finally:
+        executor.shutdown()
+
+
 def test_array_below_threshold_not_shared_memory(registry):
     policy = PoolPolicy(shm_threshold_bytes=10 * 1024 * 1024)  # Large threshold
     executor = WorkerProcessExecutor(registry, policy)
