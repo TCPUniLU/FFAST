@@ -1,5 +1,8 @@
 """Worker-process MetricExecutor with shared-memory inputs and recycling.
 
+Since ADR 0079 only outside code reaches this pool; FFAST's own metric code
+runs in the server (``ffast.metrics.server_executor``).
+
 Architecture
 ------------
 WorkerProcessExecutor wraps one lazily-spawned worker subprocess at a time.

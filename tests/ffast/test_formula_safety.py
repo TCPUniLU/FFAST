@@ -1,8 +1,8 @@
 """A formula cannot take the server down (ADR 0064 step 1).
 
-The check refuses a formula that is too long or nested too deeply, and Try
-computes the formula in the metric worker process, so a formula that uses up
-memory kills only the worker, which restarts.
+The check refuses a formula that is too long or nested too deeply. Try
+computes the formula in the server, like saved formulas (ADR 0079); the
+worker tests below cover outside code's worker ``call()``.
 """
 import functools
 import os
@@ -82,7 +82,7 @@ def test_a_worker_that_dies_is_reported_and_replaced(worker):
     assert worker.call(os.getpid, {}) != os.getpid()      # a new worker answers
 
 
-def test_try_runs_its_formula_in_the_worker(worker):
+def test_the_worker_can_compute_a_formula(worker):
     import numpy as np
 
     from ffast.metrics import dims

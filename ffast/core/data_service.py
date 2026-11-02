@@ -274,16 +274,16 @@ class DataService:
         (tests, or a future Environment override); otherwise built lazily on
         first use and memoized, so every metric path through this DataService
         shares one executor. The headless/server DataService gets a
-        WorkerProcessExecutor — metric code must not run in the long-lived
-        server process (the Worker Pool Key Constraint) — the desktop/client
-        DataService gets an InProcessExecutor.
+        ServerExecutor: FFAST's code runs in the server, outside code in
+        workers (ADR 0079). The desktop/client DataService gets an
+        InProcessExecutor.
         """
         if self._metricExecutor is None:
             import ffast.metrics.builtin  # noqa: F401 — register built-in metrics
             from ffast.metrics.registry import default_registry
             if self.headless:
-                from ffast.metrics.pool import WorkerProcessExecutor
-                self._metricExecutor = WorkerProcessExecutor(default_registry)
+                from ffast.metrics.server_executor import ServerExecutor
+                self._metricExecutor = ServerExecutor(default_registry)
             else:
                 from ffast.metrics.executor import InProcessExecutor
                 self._metricExecutor = InProcessExecutor(default_registry)

@@ -1714,8 +1714,7 @@ class ServerSession:
         n_atoms = resolver.resolve("n_atoms", dataset=dataset)
         if n_atoms is None:
             raise TryError("The dataset's atom counts are not available")
-        # The formula runs where saved metrics run, in the metric worker: one
-        # that uses up memory or time then stops the worker, not the server.
+        # The formula runs where saved metrics run (ADR 0079).
         executor = data.metricExecutor
         result = try_formula(
             cfg.expr, dict(cfg.vars), um.registry_without(cfg.id), resolve, n_atoms,
