@@ -113,7 +113,10 @@ def load_session_records() -> list:
 
 _DEFAULT_REMOTE_PORT = 8765
 _POLL_INTERVAL = 5        # seconds between squeue polls
-_POLL_TIMEOUT = 600       # seconds to wait for RUNNING state
+# Seconds to wait for RUNNING state; None waits until the job starts or the
+# user presses Cancel. MeluXina queued QoS-test jobs 0-15 min (2026-11-02),
+# and the old 600 s cancelled the ones that would have started.
+_POLL_TIMEOUT = None
 _TUNNEL_RETRIES = 100      # WebSocket attempts (×delay below) — the window must
                           # cover one-time in-job provisioning (pip install)
                           # before the server starts listening (ADR 0028)
@@ -858,11 +861,41 @@ async def _establish_connection(
     )
 
 
+async def _wait_until_running(backend, job_id, poll_interval, poll_timeout=None) -> None:
+    """Poll until the job runs. A job that fails or ends first raises;
+    ``poll_timeout`` seconds (None: no limit) cancel it and raise."""
+    from cluster.backend import ClusterError, JobStatus
+
+    loop = asyncio.get_event_loop()
+    deadline = None if poll_timeout is None else loop.time() + poll_timeout
+
+    while True:
+        status = await backend.poll_status(job_id)
+
+        if status == JobStatus.RUNNING:
+            return
+        if status == JobStatus.FAILED:
+            raise ClusterError(
+                f"Job {job_id} failed before reaching RUNNING state"
+            )
+        if status == JobStatus.COMPLETED:
+            raise ClusterError(
+                f"Job {job_id} completed immediately — ffast-server exited early"
+            )
+        if deadline is not None and loop.time() > deadline:
+            await backend.cancel_job(job_id)
+            raise ClusterError(
+                f"Timed out waiting {poll_timeout}s for job {job_id}"
+            )
+
+        await asyncio.sleep(poll_interval)
+
+
 async def connect_to_cluster(
     profile,
     remote_port: int = _DEFAULT_REMOTE_PORT,
     poll_interval: float = _POLL_INTERVAL,
-    poll_timeout: float = _POLL_TIMEOUT,
+    poll_timeout: Optional[float] = _POLL_TIMEOUT,
     progress_cb: Optional[Callable[[str], None]] = None,
     on_job_submitted: Optional[Callable[[str], None]] = None,
 ) -> ServerConnection:
@@ -876,8 +909,9 @@ async def connect_to_cluster(
         Port ffast-server listens on inside the job (default 8765).
     poll_interval : float
         Seconds between squeue status checks.
-    poll_timeout : float
-        Maximum seconds to wait for the job to reach RUNNING state.
+    poll_timeout : float | None
+        Maximum seconds to wait for the job to reach RUNNING state; None
+        (the default) waits until it starts or the connect is cancelled.
     progress_cb : callable(str) | None
         Optional callback invoked with a human-readable progress message at
         each stage — useful for forwarding to the UI task progress system.
@@ -939,29 +973,7 @@ async def connect_to_cluster(
 
     # ── 2. poll until RUNNING ─────────────────────────────────────────────
     _progress("Waiting for job to reach RUNNING state…")
-    loop = asyncio.get_event_loop()
-    deadline = loop.time() + poll_timeout
-
-    while True:
-        status = await backend.poll_status(job_id)
-
-        if status == JobStatus.RUNNING:
-            break
-        if status == JobStatus.FAILED:
-            raise ClusterError(
-                f"Job {job_id} failed before reaching RUNNING state"
-            )
-        if status == JobStatus.COMPLETED:
-            raise ClusterError(
-                f"Job {job_id} completed immediately — ffast-server exited early"
-            )
-        if loop.time() > deadline:
-            await backend.cancel_job(job_id)
-            raise ClusterError(
-                f"Timed out waiting {poll_timeout}s for job {job_id}"
-            )
-
-        await asyncio.sleep(poll_interval)
+    await _wait_until_running(backend, job_id, poll_interval, poll_timeout)
 
     # ── 3. resolve node address ───────────────────────────────────────────
     node = await backend.get_node_address(job_id)

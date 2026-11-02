@@ -56,7 +56,7 @@ class SlurmBackend(ClusterBackend):
         if output:
             return self._squeue_state_to_status(output.split()[0])
 
-        # Job gone from squeue — resolve terminal state via sacct
+        # Not in squeue (gone, or missed for a moment): ask sacct
         proc = await asyncio.create_subprocess_exec(
             "sacct",
             "-j",
@@ -75,10 +75,9 @@ class SlurmBackend(ClusterBackend):
                 f"Job {job_id} not found in squeue or sacct"
             )
 
-        state = output.split()[0].upper()
-        if state == "COMPLETED":
-            return JobStatus.COMPLETED
-        return JobStatus.FAILED
+        # Not only terminal: a job squeue missed for a moment can be RUNNING
+        # or PENDING here (MeluXina, 2026-11-02). "CANCELLED+" is truncated.
+        return self._squeue_state_to_status(output.split()[0].rstrip("+"))
 
     async def get_node_address(self, job_id: str) -> str:
         proc = await asyncio.create_subprocess_exec(
@@ -292,7 +291,7 @@ class RemoteSlurmBackend(SlurmBackend):
         if output:
             return self._squeue_state_to_status(output.split()[0])
 
-        # Job gone from squeue — resolve terminal state via sacct
+        # Not in squeue (gone, or missed for a moment): ask sacct
         stdout, _, _ = await self._run_remote(
             "sacct", "-j", job_id, "--noheader", "--format=State", "-X"
         )
@@ -301,10 +300,9 @@ class RemoteSlurmBackend(SlurmBackend):
             raise ClusterError(
                 f"Job {job_id} not found in squeue or sacct on {self._host}"
             )
-        state = output.split()[0].upper()
-        if state == "COMPLETED":
-            return JobStatus.COMPLETED
-        return JobStatus.FAILED
+        # Not only terminal: a job squeue missed for a moment can be RUNNING
+        # or PENDING here (MeluXina, 2026-11-02). "CANCELLED+" is truncated.
+        return self._squeue_state_to_status(output.split()[0].rstrip("+"))
 
     async def get_node_address(self, job_id: str) -> str:
         stdout, _, _ = await self._run_remote(
