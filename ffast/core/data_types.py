@@ -317,10 +317,11 @@ class AtomsList(UserList):
     AtomsList class acts as an intermediate cache for large datasets. Just like how CPUs use cache to access larger data
     in smaller space with more speed, this data structure aims to hold large datasets without having to load the
     complete dataset in memory all at once (RAM).
-    It holds a cache size of 100_000 atoms (by default) and loads data into that cache. When a user wants to access an
-    atom with index i in a specific dataset, if i exists in cache, then the object will be returned, otherwise, a chunk
-    of 100_000 (by default) atoms will be read from the source dataset (containing the requested index at first place)
-    and the requested atom will then be returned. The new chunk will replace the previous one obviously.
+    It holds a cache of `atoms_chunk` frames (300_000 by default). Nothing is read when the list is created (ADR 0076):
+    the first chunk is read on first access. When a user wants to access an atom with index i in a specific dataset, if
+    i exists in cache, then the object will be returned, otherwise, a chunk of `atoms_chunk` frames will be read from
+    the source dataset (containing the requested index at first place) and the requested atom will then be returned.
+    The new chunk will replace the previous one obviously.
 
     This way we can work with large datasets without occupying several Gigabytes of RAM.
 
@@ -334,7 +335,7 @@ class AtomsList(UserList):
 
     Args:
         path (str): the path to the designated dataset.
-        atoms_chunk (int): cache size (in terms of number of atoms).
+        atoms_chunk (int): cache size (in terms of number of frames).
     """
     def __init__(self, path, atoms_chunk=300_000):
         super().__init__()
@@ -342,14 +343,18 @@ class AtomsList(UserList):
         self.start_index = 0
         self.path = path
         self.data = []
+        self._loaded = False
+        # The loader's one read of every frame (ADR 0076), kept so a second loader on the same frames (in-file predictions) reuses it.
+        self.frame_arrays = None
         # One scan, saved (frame index plan 2026-11-01); other formats count as before.
         from ffast.io import frame_index
         self._index = frame_index.get_frame_index(path) if frame_index.is_indexable(path) else None
         self.N = len(self._index) if self._index is not None else self.calc_dataset_length()
 
-        # Then, we need to load the first chunk of data.
-
-        self.load_new_chunk(0)
+    @property
+    def frame_index(self):
+        """The file's frame index, or None for formats without one."""
+        return self._index
 
     def calc_dataset_length(self):
         """
@@ -446,6 +451,7 @@ class AtomsList(UserList):
         :return: dataset[start: start+chunk]
         """
         self.start_index = start
+        self._loaded = True
         del self.data
         if self._index is not None:
             self.data = self._index.read(self.start_index, self.start_index + self.offset)
@@ -474,7 +480,7 @@ class AtomsList(UserList):
             logger.warning("slice version of __getitem__ may need more optimization")
             start, stop, step = item.indices(self.N)
 
-            if (self.start_index <= start) and (stop < self.start_index + self.offset):
+            if self._loaded and (self.start_index <= start) and (stop < self.start_index + self.offset):
                 return self.data[start - self.start_index: stop - self.start_index: step]
 
             result = []
@@ -493,7 +499,7 @@ class AtomsList(UserList):
             if item >= self.N or item < 0:
                 raise IndexError(f"Index {item} out of range {self.N}")
 
-            if not (self.start_index <= item < self.start_index + self.offset):
+            if not self._loaded or not (self.start_index <= item < self.start_index + self.offset):
                 self.load_new_chunk(item)
 
             return self.data[item-self.start_index]
