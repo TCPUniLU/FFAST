@@ -1,57 +1,270 @@
-# Example data
+# Example datasets and predictions
 
-## What is here now
+This directory contains small atomistic datasets and associated prediction
+files for trying FFAST's loading, visualisation, and error-analysis features.
 
-`dataset.xyz` and `prediction.xyz` — 100 configurations of mixed organic
-molecules, 4 to 50 atoms each, so atom count varies between configurations. Load
-the first as a dataset and the second as a prediction against it.
+These are demonstration samples, not complete copies of the upstream
+benchmarks. Results obtained from them should not be presented as results
+on the complete upstream datasets.
+## Attention
+The provided predictions files are as same as their training files except for their `energy` and `forces` keys which are calculated by a simple mlff trained on the training dataset. If a dataset (among the provided datasets in the subsequent directories) has `energy_per_atom` key (or similar), load that dataset with its `energy` key, not `energy_per_atom`, otherwise your energy related errors would become zero.
 
-This pair is load-bearing: `examples/headless/headless.py`, the demo `ffast.toml`
-at the repository root and several tests refer to it by path, so moving or
-renaming it breaks them.
+## Licensing and provenance
 
-- **Source:** the [SPICE dataset](https://github.com/openmm/spice-dataset) — the
-  configurations carry SPICE's own `config_type` values (`PubChem`, `DES370K`)
-  alongside `smiles`, `total_charge` and `REF_energy`.
-- **Licence:** CC0 1.0 (public domain dedication), per the
-  [Zenodo record](https://doi.org/10.5281/zenodo.7338495). No restriction on
-  redistribution; citing Eastman et al., *Sci. Data* **9**, 11 (2022) is
-  courtesy rather than obligation.
-- **Sampling:** TODO — how these 100 configurations were drawn from SPICE
+FFAST's software licence does not replace the licences or permissions
+applicable to third-party data.
 
-## What is coming
+Dataset sources, modifications, and applicable terms are documented below.
+Upstream notices must be retained where required. Inclusion here does not
+imply endorsement by the original dataset authors.
 
-A wider corpus is prepared but not published yet: fixed-sized and
-variable-sized systems, molecular, periodic and subsystem, each with a reference
-dataset, a model prediction, and a perturbed-reference control for the low-error
-end of the scale. Together they cover the cases that behave differently, which
-makes them useful for checking a change rather than only for a first look.
+Files whose redistribution permission remains unresolved must not be
+included in a public release.
 
-It is held back because those files are samples of datasets that other people
-published — MD22, MPtrj and others — and their provenance and licence terms have
-to be established before this repository can redistribute them. The MIT licence
-here covers FFAST's code; it cannot relicense someone else's data, and
-republishing a dataset with no attribution is not something to do by accident.
+## Summary
 
-What the files' own metadata says about where they came from:
+| Example | Upstream dataset | Selection | Redistribution status |
+| --- | --- | --- | --- |
+| Fixed-size molecular | MD22 Stachyose | 100 configurations, stride 100 | Pending confirmation for the source data |
+| Fixed-size periodic | AM26, amorphous carbon | First 100 configurations of the downloaded source file | Pending permission/licence |
+| Fixed-size subsystem | Organic molecule and graphene | One configuration every 150 frames | Origin and permission unresolved |
+| Variable-size molecular | SPICE | Existing 100-configuration sample; method unknown | Upstream CC0 statement; archive metadata discrepancy noted below |
+| Variable-size periodic | MPtrj via MACE | Whole randomly selected files appended until count exceeded 200 | Underlying Materials Project data: CC BY 4.0; retain source-package notices |
 
-| File | Source | Licence | Confidence |
-|---|---|---|---|
-| `mptrj_sampled_over_200.extxyz` | MPtrj (Materials Project trajectories), from its `mp_id` / `task_id` / `calc_id` / `ionic_step` keys | CC BY 4.0, plus the Materials Project terms of use — **attribution required** | Certain |
-| `md22_stachyose_sampled.xyz` | MD22, sgdml.org | **None stated.** sgdml.org publishes no licence for its datasets; its terms cover uploads to the site, not downloads from it | Source certain, terms unclear |
-| `am26_subbed_100.extxyz` | Very likely the amorphous-carbon set at [Zenodo 7905585](https://doi.org/10.5281/zenodo.7905585) (Minamitani, Osaka University): 216 atoms, melt-quench, densities including 1.5 g/cm³, which matches this file's `label=carbon-mq_1.5_N` and `system=carbon` | CC BY 4.0 — **attribution required** | Strong but circumstantial; confirm before relying on it |
-| `graphene_sampled.xyz` | Unknown — the file carries no identifying metadata. Possibly generated in-house | Unknown | — |
+## Fixed-size molecular: MD22 Stachyose
 
-Outstanding before any of it ships:
+Files:
+- `md22_stachyose_sampled.xyz`
+- `predictions_md22_stachyose.xyz`
+- `random_prediction.xyz`
 
-- Confirm the am26 identification, and settle what MD22 permits — the honest
-  options there are to ask the authors, or to link to sgdml.org and have users
-  download it themselves rather than redistributing it here.
-- Add the attribution CC BY asks for, for every file that turns out to need it.
-- How each sample was drawn from its source, so the numbers are reproducible.
-- One prediction file needs checking: its forces average about half the
-  magnitude of the corresponding reference, which reads as a units or
-  normalisation error rather than a weak model.
+Source: MD22 Stachyose, downloaded from https://www.sgdml.org/.
 
-If you are adding data here, record source, licence and sampling in this file at
-the same time. A dataset with no provenance is not usable by anyone else.
+Original authors: Stefan Chmiela, Valentin Vassilev-Galindo, Oliver T.
+Unke, Adil Kabylda, Huziel E. Sauceda, Alexandre Tkatchenko, and
+Klaus-Robert Müller.
+
+Selection: 100 configurations selected at a stride of 100 source records (starting from index `0`).
+
+Source filename/version/checksum: [md22_stachyose.zip](http://sgdml.org?datasetID=md22_stachyose).
+
+Changes: Subsampling and export to XYZ.
+
+Licence/permission: Not yet confirmed for the source download.
+Do not redistribute these files until this entry is updated with
+the applicable licence or permission.
+
+Scientific reference: [1].
+
+## Fixed-size periodic: AM26 amorphous carbon
+
+Files:
+- `am26_subbed_100.extxyz`
+- `predictions_am26_subbed.xyz`
+- `random_prediction.xyz`
+
+Source: https://github.com/vldgroup/AM26
+Original authors: Natascia L. Fragapane and Volker L. Deringer.
+
+This example contains only amorphous-carbon configurations from AM26.
+It does not represent all chemical systems in the full benchmark.
+The upstream repository identifies its amorphous-carbon structures as
+generated using C-GAP-17.
+
+Selection: First 100 configurations of the downloaded source file.
+Source filename, repository commit, and checksum: [am26.extxyz](https://github.com/vldgroup/AM26/blob/main/data/am26.extxyz) (Initial commit: `
+e88472a`).
+
+Changes: Subsampling and export to extended XYZ.
+Additional field or unit changes: [record].
+
+Licence/permission: Redistribution permission has not yet been established.
+Do not redistribute these files until the rights holder supplies applicable
+terms or permission.
+
+Scientific references: [2, 3].
+
+## Fixed-size subsystem: organic molecule and graphene
+
+Files:
+- `graphene_sampled.xyz`
+- `graphene_prediction.npz`
+
+Source: Supplied by the project supervisor; original provenance unresolved.
+
+Selection: One configuration every 150 source configurations (starting from index `0`).
+Starting index, source filename, and output count: [record].
+
+Changes: Subsampling and [record any conversion or field changes].
+
+Licence/permission: Unresolved.
+Do not redistribute these files until their source and permission
+have been established.
+
+## Variable-size molecular: SPICE
+
+Files:
+- `dataset.xyz`
+- `prediction.xyz`
+
+### Source and sampling
+
+`dataset.xyz` contains 100 configurations sampled from SPICE version 1.1.2
+and distributed here in XYZ format. The original sampling procedure was
+not recorded. The configurations carry SPICE's own `config_type` values (`PubChem`, `DES370K`) alongside smiles, `total_charge` and `REF_energy`.
+
+Dataset release:
+https://doi.org/10.5281/zenodo.7338495
+
+Official project:
+https://github.com/openmm/spice-dataset
+
+SPICE version 1.1.2:
+https://doi.org/10.5281/zenodo.7338495
+
+`prediction.xyz` contains predictions corresponding to this sample.
+
+### Licence
+
+The original SPICE data are used and redistributed in reliance on the
+SPICE authors' explicit statement in the official repository:
+
+"All data in the SPICE dataset may be used under the public domain
+equivalent CC0 license."
+
+CC0 1.0 Universal:
+https://creativecommons.org/publicdomain/zero/1.0/
+
+The Zenodo release record displays CC BY 4.0 (for version 1.1.2), whereas the official project
+README states CC0 for all SPICE data. This distribution relies on the
+authors' CC0 statement.
+
+The sample has been selected from the original dataset and exported to XYZ.
+The accompanying predictions are separate from the original SPICE
+reference data.
+
+Scientific reference: [4, 5].
+
+## Variable-size periodic: MPtrj through MACE
+
+Files:
+- `mptrj_sampled_over_200.extxyz`
+- `predictions_mptrj_sampled.xyz`
+- `random_prediction.xyz`
+
+Source distribution:
+https://github.com/ACEsuit/mace-foundations
+
+Exact training-data release/archive and checksum: https://github.com/ACEsuit/mace-mp/releases/download/mace_mp_0/training_data.zip (Release: `mace-mp-0`, last commit hash of the release: `a2e6dec 
+`).
+
+Underlying data: Materials Project Trajectory (MPtrj) dataset, compiled
+by Bowen Deng from Materials Project calculation trajectories.
+
+
+Selection: Source extended-XYZ files were selected randomly at file level.
+All configurations in each selected file were appended, preserving their
+within-file order, until the accumulated count exceeded 200.
+
+Changes: File-level selection and concatenation into extended XYZ.
+Other field or unit changes: [record].
+
+### MPtrj — licence and attribution
+
+This example is a subset of the Materials Project Trajectory (MPtrj)
+dataset, compiled by Bowen Deng from Materials Project calculation
+trajectories.
+
+The original dataset is published under the MIT licence:
+https://doi.org/10.6084/m9.figshare.23713842
+
+We downloaded the MPtrj training-data distribution provided through:
+https://github.com/ACEsuit/mace-foundations
+
+The upstream MIT license text and any accompanying copyright notices
+are provided below.
+
+<details>
+<summary>MIT license text</summary>
+
+```text
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the “Software”), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+</details>
+
+Scientific reference: [6].
+
+MACE is the source of the downloaded repackaging; the prediction files
+were generated with SchNet, not with a pretrained MACE model.
+
+## Prediction files and perturbed-reference controls
+
+The newly added model-prediction files were generated by [Amirarsalan](https://github.com/Amirarsalan-sn) by training and using a simple SchNet models.
+
+The existing SPICE prediction file has separate provenance (available since FFAST v1.0).
+
+Files named `random_prediction.xyz` are perturbed-reference controls:
+reference values plus noise. They are not independent model predictions.
+
+Prediction and control files may retain structures and metadata from their
+source datasets. Applicable upstream notices remain relevant to those
+copied components.
+
+These files are intended for demonstrating FFAST, not for establishing
+model accuracy or suitability for molecular dynamics.
+
+## References
+
+[1] Chmiela, S. et al. Accurate global machine learning force fields for
+molecules with hundreds of atoms. Science Advances 9, eadf0873 (2023).
+https://doi.org/10.1126/sciadv.adf0873
+
+[2] Fragapane, N. L. and Deringer, V. L. Amorphous materials as a frontier
+challenge for universal interatomic potentials. arXiv:2607.11384 (2026).
+https://arxiv.org/abs/2607.11384
+Data: https://github.com/vldgroup/AM26
+
+[3] C-GAP-17: upstream method used to generate AM26 amorphous-carbon
+structures.
+https://doi.org/10.1103/PhysRevB.95.094203
+
+[4] Peter Eastman, Pavan Kumar Behara, David L. Dotson, Raimondas Galvelis,
+John E. Herr, Josh T. Horton, Yuezhi Mao, John D. Chodera,
+Benjamin P. Pritchard, Yuanqing Wang, Gianni De Fabritiis, and
+Thomas E. Markland.
+"SPICE, A Dataset of Drug-like Molecules and Peptides for Training
+Machine Learning Potentials."
+Scientific Data 10, 11 (2023).
+https://doi.org/10.1038/s41597-022-01882-6
+
+[5] Peter Eastman, Benjamin P. Pritchard, John D. Chodera, and
+Thomas E. Markland.
+"Nutmeg and SPICE: Models and Data for Biomolecular Machine Learning."
+Journal of Chemical Theory and Computation 20(19), 8583–8593 (2024).
+https://doi.org/10.1021/acs.jctc.4c00794
+
+[6] Deng, Bowen; Zhong, Peichen; Jun, KyuJung; Riebesell, Janosh;
+Han, Kevin; Bartel, Christopher J.; and Ceder, Gerbrand.
+"CHGNet as a pretrained universal neural network potential for
+charge-informed atomistic modelling."
+Nature Machine Intelligence (2023).
+https://doi.org/10.1038/s42256-023-00716-3
