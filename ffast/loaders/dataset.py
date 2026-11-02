@@ -199,6 +199,11 @@ class DatasetLoader(EventClass):
     def getAtomField(self, key, indices=None):
         return None
 
+    def getAtomFieldMissing(self, key, indices=None):
+        """Where atom field ``key`` is missing (its frame has no such column,
+        ADR 0076), in getAtomField's shape; None when nothing is missing."""
+        return None
+
     def availableFieldKeys(self):
         """(frame_keys, atom_keys) exposable as Dataset Fields."""
         return [], []
@@ -698,6 +703,9 @@ class FlatDatasetLoader(DatasetLoader):
     def getAtomField(self, key, indices=None):
         return None
 
+    def getAtomFieldMissing(self, key, indices=None):
+        return None
+
     def availableFieldKeys(self):
         return [], []
 
@@ -1102,6 +1110,10 @@ class DatasetView(DatasetLoader):
     def getAtomField(self, key, indices=None):
         values = self.parent.getAtomField(key, indices=self._parentIndex(indices))
         return self._maskAtoms(values, indices)
+
+    def getAtomFieldMissing(self, key, indices=None):
+        mask = self.parent.getAtomFieldMissing(key, indices=self._parentIndex(indices))
+        return self._maskAtoms(mask, indices)
 
     def availableFieldKeys(self):
         return self.parent.availableFieldKeys()

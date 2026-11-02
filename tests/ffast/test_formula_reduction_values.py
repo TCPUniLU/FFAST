@@ -178,28 +178,35 @@ def test_a_nan_from_a_python_input_fails_the_metric():
 
 # ── a column some frames lack is missing, not bad (ADR 0076) ────────────────
 
-def _run_with_err(err, expr, vars_, registry=None):
+# Atom 1 (structure 0) belongs to a frame without the column: NaN, and marked.
+MISSING_ERR = np.where(np.arange(6) == 1, np.nan, ERR)
+MASK = np.arange(6) == 1
+
+
+def _run_with_err(err, expr, vars_, registry=None, **more):
     r = registry or MetricRegistry()
     mid = compile_expr_metric("t.out", expr, vars_, registry=r)
     return InProcessExecutor(r).run(mid, FlatInputSource({"err": err, "value": err, "_offsets": OFFSETS,
-                                                           "_elements": Z}), {})
+                                                           "_elements": Z, **more}), {})
 
 
-def _with_missing_atom():
-    from ffast.io.missing import MISSING
-    err = ERR.copy()
-    err[1] = MISSING
-    return err
+def test_a_field_formula_asks_for_the_missing_mask_as_an_optional_input():
+    r = MetricRegistry()
+    compile_expr_metric("t.out", "err * 2", {"err": "reference.atoms.err"}, registry=r)
+    schema = r.get("t.out")[0]
+    assert schema.inputs["_missing_err"] == "reference.atoms.err#missing"
+    assert "_missing_err" in schema.optional_inputs
 
 
 def test_a_missing_dataset_field_value_is_no_value():
-    out = _run_with_err(_with_missing_atom(), "err * 2", {"err": "reference.atoms.err"})
+    out = _run_with_err(MISSING_ERR, "err * 2", {"err": "reference.atoms.err"}, _missing_err=MASK)
     assert not isinstance(out, MetricFailure), getattr(out, "traceback", "")
     assert np.isnan(out.values[1]) and out.values[0] == 2.0
 
 
 def test_a_missing_dataset_field_value_is_left_out_of_a_reduction():
-    out = _run_with_err(_with_missing_atom(), "mean(err, by=structure)", {"err": "reference.atoms.err"})
+    out = _run_with_err(MISSING_ERR, "mean(err, by=structure)", {"err": "reference.atoms.err"},
+                        _missing_err=MASK)
     assert not isinstance(out, MetricFailure), getattr(out, "traceback", "")
     np.testing.assert_allclose(out.values, [1.0, 4.0, 6.0])
 
@@ -208,24 +215,42 @@ def test_a_missing_value_from_a_field_metric_is_no_value():
     from ffast.metrics.fields import compile_field_metric
     r = MetricRegistry()
     compile_field_metric("t.err_field", "reference.atoms.err", registry=r)
-    out = _run_with_err(_with_missing_atom(), "f * 2", {"f": "t.err_field"}, registry=r)
+    out = _run_with_err(MISSING_ERR, "f * 2", {"f": "t.err_field"}, registry=r, _missing_f=MASK)
     assert not isinstance(out, MetricFailure), getattr(out, "traceback", "")
     assert np.isnan(out.values[1])
+    assert r.get("t.out")[0].inputs["_missing_f"] == "reference.atoms.err#missing"
 
 
-def test_a_nan_in_a_dataset_field_still_fails_the_metric():
-    err = ERR.copy()
-    err[1] = np.nan
-    out = _run_with_err(err, "err * 2", {"err": "reference.atoms.err"})
+def test_a_nan_the_mask_does_not_mark_still_fails_the_metric():
+    out = _run_with_err(MISSING_ERR, "err * 2", {"err": "reference.atoms.err"},
+                        _missing_err=np.zeros(6, dtype=bool))
+    assert isinstance(out, MetricFailure) and "non-finite" in out.traceback
+
+
+def test_without_a_mask_a_nan_in_a_dataset_field_still_fails_the_metric():
+    out = _run_with_err(MISSING_ERR, "err * 2", {"err": "reference.atoms.err"})
     assert isinstance(out, MetricFailure) and "non-finite" in out.traceback
 
 
 def test_try_counts_a_missing_value_as_no_value():
     def resolve(ref):
-        return {"reference.atoms.err": _with_missing_atom(), "offsets": OFFSETS,
-                "reference.elements": Z}.get(ref)
+        return {"reference.atoms.err": MISSING_ERR, "reference.atoms.err#missing": MASK,
+                "offsets": OFFSETS, "reference.elements": Z}.get(ref)
     r = try_formula("err * 2", {"err": "reference.atoms.err"}, MetricRegistry(), resolve, np.diff(OFFSETS))
     assert r.bad_count == 0 and r.no_value_count == 1
+
+
+def test_try_without_a_mask_counts_a_nan_as_bad():
+    def resolve(ref):
+        return {"reference.atoms.err": MISSING_ERR, "offsets": OFFSETS, "reference.elements": Z}.get(ref)
+    r = try_formula("err * 2", {"err": "reference.atoms.err"}, MetricRegistry(), resolve, np.diff(OFFSETS))
+    assert r.bad_count == 1
+
+
+def test_a_variable_cannot_take_a_missing_mask_name():
+    with pytest.raises(ValueError, match="_missing_x"):
+        compile_expr_metric("t.bad", "_missing_x * 2", {"_missing_x": "reference.energies"},
+                            registry=MetricRegistry())
 
 
 def test_the_hidden_inputs_are_the_offsets_and_the_elements():

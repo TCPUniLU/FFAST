@@ -25,7 +25,7 @@ import logging
 import numpy as np
 
 from ffast.metrics.execution import InputSource
-from ffast.metrics.inputs import parse_field_ref
+from ffast.metrics.inputs import parse_field_ref, parse_missing_ref
 
 logger = logging.getLogger("FFAST")
 
@@ -152,6 +152,13 @@ class InputResolver:
                 return self._offsets(dataset)
             if ref == "n_atoms":
                 return self._n_atoms(dataset)
+            # An atom field's missing mask (ADR 0076): None when no frame lacks it.
+            base = parse_missing_ref(ref)
+            if base is not None:
+                side, _kind, key = parse_field_ref(base)
+                if side == "reference":
+                    return _flatPerAtom(dataset.getAtomFieldMissing(key), axes=0)
+                return self._prediction_field(model, dataset, "atoms", key, missing=True)
             # Dataset Field refs (ADR 0023): {reference,prediction}.{info,atoms}.<key>
             parsed = parse_field_ref(ref)
             if parsed is not None:
@@ -170,7 +177,7 @@ class InputResolver:
         logger.error("InputResolver: unknown input ref %r", ref)
         return None
 
-    def _prediction_field(self, model, dataset, kind, key):
+    def _prediction_field(self, model, dataset, kind, key, missing=False):
         """Resolve a ``prediction.{info,atoms}.<key>`` ref.
 
         Prediction Dataset Fields are eagerly extracted at prediction-load time
@@ -178,7 +185,8 @@ class InputResolver:
         prediction's ASE source is otherwise discarded — ADR 0023). Real-model
         predictions carry no such entry → ``None``. A DatasetView may read a
         parent's stored fields; apply each view's frame and atom mapping before
-        returning the values.
+        returning the values. ``missing`` reads the field's stored missing
+        mask instead (ADR 0076).
         """
         from ffast.loaders.dataset import DatasetView
 
@@ -191,7 +199,7 @@ class InputResolver:
         while ds is not None:
             by_kind = store.get((model_fp, getattr(ds, "fingerprint", None)))
             if by_kind is not None:
-                value = by_kind.get(kind, {}).get(key)
+                value = by_kind.get("missing" if missing else kind, {}).get(key)
                 if value is None:
                     return None
                 values = (_flatPerAtom(value, axes=0) if kind == "atoms"

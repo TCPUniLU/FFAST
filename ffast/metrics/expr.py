@@ -58,8 +58,7 @@ import ast
 import numpy as np
 
 from ffast.metrics import dims, units
-from ffast.io.missing import is_missing
-from ffast.metrics.inputs import RAW_INPUT_BY_REF, parse_field_ref
+from ffast.metrics.inputs import MISSING_SUFFIX, RAW_INPUT_BY_REF, parse_field_ref, parse_missing_ref
 from ffast.metrics.models import WithWarnings
 from ffast.metrics.registry import default_registry
 from ffast.metrics.segments import framesOrOne, segmentExtremes, segmentSums
@@ -140,6 +139,9 @@ _RESERVED_SHAPE = {"n_atoms": (dims.N_frames,)}
 _OFFSETS = "_offsets"
 _ELEMENTS = "_elements"
 HIDDEN_INPUTS = {_OFFSETS: "offsets", _ELEMENTS: "reference.elements"}
+# A variable bound to an atom field gets the field's missing mask as the
+# hidden, optional input ``_missing_<name>`` (ADR 0076).
+MISSING_PREFIX = "_missing_"
 # Where the evaluator collects the bad values that where= left out.
 _IGNORED = "__ignored"
 _MAX_FRAMES_SHOWN = 5
@@ -474,6 +476,8 @@ def _resolve_ref_shape(ref: str, registry):
         return _as_tuple(registry.get(ref)[0].shape)
     if ref in _RESERVED_SHAPE:
         return _RESERVED_SHAPE[ref]
+    if parse_missing_ref(ref) is not None:
+        return (dims.N_atoms,)
     parsed = parse_field_ref(ref)
     if parsed is not None:
         _side, kind, _key = parsed
@@ -675,13 +679,13 @@ class _ExprFn:
     over the rows, so a bad value (inf, NaN from 0/0) is never mistaken for
     one. It comes from a reduction's empty group, from an input that is a
     formula metric (``gap_inputs``), whose NaN can mean nothing else, or from
-    a Dataset Field value a frame does not have (``missing_inputs``: MISSING,
-    ADR 0076), whose other NaN stays bad.
+    an atom field's missing mask (``_missing_<name>``, ADR 0076): the rows
+    whose frame does not list the column. A field's other NaN stays bad.
     """
 
     def __init__(self, expr: str, var_refs: dict[str, str],
                  var_parts: dict[str, int] | None = None,
-                 gap_inputs=(), missing_inputs=()) -> None:
+                 gap_inputs=()) -> None:
         self.expr = expr
         # sorted for a stable implementation_source regardless of dict order
         self.var_refs = dict(sorted(var_refs.items()))
@@ -690,15 +694,14 @@ class _ExprFn:
         self.var_parts = dict(var_parts or {})
         # inputs whose NaN is "no value": those bound to a formula metric
         self.gap_inputs = frozenset(gap_inputs)
-        # inputs that may hold MISSING: Dataset Fields and field metrics
-        self.missing_inputs = frozenset(missing_inputs)
 
     @property
     def user_vars(self) -> dict[str, str]:
         """The variables the user named: without ``n_atoms`` and the hidden
         offsets / elements inputs."""
         return {n: r for n, r in self.var_refs.items()
-                if n not in RESERVED_VARS and n not in HIDDEN_INPUTS}
+                if n not in RESERVED_VARS and n not in HIDDEN_INPUTS
+                and not n.startswith(MISSING_PREFIX)}
 
     def _tree(self) -> ast.Expression:
         tree = _AST_CACHE.get(self.expr)
@@ -764,9 +767,9 @@ class _ExprFn:
         if name in self.gap_inputs:
             arr = np.asarray(value, dtype=float)
             gap = np.isnan(arr)
-        elif name in self.missing_inputs:
+        elif ns.get(MISSING_PREFIX + name) is not None:
             arr = np.asarray(value, dtype=float)
-            gap = is_missing(arr)
+            gap = np.asarray(ns[MISSING_PREFIX + name], dtype=bool)
         else:
             return value, k, None
         if k:
@@ -984,7 +987,7 @@ def analyze_expr(expr, vars, *, registry=None, id="<expr>"):
         )
     tree = parse_and_validate(expr)
     used = _value_names(tree) - set(_CONSTS)
-    hidden = sorted(used & set(HIDDEN_INPUTS))
+    hidden = sorted(n for n in used if n in HIDDEN_INPUTS or n.startswith(MISSING_PREFIX))
     if hidden:
         raise ValueError(
             f"expr metric '{id}': {hidden[0]!r} is a name FFAST keeps for itself — "
@@ -1106,13 +1109,21 @@ def formula_inputs(inputs: dict[str, str], registry) -> set[str]:
             if registry.has(ref) and isinstance(registry.get(ref)[1], _ExprFn)}
 
 
-def field_inputs(inputs: dict[str, str], registry) -> set[str]:
-    """The variables bound to a Dataset Field or a field metric: a value a
-    frame does not have is MISSING there (ADR 0076), and is "no value"."""
+def missing_inputs(inputs: dict[str, str], registry) -> dict[str, str]:
+    """``_missing_<name>`` → ``<field ref>#missing`` for each variable bound to
+    an atom field, directly or through a field metric (ADR 0076). Optional:
+    the resolver gives None when no frame lacks the column."""
     from ffast.metrics.fields import field_passthrough
-    return {name for name, ref in inputs.items()
-            if parse_field_ref(ref) is not None
-            or (registry.has(ref) and registry.get(ref)[1] is field_passthrough)}
+    out = {}
+    for name, ref in inputs.items():
+        if name in HIDDEN_INPUTS or name in RESERVED_VARS:
+            continue
+        if registry.has(ref) and registry.get(ref)[1] is field_passthrough:
+            ref = registry.get(ref)[0].inputs["value"]
+        parsed = parse_field_ref(ref)
+        if parsed is not None and parsed[1] == "atoms":
+            out[MISSING_PREFIX + name] = ref + MISSING_SUFFIX
+    return out
 
 
 def compile_expr_metric(id, expr, vars, *, label="", unit="", registry=None) -> str:
@@ -1138,15 +1149,17 @@ def compile_expr_metric(id, expr, vars, *, label="", unit="", registry=None) -> 
 
     inputs, output_shape, var_parts = analyze_expr(
         expr, vars, registry=registry, id=id)
+    missing = missing_inputs(inputs, registry)
+    inputs = {**inputs, **missing}
     decorator = registry.metric(
         id=id,
         label=label or id,
         inputs=inputs,
+        optional_inputs=sorted(missing),
         shape=output_shape,
         unit=unit or units.dimensionless,
     )
-    decorator(_ExprFn(expr, inputs, var_parts, formula_inputs(inputs, registry),
-                      field_inputs(inputs, registry)))
+    decorator(_ExprFn(expr, inputs, var_parts, formula_inputs(inputs, registry)))
     return id
 
 

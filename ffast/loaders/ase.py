@@ -421,6 +421,20 @@ class aseDatasetLoader(FlatDatasetLoader):
             return self._frame(col, indices)
         return self._frames(col, indices)
 
+    def getAtomFieldMissing(self, key, indices=None):
+        """Where atom field ``key`` is missing because its frame does not list
+        the column (ADR 0076), in getAtomField's shape; None when no frame
+        lacks it. A NaN the file holds is not missing: it stays a bad value."""
+        if self._fields is None:
+            return None
+        mask = next((m for name, m in self._fields.missing.items()
+                     if REV_PROPERTY_NAME_MAP.get(name, name) == key), None)
+        if mask is None:
+            return None
+        if isOneFrame(indices):
+            return self._frame(mask, indices)
+        return self._frames(mask, indices)
+
     def availableFieldKeys(self):
         if self._fields is None:
             return available_field_keys(self.atomsList)

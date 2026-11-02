@@ -88,7 +88,11 @@ ALL_VALID_REFS: frozenset = frozenset({
 
 # Dataset Field refs (ADR 0023): {reference,prediction}.{info,atoms}.<key>.
 # `info` → per-frame scalar (Frame Field); `atoms` → per-atom scalar (Atom Field).
-_FIELD_REF_RE = re.compile(r"^(reference|prediction)\.(info|atoms)\.(.+)$")
+_FIELD_REF_RE = re.compile(r"^(reference|prediction)\.(info|atoms)\.([^#]+)$")
+
+# An atom field's missing mask (ADR 0076): ``<atom field ref>#missing``, True
+# where the atom's frame does not list the column. Extxyz keys have no '#'.
+MISSING_SUFFIX = "#missing"
 
 
 def parse_field_ref(ref):
@@ -102,6 +106,15 @@ def parse_field_ref(ref):
     if m is None:
         return None
     return m.group(1), m.group(2), m.group(3)
+
+
+def parse_missing_ref(ref):
+    """The atom field ref whose missing mask ``ref`` names, else ``None``."""
+    if not isinstance(ref, str) or not ref.endswith(MISSING_SUFFIX):
+        return None
+    base = ref[:-len(MISSING_SUFFIX)]
+    parsed = parse_field_ref(base)
+    return base if parsed is not None and parsed[1] == "atoms" else None
 
 
 def is_field_ref(ref) -> bool:

@@ -31,9 +31,9 @@ from ffast.metrics.expr import (
     ignored_warning,
     analyze_expr,
     by_words,
-    field_inputs,
     formula_inputs,
     is_table,
+    missing_inputs,
     parse_and_validate,
     resolve_ref_shape,
 )
@@ -101,8 +101,9 @@ def try_formula(expr: str, variables: dict[str, str], registry,
         inputs, out_shape, var_parts = analyze_expr(expr, variables, registry=registry)
     except ValueError as exc:
         raise TryError(str(exc)) from None
-    fn = _ExprFn(expr, inputs, var_parts, formula_inputs(inputs, registry),
-                 field_inputs(inputs, registry))
+    missing = missing_inputs(inputs, registry)
+    inputs = {**inputs, **missing}
+    fn = _ExprFn(expr, inputs, var_parts, formula_inputs(inputs, registry))
     hidden = {"_offsets": None, "_elements": (dims.N_atoms,)}
     shapes = {n: hidden[n] if n in HIDDEN_INPUTS else tuple(resolve_ref_shape(r, registry))
               for n, r in inputs.items()}
@@ -120,6 +121,8 @@ def try_formula(expr: str, variables: dict[str, str], registry,
             full[name] = atom_offsets
             continue
         value = resolve(ref)
+        if value is None and name in missing:
+            continue                # no frame lacks the column (ADR 0076)
         if value is None:
             raise TryError(f"{ref} is not available for this dataset and prediction")
         full[name] = np.asarray(value)

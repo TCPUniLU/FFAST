@@ -14,8 +14,6 @@ import multiprocessing as mp
 
 import numpy as np
 
-from ffast.io.missing import MISSING
-
 logger = logging.getLogger("FFAST")
 
 # key, then =value (quoted, braced, bracketed or bare); anything else is junk.
@@ -54,7 +52,8 @@ class FrameArrays:
     positions: np.ndarray         # (atoms, 3) float64
     cells: np.ndarray             # (N, 3, 3) float64
     pbc: np.ndarray               # (N, 3) bool
-    columns: dict = field(default_factory=dict)   # Properties name -> (atoms,) or (atoms, k); MISSING where a frame lacks an extra
+    columns: dict = field(default_factory=dict)   # Properties name -> (atoms,) or (atoms, k); NaN where a frame lacks an extra
+    missing: dict = field(default_factory=dict)   # extra name -> (atoms,) bool, True where its frame lacks it; only columns some frame lacks
     values: dict = field(default_factory=dict)    # header key -> (N,), numeric in every frame
     first_frame: int = 0          # where this batch starts in the file
 
@@ -126,23 +125,27 @@ def _merge_extras(seen, extras, frame, first, props):
             raise PropertiesDiffer(frame, first, props)
 
 
-def _stack(parts, atoms):
-    """Columns of consecutive runs, one array per name. A run without the
-    column gets MISSING (a NaN, as float64), told apart from a NaN in the data."""
+def _stack(parts, masks, atoms):
+    """Columns of consecutive runs, one array per name, and where each is
+    missing. A run without the column gets NaN (as float64) and True in the
+    mask, so the gap is told apart from a NaN in the data (ADR 0076)."""
     names = {}
     for cols in parts:
         names.update(dict.fromkeys(cols))
-    out = {}
+    out, missing = {}, {}
     for name in names:
         present = [cols[name] for cols in parts if name in cols]
-        if len(present) == len(parts):
+        if len(present) == len(parts) and not any(name in m for m in masks):
             out[name] = np.concatenate(present) if len(parts) > 1 else present[0]
             continue
         tail = present[0].shape[1:]
         out[name] = np.concatenate([
-            cols[name].astype(np.float64) if name in cols else np.full((n,) + tail, MISSING)
+            cols[name].astype(np.float64) if name in cols else np.full((n,) + tail, np.nan)
             for cols, n in zip(parts, atoms)])
-    return out
+        missing[name] = np.concatenate([
+            m[name] if name in m else np.full(n, name not in cols)
+            for cols, m, n in zip(parts, masks, atoms)])
+    return out, missing
 
 
 def _cell(raw):
@@ -260,7 +263,7 @@ def parse_block(data, first_frame=0):
         done += len(run_counts)
     numbers = np.concatenate([p[0] for p in parsed]) if len(parsed) > 1 else parsed[0][0]
     positions = np.concatenate([p[1] for p in parsed]) if len(parsed) > 1 else parsed[0][1]
-    columns = _stack([p[2] for p in parsed], [len(p[0]) for p in parsed])
+    columns, missing = _stack([p[2] for p in parsed], [{}] * len(parsed), [len(p[0]) for p in parsed])
 
     keys = set(rows[0]) if rows else set()
     for row in rows[1:]:
@@ -277,6 +280,7 @@ def parse_block(data, first_frame=0):
         cells=np.array(cells, dtype=np.float64).reshape(-1, 3, 3),
         pbc=np.array(pbcs, dtype=bool).reshape(-1, 3),
         columns=columns,
+        missing=missing,
         values=values,
         first_frame=first_frame,
     )
@@ -301,6 +305,8 @@ def join(parts):
     extras = {}
     for p in parts:
         extras.update(p.extras)
+    columns, missing = _stack([p.columns for p in parts], [p.missing for p in parts],
+                              [len(p.numbers) for p in parts])
     return FrameArrays(
         properties=first.properties,
         essential=first.essential,
@@ -310,7 +316,8 @@ def join(parts):
         positions=cat([p.positions for p in parts]),
         cells=cat([p.cells for p in parts]),
         pbc=cat([p.pbc for p in parts]),
-        columns=_stack([p.columns for p in parts], [len(p.numbers) for p in parts]),
+        columns=columns,
+        missing=missing,
         values={k: cat([p.values[k] for p in parts]) for k in keys},
     )
 

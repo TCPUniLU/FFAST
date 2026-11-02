@@ -138,8 +138,39 @@ def test_an_extra_column_in_some_frames_loads_fast_without_warning(files, caplog
     assert "spin" in loader.availableFieldKeys()[1]
     got = loader.getAtomField("spin")
     assert np.isnan(got[0]).all() and np.isnan(got[1]).all() and got[2].tolist() == [0.5, -0.5]
-    from ffast.io.missing import is_missing
-    assert is_missing(np.asarray(got[0])).all() and is_missing(loader.getAtomField("spin", 1)).all()
+    missing = loader.getAtomFieldMissing("spin")
+    assert np.asarray(missing).tolist() == [[True, True], [True, True], [False, False]]
+    assert loader.getAtomFieldMissing("spin", 2).tolist() == [False, False]
+
+
+def test_a_field_no_frame_lacks_has_no_missing_mask(files):
+    assert _load(files / "variable.extxyz").getAtomFieldMissing("q") is None
+    assert _load(files / "plain.xyz").getAtomFieldMissing("q") is None     # read with ASE
+
+
+def test_the_resolver_answers_the_missing_ref(files):
+    from ffast.metrics.input_resolver import InputResolver
+    loader = _load(files / "columns_change.extxyz")
+    resolver = InputResolver(env=None)
+    assert resolver.resolve("reference.atoms.spin#missing", dataset=loader).tolist() == [True] * 4 + [False] * 2
+    assert np.isnan(resolver.resolve("reference.atoms.spin", dataset=loader)[:4]).all()
+    other = _load(files / "variable.extxyz")
+    assert resolver.resolve("reference.atoms.q#missing", dataset=other) is None
+
+
+def test_a_prediction_keeps_its_missing_mask(files):
+    """Prediction fields are read once at load and stored (ADR 0023); the mask
+    is stored with them."""
+    from ffast.metrics.input_resolver import InputResolver
+    loader = _load(files / "columns_change.extxyz")
+    data = types.SimpleNamespace(predictionFields={})
+    env = types.SimpleNamespace(data=data, datasets=types.SimpleNamespace(slice_numbers={}))
+    dataset = types.SimpleNamespace(fingerprint="ds", getName=lambda: "ds.extxyz")
+    LoadingCoordinator(env)._extractPredictionFields(loader, "m", dataset)
+    model = types.SimpleNamespace(fingerprint="m")
+    resolver = InputResolver(env=data)
+    assert resolver.resolve("prediction.atoms.spin#missing", model=model,
+                            dataset=dataset).tolist() == [True] * 4 + [False] * 2
 
 
 def test_plain_xyz_loads_with_ase_without_warning(files, caplog):

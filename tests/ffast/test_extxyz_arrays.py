@@ -8,7 +8,6 @@ from ase.io.extxyz import REV_PROPERTY_NAME_MAP, per_config_properties
 
 from ffast.io import extxyz_arrays as xa
 from ffast.io import frame_index as fi
-from ffast.io.missing import MISSING, is_missing
 from tests.ffast.read_once_fixtures import FILES, REPO_FILES
 
 
@@ -73,8 +72,9 @@ def test_an_extra_number_column_is_nan_where_a_frame_has_none(tmp_path):
     m = fa.columns["spin"]
     assert m.dtype == np.float64 and m.shape == (6,)
     assert np.isnan(m[:4]).all() and m[4:].tolist() == [0.5, -0.5]
-    assert is_missing(m).tolist() == [True] * 4 + [False] * 2
+    assert fa.missing["spin"].tolist() == [True] * 4 + [False] * 2
     assert fa.columns["forces"].shape == (6, 3)
+    assert "forces" not in fa.missing                        # every frame has it
 
 
 def test_a_nan_written_in_the_file_is_not_missing(tmp_path):
@@ -83,20 +83,14 @@ def test_a_nan_written_in_the_file_is_not_missing(tmp_path):
     p = tmp_path / "nan.extxyz"
     p.write_text("1\nProperties=species:S:1:pos:R:3 energy=1.0\nH 0 0 0\n"
                  "1\nProperties=species:S:1:pos:R:3:q:R:1 energy=2.0\nH 0 0 1 nan\n")
-    q = xa.read_frames(fi.scan(str(p)), workers=1).columns["q"]
-    assert np.isnan(q).all()
-    assert is_missing(q).tolist() == [True, False]
+    fa = xa.read_frames(fi.scan(str(p)), workers=1)
+    assert np.isnan(fa.columns["q"]).all()
+    assert fa.missing["q"].tolist() == [True, False]
 
 
-def test_missing_survives_copies_slices_and_pickling():
-    import pickle
-    a = np.array([1.0, MISSING, np.nan, 2.0])
-    want = [False, True, False, False]
-    assert is_missing(a.copy()).tolist() == want
-    assert is_missing(a.astype(np.float64)).tolist() == want
-    assert is_missing(pickle.loads(pickle.dumps(a))).tolist() == want
-    assert is_missing(np.concatenate([a, a])).tolist() == want * 2
-    assert is_missing(a[[1, 2]]).tolist() == [True, False]
+def test_no_column_missing_gives_no_masks(tmp_path):
+    fa = xa.read_frames(fi.scan(_write(tmp_path, "variable.extxyz")), workers=1)
+    assert fa.missing == {}
 
 
 def test_extra_columns_fill_across_batches(tmp_path, monkeypatch):
@@ -104,7 +98,7 @@ def test_extra_columns_fill_across_batches(tmp_path, monkeypatch):
     fa = xa.read_frames(fi.scan(_write(tmp_path, "columns_change.extxyz")), workers=1, batch=1)
     m = fa.columns["spin"]
     assert np.isnan(m[:4]).all() and m[4:].tolist() == [0.5, -0.5]
-    assert is_missing(m[:4]).all()
+    assert fa.missing["spin"].tolist() == [True] * 4 + [False] * 2
 
 
 def test_an_integer_extra_column_becomes_float_with_nan(tmp_path):

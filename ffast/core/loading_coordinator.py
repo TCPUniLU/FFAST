@@ -403,6 +403,11 @@ class LoadingCoordinator:
             v = aseObject.getAtomField(key)
             if v is not None:
                 store["atoms"][key] = v
+                # Where a frame lacks the column (ADR 0076); absent when none does.
+                ask = getattr(aseObject, "getAtomFieldMissing", None)
+                missing = ask(key) if ask else None
+                if missing is not None:
+                    store.setdefault("missing", {})[key] = missing
         if store["info"] or store["atoms"]:
             self._env.data.predictionFields[(modelKey, dataset.fingerprint)] = store
             logger.info(
