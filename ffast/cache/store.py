@@ -74,7 +74,7 @@ class DataCache:
         return len(self._store)
 
     def __iter__(self):
-        return iter(self._store)
+        return iter(list(self._store))
 
     def get(self, key, default=None):
         canon = self._lookup_key(key)
@@ -82,14 +82,16 @@ class DataCache:
             return default
         return self._store.get(canon, default)
 
+    # Copies, not live views: metric threads store results while others walk
+    # the cache (the auto-snapshot did, 2026-11-02). list() of a dict is atomic.
     def keys(self):
-        return self._store.keys()
+        return list(self._store)
 
     def items(self):
-        return self._store.items()
+        return list(self._store.items())
 
     def values(self):
-        return self._store.values()
+        return list(self._store.values())
 
     # ── invalidation ──────────────────────────────────────────────────────
     def invalidate(self, predicate):
@@ -98,7 +100,7 @@ class DataCache:
         Returns the list of deleted keys so callers can log them or push
         their own events (the cache stays free of event-bus knowledge).
         """
-        dead = [k for k in self._store if predicate(k)]
+        dead = [k for k in list(self._store) if predicate(k)]
         for k in dead:
             del self._store[k]
         return dead

@@ -88,3 +88,14 @@ def test_invalidate_metrics_drops_a_metric_whatever_its_model_dataset_and_params
     dropped = DataService.invalidate_metrics(SimpleNamespace(cache=cache), {"user.m"})
     assert sorted(dropped) == ["user.m__mod__ds", "user.m__nil__ds2", "user.m__p1a2b3c4__mod__ds"]
     assert sorted(cache.keys()) == ["forces__mod__ds", "user.m2__mod__ds"]
+
+
+def test_walking_the_cache_survives_a_result_added_meanwhile():
+    """Cluster log 2026-11-02: the auto-snapshot walked the cache while a
+    metric thread stored a result -> "dictionary changed size during iteration"."""
+    c = DataCache()
+    c["forces__M__D"] = "v"
+    for walk in (c.keys, c.items, c.values):
+        for _ in walk():
+            c[f"energy{len(c)}__M__D"] = "new"
+    c.invalidate(lambda key: c.__setitem__(f"forces{len(c)}__M__D", "new") or False)
