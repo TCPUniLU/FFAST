@@ -34,14 +34,12 @@ function requestLabel(metricId, params, modelFp, datasetFp) {
 /** A metric that failed, and why (ADR 0066 rule 6).
  * @typedef {{nd: null, failed: true, error: string, metricId: string}} MetricFailure */
 
-const _TIMEOUT_MS = 120000;
-
 export class MetricClient {
   /** @param {import('./connection.js').FFastConnection} conn */
   constructor(conn) {
     this._conn = conn;
     this._nextId = 0;
-    /** @type {Map<string, {resolve: Function, timer: any}>} */
+    /** @type {Map<string, {resolve: Function}>} */
     this._byId = new Map();
     /** @type {Map<string, Promise<MetricResult|MetricFailure|null>>} */
     this._inFlight = new Map();
@@ -54,8 +52,12 @@ export class MetricClient {
    * @param {{params?: object, modelFp?: string|null, datasetFp?: string|null}} [opts]
    * @returns {Promise<MetricResult|MetricFailure|null>} a failure when the
    *   metric ran and failed; null when the server can't compute it (e.g. a
-   *   client-only model, no data — `ok:false` without an error) or the
-   *   request times out.
+   *   client-only model, no data — `ok:false` without an error).
+   *
+   * No clock gives up on a request: the server answers every one, also when
+   * its reply cannot be built, and a metric on a large dataset takes minutes
+   * (force metrics on 1.77M structures: 127-340 s; a 120 s limit drew
+   * "No data", 2026-11-02).
    */
   request(metricId, { params = {}, modelFp = null, datasetFp = null } = {}) {
     const label = requestLabel(metricId, params, modelFp, datasetFp);
@@ -64,11 +66,7 @@ export class MetricClient {
 
     const requestId = `m${++this._nextId}`;
     const promise = new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this._byId.delete(requestId);
-        resolve(null);
-      }, _TIMEOUT_MS);
-      this._byId.set(requestId, { resolve, timer });
+      this._byId.set(requestId, { resolve });
     }).finally(() => {
       if (this._inFlight.get(label) === promise) this._inFlight.delete(label);
     });
@@ -94,7 +92,6 @@ export class MetricClient {
     const waiter = requestId != null ? this._byId.get(requestId) : null;
     if (!waiter) return;
     this._byId.delete(requestId);
-    clearTimeout(waiter.timer);
     waiter.resolve(
       kw.ok
         ? { nd: decodeNdarray(kw.values), shape: kw.shape, unit: kw.unit, dtype: kw.dtype,

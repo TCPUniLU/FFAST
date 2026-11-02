@@ -689,6 +689,34 @@ def test_the_same_metric_asked_twice_at_once_is_computed_once():
     assert all(unpack_metric_result(kwargs) is not None for _, _, kwargs in replies)
 
 
+def test_a_result_that_cannot_be_sent_is_answered_with_why(monkeypatch):
+    """The page waits for every metric reply (no timeout, 2026-11-02), so a
+    reply that cannot be built (``bytes object is too large`` on 1.77M
+    structures) must still be answered, as a failure."""
+    import ffast.protocol.rpc as rpc
+
+    real = rpc.pack_metric_result
+
+    def pack(request_id, metric_id, ok, result=None, error=None):
+        if ok:
+            raise ValueError("bytes object is too large")
+        return real(request_id, metric_id, ok, result, error)
+
+    monkeypatch.setattr(rpc, "pack_metric_result", pack)
+    env = _FakeEnv(datasets={"ds1": object()}, cache={})
+    env.data = _FakeData(env.cache)
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_METRIC", ["ffast.gyradius", "m9"], {"dataset_fp": "ds1"})
+        return s.outbound.get_nowait()
+
+    event, args, kwargs = unpack(_run(scenario()))
+    assert event == control.METRIC_RESULT and args[0] == "m9"
+    assert kwargs["ok"] is False
+    assert "too large" in kwargs["error"]
+
+
 def test_request_metric_needing_a_prediction_without_one_is_not_computed():
     """A panel that mixes a dataset metric with a prediction metric asks for
     both before a prediction is chosen; the prediction one replies "no data"

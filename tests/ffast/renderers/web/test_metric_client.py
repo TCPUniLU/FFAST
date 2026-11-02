@@ -80,6 +80,18 @@ async (origin) => {
     client.request('a.x', { datasetFp: 'd1' });
     out.sentAfterSettled = sent.length;
   }
+  { // a slow metric is waited for: no clock gives up on it (2026-11-02:
+    // force metrics on 1.77M structures answered after 127-340 s, and the
+    // page had given up at 120 s, drawing "No data")
+    const { sent, client, reply } = make();
+    const realTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn, ms, ...a) => (ms >= 1000 ? (fn(...a), 0) : realTimeout(fn, ms, ...a));
+    let p;
+    try { p = client.request('a.slow', { datasetFp: 'd1' }); } finally { globalThis.setTimeout = realTimeout; }
+    out.slowStillWaiting = (await state(p)) === PENDING;
+    reply(sent[0][1].request_id, 'a.slow');
+    out.slowResolved = (await state(p)) === null;
+  }
   return out;
 }
 """
@@ -140,3 +152,7 @@ def test_each_reply_resolves_its_own_request(results):
 
 def test_a_settled_request_no_longer_merges_later_ones(results):
     assert results["sentAfterSettled"] == 2
+
+
+def test_a_slow_metric_is_waited_for(results):
+    assert results["slowStillWaiting"] and results["slowResolved"]

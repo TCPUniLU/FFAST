@@ -1371,7 +1371,17 @@ class ServerSession:
         # Why it failed, when it did (ADR 0066 rule 6); not for missing data.
         error = (None if result is not None else
                  getattr(self.env.data, "metric_failures", {}).pop(key, None))
-        data = pack_metric_result(request_id, metric_id, result is not None, result, error)
+        try:
+            data = pack_metric_result(request_id, metric_id, result is not None, result, error)
+        except Exception as exc:
+            # The page waits for every reply (no timeout), so one that cannot
+            # be built is answered as a failure ("bytes object is too large"
+            # on 1.77M structures, 2026-11-02).
+            logger.warning("METRIC_RESULT for %r could not be packed: %s", metric_id, exc)
+            result = None
+            data = pack_metric_result(
+                request_id, metric_id, False, None,
+                f"The result could not be sent to the page: {exc}")
         await self._emit(data)
         logger.info(
             "METRIC_RESULT queued: metric=%r ok=%s request_id=%r",
