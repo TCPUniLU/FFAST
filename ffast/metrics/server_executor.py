@@ -7,9 +7,13 @@ processes. A server with no outside code never starts a worker.
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 import traceback as tb
 from typing import Any, Callable
+
+import numpy as np
 
 from ffast.metrics.cache import MetricCache
 from ffast.metrics.execution import InputSource, build_execution_plan, run_plan
@@ -17,6 +21,25 @@ from ffast.metrics.executor import MetricExecutor
 from ffast.metrics.models import MetricFailure, MetricResult
 from ffast.metrics.placement import is_outside_code
 from ffast.metrics.registry import MetricRegistry
+from ffast.metrics.resources import MemoryGate
+
+log = logging.getLogger(__name__)
+
+_MIB = 2**20
+
+
+def _estimate(schema: Any, fn: Any, kwargs: dict[str, Any]) -> int:
+    """Bytes a step is expected to need (ADR 0079 decision 2): its
+    ``memory_mb`` hint; else, for a formula, one full-size array per
+    operation plus the result; else twice its array inputs. At least 1 MiB."""
+    hint = schema.hints.memory_mb if schema is not None else None
+    if hint is not None:
+        return max(hint * _MIB, _MIB)
+    arrays = [v.nbytes for v in kwargs.values() if isinstance(v, np.ndarray)]
+    from ffast.metrics.expr import _ExprFn
+    if isinstance(fn, _ExprFn):
+        return max((fn.operations + 1) * max(arrays, default=0), _MIB)
+    return max(2 * sum(arrays), _MIB)
 
 
 class ServerExecutor(MetricExecutor):
@@ -34,12 +57,15 @@ class ServerExecutor(MetricExecutor):
         *,
         outside: Callable[[Any], bool] = is_outside_code,
         workers: Any = None,
+        gate: MemoryGate | None = None,
     ) -> None:
         self._registry = registry
         self._cache = cache if cache is not None else MetricCache()
         self._outside = outside
         self._workers_executor = workers
         self._workers_lock = threading.Lock()
+        # One gate for in-server steps and steps shipped to a worker.
+        self._gate = gate if gate is not None else MemoryGate()
 
     @property
     def _workers_built(self) -> bool:
@@ -69,12 +95,25 @@ class ServerExecutor(MetricExecutor):
 
     def _step(self, id, schema, fn, kwargs, compute_params, parameters):
         """Transport: one step here, or in a worker when ``fn`` is outside code."""
-        if self._outside(fn):
-            return self._workers()._ship_to_worker(id, schema, fn, kwargs, compute_params, parameters)
-        try:
-            return fn(**kwargs, **compute_params)
-        except Exception:
-            return MetricFailure(metric_id=id, traceback=tb.format_exc(), parameters=parameters)
+        outside = self._outside(fn)
+        want = _estimate(schema, fn, kwargs)
+        asked = time.monotonic()
+        with self._gate.reserve(want):
+            started = time.monotonic()
+            try:
+                if outside:
+                    return self._workers()._ship_to_worker(
+                        id, schema, fn, kwargs, compute_params, parameters)
+                try:
+                    return fn(**kwargs, **compute_params)
+                except Exception:
+                    return MetricFailure(metric_id=id, traceback=tb.format_exc(), parameters=parameters)
+            finally:
+                log.info(
+                    "metric step %s: waited %d ms for memory, computed in %d ms "
+                    "(reserved ~%d MB, in %s)",
+                    id, (started - asked) * 1000, (time.monotonic() - started) * 1000,
+                    want // _MIB, "worker" if outside else "server")
 
     def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
         plan = build_execution_plan(self._registry, id, parameters, source)
@@ -89,6 +128,7 @@ class ServerExecutor(MetricExecutor):
         return results[id]
 
     def call(self, fn: Any, kwargs: dict[str, Any], label: str = "formula") -> Any:
-        if self._outside(fn):
-            return self._workers().call(fn, kwargs, label)
-        return fn(**kwargs)
+        with self._gate.reserve(_estimate(None, fn, kwargs)):
+            if self._outside(fn):
+                return self._workers().call(fn, kwargs, label)
+            return fn(**kwargs)

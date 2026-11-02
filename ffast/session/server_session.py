@@ -70,16 +70,15 @@ def _probe_path_diagnostics(path):
     )
 
 
-# Metric computation runs in the SAME process as the GUI (the local server is
-# in-process). Routing it through asyncio's default thread pool lets a burst of
-# recomputes — e.g. toggling the energy shift re-runs ~15 KDE/density metrics
-# across the loaded predictions — spin up a dozen CPU threads that thrash the
-# GIL and starve the Qt event loop (measured 120-533ms stalls = visible UI
-# lag). A small dedicated pool caps the GIL competitors so the UI keeps
-# breathing; throughput barely drops since GIL-bound work doesn't parallelise
-# anyway. It is deliberately SEPARATE from the default pool: client worker
-# threads block there awaiting server replies, and sharing one bounded pool
-# would deadlock (blocked clients holding every slot the compute needs).
+# FFAST's own metric code runs in the server process (ADR 0079), on this
+# dedicated pool: up to 16 steps at once. How many really run together is
+# decided by the memory gate of the ServerExecutor (a step waits until its
+# estimated memory fits) and, for numpy's heavy loops, by the chunk pool.
+# Throughput of GIL-bound steps does not grow with threads; the large array
+# operations release the GIL and do. It is deliberately SEPARATE from the
+# default pool: client worker threads block there awaiting server replies, and
+# sharing one bounded pool would deadlock (blocked clients holding every slot
+# the compute needs).
 #
 # Built lazily on first metric request so merely importing ``ffast.session``
 # (which the GUI client does for ConnectionRegistry / LocalServerManager) costs
@@ -91,7 +90,7 @@ def _metric_compute_pool() -> ThreadPoolExecutor:
     global _METRIC_COMPUTE_POOL
     if _METRIC_COMPUTE_POOL is None:
         _METRIC_COMPUTE_POOL = ThreadPoolExecutor(
-            max_workers=2, thread_name_prefix="ffast-metric"
+            max_workers=16, thread_name_prefix="ffast-metric"
         )
     return _METRIC_COMPUTE_POOL
 

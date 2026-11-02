@@ -703,6 +703,13 @@ class _ExprFn:
                 if n not in RESERVED_VARS and n not in HIDDEN_INPUTS
                 and not n.startswith(MISSING_PREFIX)}
 
+    @property
+    def operations(self) -> int:
+        """How many operations the formula holds. Each makes a temporary as
+        large as its largest input (ADR 0064), which is what it reserves."""
+        return sum(isinstance(n, (ast.BinOp, ast.UnaryOp, ast.Compare, ast.Call))
+                   for n in ast.walk(self._tree()))
+
     def _tree(self) -> ast.Expression:
         tree = _AST_CACHE.get(self.expr)
         if tree is None:
