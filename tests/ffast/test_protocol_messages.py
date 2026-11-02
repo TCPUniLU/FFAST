@@ -17,14 +17,16 @@ from ffast.protocol import (
 # datasetLoaders/loader.py:208 and :332.
 UNIFORM = {
     "name": "aspirin", "n": 100, "has_forces": True, "is_sub": False,
-    "variable": False, "elements": [6, 1, 1, 8], "offsets": None,
+    "variable": False, "elements": [6, 1, 1, 8], "element_set": [1, 6, 8],
+    "first_elements": None, "offsets": None,
     "path": "/data/aspirin.xyz", "source_type": "ASE",
     "parent": None, "parent_frames": None, "active": True, "frozen": False,
     "units": {"energy": "eV"},
 }
 VARIABLE = {
     "name": "mixed", "n": 50, "has_forces": False, "is_sub": True,
-    "variable": True, "elements": [6, 1, 8], "offsets": [0, 2, 3],
+    "variable": True, "elements": None, "element_set": [1, 6, 8],
+    "first_elements": [6, 1], "offsets": [0, 2, 3],
     "path": "/data/mixed.xyz", "source_type": "Variable ASE",
     "parent": "aspirinfp", "parent_frames": [4, 9], "active": False,
     "frozen": True, "units": {},
@@ -45,7 +47,7 @@ def test_model_fields_match_tometadict_keys():
     # validation both flag it.
     assert set(DatasetMeta.model_fields) == {
         "name", "n", "has_forces", "is_sub", "variable",
-        "elements", "offsets", "path", "source_type",
+        "elements", "element_set", "first_elements", "offsets", "path", "source_type",
         "parent", "parent_frames", "active", "frozen", "units",
     }
 

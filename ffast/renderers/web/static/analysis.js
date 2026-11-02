@@ -311,7 +311,8 @@ export class AnalysisManager {
     let source = datasetMeta;
     while (source?.parent && source.parent_frames && this._available.datasets.has(source.parent))
       source = this._available.datasets.get(source.parent);
-    const zs = (source && source.elements) || [];
+    // A variable dataset sends its distinct elements, not every atom's.
+    const zs = (source && (source.element_set || source.elements)) || [];
     this._elementOrder = [...new Set(zs.map(Number))].sort((a, b) => a - b);
     for (const t of this._tabs) {
       // Prune element selection to the new dataset's elements.

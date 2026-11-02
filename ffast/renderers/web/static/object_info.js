@@ -52,10 +52,17 @@ export function objectInfo(kind, fp, meta, datasets) {
   let atoms = '';
   let formula = '';
   if (meta.variable && offsets && offsets.length > 1) {
-    const sizes = offsets.slice(1).map((o, i) => o - offsets[i]);
-    const lo = Math.min(...sizes), hi = Math.max(...sizes);
+    // A loop, not Math.min(...sizes): 1.77M arguments overflow the stack.
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 1; i < offsets.length; i++) {
+      const size = offsets[i] - offsets[i - 1];
+      if (size < lo) lo = size;
+      if (size > hi) hi = size;
+    }
     atoms = lo === hi ? String(lo) : `${lo}–${hi}`;
-    formula = `varies (first: ${chemicalFormula(els.slice(offsets[0], offsets[1]))})`;
+    // The first structure's elements (every atom's is not sent).
+    const first = meta.first_elements || els.slice(offsets[0], offsets[1]);
+    formula = `varies (first: ${chemicalFormula(first)})`;
   } else if (els.length) {
     atoms = String(els.length);
     formula = chemicalFormula(els);

@@ -53,6 +53,7 @@ def test_legacy_uniform_metadata_carries_elements_for_remote_proxy():
 
     assert meta.variable is False
     assert meta.elements == [8, 1, 1]
+    assert meta.element_set == [1, 8]
     assert meta.offsets is None
     assert meta.path == "/data/water.xyz"
     assert meta.source_type == "fake uniform"
@@ -66,11 +67,16 @@ def test_legacy_uniform_metadata_carries_elements_for_remote_proxy():
     assert proxy.getNAtoms() == 3
 
 
-def test_legacy_variable_metadata_carries_flat_elements_and_offsets():
+def test_variable_metadata_carries_distinct_and_first_elements_not_every_atoms():
+    """Every atom's element of shard_03 (177M atoms) broke the page's decoder
+    (2026-11-02); the page needs only the distinct elements and the first
+    structure's, and the proxy reads every atom's from the fetched arrays."""
     meta = DatasetMeta.model_validate(_make_variable().toMetaDict())
 
     assert meta.variable is True
-    assert meta.elements == [6, 1, 8, 1, 1]
+    assert meta.elements is None
+    assert meta.element_set == [1, 6, 8]
+    assert meta.first_elements == [6, 1]
     assert meta.offsets == [0, 2, 5]
     assert meta.path == "/data/mixed.xyz"
     assert meta.source_type == "fake variable"
@@ -80,8 +86,7 @@ def test_legacy_variable_metadata_carries_flat_elements_and_offsets():
         elements=meta.elements, offsets=meta.offsets, is_variable=meta.variable
     )
 
-    assert np.array_equal(proxy.getElements(), np.array([6, 1, 8, 1, 1]))
-    assert np.array_equal(proxy.getElements(1), np.array([8, 1, 1]))
+    assert proxy.getElements().size == 0          # until the arrays are fetched
     assert np.array_equal(proxy.getNAtoms(), np.array([2, 3]))
 
 

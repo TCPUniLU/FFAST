@@ -80,6 +80,8 @@ def test_the_announcement_describes_the_subsets_own_atoms(sub):
     meta = sub.toMetaDict()
     assert meta["variable"] is True
     assert meta["offsets"] == [0, 5, 8]
-    assert meta["elements"] == [6, 6, 8, 8, 16, 1, 6, 8]
+    assert meta["elements"] is None                     # not every atom's (2026-11-02)
+    assert meta["element_set"] == [1, 6, 8, 16]
+    assert meta["first_elements"] == [6, 6, 8, 8, 16]
     assert meta["n"] == 2
     assert meta["parent"] == "parent-fp" and meta["parent_frames"] == FRAMES

@@ -385,6 +385,30 @@ class DatasetLoader(EventClass):
         except Exception:
             return False
 
+    def metaElements(self) -> dict:
+        """The elements REMOTE_DATASET_META carries, so a client can label
+        atoms and list elements without fetching the arrays.
+
+        All structures alike: one structure's elements. Structures of
+        different make-up: the distinct elements and the first structure's,
+        not every atom's: 177M atoms on shard_03 took the page 7 minutes to
+        decode and then broke it (2026-11-02)."""
+        out = {"elements": None, "element_set": None, "first_elements": None}
+        try:
+            if getattr(self, "isVariable", False):
+                z = np.asarray(self.getAllElements()).reshape(-1).astype(np.int64)
+                offsets = np.asarray(self.getOffsets())
+                first = z[int(offsets[0]):int(offsets[1])] if len(offsets) > 1 else z[:0]
+                out["first_elements"] = first.tolist()
+            else:
+                z = np.asarray(self.getElements()).reshape(-1).astype(np.int64)
+                out["elements"] = z.tolist()
+            # A count per atomic number: instant, where sorting 177M is not.
+            out["element_set"] = np.flatnonzero(np.bincount(z)).tolist() if z.size else []
+        except Exception:
+            pass
+        return out
+
     def toMetaDict(self) -> dict:
         """Return lightweight metadata for RPC transfer (REMOTE_DATASET_META).
 
@@ -396,20 +420,13 @@ class DatasetLoader(EventClass):
         dict with keys: name, n, has_forces, is_sub, variable, elements, offsets
         """
         has_forces = self.hasForces()
-        # Stage 4c: carry cheap per-atom elements so the client proxy serves
-        # element labels / atom-filter without fetching the big R/F arrays.
-        elements = None
-        try:
-            elements = np.asarray(self.getElements()).reshape(-1).astype(int).tolist()
-        except Exception:
-            pass
         return {
             "name": self.getName(),
             "n": self.getN(),
             "has_forces": has_forces,
             "is_sub": bool(self.isSubDataset),
             "variable": False,
-            "elements": elements,
+            **self.metaElements(),
             "offsets": None,
             "path": self.path,
             "source_type": getattr(type(self), "datasetName", None),
@@ -520,14 +537,9 @@ class FlatDatasetLoader(DatasetLoader):
         if not self.isVariable:
             return DatasetLoader.toMetaDict(self)
         has_forces = self.hasForces()
-        # Stage 4c: carry cheap flat elements + molecule offsets so the client
-        # proxy serves labels / atom-filter / scatter sub-indexing without
-        # fetching the big R_flat/F_flat arrays.
-        elements = offsets = None
-        try:
-            elements = np.asarray(self.z_flat).reshape(-1).astype(int).tolist()
-        except Exception:
-            pass
+        # Stage 4c: molecule offsets let the client proxy split frames without
+        # fetching the big R_flat/F_flat arrays; the elements: metaElements.
+        offsets = None
         try:
             offsets = np.asarray(self.molecule_offsets).astype(int).tolist()
         except Exception:
@@ -538,7 +550,7 @@ class FlatDatasetLoader(DatasetLoader):
             "has_forces": has_forces,
             "is_sub": bool(self.isSubDataset),
             "variable": True,
-            "elements": elements,
+            **self.metaElements(),
             "offsets": offsets,
             "path": self.path,
             "source_type": getattr(type(self), "datasetName", None),

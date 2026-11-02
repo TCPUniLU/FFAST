@@ -33,7 +33,13 @@ class DatasetMeta(BaseModel):
     has_forces: bool = True
     is_sub: bool = False
     variable: bool = False
+    # One structure's elements when all structures share them; None for a
+    # variable dataset, whose every atom's (177M on shard_03) broke the page's
+    # decoder (2026-11-02). Its clients read ``element_set`` and
+    # ``first_elements``, and every atom's from the fetched arrays.
     elements: Optional[list[int]] = None
+    element_set: Optional[list[int]] = None     # distinct atomic numbers, sorted
+    first_elements: Optional[list[int]] = None  # the first structure's (variable only)
     offsets: Optional[list[int]] = None
     path: Optional[str] = None
     source_type: Optional[str] = None

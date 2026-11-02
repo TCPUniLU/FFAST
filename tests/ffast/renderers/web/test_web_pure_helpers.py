@@ -154,7 +154,9 @@ CASES = {
     "formula_aspirin": "oi.chemicalFormula([6,6,6,6,6,6,6,6,6,1,1,1,1,1,1,1,1,8,8,8,8])",
     "formula_water": "oi.chemicalFormula([1,1,8])",
     "info_uniform": "oi.objectInfo('dataset', 'abcdef0123', {name: 'w', n: 4, elements: [1,1,8], variable: false, has_forces: true, source_type: 'ase', path: '/d/w.xyz', units: {energy: 'eV'}}, new Map([['abcdef0123', {units: {energy: 'eV'}}]])).rows",
-    "info_variable": "oi.objectInfo('dataset', 'v1', {name: 'v', n: 2, elements: [1,1,8,6,1,1,1,1], offsets: [0,3,8], variable: true, has_forces: false}, new Map()).rows",
+    # A variable dataset sends its distinct and first structure's elements, not every atom's (2026-11-02).
+    "info_variable": "oi.objectInfo('dataset', 'v1', {name: 'v', n: 2, element_set: [1,6,8], first_elements: [1,1,8], offsets: [0,3,8], variable: true, has_forces: false}, new Map()).rows",
+    "info_variable_large": "(() => { const offsets = Array.from({length: 2000001}, (_, i) => 3 * i + (i > 1 ? 2 : 0)); return oi.objectInfo('dataset', 'v2', {name: 'big', n: 2000000, element_set: [1,8], first_elements: [1,1,8], offsets, variable: true}, new Map()).rows; })()",
     "info_subset": "oi.objectInfo('dataset', 'S', FL.get('S'), FL).rows",
     "info_prediction": "oi.objectInfo('model', 'm1', {name: 'MACE', dataset_fingerprints: ['T']}, FL).rows",
     "progress_count": "tk.progressText({prog: 3, progMax: 10})",
@@ -1754,6 +1756,11 @@ def test_info_of_a_variable_dataset_gives_the_range_and_the_first_formula(result
     rows = results["info_variable"]
     assert ["Atoms per structure", "3–5"] in rows
     assert ["Formula", "varies (first: H2O)"] in rows
+
+
+def test_info_of_two_million_structures_does_not_overflow(results):
+    rows = results["info_variable_large"]
+    assert ["Atoms per structure", "3–5"] in rows
 
 
 def test_info_of_a_frozen_subset_names_where_it_was_cut_from(results):
