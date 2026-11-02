@@ -138,6 +138,8 @@ def test_an_extra_column_in_some_frames_loads_fast_without_warning(files, caplog
     assert "spin" in loader.availableFieldKeys()[1]
     got = loader.getAtomField("spin")
     assert np.isnan(got[0]).all() and np.isnan(got[1]).all() and got[2].tolist() == [0.5, -0.5]
+    from ffast.io.missing import is_missing
+    assert is_missing(np.asarray(got[0])).all() and is_missing(loader.getAtomField("spin", 1)).all()
 
 
 def test_plain_xyz_loads_with_ase_without_warning(files, caplog):

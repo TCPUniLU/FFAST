@@ -14,6 +14,8 @@ import multiprocessing as mp
 
 import numpy as np
 
+from ffast.io.missing import MISSING
+
 logger = logging.getLogger("FFAST")
 
 # key, then =value (quoted, braced, bracketed or bare); anything else is junk.
@@ -52,7 +54,7 @@ class FrameArrays:
     positions: np.ndarray         # (atoms, 3) float64
     cells: np.ndarray             # (N, 3, 3) float64
     pbc: np.ndarray               # (N, 3) bool
-    columns: dict = field(default_factory=dict)   # Properties name -> (atoms,) or (atoms, k); NaN where a frame lacks an extra
+    columns: dict = field(default_factory=dict)   # Properties name -> (atoms,) or (atoms, k); MISSING where a frame lacks an extra
     values: dict = field(default_factory=dict)    # header key -> (N,), numeric in every frame
     first_frame: int = 0          # where this batch starts in the file
 
@@ -126,7 +128,7 @@ def _merge_extras(seen, extras, frame, first, props):
 
 def _stack(parts, atoms):
     """Columns of consecutive runs, one array per name. A run without the
-    column gets NaN (as float64), so the gap is told apart from a number."""
+    column gets MISSING (a NaN, as float64), told apart from a NaN in the data."""
     names = {}
     for cols in parts:
         names.update(dict.fromkeys(cols))
@@ -138,7 +140,7 @@ def _stack(parts, atoms):
             continue
         tail = present[0].shape[1:]
         out[name] = np.concatenate([
-            cols[name].astype(np.float64) if name in cols else np.full((n,) + tail, np.nan)
+            cols[name].astype(np.float64) if name in cols else np.full((n,) + tail, MISSING)
             for cols, n in zip(parts, atoms)])
     return out
 

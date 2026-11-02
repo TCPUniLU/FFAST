@@ -58,6 +58,7 @@ import ast
 import numpy as np
 
 from ffast.metrics import dims, units
+from ffast.io.missing import is_missing
 from ffast.metrics.inputs import RAW_INPUT_BY_REF, parse_field_ref
 from ffast.metrics.models import WithWarnings
 from ffast.metrics.registry import default_registry
@@ -672,13 +673,15 @@ class _ExprFn:
 
     "No value" (ADR 0064 section 8) travels beside each value as its own mask
     over the rows, so a bad value (inf, NaN from 0/0) is never mistaken for
-    one. It comes from a reduction's empty group, or from an input that is a
-    formula metric (``gap_inputs``), whose NaN can mean nothing else.
+    one. It comes from a reduction's empty group, from an input that is a
+    formula metric (``gap_inputs``), whose NaN can mean nothing else, or from
+    a Dataset Field value a frame does not have (``missing_inputs``: MISSING,
+    ADR 0076), whose other NaN stays bad.
     """
 
     def __init__(self, expr: str, var_refs: dict[str, str],
                  var_parts: dict[str, int] | None = None,
-                 gap_inputs=()) -> None:
+                 gap_inputs=(), missing_inputs=()) -> None:
         self.expr = expr
         # sorted for a stable implementation_source regardless of dict order
         self.var_refs = dict(sorted(var_refs.items()))
@@ -687,6 +690,8 @@ class _ExprFn:
         self.var_parts = dict(var_parts or {})
         # inputs whose NaN is "no value": those bound to a formula metric
         self.gap_inputs = frozenset(gap_inputs)
+        # inputs that may hold MISSING: Dataset Fields and field metrics
+        self.missing_inputs = frozenset(missing_inputs)
 
     @property
     def user_vars(self) -> dict[str, str]:
@@ -756,10 +761,14 @@ class _ExprFn:
 
     def _input(self, name, ns):
         value, k = ns[name], self.var_parts.get(name, 0)
-        if name not in self.gap_inputs:
+        if name in self.gap_inputs:
+            arr = np.asarray(value, dtype=float)
+            gap = np.isnan(arr)
+        elif name in self.missing_inputs:
+            arr = np.asarray(value, dtype=float)
+            gap = is_missing(arr)
+        else:
             return value, k, None
-        arr = np.asarray(value, dtype=float)
-        gap = np.isnan(arr)
         if k:
             gap = gap.any(axis=tuple(range(-k, 0)))
         return arr, k, (gap if gap.any() else None)
@@ -1097,6 +1106,15 @@ def formula_inputs(inputs: dict[str, str], registry) -> set[str]:
             if registry.has(ref) and isinstance(registry.get(ref)[1], _ExprFn)}
 
 
+def field_inputs(inputs: dict[str, str], registry) -> set[str]:
+    """The variables bound to a Dataset Field or a field metric: a value a
+    frame does not have is MISSING there (ADR 0076), and is "no value"."""
+    from ffast.metrics.fields import field_passthrough
+    return {name for name, ref in inputs.items()
+            if parse_field_ref(ref) is not None
+            or (registry.has(ref) and registry.get(ref)[1] is field_passthrough)}
+
+
 def compile_expr_metric(id, expr, vars, *, label="", unit="", registry=None) -> str:
     """Compile one ``[[metrics.expr]]`` entry → a registered Metric id. Idempotent.
 
@@ -1127,7 +1145,8 @@ def compile_expr_metric(id, expr, vars, *, label="", unit="", registry=None) -> 
         shape=output_shape,
         unit=unit or units.dimensionless,
     )
-    decorator(_ExprFn(expr, inputs, var_parts, formula_inputs(inputs, registry)))
+    decorator(_ExprFn(expr, inputs, var_parts, formula_inputs(inputs, registry),
+                      field_inputs(inputs, registry)))
     return id
 
 

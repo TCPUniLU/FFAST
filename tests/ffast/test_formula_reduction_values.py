@@ -176,6 +176,58 @@ def test_a_nan_from_a_python_input_fails_the_metric():
     assert isinstance(out, MetricFailure) and "non-finite" in out.traceback
 
 
+# ── a column some frames lack is missing, not bad (ADR 0076) ────────────────
+
+def _run_with_err(err, expr, vars_, registry=None):
+    r = registry or MetricRegistry()
+    mid = compile_expr_metric("t.out", expr, vars_, registry=r)
+    return InProcessExecutor(r).run(mid, FlatInputSource({"err": err, "value": err, "_offsets": OFFSETS,
+                                                           "_elements": Z}), {})
+
+
+def _with_missing_atom():
+    from ffast.io.missing import MISSING
+    err = ERR.copy()
+    err[1] = MISSING
+    return err
+
+
+def test_a_missing_dataset_field_value_is_no_value():
+    out = _run_with_err(_with_missing_atom(), "err * 2", {"err": "reference.atoms.err"})
+    assert not isinstance(out, MetricFailure), getattr(out, "traceback", "")
+    assert np.isnan(out.values[1]) and out.values[0] == 2.0
+
+
+def test_a_missing_dataset_field_value_is_left_out_of_a_reduction():
+    out = _run_with_err(_with_missing_atom(), "mean(err, by=structure)", {"err": "reference.atoms.err"})
+    assert not isinstance(out, MetricFailure), getattr(out, "traceback", "")
+    np.testing.assert_allclose(out.values, [1.0, 4.0, 6.0])
+
+
+def test_a_missing_value_from_a_field_metric_is_no_value():
+    from ffast.metrics.fields import compile_field_metric
+    r = MetricRegistry()
+    compile_field_metric("t.err_field", "reference.atoms.err", registry=r)
+    out = _run_with_err(_with_missing_atom(), "f * 2", {"f": "t.err_field"}, registry=r)
+    assert not isinstance(out, MetricFailure), getattr(out, "traceback", "")
+    assert np.isnan(out.values[1])
+
+
+def test_a_nan_in_a_dataset_field_still_fails_the_metric():
+    err = ERR.copy()
+    err[1] = np.nan
+    out = _run_with_err(err, "err * 2", {"err": "reference.atoms.err"})
+    assert isinstance(out, MetricFailure) and "non-finite" in out.traceback
+
+
+def test_try_counts_a_missing_value_as_no_value():
+    def resolve(ref):
+        return {"reference.atoms.err": _with_missing_atom(), "offsets": OFFSETS,
+                "reference.elements": Z}.get(ref)
+    r = try_formula("err * 2", {"err": "reference.atoms.err"}, MetricRegistry(), resolve, np.diff(OFFSETS))
+    assert r.bad_count == 0 and r.no_value_count == 1
+
+
 def test_the_hidden_inputs_are_the_offsets_and_the_elements():
     inputs, _s, _p = analyze_expr('mean(err, by=structure, where=element("H"))', VARS,
                                   registry=MetricRegistry())
