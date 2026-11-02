@@ -27,7 +27,7 @@ def loadData(env):
         saveFormats = ["db", "xyz", "extxyz", "traj", "vasp", "dftb"]
 
         def __call__(self, path: str, selected_energy_key=None, selected_force_key=None,
-                     prediction_keys=None, show_dialog=True, slice_num=0):
+                     prediction_keys=None, show_dialog=True, slice_num=0, progress=None):
             """Load ASE dataset with optional key selection.
 
             Args:
@@ -36,6 +36,7 @@ def loadData(env):
                 selected_force_key: Pre-selected force key for reference
                 prediction_keys: List of (energy_key, force_key, model_name) tuples
                 show_dialog: Whether to show selection dialog (False when loading from session)
+                progress: optional progress(done, total) called as frames are read (ADR 0076)
 
             Returns:
                 tuple: (dataset_loader, prediction_keys) or (None, None) if cancelled
@@ -80,7 +81,8 @@ def loadData(env):
                 path,
                 atomsList=atomsList,
                 selected_energy_key=selected_energy_key,
-                selected_force_key=selected_force_key
+                selected_force_key=selected_force_key,
+                progress=progress,
             )
             logger.info(
                 "Loading %s ASE dataset: %d molecules",

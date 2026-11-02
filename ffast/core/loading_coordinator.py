@@ -116,6 +116,11 @@ class LoadingCoordinator:
         return frame_index.get_frame_index(
             path, progress=lambda n: self._progress(taskID, f"Indexing {name}: {n:,} frames…"))
 
+    def _readProgress(self, path, taskID):
+        """Report the one read of a load (ADR 0076) on its task."""
+        name = os.path.basename(path)
+        return lambda done, total: self._progress(taskID, f"Reading {name}: {done:,} of {total:,} frames…")
+
     def _resolveLoad(self, kind, path, typeName, popup=True):
         """Validate a load request and resolve the plugin class that serves it.
 
@@ -283,6 +288,7 @@ class LoadingCoordinator:
             aseObject = self._aseLoaderFor(
                 path, atomsList,
                 energy_key=selected_energy_key, force_key=selected_force_key,
+                progress=self._readProgress(path, taskID),
             )
 
             try:
@@ -409,7 +415,7 @@ class LoadingCoordinator:
     #############
 
     @staticmethod
-    def _aseLoaderFor(path, atomsList, *, energy_key=None, force_key=None):
+    def _aseLoaderFor(path, atomsList, *, energy_key=None, force_key=None, progress=None):
         """Build the ASE loader for ``atomsList``. There is one; it decides
         uniform or variable from the frames itself (ADR 0058)."""
         from ffast.loaders.ase import aseDatasetLoader
@@ -419,6 +425,7 @@ class LoadingCoordinator:
             atomsList=atomsList,
             selected_energy_key=energy_key,
             selected_force_key=force_key,
+            progress=progress,
         )
         logger.info(
             "Loading prediction as %s ASE dataset: %d molecules",
@@ -590,7 +597,8 @@ class LoadingCoordinator:
                     selected_force_key=selected_force_key,
                     prediction_keys=prediction_keys,
                     show_dialog=False,  # Dialog already shown on main thread
-                    slice_num=slice_num
+                    slice_num=slice_num,
+                    progress=self._readProgress(path, taskID),
                 )
             except Exception as e:
                 logger.exception(f"Failed to load dataset {path} in method 'loadDataset'",
