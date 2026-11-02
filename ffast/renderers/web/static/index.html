@@ -1566,10 +1566,10 @@
     </div>
   </div>
 </div>
-  <!-- Plotly.js is vendored under vendor/plotly/ (basic bundle, UMD → window.Plotly).
+  <!-- Plotly.js is vendored under vendor/plotly/ (full bundle, UMD → window.Plotly).
        Loaded as a classic script (not a module) before the app so panels.js can
        read globalThis.Plotly. No CDN — offline / cluster parity (ADR 0045). -->
-  <script src="vendor/plotly/plotly-basic.min.js"></script>
+  <script src="vendor/plotly/plotly.min.js"></script>
   <script type="module" src="ffast-viewer.js"></script>
 </body>
 </html>

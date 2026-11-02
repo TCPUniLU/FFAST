@@ -175,7 +175,7 @@ class TestWheelContents:
 
     def test_vendored_plotly_ships(self, wheel_names):
         assert (
-            "ffast/renderers/web/static/vendor/plotly/plotly-basic.min.js"
+            "ffast/renderers/web/static/vendor/plotly/plotly.min.js"
             in wheel_names
         )
 

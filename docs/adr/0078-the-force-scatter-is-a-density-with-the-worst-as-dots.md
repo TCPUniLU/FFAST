@@ -55,8 +55,10 @@ selectable.
   and the plot looks as it did before.
 - The parity kind is built-in only: the tab editor's kind list stays in step
   with the desktop's kinds (a test checks that), and the desktop has none.
-- Every other scatter in the page is still SVG. Changing the Plotly build
-  (e.g. one with `scattergl`) is a separate decision.
+- Amended 2026-11-02: the page now ships the full Plotly build, so
+  `scattergl` draws with WebGL (50,000 points: 135 ms to draw, 7 ms per zoom,
+  was 416 ms and 328 ms). The density stays an image; a heatmap would add
+  per-bin hover.
 
 ## Alternatives
 
