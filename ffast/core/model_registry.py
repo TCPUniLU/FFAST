@@ -66,6 +66,7 @@ class ModelRegistry:
         model = self.get(key)
         if model is None:
             return
+        model.deleted = True        # a metric reading it stops (ADR 0079)
 
         # Prune every cached artifact this model produced. matches_model holds
         # regardless of how many "__" the identity token carries, so params /

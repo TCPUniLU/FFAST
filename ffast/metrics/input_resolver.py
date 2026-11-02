@@ -118,6 +118,10 @@ class _ResolverSource(InputSource):
     def get(self, metric_id, local_key, ref):
         return True, self._resolver.resolve(ref, model=self._model, dataset=self._dataset)
 
+    def stopped(self):
+        return bool(getattr(self._dataset, "deleted", False)
+                    or getattr(self._model, "deleted", False))
+
     def identity(self, ref):
         """``ref`` of this loaded dataset (and prediction, for a prediction
         input): their arrays do not change once loaded. A subset that follows

@@ -49,7 +49,7 @@ class InProcessExecutor(MetricExecutor):
         except Exception:
             return MetricFailure(metric_id=id, traceback=tb.format_exc(), parameters=parameters)
 
-    def _execute(self, plan: ExecutionPlan) -> dict[str, MetricResult | MetricFailure]:
+    def _execute(self, plan: ExecutionPlan, source: InputSource | None = None) -> dict[str, MetricResult | MetricFailure]:
         return run_plan(
             plan,
             self._registry,
@@ -57,6 +57,7 @@ class InProcessExecutor(MetricExecutor):
             lambda mid, schema, fn, kwargs, cparams: self._call(
                 mid, schema, fn, kwargs, cparams, plan.parameters
             ),
+            stopped=source.stopped if source is not None else (lambda: False),
         )
 
     def call(self, fn: Any, kwargs: dict[str, Any], label: str = "formula") -> Any:
@@ -65,4 +66,4 @@ class InProcessExecutor(MetricExecutor):
     def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
         """Run a single metric and its dependencies."""
         plan = build_execution_plan(self._registry, id, parameters, source)
-        return self._execute(plan)[id]
+        return self._execute(plan, source)[id]

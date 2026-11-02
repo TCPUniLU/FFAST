@@ -398,6 +398,7 @@ class WorkerProcessExecutor(MetricExecutor):
             lambda mid, schema, fn, kwargs, cparams: self._ship_to_worker(
                 mid, schema, fn, kwargs, cparams, parameters
             ),
+            stopped=source.stopped,
         )
         return results[id]
 

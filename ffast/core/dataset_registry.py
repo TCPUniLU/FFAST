@@ -75,6 +75,7 @@ class DatasetRegistry:
         dataset = self.get(key)
         if dataset is None:
             return
+        dataset.deleted = True      # a metric reading it stops (ADR 0079)
 
         for child in [fp for fp, ds in self._datasets.items()
                       if getattr(ds, "parent", None) is dataset]:

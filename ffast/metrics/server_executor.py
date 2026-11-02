@@ -22,6 +22,7 @@ from ffast.metrics.models import MetricFailure, MetricResult
 from ffast.metrics.placement import is_outside_code
 from ffast.metrics.registry import MetricRegistry
 from ffast.metrics.resources import MemoryGate
+from ffast.metrics import stop
 
 log = logging.getLogger(__name__)
 
@@ -93,22 +94,29 @@ class ServerExecutor(MetricExecutor):
         if self._workers_executor is not None:
             self._workers_executor.shutdown()
 
-    def _step(self, id, schema, fn, kwargs, compute_params, parameters):
+    def _step(self, id, schema, fn, kwargs, compute_params, parameters, stopped=lambda: False):
         """Transport: one step here, or in a worker when ``fn`` is outside code."""
         outside = self._outside(fn)
         want = _estimate(schema, fn, kwargs)
         asked = time.monotonic()
-        with self._gate.reserve(want):
+        reservation = self._gate.reserve(want, stopped)
+        if reservation is None:
+            return MetricFailure(metric_id=id, traceback=stop.STOPPED, parameters=parameters)
+        with reservation:
             started = time.monotonic()
+            token = stop.running_under(stopped)
             try:
                 if outside:
                     return self._workers()._ship_to_worker(
                         id, schema, fn, kwargs, compute_params, parameters)
                 try:
                     return fn(**kwargs, **compute_params)
+                except stop.Stopped:
+                    return MetricFailure(metric_id=id, traceback=stop.STOPPED, parameters=parameters)
                 except Exception:
                     return MetricFailure(metric_id=id, traceback=tb.format_exc(), parameters=parameters)
             finally:
+                stop.reset(token)
                 log.info(
                     "metric step %s: waited %d ms for memory, computed in %d ms "
                     "(reserved ~%d MB, in %s)",
@@ -122,8 +130,9 @@ class ServerExecutor(MetricExecutor):
             self._registry,
             self._cache,
             lambda mid, schema, fn, kwargs, cparams: self._step(
-                mid, schema, fn, kwargs, cparams, parameters
+                mid, schema, fn, kwargs, cparams, parameters, source.stopped
             ),
+            stopped=source.stopped,
         )
         return results[id]
 

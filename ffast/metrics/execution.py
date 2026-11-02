@@ -42,6 +42,7 @@ import numpy as np
 from ffast.metrics.cache import MetricCache, function_hash
 from ffast.metrics.dims import shape_to_str
 from ffast.metrics.models import MetricFailure, MetricResult, WithWarnings
+from ffast.metrics.stop import STOPPED
 
 
 # ── Input bindings ──────────────────────────────────────────────────────────
@@ -119,6 +120,11 @@ class InputSource(ABC):
         name instead of a hash of its content: hashing the forces of 1.77M
         structures (4 GB) took ~18 s per metric (2026-11-02)."""
         return None
+
+    def stopped(self) -> bool:
+        """True once what this source reads was deleted: a running metric
+        stops at its next checkpoint (ADR 0079)."""
+        return False
 
 
 class FlatInputSource(InputSource):
@@ -248,6 +254,7 @@ def run_plan(
     registry,
     cache: MetricCache,
     run_fn: RunFn,
+    stopped: Callable[[], bool] = lambda: False,
 ) -> dict[str, MetricResult | MetricFailure]:
     """Execute a plan's steps in order → ``{metric_id: MetricResult | MetricFailure}``.
 
@@ -257,15 +264,27 @@ def run_plan(
     and ``MetricResult`` construction.  ``run_fn`` is the transport: it either
     calls the metric function directly or ships it to a worker, returning the raw
     function output or a ``MetricFailure``.
+
+    Once ``stopped()`` is true, the step about to start and every later one fail
+    with "Stopped" and are not cached (ADR 0079 decision 3).
     """
     results: dict[str, MetricResult | MetricFailure] = {}
     # Each step's cache key: a step reading another's output is keyed by that
     # step's key, not by hashing the output (the 4 GB force difference).
     keys: dict[str, Any] = {}
 
+    halted = False
+
     for step in plan.steps:
         metric_id = step.metric_id
         schema, fn = registry.get(metric_id)
+
+        halted = halted or stopped()
+        if halted:
+            results[metric_id] = MetricFailure(
+                metric_id=metric_id, traceback=STOPPED, parameters=plan.parameters
+            )
+            continue
 
         # A required raw input was missing/None → don't run, just fail this step.
         if step.failure is not None:
