@@ -180,3 +180,47 @@ class TestConnectionEnd:
                              "", 0, asyncio.Event()))
         # Only the other window is registered when the session closes.
         assert counts == [1]
+
+
+# ── a slow message does not stop the server hearing keepalive pongs ────────
+
+class TestSlowHandlingKeepsConnection:
+    def test_many_messages_behind_a_slow_one_do_not_drop_the_client(self, monkeypatch):
+        """Cluster log 2026-11-02: metrics took ~1 min each while the page sent
+        ~100 slider moves. The server stopped reading the socket once 16
+        messages waited, never saw the page's pongs, and dropped it with
+        "keepalive ping timeout"."""
+        import websockets
+        from websockets.protocol import State
+        from ffast.session.server_session import ServerSession
+
+        handled = []
+
+        async def slow_dispatch(session, event, args, kwargs, msg_id=None):
+            await asyncio.sleep(0.05)
+            handled.append(kwargs["n"])
+
+        monkeypatch.setattr(ServerSession, "dispatch", slow_dispatch)
+
+        async def scenario():
+            hub = ConnectionHub()
+            env = _FeedEnv(hub)
+
+            async def handler(ws):
+                await server._handler(ws, env, hub, "", 0, asyncio.Event())
+
+            async with websockets.serve(handler, "127.0.0.1", 0,
+                                        ping_interval=0.2, ping_timeout=0.3) as srv:
+                port = srv.sockets[0].getsockname()[1]
+                async with websockets.connect(f"ws://127.0.0.1:{port}",
+                                              ping_interval=None) as ws:
+                    for message in _hello_messages():
+                        await ws.send(message)
+                    for n in range(40):
+                        await ws.send(pack(control.VIEW_COMMAND, [], {"n": n}))
+                    await asyncio.sleep(2.5)
+                    return ws.state
+
+        assert _run(scenario()) == State.OPEN
+        # Still one at a time, in the order sent.
+        assert handled == list(range(40))

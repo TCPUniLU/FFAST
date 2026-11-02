@@ -279,6 +279,10 @@ async def _handler(
     from ffast.protocol import control
     from ffast.protocol.rpc import unpack, unpack_with_id
     graceful = False
+    # Messages wait here, not in websockets' own buffer: when 16 wait there
+    # it stops reading the socket, misses the client's keepalive pongs and
+    # drops the client while a slow metric is handled (2026-11-02).
+    received: asyncio.Queue = asyncio.Queue()
 
     async def receive_loop():
         nonlocal graceful
@@ -286,26 +290,38 @@ async def _handler(
             if isinstance(message, bytes):
                 try:
                     event, args, kwargs, msg_id = unpack_with_id(message)
-                    if event == control.GRACEFUL_DISCONNECT:
-                        graceful = True
-                        logger.info("GRACEFUL_DISCONNECT from %s", addr)
-                    elif event == control.TIMING_PING:
-                        if session.timing:
-                            timing.put_note(session.outbound, timing.pong(kwargs))
-                    elif _may_dispatch(role, event):
-                        await session.dispatch(
-                            event, args, kwargs, msg_id=msg_id if session.timing else None
-                        )
-                    else:
-                        logger.debug(
-                            "READ_ONLY client %s sent mutating event %s — ignored",
-                            addr, event,
-                        )
                 except Exception as exc:
                     logger.warning("RPC decode error: %s", exc)
                     trace.record_error(f"handling a message failed: {exc!r}", exc)
+                    continue
+                if event == control.GRACEFUL_DISCONNECT:
+                    graceful = True
+                    logger.info("GRACEFUL_DISCONNECT from %s", addr)
+                else:
+                    received.put_nowait((event, args, kwargs, msg_id))
             else:
                 logger.debug("Unexpected text message from %s: %r", addr, message)
+
+    async def handle_loop():
+        # One message at a time, in the order received; None ends the loop.
+        while (item := await received.get()) is not None:
+            event, args, kwargs, msg_id = item
+            try:
+                if event == control.TIMING_PING:
+                    if session.timing:
+                        timing.put_note(session.outbound, timing.pong(kwargs))
+                elif _may_dispatch(role, event):
+                    await session.dispatch(
+                        event, args, kwargs, msg_id=msg_id if session.timing else None
+                    )
+                else:
+                    logger.debug(
+                        "READ_ONLY client %s sent mutating event %s — ignored",
+                        addr, event,
+                    )
+            except Exception as exc:
+                logger.warning("Handling %s failed: %s", event, exc)
+                trace.record_error(f"handling a message failed: {exc!r}", exc)
 
     async def send_loop():
         while True:
@@ -330,13 +346,26 @@ async def _handler(
                     pass
 
     receive_task = asyncio.create_task(receive_loop())
+    handle_task = asyncio.create_task(handle_loop())
     send_task = asyncio.create_task(send_loop())
 
     try:
         await receive_task
+    except asyncio.CancelledError:
+        handle_task.cancel()    # the server is stopping: don't wait for it
+        raise
     except Exception as exc:
         logger.warning("Connection error from %s: %s", addr, exc)
     finally:
+        # Messages still waiting die with the connection, as unread ones did;
+        # the one being handled finishes, as it did.
+        while not received.empty():
+            received.get_nowait()
+        received.put_nowait(None)
+        try:
+            await handle_task
+        except asyncio.CancelledError:
+            pass
         send_task.cancel()
         try:
             await send_task
