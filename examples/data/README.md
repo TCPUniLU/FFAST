@@ -6,8 +6,6 @@ files for trying FFAST's loading, visualisation, and error-analysis features.
 These are demonstration samples, not complete copies of the upstream
 benchmarks. Results obtained from them should not be presented as results
 on the complete upstream datasets.
-## Attention
-The provided predictions files are as same as their training files except for their `energy` and `forces` keys which are calculated by a simple mlff trained on the training dataset. If a dataset (among the provided datasets in the subsequent directories) has `energy_per_atom` key (or similar), load that dataset with its `energy` key, not `energy_per_atom`, otherwise your energy related errors would become zero.
 
 ## Licensing and provenance
 
@@ -76,7 +74,6 @@ Source filename, repository commit, and checksum: [am26.extxyz](https://github.c
 e88472a`).
 
 Changes: Subsampling and export to extended XYZ.
-Additional field or unit changes: [record].
 
 Licence/permission: Redistribution permission has not yet been established.
 Do not redistribute these files until the rights holder supplies applicable
@@ -167,7 +164,6 @@ All configurations in each selected file were appended, preserving their
 within-file order, until the accumulated count exceeded 200.
 
 Changes: File-level selection and concatenation into extended XYZ.
-Other field or unit changes: [record].
 
 ### MPtrj — licence and attribution
 
