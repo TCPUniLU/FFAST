@@ -224,3 +224,40 @@ class TestSlowHandlingKeepsConnection:
         assert _run(scenario()) == State.OPEN
         # Still one at a time, in the order sent.
         assert handled == list(range(40))
+
+    def test_a_view_command_does_not_wait_for_a_metric_sent_before_it(self, monkeypatch):
+        """Cluster log 2026-11-02: slider moves waited ~45 s behind metrics."""
+        import websockets
+        from ffast.session.server_session import ServerSession
+
+        handled = []
+
+        async def dispatch(session, event, args, kwargs, msg_id=None):
+            if event == control.REQUEST_METRIC:
+                await asyncio.sleep(1.0)
+            handled.append(event)
+
+        monkeypatch.setattr(ServerSession, "dispatch", dispatch)
+
+        async def scenario():
+            hub = ConnectionHub()
+            env = _FeedEnv(hub)
+
+            async def handler(ws):
+                await server._handler(ws, env, hub, "", 0, asyncio.Event())
+
+            async with websockets.serve(handler, "127.0.0.1", 0) as srv:
+                port = srv.sockets[0].getsockname()[1]
+                async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
+                    for message in _hello_messages():
+                        await ws.send(message)
+                    await ws.send(pack(control.REQUEST_METRIC, ["m", "r1"], {}))
+                    await ws.send(pack(control.VIEW_COMMAND, [], {}))
+                    await asyncio.sleep(0.5)
+                    early = list(handled)
+                    await asyncio.sleep(1.0)
+                    return early, list(handled)
+
+        early, late = _run(scenario())
+        assert early == [control.VIEW_COMMAND]
+        assert late == [control.VIEW_COMMAND, control.REQUEST_METRIC]

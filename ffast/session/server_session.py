@@ -96,6 +96,22 @@ def _metric_compute_pool() -> ThreadPoolExecutor:
     return _METRIC_COMPUTE_POOL
 
 
+# Metrics being computed, by cache key, over every connection: a second
+# request for one waits for the first's result instead of computing it again.
+_COMPUTING: dict = {}
+
+
+async def _compute_once(key, start):
+    """The result of ``start()`` (a future), shared with every request for
+    ``key`` made while it runs. A request that is cancelled (its page left)
+    stops waiting; the computation goes on for the others and the cache."""
+    future = _COMPUTING.get(key)
+    if future is None:
+        future = _COMPUTING[key] = start()
+        future.add_done_callback(lambda _: _COMPUTING.pop(key, None))
+    return await asyncio.shield(future)
+
+
 def _needs_prediction(metric_id) -> bool:
     """True when the metric needs a prediction; an unknown id is left to the
     compute path, which says why it failed."""
@@ -1343,11 +1359,10 @@ class ServerSession:
 
         if result is None and server_can_compute:
             try:
-                loop = asyncio.get_running_loop()
-                made = await loop.run_in_executor(
+                made = await _compute_once(key, lambda: asyncio.get_running_loop().run_in_executor(
                     _metric_compute_pool(),
                     self.env.data.generateMetric, metric_id, params, model, dataset,
-                )
+                ))
             except Exception as exc:
                 logger.error("REQUEST_METRIC compute failed %s: %s", metric_id, exc)
                 made = None

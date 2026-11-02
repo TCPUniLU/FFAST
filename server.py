@@ -302,26 +302,39 @@ async def _handler(
             else:
                 logger.debug("Unexpected text message from %s: %r", addr, message)
 
+    async def handle(event, args, kwargs, msg_id):
+        try:
+            if event == control.TIMING_PING:
+                if session.timing:
+                    timing.put_note(session.outbound, timing.pong(kwargs))
+            elif _may_dispatch(role, event):
+                await session.dispatch(
+                    event, args, kwargs, msg_id=msg_id if session.timing else None
+                )
+            else:
+                logger.debug(
+                    "READ_ONLY client %s sent mutating event %s — ignored",
+                    addr, event,
+                )
+        except Exception as exc:
+            logger.warning("Handling %s failed: %s", event, exc)
+            trace.record_error(f"handling a message failed: {exc!r}", exc)
+
+    # Metric requests run beside the queue: a metric can take a minute on a
+    # large dataset, and slider moves waited ~45 s behind them (2026-11-02).
+    # Their replies carry their own request id, so finishing out of order is
+    # fine; they still start in the order sent.
+    in_background: set[asyncio.Task] = set()
+
     async def handle_loop():
         # One message at a time, in the order received; None ends the loop.
         while (item := await received.get()) is not None:
-            event, args, kwargs, msg_id = item
-            try:
-                if event == control.TIMING_PING:
-                    if session.timing:
-                        timing.put_note(session.outbound, timing.pong(kwargs))
-                elif _may_dispatch(role, event):
-                    await session.dispatch(
-                        event, args, kwargs, msg_id=msg_id if session.timing else None
-                    )
-                else:
-                    logger.debug(
-                        "READ_ONLY client %s sent mutating event %s — ignored",
-                        addr, event,
-                    )
-            except Exception as exc:
-                logger.warning("Handling %s failed: %s", event, exc)
-                trace.record_error(f"handling a message failed: {exc!r}", exc)
+            if item[0] == control.REQUEST_METRIC:
+                task = asyncio.create_task(handle(*item))
+                in_background.add(task)
+                task.add_done_callback(in_background.discard)
+            else:
+                await handle(*item)
 
     async def send_loop():
         while True:
@@ -366,6 +379,10 @@ async def _handler(
             await handle_task
         except asyncio.CancelledError:
             pass
+        # Nobody will read their replies; a metric already computing still
+        # finishes in its thread and is cached for a reconnect.
+        for task in list(in_background):
+            task.cancel()
         send_task.cancel()
         try:
             await send_task

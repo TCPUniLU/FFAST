@@ -661,6 +661,34 @@ def test_request_metric_computes_on_cache_miss_and_replies_with_request_id():
     np.testing.assert_array_equal(recovered.values, np.array([3.0]))
 
 
+def test_the_same_metric_asked_twice_at_once_is_computed_once():
+    """Metric requests run in the background (2026-11-02), so two panels (or
+    two windows) can ask for the same metric while it is still computing."""
+    import time
+
+    class _SlowData(_FakeData):
+        def generateMetric(self, *args, **kwargs):
+            time.sleep(0.3)
+            return super().generateMetric(*args, **kwargs)
+
+    env = _FakeEnv(datasets={"ds1": object()}, cache={})
+    env.data = _SlowData(env.cache)
+
+    async def scenario():
+        a = ServerSession(env, asyncio.Queue())
+        b = ServerSession(env, asyncio.Queue())
+        await asyncio.gather(
+            a.dispatch("REQUEST_METRIC", ["ffast.gyradius", "m1"], {"dataset_fp": "ds1"}),
+            b.dispatch("REQUEST_METRIC", ["ffast.gyradius", "m2"], {"dataset_fp": "ds1"}),
+        )
+        return a.outbound.get_nowait(), b.outbound.get_nowait()
+
+    replies = [unpack(r) for r in _run(scenario())]
+    assert len(env.data.generate_metric_calls) == 1
+    assert [args[0] for _, args, _ in replies] == ["m1", "m2"]
+    assert all(unpack_metric_result(kwargs) is not None for _, _, kwargs in replies)
+
+
 def test_request_metric_needing_a_prediction_without_one_is_not_computed():
     """A panel that mixes a dataset metric with a prediction metric asks for
     both before a prediction is chosen; the prediction one replies "no data"
