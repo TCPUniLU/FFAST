@@ -29,10 +29,17 @@ Where the time went (handoff `docs/handoffs/2026-11-02-basic-errors-under-a-minu
    formula (Expression metric) whatever its origin, because FFAST's own
    evaluator runs a formula. **Outside code** is Python that did not ship with
    FFAST: a project's metric module, a plugin outside the `ffast` package. The
-   Try button follows the same rule.
+   Try button follows the same rule, which reverses ADR 0064 step 1 (Try in
+   the worker so a formula that uses up memory spares the server). A formula
+   that fails for any other reason fails the same way here as in a worker: the
+   error is caught and shown, and nothing else stops. A formula cannot crash
+   Python or run forever (fixed list of operations, no loops, length and depth
+   caps of ADR 0064).
 2. **Several steps run at the same time, as memory allows.** Before an
    in-server step starts, it reserves an estimate of the memory it will need
-   (its `memory_mb` hint, else twice the size of its array inputs). Steps start
+   (its `memory_mb` hint, else twice the size of its array inputs; for a
+   formula, one full-size array per operation in it, since each operation makes
+   a temporary as large as its largest input). Steps start
    while the reservations fit under 90% of the memory available when the
    first of them started. A step that does not fit **waits**; it is never
    refused. A step bigger than the whole budget runs alone. Steps on outside
@@ -86,6 +93,13 @@ Where the time went (handoff `docs/handoffs/2026-11-02-basic-errors-under-a-minu
 - A session with no outside code never starts a worker process.
 
 ## Considered and rejected
+
+- **Try stays in the worker; only saved formulas run in the server.** Each
+  Try would pay the shared-memory copy, a worker would boot for it with no
+  outside code, and the same formula would run in one place while tried and
+  another once saved. The worker's protection was weak anyway: in a Slurm job
+  the server and worker share one memory limit, and the process killed when it
+  runs out is usually the biggest, the server.
 
 - **All non-built-in metrics in workers** (by origin, not by kind of code).
   A user formula over 4 GB of forces would pay the shared-memory copy and wait
