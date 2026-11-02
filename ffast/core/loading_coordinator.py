@@ -18,6 +18,7 @@ hands the coordinator dialog callbacks for its remote-load orchestration.
 
 import logging
 import os
+import time
 
 import numpy as np
 from ase.calculators.calculator import PropertyNotImplementedError
@@ -117,9 +118,19 @@ class LoadingCoordinator:
             path, progress=lambda n: self._progress(taskID, f"Indexing {name}: {n:,} frames…"))
 
     def _readProgress(self, path, taskID):
-        """Report the one read of a load (ADR 0076) on its task."""
+        """Report the one read of a load (ADR 0076) on its task: at most once
+        a second, and always the end. Workers finish a batch every few
+        milliseconds; a message each filled the page's queue on MeluXina."""
         name = os.path.basename(path)
-        return lambda done, total: self._progress(taskID, f"Reading {name}: {done:,} of {total:,} frames…")
+        last = [None]
+
+        def report(done, total):
+            now = time.monotonic()
+            if done < total and last[0] is not None and now - last[0] < 1.0:
+                return
+            last[0] = now
+            self._progress(taskID, f"Reading {name}: {done:,} of {total:,} frames…")
+        return report
 
     def _resolveLoad(self, kind, path, typeName, popup=True):
         """Validate a load request and resolve the plugin class that serves it.

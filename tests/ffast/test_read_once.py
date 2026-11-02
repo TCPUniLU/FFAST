@@ -264,3 +264,19 @@ def test_the_coordinator_reports_reading_on_the_task():
     LoadingCoordinator(env)._readProgress("/x/shard_00.extxyz", 7)(900_000, 1_773_606)
     messages = [k["message"] for a, k in events if a[:2] == ("TASK_PROGRESS", 7)]
     assert messages == ["Reading shard_00.extxyz: 900,000 of 1,773,606 frames…"]
+
+
+def test_the_task_hears_at_most_once_a_second_and_always_the_end(monkeypatch):
+    """887 batches in 15 s flooded the page's queue (MeluXina, 2026-11-02)."""
+    import ffast.core.loading_coordinator as lc
+    clock = [100.0]
+    monkeypatch.setattr(lc.time, "monotonic", lambda: clock[0])
+    events = []
+    env = types.SimpleNamespace(datasets=types.SimpleNamespace(slice_numbers={}),
+                                eventPush=lambda *a, **k: events.append(k["message"]))
+    report = LoadingCoordinator(env)._readProgress("/x/shard_00.extxyz", 7)
+    for done in range(1, 888):
+        clock[0] += 0.017                     # 887 batches in about 15 s
+        report(done, 887)
+    assert 14 <= len(events) <= 17
+    assert events[-1] == "Reading shard_00.extxyz: 887 of 887 frames…"
