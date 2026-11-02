@@ -27,6 +27,7 @@ GOLDEN = {
     ("variable.extxyz", "energy", "forces"): "0a8df1815fa50e7387f87abfb2f44cb6",  # int64 energies
     ("variable.extxyz", "", ""): "0a8df1815fa50e7387f87abfb2f44cb6",
     ("columns_change.extxyz", None, None): "037b94e52d74f636412b42677fb20101",
+    ("forces_change.extxyz", None, None): "791a81814f073006e4a3e24f0bda770d",   # no forces at all
     ("plain.xyz", None, None): "94a08854db1569325cd84538a091a415",
 }
 REPO_GOLDEN = {
@@ -111,7 +112,7 @@ def test_a_fast_load_parses_no_chunk(files, chunk_loads, name):
     assert chunk_loads == []
 
 
-@pytest.mark.parametrize("name", ["columns_change.extxyz", "plain.xyz"])
+@pytest.mark.parametrize("name", ["forces_change.extxyz", "plain.xyz"])
 def test_an_ase_load_parses_each_frame_once(files, chunk_loads, name):
     loader = _load(files / name)
     loader.getFingerprint()
@@ -120,13 +121,23 @@ def test_an_ase_load_parses_each_frame_once(files, chunk_loads, name):
     assert len(chunk_loads) == 1          # all 2-3 frames fit one chunk
 
 
-def test_changed_columns_warn_and_load_with_ase(files, caplog):
+def test_changed_essential_columns_warn_and_load_with_ase(files, caplog):
     with caplog.at_level(logging.WARNING, logger="FFAST"):
-        loader = _load(files / "columns_change.extxyz")
+        loader = _load(files / "forces_change.extxyz")
     warned = [r.getMessage() for r in caplog.records if "Reading it with ASE" in r.getMessage()]
     assert len(warned) == 1
-    assert "Frame 2" in warned[0] and "magmoms" in warned[0]
-    assert loader.getFingerprint() == GOLDEN[("columns_change.extxyz", None, None)]
+    assert "Frame 2" in warned[0] and "forces" in warned[0]
+    assert loader.getFingerprint() == GOLDEN[("forces_change.extxyz", None, None)]
+
+
+def test_an_extra_column_in_some_frames_loads_fast_without_warning(files, caplog, chunk_loads):
+    with caplog.at_level(logging.WARNING, logger="FFAST"):
+        loader = _load(files / "columns_change.extxyz")
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert chunk_loads == []
+    assert "spin" in loader.availableFieldKeys()[1]
+    got = loader.getAtomField("spin")
+    assert np.isnan(got[0]).all() and np.isnan(got[1]).all() and got[2].tolist() == [0.5, -0.5]
 
 
 def test_plain_xyz_loads_with_ase_without_warning(files, caplog):

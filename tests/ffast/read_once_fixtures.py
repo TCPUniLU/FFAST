@@ -36,7 +36,8 @@ Properties=species:S:1:pos:R:3:forces:R:3:forces_mace:R:3:q:R:1 note="y" energy=
 Ar 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
 """
 
-# Frame 2 adds a column: the fast reader refuses, ASE reads it, with a warning.
+# Frame 2 adds a per-atom number (spin): the fast reader keeps it, with NaN
+# where a frame has none.
 COLUMNS_CHANGE = """2
 Properties=species:S:1:pos:R:3:forces:R:3 energy=-1.0
 H 0.0 0.0 0.0 0.1 0.0 0.0
@@ -46,7 +47,7 @@ Properties=species:S:1:pos:R:3:forces:R:3 energy=-1.1
 H 0.0 0.0 0.0 0.2 0.0 0.0
 H 0.0 0.0 0.75 -0.2 0.0 0.0
 2
-Properties=species:S:1:pos:R:3:forces:R:3:magmoms:R:1 energy=-1.2
+Properties=species:S:1:pos:R:3:forces:R:3:spin:R:1 energy=-1.2
 H 0.0 0.0 0.0 0.3 0.0 0.0 0.5
 H 0.0 0.0 0.76 -0.3 0.0 0.0 -0.5
 """
@@ -62,10 +63,26 @@ H 0.0 0.0 0.0
 H 0.0 0.0 0.75
 """
 
+# Frame 2 has no forces: the fast reader refuses, ASE reads it, with a warning.
+FORCES_CHANGE = """2
+Properties=species:S:1:pos:R:3:forces:R:3 energy=-1.0
+H 0.0 0.0 0.0 0.1 0.0 0.0
+H 0.0 0.0 0.74 -0.1 0.0 0.0
+2
+Properties=species:S:1:pos:R:3:forces:R:3 energy=-1.1
+H 0.0 0.0 0.0 0.2 0.0 0.0
+H 0.0 0.0 0.75 -0.2 0.0 0.0
+2
+Properties=species:S:1:pos:R:3 energy=-1.2
+H 0.0 0.0 0.0
+H 0.0 0.0 0.76
+"""
+
 FILES = {
     "uniform.extxyz": UNIFORM,
     "variable.extxyz": VARIABLE,
     "columns_change.extxyz": COLUMNS_CHANGE,
+    "forces_change.extxyz": FORCES_CHANGE,
     "plain.xyz": PLAIN,
 }
 

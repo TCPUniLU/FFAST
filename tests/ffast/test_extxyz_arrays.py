@@ -67,17 +67,49 @@ def test_lattice_rows_and_pbc(tmp_path):
     assert fa.values["energy"].dtype == np.float64           # -11 among floats
 
 
-def test_changed_columns_are_refused_with_the_frame(tmp_path):
+def test_an_extra_number_column_is_nan_where_a_frame_has_none(tmp_path):
+    fa = xa.read_frames(fi.scan(_write(tmp_path, "columns_change.extxyz")), workers=1)
+    m = fa.columns["spin"]
+    assert m.dtype == np.float64 and m.shape == (6,)
+    assert np.isnan(m[:4]).all() and m[4:].tolist() == [0.5, -0.5]
+    assert fa.columns["forces"].shape == (6, 3)
+
+
+def test_extra_columns_fill_across_batches(tmp_path, monkeypatch):
+    monkeypatch.setattr(xa, "MIN_BATCH", 1)
+    fa = xa.read_frames(fi.scan(_write(tmp_path, "columns_change.extxyz")), workers=1, batch=1)
+    m = fa.columns["spin"]
+    assert np.isnan(m[:4]).all() and m[4:].tolist() == [0.5, -0.5]
+
+
+def test_an_integer_extra_column_becomes_float_with_nan(tmp_path):
+    p = tmp_path / "ints.extxyz"
+    p.write_text("1\nProperties=species:S:1:pos:R:3 energy=1.0\nH 0 0 0\n"
+                 "1\nProperties=species:S:1:pos:R:3:tag:I:1 energy=2.0\nH 0 0 1 7\n")
+    fa = xa.read_frames(fi.scan(str(p)), workers=1)
+    assert fa.columns["tag"].dtype == np.float64
+    assert np.isnan(fa.columns["tag"][0]) and fa.columns["tag"][1] == 7
+
+
+def test_an_extra_column_that_changes_width_is_refused(tmp_path):
+    p = tmp_path / "wide.extxyz"
+    p.write_text("1\nProperties=species:S:1:pos:R:3:q:R:1 energy=1.0\nH 0 0 0 1\n"
+                 "1\nProperties=species:S:1:pos:R:3:q:R:2 energy=2.0\nH 0 0 1 1 2\n")
+    with pytest.raises(xa.PropertiesDiffer):
+        xa.read_frames(fi.scan(str(p)), workers=1)
+
+
+def test_changed_essential_columns_are_refused_with_the_frame(tmp_path):
     with pytest.raises(xa.PropertiesDiffer) as err:
-        xa.read_frames(fi.scan(_write(tmp_path, "columns_change.extxyz")), workers=1)
+        xa.read_frames(fi.scan(_write(tmp_path, "forces_change.extxyz")), workers=1)
     assert err.value.frame == 2
-    assert "magmoms" in str(err.value)
+    assert "forces" in str(err.value)
 
 
-def test_changed_columns_across_batches(tmp_path, monkeypatch):
+def test_changed_essential_columns_across_batches(tmp_path, monkeypatch):
     monkeypatch.setattr(xa, "MIN_BATCH", 1)
     with pytest.raises(xa.PropertiesDiffer) as err:
-        xa.read_frames(fi.scan(_write(tmp_path, "columns_change.extxyz")), workers=1, batch=1)
+        xa.read_frames(fi.scan(_write(tmp_path, "forces_change.extxyz")), workers=1, batch=1)
     assert err.value.frame == 2
 
 

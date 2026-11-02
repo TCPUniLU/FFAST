@@ -44,13 +44,15 @@ class PropertiesDiffer(NotFast):
 
 @dataclass
 class FrameArrays:
-    properties: str
+    properties: str               # frame 0's Properties=, for messages
+    essential: tuple              # (name, type, count) of the columns every frame must list
+    extras: dict                  # name -> (type, count) of per-atom numbers a frame may lack
     counts: np.ndarray            # (N,) int64
     numbers: np.ndarray           # (atoms,) int64
     positions: np.ndarray         # (atoms, 3) float64
     cells: np.ndarray             # (N, 3, 3) float64
     pbc: np.ndarray               # (N, 3) bool
-    columns: dict = field(default_factory=dict)   # Properties name -> (atoms,) or (atoms, k)
+    columns: dict = field(default_factory=dict)   # Properties name -> (atoms,) or (atoms, k); NaN where a frame lacks an extra
     values: dict = field(default_factory=dict)    # header key -> (N,), numeric in every frame
     first_frame: int = 0          # where this batch starts in the file
 
@@ -101,6 +103,46 @@ def _layout(properties):
     return layout, col
 
 
+def _is_extra(name, kind, n):
+    """A per-atom number nothing in the loader needs (a Dataset Field at most):
+    a frame may lack it. Elements, positions, forces and every wider column
+    must be listed by every frame."""
+    return n == 1 and kind in "RI" and name not in ("species", "Z", "pos")
+
+
+def _signature(layout):
+    """((name, type, count) every frame must list, {name: (type, count)} it may)."""
+    essential = tuple((name, kind, n) for name, kind, _, n in layout if not _is_extra(name, kind, n))
+    extras = {name: (kind, n) for name, kind, _, n in layout if _is_extra(name, kind, n)}
+    return essential, extras
+
+
+def _merge_extras(seen, extras, frame, first, props):
+    """Add a frame's extras to ``seen``; the same name with another type is a different file."""
+    for name, spec in extras.items():
+        if seen.setdefault(name, spec) != spec:
+            raise PropertiesDiffer(frame, first, props)
+
+
+def _stack(parts, atoms):
+    """Columns of consecutive runs, one array per name. A run without the
+    column gets NaN (as float64), so the gap is told apart from a number."""
+    names = {}
+    for cols in parts:
+        names.update(dict.fromkeys(cols))
+    out = {}
+    for name in names:
+        present = [cols[name] for cols in parts if name in cols]
+        if len(present) == len(parts):
+            out[name] = np.concatenate(present) if len(parts) > 1 else present[0]
+            continue
+        tail = present[0].shape[1:]
+        out[name] = np.concatenate([
+            cols[name].astype(np.float64) if name in cols else np.full((n,) + tail, np.nan)
+            for cols, n in zip(parts, atoms)])
+    return out
+
+
 def _cell(raw):
     toks = _TOKENS.findall(raw)
     if len(toks) != 9:
@@ -120,13 +162,49 @@ def _pbc(raw):
     return flags
 
 
-def parse_block(data, first_frame=0):
-    """Parse whole frames held in ``data`` (bytes)."""
+def _parse_atoms(atom_lines, counts, layout, ncol, first_frame):
+    """Elements, positions and the other columns of one run of frames that share a layout."""
     from ase.data import atomic_numbers
 
+    tokens = b" ".join(atom_lines).split()
+    total = sum(counts)
+    if len(tokens) != total * ncol:
+        raise NotFast(f"frames {first_frame:,}+: atom lines do not have {ncol} columns each")
+    table = np.array(tokens).reshape(total, ncol) if total else np.empty((0, ncol), dtype="S1")
+
+    columns, numbers, positions = {}, None, None
+    for name, kind, col, n in layout:
+        block = table[:, col:col + n]
+        if name == "species":
+            symbols, inverse = np.unique(block[:, 0], return_inverse=True)
+            try:
+                z = np.array([atomic_numbers[s.decode().capitalize()] for s in symbols], dtype=np.int64)
+            except KeyError as exc:
+                raise NotFast(f"unknown element {exc}") from None
+            numbers = z[inverse.reshape(-1)] if total else np.empty(0, dtype=np.int64)
+            continue
+        arr = block.astype(np.float64 if kind == "R" else np.int32)
+        arr = arr[:, 0] if n == 1 else arr
+        if name == "pos":
+            positions = np.ascontiguousarray(arr, dtype=np.float64)
+        elif name == "Z" and numbers is None:
+            numbers = arr.astype(np.int64)
+        else:
+            columns[name] = np.ascontiguousarray(arr)
+    return numbers, positions, columns
+
+
+def parse_block(data, first_frame=0):
+    """Parse whole frames held in ``data`` (bytes).
+
+    Frames may list different per-atom numbers (``_is_extra``); the others
+    must match frame 0's."""
     lines = data.split(b"\n")
-    counts, rows, cells, pbcs, atom_lines = [], [], [], [], []
-    properties = None
+    counts, rows, cells, pbcs = [], [], [], []
+    runs = []                     # [props, layout, ncol, atom_lines, counts] per stretch of one layout
+    layouts = {}                  # props -> (layout, ncol, essential, extras)
+    first_props = first_essential = None
+    seen_extras = {}
     i, n_lines = 0, len(lines)
     while i < n_lines:
         head = lines[i].strip()
@@ -154,43 +232,33 @@ def parse_block(data, first_frame=0):
                     row[key] = num
         if props is None:
             raise NotFast("no Properties= in the header (plain xyz)")
-        if properties is None:
-            properties = props
-        elif props != properties:
-            raise PropertiesDiffer(first_frame + len(counts), properties, props)
+        if props not in layouts:
+            layout, ncol = _layout(props)
+            essential, extras = _signature(layout)
+            frame = first_frame + len(counts)
+            if first_props is None:
+                first_props, first_essential = props, essential
+            elif essential != first_essential:
+                raise PropertiesDiffer(frame, first_props, props)
+            _merge_extras(seen_extras, extras, frame, first_props, props)
+            layouts[props] = (layout, ncol)
+        if not runs or runs[-1][0] != props:
+            runs.append([props, *layouts[props], [], []])
+        runs[-1][3].extend(lines[i + 2:i + 2 + n])
+        runs[-1][4].append(n)
         counts.append(n)
         rows.append(row)
         cells.append(cell if cell is not None else np.zeros((3, 3)))
         pbcs.append(pbc if pbc is not None else [cell is not None] * 3)
-        atom_lines.extend(lines[i + 2:i + 2 + n])
         i += 2 + n
 
-    layout, ncol = _layout(properties)
-    tokens = b" ".join(atom_lines).split()
-    total = sum(counts)
-    if len(tokens) != total * ncol:
-        raise NotFast(f"frames {first_frame:,}+: atom lines do not have {ncol} columns each")
-    table = np.array(tokens).reshape(total, ncol) if total else np.empty((0, ncol), dtype="S1")
-
-    columns, numbers, positions = {}, None, None
-    for name, kind, col, n in layout:
-        block = table[:, col:col + n]
-        if name == "species":
-            symbols, inverse = np.unique(block[:, 0], return_inverse=True)
-            try:
-                z = np.array([atomic_numbers[s.decode().capitalize()] for s in symbols], dtype=np.int64)
-            except KeyError as exc:
-                raise NotFast(f"unknown element {exc}") from None
-            numbers = z[inverse.reshape(-1)] if total else np.empty(0, dtype=np.int64)
-            continue
-        arr = block.astype(np.float64 if kind == "R" else np.int32)
-        arr = arr[:, 0] if n == 1 else arr
-        if name == "pos":
-            positions = np.ascontiguousarray(arr, dtype=np.float64)
-        elif name == "Z" and numbers is None:
-            numbers = arr.astype(np.int64)
-        else:
-            columns[name] = np.ascontiguousarray(arr)
+    parsed, done = [], 0
+    for props, layout, ncol, atom_lines, run_counts in runs:
+        parsed.append(_parse_atoms(atom_lines, run_counts, layout, ncol, first_frame + done))
+        done += len(run_counts)
+    numbers = np.concatenate([p[0] for p in parsed]) if len(parsed) > 1 else parsed[0][0]
+    positions = np.concatenate([p[1] for p in parsed]) if len(parsed) > 1 else parsed[0][1]
+    columns = _stack([p[2] for p in parsed], [len(p[0]) for p in parsed])
 
     keys = set(rows[0]) if rows else set()
     for row in rows[1:]:
@@ -198,7 +266,9 @@ def parse_block(data, first_frame=0):
     values = {k: np.array([row[k] for row in rows]) for k in keys}
 
     return FrameArrays(
-        properties=properties,
+        properties=first_props,
+        essential=first_essential,
+        extras=seen_extras,
         counts=np.array(counts, dtype=np.int64),
         numbers=numbers,
         positions=positions.reshape(-1, 3),
@@ -226,14 +296,19 @@ def join(parts):
         keys &= p.values.keys()
     def cat(arrs):
         return np.concatenate(arrs) if len(arrs) > 1 else arrs[0]
+    extras = {}
+    for p in parts:
+        extras.update(p.extras)
     return FrameArrays(
         properties=first.properties,
+        essential=first.essential,
+        extras=extras,
         counts=cat([p.counts for p in parts]),
         numbers=cat([p.numbers for p in parts]),
         positions=cat([p.positions for p in parts]),
         cells=cat([p.cells for p in parts]),
         pbc=cat([p.pbc for p in parts]),
-        columns={k: cat([p.columns[k] for p in parts]) for k in first.columns},
+        columns=_stack([p.columns for p in parts], [len(p.numbers) for p in parts]),
         values={k: cat([p.values[k] for p in parts]) for k in keys},
     )
 
@@ -268,9 +343,13 @@ def read_frames(index, *, workers=None, batch=None, progress=None):
                 os.path.basename(index.path), f"{n:,}", len(jobs), workers)
     parts = []
 
+    seen_extras = {}
+
     def keep(part):
-        if parts and part.properties != parts[0].properties:
+        if parts and part.essential != parts[0].essential:
             raise PropertiesDiffer(part.first_frame, parts[0].properties, part.properties)
+        _merge_extras(seen_extras, part.extras, part.first_frame, parts[0].properties if parts else part.properties,
+                      part.properties)
         parts.append(part)
         if progress:
             progress(part.first_frame + len(part), n)
