@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+import os
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -76,7 +77,18 @@ class CacheKey:
     input_fingerprints: frozenset
 
 
-DEFAULT_MAX_BYTES = 1 << 30   # 1 GiB; change here, there is no setting (ADR 0061)
+def _memory_bytes() -> int:
+    """This machine's memory, or 0 when it cannot be read."""
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (AttributeError, OSError, ValueError):
+        return 0
+
+
+# A quarter of the machine's memory, at least 1 GiB; change here, there is no
+# setting (ADR 0061). A fixed 1 GiB could not keep the 4 GB force difference
+# of 1.77M structures, so every force metric recomputed it (2026-11-02).
+DEFAULT_MAX_BYTES = max(1 << 30, _memory_bytes() // 4)
 
 
 class MetricCache:
@@ -99,10 +111,15 @@ class MetricCache:
         fn: Callable,
         compute_params: dict[str, Any],
         resolved_inputs: dict[str, Any],
+        known: dict[str, Any] | None = None,
     ) -> CacheKey:
+        """``known`` gives inputs a fingerprint already (a source name, a
+        dependency's key); the rest are hashed by content."""
+        known = known or {}
         impl_hash = function_hash(fn)
         input_fps = frozenset(
-            (k, _value_fingerprint(v)) for k, v in resolved_inputs.items()
+            (k, known[k] if k in known else _value_fingerprint(v))
+            for k, v in resolved_inputs.items()
         )
         return CacheKey(
             metric_id=metric_id,

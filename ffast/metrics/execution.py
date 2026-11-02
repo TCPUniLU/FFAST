@@ -58,9 +58,12 @@ class RawInput:
     """A metric input bound to a concrete sourced value.
 
     ``value`` is a numpy array, or ``None`` for an optional or unavailable input.
+    ``identity`` names where it came from, when the source knows (see
+    ``InputSource.identity``); the cache key then uses the name, not the value.
     """
 
     value: Any
+    identity: str | None = None
 
 
 Binding = DepInput | RawInput
@@ -109,6 +112,13 @@ class InputSource(ABC):
     @abstractmethod
     def get(self, metric_id: str, local_key: str, ref: str) -> tuple[bool, Any]:
         ...
+
+    def identity(self, ref: str) -> str | None:
+        """A name that stands for ``ref``'s value as long as it is the same
+        value, or None. A named input is keyed in the result cache by its
+        name instead of a hash of its content: hashing the forces of 1.77M
+        structures (4 GB) took ~18 s per metric (2026-11-02)."""
+        return None
 
 
 class FlatInputSource(InputSource):
@@ -193,14 +203,16 @@ def build_execution_plan(
                 if not optional and failure is None:
                     failure = f"Input '{local_key}' (ref '{ref}') is unavailable for this dataset"
             else:
-                bindings[local_key] = RawInput(np.asarray(value))
+                bindings[local_key] = RawInput(np.asarray(value), source.identity(ref))
 
         # Bare optional inputs — declared in optional_inputs but not in inputs.
         for opt_key in schema.optional_inputs:
             if opt_key not in bindings:
                 found, value = source.get(metric_id, opt_key, opt_key)
+                present = found and value is not None
                 bindings[opt_key] = RawInput(
-                    np.asarray(value) if (found and value is not None) else None
+                    np.asarray(value) if present else None,
+                    source.identity(opt_key) if present else None,
                 )
 
         compute_params = {
@@ -247,6 +259,9 @@ def run_plan(
     function output or a ``MetricFailure``.
     """
     results: dict[str, MetricResult | MetricFailure] = {}
+    # Each step's cache key: a step reading another's output is keyed by that
+    # step's key, not by hashing the output (the 4 GB force difference).
+    keys: dict[str, Any] = {}
 
     for step in plan.steps:
         metric_id = step.metric_id
@@ -261,6 +276,7 @@ def run_plan(
 
         # Assemble kwargs from raw values + already-computed dependency outputs.
         kwargs: dict[str, Any] = {}
+        known: dict[str, Any] = {}        # fingerprints that need no hashing
         warnings: list[str] = []          # a dependency's warnings are passed on
         dep_failure: tuple[str, MetricFailure] | None = None
         for key, binding in step.bindings.items():
@@ -270,9 +286,12 @@ def run_plan(
                     dep_failure = (binding.metric_id, dep)
                     break
                 kwargs[key] = dep.values
+                known[key] = ("metric", keys[binding.metric_id])
                 warnings.extend(dep.warnings)
             else:
                 kwargs[key] = binding.value
+                if binding.identity is not None:
+                    known[key] = ("source", binding.identity)
 
         if dep_failure is not None:
             dep_id, dep = dep_failure
@@ -283,7 +302,8 @@ def run_plan(
             )
             continue
 
-        cache_key = cache.make_key(metric_id, fn, step.compute_params, kwargs)
+        cache_key = keys[metric_id] = cache.make_key(
+            metric_id, fn, step.compute_params, kwargs, known)
         cached = cache.get(cache_key)
         if cached is not None:
             results[metric_id] = cached

@@ -118,6 +118,21 @@ class _ResolverSource(InputSource):
     def get(self, metric_id, local_key, ref):
         return True, self._resolver.resolve(ref, model=self._model, dataset=self._dataset)
 
+    def identity(self, ref):
+        """``ref`` of this loaded dataset (and prediction, for a prediction
+        input): their arrays do not change once loaded. A subset that follows
+        the zoom changes its frames under one fingerprint, and a selection
+        changes with the plot, so neither is named."""
+        if ref == "selection.indices":
+            return None
+        dataset_fp = getattr(self._dataset, "fingerprint", None)
+        if not dataset_fp or getattr(self._dataset, "isSubDataset", True):
+            return None
+        if not ref.startswith("prediction"):
+            return f"{ref}|{dataset_fp}"
+        model_fp = getattr(self._model, "fingerprint", None)
+        return f"{ref}|{dataset_fp}|{model_fp}" if model_fp else None
+
 
 class InputResolver:
     def __init__(self, env):

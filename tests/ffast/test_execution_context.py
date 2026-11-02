@@ -285,3 +285,70 @@ def test_valid_diamond_dag_produces_correct_topological_order():
     results = run_plan(plan, r, MetricCache(), _direct_run_fn([]))
     assert isinstance(results["d.root"], MetricResult)
     assert float(results["d.root"].values) == pytest.approx(4.0)
+
+
+# ── inputs keyed by where they came from (2026-11-02) ────────────────────────
+# On 1.77M structures each force metric spent ~18 s hashing 4 GB of forces
+# for its cache key. A source that knows where an input comes from (this ref
+# of this dataset and prediction) names it instead, and a step reading
+# another metric's output is keyed by that metric's key, not its values.
+
+class _NamedSource(FlatInputSource):
+    def identity(self, ref):
+        return f"{ref}@ds"
+
+
+def _no_hashing(monkeypatch):
+    import ffast.metrics.cache as cache_module
+
+    def refuse(arr):
+        raise AssertionError("an input was hashed by content")
+
+    monkeypatch.setattr(cache_module, "_array_fingerprint", refuse)
+
+
+def test_named_inputs_and_dependencies_are_not_hashed(registry, monkeypatch):
+    _no_hashing(monkeypatch)
+    ref, pred = np.zeros((4, 3)), np.ones((4, 3))
+    cache, ran = MetricCache(), []
+    for mid in ("t.mae", "t.rmse"):
+        plan = build_execution_plan(registry, mid, {}, _NamedSource({"reference": ref, "predicted": pred}))
+        out = run_plan(plan, registry, cache, _direct_run_fn(ran))
+        assert isinstance(out[mid], MetricResult)
+    assert ran == ["t.diff", "t.mae", "t.rmse"]       # the difference is computed once
+
+
+def test_a_named_input_is_trusted_by_its_name(registry):
+    """The name stands for the value: the same name means the same input."""
+    cache, ran = MetricCache(), []
+    for value in (np.zeros((4, 3)), np.ones((4, 3))):
+        source = _NamedSource({"reference": value, "predicted": value})
+        run_plan(build_execution_plan(registry, "t.diff", {}, source), registry, cache, _direct_run_fn(ran))
+    assert ran == ["t.diff"]
+
+
+def test_an_unnamed_input_is_still_hashed_by_content(registry):
+    cache, ran = MetricCache(), []
+    for value in (np.zeros((4, 3)), np.ones((4, 3))):
+        source = FlatInputSource({"reference": value, "predicted": value})
+        run_plan(build_execution_plan(registry, "t.diff", {}, source), registry, cache, _direct_run_fn(ran))
+    assert ran == ["t.diff", "t.diff"]
+
+
+def test_the_server_names_inputs_of_a_loaded_dataset_and_prediction():
+    from types import SimpleNamespace
+    from ffast.metrics.input_resolver import _ResolverSource
+
+    loaded = SimpleNamespace(fingerprint="ds", isSubDataset=False)
+    model = SimpleNamespace(fingerprint="m")
+    source = _ResolverSource(None, model, loaded)
+    assert source.identity("reference.forces") == "reference.forces|ds"
+    assert source.identity("prediction.forces") == "prediction.forces|ds|m"
+    assert source.identity("offsets") == "offsets|ds"
+    # a plot selection changes under the same name
+    assert source.identity("selection.indices") is None
+    # a subset that follows the zoom changes its frames under the same fingerprint
+    view = SimpleNamespace(fingerprint="sub", isSubDataset=True)
+    assert _ResolverSource(None, model, view).identity("reference.forces") is None
+    # a prediction input without a known prediction
+    assert _ResolverSource(None, None, loaded).identity("prediction.forces") is None

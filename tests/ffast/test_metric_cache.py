@@ -61,6 +61,10 @@ def test_clear_resets_the_total():
     assert cache.get(_key("b")) is not None and cache.get(_key("a")) is None
 
 
-def test_the_default_limit_is_one_gibibyte():
-    from ffast.metrics.cache import DEFAULT_MAX_BYTES
-    assert DEFAULT_MAX_BYTES == 1 << 30
+def test_the_default_limit_is_a_quarter_of_memory_and_at_least_one_gibibyte():
+    """A 1 GiB limit could not keep the 4 GB force difference of 1.77M
+    structures, so every force metric recomputed it (2026-11-02)."""
+    from ffast.metrics.cache import DEFAULT_MAX_BYTES, _memory_bytes
+    total = _memory_bytes()
+    assert DEFAULT_MAX_BYTES == max(1 << 30, total // 4 if total else 0)
+    assert MetricCache()._max_bytes == DEFAULT_MAX_BYTES
