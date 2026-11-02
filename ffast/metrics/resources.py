@@ -5,7 +5,8 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import Callable
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Callable
 
 _MIB = 2**20
 
@@ -99,3 +100,42 @@ class MemoryGate:
         with self._cond:
             self._reserved -= nbytes
             self._cond.notify_all()
+
+
+# ── one chunk pool for the whole server (ADR 0079 decision 4) ────────────────
+
+_CHUNK_POOL: ThreadPoolExecutor | None = None
+_CHUNK_POOL_LOCK = threading.Lock()
+
+
+def chunk_pool() -> ThreadPoolExecutor:
+    """The threads chunked built-ins share: the cores the job may use, at most
+    32. Step threads never run in it, so a step waiting for its chunks cannot
+    block them."""
+    global _CHUNK_POOL
+    with _CHUNK_POOL_LOCK:
+        if _CHUNK_POOL is None:
+            _CHUNK_POOL = ThreadPoolExecutor(
+                max_workers=min(32, cores()), thread_name_prefix="ffast-chunk")
+        return _CHUNK_POOL
+
+
+def map_chunks(fn: Callable[[Any], Any], starts) -> list:
+    """``[fn(start) for start in starts]`` on the chunk pool, results in the
+    order of ``starts``. Stops at the next result once the step's data was
+    deleted (``stop.check``), cancelling chunks not yet started. Call it from a
+    step thread, never from inside a chunk."""
+    from ffast.metrics import stop
+
+    pool = chunk_pool()
+    futures = [pool.submit(fn, s) for s in starts]
+    try:
+        out = []
+        for f in futures:
+            stop.check()
+            out.append(f.result())
+        return out
+    except BaseException:
+        for f in futures:
+            f.cancel()
+        raise

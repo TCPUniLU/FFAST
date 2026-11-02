@@ -80,8 +80,15 @@ class ServerExecutor(MetricExecutor):
             return self._workers_executor
 
     def start(self) -> None:
-        """Warm the slow imports on a thread and boot a worker if the registry
-        holds outside code. Returns at once."""
+        """Hold BLAS/OpenMP to one thread (the chunk pool is the server's
+        parallelism), warm the slow imports on a thread and boot a worker if
+        the registry holds outside code. Returns at once."""
+        try:
+            import threadpoolctl
+            threadpoolctl.threadpool_limits(1)
+        except Exception:
+            log.warning("threadpoolctl is not available; BLAS threads are not limited")
+
         def warm() -> None:
             from ffast.metrics.pool import _preload
             _preload()

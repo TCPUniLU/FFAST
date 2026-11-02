@@ -2,6 +2,7 @@ import numpy as np
 from jaxtyping import Float
 
 from ffast.metrics import metric, units, inputs as I
+from ffast.metrics.resources import map_chunks
 from ffast.metrics.segments import framesOrOne, segmentSums
 from ffast.metrics.signature import Ref
 
@@ -109,40 +110,47 @@ def force_net_residual(
 
 PARITY_BINS = 300
 PARITY_OUTLIERS = 50_000
-_CHUNK = 10_000_000   # components per pass: bounds the temporary arrays
+_CHUNK = 2_000_000   # components per chunk: bounds each thread's temporary arrays
 
 
 def _components(true, pred):
     return np.asarray(true, dtype=float).ravel(), np.asarray(pred, dtype=float).ravel()
 
 
-def _finite_pairs(t, p, chunk):
-    for start in range(0, t.size, chunk):
-        a, b = t[start:start + chunk], p[start:start + chunk]
-        keep = np.isfinite(a) & np.isfinite(b)
-        yield a[keep], b[keep]
-
-
 def parity_density(true, pred, bins=PARITY_BINS, chunk=_CHUNK):
     """``(bins + 1, bins)``: row 0 the bin centres of both axes, rows 1.. the
     number of components in each bin, [predicted bin][true bin]. A component
-    with a NaN on either side is left out."""
+    with a NaN on either side is left out. Chunks run on the shared chunk pool."""
     t, p = _components(true, pred)
-    lo, hi = np.inf, -np.inf
-    for a, b in _finite_pairs(t, p, chunk):
-        if a.size:
-            lo = min(lo, a.min(), b.min())
-            hi = max(hi, a.max(), b.max())
+    starts = range(0, t.size, chunk)
+
+    def finite(start):
+        a, b = t[start:start + chunk], p[start:start + chunk]
+        keep = np.isfinite(a) & np.isfinite(b)
+        return a[keep], b[keep]
+
+    def extent(start):
+        a, b = finite(start)
+        return (min(a.min(), b.min()), max(a.max(), b.max())) if a.size else None
+
+    ends = [e for e in map_chunks(extent, starts) if e is not None]
+    lo = min((e[0] for e in ends), default=np.inf)
+    hi = max((e[1] for e in ends), default=-np.inf)
     if not np.isfinite(lo):
         lo, hi = 0.0, 1.0
     if hi <= lo:
         hi = lo + 1.0
     width = (hi - lo) / bins
-    counts = np.zeros(bins * bins, dtype=np.int64)
-    for a, b in _finite_pairs(t, p, chunk):
+
+    def count(start):
+        a, b = finite(start)
         col = np.minimum(((a - lo) / width).astype(np.int64), bins - 1)
         row = np.minimum(((b - lo) / width).astype(np.int64), bins - 1)
-        counts += np.bincount(row * bins + col, minlength=bins * bins)
+        return np.bincount(row * bins + col, minlength=bins * bins)
+
+    counts = np.zeros(bins * bins, dtype=np.int64)
+    for part in map_chunks(count, starts):
+        counts += part
     grid = np.empty((bins + 1, bins))
     grid[0] = lo + (np.arange(bins) + 0.5) * width
     grid[1:] = counts.reshape(bins, bins)
@@ -152,16 +160,20 @@ def parity_density(true, pred, bins=PARITY_BINS, chunk=_CHUNK):
 def worst_components(true, pred, offsets, k=PARITY_OUTLIERS, chunk=_CHUNK):
     """The ``k`` components furthest from the diagonal, worst first, one row
     each: true, predicted, structure, atom within it, component (0-2 for
-    x-z). A component with a NaN on either side is left out."""
+    x-z). A component with a NaN on either side is left out. Chunks run on the
+    shared chunk pool."""
     t, p = _components(true, pred)
-    picked, errors = [], []
-    for start in range(0, t.size, chunk):
+
+    def worst(start):
         err = np.abs(p[start:start + chunk] - t[start:start + chunk])
         err[~np.isfinite(err)] = -1.0
         idx = np.argpartition(-err, k - 1)[:k] if err.size > k else np.arange(err.size)
         idx = idx[err[idx] >= 0]
-        picked.append(idx + start)
-        errors.append(err[idx])
+        return idx + start, err[idx]
+
+    parts = map_chunks(worst, range(0, t.size, chunk))
+    picked = [i for i, _ in parts]
+    errors = [e for _, e in parts]
     idx = np.concatenate(picked) if picked else np.zeros(0, dtype=np.int64)
     err = np.concatenate(errors) if errors else np.zeros(0)
     if idx.size > k:
@@ -181,6 +193,7 @@ def worst_components(true, pred, offsets, k=PARITY_OUTLIERS, chunk=_CHUNK):
         f"{PARITY_BINS}x{PARITY_BINS} grid. Row 0 holds the bin centres."
     ),
     unit=units.force,
+    hints={"memory_mb": 4096},
 )
 def force_parity_density(
     reference: Ref[I.reference_forces],
@@ -196,6 +209,7 @@ def force_parity_density(
         "true, predicted, structure, atom, component."
     ),
     unit=units.force,
+    hints={"memory_mb": 4096},
 )
 def force_parity_outliers(
     reference: Ref[I.reference_forces],
