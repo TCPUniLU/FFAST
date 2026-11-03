@@ -431,3 +431,38 @@ def test_every_nth_frame_of_another_format_comes_from_ase(tmp_path):
     path = tmp_path / "d.traj"
     ase.io.write(path, _frames(7))
     _same_all(fi.read_every(path, 3), ase.io.read(path, index=slice(0, None, 3)))
+
+
+# ── atom counts (ADR 0083) ──────────────────────────────────────────────────
+
+def test_the_scan_keeps_every_frames_atom_count(tmp_path):
+    path = _write(tmp_path)
+    assert fi.scan(path).atom_counts().tolist() == [len(a) for a in ase.io.read(path, index=":")]
+
+
+def test_an_index_saved_without_counts_is_scanned_again(tmp_path, monkeypatch):
+    path = _write(tmp_path)
+    full = fi.scan(path)
+    fi.save_cached(fi.FrameIndex(path, full.starts, full.size, full.mtime_ns))   # as saved before counts
+    assert fi.load_cached(path) is None
+    scans = _CountScans(monkeypatch)
+    assert np.array_equal(fi.get_frame_index(path).counts, full.counts)
+    assert scans.calls == 1
+    assert np.array_equal(fi.load_cached(path).counts, full.counts)
+
+
+def test_an_index_without_counts_reads_them_from_the_file(tmp_path):
+    path = _write(tmp_path)
+    full = fi.scan(path)
+    old = fi.FrameIndex(path, full.starts, full.size, full.mtime_ns)
+    assert np.array_equal(old.atom_counts(), full.counts)
+    assert np.array_equal(old.every(3).atom_counts(), full.counts[::3])
+
+
+def test_counts_of_a_file_with_windows_line_endings(tmp_path):
+    path = _write(tmp_path)
+    p = tmp_path / "crlf.extxyz"
+    p.write_bytes(open(path, "rb").read().replace(b"\n", b"\r\n"))
+    index = fi.scan(str(p))
+    assert np.array_equal(fi.FrameIndex(str(p), index.starts, index.size, index.mtime_ns).atom_counts(),
+                          index.counts)

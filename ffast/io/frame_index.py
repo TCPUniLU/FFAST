@@ -38,16 +38,34 @@ def is_indexable(path):
 
 
 class FrameIndex:
-    """`starts` has N+1 entries; the last is where the last frame ends."""
+    """`starts` has N+1 entries; the last is where the last frame ends.
+    `counts` (atoms per frame) is None for an index saved before it was kept."""
 
-    def __init__(self, path, starts, size, mtime_ns):
+    def __init__(self, path, starts, size, mtime_ns, counts=None):
         self.path = str(path)
         self.starts = np.asarray(starts, dtype=np.int64)
         self.size = int(size)
         self.mtime_ns = int(mtime_ns)
+        self.counts = None if counts is None else np.asarray(counts, dtype=np.int64)
 
     def __len__(self):
         return len(self.starts) - 1
+
+    def atom_counts(self):
+        """Atoms per frame, without parsing the frames: from the scan, or read
+        from each frame's first line (and saved) for an older index."""
+        if self.counts is None:
+            self.counts = _read_counts(self.path, self.starts[:-1])
+            save_cached(self)
+        return self.counts
+
+    def spans(self):
+        """(starts, ends): where each frame's bytes begin and end."""
+        return self.starts[:-1], self.starts[1:]
+
+    def every(self, step):
+        """Every ``step``-th frame, as an index of its own (itself for 1)."""
+        return self if step <= 1 else StridedFrameIndex(self, step)
 
     def read(self, start=0, stop=None, step=1):
         import ase.io
@@ -79,6 +97,56 @@ class FrameIndex:
         return self.read(i, i + 1)[0]
 
 
+class StridedFrameIndex:
+    """Every ``step``-th frame of a FrameIndex. Frame i here is frame
+    i * step of the file; reads and counts answer in these numbers."""
+
+    def __init__(self, base, step):
+        self.base = base
+        self.step = int(step)
+        self.path = base.path
+        self._counts = None
+
+    def __len__(self):
+        return -(-len(self.base) // self.step)
+
+    def atom_counts(self):
+        """Only these frames' counts are read when the index has none."""
+        if self.base.counts is not None:
+            return self.base.counts[::self.step]
+        if self._counts is None:
+            self._counts = _read_counts(self.path, self.base.starts[:-1][::self.step])
+        return self._counts
+
+    def spans(self):
+        starts, ends = self.base.spans()
+        return starts[::self.step], ends[::self.step]
+
+    def read(self, start=0, stop=None, step=1):
+        start, stop, step = slice(start, stop, step).indices(len(self))
+        return self.base.read(start * self.step, stop * self.step, step * self.step)
+
+    def read_one(self, i):
+        n = len(self)
+        if i < 0:
+            i += n
+        if not 0 <= i < n:
+            raise IndexError(f"Frame {i} out of range {n}")
+        return self.base.read_one(i * self.step)
+
+
+def _read_counts(path, starts):
+    """The number on the first line of the frames starting at ``starts``."""
+    import mmap
+    out = np.empty(len(starts), dtype=np.int64)
+    if len(out) == 0:
+        return out
+    with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+        for i, s in enumerate(starts.tolist()):
+            out[i] = int(mm[s:mm.find(b"\n", s)])
+    return out
+
+
 def _more_frames_follow(f):
     """Whether anything but blank lines is left (reads until the first such line)."""
     for line in f:
@@ -91,7 +159,7 @@ def scan(path, *, progress=None, should_stop=None):
     """One pass over the file. A blank line between frames is an error (ASE
     would silently drop the rest); trailing blank lines are fine."""
     st = os.stat(path)
-    starts = []
+    starts, counts = [], []
     line_no = 0
     with open(path, "rb", buffering=1 << 20) as f:
         pos = 0
@@ -115,6 +183,7 @@ def scan(path, *, progress=None, should_stop=None):
                     f"expected an atom count, found {text.decode(errors='replace')!r}.") from None
             header = line_no
             starts.append(pos)
+            counts.append(natoms)
             got = -1
             for _ in range(natoms + 1):
                 if not f.readline():
@@ -129,7 +198,7 @@ def scan(path, *, progress=None, should_stop=None):
                     raise FrameIndexCancelled(path)
                 progress(len(starts))
     starts.append(pos)
-    return FrameIndex(path, starts, st.st_size, st.st_mtime_ns)
+    return FrameIndex(path, starts, st.st_size, st.st_mtime_ns, counts)
 
 
 def cache_file(path):
@@ -143,7 +212,12 @@ def load_cached(path):
         with np.load(cache_file(path)) as z:
             if int(z["size"]) != st.st_size or int(z["mtime_ns"]) != st.st_mtime_ns:
                 return None
-            return FrameIndex(path, z["starts"], z["size"], z["mtime_ns"])
+            if "counts" not in z.files:
+                # Saved before atom counts were kept: scanning again in order
+                # beats reading each frame's first line (302 s for a million
+                # frames of a 60 GB file on a USB disk, 2026-11-03).
+                return None
+            return FrameIndex(path, z["starts"], z["size"], z["mtime_ns"], z["counts"])
     except Exception:
         return None
 
@@ -154,7 +228,8 @@ def save_cached(index):
         target = cache_file(index.path)
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.with_suffix(".tmp.npz")
-        np.savez(tmp, starts=index.starts, size=index.size, mtime_ns=index.mtime_ns)
+        extra = {} if index.counts is None else {"counts": index.counts}
+        np.savez(tmp, starts=index.starts, size=index.size, mtime_ns=index.mtime_ns, **extra)
         os.replace(tmp, target)
     except Exception as exc:
         logger.warning("Could not save the frame index of %s: %s", index.path, exc, extra={"popup": False})
@@ -276,7 +351,8 @@ def read_first_frame(path):
 
 
 def read_every(path, step):
-    """Every `step`-th frame."""
+    """Every `step`-th frame, as a list of Atoms. An .xyz/.extxyz load uses
+    ``AtomsList(path, step=step)`` instead, which the fast reader reads."""
     if is_indexable(path):
         return get_frame_index(path).read(0, None, step)
     import ase.io

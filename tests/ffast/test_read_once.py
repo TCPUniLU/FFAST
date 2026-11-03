@@ -112,7 +112,7 @@ def test_a_fast_load_parses_no_chunk(files, chunk_loads, name):
     assert chunk_loads == []
 
 
-@pytest.mark.parametrize("name", ["forces_change.extxyz", "plain.xyz"])
+@pytest.mark.parametrize("name", ["forces_change.extxyz"])
 def test_an_ase_load_parses_each_frame_once(files, chunk_loads, name):
     loader = _load(files / name)
     loader.getFingerprint()
@@ -145,7 +145,7 @@ def test_an_extra_column_in_some_frames_loads_fast_without_warning(files, caplog
 
 def test_a_field_no_frame_lacks_has_no_missing_mask(files):
     assert _load(files / "variable.extxyz").getAtomFieldMissing("q") is None
-    assert _load(files / "plain.xyz").getAtomFieldMissing("q") is None     # read with ASE
+    assert _load(files / "plain.xyz").getAtomFieldMissing("q") is None
 
 
 def test_the_resolver_answers_the_missing_ref(files):
@@ -173,9 +173,10 @@ def test_a_prediction_keeps_its_missing_mask(files):
                             dataset=dataset).tolist() == [True] * 4 + [False] * 2
 
 
-def test_plain_xyz_loads_with_ase_without_warning(files, caplog):
+def test_plain_xyz_loads_fast_without_warning(files, caplog):
     with caplog.at_level(logging.WARNING, logger="FFAST"):
-        _load(files / "plain.xyz")
+        loader = _load(files / "plain.xyz")
+    assert loader._fields is not None                 # the fast reader, not ASE (ADR 0083)
     assert not [r for r in caplog.records if "Reading it with ASE" in r.getMessage()]
 
 

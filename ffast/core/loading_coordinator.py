@@ -26,6 +26,7 @@ from ase.io.trajectory import Trajectory
 
 from ffast.core.data_types import AtomsList
 from ffast.core.flat_frames import FlatFrames
+from ffast.io.extxyz_arrays import NotEnoughMemory
 from ffast.protocol import control
 from ffast.loaders.ghost import GhostModelLoader
 from ffast.loaders.dataset import framesShaped
@@ -370,11 +371,13 @@ class LoadingCoordinator:
         for ``.traj``) instead of held in RAM.
         """
         import ase.io
-        from ffast.io.frame_index import read_every
+        from ffast.io.frame_index import is_indexable, read_every
 
         slice_num = self._env.datasets.slice_numbers.get(datasetKey)
         if slice_num is not None and slice_num > 0:
             logger.info(f"Loading dataset with slice number of: {slice_num}")
+            if is_indexable(path):
+                return AtomsList(path, step=slice_num)
             return read_every(path, slice_num)
         if slice_num is not None and slice_num == 0:
             logger.info("Loading prediction dataset with caching.")
@@ -632,6 +635,11 @@ class LoadingCoordinator:
                     slice_num=slice_num,
                     progress=self._readProgress(path, taskID),
                 )
+            except NotEnoughMemory as e:
+                logger.error(str(e), extra={"popup": on_error is None})
+                if on_error:
+                    on_error(e)
+                return None
             except Exception as e:
                 logger.exception(f"Failed to load dataset {path} in method 'loadDataset'",
                                  extra={"popup": on_error is None})

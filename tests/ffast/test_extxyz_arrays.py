@@ -132,9 +132,33 @@ def test_changed_essential_columns_across_batches(tmp_path, monkeypatch):
     assert err.value.frame == 2
 
 
-def test_plain_xyz_is_not_fast(tmp_path):
+def test_plain_xyz_reads_like_ase(tmp_path):
+    path = _write(tmp_path, "plain.xyz")
+    fa = xa.read_frames(fi.scan(path), workers=1)
+    _assert_like_ase(path, fa)
+    assert fa.values == {} and fa.columns == {}
+
+
+def test_a_plain_header_like_a_pimd_one_reads_like_ase(tmp_path):
+    p = tmp_path / "pimd.xyz"
+    head = "# CELL(abcABC):  105.83544   105.83544   105.83544    90.00000  Step:  {}  Bead:  9 positions{{angstrom}}"
+    p.write_text("".join(f"2\n{head.format(i)}\n  C  2.13102e+00 -3.39153e-01  1.45088e-02\n"
+                         f"  H  1.0e-01 2.0 3.0\n" for i in range(3)))
+    _assert_like_ase(str(p), xa.read_frames(fi.scan(str(p)), workers=1))
+
+
+def test_plain_xyz_with_extra_columns_is_not_fast(tmp_path):
+    p = tmp_path / "extra.xyz"
+    p.write_text("1\ncomment\nH 0 0 0 1.5\n")      # ASE drops the 5th column; ASE reads it
     with pytest.raises(xa.NotFast):
-        xa.read_frames(fi.scan(_write(tmp_path, "plain.xyz")), workers=1)
+        xa.read_frames(fi.scan(str(p)), workers=1)
+
+
+def test_a_bare_pbc_word_in_a_plain_header_is_left_to_ase(tmp_path):
+    p = tmp_path / "pbc.xyz"
+    p.write_text("1\nperiodic pbc run\nH 0 0 0\n")
+    with pytest.raises(xa.NotFast):
+        xa.read_frames(fi.scan(str(p)), workers=1)
 
 
 def test_logical_column_is_not_fast(tmp_path):
@@ -180,3 +204,109 @@ def test_worker_count_from_environment(monkeypatch):
     assert xa.worker_count() == 3
     monkeypatch.setenv("FFAST_READ_WORKERS", "0")
     assert xa.worker_count() == 1
+
+
+# ── memory (ADR 0083) ───────────────────────────────────────────────────────
+
+def _free(monkeypatch, *values):
+    """available_memory() answers ``values`` in turn, then the last one."""
+    from ffast.metrics import resources
+    left = list(values)
+    monkeypatch.setattr(resources, "available_memory", lambda: left.pop(0) if len(left) > 1 else left[0])
+
+
+def test_a_file_that_does_not_fit_is_refused_before_reading(tmp_path, monkeypatch):
+    path = _write(tmp_path, "variable.extxyz")
+    _free(monkeypatch, 1000)
+    parsed = []
+    real = xa._parse_range
+    monkeypatch.setattr(xa, "_parse_range", lambda *a: parsed.append(a) or real(*a))
+    with pytest.raises(xa.NotEnoughMemory) as err:
+        xa.read_frames(fi.scan(path), workers=1)
+    assert "variable.extxyz needs about" in str(err.value) and "is free" in str(err.value)
+    assert len(parsed) == 1                      # frame 0 alone, to size the arrays
+
+
+def test_a_memory_error_is_not_a_reason_to_read_with_ase():
+    assert not issubclass(xa.NotEnoughMemory, xa.NotFast)
+
+
+def test_fewer_workers_when_all_of_them_do_not_fit():
+    gb = 2**30
+    assert xa._plan(4 * gb, 1 * gb, 8, 10 * gb) == (5, True, 9 * gb)
+    assert xa._plan(4 * gb, 1 * gb, 8, 100 * gb) == (8, True, 12 * gb)
+    assert xa._plan(9 * gb, 1 * gb, 8, 10 * gb) == (1, False, 10 * gb)
+
+
+def test_reading_stops_when_free_memory_runs_low(tmp_path, monkeypatch):
+    monkeypatch.setattr(xa, "MIN_BATCH", 1)
+    path = _write(tmp_path, "variable.extxyz")
+    _free(monkeypatch, 100 * 2**30, 100 * 2**30, 1)   # the check, batch 1, then nearly nothing
+    with pytest.raises(xa.NotEnoughMemory) as err:
+        xa.read_frames(fi.scan(path), workers=1, batch=1)
+    assert "after 2 of 3 frames" in str(err.value)
+
+
+def test_the_last_batch_never_stops_a_read(tmp_path, monkeypatch):
+    path = _write(tmp_path, "variable.extxyz")
+    _free(monkeypatch, 100 * 2**30, 1)
+    assert len(xa.read_frames(fi.scan(path), workers=1)) == 3
+
+
+def test_frame_counts_that_disagree_with_the_index_are_not_fast(tmp_path):
+    index = fi.scan(_write(tmp_path, "variable.extxyz"))
+    index.counts = index.counts - 1
+    with pytest.raises(xa.NotFast):
+        xa.read_frames(index, workers=1)
+
+
+# ── every n-th frame (ADR 0083) ─────────────────────────────────────────────
+
+def _many(tmp_path, n=23):
+    from ase import Atoms
+    from ase.calculators.singlepoint import SinglePointCalculator
+    rng = np.random.default_rng(1)
+    frames = []
+    for i in range(n):
+        a = Atoms("H" * (1 + i % 4), positions=rng.random((1 + i % 4, 3)))
+        a.calc = SinglePointCalculator(a, energy=float(i), forces=rng.random((1 + i % 4, 3)))
+        frames.append(a)
+    p = tmp_path / "many.extxyz"
+    ase.io.write(p, frames, format="extxyz")
+    return str(p)
+
+
+@pytest.mark.parametrize("through", [16, 0])        # read straight through / a seek per frame
+@pytest.mark.parametrize("step", [2, 7])
+def test_every_nth_frame_reads_like_ase(tmp_path, monkeypatch, step, through):
+    monkeypatch.setattr(xa, "READ_THROUGH", through)
+    monkeypatch.setattr(xa, "MIN_BATCH", 1)
+    path = _many(tmp_path)
+    fa = xa.read_frames(fi.scan(path).every(step), workers=1, batch=2)
+    frames = ase.io.read(path, index=slice(0, None, step))
+    assert _same(fa.counts, [len(a) for a in frames])
+    assert _same(fa.positions, np.vstack([a.get_positions() for a in frames]))
+    assert _same(fa.columns["forces"], np.vstack([a.get_forces() for a in frames]))
+    assert _same(fa.values["energy"], np.array([a.get_potential_energy() for a in frames]))
+
+
+def test_a_strided_index_counts_and_reads_its_own_frames(tmp_path):
+    path = _many(tmp_path)
+    index = fi.scan(path).every(7)
+    assert len(index) == 4                                     # frames 0, 7, 14, 21
+    assert index.atom_counts().tolist() == [1, 4, 3, 2]
+    assert index.read_one(-1).get_potential_energy() == 21.0
+    assert [a.get_potential_energy() for a in index.read(1, 3)] == [7.0, 14.0]
+
+
+def test_a_strided_load_goes_through_the_fast_reader(tmp_path, monkeypatch):
+    from ffast.core.data_types import AtomsList
+    from ffast.loaders.ase import aseDatasetLoader
+    path = _many(tmp_path)
+    used = []
+    real = xa.read_frames
+    monkeypatch.setattr(xa, "read_frames", lambda index, **kw: used.append(index) or real(index, **kw))
+    loader = aseDatasetLoader(path, atomsList=AtomsList(path, step=7))
+    assert len(used) == 1 and loader.N == 4
+    assert loader.E.tolist() == [0.0, 7.0, 14.0, 21.0]
+

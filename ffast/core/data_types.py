@@ -350,8 +350,9 @@ class AtomsList(UserList):
     Args:
         path (str): the path to the designated dataset.
         atoms_chunk (int): cache size (in terms of number of frames).
+        step (int): keep every ``step``-th frame; .xyz/.extxyz files only.
     """
-    def __init__(self, path, atoms_chunk=300_000):
+    def __init__(self, path, atoms_chunk=300_000, step=1):
         super().__init__()
         self.offset = atoms_chunk
         self.start_index = 0
@@ -362,7 +363,9 @@ class AtomsList(UserList):
         self.frame_arrays = None
         # One scan, saved (frame index plan 2026-11-01); other formats count as before.
         from ffast.io import frame_index
-        self._index = frame_index.get_frame_index(path) if frame_index.is_indexable(path) else None
+        self._index = frame_index.get_frame_index(path).every(step) if frame_index.is_indexable(path) else None
+        if step > 1 and self._index is None:
+            raise ValueError(f"A stride needs a frame index; {path} has none (read_every reads it)")
         self.N = len(self._index) if self._index is not None else self.calc_dataset_length()
 
     @property

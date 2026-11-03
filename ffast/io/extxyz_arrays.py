@@ -24,16 +24,39 @@ _PAIR = re.compile(
     r'|(\S+)')
 _UNESCAPE = re.compile(r'\\(.)')
 _TOKENS = re.compile(r'[^\s,]+')
+_PLAIN_PROPERTIES = "species:S:1:pos:R:3"   # ASE's columns when a header lists none
+_MEANINGFUL = {"Properties", "Lattice", "pbc"}   # words that mean something even without "="
 _BOOL = {'T': True, 'F': False, 'true': True, 'false': False,
          'True': True, 'False': False, 'TRUE': True, 'FALSE': False}
 
 PARALLEL_MIN_FRAMES = 100_000   # below this, worker start-up costs more than it saves
 MIN_BATCH, MAX_BATCH = 2_000, 50_000
 WINDOW_PER_WORKER = 2
+# Parsing a batch holds ~6x its bytes in the file (one Python string per
+# number), measured 2026-11-03 on md22_stachyose: 650 bytes per atom while
+# parsing, 57 in the joined arrays.
+PARSE_PEAK_PER_BYTE = 7
+# Of frame text per batch: ~0.2 GB while it is parsed. Small batches let more
+# workers fit beside the arrays: omol25 biomolecules, every 7th frame, 7.4 GB
+# free, read with 1 worker in 242 s at 64 MB, with 3 in 110 s at 16 MB.
+BATCH_BYTES = 16 * 2**20
+# Frames of a stride are read straight through while the file between them is
+# at most this many times their own bytes. Measured 2026-11-03 on a USB SSD
+# (omol25 biomolecules, 9 KB frames, every 7th): straight through 671 MB/s, a
+# seek per frame 339 us. Reading 8 frames at once was 2x faster in a bare read
+# test but no faster in a full load (133 s vs 130 s), so it was not kept.
+READ_THROUGH = 16
+MEMORY_SHARE = 0.9          # of the free memory a load may plan to use
+MEMORY_FLOOR = 512 * 2**20  # a load stops when free memory falls below this
 
 
 class NotFast(Exception):
     """This file needs ASE's reader; the message says why."""
+
+
+class NotEnoughMemory(Exception):
+    """The file's arrays do not fit in the free memory. Not NotFast: ASE's
+    reader needs more memory, not less."""
 
 
 class PropertiesDiffer(NotFast):
@@ -220,10 +243,15 @@ def parse_block(data, first_frame=0):
         header = lines[i + 1].decode()
         props = cell = pbc = None
         row = {}
-        for key, raw, junk in _PAIR.findall(header):
+        # A plain xyz comment (no key=value): ASE makes each word a flag set
+        # to True, so it holds no number, cell or pbc.
+        plain = "=" not in header and not _MEANINGFUL & set(header.split())
+        for key, raw, junk in () if plain else _PAIR.findall(header):
             if junk:
                 raise NotFast(f"frame {first_frame + len(counts):,}: cannot read {junk!r} in its header")
             raw = raw or None
+            if raw is None and key in _MEANINGFUL:
+                raise NotFast(f"frame {first_frame + len(counts):,}: {key} without a value in its header")
             if key == "Properties":
                 props = _value(raw)
             elif key == "Lattice":
@@ -236,7 +264,7 @@ def parse_block(data, first_frame=0):
                 if num is not None:
                     row[key] = num
         if props is None:
-            raise NotFast("no Properties= in the header (plain xyz)")
+            props = _PLAIN_PROPERTIES
         if props not in layouts:
             layout, ncol = _layout(props)
             essential, extras = _signature(layout)
@@ -294,32 +322,131 @@ def _parse_range(path, start, stop, first_frame):
     return parse_block(data, first_frame)
 
 
+def _parse_spans(path, starts, ends, first_frame):
+    """Worker: read the frames at bytes [starts[i], ends[i]) and parse them.
+    Frames side by side are one read. Frames a few apart (a stride) are read
+    straight through and picked out, which beats a seek per frame on a disk;
+    frames far apart get a seek each."""
+    if len(starts) == 1 or (ends[:-1] == starts[1:]).all():
+        return _parse_range(path, int(starts[0]), int(ends[-1]), first_frame)
+    with open(path, "rb") as f:
+        if ends[-1] - starts[0] <= READ_THROUGH * int((ends - starts).sum()):
+            base = int(starts[0])
+            f.seek(base)
+            buf = f.read(int(ends[-1]) - base)
+            data = b"".join(buf[int(a) - base:int(b) - base] for a, b in zip(starts, ends))
+            del buf
+        else:
+            parts = []
+            for a, b in zip(starts.tolist(), ends.tolist()):
+                f.seek(a)
+                parts.append(f.read(b - a))
+            data = b"".join(parts)
+    return parse_block(data, first_frame)
+
+
 def join(parts):
     """One FrameArrays from batches, in order."""
-    first = parts[0]
-    keys = set(first.values)
-    for p in parts[1:]:
-        keys &= p.values.keys()
-    def cat(arrs):
-        return np.concatenate(arrs) if len(arrs) > 1 else arrs[0]
-    extras = {}
+    filled = _Filled(parts[0], sum(len(p.numbers) for p in parts), sum(len(p) for p in parts))
     for p in parts:
-        extras.update(p.extras)
-    columns, missing = _stack([p.columns for p in parts], [p.missing for p in parts],
-                              [len(p.numbers) for p in parts])
-    return FrameArrays(
-        properties=first.properties,
-        essential=first.essential,
-        extras=extras,
-        counts=cat([p.counts for p in parts]),
-        numbers=cat([p.numbers for p in parts]),
-        positions=cat([p.positions for p in parts]),
-        cells=cat([p.cells for p in parts]),
-        pbc=cat([p.pbc for p in parts]),
-        columns=columns,
-        missing=missing,
-        values={k: cat([p.values[k] for p in parts]) for k in keys},
-    )
+        filled.add(p)
+    return filled.result()
+
+
+class _Filled:
+    """The joined arrays, made once at their final size from frame 0's
+    columns; each batch is copied into its place as it arrives, so a load
+    never holds the batches and their join at once. Per-atom numbers a frame
+    may lack (extras) and header values are small and joined at the end."""
+
+    def __init__(self, first, atoms, frames):
+        self.first = first
+        self.atoms, self.frames = atoms, frames
+        self.counts = np.empty(frames, dtype=np.int64)
+        self.numbers = np.empty(atoms, dtype=first.numbers.dtype)
+        self.positions = np.empty((atoms, 3), dtype=np.float64)
+        self.cells = np.empty((frames, 3, 3), dtype=np.float64)
+        self.pbc = np.empty((frames, 3), dtype=bool)
+        self.wide = {name: np.empty((atoms,) + col.shape[1:], dtype=col.dtype)
+                     for name, col in first.columns.items() if name not in first.extras}
+        self.extra_cols, self.extra_masks, self.extra_atoms = [], [], []
+        self.values, self.extras = [], {}
+        self.atom_at = self.frame_at = 0
+
+    def add(self, part):
+        a, f = self.atom_at, self.frame_at
+        na, nf = len(part.numbers), len(part)
+        if a + na > self.atoms or f + nf > self.frames:
+            raise NotFast(f"frames {part.first_frame:,}+ have more atoms than the frame index counted")
+        self.counts[f:f + nf] = part.counts
+        self.numbers[a:a + na] = part.numbers
+        self.positions[a:a + na] = part.positions
+        self.cells[f:f + nf] = part.cells
+        self.pbc[f:f + nf] = part.pbc
+        for name, out in self.wide.items():
+            out[a:a + na] = part.columns[name]
+        self.extra_cols.append({k: v for k, v in part.columns.items() if k not in self.wide})
+        self.extra_masks.append(part.missing)
+        self.extra_atoms.append(na)
+        self.values.append(part.values)
+        self.extras.update(part.extras)
+        self.atom_at, self.frame_at = a + na, f + nf
+
+    def result(self):
+        if self.atom_at != self.atoms or self.frame_at != self.frames:
+            raise NotFast(f"read {self.atom_at:,} atoms in {self.frame_at:,} frames, "
+                          f"the frame index counted {self.atoms:,} in {self.frames:,}")
+        def cat(arrs):
+            return np.concatenate(arrs) if len(arrs) > 1 else arrs[0]
+        keys = set(self.values[0])
+        for v in self.values[1:]:
+            keys &= v.keys()
+        columns, missing = _stack(self.extra_cols, self.extra_masks, self.extra_atoms)
+        columns.update(self.wide)
+        return FrameArrays(
+            properties=self.first.properties,
+            essential=self.first.essential,
+            extras=self.extras,
+            counts=self.counts,
+            numbers=self.numbers,
+            positions=self.positions,
+            cells=self.cells,
+            pbc=self.pbc,
+            columns=columns,
+            missing=missing,
+            values={k: cat([v[k] for v in self.values]) for k in keys},
+        )
+
+
+def _bytes_per_atom_and_frame(first):
+    """What one atom and one frame take in the joined arrays, from frame 0."""
+    per_atom = first.numbers.itemsize + 3 * 8
+    for col in first.columns.values():
+        per_atom += col.itemsize * int(np.prod(col.shape[1:], dtype=np.int64))
+    per_frame = 8 + 9 * 8 + 3 + 8 * len(first.values)
+    return per_atom, per_frame
+
+
+def _batch_peak(starts, ends):
+    """Memory one worker holds for a batch: its text while parsed, plus the
+    file read straight through around a stride's frames (``_parse_spans``)."""
+    wanted = int((ends - starts).sum())
+    through = int(ends[-1] - starts[0])
+    return PARSE_PEAK_PER_BYTE * wanted + (through if through <= READ_THROUGH * wanted else 0)
+
+
+def _plan(final, batch_peak, workers, free):
+    """Workers that fit beside the joined arrays (each parses one batch at a
+    time); NotEnoughMemory's numbers when even one does not."""
+    budget = MEMORY_SHARE * free
+    while workers > 1 and final + workers * batch_peak > budget:
+        workers -= 1
+    need = final + workers * batch_peak
+    return workers, need <= budget, need
+
+
+def _gib(n):
+    return f"{n / 2**30:.1f} GB"
 
 
 def worker_count():
@@ -336,46 +463,80 @@ def read_frames(index, *, workers=None, batch=None, progress=None):
     """Every frame of an indexed file as FrameArrays; NotFast if ASE must read it.
 
     Batches of frames are parsed in worker processes when the file is large,
-    and joined in file order. ``progress(done, total)`` follows each batch."""
+    and copied into the joined arrays in file order. ``progress(done, total)``
+    follows each batch. NotEnoughMemory, before reading, when the arrays and
+    one batch do not fit in the free memory, and while reading, when free
+    memory falls below ``MEMORY_FLOOR``."""
+    from ffast.metrics.resources import available_memory
+
     n = len(index)
     if n == 0:
         raise NotFast("the file has no frames")
+    name = os.path.basename(index.path)
+    starts, ends = index.spans()
+    sizes = ends - starts
     workers = worker_count() if workers is None else workers
     if n < PARALLEL_MIN_FRAMES:
         workers = 1
     if batch is None:
         batch = max(MIN_BATCH, min(MAX_BATCH, -(-n // (workers * 4))))
-    jobs = [(index.path, int(index.starts[a]), int(index.starts[min(a + batch, n)]), a)
-            for a in range(0, n, batch)]
+        batch = max(1, min(batch, int(BATCH_BYTES * n // max(1, int(sizes.sum())))))
+    jobs = [(index.path, starts[a:a + batch], ends[a:a + batch], a) for a in range(0, n, batch)]
     workers = min(workers, len(jobs))
-    logger.info("Reading %s: %s frames, %d batches, %d worker process(es)",
-                os.path.basename(index.path), f"{n:,}", len(jobs), workers)
-    parts = []
 
+    atoms = int(index.atom_counts().sum())
+    first = _parse_range(index.path, int(starts[0]), int(ends[0]), 0)
+    per_atom, per_frame = _bytes_per_atom_and_frame(first)
+    final = atoms * per_atom + n * per_frame
+    batch_peak = max(_batch_peak(s, e) for _, s, e, _ in jobs)
+    free = available_memory()
+    workers, fits, need = _plan(final, batch_peak, workers, free)
+    if not fits:
+        raise NotEnoughMemory(
+            f"{name} needs about {_gib(need)} of memory to load ({atoms:,} atoms in {n:,} frames), "
+            f"but {_gib(free)} is free. Close other programs, or load a smaller file.")
+    logger.info("Reading %s: %s frames, %d batches, %d worker process(es), about %s of %s free",
+                name, f"{n:,}", len(jobs), workers, _gib(need), _gib(free))
+
+    filled = None
     seen_extras = {}
 
     def keep(part):
-        if parts and part.essential != parts[0].essential:
-            raise PropertiesDiffer(part.first_frame, parts[0].properties, part.properties)
-        _merge_extras(seen_extras, part.extras, part.first_frame, parts[0].properties if parts else part.properties,
+        nonlocal filled
+        if filled is None:
+            filled = _Filled(part, atoms, n)
+        elif part.essential != filled.first.essential:
+            raise PropertiesDiffer(part.first_frame, filled.first.properties, part.properties)
+        _merge_extras(seen_extras, part.extras, part.first_frame, filled.first.properties,
                       part.properties)
-        parts.append(part)
+        filled.add(part)
+        done = part.first_frame + len(part)
+        left = available_memory()
+        if done < n and left < MEMORY_FLOOR:
+            raise NotEnoughMemory(
+                f"Stopped reading {name} after {done:,} of {n:,} frames: only {_gib(left)} "
+                f"of memory is left. Close other programs, or load a smaller file.")
         if progress:
-            progress(part.first_frame + len(part), n)
+            progress(done, n)
 
     if workers <= 1:
         for job in jobs:
-            keep(_parse_range(*job))
-        return join(parts)
+            keep(_parse_spans(*job))
+        return filled.result()
     # At most a few batches per worker in flight, so finished batches waiting
-    # to be joined do not pile up in memory.
+    # to be copied do not pile up in memory.
     window = workers * WINDOW_PER_WORKER
     with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as pool:
         pending = deque()
-        for job in jobs:
-            pending.append(pool.submit(_parse_range, *job))
-            if len(pending) >= window:
+        try:
+            for job in jobs:
+                pending.append(pool.submit(_parse_spans, *job))
+                if len(pending) >= window:
+                    keep(pending.popleft().result())
+            while pending:
                 keep(pending.popleft().result())
-        while pending:
-            keep(pending.popleft().result())
-    return join(parts)
+        except BaseException:
+            for future in pending:
+                future.cancel()
+            raise
+    return filled.result()

@@ -12,7 +12,7 @@ import ase.io
 from ase.io.trajectory import Trajectory
 
 from ffast.core.data_types import AtomsList
-from ffast.io.frame_index import read_every
+from ffast.io.frame_index import is_indexable, read_every
 from ffast.loaders.ase import aseDatasetLoader
 
 logger = logging.getLogger("FFAST")
@@ -50,6 +50,8 @@ def loadData(env):
                     atomsList = AtomsList(path)
             elif slice_num == -1:
                 atomsList = ase.io.read(path, index=':')
+            elif is_indexable(path):
+                atomsList = AtomsList(path, step=slice_num)
             else:
                 atomsList = read_every(path, slice_num)
 
