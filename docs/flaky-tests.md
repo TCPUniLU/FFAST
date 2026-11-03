@@ -1,0 +1,38 @@
+# Flaky tests
+
+Every test that has failed and then passed again on the same code. One row per
+test.
+
+## Rules
+
+1. When a test fails, rerun it alone (`-n 0`) before blaming your change.
+   If it passes, it is a flake: add it here, or update its row ("Seen",
+   status), in the same session.
+2. Keep the error text: copy the assertion message into the row or into a
+   `docs/issues/` note. A row without the error is hard to diagnose later.
+3. Never call a flake fixed until the cause is proven. Use `mitigated` for a
+   change that should help but whose cause is unproven.
+4. Do not hide a flake with a longer timeout, a fixed wait, or a retry.
+   Find what the test really waits for.
+5. Before a long test run, read this list so a known flake is recognised,
+   not reported as new.
+
+## The list
+
+Status words:
+- **open**: still fails now and then; cause unknown or not fixed.
+- **mitigated**: changed so it should not fail, but the cause is not proven.
+- **fixed**: cause proven and removed.
+- **watch**: failed once only; no cause found yet.
+
+| Test | First seen | Seen | Status | Cause / notes | Record |
+|---|---|---|---|---|---|
+| `tests/ffast/renderers/web/test_web_runtime.py::test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_screen` | 2026-10-20 | 3 fails in 14 runs | open | Click on the prediction's row times out; row is visible and stable. Cause unknown. Failure now leaves a Playwright trace in `temp/playwright-traces/` (76e9649). | [0056-01](issues/0056-01-flaky-model-row-click-in-edit-mode-test.md) |
+| `tests/ffast/renderers/web/test_web_runtime.py::test_web_extract_creates_subset_dataset` | 2026-10-20 | 1 fail in 5 runs | watch | Only under full-suite load; waits at most 15 s for the subset row. No error text kept. | [0056-01](issues/0056-01-flaky-model-row-click-in-edit-mode-test.md) (last section) |
+| `tests/ffast/renderers/web/test_web_runtime.py::test_web_a_timeline_labels_its_five_worst_frames_and_a_label_opens_one` | 2026-10-28 | 1 fail, full suite | mitigated | Likely a click on the plot before it finished resizing. Test now waits for the plot to settle. | [0063-01](issues/0063-01-peak-label-click-test-fails-under-load.md) |
+| `tests/ffast/test_plugin_discovery.py::test_start_headless_environment_configures_logging_without_flat_utils` | 2026-10-28 | every run after an `asyncio.run` test | fixed (3f9c4f5) | Depended on test order: `TaskManager` asked for an event loop it never used. | [0067-01](issues/0067-01-headless-environment-test-fails-after-asyncio-run.md) |
+| `tests/test_packaging.py` (wheel build) | 2026-10-25 | 4 of 4 with `-n 6` | fixed (e91742c) | Parallel workers built wheels in the same `build/` folder and deleted each other's files. | — |
+| `tests/ffast/test_empty_code_box_is_quiet.py` | 2026-10-25 | 1 fail | watch | Not reproduced. Test narrowed to the code box's own log messages (02c38cd) as a precaution. | — |
+| `tests/ffast/renderers/web/test_web_runtime.py::test_web_export_overwrites_a_file_clicked_in_the_list`, `::test_web_export_writes_the_chosen_format`, `tests/ffast/renderers/web/test_web_example_data.py::test_a_real_crystal_exports_in_an_ase_format` | 2026-11-03 | failed once the suite got faster | fixed (2026-11-03, uncommitted) | Tests waited for the file name in the status line, which shows in "Exporting to …" *before* the file is written. Now wait for "Exported". | — |
+| `tests/ffast/renderers/web/test_web_example_data.py::test_an_npz_prediction_loads_on_a_real_graphene_dataset` | 2026-11-03 | 1 fail in full suite; 3 of 3 pass alone | watch | Typed folder path did not appear in the file browser's path field (`#fb-path`) within 5 s. | — |
+| `tests/ffast/renderers/web/test_metric_boxes_pane.py::test_the_boxes_make_a_metric_that_tries_creates_and_plots` | 2026-11-03 | 1 fail; passed on rerun | watch | Shown formula text differed. Probably uncommitted metric changes being edited at the same time; not confirmed. | — |
