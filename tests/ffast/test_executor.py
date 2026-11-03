@@ -91,7 +91,7 @@ def test_cache_miss_on_different_compute_param(registry_with_force_mae):
     result_l1 = executor.run("test.force_mae", source=FlatInputSource({"force_difference": diff}), parameters={"norm": "l1"})
 
     assert result_l2 is not result_l1
-    assert result_l2.checksum != result_l1.checksum
+    assert not np.array_equal(result_l2.values, result_l1.values)
 
 
 def test_presentation_param_does_not_affect_cache(registry_with_force_mae):
@@ -223,7 +223,8 @@ def test_result_has_implementation_hash(registry):
     assert len(result.implementation_hash) == 16
 
 
-def test_result_has_checksum(registry):
+def test_result_has_no_checksum(registry):
+    """Results are not hashed (ADR 0081): nothing in the app read the hash."""
     @registry.metric(id="test.simple2", inputs={"x": "raw.x"}, shape="scalar", unit="energy")
     def simple2(x):
         return x
@@ -231,5 +232,4 @@ def test_result_has_checksum(registry):
     executor = InProcessExecutor(registry)
     result = executor.run("test.simple2", source=FlatInputSource({"x": 1.0}), parameters={})
 
-    assert isinstance(result.checksum, str)
-    assert len(result.checksum) == 64  # SHA-256 hex
+    assert "checksum" not in type(result).model_fields

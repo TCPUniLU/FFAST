@@ -385,7 +385,7 @@ def test_the_warning_travels_in_the_metric_result_message():
     from ffast.metrics.models import MetricResult
     from ffast.protocol.rpc import pack_metric_result, unpack, unpack_metric_result
     result = MetricResult(metric_id="t.h", shape="N_frames", dtype="float64", unit="x",
-                          compute_parameters={}, implementation_hash="h", checksum="c",
+                          compute_parameters={}, implementation_hash="h",
                           values=np.array([1.0, np.nan]), warnings=["careful"])
     _event, _args, kwargs = unpack(pack_metric_result("r1", "t.h", True, result))
     assert kwargs["warnings"] == ["careful"]

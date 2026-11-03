@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -157,7 +158,7 @@ def cmd_metrics_test(args: argparse.Namespace) -> None:
                 all_passed = False
                 continue
 
-            if result1.checksum != result2.checksum:
+            if _values_digest(result1) != _values_digest(result2):
                 print(f"  FAIL {label}: non-deterministic (checksums differ between runs)")
                 all_passed = False
                 continue
@@ -332,7 +333,7 @@ def cmd_metrics_run(args: argparse.Namespace) -> None:
                 "unit": result.unit,
                 "dtype": result.dtype,
                 "compute_parameters": result.compute_parameters,
-                "checksum": result.checksum,
+                "checksum": _values_digest(result),
                 "values": np.asarray(result.values).tolist(),
             }, indent=2))
         else:
@@ -501,6 +502,12 @@ def cmd_stages_test(args: argparse.Namespace) -> None:
 
     if not all_passed:
         sys.exit(1)
+
+
+def _values_digest(result) -> str:
+    """SHA-256 of a result's values, for comparing two runs (ADR 0081: results
+    no longer carry one)."""
+    return hashlib.sha256(np.ascontiguousarray(np.asarray(result.values)).tobytes()).hexdigest()
 
 
 def _fresh_registry_with_builtins() -> MetricRegistry:

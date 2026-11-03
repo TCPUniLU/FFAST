@@ -188,7 +188,7 @@ def _sample_metric_result():
     return MetricResult(
         metric_id="ffast.force_difference[structure;length;rmse]", shape="per_structure", dtype="float64",
         unit="eV/Angstrom", compute_parameters={"order": 1},
-        implementation_hash="impl-abc", checksum="chk-def",
+        implementation_hash="impl-abc",
         values=np.array([1.0, 2.0, 3.0]),
     )
 
@@ -206,7 +206,7 @@ def test_metric_result_ok_wire_shape_and_roundtrip():
     # the pre-typing hand-rolled payload)
     assert set(kw) == {
         "ok", "metric_id", "shape", "dtype", "unit", "compute_parameters",
-        "implementation_hash", "checksum", "values",
+        "implementation_hash", "values",
     }
     assert kw["ok"] is True
     assert kw["values"]["__ndarray__"] is True  # array stays binary-encoded
@@ -218,7 +218,6 @@ def test_metric_result_ok_wire_shape_and_roundtrip():
     assert back.unit == r.unit
     assert back.compute_parameters == r.compute_parameters
     assert back.implementation_hash == r.implementation_hash
-    assert back.checksum == r.checksum
     assert np.array_equal(np.asarray(back.values), np.asarray(r.values))
 
 
@@ -240,12 +239,23 @@ def test_metric_result_extra_key_rejected():
 def test_metric_result_fields_match_metricresult():
     # Drift guard: the message's metadata fields are exactly MetricResult's
     # fields plus the transport-only `ok` flag and `error` (why a failed
-    # metric failed, ADR 0066).
+    # metric failed, ADR 0066), and `checksum`, which older servers still send
+    # (ADR 0081).
     from ffast.metrics.models import MetricResult
 
     assert set(MetricResultMessage.model_fields) == set(
         MetricResult.model_fields
-    ) | {"ok", "error"}
+    ) | {"ok", "error", "checksum"}
+
+
+def test_a_result_from_an_older_server_with_a_checksum_still_reads():
+    from ffast.protocol.rpc import pack_metric_result, unpack, unpack_metric_result
+
+    r = _sample_metric_result()
+    _, _, kw = unpack(pack_metric_result("k1", r.metric_id, True, r))
+    back = unpack_metric_result({**kw, "checksum": "a" * 64})
+    assert back.metric_id == r.metric_id
+    assert not hasattr(back, "checksum")
 
 
 def test_catalog_entries_list_the_refs_each_metric_reads():

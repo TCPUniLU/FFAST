@@ -193,12 +193,12 @@ def test_result_has_correct_shape_and_unit(executor, registry):
     assert result.unit == schema.unit
 
 
-def test_result_checksum_is_deterministic(executor):
+def test_result_is_deterministic(executor):
     r1 = executor.run("test.identity", FlatInputSource({"x": 7.0}), {})
     r2 = executor.run("test.identity", FlatInputSource({"x": 7.0}), {})
     assert isinstance(r1, MetricResult)
     assert isinstance(r2, MetricResult)
-    assert r1.checksum == r2.checksum
+    assert np.array_equal(np.asarray(r1.values), np.asarray(r2.values))
 
 
 # ── Shared-memory (Worker Buffers) ────────────────────────────────────────────

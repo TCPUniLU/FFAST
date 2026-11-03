@@ -37,7 +37,6 @@ def _make_metric_result(metric_id="ffast.force_difference[atom+structure;length]
         unit="eV",
         compute_parameters={},
         implementation_hash="hash123",
-        checksum="chk456",
         values=np.asarray([1.5] if values is None else values),
     )
 

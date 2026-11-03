@@ -219,7 +219,6 @@ def pack_metric_result(request_id: str, metric_id: str, ok: bool, result=None,
             unit=result.unit,
             compute_parameters=result.compute_parameters,
             implementation_hash=result.implementation_hash,
-            checksum=result.checksum,
             values=_encode_array(np.asarray(result.values)),
             warnings=list(getattr(result, "warnings", None) or []) or None,
         )
@@ -256,7 +255,6 @@ def unpack_metric_result(kwargs: dict):
         unit=msg.unit,
         compute_parameters=msg.compute_parameters,
         implementation_hash=msg.implementation_hash,
-        checksum=msg.checksum,
         values=values,
         warnings=msg.warnings or [],
     )

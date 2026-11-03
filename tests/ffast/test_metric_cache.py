@@ -15,7 +15,7 @@ def _key(name: str) -> CacheKey:
 def _result(n_floats: int) -> MetricResult:
     return MetricResult(
         metric_id="t.m", shape="N_frames", dtype="float64", unit="energy",
-        compute_parameters={}, implementation_hash="h", checksum="c",
+        compute_parameters={}, implementation_hash="h",
         values=np.zeros(n_floats),      # 8 bytes each
     )
 

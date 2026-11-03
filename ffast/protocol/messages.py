@@ -227,6 +227,7 @@ class MetricResultMessage(BaseModel):
     unit: Optional[str] = None
     compute_parameters: Optional[dict[str, Any]] = None
     implementation_hash: Optional[str] = None
+    # Older servers still send a hash of the values; it is ignored (ADR 0081).
     checksum: Optional[str] = None
     values: Optional[dict] = None
     # Sentences about what the result left out (ADR 0064 amendment); sent only

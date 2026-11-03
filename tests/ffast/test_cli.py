@@ -276,3 +276,28 @@ def test_metrics_run_with_prediction_end_to_end(capsys):
     assert data["unit"] == "force"
     assert isinstance(data["values"], (int, float))
     assert data["values"] >= 0.0
+
+
+def test_metrics_test_catches_a_metric_that_answers_differently_each_run(tmp_path, capsys, monkeypatch):
+    """The determinism check hashes the two runs' values itself (ADR 0081)."""
+    import itertools
+
+    import ffast.cli.main as cli_main
+    from ffast.metrics.registry import MetricRegistry
+
+    counter = itertools.count()
+    reg = MetricRegistry()
+
+    @reg.metric(id="test.drifts", inputs={"x": "raw.x"}, shape="scalar", unit="energy",
+                tests=[{"inputs": {"x": 1.0}, "parameters": {}, "expected": 1.0, "atol": 1.0}])
+    def drifts(x):
+        return x + next(counter) * 1e-3
+
+    monkeypatch.setattr(cli_main, "_default_registry", reg)
+    monkeypatch.setattr(cli_main, "_fresh_registry_with_builtins", lambda: reg)
+    config_file = tmp_path / "ffast.toml"
+    config_file.write_text("")
+    with pytest.raises(SystemExit) as exc:
+        main(["metrics", "test", "test.drifts", "--config", str(config_file)])
+    assert exc.value.code == 1
+    assert "non-deterministic" in capsys.readouterr().out

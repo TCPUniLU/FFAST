@@ -129,7 +129,6 @@ class MetricResult(BaseModel):
     unit: str
     compute_parameters: dict[str, Any]
     implementation_hash: str
-    checksum: str
     values: Any
     # Sentences about something the result left out but the user should know,
     # e.g. bad values in rows a formula's where= left out (ADR 0064 amendment).

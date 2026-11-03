@@ -27,12 +27,13 @@ def _run(reg, cache):
     return run_plan(plan, reg, cache, lambda mid, schema, fn, kw, cp: fn(**kw, **cp))
 
 
-def test_a_computed_step_logs_its_key_cache_checksum_and_store_times(caplog):
+def test_a_computed_step_logs_its_key_cache_and_store_times(caplog):
     caplog.set_level(logging.INFO, logger="ffast.metrics.execution")
     _run(_registry(), MetricCache())
     line = next(r.getMessage() for r in caplog.records if "around compute" in r.getMessage())
-    for part in ("t.double", "key", "cache read", "checksum", "cache write"):
+    for part in ("t.double", "key", "cache read", "cache write"):
         assert part in line
+    assert "checksum" not in line  # results are not hashed (ADR 0081)
 
 
 def test_a_cache_hit_logs_how_long_it_took(caplog):

@@ -555,7 +555,7 @@ class _ResultExecutor:
         from ffast.metrics.models import MetricResult
         return MetricResult(
             metric_id=id, shape="scalar", dtype="float64", unit="energy",
-            compute_parameters={}, implementation_hash="h", checksum="c",
+            compute_parameters={}, implementation_hash="h",
             values=np.array(1.0))
 
 

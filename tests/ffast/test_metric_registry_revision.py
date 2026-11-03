@@ -62,7 +62,7 @@ class _Dataset:
 def _result(value):
     return MetricResult(
         metric_id="t61.m", shape="scalar", dtype="float64", unit="energy",
-        compute_parameters={}, implementation_hash="h", checksum="c",
+        compute_parameters={}, implementation_hash="h",
         values=np.array(value),
     )
 

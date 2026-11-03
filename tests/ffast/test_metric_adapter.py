@@ -128,7 +128,6 @@ def test_adapter_accepts_any_metric_executor(registry):
                 unit="force",
                 compute_parameters={},
                 implementation_hash="stub",
-                checksum="stub",
                 values=np.array([0.0, 0.5, 1.0]),
             )
 

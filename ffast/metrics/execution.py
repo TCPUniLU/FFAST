@@ -32,7 +32,6 @@ a worker can consume it without an Environment (ADR 0035 consequence).
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -347,14 +346,11 @@ def run_plan(
         if isinstance(raw, MetricFailure):
             results[metric_id] = raw
             continue
-        t = time.monotonic()
 
         if isinstance(raw, WithWarnings):
             warnings.extend(raw.warnings)
             raw = raw.values
         arr = np.asarray(raw)
-        checksum = hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()
-        checksum_ms = _ms(t)
         result = MetricResult(
             metric_id=metric_id,
             shape=shape_to_str(schema.shape),
@@ -362,16 +358,15 @@ def run_plan(
             unit=schema.unit,
             compute_parameters=step.compute_params,
             implementation_hash=function_hash(fn),
-            checksum=checksum,
             values=arr,
             warnings=list(dict.fromkeys(warnings)),
         )
         t = time.monotonic()
         cache.put(cache_key, result)
         log.info(
-            "metric step %s around compute: key %d ms, cache read %d ms, checksum %d ms, "
+            "metric step %s around compute: key %d ms, cache read %d ms, "
             "cache write %d ms (%d MB)",
-            metric_id, key_ms, read_ms, checksum_ms, _ms(t), arr.nbytes // 2**20)
+            metric_id, key_ms, read_ms, _ms(t), arr.nbytes // 2**20)
         results[metric_id] = result
 
     return results
