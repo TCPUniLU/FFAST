@@ -152,6 +152,67 @@ async def _connect_headless_client(port: int):
     return ws
 
 
+class _ServerProcess:
+    """One ``server.py`` subprocess on free ports, its log kept as it comes.
+
+    Plain start and stop, bound to no event loop, so a shared server can
+    outlive the test that started it.
+    """
+
+    def __init__(self, *extra_args: str):
+        self.ws_port = _free_port()
+        self.web_port = _free_port()
+        # Never the real ~/.ffast/tabs: a test must not read, or write, your tabs.
+        self._tabs_dir = tempfile.mkdtemp(prefix="ffast-tabs-")
+        if "--tabs-dir" not in extra_args:
+            extra_args = (*extra_args, "--tabs-dir", self._tabs_dir)
+        index_dir = tempfile.mkdtemp(prefix="ffast-frame-index-")
+        if "--frame-index-dir" not in extra_args:
+            extra_args = (*extra_args, "--frame-index-dir", index_dir)
+        self._metrics_dir = tempfile.mkdtemp(prefix="ffast-metrics-")
+        if "--metrics-dir" not in extra_args:
+            extra_args = (*extra_args, "--metrics-dir", self._metrics_dir)
+        self._proc = subprocess.Popen(
+            [
+                sys.executable,
+                "server.py",
+                "--port",
+                str(self.ws_port),
+                "--web-port",
+                str(self.web_port),
+                "--snapshot-interval",
+                "0",
+                "--recovery-window",
+                "0",
+                *extra_args,
+            ],
+            cwd=str(REPO_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+        # Read the log as it comes: a pipe nobody reads fills (~64 KB) and the
+        # server then stops at its next log line.
+        self._tail = collections.deque(maxlen=60)
+        self._reader = threading.Thread(
+            target=lambda: self._tail.extend(
+                line.decode(errors="replace").rstrip() for line in self._proc.stdout),
+            daemon=True)
+        self._reader.start()
+
+    def stop(self) -> None:
+        self._proc.terminate()
+        try:
+            self._proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._proc.kill()
+            self._proc.wait()
+        self._reader.join(timeout=5)
+        if self._tail:
+            print("[server log]\n" + "\n".join(self._tail))
+        shutil.rmtree(self._tabs_dir, ignore_errors=True)
+        shutil.rmtree(self._metrics_dir, ignore_errors=True)
+
+
 @contextlib.asynccontextmanager
 async def _spawn_server(*extra_args: str):
     """Launch one ``server.py`` subprocess on free ports; terminate on exit.
@@ -162,62 +223,133 @@ async def _spawn_server(*extra_args: str):
     itself loaded — can open a second one without fighting pytest's
     one-fixture-instance-per-test model.
     """
-    ws_port = _free_port()
-    web_port = _free_port()
-    # Never the real ~/.ffast/tabs: a test must not read, or write, your tabs.
-    tabs_dir = tempfile.mkdtemp(prefix="ffast-tabs-")
-    if "--tabs-dir" not in extra_args:
-        extra_args = (*extra_args, "--tabs-dir", tabs_dir)
-    index_dir = tempfile.mkdtemp(prefix="ffast-frame-index-")
-    if "--frame-index-dir" not in extra_args:
-        extra_args = (*extra_args, "--frame-index-dir", index_dir)
-    metrics_dir = tempfile.mkdtemp(prefix="ffast-metrics-")
-    if "--metrics-dir" not in extra_args:
-        extra_args = (*extra_args, "--metrics-dir", metrics_dir)
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            "server.py",
-            "--port",
-            str(ws_port),
-            "--web-port",
-            str(web_port),
-            "--snapshot-interval",
-            "0",
-            "--recovery-window",
-            "0",
-            *extra_args,
-        ],
-        cwd=str(REPO_ROOT),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    # Read the log as it comes: a pipe nobody reads fills (~64 KB) and the
-    # server then stops at its next log line.
-    tail = collections.deque(maxlen=60)
-    reader = threading.Thread(
-        target=lambda: tail.extend(line.decode(errors="replace").rstrip() for line in proc.stdout),
-        daemon=True)
-    reader.start()
+    server = _ServerProcess(*extra_args)
     try:
-        yield ws_port, web_port
+        yield server.ws_port, server.web_port
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait()
-        reader.join(timeout=5)
-        if tail:
-            print("[server log]\n" + "\n".join(tail))
-        shutil.rmtree(tabs_dir, ignore_errors=True)
-        shutil.rmtree(metrics_dir, ignore_errors=True)
+        server.stop()
 
 
 @pytest.fixture
 async def ffast_web_server():
+    """A fresh server for a test that changes what the server holds."""
     async with _spawn_server() as ports:
+        yield ports
+
+
+# ── shared servers ──────────────────────────────────────────────────────────
+# Starting a server for every test cost each one about a second. A test that
+# leaves the server as it found it shares one with the others that start from
+# the same state: nothing loaded, the example dataset, or the dataset and its
+# prediction. Each pytest worker keeps its own. After every test the server
+# must hold what it held before; if not, it is replaced, and a test that passed
+# fails, since it belongs on ``ffast_web_server``.
+
+async def _server_state(ws_port: int) -> list[tuple[str, str]]:
+    """What a new window is told the server holds: the replay, which ends with
+    METRIC_USERS. Live updates that follow it are left out."""
+    ws = await _connect_headless_client(ws_port)
+    state = []
+    try:
+        while True:
+            msg = await asyncio.wait_for(ws.recv(), timeout=10)
+            if not isinstance(msg, bytes):
+                continue
+            event, args, kwargs = unpack(msg)
+            if event in ("LOADER_TYPES", "TIMING"):
+                continue
+            state.append((event, repr((args, kwargs))))
+            if event == "METRIC_USERS":
+                return state
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+
+def _what_changed(before, after) -> list[str]:
+    names = lambda state: collections.Counter(event for event, _ in state)
+    gone = names(before) - names(after)
+    new = names(after) - names(before)
+    edited = {event for event, _ in set(before) ^ set(after)} - set(gone) - set(new)
+    return ([f"{e} gone" for e in gone] + [f"{e} added" for e in new]
+            + [f"{e} changed" for e in sorted(edited)])
+
+
+# ws port of a shared server → what it was loaded with, so the preload helpers
+# hand that back instead of loading the files again
+_HELD: dict[int, dict] = {}
+
+
+async def _hold_nothing(ws_port: int) -> dict:
+    return {}
+
+
+async def _hold_dataset(ws_port: int) -> dict:
+    return {"dataset": await _preload_dataset(ws_port)}
+
+
+async def _hold_prediction(ws_port: int) -> dict:
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    return {"dataset": dataset_fp, "prediction": (dataset_fp, model_fp)}
+
+
+@pytest.fixture(scope="session")
+def _shared_servers():
+    servers: dict[str, tuple[_ServerProcess, list]] = {}
+    yield servers
+    for server, _state in servers.values():
+        server.stop()
+
+
+async def _shared_server(request, servers, start: str, load):
+    if start not in servers:
+        server = _ServerProcess()
+        try:
+            await _wait_for_server_ready(server.ws_port)
+            _HELD[server.ws_port] = await load(server.ws_port)
+            servers[start] = (server, await _server_state(server.ws_port))
+        except BaseException:
+            _HELD.pop(server.ws_port, None)
+            server.stop()
+            raise
+    server, before = servers[start]
+    yield server.ws_port, server.web_port
+    # The page closing is heard a moment later: its views, and the metrics
+    # they coloured by, leave then.
+    for _ in range(20):
+        after = await _server_state(server.ws_port)
+        if after == before:
+            return
+        await asyncio.sleep(0.25)
+    del servers[start]
+    _HELD.pop(server.ws_port, None)
+    server.stop()
+    call = getattr(request.node, "rep_call", None)
+    if call is not None and call.passed:
+        pytest.fail(f"this test changed the shared '{start}' server "
+                    f"({', '.join(_what_changed(before, after))}); "
+                    "give it its own server: use ffast_web_server", pytrace=False)
+
+
+@pytest.fixture
+async def shared_server(request, _shared_servers):
+    """A server with nothing loaded, shared with tests that leave it so."""
+    async for ports in _shared_server(request, _shared_servers, "empty", _hold_nothing):
+        yield ports
+
+
+@pytest.fixture
+async def shared_dataset_server(request, _shared_servers):
+    """A server holding the example dataset, shared with tests that leave it so."""
+    async for ports in _shared_server(request, _shared_servers, "dataset", _hold_dataset):
+        yield ports
+
+
+@pytest.fixture
+async def shared_prediction_server(request, _shared_servers):
+    """A server holding the example dataset and its prediction, shared with
+    tests that leave it so."""
+    async for ports in _shared_server(request, _shared_servers, "prediction", _hold_prediction):
         yield ports
 
 
@@ -251,6 +383,8 @@ async def _wait_for_port(port: int) -> None:
 
 
 async def _preload_dataset(ws_port: int) -> str:
+    if "dataset" in _HELD.get(ws_port, {}):   # loading again would read the file again
+        return _HELD[ws_port]["dataset"]
     ws = await _connect_headless_client(ws_port)
     try:
         await ws.send(pack("LOAD_DATASET", (str(DATASET_PATH), "ase (auto)"), {}))
@@ -284,6 +418,8 @@ async def _preload_uniform_dataset(ws_port: int, tmp_path) -> str:
 
 
 async def _preload_dataset_and_prediction(ws_port: int) -> tuple[str, str]:
+    if "prediction" in _HELD.get(ws_port, {}):
+        return _HELD[ws_port]["prediction"]
     ws = await _connect_headless_client(ws_port)
     try:
         await ws.send(pack("LOAD_DATASET", (str(DATASET_PATH), "ase (auto)"), {}))
@@ -329,11 +465,11 @@ FILE_MENU = [
 ]
 
 
-async def test_web_file_menu_holds_the_session_actions(ffast_web_server):
+async def test_web_file_menu_holds_the_session_actions(shared_server):
     """ADR 0055 "Session actions": one File menu; an action that cannot run
     yet is greyed out with the reason; the top-bar Save/Load buttons and the
     rail's unlabelled ⬇ are gone, the rail's + shortcuts stay."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -404,7 +540,7 @@ async def _cluster_page(broker, secret="s3cret"):
         broker.shutdown()
 
 
-async def test_web_cluster_dialog_saves_and_deletes_profiles(ffast_web_server, tmp_path, monkeypatch):
+async def test_web_cluster_dialog_saves_and_deletes_profiles(shared_server, tmp_path, monkeypatch):
     """Web parity plan 2026-10-29: File > Connect to Cluster… lists the
     launcher's profiles, shows the defaults, keeps Server setup folded."""
     import cluster.connection as cluster_conn
@@ -412,7 +548,7 @@ async def test_web_cluster_dialog_saves_and_deletes_profiles(ffast_web_server, t
     from cluster.web_broker import ClusterBroker
 
     monkeypatch.setattr(cluster_conn, "_SESSIONS_FILE", str(tmp_path / ".ffast" / "sessions.json"))
-    ws_port, _ = ffast_web_server
+    ws_port, _ = shared_server
     await _wait_for_server_ready(ws_port)
     broker = ClusterBroker(ClusterConfig(str(tmp_path / "clusters.json")))
     async with _cluster_page(broker) as page_port, async_playwright() as p:
@@ -510,11 +646,11 @@ def _fake_cluster_broker(tmp_path, monkeypatch, **fakes):
     return broker, cancelled
 
 
-async def test_web_cluster_connect_hands_the_page_the_tunnel(ffast_web_server, tmp_path, monkeypatch):
+async def test_web_cluster_connect_hands_the_page_the_tunnel(shared_server, tmp_path, monkeypatch):
     """Web parity plan 2026-10-29: Connect shows progress, then the page
     connects through the tunnel (here, the test server stands in for the
     cluster's); End cluster job lets go and cancels the job."""
-    ws_port, _ = ffast_web_server
+    ws_port, _ = shared_server
     await _wait_for_server_ready(ws_port)
     session = _FakeClusterSession("J1", ws_port)
 
@@ -574,12 +710,12 @@ async def test_web_cluster_connect_hands_the_page_the_tunnel(ffast_web_server, t
             await browser.close()
 
 
-async def test_web_cluster_dialog_offers_to_reconnect_a_recorded_job(ffast_web_server, tmp_path, monkeypatch):
+async def test_web_cluster_dialog_offers_to_reconnect_a_recorded_job(shared_server, tmp_path, monkeypatch):
     """A profile with a Session Record offers Reconnect; a dead job purges it."""
     import cluster.connection as cluster_conn
     from cluster.backend import ClusterError
 
-    ws_port, _ = ffast_web_server
+    ws_port, _ = shared_server
     await _wait_for_server_ready(ws_port)
 
     async def reconnect(profile, job_id, progress_cb=None):
@@ -607,12 +743,12 @@ async def test_web_cluster_dialog_offers_to_reconnect_a_recorded_job(ffast_web_s
             await browser.close()
 
 
-async def test_web_cluster_dialog_drops_the_offer_for_an_ended_job(ffast_web_server, tmp_path, monkeypatch):
+async def test_web_cluster_dialog_drops_the_offer_for_an_ended_job(shared_server, tmp_path, monkeypatch):
     """Opening the dialog asks SLURM which recorded jobs still exist; an ended
     job's Reconnect offer goes away without a failed reconnect (ADR 0074)."""
     import cluster.connection as cluster_conn
 
-    ws_port, _ = ffast_web_server
+    ws_port, _ = shared_server
     await _wait_for_server_ready(ws_port)
 
     async def job_ids(profile):
@@ -671,10 +807,10 @@ async def test_web_trace_records_the_click_the_command_and_page_errors(tmp_path)
     assert [m.start() for m in order] == sorted(m.start() for m in order), text
 
 
-async def test_web_a_dataset_that_cannot_be_loaded_says_so_in_the_status(ffast_web_server):
+async def test_web_a_dataset_that_cannot_be_loaded_says_so_in_the_status(shared_server):
     """ADR 0063 follow-up: a text file loaded as a dataset used to leave
     "Loading README.md…" up for good; the status now names the file and why."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -700,10 +836,10 @@ async def test_web_a_dataset_that_cannot_be_loaded_says_so_in_the_status(ffast_w
             await browser.close()
 
 
-async def test_web_the_loader_suggests_paths_while_typing(ffast_web_server):
+async def test_web_the_loader_suggests_paths_while_typing(shared_server):
     """After a pause the typed folder is listed and filtered by the typed
     prefix; the arrows choose, Tab completes, Enter still goes to the path."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -805,11 +941,11 @@ async def test_web_the_loader_names_units_only_when_asked_and_lists_the_last_use
             await browser.close()
 
 
-async def test_web_element_picker_buttons_wear_the_3d_element_colours(ffast_web_server):
+async def test_web_element_picker_buttons_wear_the_3d_element_colours(shared_prediction_server):
     """Each element button's outline and symbol use the element's colour in the
     3D view; selected, it is filled with that colour and the symbol is black or
     white. "All" stays neutral."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -839,12 +975,12 @@ async def test_web_element_picker_buttons_wear_the_3d_element_colours(ffast_web_
             await browser.close()
 
 
-async def test_web_rail_swatches_colour_the_same_series_in_every_panel(ffast_web_server):
+async def test_web_rail_swatches_colour_the_same_series_in_every_panel(shared_prediction_server):
     """Each dataset and prediction row has a colour swatch; a plot series is
     drawn in its prediction's colour (its dataset's for Ground Truth), the
     same in every panel, and changing the swatch redraws them; the choice is
     kept in this browser."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     colour = lambda title: page.evaluate(
         "(t) => document.querySelector(`.tabpanel.active .analysis-panel[data-title=\"${t}\"] .panel-plot`)"
@@ -880,10 +1016,10 @@ async def test_web_rail_swatches_colour_the_same_series_in_every_panel(ffast_web
             await browser.close()
 
 
-async def test_web_a_server_warning_pops_up_once(ffast_web_server):
+async def test_web_a_server_warning_pops_up_once(shared_server):
     """A warning the server logs pops up in the corner; the same one again
     within a minute does not add a second pop-up."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -902,9 +1038,9 @@ async def test_web_a_server_warning_pops_up_once(ffast_web_server):
             await browser.close()
 
 
-async def test_web_prediction_browser_keeps_load_button_inside_dialog(ffast_web_server):
+async def test_web_prediction_browser_keeps_load_button_inside_dialog(shared_dataset_server):
     """The prediction-only selectors may wrap, but its actions stay reachable."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -927,9 +1063,9 @@ async def test_web_prediction_browser_keeps_load_button_inside_dialog(ffast_web_
             await browser.close()
 
 
-async def test_web_text_controls_expand_instead_of_clipping(ffast_web_server):
+async def test_web_text_controls_expand_instead_of_clipping(shared_dataset_server):
     """Larger type may wrap controls, but their boxes must grow with it."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -959,8 +1095,8 @@ async def test_web_text_controls_expand_instead_of_clipping(ffast_web_server):
             await browser.close()
 
 
-async def test_web_file_menu_greys_out_server_actions_while_disconnected(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_file_menu_greys_out_server_actions_while_disconnected(shared_server):
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -983,11 +1119,11 @@ async def test_web_file_menu_greys_out_server_actions_while_disconnected(ffast_w
 
 # ── connection (ADR 0055 "Connection" row) ─────────────────────────────────
 
-async def test_web_connects_by_itself_when_the_url_names_the_port(ffast_web_server):
+async def test_web_connects_by_itself_when_the_url_names_the_port(shared_server):
     """The launcher's link carries the port (and an extra `launch=` id that the
     page ignores); the page connects without a click, and the top bar shows
     only a status label — the connection fields live in the dialog."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1007,8 +1143,8 @@ async def test_web_connects_by_itself_when_the_url_names_the_port(ffast_web_serv
             await browser.close()
 
 
-async def test_web_status_label_opens_the_connection_dialog(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_status_label_opens_the_connection_dialog(shared_server):
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1032,11 +1168,11 @@ async def test_web_status_label_opens_the_connection_dialog(ffast_web_server):
             await browser.close()
 
 
-async def test_web_dialog_opens_by_itself_and_remembers_the_last_five_servers(ffast_web_server):
+async def test_web_dialog_opens_by_itself_and_remembers_the_last_five_servers(shared_server):
     """With no port in the URL there is no server to connect to, so the dialog
     opens. Servers that connected are remembered (newest first, five at most)
     in browser storage — the address only, never the token."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1120,8 +1256,8 @@ async def _open_sections(page):
     )
 
 
-async def test_web_sidebar_opens_one_section_at_a_time_and_remembers_it(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_sidebar_opens_one_section_at_a_time_and_remembers_it(shared_dataset_server):
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1146,10 +1282,10 @@ async def test_web_sidebar_opens_one_section_at_a_time_and_remembers_it(ffast_we
             await browser.close()
 
 
-async def test_web_camera_exact_angles_wait_behind_a_link(ffast_web_server):
+async def test_web_camera_exact_angles_wait_behind_a_link(shared_dataset_server):
     """ADR 0055 "Inside sections": azimuth, elevation and distance sit behind
     an "Exact angles" link; the presets and toggles stay in view."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     rows = [f".pane[data-pane='Camera'] .ctl-row[data-label='{label}']"
             for label in ("Azimuth (°)", "Elevation (°)", "Roll (°)", "Distance")]
@@ -1175,11 +1311,11 @@ async def test_web_camera_exact_angles_wait_behind_a_link(ffast_web_server):
             await browser.close()
 
 
-async def test_web_the_camera_turns_freely_over_the_top_and_rolls(ffast_web_server):
+async def test_web_the_camera_turns_freely_over_the_top_and_rolls(shared_dataset_server):
     """to_fix 9: dragging up keeps turning the view past straight overhead
     (the old turntable stopped there); Roll in Exact angles turns the picture
     about the view and reaches the server; a preset takes the roll away."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     camera = "() => window.ffastApp.renderer._exportCamera()"
     async with async_playwright() as p:
@@ -1222,11 +1358,11 @@ async def test_web_the_camera_turns_freely_over_the_top_and_rolls(ffast_web_serv
             await browser.close()
 
 
-async def test_web_sidebar_search_opens_matching_sections(ffast_web_server):
+async def test_web_sidebar_search_opens_matching_sections(shared_dataset_server):
     """ADR 0055 "Sidebar search": typing opens every section with a match and
     highlights the matching rows, including rows behind "Exact angles";
     clearing it restores the section that was open."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1260,10 +1396,10 @@ async def test_web_sidebar_search_opens_matching_sections(ffast_web_server):
             await browser.close()
 
 
-async def test_web_sidebar_search_explains_rows_that_wait_for_something(ffast_web_server):
+async def test_web_sidebar_search_explains_rows_that_wait_for_something(shared_dataset_server):
     """A row hidden until something else happens is found too, greyed out,
     with the reason."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1291,8 +1427,8 @@ def _control(section, label, tag="select"):
     return f".pane[data-pane='{section}'] .ctl-row[data-label='{label}'] {tag}"
 
 
-async def test_web_force_error_style_waits_for_a_prediction(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_force_error_style_waits_for_a_prediction(shared_dataset_server):
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1308,13 +1444,13 @@ async def test_web_force_error_style_waits_for_a_prediction(ffast_web_server):
             await browser.close()
 
 
-async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server):
+async def test_web_force_error_style_sets_the_existing_controls(shared_prediction_server):
     """ADR 0055 "Quick styles": Force error only sets existing controls —
     colour by the per-atom force error of the selected prediction, with the
     desktop app's force_error colour map (ADR 0063 follow-up; cividis before).
     Force arrows are left as they are. The
     colour legend sits on the 3D view."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1339,10 +1475,10 @@ async def test_web_force_error_style_sets_the_existing_controls(ffast_web_server
             await browser.close()
 
 
-async def test_web_the_hint_bar_keeps_clear_of_the_colour_bar(ffast_web_server):
+async def test_web_the_hint_bar_keeps_clear_of_the_colour_bar(shared_prediction_server):
     """The colour bar's pieces start on the left, clear of the hint bar at the
     bottom (to_fix 17), and the hint bar stays inside the 3D view."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1370,11 +1506,11 @@ async def test_web_the_hint_bar_keeps_clear_of_the_colour_bar(ffast_web_server):
             await browser.close()
 
 
-async def test_web_a_narrow_compare_tab_gives_its_3d_panel_room_and_no_hint_bar(ffast_web_server):
+async def test_web_a_narrow_compare_tab_gives_its_3d_panel_room_and_no_hint_bar(shared_prediction_server):
     """ADR 0063 follow-up: at 1024 px Compare is one column; its 3D panel was
     300 px high and the hint bar and colour legend covered the molecule. Now
     the panel is 460 px high and the hint bar is not shown there."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1420,10 +1556,10 @@ async def test_web_the_colourbar_names_the_unit_of_a_force_colouring(ffast_web_s
             await browser.close()
 
 
-async def test_web_publication_style_and_reset(ffast_web_server):
+async def test_web_publication_style_and_reset(shared_dataset_server):
     """Publication: white background (view and export), orthographic, no axes.
     Reset puts back what the quick styles change."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     state = """() => {
       const R = window.ffastApp.renderer, c = new R._bondColor.constructor();
@@ -1451,9 +1587,9 @@ async def test_web_publication_style_and_reset(ffast_web_server):
             await browser.close()
 
 
-async def test_web_every_section_has_a_help_button(ffast_web_server):
+async def test_web_every_section_has_a_help_button(shared_dataset_server):
     """ADR 0055 "Help": a "?" on each section shows what it is for."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1475,8 +1611,8 @@ async def test_web_every_section_has_a_help_button(ffast_web_server):
             await browser.close()
 
 
-async def test_web_input_boxes_are_dark(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_input_boxes_are_dark(shared_dataset_server):
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1497,10 +1633,10 @@ async def test_web_input_boxes_are_dark(ffast_web_server):
             await browser.close()
 
 
-async def test_web_journal_page_whitens_the_figure_area_and_density_scales_the_type(ffast_web_server):
+async def test_web_journal_page_whitens_the_figure_area_and_density_scales_the_type(shared_prediction_server):
     """ADR 0063: Journal page turns the panels white and leaves the rail dark;
     Large is today's 18.2 px body; both survive a reload."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     background = "(el) => getComputedStyle(el).backgroundColor"
     async with async_playwright() as p:
@@ -1548,11 +1684,11 @@ async def test_web_journal_page_whitens_the_figure_area_and_density_scales_the_t
             await browser.close()
 
 
-async def test_web_journal_page_hides_the_controls_and_prints_units_as_text(ffast_web_server):
+async def test_web_journal_page_hides_the_controls_and_prints_units_as_text(shared_prediction_server):
     """ADR 0063 follow-up: Journal page is a print view: no control bar, no
     Peaks/Sub, no Smoothing, no Plotly toolbar, and a unit is not a link; edit
     mode keeps what it needs. Screen brings it all back."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1618,11 +1754,11 @@ _PNG_CORNER = """async (url) => {
 }"""
 
 
-async def test_web_journal_page_draws_the_3d_view_on_white_in_this_browser_only(ffast_web_server):
+async def test_web_journal_page_draws_the_3d_view_on_white_in_this_browser_only(shared_dataset_server):
     """ADR 0063 follow-up: Journal page draws the 3D view on white; Screen
     brings back the user's own background; an export keeps the background it
     is given."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1649,14 +1785,14 @@ async def test_web_journal_page_draws_the_3d_view_on_white_in_this_browser_only(
             await browser.close()
 
 
-async def test_web_colour_bar_limits_are_typed_and_its_pieces_move(ffast_web_server):
+async def test_web_colour_bar_limits_are_typed_and_its_pieces_move(shared_prediction_server):
     """The 3D colour bar prints its limits in scientific notation; a limit
     clicked and typed sets the range, an empty one is automatic again
     (to_fix 17: still so with four pieces). A piece dragged stays where it is
     put, as a fraction of the panel, for every colouring and after a reload;
     a group moves together, Rotate all 90° gives the horizontal layout, and
     a selected piece's corner grip resizes it, a text's font with it."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1770,11 +1906,11 @@ async def test_web_colour_bar_limits_are_typed_and_its_pieces_move(ffast_web_ser
             await browser.close()
 
 
-async def test_web_journal_page_drops_the_cards_the_pick_bar_and_the_hint_bar(ffast_web_server):
+async def test_web_journal_page_drops_the_cards_the_pick_bar_and_the_hint_bar(shared_dataset_server):
     """ADR 0063 follow-up: Journal page draws no card round a panel and hides
     the 3D pick bar and the hint bar; the panel titles stay. Screen brings
     them back."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1814,9 +1950,9 @@ _LEGEND_SIZE = """async () => {
 }"""
 
 
-async def test_web_a_plot_legend_follows_density(ffast_web_server):
+async def test_web_a_plot_legend_follows_density(shared_server):
     """ADR 0063 follow-up: a legend was 12 px at every Density."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1833,10 +1969,10 @@ async def test_web_a_plot_legend_follows_density(ffast_web_server):
             await browser.close()
 
 
-async def test_web_space_plays_and_esc_puts_down_a_pick_tool_on_the_3d_tab(ffast_web_server):
+async def test_web_space_plays_and_esc_puts_down_a_pick_tool_on_the_3d_tab(shared_dataset_server):
     """ADR 0063: Space plays and pauses the 3D view; Esc puts down an armed
     pick tool."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1861,8 +1997,8 @@ async def test_web_space_plays_and_esc_puts_down_a_pick_tool_on_the_3d_tab(ffast
             await browser.close()
 
 
-async def test_web_density_comfortable_scales_the_type_by_1_15(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_density_comfortable_scales_the_type_by_1_15(shared_server):
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2009,10 +2145,10 @@ async def test_web_tabs_rail_rows_and_section_headers_work_from_the_keyboard(ffa
             await browser.close()
 
 
-async def test_web_a_delete_dialog_starts_on_cancel_and_keeps_focus_inside(ffast_web_server):
+async def test_web_a_delete_dialog_starts_on_cancel_and_keeps_focus_inside(shared_prediction_server):
     """ADR 0063: the dialog that deletes focuses the safe button, outlines Delete,
     keeps Tab inside, and closes on Escape."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2032,8 +2168,8 @@ async def test_web_a_delete_dialog_starts_on_cancel_and_keeps_focus_inside(ffast
             await browser.close()
 
 
-async def test_web_the_file_browser_closes_on_escape_and_opens_with_a_row_focused(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_the_file_browser_closes_on_escape_and_opens_with_a_row_focused(shared_dataset_server):
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2053,10 +2189,10 @@ async def test_web_the_file_browser_closes_on_escape_and_opens_with_a_row_focuse
             await browser.close()
 
 
-async def test_web_the_file_browser_moves_with_arrow_keys(ffast_web_server):
+async def test_web_the_file_browser_moves_with_arrow_keys(shared_dataset_server):
     """to_fix_v2: ↓/↑ move between rows, → opens a folder, ← goes up and
     leaves the cursor on the folder it came from."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2088,10 +2224,10 @@ async def test_web_the_file_browser_moves_with_arrow_keys(ffast_web_server):
             await browser.close()
 
 
-async def test_web_four_shortcuts_step_frames_search_and_keep_out_of_inputs(ffast_web_server):
+async def test_web_four_shortcuts_step_frames_search_and_keep_out_of_inputs(shared_dataset_server):
     """ADR 0063: ←/→ step a frame, / focuses the settings search; neither fires
     while typing in an input."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2122,11 +2258,11 @@ async def test_web_four_shortcuts_step_frames_search_and_keep_out_of_inputs(ffas
             await browser.close()
 
 
-async def test_web_status_says_when_a_dataset_is_ready_and_the_rail_spells_frames_out(ffast_web_server):
+async def test_web_status_says_when_a_dataset_is_ready_and_the_rail_spells_frames_out(shared_dataset_server):
     """ADR 0063: a loaded dataset is announced ("ready"), the status says only
     "Connected" with the role in the button's title, empty rail lists read
     "None loaded", and a dataset's length is "100 frames"."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2144,13 +2280,13 @@ async def test_web_status_says_when_a_dataset_is_ready_and_the_rail_spells_frame
             await browser.close()
 
 
-async def test_web_a_narrow_window_stacks_the_plots_instead_of_scrolling_sideways(ffast_web_server):
+async def test_web_a_narrow_window_stacks_the_plots_instead_of_scrolling_sideways(shared_prediction_server):
     """ADR 0063: at 1024 px two plot columns fit and nothing scrolls sideways;
     narrower, the grid is one column; wide again, two. (The ADR names 1024 px
     for one column, but its own rule, two 360 px columns, fits there.) A tab's
     two plot columns are 12 + 12 of the 24 grid columns (ADR 0069), so the
     wide grid has 24 tracks, not 2."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2188,10 +2324,10 @@ async def test_web_a_narrow_window_stacks_the_plots_instead_of_scrolling_sideway
             await browser.close()
 
 
-async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
+async def test_web_hint_bar_offers_next_steps_until_dismissed(shared_dataset_server):
     """ADR 0055 "Help": a hint bar with numbered next steps; dismissing it is
     remembered in browser storage."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2222,10 +2358,10 @@ async def test_web_hint_bar_offers_next_steps_until_dismissed(ffast_web_server):
             await browser.close()
 
 
-async def test_web_a_pick_tool_shows_its_steps_live_and_each_can_be_dismissed(ffast_web_server):
+async def test_web_a_pick_tool_shows_its_steps_live_and_each_can_be_dismissed(shared_dataset_server):
     """An armed pick tool's hint follows the pick count; dismissing one tool's
     hint is remembered and leaves the other tools' hints alone."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2263,8 +2399,8 @@ async def test_web_a_pick_tool_shows_its_steps_live_and_each_can_be_dismissed(ff
             await browser.close()
 
 
-async def test_web_hint_bar_changes_once_a_prediction_is_loaded(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_hint_bar_changes_once_a_prediction_is_loaded(shared_prediction_server):
+    ws_port, web_port = shared_prediction_server
     dataset_fp, _model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2351,8 +2487,8 @@ async def test_web_arming_a_pick_tool_opens_its_section(ffast_web_server, tmp_pa
             await browser.close()
 
 
-async def test_web_sidebar_can_be_hidden_and_stays_hidden(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_sidebar_can_be_hidden_and_stays_hidden(shared_dataset_server):
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2386,11 +2522,11 @@ async def _width(page, selector):
     return (await page.locator(selector).bounding_box())["width"]
 
 
-async def test_web_sidebar_and_object_list_widths_are_adjustable(ffast_web_server):
+async def test_web_sidebar_and_object_list_widths_are_adjustable(shared_dataset_server):
     """Drag the edge of the Settings sidebar or the Datasets/Predictions list
     to resize it; the width is remembered in browser storage, double-click
     restores the default, and arrow keys work on a focused edge."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2426,11 +2562,11 @@ async def test_web_sidebar_and_object_list_widths_are_adjustable(ffast_web_serve
             await browser.close()
 
 
-async def test_web_resizing_the_view_redraws_at_once(ffast_web_server):
+async def test_web_resizing_the_view_redraws_at_once(shared_server):
     """Resizing a WebGL canvas wipes it. The view used to wait for the next
     animation frame to redraw, so every step of a sidebar drag showed one
     empty frame: the view blinked while dragging."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2456,10 +2592,10 @@ async def test_web_resizing_the_view_redraws_at_once(ffast_web_server):
     assert sum(centre) > 60, f"view empty right after a resize: {centre}"
 
 
-async def test_web_layout_works_when_browser_storage_is_blocked(ffast_web_server):
+async def test_web_layout_works_when_browser_storage_is_blocked(shared_dataset_server):
     """Private windows and blocked site data make storage throw; the page must
     still lay itself out, just without remembering anything."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2487,8 +2623,8 @@ async def test_web_layout_works_when_browser_storage_is_blocked(ffast_web_server
 _LOUPE_CHROME = ("#loupe-sidebar", "#pick-bar", "#loupe-controls")
 
 
-async def test_web_3d_tab_shows_only_a_load_button_until_a_dataset_is_open(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_3d_tab_shows_only_a_load_button_until_a_dataset_is_open(shared_server):
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2534,8 +2670,8 @@ async def test_web_empty_state_loads_the_example_dataset_and_prediction(ffast_we
             await browser.close()
 
 
-async def test_web_3d_controls_appear_once_a_dataset_is_open(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_3d_controls_appear_once_a_dataset_is_open(shared_dataset_server):
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -2556,11 +2692,11 @@ async def test_web_3d_controls_appear_once_a_dataset_is_open(ffast_web_server):
             await browser.close()
 
 
-async def test_web_3d_tab_is_an_ordinary_tab_holding_one_3d_panel(ffast_web_server):
+async def test_web_3d_tab_is_an_ordinary_tab_holding_one_3d_panel(shared_dataset_server):
     """ADR 0056 rule 6: the fixed 3D tab is the built-in "3D" tab now, built
     from the layout like any other: one 3D panel filling its grid, and no
     dataset picker, since nothing in it plots."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -3012,10 +3148,10 @@ async def _delete_from_rail(page, kind, fp):
     return page.locator(".ask-dialog")
 
 
-async def test_web_dialogs_and_repeated_controls_have_their_own_names(ffast_web_server):
+async def test_web_dialogs_and_repeated_controls_have_their_own_names(shared_prediction_server):
     """ADR 0063 follow-up: every "?" was "What is this?", dialogs had no name,
     every Peaks box was "Peaks", and a pick tool did not say it was armed."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -3055,8 +3191,8 @@ async def test_web_dialogs_and_repeated_controls_have_their_own_names(ffast_web_
             await browser.close()
 
 
-async def test_web_the_play_button_is_named_for_what_a_press_does(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_the_play_button_is_named_for_what_a_press_does(shared_dataset_server):
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -3074,10 +3210,10 @@ async def test_web_the_play_button_is_named_for_what_a_press_does(ffast_web_serv
             await browser.close()
 
 
-async def test_web_frame_and_play_keys_do_nothing_on_a_tab_without_a_3d_view(ffast_web_server):
+async def test_web_frame_and_play_keys_do_nothing_on_a_tab_without_a_3d_view(shared_dataset_server):
     """ADR 0063 follow-up: on an analysis tab without a 3D panel, ←/→ and
     Space stepped and played the 3D view out of sight."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -3104,9 +3240,9 @@ async def test_web_frame_and_play_keys_do_nothing_on_a_tab_without_a_3d_view(ffa
             await browser.close()
 
 
-async def test_web_closing_a_dialog_gives_focus_back_to_what_opened_it(ffast_web_server):
+async def test_web_closing_a_dialog_gives_focus_back_to_what_opened_it(shared_dataset_server):
     """ADR 0063 follow-up: a dialog closed with Esc left focus on <body>."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -4539,10 +4675,10 @@ _VIEWPORT_LETTERS = """() => [...document.querySelectorAll('.viewport')]
   .map((v) => v.querySelectorAll(':scope > .panel-letter').length)"""
 
 
-async def test_web_a_3d_view_shows_one_panel_letter_however_often_the_layout_is_rebuilt(ffast_web_server):
+async def test_web_a_3d_view_shows_one_panel_letter_however_often_the_layout_is_rebuilt(shared_dataset_server):
     """ADR 0063 follow-up: a rebuilt layout reuses its 3D panels, and each
     mount added the new cell's letter beside the old one."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -4560,10 +4696,10 @@ async def test_web_a_3d_view_shows_one_panel_letter_however_often_the_layout_is_
             await browser.close()
 
 
-async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(ffast_web_server):
+async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(shared_dataset_server):
     """The first time a dataset's view opens, every atom is in view. After
     that the camera is the user's: switching tabs and back keeps it (457dcaa)."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     in_view = """() => {
       const R = window.ffastApp.renderer;
@@ -4658,8 +4794,8 @@ async def test_web_prediction_selectors_appear_with_a_prediction(ffast_web_serve
             await browser.close()
 
 
-async def test_web_renderer_connects_and_draws_scene(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_renderer_connects_and_draws_scene(shared_dataset_server):
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     console_errors: list[str] = []
@@ -4740,11 +4876,11 @@ def _count_orange_force_pixels(png_bytes: bytes) -> int:
     )
 
 
-async def test_web_renderer_draws_prediction_force_arrows(ffast_web_server):
+async def test_web_renderer_draws_prediction_force_arrows(shared_prediction_server):
     """ADR 0045 issue 07: the Force Vectors pane's 'Show force vectors' toggle
     must actually gate the server-side TOGGLE_FEATURE("forces", ...) — arrows
     appear when checked, disappear when cleared."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
 
     async with async_playwright() as p:
@@ -4809,10 +4945,10 @@ async def test_web_renderer_draws_prediction_force_arrows(ffast_web_server):
             await browser.close()
 
 
-async def test_web_arming_force_turns_the_arrows_on_and_says_how_to_narrow_them(ffast_web_server):
+async def test_web_arming_force_turns_the_arrows_on_and_says_how_to_narrow_them(shared_dataset_server):
     """to_fix_v2: arming the Force tool ticks 'Show force vectors', and its hint
     says the arrows are on every atom until a pick narrows them."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -4830,12 +4966,12 @@ async def test_web_arming_force_turns_the_arrows_on_and_says_how_to_narrow_them(
             await browser.close()
 
 
-async def test_web_force_picks_follow_the_frame_on_a_variable_dataset(ffast_web_server):
+async def test_web_force_picks_follow_the_frame_on_a_variable_dataset(shared_dataset_server):
     """to_fix_v2: on a variable dataset each frame keeps its own Force picks.
     Stepping the frame sets ``view.frame`` before the scene arrives, so the
     picks shown must reload on the step itself — else the old frame's atoms
     stay picked and the next click copies them into the new frame."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -4872,13 +5008,13 @@ async def test_web_force_picks_follow_the_frame_on_a_variable_dataset(ffast_web_
             await browser.close()
 
 
-async def test_web_renderer_draws_the_colours_the_scene_specifies(ffast_web_server):
+async def test_web_renderer_draws_the_colours_the_scene_specifies(shared_prediction_server):
     """Scene colours are sRGB, like the CSS colour bar (ADR 0052: a renderer
     draws the RGBA it is given). Three.js reads a bare ``setRGB`` as *linear*
     and brightens it on output, so every atom and arrow came out paler than
     specified — force-error colouring looked washed out and no longer matched
     its colour bar. Read back what the GPU buffers hold, in sRGB."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
 
     async with async_playwright() as p:
@@ -4923,10 +5059,10 @@ async def test_web_renderer_draws_the_colours_the_scene_specifies(ffast_web_serv
     assert drawn["arrow"] == "e6661a"
 
 
-async def test_web_arrow_thickness_slider_scales_the_arrow_radii(ffast_web_server):
+async def test_web_arrow_thickness_slider_scales_the_arrow_radii(shared_prediction_server):
     """Force arrows are solid rods and cones sized in Å (shaft 0.05, head 0.12);
     the Force Vectors pane's Arrow thickness scales both radii, and only them."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     read = """() => {
       const R = window.ffastApp.renderer;
@@ -4964,12 +5100,12 @@ async def test_web_arrow_thickness_slider_scales_the_arrow_radii(ffast_web_serve
             await browser.close()
 
 
-async def test_web_pick_highlight_does_not_rebuild_a_shader(ffast_web_server):
+async def test_web_pick_highlight_does_not_rebuild_a_shader(shared_dataset_server):
     """Each pick sends a selection patch. The overlay used to dispose its
     material and make a new one every time, so the GPU recompiled the shader
     program on every pick — a ~115 ms freeze that delayed the next reply.
     Picking again must reuse the program the first highlight compiled."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -5041,10 +5177,10 @@ async def _apply_synthetic(page, n):
     )
 
 
-async def test_web_small_structures_get_the_richer_look(ffast_web_server):
+async def test_web_small_structures_get_the_richer_look(shared_server):
     """ADR 0055 "3D drawing": below the atom-count threshold, smoother spheres
     and bonds, glossier materials and a sky light; above it, today's look."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -5099,12 +5235,12 @@ _DRAWN_BALLS = """() => {
 }"""
 
 
-async def test_web_rich_look_draws_chemistry_alive_ball_and_stick(ffast_web_server):
+async def test_web_rich_look_draws_chemistry_alive_ball_and_stick(shared_server):
     """ADR 0055 (revised): below the threshold the browser draws ball-and-stick
     as the chemistry.alive prototype did — 0.42 x covalent radius kept within
     0.24-0.55 A, times Atom size; bonds in two halves coloured like their
     atoms; a 35-degree lens, while the server keeps its own field of view."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -5137,8 +5273,8 @@ async def test_web_rich_look_draws_chemistry_alive_ball_and_stick(ffast_web_serv
     assert full["fov"] == 35 and full["exportedFov"] == 60
 
 
-async def test_web_large_structures_keep_server_sizes_and_lens(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_large_structures_keep_server_sizes_and_lens(shared_server):
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -5166,10 +5302,10 @@ async def test_web_large_structures_keep_server_sizes_and_lens(ffast_web_server)
     assert drawn == {"r": pytest.approx(0.76), "fov": 60, "bonds": 1}
 
 
-async def test_web_rich_look_keeps_an_atoms_shade_while_orbiting(ffast_web_server):
+async def test_web_rich_look_keeps_an_atoms_shade_while_orbiting(shared_server):
     """ADR 0055: the lights turn with the camera, so an atom looks the same
     from every side. Above the threshold the light stays fixed in the world."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     shade = """async (azimuth) => {
       const R = window.ffastApp.renderer;
@@ -5210,9 +5346,9 @@ async def test_web_rich_look_keeps_an_atoms_shade_while_orbiting(ffast_web_serve
     assert any(max(abs(a - b) for a, b in zip(plain[0], o)) > 10 for o in plain[1:]), plain
 
 
-async def test_web_pixel_ratio_is_capped_at_two(ffast_web_server):
+async def test_web_pixel_ratio_is_capped_at_two(shared_server):
     """ADR 0055: a 3x screen draws at 2x, for every structure size."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -5277,10 +5413,10 @@ async def test_web_color_by_selector_recolors_atoms_and_shows_colorbar(ffast_web
             await browser.close()
 
 
-async def test_web_camera_preset_reorients_view(ffast_web_server):
+async def test_web_camera_preset_reorients_view(shared_dataset_server):
     """ADR 0045 issue 04 / Phase 1 gate: a camera preset button reorients the
     rendered view (observed as a materially different image, not a no-op)."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -5321,10 +5457,10 @@ async def test_web_camera_preset_reorients_view(ffast_web_server):
             await browser.close()
 
 
-async def test_web_fps_and_skip_live_in_a_gear_pop_up(ffast_web_server):
+async def test_web_fps_and_skip_live_in_a_gear_pop_up(shared_dataset_server):
     """ADR 0055: FPS and Skip move into a ⚙ pop-up, whose button is drawn
     larger than the other strip icons."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -5358,10 +5494,10 @@ async def test_web_fps_and_skip_live_in_a_gear_pop_up(ffast_web_server):
             await browser.close()
 
 
-async def test_web_playback_advances_frames_and_stops_on_pause(ffast_web_server):
+async def test_web_playback_advances_frames_and_stops_on_pause(shared_dataset_server):
     """ADR 0045 issue 08: play advances the frame index automatically; pause
     stops it — the frame slider must not keep moving once paused."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -5436,11 +5572,11 @@ async def _selection_mesh_count(page):
     return await page.evaluate("() => window.ffastApp.renderer._selectionMeshes.size")
 
 
-async def test_web_pick_click_and_box_render_selection_overlay(ffast_web_server):
+async def test_web_pick_click_and_box_render_selection_overlay(shared_dataset_server):
     """ADR 0045 issue 10 gate: with a pick tool armed, a click selects the
     nearest atom and a box-drag selects a group — each commits to the server
     and renders a selection overlay."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -5482,10 +5618,10 @@ async def test_web_pick_click_and_box_render_selection_overlay(ffast_web_server)
             await browser.close()
 
 
-async def test_web_info_tool_reports_distance(ffast_web_server):
+async def test_web_info_tool_reports_distance(shared_dataset_server):
     """ADR 0045 issue 11 gate: picking two atoms with the Info tool reports a
     distance read-out in the pick strip."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -5553,9 +5689,9 @@ async def _front_atom(page, zoom=1.0):
     )
 
 
-async def test_web_pick_tools_show_their_names(ffast_web_server):
+async def test_web_pick_tools_show_their_names(shared_dataset_server):
     """ADR 0055: pick tools show their names next to their icons."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -5572,10 +5708,10 @@ async def test_web_pick_tools_show_their_names(ffast_web_server):
             await browser.close()
 
 
-async def test_web_click_anywhere_on_an_atoms_ball_picks_it(ffast_web_server):
+async def test_web_click_anywhere_on_an_atoms_ball_picks_it(shared_dataset_server):
     """ADR 0055: the pick radius is gone; a click anywhere on an atom's drawn
     ball picks it, even far beyond the old 12 px from its centre."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -5596,9 +5732,9 @@ async def test_web_click_anywhere_on_an_atoms_ball_picks_it(ffast_web_server):
             await browser.close()
 
 
-async def test_web_tiny_atoms_keep_a_minimum_pick_target(ffast_web_server):
+async def test_web_tiny_atoms_keep_a_minimum_pick_target(shared_dataset_server):
     """ADR 0055: very small atoms keep a minimum target of a few pixels."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -5630,10 +5766,10 @@ async def test_web_tiny_atoms_keep_a_minimum_pick_target(ffast_web_server):
             await browser.close()
 
 
-async def test_web_the_atom_under_the_pointer_is_highlighted(ffast_web_server):
+async def test_web_the_atom_under_the_pointer_is_highlighted(shared_dataset_server):
     """The atom under the pointer is drawn larger and lighter, with or without
     a tool armed (as the desktop does); an orbit drag does not highlight."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     drawn = """(i) => {
@@ -5687,9 +5823,9 @@ async def test_web_the_atom_under_the_pointer_is_highlighted(ffast_web_server):
             await browser.close()
 
 
-async def test_web_pick_radius_control_is_gone(ffast_web_server):
+async def test_web_pick_radius_control_is_gone(shared_dataset_server):
     """ADR 0055: picking by the drawn ball replaces the Pick radius setting."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -5705,11 +5841,11 @@ async def test_web_pick_radius_control_is_gone(ffast_web_server):
             await browser.close()
 
 
-async def test_web_picking_does_not_resize_the_3d_view(ffast_web_server):
+async def test_web_picking_does_not_resize_the_3d_view(shared_dataset_server):
     """The pick read-out used to wrap the pick bar onto a second line, shrinking
     the 3D view, so the molecule jumped under the pointer after the first pick
     and the next click missed its atom."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     size = """() => [document.querySelector('.tabpanel.active .panel-3d.focused canvas.view3d').clientWidth,
                      document.querySelector('.tabpanel.active .panel-3d.focused canvas.view3d').clientHeight,
@@ -5825,11 +5961,11 @@ async def test_web_alignment_pane_wires_kabsch_and_exclusive_modes(ffast_web_ser
     assert not page_errors
 
 
-async def test_web_alignment_is_off_on_a_variable_dataset(ffast_web_server):
+async def test_web_alignment_is_off_on_a_variable_dataset(shared_dataset_server):
     """On a dataset whose atoms change between frames (the bundled example),
     one frame's atoms cannot be matched to another's: the Align tool is
     greyed out and the Alignment section says why instead of offering modes."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -5874,10 +6010,10 @@ async def _open_analysis_tab(page, name):
     await tab.click()
 
 
-async def test_web_analysis_scatter_renders(ffast_web_server):
+async def test_web_analysis_scatter_renders(shared_prediction_server):
     """ADR 0045 Phase 3 gate: the Basic Errors tab's true-vs-predicted scatter
     renders a Plotly plot fed by the metric channel."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
 
     async with async_playwright() as p:
@@ -5896,10 +6032,10 @@ async def test_web_analysis_scatter_renders(ffast_web_server):
             await browser.close()
 
 
-async def test_web_every_analysis_panel_has_a_letter_and_the_first_is_a(ffast_web_server):
+async def test_web_every_analysis_panel_has_a_letter_and_the_first_is_a(shared_prediction_server):
     """ADR 0063: panels are lettered in screen reading order, and a plot says
     in one line under it what it shows."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
 
     async with async_playwright() as p:
@@ -5930,10 +6066,10 @@ async def test_web_every_analysis_panel_has_a_letter_and_the_first_is_a(ffast_we
             await browser.close()
 
 
-async def test_web_a_timeline_labels_its_five_worst_frames_and_a_label_opens_one(ffast_web_server):
+async def test_web_a_timeline_labels_its_five_worst_frames_and_a_label_opens_one(shared_prediction_server):
     """ADR 0063: a one-series timeline marks its 5 highest peaks, and clicking a
     label opens that frame, as clicking the curve does; the frame stays marked."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
 
     async with async_playwright() as p:
@@ -5974,10 +6110,10 @@ async def test_web_a_timeline_labels_its_five_worst_frames_and_a_label_opens_one
             await browser.close()
 
 
-async def test_web_a_timelines_peak_labels_start_off_and_switch_on(ffast_web_server):
+async def test_web_a_timelines_peak_labels_start_off_and_switch_on(shared_prediction_server):
     """Each one-series timeline has a Peaks checkbox that hides its labels, and
     the caption's peak sentence with them; the choice survives a reload."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
 
     async with async_playwright() as p:
@@ -6035,10 +6171,10 @@ async def _zoom_above_the_data(page, panel):
         panel)
 
 
-async def test_web_double_clicking_a_labelled_timeline_goes_back_to_its_drawn_range(ffast_web_server):
+async def test_web_double_clicking_a_labelled_timeline_goes_back_to_its_drawn_range(shared_prediction_server):
     """ADR 0063 follow-up: Plotly's default double-click switched a labelled
     timeline to autorange, which counts the label arrows and squashed the curve."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -6101,10 +6237,10 @@ _POINT_XY = """([sel, frame]) => {
 }"""
 
 
-async def test_web_a_double_click_on_a_timeline_does_not_open_a_frame(ffast_web_server):
+async def test_web_a_double_click_on_a_timeline_does_not_open_a_frame(shared_prediction_server):
     """ADR 0063 follow-up: the first click of a double-click opened the frame
     under it and left the tab; a single click still opens it."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -6139,12 +6275,12 @@ _SLOT_BOXES = """(name) => window.ffastApp._analysis._tabs.find((t) => t.spec.na
 
 
 @pytest.mark.parametrize("width", [1440, 900])
-async def test_web_only_the_rows_with_peak_labels_grow(ffast_web_server, width):
+async def test_web_only_the_rows_with_peak_labels_grow(shared_prediction_server, width):
     """ADR 0063 follow-up: a labelled timeline made every row of its tab taller
     by its labels' height, leaving the tables' rows mostly empty. (A 300 px row
     of the old form is 6 units on the fine grid, 6 x 50 px and 5 gaps: 350 px; a
     narrow window stacks the panels in 300 px rows.)"""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -6261,11 +6397,11 @@ async def test_web_sub_makes_a_subset_that_follows_the_zoom(ffast_web_server):
             await browser.close()
 
 
-async def test_web_custom_toml_tab_matches_builtin(ffast_web_server):
+async def test_web_custom_toml_tab_matches_builtin(shared_dataset_server):
     """ADR 0045 Phase 3 gate: a project TOML [[visualization.tabs]] (the repo's
     'Dataset Fields (demo)' tab) appears in the tab bar with the same structure
     as a built-in tab and renders identically over the same layout channel."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -6296,10 +6432,10 @@ async def test_web_custom_toml_tab_matches_builtin(ffast_web_server):
 
 # ── Phase 4: export + session ────────────────────────────────────────────────
 
-async def test_web_export_png_opaque_and_transparent_download(ffast_web_server):
+async def test_web_export_png_opaque_and_transparent_download(shared_dataset_server):
     """ADR 0045 issue 19 gate: both PNG export buttons trigger a real browser
     download of a non-empty PNG produced from the WebGL canvas."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -6377,14 +6513,14 @@ async def test_web_export_subset_writes_extxyz_and_reports_path(ffast_web_server
             await browser.close()
 
 
-async def test_web_popout_opens_independent_live_controller(ffast_web_server):
+async def test_web_popout_opens_independent_live_controller(shared_dataset_server):
     """ADR 0044 Phase 4 gate: the pop-out button opens its OWN WebSocket
     connection (the server advertises ``multi_client`` in HELLO_ACK) — a real
     second controller with its own view, not a same-tab BroadcastChannel
     mirror (ADR 0043). It replays the shared dataset, auto-selects the one the
     opener had open, and scrubbing its frame slider must not move the
     opener's — independent views over the shared Environment (ADR 0044)."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
     async with async_playwright() as p:
@@ -6487,9 +6623,9 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
                 await browser.close()
 
 
-async def test_web_loading_a_session_that_does_not_exist_shows_an_error(ffast_web_server, tmp_path):
+async def test_web_loading_a_session_that_does_not_exist_shows_an_error(shared_server, tmp_path):
     """ADR 0063 follow-up: a missing session folder used to report "Loaded session"."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -6509,10 +6645,10 @@ async def test_web_loading_a_session_that_does_not_exist_shows_an_error(ffast_we
             await browser.close()
 
 
-async def test_web_loading_a_prediction_the_server_already_holds_ends_the_loading_status(ffast_web_server):
+async def test_web_loading_a_prediction_the_server_already_holds_ends_the_loading_status(shared_prediction_server):
     """ADR 0063 follow-up: the server announces nothing for a prediction it
     already holds, so "Loading prediction…" used to stay up for good."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, _ = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -6770,9 +6906,9 @@ async def test_web_the_page_does_not_ask_for_what_the_server_pushes(ffast_web_se
         assert event not in sent
 
 
-async def test_web_atom_index_labels_switch_on_and_off(ffast_web_server):
+async def test_web_atom_index_labels_switch_on_and_off(shared_dataset_server):
     """Display ▸ Atom index labels writes each atom's index next to it (web parity plan 2026-10-29)."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -6814,10 +6950,10 @@ async def test_web_three_atom_align_and_origin_com_switch_each_other_off(ffast_w
             await browser.close()
 
 
-async def test_web_clear_picks_also_clears_the_force_atoms(ffast_web_server):
+async def test_web_clear_picks_also_clears_the_force_atoms(shared_dataset_server):
     """Guards the Clear button: with the Force tool armed it clears the Force
     atom picks as well as the overlay (web parity plan 2026-10-29)."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -6836,9 +6972,9 @@ async def test_web_clear_picks_also_clears_the_force_atoms(ffast_web_server):
             await browser.close()
 
 
-async def test_web_a_plot_downloads_svg_and_csv(ffast_web_server):
+async def test_web_a_plot_downloads_svg_and_csv(shared_prediction_server):
     """Web parity plan 2026-10-29: a plot's ⋯ menu downloads it as SVG and CSV."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -6876,9 +7012,9 @@ async def test_web_a_plot_downloads_svg_and_csv(ffast_web_server):
             await browser.close()
 
 
-async def test_web_a_table_downloads_as_csv(ffast_web_server):
+async def test_web_a_table_downloads_as_csv(shared_prediction_server):
     """Web parity plan 2026-10-29: a table's ⋯ menu downloads it as CSV."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -7020,8 +7156,8 @@ async def test_web_the_file_browser_starts_in_the_workdir(tmp_path):
                 await browser.close()
 
 
-async def test_web_the_file_browser_starts_where_the_server_started(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_the_file_browser_starts_where_the_server_started(shared_server):
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -7035,9 +7171,9 @@ async def test_web_the_file_browser_starts_where_the_server_started(ffast_web_se
             await browser.close()
 
 
-async def test_web_export_overwrites_a_file_clicked_in_the_list(ffast_web_server, tmp_path):
+async def test_web_export_overwrites_a_file_clicked_in_the_list(shared_dataset_server, tmp_path):
     """Export Dataset: clicking a file puts its name in the box (web parity plan 2026-10-29)."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     target = tmp_path / "old.extxyz"
     target.write_text("")
@@ -7058,9 +7194,9 @@ async def test_web_export_overwrites_a_file_clicked_in_the_list(ffast_web_server
             await browser.close()
 
 
-async def test_web_export_writes_the_chosen_format(ffast_web_server, tmp_path):
+async def test_web_export_writes_the_chosen_format(shared_dataset_server, tmp_path):
     """Export Dataset asks for the format and the file is written in it (web parity plan 2026-10-29)."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -7123,9 +7259,9 @@ async def test_web_the_rail_menu_renames_for_every_window(ffast_web_server):
             await browser.close()
 
 
-async def test_web_the_rail_menu_shows_info(ffast_web_server):
+async def test_web_the_rail_menu_shows_info(shared_prediction_server):
     """Info in a rail row's ⋯ menu says what the dataset or prediction is."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_prediction_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -7152,9 +7288,9 @@ async def test_web_the_rail_menu_shows_info(ffast_web_server):
             await browser.close()
 
 
-async def test_the_server_names_each_task(ffast_web_server, tmp_path):
+async def test_the_server_names_each_task(shared_server, tmp_path):
     """TASK_INFO follows TASK_CREATED with the task's name (web parity plan 2026-10-29)."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     ws = await _connect_headless_client(ws_port)
     try:
@@ -7168,9 +7304,9 @@ async def test_the_server_names_each_task(ffast_web_server, tmp_path):
         await ws.close()
 
 
-async def test_web_tasks_button_shows_a_running_task_and_cancels_it(ffast_web_server):
+async def test_web_tasks_button_shows_a_running_task_and_cancels_it(shared_server):
     """The Tasks button lists a running task and its Cancel asks the server (web parity plan 2026-10-29)."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -7197,9 +7333,9 @@ async def test_web_tasks_button_shows_a_running_task_and_cancels_it(ffast_web_se
             await browser.close()
 
 
-async def test_web_alt_shift_shortcuts_open_the_file_actions(ffast_web_server):
+async def test_web_alt_shift_shortcuts_open_the_file_actions(shared_dataset_server):
     """Alt+Shift+letter opens the file actions (web parity plan 2026-10-29)."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -7345,10 +7481,10 @@ async def test_web_a_panel_warning_explains_itself_on_hover(ffast_web_server, tm
             await browser.close()
 
 
-async def test_web_the_bell_keeps_warnings_and_errors_after_their_popups_close(ffast_web_server):
+async def test_web_the_bell_keeps_warnings_and_errors_after_their_popups_close(shared_server):
     """Pop-ups close by themselves; the bell in the bottom-right corner keeps
     every warning and error, newest first, across a reload of the page."""
-    ws_port, web_port = ffast_web_server
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     pop = "([t, l]) => import('/toasts.js').then((m) => { m.showWarning(t, l); })"
     async with async_playwright() as p:

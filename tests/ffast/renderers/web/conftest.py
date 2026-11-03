@@ -18,6 +18,15 @@ import pytest
 from playwright.async_api import Browser
 
 
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item, call):
+    """Keep how the test itself went, for a shared server's check after it."""
+    report = yield
+    if report.when == "call":
+        item.rep_call = report
+    return report
+
+
 @pytest.fixture(autouse=True)
 def browser_evidence(request, tmp_path_factory, monkeypatch):
     evidence = SimpleNamespace(kept=[])   # the folders written, for the self-test

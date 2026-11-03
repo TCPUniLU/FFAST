@@ -10,7 +10,7 @@ from playwright.async_api import async_playwright, expect
 from .test_web_runtime import (
     DATASET_PATH, PREDICTION_PATH, REPO_ROOT, _RECORD_SENDS, _expect_connected,
     _file_menu, _open_loupe, _preload_dataset, _preload_uniform_dataset,
-    _spawn_server, _wait_for_server_ready,
+    _shared_servers, _spawn_server, _wait_for_server_ready, shared_server,
 )
 
 pytestmark = pytest.mark.integration
@@ -34,8 +34,8 @@ async def _sent(page, event):
         "(e) => window.__sent.filter(([name]) => name === e).map(([, kw]) => kw)", event)
 
 
-async def test_web_the_type_list_is_the_servers_and_follows_the_file(ffast_web_server, tmp_path):
-    ws_port, web_port = ffast_web_server
+async def test_web_the_type_list_is_the_servers_and_follows_the_file(shared_server, tmp_path):
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     np.savez(tmp_path / "m.npz", x=np.zeros(1))
     async with async_playwright() as p:
@@ -218,8 +218,8 @@ async def test_web_an_npz_prediction_loads(ffast_web_server, tmp_path):
             await browser.close()
 
 
-async def test_web_a_model_that_cannot_load_says_why(ffast_web_server):
-    ws_port, web_port = ffast_web_server
+async def test_web_a_model_that_cannot_load_says_why(shared_server):
+    ws_port, web_port = shared_server
     await _wait_for_server_ready(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
