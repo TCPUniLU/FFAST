@@ -342,31 +342,57 @@ def run_plan(
             results[metric_id] = cached
             continue
 
-        raw = run_fn(metric_id, schema, fn, kwargs, step.compute_params)
-        if isinstance(raw, MetricFailure):
-            results[metric_id] = raw
-            continue
-
-        if isinstance(raw, WithWarnings):
-            warnings.extend(raw.warnings)
-            raw = raw.values
-        arr = np.asarray(raw)
-        result = MetricResult(
-            metric_id=metric_id,
-            shape=shape_to_str(schema.shape),
-            dtype=str(arr.dtype),
-            unit=schema.unit,
-            compute_parameters=step.compute_params,
-            implementation_hash=function_hash(fn),
-            values=arr,
-            warnings=list(dict.fromkeys(warnings)),
-        )
-        t = time.monotonic()
-        cache.put(cache_key, result)
-        log.info(
-            "metric step %s around compute: key %d ms, cache read %d ms, "
-            "cache write %d ms (%d MB)",
-            metric_id, key_ms, read_ms, _ms(t), arr.nbytes // 2**20)
+        # Another metric may be computing this step right now: wait for its
+        # result rather than compute it a second time. If that run fails or
+        # is stopped, this one computes it itself.
+        running = cache.claim(cache_key)
+        if running is not None:
+            t = time.monotonic()
+            shared = running.result()
+            if shared is not None:
+                log.info("metric step %s: shared with a run already computing it, waited %d ms",
+                         metric_id, _ms(t))
+                results[metric_id] = shared
+                continue
+            result = _compute_step(step, schema, fn, kwargs, warnings, run_fn, cache, cache_key,
+                                   key_ms, read_ms)
+        else:
+            result = None
+            try:
+                # Finished between the cache read and the claim.
+                result = cache.get(cache_key) or _compute_step(
+                    step, schema, fn, kwargs, warnings, run_fn, cache, cache_key, key_ms, read_ms)
+            finally:
+                cache.release(cache_key, result if isinstance(result, MetricResult) else None)
         results[metric_id] = result
 
     return results
+
+
+def _compute_step(step, schema, fn, kwargs, warnings, run_fn, cache, cache_key, key_ms, read_ms):
+    """Run one step and cache its result → ``MetricResult | MetricFailure``."""
+    metric_id = step.metric_id
+    raw = run_fn(metric_id, schema, fn, kwargs, step.compute_params)
+    if isinstance(raw, MetricFailure):
+        return raw
+    if isinstance(raw, WithWarnings):
+        warnings = [*warnings, *raw.warnings]
+        raw = raw.values
+    arr = np.asarray(raw)
+    result = MetricResult(
+        metric_id=metric_id,
+        shape=shape_to_str(schema.shape),
+        dtype=str(arr.dtype),
+        unit=schema.unit,
+        compute_parameters=step.compute_params,
+        implementation_hash=function_hash(fn),
+        values=arr,
+        warnings=list(dict.fromkeys(warnings)),
+    )
+    t = time.monotonic()
+    cache.put(cache_key, result)
+    log.info(
+        "metric step %s around compute: key %d ms, cache read %d ms, "
+        "cache write %d ms (%d MB)",
+        metric_id, key_ms, read_ms, _ms(t), arr.nbytes // 2**20)
+    return result

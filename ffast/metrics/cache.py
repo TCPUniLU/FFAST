@@ -10,6 +10,7 @@ import tempfile
 import threading
 import uuid
 from collections import OrderedDict
+from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -165,6 +166,25 @@ class MetricCache:
         self._disk: OrderedDict[CacheKey, tuple[MetricResult, Path, int]] = OrderedDict()
         self._disk_total = 0
         self._warned: set[tuple[str, str]] = set()
+        # key -> the result another thread is computing now
+        self._computing: dict[CacheKey, Future] = {}
+
+    def claim(self, key: CacheKey) -> Future | None:
+        """``None`` when the caller is now the one computing ``key`` and must
+        ``release`` it; otherwise a future giving the result of the thread
+        already computing it (``None`` when that failed)."""
+        with self._lock:
+            running = self._computing.get(key)
+            if running is not None:
+                return running
+            self._computing[key] = Future()
+            return None
+
+    def release(self, key: CacheKey, result: MetricResult | None) -> None:
+        """End the computing ``claim``ed for ``key``; waiters get ``result``."""
+        with self._lock:
+            running = self._computing.pop(key)
+        running.set_result(result)
 
     def make_key(
         self,
