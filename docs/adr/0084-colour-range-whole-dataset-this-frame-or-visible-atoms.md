@@ -1,6 +1,7 @@
 # Colour range: whole dataset, this frame or visible atoms
 
-Status: Accepted 2026-11-03.
+Status: Accepted and built 2026-11-03 (b44155a, 8310ab8). Not yet tried by
+hand in the app.
 
 ## The problem
 

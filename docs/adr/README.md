@@ -104,6 +104,7 @@ things came up.
 - [0077](0077-metric-requests-run-beside-other-messages.md) Metric requests run beside other messages: slider and view clicks no longer wait for minute-long metrics; the same metric asked twice computes once (built)
 - [0078](0078-the-force-scatter-is-a-density-with-the-worst-as-dots.md) The force scatter is a density of every component with the worst 50,000 as dots you can hover, click and Sub; the density is an image, since the vendored Plotly has no heatmap (built)
 - [0079](0079-ffast-code-runs-in-the-server-outside-code-in-workers.md) FFAST's own metric code (built-ins, every formula) runs in the server, several steps at once as memory allows; only outside code runs in workers, which grow and shrink (planned)
+- [0084](0084-colour-range-whole-dataset-this-frame-or-visible-atoms.md) Colour range: the colour bar's ends come from the whole dataset, this frame or its visible atoms; only the ends change, never the values (built)
 
 ## Environment structure
 
