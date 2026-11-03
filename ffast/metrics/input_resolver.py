@@ -24,6 +24,7 @@ import logging
 
 import numpy as np
 
+from ffast.core.flat_frames import FlatFrames
 from ffast.metrics.execution import InputSource
 from ffast.metrics.inputs import parse_field_ref, parse_missing_ref
 
@@ -91,6 +92,8 @@ def _flatPerAtom(value, axes):
     of per-frame arrays, or ``(frames, atoms, ...)``. ``axes`` is how many axes
     one atom's value has (1 for a force, 0 for a scalar field); an array with
     two more still has its frame axis."""
+    if isinstance(value, FlatFrames):
+        return value.values
     if isinstance(value, list):
         return _flatten(value)
     if value is None:

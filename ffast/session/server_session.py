@@ -38,6 +38,7 @@ from typing import Optional
 import numpy as np
 from pydantic import BaseModel, ValidationError
 
+from ffast.core.flat_frames import FlatFrames
 from ffast.protocol import control
 from ffast.session import timing, trace
 from ffast.session.window_feed import WindowFeed
@@ -375,7 +376,9 @@ class ServerSession:
                 if parent is not None:
                     frames = [int(i) for i in np.asarray(dataset.frames).ravel()]
                     forces = parent.forces
-                    # Structures of different sizes come as a list of arrays.
+                    if isinstance(forces, FlatFrames):
+                        return _PredictionView(forces.frames(frames))
+                    # Older entries: a list of arrays, or one array.
                     if isinstance(forces, list):
                         return _PredictionView([forces[i] for i in frames])
                     return _PredictionView(np.asarray(forces)[frames])
@@ -691,7 +694,9 @@ class ServerSession:
             # Variable-dataset forces arrive as a list of (natoms_i, 3) arrays;
             # flatten to (total_atoms, 3) — client rebuilds per-molecule slices
             # using the already-transferred offsets.
-            if isinstance(raw, list):
+            if isinstance(raw, FlatFrames):
+                raw = raw.values
+            elif isinstance(raw, list):
                 try:
                     raw = np.concatenate(raw, axis=0)
                 except Exception as exc:
@@ -1030,7 +1035,9 @@ class ServerSession:
             # Variable-dataset forces arrive as list of (natoms_i, 3) arrays;
             # flatten to (total_atoms, 3) — client rebuilds per-molecule slices
             # using the already-held offsets.
-            if isinstance(raw, list):
+            if isinstance(raw, FlatFrames):
+                raw = raw.values
+            elif isinstance(raw, list):
                 try:
                     raw = np.concatenate(raw, axis=0)
                 except Exception as exc:

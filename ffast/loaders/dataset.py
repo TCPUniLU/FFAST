@@ -5,6 +5,7 @@ import os
 import logging
 from scipy.spatial.distance import pdist
 from ffast.core.events import EventClass
+from ffast.core.flat_frames import FlatFrames
 from ffast.cache.fingerprint import md5FromArraysAndStrings
 from ffast.core.util import removeExtension, hexToRGB, cleanBondIdxsArray
 from ffast.chemistry import zIntToZStr, zStrToZInt
@@ -1024,6 +1025,10 @@ class DatasetView(DatasetLoader):
         (one, several, or all when None), in either kind's shape."""
         if not self.isAtomFiltered or values is None:
             return values
+        if isinstance(values, FlatFrames) and indices is None:
+            if self.frames is not None:
+                raise NotImplementedError("a frame-picking atom view over FlatFrames")
+            return values.atoms(self._flatIndex(), self.getOffsets())
         same = self._sameAtoms()
         if isOneFrame(indices):
             atoms = same if same is not None else self._atomsOf(int(self._parentIndex(indices)))

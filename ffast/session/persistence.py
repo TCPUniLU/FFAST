@@ -18,6 +18,7 @@ import logging
 import numpy as np
 
 from ffast.core.data_types import SubDataEntity
+from ffast.core.flat_frames import FlatFrames
 
 logger = logging.getLogger("FFAST")
 
@@ -88,7 +89,10 @@ class SessionPersistence:
             # dataset forces) to object arrays so numpy can save them.
             saveData = {}
             for k, v in entity.data.items():
-                if isinstance(v, list):
+                if isinstance(v, FlatFrames):
+                    saveData[k + "__flat_values"] = v.values
+                    saveData[k + "__flat_offsets"] = v.offsets
+                elif isinstance(v, list):
                     saveData[k] = np.array(v, dtype=object)
                 else:
                     saveData[k] = v
@@ -257,6 +261,9 @@ class SessionPersistence:
             for k, v in d.items():
                 if isinstance(v, np.ndarray) and v.dtype == object:
                     d[k] = list(v)
+            for k in [k for k in d if k.endswith("__flat_values")]:
+                base = k[:-len("__flat_values")]
+                d[base] = FlatFrames(d.pop(k), d.pop(base + "__flat_offsets"))
 
             dataType = self.getDataType(dataTypeKey)
 

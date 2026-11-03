@@ -5,6 +5,7 @@ import ase.io
 import numpy as np
 from collections import UserList
 from ffast.core.events import EventClass
+from ffast.core.flat_frames import FlatFrames
 
 logger = logging.getLogger("FFAST")
 
@@ -61,6 +62,8 @@ class SubDataEntity(DataEntity):
     def get(self, key=None):
         data = self.parent.get(key=key)
 
+        if isinstance(data, FlatFrames):
+            return data.frames(self.indices)
         # Handle variable datasets (list of arrays)
         if isinstance(data, list):
             return [data[i] for i in self.indices]
@@ -83,6 +86,11 @@ class AtomFilteredEntity(DataEntity):
 
     def get(self, key=None):
         d = self.parent.get(key=key)
+        if isinstance(d, FlatFrames) and not hasattr(self.indices, "keepAtoms"):
+            # The same atoms of every frame.
+            atoms = np.asarray(self.indices)
+            flat = (d.offsets[:-1, None] + atoms[None, :]).reshape(-1)
+            return d.atoms(flat, np.arange(len(d) + 1, dtype=np.int64) * len(atoms))
         # A dataset view knows which atoms each frame keeps (an element
         # subset's change from frame to frame, ADR 0067).
         if hasattr(self.indices, "keepAtoms"):
@@ -273,7 +281,7 @@ class EnergyPredictionData(DataType):
 
         if model.singlePredict:
             (e, f) = model.predict(dataset, taskID=taskID)
-            fData = self.newDataEntity(forces=f)
+            fData = self.newDataEntity(forces=FlatFrames.of(f))
             service.setData(fData, "forces", model=model, dataset=dataset)
 
         else:
@@ -294,6 +302,12 @@ class ForcesPredictionData(DataType):
 
     def __init__(self, *args):
         super().__init__(*args)
+
+    def newDataEntity(self, *args, **kwargs):
+        """Forces are kept as one FlatFrames (ADR 0080)."""
+        if kwargs.get("forces") is not None:
+            kwargs["forces"] = FlatFrames.of(kwargs["forces"])
+        return super().newDataEntity(*args, **kwargs)
 
     def data(self, dataset=None, model=None, taskID=None):
         service = self.service
