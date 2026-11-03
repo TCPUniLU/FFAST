@@ -9,7 +9,7 @@ import { DEFAULT_LOOK, startCommands } from './start_settings.js';
 /** A new view's settings, today's defaults. */
 export function defaultSettings() {
   return {
-    colorBy: { source: 'element', prediction: null, colormap: DEFAULT_LOOK.colormap, norm: 'None', vmin: null, vmax: null },
+    colorBy: { source: 'element', prediction: null, colormap: DEFAULT_LOOK.colormap, norm: 'None', vmin: null, vmax: null, range: 'dataset' },
     camera: { ortho: false, gizmo: false, background: '#000000' },
     display: { atomSize: 1, labels: false, hide: '', highlight: '', unitCell: true },
     bonds: { width: 100, color: DEFAULT_LOOK.bondColour, bondType: 'Dynamic', fixedIndices: [] },

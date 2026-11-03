@@ -21,6 +21,12 @@
  * with the view; the list shows it under its base. Save as metric keeps it as
  * a user metric. Only settings with one value per atom are offered.
  *
+ * Range (ADR 0084): which values set the automatic ends of the colour bar,
+ * the whole dataset (default), this frame, or this frame's visible atoms.
+ * Only the ends change, never the values; switching clears typed limits.
+ * When the prediction covers the frame on screen alone, Whole dataset is
+ * greyed out and the row shows This frame (`shownRange`).
+ *
  * Whose numbers: one "Forces" entry stands for the two force pass-throughs
  * (ffast.force_reference / ffast.force_prediction, which the Forces scatter
  * also reads), and the Prediction picks which: Ground Truth or a model. An
@@ -48,6 +54,20 @@ const COLORMAPS = ['force_error', 'cividis', 'viridis', 'inferno', 'plasma', 'co
 // A base with x/y/z per atom (Force Difference): coloured through its boxes.
 const VECTOR_PER_ATOM = '(N_atoms, xyz)';
 
+/** Colour range choices (ADR 0084), the `range` key of `ffast.atom_color`. */
+export const RANGE_CHOICES = [
+  ['dataset', 'Whole dataset'], ['frame', 'This frame'], ['visible', 'Visible atoms'],
+];
+export const NO_DATASET_RANGE = 'Prediction covers this frame only';
+
+/** The range the colour bar shows: the chosen one, except that Whole dataset
+ * without a whole-dataset result is drawn as This frame.
+ * @param {string|undefined} chosen @param {boolean|undefined} datasetRange */
+export function shownRange(chosen, datasetRange = true) {
+  const range = RANGE_CHOICES.some(([v]) => v === chosen) ? chosen : 'dataset';
+  return range === 'dataset' && datasetRange === false ? 'frame' : range;
+}
+
 /**
  * @param {HTMLElement} sidebarEl
  * @param {{
@@ -56,6 +76,7 @@ const VECTOR_PER_ATOM = '(N_atoms, xyz)';
  *   onColormapChange: (colormap: string) => void,
  *   onMetricParam: (key: string, value: any) => void,
  *   onLimit?: (key: 'vmin'|'vmax', value: number|null) => void,
+ *   onRangeChange?: (range: string) => void,
  *   unitsOf?: () => Object<string, string>,
  *   onSetUnit?: (dimension: string, unit: string) => void,
  *   boxes?: (request: {metricId?: string, base?: string, setting?: object}) => Promise<object>,
@@ -155,6 +176,8 @@ export function createColorByPane(sidebarEl, callbacks) {
     }
     _syncVisibility();
     clearLimits();
+    datasetRange = true;      // not known for the new colouring until it is drawn
+    renderRange();
     callbacks.onSourceChange(state.source);
     _rebuildParamControls();
     showBoxes();
@@ -231,6 +254,51 @@ export function createColorByPane(sidebarEl, callbacks) {
     state.colormap = cm;
     callbacks.onColormapChange(cm);
   });
+
+  // ── Range: drawn like the keep boxes' Combine row ─────────────────────
+  const rangeEl = document.createElement('div');
+  rangeEl.className = 'kb colorby-range';
+  const rangeRow = document.createElement('div');
+  rangeRow.className = 'kb-row';
+  const rangeLabel = document.createElement('span');
+  rangeLabel.className = 'kb-label';
+  rangeLabel.textContent = 'Range';
+  rangeRow.appendChild(rangeLabel);
+  const rangeInputs = {};
+  for (const [value, words] of RANGE_CHOICES) {
+    const label = document.createElement('label');
+    label.className = 'kb-choice';
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'colorby-range';
+    radio.value = value;
+    label.append(radio, document.createTextNode(` ${words}`));
+    rangeRow.appendChild(label);
+    rangeInputs[value] = { radio, label };
+    radio.addEventListener('change', () => {
+      if (!radio.checked || state.range === value) return;
+      state.range = value;
+      clearLimits();
+      callbacks.onRangeChange?.(value);
+    });
+  }
+  rangeEl.appendChild(rangeRow);
+  body.appendChild(rangeEl);
+  let datasetRange = true;   // false: the shown colouring has no whole-dataset range
+
+  function renderRange() {
+    rangeEl.hidden = !state.source?.startsWith('metric:');
+    const shown = shownRange(state.range, datasetRange);
+    for (const [value, { radio, label }] of Object.entries(rangeInputs)) {
+      radio.checked = value === shown;
+      const off = value === 'dataset' && !datasetRange;
+      radio.disabled = off;
+      label.classList.toggle('off', off);
+      label.title = off ? NO_DATASET_RANGE : '';
+    }
+  }
+
+  renderRange();
 
   const paramContainer = document.createElement('div');
   paramContainer.className = 'metric-params';
@@ -479,6 +547,8 @@ export function createColorByPane(sidebarEl, callbacks) {
       if (!cbMax.querySelector('input')) cbMax.textContent = formatScientific(colorBy.vmax);
       shownColorBy = colorBy;
       _renderLabel();
+      datasetRange = colorBy.dataset_range !== false;
+      renderRange();
     },
 
     /** The shown dataset's units changed (or another view is shown). */
@@ -505,6 +575,8 @@ export function createColorByPane(sidebarEl, callbacks) {
       colormapSelect.value = settings.colormap;
       _syncVisibility();
       _rebuildParamControls({ restore: true });
+      datasetRange = true;
+      renderRange();
       showBoxes();
     },
   };

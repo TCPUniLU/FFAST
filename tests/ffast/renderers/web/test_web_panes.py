@@ -231,6 +231,25 @@ CASES = {
       const computing = [bar().textContent, bar().querySelector('.cb-note')?.textContent ?? null];
       pane.setColorBy({...by, note: ''});
       return {computing, done: [bar().textContent, bar().querySelector('.cb-note')]}; })()""",
+    "color_range": """(() => { const {pane, host, calls} = mk(cb, 'createColorByPane');
+      pane.setMetricCatalog(CAT);
+      const box = () => host.querySelector('.colorby-range');
+      const radio = (v) => host.querySelector(`.colorby-range input[value="${v}"]`);
+      const checked = () => host.querySelector('.colorby-range input:checked')?.value ?? null;
+      const el = {source: 'element', prediction: null, colormap: 'viridis', norm: 'None'}; pane.show(el);
+      const hiddenForElements = box().hidden;
+      const s = {source: 'metric:m.a', prediction: null, colormap: 'viridis', norm: 'None', vmax: 2, range: 'dataset'};
+      pane.show(s);
+      const start = [box().hidden, checked()];
+      calls.splice(0);
+      radio('frame').checked = true; radio('frame').dispatchEvent(new Event('change'));
+      const toFrame = [s.range, s.vmax, calls.splice(0)];
+      const by = {values: [1], colormap: 'viridis', vmin: 0, vmax: 1, label: 'A', unit: ''};
+      s.range = 'dataset'; pane.setColorBy({...by, range: 'dataset', dataset_range: false});
+      const missing = [checked(), radio('dataset').disabled, radio('dataset').closest('label').title];
+      pane.setColorBy({...by, range: 'dataset', dataset_range: true});
+      const back = [checked(), radio('dataset').disabled];
+      return {hiddenForElements, start, toFrame, missing, back}; })()""",
     "color_prediction_rows": """(() => { const {pane, host, calls} = mk(cb, 'createColorByPane');
       pane.setMetricCatalog(FCAT);
       const opts = () => [...ctl(host, 'Prediction').options].map((o) => o.value);
@@ -540,6 +559,23 @@ def test_the_colour_bar_says_when_its_colours_are_not_final(results):
     assert r["computing"][1] == "Computing colours over all structures…"
     assert r["computing"][0].startswith("Force error")
     assert r["done"] == ["Force error", None]
+
+
+def test_the_range_row_switches_and_clears_typed_limits(results):
+    """ADR 0084: Whole dataset, This frame or Visible atoms, for metric colourings."""
+    r = results["color_range"]
+    assert r["hiddenForElements"] is True
+    assert r["start"] == [False, "dataset"]
+    range_, vmax, sent = r["toFrame"]
+    assert (range_, vmax) == ("frame", None)
+    assert ["onLimit", "vmax", None] in sent
+    assert sent[-1] == ["onRangeChange", "frame"]
+
+
+def test_the_range_row_greys_out_whole_dataset_without_one(results):
+    r = results["color_range"]
+    assert r["missing"] == ["frame", True, "Prediction covers this frame only"]
+    assert r["back"] == ["dataset", False]
 
 
 def test_the_prediction_row_offers_what_the_colouring_reads(results):

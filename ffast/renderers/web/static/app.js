@@ -1106,6 +1106,7 @@ export class FFastApp {
       onColormapChange: (cm) => this._sendSetParameter('ffast.atom_color', 'colormap', cm),
       onMetricParam: (key, value) => this._sendSetParameter('ffast.atom_color', key, value),
       onLimit: (key, value) => this._sendSetParameter('ffast.atom_color', key, value),
+      onRangeChange: (range) => this._sendSetParameter('ffast.atom_color', 'range', range),
       unitsOf: () => datasetUnits(this._focusedDatasetFp(), this._datasets),
       onSetUnit: (dimension, unit) => this._setDatasetUnit(this._focusedDatasetFp(), dimension, unit),
       // Keep boxes (ADR 0065): the focused view's dataset says whether by=atom applies.
