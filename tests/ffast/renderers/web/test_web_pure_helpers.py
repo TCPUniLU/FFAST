@@ -1120,6 +1120,25 @@ CASES.update({
         "})()"
     ),
     "timing_bytes": "[tm.fmtBytes(512), tm.fmtBytes(2048), tm.fmtBytes(3355443)]",
+    # Cut-off text gets its full text as the hover title; text that fits,
+    # and an element with its own title, are left alone.
+    "full_text_titles": (
+        "(() => { const root = document.createElement('div'); document.body.appendChild(root);"
+        "  const line = 'display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis';"
+        "  root.innerHTML = `<div style=\"width:60px\">"
+        "    <span class=\"cut\" style=\"${line}\"><b>a very long dataset name</b></span>"
+        "    <span class=\"fits\" style=\"${line}\">ok</span>"
+        "    <span class=\"own\" title=\"mine\" style=\"${line}\">another long long text</span>"
+        "    <input class=\"path\" style=\"width:40px\" value=\"/some/long/path/file.xyz\"></div>`;"
+        "  ht.initFullTextTitles(root);"
+        "  const hover = (sel) => { const el = root.querySelector(sel);"
+        "    el.dispatchEvent(new PointerEvent('pointerover', {bubbles: true})); };"
+        "  ['.cut b', '.fits', '.own', '.path'].forEach(hover);"
+        "  const t = (sel) => root.querySelector(sel).title;"
+        "  const out = [t('.cut'), t('.fits'), t('.own'), t('.path')];"
+        "  root.remove(); return out;"
+        "})()"
+    ),
 })
 
 
@@ -1174,6 +1193,7 @@ def results():
         f"  const sc = await import('{origin}/shortcuts.js');\n"
         f"  const cc = await import('{origin}/cluster_client.js');\n"
         f"  const tm = await import('{origin}/timing.js');\n"
+        f"  const ht = await import('{origin}/hover_tip.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -2737,3 +2757,9 @@ def test_timing_without_server_notes_uses_the_pages_times(results):
 
 def test_timing_sizes_read_plainly(results):
     assert results["timing_bytes"] == ["512 B", "2 KB", "3.2 MB"]
+
+
+def test_cut_off_text_shows_in_full_on_hover(results):
+    assert results["full_text_titles"] == [
+        "a very long dataset name", "", "mine", "/some/long/path/file.xyz",
+    ]

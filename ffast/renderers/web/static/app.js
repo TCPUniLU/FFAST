@@ -45,6 +45,7 @@ import { FILE_SHORTCUTS, isMac, matchShortcut, shortcutLabel } from './shortcuts
 import { showWarning } from './toasts.js';
 import { applyStaticIcons, icon } from './icons.js';
 import { initBell } from './notification_bell.js';
+import { initFullTextTitles } from './hover_tip.js';
 import { initAppearance } from './appearance.js';
 import { datasetUnits } from './units.js';
 import { TabEditor } from './edit_mode.js';
@@ -127,6 +128,7 @@ export class FFastApp {
   constructor() {
     applyStaticIcons();
     initBell();
+    initFullTextTitles();
     initAppearance(() => this._analysis?.rerenderAll());
     this._conn = null;
     // The main view (ADR 0056): the one visualization view the rail drives,
