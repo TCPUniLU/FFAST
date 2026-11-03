@@ -27,6 +27,7 @@ from ffast.visualization.presentation import (
     SELECTION_OVERLAY_COLOR,
 )
 from ffast.visualization.scene import (
+    COLOR_RANGES,
     DEFAULT_COLORMAP,
     AtomColorBy,
     AtomScene,
@@ -184,23 +185,24 @@ def build_scene(
         executor=executor, get_metric=get_metric,
         prediction_fields=prediction_fields,
     )
+    color_range = None
     if _color_src is not None:
         color_values, _clabel, _cunit, _span = _color_src
         cparams = state.parameters.get("ffast.atom_color", {})
-        finite = color_values[np.isfinite(color_values)]
-        auto_lo = float(np.min(finite)) if finite.size else 0.0
-        auto_hi = float(np.max(finite)) if finite.size else 1.0
-        if _span is not None:
-            auto_lo, auto_hi = _span
-        # A limit the user cleared (None) is automatic again.
-        lo, hi = cparams.get("vmin"), cparams.get("vmax")
+        # Colour range (ADR 0084): which values set the automatic ends. With no
+        # whole-dataset result, "dataset" falls back to the frame's own range.
+        color_range = cparams.get("range") or "dataset"
+        if color_range not in COLOR_RANGES:
+            color_range = "dataset"
         color_meta = {
             "colormap": cparams.get("colormap", DEFAULT_COLORMAP),
-            "vmin": float(auto_lo if lo is None else lo),
-            "vmax": float(auto_hi if hi is None else hi),
             "label": _clabel,
             "unit": _cunit,
+            "range": color_range,
+            "dataset_range": _span is not None,
         }
+        if color_range == "dataset" and _span is None:
+            color_range = "frame"
 
     # Atom filter (ADR 0014, gate item 3): the ffast.atom_filter stage builds a
     # keep-mask from explicit indices; scene assembly applies it across atoms,
@@ -240,7 +242,21 @@ def build_scene(
 
     color_by = None
     if color_values is not None and color_meta is not None:
-        color_by = AtomColorBy(values=color_values.tolist(), **color_meta)
+        # The ends come from every frame, this frame's atoms (all of them, so
+        # hiding atoms keeps the colours), or the atoms left visible.
+        if color_range == "dataset":
+            auto_lo, auto_hi = _span
+        else:
+            auto_lo, auto_hi = _value_span(
+                color_values if color_range == "visible" else _color_src[0])
+        # A limit the user cleared (None) is automatic again.
+        lo, hi = cparams.get("vmin"), cparams.get("vmax")
+        color_by = AtomColorBy(
+            values=color_values.tolist(),
+            vmin=float(auto_lo if lo is None else lo),
+            vmax=float(auto_hi if hi is None else hi),
+            **color_meta,
+        )
 
     elements = (z[keep] if keep is not None else z).astype(int).tolist()
     scene.atoms = AtomScene(
@@ -523,6 +539,15 @@ def _atom_align_to_reference(ds, raw_positions: np.ndarray, state) -> list:
     except Exception as exc:
         logger.warning("scene_builder: atom_align failed: %s", exc)
         return []
+
+
+def _value_span(values) -> tuple[float, float]:
+    """``(lowest, highest)`` of the finite ``values``; ``(0, 1)`` when none are."""
+    finite = np.asarray(values, dtype=np.float64)
+    finite = finite[np.isfinite(finite)]
+    if not finite.size:
+        return 0.0, 1.0
+    return float(np.min(finite)), float(np.max(finite))
 
 
 def _resolve_filter_indices(raw, z) -> list:

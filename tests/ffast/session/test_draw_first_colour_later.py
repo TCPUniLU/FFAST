@@ -87,6 +87,8 @@ def test_the_scene_comes_at_once_with_frame_colours_and_the_final_ones_follow():
     (patch_now,) = _patches(first)
     assert patch_now["atoms"]["color_by"]["values"] == [1.0]
     assert "computing" in patch_now["atoms"]["color_by"]["note"].lower()
+    # Coming, not missing: Whole dataset stays choosable (ADR 0084).
+    assert patch_now["atoms"]["color_by"]["dataset_range"] is True
     assert computed_before == []          # not computed inside the command
     (patch_later,) = _patches(later)
     assert patch_later["atoms"]["color_by"]["values"] == [9.0]

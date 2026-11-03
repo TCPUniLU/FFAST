@@ -432,6 +432,7 @@ class ServerSession:
         color_by = scene.atoms.color_by if scene is not None and scene.atoms else None
         if wanted and color_by is not None:
             color_by.note = "Computing colours over all structures…"
+            color_by.dataset_range = True   # coming, not missing (ADR 0084)
 
     def _colour_later(self, view, wanted) -> None:
         """Compute ``wanted`` beside the message queue; send the view again when done."""

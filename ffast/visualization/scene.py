@@ -13,6 +13,10 @@ from ffast.visualization.models import CameraState, DatasetProvenance
 DEFAULT_COLORMAP = "force_error"
 
 
+# Colour range choices (ADR 0084), the ``range`` key of ``ffast.atom_color``.
+COLOR_RANGES = ("dataset", "frame", "visible")
+
+
 class AtomColorBy(BaseModel):
     """Value-driven atom coloring descriptor (ADR 0016).
 
@@ -30,6 +34,12 @@ class AtomColorBy(BaseModel):
     # Shown with the colour bar when the colours are not final, e.g. the
     # frame's own while the whole dataset's are computed (ADR 0082).
     note: str = ""
+    # Colour range (ADR 0084): the range the user chose, "dataset", "frame" or
+    # "visible"; and whether the whole dataset's range exists (False when the
+    # prediction covers the frame on screen alone: "dataset" then draws the
+    # frame's range).
+    range: str = "dataset"
+    dataset_range: bool = True
 
 
 class AtomScene(BaseModel):

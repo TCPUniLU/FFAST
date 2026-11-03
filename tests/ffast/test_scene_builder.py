@@ -933,6 +933,74 @@ class TestBuildSceneColorBy:
                          get_metric=self._whole(np.arange(12.0))).atoms.color_by
         assert (cb.vmin, cb.vmax) == (0.0, 2.0)
 
+    def _ranged(self, ds, colour, filter_indices=None, values=np.arange(12.0)):
+        """The colour bar of frame 1 (values 4..7, over 0..11) coloured with ``colour``."""
+        parameters = {"ffast.atom_color": {
+            "source": "metric:ffast.force_difference[atom+structure;length]", **colour}}
+        if filter_indices is not None:
+            parameters["ffast.atom_filter"] = {"indices": filter_indices}
+        state = VisualizationState(view_id="v1", dataset_ref="DS", prediction_ref="M",
+                                   structure_index=1, parameters=parameters)
+        return build_scene(state, get_dataset=lambda fp: ds,
+                           get_metric=self._whole(values)).atoms.color_by
+
+    def test_the_colour_range_is_the_whole_dataset_by_default(self, ds):
+        cb = self._ranged(ds, {})
+        assert (cb.vmin, cb.vmax) == (0.0, 11.0)
+        assert (cb.range, cb.dataset_range) == ("dataset", True)
+
+    def test_the_colour_range_can_be_this_frame(self, ds):
+        # ADR 0084: only the ends change, never the values.
+        cb = self._ranged(ds, {"range": "frame"})
+        assert list(cb.values) == [4.0, 5.0, 6.0, 7.0]
+        assert (cb.vmin, cb.vmax) == (4.0, 7.0)
+        assert cb.range == "frame"
+
+    def test_this_frame_covers_hidden_atoms_too(self, ds):
+        cb = self._ranged(ds, {"range": "frame"}, filter_indices=[1, 2])
+        assert list(cb.values) == [5.0, 6.0]
+        assert (cb.vmin, cb.vmax) == (4.0, 7.0)
+
+    def test_the_colour_range_can_be_the_visible_atoms(self, ds):
+        cb = self._ranged(ds, {"range": "visible"}, filter_indices=[1, 2])
+        assert list(cb.values) == [5.0, 6.0]
+        assert (cb.vmin, cb.vmax) == (5.0, 6.0)
+        assert cb.range == "visible"
+
+    def test_visible_atoms_with_none_hidden_is_this_frame(self, ds):
+        cb = self._ranged(ds, {"range": "visible"})
+        assert (cb.vmin, cb.vmax) == (4.0, 7.0)
+        assert cb.range == "visible"
+
+    def test_a_typed_limit_wins_over_the_frame_range(self, ds):
+        cb = self._ranged(ds, {"range": "frame", "vmin": 0.0})
+        assert (cb.vmin, cb.vmax) == (0.0, 7.0)
+
+    def test_an_unknown_colour_range_is_the_whole_dataset(self, ds):
+        cb = self._ranged(ds, {"range": "bogus"})
+        assert (cb.vmin, cb.vmax) == (0.0, 11.0)
+        assert cb.range == "dataset"
+
+    def test_without_the_whole_dataset_its_range_is_missing_and_the_frame_s_is_drawn(self, ds):
+        from ffast.metrics.executor import InProcessExecutor
+        from ffast.metrics.registry import default_registry
+
+        pred = np.stack([np.full((4, 3), 0.5)] * 3)
+        state = VisualizationState(
+            view_id="v1", dataset_ref="DS", prediction_ref="M", structure_index=1,
+            parameters={"ffast.atom_color": {
+                "source": "metric:ffast.force_difference[atom+structure;length]"}},
+        )
+        cb = build_scene(
+            state, get_dataset=lambda fp: ds,
+            get_prediction=lambda dfp, mfp: _Pred(pred),
+            executor=InProcessExecutor(default_registry),
+            get_metric=self._whole(None),
+        ).atoms.color_by
+        assert (cb.range, cb.dataset_range) == ("dataset", False)
+        finite = np.asarray(cb.values)
+        assert (cb.vmin, cb.vmax) == (float(finite.min()), float(finite.max()))
+
     def test_without_the_whole_dataset_a_per_element_setting_is_not_coloured(self, ds):
         # A by=element setting is a formula: over this frame alone it would
         # mean something else, so it falls back to element colours (ADR 0064).
