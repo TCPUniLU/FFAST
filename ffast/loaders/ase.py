@@ -8,6 +8,7 @@ import ase.io
 from ase.calculators.calculator import PropertyNotImplementedError, all_properties
 from ase.io.extxyz import REV_PROPERTY_NAME_MAP, per_config_properties
 from ffast.io import extxyz_arrays as xa   # call xa.read_frames: tests patch it
+from ffast.io import frame_cache
 
 # The discoverable plugin (loadData/SmartASELoader, registered under the
 # "ase (auto)" datasetName) lives in ffast.plugins.loaders.ase (ADR 0048); this
@@ -268,8 +269,17 @@ class aseDatasetLoader(FlatDatasetLoader):
         if arrays is not None:
             return arrays
         name = os.path.basename(self.path)
+        arrays = frame_cache.load(index)
+        if arrays is not None:
+            logger.info("%s: opened the arrays kept from an earlier load", name)
+            self.atomsList.frame_arrays = arrays
+            return arrays
         try:
             arrays = xa.read_frames(index, progress=progress)
+            # The kept copy from now on: every load works on the same
+            # read-only arrays, and the parsed ones can be freed.
+            frame_cache.save(index, arrays)
+            arrays = frame_cache.load(index) or arrays
         except xa.PropertiesDiffer as exc:
             logger.warning("%s: %s Reading it with ASE, which is slower.", name, exc)
             return None
