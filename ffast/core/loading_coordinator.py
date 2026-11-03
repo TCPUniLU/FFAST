@@ -458,13 +458,21 @@ class LoadingCoordinator:
         return loader
 
     @staticmethod
-    def _predictionMatchesDataset(E, dataset, name):
-        """Check a prediction has one energy per dataset frame.
+    def _predictionMatchesDataset(E, dataset, name, F=None):
+        """Check a prediction has one energy per dataset frame, and, when its
+        forces come as FlatFrames, the dataset's atoms in every frame.
 
         Counts frames with ``getN()``, which every dataset answers, rather than
         reading the dataset's own energies, which a file of bare geometries
         does not have (ADR 0058: absent, not zeros).
         """
+        if isinstance(F, FlatFrames) and hasattr(dataset, "getOffsets"):
+            if not np.array_equal(F.offsets, np.asarray(dataset.getOffsets())):
+                logger.error(
+                    f"Atom count mismatch for prediction '{name}': its forces "
+                    f"do not hold the dataset's atoms in every frame."
+                )
+                return False
         if E is None:
             return True
 
@@ -503,7 +511,7 @@ class LoadingCoordinator:
 
         Callers must hold ``mutation_lock``.
         """
-        if not self._predictionMatchesDataset(E, dataset, name):
+        if not self._predictionMatchesDataset(E, dataset, name, F=F):
             return False
 
         if E is not None:

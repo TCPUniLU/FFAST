@@ -1071,3 +1071,27 @@ def test_in_file_prediction_forces_are_flat_frames_sharing_the_loaders_array(tmp
     assert isinstance(forces, FlatFrames)
     assert np.shares_memory(forces.values, loader.getAllForces())
     assert forces.offsets.tolist() == loader.getOffsets().tolist()
+
+
+# ── forces must line up with the dataset's atoms ────────────────────────────
+
+class _OffsetsDataset(_FakeDataset):
+    def __init__(self, offsets):
+        super().__init__(np.zeros(len(offsets) - 1))
+        self._offsets = np.asarray(offsets)
+
+    def getOffsets(self):
+        return self._offsets
+
+
+def test_prediction_forces_must_have_the_datasets_frames_and_atoms():
+    from ffast.core.flat_frames import FlatFrames
+
+    ds = _OffsetsDataset([0, 5, 13, 18])
+    match = LoadingCoordinator._predictionMatchesDataset
+    good = FlatFrames(np.zeros((18, 3)), [0, 5, 13, 18])
+    assert match(None, ds, "m", F=good) is True
+    # right total, wrong split between frames
+    assert match(None, ds, "m", F=FlatFrames(np.zeros((18, 3)), [0, 6, 13, 18])) is False
+    # one frame short
+    assert match(None, ds, "m", F=FlatFrames(np.zeros((13, 3)), [0, 5, 13])) is False
