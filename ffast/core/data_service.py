@@ -22,6 +22,7 @@ surface they use) rather than the full env.
 """
 
 import logging
+import time
 
 logger = logging.getLogger("FFAST")
 
@@ -410,11 +411,15 @@ class DataService:
         from ffast.metrics.input_resolver import _ResolverSource
 
         source = _ResolverSource(self.inputResolver, model, dataset)
+        started = time.monotonic()
         result = self.metricExecutor.run(metric_id, source, params or {})
+        ran = time.monotonic()
         if default_registry.revision != revision:
             return _CHANGED
         if isinstance(result, MetricResult):
             self.cache[key] = result
+            logger.info("Metric %s: run took %d ms, storing it %d ms", metric_id,
+                        (ran - started) * 1000, (time.monotonic() - ran) * 1000)
             # A change that lands between the check above and this store has
             # already dropped old results, so take this one back too.
             if default_registry.revision != revision:

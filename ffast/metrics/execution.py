@@ -33,6 +33,8 @@ a worker can consume it without an Environment (ADR 0035 consequence).
 from __future__ import annotations
 
 import hashlib
+import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -43,6 +45,12 @@ from ffast.metrics.cache import MetricCache, function_hash
 from ffast.metrics.dims import shape_to_str
 from ffast.metrics.models import MetricFailure, MetricResult, WithWarnings
 from ffast.metrics.stop import STOPPED
+
+log = logging.getLogger(__name__)
+
+
+def _ms(since: float) -> int:
+    return int((time.monotonic() - since) * 1000)
 
 
 # ── Input bindings ──────────────────────────────────────────────────────────
@@ -237,8 +245,11 @@ def build_execution_plan(
         )
         visiting.discard(metric_id)
 
+    started = time.monotonic()
     for rid in root_ids:
         visit(rid)
+    log.info("metric plan %s: inputs read in %d ms (%d steps)",
+             ",".join(root_ids), _ms(started), len(steps))
 
     return ExecutionPlan(root_ids=list(root_ids), steps=steps, parameters=parameters)
 
@@ -321,10 +332,14 @@ def run_plan(
             )
             continue
 
+        t = time.monotonic()
         cache_key = keys[metric_id] = cache.make_key(
             metric_id, fn, step.compute_params, kwargs, known)
+        key_ms, t = _ms(t), time.monotonic()
         cached = cache.get(cache_key)
+        read_ms = _ms(t)
         if cached is not None:
+            log.info("metric step %s: from cache in %d ms (key %d ms)", metric_id, read_ms, key_ms)
             results[metric_id] = cached
             continue
 
@@ -332,12 +347,14 @@ def run_plan(
         if isinstance(raw, MetricFailure):
             results[metric_id] = raw
             continue
+        t = time.monotonic()
 
         if isinstance(raw, WithWarnings):
             warnings.extend(raw.warnings)
             raw = raw.values
         arr = np.asarray(raw)
         checksum = hashlib.sha256(np.ascontiguousarray(arr).tobytes()).hexdigest()
+        checksum_ms = _ms(t)
         result = MetricResult(
             metric_id=metric_id,
             shape=shape_to_str(schema.shape),
@@ -349,7 +366,12 @@ def run_plan(
             values=arr,
             warnings=list(dict.fromkeys(warnings)),
         )
+        t = time.monotonic()
         cache.put(cache_key, result)
+        log.info(
+            "metric step %s around compute: key %d ms, cache read %d ms, checksum %d ms, "
+            "cache write %d ms (%d MB)",
+            metric_id, key_ms, read_ms, checksum_ms, _ms(t), arr.nbytes // 2**20)
         results[metric_id] = result
 
     return results

@@ -1357,10 +1357,16 @@ class ServerSession:
             server_can_compute = False
 
         if result is None and server_can_compute:
+            asked = time.monotonic()
+
+            def generate():
+                logger.info("REQUEST_METRIC %s: waited %d ms for a compute thread",
+                            metric_id, (time.monotonic() - asked) * 1000)
+                return self.env.data.generateMetric(metric_id, params, model, dataset)
+
             try:
                 made = await _compute_once(key, lambda: asyncio.get_running_loop().run_in_executor(
-                    _metric_compute_pool(),
-                    self.env.data.generateMetric, metric_id, params, model, dataset,
+                    _metric_compute_pool(), generate,
                 ))
             except Exception as exc:
                 logger.error("REQUEST_METRIC compute failed %s: %s", metric_id, exc)
