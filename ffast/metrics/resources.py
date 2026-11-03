@@ -24,13 +24,16 @@ def cores() -> int:
 
 
 def available_memory() -> int:
-    """Bytes of memory a new step could use now. Linux: ``MemAvailable``.
-    Else psutil if it imports, else half of the machine's memory."""
+    """Bytes of memory a new step could use now. Linux: ``MemAvailable``, or
+    less when a cgroup (a Slurm job, a container) limits this process. Else
+    psutil (macOS, Windows), else half of the machine's memory."""
     try:
         with open("/proc/meminfo") as f:
             for line in f:
                 if line.startswith("MemAvailable:"):
-                    return int(line.split()[1]) * 1024
+                    free = int(line.split()[1]) * 1024
+                    left = cgroup_headroom()
+                    return free if left is None else min(free, left)
     except (OSError, ValueError, IndexError):
         pass
     try:
@@ -42,6 +45,64 @@ def available_memory() -> int:
         return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") // 2
     except (ValueError, OSError, AttributeError):
         return 8 * 2**30
+
+
+def _read_int(path: str) -> int | None:
+    """The number in a cgroup file; None when missing or "max" (no limit)."""
+    try:
+        with open(path) as f:
+            text = f.read().strip()
+    except OSError:
+        return None
+    return int(text) if text.isdigit() else None
+
+
+def _inactive_file(path: str, key: str) -> int:
+    """File cache the kernel can drop; a cgroup counts it as used."""
+    try:
+        with open(path) as f:
+            for line in f:
+                name, _, value = line.partition(" ")
+                if name == key:
+                    return int(value)
+    except (OSError, ValueError):
+        pass
+    return 0
+
+
+def cgroup_headroom(proc: str = "/proc/self/cgroup", root: str = "/sys/fs/cgroup") -> int | None:
+    """Bytes left under the tightest cgroup memory limit above this process,
+    or None when none is set. A Slurm job's limit lives here; MemAvailable
+    shows the whole node, so a job past its limit is killed with the node
+    still showing memory free."""
+    try:
+        with open(proc) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return None
+    best = None
+    for line in lines:
+        parts = line.split(":", 2)
+        if len(parts) != 3:
+            continue
+        _, controllers, path = parts
+        steps = [p for p in path.strip("/").split("/") if p]
+        if controllers == "":                            # cgroup v2: every level may set memory.max
+            dirs = [os.path.join(root, *steps[:k]) for k in range(len(steps), -1, -1)]
+            files = ("memory.max", "memory.current", "memory.stat", "inactive_file")
+        elif "memory" in controllers.split(","):         # cgroup v1
+            dirs = [os.path.join(root, "memory", *steps), os.path.join(root, "memory")]
+            files = ("memory.limit_in_bytes", "memory.usage_in_bytes", "memory.stat", "total_inactive_file")
+        else:
+            continue
+        for d in dirs:
+            limit = _read_int(os.path.join(d, files[0]))
+            used = _read_int(os.path.join(d, files[1]))
+            if limit is None or used is None or limit >= 1 << 60:   # v1 writes "no limit" as ~2**63
+                continue
+            left = max(0, limit - used + _inactive_file(os.path.join(d, files[2]), files[3]))
+            best = left if best is None else min(best, left)
+    return best
 
 
 class Reservation:

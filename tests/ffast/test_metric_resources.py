@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pytest
 
-from ffast.metrics import dims
+from ffast.metrics import dims, resources
 from ffast.metrics.execution import FlatInputSource
 from ffast.metrics.expr import compile_expr_metric
 from ffast.metrics.registry import MetricRegistry
@@ -177,3 +177,51 @@ def test_other_estimates():
                 hints={"memory_mb": 5})(_plain)
     assert _estimate(reg2.get("t.p")[0], _plain, kw) == 5 * 2**20
     assert _estimate(None, _plain, {}) == 2**20
+
+
+# ── cgroup limits (ADR 0083) ────────────────────────────────────────────────
+
+def _tree(tmp_path, cgroup, files):
+    proc = tmp_path / "cgroup"
+    proc.write_text(cgroup)
+    root = tmp_path / "fs"
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+    return str(proc), str(root)
+
+
+def test_a_slurm_job_limit_under_cgroup_v2(tmp_path):
+    proc, root = _tree(tmp_path, "0::/job_1/step_0\n", {
+        "job_1/memory.max": str(8 * 2**30),
+        "job_1/memory.current": str(6 * 2**30),
+        "job_1/memory.stat": f"anon 1\ninactive_file {2**30}\n",
+        "job_1/step_0/memory.max": "max",
+        "job_1/step_0/memory.current": "5",
+    })
+    assert resources.cgroup_headroom(proc, root) == 3 * 2**30   # 8 - 6 + 1 of droppable file cache
+
+
+def test_the_tightest_level_wins(tmp_path):
+    proc, root = _tree(tmp_path, "0::/a/b\n", {
+        "a/memory.max": "1000", "a/memory.current": "100",
+        "a/b/memory.max": "500", "a/b/memory.current": "100",
+    })
+    assert resources.cgroup_headroom(proc, root) == 400
+
+
+def test_a_limit_under_cgroup_v1(tmp_path):
+    proc, root = _tree(tmp_path, "4:memory:/slurm/uid_1/job_1\n3:cpu,cpuacct:/x\n", {
+        "memory/slurm/uid_1/job_1/memory.limit_in_bytes": "1000",
+        "memory/slurm/uid_1/job_1/memory.usage_in_bytes": "300",
+        "memory/slurm/uid_1/job_1/memory.stat": "total_inactive_file 50\n",
+        "memory/memory.limit_in_bytes": "9223372036854771712",   # v1's "no limit"
+        "memory/memory.usage_in_bytes": "5",
+    })
+    assert resources.cgroup_headroom(proc, root) == 750
+
+
+def test_no_limit_or_no_cgroup_is_none(tmp_path):
+    proc, root = _tree(tmp_path, "0::/\n", {"memory.max": "max", "memory.current": "1"})
+    assert resources.cgroup_headroom(proc, root) is None
+    assert resources.cgroup_headroom(str(tmp_path / "absent"), root) is None
