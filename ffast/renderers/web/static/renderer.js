@@ -38,6 +38,9 @@ const LOOKS = {
            atom: { roughness: 0.35, metalness: 0.25 }, bond: { roughness: 0.5, metalness: 0.2 } },
 };
 const MAX_PIXEL_RATIO = 2;
+/** Methods that only ask: calling them does not mean the view needs drawing. */
+const READ_ONLY = new Set(['constructor', 'atomIdOf', 'pickAtom', 'boxSelect',
+  'atomScreenPosition', 'atomScreenRadius', 'atomPosition', 'atomElement']);
 /** Rich-look atom radius: 0.42 x covalent radius, kept within 0.24-0.55 A,
  *  then times the Atom size setting. */
 const BALL_AND_STICK = { factor: 0.42, min: 0.24, max: 0.55 };
@@ -169,10 +172,22 @@ export class MoleculeRenderer {
     this._atomColors = null;
     // RAF handle
     this._rafId = null;
+    // Draw only when something changed: an idle view redrawn every frame kept
+    // a core busy, five in a browser drawing without a GPU (headless tests).
+    // Every public method may change the picture, so each marks it; the
+    // read-only ones below do not.
+    this._needsDraw = true;
+    this._wasDrawing = false;
+    for (const name of Object.getOwnPropertyNames(MoleculeRenderer.prototype)) {
+      if (READ_ONLY.has(name) || (name.startsWith('_') && name !== '_applyCamera')) continue;
+      const desc = Object.getOwnPropertyDescriptor(MoleculeRenderer.prototype, name);
+      if (typeof desc.value !== 'function') continue;
+      this[name] = (...args) => { this._needsDraw = true; return desc.value.apply(this, args); };
+    }
 
     this._onCameraChange = null; // set by app to send SET_CAMERA commands
 
-    this._controls.addEventListener('change', () => this._cameraMoved());
+    this._controls.addEventListener('change', () => { this._needsDraw = true; this._cameraMoved(); });
 
     this._resize();
     this._onWindowResize = () => this._resize();
@@ -310,6 +325,7 @@ export class MoleculeRenderer {
     if (hex === this._drawnBackground) return;   // another class changed
     this._drawnBackground = hex;
     this._renderer.setClearColor(new THREE.Color(hex), 1);
+    this._needsDraw = true;
   }
 
   /**
@@ -358,10 +374,18 @@ export class MoleculeRenderer {
   _startLoop() {
     const loop = () => {
       this._rafId = requestAnimationFrame(loop);
-      if (!this.drawing) return;
+      const drawing = this.drawing;
+      if (drawing && !this._wasDrawing) this._needsDraw = true;   // its tab came back
+      this._wasDrawing = drawing;
+      if (!drawing) return;
       this._controls.update();
       // the trackball rolling the camera in place says nothing
-      if (this._camera.up.distanceToSquared(this._lastUp) > 1e-12) this._cameraMoved();
+      if (this._camera.up.distanceToSquared(this._lastUp) > 1e-12) {
+        this._needsDraw = true;
+        this._cameraMoved();
+      }
+      if (!this._needsDraw) return;
+      this._needsDraw = false;
       this._renderFrame();
     };
     loop();
