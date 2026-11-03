@@ -224,6 +224,13 @@ CASES = {
       pane.show(t);
       return {coloring: opts('Coloring'), old, toTruth, toModel, bar: bar.textContent,
               truth: val(ctl(host, 'Prediction'))}; })()""",
+    "color_note": """(() => { const {pane} = mk(cb, 'createColorByPane');
+      const bar = () => pane.legend.querySelector('#colorbar-label');
+      const by = {values: [1], colormap: 'viridis', vmin: 0, vmax: 1, label: 'Force error', unit: ''};
+      pane.setColorBy({...by, note: 'Computing colours over all structures…'});
+      const computing = [bar().textContent, bar().querySelector('.cb-note')?.textContent ?? null];
+      pane.setColorBy({...by, note: ''});
+      return {computing, done: [bar().textContent, bar().querySelector('.cb-note')]}; })()""",
     "color_prediction_rows": """(() => { const {pane, host, calls} = mk(cb, 'createColorByPane');
       pane.setMetricCatalog(FCAT);
       const opts = () => [...ctl(host, 'Prediction').options].map((o) => o.value);
@@ -525,6 +532,14 @@ def test_the_forces_colour_bar_reads_magnitude(results):
     assert r["bar"].startswith("Forces · Magnitude")
     # an old view coloured by the reference forces opens on Ground Truth
     assert r["truth"] == "Ground Truth"
+
+
+def test_the_colour_bar_says_when_its_colours_are_not_final(results):
+    """ADR 0082: frame-only colours while the whole dataset's are computed."""
+    r = results["color_note"]
+    assert r["computing"][1] == "Computing colours over all structures…"
+    assert r["computing"][0].startswith("Force error")
+    assert r["done"] == ["Force error", None]
 
 
 def test_the_prediction_row_offers_what_the_colouring_reads(results):

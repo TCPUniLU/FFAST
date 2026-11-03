@@ -164,6 +164,8 @@ class ServerSession:
         # The running frame count of the Load dialog (frame index plan 2026-11-01)
         self._length_probe_cancel: threading.Event | None = None
         self._length_probe_task: asyncio.Task | None = None
+        # Views' whole-dataset colours being computed (ADR 0082).
+        self._colouring: set[asyncio.Task] = set()
         self.views: dict = {}  # view_id → VisualizationView
         # Sends packed bytes to every connection (the hub, ADR 0044); a
         # session on its own, as in a test, has only itself to tell.
@@ -388,7 +390,7 @@ class ServerSession:
             return None
         return _PredictionView(forces)
 
-    def get_metric(self, metric_id, params, dataset_fp, model_fp):
+    def get_metric(self, metric_id, params, dataset_fp, model_fp, wanted=None):
         """``get_metric(...)`` for build_scene: a metric over the whole dataset,
         stored under the same key as a 2D plot's, so the two compute it once.
 
@@ -396,6 +398,9 @@ class ServerSession:
         that is gone, or a prediction not made for the dataset (a live model
         asked for one frame). Atom colouring then uses the frame on screen
         alone; it never starts a prediction of every frame.
+
+        With ``wanted`` (a list), a result not yet cached is not computed: its
+        arguments are added to ``wanted`` and None is returned (ADR 0082).
         """
         dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
         model = self.env.models.get(model_fp) if model_fp else None
@@ -408,8 +413,94 @@ class ServerSession:
             return result
         if data.inputResolver.missing_prediction_keys(metric_id, model=model, dataset=dataset):
             return None
+        if wanted is not None:
+            wanted.append((metric_id, params, dataset_fp, model_fp))
+            return None
         made = data.generateMetric(metric_id, params, model, dataset)
         return self.env.cache.get(made) if made else None
+
+    # ── draw first, colour later (ADR 0082) ─────────────────────────────────
+
+    def _scene_metric(self, wanted):
+        """``get_metric`` for a scene build: it never computes a whole-dataset
+        result; one not yet cached is added to ``wanted``."""
+        return lambda *args: self.get_metric(*args, wanted=wanted)
+
+    @staticmethod
+    def _mark_provisional(scene, wanted) -> None:
+        """Say ``scene``'s colours are the frame's own while ``wanted`` is computed."""
+        color_by = scene.atoms.color_by if scene is not None and scene.atoms else None
+        if wanted and color_by is not None:
+            color_by.note = "Computing colours over all structures…"
+
+    def _colour_later(self, view, wanted) -> None:
+        """Compute ``wanted`` beside the message queue; send the view again when done."""
+        if not wanted:
+            return
+        state = view.state
+        task = asyncio.create_task(self._finish_colours(
+            view, wanted, copy.deepcopy(state.parameters.get("ffast.atom_color")),
+            state.dataset_ref, state.prediction_ref))
+        self._colouring.add(task)
+        task.add_done_callback(self._colouring.discard)
+
+    async def colours_settled(self) -> None:
+        """Wait until no view's colours are being computed."""
+        while self._colouring:
+            await asyncio.gather(*list(self._colouring), return_exceptions=True)
+
+    async def _finish_colours(self, view, wanted, colouring, dataset_ref, prediction_ref) -> None:
+        from ffast.protocol.rpc import pack
+        from ffast.visualization.scene import ScenePatch
+        from ffast.visualization.scene_builder import build_scene, fill_patch_from_scene
+
+        loop = asyncio.get_running_loop()
+        data = self.env.data
+        made, problems = [], []
+        for metric_id, params, dataset_fp, model_fp in wanted:
+            model = self.env.models.get(model_fp) if model_fp else None
+            dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
+            key = data.make_metric_cache_key(metric_id, params, model, dataset)
+            error = None
+            try:
+                # Shared with a 2D plot asking for the same metric meanwhile.
+                key_made = await _compute_once(key, lambda: loop.run_in_executor(
+                    _metric_compute_pool(), data.generateMetric, metric_id, params, model, dataset))
+            except Exception as exc:
+                key_made, error = None, str(exc)
+            made.append(key_made)
+            if not key_made:
+                problems.append(getattr(data, "metric_failures", {}).pop(key, None)
+                                or error or "no result")
+
+        state = view.state
+        if (self.views.get(state.view_id) is not view
+                or state.parameters.get("ffast.atom_color") != colouring
+                or state.dataset_ref != dataset_ref or state.prediction_ref != prediction_ref):
+            return      # the user moved on; the result stays in the cache
+
+        def finished(*args):
+            for asked, key_made in zip(wanted, made):
+                if tuple(args) == tuple(asked):
+                    return self.env.cache.get(key_made) if key_made else None
+            return self.get_metric(*args, wanted=[])
+
+        try:
+            scene = await asyncio.to_thread(
+                build_scene, state, self.env.datasets.get, self.get_prediction,
+                self.get_forces, data.metricExecutor, get_metric=finished,
+                prediction_fields=getattr(data, "predictionFields", {}))
+        except Exception as exc:
+            self._log_scene_degrade("colours", state.view_id, exc)
+            return
+        color_by = scene.atoms.color_by if scene.atoms else None
+        if problems and color_by is not None:
+            color_by.note = (f"Colours over all structures could not be computed "
+                             f"({problems[0]}); these are the frame's own.")
+        patch = ScenePatch(view_id=state.view_id, from_version=view.version,
+                           to_version=view.version, changed={"atoms"})
+        fill_patch_from_scene(patch, scene)
+        await self._emit(pack(control.SCENE_PATCH, [], patch.model_dump()))
 
     def get_forces(self, dataset_ref, idx):
         """``get_forces(dataset_ref, idx)`` for build_scene — *ground-truth*
@@ -1102,22 +1193,26 @@ class ServerSession:
         # by another connection between OPEN_VIEW arriving and the snapshot
         # build (delete race) — degrade to a bare (camera-only) snapshot
         # instead of raising, mirroring _on_view_command's guard.
+        wanted = []
         try:
             snapshot = view.snapshot(
                 get_dataset=self.env.datasets.get,
                 get_prediction=self.get_prediction,
                 get_forces=self.get_forces,
                 executor=self.env.data.metricExecutor,
-                get_metric=self.get_metric,
+                get_metric=self._scene_metric(wanted),
                 prediction_fields=getattr(
                     self.env.data, "predictionFields", {}),
             )
         except Exception as exc:
             self._log_scene_degrade("OPEN_VIEW", view_id, exc)
             snapshot = view.snapshot()
+            wanted = []
+        self._mark_provisional(snapshot.scene, wanted)
         data = pack(control.SCENE_SNAPSHOT, [], snapshot.model_dump())
         #if snapshot.scene.only_forces: print("only forces sent!")
         await self._emit(data)
+        self._colour_later(view, wanted)
         logger.info(
             "OPEN_VIEW: view_id=%r dataset_ref=%r prediction_ref=%r scene_version=%d",
             view_id, dataset_ref, view.state.prediction_ref, view.version,
@@ -1171,6 +1266,7 @@ class ServerSession:
         # in the pipeline (e.g. a colour-by metric referencing a just-deleted
         # model) raising instead — the view degrades to an empty patch rather
         # than the COMMAND_RESULT/SCENE_PATCH never reaching the client.
+        wanted = []
         if result.success and result.patch and result.patch.changed:
             view_state = view.state
             only_forces_selected = "only_forces" in view_state.enabled_features
@@ -1178,7 +1274,7 @@ class ServerSession:
                 scene = await asyncio.to_thread(
                     build_scene, view_state, self.env.datasets.get,
                     self.get_prediction, self.get_forces,
-                    self.env.data.metricExecutor, get_metric=self.get_metric,
+                    self.env.data.metricExecutor, get_metric=self._scene_metric(wanted),
                     prediction_fields=getattr(
                         self.env.data, "predictionFields", {}),
                 )
@@ -1190,6 +1286,11 @@ class ServerSession:
                     version=view_state.version,
                     camera=view_state.camera,
                 )
+                wanted = []
+            if "atoms" in result.patch.changed:
+                self._mark_provisional(scene, wanted)
+            else:
+                wanted = []
             fill_patch_from_scene(result.patch, scene)
             if only_forces_selected:
                 result.patch.changed.add("only_forces")
@@ -1203,6 +1304,7 @@ class ServerSession:
         if result.success and result.patch:
             patch_data = pack(control.SCENE_PATCH, [], result.patch.model_dump())
             await self._emit(patch_data)
+            self._colour_later(view, wanted)
 
         logger.debug(
             "VIEW_COMMAND %s → success=%s new_version=%d",

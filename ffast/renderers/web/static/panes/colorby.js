@@ -316,6 +316,13 @@ export function createColorByPane(sidebarEl, callbacks) {
     const id = state.source?.startsWith('metric:') ? state.source.slice(7) : '';
     const name = forcesSide(id) ? forcesLabel(id) : shownColorBy.label;
     cbLabel.textContent = withUnit(name, resolveUnit(shownColorBy.unit, units));
+    // Colours that are not final yet, or why they could not be (ADR 0082).
+    if (shownColorBy.note) {
+      const note = document.createElement('span');
+      note.className = 'cb-note';
+      note.textContent = shownColorBy.note;
+      cbLabel.append(note);
+    }
     cbLabel.classList.toggle('unit-editable', !!editableDimension(shownColorBy.unit));
   };
   // Clicking the label names the unit of an energy or force colouring.

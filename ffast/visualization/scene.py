@@ -27,6 +27,9 @@ class AtomColorBy(BaseModel):
     vmax: float = 1.0
     label: str = ""
     unit: str = ""
+    # Shown with the colour bar when the colours are not final, e.g. the
+    # frame's own while the whole dataset's are computed (ADR 0082).
+    note: str = ""
 
 
 class AtomScene(BaseModel):
