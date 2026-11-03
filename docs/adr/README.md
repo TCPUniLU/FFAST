@@ -112,6 +112,7 @@ things came up.
 - [0080](0080-predicted-forces-are-stored-flat-like-reference-forces.md) Predicted forces are stored flat, like reference forces: force reads 45 s to 2 ms (built)
 - [0081](0081-metric-results-carry-no-checksum.md) Metric results carry no checksum (built)
 - [0082](0082-a-slow-view-command-holds-up-nothing-else.md) A slow view command holds up nothing else: Basic Errors 41.8 s to 12.6 s on MeluXina (built)
+- [0083](0083-a-load-checks-memory-before-it-reads.md) A load checks memory before it reads; every n-th frame and plain xyz read fast; a file's arrays are kept on disk: omol25 every 7th frame 14 min to 87 s, then 11.5 s (built)
 
 ## Environment structure
 
