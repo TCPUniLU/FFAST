@@ -95,6 +95,30 @@ Expected on shard_03, with the checksum removal (ADR 0081): Basic Errors'
 metrics start when it is clicked, not 13 s later; the colour click answers at
 once with frame-only colours, and the final colours follow in ~7 s.
 
+## Measured
+
+MeluXina, 2026-11-03 14:19, same file and drive script as ADR 0080's
+"Measured" (`docs/handoffs/2026-11-02-scripts/drive.py`), at `4ee7a3b`: this
+ADR, ADR 0081 (no checksum), one run per shared step (`f082873`) and binned
+density curves (`b5cd883`). Timing log
+`~/.ffast/logs/timing-20261103-134921.log`; server log on the cluster.
+
+| | 11:10 run (`ee399b7`) | This run |
+|---|---|---|
+| Colour by force error, click to answer | 15.4 s | 0.6 s (frame colours) |
+| Final whole-dataset colours | — | ~10 s after the click |
+| Basic Errors' requests reach the server | 13 s after the click | the same second |
+| Basic Errors, click to last panel | 41.8 s | 12.6 s |
+
+- The colour metric itself: 9.8 s (13.1 s with the checksum).
+- The per-structure force difference ran once per statistic; the second
+  metric needing it waited for it ("shared with a run already computing it,
+  waited 10390 ms").
+- The force density curves took ~0.1 s after that step (were ~18 s).
+- What sets the 12.6 s now: the force difference steps, 9–10.6 s each side by
+  side; then the force parity density (7.5 s) and worst dots (7.8 s). The
+  energy density still took 4.3 s, not yet explained.
+
 ## Considered and rejected
 
 - **Only (b).** Nothing else waits, but colour by still shows nothing new for
