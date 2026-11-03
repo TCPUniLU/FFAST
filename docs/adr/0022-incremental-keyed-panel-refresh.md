@@ -1,6 +1,7 @@
 # ADR 0022: 2D Panels refresh incrementally by diffing Series, not clear+rebuild
 
-**Status:** Accepted
+**Status:** Accepted. Amended by ADR 0081: Metric Results carry no checksum, so
+the checksum fast path below does not exist; the drawn-array hash alone decides.
 
 ## Context
 

@@ -113,7 +113,8 @@ shapes bring their own validation and presentation adapters.
 
 **Results and cache identity.** Every calculation returns a self-describing **Metric
 Result** (requested + resolved id, implementation hash, shape, canonical unit, input
-fingerprints, compute parameters, dtype/shape, checksum, and payload-or-buffer-ref).
+fingerprints, compute parameters, dtype/shape, and payload-or-buffer-ref; no checksum,
+ADR 0081).
 Cache identity includes everything that can change numeric output:
 
 ```text
