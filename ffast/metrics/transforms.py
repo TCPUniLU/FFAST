@@ -83,7 +83,37 @@ def _kde_xy(sample, bounds, n_pts=200):
     if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
         lo, hi = 0.0, 1.0
     x = np.linspace(lo, hi, n_pts)
-    return np.vstack([x, gaussian_kde(sample)(x)])
+    if sample.size < _EXACT_KDE_MAX:
+        return np.vstack([x, gaussian_kde(sample)(x)])
+    return np.vstack([x, _binned_kde(sample, x)])
+
+
+# Below this many values the exact KDE takes milliseconds (a SUB subset, say).
+_EXACT_KDE_MAX = 20_000
+
+
+def _binned_kde(sample, x, per_sigma=8, max_bins=1 << 22):
+    """``gaussian_kde(sample)(x)`` by binning: count the values into bins
+    ``per_sigma`` per bandwidth and smooth the counts with the Gaussian in one
+    convolution, as statsmodels (``fft=True``) and KDEpy do. Same bandwidth
+    as SciPy (Scott's rule); 1.77M structures take ~0.1 s, not ~18 s."""
+    from scipy.signal import fftconvolve
+
+    n = sample.size
+    sigma = float(np.std(sample, ddof=1)) * n ** (-1 / 5)
+    lo, hi = float(sample.min()) - 5 * sigma, float(sample.max()) + 5 * sigma
+    bins = int(min(max_bins, max(256, np.ceil((hi - lo) / sigma * per_sigma))))
+    step = (hi - lo) / (bins - 1)
+    # Each value split between its two nearest bins, by distance.
+    t = (sample - lo) / step
+    i = np.minimum(t.astype(np.int64), bins - 2)
+    w = t - i
+    counts = np.bincount(i, 1 - w, bins) + np.bincount(i + 1, w, bins)
+    half = int(np.ceil(5 * sigma / step))
+    kernel = np.exp(-0.5 * (np.arange(-half, half + 1) * step / sigma) ** 2)
+    kernel /= kernel.sum()
+    density = fftconvolve(counts, kernel, mode="same") / (n * step)
+    return np.interp(x, lo + step * np.arange(bins), np.maximum(density, 0.0))
 
 
 def _mirror_kde(values):
