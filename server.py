@@ -320,21 +320,18 @@ async def _handler(
             logger.warning("Handling %s failed: %s", event, exc)
             trace.record_error(f"handling a message failed: {exc!r}", exc)
 
-    # Metric requests run beside the queue: a metric can take a minute on a
-    # large dataset, and slider moves waited ~45 s behind them (2026-11-02).
-    # Their replies carry their own request id, so finishing out of order is
-    # fine; they still start in the order sent.
-    in_background: set[asyncio.Task] = set()
+    # Metric requests and view commands run beside the queue: a metric can
+    # take a minute on a large dataset, and slider moves waited ~45 s behind
+    # them (2026-11-02); a colour-by command held Basic Errors 13 s
+    # (2026-11-03, ADR 0082). They still start in the order sent.
+    from ffast.session.message_lanes import MessageLanes
+    lanes = MessageLanes(handle)
+    in_background = lanes.background
 
     async def handle_loop():
-        # One message at a time, in the order received; None ends the loop.
+        # In the order received; None ends the loop.
         while (item := await received.get()) is not None:
-            if item[0] == control.REQUEST_METRIC:
-                task = asyncio.create_task(handle(*item))
-                in_background.add(task)
-                task.add_done_callback(in_background.discard)
-            else:
-                await handle(*item)
+            await lanes.take(item)
 
     async def send_loop():
         while True:
