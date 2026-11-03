@@ -94,8 +94,10 @@ the cluster.
 What the 41.8 s is now spent on (server log):
 
 - The three density steps (energy MAE, force MAE per structure, force RMSE):
-  ~18 s of compute each. Two of them waited ~11 s before starting, so they
-  finish last, at ~29 s.
+  ~18 s of compute each. The two force ones first need the per-structure
+  force difference (~11 s), so they finish last, ~29 s after starting.
+- Basic Errors' requests reached the server 13 s after the click, held behind
+  the colour-by-force-error command (ADR 0082).
 - Force difference steps (MAE/RMSE, per dataset and per structure):
   8–11 s each, running side by side.
 - The checksum of large results: 4.7 s and 1.6 s inside the
