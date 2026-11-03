@@ -213,7 +213,8 @@ async def test_a_real_crystal_exports_in_an_ase_format(ffast_web_server, tmp_pat
             name = await page.locator("#fb-name").input_value()
             assert name.endswith(f".{fmt}")
             await page.locator("#fb-load").click()
-            await expect(page.locator("#status")).to_contain_text(f".{fmt}", timeout=60000)
+            # "Exporting to …name.{fmt}…" shows before the file is written
+            await expect(page.locator("#status")).to_contain_text(re.compile(rf"Exported .*\.{fmt}"), timeout=60000)
             frames = ase.io.read(str(tmp_path / name), index=":")
             assert len(frames) == 100 and len(frames[0]) == 216
         finally:

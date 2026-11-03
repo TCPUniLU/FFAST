@@ -7051,7 +7051,8 @@ async def test_web_export_overwrites_a_file_clicked_in_the_list(ffast_web_server
             await page.locator("#fb-list .fb-row", has_text="old.extxyz").click()
             await expect(page.locator("#fb-name")).to_have_value("old.extxyz")
             await page.locator("#fb-load").click()
-            await expect(page.locator("#status")).to_contain_text("old.extxyz", timeout=15000)
+            # "Exporting to …old.extxyz…" shows before the file is written
+            await expect(page.locator("#status")).to_contain_text(re.compile(r"Exported .*old\.extxyz"), timeout=15000)
             assert len(ase.io.read(str(target), index=":")) == len(ase.io.read(DATASET_PATH, index=":"))
         finally:
             await browser.close()
@@ -7072,7 +7073,7 @@ async def test_web_export_writes_the_chosen_format(ffast_web_server, tmp_path):
             await expect(page.locator("#fb-name")).to_have_value(re.compile(r"\.traj$"))
             name = await page.locator("#fb-name").input_value()
             await page.locator("#fb-load").click()
-            await expect(page.locator("#status")).to_contain_text(".traj", timeout=15000)
+            await expect(page.locator("#status")).to_contain_text(re.compile(r"Exported .*\.traj"), timeout=15000)
             frames = ase.io.read(str(tmp_path / name), index=":")
             assert len(frames) == len(ase.io.read(DATASET_PATH, index=":"))
         finally:
