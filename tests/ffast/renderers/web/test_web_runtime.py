@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import contextlib
 import hashlib
 import io
@@ -13,6 +14,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import tomllib
 from pathlib import Path
@@ -190,6 +192,13 @@ async def _spawn_server(*extra_args: str):
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
+    # Read the log as it comes: a pipe nobody reads fills (~64 KB) and the
+    # server then stops at its next log line.
+    tail = collections.deque(maxlen=60)
+    reader = threading.Thread(
+        target=lambda: tail.extend(line.decode(errors="replace").rstrip() for line in proc.stdout),
+        daemon=True)
+    reader.start()
     try:
         yield ws_port, web_port
     finally:
@@ -198,9 +207,9 @@ async def _spawn_server(*extra_args: str):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-        out, _ = proc.communicate()
-        if out:
-            tail = out.decode(errors="replace").splitlines()[-60:]
+            proc.wait()
+        reader.join(timeout=5)
+        if tail:
             print("[server log]\n" + "\n".join(tail))
         shutil.rmtree(tabs_dir, ignore_errors=True)
         shutil.rmtree(metrics_dir, ignore_errors=True)
