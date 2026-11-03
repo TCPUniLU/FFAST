@@ -325,8 +325,8 @@
         repeating-linear-gradient(to bottom, color-mix(in srgb, var(--hl1) 35%, transparent) 0 50px, transparent 50px 60px);
     }
     .edit-empty { min-height: 200px; }
-    .edit-modal .warning-modal-panel { width: 520px; }
-    .edit-modal-body { padding: 10px 12px; max-height: 65vh; overflow-y: auto; }
+    .edit-modal .warning-modal-panel { width: 520px; display: flex; flex-direction: column; }
+    .edit-modal-body { padding: 10px 12px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
     .edit-field { display: flex; align-items: center; gap: 8px; margin: 4px 0; font-size: var(--fs-m); }
     .edit-field > span:first-child { min-width: 70px; color: var(--muted); font-size: var(--fs-s); }
     .edit-field input[type="text"], .edit-field input[type="number"], .edit-field select { flex: 1; height: auto; min-height: calc(1.2em + 8px); }
@@ -1047,6 +1047,10 @@
     .warning-modal-panel {
       width: 440px;
       max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 32px);
+      min-width: 280px;
+      min-height: 120px;
+      resize: both;              /* drag the bottom-right corner to enlarge */
 
       background: var(--bg2);
       color: var(--text1);
@@ -1129,7 +1133,7 @@
 
     /* cluster dialog (web parity plan 2026-10-29) */
     #cluster-dialog .warning-modal-panel { display: flex; flex-direction: column;
-      max-height: calc(100vh - 32px); }
+      width: 720px; height: 80vh; }
     #cluster-body { padding: 12px; display: flex; flex-direction: column; gap: 6px;
       flex: 1 1 auto; min-height: 0; overflow-y: auto; }
     #cluster-body label { font-size: var(--fs-s); color: var(--muted); font-weight: 600; }
@@ -1153,13 +1157,25 @@
     .warning-modal-footer button {
       min-width: 72px;
     }
+    /* a visible grip in the bottom-right corner: drag it to resize the dialog */
+    .warning-modal-panel, #fb-panel {
+      background-image: linear-gradient(135deg,
+        transparent 0 46%, var(--text1) 46% 54%, transparent 54% 64%,
+        var(--text1) 64% 72%, transparent 72% 82%, var(--text1) 82% 90%, transparent 90%);
+      background-repeat: no-repeat;
+      background-size: 18px 18px;
+      background-position: right 2px bottom 2px;
+    }
+    .warning-modal-panel::-webkit-resizer, #fb-panel::-webkit-resizer { background: transparent; }
+    .warning-modal-panel .warning-modal-footer, #fb-panel #fb-footer { padding-right: 24px; }
     /* the button that deletes something (askDialog `danger`, ADR 0063) */
     .warning-modal-footer button.danger {
       background: transparent; color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger);
     }
     #fb-modal.hidden { display: none; }
     #fb-panel {
-      width: 640px; max-width: 92vw; height: 70vh; max-height: 600px;
+      width: 640px; max-width: calc(100vw - 32px); height: 70vh; max-height: calc(100vh - 32px);
+      min-width: 360px; min-height: 240px; resize: both;
       background: var(--bg2); border: 1px solid var(--bg3); border-radius: 6px;
       display: flex; flex-direction: column; overflow: hidden;
       box-shadow: 0 12px 40px rgba(0,0,0,0.6);
