@@ -70,6 +70,19 @@ def test_an_element_view_keeps_each_frames_carbons():
         np.testing.assert_allclose(kept[i], predicted[i][_carbons(parent, i)])
 
 
+def test_an_element_view_that_also_picks_frames_keeps_those_frames_carbons():
+    from ffast.loaders.dataset import DatasetView
+
+    parent = _variable_parent()
+    view = DatasetView(parent, frames=[3, 0, 2], elements=[CARBON])
+    view.initialise()
+    predicted = [np.asarray(parent.getForces(i)) + 1.0 for i in range(parent.getN())]
+    kept = _forces_type().newDataEntity(forces=predicted).getAtomFilteredEntity(view).get("forces")
+    assert kept.offsets.tolist() == view.getOffsets().tolist()
+    for row, frame in enumerate([3, 0, 2]):
+        np.testing.assert_allclose(kept[row], predicted[frame][_carbons(parent, frame)])
+
+
 def test_an_atom_view_of_same_size_frames_keeps_the_same_atoms():
     predicted = np.arange(4 * 5 * 3, dtype=float).reshape(4, 5, 3)
     entity = _forces_type().newDataEntity(forces=predicted)

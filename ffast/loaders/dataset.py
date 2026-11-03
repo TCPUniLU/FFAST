@@ -1026,8 +1026,6 @@ class DatasetView(DatasetLoader):
         if not self.isAtomFiltered or values is None:
             return values
         if isinstance(values, FlatFrames) and indices is None:
-            if self.frames is not None:
-                raise NotImplementedError("a frame-picking atom view over FlatFrames")
             return values.atoms(self._flatIndex(), self.getOffsets())
         same = self._sameAtoms()
         if isOneFrame(indices):
