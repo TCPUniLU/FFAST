@@ -645,7 +645,7 @@ the Coloring list names a per-element metric as the plots do.
 **Not now.**
 - **A choice between "every frame" and "this frame" for the range.** Typed
   limits cover a fixed range of the user's own; wait until someone asks for
-  the frame's range back.
+  the frame's range back. (Taken up by ADR 0084.)
 - **Outliers.** One very large error squeezes every other colour to the bottom
   of the scale. A percentile range (the setting `loupeForceErrorPercentile`
   describes one) can come later.

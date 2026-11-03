@@ -331,6 +331,13 @@ legend, which is exactly why it is kept apart from configuration, which people
 author by hand (ADR 0029). **Colorbar display override** is the same idea applied
 to the 3D view's colourbar.
 
+### Colour range
+
+Which values set the automatic ends of the colour bar when atoms are coloured
+by a metric: the **whole dataset** (default; a colour means the same in every
+frame), **this frame**, or the **visible atoms** of this frame. It changes only
+the ends, never the values. A typed limit wins over it (ADR 0084).
+
 ## The 3D view
 
 ### Loupe
