@@ -606,6 +606,15 @@ class _StubPredictionLoader:
     def getForces(self):
         return self._F
 
+    def getAllForces(self):
+        if self._F is None:
+            raise RuntimeError("Forces are not available for this dataset.")
+        return np.asarray(self._F).reshape(-1, 3)
+
+    def getOffsets(self):
+        frames, atoms = np.asarray(self._F).shape[:2]
+        return np.arange(frames + 1) * atoms
+
     def getFrameField(self, key, indices=None):
         return self._fields.get(("info", key))
 
@@ -1007,3 +1016,58 @@ def test_a_missing_model_file_reports_why(tmp_path):
         str(tmp_path / "nope.bin"), "Broken", on_error=errors.append)
     assert len(errors) == 1
     assert "no file at" in str(errors[0])
+
+
+# ── in-file prediction forces stay flat (ADR 0080) ──────────────────────────
+
+GOLDEN_RAGGED = "d9bedd71db5d2a6b395ecfa9e02c9673"
+GOLDEN_UNIFORM = "7d65953bc580eca308af59d81b51847c"
+
+
+def _prediction_file(tmp_path, symbols_per_frame):
+    frames = []
+    for i, symbols in enumerate(symbols_per_frame):
+        atoms = _frame(symbols, energy=-(i + 1.0), seed=i)
+        atoms.info["pred_energy"] = -(i + 1.5)
+        atoms.arrays["pred_forces"] = np.arange(len(atoms) * 3, dtype=float).reshape(-1, 3) * 0.01 + i
+        frames.append(atoms)
+    return frames, _write(tmp_path, frames, name="pred.extxyz")
+
+
+def _load_prediction_column(tmp_path, symbols_per_frame):
+    frames, path = _prediction_file(tmp_path, symbols_per_frame)
+    ds = _FakeDataset(np.zeros(len(frames)))
+    env = _file_env(ds)
+    LoadingCoordinator(env)._loadPredictionsFromKeys(
+        ds, path, [("pred_energy", "pred_forces", "my-pred")], atomsList=frames)
+    return env
+
+
+def test_in_file_prediction_fingerprint_is_unchanged_on_ragged_data(tmp_path):
+    env = _load_prediction_column(tmp_path, ["CH4", "C2H6", "CH4"])
+    (ghost_fp,) = env.objects.registered
+    assert ghost_fp == GOLDEN_RAGGED
+
+
+def test_in_file_prediction_fingerprint_is_unchanged_on_same_size_data(tmp_path):
+    env = _load_prediction_column(tmp_path, ["CH4"] * 3)
+    (ghost_fp,) = env.objects.registered
+    assert ghost_fp == GOLDEN_UNIFORM
+
+
+def test_in_file_prediction_forces_are_flat_frames_sharing_the_loaders_array(tmp_path, monkeypatch):
+    from ffast.core.flat_frames import FlatFrames
+
+    frames, path = _prediction_file(tmp_path, ["CH4", "C2H6", "CH4"])
+    loader = LoadingCoordinator._aseLoaderFor(
+        path, frames, energy_key="pred_energy", force_key="pred_forces")
+    monkeypatch.setattr(LoadingCoordinator, "_aseLoaderFor", staticmethod(lambda *a, **k: loader))
+    ds = _FakeDataset(np.zeros(3))
+    env = _file_env(ds)
+    LoadingCoordinator(env)._loadPredictionsFromKeys(
+        ds, path, [("pred_energy", "pred_forces", "my-pred")], atomsList=frames)
+
+    forces, = [p["forces"] for k, p, _, _ in env.data.stored if k == "forces"]
+    assert isinstance(forces, FlatFrames)
+    assert np.shares_memory(forces.values, loader.getAllForces())
+    assert forces.offsets.tolist() == loader.getOffsets().tolist()

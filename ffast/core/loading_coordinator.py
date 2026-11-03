@@ -25,6 +25,7 @@ from ase.calculators.calculator import PropertyNotImplementedError
 from ase.io.trajectory import Trajectory
 
 from ffast.core.data_types import AtomsList
+from ffast.core.flat_frames import FlatFrames
 from ffast.protocol import control
 from ffast.loaders.ghost import GhostModelLoader
 from ffast.loaders.dataset import framesShaped
@@ -40,6 +41,13 @@ def _resultOrNone(read):
     except (PropertyNotImplementedError, RuntimeError):
         return None
 
+
+
+def _flatForcesOrNone(loader):
+    """The loader's forces as one FlatFrames, made without a copy (ADR 0080),
+    or ``None`` when the file has none."""
+    values = _resultOrNone(loader.getAllForces)
+    return None if values is None else FlatFrames(values, loader.getOffsets())
 
 
 class LoadingCoordinator:
@@ -712,11 +720,11 @@ class LoadingCoordinator:
                 )
 
                 E = _resultOrNone(temp_loader.getEnergies)
-                F = _resultOrNone(temp_loader.getForces)
+                F = _flatForcesOrNone(temp_loader)
                 if E is None and F is None:
                     logger.warning(f"Prediction '{model_name}' has neither energies nor forces; skipped.")
                     continue
-                available = [x for x in (E, F) if x is not None]
+                available = [x for x in (E, None if F is None else F.values) if x is not None]
                 ghost_fp = md5FromArraysAndStrings(*available, model_name)
 
 
