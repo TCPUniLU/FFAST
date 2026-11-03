@@ -60,6 +60,7 @@ things came up.
 - [0007](0007-toml-for-user-and-project-configuration.md) TOML as the config format
 - [0029](0029-display-overrides-client-local-cosmetic-state.md) Renamed labels are client-local, not scientific state
 - [0037](0037-display-override-state-presenter-split.md) Pure override state behind thin presenters (proposed)
+- [0067](0067-an-element-subset-chooses-atoms-by-element-in-every-frame.md) An element subset chooses its atoms by element, in every frame (built)
 
 ## The 3D view
 
@@ -77,6 +78,7 @@ things came up.
 - [0041](0041-displacement-geometry-trajectory-overlay.md) Displacement as geometry (proposed)
 - [0038](0038-pipeline-stage-output-contracts.md) Stage output contracts, rejected, with the measurements
 - [0054](0054-no-setting-to-parameter-map.md) Deleting a stage descriptor nobody read
+- [0084](0084-colour-range-whole-dataset-this-frame-or-visible-atoms.md) Colour range: the colour bar's ends come from the whole dataset, this frame or its visible atoms; only the ends change, never the values (built)
 
 ## The web client
 
@@ -104,7 +106,12 @@ things came up.
 - [0077](0077-metric-requests-run-beside-other-messages.md) Metric requests run beside other messages: slider and view clicks no longer wait for minute-long metrics; the same metric asked twice computes once (built)
 - [0078](0078-the-force-scatter-is-a-density-with-the-worst-as-dots.md) The force scatter is a density of every component with the worst 50,000 as dots you can hover, click and Sub; the density is an image, since the vendored Plotly has no heatmap (built)
 - [0079](0079-ffast-code-runs-in-the-server-outside-code-in-workers.md) FFAST's own metric code (built-ins, every formula) runs in the server, several steps at once as memory allows; only outside code runs in workers, which grow and shrink (planned)
-- [0084](0084-colour-range-whole-dataset-this-frame-or-visible-atoms.md) Colour range: the colour bar's ends come from the whole dataset, this frame or its visible atoms; only the ends change, never the values (built)
+- [0071](0071-the-web-launcher-opens-cluster-connections.md) The web launcher opens cluster connections for the page (built)
+- [0075](0075-a-dataset-being-read-is-a-preview-without-a-fingerprint.md) A dataset still being read is a preview, without a fingerprint (proposed, on hold since ADR 0076)
+- [0076](0076-a-dataset-file-is-read-once-into-arrays.md) A dataset file is read once, into arrays, by our own extxyz reader (built)
+- [0080](0080-predicted-forces-are-stored-flat-like-reference-forces.md) Predicted forces are stored flat, like reference forces: force reads 45 s to 2 ms (built)
+- [0081](0081-metric-results-carry-no-checksum.md) Metric results carry no checksum (built)
+- [0082](0082-a-slow-view-command-holds-up-nothing-else.md) A slow view command holds up nothing else: Basic Errors 41.8 s to 12.6 s on MeluXina (built)
 
 ## Environment structure
 
