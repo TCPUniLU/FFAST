@@ -346,6 +346,52 @@ class TestPredictionForces:
         env.cache[cache_key] = {}  # no "forces" key
         assert self._get_prediction(env)(env.DS_FP, env.MODEL_FP) is None
 
+    def test_adapter_returns_predicted_energies(self):
+        # Colouring by prediction.energies on the frame-only path reads
+        # get_prediction(...).energies; it used to carry forces only.
+        env = _FakeEnvWithPrediction()
+        from ffast.cache.keys import CacheKey
+        env.cache[CacheKey("energy", env.MODEL_FP, env.DS_FP).format()] = {
+            "energy": np.array([1.0, 2.0, 3.0])}
+        pred = self._get_prediction(env)(env.DS_FP, env.MODEL_FP)
+        assert pred.energies[2] == pytest.approx(3.0)
+
+    def test_adapter_returns_energies_without_forces(self):
+        env = _FakeEnvWithPrediction()
+        from ffast.cache.keys import CacheKey
+        env.cache.clear()
+        env.cache[CacheKey("energy", env.MODEL_FP, env.DS_FP).format()] = {
+            "energy": np.array([1.0, 2.0, 3.0])}
+        pred = self._get_prediction(env)(env.DS_FP, env.MODEL_FP)
+        assert pred is not None and pred.forces is None
+        assert pred.energies[0] == pytest.approx(1.0)
+
+    def test_energies_only_prediction_draws_no_arrows(self, caplog):
+        env = _FakeEnvWithPrediction()
+        from ffast.cache.keys import CacheKey
+        env.cache.clear()
+        env.cache[CacheKey("energy", env.MODEL_FP, env.DS_FP).format()] = {
+            "energy": np.array([1.0, 2.0, 3.0])}
+        state = VisualizationState(
+            view_id="v1", dataset_ref=env.DS_FP, prediction_ref=env.MODEL_FP,
+            enabled_features=["forces"],
+        )
+        with caplog.at_level("WARNING"):
+            scene = build_scene(state, env.getDataset, self._get_prediction(env))
+        assert scene.forces is None
+        assert not [r for r in caplog.records if r.levelname in ("WARNING", "ERROR")]
+
+    def test_frame_colour_reads_predicted_energies(self):
+        from ffast.visualization.color_values import _prediction_frame_value
+        env = _FakeEnvWithPrediction()
+        from ffast.cache.keys import CacheKey
+        env.cache[CacheKey("energy", env.MODEL_FP, env.DS_FP).format()] = {
+            "energy": np.array([1.0, 2.0, 3.0])}
+        value = _prediction_frame_value(
+            self._get_prediction(env), env.getDataset(env.DS_FP), 1,
+            env.MODEL_FP, "energies", env.DS_FP)
+        assert float(value) == pytest.approx(2.0)
+
     def test_build_scene_populates_forces(self):
         env = _FakeEnvWithPrediction()
         # Force arrows require explicit opt-in via the "forces" feature flag.

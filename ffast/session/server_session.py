@@ -133,15 +133,27 @@ class _Route:
 
 
 class _PredictionView:
-    """Minimal adapter exposing cached prediction forces to build_scene.
-
-    build_scene calls ``get_prediction(dataset_fp, model_fp).forces[idx]``;
-    the cache stores forces under ``forces__{model_fp}__{dataset_fp}``.
+    """A pair's cached predicted energies and forces, for build_scene and
+    atom colouring: ``get_prediction(dataset_fp, model_fp).forces[idx]`` or
+    ``.energies[idx]``. Either is None when it was not predicted.
     """
-    __slots__ = ("forces",)
+    __slots__ = ("forces", "energies")
 
-    def __init__(self, forces) -> None:
+    def __init__(self, forces, energies=None) -> None:
         self.forces = forces
+        self.energies = energies
+
+
+def _frames_of(values, frames):
+    """``values`` (one entry per frame) at ``frames``, or None."""
+    if values is None:
+        return None
+    if isinstance(values, FlatFrames):
+        return values.frames(frames)
+    # Older entries: a list of arrays, or one array.
+    if isinstance(values, list):
+        return [values[i] for i in frames]
+    return np.asarray(values)[frames]
 
 
 class ServerSession:
@@ -361,34 +373,33 @@ class ServerSession:
     def get_prediction(self, dataset_fp, model_fp):
         """``get_prediction(dataset_fp, model_fp)`` for build_scene.
 
-        Reads predicted forces from the fingerprint-keyed cache (the same
-        entries the Prediction-Only Array Channel serves). Returns ``None`` when
-        no prediction is cached for the pair, so build_scene omits force arrows.
+        Reads predicted forces and energies from the fingerprint-keyed cache
+        (the same entries the Prediction-Only Array Channel serves). Returns
+        ``None`` when neither is cached for the pair, so build_scene omits
+        force arrows.
         """
         if not dataset_fp or not model_fp:
             return None
-        de = self.env.cache.get(f"forces__{model_fp}__{dataset_fp}")
-        if de is None:
-            # A frame subset's predicted forces are its parent's, at the
-            # parent frames it holds (a subset made with SUB, say).
-            dataset = self.env.datasets.get(dataset_fp)
-            if (getattr(dataset, "isSubDataset", False) and not getattr(dataset, "isAtomFiltered", False)
-                    and getattr(dataset, "parent", None) is not None):
-                parent = self.get_prediction(dataset.parent.fingerprint, model_fp)
-                if parent is not None:
-                    frames = [int(i) for i in np.asarray(dataset.frames).ravel()]
-                    forces = parent.forces
-                    if isinstance(forces, FlatFrames):
-                        return _PredictionView(forces.frames(frames))
-                    # Older entries: a list of arrays, or one array.
-                    if isinstance(forces, list):
-                        return _PredictionView([forces[i] for i in frames])
-                    return _PredictionView(np.asarray(forces)[frames])
-            return None
-        forces = de.get("forces")
-        if forces is None:
-            return None
-        return _PredictionView(forces)
+        from ffast.cache import CacheKey
+
+        def cached(dt_key, field):
+            entry = self.env.cache.get(CacheKey(dt_key, model_fp, dataset_fp).format())
+            return None if entry is None else entry.get(field)
+
+        forces, energies = cached("forces", "forces"), cached("energy", "energy")
+        if forces is not None or energies is not None:
+            return _PredictionView(forces, energies)
+        # A frame subset's prediction is its parent's, at the parent frames
+        # it holds (a subset made with SUB, say).
+        dataset = self.env.datasets.get(dataset_fp)
+        if (getattr(dataset, "isSubDataset", False) and not getattr(dataset, "isAtomFiltered", False)
+                and getattr(dataset, "parent", None) is not None):
+            parent = self.get_prediction(dataset.parent.fingerprint, model_fp)
+            if parent is not None:
+                frames = [int(i) for i in np.asarray(dataset.frames).ravel()]
+                return _PredictionView(_frames_of(parent.forces, frames),
+                                       _frames_of(parent.energies, frames))
+        return None
 
     def get_metric(self, metric_id, params, dataset_fp, model_fp, wanted=None):
         """``get_metric(...)`` for build_scene: a metric over the whole dataset,

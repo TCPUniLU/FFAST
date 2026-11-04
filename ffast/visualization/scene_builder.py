@@ -334,7 +334,7 @@ def build_scene(
                     raw_forces = get_forces(state.dataset_ref, idx)
             elif get_prediction is not None:
                 pred = get_prediction(state.dataset_ref, force_pred_ref)
-                if pred is not None:
+                if pred is not None and pred.forces is not None:
                     raw_forces = pred.forces[idx]
 
             if raw_forces is not None:
