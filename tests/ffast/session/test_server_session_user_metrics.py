@@ -300,6 +300,77 @@ def test_try_computes_the_formula_on_the_metric_executor(env):
     assert calls and all(c == ["e"] for c in calls)
 
 
+def _try_with_a_store(env, missing=()):
+    """``_try_env`` plus a real result store over a counting fake compute step."""
+    from types import SimpleNamespace
+    from ffast.metrics.models import MetricResult
+    from ffast.metrics.result_store import MetricResultStore
+
+    _try_env(env)
+    env.models = {"m1": SimpleNamespace(fingerprint="m1")}
+    env.compute_calls = []
+    held = {}
+
+    def compute_metric(metric_id, params, model, dataset, *, stopped=None, key_out=None):
+        env.compute_calls.append(metric_id)
+        result = MetricResult(metric_id=metric_id, shape="per_structure", dtype="float64",
+                              unit="eV", compute_parameters={}, implementation_hash="h",
+                              values=_Resolver.ENERGY * 2)
+        key_out["key"] = metric_id
+        held[metric_id] = result
+        return result
+
+    env.data.make_metric_cache_key = lambda m, params, model, dataset: f"{m}__nil__nil"
+    env.data.inputResolver.missing_prediction_keys = lambda *a, **k: list(missing)
+    env.data.compute_metric = compute_metric
+    env.data.metricExecutor = SimpleNamespace(cached=held.get, call=lambda fn, kwargs, label="": fn(**kwargs))
+    env.results = MetricResultStore(env)
+
+
+def test_try_gets_a_saved_metric_through_the_store_once_however_often_it_is_tried(env):
+    _try_with_a_store(env)
+    trial = {"id": "t57.try", "expr": "m + 1", "vars": {"m": "ffast.energy_reference"}}
+
+    async def steps(s):
+        for i in ("a", "b"):
+            await s.dispatch(control.TRY_METRIC, [], {"metric": trial, "try_id": i, "dataset_fp": "ds1"})
+            await s._tries[i][1]
+
+    got = [k for e, _, k in _run_session(env, steps) if e == control.METRIC_TRIED]
+    assert [k["ok"] for k in got] == [True, True]
+    assert got[0]["max"] == 9.0                      # 4 * 2 + 1
+    assert env.compute_calls == ["ffast.energy_reference"]
+
+
+def test_try_of_a_prediction_metric_the_model_lacks_says_a_prediction_is_needed(env):
+    _try_with_a_store(env, missing=["forces"])
+    trial = {"id": "t57.try", "expr": "m",
+             "vars": {"m": "ffast.force_difference[dataset;component;mae]"}}
+
+    async def steps(s):
+        await s.dispatch(control.TRY_METRIC, [], {
+            "metric": trial, "try_id": "n", "dataset_fp": "ds1", "model_fp": "m1"})
+        await s._tries["n"][1]
+
+    [(event, _, kwargs)] = _run_session(env, steps)
+    assert event == control.METRIC_TRIED and kwargs["ok"] is False
+    assert "needs a prediction" in kwargs["error"]
+    assert env.compute_calls == []
+
+
+def test_try_of_an_invalid_formula_keeps_its_own_message_not_the_stores(env):
+    _try_with_a_store(env)
+    bad = {"id": "t57.try", "expr": "2 *", "vars": {"m": "ffast.energy_reference"}}
+
+    async def steps(s):
+        await s.dispatch(control.TRY_METRIC, [], {"metric": bad, "try_id": "v", "dataset_fp": "ds1"})
+        await s._tries["v"][1]
+
+    [(event, _, kwargs)] = _run_session(env, steps)
+    assert kwargs["ok"] is False and "valid expression" in kwargs["error"]
+    assert env.compute_calls == []
+
+
 def test_a_try_whose_worker_dies_fails_and_the_server_still_answers(env):
     from ffast.metrics.pool import WorkerCallError
     _try_env(env)

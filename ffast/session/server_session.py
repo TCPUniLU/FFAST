@@ -1770,19 +1770,32 @@ class ServerSession:
             loop.call_soon_threadsafe(self._emit_or_drop, data, "TASK_PROGRESS")
 
         try:
-            work = asyncio.ensure_future(asyncio.to_thread(
-                self._try_blocking, metric, dataset_fp, model_fp, progress, stop.is_set))
             heard = asyncio.ensure_future(cancelled.wait())
-            await asyncio.wait({work, heard}, return_when=asyncio.FIRST_COMPLETED)
-            heard.cancel()
-            if not work.done():
-                # Answer Cancel at once. The thread may still be computing an
-                # input (a metric on the worker); it finishes in the background,
-                # the result stays in the cache, and it then sees the stop and exits.
-                work.add_done_callback(lambda f: f.cancelled() or f.exception())
+            # The saved metrics the formula reads come from the result store
+            # first (ADR 0085); Cancel while they compute lets the store stop a
+            # computation nobody else waits for.
+            ready = asyncio.ensure_future(self._try_inputs(metric, dataset_fp, model_fp))
+            await asyncio.wait({ready, heard}, return_when=asyncio.FIRST_COMPLETED)
+            if not ready.done():
+                ready.cancel()
+                heard.cancel()
                 out = {"ok": True, "error": None, **TryResult(cancelled=True).to_dict()}
+            elif ready.result():
+                heard.cancel()
+                out = {"ok": False, "error": ready.result()}
             else:
-                out = {"ok": True, "error": None, **work.result()}
+                work = asyncio.ensure_future(asyncio.to_thread(
+                    self._try_blocking, metric, dataset_fp, model_fp, progress, stop.is_set))
+                await asyncio.wait({work, heard}, return_when=asyncio.FIRST_COMPLETED)
+                heard.cancel()
+                if not work.done():
+                    # Answer Cancel at once. The thread may still be computing an
+                    # input (a metric on the worker); it finishes in the background,
+                    # the result stays in the cache, and it then sees the stop and exits.
+                    work.add_done_callback(lambda f: f.cancelled() or f.exception())
+                    out = {"ok": True, "error": None, **TryResult(cancelled=True).to_dict()}
+                else:
+                    out = {"ok": True, "error": None, **work.result()}
         except TryError as exc:
             out = {"ok": False, "error": str(exc)}
         except Exception as exc:
@@ -1791,14 +1804,46 @@ class ServerSession:
         out.setdefault("cancelled", False)
         await self._emit(pack(control.METRIC_TRIED, [], {"try_id": try_id, **out}))
 
+    async def _try_inputs(self, metric, dataset_fp, model_fp) -> str | None:
+        """Get the saved metrics a draft formula reads, through the result
+        store. A sentence saying why when one is missing, else None. A formula
+        that does not validate, or no dataset, is left to ``_try_blocking`` to
+        report as it always has."""
+        from pydantic import ValidationError
+
+        from ffast.config.models import ExprMetricConfig
+        from ffast.metrics.expr import analyze_expr
+        from ffast.metrics.models import MetricResult
+        from ffast.metrics.registry import default_registry
+
+        try:
+            cfg = ExprMetricConfig.model_validate(metric)
+        except ValidationError:
+            return None
+        if not dataset_fp or self.env.datasets.get(dataset_fp) is None:
+            return None
+        um = getattr(self.env, "user_metrics", None)
+        if um is None:
+            return None
+        try:        # a formula that does not parse is reported by the Try, before any metric runs
+            analyze_expr(cfg.expr, dict(cfg.vars), registry=um.registry_without(cfg.id))
+        except ValueError:
+            return None
+        for ref in cfg.vars.values():
+            if not default_registry.has(ref):
+                continue
+            outcome = await self.env.results.get(ref, {}, dataset_fp, model_fp)
+            if not isinstance(outcome, MetricResult):
+                label = default_registry.get(ref)[0].label or ref
+                return f"{label}: {outcome.text}"
+        return None
+
     def _try_blocking(self, metric, dataset_fp, model_fp, progress, cancelled) -> dict:
         """The Try itself, on a thread: resolve the inputs for the selected
         dataset and prediction, then evaluate in chunks on the metric worker."""
         from pydantic import ValidationError
 
         from ffast.config.models import ExprMetricConfig
-        from ffast.metrics.input_resolver import _ResolverSource
-        from ffast.metrics.models import MetricResult
         from ffast.metrics.registry import default_registry
         from ffast.metrics.try_formula import TryError, try_formula
 
@@ -1818,8 +1863,10 @@ class ServerSession:
 
         def resolve(ref):
             if default_registry.has(ref):
-                result = data.metricExecutor.run(ref, _ResolverSource(resolver, model, dataset), {})
-                if isinstance(result, MetricResult):
+                # Got before this thread started; only the cache dropping it
+                # meanwhile can leave it missing.
+                result = self.env.results.peek(ref, {}, dataset_fp, model_fp)
+                if result is not None:
                     return result.values
                 raise TryError(f"{ref} could not be computed here")
             return resolver.resolve(ref, model=model, dataset=dataset)
