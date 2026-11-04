@@ -1,7 +1,10 @@
 # One metric result store on the server
 
-Status: Accepted 2026-11-04. Built 2026-11-04 (5598145..6e07655). Not yet tried by
-hand in the app. Plan:
+Status: Accepted 2026-11-04. Built 2026-11-04 (5598145..16310b7, with review
+fixes 9807e3a, 32b8d5c, 16310b7). Checked in a real browser by a script on
+`examples/data` (each metric step computed once on Basic Errors; the Zero
+Model gives one "Load prediction…" pop-up that opens the browser on the
+dataset); not yet tried by a person. Plan:
 `docs/implementation/2026-11-04-metric-result-store.md`.
 
 ## The problem
