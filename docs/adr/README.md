@@ -114,6 +114,12 @@ things came up.
 - [0082](0082-a-slow-view-command-holds-up-nothing-else.md) A slow view command holds up nothing else: Basic Errors 41.8 s to 12.6 s on MeluXina (built)
 - [0083](0083-a-load-checks-memory-before-it-reads.md) A load checks memory before it reads; every n-th frame and plain xyz read fast; a file's arrays are kept on disk: omol25 every 7th frame 14 min to 87 s, then 11.5 s (built)
 
+## LAMMPS runs
+
+- [0068](0068-first-lammps-analysis-scope.md) First LAMMPS analysis scope: one molecule, no periodic boundaries (superseded in part by 0086)
+- [0086](0086-lammps-runs-are-watched-live-through-a-dump-and-a-wrapper.md) LAMMPS runs are watched live through a dump and a wrapper: DetectAna scores, FFAST plumbs; alarms need persistence; stop off by default (accepted, trial-checked on MeluXina)
+- [0087](0087-a-live-run-keeps-scores-apart-from-geometry.md) A live run keeps its scores apart from its geometry: run folder, one incremental LAMMPS-dump reader, attribution on demand (accepted)
+
 ## Environment structure
 
 - [0020](0020-environment-decomposed-into-composed-managers.md) Breaking up the god object by composition

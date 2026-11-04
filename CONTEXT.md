@@ -552,6 +552,27 @@ These terms come from design work that has not been built. They appear in older
 ADRs and in planning documents. None of them has code behind it today, and this
 section exists so nobody goes looking for it.
 
+- **Live run** — one LAMMPS job watched through the `ffast-lammps` wrapper: its
+  run folder, its frames, one or more analyses of them, its events and its end
+  state (ADR 0086, 0087). Don't call it a session (that is a client connection)
+  or a job (that is the Slurm job).
+- **Run folder** — the folder a wrapper invocation claims for one live run; never
+  reused. Holds the dump, the analyses, `events.jsonl` and `run.json`.
+- **Run segment** — one continuous stretch of a live run; a restart starts a new
+  segment in the same run history.
+- **Analysis** (of a live run) — the scores of one run against one reference
+  bundle with one set of settings, kept in its own folder. Two analyses of the
+  same frames coexist; the dataset fingerprint knows nothing about them.
+- **Reference bundle** — DetectAna's saved fit for one force field: atom order,
+  topology, units, descriptor tracks, fitted model and calibrated thresholds.
+- **Track** — a group of descriptor numbers fitted and thresholded together
+  (default, provisional: bonds, angles, dihedrals, ring). Each has a T² and an
+  SPE score.
+- **Mark, alarm** — a mark is one scored frame above a threshold; an alarm needs
+  the anomaly to persist (DetectAna's window rule). Only an alarm can stop a run.
+- **Estimated onset, confirmation, stop observed** — where the persisting anomaly
+  began, when the alarm fired, and the step at which LAMMPS actually stopped.
+- **Alarm report** — the small permanent record of why an alarm fired.
 - **Geometry edit, edit target, edit log, derived dataset, dataset provenance,
   materialization** — editing atoms in the viewer and saving the result as a new
   dataset with a reproducibility record.
