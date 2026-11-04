@@ -385,12 +385,24 @@ export class AnalysisManager {
     }
   }
 
-  /** Draw the plots again, after Journal page or Density changed the tokens
-   * they read. Only the tab on screen is drawn; the others are drawn when
-   * `activate` shows them. */
+  /** Draw the plots again, after a series colour, Journal page or Density
+   * changed what they read. Each plot is redrawn in place from the results its
+   * card holds: nothing is asked of the server and a zoom is kept. A card still
+   * waiting for its results draws with the new look when they come. Only the
+   * tab on screen is drawn; the others are drawn when `activate` shows them. */
   rerenderAll() {
     const t = this._tabs.find((x) => x.id === this._activeId);
-    if (t) this._renderTab(t);
+    if (!t) return;
+    if (!t.slots.length || !t.slots.every((slot) => slot.cards) || t.gridEl.hidden) {
+      this._renderTab(t);
+      return;
+    }
+    for (const slot of t.slots) {
+      slot.cards.forEach((card, i) => {
+        if (card.series && !card.waiting)
+          this._drawPanel(t, slot.specs[i], card, card.series, this._renderToken, card.seq);
+      });
+    }
   }
 
   /** Called by app when a tab is activated (renders analysis tabs lazily). */
@@ -1317,7 +1329,13 @@ export class AnalysisManager {
       return;
     }
     card.body.className = PLOT_KINDS.has(spec.kind) ? 'panel-plot' : '';
+    await this._drawPanel(t, spec, card, series, token, seq);
+  }
 
+  /** Draw `series` (results the card already holds) into the card, with the
+   * look and the zoom the tab has now. `token`/`seq` as in
+   * `_fetchAndRenderPanel`: a newer draw or fetch supersedes this one. */
+  async _drawPanel(t, spec, card, series, token, seq) {
     const ctx = {
       units: this._panelUnits(spec, series),
       unitDims: this._panelUnitDims(spec),
