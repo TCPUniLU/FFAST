@@ -308,6 +308,35 @@ CASES = {
         " [[{nd: null, failed: true, kind: 'needs_prediction', error: 'x', metricId: 'm'},"
         "   {nd: null, failed: true, kind: 'failed', error: 'bad', metricId: 'n'}]], (id) => id)"
     ),
+    # ADR 0085: a request every asker has let go of is cancelled, once
+    "metric_cancel": (
+        "await (async () => {"
+        "  const sent = [];"
+        "  const conn = {send: (e, kw) => sent.push([e, kw]), on: () => {}};"
+        "  const c = new mc.MetricClient(conn);"
+        "  const a = new AbortController(), b = new AbortController();"
+        "  const p1 = c.request('m', {datasetFp: 'd', signal: a.signal});"
+        "  c.request('m', {datasetFp: 'd', signal: b.signal});"
+        "  a.abort(); const afterOne = sent.map((s) => s[0]);"
+        "  b.abort(); const afterBoth = sent.map((s) => s[0]);"
+        "  const resolved = await p1;"
+        "  c.request('m', {datasetFp: 'd'});"
+        "  return {afterOne, afterBoth, cancelled: sent[1][1], resolved,"
+        "    asked: sent.filter((s) => s[0] === 'REQUEST_METRIC').map((s) => s[1].request_id)};"
+        "})()"
+    ),
+    "metric_no_cancel_after_reply": (
+        "await (async () => {"
+        "  const sent = []; let onResult = null;"
+        "  const conn = {send: (e, kw) => sent.push([e, kw]), on: (e, f) => { onResult = f; }};"
+        "  const c = new mc.MetricClient(conn);"
+        "  const a = new AbortController();"
+        "  const p = c.request('m', {datasetFp: 'd', signal: a.signal});"
+        "  onResult({ok: false}, ['m1', 'm']);"
+        "  await p; a.abort();"
+        "  return sent.map((s) => s[0]);"
+        "})()"
+    ),
     # ── nt: the bell's list of warnings and errors ──────────────────────────
     "notices": (
         "(() => { let l = [];"
@@ -1243,6 +1272,7 @@ def results():
         f"  const cc = await import('{origin}/cluster_client.js');\n"
         f"  const tm = await import('{origin}/timing.js');\n"
         f"  const ht = await import('{origin}/hover_tip.js');\n"
+        f"  const mc = await import('{origin}/metrics.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -1333,6 +1363,19 @@ def test_at_most_four_popups_the_oldest_close_first(results):
 
 def test_the_close_button_closes_its_popup(results):
     assert results["toasts"]["after_close"] == 3
+
+
+def test_a_request_is_cancelled_only_when_every_asker_let_go(results):
+    r = results["metric_cancel"]
+    assert r["afterOne"] == ["REQUEST_METRIC"]                  # the other asker still waits
+    assert r["afterBoth"] == ["REQUEST_METRIC", "CANCEL_METRIC"]
+    assert r["cancelled"] == {"request_id": "m1"}
+    assert r["resolved"] is None                                # its askers are let go
+    assert r["asked"] == ["m1", "m2"]                           # asking again is a new request
+
+
+def test_a_request_already_answered_is_not_cancelled(results):
+    assert results["metric_no_cancel_after_reply"] == ["REQUEST_METRIC"]
 
 
 def test_a_popup_with_an_action_shows_its_button_before_the_close_button(results):

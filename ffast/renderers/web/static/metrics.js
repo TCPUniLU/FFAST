@@ -42,7 +42,8 @@ export class MetricClient {
     this._nextId = 0;
     /** @type {Map<string, {resolve: Function}>} */
     this._byId = new Map();
-    /** @type {Map<string, Promise<MetricResult|MetricFailure|null>>} */
+    /** @type {Map<string, {requestId: string, label: string, holders: number,
+     *   promise: Promise<MetricResult|MetricFailure|null>}>} label → request in flight */
     this._inFlight = new Map();
     conn.on(IN.METRIC_RESULT, (kw, args) => this._onResult(kw, args));
   }
@@ -50,7 +51,10 @@ export class MetricClient {
   /**
    * Request a metric's computed array.
    * @param {string} metricId concrete (already resolved) metric id
-   * @param {{params?: object, modelFp?: string|null, datasetFp?: string|null}} [opts]
+   * @param {{params?: object, modelFp?: string|null, datasetFp?: string|null,
+   *   signal?: AbortSignal|null}} [opts] `signal`: abort it when the result is
+   *   no longer wanted (the panel was redrawn or closed). A request every asker
+   *   has let go of is cancelled on the server (ADR 0085) and resolves null.
    * @returns {Promise<MetricResult|MetricFailure|null>} a failure when the
    *   metric ran and failed; null when the server can't compute it (e.g. a
    *   client-only model, no data — `ok:false` without an error).
@@ -60,26 +64,47 @@ export class MetricClient {
    * (force metrics on 1.77M structures: 127-340 s; a 120 s limit drew
    * "No data", 2026-11-02).
    */
-  request(metricId, { params = {}, modelFp = null, datasetFp = null } = {}) {
+  request(metricId, { params = {}, modelFp = null, datasetFp = null, signal = null } = {}) {
     const label = requestLabel(metricId, params, modelFp, datasetFp);
-    const joined = this._inFlight.get(label);
-    if (joined) return joined;
+    let entry = this._inFlight.get(label);
+    if (!entry) {
+      const requestId = `m${++this._nextId}`;
+      entry = { requestId, label, holders: 0, promise: null };
+      const made = entry;
+      entry.promise = new Promise((resolve) => {
+        this._byId.set(requestId, { resolve });
+      }).finally(() => {
+        if (this._inFlight.get(label) === made) this._inFlight.delete(label);
+      });
+      this._inFlight.set(label, entry);
+      this._conn.send(OUT.REQUEST_METRIC, {
+        metric_id: metricId,
+        request_id: requestId,    // echoed back as args[0] → 1:1 correlation
+        params,
+        model_fp: modelFp,
+        dataset_fp: datasetFp,
+      });
+    }
+    entry.holders += 1;           // an asker with no signal holds it to the end
+    if (signal) {
+      const held = entry;
+      if (signal.aborted) this._release(held);
+      else signal.addEventListener('abort', () => this._release(held), { once: true });
+    }
+    return entry.promise;
+  }
 
-    const requestId = `m${++this._nextId}`;
-    const promise = new Promise((resolve) => {
-      this._byId.set(requestId, { resolve });
-    }).finally(() => {
-      if (this._inFlight.get(label) === promise) this._inFlight.delete(label);
-    });
-    this._inFlight.set(label, promise);
-    this._conn.send(OUT.REQUEST_METRIC, {
-      metric_id: metricId,
-      request_id: requestId,    // echoed back as args[0] → 1:1 correlation
-      params,
-      model_fp: modelFp,
-      dataset_fp: datasetFp,
-    });
-    return promise;
+  /** One asker let go of `entry`; with none left and no answer yet, the
+   * server is told to stop and the askers get null. */
+  _release(entry) {
+    entry.holders -= 1;
+    if (entry.holders > 0) return;
+    const waiter = this._byId.get(entry.requestId);
+    if (!waiter) return;          // already answered
+    this._byId.delete(entry.requestId);
+    if (this._inFlight.get(entry.label) === entry) this._inFlight.delete(entry.label);
+    this._conn.send(OUT.CANCEL_METRIC, { request_id: entry.requestId });
+    waiter.resolve(null);
   }
 
   /** Stop merging new requests into ones already sent. Replies still resolve

@@ -140,6 +140,10 @@ class ServerSession:
         # Running Tries of this connection (ADR 0057 rule 12): try_id → (stop
         # flag, task). The task is held here so it is not garbage-collected.
         self._tries: dict = {}
+        # REQUEST_METRIC handlers by request id, so CANCEL_METRIC can stop one;
+        # and cancels that came before their request started (ADR 0085).
+        self._metric_requests: dict = {}
+        self._cancelled_early: dict = {}
         # Offers made after a session load, waiting for "Add them?" (rule 15)
         self._session_offers: dict = {}
 
@@ -158,7 +162,7 @@ class ServerSession:
             RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
-            CancelTryMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
+            CancelTryMetricRequest, CancelMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
             TraceRequest, RequestMetricBoxesRequest,
         )
         self._handlers: dict[str, _Route] = {
@@ -201,6 +205,7 @@ class ServerSession:
             control.CHECK_METRIC:               _Route(self._on_check_metric, ["metric", "?check_id", "?dataset_fp"], CheckMetricRequest),
             control.TRY_METRIC:                 _Route(self._on_try_metric, ["metric", "try_id", "?dataset_fp", "?model_fp"], TryMetricRequest),
             control.CANCEL_TRY_METRIC:          _Route(self._on_cancel_try_metric, ["try_id"], CancelTryMetricRequest),
+            control.CANCEL_METRIC:              _Route(self._on_cancel_metric, ["request_id"], CancelMetricRequest),
             control.REQUEST_METRIC_BOXES:       _Route(self._on_request_metric_boxes, ["request_id", "?metric_id", "?base", "?setting", "?dataset_fp"], RequestMetricBoxesRequest),
             control.ADD_SESSION_METRICS:        _Route(self._on_add_session_metrics, ["offer_id"], AddSessionMetricsRequest),
             control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
@@ -1398,11 +1403,20 @@ class ServerSession:
         model_fp = kwargs.get("model_fp")
         dataset_fp = kwargs.get("dataset_fp")
 
+        if self._cancelled_early.pop(request_id, None):
+            return              # the page let go of it before it started
+        self._metric_requests[request_id] = asyncio.current_task()
         try:
             outcome = await self.env.results.get(metric_id, params, dataset_fp, model_fp)
+        except asyncio.CancelledError:
+            logger.info("REQUEST_METRIC %s (%s) cancelled", metric_id, request_id)
+            raise
         except Exception as exc:
             logger.error("REQUEST_METRIC compute failed %s: %s", metric_id, exc)
             outcome = Missing("failed", str(exc))
+        finally:
+            if self._metric_requests.get(request_id) is asyncio.current_task():
+                del self._metric_requests[request_id]
         result = outcome if isinstance(outcome, MetricResult) else None
         error = kind = None
         if result is None and not (outcome.kind == "needs_prediction" and not model_fp):
@@ -1425,6 +1439,21 @@ class ServerSession:
             "METRIC_RESULT queued: metric=%r ok=%s request_id=%r",
             metric_id, result is not None, request_id,
         )
+
+    async def _on_cancel_metric(self, request_id, **kwargs) -> None:
+        """The page no longer wants a metric it asked for (its panel was
+        redrawn or closed). Its request stops waiting and sends nothing; the
+        result store stops the computation when nobody else waits for it
+        (ADR 0085 decision 8)."""
+        task = self._metric_requests.get(request_id)
+        if task is not None:
+            task.cancel()
+            return
+        # Its request may not have started yet (metric requests run beside the
+        # queue): remember the cancel, a few hundred at most.
+        self._cancelled_early[request_id] = True
+        while len(self._cancelled_early) > 256:
+            del self._cancelled_early[next(iter(self._cancelled_early))]
 
     async def _on_request_metric_catalog(self, **kwargs) -> None:
         try:

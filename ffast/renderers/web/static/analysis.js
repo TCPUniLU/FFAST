@@ -414,6 +414,10 @@ export class AnalysisManager {
 
   /** Remove every tab (on relayout). */
   clear() {
+    // Let go of the old cards' requests once the new layout has asked for its
+    // own (it is drawn right after this), so a metric both want carries on.
+    const old = this._tabs.flatMap((t) => t.slots.flatMap((slot) => slot.cards || []));
+    setTimeout(() => old.forEach((card) => card.abort?.abort()), 0);
     for (const t of this._tabs) {
       t.resizeObserver?.disconnect();   // or each rebuild leaves one watching
       t.tabEl.remove();
@@ -1040,6 +1044,7 @@ export class AnalysisManager {
     if (whole) return;
 
     for (const slot of t.slots) {
+      const old = slot.cards || [];
       const cards = slot.specs.map((spec, i) =>
         this._buildPanelCard(t, spec, token, t.letters.get(slot.indices[i]) || ''));
       slot.el.replaceChildren(...cards.map((c) => c.el));
@@ -1048,6 +1053,8 @@ export class AnalysisManager {
         if (msg) card.body.innerHTML = `<div class="panel-msg">${msg}</div>`;
         else this._fetchAndRenderPanel(t, slot.specs[i], card, token);
       });
+      // After the new cards asked: a metric both want is not cancelled.
+      old.forEach((card) => card.abort?.abort());
     }
   }
 
@@ -1266,17 +1273,27 @@ export class AnalysisManager {
       card.captionEl.hidden = true;
       card.params.innerHTML = '';
       card.series = null;
+      card.abort?.abort();
+      card.abort = null;
       return;
     }
+    // This fetch replaces any the card still waits for. The old one lets go
+    // only after the new requests are made, so a metric both ask for is not
+    // cancelled and computed again (ADR 0085).
+    const previous = card.abort;
+    const abort = card.abort = new AbortController();
     let perSeries;
     this._busy(card, +1);
     try {
-      perSeries = await Promise.all(refs.map((ref) =>
+      const asked = Promise.all(refs.map((ref) =>
         Promise.all(jobs.map((j) => this._metrics.request(j.id, {
           datasetFp: ref.datasetFp,
           modelFp: ref.modelFp,
           params: this._metricParams(t, spec, j.id),
+          signal: abort.signal,
         })))));
+      previous?.abort();
+      perSeries = await asked;
     } finally {
       this._busy(card, -1);
     }

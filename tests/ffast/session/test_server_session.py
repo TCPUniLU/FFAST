@@ -775,6 +775,63 @@ def test_a_computed_metric_is_not_kept_in_the_environment_cache():
     assert env.cache.keys() == []
 
 
+def _blocking_store_env():
+    """A real store whose compute waits for `release`, recording `stopped`."""
+    import threading
+    release, started, stops = threading.Event(), threading.Event(), []
+
+    def compute(metric_id):
+        return _make_metric_result(metric_id=metric_id)
+
+    env = _store_env(compute)
+    plain = env.data.compute_metric
+
+    def blocking(metric_id, params, model, dataset, *, stopped=None, key_out=None):
+        stops.append(stopped)
+        started.set()
+        release.wait(5)
+        return plain(metric_id, params, model, dataset, stopped=stopped, key_out=key_out)
+
+    env.data.compute_metric = blocking
+    return env, release, started, stops
+
+
+def test_cancel_metric_stops_a_computation_nobody_else_waits_for_and_sends_nothing():
+    """ADR 0085 decision 8: a panel that no longer wants its metric lets go."""
+    env, release, started, stops = _blocking_store_env()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        asking = asyncio.ensure_future(
+            s.dispatch("REQUEST_METRIC", ["ffast.gyradius", "m1"], {"dataset_fp": "ds1"}))
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        await s.dispatch("CANCEL_METRIC", [], {"request_id": "m1"})
+        await asyncio.sleep(0.05)
+        stopped = stops[0]()
+        release.set()
+        await asyncio.wait_for(asyncio.gather(asking, return_exceptions=True), 5)
+        return stopped, s.outbound.empty()
+
+    stopped, nothing_sent = _run(scenario())
+    assert stopped is True and nothing_sent
+
+
+def test_a_cancel_that_arrives_before_its_request_starts_is_kept():
+    """Metric requests run beside the queue, so a cancel can be handled first."""
+    env, release, started, _ = _blocking_store_env()
+    release.set()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("CANCEL_METRIC", [], {"request_id": "m1"})
+        await s.dispatch("REQUEST_METRIC", ["ffast.gyradius", "m1"], {"dataset_fp": "ds1"})
+        return s.outbound.empty()
+
+    assert _run(scenario())
+    assert not started.is_set()
+
+
 def test_request_metric_with_a_key_is_rejected():
     """ADR 0061: the wire has no `key`; a client that still sends one is dropped."""
     env = _FakeEnv(datasets={"ds1": object()})

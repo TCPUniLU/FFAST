@@ -617,6 +617,15 @@ class CancelTryMetricRequest(BaseModel):
     try_id: str
 
 
+class CancelMetricRequest(BaseModel):
+    """Typed payload for ``CANCEL_METRIC``: the ``request_id`` of a
+    ``REQUEST_METRIC`` the page no longer wants (ADR 0085)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+
+
 class SaveSessionRequest(BaseModel):
     """Typed payload for ``SAVE_SESSION``."""
 

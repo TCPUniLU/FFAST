@@ -58,6 +58,8 @@ export const OUT = Object.freeze({
   CHECK_METRIC: 'CHECK_METRIC',
   TRY_METRIC: 'TRY_METRIC',
   CANCEL_TRY_METRIC: 'CANCEL_TRY_METRIC',
+  // A metric the page asked for and no longer wants (ADR 0085)
+  CANCEL_METRIC: 'CANCEL_METRIC',
   // The keep boxes of a metric or of a box change (ADR 0065)
   REQUEST_METRIC_BOXES: 'REQUEST_METRIC_BOXES',
   ADD_SESSION_METRICS: 'ADD_SESSION_METRICS',
