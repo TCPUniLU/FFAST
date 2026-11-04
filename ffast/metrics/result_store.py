@@ -85,6 +85,13 @@ class MetricResultStore:
         found = self._known(metric_id, params, dataset_fp, model_fp)
         return found[3] if isinstance(found[3], MetricResult) else None
 
+    def can_compute(self, metric_id, params, dataset_fp, model_fp) -> bool:
+        """True when ``get`` would start a computation: the objects are there,
+        no failure is remembered, and no prediction is missing. Safe from any
+        thread."""
+        model, dataset, _, known = self._known(metric_id, params, dataset_fp, model_fp)
+        return known is None and self._needs_prediction(metric_id, model, dataset) is None
+
     async def get(self, metric_id, params, dataset_fp, model_fp) -> MetricResult | Missing:
         """The result, computing it if needed, or why there is none."""
         model, dataset, key, known = self._known(metric_id, params, dataset_fp, model_fp)

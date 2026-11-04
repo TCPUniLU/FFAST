@@ -611,11 +611,14 @@ def _store_env(compute, datasets=None, models=None, missing=()):
 
     env = _FakeEnv(datasets=datasets or {"ds1": object()}, models=models, cache={})
     held = {}
+    env.compute_calls = []
 
     def compute_metric(metric_id, params, model, dataset, *, stopped=None, key_out=None):
+        env.compute_calls.append(metric_id)
         result = compute(metric_id)
-        key_out["key"] = metric_id
-        held[metric_id] = result
+        if isinstance(result, MetricResult):
+            key_out["key"] = metric_id
+            held[metric_id] = result
         return result
 
     env.data = SimpleNamespace(
@@ -1532,49 +1535,44 @@ def test_a_frame_subset_of_structures_of_different_sizes_draws_its_parents_force
 
 
 # ── atom colouring reads a metric over the whole dataset ─────────────────────
-class _ColourData(_FakeData):
-    """A DataService double whose prediction may be missing."""
-
-    def __init__(self, cache, missing=()):
-        super().__init__(cache)
-        self.inputResolver = type("R", (), {
-            "missing_prediction_keys": lambda _self, metric_id, model, dataset: list(missing)})()
+def _colour_env(missing=()):
+    from types import SimpleNamespace
+    return _store_env(lambda metric_id: _make_metric_result(metric_id=metric_id, values=np.array([3.0])),
+                      datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
+                      models={"m1": SimpleNamespace(fingerprint="m1")}, missing=missing)
 
 
 def test_colouring_reads_the_metric_the_plots_stored():
-    from types import SimpleNamespace
-    stored = _make_metric_result(values=np.array([1.0, 2.0]))
-    env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
-                   models={"m1": SimpleNamespace(fingerprint="m1")},
-                   cache={"ffast.force_difference[atom+structure;length]__nil__nil": stored})
-    env.data = _ColourData(env.cache)
-    assert ServerSession(env, asyncio.Queue()).get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "m1") is stored
-    assert env.data.generate_metric_calls == []
+    env = _colour_env()
+    metric = "ffast.force_difference[atom+structure;length]"
+    stored = _run(env.results.get(metric, {}, "ds1", "m1"))
+    assert ServerSession(env, asyncio.Queue()).get_metric(metric, {}, "ds1", "m1") is stored
+    assert env.compute_calls == [metric]            # the plot's run, not a second one
 
 
-def test_colouring_computes_the_whole_dataset_when_the_prediction_is_there():
-    from types import SimpleNamespace
-    env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
-                   models={"m1": SimpleNamespace(fingerprint="m1")})
-    env.data = _ColourData(env.cache)
-    result = ServerSession(env, asyncio.Queue()).get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "m1")
-    assert list(result.values) == [3.0]
-    assert [c[0] for c in env.data.generate_metric_calls] == ["ffast.force_difference[atom+structure;length]"]
+def test_colouring_asks_for_the_whole_dataset_when_the_prediction_is_there():
+    env = _colour_env()
+    metric = "ffast.force_difference[atom+structure;length]"
+    wanted = []
+    session = ServerSession(env, asyncio.Queue())
+    assert session.get_metric(metric, {}, "ds1", "m1", wanted=wanted) is None
+    assert wanted == [(metric, {}, "ds1", "m1")]
+    assert env.compute_calls == []                  # a scene never computes it
 
 
 def test_colouring_never_starts_a_prediction_of_every_frame():
     """A live model predicts the frame on screen; colouring must not ask it
     for every frame, so it gets no whole-dataset result (and uses the frame)."""
-    from types import SimpleNamespace
-    env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
-                   models={"m1": SimpleNamespace(fingerprint="m1")})
-    env.data = _ColourData(env.cache, missing=["forces__m1__ds1"])
+    env = _colour_env(missing=["forces__m1__ds1"])
+    metric = "ffast.force_difference[atom+structure;length]"
     session = ServerSession(env, asyncio.Queue())
-    assert session.get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "m1") is None
-    assert env.data.generate_metric_calls == [] and env.data.generate_data_calls == []
+    wanted = []
+    assert session.get_metric(metric, {}, "ds1", "m1", wanted=wanted) is None
+    assert wanted == [] and env.compute_calls == []
     # A model or dataset that is gone gives nothing either.
-    assert session.get_metric("ffast.force_difference[atom+structure;length]", {}, "ds1", "gone") is None
-    assert session.get_metric("ffast.force_difference[atom+structure;length]", {}, "gone", "m1") is None
+    assert session.get_metric(metric, {}, "ds1", "gone", wanted=wanted) is None
+    assert session.get_metric(metric, {}, "gone", "m1", wanted=wanted) is None
+    assert wanted == []
 
 
 # ── OPEN_VIEW start_from: a subset opens with its parent's look ─────────────

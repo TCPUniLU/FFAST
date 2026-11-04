@@ -422,32 +422,22 @@ class ServerSession:
 
     def get_metric(self, metric_id, params, dataset_fp, model_fp, wanted=None):
         """``get_metric(...)`` for build_scene: a metric over the whole dataset,
-        stored under the same key as a 2D plot's, so the two compute it once.
+        read from the result store, the same one a 2D plot reads (ADR 0085).
 
-        None when it can't be computed from what is loaded: a model or dataset
-        that is gone, or a prediction not made for the dataset (a live model
-        asked for one frame). Atom colouring then uses the frame on screen
-        alone; it never starts a prediction of every frame.
-
-        With ``wanted`` (a list), a result not yet cached is not computed: its
-        arguments are added to ``wanted`` and None is returned (ADR 0082).
+        None when it is not stored. With ``wanted`` (a list), a result the
+        store could compute has its arguments added to ``wanted`` (ADR 0082).
+        Nothing is computed here, and a prediction is never started: a model or
+        dataset that is gone, or a prediction not made for the dataset (a live
+        model asked for one frame), gives None and atom colouring uses the
+        frame on screen alone.
         """
-        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
-        model = self.env.models.get(model_fp) if model_fp else None
-        if dataset is None or (model_fp and model is None):
-            return None
-        data = self.env.data
-        key = data.make_metric_cache_key(metric_id, params, model, dataset)
-        result = self.env.cache.get(key)
+        results = self.env.results
+        result = results.peek(metric_id, params, dataset_fp, model_fp)
         if result is not None:
             return result
-        if data.inputResolver.missing_prediction_keys(metric_id, model=model, dataset=dataset):
-            return None
-        if wanted is not None:
+        if wanted is not None and results.can_compute(metric_id, params, dataset_fp, model_fp):
             wanted.append((metric_id, params, dataset_fp, model_fp))
-            return None
-        made = data.generateMetric(metric_id, params, model, dataset)
-        return self.env.cache.get(made) if made else None
+        return None
 
     # ── draw first, colour later (ADR 0082) ─────────────────────────────────
 
@@ -485,25 +475,18 @@ class ServerSession:
         from ffast.visualization.scene import ScenePatch
         from ffast.visualization.scene_builder import build_scene, fill_patch_from_scene
 
-        loop = asyncio.get_running_loop()
+        from ffast.metrics.models import MetricResult
+
         data = self.env.data
         made, problems = [], []
-        for metric_id, params, dataset_fp, model_fp in wanted:
-            model = self.env.models.get(model_fp) if model_fp else None
-            dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
-            key = data.make_metric_cache_key(metric_id, params, model, dataset)
-            error = None
-            try:
-                # Shared with a 2D plot asking for the same metric meanwhile.
-                key_made = await _compute_once(key, lambda: loop.run_in_executor(
-                    _metric_compute_pool(), data.generateMetric, metric_id, params, model, dataset),
-                    self.env, _metric_task_name(metric_id, model, dataset))
-            except Exception as exc:
-                key_made, error = None, str(exc)
-            made.append(key_made)
-            if not key_made:
-                problems.append(getattr(data, "metric_failures", {}).pop(key, None)
-                                or error or "no result")
+        for args in wanted:
+            # Shared with a 2D plot asking for the same metric meanwhile.
+            outcome = await self.env.results.get(*args)
+            if isinstance(outcome, MetricResult):
+                made.append(outcome)
+            else:
+                made.append(None)
+                problems.append(outcome.text)
 
         state = view.state
         if (self.views.get(state.view_id) is not view
@@ -512,9 +495,9 @@ class ServerSession:
             return      # the user moved on; the result stays in the cache
 
         def finished(*args):
-            for asked, key_made in zip(wanted, made):
+            for asked, result in zip(wanted, made):
                 if tuple(args) == tuple(asked):
-                    return self.env.cache.get(key_made) if key_made else None
+                    return result
             return self.get_metric(*args, wanted=[])
 
         try:

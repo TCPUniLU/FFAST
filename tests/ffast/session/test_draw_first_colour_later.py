@@ -14,24 +14,21 @@ from ffast.protocol.rpc import unpack
 from ffast.session.server_session import ServerSession
 from ffast.visualization.scene import AtomColorBy, AtomScene, RenderScene
 
-from tests.ffast.session.test_server_session import _ColourData, _FakeEnv
+from ffast.metrics.models import MetricFailure
+from tests.ffast.session.test_server_session import _make_metric_result, _store_env
 
 METRIC = "ffast.force_difference[atom+structure;length]"
 
 
 def _env(fail=False):
-    env = _FakeEnv(datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
-                   models={"m1": SimpleNamespace(fingerprint="m1")})
-    env.data = _ColourData(env.cache)
-    env.data.metric_failures = {}
-    env.data.metricExecutor = None
+    def compute(metric_id):
+        if fail:
+            return MetricFailure(metric_id=metric_id, traceback="out of memory", kind="temporary")
+        return _make_metric_result(metric_id=metric_id, values=[9.0])
+
+    env = _store_env(compute, datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
+                     models={"m1": SimpleNamespace(fingerprint="m1")})
     env.data.predictionFields = {}
-    if fail:
-        def failing(metric_id, params, model, dataset, key=None):
-            env.data.generate_metric_calls.append((metric_id, None))
-            env.data.metric_failures[f"{metric_id}__nil__nil"] = "out of memory"
-            return None
-        env.data.generateMetric = failing
     return env
 
 
@@ -79,7 +76,7 @@ def test_the_scene_comes_at_once_with_frame_colours_and_the_final_ones_follow():
         with patch("ffast.visualization.scene_builder.build_scene", _fake_build_scene):
             await _colour_command(s)
             first = _messages(s)
-            computed_before = list(env.data.generate_metric_calls)
+            computed_before = list(env.compute_calls)
             await s.colours_settled()
         return first, computed_before, _messages(s)
 
@@ -93,7 +90,7 @@ def test_the_scene_comes_at_once_with_frame_colours_and_the_final_ones_follow():
     (patch_later,) = _patches(later)
     assert patch_later["atoms"]["color_by"]["values"] == [9.0]
     assert patch_later["atoms"]["color_by"]["note"] == ""
-    assert [c[0] for c in env.data.generate_metric_calls] == [METRIC]
+    assert env.compute_calls == [METRIC]
 
 
 def test_a_late_result_does_not_overwrite_a_newer_colouring():
@@ -136,10 +133,8 @@ def test_when_the_metric_fails_the_colour_bar_says_why():
 
 def test_a_cached_colour_metric_is_used_at_once_with_no_second_patch():
     env = _env()
-    env.data.generateMetric(METRIC, {}, None, None)          # the plots stored it
-    env.cache._entries[f"{METRIC}__nil__nil"] = env.cache._entries.pop(
-        f"{METRIC}__f1234abcd__nil__nil")
-    env.data.generate_metric_calls.clear()
+    asyncio.run(env.results.get(METRIC, {}, "ds1", "m1"))   # the plots stored it
+    env.compute_calls.clear()
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
@@ -156,7 +151,7 @@ def test_a_cached_colour_metric_is_used_at_once_with_no_second_patch():
     (patch_now,) = _patches(first)
     assert patch_now["atoms"]["color_by"]["values"] == [9.0]
     assert patch_now["atoms"]["color_by"]["note"] == ""
-    assert later == [] and env.data.generate_metric_calls == []
+    assert later == [] and env.compute_calls == []
 
 
 def _run(coro):
