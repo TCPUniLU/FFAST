@@ -32,7 +32,8 @@ function requestLabel(metricId, params, modelFp, datasetFp) {
 /** @typedef {{values: number[], shape: number[]}} DecodedArray */
 /** @typedef {{nd: DecodedArray|null, shape: string, unit: string, dtype: string, warnings: string[], metricId: string}} MetricResult */
 /** A metric that failed, and why (ADR 0066 rule 6).
- * @typedef {{nd: null, failed: true, error: string, metricId: string}} MetricFailure */
+ * @typedef {{nd: null, failed: true, error: string, kind: string, metricId: string}} MetricFailure
+ *   `kind`: needs_prediction, failed, missing_input, temporary or object_gone (ADR 0085). */
 
 export class MetricClient {
   /** @param {import('./connection.js').FFastConnection} conn */
@@ -97,7 +98,7 @@ export class MetricClient {
         ? { nd: decodeNdarray(kw.values), shape: kw.shape, unit: kw.unit, dtype: kw.dtype,
             warnings: kw.warnings || [], metricId: kw.metric_id }
         : kw.error
-          ? { nd: null, failed: true, error: kw.error, metricId: args[1] }
+          ? { nd: null, failed: true, error: kw.error, kind: kw.kind || 'failed', metricId: args[1] }
           : null,
     );
   }

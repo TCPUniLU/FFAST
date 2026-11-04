@@ -221,6 +221,8 @@
  * @property {string} [dtype]
  * @property {string} [unit]
  * @property {WireNdarray} [values]
+ * @property {string} [error] why there is no result, in words
+ * @property {string} [kind] needs_prediction, failed, missing_input, temporary or object_gone
  */
 
 /**

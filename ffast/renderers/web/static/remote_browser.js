@@ -508,7 +508,7 @@ export class RemoteBrowser {
   }
 
   /** @param {'dataset'|'prediction'|'model'} mode */
-  open(mode = 'dataset') {
+  open(mode = 'dataset', { datasetFp = null } = {}) {
     this._mode = mode;
     const titles = { dataset: 'Load Remote Dataset', prediction: 'Load Prediction', model: 'Load Model' };
     $('fb-title').textContent = titles[mode];
@@ -519,7 +519,11 @@ export class RemoteBrowser {
     $('fb-load').textContent = 'Load';
     this._pick = null;
     const isPred = mode === 'prediction';
-    if (isPred) this._populatePredictionTargets();
+    if (isPred) {
+      this._populatePredictionTargets();
+      // The dataset a panel needs a prediction for, when it is in the list.
+      if (datasetFp && this._ports.getDatasets().has(datasetFp)) $('fb-target-ds').value = datasetFp;
+    }
     this._renderRecent();
     this._renderUnitChoices();
     this._show();

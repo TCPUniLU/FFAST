@@ -302,10 +302,27 @@ export function panelFailures(refs, results, labelOf) {
   const out = new Map();
   refs.forEach((ref, i) => {
     for (const r of results[i] || []) {
-      if (!r?.failed) continue;
+      if (!r?.failed || r.kind === 'needs_prediction') continue;
       const key = `${r.metricId}|${ref.datasetFp}|${ref.modelFp}|${r.error}`;
       if (!out.has(key)) out.set(key, { key, text: `Could not compute ${labelOf(r.metricId)}: ${r.error}` });
     }
+  });
+  return [...out.values()];
+}
+
+/**
+ * The (dataset, prediction) pairs whose results say a prediction is needed
+ * (ADR 0085), each once.
+ * @param {{datasetFp: string, modelFp: string|null}[]} refs
+ * @param {Array<Array<{failed?: boolean, kind?: string}|null>>} results one list per ref
+ * @returns {{datasetFp: string, modelFp: string}[]}
+ */
+export function neededPredictions(refs, results) {
+  const out = new Map();
+  refs.forEach((ref, i) => {
+    if (!ref.modelFp) return;
+    if (!(results[i] || []).some((r) => r?.failed && r.kind === 'needs_prediction')) return;
+    out.set(`${ref.datasetFp}|${ref.modelFp}`, { datasetFp: ref.datasetFp, modelFp: ref.modelFp });
   });
   return [...out.values()];
 }

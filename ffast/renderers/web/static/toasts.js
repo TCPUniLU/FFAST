@@ -32,9 +32,11 @@ function stack() {
  * "critical"; the last two are drawn as errors.
  * @param {string} message
  * @param {string} [level]
+ * @param {{label: string, run: () => void}|null} [action] a button: clicking
+ *   it runs `run` and closes the pop-up (the bell keeps the text only)
  * @returns {HTMLElement} the pop-up
  */
-export function showWarning(message, level = 'warning') {
+export function showWarning(message, level = 'warning', action = null) {
   const box = stack();
   const text = String(message);
   remember(text, level);   // the bell keeps it after the pop-up closes
@@ -66,7 +68,16 @@ export function showWarning(message, level = 'warning') {
   close.textContent = '×';
   close.title = 'Close';
   close.setAttribute('aria-label', 'Close warning');
-  toast.append(mark, body, count, close);
+  toast.append(mark, body, count);
+  if (action) {
+    const button = document.createElement('button');
+    button.className = 'toast-action';
+    button.type = 'button';
+    button.textContent = action.label;
+    button.addEventListener('click', () => { remove(); action.run(); });
+    toast.append(button);
+  }
+  toast.append(close);
 
   let timer = null;
   const remove = () => { clearTimeout(timer); toast.remove(); };
@@ -87,10 +98,11 @@ const shownKeys = new Set();
  * `showWarning(message, level)` the first time `key` is seen in this window;
  * null after that.
  * @param {string} key @param {string} message @param {string} [level]
+ * @param {{label: string, run: () => void}|null} [action]
  * @returns {HTMLElement|null}
  */
-export function showOnce(key, message, level = 'warning') {
+export function showOnce(key, message, level = 'warning', action = null) {
   if (shownKeys.has(key)) return null;
   shownKeys.add(key);
-  return showWarning(message, level);
+  return showWarning(message, level, action);
 }

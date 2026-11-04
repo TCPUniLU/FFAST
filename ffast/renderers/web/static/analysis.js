@@ -24,7 +24,7 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, clearPlot } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, neededPredictions, clearPlot } from './panels.js';
 import { showOnce } from './toasts.js';
 import { attachTip } from './hover_tip.js';
 import { spinner } from './spinner.js';
@@ -204,6 +204,7 @@ export class AnalysisManager {
     /** Frames the user opened from a plot, "dataset|model|frame"; kept for the page's life. */
     this._visited = new Set();
     this._onSetUnit = deps.onSetUnit;
+    this._onLoadPrediction = deps.onLoadPrediction;
 
     /** @type {Map<string, object>} id → catalog entry */
     this._catalog = new Map();
@@ -1273,6 +1274,15 @@ export class AnalysisManager {
     // below it counts as no result.
     const failures = panelFailures(refs, perSeries, (id) => this._catalog.get(id)?.label || id);
     for (const f of failures) showOnce(f.key, f.text, 'error');
+    // A prediction nobody has loaded for a chosen model: one pop-up per
+    // (dataset, prediction) with a way to load it (ADR 0085).
+    const needed = neededPredictions(refs, perSeries);
+    for (const n of needed) {
+      const text = `${this._nameOf('datasets', n.datasetFp)} has no prediction by ` +
+        `${this._nameOf('models', n.modelFp)}, so some panels are empty.`;
+      showOnce(`needs_prediction|${n.datasetFp}|${n.modelFp}`, text, 'warning',
+        this._onLoadPrediction ? { label: 'Load prediction…', run: () => this._onLoadPrediction(n.datasetFp) } : null);
+    }
     for (const results of perSeries) results.forEach((r, i) => { if (r?.failed) results[i] = null; });
 
     // A series whose every metric came back empty is dropped rather than drawn
@@ -1298,6 +1308,7 @@ export class AnalysisManager {
       const msg = document.createElement('div');
       msg.className = 'panel-msg';
       msg.textContent = failures.length ? failures.map((f) => f.text).join('\n')
+        : needed.length ? needed.map((n) => `Needs a prediction of this dataset by ${this._nameOf('models', n.modelFp)}.`).join('\n')
         : anyModel ? 'No data for this selection.' : 'Select a prediction to compute this panel.';
       clearPlot(card.body);
       card.body.replaceChildren(msg);

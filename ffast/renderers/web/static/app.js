@@ -321,6 +321,7 @@ export class FFastApp {
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
     });
     this._applyLayout([]);
+      onLoadPrediction: (datasetFp) => this._browser.open('prediction', { datasetFp }),
   }
 
   /** Build the tabs from a layout. Linked 3D panels already drawing move into

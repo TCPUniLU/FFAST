@@ -278,6 +278,36 @@ CASES = {
         "  shown: [...box.children].map((t) => t.dataset.text)};"
         " box.remove(); return r; })()"
     ),
+    # ADR 0085: a pop-up can carry one button; clicking it runs it and closes the pop-up
+    "toasts_action": (
+        "(() => { let ran = 0;"
+        " const a = ts.showWarning('needs it', 'warning', {label: 'Load prediction…', run: () => { ran++; }});"
+        " const box = document.getElementById('toasts');"
+        " const button = a.querySelector('.toast-action');"
+        " const r = {label: button.textContent, before_close: [...a.children].map((c) => c.className),"
+        "  text_only: a.dataset.text};"
+        " button.click(); r.ran = ran; r.open_after = box.children.length; box.remove(); return r; })()"
+    ),
+    "toasts_once_with_action": (
+        "(() => { const act = {label: 'Load', run: () => {}};"
+        " const a = ts.showOnce('np|d|m', 'No prediction', 'warning', act);"
+        " const again = ts.showOnce('np|d|m', 'No prediction', 'warning', act);"
+        " const box = document.getElementById('toasts');"
+        " const r = {first: !!a, again: again, buttons: box.querySelectorAll('.toast-action').length,"
+        "  shown: box.children.length}; box.remove(); return r; })()"
+    ),
+    "needed_predictions": (
+        "(() => { const need = {nd: null, failed: true, kind: 'needs_prediction', error: 'x', metricId: 'm'};"
+        " return pn.neededPredictions("
+        "  [{datasetFp: 'd1', modelFp: 'p1'}, {datasetFp: 'd1', modelFp: 'p1'},"
+        "   {datasetFp: 'd2', modelFp: 'p2'}, {datasetFp: 'd3', modelFp: null}],"
+        "  [[need], [need, {nd: {}}], [{nd: {}}], [need]]); })()"
+    ),
+    "panel_failures_skip_needs_prediction": (
+        "pn.panelFailures([{datasetFp: 'd1', modelFp: 'p1'}],"
+        " [[{nd: null, failed: true, kind: 'needs_prediction', error: 'x', metricId: 'm'},"
+        "   {nd: null, failed: true, kind: 'failed', error: 'bad', metricId: 'n'}]], (id) => id)"
+    ),
     # ── nt: the bell's list of warnings and errors ──────────────────────────
     "notices": (
         "(() => { let l = [];"
@@ -1303,6 +1333,33 @@ def test_at_most_four_popups_the_oldest_close_first(results):
 
 def test_the_close_button_closes_its_popup(results):
     assert results["toasts"]["after_close"] == 3
+
+
+def test_a_popup_with_an_action_shows_its_button_before_the_close_button(results):
+    r = results["toasts_action"]
+    assert r["label"] == "Load prediction…"
+    assert r["before_close"] == ["toast-mark", "toast-text", "toast-count", "toast-action", "toast-close"]
+    assert r["text_only"] == "needs it"        # the bell keeps the text, not the button
+
+
+def test_clicking_the_action_runs_it_and_closes_the_popup(results):
+    r = results["toasts_action"]
+    assert r["ran"] == 1 and r["open_after"] == 0
+
+
+def test_show_once_with_an_action_shows_one_popup(results):
+    r = results["toasts_once_with_action"]
+    assert (r["first"], r["again"], r["buttons"], r["shown"]) == (True, None, 1, 1)
+
+
+def test_a_prediction_needed_by_two_series_is_listed_once(results):
+    # d1/p1 twice collapses; d2/p2 had a result; d3 has no prediction chosen
+    assert results["needed_predictions"] == [{"datasetFp": "d1", "modelFp": "p1"}]
+
+
+def test_a_missing_prediction_is_not_a_panel_failure_pop_up(results):
+    [only] = results["panel_failures_skip_needs_prediction"]
+    assert "bad" in only["text"]
 
 
 # ── theme.plotTheme (ADR 0063) ───────────────────────────────────────────────
