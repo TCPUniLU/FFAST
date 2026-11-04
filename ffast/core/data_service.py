@@ -26,9 +26,6 @@ import time
 
 logger = logging.getLogger("FFAST")
 
-# Metric failures remembered for the server's replies (DataService.metric_failures).
-_FAILURES_KEPT = 64
-
 
 def _formula_token(metric_id):
     """The formula identity of a metric for its cache key, or None (see
@@ -55,9 +52,6 @@ class DataService:
         self.tm = tm
         self._events = events
         self.headless = headless
-        # Why a metric failed, by cache key, for the server's reply
-        # (ADR 0066 rule 6); the oldest go first past _FAILURES_KEPT.
-        self.metric_failures: dict = {}
 
         # Where metric results / prediction arrays come from (ADR 0020).
         from ffast.core.prediction_source import InProcessSource
@@ -445,10 +439,6 @@ class DataService:
             return key
 
         reason = getattr(result, "reason", "") or repr(result)
-        self.metric_failures.pop(key, None)
-        self.metric_failures[key] = reason
-        while len(self.metric_failures) > _FAILURES_KEPT:
-            del self.metric_failures[next(iter(self.metric_failures))]
         # The window that asked shows it (ADR 0066 rule 4): not every window.
         label = default_registry.get(metric_id)[0].label or metric_id
         logger.error("Could not compute %s: %s", label, reason, extra={"popup": False})

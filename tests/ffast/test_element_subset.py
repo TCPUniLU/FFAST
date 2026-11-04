@@ -125,7 +125,7 @@ def test_a_per_frame_force_metric_gives_nan_on_the_empty_frame():
         DataEntity("forces", forces=predicted)
 
     key = data.generateMetric("ffast.force_difference[structure;component;mae]", {}, model, view)
-    assert key is not None, data.metric_failures
+    assert key is not None, "the metric could not be computed"
     values = np.asarray(data.cache[key].values, dtype=float)
     assert values.shape == (4,)
     assert np.isnan(values[1])

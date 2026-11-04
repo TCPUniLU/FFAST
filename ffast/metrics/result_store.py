@@ -67,7 +67,15 @@ class _Run:
 
 
 class MetricResultStore:
-    """Metric results over whole datasets, for one server (ADR 0085)."""
+    """Metric results over whole datasets, for one server (ADR 0085).
+
+    Computations run on this store's own pool, up to ``threads`` at once (16).
+    How many really run together is decided by the memory gate of the
+    ServerExecutor; throughput of GIL-bound steps does not grow with threads,
+    the large array operations release the GIL and do. The pool is separate
+    from the default one: client worker threads block there awaiting server
+    replies, and sharing one bounded pool would deadlock.
+    """
 
     def __init__(self, env, *, threads: int = 16) -> None:
         self._env = env

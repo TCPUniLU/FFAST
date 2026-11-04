@@ -31,7 +31,6 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -70,75 +69,6 @@ def _probe_path_diagnostics(path):
         os.path.isdir(os.path.dirname(path) or "."),
     )
 
-
-# FFAST's own metric code runs in the server process (ADR 0079), on this
-# dedicated pool: up to 16 steps at once. How many really run together is
-# decided by the memory gate of the ServerExecutor (a step waits until its
-# estimated memory fits) and, for numpy's heavy loops, by the chunk pool.
-# Throughput of GIL-bound steps does not grow with threads; the large array
-# operations release the GIL and do. It is deliberately SEPARATE from the
-# default pool: client worker threads block there awaiting server replies, and
-# sharing one bounded pool would deadlock (blocked clients holding every slot
-# the compute needs).
-#
-# Built lazily on first metric request so merely importing ``ffast.session``
-# (which the GUI client does for ConnectionRegistry / LocalServerManager) costs
-# nothing — the pool only exists in a process that actually computes metrics.
-_METRIC_COMPUTE_POOL: ThreadPoolExecutor | None = None
-
-
-def _metric_compute_pool() -> ThreadPoolExecutor:
-    global _METRIC_COMPUTE_POOL
-    if _METRIC_COMPUTE_POOL is None:
-        _METRIC_COMPUTE_POOL = ThreadPoolExecutor(
-            max_workers=16, thread_name_prefix="ffast-metric"
-        )
-    return _METRIC_COMPUTE_POOL
-
-
-# Metrics being computed, by cache key, over every connection: a second
-# request for one waits for the first's result instead of computing it again.
-_COMPUTING: dict = {}
-
-
-async def _compute_once(key, start, env=None, name=None):
-    """The result of ``start()`` (a future), shared with every request for
-    ``key`` made while it runs. A request that is cancelled (its page left)
-    stops waiting; the computation goes on for the others and the cache.
-    With ``env``, the computation is a Running Task named ``name`` while it
-    runs, in every window's Tasks list."""
-    future = _COMPUTING.get(key)
-    if future is None:
-        future = _COMPUTING[key] = start()
-        future.add_done_callback(lambda _: _COMPUTING.pop(key, None))
-        tm = getattr(env, "tm", None)
-        if tm is not None:
-            task_id = f"metric:{key}"
-            tm.showWork(task_id, name or "Computing a metric")
-            future.add_done_callback(lambda _: tm.endWork(task_id))
-    return await asyncio.shield(future)
-
-
-def _metric_task_name(metric_id, model, dataset) -> str:
-    """"Computing Force MAE · shard_03 / P1": what a Running Task computes."""
-    from ffast.metrics.registry import default_registry
-    try:
-        label = default_registry.get(metric_id)[0].label or metric_id
-    except KeyError:
-        label = metric_id
-    names = (getattr(o, "getDisplayName", None) for o in (dataset, model))
-    on = " / ".join(str(name()) for name in names if name)
-    return f"Computing {label}" + (f" · {on}" if on else "")
-
-
-def _needs_prediction(metric_id) -> bool:
-    """True when the metric needs a prediction; an unknown id is left to the
-    compute path, which says why it failed."""
-    from ffast.metrics.input_resolver import metric_needs_prediction
-    try:
-        return metric_needs_prediction(metric_id)
-    except KeyError:
-        return False
 
 # A table row: the handler method, the ordered names it binds from
 # (args, kwargs) — a leading "?" marks an optional name (resolves to None) —
@@ -1630,6 +1560,9 @@ class ServerSession:
         data = getattr(self.env, "data", None)
         if data is None:
             return
+        results = getattr(self.env, "results", None)
+        if results is not None:
+            results.forget_metrics(affected)
         dropped = data.invalidate_metrics(affected)
         logger.info("Metrics %s changed: %d cached result(s) dropped", sorted(affected), len(dropped))
 
