@@ -354,6 +354,26 @@ def test_dispatch_declare_subset_materializes_frame_subset():
     assert p is parent and mdl is model and idx == [3, 5, 7] and name == "Basic Errors"
 
 
+def test_a_zoom_whose_metric_lacks_a_prediction_declares_no_subset_and_computes_nothing():
+    from types import SimpleNamespace
+    ds = SimpleNamespace(fingerprint="ds1", getN=lambda: 10)
+    model = SimpleNamespace(fingerprint="m1")
+    env = _store_env(lambda metric_id: _make_metric_result(), datasets={"ds1": ds},
+                     models={"m1": model}, missing=["forces"])
+    view = {"kind": "scatter", "x": [0, 1], "y": [0, 1],
+            "metrics": {"x": "ffast.energy_reference",
+                        "y": "ffast.force_difference[structure;component;mae]"}}
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("DECLARE_SUBSET", ["ds1"], {"model_fp": "m1", "view": view})
+        return s.outbound.empty()
+
+    assert _run(scenario())
+    assert env.declare_subset_calls == []
+    assert "ffast.force_difference[structure;component;mae]" not in env.compute_calls
+
+
 def test_dispatch_declare_subset_without_model_uses_none():
     parent = _FakeFrames()
     env = _FakeEnv(datasets={"ds1": parent})

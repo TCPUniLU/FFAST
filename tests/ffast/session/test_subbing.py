@@ -13,7 +13,7 @@ import ffast.metrics.builtin  # noqa: F401  (registers the metrics below)
 from ffast.metrics.registry import default_registry
 from ffast.session.subbing import (
     flat_to_frames, frames_in_view, frames_in_x_range, points_in_box,
-    source_metric, values_in_range,
+    metrics_read, source_metric, values_in_range,
 )
 
 
@@ -107,3 +107,36 @@ def test_a_per_atom_scatter_maps_force_components_to_frames_on_any_dataset(formu
     view = {"kind": kind, "metrics": metrics, "x": box, "y": box}
     assert frames_in_view(view, n_frames=len(frames), value_of=lambda *_: components,
                           registry=default_registry, dataset=dataset) == expected
+
+
+# ── the metrics a view reads (ADR 0085) ───────────────────────────────────────
+
+class _Registry:
+    """Three metrics: a source, a shift, and a density drawn from both."""
+
+    _inputs = {"dens": {"src": "src", "shift": "shift"}, "src": {}, "shift": {}}
+
+    def has(self, metric_id):
+        return metric_id in self._inputs
+
+    def get(self, metric_id):
+        from types import SimpleNamespace
+        return SimpleNamespace(inputs=self._inputs[metric_id]), None
+
+
+def test_a_scatter_reads_its_x_and_y_with_their_parameters():
+    view = {"kind": "scatter", "metrics": {"x": "a", "y": "b"}, "params": {"b": {"w": 3}},
+            "x": [0, 1], "y": [0, 1]}
+    assert metrics_read(view, _Registry()) == [("a", {}), ("b", {"w": 3})]
+    assert metrics_read({**view, "kind": "parity"}, _Registry()) == [("a", {}), ("b", {"w": 3})]
+
+
+def test_a_density_reads_its_source_and_only_when_shifted_its_shift():
+    view = {"kind": "density", "metrics": {"value": "dens"}, "x": [0, 1]}
+    assert metrics_read(view, _Registry()) == [("src", {})]
+    shifted = {**view, "params": {"dens": {"shifted": True}}}
+    assert metrics_read(shifted, _Registry()) == [("src", {}), ("shift", {})]
+
+
+def test_a_timeline_reads_no_metric():
+    assert metrics_read({"kind": "timeline", "metrics": {"y": "a"}, "x": [0, 1]}, _Registry()) == []

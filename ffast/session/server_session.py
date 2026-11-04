@@ -707,10 +707,11 @@ class ServerSession:
         view = kwargs.get("view")
         if view is not None:
             try:
-                idx = await asyncio.get_running_loop().run_in_executor(
-                    _metric_compute_pool(), self._frames_in_view, view, parent, model)
+                idx = await self._frames_in_view(view, parent, parent_fingerprint, model_fp)
             except Exception as exc:
                 logger.warning("DECLARE_SUBSET: view of %r failed: %s", parent_fingerprint, exc)
+                return
+            if idx is None:
                 return
         else:
             idx = [int(i) for i in (indices or [])]
@@ -731,22 +732,29 @@ class ServerSession:
             "parent_fingerprint": parent_fingerprint, "model_fp": model_fp, "name": name,
         }))
 
-    def _frames_in_view(self, view, parent, model) -> list[int]:
-        """The parent frames a plot's view covers, computing the metrics it
-        reads if they are not cached yet (runs in the metric pool)."""
+    async def _frames_in_view(self, view, parent, parent_fingerprint, model_fp):
+        """The parent frames a plot's view covers, or None when a metric it
+        reads is missing. The metrics come from the result store first (ADR
+        0085), so the frame search only reads them."""
+        from ffast.metrics.models import MetricResult
         from ffast.metrics.registry import default_registry
-        from ffast.session.subbing import frames_in_view
+        from ffast.session.subbing import frames_in_view, metrics_read
+
+        pairs = metrics_read(view, default_registry)
+        results = self.env.results if pairs else None      # a timeline reads no metric
+        for metric_id, params in pairs:
+            outcome = await results.get(metric_id, params, parent_fingerprint, model_fp)
+            if not isinstance(outcome, MetricResult):
+                logger.info("DECLARE_SUBSET: %s", outcome.text)
+                return None
 
         def value_of(metric_id, params):
-            key = self.env.data.make_metric_cache_key(metric_id, params, model, parent)
-            result = self.env.cache.get(key)
-            if result is None:
-                made = self.env.data.generateMetric(metric_id, params, model, parent)
-                result = self.env.cache.get(made) if made else None
+            result = results.peek(metric_id, params, parent_fingerprint, model_fp)
             return None if result is None else result.values
 
-        return frames_in_view(view, n_frames=parent.getN(), value_of=value_of,
-                              registry=default_registry, dataset=parent)
+        return await asyncio.to_thread(
+            frames_in_view, view, n_frames=parent.getN(), value_of=value_of,
+            registry=default_registry, dataset=parent)
 
     async def _on_request_subdataset_arrays(self, fingerprint, **kwargs) -> None:
         """Serialize SubDataset arrays and push them onto the outbound queue.

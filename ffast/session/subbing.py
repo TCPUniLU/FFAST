@@ -90,6 +90,29 @@ def _per_atom(registry, metric_id: str) -> bool:
     return any(getattr(d, "name", str(d)) == "N_atoms" for d in dims)
 
 
+def metrics_read(view: dict, registry) -> list[tuple[str, dict]]:
+    """The ``(metric id, parameters)`` pairs ``frames_in_view`` asks
+    ``value_of`` for, so they can be got before it runs."""
+    kind = view["kind"]
+    metrics = view.get("metrics") or {}
+    params = view.get("params") or {}
+
+    if kind in ("scatter", "parity"):
+        return [(metrics[axis], params.get(metrics[axis], {})) for axis in ("x", "y")]
+
+    if kind == "density":
+        value = metrics["value"]
+        src = source_metric(registry, value)
+        pairs = [(src, {})] if src else []
+        if src and params.get(value, {}).get("shifted"):
+            shift_mid = _named_input(registry, value, "shift")
+            if shift_mid:
+                pairs.append((shift_mid, {}))
+        return pairs
+
+    return []
+
+
 def frames_in_view(view: dict, *, n_frames: int, value_of, registry, dataset=None) -> list[int]:
     """The parent frames a plot's ``view`` covers.
 
