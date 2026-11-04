@@ -319,9 +319,9 @@ export class FFastApp {
         seriesColourOwner(datasetFp, modelFp, !!this._datasets.get(datasetFp)?.parent)),
       onPointFrame: (o) => this._onPlotPoint(o),
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
+      onLoadPrediction: (datasetFp) => this._browser.open('prediction', { datasetFp }),
     });
     this._applyLayout([]);
-      onLoadPrediction: (datasetFp) => this._browser.open('prediction', { datasetFp }),
   }
 
   /** Build the tabs from a layout. Linked 3D panels already drawing move into

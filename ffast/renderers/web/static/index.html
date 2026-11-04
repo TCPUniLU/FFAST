@@ -1040,6 +1040,11 @@
       font-size: var(--fs-l); line-height: 1; padding: 0 4px;
     }
     .toast-close:hover { color: var(--ink); }
+    .toast-action {
+      background: none; border: 1px solid var(--bg3); border-radius: 4px; color: var(--ink);
+      cursor: pointer; font-size: var(--fs-s); padding: 0 8px; white-space: nowrap;
+    }
+    .toast-action:hover { background: var(--bg3); }
 
     /* the bell (notification_bell.js): every warning and error, kept */
     #notif-bell {
@@ -1049,11 +1054,6 @@
       background: var(--bg2); color: var(--muted); border: 1px solid var(--bg3);
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35); cursor: pointer;
     }
-    .toast-action {
-      background: none; border: 1px solid var(--bg3); border-radius: 4px; color: var(--ink);
-      cursor: pointer; font-size: var(--fs-s); padding: 0 8px; white-space: nowrap;
-    }
-    .toast-action:hover { background: var(--bg3); }
     #notif-bell:hover, #notif-bell[aria-expanded="true"] { color: var(--ink); }
     #notif-bell .notif-badge {
       position: absolute; top: -5px; right: -5px; min-width: 16px; height: 16px; padding: 0 4px;

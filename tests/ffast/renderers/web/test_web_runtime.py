@@ -6747,6 +6747,44 @@ async def test_web_a_prediction_for_a_dataset_not_on_screen_says_it_loaded(tmp_p
                 await browser.close()
 
 
+async def test_web_a_metric_that_needs_a_prediction_the_dataset_lacks_offers_to_load_it(tmp_path):
+    """ADR 0085: a prediction loaded for dataset A has none for dataset B. The
+    server says so with a kind, and the page's "Load prediction…" way in opens
+    the file browser in prediction mode with B chosen."""
+    async with _spawn_server() as (ws_port, web_port):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            try:
+                a_fp, b_fp = await _open_two_datasets(page, tmp_path, ws_port, web_port)
+                await _file_menu(page, "Load Prediction…")
+                await page.locator("#fb-path").fill(str(PREDICTION_PATH.parent))
+                await page.locator("#fb-path").press("Enter")
+                await page.locator("#fb-list .fb-row", has_text="prediction.xyz").click()
+                await page.locator("#fb-target-ds").select_option(a_fp)
+                await page.locator("#fb-target-ds").dispatch_event("change")
+                await expect(page.locator("#fb-force-key")).to_have_value("MACE_forces")
+                await page.locator("#fb-load").click()
+                await expect(page.locator("#status")).to_have_text(
+                    'Prediction "prediction.xyz" ready', timeout=15000)
+                await page.wait_for_function("() => window.ffastApp._models.size === 1")
+                model_fp = await page.evaluate("() => [...window.ffastApp._models.keys()][0]")
+
+                reply = await page.evaluate(
+                    """([ds, model]) => window.ffastApp._analysis._metrics.request(
+                         'ffast.force_difference[structure;component;mae]',
+                         {datasetFp: ds, modelFp: model})""", [b_fp, model_fp])
+                assert reply["failed"] is True and reply["kind"] == "needs_prediction"
+                assert "prediction" in reply["error"]
+
+                # The pop-up's button calls this; it opens the browser on B.
+                await page.evaluate("(fp) => window.ffastApp._analysis._onLoadPrediction(fp)", b_fp)
+                await expect(page.locator("#fb-title")).to_have_text("Load Prediction")
+                await expect(page.locator("#fb-target-ds")).to_have_value(b_fp)
+            finally:
+                await browser.close()
+
+
 async def test_web_going_back_to_a_dataset_reuses_its_view_and_clears_picks_in_the_view_left(tmp_path):
     """ADR 0060 step 2: A → B → A opens A's own server view again, and the
     command that clears A's picks names A's view and goes out before B opens."""
@@ -6787,44 +6825,6 @@ async def test_web_a_late_snapshot_of_a_main_view_no_longer_shown_is_not_drawn(t
             page = await browser.new_page(viewport={"width": 1500, "height": 850})
             try:
                 a_fp, b_fp = await _open_two_datasets(page, tmp_path, ws_port, web_port)
-                await browser.close()
-
-
-async def test_web_a_metric_that_needs_a_prediction_the_dataset_lacks_offers_to_load_it(tmp_path):
-    """ADR 0085: a prediction loaded for dataset A has none for dataset B. The
-    server says so with a kind, and the page's "Load prediction…" way in opens
-    the file browser in prediction mode with B chosen."""
-    async with _spawn_server() as (ws_port, web_port):
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page(viewport={"width": 1500, "height": 850})
-            try:
-                a_fp, b_fp = await _open_two_datasets(page, tmp_path, ws_port, web_port)
-                await _file_menu(page, "Load Prediction…")
-                await page.locator("#fb-path").fill(str(PREDICTION_PATH.parent))
-                await page.locator("#fb-path").press("Enter")
-                await page.locator("#fb-list .fb-row", has_text="prediction.xyz").click()
-                await page.locator("#fb-target-ds").select_option(a_fp)
-                await page.locator("#fb-target-ds").dispatch_event("change")
-                await expect(page.locator("#fb-force-key")).to_have_value("MACE_forces")
-                await page.locator("#fb-load").click()
-                await expect(page.locator("#status")).to_have_text(
-                    'Prediction "prediction.xyz" ready', timeout=15000)
-                await page.wait_for_function("() => window.ffastApp._models.size === 1")
-                model_fp = await page.evaluate("() => [...window.ffastApp._models.keys()][0]")
-
-                reply = await page.evaluate(
-                    """([ds, model]) => window.ffastApp._analysis._metrics.request(
-                         'ffast.force_difference[structure;component;mae]',
-                         {datasetFp: ds, modelFp: model})""", [b_fp, model_fp])
-                assert reply["failed"] is True and reply["kind"] == "needs_prediction"
-                assert "prediction" in reply["error"]
-
-                # The pop-up's button calls this; it opens the browser on B.
-                await page.evaluate("(fp) => window.ffastApp._analysis._onLoadPrediction(fp)", b_fp)
-                await expect(page.locator("#fb-title")).to_have_text("Load Prediction")
-                await expect(page.locator("#fb-target-ds")).to_have_value(b_fp)
-            finally:
                 await page.evaluate("""() => {
                   const app = window.ffastApp;
                   const original = app._onSceneSnapshot.bind(app);
