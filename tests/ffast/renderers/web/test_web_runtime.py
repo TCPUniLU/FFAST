@@ -7303,7 +7303,7 @@ async def test_the_server_names_each_task(shared_server, tmp_path):
         await ws.send(pack("SAVE_SESSION", (), {"path": str(tmp_path / "s")}))
         created = await _wait_for_event(ws, "TASK_CREATED")
         info = await _wait_for_event(ws, "TASK_INFO")
-        assert info["kwargs"] == {"name": "Saving session", "visual": True}
+        assert info["kwargs"] == {"name": "Saving session", "visual": True, "cancellable": True}
         assert info["args"][0] == created["args"][0]
     finally:
         await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))

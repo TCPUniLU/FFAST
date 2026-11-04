@@ -183,6 +183,21 @@ CASES = {
       return { ...shown, opened, cancelled, after: panel.children.length,
         hiddenAfter: menu.hidden, closedAfter: panel.classList.contains('hidden') };
     })()""",
+    # A computing metric: a spinner, no Cancel, a note why; no empty bar.
+    "task_list_metric": """(() => {
+      const menu = document.createElement('div'); menu.hidden = true;
+      const button = document.createElement('button');
+      const panel = document.createElement('div'); panel.className = 'hidden';
+      menu.append(button, panel); document.body.appendChild(menu);
+      const t = new tk.TaskList({ menu, button, panel, onCancel: () => {}, whyNoCancel: () => '' });
+      t.info('metric:k', { name: 'Computing Force MAE', visual: true, cancellable: false });
+      const row = panel.querySelector('.task-row');
+      const out = { label: button.textContent, buttonSpinner: !!button.querySelector('.spinner'),
+        rowSpinner: !!row.querySelector('.spinner'), cancelHidden: row.querySelector('.task-cancel').hidden,
+        message: row.querySelector('.task-message').textContent,
+        barHasValue: row.querySelector('progress').hasAttribute('value') };
+      menu.remove(); return out;
+    })()""",
     # ── cc: cluster client (web parity plan 2026-10-29) ──
     "cc_profile_from_form": "cc.profileFromForm({name:' m ', cores:'4', memory_mb:'x', modules:'Python, CUDA', provision:true})",
     "cc_round_trip": "cc.formValues(cc.profileFromForm({modules:'Python, CUDA'})).modules",
@@ -1798,6 +1813,13 @@ def test_progress_text_counts_or_gives_a_percent_or_nothing(results):
     assert results["progress_count"] == "3/10"
     assert results["progress_percent"] == "25%"
     assert results["progress_none"] == ""
+
+
+def test_a_computing_metric_row_turns_a_spinner_and_cannot_be_cancelled(results):
+    assert results["task_list_metric"] == {
+        "label": "Tasks (1)", "buttonSpinner": True, "rowSpinner": True, "cancelHidden": True,
+        "message": "Working… (cannot be stopped once started)", "barHasValue": False,
+    }
 
 
 def test_the_task_list_shows_only_visual_tasks_and_cancels_one(results):

@@ -727,6 +727,7 @@ async def _main(
         hub.broadcast(pack(control.TASK_INFO, (task_id,), {
             "name": str(task.get("name") or "Task"),
             "visual": bool(task.get("visual")),
+            "cancellable": bool(task.get("cancellable", True)),
         }))
 
     env.eventSubscribe("TASK_CREATED", _on_task_created_info)

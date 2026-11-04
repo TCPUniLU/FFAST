@@ -40,8 +40,9 @@ export class TaskList {
     });
   }
 
-  /** A task started: add its row when the job is one to show. */
-  info(id, { name, visual }) {
+  /** A task started: add its row when the job is one to show. A task that
+   *  cannot be cancelled (a computing metric) says so instead of a Cancel. */
+  info(id, { name, visual, cancellable = true }) {
     const key = String(id);
     if (!visual || this._rows.has(key)) return;
     const row = document.createElement('div');
@@ -69,6 +70,10 @@ export class TaskList {
     const message = document.createElement('span');
     message.className = 'task-message';
     message.textContent = 'Working…';
+    if (!cancellable) {
+      cancel.hidden = true;
+      message.textContent = 'Working… (cannot be stopped once started)';
+    }
     const bar = document.createElement('progress');
     row.append(spinner(), title, count, cancel, message, bar);
     this._panel.appendChild(row);
