@@ -185,8 +185,8 @@ SESSION_LOADED = "SESSION_LOADED"
 # announcement, out of REPLY_EVENTS.
 LOAD_FAILED = "LOAD_FAILED"
 # Sent to every window right after TASK_CREATED: args=(task_id,),
-# {name, visual}. TASK_CREATED carries only the id; the Tasks list shows
-# visual tasks by name. One-shot announcement, out of REPLY_EVENTS.
+# {name, visual, cancellable}. TASK_CREATED carries only the id; the Tasks
+# list shows visual tasks by name; a computing metric is not cancellable. One-shot announcement, out of REPLY_EVENTS.
 TASK_INFO = "TASK_INFO"
 # Outcome of SAVE_TAB / DELETE_TAB / HIDE_TAB / SET_TAB_ORDER (ADR 0056): {ok, action, name,
 # error}, to the window that asked. On success the new layout then goes to

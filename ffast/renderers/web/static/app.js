@@ -1654,11 +1654,12 @@ export class FFastApp {
         console.debug('TASK_PROGRESS', kw);
       });
       // The Tasks button lists running tasks; _browser.onTaskDone still ends a
-      // pending save/load status.
+      // pending load's status. A computing metric ("metric:<key>", from
+      // server_session._compute_once) ending is not a load ending.
       conn.on(IN.TASK_DONE,    (kw, args) => {
         console.debug('TASK_DONE', kw);
         this._tasks.done(args[0]);
-        this._browser.onTaskDone();
+        if (!String(args[0]).startsWith('metric:')) this._browser.onTaskDone();
       });
       conn.on(IN.TASK_FAILED,  (kw) => console.warn('TASK_FAILED', kw));
       conn.on(IN.DATASET_LOADED, () => {});
