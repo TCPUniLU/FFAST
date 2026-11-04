@@ -26,6 +26,13 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# Folders the wheel test leaves out of its copy of the source, at any depth.
+_COPY_SKIPS = (
+    ".git", ".venv", "build", "*.egg-info", "__pycache__",
+    ".pytest_cache", "temp", "results", "private", "examples",
+    "docs", "tests",
+)
+
 try:  # tomllib is stdlib on 3.11
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - <3.11
@@ -105,22 +112,19 @@ class TestWheelContents:
     launcher that 404s every asset."""
 
     @pytest.fixture(scope="class")
-    def wheel_path(self, tmp_path_factory) -> Path:
-        out = tmp_path_factory.mktemp("wheel")
-        # Build from a private copy of the source: the suite runs in parallel
-        # processes, and builds sharing the repo's build/ folder delete and
-        # overwrite each other's files. A fresh copy also has no stale
-        # build/lib, so a file deleted from the source cannot still ship.
+    def wheel_source(self, tmp_path_factory) -> Path:
+        """A private copy of the source to build from: the suite runs in
+        parallel processes, and builds sharing the repo's build/ folder delete
+        and overwrite each other's files. A fresh copy also has no stale
+        build/lib, so a file deleted from the source cannot still ship."""
         src = tmp_path_factory.mktemp("src") / "ffast"
-        shutil.copytree(
-            REPO_ROOT,
-            src,
-            ignore=shutil.ignore_patterns(
-                ".git", ".venv", "build", "*.egg-info", "__pycache__",
-                ".pytest_cache", "temp", "results", "private", "examples",
-                "docs", "tests",
-            ),
-        )
+        shutil.copytree(REPO_ROOT, src, ignore=shutil.ignore_patterns(*_COPY_SKIPS))
+        return src
+
+    @pytest.fixture(scope="class")
+    def wheel_path(self, tmp_path_factory, wheel_source) -> Path:
+        out = tmp_path_factory.mktemp("wheel")
+        src = wheel_source
         # Build via the PEP 517 backend directly (setuptools.build_meta) rather
         # than `python -m build`: the backend is guaranteed present (it is this
         # project's build-backend) whereas `build`/`pip` may not be installed
@@ -151,15 +155,37 @@ class TestWheelContents:
         # model loaders cannot import on an installed server.
         assert "ffast/config/default.json" in wheel_names
 
-    def test_installed_code_has_the_checkout_fingerprint(self, wheel_path, tmp_path):
+    def test_installed_code_has_the_fingerprint_of_the_code_it_was_built_from(
+            self, wheel_path, wheel_source, tmp_path):
         """A server installed from this wheel reports the same code fingerprint
-        as this checkout, so a fresh install never shows the "server runs
-        different code" warning."""
-        from ffast.session.code_fingerprint import code_fingerprint, fingerprint_of
+        as the source it was built from, so a fresh install never shows the
+        "server runs different code" warning: the wheel ships every file the
+        fingerprint covers, and nothing more.
+
+        Compared with the copy the wheel was built from, not with this
+        process's fingerprint of the checkout: that one is computed once, early
+        in the run, and a file edited meanwhile made the two differ
+        (docs/flaky-tests.md). With the next test, the copy stands for the
+        checkout."""
+        from ffast.session.code_fingerprint import fingerprint_of
 
         with zipfile.ZipFile(wheel_path) as zf:
             zf.extractall(tmp_path)
-        assert fingerprint_of(tmp_path) == code_fingerprint()
+        assert fingerprint_of(tmp_path) == fingerprint_of(wheel_source)
+
+    def test_the_copy_the_wheel_is_built_from_leaves_out_no_code_file(self):
+        """No file the code fingerprint covers sits in a folder the copy skips
+        (a `tests/` inside `ffast/`, say), so the copy holds the checkout's code
+        and the test above compares with what this checkout would install."""
+        from fnmatch import fnmatch
+
+        from ffast.session.code_fingerprint import _files
+
+        skipped = [p.relative_to(REPO_ROOT).as_posix() for p in _files(REPO_ROOT)
+                   if any(fnmatch(part, pattern)
+                          for part in p.relative_to(REPO_ROOT).parts[:-1]
+                          for pattern in _COPY_SKIPS)]
+        assert skipped == [], f"the wheel test's copy would leave out: {skipped}"
 
     def test_index_html_ships(self, wheel_names):
         assert "ffast/renderers/web/static/index.html" in wheel_names
