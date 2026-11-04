@@ -358,6 +358,42 @@ def test_try_of_a_prediction_metric_the_model_lacks_says_a_prediction_is_needed(
     assert env.compute_calls == []
 
 
+def test_closing_the_window_during_a_try_stops_the_metric_it_waits_for(env):
+    """Decision 8: a window that goes away is a waiter that leaves. Its Try
+    must let go of the store, so a metric nobody else wants stops."""
+    import threading
+    _try_with_a_store(env)
+    release, started, stops = threading.Event(), threading.Event(), []
+    plain = env.data.compute_metric
+
+    def blocking(metric_id, params, model, dataset, *, stopped=None, key_out=None):
+        stops.append(stopped)
+        started.set()
+        release.wait(5)
+        return plain(metric_id, params, model, dataset, stopped=stopped, key_out=key_out)
+
+    env.data.compute_metric = blocking
+    trial = {"id": "t57.try", "expr": "m", "vars": {"m": "ffast.energy_reference"}}
+
+    async def steps(s):
+        await s.dispatch(control.TRY_METRIC, [], {"metric": trial, "try_id": "c", "dataset_fp": "ds1"})
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        s.close()
+        await asyncio.sleep(0.05)
+        stopped_now = stops[0]()
+        release.set()
+        return stopped_now
+
+    result = {}
+
+    async def run(s):
+        result["stopped"] = await steps(s)
+
+    _run_session(env, run)
+    assert result["stopped"] is True
+
+
 def test_try_of_an_invalid_formula_keeps_its_own_message_not_the_stores(env):
     _try_with_a_store(env)
     bad = {"id": "t57.try", "expr": "2 *", "vars": {"m": "ffast.energy_reference"}}

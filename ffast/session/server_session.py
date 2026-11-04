@@ -1687,9 +1687,11 @@ class ServerSession:
             self.feed.changed(control.METRIC_USERS)
 
     def cancel_tries(self) -> None:
-        """Stop every Try of this connection (it has gone away)."""
-        for stop, _task, _cancelled in list(self._tries.values()):
+        """Stop every Try of this connection (it has gone away): no reply, and
+        the result store is told nobody here waits any more (ADR 0085)."""
+        for stop, task, _cancelled in list(self._tries.values()):
             stop.set()
+            task.cancel()
 
     async def _run_try(self, metric, try_id, dataset_fp, model_fp, stop, cancelled) -> None:
         from ffast.metrics.try_formula import TryError, TryResult, try_formula
@@ -1702,6 +1704,7 @@ class ServerSession:
                 "progress": done / total if total else 1.0, "error": False})
             loop.call_soon_threadsafe(self._emit_or_drop, data, "TASK_PROGRESS")
 
+        heard = ready = work = None
         try:
             heard = asyncio.ensure_future(cancelled.wait())
             # The saved metrics the formula reads come from the result store
@@ -1729,6 +1732,15 @@ class ServerSession:
                     out = {"ok": True, "error": None, **TryResult(cancelled=True).to_dict()}
                 else:
                     out = {"ok": True, "error": None, **work.result()}
+        except asyncio.CancelledError:
+            # The window went away: stop waiting for the store, so a metric
+            # nobody else waits for is stopped (decision 8).
+            for waiting in (ready, heard):
+                if waiting is not None:
+                    waiting.cancel()
+            if work is not None:   # the thread sees `stop` and ends on its own
+                work.add_done_callback(lambda f: f.cancelled() or f.exception())
+            raise
         except TryError as exc:
             out = {"ok": False, "error": str(exc)}
         except Exception as exc:

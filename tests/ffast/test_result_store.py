@@ -258,3 +258,96 @@ def test_forgetting_a_dataset_drops_its_results_and_failures():
     assert store.peek("ffast.energy_reference", {"x": 1}, "ds", None) is None
     _run(store.get(PLAIN, {}, "ds", None))                  # computed again, not the old failure
     assert len(env.calls) == 3
+
+
+# ── review findings, 2026-11-04 ───────────────────────────────────────────────
+
+def test_a_computation_abandoned_while_it_waited_for_a_thread_never_starts():
+    """With every thread busy, a request that leaves before a thread is free
+    must not read its inputs once one is (ADR 0085 decision 8)."""
+    env = _Env()
+    env.release = threading.Event()
+    store = MetricResultStore(env, threads=1)
+
+    async def scenario():
+        busy = asyncio.ensure_future(store.get(PLAIN, {}, "ds", None))
+        while not env.started.is_set():
+            await asyncio.sleep(0.01)
+        queued = asyncio.ensure_future(store.get(PLAIN, {"other": 1}, "ds", None))
+        await asyncio.sleep(0.05)
+        queued.cancel()
+        await asyncio.sleep(0)
+        env.release.set()
+        await busy
+        await asyncio.sleep(0.1)          # the freed thread takes the queued work
+
+    _run(scenario())
+    assert env.calls == [PLAIN]
+
+
+def test_a_result_finished_after_its_dataset_was_forgotten_is_not_kept():
+    """A subset that follows the zoom changes its frames under one fingerprint:
+    a run that started before the change must not file its old-frame result
+    under the key the new frames will be asked by (decision 6)."""
+    env = _Env()
+    env.release = threading.Event()
+    store = MetricResultStore(env)
+
+    async def scenario():
+        waiting = asyncio.ensure_future(store.get(PLAIN, {}, "ds", None))
+        while not env.started.is_set():
+            await asyncio.sleep(0.01)
+        store.forget_objects("ds")        # SUBDATASET_INDICES_CHANGED meanwhile
+        env.release.set()
+        return await waiting
+
+    got = _run(scenario())
+    assert isinstance(got, MetricResult)                    # the waiter still gets its answer
+    assert store.peek(PLAIN, {}, "ds", None) is None        # but it is not served again
+
+
+def test_a_failure_finished_after_its_dataset_was_forgotten_is_not_remembered():
+    env = _Env(outcomes=[_failure("failed")])
+    env.release = threading.Event()
+    store = MetricResultStore(env)
+
+    async def scenario():
+        waiting = asyncio.ensure_future(store.get(PLAIN, {}, "ds", None))
+        while not env.started.is_set():
+            await asyncio.sleep(0.01)
+        store.forget_objects("ds")
+        env.release.set()
+        await waiting
+        env.release = None
+        return await store.get(PLAIN, {}, "ds", None)
+
+    assert isinstance(_run(scenario()), MetricResult)       # computed again
+    assert len(env.calls) == 2
+
+
+def test_a_restarted_computation_keeps_its_own_running_task():
+    """The first run, left by its last waiter, still runs until its thread
+    sees the stop; the run asked for next must keep its own Tasks row."""
+    env = _Env()
+    env.release = threading.Event()
+    store = MetricResultStore(env)
+
+    async def scenario():
+        first = asyncio.ensure_future(store.get(PLAIN, {}, "ds", None))
+        while not env.started.is_set():
+            await asyncio.sleep(0.01)
+        first.cancel()
+        await asyncio.sleep(0)
+        env.started.clear()
+        second = asyncio.ensure_future(store.get(PLAIN, {}, "ds", None))
+        while not env.started.is_set():
+            await asyncio.sleep(0.01)
+        rows_while_both_run = len(env.tm.runningTasks)
+        env.release.set()
+        await second
+        await asyncio.sleep(0.05)
+        return rows_while_both_run, dict(env.tm.runningTasks)
+
+    rows, after = _run(scenario())
+    assert rows == 2
+    assert after == {}

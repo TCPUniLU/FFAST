@@ -58,12 +58,16 @@ def _name(obj, fallback) -> str:
 
 
 class _Run:
-    """One computation and the requests waiting for it."""
+    """One computation and the requests waiting for it. ``forgets`` is the
+    store's count of forget calls when it started: an outcome is filed only
+    when nothing was forgotten meanwhile (ADR 0085 decision 6)."""
 
-    def __init__(self, stop) -> None:
+    def __init__(self, stop, forgets, task_id) -> None:
         self.future = None
         self.waiters = 0
         self.stop = stop
+        self.forgets = forgets
+        self.task_id = task_id
 
 
 class MetricResultStore:
@@ -85,6 +89,8 @@ class MetricResultStore:
         self._index: dict[str, object] = {}                 # server key → step cache key
         self._failures: OrderedDict[str, Missing] = OrderedDict()
         self._running: dict[str, _Run] = {}                 # event-loop thread only
+        self._forgets = 0                                   # forget calls so far
+        self._runs = 0                                      # computations started
 
     # ── reading ────────────────────────────────────────────────────────────
 
@@ -105,9 +111,13 @@ class MetricResultStore:
         model, dataset, key, known = self._known(metric_id, params, dataset_fp, model_fp)
         if known is not None:
             return known
-        needs = self._needs_prediction(metric_id, model, dataset)
+        # Off the event loop: for a subset it builds the subset's arrays.
+        needs = await asyncio.to_thread(self._needs_prediction, metric_id, model, dataset)
         if needs is not None:
             return needs
+        known = self._known(metric_id, params, dataset_fp, model_fp)[3]
+        if known is not None:       # stored by a run that ended meanwhile
+            return known
 
         run = self._running.get(key)
         if run is None:
@@ -151,6 +161,7 @@ class MetricResultStore:
 
     def _forget(self, gone) -> None:
         with self._lock:
+            self._forgets += 1
             for key in [k for k in self._index if gone(k)]:
                 del self._index[key]
             for key in [k for k in self._failures if gone(k)]:
@@ -205,9 +216,14 @@ class MetricResultStore:
     def _start(self, key, metric_id, params, model, dataset) -> _Run:
         loop = asyncio.get_running_loop()
         asked = time.monotonic()
-        run = _Run(threading.Event())
+        self._runs += 1
+        with self._lock:
+            forgets = self._forgets
+        run = _Run(threading.Event(), forgets, f"metric:{key}#{self._runs}")
 
         def work():
+            if run.stop.is_set():   # left while it waited for a thread: read nothing
+                return Missing("temporary", "Nobody waits for it any more")
             logger.info("Metric %s: waited %d ms for a compute thread",
                         metric_id, (time.monotonic() - asked) * 1000)
             return self._compute(metric_id, params, model, dataset, run)
@@ -215,16 +231,17 @@ class MetricResultStore:
         run.future = loop.run_in_executor(self._pool, work)
         self._running[key] = run
 
+        # One row per run: a run left by its waiters still runs until its
+        # thread sees the stop, beside the one asked for next.
         tm = getattr(self._env, "tm", None)
-        task_id = f"metric:{key}"
         if tm is not None:
-            tm.showWork(task_id, metric_task_name(metric_id, model, dataset))
+            tm.showWork(run.task_id, metric_task_name(metric_id, model, dataset))
 
         def done(_):
             if self._running.get(key) is run:
                 del self._running[key]
             if tm is not None:
-                tm.endWork(task_id)
+                tm.endWork(run.task_id)
 
         run.future.add_done_callback(done)
         return run
@@ -244,7 +261,7 @@ class MetricResultStore:
                 if default_registry.revision != revision and not run.stop.is_set():
                     logger.info("Metric %s changed while computing; computing again", metric_id)
                     continue
-                return self._finish(key, metric_id, outcome, step_key.get("key"))
+                return self._finish(key, metric_id, outcome, step_key.get("key"), run)
             logger.warning("Metric %s kept changing while computing; gave up", metric_id)
             return Missing("temporary", "The metric kept changing while it was computed")
         except Exception as exc:
@@ -252,11 +269,12 @@ class MetricResultStore:
             logger.exception("Metric %s: computing failed", metric_id)
             return Missing("failed", str(exc))
 
-    def _finish(self, key, metric_id, outcome, step_key) -> MetricResult | Missing:
+    def _finish(self, key, metric_id, outcome, step_key, run) -> MetricResult | Missing:
         if isinstance(outcome, MetricResult):
             if step_key is not None:
                 with self._lock:
-                    self._index[key] = step_key
+                    if self._forgets == run.forgets:
+                        self._index[key] = step_key
             return outcome
         failure: MetricFailure = outcome
         reason = failure.reason or repr(failure)
@@ -266,6 +284,8 @@ class MetricResultStore:
         missing = Missing(failure.kind, reason)
         if failure.kind in ("failed", "missing_input"):
             with self._lock:
+                if self._forgets != run.forgets:
+                    return missing      # its dataset or model changed meanwhile
                 self._failures.pop(key, None)
                 self._failures[key] = missing
                 while len(self._failures) > _FAILURES_KEPT:
