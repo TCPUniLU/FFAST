@@ -120,6 +120,9 @@ class ServerExecutor(MetricExecutor):
                     return fn(**kwargs, **compute_params)
                 except stop.Stopped:
                     return MetricFailure(metric_id=id, traceback=stop.STOPPED, parameters=parameters, kind="temporary")
+                except MemoryError:
+                    return MetricFailure(metric_id=id, traceback=tb.format_exc(), parameters=parameters,
+                                         kind="temporary")
                 except Exception:
                     return MetricFailure(metric_id=id, traceback=tb.format_exc(), parameters=parameters)
             finally:

@@ -264,3 +264,12 @@ def test_a_cleared_cache_no_longer_gives_the_result_back(registry_with_force_mae
                  {}, key_out=k)
     executor._cache.clear()
     assert executor.cached(k["key"]) is None
+
+
+def test_running_out_of_memory_in_process_is_temporary(registry):
+    @registry.metric(id="test.oom", inputs={"x": "ref.x"}, shape="scalar", unit="energy")
+    def oom(x):
+        raise MemoryError()
+
+    result = InProcessExecutor(registry).run("test.oom", FlatInputSource({"x": 1.0}), {})
+    assert isinstance(result, MetricFailure) and result.kind == "temporary"

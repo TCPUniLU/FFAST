@@ -125,3 +125,29 @@ def test_the_server_executor_names_the_key_of_its_result(registry, made):
     k = {}
     result = ex.run("t.double", SRC, {}, key_out=k)
     assert ex.cached(k["key"]) is result
+
+
+def _stops(x):
+    from ffast.metrics import stop
+    raise stop.Stopped()
+
+
+def _no_memory(x):
+    raise MemoryError()
+
+
+def test_a_metric_stopped_while_it_runs_fails_as_temporary(made):
+    reg = MetricRegistry()
+    reg.metric(id="t.stops", inputs={"x": "ref.x"}, shape="scalar", unit="energy")(_stops)
+    result = made(reg, outside=lambda fn: False).run("t.stops", SRC, {})
+    assert isinstance(result, MetricFailure) and result.kind == "temporary"
+
+
+def test_running_out_of_memory_is_temporary_not_the_metrics_fault(made):
+    """ADR 0085 kind list: "no memory" is temporary, so it is computed again,
+    not remembered as a failure until the dataset is deleted."""
+    reg = MetricRegistry()
+    reg.metric(id="t.oom", inputs={"x": "ref.x"}, shape="scalar", unit="energy")(_no_memory)
+    for where in (lambda fn: False, lambda fn: True):     # in the server, in a worker
+        result = made(reg, outside=where).run("t.oom", SRC, {})
+        assert isinstance(result, MetricFailure) and result.kind == "temporary"

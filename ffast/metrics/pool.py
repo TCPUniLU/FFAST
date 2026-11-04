@@ -240,13 +240,15 @@ def _worker_main(
                 inputs = value = None
                 _close_all(made)        # the parent frees them
                 conn.send({"task_id": task_id, "value": packed["value"]})
-            except Exception:
+            except Exception as exc:
                 conn.send({
                     "task_id": task_id,
                     "value": MetricFailure(
                         metric_id=metric_id,
                         traceback=tb.format_exc(),
                         parameters=compute_params,
+                        # No memory may pass: not the metric's fault (ADR 0085).
+                        kind="temporary" if isinstance(exc, MemoryError) else "failed",
                     ),
                 })
             finally:

@@ -54,6 +54,9 @@ class InProcessExecutor(MetricExecutor):
         """Transport: run the metric function here, wrapping failures."""
         try:
             return fn(**kwargs, **compute_params)
+        except MemoryError:     # no memory may pass: not the metric's fault (ADR 0085)
+            return MetricFailure(metric_id=id, traceback=tb.format_exc(), parameters=parameters,
+                                 kind="temporary")
         except Exception:
             return MetricFailure(metric_id=id, traceback=tb.format_exc(), parameters=parameters)
 
