@@ -1095,3 +1095,23 @@ def test_prediction_forces_must_have_the_datasets_frames_and_atoms():
     assert match(None, ds, "m", F=FlatFrames(np.zeros((18, 3)), [0, 6, 13, 18])) is False
     # one frame short
     assert match(None, ds, "m", F=FlatFrames(np.zeros((13, 3)), [0, 5, 13])) is False
+
+
+def test_a_prediction_too_big_for_memory_is_reported_without_a_traceback(caplog):
+    # ADR 0083: the coordinator shows NotEnoughMemory's message as it is,
+    # for a prediction file as for a dataset.
+    from ffast.io.extxyz_arrays import NotEnoughMemory
+    coord = LoadingCoordinator(_fake_env())
+    coord.prepareFrameIndex = lambda path, taskID: None
+    coord._readPredictionAtomsList = lambda path, datasetKey: []
+
+    def too_big(*a, **kw):
+        raise NotEnoughMemory("needs 40 GB, 8 GB free")
+
+    coord._aseLoaderFor = too_big
+    errors = []
+    with caplog.at_level("ERROR"):
+        result = coord.loadPrepredictedDataset("/p.xyz", "DSfp", on_error=errors.append)
+    assert result is None
+    assert [str(e) for e in errors] == ["needs 40 GB, 8 GB free"]
+    assert not [r for r in caplog.records if r.exc_info]

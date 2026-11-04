@@ -305,11 +305,18 @@ class LoadingCoordinator:
         else:
             self.prepareFrameIndex(path, taskID)
             atomsList = self._readPredictionAtomsList(path, datasetKey)
-            aseObject = self._aseLoaderFor(
-                path, atomsList,
-                energy_key=selected_energy_key, force_key=selected_force_key,
-                progress=self._readProgress(path, taskID),
-            )
+            try:
+                aseObject = self._aseLoaderFor(
+                    path, atomsList,
+                    energy_key=selected_energy_key, force_key=selected_force_key,
+                    progress=self._readProgress(path, taskID),
+                )
+            except NotEnoughMemory as e:
+                # Its message as it is, as for a dataset (ADR 0083).
+                logger.error(str(e), extra={"popup": on_error is None})
+                if on_error:
+                    on_error(e)
+                return None
 
             try:
                 E = np.array(aseObject.getAllEnergies())
