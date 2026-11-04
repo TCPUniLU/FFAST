@@ -190,6 +190,7 @@ export class IndependentPanels {
   empty(view) {
     if (view.isOpen) this._ports.send(OUT.CLOSE_VIEW, { view_id: view.viewId });
     view.openedPair = '';
+    view.restart();
     view.started = false;
     view.frame = null;
     view.framed = false;
@@ -199,7 +200,7 @@ export class IndependentPanels {
 
   /** An independent panel's view sent its scene. */
   onSnapshot(view, scene) {
-    view.version = scene.version;
+    view.sync(scene.version);
     // The scene's camera (and a first fit) is the panel's own: it must not
     // turn the main view through the camera link.
     view.applyingScene = true;

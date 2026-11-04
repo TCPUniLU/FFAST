@@ -2181,7 +2181,7 @@ export class FFastApp {
       this._independent.onSnapshot(view, scene);
       return;
     }
-    view.version = scene.version;
+    view.sync(scene.version);
     // A main view the user has moved on from is not drawn.
     if (view !== this._main.current) return;
     this._mainView.applyScene(scene);
@@ -2230,7 +2230,7 @@ export class FFastApp {
     const changed = kw.changed || [];
     const view = this._viewById(kw.view_id);
     if (!view) return;   // a closed panel's or dataset's
-    view.version = kw.to_version;
+    view.sync(kw.to_version);
     if (view.isMain && view !== this._main.current) return;
     const renderers = view.renderers;
     renderers.applyPatch(kw, changed);

@@ -53,6 +53,12 @@ CASES = {
     "view_defaults": "(() => { const v = new vw.View({viewId: 'view-0'}); return [v.datasetFp, v.modelFp, v.version, v.frame, v.openedPair, v.framed, v.frameOnSnapshot, v.settings, v.renderers]; })()",
     "independent_is_view": "(() => { const v = new v3.IndependentView('T#0', {}, 'ind-1', () => {});"
                            " v.openedPair = 'A|'; return [v instanceof vw.View, v.frame, v.isMain, v.isOpen, v.command({x: 1}).view_id]; })()",
+    # A reply the server sent before it applied this window's last command
+    # names an older version; it must not pull the count back (2026-11-03:
+    # the colouring was sent twice as version 1 and refused as stale).
+    "sync_late_reply": "(() => { const v = new vw.View({viewId: 'view-0'}); v.openedPair = 'A|';"
+                       " v.command({a: 1}); v.command({b: 2}); v.sync(1); const late = v.command({c: 3}).view_version;"
+                       " v.sync(7); return [late, v.version]; })()",
 }
 
 
@@ -147,6 +153,12 @@ def test_command_stamps_and_advances_the_version(results):
     assert first == {"view_id": "view-0", "view_version": 0, "a": 1}
     assert second == {"view_id": "view-0", "view_version": 1, "b": 2}
     assert version == 2
+
+
+def test_a_late_reply_does_not_pull_the_version_back(results):
+    late, after_newer = results["sync_late_reply"]
+    assert late == 2            # not 1: the reply predates two of the commands
+    assert after_newer == 7     # a newer version is taken
 
 
 def test_a_version_is_stamped_per_view_and_only_by_command(results):

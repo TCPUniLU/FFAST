@@ -48,6 +48,23 @@ export class View {
     if (!this.isOpen) return null;
     return { view_id: this.viewId, view_version: this.version++, ...fields };
   }
+
+  /**
+   * Take the version a snapshot or patch names. Only this window's commands
+   * move its view's version forward, so a lower one is a reply the server
+   * sent before it applied the commands still on their way: keeping it would
+   * stamp the next command with a number already used, and the server would
+   * refuse it as stale. A refused command's COMMAND_RESULT sets the version
+   * outright; a new server view starts again at 0 (`restart`).
+   */
+  sync(version) {
+    if (version > this.version) this.version = version;
+  }
+
+  /** Its server view was closed: the next one starts at version 0. */
+  restart() {
+    this.version = 0;
+  }
 }
 
 export class MainViews {
