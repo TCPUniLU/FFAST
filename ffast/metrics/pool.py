@@ -543,6 +543,7 @@ class WorkerProcessExecutor(MetricExecutor):
                     f"{self._policy.spawn_timeout_s:.1f}s"
                 ),
                 parameters=parameters,
+                kind="temporary",
             )
 
         packed_inputs, shm_list = _pack_inputs(resolved, self._policy.shm_threshold_bytes)
@@ -563,6 +564,7 @@ class WorkerProcessExecutor(MetricExecutor):
                     metric_id=id,
                     traceback=f"The metric's task cannot be sent to the worker: {exc!r}",
                     parameters=parameters,
+                    kind="temporary",
                 )
 
             deadline = time.monotonic() + effective_timeout
@@ -578,6 +580,7 @@ class WorkerProcessExecutor(MetricExecutor):
                             f"({effective_timeout:.1f}s)"
                         ),
                         parameters=parameters,
+                        kind="temporary",
                     )
 
                 if not worker.conn.poll(min(remaining, 1.0)):
@@ -598,6 +601,7 @@ class WorkerProcessExecutor(MetricExecutor):
                 metric_id=id,
                 traceback=WORKER_DIED,
                 parameters=parameters,
+                kind="temporary",
             )
         finally:
             for shm in shm_list:

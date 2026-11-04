@@ -108,7 +108,7 @@ class ServerExecutor(MetricExecutor):
         asked = time.monotonic()
         reservation = self._gate.reserve(want, stopped)
         if reservation is None:
-            return MetricFailure(metric_id=id, traceback=stop.STOPPED, parameters=parameters)
+            return MetricFailure(metric_id=id, traceback=stop.STOPPED, parameters=parameters, kind="temporary")
         with reservation:
             started = time.monotonic()
             token = stop.running_under(stopped)
@@ -119,7 +119,7 @@ class ServerExecutor(MetricExecutor):
                 try:
                     return fn(**kwargs, **compute_params)
                 except stop.Stopped:
-                    return MetricFailure(metric_id=id, traceback=stop.STOPPED, parameters=parameters)
+                    return MetricFailure(metric_id=id, traceback=stop.STOPPED, parameters=parameters, kind="temporary")
                 except Exception:
                     return MetricFailure(metric_id=id, traceback=tb.format_exc(), parameters=parameters)
             finally:

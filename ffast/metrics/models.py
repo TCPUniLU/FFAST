@@ -107,6 +107,9 @@ class MetricFailure(BaseModel):
     metric_id: str
     traceback: str
     parameters: dict[str, Any] = Field(default_factory=dict)
+    # What sort of failure (ADR 0085): the metric's own error, a missing
+    # input, or something that may pass (stopped, worker died, no memory).
+    kind: Literal["failed", "missing_input", "temporary"] = "failed"
 
     @property
     def reason(self) -> str:

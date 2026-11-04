@@ -213,6 +213,41 @@ def test_run_plan_run_fn_failure_recorded(registry):
     assert results["t.params"].traceback == "boom"
 
 
+# ── what kind of failure (ADR 0085) ───────────────────────────────────────────
+
+def test_a_metric_that_raises_fails_with_kind_failed(registry):
+    plan = build_execution_plan(registry, "t.params", {}, FlatInputSource({"x": np.array([1.0])}))
+
+    def raising(mid, schema, fn, kwargs, cparams):
+        return MetricFailure(metric_id=mid, traceback="Traceback (most recent call last):\nValueError: x", parameters={})
+
+    results = run_plan(plan, registry, MetricCache(), raising)
+    assert results["t.params"].kind == "failed"
+
+
+def test_a_missing_required_input_fails_with_kind_missing_input(registry):
+    plan = build_execution_plan(registry, "t.diff", {}, FlatInputSource({"reference": np.zeros((1, 3))}))
+    results = run_plan(plan, registry, MetricCache(), _direct_run_fn([]))
+    assert results["t.diff"].kind == "missing_input"
+
+
+def test_a_stopped_run_fails_with_kind_temporary(registry):
+    plan = build_execution_plan(registry, "t.params", {}, FlatInputSource({"x": np.array([1.0])}))
+    results = run_plan(plan, registry, MetricCache(), _direct_run_fn([]), stopped=lambda: True)
+    assert results["t.params"].kind == "temporary"
+
+
+def test_a_failed_dependency_passes_its_kind_on(registry):
+    plan = build_execution_plan(registry, "t.mae", {}, FlatInputSource({"reference": np.zeros((1, 3))}))
+    results = run_plan(plan, registry, MetricCache(), _direct_run_fn([]))
+    assert results["t.mae"].kind == "missing_input"
+
+
+def test_a_failure_with_a_kind_survives_pickling():
+    failure = MetricFailure(metric_id="m", traceback="Stopped", kind="temporary")
+    assert pickle.loads(pickle.dumps(failure)).kind == "temporary"
+
+
 # ── cycle handling ─────────────────────────────────────────────────────────
 #
 # build_execution_plan's DFS tracks the current recursion stack (a ``visiting``

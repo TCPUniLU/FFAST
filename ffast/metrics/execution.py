@@ -292,14 +292,16 @@ def run_plan(
         halted = halted or stopped()
         if halted:
             results[metric_id] = MetricFailure(
-                metric_id=metric_id, traceback=STOPPED, parameters=plan.parameters
+                metric_id=metric_id, traceback=STOPPED, parameters=plan.parameters,
+                kind="temporary",
             )
             continue
 
         # A required raw input was missing/None → don't run, just fail this step.
         if step.failure is not None:
             results[metric_id] = MetricFailure(
-                metric_id=metric_id, traceback=step.failure, parameters=plan.parameters
+                metric_id=metric_id, traceback=step.failure, parameters=plan.parameters,
+                kind="missing_input",
             )
             continue
 
@@ -328,6 +330,7 @@ def run_plan(
                 metric_id=metric_id,
                 traceback=f"Dependency '{dep_id}' failed:\n{dep.traceback}",
                 parameters=plan.parameters,
+                kind=dep.kind,
             )
             continue
 
