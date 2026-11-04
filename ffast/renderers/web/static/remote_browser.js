@@ -308,7 +308,10 @@ export class RemoteBrowser {
     });
     // The path can be typed: Enter goes there.
     $('fb-path').addEventListener('keydown', (e) => this._pathKey(e));
-    $('fb-path').addEventListener('input', () => this._askSuggestions());
+    $('fb-path').addEventListener('input', () => {
+      this._typedSinceAsk = true;
+      this._askSuggestions();
+    });
     $('fb-path').addEventListener('blur', () => setTimeout(() => this._hideSuggestions(), 150));
     // One listener for the whole list: its rows are rebuilt on every folder change.
     $('fb-list').addEventListener('keydown', (e) => this._listKey(e));
@@ -614,7 +617,9 @@ export class RemoteBrowser {
     this._parent = kw.parent;
     if (kw.home) this._home = kw.home;
     $('fb-error').style.display = 'none';
-    $('fb-path').value = kw.path || '';
+    // A path typed while this listing was on its way is kept: the user's
+    // next Enter goes there, not to the folder that just arrived.
+    if (!this._typedSinceAsk) $('fb-path').value = kw.path || '';
     $('fb-up').disabled = !kw.parent;
     this._render(kw.entries || []);
     this._refreshLoadEnabled();   // in a pick mode the folder on screen enables the button
@@ -784,6 +789,7 @@ export class RemoteBrowser {
   }
 
   _navigate(path) {
+    this._typedSinceAsk = false;
     this._selected = null;
     $('fb-load').disabled = true;
     // path travels as a positional arg; server reads args[0]
