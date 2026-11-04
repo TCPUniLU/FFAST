@@ -236,6 +236,9 @@ class MetricResultMessage(BaseModel):
     # Why the metric failed, in words, when ``ok`` is False because it failed
     # (ADR 0066 rule 6); None when it could not be computed for lack of data.
     error: Optional[str] = None
+    # What sort of reason it is (ADR 0085): needs_prediction, failed,
+    # missing_input, temporary or object_gone; sent only when ``ok`` is False.
+    kind: Optional[str] = None
 
 
 # ── Control message requests (client→server) ─────────────────────────────────

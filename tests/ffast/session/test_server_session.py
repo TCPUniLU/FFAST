@@ -590,88 +590,100 @@ def test_replay_empty_env_enqueues_only_the_shared_pieces():
 
 # ── _on_request_metric ────────────────────────────────────────────────────────
 
-def test_request_metric_cache_hit_returns_result_without_computing():
-    """A cached MetricResult is served straight back as an ok=True
-    METRIC_RESULT — the compute path (env.data) is never touched."""
-    key = "ffast.force_difference[atom+structure;length]__nil__nil"  # what the server's own key builder gives
-    result = _make_metric_result(values=np.array([1.5, 2.5]))
-    env = _FakeEnv(datasets={"ds1": object()}, cache={key: result})
-    env.data = _FakeData(env.cache)
+class _FakeResults:
+    """Stand-in for ``env.results`` (ADR 0085): answers from a table, or with
+    a result of [3.0]; records what was asked."""
 
+    def __init__(self, answers=None):
+        self.answers = answers or {}
+        self.asked = []
+
+    async def get(self, metric_id, params, dataset_fp, model_fp):
+        self.asked.append((metric_id, params, dataset_fp, model_fp))
+        return self.answers.get(metric_id) or _make_metric_result(
+            metric_id=metric_id, values=np.array([3.0]))
+
+
+def _store_env(compute, datasets=None, models=None, missing=()):
+    """A fake env with a real result store over a fake compute step."""
+    from types import SimpleNamespace
+    from ffast.metrics.result_store import MetricResultStore
+
+    env = _FakeEnv(datasets=datasets or {"ds1": object()}, models=models, cache={})
+    held = {}
+
+    def compute_metric(metric_id, params, model, dataset, *, stopped=None, key_out=None):
+        result = compute(metric_id)
+        key_out["key"] = metric_id
+        held[metric_id] = result
+        return result
+
+    env.data = SimpleNamespace(
+        make_metric_cache_key=lambda metric_id, params, model, dataset: f"{metric_id}__nil__nil",
+        inputResolver=SimpleNamespace(missing_prediction_keys=lambda *a, **k: list(missing)),
+        compute_metric=compute_metric,
+        metricExecutor=SimpleNamespace(cached=held.get),
+    )
+    env.results = MetricResultStore(env)
+    return env
+
+
+def _ask(env, metric_id, request_id, **kwargs):
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
-        await s.dispatch(
-            "REQUEST_METRIC", ["ffast.force_difference[atom+structure;length]", "m1"], {"dataset_fp": "ds1"}
-        )
+        await s.dispatch("REQUEST_METRIC", [metric_id, request_id], kwargs)
         return s.outbound.get_nowait()
 
-    event, args, kwargs = unpack(_run(scenario()))
+    return unpack(_run(scenario()))
+
+
+def test_request_metric_serves_the_stored_result():
+    """A result from the store is an ok=True METRIC_RESULT."""
+    env = _FakeEnv(datasets={"ds1": object()})
+    env.results = _FakeResults({"ffast.force_difference[atom+structure;length]":
+                                _make_metric_result(values=np.array([1.5, 2.5]))})
+    event, args, kwargs = _ask(env, "ffast.force_difference[atom+structure;length]", "m1",
+                               dataset_fp="ds1")
     assert event == control.METRIC_RESULT
-    assert args == ["m1", "ffast.force_difference[atom+structure;length]"]  # (request_id, metric_id) positional
+    assert args == ["m1", "ffast.force_difference[atom+structure;length]"]  # (request_id, metric_id)
     recovered = unpack_metric_result(kwargs)
-    assert recovered is not None
-    assert recovered.metric_id == "ffast.force_difference[atom+structure;length]"
     np.testing.assert_array_equal(recovered.values, np.array([1.5, 2.5]))
 
 
-def test_request_metric_missing_model_signals_client_fallback():
-    """A model-dependent metric whose model isn't on the server replies ok=False
-    (server_can_compute=False), so the client falls back to in-process compute."""
-    env = _FakeEnv(datasets={"ds1": object()}, cache={})   # empty cache, no models
-    env.data = _FakeData(env.cache)
+def test_request_metric_asks_the_store_and_replies_with_the_request_id():
+    """The reply carries the request id, not the store's key (ADR 0061)."""
+    env = _FakeEnv(datasets={"ds1": object()})
+    env.results = _FakeResults()
+    event, args, kwargs = _ask(env, "ffast.gyradius", "m3", dataset_fp="ds1", model_fp="m9",
+                               params={"a": 1})
+    assert event == control.METRIC_RESULT and args == ["m3", "ffast.gyradius"]
+    assert env.results.asked == [("ffast.gyradius", {"a": 1}, "ds1", "m9")]
+    np.testing.assert_array_equal(unpack_metric_result(kwargs).values, np.array([3.0]))
 
-    async def scenario():
-        s = ServerSession(env, asyncio.Queue())
-        await s.dispatch(
-            "REQUEST_METRIC", ["ffast.energy_difference[dataset;mae]", "m2"],
-            {"model_fp": "realmodel", "dataset_fp": "ds1"},
-        )
-        return s.outbound.get_nowait()
 
-    event, args, kwargs = unpack(_run(scenario()))
+def test_request_metric_for_a_model_the_server_lacks_says_the_object_is_gone():
+    """A real client-only model is not on the server: ok=False, kind object_gone."""
+    env = _store_env(lambda metric_id: _make_metric_result(metric_id=metric_id))
+    event, args, kwargs = _ask(env, "ffast.energy_difference[dataset;mae]", "m2",
+                               model_fp="realmodel", dataset_fp="ds1")
     assert event == control.METRIC_RESULT
     assert args == ["m2", "ffast.energy_difference[dataset;mae]"]
-    assert kwargs["ok"] is False
+    assert kwargs["ok"] is False and kwargs["kind"] == "object_gone"
     assert unpack_metric_result(kwargs) is None
-
-
-def test_request_metric_computes_on_cache_miss_and_replies_with_request_id():
-    """Cache miss: the handler looks the key up through make_metric_cache_key,
-    computes through env.data.generateMetric (which builds and returns the key it
-    stored under), and replies with the request id, not the key (ADR 0061)."""
-    env = _FakeEnv(datasets={"ds1": object()}, cache={})
-    env.data = _FakeData(env.cache)
-
-    async def scenario():
-        s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_METRIC", ["ffast.gyradius", "m3"], {"dataset_fp": "ds1"})
-        return s.outbound.get_nowait()
-
-    event, args, kwargs = unpack(_run(scenario()))
-    stored_key = "ffast.gyradius__f1234abcd__nil__nil"  # carries the formula hash
-    assert event == control.METRIC_RESULT
-    assert args == ["m3", "ffast.gyradius"]
-    assert env.data.make_key_calls, "make_metric_cache_key should be used"
-    assert env.data.generate_metric_calls == [("ffast.gyradius", stored_key)]
-    assert list(env.cache._entries) == [stored_key]   # nothing stored under the request id
-    recovered = unpack_metric_result(kwargs)
-    assert recovered is not None
-    assert recovered.metric_id == "ffast.gyradius"
-    np.testing.assert_array_equal(recovered.values, np.array([3.0]))
 
 
 def test_the_same_metric_asked_twice_at_once_is_computed_once():
     """Metric requests run in the background (2026-11-02), so two panels (or
     two windows) can ask for the same metric while it is still computing."""
     import time
+    calls = []
 
-    class _SlowData(_FakeData):
-        def generateMetric(self, *args, **kwargs):
-            time.sleep(0.3)
-            return super().generateMetric(*args, **kwargs)
+    def compute(metric_id):
+        calls.append(metric_id)
+        time.sleep(0.3)
+        return _make_metric_result(metric_id=metric_id, values=np.array([3.0]))
 
-    env = _FakeEnv(datasets={"ds1": object()}, cache={})
-    env.data = _SlowData(env.cache)
+    env = _store_env(compute)
 
     async def scenario():
         a = ServerSession(env, asyncio.Queue())
@@ -683,7 +695,7 @@ def test_the_same_metric_asked_twice_at_once_is_computed_once():
         return a.outbound.get_nowait(), b.outbound.get_nowait()
 
     replies = [unpack(r) for r in _run(scenario())]
-    assert len(env.data.generate_metric_calls) == 1
+    assert len(calls) == 1
     assert [args[0] for _, args, _ in replies] == ["m1", "m2"]
     assert all(unpack_metric_result(kwargs) is not None for _, _, kwargs in replies)
 
@@ -696,44 +708,76 @@ def test_a_result_that_cannot_be_sent_is_answered_with_why(monkeypatch):
 
     real = rpc.pack_metric_result
 
-    def pack(request_id, metric_id, ok, result=None, error=None):
+    def pack(request_id, metric_id, ok, result=None, error=None, kind=None):
         if ok:
             raise ValueError("bytes object is too large")
-        return real(request_id, metric_id, ok, result, error)
+        return real(request_id, metric_id, ok, result, error, kind)
 
     monkeypatch.setattr(rpc, "pack_metric_result", pack)
-    env = _FakeEnv(datasets={"ds1": object()}, cache={})
-    env.data = _FakeData(env.cache)
-
-    async def scenario():
-        s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_METRIC", ["ffast.gyradius", "m9"], {"dataset_fp": "ds1"})
-        return s.outbound.get_nowait()
-
-    event, args, kwargs = unpack(_run(scenario()))
+    env = _FakeEnv(datasets={"ds1": object()})
+    env.results = _FakeResults()
+    event, args, kwargs = _ask(env, "ffast.gyradius", "m9", dataset_fp="ds1")
     assert event == control.METRIC_RESULT and args[0] == "m9"
     assert kwargs["ok"] is False
     assert "too large" in kwargs["error"]
 
 
-def test_request_metric_needing_a_prediction_without_one_is_not_computed():
+def test_a_missing_prediction_for_a_chosen_model_says_which_kind_and_names_the_dataset():
+    from types import SimpleNamespace
+    named = SimpleNamespace(fingerprint="m1", getDisplayName=lambda: "P1")
+    ds = SimpleNamespace(fingerprint="ds1", getDisplayName=lambda: "shard_03")
+    env = _store_env(lambda metric_id: _make_metric_result(), datasets={"ds1": ds},
+                     models={"m1": named}, missing=["forces"])
+    event, args, kwargs = _ask(env, "ffast.force_difference[structure;component;mae]", "m5",
+                               dataset_fp="ds1", model_fp="m1")
+    assert kwargs["ok"] is False and kwargs["kind"] == "needs_prediction"
+    assert "shard_03" in kwargs["error"] and "P1" in kwargs["error"]
+
+
+def test_a_prediction_metric_with_no_model_chosen_gets_the_quiet_reply():
     """A panel that mixes a dataset metric with a prediction metric asks for
-    both before a prediction is chosen; the prediction one replies "no data"
-    at once instead of running and logging errors the page pops up."""
-    env = _FakeEnv(datasets={"ds1": object()}, cache={})
-    env.data = _FakeData(env.cache)
+    both before a prediction is chosen; the page says "Select a prediction"."""
+    env = _store_env(lambda metric_id: _make_metric_result())
+    event, args, kwargs = _ask(env, "ffast.force_difference[structure;component;mae]", "m5",
+                               dataset_fp="ds1")
+    assert event == control.METRIC_RESULT
+    assert args == ["m5", "ffast.force_difference[structure;component;mae]"]
+    assert kwargs == {"ok": False}
+
+
+def test_a_computed_metric_is_not_kept_in_the_environment_cache():
+    env = _store_env(lambda metric_id: _make_metric_result(metric_id=metric_id))
+    event, _, kwargs = _ask(env, "ffast.gyradius", "m6", dataset_fp="ds1")
+    assert kwargs["ok"] is True
+    assert env.cache.keys() == []
+
+
+def test_request_metric_with_a_key_is_rejected():
+    """ADR 0061: the wire has no `key`; a client that still sends one is dropped."""
+    env = _FakeEnv(datasets={"ds1": object()})
+    env.results = _FakeResults()
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;component;mae]", "m5"],
-                         {"dataset_fp": "ds1"})
-        return s.outbound.get_nowait()
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;length;rmse]", "m4"],
+                         {"dataset_fp": "ds1", "key": "ffast.force_difference[structure;length;rmse]__nil__nil"})
+        return s.outbound.empty()
 
-    event, args, kwargs = unpack(_run(scenario()))
-    assert event == control.METRIC_RESULT
-    assert args == ["m5", "ffast.force_difference[structure;component;mae]"]
-    assert kwargs["ok"] is False
-    assert env.data.generate_metric_calls == []
+    assert _run(scenario())
+    assert env.results.asked == []
+
+
+def test_request_metric_without_a_request_id_is_dropped():
+    env = _FakeEnv(datasets={"ds1": object()})
+    env.results = _FakeResults()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;length;rmse]"], {"dataset_fp": "ds1"})
+        return s.outbound.empty()
+
+    assert _run(scenario())
+    assert env.results.asked == []
 
 
 # ── _on_request_subdataset_arrays ─────────────────────────────────────────────
@@ -1560,30 +1604,3 @@ def test_a_new_view_can_start_from_another_views_look():
         assert s.views["sub"].state.parameters == {"ffast.bonds": {"style": "lines"}}
 
     _run(scenario())
-
-
-def test_request_metric_with_a_key_is_rejected():
-    """ADR 0061: the wire has no `key`; a client that still sends one is dropped."""
-    env = _FakeEnv(datasets={"ds1": object()}, cache={})
-    env.data = _FakeData(env.cache)
-
-    async def scenario():
-        s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;length;rmse]", "m4"],
-                         {"dataset_fp": "ds1", "key": "ffast.force_difference[structure;length;rmse]__nil__nil"})
-        return s.outbound.empty()
-
-    assert _run(scenario())
-    assert env.data.generate_metric_calls == []
-
-
-def test_request_metric_without_a_request_id_is_dropped():
-    env = _FakeEnv(datasets={"ds1": object()}, cache={})
-    env.data = _FakeData(env.cache)
-
-    async def scenario():
-        s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_METRIC", ["ffast.force_difference[structure;length;rmse]"], {"dataset_fp": "ds1"})
-        return s.outbound.empty()
-
-    assert _run(scenario())

@@ -1467,58 +1467,29 @@ class ServerSession:
             await _reply(False, resolved, error=str(exc))
 
     async def _on_request_metric(self, metric_id, request_id, **kwargs) -> None:
-        """Compute a metric server-side and reply with METRIC_RESULT (Stage 4a).
-
-        Reuses the same in-process metric spine the client has — the server owns
-        the full dataset arrays and ghost/remote predictions, so plots no longer
-        need the client to hold source arrays. Replies ok=False (client falls
-        back to in-process compute) when the metric needs a model the server
-        doesn't have (a real client-only model).
-        """
+        """Ask the result store for a metric and reply with METRIC_RESULT
+        (Stage 4a, ADR 0085). A reply with no result says why, and of what kind."""
+        from ffast.metrics.models import MetricResult
+        from ffast.metrics.result_store import Missing
         from ffast.protocol.rpc import pack_metric_result
 
         params = kwargs.get("params") or {}
         model_fp = kwargs.get("model_fp")
         dataset_fp = kwargs.get("dataset_fp")
 
-        model = self.env.models.get(model_fp) if model_fp else None
-        dataset = self.env.datasets.get(dataset_fp) if dataset_fp else None
-        # The server alone names the stored result; ``request_id`` is only the
-        # label the reply carries back (ADR 0061).
-        key = self.env.data.make_metric_cache_key(metric_id, params, model, dataset)
-        result = self.env.cache.get(key)
-
-        # A model-dependent metric whose model isn't on the server (a real,
-        # client-only model) can't be computed here — signal fallback.
-        server_can_compute = not (model_fp and model is None)
-        # A prediction metric asked for with no prediction (a panel mixing it
-        # with a dataset metric, before one is chosen) has nothing to compute:
-        # "no data" at once, not a run that logs errors the page pops up.
-        if model is None and _needs_prediction(metric_id):
-            server_can_compute = False
-
-        if result is None and server_can_compute:
-            asked = time.monotonic()
-
-            def generate():
-                logger.info("REQUEST_METRIC %s: waited %d ms for a compute thread",
-                            metric_id, (time.monotonic() - asked) * 1000)
-                return self.env.data.generateMetric(metric_id, params, model, dataset)
-
-            try:
-                made = await _compute_once(key, lambda: asyncio.get_running_loop().run_in_executor(
-                    _metric_compute_pool(), generate,
-                ), self.env, _metric_task_name(metric_id, model, dataset))
-            except Exception as exc:
-                logger.error("REQUEST_METRIC compute failed %s: %s", metric_id, exc)
-                made = None
-            result = self.env.cache.get(made) if made else None
-
-        # Why it failed, when it did (ADR 0066 rule 6); not for missing data.
-        error = (None if result is not None else
-                 getattr(self.env.data, "metric_failures", {}).pop(key, None))
         try:
-            data = pack_metric_result(request_id, metric_id, result is not None, result, error)
+            outcome = await self.env.results.get(metric_id, params, dataset_fp, model_fp)
+        except Exception as exc:
+            logger.error("REQUEST_METRIC compute failed %s: %s", metric_id, exc)
+            outcome = Missing("failed", str(exc))
+        result = outcome if isinstance(outcome, MetricResult) else None
+        error = kind = None
+        if result is None and not (outcome.kind == "needs_prediction" and not model_fp):
+            # With no prediction chosen the reply stays quiet: the page says
+            # "Select a prediction" (ADR 0085 decision 5).
+            error, kind = outcome.text, outcome.kind
+        try:
+            data = pack_metric_result(request_id, metric_id, result is not None, result, error, kind)
         except Exception as exc:
             # The page waits for every reply (no timeout), so one that cannot
             # be built is answered as a failure ("bytes object is too large"
@@ -1527,7 +1498,7 @@ class ServerSession:
             result = None
             data = pack_metric_result(
                 request_id, metric_id, False, None,
-                f"The result could not be sent to the page: {exc}")
+                f"The result could not be sent to the page: {exc}", "failed")
         await self._emit(data)
         logger.info(
             "METRIC_RESULT queued: metric=%r ok=%s request_id=%r",

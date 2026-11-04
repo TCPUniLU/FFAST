@@ -704,6 +704,14 @@ async def _main(
     # What every window holds, built in one place (ADR 0062).
     env.window_feed = WindowFeed(env, hub.broadcast)
 
+    # The one place metric results over a whole dataset are asked for and
+    # kept (ADR 0085). It forgets what belongs to a dataset or model that is
+    # deleted or whose frames change.
+    from ffast.metrics.result_store import MetricResultStore
+    env.results = MetricResultStore(env)
+    for _event in ("DATASET_DELETED", "MODEL_DELETED", "SUBDATASET_INDICES_CHANGED"):
+        env.eventSubscribe(_event, env.results.forget_objects)
+
     # Who uses a metric, for "Used by" and for refusing to delete one in use
     # (ADR 0057 rule 7): the tabs' panels, and any open view's colouring.
     env.user_metrics.usage_providers += [

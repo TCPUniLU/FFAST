@@ -544,19 +544,36 @@ def test_cancel_answers_at_once_while_an_input_is_still_computing(env):
 # ── REQUEST_METRIC for a formula metric (ADR 0061) ──────────────────────────
 class _Lookup:
     def get(self, fp):
-        return None
+        return _Thing() if fp in ("ds", "m") else None
+
+
+class _Thing:
+    fingerprint = "x"
 
 
 class _ResultExecutor:
-    """Stands in for the worker pool: every run gives one result."""
+    """Stands in for the worker pool: every run gives one result, and says
+    how often it ran."""
 
-    def run(self, id, source, parameters):
+    def __init__(self):
+        self.runs = 0
+        self.held = {}
+
+    def run(self, id, source, parameters, *, key_out=None):
         import numpy as np
         from ffast.metrics.models import MetricResult
-        return MetricResult(
+        self.runs += 1
+        result = MetricResult(
             metric_id=id, shape="scalar", dtype="float64", unit="energy",
             compute_parameters={}, implementation_hash="h",
             values=np.array(1.0))
+        if key_out is not None:
+            key_out["key"] = self.runs
+            self.held[self.runs] = result
+        return result
+
+    def cached(self, key):
+        return self.held.get(key)
 
 
 class _Events:
@@ -564,32 +581,35 @@ class _Events:
         pass
 
 
-def test_a_formula_metrics_result_is_stored_under_the_servers_key_not_the_request_id(env):
+def test_a_formula_metrics_result_is_found_by_the_servers_key_not_the_request_id(env):
     from ffast.cache.store import DataCache
     from ffast.core.data_service import DataService
+    from ffast.metrics.result_store import MetricResultStore
+    executor = _ResultExecutor()
     env.data = DataService(cache=DataCache(), models={}, datasets={}, tm=None, events=_Events(),
-                           executor=_ResultExecutor())
+                           executor=executor)
     env.cache = env.data.cache
     env.models, env.datasets = _Lookup(), _Lookup()
+    env.results = MetricResultStore(env)
     formula = {"id": "t57.energy2", "expr": "2 * e", "vars": {"e": "reference.energies"}}
     _dispatch(env, control.SAVE_USER_METRIC, {"metric": formula})
 
     def request(request_id):
         own, _ = _dispatch(env, control.REQUEST_METRIC,
-                           {"metric_id": "t57.energy2", "request_id": request_id})
+                           {"metric_id": "t57.energy2", "request_id": request_id, "dataset_fp": "ds"})
         [(event, args, kwargs)] = own
         assert event == control.METRIC_RESULT and args == [request_id, "t57.energy2"]
         assert kwargs["ok"] is True
-        return [str(k) for k in env.cache.keys()]
 
-    first = request("m1")
-    assert len(first) == 1 and "__f" in first[0] and "m1" not in first[0]
+    request("m1")
+    request("m2")                      # another request id, the same result
+    assert executor.runs == 1
 
-    # editing the formula gives a new key; the old result is dropped, not reused
+    # editing the formula gives a new key; the old result is not reused
     _dispatch(env, control.SAVE_USER_METRIC, {
         "metric": {**formula, "expr": "3 * e"}, "previous_id": "t57.energy2", "overwrite": True})
-    second = request("m2")
-    assert len(second) == 1 and "__f" in second[0] and second != first
+    request("m3")
+    assert executor.runs == 2
 
 
 def test_the_replay_ends_with_who_uses_what(env):
