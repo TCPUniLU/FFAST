@@ -49,6 +49,7 @@ import { initFullTextTitles } from './hover_tip.js';
 import { initAppearance } from './appearance.js';
 import { datasetUnits } from './units.js';
 import { TabEditor } from './edit_mode.js';
+import { createPalette } from './palette.js';
 import { bindMenu, runAction, sharedMenu, whyUnavailable } from './actions.js';
 import { loadLayout, loadMainView, saveLayout, saveMainView } from './layout_state.js';
 import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './quick_styles.js';
@@ -618,6 +619,11 @@ export class FFastApp {
       a.keys = shortcutLabel(s, mac);
       a.ariaKeys = `Alt+Shift+${s.code.replace(/^Key|^Digit/, '')}`;
     }
+    this._fillEmptyKeys();
+    this._palette = createPalette(
+      () => this._actions.filter((a) => a.id !== 'command-palette'),
+      (why) => this._setStatus(why, 'error'),
+    );
     this._initFileShortcuts();
     bindMenu(
       document.getElementById('file-menu-btn'),
@@ -666,6 +672,8 @@ export class FFastApp {
   _buildActions() {
     const needsControl = () => this._needsControl();
     return [
+      // No `menu`: only the shortcut and this entry open it.
+      { id: 'command-palette', label: 'Command Palette', run: () => this._palette.open() },
       { id: 'load-dataset', label: 'Load Dataset…', menu: 'file',
         run: () => this._browser.open('dataset'), unavailable: needsControl },
       { id: 'load-prediction', label: 'Load Prediction…', menu: 'file',
@@ -989,6 +997,20 @@ export class FFastApp {
   }
 
   _action(id) { return this._actions.find((a) => a.id === id); }
+
+  /** The one key hint on the empty screen: the palette key, from the action
+   * list, so the Mac shows ⌥⇧K. */
+  _fillEmptyKeys() {
+    const keysOf = (id) => this._action(id)?.keys;
+    const rows = [[keysOf('command-palette'), 'Find and run any command']];
+    document.getElementById('empty-keys').replaceChildren(...rows.filter(([k]) => k).map(([k, text]) => {
+      const li = document.createElement('li');
+      const key = document.createElement('kbd');
+      key.textContent = k;
+      li.append(key, `Use this to ${text[0].toLowerCase()}${text.slice(1)}`);
+      return li;
+    }));
+  }
 
   /** Until a view is open the 3D tab shows only a Load Dataset… button (or
    * why it cannot load yet); its sidebar, pick bar and playback strip wait

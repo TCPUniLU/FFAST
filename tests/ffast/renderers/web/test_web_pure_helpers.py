@@ -223,6 +223,9 @@ CASES = {
     "key_in_text": "sc.matchShortcut({code: 'KeyD', altKey: true, shiftKey: true}, {inText: true})",
     "key_mac_char": "sc.matchShortcut({code: 'KeyD', key: 'Î', altKey: true, shiftKey: true})?.action",
     "key_cluster": "sc.matchShortcut({code: 'KeyC', altKey: true, shiftKey: true})?.action",
+    "key_palette_in_text": "sc.matchShortcut({code: 'KeyK', altKey: true, shiftKey: true}, {inText: true})?.action",
+    "palette_filter": "pal.filterActions([{label: 'Load Dataset…'}, {label: 'Load Prediction…'}, {label: 'Save Session…'}], 'load  PRED').map((a) => a.label)",
+    "palette_filter_empty": "pal.filterActions([{label: 'a'}, {label: 'b'}], '  ').length",
     "key_labels": "[sc.shortcutLabel(sc.FILE_SHORTCUTS[0]), sc.shortcutLabel(sc.FILE_SHORTCUTS[0], true), sc.shortcutLabel(sc.FILE_SHORTCUTS[5])]",
     "key_is_mac": "[sc.isMac({platform: 'MacIntel'}), sc.isMac({platform: 'Win32'}), sc.isMac({userAgentData: {platform: 'macOS'}})]",
     # ── rb.baseName / rb.listKey (to_fix_v2: arrow keys in the file list) ──
@@ -1206,6 +1209,7 @@ def results():
         f"  const oi = await import('{origin}/object_info.js');\n"
         f"  const tk = await import('{origin}/tasks.js');\n"
         f"  const sc = await import('{origin}/shortcuts.js');\n"
+        f"  const pal = await import('{origin}/palette.js');\n"
         f"  const cc = await import('{origin}/cluster_client.js');\n"
         f"  const tm = await import('{origin}/timing.js');\n"
         f"  const ht = await import('{origin}/hover_tip.js');\n"
@@ -1844,6 +1848,15 @@ def test_a_shortcut_needs_alt_and_shift_and_no_ctrl_or_meta_or_text_focus(result
     assert results["key_needs_both"] == [None, None]
     assert results["key_ctrl_free"] == [None, None]
     assert results["key_in_text"] is None
+
+
+def test_the_palette_key_works_while_typing(results):
+    assert results["key_palette_in_text"] == "command-palette"
+
+
+def test_palette_filter_needs_every_word_in_any_case(results):
+    assert results["palette_filter"] == ["Load Prediction…"]
+    assert results["palette_filter_empty"] == 2
 
 
 def test_shortcut_labels_and_the_mac_check(results):

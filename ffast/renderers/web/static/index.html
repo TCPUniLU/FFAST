@@ -628,6 +628,15 @@
     #overlay.hidden { display: none; }
     #empty-load-btn, #empty-example-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: var(--fs-m); }
     #empty-example-btn { margin-left: 8px; }
+    #empty-load-btn { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+    #empty-load-btn:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); filter: brightness(1.1); }
+    #empty-load-btn:disabled { background: var(--surface-2); color: var(--ink-3); font-weight: normal; }
+    #empty-keys { list-style: none; margin: 22px 0 0; padding: 0; font-size: var(--fs-s); }
+    #empty-keys li { display: flex; justify-content: center; align-items: center; gap: 10px; padding: 3px 0; }
+    #empty-keys kbd {
+      flex: 0 0 auto; font-family: var(--font); color: var(--text1); background: var(--surface-2);
+      border: 1px solid var(--bg3); border-radius: 4px; padding: 1px 6px; text-align: center;
+    }
     #content.no-view #loupe-sidebar,
     #content.no-view #pick-bar,
     #content.no-view #loupe-controls,
@@ -767,6 +776,25 @@
     .panel-section-title {
       font-size: var(--fs-s); font-weight: 600; color: var(--text1);
     }
+    /* command palette (ADR 0055) */
+    #palette {
+      position: fixed; top: 48px; left: 50%; transform: translateX(-50%); z-index: 1000;
+      width: min(520px, calc(100vw - 32px)); background: var(--bg2);
+      border: 1px solid var(--bg3); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.4);
+      padding: 8px; display: flex; flex-direction: column; gap: 6px;
+    }
+    #palette.hidden { display: none; }
+    #palette input {
+      font-family: var(--font); font-size: var(--fs-m); color: var(--text1);
+      background: var(--surface-2); border: 1px solid var(--bg3); border-radius: 4px; padding: 6px 8px;
+    }
+    #palette input:focus { outline: none; border-color: var(--hl2); }
+    #palette [role=listbox] { max-height: 50vh; overflow-y: auto; }
+    .palette-row { display: flex; gap: 16px; padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: var(--fs-m); }
+    .palette-row.active, .palette-row:hover { background: var(--bg4); }
+    .palette-row.blocked { color: var(--muted); }
+    .palette-keys { margin-left: auto; color: var(--muted); }
+    .palette-none { padding: 6px 8px; color: var(--muted); font-size: var(--fs-s); }
     /* sidebar search (ADR 0055) */
     #sidebar-search {
       flex: 0 0 auto; width: 100%; font-family: var(--font); font-size: var(--fs-m);
@@ -1496,6 +1524,7 @@
       <div class="small" id="overlay-hint">Load a dataset to see it here.</div>
       <button id="empty-load-btn">Load Dataset…</button>
       <button id="empty-example-btn">Load Example</button>
+      <ul id="empty-keys" aria-label="Keyboard shortcuts"></ul>
     </div>
     <!-- hint bar (ADR 0055): numbered next steps, dismissable -->
     <div id="hint-bar" class="hidden" role="note">

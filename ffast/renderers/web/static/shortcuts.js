@@ -12,6 +12,8 @@ export const FILE_SHORTCUTS = [
   { action: 'load-zero-model', code: 'Digit0' },
   { action: 'open-popout', code: 'KeyN' },
   { action: 'connect-cluster', code: 'KeyC' },
+  // `anywhere`: works while typing, so the palette opens from any text box.
+  { action: 'command-palette', code: 'KeyK', anywhere: true },
 ];
 
 /** Is this a Mac (Option and ⇧ symbols in the menu)? */
@@ -24,8 +26,9 @@ export function isMac(nav = globalThis.navigator) {
  *  plain object with the same fields); `inText`: focus is in a text
  *  field, where keys belong to the typing. */
 export function matchShortcut(e, { inText = false } = {}) {
-  if (inText || !e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return null;
-  return FILE_SHORTCUTS.find((s) => s.code === e.code) || null;
+  if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey) return null;
+  const s = FILE_SHORTCUTS.find((k) => k.code === e.code);
+  return s && (s.anywhere || !inText) ? s : null;
 }
 
 /** How a menu shows the keys: "Alt+Shift+S", or "⌥⇧S" on a Mac. */
