@@ -17,8 +17,16 @@ from ffast.metrics.registry import MetricRegistry
 
 class MetricExecutor(ABC):
     @abstractmethod
-    def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
+    def run(self, id: str, source: InputSource, parameters: dict[str, Any], *,
+            key_out: dict | None = None) -> MetricResult | MetricFailure:
+        """Run one metric. ``key_out["key"]`` is set to the key its result is
+        cached under, when it has one (ADR 0085)."""
         ...
+
+    def cached(self, key) -> MetricResult | None:
+        """A result by the key ``run`` gave in ``key_out``, or None when the
+        cache no longer holds it."""
+        return self._cache.get(key)
 
     def start(self) -> None:
         """Get ready for the first metric now, so no request waits for it.
@@ -49,7 +57,8 @@ class InProcessExecutor(MetricExecutor):
         except Exception:
             return MetricFailure(metric_id=id, traceback=tb.format_exc(), parameters=parameters)
 
-    def _execute(self, plan: ExecutionPlan, source: InputSource | None = None) -> dict[str, MetricResult | MetricFailure]:
+    def _execute(self, plan: ExecutionPlan, source: InputSource | None = None,
+                 key_out: dict | None = None) -> dict[str, MetricResult | MetricFailure]:
         return run_plan(
             plan,
             self._registry,
@@ -58,12 +67,14 @@ class InProcessExecutor(MetricExecutor):
                 mid, schema, fn, kwargs, cparams, plan.parameters
             ),
             stopped=source.stopped if source is not None else (lambda: False),
+            key_out=key_out,
         )
 
     def call(self, fn: Any, kwargs: dict[str, Any], label: str = "formula") -> Any:
         return fn(**kwargs)
 
-    def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
+    def run(self, id: str, source: InputSource, parameters: dict[str, Any], *,
+            key_out: dict | None = None) -> MetricResult | MetricFailure:
         """Run a single metric and its dependencies."""
         plan = build_execution_plan(self._registry, id, parameters, source)
-        return self._execute(plan, source)[id]
+        return self._execute(plan, source, key_out)[id]

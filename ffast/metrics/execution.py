@@ -265,6 +265,7 @@ def run_plan(
     cache: MetricCache,
     run_fn: RunFn,
     stopped: Callable[[], bool] = lambda: False,
+    key_out: dict | None = None,
 ) -> dict[str, MetricResult | MetricFailure]:
     """Execute a plan's steps in order → ``{metric_id: MetricResult | MetricFailure}``.
 
@@ -277,6 +278,10 @@ def run_plan(
 
     Once ``stopped()`` is true, the step about to start and every later one fail
     with "Stopped" and are not cached (ADR 0079 decision 3).
+
+    When ``key_out`` is given and the plan's first root produced a result, its
+    cache key goes in ``key_out["key"]`` so the result can be read back later
+    (ADR 0085).
     """
     results: dict[str, MetricResult | MetricFailure] = {}
     # Each step's cache key: a step reading another's output is keyed by that
@@ -369,6 +374,10 @@ def run_plan(
                 cache.release(cache_key, result if isinstance(result, MetricResult) else None)
         results[metric_id] = result
 
+    if key_out is not None and plan.root_ids:
+        root = plan.root_ids[0]
+        if isinstance(results.get(root), MetricResult) and root in keys:
+            key_out["key"] = keys[root]
     return results
 
 

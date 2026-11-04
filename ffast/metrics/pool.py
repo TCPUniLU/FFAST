@@ -460,7 +460,8 @@ class WorkerProcessExecutor(MetricExecutor):
                 slot.next.terminate()
             self._retire(slot.worker)
 
-    def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
+    def run(self, id: str, source: InputSource, parameters: dict[str, Any], *,
+            key_out: dict | None = None) -> MetricResult | MetricFailure:
         """Run a single metric and its dependencies.
 
         Input resolution, dependency ordering, Compute Parameter filtering, and
@@ -478,6 +479,7 @@ class WorkerProcessExecutor(MetricExecutor):
                 mid, schema, fn, kwargs, cparams, parameters
             ),
             stopped=source.stopped,
+            key_out=key_out,
         )
         return results[id]
 

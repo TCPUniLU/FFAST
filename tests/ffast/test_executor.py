@@ -233,3 +233,34 @@ def test_result_has_no_checksum(registry):
     result = executor.run("test.simple2", source=FlatInputSource({"x": 1.0}), parameters={})
 
     assert "checksum" not in type(result).model_fields
+
+
+# ── naming the stored result (ADR 0085) ───────────────────────────────────────
+
+def test_run_names_the_key_its_result_is_stored_under(registry_with_force_mae):
+    executor = InProcessExecutor(registry_with_force_mae)
+    diff = np.ones((2, 3, 3))
+    k = {}
+    result = executor.run("test.force_mae", FlatInputSource({"force_difference": diff}),
+                          {"norm": "l2"}, key_out=k)
+    assert executor.cached(k["key"]) is result
+
+
+def test_a_failing_metric_names_no_key(registry):
+    @registry.metric(id="test.bad", inputs={"x": "ref.x"}, shape="scalar", unit="energy")
+    def bad(x):
+        raise ValueError("no")
+
+    executor = InProcessExecutor(registry)
+    k = {}
+    executor.run("test.bad", FlatInputSource({"x": 1.0}), {}, key_out=k)
+    assert "key" not in k
+
+
+def test_a_cleared_cache_no_longer_gives_the_result_back(registry_with_force_mae):
+    executor = InProcessExecutor(registry_with_force_mae)
+    k = {}
+    executor.run("test.force_mae", FlatInputSource({"force_difference": np.ones((2, 3, 3))}),
+                 {}, key_out=k)
+    executor._cache.clear()
+    assert executor.cached(k["key"]) is None

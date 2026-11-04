@@ -130,7 +130,8 @@ class ServerExecutor(MetricExecutor):
                     id, (started - asked) * 1000, (time.monotonic() - started) * 1000,
                     want // _MIB, "worker" if outside else "server")
 
-    def run(self, id: str, source: InputSource, parameters: dict[str, Any]) -> MetricResult | MetricFailure:
+    def run(self, id: str, source: InputSource, parameters: dict[str, Any], *,
+            key_out: dict | None = None) -> MetricResult | MetricFailure:
         plan = build_execution_plan(self._registry, id, parameters, source)
         results = run_plan(
             plan,
@@ -140,6 +141,7 @@ class ServerExecutor(MetricExecutor):
                 mid, schema, fn, kwargs, cparams, parameters, source.stopped
             ),
             stopped=source.stopped,
+            key_out=key_out,
         )
         return results[id]
 

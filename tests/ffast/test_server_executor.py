@@ -118,3 +118,10 @@ def test_start_boots_a_worker_only_when_there_is_outside_code(registry, made, mo
 
     made(registry, outside=lambda fn: fn is _double).start()
     assert len(started) == 1
+
+
+def test_the_server_executor_names_the_key_of_its_result(registry, made):
+    ex = made(registry)
+    k = {}
+    result = ex.run("t.double", SRC, {}, key_out=k)
+    assert ex.cached(k["key"]) is result
