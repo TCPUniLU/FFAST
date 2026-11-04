@@ -161,3 +161,22 @@ def test_a_cached_colour_metric_is_used_at_once_with_no_second_patch():
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def test_a_closed_window_stops_its_colouring_and_its_length_probe():
+    # Work started for a window ends with it: nobody reads its queue any more.
+    import threading
+
+    async def scenario():
+        s = ServerSession(_env(), asyncio.Queue())
+        never = asyncio.Event()
+        colouring = asyncio.create_task(never.wait())
+        s._colouring.add(colouring)
+        s._length_probe_cancel = threading.Event()
+        s.close()
+        await asyncio.sleep(0)          # let a cancelled task finish
+        stopped = colouring.done()
+        colouring.cancel()              # never leave it running
+        return stopped, s._length_probe_cancel.is_set()
+
+    assert asyncio.run(scenario()) == (True, True)

@@ -1756,9 +1756,14 @@ class ServerSession:
             running[2].set()
 
     def close(self) -> None:
-        """The window has gone: stop its Tries, drop its views, and leave the
-        feed, so its colourings stop counting as users of a metric (ADR 0062)."""
+        """The window has gone: stop its Tries, colourings and length probe,
+        drop its views, and leave the feed, so its colourings stop counting as
+        users of a metric (ADR 0062). Nobody reads its queue any more, so
+        work left running could wait on a full queue for ever."""
         self.cancel_tries()
+        self._stop_length_probe()
+        for task in list(self._colouring):
+            task.cancel()
         coloured = any((self._colour_source(v) or "").startswith("metric:")
                        for v in self.views.values())
         self.views.clear()
