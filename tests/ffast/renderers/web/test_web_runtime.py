@@ -6377,6 +6377,10 @@ async def test_web_sub_makes_a_subset_that_follows_the_zoom(ffast_web_server):
             assert await page.evaluate(
                 "([d, m]) => window.ffastApp._analysis._seriesColour({datasetFp: d, modelFp: m})",
                 [sub["fp"], model_fp]) == "#abcdef"
+            # A colour change rebuilds every card of the tab at once (rerenderAll):
+            # zoom only once the timeline is drawn again, or the zoom lands on a
+            # plot that is not there yet (`_guiEditing` of undefined, 2026-11-04).
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
 
             await _zoom(page, "Energy MAE timeline", [10, 19.5])
             await page.wait_for_function(
