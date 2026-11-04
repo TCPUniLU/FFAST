@@ -82,7 +82,7 @@
        and a unit is plain text, not a link to name it. */
     body.journal .tabpanel:not(.editing) :is(
       .analysis-controls, .panel-params, .modebar-container,
-      .analysis-grid .panel-title :is(input, button, select, label, .help-btn)) { display: none !important; }
+      .analysis-grid .panel-title :is(input, button, select, label, .help-btn, .spinner)) { display: none !important; }
     body.journal .analysis-grid :is(.unit-editable, [data-unit-role], .g-xtitle text, .g-ytitle text) {
       text-decoration: none !important; cursor: auto !important; pointer-events: none !important;
     }
@@ -182,13 +182,32 @@
     }
     #status:hover { background: var(--surface-3); }
     .task-panel { width: 300px; max-height: 60vh; overflow-y: auto; gap: 2px; }
-    .task-row { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 2px 6px; padding: 5px 8px; }
+    .task-row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 2px 6px; padding: 5px 8px; }
     .task-row .task-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .task-row .task-count { color: var(--muted); font-size: var(--fs-s); }
     .task-row .task-cancel { padding: 2px 4px; background: transparent; }
     .task-row .task-message { grid-column: 1 / -1; color: var(--muted); font-size: var(--fs-s); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .task-row .task-message.error { color: var(--danger); }
     .task-row progress { grid-column: 1 / -1; width: 100%; height: 6px; accent-color: var(--hl2); }
+    .task-row progress:not([value]) { display: none; }   /* a bar only with numbers */
+    #task-btn { display: inline-flex; align-items: center; gap: 6px; }
+
+    /* spinner.js: a dim ring with a bright arc turning round it. Invisible
+       for its first 300 ms, so work that ends sooner never flashes one. */
+    .spinner {
+      display: inline-block; flex: none; box-sizing: border-box;
+      width: 14px; height: 14px; border-radius: 50%; vertical-align: -3px;
+      border: 2px solid color-mix(in srgb, var(--muted) 30%, transparent);
+      /* a bright half ring: its turning is plain to see, even this small */
+      border-top-color: var(--ink); border-right-color: var(--ink);
+      animation: spinner-turn 0.8s linear infinite, spinner-show 0s linear 0.3s both;
+    }
+    .spinner-lg { width: 28px; height: 28px; border-width: 3px; }
+    @keyframes spinner-turn { to { transform: rotate(360deg); } }
+    @keyframes spinner-show { from { opacity: 0; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) {
+      .spinner { animation-duration: 2s, 0s; }
+    }
     #status.connected { color: var(--success); }
     #status.error { color: var(--danger); }
 
@@ -436,7 +455,7 @@
       font: 700 var(--letter) Georgia, "Times New Roman", serif;
       color: var(--ink); margin-right: 8px;
     }
-    .analysis-panel .panel-title > span:not(.panel-letter):not(.sub-toggle) { flex: 1; min-width: 0; }
+    .analysis-panel .panel-title > span:not(.panel-letter):not(.sub-toggle):not(.spinner) { flex: 1; min-width: 0; }
     .viewport > .panel-letter {
       position: absolute; top: 6px; left: 8px; z-index: 3; margin: 0;
       padding: 0 6px; border-radius: 4px; pointer-events: none;
@@ -465,6 +484,8 @@
       pointer-events: none;
     }
     #hover-tip[hidden] { display: none; }
+    .analysis-panel .panel-busy { display: flex; align-items: center; justify-content: center; height: 100%; min-height: 80px; }
+    .analysis-panel .panel-title .spinner { margin-left: auto; }
     .analysis-panel .panel-title .sub-toggle {
       display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-xs); font-weight: 600;
     }
@@ -1143,7 +1164,13 @@
       border-radius: 4px; padding: 5px 8px; width: 100%;
     }
     #cluster-body input[type="text"]:focus { outline: none; border-color: var(--hl2); }
-    #cluster-message.hidden, #cluster-record.hidden, #cluster-progress.hidden { display: none; }
+    #cluster-message.hidden, #cluster-record.hidden, #cluster-progress.hidden,
+    #cluster-activity.hidden, #cluster-spinner[hidden] { display: none; }
+    #cluster-activity { flex: none; display: flex; align-items: center; gap: 8px;
+      margin: 0 12px 8px; font-size: var(--fs-s); }
+    #cluster-latest { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #cluster-log-btn { flex: none; background: transparent; color: var(--muted); padding: 2px 6px; }
+    #cluster-log-btn:hover { color: var(--text1); }
     #cluster-message { color: var(--danger); }
     #cluster-record { display: flex; align-items: center; gap: 8px; font-size: var(--fs-s); }
     #cluster-progress { flex: none; max-height: 120px; overflow-y: auto; white-space: pre-wrap;
@@ -1355,7 +1382,14 @@
           <button id="cluster-reconnect-btn"></button>
         </div>
       </div>
-      <!-- Outside the scrolling form, so progress stays in sight. -->
+      <!-- Outside the scrolling form, so progress stays in sight: the latest
+           step, and the whole log only for whoever opens it. -->
+      <div id="cluster-activity" class="hidden">
+        <span id="cluster-spinner" class="spinner" role="status" aria-label="Connecting"></span>
+        <span id="cluster-latest"></span>
+        <button id="cluster-log-btn" type="button" aria-expanded="false"
+                aria-controls="cluster-progress">Show log ▸</button>
+      </div>
       <pre id="cluster-progress" class="hidden"></pre>
       <div class="warning-modal-footer">
         <button id="cluster-stop-btn" disabled>End cluster job</button>

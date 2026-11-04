@@ -676,6 +676,12 @@ async def test_web_cluster_connect_hands_the_page_the_tunnel(shared_server, tmp_
             await page.locator("#cluster-save-btn").click()
             await expect(page.locator("#cluster-profile")).to_have_value("m")
             await page.locator("#cluster-connect-btn").click()
+            # The latest step shows beside a spinner; the log opens on request.
+            await expect(page.locator("#cluster-latest")).to_have_text("Submitting SLURM job…")
+            await expect(page.locator("#cluster-activity")).to_be_in_viewport(ratio=1)
+            await expect(page.locator("#cluster-spinner")).to_be_visible()
+            await expect(page.locator("#cluster-progress")).to_be_hidden()
+            await page.locator("#cluster-log-btn").click()
             await expect(page.locator("#cluster-progress")).to_contain_text("Submitting SLURM job…")
             await expect(page.locator("#cluster-progress")).to_be_in_viewport(ratio=1)
             await expect(page.locator("#cluster-connect-btn")).to_have_text("Cancel")

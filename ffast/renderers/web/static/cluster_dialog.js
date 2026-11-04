@@ -29,6 +29,10 @@ export class ClusterDialog {
     $('cluster-connect-btn').addEventListener('click', () => this._connectClicked());
     $('cluster-reconnect-btn').addEventListener('click', () => this._reconnectClicked());
     $('cluster-stop-btn').addEventListener('click', () => this._stopClicked());
+    $('cluster-log-btn').addEventListener('click', () => {
+      this._logOpen = !this._logOpen;
+      this._renderStatus();
+    });
     $('cluster-dialog').addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.close();
     });
@@ -87,9 +91,17 @@ export class ClusterDialog {
     const busy = status.state === 'connecting';
     const live = busy || status.state === 'connected';
     const progress = $('cluster-progress');
-    const text = [(status.messages || []).join('\n'), status.details || ''].filter(Boolean).join('\n\n');
+    const messages = status.messages || [];
+    const text = [messages.join('\n'), status.details || ''].filter(Boolean).join('\n\n');
+    // The latest step beside a spinner; the whole log only when opened.
+    $('cluster-activity').classList.toggle('hidden', !text);
+    $('cluster-spinner').hidden = !busy;
+    $('cluster-latest').textContent = messages[messages.length - 1] || '';
+    const open = !!this._logOpen && !!text;
+    $('cluster-log-btn').textContent = this._logOpen ? 'Hide log ▾' : 'Show log ▸';
+    $('cluster-log-btn').setAttribute('aria-expanded', String(open));
     progress.textContent = text;
-    progress.classList.toggle('hidden', !text);
+    progress.classList.toggle('hidden', !open);
     progress.scrollTop = progress.scrollHeight;   // newest line in sight
     if (status.state === 'failed') this._message(status.error);
     for (const el of $('cluster-body').querySelectorAll('input, select, button')) el.disabled = busy;

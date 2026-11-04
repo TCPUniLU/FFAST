@@ -27,6 +27,7 @@ import { helpToggle } from './help.js';
 import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, clearPlot } from './panels.js';
 import { showOnce } from './toasts.js';
 import { attachTip } from './hover_tip.js';
+import { spinner } from './spinner.js';
 import { elementColourOn } from './element_colours.js';
 import { plotTheme } from './theme.js';
 import { visitedKey } from './peaks.js';
@@ -1021,6 +1022,7 @@ export class AnalysisManager {
     const whole = !!msg && !t.cells3d.length;
     t.msgEl.hidden = !whole;
     t.msgEl.textContent = whole ? msg : '';
+    if (whole && !this._catalog.size) t.msgEl.prepend(spinner(), ' ');
     t.gridEl.hidden = whole;
     if (whole) return;
 
@@ -1195,6 +1197,27 @@ export class AnalysisManager {
     for (const datasetFp of fps) this._onSetUnit({ datasetFp, dimension, unit });
   }
 
+  /** A panel waiting for its metrics turns a spinner: in the middle of an
+   *  empty panel, or in the title bar beside a plot it still shows. */
+  _busy(card, step) {
+    card.waiting = (card.waiting || 0) + step;
+    if (card.waiting > 0 && !card.spinnerEl) {
+      const empty = ![...card.body.children].some((c) => !c.classList.contains('panel-busy'));
+      if (empty) {
+        card.spinnerEl = document.createElement('div');
+        card.spinnerEl.className = 'panel-busy';
+        card.spinnerEl.appendChild(spinner(true));
+        card.body.appendChild(card.spinnerEl);
+      } else {
+        card.spinnerEl = spinner();
+        card.title.insertBefore(card.spinnerEl, card.more);
+      }
+    } else if (card.waiting <= 0 && card.spinnerEl) {
+      card.spinnerEl.remove();
+      card.spinnerEl = null;
+    }
+  }
+
   async _fetchAndRenderPanel(t, spec, card, token) {
     const refs = this._cardRefs(t, spec);
     const seq = card.seq = (card.seq || 0) + 1;
@@ -1232,12 +1255,18 @@ export class AnalysisManager {
       card.series = null;
       return;
     }
-    const perSeries = await Promise.all(refs.map((ref) =>
-      Promise.all(jobs.map((j) => this._metrics.request(j.id, {
-        datasetFp: ref.datasetFp,
-        modelFp: ref.modelFp,
-        params: this._metricParams(t, spec, j.id),
-      })))));
+    let perSeries;
+    this._busy(card, +1);
+    try {
+      perSeries = await Promise.all(refs.map((ref) =>
+        Promise.all(jobs.map((j) => this._metrics.request(j.id, {
+          datasetFp: ref.datasetFp,
+          modelFp: ref.modelFp,
+          params: this._metricParams(t, spec, j.id),
+        })))));
+    } finally {
+      this._busy(card, -1);
+    }
     if (token !== this._renderToken || seq !== card.seq) return;   // superseded
 
     // A metric that ran and failed says why, once, as a pop-up (ADR 0066);

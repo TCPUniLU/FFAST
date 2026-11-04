@@ -6,6 +6,7 @@
  */
 
 import { icon } from './icons.js';
+import { spinner } from './spinner.js';
 
 /** "3/10", or "25%" when the job reports a percent; '' without numbers. Pure. */
 export function progressText({ prog, progMax, percent } = {}) {
@@ -26,6 +27,10 @@ export class TaskList {
     this._whyNoCancel = whyNoCancel;
     /** @type {Map<string, {id: any, row: HTMLElement}>} */
     this._rows = new Map();
+    // One spinner for the button's life, so a row coming or going does not
+    // restart it (the button is hidden while nothing runs).
+    this._label = document.createElement('span');
+    button.replaceChildren(spinner(), this._label);
     button.addEventListener('click', () => this.toggle());
     panel.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') { this.close(); button.focus(); }
@@ -65,7 +70,7 @@ export class TaskList {
     message.className = 'task-message';
     message.textContent = 'Working…';
     const bar = document.createElement('progress');
-    row.append(title, count, cancel, message, bar);
+    row.append(spinner(), title, count, cancel, message, bar);
     this._panel.appendChild(row);
     this._rows.set(key, { id, row });
     this._refresh();
@@ -121,7 +126,7 @@ export class TaskList {
 
   _refresh() {
     const n = this._rows.size;
-    this._button.textContent = `Tasks (${n})`;
+    this._label.textContent = `Tasks (${n})`;
     this._menu.hidden = n === 0;
     if (n === 0) this.close();
   }
