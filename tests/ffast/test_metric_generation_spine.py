@@ -218,3 +218,39 @@ def test_window_parameter_changes_cache_identity():
     k_1 = env.registerMetricRequest("ffast.force_rmse_smoothed", {"window": 1}, model, ds)
     k_5 = env.registerMetricRequest("ffast.force_rmse_smoothed", {"window": 5}, model, ds)
     assert k_1 != k_5
+
+
+# ── compute_metric (compute only, ADR 0085) ────────────────────────────────────
+
+_FORCE_DIFF = "ffast.force_difference[atom+structure;length]"
+
+
+def _compute_env():
+    ds = _Dataset(energies=[1.0, 2.0], forces=[[1.0, 0, 0], [0, 0, 0]])
+    env = _FakeEnv(
+        ds,
+        predictions={("forces", "model-fp", "ds-fp"): _Entity(
+            forces=np.array([[2.0, 0, 0], [0, 0, 0]]))},
+    )
+    return env, ds, _Model()
+
+
+def test_compute_metric_returns_the_result_and_stores_nothing():
+    from ffast.core.data_service import DataService
+
+    env, ds, model = _compute_env()
+    result = DataService.compute_metric(env, _FORCE_DIFF, {}, model, ds)
+    assert isinstance(result, MetricResult)
+    np.testing.assert_allclose(result.values, [1.0, 0.0], atol=1e-6)
+    assert env.cache == {}
+    assert env.events == []
+
+
+def test_compute_metric_stops_when_asked_with_a_temporary_failure():
+    from ffast.core.data_service import DataService
+    from ffast.metrics.models import MetricFailure
+
+    env, ds, model = _compute_env()
+    result = DataService.compute_metric(env, _FORCE_DIFF, {}, model, ds, stopped=lambda: True)
+    assert isinstance(result, MetricFailure)
+    assert result.kind == "temporary"

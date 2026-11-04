@@ -347,6 +347,21 @@ class DataService:
         logger.warning("Metric %s kept changing while computing; gave up", metric_id)
         return None
 
+    def compute_metric(self, metric_id, params, model, dataset, *,
+                       stopped=None, key_out=None):
+        """One metric over the whole dataset, in this process: the result or
+        why not. Stores nothing, queues nothing, asks no server (ADR 0085).
+
+        ``stopped`` is a callable; once it says true the run ends with a
+        ``temporary`` failure. ``key_out["key"]`` gets the key the executor
+        holds the result under."""
+        from ffast.metrics.input_resolver import _ResolverSource
+
+        source = _ResolverSource(self.inputResolver, model, dataset, stopped=stopped)
+        if key_out is None:
+            return self.metricExecutor.run(metric_id, source, params or {})
+        return self.metricExecutor.run(metric_id, source, params or {}, key_out=key_out)
+
     def _generate_metric_once(self, metric_id, params, model, dataset, key, revision):
         """One attempt of ``generateMetric``: the stored key, None, or ``_CHANGED``."""
         from ffast.metrics.models import MetricResult
@@ -408,11 +423,8 @@ class DataService:
                 )
                 return None
 
-        from ffast.metrics.input_resolver import _ResolverSource
-
-        source = _ResolverSource(self.inputResolver, model, dataset)
         started = time.monotonic()
-        result = self.metricExecutor.run(metric_id, source, params or {})
+        result = self.compute_metric(metric_id, params, model, dataset)
         ran = time.monotonic()
         if default_registry.revision != revision:
             return _CHANGED

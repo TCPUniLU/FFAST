@@ -113,17 +113,19 @@ class _ResolverSource(InputSource):
     plan builder then treats as an optional/missing input.
     """
 
-    def __init__(self, resolver, model, dataset):
+    def __init__(self, resolver, model, dataset, stopped=None):
         self._resolver = resolver
         self._model = model
         self._dataset = dataset
+        self._asked_to_stop = stopped
 
     def get(self, metric_id, local_key, ref):
         return True, self._resolver.resolve(ref, model=self._model, dataset=self._dataset)
 
     def stopped(self):
         return bool(getattr(self._dataset, "deleted", False)
-                    or getattr(self._model, "deleted", False))
+                    or getattr(self._model, "deleted", False)
+                    or (self._asked_to_stop is not None and self._asked_to_stop()))
 
     def identity(self, ref):
         """``ref`` of this loaded dataset (and prediction, for a prediction
