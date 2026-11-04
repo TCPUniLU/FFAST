@@ -217,6 +217,32 @@ class TaskManager(EventClass):
             "taskID": task_id,
         }
 
+    def showWork(self, task_id, name: str) -> None:
+        """List work that runs outside the TaskManager (a metric computing on
+        the server) as a Running Task that cannot be cancelled, until
+        ``endWork``."""
+        if task_id in self.runningTasks:
+            return
+        done: asyncio.Future = asyncio.get_event_loop().create_future()
+        done.set_result(None)
+        self.runningTasks[task_id] = {
+            "visual": True,
+            "cancellable": False,
+            "process": False,
+            "name": name,
+            "threaded": False,
+            "progress": None,
+            "progressMessage": "N/A",
+            "task": done,
+            "componentParent": None,
+            "taskID": task_id,
+        }
+        self.eventPush("TASK_CREATED", task_id)
+
+    def endWork(self, task_id) -> None:
+        if self.runningTasks.pop(task_id, None) is not None:
+            self.eventPush("TASK_DONE", task_id)
+
     def queueTask(self, *args, taskKey=None, **kwargs):
         if (taskKey is not None) and (taskKey in self.runningTasks):
             logger.debug(

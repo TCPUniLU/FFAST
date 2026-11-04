@@ -101,15 +101,34 @@ def _metric_compute_pool() -> ThreadPoolExecutor:
 _COMPUTING: dict = {}
 
 
-async def _compute_once(key, start):
+async def _compute_once(key, start, env=None, name=None):
     """The result of ``start()`` (a future), shared with every request for
     ``key`` made while it runs. A request that is cancelled (its page left)
-    stops waiting; the computation goes on for the others and the cache."""
+    stops waiting; the computation goes on for the others and the cache.
+    With ``env``, the computation is a Running Task named ``name`` while it
+    runs, in every window's Tasks list."""
     future = _COMPUTING.get(key)
     if future is None:
         future = _COMPUTING[key] = start()
         future.add_done_callback(lambda _: _COMPUTING.pop(key, None))
+        tm = getattr(env, "tm", None)
+        if tm is not None:
+            task_id = f"metric:{key}"
+            tm.showWork(task_id, name or "Computing a metric")
+            future.add_done_callback(lambda _: tm.endWork(task_id))
     return await asyncio.shield(future)
+
+
+def _metric_task_name(metric_id, model, dataset) -> str:
+    """"Computing Force MAE · shard_03 / P1": what a Running Task computes."""
+    from ffast.metrics.registry import default_registry
+    try:
+        label = default_registry.get(metric_id)[0].label or metric_id
+    except KeyError:
+        label = metric_id
+    names = (getattr(o, "getDisplayName", None) for o in (dataset, model))
+    on = " / ".join(str(name()) for name in names if name)
+    return f"Computing {label}" + (f" · {on}" if on else "")
 
 
 def _needs_prediction(metric_id) -> bool:
@@ -477,7 +496,8 @@ class ServerSession:
             try:
                 # Shared with a 2D plot asking for the same metric meanwhile.
                 key_made = await _compute_once(key, lambda: loop.run_in_executor(
-                    _metric_compute_pool(), data.generateMetric, metric_id, params, model, dataset))
+                    _metric_compute_pool(), data.generateMetric, metric_id, params, model, dataset),
+                    self.env, _metric_task_name(metric_id, model, dataset))
             except Exception as exc:
                 key_made, error = None, str(exc)
             made.append(key_made)
@@ -1488,7 +1508,7 @@ class ServerSession:
             try:
                 made = await _compute_once(key, lambda: asyncio.get_running_loop().run_in_executor(
                     _metric_compute_pool(), generate,
-                ))
+                ), self.env, _metric_task_name(metric_id, model, dataset))
             except Exception as exc:
                 logger.error("REQUEST_METRIC compute failed %s: %s", metric_id, exc)
                 made = None
