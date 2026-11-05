@@ -14,6 +14,7 @@ from cluster.bootstrap import (
     _dist_name,
     install_marker,
     light_dependencies,
+    live_marker_extra,
     needs_provision,
     provision_launch_cmd,
     read_dependencies,
@@ -179,16 +180,19 @@ async def test_provision_node_not_a_checkout_raises_clustererror(tmp_path):
 # _scp_push). The checkout is a minimal tree, so its install marker is known and
 # the "already up to date" marker can be matched.
 
-def _install_fake_build(monkeypatch):
+def _install_fake_build(monkeypatch, detectana_root=None):
+    """Fake the wheel builds; DetectAna is absent unless ``detectana_root`` is given."""
     builds = []
 
-    def _fake_build(project_root, out_dir):
-        p = Path(out_dir) / "ffast-2.0.0-py3-none-any.whl"
+    def _fake_build(project_root, out_dir, name="ffast"):
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        p = Path(out_dir) / f"{name}-2.0.0-py3-none-any.whl"
         p.write_bytes(b"fake-wheel")
         builds.append(p)
         return p
 
     monkeypatch.setattr(bootstrap, "build_server_wheel", _fake_build)
+    monkeypatch.setattr(bootstrap, "detectana_source", lambda: detectana_root)
     return builds
 
 
@@ -197,7 +201,8 @@ async def test_provision_node_skips_when_node_up_to_date(tmp_path, monkeypatch):
     skipped: no build, no mkdir, no scp — just the plain launch command."""
     builds = _install_fake_build(monkeypatch)
     _checkout(tmp_path)
-    marker = install_marker(tmp_path, ["msgpack>=1.0"])
+    marker = install_marker(tmp_path, ["msgpack>=1.0"],
+                            live_marker_extra("~/.ffast/venv", ["Python/3.11"], None))
     ssh_calls = []
     scp_calls = []
 
@@ -231,7 +236,7 @@ async def test_provision_node_builds_and_records_the_marker_when_stale(tmp_path,
     the job records this checkout's marker."""
     builds = _install_fake_build(monkeypatch)
     _checkout(tmp_path)
-    marker = install_marker(tmp_path, ["msgpack>=1.0"])
+    marker = install_marker(tmp_path, ["msgpack>=1.0"], live_marker_extra("~/v", [], None))
 
     async def _fake_ssh_run(profile, *args, stdin=None):
         if args[0] == "cat":
@@ -291,3 +296,84 @@ async def test_provision_node_scp_failure_raises_clustererror(tmp_path, monkeypa
     profile = ClusterProfile(name="x", host="login.fake", provision=True)
     with pytest.raises(ClusterError, match="Failed to copy the server wheel"):
         await provision_node(profile, project_root=tmp_path)
+
+
+# ── Live LAMMPS runs (ADR 0086): DetectAna wheel and node setup ──────────────
+
+def _detectana_checkout(root: Path, version: str = "0.3.0", bundle: bool = True) -> Path:
+    (root / "src" / "detectana").mkdir(parents=True)
+    (root / "pyproject.toml").write_text(f'[project]\nname = "detectana"\nversion = "{version}"\n')
+    (root / "src" / "detectana" / "__init__.py").write_text("")
+    if bundle:
+        (root / "src" / "detectana" / "bundle.py").write_text("X = 1\n")
+    return root
+
+
+def test_provision_launch_cmd_installs_detectana_and_sets_up_live_runs():
+    s = provision_launch_cmd("~/v", "~/w.whl", [], ["env/staging/2024.1", "Python/3.11"], "~/m", "sha",
+                             detectana_wheel="~/.ffast/detectana-0.3.0-py3-none-any.whl")
+    assert "uv pip install --no-deps --reinstall ~/.ffast/detectana-0.3.0-py3-none-any.whl" in s
+    assert s.index("~/w.whl") < s.index("detectana-0.3.0")
+    assert ("python -m ffast.live.node_setup --venv ~/v --module env/staging/2024.1 "
+            "--module Python/3.11") in s
+    # both before the marker, so a failed step is never recorded as current
+    assert s.index("ffast.live.node_setup") < s.index("printf '%s' sha")
+
+
+def test_provision_launch_cmd_without_detectana_still_sets_up_the_wrapper():
+    s = provision_launch_cmd("~/v", "~/w.whl", [], [], "~/m", "sha")
+    assert "detectana" not in s
+    assert "python -m ffast.live.node_setup --venv ~/v" in s
+
+
+def test_the_marker_changes_when_detectana_code_or_the_modules_change(tmp_path):
+    d = _detectana_checkout(tmp_path / "d")
+    base = live_marker_extra("~/v", ["Python/3.11"], d)
+    assert base == live_marker_extra("~/v", ["Python/3.11"], d)
+    assert base != live_marker_extra("~/v", ["Python/3.12"], d)
+    assert base != live_marker_extra("~/v", ["Python/3.11"], None)
+    (d / "src" / "detectana" / "bundle.py").write_text("X = 2\n")
+    assert base != live_marker_extra("~/v", ["Python/3.11"], d)
+    c = _checkout(tmp_path / "c")
+    assert install_marker(c, [], base) != install_marker(c, [], "")
+
+
+def test_detectana_source_finds_the_checkout_behind_the_install():
+    import importlib.util
+
+    src = bootstrap.detectana_source()
+    spec = importlib.util.find_spec("detectana")
+    assert src is not None and Path(spec.origin).resolve().is_relative_to(src)
+    assert (src / "src" / "detectana" / "bundle.py").is_file()
+
+
+def test_detectana_source_refuses_an_old_checkout(tmp_path, monkeypatch):
+    import importlib.machinery
+    import importlib.util
+
+    d = _detectana_checkout(tmp_path / "old", version="0.2.0")
+    spec = importlib.machinery.ModuleSpec("detectana", None,
+                                          origin=str(d / "src" / "detectana" / "__init__.py"))
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: spec)
+    assert bootstrap.detectana_source() is None
+
+
+async def test_provision_node_ships_the_detectana_wheel(tmp_path, monkeypatch):
+    d = _detectana_checkout(tmp_path / "d")
+    builds = _install_fake_build(monkeypatch, detectana_root=d)
+    _checkout(tmp_path / "c")
+    pushed = []
+
+    async def _fake_ssh_run(profile, *args, stdin=None):
+        return ("", "", 1) if args[0] == "cat" else ("", "", 0)
+
+    async def _fake_scp(profile, local, remote):
+        pushed.append(remote)
+
+    monkeypatch.setattr(bootstrap, "_ssh_run", _fake_ssh_run)
+    monkeypatch.setattr(bootstrap, "_scp_push", _fake_scp)
+    profile = ClusterProfile(name="x", host="login.fake", provision=True, venv_path="~/v")
+    cmd = await provision_node(profile, project_root=tmp_path / "c")
+    assert [b.name for b in builds] == ["ffast-2.0.0-py3-none-any.whl", "detectana-2.0.0-py3-none-any.whl"]
+    assert pushed == [f"{NODE_DIR}/ffast-2.0.0-py3-none-any.whl", f"{NODE_DIR}/detectana-2.0.0-py3-none-any.whl"]
+    assert f"--reinstall {NODE_DIR}/detectana-2.0.0-py3-none-any.whl" in cmd

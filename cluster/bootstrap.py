@@ -68,14 +68,66 @@ def light_dependencies(dependencies: list[str]) -> list[str]:
     return [d for d in dependencies if _dist_name(d) not in HEAVY_DEPS]
 
 
-def install_marker(project_root: Path, light_deps: list[str]) -> str:
+def detectana_source() -> Optional[Path]:
+    """The local DetectAna checkout to ship to the cluster (ADR 0086), or None.
+
+    DetectAna's reference-bundle API (0.3.0) is not published, so the wheel is
+    built from the checkout the local install points at (an editable install of
+    ``~/GitHub/DetectAna``). Found without importing DetectAna. None when it is
+    not installed, installed without a source folder, or older than 0.3.0.
+    """
+    import importlib.util
+
+    try:
+        spec = importlib.util.find_spec("detectana")
+    except (ImportError, ValueError):
+        return None
+    if spec is None or not spec.origin:
+        return None
+    for parent in Path(spec.origin).resolve().parents:
+        pyproject = parent / "pyproject.toml"
+        if pyproject.is_file():
+            try:
+                project = tomllib.loads(pyproject.read_text()).get("project", {})
+            except (OSError, tomllib.TOMLDecodeError):
+                return None
+            if project.get("name") != "detectana":
+                return None
+            version = tuple(int(x) for x in re.findall(r"\d+", str(project.get("version", "0")))[:3])
+            has_bundle = (parent / "src" / "detectana" / "bundle.py").is_file()
+            return parent if version >= (0, 3, 0) and has_bundle else None
+    return None
+
+
+def detectana_fingerprint(root: Path) -> str:
+    """Hash of DetectAna's code and pyproject: a change reinstalls it on the node."""
+    root = Path(root)
+    h = hashlib.sha256()
+    files = sorted((root / "src").rglob("*.py")) + [root / "pyproject.toml"]
+    for p in files:
+        if "__pycache__" in p.parts:
+            continue
+        h.update(p.relative_to(root).as_posix().encode() + b"\0" + p.read_bytes() + b"\0")
+    return h.hexdigest()[:16]
+
+
+def live_marker_extra(venv: str, modules: list[str], detectana_root: Optional[Path]) -> str:
+    """What the live-run setup adds to the install marker: venv, modules, DetectAna code."""
+    extra = "live:" + venv + "\0" + "\0".join(modules)
+    if detectana_root is not None:
+        extra += "\0detectana:" + detectana_fingerprint(detectana_root)
+    return extra
+
+
+def install_marker(project_root: Path, light_deps: list[str], extra: str = "") -> str:
     """Hex sha256 naming what a venv installed from this checkout holds.
 
     It covers the code the server runs (the code fingerprint), the JSON files
     the wheel ships, and the light dependencies. It is read from the checkout
     without building anything, and it ignores file timestamps: a built wheel's
     own sha256 changes on every build, so it never matched and every connect
-    reinstalled (ADR 0074).
+    reinstalled (ADR 0074). ``extra`` names anything else installed with it:
+    the DetectAna code and the live-run settings (ADR 0086).
     """
     root = Path(project_root)
     h = hashlib.sha256()
@@ -86,6 +138,8 @@ def install_marker(project_root: Path, light_deps: list[str]) -> str:
             h.update(rel.encode() + b"\0" + p.read_bytes() + b"\0")
     for dep in light_deps:
         h.update(dep.encode() + b"\0")
+    if extra:
+        h.update(b"extra\0" + extra.encode())
     return h.hexdigest()
 
 
@@ -100,8 +154,8 @@ def needs_provision(local_marker: str, node_marker: str | None) -> bool:
     return node_marker is None or node_marker.strip() != local_marker
 
 
-def build_server_wheel(project_root: Path, out_dir: Path) -> Path:
-    """Build the ``ffast`` wheel (no deps) into ``out_dir``; return its path.
+def build_server_wheel(project_root: Path, out_dir: Path, name: str = "ffast") -> Path:
+    """Build the ``name`` wheel (no deps) into ``out_dir``; return its path.
 
     Tries the available build frontend in order — ``uv`` (the project's own tool,
     and the common case since its venvs ship no pip), then PyPA ``build``, then
@@ -121,7 +175,7 @@ def build_server_wheel(project_root: Path, out_dir: Path) -> Path:
         [sys.executable, "-m", "pip", "wheel", "--no-deps",
          "--wheel-dir", str(out_dir), root],
     ]
-    logger.info("Building ffast wheel from %s", project_root)
+    logger.info("Building %s wheel from %s", name, project_root)
     last_err: Exception | None = None
     for cmd in candidates:
         try:
@@ -133,9 +187,9 @@ def build_server_wheel(project_root: Path, out_dir: Path) -> Path:
         raise RuntimeError(
             f"no working wheel builder (tried uv/build/pip); last error: {last_err}"
         )
-    wheels = sorted(out_dir.glob("ffast-*.whl"))
+    wheels = sorted(out_dir.glob(f"{name}-*.whl"))
     if not wheels:
-        raise RuntimeError(f"wheel build produced no ffast-*.whl in {out_dir}")
+        raise RuntimeError(f"wheel build produced no {name}-*.whl in {out_dir}")
     return wheels[-1]
 
 
@@ -193,8 +247,13 @@ def provision_launch_cmd(
     modules: list[str],
     marker_path: str,
     marker: str,
+    detectana_wheel: Optional[str] = None,
 ) -> str:
     """Job command that provisions the venv *then* launches the server (ADR 0028).
+
+    With ``detectana_wheel``, also installs DetectAna (``--no-deps``: its
+    dependencies are the heavy ones the modules provide). Every provision also
+    sets the node up for live LAMMPS runs (``ffast.live.node_setup``, ADR 0086).
 
     Run as the SLURM job on the allocated node: load modules, create a
     ``--system-site-packages`` venv (once), add ``uv`` to it (once), install the
@@ -224,6 +283,13 @@ def provision_launch_cmd(
         # Quoted: unquoted, `msgpack>=1.0` is a shell redirect to a file `=1.0`.
         deps = " ".join(shlex.quote(d) for d in light_deps)
         parts.append(timed("install deps", f"uv pip install {deps}"))
+    if detectana_wheel:
+        parts.append(timed(
+            "install detectana", f"uv pip install --no-deps --reinstall {detectana_wheel}"
+        ))
+    setup = [f"python -m ffast.live.node_setup --venv {venv_path}"]
+    setup += [f"--module {shlex.quote(m)}" for m in modules]
+    parts.append(timed("live setup", " ".join(setup)))
     # Verify the just-installed server is compatible BEFORE writing the marker,
     # so a bad install is never recorded as current.
     parts.append(timed("check server", _VERIFY_SERVER))
@@ -336,9 +402,10 @@ async def provision_node(
         profile.host, venv, modules, root,
     )
 
+    detectana_root = detectana_source()
     try:
         light = light_dependencies(read_dependencies(root / "pyproject.toml"))
-        marker = install_marker(root, light)
+        marker = install_marker(root, light, live_marker_extra(venv, modules, detectana_root))
     except Exception as exc:  # not a repo checkout
         logger.exception("auto-bootstrap: reading the checkout failed")
         raise ClusterError(
@@ -383,8 +450,24 @@ async def provision_node(
                 mk_err,
             )
         await _scp_push(profile, wheel, remote_wheel)
+
+        remote_detectana = None
+        if detectana_root is None:
+            _progress("DetectAna (0.3.0 or later) not installed here from a checkout; "
+                      "live LAMMPS scoring will not work on the cluster")
+        else:
+            _progress(f"Building DetectAna wheel from {detectana_root}…")
+            try:
+                dwheel = build_server_wheel(detectana_root, Path(tmp) / "detectana", "detectana")
+            except Exception as exc:
+                logger.exception("auto-bootstrap: DetectAna wheel build failed")
+                raise ClusterError(
+                    f"Could not build the DetectAna wheel from {detectana_root}: {exc}", str(exc))
+            remote_detectana = f"{NODE_DIR}/{dwheel.name}"
+            await _scp_push(profile, dwheel, remote_detectana)
         _progress("Wheel staged; venv build + install will run inside the SLURM job")
 
-    cmd = provision_launch_cmd(venv, remote_wheel, light, modules, marker_path, marker)
+    cmd = provision_launch_cmd(venv, remote_wheel, light, modules, marker_path, marker,
+                               detectana_wheel=remote_detectana)
     logger.info("auto-bootstrap: job will provision-and-launch: %s", cmd)
     return cmd
