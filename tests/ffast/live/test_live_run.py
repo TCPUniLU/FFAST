@@ -90,7 +90,7 @@ def test_opening_a_run_folder_registers_its_frames_and_sends_the_scores(tmp_path
     # Step-2 rows (one track, T² only) read as T² ÷ the centroid threshold.
     assert kw["series"] == {"frame": [0, 1], "step": [0, 100], "exceedance": [0.2, 1.2],
                             "test": [["geometric", "T2"], ["geometric", "T2"]],
-                            "marked": [False, True]}
+                            "marked": [False, True], "chem": [False, False]}
     assert kw["role"] == "centroid"
     assert kw["analysis_id"] == "0123456789abcdef" and kw["error"] is None
 
@@ -104,7 +104,7 @@ def test_format_2_rows_give_the_worst_test_and_marks():
              "exceedance": 1.5, "test": ["bonds", "SPE"], "marked": True}]
     assert _series_of(rows, {}) == {"frame": [0, 1], "step": [0, 100], "exceedance": [0.5, 1.5],
                                     "test": [["bonds", "T2"], ["bonds", "SPE"]],
-                                    "marked": [False, True]}
+                                    "marked": [False, True], "chem": [False, False]}
 
 
 def test_new_frames_are_announced_as_changed_frames_and_new_scores_appended(tmp_path, monkeypatch):
@@ -171,8 +171,11 @@ def test_a_run_with_frames_has_a_tab_its_3d_view_beside_its_scores(tmp_path):
     assert tab["name"] == "Live 12:00:00 node" and tab["source"] == "live"
     assert tab["has_data_selector"] is False
     kinds = [(p["kind"], p.get("live_run")) for p in tab["panels"]]
-    assert kinds == [("3d", None), ("timeline", run.run_id)]
-    assert tab["panels"][1]["metrics"] == {}
+    assert kinds == [("live", run.run_id), ("3d", None), ("live", run.run_id),
+                     ("timeline", run.run_id), ("live", run.run_id)]
+    assert [p["options"].get("part") for p in tab["panels"]] == [
+        "status", None, "attribution", None, "events"]
+    assert tab["panels"][3]["metrics"] == {}
     assert _kwargs(run.message())["tab"] == "Live 12:00:00 node"
 
 
@@ -195,3 +198,17 @@ def test_a_live_run_panel_is_a_timeline_without_metrics():
     PanelConfig(kind="timeline", row=0, col=0, live_run="r1")
     with pytest.raises(ValidationError, match="live-run panel"):
         PanelConfig(kind="scatter", row=0, col=0, live_run="r1")
+
+
+def test_a_live_panel_names_its_run_and_its_part():
+    from pydantic import ValidationError
+
+    from ffast.config.models import PanelConfig
+
+    PanelConfig(kind="live", row=0, col=0, live_run="r", options={"part": "events"})
+    with pytest.raises(ValidationError, match="names its run"):
+        PanelConfig(kind="live", row=0, col=0, options={"part": "events"})
+    with pytest.raises(ValidationError, match="options.part"):
+        PanelConfig(kind="live", row=0, col=0, live_run="r", options={"part": "x"})
+    with pytest.raises(ValidationError, match="takes no 'metrics'"):
+        PanelConfig(kind="scatter", row=0, col=0, live_run="r")

@@ -512,6 +512,41 @@
     .analysis-panel .panel-params label { font-size: var(--fs-s); color: var(--muted); }
     .analysis-panel .panel-params input[type=number],
     .analysis-panel .panel-params select { height: auto; min-height: calc(1.2em + 6px); font-size: var(--fs-s); max-width: 90px; }
+    /* A live run's tab (ADR 0087): status strip, events, attribution */
+    .analysis-panel .live-part {
+      flex: 1; min-height: 0; overflow: auto; padding: 2px 12px 8px; font-size: var(--fs-s);
+    }
+    .live-chips { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+    .live-chip {
+      border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; white-space: nowrap;
+      color: var(--ink-2);
+    }
+    .live-chip.ok { border-color: var(--median); color: var(--median); }
+    .live-chip.warn { border-color: var(--warn); color: var(--warn); }
+    .live-chip.bad { border-color: var(--danger); color: var(--danger); }
+    .live-rule { color: var(--ink-3); font-size: var(--fs-xs); margin-top: 4px; }
+    .live-problem { color: var(--warn); font-size: var(--fs-xs); margin-top: 2px; }
+    .live-controls { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+    .live-controls label { display: flex; gap: 4px; align-items: center; color: var(--ink-2); }
+    .live-controls button.danger { border-color: var(--danger); color: var(--danger); }
+    table.live-event-list { border-collapse: collapse; width: 100%; }
+    table.live-event-list td { padding: 2px 6px; border-top: 1px solid var(--line); vertical-align: top; }
+    table.live-event-list td:first-child { color: var(--ink-3); white-space: nowrap; width: 1%; }
+    table.live-event-list tr.bad td:last-child { color: var(--danger); }
+    table.live-event-list tr.warn td:last-child { color: var(--warn); }
+    .live-report { color: var(--ink-3); }
+    .live-attribution .live-att-head { color: var(--ink-3); font-size: var(--fs-xs); margin-bottom: 4px; }
+    .live-attribution select { max-width: 100%; margin-bottom: 6px; }
+    .live-attribution table { border-collapse: collapse; width: 100%; }
+    .live-attribution td { padding: 2px 4px; border-top: 1px solid var(--line); }
+    .live-attribution td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .live-attribution td.strong { color: var(--peak-ink); }
+    .live-attribution .live-att-note { color: var(--ink-3); font-size: var(--fs-xs); margin-top: 6px; }
+    .live-attribution .live-att-scale {
+      height: 8px; border-radius: 2px; margin-top: 8px;
+      background: linear-gradient(90deg, #4a5059, var(--peak), #ff3d00);
+    }
+    .live-attribution .live-att-ticks { display: flex; justify-content: space-between; color: var(--ink-3); font-size: var(--fs-xs); }
     .analysis-panel .panel-msg {
       flex: 1; display: flex; align-items: center; justify-content: center;
       color: var(--muted); font-size: var(--fs-s); font-style: italic; padding: 16px; text-align: center;

@@ -929,6 +929,7 @@ CASES = {
         "  const root = {surface: v('--surface'), line: v('--line'), ink2: v('--ink-2'), ink3: v('--ink-3'),"
         "    fsPlot: parseFloat(frame.contentWindow.getComputedStyle(probe).fontSize), font: v('--font'),"
         "    peak: v('--peak'), peakInk: v('--peak-ink'), median: v('--median'),"
+        "    warn: v('--warn'), danger: v('--danger'), ink: v('--ink'),"
         "    series: v('--series').split(',').map((c) => c.trim())};"
         "  frame.remove();"
         "  const dark = th.plotTheme();"   # no tokens in this page: the DARK values

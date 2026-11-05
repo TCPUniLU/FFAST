@@ -105,8 +105,11 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
                 await expect(tab).to_have_class(re.compile(r"\bactive\b"), timeout=15000)
                 active = page.locator(ACTIVE)
                 await expect(active.locator(".panel-3d")).to_have_count(1)
-                caption = active.locator(".analysis-panel .panel-caption-line")
+                caption = active.locator('.analysis-panel[data-kind="timeline"] .panel-caption-line')
                 await expect(caption).to_contain_text("2 frames · 2 scored")
+                # Status strip and events list are panels of the tab too.
+                await expect(active.locator(".live-status .live-chip").first).to_contain_text("LAMMPS step")
+                await expect(active.locator(".live-event-list tr")).to_have_count(0)
                 await expect(active.locator(".analysis-panel .panel-plot .main-svg").first).to_be_attached()
                 await expect(active.locator(".sub-toggle")).to_have_count(0)
                 await expect(page.locator("#dataset-list .obj-row")).to_have_count(1, timeout=15000)
@@ -150,5 +153,135 @@ async def test_web_a_folder_that_is_not_a_run_says_so(tmp_path):
                 await page.locator("#text-ask input").press("Enter")
                 await expect(page.locator("#status")).to_contain_text("not a live-run folder", timeout=15000)
                 await expect(page.locator(".live-run")).to_have_count(0)
+            finally:
+                await browser.close()
+
+
+async def test_the_status_overlays_and_event_helpers(static_origin):
+    now = "2026-11-05T12:00:10.000+00:00"
+    kw = {
+        "run_id": "r1", "fingerprint": "live:r1", "n_frames": 5,
+        "producer": {"last_step": 412300},
+        "progress": {
+            "state": "scoring", "identity": "proven", "heartbeat_utc": "2026-11-05T12:00:07.000+00:00",
+            "scored_through_step": 411900, "first_step": 0, "planned_end_step": 1000000,
+            "rule": {"window_frames": 100, "step_frames": 10, "fraction_threshold": 0.2,
+                     "persist_ps": 5.0, "frame_ps": 0.05},
+            "false_alarm": {"probability": 0.018, "at_least": False, "over": "run"},
+            "alarms": [{"kind": "ood", "onset": {"step": 380000}, "confirmation": {"step": 386000}}],
+        },
+        "series": {"frame": [0, 1, 2, 3], "step": [0, 100, 200, 300], "exceedance": [0.5, 1.2, 0.4, 1.5],
+                   "test": [None] * 4, "marked": [False, True, False, True], "chem": [False, False, False, True]},
+        "stop": {"observed_step": 386500}, "end": None, "stop_requested": True, "events": [],
+    }
+    events = [
+        {"t": now, "kind": "alarm", "alarm": "ood", "onset": {"step": 380000},
+         "confirmation": {"step": 386000}, "test": ["dihedrals", "SPE"], "report": "analysis/a/alarms/1.json"},
+        {"t": now, "kind": "stop_observed", "step": 386500, "how": "halt"},
+        {"t": now, "kind": "warning", "text": "the input writes no restart file"},
+    ]
+    script = f"""async () => {{
+      const lr = await import('{static_origin}/live_run.js');
+      const kw = {json.dumps(kw)};
+      const now = Date.parse('{now}');
+      const stalled = {{ ...kw, progress: {{ ...kw.progress, heartbeat_utc: '2026-11-05T11:56:10.000+00:00' }} }};
+      const early = {{ ...kw, progress: {{ ...kw.progress,
+        false_alarm: {{ probability: 0.0004, at_least: true, over: 'run' }} }} }};
+      return {{
+        chips: lr.liveRunChips(kw, now),
+        stalled: lr.liveRunChips(stalled, now).map((c) => c.text),
+        ended: lr.liveRunChips({{ ...kw, end: {{ state: 'terminated', stop_observed_step: 386400 }} }}, now).map((c) => c.text),
+        rule: lr.liveRunRuleText(kw), early: lr.liveRunRuleText(early),
+        overlays: lr.liveRunOverlays(kw),
+        events: {json.dumps(events)}.map(lr.liveEventLine),
+        pct: [0.018, 0.25, 3e-7, 0.004].map(lr.percent),
+      }};
+    }}"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            got = await page.evaluate(script)
+        finally:
+            await browser.close()
+    chips = [(c["text"], c["tone"]) for c in got["chips"]]
+    assert chips == [("LAMMPS step 412,300 / 1,000,000", ""), ("scored through 411,900", ""),
+                     ("scorer heartbeat 3 s ago", "ok"), ("atom order proven", ""),
+                     ("ALARM at step 386,000", "bad"), ("stop requested", "bad")]
+    assert "scorer heartbeat 4 min ago — stalled?" in got["stalled"]
+    assert "terminated; last saved frame at step 386,400" in got["ended"]
+    assert got["rule"] == ("Alarm rule: 20 % of frames marked within 5 ps (100 frames), checked every "
+                           "0.5 ps. False-alarm chance over the planned 1,000,000 steps: ≤ 1.8 % (estimated).")
+    assert "≥ 0.04 % (estimated; frames taken as uncorrelated until 200 are scored)" in got["early"]
+    o = got["overlays"]
+    assert o["ticks"][0]["xs"] == [100, 300] and o["ticks"][1]["xs"] == [300]
+    assert o["bands"] == [{"x0": 380000, "x1": 386000, "color": "danger"}]
+    assert [(l["x"], l["label"]) for l in o["lines"]] == [
+        (380000, "estimated onset"), (386000, "confirmed"), (386500, "stop observed")]
+    texts = [e["text"] for e in got["events"]]
+    assert texts[0] == "Alarm · estimated onset step 380,000 · confirmed at step 386,000 · dihedrals SPE"
+    assert got["events"][0]["report"] == "analysis/a/alarms/1.json"
+    assert texts[1] == "Stop observed at step 386,500 (fix halt line in log.lammps)"
+    assert got["events"][2]["tone"] == "warn" and got["events"][0]["time"] == "12:00:10"
+    assert got["pct"] == ["1.8 %", "25 %", "< 0.001 %", "0.4 %"]
+
+
+def _alarmed_run_folder(tmp_path):
+    """A run folder whose scorer raised an alarm and whose run stopped."""
+    run = _run_folder(tmp_path, frames=4, scores=False)
+    a = run / rf.ANALYSIS_DIR / "0123456789abcdef"
+    a.mkdir(parents=True)
+    rf.write_json_atomic(a / rf.SETTINGS, {"bundle": "/b.bundle", "scores_format": 2, "role": "centroid"})
+    rf.ScoresWriter(a / rf.SCORES).append([
+        {"segment": 0, "frame": k, "step": 100 * k, "time": 0.05 * k, "identity": "proven",
+         "tracks": {"bonds": {"T2": 1.0, "SPE": 0.1}}, "exceedance": [0.3, 0.4, 1.4, 1.6][k],
+         "test": ["bonds", "T2"], "marked": k >= 2, "chem": {"broken": 0, "close": 0}}
+        for k in range(4)])
+    progress = {"analysis_id": a.name, "state": "done", "identity": "proven", "scored_frames": 4,
+                "scored_through_step": 300, "first_step": 0, "planned_end_step": 300,
+                "alarms": [{"kind": "ood", "onset": {"frame": 1, "step": 100, "time": 0.05},
+                            "confirmation": {"frame": 3, "step": 300, "time": 0.15}}]}
+    rf.write_json_atomic(a / rf.PROGRESS, progress)
+    run_json = rf.read_json(run / rf.RUN_JSON)
+    run_json.update(analyses={a.name: progress}, producer={"last_step": 300},
+                    stop={"observed_step": 300, "method": "halt", "by": "alarm"},
+                    end={"state": "stopped", "stop_observed_step": 300})
+    rf.write_json_atomic(run / rf.RUN_JSON, run_json)
+    rf.append_event(run, "alarm", alarm="ood", onset={"step": 100}, confirmation={"step": 300},
+                    test=["bonds", "T2"], report="analysis/x/alarms/1-ood-step300.json")
+    rf.append_event(run, "stop_observed", step=300, how="halt")
+    return run
+
+
+async def test_web_a_stopped_run_shows_its_alarm_moments_and_events(tmp_path):
+    run = _alarmed_run_folder(tmp_path)
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _file_menu(page, "Open Live Run…")
+                await page.locator("#text-ask input").fill(str(run))
+                await page.locator("#text-ask input").press("Enter")
+                active = page.locator(ACTIVE)
+                status = active.locator(".live-status")
+                await expect(status).to_contain_text("ALARM at step 300", timeout=15000)
+                await expect(status).to_contain_text("stopped at step 300")
+                events = active.locator(".live-events")
+                await expect(events).to_contain_text("Alarm · estimated onset step 100 · confirmed at step 300")
+                await expect(events).to_contain_text("Stop observed at step 300")
+                await expect(active.locator(".analysis-panel .panel-plot .main-svg").first).to_be_attached()
+                notes = await page.evaluate("""(sel) => {
+                  const el = document.querySelector(sel + ' .analysis-panel[data-kind="timeline"] .panel-plot');
+                  return {notes: (el.layout.annotations || []).map((a) => a.text),
+                          rects: (el.layout.shapes || []).filter((s) => s.type === 'rect').length,
+                          traces: el.data.length};
+                }""", ACTIVE)
+                assert {"estimated onset", "confirmed", "stop observed"} <= set(notes["notes"])
+                assert notes["rects"] == 1 and notes["traces"] == 2     # scores, marks (no chemistry flag)
             finally:
                 await browser.close()

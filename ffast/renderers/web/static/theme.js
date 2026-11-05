@@ -12,6 +12,9 @@ const DARK = {
   peak: '#d55e00',
   peakInk: '#ff9a55',
   median: '#2bbf93',
+  warn: '#e69f00',
+  danger: '#ff7a6e',
+  ink: '#f2f3f5',
   series: ['#56b4e9', '#e69f00', '#2bbf93', '#f0e442', '#cc79a7', '#d55e00', '#8fc3ff', '#c3c8cf'],
 };
 
@@ -44,6 +47,9 @@ export function plotTheme() {
     peak: get('--peak', DARK.peak),
     peakInk: get('--peak-ink', DARK.peakInk),
     median: get('--median', DARK.median),
+    warn: get('--warn', DARK.warn),
+    danger: get('--danger', DARK.danger),
+    ink: get('--ink', DARK.ink),
     series: series.length ? series : [...DARK.series],
   };
 }

@@ -431,6 +431,46 @@ function buildTableTimeline(spec, series, ctx) {
     subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
 }
 
+/**
+ * Draw `overlays` on a timeline (a live run, ADR 0087):
+ * - `ticks`: [{xs, color, row}] short marks along the bottom of the plot, on a
+ *   hidden axis of their own (row 0 lowest), one per x;
+ * - `bands`: [{x0, x1, color}] shaded spans of x;
+ * - `lines`: [{x, label, color, dash}] vertical lines, labelled at the top.
+ * Colours are theme names (warn, danger, ink, ink3, median) or CSS colours.
+ */
+export function addOverlays(traces, layout, overlays) {
+  const theme = plotTheme();
+  const colour = (c) => theme[c] || c;
+  const ticks = overlays.ticks || [];
+  if (ticks.length) {
+    layout.yaxis2 = { overlaying: 'y', range: [0, 1], visible: false, fixedrange: true };
+    ticks.forEach((t) => {
+      if (!t.xs?.length) return;
+      traces.push({ x: t.xs, y: t.xs.map(() => 0.025 + 0.04 * (t.row || 0)), yaxis: 'y2',
+        type: 'scatter', mode: 'markers', hoverinfo: 'skip', showlegend: false, name: t.name || '',
+        marker: { symbol: 'line-ns-open', size: 8, line: { width: 1.5, color: colour(t.color) } } });
+    });
+  }
+  const shapes = layout.shapes || [];
+  for (const b of overlays.bands || []) {
+    shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: b.x0, x1: b.x1, y0: 0, y1: 1,
+      fillcolor: colour(b.color), opacity: 0.12, line: { width: 0 }, layer: 'below' });
+  }
+  const notes = layout.annotations || [];
+  (overlays.lines || []).forEach((l, i) => {
+    shapes.push({ type: 'line', xref: 'x', yref: 'paper', x0: l.x, x1: l.x, y0: 0, y1: 1,
+      line: { color: colour(l.color), width: l.width || 1.2, dash: l.dash || 'solid' } });
+    if (l.label) {
+      notes.push({ x: l.x, xref: 'x', y: 1 - 0.07 * (i % 3), yref: 'paper', text: l.label,
+        showarrow: false, xanchor: 'left', yanchor: 'top', xshift: 3,
+        font: { color: colour(l.color), size: theme.fsPlot } });
+    }
+  });
+  if (shapes.length) layout.shapes = shapes;
+  if (notes.length) layout.annotations = notes;
+}
+
 export function buildTimeline(spec, series, ctx) {
   if ((series || []).some((s) => isTable(s.data.y))) return buildTableTimeline(spec, series, ctx);
   const u = ctx.units || {};
@@ -456,6 +496,7 @@ export function buildTimeline(spec, series, ctx) {
     layout.shapes = [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: spec.y_line, y1: spec.y_line,
       line: { color: plotTheme().ink3, width: 1, dash: 'dash' } }];
   }
+  const dataCurveCount = traces.length;
   // With one series, its five worst frames are labelled; several would overlap.
   let peaks = [];
   let extraHeight = 0;
@@ -477,7 +518,11 @@ export function buildTimeline(spec, series, ctx) {
       extraHeight = layout.margin.t - 8;   // and the plot grows by as much, so the curve keeps its size
     }
   }
-  return { traces, layout, peaks, extraHeight, peakUnit: u.y, peaksEligible: traces.length === 1, subInfo: { perFrame: true, curveSeries }, unitAxes: { x: 'x', y: 'y' } };
+  // A live run's marks, alarm band and moments: after the data curves, which
+  // keep their indices for clicks and peaks.
+  if (spec.overlays) addOverlays(traces, layout, spec.overlays);
+  return { traces, layout, peaks, extraHeight, peakUnit: u.y, peaksEligible: dataCurveCount === 1,
+    subInfo: { perFrame: true, curveSeries, dataCurveCount }, unitAxes: { x: 'x', y: 'y' } };
 }
 
 export function buildDensity(spec, series, ctx) {

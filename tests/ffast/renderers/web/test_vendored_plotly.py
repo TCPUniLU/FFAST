@@ -57,5 +57,6 @@ def test_every_trace_type_the_page_draws_is_in_its_plotly():
         asked |= set(re.findall(r"type: '(\w+)'", (STATIC / name).read_text()))
     asked -= {"number"}     # an <input> type, not a trace
     asked -= {"line"}       # a layout shape (a timeline's threshold), not a trace
+    asked -= {"rect"}       # a layout shape (a live run's alarm band), not a trace
     assert {"scatter", "scattergl", "bar"} <= asked
     assert asked <= _shipped_traces()

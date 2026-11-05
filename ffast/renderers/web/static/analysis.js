@@ -41,7 +41,10 @@ import { KIND_3D } from './tab_rules.js';
 import { GRID_COLUMNS, ROW_UNIT_PX, LABEL_FIELDS, toFineGrid } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState } from './layout_state.js';
-import { liveRunProblem, liveRunSeries, liveRunStatus, liveRunThreshold } from './live_run.js';
+import {
+  liveEventLine, liveRunChips, liveRunOverlays, liveRunProblem, liveRunRuleText, liveRunSeries,
+  liveRunStatus, liveRunThreshold,
+} from './live_run.js';
 
 /** Two columns of the smallest plot, and the gap between cells, in px (the grid gap in index.html). */
 const COLUMN_MIN = 360;
@@ -301,6 +304,7 @@ export class AnalysisManager {
   /** Draw a live run's scores (a timeline whose spec names the run): no
    * metric is asked for; the series is the run's last LIVE_RUN_UPDATE. */
   async _drawLivePanel(t, spec, card, token) {
+    if (spec.kind === 'live') return this._drawLivePart(t, spec, card);
     const seq = card.seq = (card.seq || 0) + 1;
     const kw = this._live.get(spec.live_run);
     const status = kw ? liveRunStatus(kw) : 'Waiting for the run…';
@@ -318,12 +322,81 @@ export class AnalysisManager {
       return;
     }
     spec.y_line = liveRunThreshold(kw);
+    spec.overlays = liveRunOverlays(kw);
     card.body.className = 'panel-plot';
     await this._drawPanel(t, spec, card, series, token, seq);
     if (token !== this._renderToken || seq !== card.seq) return;
     // The caption says where the run is, in place of the figure caption.
     card.captionEl.hidden = false;
     card.captionText.textContent = problem ? `${status}. ${problem}` : status;
+  }
+
+  /** A `live` panel of a run's tab (ADR 0087): its status strip, its events,
+   * or the attribution of the clicked frame. Plain HTML, redrawn from the
+   * run's last LIVE_RUN_UPDATE. */
+  _drawLivePart(t, spec, card) {
+    const kw = this._live.get(spec.live_run);
+    const part = spec.options?.part;
+    card.captionEl.hidden = true;
+    card.body.className = `live-part live-${part}`;
+    if (!kw) {
+      card.body.textContent = 'Waiting for the run…';
+      return;
+    }
+    if (part === 'status') this._drawLiveStatus(spec, card, kw);
+    else if (part === 'events') this._drawLiveEvents(card, kw);
+    else if (part === 'attribution') this._drawLiveAttribution?.(spec, card, kw);
+  }
+
+  _drawLiveStatus(spec, card, kw) {
+    const strip = document.createElement('div');
+    strip.className = 'live-chips';
+    for (const c of liveRunChips(kw, Date.now())) {
+      const chip = document.createElement('span');
+      chip.className = `live-chip${c.tone ? ` ${c.tone}` : ''}`;
+      chip.textContent = c.text;
+      strip.appendChild(chip);
+    }
+    const rule = document.createElement('div');
+    rule.className = 'live-rule';
+    rule.textContent = liveRunRuleText(kw);
+    const problem = liveRunProblem(kw);
+    const children = [strip, rule];
+    if (problem) {
+      const p = document.createElement('div');
+      p.className = 'live-problem';
+      p.textContent = problem;
+      children.push(p);
+    }
+    const controls = this._liveControls?.(spec, kw);
+    if (controls) strip.appendChild(controls);
+    card.body.replaceChildren(...children);
+  }
+
+  _drawLiveEvents(card, kw) {
+    const list = card.body.querySelector('table.live-event-list') || document.createElement('table');
+    list.className = 'live-event-list';
+    const stick = !list.isConnected || list.parentElement.scrollTop + list.parentElement.clientHeight
+      >= list.parentElement.scrollHeight - 4;
+    list.replaceChildren(...(kw.events || []).map((e) => {
+      const line = liveEventLine(e);
+      const tr = document.createElement('tr');
+      if (line.tone) tr.className = line.tone;
+      const time = document.createElement('td');
+      time.textContent = line.time;
+      const text = document.createElement('td');
+      text.textContent = line.text;
+      if (line.report) {
+        const a = document.createElement('span');
+        a.className = 'live-report';
+        a.textContent = ` · report: ${line.report}`;
+        text.appendChild(a);
+      }
+      tr.append(time, text);
+      return tr;
+    }));
+    if (!list.isConnected) card.body.replaceChildren(list);
+    if (stick) card.body.scrollTop = card.body.scrollHeight;   // follow new events, unless scrolled back
   }
 
   /** Build (or rebuild) every tab from a TAB_LAYOUT payload. */

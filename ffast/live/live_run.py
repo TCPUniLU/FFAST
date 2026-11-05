@@ -99,19 +99,26 @@ def tab_name(run_id: str) -> str:
 
 
 def live_tab(run: "LiveRun"):
-    """The run's tab: the main 3D view, and its worst test ÷ threshold against step beside it."""
+    """The run's tab: its status and stop controls across the top; the main 3D
+    view beside the worst test ÷ threshold against step; its events below."""
     from ffast.config.models import AnalysisTabConfig, PanelConfig
+
+    def live(part, **place):
+        return PanelConfig(kind="live", live_run=run.run_id, options={"part": part}, **place)
 
     return AnalysisTabConfig(
         name=run.tab_name,
         has_data_selector=False,
         grid=24,
         panels=[
-            PanelConfig(kind="3d", row=0, col=0, rowspan=12, colspan=14),
-            PanelConfig(kind="timeline", row=0, col=14, rowspan=8, colspan=10,
+            live("status", row=0, col=0, rowspan=2, colspan=24, title="Run"),
+            PanelConfig(kind="3d", row=2, col=0, rowspan=10, colspan=10),
+            live("attribution", row=2, col=10, rowspan=10, colspan=4, title="Attribution"),
+            PanelConfig(kind="timeline", row=2, col=14, rowspan=10, colspan=10,
                         title="Worst test ÷ its threshold, against step", x_label="Step",
                         y_label="Score ÷ threshold",
                         legend=False, live_run=run.run_id),
+            live("events", row=12, col=0, rowspan=4, colspan=24, title="Events"),
         ],
     )
 
@@ -143,18 +150,26 @@ def _series_of(rows: list[dict], settings: dict | None = None) -> dict:
     """Per scored frame: the worst test's score ÷ its threshold, that test, and
     whether the frame is marked. Reads format 2 rows and step-2 (format 1) rows."""
     settings = settings or {}
-    out = {"frame": [], "step": [], "exceedance": [], "test": [], "marked": []}
+    out = {"frame": [], "step": [], "exceedance": [], "test": [], "marked": [], "chem": []}
     for r in rows:
         if "exceedance" in r:
             e, test = r.get("exceedance"), r.get("test")
         else:
             e, test = _v1_exceedance(r, settings)
+        chem = r.get("chem") or {}
         out["frame"].append(r.get("frame"))
         out["step"].append(r.get("step"))
         out["exceedance"].append(e)
         out["test"].append(test)
         out["marked"].append(bool(r.get("marked", e is not None and e > 1.0)))
+        out["chem"].append(bool(chem.get("broken") or chem.get("close")))
     return out
+
+
+# What the events list shows; the rest (scorer start, drain) is bookkeeping.
+SHOWN_EVENTS = ("start", "identity", "planned", "warning", "refused", "scorer_failed", "alarm",
+                "stop_policy", "stop_requested", "stop_sent", "stop_observed", "lammps_exit", "end")
+EVENTS_KEPT = 200
 
 
 class LiveRun:
@@ -216,8 +231,7 @@ class LiveRun:
         if self.analysis_id and not self.settings:
             self.settings = rf.read_json(
                 self.run_dir / rf.ANALYSIS_DIR / self.analysis_id / rf.SETTINGS) or {}
-        events = [e for e in rf.read_events(self.run_dir)
-                  if e.get("kind") in ("refused", "warning", "scorer_failed", "identity")]
+        events = [e for e in rf.read_events(self.run_dir) if e.get("kind") in SHOWN_EVENTS]
         return {"frames": frames, "rows": rows, "run": run, "events": events, "error": error}
 
     # ── applying (the server's event loop) ─────────────────────────────────
@@ -258,7 +272,9 @@ class LiveRun:
             "progress": progress,
             "producer": self.run.get("producer"),
             "end": self.run.get("end"),
-            "events": self.events[-20:],
+            "stop": self.run.get("stop"),
+            "stop_requested": (self.run_dir / rf.STOP_REQUEST).exists(),
+            "events": self.events[-EVENTS_KEPT:],
             "error": self.error,
         })
 
