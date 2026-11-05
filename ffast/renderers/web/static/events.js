@@ -71,6 +71,8 @@ export const OUT = Object.freeze({
   // "Stop now" and stop on alarm for an open live run (ADR 0086)
   LIVE_STOP: 'LIVE_STOP',
   LIVE_SET_STOP_ON_ALARM: 'LIVE_SET_STOP_ON_ALARM',
+  // What drove one live frame's score (ADR 0087)
+  LIVE_ATTRIBUTION: 'LIVE_ATTRIBUTION',
 });
 
 /** Server → client notifications and one-shot announcements. */
@@ -93,6 +95,8 @@ export const IN = Object.freeze({
   COMMAND_RESULT: 'COMMAND_RESULT',
   // A live run's state and score series (ADR 0087)
   LIVE_RUN_UPDATE: 'LIVE_RUN_UPDATE',
+  // The answer to LIVE_ATTRIBUTION, to this window only (ADR 0087)
+  LIVE_ATTRIBUTION_RESULT: 'LIVE_ATTRIBUTION_RESULT',
   DIR_LISTING: 'DIR_LISTING',
   DATASET_KEYS_RESPONSE: 'DATASET_KEYS_RESPONSE',
   DATASET_LENGTH_RESPONSE: 'DATASET_LENGTH_RESPONSE',

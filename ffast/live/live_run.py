@@ -112,8 +112,8 @@ def live_tab(run: "LiveRun"):
         grid=24,
         panels=[
             live("status", row=0, col=0, rowspan=2, colspan=24, title="Run"),
-            PanelConfig(kind="3d", row=2, col=0, rowspan=10, colspan=10),
-            live("attribution", row=2, col=10, rowspan=10, colspan=4, title="Attribution"),
+            PanelConfig(kind="3d", row=2, col=0, rowspan=10, colspan=8),
+            live("attribution", row=2, col=8, rowspan=10, colspan=6, title="Attribution"),
             PanelConfig(kind="timeline", row=2, col=14, rowspan=10, colspan=10,
                         title="Worst test ÷ its threshold, against step", x_label="Step",
                         y_label="Score ÷ threshold",
@@ -278,6 +278,46 @@ class LiveRun:
             "events": self.events[-EVENTS_KEPT:],
             "error": self.error,
         })
+
+    # ── attribution (any thread) ────────────────────────────────────────────
+    def _attribution_bundle(self):
+        """The run's bundle, loaded once; ``ValueError`` saying why it cannot be used."""
+        if getattr(self, "_bundle", None) is not None:
+            return self._bundle
+        from ffast.live.data_file import bundle_sha256
+        from ffast.live.detectana_api import DetectAnaMissing, require_detectana
+
+        path = self.settings.get("bundle")
+        if not path:
+            raise ValueError("this run has no scores yet, so no bundle to explain them with")
+        if not Path(path).is_dir():
+            raise ValueError(f"the reference bundle {path} is gone; attribution needs it")
+        want = self.settings.get("bundle_sha256")
+        if want and bundle_sha256(Path(path)) != want:
+            raise ValueError(f"the bundle at {path} changed after this run was scored; "
+                             "attribution would explain other scores")
+        try:
+            detectana = require_detectana()
+        except DetectAnaMissing as exc:
+            raise ValueError(str(exc)) from exc
+        try:
+            self._bundle = detectana.load(path)
+        except detectana.BundleError as exc:
+            raise ValueError(f"DetectAna {detectana.__version__} cannot use the bundle {path}: {exc}") from exc
+        return self._bundle
+
+    def attribution(self, frame: int, test: tuple[str, str] | None = None) -> dict:
+        """What drove frame ``frame``'s score (ADR 0087): computed now, never stored."""
+        from ffast.live.attribution import frame_attribution
+
+        if not 0 <= frame < self.dataset.N:
+            raise ValueError(f"frame {frame} is not read yet ({self.dataset.N} frames)")
+        bundle = self._attribution_bundle()
+        positions = np.array(self.dataset.getCoordinates(frame), dtype=np.float64)
+        out = frame_attribution(bundle, positions, self.settings.get("role", "centroid"), test)
+        out.update(run_id=self.run_id, frame=frame, step=self.dataset.steps[frame],
+                   fingerprint=self.fingerprint)
+        return out
 
     def _stop_on_alarm(self, progress: dict) -> bool:
         """The viewer's last choice (control.json) if any, else the scorer's setting."""

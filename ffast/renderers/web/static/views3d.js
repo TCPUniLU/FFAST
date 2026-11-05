@@ -181,6 +181,7 @@ export class ViewRenderers {
     renderer.setGizmoEnabled(gizmo);
     if (bondStyle) renderer.setBondStyle(...bondStyle);
     if (arrowThickness != null) renderer.setArrowThickness(arrowThickness);
+    if (this._settings.attribution) renderer.setAttribution(this._settings.attribution);
     this._quietly(() => {
       if (this._scene) renderer.applyScene(this._scene);
       if (this._camera) renderer._applyCamera(this._camera);
@@ -240,6 +241,14 @@ export class ViewRenderers {
     this._settings.bondStyle = [width, color, chosen];
     for (const r of this._renderers) r.setBondStyle(width, color, chosen);
   }
+
+  /** A live run's attribution colours on every renderer of this view, or null (renderer.setAttribution). */
+  setAttribution(att) {
+    this._settings.attribution = att || null;
+    for (const r of this._renderers) r.setAttribution(att || null);
+  }
+
+  get attribution() { return this._settings.attribution || null; }
 
   /** A renderer's camera moved (orbit, zoom, a camera command): the others
    * take the same camera, and the app hears it once. */

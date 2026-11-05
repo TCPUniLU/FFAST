@@ -420,6 +420,18 @@ class LiveSetStopOnAlarmRequest(BaseModel):
     on: bool
 
 
+class LiveAttributionRequest(BaseModel):
+    """Typed payload for ``LIVE_ATTRIBUTION``: one scored frame of an open run,
+    and optionally the test (``track`` and ``score``) to explain; else its worst."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    frame: int
+    track: str | None = None
+    score: str | None = None
+
+
 class ListDirRequest(BaseModel):
     """Typed payload for ``LIST_DIR``. ``path=None`` starts at the server
     user's home directory."""

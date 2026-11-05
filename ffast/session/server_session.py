@@ -164,7 +164,7 @@ class ServerSession:
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
             CancelTryMetricRequest, CancelMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
             TraceRequest, RequestMetricBoxesRequest, OpenLiveRunRequest,
-            LiveStopRequest, LiveSetStopOnAlarmRequest,
+            LiveStopRequest, LiveSetStopOnAlarmRequest, LiveAttributionRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -215,6 +215,8 @@ class ServerSession:
             control.LIVE_STOP:                  _Route(self._on_live_stop, ["run_id"], LiveStopRequest),
             control.LIVE_SET_STOP_ON_ALARM:     _Route(self._on_live_set_stop_on_alarm, ["run_id", "on"],
                                                        LiveSetStopOnAlarmRequest),
+            control.LIVE_ATTRIBUTION:           _Route(self._on_live_attribution, ["run_id", "frame"],
+                                                       LiveAttributionRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -937,6 +939,20 @@ class ServerSession:
         except (ValueError, OSError) as exc:
             logger.warning("LIVE_SET_STOP_ON_ALARM %r: %s", run_id, exc)
             await self._emit(pack(control.LIVE_RUN_UPDATE, (), {"run_id": None, "error": str(exc)}))
+
+    async def _on_live_attribution(self, run_id, frame, track=None, score=None, **kwargs) -> None:
+        """Attribution of one live frame (ADR 0087), computed in a thread and
+        answered to this window only; ``error`` says why when it cannot be made."""
+        from ffast.live.live_run import find_run
+        from ffast.protocol.rpc import pack
+
+        test = (track, score) if track and score else None
+        try:
+            run = find_run(self.env, run_id)
+            out = await asyncio.to_thread(run.attribution, int(frame), test)
+        except (ValueError, OSError) as exc:
+            out = {"run_id": run_id, "frame": frame, "error": str(exc)}
+        await self._emit(pack(control.LIVE_ATTRIBUTION_RESULT, (), out))
 
     async def _on_list_dir(self, path=None, **kwargs) -> None:
         """List a server-side directory and push DIR_LISTING.

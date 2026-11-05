@@ -170,6 +170,8 @@ export class MoleculeRenderer {
     this._setLook('rich');
     // Adding this for adoption of atoms colors, when 'Show only forces' is selected
     this._atomColors = null;
+    this._attribution = null;   // a live run's attribution colours (setAttribution)
+    this._lastAtoms = null;
     // RAF handle
     this._rafId = null;
     // Draw only when something changed: an idle view redrawn every frame kept
@@ -478,6 +480,13 @@ export class MoleculeRenderer {
       else console.warn(`MoleculeRenderer: unknown colormap '${atoms.color_by.colormap}' — using element colors`);
     }
 
+    this._lastAtoms = [atoms, only_forces];
+    // A live run's attribution (ADR 0087) paints over the colours while set.
+    const att = this._attribution;
+    if (att) {
+      const ids = this._cachedAtomIds;
+      colors = atoms.positions.map((_, i) => att.atoms[ids ? ids[i] : i] || colors[i]);
+    }
     this._atomColors = colors
 
     const mesh = new THREE.InstancedMesh(this._sphereGeo, this._atomMat.clone(), n);
@@ -547,7 +556,15 @@ export class MoleculeRenderer {
     // Rich look: each bond is two halves, each coloured like the atom at its
     // end (chemistry.alive), unless a Bond colour was chosen. The wire sends
     // bonds as coordinates, so an end's atom is found by its position.
-    const atomAt = this._twoToneBonds() ? this._atomIndexByPosition() : null;
+    // A live run's attribution colours each whole bond by its pair of atoms.
+    const att = this._attribution && this._cachedAtomPositions ? this._attribution : null;
+    const atomAt = this._twoToneBonds() || att ? this._atomIndexByPosition() : null;
+    const ids = this._cachedAtomIds;
+    const pairColour = (a, b) => {
+      const ia = atomAt.get(positionKey(a)), ib = atomAt.get(positionKey(b));
+      if (ia == null || ib == null) return null;
+      return att.bond(ids ? ids[ia] : ia, ids ? ids[ib] : ib);
+    };
     const geo = new THREE.CylinderGeometry(1, 1, 1, LOOKS[this._look].bondSides, 1);
     const mat = new THREE.MeshStandardMaterial({
       color: atomAt ? 0xffffff : this._bondColor, ...LOOKS[this._look].bond });
@@ -558,14 +575,14 @@ export class MoleculeRenderer {
     const start = new THREE.Vector3(), end = new THREE.Vector3(), mid = new THREE.Vector3();
     const dir = new THREE.Vector3(), color = new THREE.Color();
     let count = 0;
-    const place = (from, to, length, atomIndex) => {
+    const place = (from, to, length, atomIndex, pair = null) => {
       dummy.position.copy(from).add(to).multiplyScalar(0.5);
       dummy.quaternion.setFromUnitVectors(up, dir);
       dummy.scale.set(radius, length, radius);
       dummy.updateMatrix();
       mesh.setMatrixAt(count, dummy.matrix);
       if (atomAt) {
-        const c = atomIndex == null ? null : this._atomColors?.[atomIndex];
+        const c = att ? pair : atomIndex == null ? null : this._atomColors?.[atomIndex];
         if (c) sceneColor(c[0], c[1], c[2], color);
         else color.copy(this._bondColor);
         mesh.setColorAt(count, color);
@@ -582,8 +599,9 @@ export class MoleculeRenderer {
       dir.normalize();
       if (atomAt) {
         mid.copy(start).add(end).multiplyScalar(0.5);
-        place(start, mid, length / 2, atomAt.get(positionKey(a)));
-        place(mid, end, length / 2, atomAt.get(positionKey(b)));
+        const pair = att ? pairColour(a, b) : null;
+        place(start, mid, length / 2, atomAt.get(positionKey(a)), pair);
+        place(mid, end, length / 2, atomAt.get(positionKey(b)), pair);
       } else {
         place(start, end, length, null);
       }
@@ -594,6 +612,22 @@ export class MoleculeRenderer {
     this._bondLines = mesh;
     this._scene.add(mesh);
   }
+
+  /**
+   * Colour atoms and bonds by a live run's attribution (ADR 0087), or go back
+   * to the usual colours with null. `att.atoms[k]` is dataset atom k's RGB
+   * (0–1); `att.bond(i, j)` the RGB of the bond between dataset atoms i and j.
+   * @param {{atoms: number[][], bond: (i: number, j: number) => number[]}|null} att
+   */
+  setAttribution(att) {
+    if (att === this._attribution) return;
+    this._attribution = att || null;
+    if (this._lastAtoms && this._cachedAtomPositions) this._updateAtoms(...this._lastAtoms);
+    if (this._lastBonds) this._updateBonds(this._lastBonds);
+  }
+
+  /** Whether attribution colours are on (for tests and the panel). */
+  get attributionShown() { return !!this._attribution; }
 
   _twoToneBonds() {
     return this._look === 'rich' && !this._bondColorChosen && !!this._cachedAtomPositions;

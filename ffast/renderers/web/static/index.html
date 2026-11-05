@@ -537,9 +537,16 @@
     .live-report { color: var(--ink-3); }
     .live-attribution .live-att-head { color: var(--ink-3); font-size: var(--fs-xs); margin-bottom: 4px; }
     .live-attribution select { max-width: 100%; margin-bottom: 6px; }
+    .live-attribution .live-att-modes { display: flex; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
+    .live-attribution .live-att-modes button.active {
+      background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
+    }
     .live-attribution table { border-collapse: collapse; width: 100%; }
     .live-attribution td { padding: 2px 4px; border-top: 1px solid var(--line); }
+    .live-attribution th { padding: 2px 4px; text-align: left; font-weight: 500; color: var(--ink-3); font-size: var(--fs-xs); }
+    .live-attribution th.num { text-align: right; }
     .live-attribution td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .live-attribution td:first-child { white-space: nowrap; }
     .live-attribution td.strong { color: var(--peak-ink); }
     .live-attribution .live-att-note { color: var(--ink-3); font-size: var(--fs-xs); margin-top: 6px; }
     .live-attribution .live-att-scale {

@@ -1673,6 +1673,7 @@ export class FFastApp {
       conn.on(IN.MODEL_DELETED,       (kw, args) => this._onModelDeleted(args[0]));
       conn.on(IN.LOADER_TYPES, (kw) => this._browser.setLoaderTypes(kw));
       conn.on(IN.LIVE_RUN_UPDATE, (kw) => this._onLiveRunUpdate(kw));
+      conn.on(IN.LIVE_ATTRIBUTION_RESULT, (kw) => this._live().onResult(kw));
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.DATASET_LENGTH_RESPONSE, (kw, args) => this._browser.onDatasetLength(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
@@ -2235,6 +2236,7 @@ export class FFastApp {
     // Update frame slider
     if (Number.isInteger(scene.frame_index)) {
       view.frame = scene.frame_index;
+      this._liveUi?.sync();   // attribution colours belong to one frame
       if (view === this._focused()) this._reloadForcePicks();
     }
     if (this._getViewDataset(scene)) this._syncPlayback();
@@ -2558,11 +2560,19 @@ export class FFastApp {
     this._setStatus('Opening live run…', 'connected');
   }
 
-  /** A live panel's command (stop, stop on alarm; live_ui.js). */
+  /** A live panel's command (stop, stop on alarm, attribution; live_ui.js). */
   _liveCommand(cmd) {
-    if (!this._conn) return;
-    this._liveUi ??= new LiveUi({ send: (event, kw) => this._conn?.send(event, kw, []) });
-    this._liveUi.command(cmd);
+    if (this._conn) this._live().command(cmd);
+  }
+
+  /** The page's live-run controls, made on first use. */
+  _live() {
+    this._liveUi ??= new LiveUi({
+      send: (event, kw) => this._conn?.send(event, kw, []),
+      analysis: this._analysis, mainView: this._mainView,
+      shown: () => ({ datasetFp: this._currentDatasetFp, frame: this._main.current?.frame ?? null }),
+    });
+    return this._liveUi;
   }
 
   /** A live run's state and scores (ADR 0087): its tab's score panel draws
@@ -2870,6 +2880,7 @@ export class FFastApp {
       frame_index: frame,
     });
     view.frame = frame;
+    this._liveUi?.sync();   // attribution colours belong to one frame
     if (view === this._focused()) this._reloadForcePicks();
     this._independent.syncLinkedFrames();
   }

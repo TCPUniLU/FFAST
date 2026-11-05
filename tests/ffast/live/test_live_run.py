@@ -237,3 +237,53 @@ def test_stop_now_and_stop_on_alarm_write_into_the_run_folder(tmp_path):
     run.run["end"] = {"state": "finished"}
     with pytest.raises(ValueError, match="already ended"):
         stop_run(env, run.run_id)
+
+
+def _scored_run_with_bundle(tmp_path, n=3):
+    """A run folder whose frames are aspirin (bundle atom order), the last one
+    with bond C0–H14 pulled 0.6 Å, and whose settings name a real bundle."""
+    from ffast.live.data_file import bundle_sha256
+    from tests.ffast.live.bundle_helpers import initial_atoms, make_bundle
+
+    (tmp_path / "b").mkdir()
+    bundle_dir = make_bundle(tmp_path / "b")[0]
+    base = initial_atoms().get_positions()
+    frames = [base.copy() for _ in range(n)]
+    u = frames[-1][14] - frames[-1][0]
+    frames[-1][14] += 0.6 * u / np.linalg.norm(u)
+    d = tmp_path / "20261105-120000-node-1-abcd"
+    d.mkdir()
+    rf.write_json_atomic(d / rf.RUN_JSON, {"format": rf.RUN_FORMAT, "run_id": d.name, "end": None})
+    (d / rf.FRAMES).write_text(dump_text(frames))
+    a = d / rf.ANALYSIS_DIR / "0123456789abcdef"
+    a.mkdir(parents=True)
+    rf.write_json_atomic(a / rf.SETTINGS, {"bundle": str(bundle_dir), "role": "centroid",
+                                           "bundle_sha256": bundle_sha256(bundle_dir)})
+    return d, bundle_dir
+
+
+def test_attribution_of_a_live_frame_names_the_stretched_bond(tmp_path):
+    d, _ = _scored_run_with_bundle(tmp_path)
+    run = LiveRun(_Env(), d, lambda m: None)
+    run.apply(run.read_files())
+    got = run.attribution(2, ("bonds", "T2"))
+    assert got["run_id"] == d.name and got["frame"] == 2 and got["step"] == 200
+    assert got["fingerprint"] == f"live:{d.name}" and got["groups"][0]["label"] == "bond C0-H14"
+    assert got["role"] == "centroid"
+    with pytest.raises(ValueError, match="not read yet"):
+        run.attribution(9)
+
+
+def test_attribution_says_when_the_bundle_is_gone_or_changed(tmp_path):
+    import shutil
+
+    d, bundle_dir = _scored_run_with_bundle(tmp_path)
+    run = LiveRun(_Env(), d, lambda m: None)
+    run.apply(run.read_files())
+    with open(bundle_dir / "manifest.json", "a") as fh:
+        fh.write(" ")
+    with pytest.raises(ValueError, match="changed after this run was scored"):
+        run.attribution(0)
+    shutil.rmtree(bundle_dir)
+    with pytest.raises(ValueError, match="is gone"):
+        run.attribution(0)

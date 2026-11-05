@@ -89,6 +89,8 @@ OPEN_LIVE_RUN = "OPEN_LIVE_RUN"
 # "Stop now" for an open live run, and its stop-on-alarm switch (ADR 0086).
 LIVE_STOP = "LIVE_STOP"
 LIVE_SET_STOP_ON_ALARM = "LIVE_SET_STOP_ON_ALARM"
+# What drove one live frame's score, computed when asked (ADR 0087).
+LIVE_ATTRIBUTION = "LIVE_ATTRIBUTION"
 
 CLIENT_TO_SERVER = frozenset(
     {
@@ -102,7 +104,7 @@ CLIENT_TO_SERVER = frozenset(
         REQUEST_USER_METRICS, SAVE_USER_METRIC, DELETE_USER_METRIC, EXPORT_USER_METRIC,
         REQUEST_METRIC_INPUTS, CHECK_METRIC, TRY_METRIC, CANCEL_TRY_METRIC,
         REQUEST_METRIC_BOXES, ADD_SESSION_METRICS, TRACE, OPEN_LIVE_RUN,
-        LIVE_STOP, LIVE_SET_STOP_ON_ALARM,
+        LIVE_STOP, LIVE_SET_STOP_ON_ALARM, LIVE_ATTRIBUTION,
     }
 )
 
@@ -155,6 +157,8 @@ COMMAND_RESULT = "COMMAND_RESULT"
 # A live run's state and score series, to every window (ADR 0087); also the
 # answer to OPEN_LIVE_RUN, with ``error`` set when the folder is not a run.
 LIVE_RUN_UPDATE = "LIVE_RUN_UPDATE"
+# The answer to LIVE_ATTRIBUTION, to the asking window only; ``error`` when it cannot be made.
+LIVE_ATTRIBUTION_RESULT = "LIVE_ATTRIBUTION_RESULT"
 # Pushed to a window on connect and to every window after a change (ADR 0062);
 # also the answer to REQUEST_METRIC_CATALOG, which only the asker gets.
 METRIC_CATALOG = "METRIC_CATALOG"

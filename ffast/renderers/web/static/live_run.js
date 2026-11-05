@@ -59,7 +59,8 @@ export function liveRunChips(kw, nowMs) {
   const chips = [];
   const last = kw.producer?.last_step;
   const end = p.planned_end_step;
-  chips.push({ text: `LAMMPS step ${fmt(last)}${end != null ? ` / ${fmt(end)}` : ''}`, tone: '' });
+  chips.push({ text: last == null ? 'LAMMPS: no frame written yet'
+    : `LAMMPS step ${fmt(last)}${end != null ? ` / ${fmt(end)}` : ''}`, tone: '' });
   if (p.scored_through_step != null) chips.push({ text: `scored through ${fmt(p.scored_through_step)}`, tone: '' });
   if (p.heartbeat_utc && !kw.end && !['done', 'refused', 'failed'].includes(p.state)) {
     const age = Math.max(0, (nowMs - Date.parse(p.heartbeat_utc)) / 1000);
@@ -176,4 +177,38 @@ export function liveRunSeries(kw) {
     data: { x: { nd: { values: s.step, shape: [s.step.length] } },
             y: { nd: { values: y, shape: [y.length] } } },
   }];
+}
+
+// Attribution strength ÷ threshold on a fixed scale (ADR 0087): 0 grey, 1 the
+// peak orange, 2 and above red. The same colour means the same on every frame.
+const ATT_STOPS = [[0, [0x4a, 0x50, 0x59]], [1, [0xd5, 0x5e, 0x00]], [2, [0xff, 0x3d, 0x00]]];
+export const ATTRIBUTION_MAX = 2;
+
+/** RGB (0–1) of an attribution strength ÷ threshold, clamped to 0–2. */
+export function attributionRgb(v) {
+  const x = Math.min(ATTRIBUTION_MAX, Math.max(0, Number.isFinite(v) ? v : 0));
+  const k = x >= 1 ? 1 : 0;
+  const [x0, c0] = ATT_STOPS[k], [x1, c1] = ATT_STOPS[k + 1];
+  const t = (x - x0) / (x1 - x0);
+  return c0.map((a, i) => (a + (c1[i] - a) * t) / 255);
+}
+
+/**
+ * The renderer's colours for one attribution reply: every atom by its
+ * strength; a bond by its own group's strength when it is one (bonds track),
+ * otherwise by the weaker of its two atoms, so only bonds inside a strong
+ * group light up.
+ * @returns {{atoms: number[][], bond: (i: number, j: number) => number[]}}
+ */
+export function attributionColours(result) {
+  const atom = result.atom_strength || [];
+  const own = result.bond_strength || {};
+  return {
+    atoms: atom.map(attributionRgb),
+    bond: (i, j) => {
+      const key = i < j ? `${i}-${j}` : `${j}-${i}`;
+      const v = key in own ? own[key] : Math.min(atom[i] ?? 0, atom[j] ?? 0);
+      return attributionRgb(v);
+    },
+  };
 }

@@ -225,6 +225,8 @@ export class AnalysisManager {
     this._subsets = new Map();
     /** Live runs (ADR 0087): run id → the last LIVE_RUN_UPDATE. */
     this._live = new Map();
+    /** run id → {result, mode, pending}: the clicked frame's attribution (live_ui.js). */
+    this._liveAtt = new Map();
 
     // One ⋯ menu list for every panel (web parity: plot and table export).
     const panelMenuList = document.createElement('div');
@@ -298,6 +300,19 @@ export class AnalysisManager {
     }
   }
 
+  /** A live run's attribution state changed (live_ui.js): redraw its attribution panels. */
+  setLiveAttribution(runId, state) {
+    this._liveAtt.set(runId, state);
+    const t = this._activeTab();
+    if (!t || !t.slots.every((slot) => slot.cards)) return;
+    for (const slot of t.slots) {
+      slot.cards.forEach((card, i) => {
+        const spec = slot.specs[i];
+        if (spec.live_run === runId && spec.options?.part === 'attribution') this._drawLivePart(t, spec, card);
+      });
+    }
+  }
+
   /** The name of a live run's tab, once the server lists it. */
   liveTabId(name) {
     return this._tabs.find((t) => t.spec.name === name)?.id ?? null;
@@ -347,7 +362,7 @@ export class AnalysisManager {
     }
     if (part === 'status') this._drawLiveStatus(spec, card, kw);
     else if (part === 'events') this._drawLiveEvents(card, kw);
-    else if (part === 'attribution') this._drawLiveAttribution?.(spec, card, kw);
+    else if (part === 'attribution') this._drawLiveAttribution(spec, card, kw);
   }
 
   _drawLiveStatus(spec, card, kw) {
@@ -396,6 +411,70 @@ export class AnalysisManager {
       processes: kw.progress?.processes ?? null }));
     box.append(label, stop);
     return box;
+  }
+
+  /** The clicked frame's strongest descriptor groups, as strength ÷ threshold
+   * (never shares), with the test explained and the colour switch. */
+  _drawLiveAttribution(spec, card, kw) {
+    const state = this._liveAtt.get(kw.run_id);
+    const r = state?.result;
+    const el = (tag, cls, text) => {
+      const e = document.createElement(tag);
+      if (cls) e.className = cls;
+      if (text != null) e.textContent = text;
+      return e;
+    };
+    if (!state) {
+      card.body.replaceChildren(el('div', 'live-att-note', 'Click a point on the score plot to see what drove that frame\'s score.'));
+      return;
+    }
+    if (state.pending) {
+      card.body.replaceChildren(el('div', 'live-att-note', `Asking DetectAna about frame ${state.frame}…`));
+      return;
+    }
+    if (r?.error) {
+      card.body.replaceChildren(el('div', 'live-problem', r.error));
+      return;
+    }
+    const head = el('div', 'live-att-head',
+      `Step ${Number(r.step).toLocaleString('en-US')} · ${r.test.join(' ')} ${r.ratio.toFixed(2)}× threshold`);
+    const modes = el('div', 'live-att-modes');
+    for (const m of ['element', 'attribution']) {
+      const b = el('button', state.mode === m ? 'active' : '', m === 'element' ? 'Element colours' : 'Attribution');
+      b.type = 'button';
+      b.dataset.mode = m;
+      b.setAttribute('aria-pressed', String(state.mode === m));
+      b.addEventListener('click', () => this._onLive?.({ action: 'attribution_mode', run_id: kw.run_id, mode: m }));
+      modes.appendChild(b);
+    }
+    const pick = el('select', 'live-att-test');
+    pick.setAttribute('aria-label', 'Test to explain');
+    for (const t of r.tests || []) {
+      const o = el('option', '', `${t.track} ${t.score} (${t.ratio.toFixed(2)}×)`);
+      o.value = `${t.track}|${t.score}`;
+      o.selected = t.track === r.test[0] && t.score === r.test[1];
+      pick.appendChild(o);
+    }
+    pick.addEventListener('change', () => {
+      const [track, score] = pick.value.split('|');
+      this._onLive?.({ action: 'attribute', run_id: kw.run_id, frame: r.frame, track, score });
+    });
+    const table = el('table', 'live-att-groups');
+    const headRow = el('tr', 'live-att-cols');
+    headRow.append(el('th', '', 'Group'), el('th', 'num', 'Strength'), el('th', 'num', 'Numbers'));
+    table.appendChild(headRow);
+    for (const g of r.groups || []) {
+      const tr = el('tr');
+      tr.append(el('td', '', g.label), el('td', `num${g.strength >= 1 ? ' strong' : ''}`, g.strength.toFixed(2)),
+        el('td', 'num', String(g.size)));
+      table.appendChild(tr);
+    }
+    const note = el('div', 'live-att-note', 'Strength ÷ threshold. Strengths overlap: they do not add up to '
+      + 'the score. Larger groups tend to score higher.');
+    const scale = el('div', 'live-att-scale');
+    const ticks = el('div', 'live-att-ticks');
+    ticks.append(el('span', '', '0'), el('span', '', '1'), el('span', '', '≥ 2'));
+    card.body.replaceChildren(head, modes, pick, table, note, scale, ticks);
   }
 
   _drawLiveEvents(card, kw) {
@@ -1903,6 +1982,8 @@ export class AnalysisManager {
       card.frameTimer = setTimeout(() => {
         card.frameTimer = null;
         this._onPointFrame(frame);
+        // A live run's frame is also explained (ADR 0087): its attribution is asked for.
+        if (spec.live_run) this._onLive?.({ action: 'attribute', run_id: spec.live_run, frame: frame.frame });
       }, PLOT_CONFIG.doubleClickDelay ?? 300);
     });
     if (el.removeAllListeners) el.removeAllListeners('plotly_doubleclick');

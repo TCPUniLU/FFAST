@@ -108,7 +108,7 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
                 caption = active.locator('.analysis-panel[data-kind="timeline"] .panel-caption-line')
                 await expect(caption).to_contain_text("2 frames · 2 scored")
                 # Status strip and events list are panels of the tab too.
-                await expect(active.locator(".live-status .live-chip").first).to_contain_text("LAMMPS step")
+                await expect(active.locator(".live-status .live-chip").first).to_contain_text("LAMMPS")
                 await expect(active.locator(".live-event-list tr")).to_have_count(0)
                 await expect(active.locator(".analysis-panel .panel-plot .main-svg").first).to_be_attached()
                 await expect(active.locator(".sub-toggle")).to_have_count(0)
@@ -319,5 +319,91 @@ async def test_web_stop_now_asks_first_and_stop_on_alarm_switches(tmp_path):
                 await expect(active.locator(".live-stop-now")).to_be_disabled()
                 assert rf.read_json(run / rf.STOP_REQUEST)["by"] == "user"
                 await expect(active.locator(".live-status")).to_contain_text("stop requested")
+            finally:
+                await browser.close()
+
+
+async def test_attribution_colours_on_a_fixed_scale(static_origin):
+    script = f"""async () => {{
+      const lr = await import('{static_origin}/live_run.js');
+      const r3 = (c) => c.map((v) => Math.round(v * 255));
+      const c = lr.attributionColours({{ atom_strength: [0, 1.5, 3, 0.2], bond_strength: {{'0-1': 1}} }});
+      return {{
+        zero: r3(lr.attributionRgb(0)), one: r3(lr.attributionRgb(1)), two: r3(lr.attributionRgb(2)),
+        over: r3(lr.attributionRgb(7)), nan: r3(lr.attributionRgb(NaN)),
+        atoms: c.atoms.map(r3), own: r3(c.bond(1, 0)), weaker: r3(c.bond(2, 3)),
+      }};
+    }}"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            got = await page.evaluate(script)
+        finally:
+            await browser.close()
+    assert got["zero"] == [0x4a, 0x50, 0x59] == got["nan"]
+    assert got["one"] == [0xd5, 0x5e, 0x00] and got["two"] == [0xff, 0x3d, 0x00] == got["over"]
+    assert got["atoms"][2] == got["two"]
+    assert got["own"] == got["one"]                       # the bond's own group
+    assert got["weaker"] == got["atoms"][3]               # else the weaker atom
+
+
+async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
+    from tests.ffast.live.test_live_run import _scored_run_with_bundle
+
+    run, _ = _scored_run_with_bundle(tmp_path)
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                # No scores in this folder: the plot needs some to click on.
+                [adir] = list((run / rf.ANALYSIS_DIR).iterdir())
+                rf.ScoresWriter(adir / rf.SCORES).append([
+                    {"segment": 0, "frame": k, "step": 100 * k, "time": 0.05 * k, "identity": "proven",
+                     "tracks": {}, "exceedance": [0.2, 3.0, 1.5][k], "test": ["bonds", "T2"],
+                     "marked": k == 2, "chem": {"broken": 0, "close": 0}} for k in range(3)])
+                await _file_menu(page, "Open Live Run…")
+                await page.locator("#text-ask input").fill(str(run))
+                await page.locator("#text-ask input").press("Enter")
+                active = page.locator(ACTIVE)
+                att = active.locator(".live-attribution")
+                await expect(att).to_contain_text("Click a point", timeout=15000)
+                caption = active.locator('.analysis-panel[data-kind="timeline"] .panel-caption-line')
+                await expect(caption).to_contain_text("3 frames · 3 scored", timeout=15000)
+                await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=10000)
+
+                xy = await page.evaluate("""(sel) => {
+                  const el = document.querySelector(sel + ' .analysis-panel[data-kind="timeline"] .panel-plot');
+                  const fl = el._fullLayout, tr = el.data[0], r = el.getBoundingClientRect();
+                  return {x: r.left + fl.margin.l + fl.xaxis.l2p(tr.x[2]),
+                          y: r.top + fl.margin.t + fl.yaxis.l2p(tr.y[2])};
+                }""", ACTIVE)
+                await page.mouse.move(xy["x"], xy["y"])
+                await page.mouse.click(xy["x"], xy["y"])
+                await expect(page.locator("#frame-label")).to_have_text("2 / 2", timeout=10000)
+                await expect(att).to_contain_text("Step 200", timeout=15000)
+                await expect(att.locator("table.live-att-groups tr").nth(1)).to_be_visible()
+                await expect(att).to_contain_text("do not add up to the score")
+                shown = "() => window.ffastApp.renderer.attributionShown"
+                await page.wait_for_function(shown, timeout=10000)
+
+                # The bonds test names the stretched bond first.
+                await att.locator("select.live-att-test").select_option("bonds|T2")
+                await expect(att.locator("table.live-att-groups tr").nth(1)).to_contain_text("bond C0-H14",
+                                                                                            timeout=15000)
+                # Element colours take the attribution off; another frame does too.
+                await att.locator('button[data-mode="element"]').click()
+                await page.wait_for_function(f"() => !({shown[6:]})", timeout=10000)
+                await att.locator('button[data-mode="attribution"]').click()
+                await page.wait_for_function(shown, timeout=10000)
+                await page.locator("#prev-frame-btn").click()
+                await expect(page.locator("#frame-label")).to_have_text("1 / 2", timeout=10000)
+                await page.wait_for_function(f"() => !({shown[6:]})", timeout=10000)
+                await expect(att).to_contain_text("Step 200")         # the list stays, naming its step
             finally:
                 await browser.close()
