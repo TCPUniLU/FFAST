@@ -10,10 +10,17 @@ One folder per ``ffast-lammps`` invocation, never reused::
         run.json                  run state, written by the wrapper only
         producer_done.json        written by the wrapper when LAMMPS has exited
         scorer.log                the scorer's own log
+        control.json              stop on alarm, changed from the viewer (optional)
+        stop_request.json         "stop this run", by an alarm or the user; the wrapper acts
+        STOP                      written by the wrapper; LAMMPS's fix halt checks for it
         analysis/<analysis id>/
             settings.json         bundle and settings this analysis used
             scores.jsonl          one row per scored frame, append-only
-            progress.json         scorer state and heartbeat
+            progress.json         scorer state, heartbeat, rule, alarms
+            alarms/               one permanent report per alarm
+
+``~/.ffast/live-runs/<run id>.json`` points at each run folder, for the
+"Live runs" list (``$FFAST_LIVE_RUNS`` overrides the folder).
 
 Standard library only, and Python 3.6 compatible: the wrapper imports this
 module under whatever ``python3`` the job script has.
@@ -41,8 +48,51 @@ ANALYSIS_DIR = "analysis"
 SETTINGS = "settings.json"
 SCORES = "scores.jsonl"
 PROGRESS = "progress.json"
+ALARMS_DIR = "alarms"
+CONTROL = "control.json"
+STOP_REQUEST = "stop_request.json"
+STOP = "STOP"
 
 RUN_DIR_ENV = "FFAST_RUN_DIR"
+LIVE_RUNS_ENV = "FFAST_LIVE_RUNS"
+DEFAULT_LIVE_RUNS = "~/.ffast/live-runs"
+
+
+def live_runs_dir(environ=None):
+    """Folder of the run pointers: ``$FFAST_LIVE_RUNS``, else ``~/.ffast/live-runs``."""
+    environ = os.environ if environ is None else environ
+    return Path(os.path.expanduser(environ.get(LIVE_RUNS_ENV) or DEFAULT_LIVE_RUNS))
+
+
+def register_run(run_id, run_dir, environ=None):
+    """Write the pointer the "Live runs" list reads; never fails the run."""
+    try:
+        d = live_runs_dir(environ)
+        d.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(d / ("%s.json" % run_id),
+                          {"run_id": run_id, "run_dir": str(run_dir), "started_utc": utc_now()})
+        return True
+    except OSError:
+        return False
+
+
+def request_stop(run_dir, by, reason):
+    """Ask the wrapper to stop the run. The first request wins; True if this one did."""
+    path = Path(run_dir) / STOP_REQUEST
+    try:   # exclusive create: of two requesters (scorer, viewer) only one writes
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w") as fh:
+        json.dump({"by": by, "reason": reason, "utc": utc_now()}, fh, sort_keys=True)
+        fh.write("\n")
+    append_event(run_dir, "stop_requested", by=by, reason=reason)
+    return True
+
+
+def set_stop_on_alarm(run_dir, on, by):
+    """Change whether an alarm stops the run (read by the scorer every poll)."""
+    write_json_atomic(Path(run_dir) / CONTROL, {"stop_on_alarm": bool(on), "by": by, "utc": utc_now()})
 
 
 def utc_now():

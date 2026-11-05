@@ -25,6 +25,21 @@ def test_the_include_sets_up_the_dump_the_switch_and_the_stop_check():
     # tells the scorer which bundle, through the run folder
     assert "bundle /abs/aspirin.bundle" in lines
     assert 'end""" file ${ffast_dir}/include.txt screen no' in lines
+    # alarm settings: index variables, so a definition before the include wins
+    assert any(l.startswith("variable ffast_persist_ps    index 5 ") for l in lines)
+    assert any(l.startswith("variable ffast_stop_on_alarm index 0 ") for l in lines)
+    assert "persist_ps ${ffast_persist_ps}" in lines
+    assert "stop_on_alarm ${ffast_stop_on_alarm}" in lines
+    # both are defined before the no-wrapper jump
+    assert lines.index(next(l for l in lines if l.startswith("variable ffast_stop_on_alarm"))) < \
+        lines.index(next(l for l in lines if l.startswith('if "${ffast_on}')))
+
+
+def test_the_include_takes_another_persistence():
+    assert any(l.startswith("variable ffast_persist_ps    index 2.5 ")
+               for l in include_text("/b.bundle", ["C"], persist_ps=2.5).splitlines())
+    with pytest.raises(ValueError):
+        include_text("/b.bundle", ["C"], persist_ps=0)
 
 
 def test_the_include_refuses_a_bundle_path_with_a_space():
