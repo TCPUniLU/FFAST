@@ -394,6 +394,15 @@ class ProbeDatasetLengthRequest(BaseModel):
     path: str
 
 
+class OpenLiveRunRequest(BaseModel):
+    """Typed payload for ``OPEN_LIVE_RUN``: a run folder (or its ``run.json``)
+    on the server's disk; ``~`` allowed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+
+
 class ListDirRequest(BaseModel):
     """Typed payload for ``LIST_DIR``. ``path=None`` starts at the server
     user's home directory."""

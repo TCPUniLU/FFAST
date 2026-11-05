@@ -163,7 +163,7 @@ class ServerSession:
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
             CancelTryMetricRequest, CancelMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
-            TraceRequest, RequestMetricBoxesRequest,
+            TraceRequest, RequestMetricBoxesRequest, OpenLiveRunRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -210,6 +210,7 @@ class ServerSession:
             control.ADD_SESSION_METRICS:        _Route(self._on_add_session_metrics, ["offer_id"], AddSessionMetricsRequest),
             control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
             control.TRACE:                      _Route(self._on_trace, ["kind", "text"], TraceRequest),
+            control.OPEN_LIVE_RUN:              _Route(self._on_open_live_run, ["path"], OpenLiveRunRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -896,6 +897,19 @@ class ServerSession:
     async def _on_cancel_probe_dataset_length(self, **kwargs) -> None:
         """The Load dialog moved on to another file, or closed without Load."""
         self._stop_length_probe()
+
+    async def _on_open_live_run(self, path, **kwargs) -> None:
+        """Follow a live LAMMPS run folder (ADR 0087). Its frames appear as a
+        dataset; its scores go to every window in ``LIVE_RUN_UPDATE``. A path
+        that is not a run folder is answered to this window only, with ``error``."""
+        from ffast.live.live_run import open_live_run
+        from ffast.protocol.rpc import pack
+
+        try:
+            open_live_run(self.env, path, self._broadcast)
+        except (ValueError, OSError) as exc:
+            logger.warning("OPEN_LIVE_RUN %r: %s", path, exc)
+            await self._emit(pack(control.LIVE_RUN_UPDATE, (), {"path": path, "error": str(exc)}))
 
     async def _on_list_dir(self, path=None, **kwargs) -> None:
         """List a server-side directory and push DIR_LISTING.

@@ -84,6 +84,8 @@ ADD_SESSION_METRICS = "ADD_SESSION_METRICS"
 # One line for the server's trace file (ffast-server --trace): what the user
 # clicked or changed, or an error in the page. Ignored while the trace is off.
 TRACE = "TRACE"
+# Follow a live LAMMPS run folder on the server's disk (ADR 0087).
+OPEN_LIVE_RUN = "OPEN_LIVE_RUN"
 
 CLIENT_TO_SERVER = frozenset(
     {
@@ -96,7 +98,7 @@ CLIENT_TO_SERVER = frozenset(
         SAVE_TAB, DELETE_TAB, HIDE_TAB, SET_TAB_ORDER, EXPORT_TAB,
         REQUEST_USER_METRICS, SAVE_USER_METRIC, DELETE_USER_METRIC, EXPORT_USER_METRIC,
         REQUEST_METRIC_INPUTS, CHECK_METRIC, TRY_METRIC, CANCEL_TRY_METRIC,
-        REQUEST_METRIC_BOXES, ADD_SESSION_METRICS, TRACE,
+        REQUEST_METRIC_BOXES, ADD_SESSION_METRICS, TRACE, OPEN_LIVE_RUN,
     }
 )
 
@@ -110,7 +112,7 @@ MUTATING_CLIENT_EVENTS = frozenset(
         LOAD_DATASET, LOAD_MODEL, DELETE_OBJECT, CREATE_SUBSET, DECLARE_SUBSET,
         FREEZE_SUBSET, RENAME_OBJECT, CANCEL_TASK, SET_DATASET_UNIT, LOAD_PREDICTION, LOAD_EXAMPLE, LOAD_ZERO_MODEL, VIEW_COMMAND, SAVE_SESSION, LOAD_SESSION, EXPORT_SUBSET,
         SAVE_TAB, DELETE_TAB, HIDE_TAB, SET_TAB_ORDER, SAVE_USER_METRIC, DELETE_USER_METRIC,
-        ADD_SESSION_METRICS,
+        ADD_SESSION_METRICS, OPEN_LIVE_RUN,
     }
 )
 
@@ -146,6 +148,9 @@ REMOTE_MODEL_META = "REMOTE_MODEL_META"
 SCENE_SNAPSHOT = "SCENE_SNAPSHOT"
 SCENE_PATCH = "SCENE_PATCH"
 COMMAND_RESULT = "COMMAND_RESULT"
+# A live run's state and score series, to every window (ADR 0087); also the
+# answer to OPEN_LIVE_RUN, with ``error`` set when the folder is not a run.
+LIVE_RUN_UPDATE = "LIVE_RUN_UPDATE"
 # Pushed to a window on connect and to every window after a change (ADR 0062);
 # also the answer to REQUEST_METRIC_CATALOG, which only the asker gets.
 METRIC_CATALOG = "METRIC_CATALOG"

@@ -436,8 +436,10 @@ export function buildTimeline(spec, series, ctx) {
   (series || []).forEach((s, i) => {
     const y = values1d(s.data.y);
     if (!y.length) return;
+    // x is the frame index unless the series brings its own (a live run's steps).
+    const xs = s.data.x ? values1d(s.data.x) : null;
     traces.push({
-      x: y.map((_, k) => k), y, type: 'scatter', mode: 'lines',
+      x: xs && xs.length === y.length ? xs : y.map((_, k) => k), y, type: 'scatter', mode: 'lines',
       line: { color: paint(ctx, s, i), width: 1.5 },
       name: s.name || '',
     });
@@ -446,6 +448,11 @@ export function buildTimeline(spec, series, ctx) {
   const layout = withLegend(baseLayout(), traces.length);
   layout.xaxis.title = { ...layout.xaxis.title, text: axisTitle(spec.x_label, u.x) || 'Configuration index' };
   layout.yaxis.title = { ...layout.yaxis.title, text: axisTitle(spec.y_label, u.y) };
+  // A dashed level across the plot, such as a live run's threshold.
+  if (Number.isFinite(spec.y_line)) {
+    layout.shapes = [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: spec.y_line, y1: spec.y_line,
+      line: { color: plotTheme().ink3, width: 1, dash: 'dash' } }];
+  }
   // With one series, its five worst frames are labelled; several would overlap.
   let peaks = [];
   let extraHeight = 0;

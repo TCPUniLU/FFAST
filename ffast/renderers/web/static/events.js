@@ -66,6 +66,8 @@ export const OUT = Object.freeze({
   GRACEFUL_DISCONNECT: 'GRACEFUL_DISCONNECT',
   // Ask the server's clock, for the timing log (ADR 0072)
   TIMING_PING: 'TIMING_PING',
+  // Follow a live LAMMPS run folder (ADR 0087)
+  OPEN_LIVE_RUN: 'OPEN_LIVE_RUN',
 });
 
 /** Server → client notifications and one-shot announcements. */
@@ -86,6 +88,8 @@ export const IN = Object.freeze({
   // When a message was read, handled and sent, for the timing log (ADR 0072)
   TIMING: 'TIMING',
   COMMAND_RESULT: 'COMMAND_RESULT',
+  // A live run's state and score series (ADR 0087)
+  LIVE_RUN_UPDATE: 'LIVE_RUN_UPDATE',
   DIR_LISTING: 'DIR_LISTING',
   DATASET_KEYS_RESPONSE: 'DATASET_KEYS_RESPONSE',
   DATASET_LENGTH_RESPONSE: 'DATASET_LENGTH_RESPONSE',

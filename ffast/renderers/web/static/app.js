@@ -43,6 +43,7 @@ import { setTimingSink } from './timing.js';
 import { ClusterDialog } from './cluster_dialog.js';
 import { FILE_SHORTCUTS, isMac, matchShortcut, shortcutLabel } from './shortcuts.js';
 import { showWarning } from './toasts.js';
+import { LiveRuns } from './live_run.js';
 import { applyStaticIcons, icon } from './icons.js';
 import { initBell } from './notification_bell.js';
 import { initFullTextTitles } from './hover_tip.js';
@@ -691,6 +692,9 @@ export class FFastApp {
           this._setStatus('Loading example…', 'connected');
         },
         unavailable: needsControl },
+      // A live LAMMPS run folder on the server's disk (ADR 0087).
+      { id: 'open-live-run', label: 'Open Live Run…', menu: 'file',
+        run: () => this._openLiveRun(), unavailable: needsControl },
       { id: 'save-session', label: 'Save Session…', menu: 'file',
         run: () => this._sessionOps.saveSession(), unavailable: needsControl },
       { id: 'load-session', label: 'Load Session…', menu: 'file',
@@ -1667,6 +1671,7 @@ export class FFastApp {
       conn.on(IN.DATASET_DELETED,     (kw, args) => this._onDatasetDeleted(args[0]));
       conn.on(IN.MODEL_DELETED,       (kw, args) => this._onModelDeleted(args[0]));
       conn.on(IN.LOADER_TYPES, (kw) => this._browser.setLoaderTypes(kw));
+      conn.on(IN.LIVE_RUN_UPDATE, (kw) => this._onLiveRunUpdate(kw));
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.DATASET_LENGTH_RESPONSE, (kw, args) => this._browser.onDatasetLength(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
@@ -2540,6 +2545,40 @@ export class FFastApp {
 
   /** Show dataset `fp` in the main view at `frame`, or at the same structure
    * as now where it has it, else its first frame. */
+  /** Ask for a live run folder's path and follow it (ADR 0087). */
+  async _openLiveRun() {
+    const path = await askText({
+      title: 'Open live run', label: 'Run folder on the server (from ffast-lammps)',
+      problem: (v) => (v.trim() ? '' : 'Give the folder ffast-lammps printed'), okLabel: 'Open',
+    });
+    if (!path || !this._conn) return;
+    this._liveRunsView().expect(path.trim());
+    this._liveRunWanted = true;
+    this._conn.send(OUT.OPEN_LIVE_RUN, { path: path.trim() }, []);
+    this._setStatus('Opening live run…', 'connected');
+  }
+
+  _liveRunsView() {
+    if (!this._liveRuns) {
+      this._liveRuns = new LiveRuns({
+        onFrame: (fp, frame) => this._onPlotPoint({ datasetFp: fp, modelFp: null, frame }),
+        onError: (text) => this._setStatus(`Live run: ${text}`, 'error'),
+      });
+    }
+    return this._liveRuns;
+  }
+
+  _onLiveRunUpdate(kw) {
+    const panel = this._liveRunsView().update(kw);
+    // The run this window asked for is shown in the main view once it has frames.
+    if (panel && this._liveRunWanted && kw.fingerprint) {
+      this._liveRunWanted = false;
+      this._setStatus(`Live run ${kw.run_id}`, 'connected');
+      if (this._datasets.has(kw.fingerprint)) this._showInMainView(kw.fingerprint);
+      else this._showWhenKnown = kw.fingerprint;
+    }
+  }
+
   _showInMainView(fp, frame = null) {
     const from = this._currentDatasetFp;
     const same = from ? sameConfiguration(from, this._main.current?.frame ?? 0, fp, this._datasets) : null;
