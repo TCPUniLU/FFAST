@@ -27,6 +27,10 @@ log = logging.getLogger("ffast.live.scorer")
 
 ACCEPTED_UNITS = {"metal": "ps", "real": "fs"}   # unit style → time unit; both Å
 HEARTBEAT_S = 10.0
+SCORES_FORMAT = 2
+# One LAMMPS frame is one geometry, not a set of path-integral beads: the
+# centroid thresholds apply. Bead runs (-partition, i-PI) are not watched yet.
+ROLE = "centroid"
 
 
 class Refused(Exception):
@@ -116,7 +120,7 @@ class Scorer:
             bundle = detectana.load(bundle_dir)
         except detectana.BundleError as exc:
             raise Refused(f"cannot use the bundle {bundle_dir}: {exc}") from exc
-        settings = {"thresholds": "bundle", "every": int(info.get("every", "0") or 0)}
+        settings = {"thresholds": "bundle", "role": ROLE, "every": int(info.get("every", "0") or 0)}
         aid = rf.analysis_id(bundle_dir, settings)
         self.analysis_dir = self.run_dir / rf.ANALYSIS_DIR / aid
         self.analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -127,9 +131,11 @@ class Scorer:
             "bundle_sha256": self.bundle_sha,
             "detectana_version": bundle.detectana_version,
             "detectana_installed": detectana.__version__,
+            "scores_format": SCORES_FORMAT,
+            "role": ROLE,
             "tracks": list(bundle.tracks),
+            "tests": [list(t) for t in bundle.tests],
             "thresholds": {t: bundle.thresholds(t) for t in bundle.tracks},
-            "spe": "inactive",   # DetectAna has no SPE yet (plan step 3)
             "settings": settings,
         })
         self.progress["analysis_id"] = aid
@@ -192,21 +198,25 @@ class Scorer:
 
     def _score(self, bundle, frames, writer) -> None:
         scores = bundle.score(np.stack([f.positions for f in frames]))
+        exc = bundle.exceedance(scores, role=ROLE)
         rows = []
         for i, f in enumerate(frames):
-            tracks = {}
-            for track, values in scores.items():
-                t2 = float(values[i])
-                tracks[track] = {
-                    "t2": t2,
-                    "spe": None,
-                    "flags": {k: t2 > v for k, v in bundle.thresholds(track).items()},
-                }
+            tracks = {
+                track: {"T2": _num(values.get("T2"), i), "SPE": _num(values.get("SPE"), i)}
+                for track, values in scores.items()
+            }
             rows.append({"segment": 0, "frame": f.index, "step": f.step, "time": f.time,
-                         "identity": self.identity, "tracks": tracks})
+                         "identity": self.identity, "tracks": tracks,
+                         "exceedance": float(exc.values[i]), "test": list(exc.tests[i]),
+                         "marked": bool(exc.values[i] > 1.0)})
         writer.append(rows)
         self._write_progress(scored_frames=self.progress["scored_frames"] + len(frames),
                              scored_through_step=frames[-1].step)
+
+
+def _num(values, i):
+    """One frame's value of a score, or None when the score is inactive."""
+    return None if values is None else float(values[i])
 
 
 def main(argv: list[str] | None = None) -> int:

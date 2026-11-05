@@ -10,7 +10,7 @@ export function liveRunStatus(kw) {
   const parts = [`${kw.n_frames || 0} frames`];
   const p = kw.progress || {};
   // The scores drawn, not the scorer's own count, which may be ahead of them.
-  const scored = kw.series?.t2?.length ?? p.scored_frames;
+  const scored = kw.series?.exceedance?.length ?? p.scored_frames;
   if (scored != null) parts.push(`${scored} scored`);
   if (p.identity) parts.push(p.identity === 'proven' ? 'atom order proven' : 'atom order unverified');
   if (kw.end) parts.push(`run ${kw.end.state}`);
@@ -28,20 +28,20 @@ export function liveRunProblem(kw) {
   return ev ? (ev.reason || ev.text || '') : '';
 }
 
-/** The threshold drawn across the plot: the centroid one, else the first. */
-export function liveRunThreshold(kw) {
-  const t = kw.thresholds || {};
-  const v = t.centroid ?? Object.values(t)[0];
-  return Number.isFinite(v) ? v : undefined;
+/** The line drawn across the plot: every test's threshold is 1 on this scale. */
+export function liveRunThreshold() {
+  return 1;
 }
 
-/** The score series in the shape panels draw: x is the step, y the T²;
- * `frames[i]` is the run's frame that point i scores, for a click. */
+/** The score series in the shape panels draw: x is the step, y the worst
+ * test's score ÷ its threshold; `frames[i]` is the run's frame that point i
+ * scores, for a click. */
 export function liveRunSeries(kw) {
-  const s = kw.series || { frame: [], step: [], t2: [] };
+  const s = kw.series || { frame: [], step: [], exceedance: [] };
+  const y = s.exceedance || [];
   return [{
-    name: 'T²', datasetFp: kw.fingerprint, modelFp: null, frames: s.frame,
+    name: 'Score ÷ threshold', datasetFp: kw.fingerprint, modelFp: null, frames: s.frame,
     data: { x: { nd: { values: s.step, shape: [s.step.length] } },
-            y: { nd: { values: s.t2, shape: [s.t2.length] } } },
+            y: { nd: { values: y, shape: [y.length] } } },
   }];
 }

@@ -40,8 +40,8 @@ async def test_the_live_run_helpers_and_the_timeline_with_steps(static_origin):
     kw = {
         "run_id": "r1", "fingerprint": "live:r1", "n_frames": 3,
         "progress": {"scored_frames": 2, "identity": "unverified", "state": "scoring"},
-        "thresholds": {"bead": 4.0, "centroid": 5.0},
-        "series": {"frame": [0, 1], "step": [0, 100], "t2": [1.0, 6.0], "flag": [False, True]},
+        "series": {"frame": [0, 1], "step": [0, 100], "exceedance": [0.2, 1.2],
+                   "test": [["bonds", "T2"], ["bonds", "SPE"]], "marked": [False, True]},
         "end": None, "events": [{"kind": "warning", "text": "slow disk"}], "error": None,
     }
     script = f"""async () => {{
@@ -58,7 +58,6 @@ async def test_the_live_run_helpers_and_the_timeline_with_steps(static_origin):
         ended: lr.liveRunStatus({{ ...kw, end: {{ state: 'finished' }}, progress: {{ state: 'refused' }} }}),
         problem: lr.liveRunProblem(kw),
         refused: lr.liveRunProblem({{ ...kw, progress: {{ reason: 'units lj' }} }}),
-        noThreshold: lr.liveRunThreshold({{}}) ?? null,
         frames: series[0].frames, fp: series[0].datasetFp,
         x: built.traces[0].x, y: built.traces[0].y,
         xTitle: built.layout.xaxis.title.text,
@@ -78,10 +77,9 @@ async def test_the_live_run_helpers_and_the_timeline_with_steps(static_origin):
     assert got["status"] == "3 frames · 2 scored · atom order unverified · running"
     assert got["ended"] == "3 frames · 2 scored · run finished · scorer refused"
     assert got["problem"] == "slow disk" and got["refused"] == "units lj"
-    assert got["noThreshold"] is None
     assert got["frames"] == [0, 1] and got["fp"] == "live:r1"
-    assert got["x"] == [0, 100] and got["y"] == [1.0, 6.0] and got["xTitle"] == "Step"
-    assert got["line"] == 5.0
+    assert got["x"] == [0, 100] and got["y"] == [0.2, 1.2] and got["xTitle"] == "Step"
+    assert got["line"] == 1
     assert got["plainX"] == [0, 1] and got["plainShapes"] is None
 
 
@@ -119,7 +117,8 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
                 [adir] = list((run / rf.ANALYSIS_DIR).iterdir())
                 rf.ScoresWriter(adir / rf.SCORES).append([{
                     "segment": 0, "frame": 2, "step": 200, "time": 0.1, "identity": "proven",
-                    "tracks": {"geometric": {"t2": 2.0, "spe": None, "flags": {"bead": False}}}}])
+                    "tracks": {"bonds": {"T2": 2.0, "SPE": 0.5}}, "exceedance": 0.4,
+                    "test": ["bonds", "T2"], "marked": False}])
                 await expect(caption).to_contain_text("3 frames · 3 scored", timeout=15000)
 
                 # A click on the last point shows that frame in the 3D view.

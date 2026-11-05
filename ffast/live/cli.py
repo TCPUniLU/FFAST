@@ -102,11 +102,10 @@ def cmd_bundle(args: argparse.Namespace) -> None:
     bundle.save(bundle_dir)
     include_path.write_text(include_text(str(bundle_dir), elements, args.every))
 
-    t = bundle.thresholds(bundle.tracks[0])
     print(f"Reference bundle: {bundle_dir}")
     print(f"  {len(train_pos)} training and {len(valid_pos)} validation frames, "
-          f"{bundle.n_atoms} atoms, thresholds (T²) "
-          + ", ".join(f"{k} {v:.4g}" for k, v in t.items()))
+          f"{bundle.n_atoms} atoms, {len(bundle.tests)} tests: "
+          + ", ".join(f"{t} {s}" for t, s in bundle.tests))
     print(f"LAMMPS include file: {include_path}")
     print(f"  Add `include {include_path}` to your input after the atoms exist,")
     print("  and run the job as `ffast-lammps srun lmp ...`.")

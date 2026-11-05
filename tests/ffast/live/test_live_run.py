@@ -87,9 +87,24 @@ def test_opening_a_run_folder_registers_its_frames_and_sends_the_scores(tmp_path
     assert env.datasets.added == [f"live:{d.name}"]
     kw = _kwargs(sent[-1])
     assert kw["fingerprint"] == f"live:{d.name}" and kw["n_frames"] == 2
-    assert kw["series"] == {"frame": [0, 1], "step": [0, 100], "t2": [1.0, 6.0], "flag": [False, True]}
-    assert kw["thresholds"] == {"bead": 5.0, "centroid": 5.0}
+    # Step-2 rows (one track, T² only) read as T² ÷ the centroid threshold.
+    assert kw["series"] == {"frame": [0, 1], "step": [0, 100], "exceedance": [0.2, 1.2],
+                            "test": [["geometric", "T2"], ["geometric", "T2"]],
+                            "marked": [False, True]}
+    assert kw["role"] == "centroid"
     assert kw["analysis_id"] == "0123456789abcdef" and kw["error"] is None
+
+
+def test_format_2_rows_give_the_worst_test_and_marks():
+    from ffast.live.live_run import _series_of
+
+    rows = [{"frame": 0, "step": 0, "tracks": {"bonds": {"T2": 1.0, "SPE": 0.1}},
+             "exceedance": 0.5, "test": ["bonds", "T2"], "marked": False},
+            {"frame": 1, "step": 100, "tracks": {"bonds": {"T2": 9.0, "SPE": 3.0}},
+             "exceedance": 1.5, "test": ["bonds", "SPE"], "marked": True}]
+    assert _series_of(rows, {}) == {"frame": [0, 1], "step": [0, 100], "exceedance": [0.5, 1.5],
+                                    "test": [["bonds", "T2"], ["bonds", "SPE"]],
+                                    "marked": [False, True]}
 
 
 def test_new_frames_are_announced_as_changed_frames_and_new_scores_appended(tmp_path, monkeypatch):

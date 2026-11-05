@@ -71,12 +71,20 @@ def test_a_finished_dump_is_scored_exactly_like_the_bundle_scores_it(tmp_path, b
 
     a = _analysis(run)
     rows = rf.read_scores(a / rf.SCORES)
-    want = detectana.load(bundle_dir).score(np.stack(frames))["geometric"]
+    bundle = detectana.load(bundle_dir)
+    want = bundle.score(np.stack(frames))
+    exc = bundle.exceedance(want, role="centroid")
     assert [r["frame"] for r in rows] == [0, 1, 2, 3, 4]
     assert [r["step"] for r in rows] == [0, 100, 200, 300, 400]
-    assert [r["tracks"]["geometric"]["t2"] for r in rows] == [float(v) for v in want]
+    assert set(rows[0]["tracks"]) == set(bundle.tracks)
+    for track, values in want.items():
+        for score in ("T2", "SPE"):
+            got = [r["tracks"][track][score] for r in rows]
+            assert got == ([float(v) for v in values[score]] if score in values else [None] * 5)
+    assert [r["exceedance"] for r in rows] == [float(v) for v in exc.values]
+    assert [tuple(r["test"]) for r in rows] == list(exc.tests)
+    assert [r["marked"] for r in rows] == [bool(v) for v in exc.marked]
     assert all(r["identity"] == "proven" for r in rows)
-    assert set(rows[0]["tracks"]["geometric"]["flags"]) == {"bead", "centroid"}
     progress = rf.read_json(a / rf.PROGRESS)
     assert progress["state"] == "done" and progress["scored_frames"] == 5
     assert progress["scored_through_step"] == 400 and progress["units"] == "metal"

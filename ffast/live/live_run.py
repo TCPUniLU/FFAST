@@ -99,7 +99,7 @@ def tab_name(run_id: str) -> str:
 
 
 def live_tab(run: "LiveRun"):
-    """The run's tab: the main 3D view, and its T² against step beside it."""
+    """The run's tab: the main 3D view, and its worst test ÷ threshold against step beside it."""
     from ffast.config.models import AnalysisTabConfig, PanelConfig
 
     return AnalysisTabConfig(
@@ -109,7 +109,8 @@ def live_tab(run: "LiveRun"):
         panels=[
             PanelConfig(kind="3d", row=0, col=0, rowspan=12, colspan=14),
             PanelConfig(kind="timeline", row=0, col=14, rowspan=8, colspan=10,
-                        title="Score against step", x_label="Step", y_label="T² (geometric)",
+                        title="Worst test ÷ its threshold, against step", x_label="Step",
+                        y_label="Score ÷ threshold",
                         legend=False, live_run=run.run_id),
         ],
     )
@@ -128,15 +129,31 @@ def _tabs_changed(env) -> None:
         feed.changed(control.TAB_LAYOUT)
 
 
-def _series_of(rows: list[dict]) -> dict:
-    out = {"frame": [], "step": [], "t2": [], "flag": []}
+def _v1_exceedance(row: dict, settings: dict) -> tuple[float | None, list | None]:
+    """A step-2 row (one track, T² only): T² ÷ its centroid threshold."""
+    name, track = next(iter((row.get("tracks") or {}).items()), (None, {}))
+    limit = ((settings.get("thresholds") or {}).get(name) or {}).get("centroid")
+    t2 = track.get("t2")
+    if t2 is None or not limit:
+        return None, None
+    return t2 / limit, [name, "T2"]
+
+
+def _series_of(rows: list[dict], settings: dict | None = None) -> dict:
+    """Per scored frame: the worst test's score ÷ its threshold, that test, and
+    whether the frame is marked. Reads format 2 rows and step-2 (format 1) rows."""
+    settings = settings or {}
+    out = {"frame": [], "step": [], "exceedance": [], "test": [], "marked": []}
     for r in rows:
-        track = next(iter(r.get("tracks", {}).values()), {})
+        if "exceedance" in r:
+            e, test = r.get("exceedance"), r.get("test")
+        else:
+            e, test = _v1_exceedance(r, settings)
         out["frame"].append(r.get("frame"))
         out["step"].append(r.get("step"))
-        out["t2"].append(track.get("t2"))
-        flags = track.get("flags") or {}
-        out["flag"].append(bool(any(flags.values())))
+        out["exceedance"].append(e)
+        out["test"].append(test)
+        out["marked"].append(bool(r.get("marked", e is not None and e > 1.0)))
     return out
 
 
@@ -228,7 +245,6 @@ class LiveRun:
         from ffast.protocol.rpc import pack
 
         progress = (self.run.get("analyses") or {}).get(self.analysis_id or "", {})
-        thresholds = next(iter((self.settings.get("thresholds") or {}).values()), {})
         return pack(control.LIVE_RUN_UPDATE, (self.run_id,), {
             "run_id": self.run_id,
             "path": str(self.run_dir),
@@ -237,8 +253,8 @@ class LiveRun:
             "n_frames": self.dataset.N,
             "analysis_id": self.analysis_id,
             "bundle": self.settings.get("bundle"),
-            "thresholds": thresholds,
-            "series": _series_of(self.rows),
+            "role": self.settings.get("role", "centroid"),
+            "series": _series_of(self.rows, self.settings),
             "progress": progress,
             "producer": self.run.get("producer"),
             "end": self.run.get("end"),
