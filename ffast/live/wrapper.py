@@ -9,14 +9,21 @@ The wrapper
    from ``~/.ffast/live.json`` written by the cluster bootstrap; LAMMPS keeps the
    job's own environment),
 3. runs the command with ``-var ffast_on 1 -var ffast_dir <run folder>``,
-4. when LAMMPS exits, writes ``producer_done.json``, lets the scorer read to the
-   end, and records how the run ended in ``run.json`` (the only writer).
+4. stops LAMMPS when ``stop_request.json`` appears (written by the scorer on an
+   alarm with stop on alarm, or by the viewer's "Stop now"): one process →
+   writes ``STOP`` and LAMMPS's ``fix halt … error soft`` ends the run cleanly;
+   several processes → terminates LAMMPS (``fix halt`` is not synchronised
+   across processes),
+5. when LAMMPS exits, writes ``producer_done.json``, lets the scorer read to the
+   end, and records how the run ended in ``run.json`` (the only writer):
+   finished, stopped, terminated, crashed or interrupted.
 
-Its exit code is LAMMPS's. Multi-partition runs are refused.
+Its exit code is LAMMPS's. Multi-partition runs are refused. Each run is listed
+for the viewer by a pointer in ``~/.ffast/live-runs/``.
 
 Standard library only, Python 3.6 compatible: it runs under whatever
 ``python3`` the job has. The cluster copy lives in ``~/.ffast/bin`` next to
-``run_folder.py``.
+``run_folder.py`` and ``lammps_log.py``.
 """
 
 import json
@@ -28,9 +35,11 @@ import sys
 import time
 
 try:
+    from ffast.live import lammps_log
     from ffast.live import run_folder as rf
 except ImportError:  # the copy in ~/.ffast/bin, run with python3 -I
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import lammps_log  # noqa: E402
     import run_folder as rf  # noqa: E402
 
 SETTINGS_ENV = "FFAST_LIVE_SETTINGS"          # path of live.json
@@ -41,6 +50,7 @@ DRAIN_INTERRUPTED_S = 20.0   # after a signal: Slurm kills everything about 30 s
 SCORER_START_S = 300.0       # a scorer that has not started by then is reported
 POLL_S = 1.0
 LOG_TAIL_LINES = 20
+GRID_WAIT_S = 30.0           # a stop request with no process count yet: terminate after this
 
 USAGE = """usage: ffast-lammps <command that runs LAMMPS>
   e.g.  ffast-lammps srun lmp -in run.in
@@ -164,6 +174,9 @@ class Wrapper:
         self.lammps = None
         self.run_dir = None
         self.run = {}
+        self.log = None
+        self.stop = None        # the stop request being carried out, as stored in run.json
+        self._stop_seen_t = None
 
     # ── run.json (this process is its only writer) ───────────────────────────
     def _save(self):
@@ -210,6 +223,8 @@ class Wrapper:
                         slurm_job_id=self.environ.get("SLURM_JOB_ID"))
         rf.append_event(self.run_dir, "segment", segment=0)
         self._save()
+        rf.register_run(run_id, self.run_dir, self.environ)
+        self.log = lammps_log.LogFollower(rf.log_path(self.run_dir, lmp_cmd, self.cwd))
         sys.stderr.write("ffast-lammps: run folder %s\n" % self.run_dir)
 
         log = open(str(self.run_dir / rf.SCORER_LOG), "wb")
@@ -238,9 +253,12 @@ class Wrapper:
                 rf.append_event(self.run_dir, "warning",
                                 text="the scorer has not started after %d s" % SCORER_START_S,
                                 scorer_log=_tail(self.run_dir / rf.SCORER_LOG))
+            self.log.poll()
+            self._check_stop()
             self._save()
             time.sleep(self.poll_s)
         rc = self.lammps.returncode
+        self.log.poll()
         rf.write_json_atomic(self.run_dir / rf.PRODUCER_DONE, {"exit_code": rc, "ended_utc": rf.utc_now()})
         rf.append_event(self.run_dir, "lammps_exit", exit_code=rc)
 
@@ -262,21 +280,68 @@ class Wrapper:
                         seconds=drain_s, scorer_exit_code=scorer.returncode,
                         **({} if drained else {"text": "the scorer did not finish within %d s" % budget}))
 
-        if self.signal_received:
-            state = "interrupted"
-        elif rc == 0:
-            state = "finished"
-        else:
-            state = "crashed"
+        state = self._end_state(rc)
         self.run["end"] = {"state": state, "exit_code": rc, "ended_utc": rf.utc_now(),
                            "drained": drained, "drain_s": drain_s,
                            "signal": self.signal_received}
+        if self.stop is not None:
+            self.run["end"]["stop_observed_step"] = self.stop.get("observed_step")
         self._save()
         rf.append_event(self.run_dir, "end", state=state, exit_code=rc)
         sys.stderr.write("ffast-lammps: run %s (%s), folder %s\n" % (state, rc, self.run_dir))
-        if self.signal_received and rc is not None and rc < 0:
+        if (self.signal_received or state == "terminated") and rc is not None and rc < 0:
             return 128 - rc
         return rc
+
+    # ── stopping (ADR 0086: one process halts cleanly, several are terminated) ──
+    def _check_stop(self):
+        if self.stop is not None:
+            return
+        req = rf.read_json(self.run_dir / rf.STOP_REQUEST)
+        if not isinstance(req, dict):
+            return                    # none, or still being written
+        if self._stop_seen_t is None:
+            self._stop_seen_t = time.monotonic()
+        procs = self.log.processes
+        if procs is None and time.monotonic() - self._stop_seen_t < GRID_WAIT_S:
+            return                    # the processor grid line comes before the first step
+        method = "halt" if procs == 1 else "terminate"
+        self.stop = {"by": req.get("by"), "reason": req.get("reason"),
+                     "requested_utc": req.get("utc"), "method": method, "processes": procs,
+                     "sent_utc": rf.utc_now()}
+        self.run["stop"] = self.stop
+        if method == "halt":
+            with open(str(self.run_dir / rf.STOP), "w") as fh:
+                fh.write("stop requested by %s\n" % req.get("by"))
+            rf.append_event(self.run_dir, "stop_sent", method="halt",
+                            text="STOP written; LAMMPS's fix halt ends the run at its next check")
+        else:
+            why = ("%d processes: fix halt is not synchronised across processes" % procs
+                   if procs else "process count unknown after %d s" % GRID_WAIT_S)
+            rf.append_event(self.run_dir, "stop_sent", method="terminate", text="terminating LAMMPS; " + why)
+            try:
+                self.lammps.send_signal(signal.SIGTERM)
+            except OSError:
+                pass
+
+    def _end_state(self, rc):
+        if self.signal_received:
+            return "interrupted"
+        if self.stop is not None:
+            if self.stop["method"] == "halt":
+                step = self.log.halt_step
+                if step is not None:
+                    self.stop.update(observed_step=step, observed="halt line in log.lammps")
+                    rf.append_event(self.run_dir, "stop_observed", step=step, how="halt")
+                    return "stopped" if rc == 0 else "crashed"
+                rf.append_event(self.run_dir, "warning",
+                                text="a stop was requested, but LAMMPS ended before it checked for it")
+            else:
+                step = producer_progress(self.run_dir)["last_step"]
+                self.stop.update(observed_step=step, observed="terminated; last saved frame")
+                rf.append_event(self.run_dir, "stop_observed", step=step, how="terminated")
+                return "terminated"
+        return "finished" if rc == 0 else "crashed"
 
     def _scorer_ended_early(self, code):
         events = rf.read_events(self.run_dir)

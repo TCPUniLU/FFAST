@@ -15,8 +15,9 @@ def test_setup_writes_the_settings_and_a_wrapper_that_runs_without_ffast(tmp_pat
     launcher = bin_dir / "ffast-lammps"
     assert os.access(launcher, os.X_OK)
     assert (bin_dir / "run_folder.py").is_file() and (bin_dir / "ffast_lammps.py").is_file()
+    assert (bin_dir / "lammps_log.py").is_file()
     # Without site-packages (-S) the ffast package is out of reach: the copy
-    # must import its sibling run_folder.py.
+    # must import its siblings run_folder.py and lammps_log.py.
     p = subprocess.run([sys.executable, "-I", "-S", str(bin_dir / "ffast_lammps.py"), "--help"],
                        capture_output=True, text=True, cwd=str(tmp_path))
     assert p.returncode == 0 and "usage: ffast-lammps" in p.stderr

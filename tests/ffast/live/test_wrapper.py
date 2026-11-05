@@ -38,6 +38,7 @@ def env(tmp_path, bundle_dir):
     e = dict(os.environ)
     e.update({
         "FFAST_RUN_DIR": str(tmp_path / "runs"),
+        "FFAST_LIVE_RUNS": str(tmp_path / "pointers"),
         "FFAST_LAMMPS_DATA_RECORDS": str(tmp_path / "records"),
         "FFAST_LIVE_SCORER_CMD": json.dumps([sys.executable, "-m", "ffast.live.scorer", "--poll", "0.02"]),
         "FAKE_LMP_BUNDLE": str(bundle_dir),
@@ -194,3 +195,88 @@ def test_the_scorer_starts_with_the_bootstrap_modules_and_one_thread(tmp_path):
     assert "source " + os.path.expanduser("~/.ffast/venv") + "/bin/activate" in script
     assert script.endswith('exec ffast-live "$0"')
     assert "PYTHONPATH" not in env and env["OMP_NUM_THREADS"] == "1" and env["PATH"] == "/bin"
+
+
+# ── stopping (plan step 4) ───────────────────────────────────────────────────
+
+def _long_dump(env, tmp_path, n=20, anomaly_from=None):
+    base = initial_atoms().get_positions()
+    rng = np.random.default_rng(4)
+    frames = [base] + [base + rng.normal(0, 0.01, base.shape) for _ in range(n - 1)]
+    if anomaly_from is not None:
+        for k in range(anomaly_from, n):
+            u = frames[k][14] - frames[k][0]
+            frames[k] = frames[k].copy()
+            frames[k][14] += 0.6 * u / np.linalg.norm(u)
+    (tmp_path / "source.lammpstrj").write_text(dump_text(frames))
+    env["FAKE_LMP_SLEEP"] = "0.1"
+
+
+def _kinds(d):
+    return [e["kind"] for e in rf.read_events(d)]
+
+
+def test_the_run_is_listed_by_a_pointer(env):
+    _wrapper(env).main()
+    d = _run_dir(env)
+    [p] = list(Path(env["FFAST_LIVE_RUNS"]).iterdir())
+    assert rf.read_json(p)["run_dir"] == str(d) and p.name == d.name + ".json"
+
+
+def test_a_one_process_run_stops_cleanly_through_fix_halt(env, tmp_path):
+    _long_dump(env, tmp_path)
+    env["FAKE_LMP_REQUEST_AT"] = "3"
+    rc = _wrapper(env).main()
+    d = _run_dir(env)
+    run = rf.read_json(d / rf.RUN_JSON)
+    assert rc == 0 and run["end"]["state"] == "stopped"
+    assert (d / rf.STOP).exists()
+    stop = run["stop"]
+    assert stop["by"] == "user" and stop["method"] == "halt" and stop["processes"] == 1
+    assert 400 <= stop["observed_step"] < 1900 and stop["observed"] == "halt line in log.lammps"
+    assert run["end"]["stop_observed_step"] == stop["observed_step"]
+    [obs] = [e for e in rf.read_events(d) if e["kind"] == "stop_observed"]
+    assert obs["how"] == "halt" and obs["step"] == stop["observed_step"]
+    assert "AFTER_RUN_EXECUTED" in (d / rf.LOG).read_text()   # later input commands still ran
+
+
+def test_a_two_process_run_is_terminated(env, tmp_path):
+    _long_dump(env, tmp_path)
+    env["FAKE_LMP_REQUEST_AT"] = "3"
+    env["FAKE_LMP_PROCS"] = "2"
+    rc = _wrapper(env).main()
+    d = _run_dir(env)
+    run = rf.read_json(d / rf.RUN_JSON)
+    assert run["end"]["state"] == "terminated" and rc == 128 + signal.SIGTERM
+    assert not (d / rf.STOP).exists()
+    assert run["stop"]["method"] == "terminate" and run["stop"]["processes"] == 2
+    assert run["stop"]["observed_step"] == run["producer"]["last_step"] < 1900
+    assert run["stop"]["observed"] == "terminated; last saved frame"
+    assert "stop_observed" in _kinds(d) and "drained" in _kinds(d)
+
+
+def test_an_alarm_stops_the_run_when_stop_on_alarm_is_on(env, tmp_path):
+    _long_dump(env, tmp_path, n=60, anomaly_from=25)
+    env["FAKE_LMP_INCLUDE_EXTRA"] = "persist_ps 0.5\nstop_on_alarm 1\n"
+    env["FAKE_LMP_WAIT_SCORER"] = "1"
+    _wrapper(env).main()
+    d = _run_dir(env)
+    run = rf.read_json(d / rf.RUN_JSON)
+    assert run["end"]["state"] == "stopped" and run["stop"]["by"] == "alarm"
+    kinds = _kinds(d)
+    assert kinds.index("alarm") < kinds.index("stop_requested") < kinds.index("stop_sent") \
+        < kinds.index("stop_observed")
+    [(aid, progress)] = run["analyses"].items()
+    assert progress["alarms"][0]["kind"] == "ood"
+    assert run["stop"]["observed_step"] > progress["alarms"][0]["confirmation"]["step"]
+
+
+def test_without_stop_on_alarm_an_alarm_does_not_stop_the_run(env, tmp_path):
+    _long_dump(env, tmp_path, n=40, anomaly_from=10)
+    env["FAKE_LMP_SLEEP"] = "0.05"
+    env["FAKE_LMP_INCLUDE_EXTRA"] = "persist_ps 0.5\n"
+    _wrapper(env).main()
+    d = _run_dir(env)
+    run = rf.read_json(d / rf.RUN_JSON)
+    assert run["end"]["state"] == "finished" and "stop" not in run
+    assert "alarm" in _kinds(d) and not (d / rf.STOP_REQUEST).exists()

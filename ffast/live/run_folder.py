@@ -76,6 +76,16 @@ def register_run(run_id, run_dir, environ=None):
         return False
 
 
+def log_path(run_dir, command=None, cwd=None):
+    """Where LAMMPS writes its log: the run folder's, unless the command named one."""
+    cmd = list(command or [])
+    for i, arg in enumerate(cmd[:-1]):
+        if arg in ("-log", "-l"):
+            p = Path(cmd[i + 1])
+            return p if p.is_absolute() else Path(cwd or run_dir) / p
+    return Path(run_dir) / LOG
+
+
 def request_stop(run_dir, by, reason):
     """Ask the wrapper to stop the run. The first request wins; True if this one did."""
     path = Path(run_dir) / STOP_REQUEST

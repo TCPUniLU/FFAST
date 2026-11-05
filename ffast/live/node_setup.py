@@ -31,6 +31,7 @@ def setup_node(home: Path, venv: str, modules: list[str]) -> Path:
     here = Path(__file__).resolve().parent
     shutil.copyfile(here / "wrapper.py", bin_dir / "ffast_lammps.py")
     shutil.copyfile(here / "run_folder.py", bin_dir / "run_folder.py")
+    shutil.copyfile(here / "lammps_log.py", bin_dir / "lammps_log.py")
     launcher = bin_dir / "ffast-lammps"
     launcher.write_text(LAUNCHER.format(script=bin_dir / "ffast_lammps.py"))
     os.chmod(launcher, 0o755)

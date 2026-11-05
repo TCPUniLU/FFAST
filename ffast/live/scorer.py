@@ -58,16 +58,6 @@ def _flag_on(text) -> bool:
     return str(text or "0").strip() not in ("", "0", "no", "false")
 
 
-def log_path(run_dir: Path, run: dict | None) -> Path:
-    """Where LAMMPS writes its log: the run folder's, unless the command named one."""
-    cmd = (run or {}).get("command") or []
-    for i, arg in enumerate(cmd[:-1]):
-        if arg in ("-log", "-l"):
-            p = Path(cmd[i + 1])
-            return p if p.is_absolute() else Path((run or {}).get("cwd") or run_dir) / p
-    return run_dir / rf.LOG
-
-
 class Scorer:
     def __init__(self, run_dir: Path, poll_s: float = 0.5, heartbeat_s: float = HEARTBEAT_S) -> None:
         self.run_dir = Path(run_dir)
@@ -191,7 +181,8 @@ class Scorer:
 
         self.reader = DumpReader(self.run_dir / rf.FRAMES)
         writer = rf.ScoresWriter(self.analysis_dir / rf.SCORES)
-        self.log = LogFollower(log_path(self.run_dir, rf.read_json(self.run_dir / rf.RUN_JSON)))
+        run = rf.read_json(self.run_dir / rf.RUN_JSON) or {}
+        self.log = LogFollower(rf.log_path(self.run_dir, run.get("command"), run.get("cwd")))
         self.identity: str | None = None
         self.first: dict | None = None        # first frame's step and time
         self.tracker = None
