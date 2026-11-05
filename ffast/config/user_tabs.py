@@ -27,6 +27,7 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 import tomli_w
 from pydantic import ValidationError
@@ -242,7 +243,7 @@ class UserTabStore:
 class TabEntry:
     """One tab of the merged bar."""
     tab: AnalysisTabConfig
-    source: str                      # "built-in" | "project" | "user"
+    source: str                      # "built-in" | "project" | "user" | "live"
     file: str | None = None          # user tabs: the file in the store
     replaces: str | None = None      # user tabs: the original they stand in for
     original_changed: bool = False   # that original changed since the edit
@@ -260,6 +261,9 @@ class TabSources:
     project: list[AnalysisTabConfig] = field(default_factory=list)
     store: UserTabStore | None = None
     registry: object = None
+    # The tabs of the live runs open on this server (ADR 0087): made by the
+    # server, last in the bar, never saved.
+    live: Callable[[], list[AnalysisTabConfig]] | None = None
 
     @classmethod
     def for_project(cls, project_config=None, store: UserTabStore | None = None,
@@ -306,7 +310,12 @@ class TabSources:
             if u.replaces not in base_names:   # a new tab, or its original is gone
                 out.append(TabEntry(u.tab, "user", u.file, hidden=u.tab.name in hidden))
         rank = {n: i for i, n in enumerate(self.store.bar_order if self.store else [])}
-        return sorted(out, key=lambda e: rank.get(e.tab.name, len(rank)))
+        out = sorted(out, key=lambda e: rank.get(e.tab.name, len(rank)))
+        taken = {e.tab.name for e in out}
+        for tab in (self.live() if self.live else []):
+            if tab.name not in taken:
+                out.append(TabEntry(tab, "live"))
+        return out
 
     def layout(self) -> list[dict]:
         """The TAB_LAYOUT payload: each tab as the browser draws it, plus where
@@ -357,6 +366,9 @@ class TabSources:
         except ValidationError as exc:
             raise TabError(_validation_message(exc)) from None
         self._check_metrics(tab)
+        if any(p.live_run for p in tab.panels):
+            raise TabError("A live-run tab is not saved: it belongs to its run and "
+                           "closes with it. Build a new tab for the panels you want to keep.")
 
         entries = self.entries()
         editing = self._entry(previous_name, entries) if previous_name is not None else None

@@ -151,6 +151,10 @@ class PanelConfig(BaseModel):
     legacy error tabs) at the *first* member's ``row``/``col``/span, instead of
     each taking its own grid cell.
 
+    ``live_run`` names a live LAMMPS run (ADR 0087): the panel, a timeline,
+    draws that run's scores against step instead of metrics. Such panels are
+    in the tabs the server makes for open runs, never in saved tabs.
+
     ``kind = "3d"`` is a **3D panel** (ADR 0056): a cell showing a visualization
     view instead of plotting metrics. Browser only; it binds no metric roles.
     It is ``view = "linked"`` (the default: it shows the main view) or
@@ -188,6 +192,13 @@ class PanelConfig(BaseModel):
     link_frame: bool = True
     link_camera: bool = True
     start: StartSettings | None = None
+    live_run: str | None = None
+
+    @model_validator(mode="after")
+    def _live_panel_is_a_timeline_of_its_run(self) -> "PanelConfig":
+        if self.live_run is not None and (self.kind != "timeline" or self.metrics):
+            raise ValueError("a live-run panel is a timeline and takes no 'metrics'")
+        return self
 
     @model_validator(mode="after")
     def _3d_panel_binds_no_metrics(self) -> "PanelConfig":

@@ -43,7 +43,6 @@ import { setTimingSink } from './timing.js';
 import { ClusterDialog } from './cluster_dialog.js';
 import { FILE_SHORTCUTS, isMac, matchShortcut, shortcutLabel } from './shortcuts.js';
 import { showWarning } from './toasts.js';
-import { LiveRuns } from './live_run.js';
 import { applyStaticIcons, icon } from './icons.js';
 import { initBell } from './notification_bell.js';
 import { initFullTextTitles } from './hover_tip.js';
@@ -2552,31 +2551,27 @@ export class FFastApp {
       problem: (v) => (v.trim() ? '' : 'Give the folder ffast-lammps printed'), okLabel: 'Open',
     });
     if (!path || !this._conn) return;
-    this._liveRunsView().expect(path.trim());
     this._liveRunWanted = true;
     this._conn.send(OUT.OPEN_LIVE_RUN, { path: path.trim() }, []);
     this._setStatus('Opening live run…', 'connected');
   }
 
-  _liveRunsView() {
-    if (!this._liveRuns) {
-      this._liveRuns = new LiveRuns({
-        onFrame: (fp, frame) => this._onPlotPoint({ datasetFp: fp, modelFp: null, frame }),
-        onError: (text) => this._setStatus(`Live run: ${text}`, 'error'),
-      });
-    }
-    return this._liveRuns;
-  }
-
+  /** A live run's state and scores (ADR 0087): its tab's score panel draws
+   * them. The window that opened the run goes to the run's tab and shows its
+   * frames in the main view, once the run has frames and its tab is listed. */
   _onLiveRunUpdate(kw) {
-    const panel = this._liveRunsView().update(kw);
-    // The run this window asked for is shown in the main view once it has frames.
-    if (panel && this._liveRunWanted && kw.fingerprint) {
-      this._liveRunWanted = false;
-      this._setStatus(`Live run ${kw.run_id}`, 'connected');
-      if (this._datasets.has(kw.fingerprint)) this._showInMainView(kw.fingerprint);
-      else this._showWhenKnown = kw.fingerprint;
+    if (!kw.run_id) {
+      if (kw.error) this._setStatus(`Live run: ${kw.error}`, 'error');
+      return;
     }
+    this._analysis.setLiveRun(kw);
+    const tabId = kw.tab && this._analysis.liveTabId(kw.tab);
+    if (!this._liveRunWanted || !kw.fingerprint || !tabId) return;
+    this._liveRunWanted = false;
+    this._setStatus(`Live run ${kw.run_id}`, 'connected');
+    this._selectTab(tabId);
+    if (this._datasets.has(kw.fingerprint)) this._showInMainView(kw.fingerprint);
+    else this._showWhenKnown = kw.fingerprint;
   }
 
   _showInMainView(fp, frame = null) {

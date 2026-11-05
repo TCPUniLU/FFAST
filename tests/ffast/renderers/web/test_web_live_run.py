@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import http.server
 import json
+import re
 import threading
 from pathlib import Path
 
@@ -47,7 +48,8 @@ async def test_the_live_run_helpers_and_the_timeline_with_steps(static_origin):
       const lr = await import('{static_origin}/live_run.js');
       const pn = await import('{static_origin}/panels.js');
       const kw = {json.dumps(kw)};
-      const {{ spec, series }} = lr.liveRunPlot(kw);
+      const series = lr.liveRunSeries(kw);
+      const spec = {{ kind: 'timeline', x_label: 'Step', y_line: lr.liveRunThreshold(kw) }};
       const built = pn.buildPanel(spec, series, {{ peaks: false, units: {{}} }});
       const plain = pn.buildPanel({{ kind: 'timeline' }},
         [{{ name: 'a', data: {{ y: {{ nd: {{ values: [3, 4], shape: [2] }} }} }} }}], {{}});
@@ -56,6 +58,8 @@ async def test_the_live_run_helpers_and_the_timeline_with_steps(static_origin):
         ended: lr.liveRunStatus({{ ...kw, end: {{ state: 'finished' }}, progress: {{ state: 'refused' }} }}),
         problem: lr.liveRunProblem(kw),
         refused: lr.liveRunProblem({{ ...kw, progress: {{ reason: 'units lj' }} }}),
+        noThreshold: lr.liveRunThreshold({{}}) ?? null,
+        frames: series[0].frames, fp: series[0].datasetFp,
         x: built.traces[0].x, y: built.traces[0].y,
         xTitle: built.layout.xaxis.title.text,
         line: built.layout.shapes && built.layout.shapes[0].y0,
@@ -72,20 +76,25 @@ async def test_the_live_run_helpers_and_the_timeline_with_steps(static_origin):
         finally:
             await browser.close()
     assert got["status"] == "3 frames · 2 scored · atom order unverified · running"
-    assert got["ended"] == "3 frames · run finished · scorer refused"
+    assert got["ended"] == "3 frames · 2 scored · run finished · scorer refused"
     assert got["problem"] == "slow disk" and got["refused"] == "units lj"
+    assert got["noThreshold"] is None
+    assert got["frames"] == [0, 1] and got["fp"] == "live:r1"
     assert got["x"] == [0, 100] and got["y"] == [1.0, 6.0] and got["xTitle"] == "Step"
     assert got["line"] == 5.0
     assert got["plainX"] == [0, 1] and got["plainShapes"] is None
 
 
-async def test_web_a_live_run_opens_shows_its_frames_and_follows_new_ones(tmp_path):
+ACTIVE = "#tabpanels .tabpanel.active"
+
+
+async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_path):
     run = _run_folder(tmp_path, frames=2)
     async with _spawn_server() as (ws_port, web_port):
         await _wait_for_server_ready(ws_port)
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
@@ -93,10 +102,15 @@ async def test_web_a_live_run_opens_shows_its_frames_and_follows_new_ones(tmp_pa
                 await page.locator("#text-ask input").fill(str(run))
                 await page.locator("#text-ask input").press("Enter")
 
-                panel = page.locator(".live-run")
-                await expect(panel).to_be_visible(timeout=15000)
-                await expect(panel.locator(".live-run-status")).to_contain_text("2 frames")
-                await expect(panel.locator(".live-run-plot .main-svg").first).to_be_attached()
+                # The run's tab is listed and opened: its 3D view beside its scores.
+                tab = page.locator("#tabbar .tab", has_text="Live 12:00:00 node")
+                await expect(tab).to_have_class(re.compile(r"\bactive\b"), timeout=15000)
+                active = page.locator(ACTIVE)
+                await expect(active.locator(".panel-3d")).to_have_count(1)
+                caption = active.locator(".analysis-panel .panel-caption-line")
+                await expect(caption).to_contain_text("2 frames · 2 scored")
+                await expect(active.locator(".analysis-panel .panel-plot .main-svg").first).to_be_attached()
+                await expect(active.locator(".sub-toggle")).to_have_count(0)
                 await expect(page.locator("#dataset-list .obj-row")).to_have_count(1, timeout=15000)
 
                 # LAMMPS writes another frame, the scorer scores it.
@@ -106,10 +120,19 @@ async def test_web_a_live_run_opens_shows_its_frames_and_follows_new_ones(tmp_pa
                 rf.ScoresWriter(adir / rf.SCORES).append([{
                     "segment": 0, "frame": 2, "step": 200, "time": 0.1, "identity": "proven",
                     "tracks": {"geometric": {"t2": 2.0, "spe": None, "flags": {"bead": False}}}}])
-                await expect(panel.locator(".live-run-status")).to_contain_text("3 frames", timeout=15000)
+                await expect(caption).to_contain_text("3 frames · 3 scored", timeout=15000)
 
-                await panel.locator(".live-run-close").click()
-                await expect(panel).to_have_count(0)
+                # A click on the last point shows that frame in the 3D view.
+                xy = await page.evaluate("""(sel) => {
+                  const el = document.querySelector(sel + ' .analysis-panel .panel-plot');
+                  const fl = el._fullLayout, tr = el.data[0], r = el.getBoundingClientRect();
+                  const i = tr.x.length - 1;
+                  return {x: r.left + fl.margin.l + fl.xaxis.l2p(tr.x[i]),
+                          y: r.top + fl.margin.t + fl.yaxis.l2p(tr.y[i])};
+                }""", ACTIVE)
+                await page.mouse.move(xy["x"], xy["y"])
+                await page.mouse.click(xy["x"], xy["y"])
+                await expect(page.locator("#frame-label")).to_have_text("2 / 2", timeout=10000)
             finally:
                 await browser.close()
 

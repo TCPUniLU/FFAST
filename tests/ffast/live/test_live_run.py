@@ -134,3 +134,49 @@ async def test_open_follows_until_the_dataset_is_deleted(tmp_path):
     del env.datasets[run.fingerprint]
     await asyncio.wait_for(run.task, 5)
     assert d.name not in env.live_runs
+
+
+# ── the run's tab (ADR 0087) ──────────────────────────────────────────────────
+
+def test_a_run_with_frames_has_a_tab_its_3d_view_beside_its_scores(tmp_path):
+    from ffast.config.user_tabs import TabSources
+    from ffast.live.live_run import live_tabs, tab_name
+
+    assert tab_name("20261105-103335-mel0314-17254-dae9") == "Live 10:33:35 mel0314"
+    assert tab_name("odd") == "Live odd"
+    d = _run_folder(tmp_path)
+    env = _Env()
+    env.live_runs = {}
+    run = LiveRun(env, d, lambda m: None)
+    env.live_runs[run.run_id] = run
+    assert live_tabs(env) == []                         # no frames read yet
+    run.apply(run.read_files())
+    sources = TabSources(builtin=[], live=lambda: live_tabs(env))
+    [tab] = sources.layout()
+    assert tab["name"] == "Live 12:00:00 node" and tab["source"] == "live"
+    assert tab["has_data_selector"] is False
+    kinds = [(p["kind"], p.get("live_run")) for p in tab["panels"]]
+    assert kinds == [("3d", None), ("timeline", run.run_id)]
+    assert tab["panels"][1]["metrics"] == {}
+    assert _kwargs(run.message())["tab"] == "Live 12:00:00 node"
+
+
+def test_a_live_run_tab_is_never_saved(tmp_path):
+    from ffast.config.user_tabs import TabError, TabSources, UserTabStore
+
+    sources = TabSources(builtin=[], store=UserTabStore(tmp_path / "tabs"))
+    tab = {"name": "Mine", "grid": 24, "panels": [
+        {"kind": "3d", "row": 0, "col": 0, "rowspan": 4, "colspan": 12},
+        {"kind": "timeline", "row": 0, "col": 12, "rowspan": 4, "colspan": 12, "live_run": "r1"}]}
+    with pytest.raises(TabError, match="not saved"):
+        sources.save(tab)
+
+
+def test_a_live_run_panel_is_a_timeline_without_metrics():
+    from pydantic import ValidationError
+
+    from ffast.config.models import PanelConfig
+
+    PanelConfig(kind="timeline", row=0, col=0, live_run="r1")
+    with pytest.raises(ValidationError, match="live-run panel"):
+        PanelConfig(kind="scatter", row=0, col=0, live_run="r1")

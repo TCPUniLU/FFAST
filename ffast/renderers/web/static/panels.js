@@ -167,7 +167,10 @@ export function withHoverReadout(built) {
   const yName = name(built.layout.yaxis?.title?.text, 'y');
   for (const tr of built.traces) {
     if (tr.hoverinfo === 'skip' || tr.hovertemplate) continue;
-    const x = tr.type === 'bar' ? '%{x}' : '%{x:.6g}';
+    // Whole numbers (frame indices, simulation steps) read as such: .6g
+    // printed step 15000 as "15000.0" and step 1000000 as "1.00000e+6".
+    const whole = Array.isArray(tr.x) && tr.x.length && tr.x.every(Number.isInteger);
+    const x = tr.type === 'bar' ? '%{x}' : whole ? '%{x:d}' : '%{x:.6g}';
     tr.hovertemplate = `${tr.name ? '<b>%{fullData.name}</b><br>' : ''}${xName} = ${x}<br>${yName} = %{y:.6g}<extra></extra>`;
   }
   const spikes = { showspikes: true, spikemode: 'across', spikesnap: 'hovered data',

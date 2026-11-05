@@ -41,6 +41,7 @@ import { KIND_3D } from './tab_rules.js';
 import { GRID_COLUMNS, ROW_UNIT_PX, LABEL_FIELDS, toFineGrid } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState } from './layout_state.js';
+import { liveRunProblem, liveRunSeries, liveRunStatus, liveRunThreshold } from './live_run.js';
 
 /** Two columns of the smallest plot, and the gap between cells, in px (the grid gap in index.html). */
 const COLUMN_MIN = 360;
@@ -217,6 +218,8 @@ export class AnalysisManager {
     this._renderToken = 0;
     /** Subsets SUB made: `${parentFp}|${modelFp}|${plot}` → fingerprint. */
     this._subsets = new Map();
+    /** Live runs (ADR 0087): run id → the last LIVE_RUN_UPDATE. */
+    this._live = new Map();
 
     // One ⋯ menu list for every panel (web parity: plot and table export).
     const panelMenuList = document.createElement('div');
@@ -274,6 +277,53 @@ export class AnalysisManager {
   setMetricCatalog(entries) {
     this._catalog = new Map((entries || []).map((e) => [e.id, e]));
     if (this._activeTab()) this._renderTab(this._activeTab());
+  }
+
+  /** A live run's new state and scores: redraw the panels of the tab on
+   * screen that plot it (ADR 0087). */
+  setLiveRun(kw) {
+    this._live.set(kw.run_id, kw);
+    const t = this._activeTab();
+    if (!t || !t.slots.every((slot) => slot.cards)) return;
+    for (const slot of t.slots) {
+      slot.cards.forEach((card, i) => {
+        if (slot.specs[i].live_run === kw.run_id)
+          this._fetchAndRenderPanel(t, slot.specs[i], card, this._renderToken);
+      });
+    }
+  }
+
+  /** The name of a live run's tab, once the server lists it. */
+  liveTabId(name) {
+    return this._tabs.find((t) => t.spec.name === name)?.id ?? null;
+  }
+
+  /** Draw a live run's scores (a timeline whose spec names the run): no
+   * metric is asked for; the series is the run's last LIVE_RUN_UPDATE. */
+  async _drawLivePanel(t, spec, card, token) {
+    const seq = card.seq = (card.seq || 0) + 1;
+    const kw = this._live.get(spec.live_run);
+    const status = kw ? liveRunStatus(kw) : 'Waiting for the run…';
+    const problem = kw ? liveRunProblem(kw) : '';
+    const series = kw ? liveRunSeries(kw) : [];
+    if (!series.length || !series[0].data.y.nd.values.length) {
+      card.body.className = '';
+      const msg = document.createElement('div');
+      msg.className = 'panel-msg';
+      msg.textContent = [status, problem, 'No scores yet.'].filter(Boolean).join('\n');
+      clearPlot(card.body);
+      card.body.replaceChildren(msg);
+      card.captionEl.hidden = true;
+      card.series = null;
+      return;
+    }
+    spec.y_line = liveRunThreshold(kw);
+    card.body.className = 'panel-plot';
+    await this._drawPanel(t, spec, card, series, token, seq);
+    if (token !== this._renderToken || seq !== card.seq) return;
+    // The caption says where the run is, in place of the figure caption.
+    card.captionEl.hidden = false;
+    card.captionText.textContent = problem ? `${status}. ${problem}` : status;
   }
 
   /** Build (or rebuild) every tab from a TAB_LAYOUT payload. */
@@ -1033,7 +1083,10 @@ export class AnalysisManager {
     const token = ++this._renderToken;
     if (!t.has2d) return;
     let msg = '';
-    if (!this._metrics || !this._catalog.size) msg = 'Waiting for metric catalog…';
+    // A live run's tab plots its scores, which need no metric or selection.
+    const liveOnly = t.spec.panels.every((p) => p.kind === KIND_3D || p.live_run);
+    if (liveOnly) msg = '';
+    else if (!this._metrics || !this._catalog.size) msg = 'Waiting for metric catalog…';
     else if (!this._tabDatasets(t).length) msg = 'Select a dataset to view this analysis.';
     // A tab of plots only says it once; around a 3D panel each card says it.
     const whole = !!msg && !t.cells3d.length;
@@ -1239,6 +1292,7 @@ export class AnalysisManager {
   }
 
   async _fetchAndRenderPanel(t, spec, card, token) {
+    if (spec.live_run) return this._drawLivePanel(t, spec, card, token);
     const refs = this._cardRefs(t, spec);
     const seq = card.seq = (card.seq || 0) + 1;
 
@@ -1408,7 +1462,8 @@ export class AnalysisManager {
 
   /** The "Peaks" checkbox of a one-series timeline: its peak labels on or off. */
   _wirePeaksToggle(t, spec, card) {
-    if (spec.kind !== 'timeline') return;
+    // A live run's x is the step; peak labels name frame indices.
+    if (spec.kind !== 'timeline' || spec.live_run) return;
     const key = panelKey(spec);
     if (!card.peaksToggle) {
       const toggle = document.createElement('label');
@@ -1720,7 +1775,8 @@ export class AnalysisManager {
       }
       this._noteZoom(t, spec, card);
     });
-    if (SUB_KINDS.has(spec.kind)) this._wireSub(t, spec, card);
+    // A live run's scores are not a metric of a dataset: no subset from them.
+    if (SUB_KINDS.has(spec.kind) && !spec.live_run) this._wireSub(t, spec, card);
     clearTimeout(card.frameTimer);   // a click on the plot this one replaces
     card.frameTimer = null;
     if (!el._subInfo || !el._subInfo.perFrame) return;   // only per-frame kinds
@@ -1737,7 +1793,9 @@ export class AnalysisManager {
       if (info.dataCurveCount != null && pt.curveNumber >= info.dataCurveCount) return;
       const src = (card.series || [])[(info.curveSeries || [])[pt.curveNumber] ?? 0];
       // A point that is not a frame carries its frame in its data (a parity dot).
-      const index = info.frameField != null ? pt.customdata?.[info.frameField] : pt.pointIndex;
+      // A live run's points are its scored frames, in order (ADR 0087).
+      const index = info.frameField != null ? pt.customdata?.[info.frameField]
+        : src?.frames ? src.frames[pt.pointIndex] : pt.pointIndex;
       if (index == null || !src) return;
       const frame = { datasetFp: src.datasetFp, modelFp: src.modelFp, frame: index };
       clearTimeout(card.frameTimer);

@@ -124,6 +124,7 @@ CASES = {
     "hover_scatter_diagonal": "(() => { const b = pn.buildPanel({kind: 'scatter', diagonal: true}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {x: {nd: {values: [1, 2], shape: [2]}}, y: {nd: {values: [1, 2], shape: [2]}}}}], {units: {}}); return [b.traces.length, b.traces[b.traces.length - 1].hovertemplate === undefined, b.traces[0].hovertemplate]; })()",
     # A force parity panel (ADR 0078): density (row 0 centres, then counts) + worst components.
     "parity": "(() => { const b = pn.buildPanel({kind: 'parity', diagonal: true}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {density: {nd: {values: [0.5, 1.5, 3, 0, 1, 7], shape: [3, 2]}}, outliers: {nd: {values: [0, -3, 1, 1, 0, 0, 1, 1, 0, 1], shape: [2, 5]}}}}], {units: {}}); const [dots, bar, diag] = b.traces; const im = b.layout.images[0]; const px = pn.densityPixels([[3, 0], [1, 7]]); return [b.traces.map((t) => t.type), dots.x, dots.y, dots.customdata, bar.marker.cmax, bar.marker.colorbar.ticktext, im.source.slice(0, 21), [im.x, im.y, im.sizex, im.sizey, im.layer], b.layout.xaxis.range, diag.x, b.subInfo, Array.from(px.slice(0, 8)), px[15]]; })()",
+    "hover_fractional_x": "(() => { const b = pn.buildPanel({kind: 'scatter'}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {x: {nd: {values: [0.5, 1.25], shape: [2]}}, y: {nd: {values: [1, 2], shape: [2]}}}}], {units: {}}); return b.traces[0].hovertemplate; })()",
     "hover_bars": "(() => { const b = pn.buildPanel({kind: 'bars'}, [{name: 'MACE', data: {value: {nd: {values: [0.1, 0.2], shape: [2]}}}}], {elementOrder: [1, 6], selectedElements: ['All']}); return b.traces[0].hovertemplate; })()",
     "te_set_labels": "(() => { const a = te.setPanelLabels(TE(), 2, {y_title: 'Mine', label_size: 14, colour: 'red'}); const b = te.setPanelLabels(a, 2, {y_title: null}); return [a.panels[2], b.panels[2], te.toSaved(b).panels[2], TE().panels[2]]; })()",
     "pn_labels_applied": "(() => { const S = (name) => ({datasetFp: 'D', modelFp: name, name, data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}); const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u'], y_title: 'Mine', label_size: 15, legend_size: 9, legend_x: 0.1, legend_y: 0.9}, [S('MACE'), S('SchNet')], {units: {}, peaks: false}); return [b.layout.yaxis.title.text, b.layout.yaxis.title.font.size, b.layout.xaxis.title.font.size, b.layout.legend.font.size, b.layout.legend.x, b.layout.legend.y, b.labelDefaults, b.traces[0].hovertemplate]; })()",
@@ -1774,10 +1775,15 @@ def test_grouped_table_csv_keeps_the_raw_numbers(results):
 
 def test_hover_names_the_series_and_both_values_with_crosshair_lines(results):
     template, spikes, mode = results["hover_timeline"]
-    assert "Configuration index = %{x:.6g}" in template
+    # Frame indices are whole numbers and read as such.
+    assert "Configuration index = %{x:d}" in template
     assert "%{y:.6g}" in template
     assert "<b>%{fullData.name}</b>" in template
     assert spikes is True and mode == "across"
+
+
+def test_fractional_x_keeps_six_significant_digits_on_hover(results):
+    assert "= %{x:.6g}<br>" in results["hover_fractional_x"]
 
 
 def test_the_scatter_diagonal_shows_nothing_on_hover(results):

@@ -9,6 +9,10 @@ so every window gets the new count and stale metric results are dropped.
 Scores stay apart from geometry: they travel in ``LIVE_RUN_UPDATE``, one
 message per change (and every ``RESEND_S`` seconds, for windows that connect
 later), holding the whole score series of the run's first analysis.
+
+Each open run with frames has a tab of its own in the server's tab list
+(``live_tab``): its 3D view beside a timeline of its scores against step. The
+tab is made by the server, never saved, and leaves with the run.
 """
 
 from __future__ import annotations
@@ -85,6 +89,45 @@ class LiveRunDataset(FlatDatasetLoader):
         self.molecule_offsets = np.arange(self.N + 1, dtype=np.int64) * self._n_atoms
 
 
+def tab_name(run_id: str) -> str:
+    """"Live 10:33:35 mel0314" from "20261105-103335-mel0314-17254-dae9"."""
+    parts = run_id.split("-")
+    if len(parts) >= 3 and len(parts[1]) == 6 and parts[1].isdigit():
+        t = parts[1]
+        return f"Live {t[:2]}:{t[2:4]}:{t[4:]} {parts[2]}"
+    return f"Live {run_id}"
+
+
+def live_tab(run: "LiveRun"):
+    """The run's tab: the main 3D view, and its T² against step beside it."""
+    from ffast.config.models import AnalysisTabConfig, PanelConfig
+
+    return AnalysisTabConfig(
+        name=run.tab_name,
+        has_data_selector=False,
+        grid=24,
+        panels=[
+            PanelConfig(kind="3d", row=0, col=0, rowspan=12, colspan=14),
+            PanelConfig(kind="timeline", row=0, col=14, rowspan=8, colspan=10,
+                        title="Score against step", x_label="Step", y_label="T² (geometric)",
+                        legend=False, live_run=run.run_id),
+        ],
+    )
+
+
+def live_tabs(env) -> list:
+    """The tabs of the open runs that have frames, oldest first."""
+    return [live_tab(r) for r in getattr(env, "live_runs", {}).values() if r.registered]
+
+
+def _tabs_changed(env) -> None:
+    feed = getattr(env, "window_feed", None)
+    if feed is not None:
+        from ffast.protocol import control
+
+        feed.changed(control.TAB_LAYOUT)
+
+
 def _series_of(rows: list[dict]) -> dict:
     out = {"frame": [], "step": [], "t2": [], "flag": []}
     for r in rows:
@@ -110,6 +153,7 @@ class LiveRun:
         self.env = env
         self.run_dir = run_dir
         self.run_id = str(run["run_id"])
+        self.tab_name = tab_name(self.run_id)
         self.run = run
         self.broadcast = broadcast
         from ffast.live.dump_reader import DumpReader
@@ -173,6 +217,7 @@ class LiveRun:
             if not self.registered:
                 self.env.datasets.add(self.dataset)
                 self.registered = True
+                _tabs_changed(self.env)
             else:
                 self.dataset.eventPush("SUBDATASET_INDICES_CHANGED", self.fingerprint)
         self.rows += got["rows"]
@@ -188,6 +233,7 @@ class LiveRun:
             "run_id": self.run_id,
             "path": str(self.run_dir),
             "fingerprint": self.fingerprint if self.registered else None,
+            "tab": self.tab_name if self.registered else None,
             "n_frames": self.dataset.N,
             "analysis_id": self.analysis_id,
             "bundle": self.settings.get("bundle"),
@@ -211,6 +257,7 @@ class LiveRun:
             if self.registered and self.env.datasets.get(self.fingerprint) is not self.dataset:
                 logger.info("live run %s: dataset closed, no longer followed", self.run_id)
                 self.env.live_runs.pop(self.run_id, None)
+                _tabs_changed(self.env)
                 return
             if self.apply(got) or time.monotonic() - self._last_sent > RESEND_S:
                 self.announce()
@@ -222,6 +269,9 @@ def open_live_run(env, path: str, broadcast) -> LiveRun:
     runs = getattr(env, "live_runs", None)
     if runs is None:
         runs = env.live_runs = {}
+    sources = getattr(env, "tab_sources", None)
+    if sources is not None and sources.live is None:
+        sources.live = lambda: live_tabs(env)
     run = LiveRun(env, Path(path), broadcast)
     existing = runs.get(run.run_id)
     if existing is not None and existing.task is not None and not existing.task.done():
