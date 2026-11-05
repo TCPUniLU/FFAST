@@ -31,7 +31,17 @@ def _qt_available() -> bool:
         return False
 
 
+LIVE_COMMANDS = ("bundle", "lammps")
+
+
 def main(argv: list | None = None) -> None:
+    args = list(argv if argv is not None else sys.argv[1:])
+    if args and args[0] in LIVE_COMMANDS:
+        # `ffast bundle` / `ffast lammps data` (ADR 0086) start no client.
+        from ffast.live.cli import main as live_main
+
+        sys.exit(live_main(args))
+
     if _qt_available():
         from main import cli
 
