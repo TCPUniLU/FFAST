@@ -164,6 +164,7 @@ class ServerSession:
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
             CancelTryMetricRequest, CancelMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
             TraceRequest, RequestMetricBoxesRequest, OpenLiveRunRequest,
+            LiveStopRequest, LiveSetStopOnAlarmRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -211,6 +212,9 @@ class ServerSession:
             control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
             control.TRACE:                      _Route(self._on_trace, ["kind", "text"], TraceRequest),
             control.OPEN_LIVE_RUN:              _Route(self._on_open_live_run, ["path"], OpenLiveRunRequest),
+            control.LIVE_STOP:                  _Route(self._on_live_stop, ["run_id"], LiveStopRequest),
+            control.LIVE_SET_STOP_ON_ALARM:     _Route(self._on_live_set_stop_on_alarm, ["run_id", "on"],
+                                                       LiveSetStopOnAlarmRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -910,6 +914,29 @@ class ServerSession:
         except (ValueError, OSError) as exc:
             logger.warning("OPEN_LIVE_RUN %r: %s", path, exc)
             await self._emit(pack(control.LIVE_RUN_UPDATE, (), {"path": path, "error": str(exc)}))
+
+    async def _on_live_stop(self, run_id, **kwargs) -> None:
+        """"Stop now" (ADR 0086): writes the run's stop request; its wrapper
+        stops LAMMPS. A run that is not open or has ended is answered with ``error``."""
+        from ffast.live.live_run import stop_run
+        from ffast.protocol.rpc import pack
+
+        try:
+            stop_run(self.env, run_id)
+        except (ValueError, OSError) as exc:
+            logger.warning("LIVE_STOP %r: %s", run_id, exc)
+            await self._emit(pack(control.LIVE_RUN_UPDATE, (), {"run_id": None, "error": str(exc)}))
+
+    async def _on_live_set_stop_on_alarm(self, run_id, on, **kwargs) -> None:
+        """Turn a live run's stop on alarm on or off (``control.json``, read by its scorer)."""
+        from ffast.live.live_run import set_stop_on_alarm
+        from ffast.protocol.rpc import pack
+
+        try:
+            set_stop_on_alarm(self.env, run_id, on)
+        except (ValueError, OSError) as exc:
+            logger.warning("LIVE_SET_STOP_ON_ALARM %r: %s", run_id, exc)
+            await self._emit(pack(control.LIVE_RUN_UPDATE, (), {"run_id": None, "error": str(exc)}))
 
     async def _on_list_dir(self, path=None, **kwargs) -> None:
         """List a server-side directory and push DIR_LISTING.

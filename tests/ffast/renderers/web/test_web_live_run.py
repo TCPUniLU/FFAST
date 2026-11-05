@@ -285,3 +285,39 @@ async def test_web_a_stopped_run_shows_its_alarm_moments_and_events(tmp_path):
                 assert notes["rects"] == 1 and notes["traces"] == 2     # scores, marks (no chemistry flag)
             finally:
                 await browser.close()
+
+
+async def test_web_stop_now_asks_first_and_stop_on_alarm_switches(tmp_path):
+    run = _run_folder(tmp_path, frames=2)
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _file_menu(page, "Open Live Run…")
+                await page.locator("#text-ask input").fill(str(run))
+                await page.locator("#text-ask input").press("Enter")
+                active = page.locator(ACTIVE)
+                tick = active.locator(".live-stop-on-alarm")
+                await expect(tick).not_to_be_checked(timeout=15000)
+                await tick.check()
+                await expect(tick).to_be_checked(timeout=10000)
+                assert rf.read_json(run / rf.CONTROL)["stop_on_alarm"] is True
+
+                # Stop now asks first; Cancel leaves the run alone.
+                await active.locator(".live-stop-now").click()
+                dialog = page.locator(".ask-dialog")
+                await expect(dialog).to_contain_text("Stop this run?")
+                await dialog.get_by_role("button", name="Cancel").click()
+                assert not (run / rf.STOP_REQUEST).exists()
+                await active.locator(".live-stop-now").click()
+                await page.locator(".ask-dialog").get_by_role("button", name="Stop run").click()
+                await expect(active.locator(".live-stop-now")).to_have_text("Stop requested", timeout=10000)
+                await expect(active.locator(".live-stop-now")).to_be_disabled()
+                assert rf.read_json(run / rf.STOP_REQUEST)["by"] == "user"
+                await expect(active.locator(".live-status")).to_contain_text("stop requested")
+            finally:
+                await browser.close()

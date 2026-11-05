@@ -202,6 +202,8 @@ export class AnalysisManager {
     /** The name of the tab being dragged in the bar, or null (ADR 0070). */
     this._dragging = null;
     this._onSub = deps.onSub;
+    // A live run's stop controls and attribution ask the app (live_ui.js).
+    this._onLive = deps.onLive;
     this._onFreeze = deps.onFreeze;
     this._seriesColour = deps.seriesColour;
     this._openFrame = deps.onPointFrame;
@@ -371,6 +373,29 @@ export class AnalysisManager {
     const controls = this._liveControls?.(spec, kw);
     if (controls) strip.appendChild(controls);
     card.body.replaceChildren(...children);
+  }
+
+  /** "Stop on alarm" and "Stop now…" for a running run; nothing once it ended. */
+  _liveControls(spec, kw) {
+    if (kw.end || !this._onLive) return null;
+    const box = document.createElement('span');
+    box.className = 'live-controls';
+    const label = document.createElement('label');
+    const tick = document.createElement('input');
+    tick.type = 'checkbox';
+    tick.className = 'live-stop-on-alarm';
+    tick.checked = !!kw.stop_on_alarm;
+    tick.addEventListener('change', () => this._onLive({ action: 'stop_on_alarm', run_id: kw.run_id, on: tick.checked }));
+    label.append(tick, 'Stop on alarm');
+    const stop = document.createElement('button');
+    stop.type = 'button';
+    stop.className = 'danger live-stop-now';
+    stop.textContent = kw.stop_requested ? 'Stop requested' : 'Stop now…';
+    stop.disabled = !!kw.stop_requested;
+    stop.addEventListener('click', () => this._onLive({ action: 'stop', run_id: kw.run_id,
+      processes: kw.progress?.processes ?? null }));
+    box.append(label, stop);
+    return box;
   }
 
   _drawLiveEvents(card, kw) {

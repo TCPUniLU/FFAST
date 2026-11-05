@@ -274,9 +274,17 @@ class LiveRun:
             "end": self.run.get("end"),
             "stop": self.run.get("stop"),
             "stop_requested": (self.run_dir / rf.STOP_REQUEST).exists(),
+            "stop_on_alarm": self._stop_on_alarm(progress),
             "events": self.events[-EVENTS_KEPT:],
             "error": self.error,
         })
+
+    def _stop_on_alarm(self, progress: dict) -> bool:
+        """The viewer's last choice (control.json) if any, else the scorer's setting."""
+        ctl = rf.read_json(self.run_dir / rf.CONTROL)
+        if isinstance(ctl, dict) and "stop_on_alarm" in ctl:
+            return bool(ctl["stop_on_alarm"])
+        return bool(progress.get("stop_on_alarm"))
 
     def announce(self) -> None:
         self._last_sent = time.monotonic()
@@ -294,6 +302,31 @@ class LiveRun:
             if self.apply(got) or time.monotonic() - self._last_sent > RESEND_S:
                 self.announce()
             await asyncio.sleep(poll_s)
+
+
+def find_run(env, run_id: str) -> LiveRun:
+    """The open run ``run_id``; ``ValueError`` when no window opened it."""
+    run = (getattr(env, "live_runs", None) or {}).get(run_id)
+    if run is None:
+        raise ValueError(f"live run {run_id!r} is not open")
+    return run
+
+
+def stop_run(env, run_id: str) -> bool:
+    """"Stop now": ask the run's wrapper to stop LAMMPS. False if a stop was already asked for."""
+    run = find_run(env, run_id)
+    if (run.run.get("end") or None) is not None:
+        raise ValueError(f"live run {run_id} has already ended")
+    asked = rf.request_stop(run.run_dir, by="user", reason="Stop now in the FFAST viewer")
+    run.announce()
+    return asked
+
+
+def set_stop_on_alarm(env, run_id: str, on: bool) -> None:
+    """Turn stop on alarm on or off for a running run (the scorer reads it every poll)."""
+    run = find_run(env, run_id)
+    rf.set_stop_on_alarm(run.run_dir, bool(on), by="user")
+    run.announce()
 
 
 def open_live_run(env, path: str, broadcast) -> LiveRun:

@@ -403,6 +403,23 @@ class OpenLiveRunRequest(BaseModel):
     path: str
 
 
+class LiveStopRequest(BaseModel):
+    """Typed payload for ``LIVE_STOP``: "Stop now" for an open live run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+
+
+class LiveSetStopOnAlarmRequest(BaseModel):
+    """Typed payload for ``LIVE_SET_STOP_ON_ALARM``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+    on: bool
+
+
 class ListDirRequest(BaseModel):
     """Typed payload for ``LIST_DIR``. ``path=None`` starts at the server
     user's home directory."""

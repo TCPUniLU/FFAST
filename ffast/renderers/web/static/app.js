@@ -27,6 +27,7 @@ import { createExtractPane } from './panes/extract.js';
 import { createAlignPane } from './panes/align.js';
 import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
+import { LiveUi } from './live_ui.js';
 import { Rail, framesText, nameProblem } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
@@ -318,6 +319,7 @@ export class FFastApp {
       seriesColour: ({ datasetFp, modelFp }) => this._colours.get(
         seriesColourOwner(datasetFp, modelFp, !!this._datasets.get(datasetFp)?.parent)),
       onPointFrame: (o) => this._onPlotPoint(o),
+      onLive: (cmd) => this._liveCommand(cmd),
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
       onLoadPrediction: (datasetFp) => this._browser.open('prediction', { datasetFp }),
     });
@@ -2554,6 +2556,13 @@ export class FFastApp {
     this._liveRunWanted = true;
     this._conn.send(OUT.OPEN_LIVE_RUN, { path: path.trim() }, []);
     this._setStatus('Opening live run…', 'connected');
+  }
+
+  /** A live panel's command (stop, stop on alarm; live_ui.js). */
+  _liveCommand(cmd) {
+    if (!this._conn) return;
+    this._liveUi ??= new LiveUi({ send: (event, kw) => this._conn?.send(event, kw, []) });
+    this._liveUi.command(cmd);
   }
 
   /** A live run's state and scores (ADR 0087): its tab's score panel draws

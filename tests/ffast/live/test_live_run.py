@@ -212,3 +212,28 @@ def test_a_live_panel_names_its_run_and_its_part():
         PanelConfig(kind="live", row=0, col=0, live_run="r", options={"part": "x"})
     with pytest.raises(ValidationError, match="takes no 'metrics'"):
         PanelConfig(kind="scatter", row=0, col=0, live_run="r")
+
+
+def test_stop_now_and_stop_on_alarm_write_into_the_run_folder(tmp_path):
+    from ffast.live.live_run import find_run, set_stop_on_alarm, stop_run
+
+    d = _run_folder(tmp_path)
+    env, sent = _Env(), []
+    env.live_runs = {}
+    run = LiveRun(env, d, sent.append)
+    env.live_runs[run.run_id] = run
+    run.apply(run.read_files())
+    assert _kwargs(run.message())["stop_on_alarm"] is False
+    set_stop_on_alarm(env, run.run_id, True)
+    assert rf.read_json(d / rf.CONTROL)["stop_on_alarm"] is True
+    assert _kwargs(sent[-1])["stop_on_alarm"] is True
+    assert stop_run(env, run.run_id) is True
+    req = rf.read_json(d / rf.STOP_REQUEST)
+    assert req["by"] == "user" and _kwargs(sent[-1])["stop_requested"] is True
+    assert stop_run(env, run.run_id) is False                    # the first request stands
+    assert [e["kind"] for e in rf.read_events(d)] == ["stop_requested"]
+    with pytest.raises(ValueError, match="not open"):
+        find_run(env, "other")
+    run.run["end"] = {"state": "finished"}
+    with pytest.raises(ValueError, match="already ended"):
+        stop_run(env, run.run_id)
