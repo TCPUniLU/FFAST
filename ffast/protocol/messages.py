@@ -432,6 +432,14 @@ class LiveAttributionRequest(BaseModel):
     score: str | None = None
 
 
+class ForgetLiveRunRequest(BaseModel):
+    """Typed payload for ``FORGET_LIVE_RUN``: drop a run from the list (its pointer only)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str
+
+
 class ListDirRequest(BaseModel):
     """Typed payload for ``LIST_DIR``. ``path=None`` starts at the server
     user's home directory."""

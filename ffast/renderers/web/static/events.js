@@ -73,6 +73,9 @@ export const OUT = Object.freeze({
   LIVE_SET_STOP_ON_ALARM: 'LIVE_SET_STOP_ON_ALARM',
   // What drove one live frame's score (ADR 0087)
   LIVE_ATTRIBUTION: 'LIVE_ATTRIBUTION',
+  // The "Live runs" list; forget a run whose folder is gone (ADR 0087)
+  LIST_LIVE_RUNS: 'LIST_LIVE_RUNS',
+  FORGET_LIVE_RUN: 'FORGET_LIVE_RUN',
 });
 
 /** Server → client notifications and one-shot announcements. */
@@ -97,6 +100,8 @@ export const IN = Object.freeze({
   LIVE_RUN_UPDATE: 'LIVE_RUN_UPDATE',
   // The answer to LIVE_ATTRIBUTION, to this window only (ADR 0087)
   LIVE_ATTRIBUTION_RESULT: 'LIVE_ATTRIBUTION_RESULT',
+  // The "Live runs" list's rows (ADR 0087)
+  LIVE_RUNS: 'LIVE_RUNS',
   DIR_LISTING: 'DIR_LISTING',
   DATASET_KEYS_RESPONSE: 'DATASET_KEYS_RESPONSE',
   DATASET_LENGTH_RESPONSE: 'DATASET_LENGTH_RESPONSE',

@@ -407,3 +407,76 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 await expect(att).to_contain_text("Step 200")         # the list stays, naming its step
             finally:
                 await browser.close()
+
+
+async def test_live_runs_rows_show_progress_heartbeat_alarm_and_end(static_origin):
+    rows = [
+        {"run_id": "a", "name": "Live 10:33:35 mel0314", "run_dir": "/r/a", "exists": True, "bundle": "aspirin_mace",
+         "last_step": 412300, "planned_end_step": 1000000, "first_step": 0, "scored_through_step": 411900,
+         "scorer_state": "scoring", "heartbeat_age_s": 3, "stalled": False,
+         "alarms": [{"kind": "ood", "step": 386000}], "end": None, "state": "running"},
+        {"run_id": "b", "name": "Live 09:12:02 mel0207", "run_dir": "/r/b", "exists": True, "bundle": "aspirin_mace",
+         "last_step": 230000, "planned_end_step": 500000, "first_step": 0, "scored_through_step": 118000,
+         "scorer_state": "scoring", "heartbeat_age_s": 240, "stalled": True, "alarms": [], "end": None,
+         "state": "running"},
+        {"run_id": "c", "name": "Live 15:02:01 mel0110", "run_dir": "/r/c", "exists": True, "bundle": None,
+         "last_step": 61500, "planned_end_step": None, "scored_through_step": 61500, "scorer_state": "done",
+         "heartbeat_age_s": 9000, "stalled": False, "alarms": [{"kind": "chem", "step": 58000}],
+         "end": {"state": "terminated", "stop_observed_step": 61500}, "state": "terminated"},
+        {"run_id": "d", "name": "Live 08:00:00 n", "run_dir": "/gone/d", "exists": False},
+    ]
+    script = f"""async () => {{
+      const d = await import('{static_origin}/live_runs_dialog.js');
+      return {json.dumps(rows)}.map(d.liveRunRow);
+    }}"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            a, b, c, d = await page.evaluate(script)
+        finally:
+            await browser.close()
+    assert a["lammps"] == "LAMMPS 412,300 / 1,000,000" and a["scored"] == "scored 411,900"
+    assert round(a["lammpsShare"], 3) == 0.412 and a["scorer"] == {"text": "3 s ago", "tone": "ok"}
+    assert a["alarm"] == {"text": "step 386,000", "tone": "bad"} and a["state"]["text"] == "running"
+    assert a["sub"] == "aspirin_mace · /r/a" and a["canOpen"]
+    assert b["scorer"] == {"text": "4 min ago — stalled?", "tone": "warn"}
+    assert c["lammpsShare"] is None and c["scorer"]["text"] == "done"
+    assert c["alarm"]["text"] == "chemistry step 58,000" and c["state"]["text"] == "terminated at step 61,500"
+    assert d["state"]["text"] == "folder not found" and not d["canOpen"]
+
+
+async def test_web_the_live_runs_dialog_lists_opens_and_forgets(tmp_path, monkeypatch):
+    run = _run_folder(tmp_path, frames=2)
+    pointers = tmp_path / "pointers"
+    pointers.mkdir()
+    rf.write_json_atomic(pointers / f"{run.name}.json",
+                         {"run_id": run.name, "run_dir": str(run), "started_utc": "2026-11-05T12:00:00+00:00"})
+    rf.write_json_atomic(pointers / "20261104-080000-n-1-0000.json",
+                         {"run_id": "20261104-080000-n-1-0000", "run_dir": str(tmp_path / "gone"),
+                          "started_utc": "2026-11-04T08:00:00+00:00"})
+    monkeypatch.setenv("FFAST_LIVE_RUNS", str(pointers))
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _file_menu(page, "Live Runs…")
+                dialog = page.locator("#live-runs-dialog")
+                rows = dialog.locator("table.live-runs-table tr[data-run-id]")
+                await expect(rows).to_have_count(2, timeout=10000)
+                await expect(rows.nth(0)).to_contain_text("Live 12:00:00 node")
+                await expect(rows.nth(1)).to_contain_text("folder not found")
+                await rows.nth(1).locator("button.live-runs-forget").click()
+                await expect(rows).to_have_count(1, timeout=10000)
+                assert not (pointers / "20261104-080000-n-1-0000.json").exists()
+                await rows.nth(0).locator("button.live-runs-open").click()
+                await expect(dialog).to_have_count(0)
+                tab = page.locator("#tabbar .tab", has_text="Live 12:00:00 node")
+                await expect(tab).to_have_class(re.compile(r"\bactive\b"), timeout=15000)
+            finally:
+                await browser.close()

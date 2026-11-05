@@ -165,6 +165,7 @@ class ServerSession:
             CancelTryMetricRequest, CancelMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
             TraceRequest, RequestMetricBoxesRequest, OpenLiveRunRequest,
             LiveStopRequest, LiveSetStopOnAlarmRequest, LiveAttributionRequest,
+            ForgetLiveRunRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -217,6 +218,8 @@ class ServerSession:
                                                        LiveSetStopOnAlarmRequest),
             control.LIVE_ATTRIBUTION:           _Route(self._on_live_attribution, ["run_id", "frame"],
                                                        LiveAttributionRequest),
+            control.LIST_LIVE_RUNS:             _Route(self._on_list_live_runs, [], EmptyRequest),
+            control.FORGET_LIVE_RUN:            _Route(self._on_forget_live_run, ["run_id"], ForgetLiveRunRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -953,6 +956,31 @@ class ServerSession:
         except (ValueError, OSError) as exc:
             out = {"run_id": run_id, "frame": frame, "error": str(exc)}
         await self._emit(pack(control.LIVE_ATTRIBUTION_RESULT, (), out))
+
+    async def _on_list_live_runs(self, **kwargs) -> None:
+        """The "Live runs" list (ADR 0087): every run the wrapper started on
+        this account, read from the pointers in ``~/.ffast/live-runs``."""
+        import os
+
+        from ffast.live import run_folder as rf
+        from ffast.live.runs_list import list_runs
+        from ffast.protocol.rpc import pack
+
+        rows = await asyncio.to_thread(list_runs, rf.live_runs_dir(os.environ))
+        await self._emit(pack(control.LIVE_RUNS, (), {"runs": rows}))
+
+    async def _on_forget_live_run(self, run_id, **kwargs) -> None:
+        """Drop a run from the list (its pointer, never its folder), then send the list."""
+        import os
+
+        from ffast.live import run_folder as rf
+        from ffast.live.runs_list import forget_run
+
+        try:
+            forget_run(rf.live_runs_dir(os.environ), run_id)
+        except (ValueError, OSError) as exc:
+            logger.warning("FORGET_LIVE_RUN %r: %s", run_id, exc)
+        await self._on_list_live_runs()
 
     async def _on_list_dir(self, path=None, **kwargs) -> None:
         """List a server-side directory and push DIR_LISTING.

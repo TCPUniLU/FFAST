@@ -10,6 +10,7 @@
 import { askDialog } from './dialogs.js';
 import { OUT } from './events.js';
 import { attributionColours } from './live_run.js';
+import { openLiveRunsDialog } from './live_runs_dialog.js';
 
 /** What "Stop now" will do, by the number of LAMMPS processes. */
 export function stopMessage(processes) {
@@ -27,10 +28,15 @@ export class LiveUi {
    * @param {{send: (event: string, kw: object) => void,
    *   analysis?: {setLiveAttribution: (runId: string, state: object) => void},
    *   mainView?: {setAttribution: (att: object|null) => void},
-   *   shown?: () => {datasetFp: string|null, frame: number|null}}} deps
+   *   shown?: () => {datasetFp: string|null, frame: number|null},
+   *   follow?: (path: string) => void, askPath?: () => void}} deps
    */
-  constructor({ send, analysis = null, mainView = null, shown = () => ({ datasetFp: null, frame: null }) }) {
+  constructor({ send, analysis = null, mainView = null, shown = () => ({ datasetFp: null, frame: null }),
+    follow = () => {}, askPath = () => {} }) {
     this._send = send;
+    this._follow = follow;
+    this._askPath = askPath;
+    this._runsDialog = null;
     this._analysis = analysis;
     this._mainView = mainView;
     this._shown = shown;
@@ -57,6 +63,21 @@ export class LiveUi {
       const state = this._att.get(cmd.run_id);
       if (state) this._set(cmd.run_id, { ...state, mode: cmd.mode });
     }
+  }
+
+  /** The "Live runs" dialog; its rows come back in LIVE_RUNS (onRuns). */
+  openRuns() {
+    this._runsDialog = openLiveRunsDialog({
+      ask: () => this._send(OUT.LIST_LIVE_RUNS, {}),
+      open: (path) => this._follow(path),
+      openByPath: () => this._askPath(),
+      forget: (runId) => this._send(OUT.FORGET_LIVE_RUN, { run_id: runId }),
+    });
+  }
+
+  /** LIVE_RUNS: the list's rows. */
+  onRuns(kw) {
+    this._runsDialog?.update(kw.runs || []);
   }
 
   /** LIVE_ATTRIBUTION_RESULT: the server's answer for one frame. */

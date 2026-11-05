@@ -696,6 +696,8 @@ export class FFastApp {
       // A live LAMMPS run folder on the server's disk (ADR 0087).
       { id: 'open-live-run', label: 'Open Live Run…', menu: 'file',
         run: () => this._openLiveRun(), unavailable: needsControl },
+      { id: 'live-runs', label: 'Live Runs…', menu: 'file',
+        run: () => this._live().openRuns(), unavailable: needsControl },
       { id: 'save-session', label: 'Save Session…', menu: 'file',
         run: () => this._sessionOps.saveSession(), unavailable: needsControl },
       { id: 'load-session', label: 'Load Session…', menu: 'file',
@@ -1674,6 +1676,7 @@ export class FFastApp {
       conn.on(IN.LOADER_TYPES, (kw) => this._browser.setLoaderTypes(kw));
       conn.on(IN.LIVE_RUN_UPDATE, (kw) => this._onLiveRunUpdate(kw));
       conn.on(IN.LIVE_ATTRIBUTION_RESULT, (kw) => this._live().onResult(kw));
+      conn.on(IN.LIVE_RUNS, (kw) => this._live().onRuns(kw));
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.DATASET_LENGTH_RESPONSE, (kw, args) => this._browser.onDatasetLength(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
@@ -2554,9 +2557,14 @@ export class FFastApp {
       title: 'Open live run', label: 'Run folder on the server (from ffast-lammps)',
       problem: (v) => (v.trim() ? '' : 'Give the folder ffast-lammps printed'), okLabel: 'Open',
     });
-    if (!path || !this._conn) return;
+    if (path) this._followLiveRun(path.trim());
+  }
+
+  /** Follow the run folder at `path` and go to its tab once it has frames. */
+  _followLiveRun(path) {
+    if (!this._conn) return;
     this._liveRunWanted = true;
-    this._conn.send(OUT.OPEN_LIVE_RUN, { path: path.trim() }, []);
+    this._conn.send(OUT.OPEN_LIVE_RUN, { path }, []);
     this._setStatus('Opening live run…', 'connected');
   }
 
@@ -2571,6 +2579,8 @@ export class FFastApp {
       send: (event, kw) => this._conn?.send(event, kw, []),
       analysis: this._analysis, mainView: this._mainView,
       shown: () => ({ datasetFp: this._currentDatasetFp, frame: this._main.current?.frame ?? null }),
+      follow: (path) => this._followLiveRun(path),
+      askPath: () => this._openLiveRun(),
     });
     return this._liveUi;
   }
