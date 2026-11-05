@@ -76,6 +76,8 @@ export const OUT = Object.freeze({
   // The "Live runs" list; forget a run whose folder is gone (ADR 0087)
   LIST_LIVE_RUNS: 'LIST_LIVE_RUNS',
   FORGET_LIVE_RUN: 'FORGET_LIVE_RUN',
+  // Fit a reference bundle from two loaded datasets (ADR 0086)
+  MAKE_REFERENCE: 'MAKE_REFERENCE',
 });
 
 /** Server → client notifications and one-shot announcements. */
@@ -102,6 +104,8 @@ export const IN = Object.freeze({
   LIVE_ATTRIBUTION_RESULT: 'LIVE_ATTRIBUTION_RESULT',
   // The "Live runs" list's rows (ADR 0087)
   LIVE_RUNS: 'LIVE_RUNS',
+  // The answer to MAKE_REFERENCE (ADR 0086)
+  REFERENCE_MADE: 'REFERENCE_MADE',
   DIR_LISTING: 'DIR_LISTING',
   DATASET_KEYS_RESPONSE: 'DATASET_KEYS_RESPONSE',
   DATASET_LENGTH_RESPONSE: 'DATASET_LENGTH_RESPONSE',

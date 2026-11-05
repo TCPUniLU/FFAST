@@ -480,3 +480,72 @@ async def test_web_the_live_runs_dialog_lists_opens_and_forgets(tmp_path, monkey
                 await expect(tab).to_have_class(re.compile(r"\bactive\b"), timeout=15000)
             finally:
                 await browser.close()
+
+
+async def test_make_reference_problems_and_names(static_origin):
+    script = f"""async () => {{
+      const m = await import('{static_origin}/make_reference_dialog.js');
+      const two = [{{ fp: 'a' }}, {{ fp: 'b' }}];
+      return {{
+        one: m.referenceProblem('a', '', [{{ fp: 'a' }}]), same: m.referenceProblem('a', 'a', two),
+        ok: m.referenceProblem('a', 'b', two),
+        names: ['aspirin train.xyz', 'mace.extxyz', '', '***'].map(m.referenceName),
+      }};
+    }}"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            got = await page.evaluate(script)
+        finally:
+            await browser.close()
+    assert got["one"].startswith("Needs two datasets") and "different" in got["same"] and got["ok"] == ""
+    assert got["names"] == ["aspirin_train", "mace", "reference", "reference"]
+
+
+async def test_web_make_reference_fits_a_bundle_from_two_loaded_datasets(tmp_path):
+    from tests.ffast.live.bundle_helpers import write_frames
+    from tests.ffast.renderers.web.test_web_runtime import _connect_headless_client, _wait_for_event
+    from ffast.protocol.rpc import pack
+
+    train = write_frames(tmp_path / "train.xyz", 300, seed=1)
+    valid = write_frames(tmp_path / "valid.xyz", 150, seed=2)
+    out = tmp_path / "refs"
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        ws = await _connect_headless_client(ws_port)
+        try:
+            for path in (train, valid):
+                await ws.send(pack("LOAD_DATASET", (str(path), "ase (auto)"), {}))
+                await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30)
+        finally:
+            await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+            await ws.close()
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 850})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
+                await _file_menu(page, "Make Reference…")
+                dialog = page.locator("#make-reference-dialog")
+                await expect(dialog.locator("#make-ref-train option")).to_have_count(2)
+                # The same dataset twice is refused before anything is sent.
+                train_fp = await dialog.locator("#make-ref-train").input_value()
+                await dialog.locator("#make-ref-valid").select_option(train_fp)
+                await expect(dialog.locator(".make-ref-problem")).to_contain_text("different datasets")
+                await expect(dialog.locator(".make-ref-go")).to_be_disabled()
+                other = [o for o in await dialog.locator("#make-ref-valid option").evaluate_all(
+                    "(os) => os.map((o) => o.value)") if o != train_fp][0]
+                await dialog.locator("#make-ref-valid").select_option(other)
+                await dialog.locator("#make-ref-name").fill("aspirin")
+                await dialog.locator("#make-ref-folder").fill(str(out))
+                await dialog.locator(".make-ref-go").click()
+                await expect(dialog.locator(".make-ref-ok")).to_contain_text("Reference written", timeout=60000)
+                await expect(dialog.locator(".make-ref-line code").first).to_have_text(
+                    f"include {out / 'aspirin.lmp'}")
+            finally:
+                await browser.close()
+    assert (out / "aspirin.bundle" / "manifest.json").is_file() and (out / "aspirin.lmp").is_file()

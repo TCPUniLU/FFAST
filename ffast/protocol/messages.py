@@ -440,6 +440,20 @@ class ForgetLiveRunRequest(BaseModel):
     run_id: str
 
 
+class MakeReferenceRequest(BaseModel):
+    """Typed payload for ``MAKE_REFERENCE``: training and validation datasets
+    (fingerprints of loaded datasets) and where the bundle goes
+    (``folder``/``name``.bundle and ``.lmp``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    train: str
+    valid: str
+    name: str = Field(min_length=1)
+    folder: str = Field(min_length=1)
+    every: int = Field(default=100, ge=1)
+
+
 class ListDirRequest(BaseModel):
     """Typed payload for ``LIST_DIR``. ``path=None`` starts at the server
     user's home directory."""

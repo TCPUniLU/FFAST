@@ -698,6 +698,8 @@ export class FFastApp {
         run: () => this._openLiveRun(), unavailable: needsControl },
       { id: 'live-runs', label: 'Live Runs…', menu: 'file',
         run: () => this._live().openRuns(), unavailable: needsControl },
+      { id: 'make-reference', label: 'Make Reference…', menu: 'file',
+        run: () => this._makeReference(), unavailable: needsControl },
       { id: 'save-session', label: 'Save Session…', menu: 'file',
         run: () => this._sessionOps.saveSession(), unavailable: needsControl },
       { id: 'load-session', label: 'Load Session…', menu: 'file',
@@ -1677,6 +1679,7 @@ export class FFastApp {
       conn.on(IN.LIVE_RUN_UPDATE, (kw) => this._onLiveRunUpdate(kw));
       conn.on(IN.LIVE_ATTRIBUTION_RESULT, (kw) => this._live().onResult(kw));
       conn.on(IN.LIVE_RUNS, (kw) => this._live().onRuns(kw));
+      conn.on(IN.REFERENCE_MADE, (kw) => this._live().onReferenceMade(kw));
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.DATASET_LENGTH_RESPONSE, (kw, args) => this._browser.onDatasetLength(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
@@ -2571,6 +2574,18 @@ export class FFastApp {
   /** A live panel's command (stop, stop on alarm, attribution; live_ui.js). */
   _liveCommand(cmd) {
     if (this._conn) this._live().command(cmd);
+  }
+
+  /** "Make reference" over the loaded datasets (not live runs' frames). */
+  _makeReference() {
+    const datasets = [...this._datasets.entries()]
+      .filter(([fp]) => !fp.startsWith('live:'))
+      .map(([fp, meta]) => ({ fp, name: meta.name || fp.slice(0, 8), n: meta.n }));
+    this._live().openMakeReference({
+      datasets,
+      pickFolder: (onPick) => this._browser.pick({ mode: 'open-folder', title: 'Save reference in',
+        okLabel: 'Choose', onPick }),
+    });
   }
 
   /** The page's live-run controls, made on first use. */

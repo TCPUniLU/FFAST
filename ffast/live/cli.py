@@ -61,20 +61,8 @@ def _positions(frames, symbols: list[str], name: str) -> np.ndarray:
     return np.stack([a.get_positions() for a in frames]).astype(np.float64)
 
 
-def bundle_paths(output: str) -> tuple[Path, Path]:
-    """``-o PATH`` → (``PATH.bundle`` directory, ``PATH.lmp`` include file)."""
-    out = Path(output).expanduser().resolve()
-    if out.suffix in (".bundle", ".lmp"):
-        out = out.with_suffix("")
-    return out.with_name(out.name + ".bundle"), out.with_name(out.name + ".lmp")
-
-
 def cmd_bundle(args: argparse.Namespace) -> None:
-    from ffast.live.detectana_api import require_detectana
-    from ffast.live.include_file import include_text
-
-    detectana = require_detectana()
-    from detectana.topology import build_topology
+    from ffast.live.reference import ReferenceRefused, make_reference
 
     train_path, valid_path = Path(args.train), Path(args.valid)
     if train_path.resolve() == valid_path.resolve() or _file_sha(train_path) == _file_sha(valid_path):
@@ -83,9 +71,6 @@ def cmd_bundle(args: argparse.Namespace) -> None:
             "frames the fit has not seen, so give two different sets"
         )
     elements = _parse_elements(args.elements)
-    bundle_dir, include_path = bundle_paths(args.output)
-    _no_space(bundle_dir, "bundle path")
-
     train = _read_frames(train_path)
     valid = _read_frames(valid_path)
     symbols = train[0].get_chemical_symbols()
@@ -96,18 +81,17 @@ def cmd_bundle(args: argparse.Namespace) -> None:
         )
     train_pos = _positions(train, symbols, "training")
     valid_pos = _positions(valid, symbols, "validation")
+    try:
+        made = make_reference(train_pos, valid_pos, symbols, args.output, elements=elements, every=args.every)
+    except ReferenceRefused as exc:
+        raise CommandError(str(exc)) from exc
 
-    topology = build_topology(train[0])
-    bundle = detectana.fit(train_pos, valid_pos, topology)
-    bundle.save(bundle_dir)
-    include_path.write_text(include_text(str(bundle_dir), elements, args.every))
-
-    print(f"Reference bundle: {bundle_dir}")
-    print(f"  {len(train_pos)} training and {len(valid_pos)} validation frames, "
-          f"{bundle.n_atoms} atoms, {len(bundle.tests)} tests: "
-          + ", ".join(f"{t} {s}" for t, s in bundle.tests))
-    print(f"LAMMPS include file: {include_path}")
-    print(f"  Add `include {include_path}` to your input after the atoms exist,")
+    print(f"Reference bundle: {made['bundle']}")
+    print(f"  {made['n_train']} training and {made['n_valid']} validation frames, "
+          f"{made['n_atoms']} atoms, {len(made['tests'])} tests: "
+          + ", ".join(f"{t} {s}" for t, s in made["tests"]))
+    print(f"LAMMPS include file: {made['include']}")
+    print(f"  Add `include {made['include']}` to your input after the atoms exist,")
     print("  and run the job as `ffast-lammps srun lmp ...`.")
 
 

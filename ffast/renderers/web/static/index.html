@@ -568,6 +568,18 @@
     .live-runs-state.ok { color: var(--median); }
     .live-runs-state.bad { color: var(--danger); }
     .live-runs-state.warn { color: var(--warn); }
+    /* the "Make reference" dialog */
+    #make-reference-dialog .warning-modal-panel { width: min(620px, calc(100vw - 32px)); max-width: none; }
+    .make-ref-body { display: flex; flex-direction: column; gap: 8px; padding: 4px 0 8px; font-size: var(--fs-s); }
+    .make-ref-row { display: grid; grid-template-columns: 130px 1fr auto; gap: 8px; align-items: center; }
+    .make-ref-row > select, .make-ref-row > input { min-width: 0; }
+    .make-ref-row > select { grid-column: 2 / 4; }
+    .make-ref-settings { color: var(--ink-3); font-size: var(--fs-xs); }
+    .make-ref-problem, .make-ref-error { color: var(--danger); }
+    .make-ref-ok { color: var(--median); }
+    .make-ref-wait { color: var(--ink-3); }
+    .make-ref-line { display: flex; gap: 8px; align-items: center; margin: 2px 0 6px; }
+    .make-ref-line code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--surface-2); padding: 3px 6px; border-radius: 3px; }
     .live-attribution .live-att-ticks { display: flex; justify-content: space-between; color: var(--ink-3); font-size: var(--fs-xs); }
     .analysis-panel .panel-msg {
       flex: 1; display: flex; align-items: center; justify-content: center;

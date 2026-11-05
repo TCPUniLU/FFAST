@@ -11,6 +11,7 @@ import { askDialog } from './dialogs.js';
 import { OUT } from './events.js';
 import { attributionColours } from './live_run.js';
 import { openLiveRunsDialog } from './live_runs_dialog.js';
+import { openMakeReferenceDialog } from './make_reference_dialog.js';
 
 /** What "Stop now" will do, by the number of LAMMPS processes. */
 export function stopMessage(processes) {
@@ -73,6 +74,18 @@ export class LiveUi {
       openByPath: () => this._askPath(),
       forget: (runId) => this._send(OUT.FORGET_LIVE_RUN, { run_id: runId }),
     });
+  }
+
+  /** The "Make reference" dialog over the loaded datasets; its answer comes in REFERENCE_MADE. */
+  openMakeReference({ datasets, pickFolder = null }) {
+    this._refDialog = openMakeReferenceDialog({
+      datasets, pickFolder, send: (kw) => this._send(OUT.MAKE_REFERENCE, kw),
+    });
+  }
+
+  /** REFERENCE_MADE: the bundle written, or why not. */
+  onReferenceMade(kw) {
+    this._refDialog?.done(kw);
   }
 
   /** LIVE_RUNS: the list's rows. */

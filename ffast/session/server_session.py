@@ -165,7 +165,7 @@ class ServerSession:
             CancelTryMetricRequest, CancelMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
             TraceRequest, RequestMetricBoxesRequest, OpenLiveRunRequest,
             LiveStopRequest, LiveSetStopOnAlarmRequest, LiveAttributionRequest,
-            ForgetLiveRunRequest,
+            ForgetLiveRunRequest, MakeReferenceRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -220,6 +220,8 @@ class ServerSession:
                                                        LiveAttributionRequest),
             control.LIST_LIVE_RUNS:             _Route(self._on_list_live_runs, [], EmptyRequest),
             control.FORGET_LIVE_RUN:            _Route(self._on_forget_live_run, ["run_id"], ForgetLiveRunRequest),
+            control.MAKE_REFERENCE:             _Route(self._on_make_reference, ["train", "valid", "name", "folder"],
+                                                       MakeReferenceRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -981,6 +983,40 @@ class ServerSession:
         except (ValueError, OSError) as exc:
             logger.warning("FORGET_LIVE_RUN %r: %s", run_id, exc)
         await self._on_list_live_runs()
+
+    async def _on_make_reference(self, train, valid, name, folder, every=100, **kwargs) -> None:
+        """"Make reference" (ADR 0086): fit a bundle on one loaded dataset,
+        calibrate it on another, write it and its include file on the server.
+        Refuses one dataset given twice. Answered to this window only."""
+        from ffast.live.detectana_api import DetectAnaMissing
+        from ffast.protocol.rpc import pack
+
+        try:
+            out = await asyncio.to_thread(self._make_reference, train, valid, name, folder, int(every))
+        except (ValueError, DetectAnaMissing) as exc:
+            out = {"error": str(exc)}
+        except Exception as exc:   # a fit can fail in ways worth reading in full
+            logger.exception("MAKE_REFERENCE failed")
+            out = {"error": f"{type(exc).__name__}: {exc}"}
+        await self._emit(pack(control.REFERENCE_MADE, (), out))
+
+    def _make_reference(self, train, valid, name, folder, every) -> dict:
+        import os
+
+        from ffast.live.reference import ReferenceRefused, dataset_frames, make_reference
+
+        if train == valid:
+            raise ReferenceRefused("training and validation are the same dataset; the thresholds are "
+                                   "calibrated on frames the fit has not seen")
+        sets = []
+        for fp, role in ((train, "training"), (valid, "validation")):
+            ds = self.env.datasets.get(fp)
+            if ds is None:
+                raise ReferenceRefused(f"the {role} dataset is not loaded")
+            sets.append(dataset_frames(ds, f"the {role} dataset"))
+        (t_sym, t_pos), (v_sym, v_pos) = sets
+        out = Path(os.path.expanduser(folder)) / name
+        return make_reference(t_pos, v_pos, t_sym, out, every=every, valid_symbols=v_sym)
 
     async def _on_list_dir(self, path=None, **kwargs) -> None:
         """List a server-side directory and push DIR_LISTING.
