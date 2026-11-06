@@ -700,6 +700,8 @@ export class FFastApp {
         run: () => this._live().openRuns(), unavailable: needsControl },
       { id: 'make-reference', label: 'Make Reference…', menu: 'file',
         run: () => this._makeReference(), unavailable: needsControl },
+      { id: 'run-with-ffast', label: 'Run with FFAST…', menu: 'file',
+        run: () => this._runWithFfast(), unavailable: needsControl },
       { id: 'save-session', label: 'Save Session…', menu: 'file',
         run: () => this._sessionOps.saveSession(), unavailable: needsControl },
       { id: 'load-session', label: 'Load Session…', menu: 'file',
@@ -1680,6 +1682,9 @@ export class FFastApp {
       conn.on(IN.LIVE_ATTRIBUTION_RESULT, (kw) => this._live().onResult(kw));
       conn.on(IN.LIVE_RUNS, (kw) => this._live().onRuns(kw));
       conn.on(IN.REFERENCE_MADE, (kw) => this._live().onReferenceMade(kw));
+      for (const ev of [IN.RUN_WITH_FFAST_PREPARED, IN.RUN_WITH_FFAST_WRITTEN, IN.JOB_SUBMITTED, IN.JOB_STATE]) {
+        conn.on(ev, (kw) => this._live().onRunWithFfast(ev, kw));
+      }
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.DATASET_LENGTH_RESPONSE, (kw, args) => this._browser.onDatasetLength(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
@@ -2585,6 +2590,24 @@ export class FFastApp {
       datasets,
       pickFolder: (onPick) => this._browser.pick({ mode: 'open-folder', title: 'Save reference in',
         okLabel: 'Choose', onPick }),
+    });
+  }
+
+  /** "Run with FFAST" (ADR 0086): files on the server's disk; sbatch from
+   * this computer over SSH when connected through a cluster profile, else
+   * from the server's node. */
+  _runWithFfast() {
+    const client = this._clusterClient;
+    this._live().openRunWithFfast({
+      pickFile: (title, onPick) => this._browser.pick({ mode: 'save-file', title, okLabel: 'Choose', onPick }),
+      laptop: async () => {
+        if (!client) return { ok: false, reason: 'FFAST was not started with ffast-web' };
+        const s = await client.state();
+        return s.can_submit ? { ok: true }
+          : { ok: false, reason: 'not connected through a cluster profile' };
+      },
+      submitFromLaptop: (folder, script) => client.submit(folder, script),
+      status: (text, kind = 'connected') => this._setStatus(text, kind),
     });
   }
 

@@ -112,6 +112,8 @@ export class ClusterClient {
   }
   cancel() { return this._ask('POST', '/cluster/cancel', {}); }
   stop() { return this._ask('POST', '/cluster/stop', {}); }
+  /** "Run with FFAST": sbatch a written job script on the login node, from its folder. */
+  submit(folder, script) { return this._ask('POST', '/cluster/submit', { folder, script }); }
 
   /** The custom header is what keeps other web sites out; a JSON body is
    * same-origin here, so it needs no preflight. */

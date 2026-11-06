@@ -8,10 +8,11 @@
  *   shown. A frame change takes the colours off; the list stays, naming its step.
  */
 import { askDialog } from './dialogs.js';
-import { OUT } from './events.js';
+import { IN, OUT } from './events.js';
 import { attributionColours } from './live_run.js';
 import { openLiveRunsDialog } from './live_runs_dialog.js';
 import { openMakeReferenceDialog } from './make_reference_dialog.js';
+import { openRunWithFfastDialog } from './run_with_ffast_dialog.js';
 
 /** What "Stop now" will do, by the number of LAMMPS processes. */
 export function stopMessage(processes) {
@@ -86,6 +87,24 @@ export class LiveUi {
   /** REFERENCE_MADE: the bundle written, or why not. */
   onReferenceMade(kw) {
     this._refDialog?.done(kw);
+  }
+
+  /** "Run with FFAST" (ADR 0086): pick, check, review, submit, follow to the first frame. */
+  openRunWithFfast({ pickFile, laptop, submitFromLaptop, status = () => {} }) {
+    this._rwf = openRunWithFfastDialog({
+      send: (event, kw) => this._send(event, kw), pickFile, laptop, submitFromLaptop, status,
+      openRun: (folder) => this._follow(folder),
+    });
+  }
+
+  /** RUN_WITH_FFAST_PREPARED, RUN_WITH_FFAST_WRITTEN, JOB_SUBMITTED, JOB_STATE. */
+  onRunWithFfast(event, kw) {
+    const d = this._rwf;
+    if (!d) return;
+    if (event === IN.RUN_WITH_FFAST_PREPARED) d.onPrepared(kw);
+    else if (event === IN.RUN_WITH_FFAST_WRITTEN) d.onWritten(kw);
+    else if (event === IN.JOB_SUBMITTED) d.onSubmitted(kw);
+    else if (event === IN.JOB_STATE) d.onJobState(kw);
   }
 
   /** LIVE_RUNS: the list's rows. */

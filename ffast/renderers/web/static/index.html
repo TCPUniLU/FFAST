@@ -580,6 +580,49 @@
     .make-ref-wait { color: var(--ink-3); }
     .make-ref-line { display: flex; gap: 8px; align-items: center; margin: 2px 0 6px; }
     .make-ref-line code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--surface-2); padding: 3px 6px; border-radius: 3px; }
+    /* the "Run with FFAST" dialog (ADR 0086) */
+    #run-with-ffast-dialog .warning-modal-panel { width: min(860px, calc(100vw - 32px)); max-width: none; }
+    .rwf-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .rwf-steps { display: flex; gap: 4px; font-size: var(--fs-xs); font-weight: 400; }
+    .rwf-steps span { padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--ink-3); }
+    .rwf-steps span.on { border-color: var(--accent); color: var(--accent); }
+    .rwf-steps span.done { border-color: var(--median); color: var(--median); }
+    .rwf-body { max-height: 65vh; overflow: auto; padding: 8px 14px; font-size: var(--fs-s); }
+    .rwf-step { display: flex; flex-direction: column; gap: 8px; }
+    .rwf-row { display: grid; grid-template-columns: 130px 1fr auto; gap: 8px; align-items: center; }
+    .rwf-row > input, .rwf-row > select { min-width: 0; }
+    .rwf-row > select, .rwf-row > .rwf-check { grid-column: 2 / 4; }
+    .rwf-row[hidden] { display: none; }
+    #rwf-data-path { grid-column: 2; }
+    .rwf-row .rwf-index { width: 64px; }
+    .rwf-row:has(.rwf-index) { grid-template-columns: 130px 1fr 64px auto; }
+    .rwf-path { font-family: var(--mono, ui-monospace, Menlo, monospace); font-size: var(--fs-xs); }
+    .rwf-note, .rwf-foot-note { color: var(--ink-3); font-size: var(--fs-xs); }
+    .rwf-note { margin: -4px 0 0 138px; }
+    .rwf-foot-note { margin-right: auto; align-self: center; }
+    .rwf-problem, .rwf-error { color: var(--danger); }
+    .rwf-wait, .rwf-state { color: var(--ink-3); }
+    .rwf-sec h4 { margin: 4px 0; color: var(--ink); font-size: var(--fs-s); }
+    .rwf-checks { list-style: none; margin: 0; padding: 0; }
+    .rwf-checks li { display: flex; gap: 8px; padding: 1px 0; overflow-wrap: anywhere; }
+    .rwf-mark { width: 14px; flex: none; text-align: center; }
+    .rwf-checks li.ok .rwf-mark { color: var(--median); }
+    .rwf-checks li.warn .rwf-mark { color: var(--warn); }
+    .rwf-refusal { border: 1px solid var(--danger); border-radius: 4px; padding: 8px 10px; overflow-wrap: anywhere; }
+    .rwf-refusal b { color: var(--danger); display: block; margin-bottom: 2px; }
+    .rwf-hand { margin-top: 4px; color: var(--ink); }
+    .rwf-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+    .rwf-tab { font-size: var(--fs-xs); }
+    .rwf-tab[aria-selected="true"] { border-color: var(--accent); color: var(--ink); }
+    .rwf-diff, .rwf-log { margin: 0; max-height: 40vh; overflow: auto; padding: 6px 0; border: 1px solid var(--line); border-radius: 4px;
+      background: var(--surface-2); font: var(--fs-xs)/1.5 var(--mono, ui-monospace, Menlo, monospace); }
+    .rwf-diff div, .rwf-log { padding: 0 10px; white-space: pre; }
+    .rwf-diff .add { background: color-mix(in srgb, var(--median) 18%, transparent); }
+    .rwf-diff .del { background: color-mix(in srgb, var(--danger) 18%, transparent); }
+    .rwf-diff .head { color: var(--accent); }
+    .rwf-diff .ctx { color: var(--ink-3); }
+    .rwf-submit-from { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
+    .rwf-submit-from .rwf-note { margin: 0; }
     .live-attribution .live-att-ticks { display: flex; justify-content: space-between; color: var(--ink-3); font-size: var(--fs-xs); }
     .analysis-panel .panel-msg {
       flex: 1; display: flex; align-items: center; justify-content: center;

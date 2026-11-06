@@ -78,6 +78,12 @@ export const OUT = Object.freeze({
   FORGET_LIVE_RUN: 'FORGET_LIVE_RUN',
   // Fit a reference bundle from two loaded datasets (ADR 0086)
   MAKE_REFERENCE: 'MAKE_REFERENCE',
+  // "Run with FFAST": check and review, write the copies, submit from the
+  // server's node, follow the job to its first frame (ADR 0086)
+  PREPARE_RUN_WITH_FFAST: 'PREPARE_RUN_WITH_FFAST',
+  WRITE_RUN_WITH_FFAST: 'WRITE_RUN_WITH_FFAST',
+  SUBMIT_JOB: 'SUBMIT_JOB',
+  WATCH_JOB: 'WATCH_JOB',
 });
 
 /** Server → client notifications and one-shot announcements. */
@@ -106,6 +112,11 @@ export const IN = Object.freeze({
   LIVE_RUNS: 'LIVE_RUNS',
   // The answer to MAKE_REFERENCE (ADR 0086)
   REFERENCE_MADE: 'REFERENCE_MADE',
+  // "Run with FFAST" answers and the followed job's state (ADR 0086)
+  RUN_WITH_FFAST_PREPARED: 'RUN_WITH_FFAST_PREPARED',
+  RUN_WITH_FFAST_WRITTEN: 'RUN_WITH_FFAST_WRITTEN',
+  JOB_SUBMITTED: 'JOB_SUBMITTED',
+  JOB_STATE: 'JOB_STATE',
   DIR_LISTING: 'DIR_LISTING',
   DATASET_KEYS_RESPONSE: 'DATASET_KEYS_RESPONSE',
   DATASET_LENGTH_RESPONSE: 'DATASET_LENGTH_RESPONSE',
