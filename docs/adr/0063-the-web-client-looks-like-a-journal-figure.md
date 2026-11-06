@@ -157,6 +157,14 @@ Font: `--font` stays the system stack. Panel letters use
 `Georgia, "Times New Roman", serif`, bold. Numbers in tables, status and peak
 labels use `font-variant-numeric: tabular-nums`.
 
+*Amended 2026-11-04:* on Screen the panel letters (and the bold letter in a
+caption) use `--font`, bold, so they match the rest of the program; serif
+stood out as the only serif text on screen. On the Journal page they stay
+Georgia by default, and a double-click or right-click on any letter opens a
+menu of fonts (Georgia, Times, Helvetica / Arial, Program font). The choice
+applies to every letter and is browser layout state (`ffast.layout`,
+`letterFont`; `letter_font.js`), never in a session file.
+
 Remove every `text-transform: uppercase` and its `letter-spacing` (tabs, section
 titles, sub-toggle, analysis-control labels, dialog titles, pick-strip tool,
 panel-list heads). Headers get `font-weight: 600` instead.
