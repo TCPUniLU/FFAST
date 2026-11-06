@@ -2042,6 +2042,49 @@ async def test_web_journal_page_drops_the_cards_the_pick_bar_and_the_hint_bar(sh
             await browser.close()
 
 
+async def test_web_panel_letters_use_the_program_font_and_journal_page_lets_you_pick_theirs(shared_dataset_server):
+    """Panel letters follow the program font on screen. On the Journal page
+    they are serif, and a double-click or a right-click on a letter (2D or 3D)
+    picks another font for every letter; the choice survives a reload."""
+    ws_port, web_port = shared_dataset_server
+    dataset_fp = await _preload_dataset(ws_port)
+    family = "(el) => getComputedStyle(el).fontFamily"
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            body_font = await page.locator("body").evaluate(family)
+            await _open_analysis_tab(page, "Basic Errors")
+            letter = page.locator(".tabpanel.active .analysis-panel .panel-letter").first
+            assert await letter.evaluate(family) == body_font
+            menu = page.get_by_role("menu", name="Panel letter font")
+            await letter.dblclick()
+            await expect(menu).to_be_hidden()   # on screen a letter is not editable
+
+            await page.get_by_role("radio", name="Journal page").click()
+            assert "Georgia" in await letter.evaluate(family)
+            await letter.dblclick()
+            await expect(menu).to_be_visible()
+            await menu.get_by_role("menuitem", name="Times").click()
+            await expect(menu).to_be_hidden()
+            assert (await letter.evaluate(family)).startswith('"Times New Roman"')
+
+            await _open_analysis_tab(page, "3D")
+            letter3d = page.locator(".tabpanel.active .viewport > .panel-letter").first
+            assert (await letter3d.evaluate(family)).startswith('"Times New Roman"')
+            await letter3d.click(button="right")
+            await expect(menu).to_be_visible()
+            await menu.get_by_role("menuitem", name="Program font").click()
+            assert await letter3d.evaluate(family) == body_font
+
+            await _open_loupe(page, ws_port, web_port, dataset_fp)   # a reload
+            await _open_analysis_tab(page, "3D")
+            assert await page.locator(".tabpanel.active .viewport > .panel-letter").first.evaluate(family) == body_font
+        finally:
+            await browser.close()
+
+
 # A two-series timeline built in the app page: its legend font and the axes'.
 _LEGEND_SIZE = """async () => {
   const pn = await import('/panels.js');

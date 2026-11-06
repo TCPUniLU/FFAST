@@ -48,6 +48,7 @@ import { applyStaticIcons, icon } from './icons.js';
 import { initBell } from './notification_bell.js';
 import { initFullTextTitles } from './hover_tip.js';
 import { initAppearance } from './appearance.js';
+import { initLetterFont } from './letter_font.js';
 import { datasetUnits } from './units.js';
 import { TabEditor } from './edit_mode.js';
 import { createPalette } from './palette.js';
@@ -132,6 +133,7 @@ export class FFastApp {
     initBell();
     initFullTextTitles();
     initAppearance(() => this._analysis?.rerenderAll());
+    initLetterFont();
     this._conn = null;
     // The main view (ADR 0056): the one visualization view the rail drives,
     // drawn by every linked 3D panel. Its renderers come and go with the

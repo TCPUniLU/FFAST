@@ -90,6 +90,15 @@
     body.journal .analysis-grid .panel-caption-line {
       font-family: Georgia, "Times New Roman", serif; font-size: var(--fs-s); color: var(--ink);
     }
+    /* Panel letters follow the program font on screen; on the journal page
+       they take the letter font (serif unless chosen otherwise, letter_font.js):
+       double-click or right-click a letter to change it. */
+    body.journal .panel-letter,
+    body.journal .analysis-grid .panel-caption-line b {
+      font-family: var(--journal-letter-font, Georgia, "Times New Roman", serif);
+    }
+    body.journal .panel-letter { cursor: context-menu; }
+    body.journal .viewport > .panel-letter { pointer-events: auto; }
     /* no card round a panel (square, or its corners leave marks), and no 3D
        pick bar or hint bar; the titles stay */
     body.journal .tabpanel:not(.editing) .analysis-grid .analysis-panel {
@@ -452,7 +461,7 @@
     } /*Changed overflow from hidden to auto to support situations where the whole table doesn't fit entirely inside the allocated space*/
     /* panel letter and caption (ADR 0063, figure.js) */
     .panel-letter {
-      font: 700 var(--letter) Georgia, "Times New Roman", serif;
+      font-family: var(--font); font-size: var(--letter); font-weight: 700;
       color: var(--ink); margin-right: 8px;
     }
     .analysis-panel .panel-title > span:not(.panel-letter):not(.sub-toggle):not(.spinner) { flex: 1; min-width: 0; }
@@ -467,7 +476,7 @@
       border-top: 1px solid var(--line);
     }
     .panel-caption-line[hidden] { display: none; }
-    .panel-caption-line b { font-family: Georgia, "Times New Roman", serif; color: var(--ink); }
+    .panel-caption-line b { color: var(--ink); }
     .panel-caption-line .unit-editable { cursor: pointer; text-decoration: underline dotted; }
     .analysis-panel .panel-title {
       font-size: var(--fs-m); font-weight: 600; color: var(--ink); padding: 10px 12px 4px;
