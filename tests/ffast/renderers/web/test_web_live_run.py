@@ -83,6 +83,53 @@ async def test_the_live_run_helpers_and_the_timeline_with_steps(static_origin):
     assert got["plainX"] == [0, 1] and got["plainShapes"] is None
 
 
+async def test_a_long_runs_marks_are_one_path_per_row_and_a_resend_is_recognised(static_origin):
+    # 20,000 marked frames: one SVG element each froze the page for seconds per
+    # redraw. Each row of marks is one path shape; the legend keeps its entry.
+    n = 20000
+    kw = {"run_id": "r1", "fingerprint": "live:r1",
+          "series": {"frame": list(range(n)), "step": [100 * k for k in range(n)],
+                     "exceedance": [1.5] * n, "test": [None] * n, "marked": [True] * n,
+                     "chem": [k == 777 for k in range(n)]},
+          "progress": {}, "end": None, "events": []}
+    script = f"""async (kw) => {{
+      const lr = await import('{static_origin}/live_run.js');
+      const pn = await import('{static_origin}/panels.js');
+      const el = document.createElement('div');
+      el.style.cssText = 'width:900px;height:300px';
+      document.body.append(el);
+      const spec = {{ kind: 'timeline', x_label: 'Step', y_line: 1,
+                      overlays: lr.liveRunsOverlays([{{ name: 'r', kw }}]) }};
+      pn.renderPanel(el, spec, lr.liveRunSeries(kw), {{ peaks: false, units: {{}} }});
+      const paths = (el.layout.shapes || []).filter((s) => s.type === 'path');
+      const copy = JSON.parse(JSON.stringify(kw));
+      return {{
+        elements: el.querySelectorAll('*').length,
+        paths: paths.map((s) => s.path.split('M').length - 1),
+        legend: el.data.filter((t) => t.showlegend).map((t) => t.name),
+        same: lr.sameRunUpdate(kw, copy),
+        first: lr.sameRunUpdate(undefined, kw),
+        newScore: lr.sameRunUpdate(kw, {{ ...copy, series: {{ ...copy.series,
+          exceedance: [...copy.series.exceedance.slice(0, -1), 1.6] }} }}),
+        newKey: lr.sameRunUpdate(kw, {{ ...copy, stop_requested: true }}),
+      }};
+    }}"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            await page.add_script_tag(url=f"{static_origin}/vendor/plotly/plotly.min.js")
+            got = await page.evaluate(script, kw)
+        finally:
+            await browser.close()
+    assert got["paths"] == [n, 1]   # every mark kept, the lone chemistry flag too
+    assert got["elements"] < 1000
+    assert got["legend"] == ["marked", "chemistry flag"]
+    assert got["same"] is True and got["first"] is False
+    assert got["newScore"] is False and got["newKey"] is False
+
+
 ACTIVE = "#tabpanels .tabpanel.active"
 CHROME = ".tabpanel.active .edit-chrome"
 

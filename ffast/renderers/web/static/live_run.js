@@ -221,6 +221,23 @@ export function attributionColours(result) {
   };
 }
 
+/** Whether two LIVE_RUN_UPDATEs say the same: the server sends a run again
+ * every 10 s for windows that connect later, mostly unchanged. Compares
+ * plain decoded values (objects, arrays, numbers, strings, null). */
+export function sameRunUpdate(a, b) {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  if (Array.isArray(a)) {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!sameRunUpdate(a[i], b[i])) return false;
+    return true;
+  }
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  return keys.every((k) => Object.prototype.hasOwnProperty.call(b, k) && sameRunUpdate(a[k], b[k]));
+}
+
 // ── several runs in one tab (ADR 0089) ───────────────────────────────────────
 // A tab draws every run ticked in its selector. These take `runs`, a list of
 // {name, kw}: the run's name in plots and its last LIVE_RUN_UPDATE.

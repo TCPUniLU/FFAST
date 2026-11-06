@@ -433,8 +433,8 @@ function buildTableTimeline(spec, series, ctx) {
 
 /**
  * Draw `overlays` on a timeline (a live run, ADR 0087):
- * - `ticks`: [{xs, color, row}] short marks along the bottom of the plot, on a
- *   hidden axis of their own (row 0 lowest), one per x;
+ * - `ticks`: [{xs, color, row}] short marks along the bottom of the plot
+ *   (row 0 lowest), one per x, one path shape per row;
  * - `bands`: [{x0, x1, color}] shaded spans of x;
  * - `lines`: [{x, label, color, dash, width}] vertical lines, named in the
  *   legend and on hover (text beside a line read as naming its neighbour).
@@ -449,9 +449,19 @@ export function addOverlays(traces, layout, overlays) {
   if (ticks.length || lines.length) {
     layout.yaxis2 = { overlaying: 'y', range: [0, 1], visible: false, fixedrange: true };
   }
+  const shapes = layout.shapes || [];
   ticks.forEach((t) => {
     if (!t.xs?.length) return;
-    traces.push({ x: t.xs, y: t.xs.map(() => 0.025 + 0.04 * (t.row || 0)), yaxis: 'y2',
+    // All of a row's marks are one path: a marker each made one SVG element
+    // per mark, and a long run's 28,000 marks took most of every redraw. The
+    // path's x is data, its y pixels around the row, so each mark stays 8 px
+    // tall and 1.5 px wide at any zoom.
+    shapes.push({ type: 'path', xref: 'x', yref: 'paper', ysizemode: 'pixel',
+      yanchor: 0.025 + 0.04 * (t.row || 0), layer: 'above',
+      path: t.xs.map((x) => `M${x},-4V4`).join(''),
+      line: { width: 1.5, color: colour(t.color) } });
+    // The legend entry: a trace with no points, drawn as one mark.
+    traces.push({ x: [null], y: [null], yaxis: 'y2',
       type: 'scatter', mode: 'markers', hoverinfo: 'skip', name: t.name || '', meta: 'overlay',
       showlegend: !!t.name,
       // an open symbol is stroked in marker.color: without it Plotly paints
@@ -459,7 +469,6 @@ export function addOverlays(traces, layout, overlays) {
       marker: { symbol: 'line-ns-open', size: 8, color: colour(t.color),
                 line: { width: 1.5, color: colour(t.color) } } });
   });
-  const shapes = layout.shapes || [];
   for (const b of overlays.bands || []) {
     shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: b.x0, x1: b.x1, y0: 0, y1: 1,
       fillcolor: colour(b.color), opacity: 0.12, line: { width: 0 }, layer: 'below' });

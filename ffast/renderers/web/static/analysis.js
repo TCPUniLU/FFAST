@@ -43,7 +43,7 @@ import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState } from './layout_state.js';
 import {
   liveEventLine, liveNoScoreMessage, liveRunChips, liveRunProblem, liveRunRuleText, liveRunSeries,
-  liveRunStatus, liveRunThreshold, liveRunsEvents, liveRunsOverlays,
+  liveRunStatus, liveRunThreshold, liveRunsEvents, liveRunsOverlays, sameRunUpdate,
 } from './live_run.js';
 
 /** Two columns of the smallest plot, and the gap between cells, in px (the grid gap in index.html). */
@@ -294,12 +294,16 @@ export class AnalysisManager {
   /** A live run's new state and scores: redraw the live panels of the tab on
    * screen when the run is among the runs ticked in it (ADR 0087, 0089). */
   setLiveRun(kw) {
+    const before = this._live.get(kw.run_id);
     this._live.set(kw.run_id, kw);
     this._syncCompareHint();
     const t = this._activeTab();
     if (!t || !t.slots.every((slot) => slot.cards)) return;
     if (!this._tabRuns(t).some((r) => r.fp === kw.fingerprint)) return;
-    this._redrawLiveParts(t);
+    // The same state sent again (every 10 s): only the status is drawn again,
+    // for its "heartbeat N s ago". Redrawing the scores of a long run froze
+    // the page for seconds each time.
+    this._redrawLiveParts(t, sameRunUpdate(before, kw) ? 'status' : null);
   }
 
   /** A live run's attribution state changed (live_ui.js): it is the run the
@@ -317,10 +321,13 @@ export class AnalysisManager {
     }
   }
 
-  _redrawLiveParts(t) {
+  /** Redraw the tab's live panels; with `only`, just the panels of that part. */
+  _redrawLiveParts(t, only = null) {
     for (const slot of t.slots) {
       slot.cards.forEach((card, i) => {
-        if (slot.specs[i].kind === 'live') this._fetchAndRenderPanel(t, slot.specs[i], card, this._renderToken);
+        const spec = slot.specs[i];
+        if (spec.kind === 'live' && (!only || spec.options?.part === only))
+          this._fetchAndRenderPanel(t, spec, card, this._renderToken);
       });
     }
   }
