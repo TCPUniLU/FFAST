@@ -127,6 +127,8 @@ class ServerSession:
         self._length_probe_task: asyncio.Task | None = None
         # Views' whole-dataset colours being computed (ADR 0082).
         self._colouring: set[asyncio.Task] = set()
+        # Submitted "Run with FFAST" jobs followed until their first frame.
+        self._job_watches: dict[str, asyncio.Task] = {}
         self.views: dict = {}  # view_id → VisualizationView
         # Sends packed bytes to every connection (the hub, ADR 0044); a
         # session on its own, as in a test, has only itself to tell.
@@ -166,7 +168,7 @@ class ServerSession:
             TraceRequest, RequestMetricBoxesRequest, OpenLiveRunRequest,
             LiveStopRequest, LiveSetStopOnAlarmRequest, LiveAttributionRequest,
             ForgetLiveRunRequest, MakeReferenceRequest, RunWithFfastRequest, WriteRunWithFfastRequest,
-            SubmitJobRequest,
+            SubmitJobRequest, WatchJobRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -229,6 +231,7 @@ class ServerSession:
                                                        ["input", "job", "bundle", "originals"],
                                                        WriteRunWithFfastRequest),
             control.SUBMIT_JOB:                 _Route(self._on_submit_job, ["folder", "script"], SubmitJobRequest),
+            control.WATCH_JOB:                  _Route(self._on_watch_job, ["job_id"], WatchJobRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -1037,6 +1040,35 @@ class ServerSession:
         except SubmitError as exc:
             out = {"error": str(exc), "folder": folder, "script": script}
         await self._emit(pack(control.JOB_SUBMITTED, (), out))
+
+    async def _on_watch_job(self, job_id, **kwargs) -> None:
+        """Follow a submitted job and push JOB_STATE on each change until its
+        run's first frame or its end. One watch per job; ends with the window."""
+        if job_id in self._job_watches:
+            return
+        task = asyncio.create_task(self._watch_job(job_id))
+        self._job_watches[job_id] = task
+        task.add_done_callback(lambda _t: self._job_watches.pop(job_id, None))
+
+    async def _watch_job(self, job_id, poll_s: float | None = None) -> None:
+        from ffast.live.job_watch import POLL_S, JobWatch
+        from ffast.protocol.rpc import pack
+
+        watch = JobWatch(job_id)
+        last = None
+        while True:
+            try:
+                state = await asyncio.to_thread(watch.poll)
+            except Exception as exc:   # a broken watch must say so, not hang the dialog
+                logger.exception("WATCH_JOB %s failed", job_id)
+                state = {"job_id": job_id, "state": "ended", "reason": f"{type(exc).__name__}: {exc}"}
+                watch.done = True
+            if state != last:
+                await self._emit(pack(control.JOB_STATE, (), state))
+                last = state
+            if watch.done:
+                return
+            await asyncio.sleep(POLL_S if poll_s is None else poll_s)
 
     async def _run_with_ffast(self, reply, fn, *args, **kwargs) -> None:
         from ffast.live.detectana_api import DetectAnaMissing
@@ -1882,6 +1914,8 @@ class ServerSession:
         self.cancel_tries()
         self._stop_length_probe()
         for task in list(self._colouring):
+            task.cancel()
+        for task in list(self._job_watches.values()):
             task.cancel()
         coloured = any((self._colour_source(v) or "").startswith("metric:")
                        for v in self.views.values())

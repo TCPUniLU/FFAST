@@ -69,11 +69,14 @@ def live_runs_dir(environ=None):
 
 def register_run(run_id, run_dir, environ=None):
     """Write the pointer the "Live runs" list reads; never fails the run."""
+    environ = os.environ if environ is None else environ
     try:
         d = live_runs_dir(environ)
         d.mkdir(parents=True, exist_ok=True)
+        # The Slurm job id lets "Run with FFAST" find the run of the job it submitted.
         write_json_atomic(d / ("%s.json" % run_id),
-                          {"run_id": run_id, "run_dir": str(run_dir), "started_utc": utc_now()})
+                          {"run_id": run_id, "run_dir": str(run_dir), "started_utc": utc_now(),
+                           "slurm_job_id": environ.get("SLURM_JOB_ID")})
         return True
     except OSError:
         return False

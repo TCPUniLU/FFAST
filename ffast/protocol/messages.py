@@ -487,6 +487,14 @@ class SubmitJobRequest(BaseModel):
     script: str = Field(min_length=1, pattern=r"^[^/]+$")
 
 
+class WatchJobRequest(BaseModel):
+    """Typed payload for ``WATCH_JOB``: a Slurm job id."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    job_id: str = Field(pattern=r"^\d+$")
+
+
 class ListDirRequest(BaseModel):
     """Typed payload for ``LIST_DIR``. ``path=None`` starts at the server
     user's home directory."""

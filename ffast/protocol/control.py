@@ -103,6 +103,8 @@ WRITE_RUN_WITH_FFAST = "WRITE_RUN_WITH_FFAST"
 # Submit a written job-script copy from the server's own node (the other path is
 # the web launcher's /cluster/submit, over SSH from the laptop).
 SUBMIT_JOB = "SUBMIT_JOB"
+# Follow a submitted job until its run's first frame (then the page opens it).
+WATCH_JOB = "WATCH_JOB"
 
 CLIENT_TO_SERVER = frozenset(
     {
@@ -117,7 +119,7 @@ CLIENT_TO_SERVER = frozenset(
         REQUEST_METRIC_INPUTS, CHECK_METRIC, TRY_METRIC, CANCEL_TRY_METRIC,
         REQUEST_METRIC_BOXES, ADD_SESSION_METRICS, TRACE, OPEN_LIVE_RUN,
         LIVE_STOP, LIVE_SET_STOP_ON_ALARM, LIVE_ATTRIBUTION, LIST_LIVE_RUNS, FORGET_LIVE_RUN,
-        MAKE_REFERENCE, PREPARE_RUN_WITH_FFAST, WRITE_RUN_WITH_FFAST, SUBMIT_JOB,
+        MAKE_REFERENCE, PREPARE_RUN_WITH_FFAST, WRITE_RUN_WITH_FFAST, SUBMIT_JOB, WATCH_JOB,
     }
 )
 
@@ -183,6 +185,9 @@ RUN_WITH_FFAST_PREPARED = "RUN_WITH_FFAST_PREPARED"
 RUN_WITH_FFAST_WRITTEN = "RUN_WITH_FFAST_WRITTEN"
 # The answer to SUBMIT_JOB, to the asking window: ``job_id``, or ``error``.
 JOB_SUBMITTED = "JOB_SUBMITTED"
+# Pushed to the window that asked WATCH_JOB on each change: queued, running,
+# started, frame (open the run folder now) or ended.
+JOB_STATE = "JOB_STATE"
 # Pushed to a window on connect and to every window after a change (ADR 0062);
 # also the answer to REQUEST_METRIC_CATALOG, which only the asker gets.
 METRIC_CATALOG = "METRIC_CATALOG"
