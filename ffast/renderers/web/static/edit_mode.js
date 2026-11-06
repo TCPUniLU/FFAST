@@ -540,11 +540,13 @@ export class TabEditor {
     const name = Object.assign(document.createElement('input'), { type: 'text', value: draft.name });
     name.dataset.field = 'name';
     name.disabled = !!draft.layout_of;   // the Live run layout keeps its name (ADR 0089)
-    const [shiftRow, shift] = checkField('Energy shift', (draft.controls || []).includes('energy_shift'), 'energy_shift');
+    const has = (c) => (draft.controls || []).includes(c);
+    const [shiftRow, shift] = checkField('Energy shift', has('energy_shift'), 'energy_shift');
+    const [stepRow, step] = checkField('Same step in all 3D panels', has('same_step'), 'same_step');
     const [elemRow, elems] = checkField('Element picker', draft.selector === 'atomic', 'element_picker');
     const why = document.createElement('div');
     why.className = 'ctl-hint';
-    body.append(field('Name', name), shiftRow, elemRow, why);
+    body.append(field('Name', name), shiftRow, stepRow, elemRow, why);
     // The tab being edited may keep its own name; every other name is taken.
     const own = draft === this._draft ? this._previous : null;
     const taken = this._deps.serverTabs().map((t) => t.name).filter((n) => n !== own);
@@ -560,8 +562,11 @@ export class TabEditor {
     validate();
     if ((await answer) !== ok) return null;
     const next = { ...draft, name: name.value.trim() };
-    const controls = (next.controls || []).filter((c) => c !== 'energy_shift');
-    return { ...next, controls: shift.checked ? [...controls, 'energy_shift'] : controls,
+    // The tab's top-bar boxes, in the order they show there.
+    const ticked = [['energy_shift', shift], ['same_step', step]];
+    const controls = (next.controls || []).filter((c) => !ticked.some(([k]) => k === c));
+    for (const [key, box] of ticked) if (box.checked) controls.push(key);
+    return { ...next, controls,
       selector: elems.checked ? 'atomic' : (next.selector === 'atomic' ? null : next.selector) };
   }
 }
@@ -589,8 +594,8 @@ function checkField(label, checked, key) {
   const box = Object.assign(document.createElement('input'), { type: 'checkbox', checked });
   box.dataset.field = key;
   const lbl = document.createElement('label');
-  lbl.className = 'conn-check';
-  lbl.append(box, ` ${label}`);
+  lbl.className = 'edit-check';
+  lbl.append(box, label);
   return [lbl, box];
 }
 
