@@ -192,9 +192,7 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _lammps_menu(page, "Open Live Run…")
-                await page.locator("#text-ask input").fill(str(run))
-                await page.locator("#text-ask input").press("Enter")
+                await _open_run(page, run)
 
                 # The run's tab is listed and opened: its 3D view beside its scores.
                 tab = page.locator("#tabbar .tab", has_text="Live 12:00:00 node")
@@ -250,9 +248,7 @@ async def test_web_a_folder_that_is_not_a_run_says_so(tmp_path):
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _lammps_menu(page, "Open Live Run…")
-                await page.locator("#text-ask input").fill(str(tmp_path))
-                await page.locator("#text-ask input").press("Enter")
+                await _open_run(page, tmp_path)
                 await expect(page.locator("#status")).to_contain_text("not a live-run folder", timeout=15000)
                 await expect(page.locator(".live-run")).to_have_count(0)
             finally:
@@ -368,9 +364,7 @@ async def test_web_a_stopped_run_shows_its_alarm_moments_and_events(tmp_path):
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _lammps_menu(page, "Open Live Run…")
-                await page.locator("#text-ask input").fill(str(run))
-                await page.locator("#text-ask input").press("Enter")
+                await _open_run(page, run)
                 active = page.locator(ACTIVE)
                 status = active.locator(".live-status")
                 await expect(status).to_contain_text("ALARM at step 300", timeout=15000)
@@ -428,9 +422,7 @@ async def test_web_stop_now_is_in_the_live_runs_dialog_and_stop_on_alarm_in_the_
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _lammps_menu(page, "Open Live Run…")
-                await page.locator("#text-ask input").fill(str(run))
-                await page.locator("#text-ask input").press("Enter")
+                await _open_run(page, run)
                 active = page.locator(ACTIVE)
                 tick = active.locator(".live-stop-on-alarm")
                 await expect(tick).not_to_be_checked(timeout=15000)
@@ -514,9 +506,7 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                     {"segment": 0, "frame": k, "step": 100 * k, "time": 0.05 * k, "identity": "proven",
                      "tracks": {}, "exceedance": [0.2, 3.0, 1.5][k], "test": ["bonds", "T2"],
                      "marked": k == 2, "chem": {"broken": 0, "close": 0}} for k in range(3)])
-                await _lammps_menu(page, "Open Live Run…")
-                await page.locator("#text-ask input").fill(str(run))
-                await page.locator("#text-ask input").press("Enter")
+                await _open_run(page, run)
                 active = page.locator(ACTIVE)
                 att = active.locator(".live-attribution")
                 await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 3], timeout=15000)
@@ -864,9 +854,14 @@ def _two_runs(tmp_path):
 
 
 async def _open_run(page, folder):
+    """Open Live Run…: go to `folder` in the server's file browser and open it."""
     await _lammps_menu(page, "Open Live Run…")
-    await page.locator("#text-ask input").fill(str(folder))
-    await page.locator("#text-ask input").press("Enter")
+    await expect(page.locator("#fb-modal")).to_be_visible()
+    await page.locator("#fb-path").fill(str(folder))
+    await page.locator("#fb-path").press("Enter")
+    await expect(page.locator("#fb-path")).to_have_value(str(folder))
+    await page.locator("#fb-load").click()
+    await expect(page.locator("#fb-modal")).to_be_hidden()
 
 
 async def test_the_helpers_that_merge_several_runs(static_origin):

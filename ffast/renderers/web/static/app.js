@@ -2657,13 +2657,12 @@ export class FFastApp {
 
   /** Show dataset `fp` in the main view at `frame`, or at the same structure
    * as now where it has it, else its first frame. */
-  /** Ask for a live run folder's path and follow it (ADR 0087). */
-  async _openLiveRun() {
-    const path = await askText({
-      title: 'Open live run', label: 'Run folder on the server (from ffast-lammps)',
-      problem: (v) => (v.trim() ? '' : 'Give the folder ffast-lammps printed'), okLabel: 'Open',
+  /** Pick a live run folder in the server's file browser and follow it (ADR 0087). */
+  _openLiveRun() {
+    this._browser.pick({
+      mode: 'open-folder', title: 'Open live run (the folder ffast-lammps printed)',
+      okLabel: 'Open', onPick: (path) => { if (path) this._followLiveRun(path); },
     });
-    if (path) this._followLiveRun(path.trim());
   }
 
   /** Follow the run folder at `path` and go to its tab once it has frames. */
