@@ -105,7 +105,7 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
                 await expect(tab).to_have_class(re.compile(r"\bactive\b"), timeout=15000)
                 active = page.locator(ACTIVE)
                 await expect(active.locator(".panel-3d")).to_have_count(1)
-                caption = active.locator('.analysis-panel[data-kind="timeline"] .panel-caption-line')
+                caption = active.locator('.analysis-panel[data-part="scores"] .panel-caption-line')
                 await expect(caption).to_contain_text("2 frames · 2 scored")
                 # Status strip and events list are panels of the tab too.
                 await expect(active.locator(".live-status .live-chip").first).to_contain_text("LAMMPS")
@@ -282,7 +282,7 @@ async def test_web_a_stopped_run_shows_its_alarm_moments_and_events(tmp_path):
                 await expect(events).to_contain_text("Stop observed at step 300")
                 await expect(active.locator(".analysis-panel .panel-plot .main-svg").first).to_be_attached()
                 plot = await page.evaluate("""(sel) => {
-                  const el = document.querySelector(sel + ' .analysis-panel[data-kind="timeline"] .panel-plot');
+                  const el = document.querySelector(sel + ' .analysis-panel[data-part="scores"] .panel-plot');
                   return {notes: (el.layout.annotations || []).map((a) => a.text),
                           rects: (el.layout.shapes || []).filter((s) => s.type === 'rect').length,
                           legend: !!el.layout.showlegend,
@@ -402,14 +402,14 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 await page.locator("#text-ask input").press("Enter")
                 active = page.locator(ACTIVE)
                 att = active.locator(".live-attribution")
-                caption = active.locator('.analysis-panel[data-kind="timeline"] .panel-caption-line')
+                caption = active.locator('.analysis-panel[data-part="scores"] .panel-caption-line')
                 await expect(caption).to_contain_text("3 frames · 3 scored", timeout=15000)
                 await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=10000)
                 # The shown frame is explained without a click.
                 await expect(att).to_contain_text("Step 0", timeout=15000)
 
                 xy = await page.evaluate("""(sel) => {
-                  const el = document.querySelector(sel + ' .analysis-panel[data-kind="timeline"] .panel-plot');
+                  const el = document.querySelector(sel + ' .analysis-panel[data-part="scores"] .panel-plot');
                   const fl = el._fullLayout, tr = el.data[0], r = el.getBoundingClientRect();
                   // _size: the margins as drawn, after the legend pushed them
                   return {x: r.left + fl._size.l + fl.xaxis.l2p(tr.x[2]),
@@ -652,3 +652,137 @@ async def test_web_make_reference_fits_a_bundle_from_two_loaded_datasets(tmp_pat
             finally:
                 await browser.close()
     assert (out / "aspirin.bundle" / "manifest.json").is_file() and (out / "aspirin.lmp").is_file()
+
+
+# ── a live tab draws the runs ticked in its selector (ADR 0089) ──────────────
+
+RUN_A, RUN_B = "20261105-120000-node-1-abcd", "20261105-130000-node-2-efgh"
+
+
+def _two_runs(tmp_path):
+    """Two run folders with different run IDs, each with one event."""
+    a = _run_folder(tmp_path, frames=2)
+    (tmp_path / "b").mkdir()
+    b = _run_folder(tmp_path / "b", frames=3)
+    meta = rf.read_json(b / rf.RUN_JSON)
+    meta["run_id"] = RUN_B
+    rf.write_json_atomic(b / rf.RUN_JSON, meta)
+    rf.append_event(a, "warning", text="slow disk in A")
+    rf.append_event(b, "warning", text="slow disk in B")
+    return a, b
+
+
+async def _open_run(page, folder):
+    await _lammps_menu(page, "Open Live Run…")
+    await page.locator("#text-ask input").fill(str(folder))
+    await page.locator("#text-ask input").press("Enter")
+
+
+async def test_the_helpers_that_merge_several_runs(static_origin):
+    script = f"""async () => {{
+      const lr = await import('{static_origin}/live_run.js');
+      const mk = (name, steps, flags, events, alarm) => ({{ name, kw: {{
+        series: {{ step: steps, marked: flags, chem: steps.map(() => false) }},
+        progress: {{ alarms: alarm ? [{{ kind: 'ood', onset: {{ step: 100 }}, confirmation: {{ step: 300 }} }}] : [] }},
+        events }} }});
+      const a = mk('aspirin_nvt', [0, 100], [false, true], [{{ kind: 'warning', text: 'a1', t: '2026-11-05T12:00:05+00:00' }}], true);
+      const b = mk('other', [0, 50], [true, false], [{{ kind: 'warning', text: 'b1', t: '2026-11-05T12:00:01+00:00' }}], true);
+      const one = lr.liveRunsOverlays([a]);
+      const two = lr.liveRunsOverlays([a, b]);
+      return {{
+        oneLabels: one.lines.map((l) => l.label),
+        twoLabels: two.lines.map((l) => l.label),
+        twoBands: two.bands.length,
+        marked: two.ticks[0].xs,
+        events: lr.liveRunsEvents([a, b]).map((e) => [e.run, e.event.text]),
+        msg: lr.liveNoScoreMessage('ethanol'),
+      }};
+    }}"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            got = await page.evaluate(script)
+        finally:
+            await browser.close()
+    assert got["oneLabels"] == ["estimated onset", "confirmed"]
+    assert got["twoLabels"] == ["aspirin_nvt: estimated onset", "aspirin_nvt: confirmed",
+                                "other: estimated onset", "other: confirmed"]
+    assert got["twoBands"] == 2 and got["marked"] == [100, 0]
+    assert got["events"] == [["other", "b1"], ["aspirin_nvt", "a1"]]    # by time, oldest first
+    assert got["msg"] == "No score for ethanol: only live runs have scores for now."
+
+
+async def test_web_a_live_tab_draws_the_runs_ticked_in_its_selector(tmp_path):
+    a, b = _two_runs(tmp_path)
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1600, "height": 1000})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _open_run(page, a)
+                await expect(page.locator("#tabbar .tab", has_text="Live 12:00:00 node")).to_be_visible(timeout=15000)
+                await _open_run(page, b)
+                await expect(page.locator("#tabbar .tab", has_text="Live 13:00:00 node")).to_be_visible(timeout=15000)
+                await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
+
+                # Each run has its own tab, opened with that run ticked and no other.
+                await page.locator("#tabbar .tab", has_text="Live 12:00:00 node").click()
+                active = page.locator(ACTIVE)
+                pick = lambda run: active.locator(f'.ac-series button[data-fp="live:{run}"]')  # noqa: E731
+                await expect(pick(RUN_A)).to_have_class(re.compile(r"\bactive\b"), timeout=15000)
+                await expect(pick(RUN_B)).not_to_have_class(re.compile(r"\bactive\b"))
+                # A live tab has no metric panel, so no prediction row.
+                await expect(active.locator('.ac-item[data-series="models"]')).to_have_count(0)
+
+                # The left-hand list does not move this tab's ticks.
+                await page.locator("#dataset-list .obj-row").nth(1).click()
+                await expect(pick(RUN_A)).to_have_class(re.compile(r"\bactive\b"))
+                await expect(pick(RUN_B)).not_to_have_class(re.compile(r"\bactive\b"))
+
+                # One run: one curve, one status row, no Run column.
+                scores = active.locator('.analysis-panel[data-part="scores"] .panel-plot')
+                await expect(scores.locator(".main-svg").first).to_be_attached(timeout=15000)
+                names = lambda: page.evaluate("""(sel) => {  // noqa
+                  const el = document.querySelector(sel + ' .analysis-panel[data-part="scores"] .panel-plot');
+                  return el.data.filter((t) => t.showlegend !== false || t.mode).map((t) => t.name)
+                    .filter((n) => /node|Score/.test(n));
+                }""", ACTIVE)
+                assert await names() == ["Score ÷ threshold"]      # one run: as before
+                await expect(active.locator(".live-status .live-chips")).to_have_count(1)
+                await expect(active.locator(".live-event-list th")).to_have_count(0)
+
+                # Ticking the other run adds its curve, status row and events.
+                await pick(RUN_B).click()
+                await expect(active.locator(".live-status .live-chips")).to_have_count(2, timeout=15000)
+                assert sorted(await names()) == ["12:00:00 node", "13:00:00 node"]
+                await expect(active.locator(".live-event-list tr:not(:has(th))")).to_have_count(2)
+                await expect(active.locator(".live-event-list")).to_contain_text("13:00:00 node")
+                await expect(active.locator(".live-event-list")).to_contain_text("slow disk in A")
+
+                # A click on run B's curve asks for B's attribution, and the panel names B.
+                await page.evaluate("""() => {
+                  const an = window.ffastApp._analysis, old = an._onLive;
+                  window.__cmds = [];
+                  an._onLive = (c) => { window.__cmds.push(c); return old(c); };
+                }""")
+                xy = await page.evaluate("""(sel) => {
+                  const el = document.querySelector(sel + ' .analysis-panel[data-part="scores"] .panel-plot');
+                  const tr = el.data.find((t) => t.name === '13:00:00 node');
+                  const fl = el._fullLayout, r = el.getBoundingClientRect();
+                  const i = tr.x.length - 1;
+                  return {x: r.left + fl._size.l + fl.xaxis.l2p(tr.x[i]),
+                          y: r.top + fl._size.t + fl.yaxis.l2p(tr.y[i])};
+                }""", ACTIVE)
+                await page.mouse.move(xy["x"], xy["y"])
+                await page.mouse.click(xy["x"], xy["y"])
+                await page.wait_for_function("() => window.__cmds.some((c) => c.action === 'attribute')",
+                                             timeout=10000)
+                cmd = await page.evaluate("() => window.__cmds.find((c) => c.action === 'attribute')")
+                assert cmd["run_id"] == RUN_B
+            finally:
+                await browser.close()

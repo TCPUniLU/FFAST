@@ -1,9 +1,9 @@
 /**
  * Pure helpers for live LAMMPS runs (ADR 0087). A run's tab comes from the
- * server like any other; its score panel (a timeline whose spec names the run
- * in `live_run`) and its `live` panels (status, events, attribution) are drawn
- * by analysis.js from LIVE_RUN_UPDATE, the message that carries the run's
- * state and whole score series.
+ * server like any other (ADR 0089); its `live` panels (status, events,
+ * attribution, scores) draw the runs ticked in the tab's selector, from
+ * LIVE_RUN_UPDATE, the message that carries a run's state and whole score
+ * series.
  */
 
 /** One line saying where the run and its scorer are. */
@@ -219,4 +219,39 @@ export function attributionColours(result) {
       return attributionRgb(v);
     },
   };
+}
+
+// ── several runs in one tab (ADR 0089) ───────────────────────────────────────
+// A tab draws every run ticked in its selector. These take `runs`, a list of
+// {name, kw}: the run's name in plots and its last LIVE_RUN_UPDATE.
+
+/** Marks, bands and lines of every run, for one score plot. With several runs
+ * each line's label starts with its run's name, so the legend says whose it is. */
+export function liveRunsOverlays(runs) {
+  const merged = { ticks: [], bands: [], lines: [] };
+  const many = runs.length > 1;
+  const marked = [], chem = [];
+  for (const { name, kw } of runs) {
+    const o = liveRunOverlays(kw);
+    marked.push(...o.ticks[0].xs);
+    chem.push(...o.ticks[1].xs);
+    merged.bands.push(...o.bands);
+    merged.lines.push(...o.lines.map((l) => (many ? { ...l, label: `${name}: ${l.label}` } : l)));
+  }
+  const [m, c] = liveRunOverlays(runs[0]?.kw || {}).ticks;
+  merged.ticks = [{ ...m, xs: marked }, { ...c, xs: chem }];
+  return merged;
+}
+
+/** The events of every run in one list, by time (oldest first, like one run's
+ * list): [{run, event}]. */
+export function liveRunsEvents(runs) {
+  const all = runs.flatMap(({ name, kw }) => (kw.events || []).map((event) => ({ run: name, event })));
+  return all.map((x, i) => [x, i]).sort(([a, i], [b, j]) =>
+    String(a.event.t || '').localeCompare(String(b.event.t || '')) || i - j).map(([x]) => x);
+}
+
+/** What a plain dataset ticked in a live panel says instead of a score. */
+export function liveNoScoreMessage(name) {
+  return `No score for ${name}: only live runs have scores for now.`;
 }

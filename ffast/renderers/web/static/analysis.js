@@ -42,8 +42,8 @@ import { GRID_COLUMNS, ROW_UNIT_PX, LABEL_FIELDS, toFineGrid } from './tab_edit.
 import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState } from './layout_state.js';
 import {
-  liveEventLine, liveRunChips, liveRunOverlays, liveRunProblem, liveRunRuleText, liveRunSeries,
-  liveRunStatus, liveRunThreshold,
+  liveEventLine, liveNoScoreMessage, liveRunChips, liveRunProblem, liveRunRuleText, liveRunSeries,
+  liveRunStatus, liveRunThreshold, liveRunsEvents, liveRunsOverlays,
 } from './live_run.js';
 
 /** Two columns of the smallest plot, and the gap between cells, in px (the grid gap in index.html). */
@@ -254,7 +254,9 @@ export class AnalysisManager {
       // Drop anything that has since been deleted; an empty list falls back to
       // following the rail rather than showing nothing.
       const before = `${t.selectedDatasets?.length}|${t.selectedModels?.length}`;
-      if (t.selectedDatasets)
+      // A pinned run's dataset may arrive after its tab: keep the pin until it does.
+      if (t.pinWaiting && t.spec.pinned.every((fp) => this._available.datasets.has(fp))) t.pinWaiting = false;
+      if (t.selectedDatasets && !t.pinWaiting)
         t.selectedDatasets = t.selectedDatasets.filter((fp) => this._available.datasets.has(fp));
       if (t.selectedModels)
         t.selectedModels = t.selectedModels.filter((fp) => this._available.models.has(fp));
@@ -286,31 +288,44 @@ export class AnalysisManager {
     if (this._activeTab()) this._renderTab(this._activeTab());
   }
 
-  /** A live run's new state and scores: redraw the panels of the tab on
-   * screen that plot it (ADR 0087). */
+  /** A live run's new state and scores: redraw the live panels of the tab on
+   * screen when the run is among the runs ticked in it (ADR 0087, 0089). */
   setLiveRun(kw) {
     this._live.set(kw.run_id, kw);
     const t = this._activeTab();
     if (!t || !t.slots.every((slot) => slot.cards)) return;
-    for (const slot of t.slots) {
-      slot.cards.forEach((card, i) => {
-        if (slot.specs[i].live_run === kw.run_id)
-          this._fetchAndRenderPanel(t, slot.specs[i], card, this._renderToken);
-      });
-    }
+    if (!this._tabRuns(t).some((r) => r.fp === kw.fingerprint)) return;
+    this._redrawLiveParts(t);
   }
 
-  /** A live run's attribution state changed (live_ui.js): redraw its attribution panels. */
+  /** A live run's attribution state changed (live_ui.js): it is the run the
+   * attribution panels explain now; redraw them. */
   setLiveAttribution(runId, state) {
     this._liveAtt.set(runId, state);
+    this._attRun = runId;
     const t = this._activeTab();
     if (!t || !t.slots.every((slot) => slot.cards)) return;
     for (const slot of t.slots) {
       slot.cards.forEach((card, i) => {
         const spec = slot.specs[i];
-        if (spec.live_run === runId && spec.options?.part === 'attribution') this._drawLivePart(t, spec, card);
+        if (spec.kind === 'live' && spec.options?.part === 'attribution') this._drawLivePart(t, spec, card);
       });
     }
+  }
+
+  _redrawLiveParts(t) {
+    for (const slot of t.slots) {
+      slot.cards.forEach((card, i) => {
+        if (slot.specs[i].kind === 'live') this._fetchAndRenderPanel(t, slot.specs[i], card, this._renderToken);
+      });
+    }
+  }
+
+  /** The runs a tab draws: its ticked datasets that are live runs. `kw` is the
+   * run's last LIVE_RUN_UPDATE, null until it arrives. */
+  _tabRuns(t) {
+    return this._tabDatasets(t).map((fp) => ({ fp, kw: this.liveRunOf(fp) })).filter((r) => r.kw
+      || String(r.fp).startsWith('live:'));
   }
 
   /** The live run whose frames are dataset `fp` (its last LIVE_RUN_UPDATE), or null. */
@@ -325,56 +340,84 @@ export class AnalysisManager {
     return this._tabs.find((t) => t.spec.name === name)?.id ?? null;
   }
 
-  /** Draw a live run's scores (a timeline whose spec names the run): no
-   * metric is asked for; the series is the run's last LIVE_RUN_UPDATE. */
-  async _drawLivePanel(t, spec, card, token) {
-    if (spec.kind === 'live') return this._drawLivePart(t, spec, card);
+  /** A `live` panel (ADR 0089): its status rows, events, the attribution of the
+   * last frame explained, or the scores of every run ticked in the tab. Plain
+   * HTML (the scores are a timeline), redrawn from the runs' last LIVE_RUN_UPDATE. */
+  _drawLivePart(t, spec, card, token) {
+    const part = spec.options?.part;
+    card.el.dataset.part = part;
+    const runs = this._tabRuns(t);
+    const ready = runs.filter((r) => r.kw);
+    const plain = this._tabDatasets(t).filter((fp) => !String(fp).startsWith('live:'));
+    if (part === 'scores') return this._drawLiveScores(t, spec, card, token, ready, runs, plain);
+    card.captionEl.hidden = true;
+    card.body.className = `live-part live-${part}`;
+    if (!ready.length) {
+      const own = plain[0] ? liveNoScoreMessage(this._nameOf('datasets', plain[0])) : '';
+      card.body.textContent = runs.length ? 'Waiting for the run…' : own || 'Tick a live run in the selector.';
+      return;
+    }
+    if (part === 'status') this._drawLiveStatus(spec, card, ready);
+    else if (part === 'events') this._drawLiveEvents(card, ready);
+    else if (part === 'attribution') this._drawLiveAttribution(spec, card, ready);
+  }
+
+  /** The scores panel: one curve per ticked run against step, on one threshold line. */
+  async _drawLiveScores(t, spec, card, token, ready, runs, plain) {
     const seq = card.seq = (card.seq || 0) + 1;
-    const kw = this._live.get(spec.live_run);
-    const status = kw ? liveRunStatus(kw) : 'Waiting for the run…';
-    const problem = kw ? liveRunProblem(kw) : '';
-    const series = kw ? liveRunSeries(kw) : [];
-    if (!series.length || !series[0].data.y.nd.values.length) {
+    const nameOf = (kw) => kw.name || kw.tab || kw.run_id;
+    const scored = ready.filter((r) => r.kw.series?.step?.length);
+    const notes = plain.map((fp) => liveNoScoreMessage(this._nameOf('datasets', fp)));
+    if (!scored.length) {
+      const status = ready.map((r) => liveRunStatus(r.kw)).join('\n');
+      const problem = ready.map((r) => liveRunProblem(r.kw)).filter(Boolean).join('\n');
       card.body.className = '';
       const msg = document.createElement('div');
       msg.className = 'panel-msg';
-      msg.textContent = [status, problem, 'No scores yet.'].filter(Boolean).join('\n');
+      msg.textContent = [runs.length && !ready.length ? 'Waiting for the run…' : status, problem,
+        ...notes, ready.length ? 'No scores yet.' : ''].filter(Boolean).join('\n');
       clearPlot(card.body);
       card.body.replaceChildren(msg);
       card.captionEl.hidden = true;
       card.series = null;
       return;
     }
-    spec.y_line = liveRunThreshold(kw);
-    spec.overlays = liveRunOverlays(kw);
+    const named = scored.map((r) => ({ name: nameOf(r.kw), kw: r.kw }));
+    // One run keeps its curve's own name; several are told apart by their runs' names.
+    const series = scored.map((r) => (scored.length > 1
+      ? { ...liveRunSeries(r.kw)[0], name: nameOf(r.kw) } : liveRunSeries(r.kw)[0]));
+    const plotSpec = { ...spec, kind: 'timeline', metrics: {}, liveScores: true,
+      legend: scored.length > 1 || spec.legend,
+      y_line: liveRunThreshold(), overlays: liveRunsOverlays(named) };
+    card.plotSpec = plotSpec;
     card.body.className = 'panel-plot';
-    await this._drawPanel(t, spec, card, series, token, seq);
+    await this._drawPanel(t, plotSpec, card, series, token, seq);
     if (token !== this._renderToken || seq !== card.seq) return;
-    // The caption says where the run is, in place of the figure caption.
+    // The caption says where each run is, in place of the figure caption.
     card.captionEl.hidden = false;
-    card.captionText.textContent = problem ? `${status}. ${problem}` : status;
+    card.captionText.textContent = [...scored.map((r) => {
+      const problem = liveRunProblem(r.kw);
+      const status = liveRunStatus(r.kw);
+      const line = problem ? `${status}. ${problem}` : status;
+      return scored.length > 1 ? `${nameOf(r.kw)}: ${line}` : line;
+    }), ...notes].join('\n');
   }
 
-  /** A `live` panel of a run's tab (ADR 0087): its status strip, its events,
-   * or the attribution of the clicked frame. Plain HTML, redrawn from the
-   * run's last LIVE_RUN_UPDATE. */
-  _drawLivePart(t, spec, card) {
-    const kw = this._live.get(spec.live_run);
-    const part = spec.options?.part;
-    card.captionEl.hidden = true;
-    card.body.className = `live-part live-${part}`;
-    if (!kw) {
-      card.body.textContent = 'Waiting for the run…';
-      return;
-    }
-    if (part === 'status') this._drawLiveStatus(spec, card, kw);
-    else if (part === 'events') this._drawLiveEvents(card, kw);
-    else if (part === 'attribution') this._drawLiveAttribution(spec, card, kw);
+  _drawLiveStatus(spec, card, ready) {
+    const rows = ready.map((r) => this._liveStatusRow(spec, r.kw, ready.length > 1));
+    card.body.replaceChildren(...rows);
   }
 
-  _drawLiveStatus(spec, card, kw) {
+  /** One run's status: chips, the alarm rule's "?" and note, a problem, the controls. */
+  _liveStatusRow(spec, kw, named) {
     const strip = document.createElement('div');
     strip.className = 'live-chips';
+    if (named) {
+      const who = document.createElement('span');
+      who.className = 'live-chip live-run-name';
+      who.textContent = kw.name || kw.tab || kw.run_id;
+      strip.appendChild(who);
+    }
     for (const c of liveRunChips(kw, Date.now())) {
       const chip = document.createElement('span');
       chip.className = `live-chip${c.tone ? ` ${c.tone}` : ''}`;
@@ -400,7 +443,10 @@ export class AnalysisManager {
     if (ruleBtn) strip.appendChild(ruleBtn);
     const controls = this._liveControls?.(spec, kw);
     if (controls) strip.appendChild(controls);
-    card.body.replaceChildren(...children);
+    const row = document.createElement('div');
+    row.className = 'live-status-row';
+    row.append(...children);
+    return row;
   }
 
   /** A "?" and its note for a live card; the note stays open across redraws. */
@@ -437,8 +483,10 @@ export class AnalysisManager {
 
   /** The clicked frame's strongest descriptor groups, as strength ÷ threshold
    * (never shares), with the test explained and the colour switch. */
-  _drawLiveAttribution(spec, card, kw) {
-    const state = this._liveAtt.get(kw.run_id);
+  _drawLiveAttribution(spec, card, ready) {
+    // The run clicked or shown last, when it is ticked in this tab.
+    const kw = ready.find((x) => x.kw.run_id === this._attRun)?.kw;
+    const state = kw && this._liveAtt.get(kw.run_id);
     const r = state?.result;
     const el = (tag, cls, text) => {
       const e = document.createElement(tag);
@@ -446,11 +494,22 @@ export class AnalysisManager {
       if (text != null) e.textContent = text;
       return e;
     };
+    if (!kw) {
+      const first = card.title.querySelector('.panel-letter')?.nextElementSibling;
+      if (first) first.textContent = spec.title || 'Attribution';
+      card.body.replaceChildren(el('div', 'live-att-note',
+        'Click a point on a ticked run\'s curve to see what drove its score.'));
+      return;
+    }
     if (!state) {
       card.body.replaceChildren(el('div', 'live-att-note',
         'Show one of this run\'s frames (frame slider, or a point on the score plot) to see what drove its score.'));
       return;
     }
+    // The title names the run and step explained, whichever run was shown last.
+    const titleEl = card.title.querySelector('.panel-letter')?.nextElementSibling;
+    const setTitle = (text) => { if (titleEl) titleEl.textContent = text; };
+    setTitle(spec.title || 'Attribution');
     const asking = el('div', 'live-att-note', `Asking DetectAna about frame ${state.frame}…`);
     if (state.pending && (!r || r.error)) {
       card.body.replaceChildren(asking);
@@ -460,6 +519,7 @@ export class AnalysisManager {
       card.body.replaceChildren(el('div', 'live-problem', r.error));
       return;
     }
+    setTitle(`${spec.title || 'Attribution'} · ${kw.name || kw.tab || kw.run_id}, step ${Number(r.step).toLocaleString('en-US')}`);
     // While the next frame is asked for, the last answer stays: its head names its step.
     const head = el('div', 'live-att-head',
       `Step ${Number(r.step).toLocaleString('en-US')} · ${r.test.join(' ')} ${r.ratio.toFixed(2)}× threshold`);
@@ -505,13 +565,15 @@ export class AnalysisManager {
     card.body.replaceChildren(...(state.pending ? [asking] : []), head, modes, pick, table, note, scale, ticks);
   }
 
-  _drawLiveEvents(card, kw) {
+  _drawLiveEvents(card, ready) {
+    const runs = ready.map((r) => ({ name: r.kw.name || r.kw.tab || r.kw.run_id, kw: r.kw }));
+    const many = runs.length > 1;
     const list = card.body.querySelector('table.live-event-list') || document.createElement('table');
     list.className = 'live-event-list';
     const stick = !list.isConnected || list.parentElement.scrollTop + list.parentElement.clientHeight
       >= list.parentElement.scrollHeight - 4;
-    list.replaceChildren(...(kw.events || []).map((e) => {
-      const line = liveEventLine(e);
+    const rows = liveRunsEvents(runs).map(({ run, event }) => {
+      const line = liveEventLine(event);
       const tr = document.createElement('tr');
       if (line.tone) tr.className = line.tone;
       const time = document.createElement('td');
@@ -524,9 +586,23 @@ export class AnalysisManager {
         a.textContent = ` · report: ${line.report}`;
         text.appendChild(a);
       }
-      tr.append(time, text);
+      if (many) {
+        const who = document.createElement('td');
+        who.className = 'live-event-run';
+        who.textContent = run;
+        tr.append(time, who, text);
+      } else tr.append(time, text);
       return tr;
-    }));
+    });
+    if (many) {
+      const head = document.createElement('tr');
+      for (const h of ['Time', 'Run', 'Event']) {
+        const th = document.createElement('th');
+        th.textContent = h;
+        head.appendChild(th);
+      }
+      list.replaceChildren(head, ...rows);
+    } else list.replaceChildren(...rows);
     if (!list.isConnected) card.body.replaceChildren(list);
     if (stick) card.body.scrollTop = card.body.scrollHeight;   // follow new events, unless scrolled back
   }
@@ -655,7 +731,7 @@ export class AnalysisManager {
     for (const slot of t.slots) {
       slot.cards.forEach((card, i) => {
         if (card.series && !card.waiting)
-          this._drawPanel(t, slot.specs[i], card, card.series, this._renderToken, card.seq);
+          this._drawPanel(t, card.plotSpec || slot.specs[i], card, card.series, this._renderToken, card.seq);
       });
     }
   }
@@ -814,6 +890,11 @@ export class AnalysisManager {
     });
     t.resizeObserver.observe(gridEl);
     this._restoreTab(t);
+    // A live tab opens with its own run ticked (ADR 0089); the rail does not move it.
+    if (spec.pinned?.length && !t.selectedDatasets) {
+      t.selectedDatasets = [...spec.pinned];
+      t.pinWaiting = !spec.pinned.every((fp) => this._available.datasets.has(fp));
+    }
     this._tabs.push(t);
     this._layoutGrid(t);
     this._buildControls(t);
@@ -1218,8 +1299,9 @@ export class AnalysisManager {
     };
 
     group('datasets', 'Datasets', t.selectedDatasets, this._tabDatasets(t));
-    group('models', 'Predictions', t.selectedModels,
-      this._tabModels(t).filter(Boolean));
+    // A tab of live panels and 3D panels has no metric to compute: no prediction row.
+    if (t.spec.panels.some((p) => p.kind !== KIND_3D && p.kind !== 'live'))
+      group('models', 'Predictions', t.selectedModels, this._tabModels(t).filter(Boolean));
     if (!holder.childElementCount) return;
     const { button, note } = helpToggle(PICKER_HELP, {
       subject: "this tab's choice of data",
@@ -1289,7 +1371,7 @@ export class AnalysisManager {
     if (!t.has2d) return;
     let msg = '';
     // A live run's tab plots its scores, which need no metric or selection.
-    const liveOnly = t.spec.panels.every((p) => p.kind === KIND_3D || p.live_run);
+    const liveOnly = t.spec.panels.every((p) => p.kind === KIND_3D || p.kind === 'live');
     if (liveOnly) msg = '';
     else if (!this._metrics || !this._catalog.size) msg = 'Waiting for metric catalog…';
     else if (!this._tabDatasets(t).length) msg = 'Select a dataset to view this analysis.';
@@ -1337,6 +1419,7 @@ export class AnalysisManager {
     el.className = 'analysis-panel';
     el.dataset.kind = spec.kind;
     if (spec.title) el.dataset.title = spec.title;
+    if (spec.kind === 'live') el.dataset.part = spec.options?.part || '';
 
     const title = document.createElement('div');
     title.className = 'panel-title';
@@ -1497,7 +1580,7 @@ export class AnalysisManager {
   }
 
   async _fetchAndRenderPanel(t, spec, card, token) {
-    if (spec.live_run) return this._drawLivePanel(t, spec, card, token);
+    if (spec.kind === 'live') return this._drawLivePart(t, spec, card, token);
     const refs = this._cardRefs(t, spec);
     const seq = card.seq = (card.seq || 0) + 1;
 
@@ -1668,7 +1751,7 @@ export class AnalysisManager {
   /** The "Peaks" checkbox of a one-series timeline: its peak labels on or off. */
   _wirePeaksToggle(t, spec, card) {
     // A live run's x is the step; peak labels name frame indices.
-    if (spec.kind !== 'timeline' || spec.live_run) return;
+    if (spec.kind !== 'timeline' || spec.liveScores) return;
     const key = panelKey(spec);
     if (!card.peaksToggle) {
       const toggle = document.createElement('label');
@@ -1981,7 +2064,7 @@ export class AnalysisManager {
       this._noteZoom(t, spec, card);
     });
     // A live run's scores are not a metric of a dataset: no subset from them.
-    if (SUB_KINDS.has(spec.kind) && !spec.live_run) this._wireSub(t, spec, card);
+    if (SUB_KINDS.has(spec.kind) && !spec.liveScores) this._wireSub(t, spec, card);
     clearTimeout(card.frameTimer);   // a click on the plot this one replaces
     card.frameTimer = null;
     if (!el._subInfo || !el._subInfo.perFrame) return;   // only per-frame kinds
@@ -2011,7 +2094,8 @@ export class AnalysisManager {
         card.frameTimer = null;
         this._onPointFrame(frame);
         // A live run's frame is also explained (ADR 0087): its attribution is asked for.
-        if (spec.live_run) this._onLive?.({ action: 'attribute', run_id: spec.live_run, frame: frame.frame });
+        const run = this.liveRunOf(frame.datasetFp);
+        if (run) this._onLive?.({ action: 'attribute', run_id: run.run_id, frame: frame.frame });
       }, PLOT_CONFIG.doubleClickDelay ?? 300);
     });
     if (el.removeAllListeners) el.removeAllListeners('plotly_doubleclick');
