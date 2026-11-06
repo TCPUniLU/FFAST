@@ -127,14 +127,15 @@ def build_analysis_tab(UIHandler, env, tab):
 
 
 def desktop_tabs(tabs):
-    """The tabs the desktop builds: all but those made only of 3D panels.
+    """The tabs the desktop builds: all but those made only of 3D panels and
+    the Live run layout (ADR 0089; live runs are browser only).
 
     3D panels are browser-only (ADR 0056). The desktop shows its 3D view in
     its own window, so a tab holding nothing but 3D panels, the built-in "3D"
     tab among them, would be empty here."""
     return [
         t for t in tabs
-        if not t.panels or any(p.kind != PANEL_KIND_3D for p in t.panels)
+        if not t.live_layout and (not t.panels or any(p.kind != PANEL_KIND_3D for p in t.panels))
     ]
 
 

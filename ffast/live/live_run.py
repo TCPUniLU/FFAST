@@ -11,8 +11,9 @@ message per change (and every ``RESEND_S`` seconds, for windows that connect
 later), holding the whole score series of the run's first analysis.
 
 Each open run with frames has a tab of its own in the server's tab list
-(``live_tab``): its 3D view beside a timeline of its scores against step. The
-tab is made by the server, never saved, and leaves with the run.
+(``live_tab``), made from the one built-in "Live run" layout (ADR 0089) and
+opened with that run ticked in its selector. The tab is made by the server,
+never saved, and leaves with the run.
 """
 
 from __future__ import annotations
@@ -101,34 +102,16 @@ def tab_name(run_id: str, job_name: str | None = None) -> str:
     return f"Live {job_name} ({when})" if job_name else f"Live {when}"
 
 
-def live_tab(run: "LiveRun"):
-    """The run's tab: its status and stop controls across the top; the main 3D
-    view beside the worst test ÷ threshold against step; its events below."""
-    from ffast.config.models import AnalysisTabConfig, PanelConfig
-
-    def live(part, **place):
-        return PanelConfig(kind="live", live_run=run.run_id, options={"part": part}, **place)
-
-    return AnalysisTabConfig(
-        name=run.tab_name,
-        has_data_selector=False,
-        grid=24,
-        panels=[
-            live("status", row=0, col=0, rowspan=2, colspan=24, title="Run"),
-            PanelConfig(kind="3d", row=2, col=0, rowspan=10, colspan=8),
-            live("attribution", row=2, col=8, rowspan=10, colspan=6, title="Attribution"),
-            PanelConfig(kind="timeline", row=2, col=14, rowspan=10, colspan=10,
-                        title="Worst test ÷ its threshold, against step", x_label="Step",
-                        y_label="Score ÷ threshold",
-                        legend=False, live_run=run.run_id),
-            live("events", row=12, col=0, rowspan=4, colspan=24, title="Events"),
-        ],
-    )
+def live_tab(run: "LiveRun", layout):
+    """The run's tab: the Live run layout under the run's name. It opens with
+    this run ticked in its selector (the server sends the run as ``pinned``)."""
+    return layout.model_copy(deep=True, update={"name": run.tab_name, "live_layout": False})
 
 
-def live_tabs(env) -> list:
-    """The tabs of the open runs that have frames, oldest first."""
-    return [live_tab(r) for r in getattr(env, "live_runs", {}).values() if r.registered]
+def live_tabs(env, layout) -> list:
+    """(tab, run fingerprint) for each open run that has frames, oldest first."""
+    return [(live_tab(r, layout), r.fingerprint)
+            for r in getattr(env, "live_runs", {}).values() if r.registered]
 
 
 def _tabs_changed(env) -> None:
@@ -207,6 +190,11 @@ class LiveRun:
         self.task: asyncio.Task | None = None
 
     @property
+    def display_name(self) -> str:
+        """The run's name in plots: its tab name without the leading "Live "."""
+        return self.tab_name.removeprefix("Live ")
+
+    @property
     def fingerprint(self) -> str:
         return self.dataset.fingerprint
 
@@ -267,6 +255,8 @@ class LiveRun:
             "path": str(self.run_dir),
             "fingerprint": self.fingerprint if self.registered else None,
             "tab": self.tab_name if self.registered else None,
+            "name": self.display_name,
+            "steps": list(self.dataset.steps),
             "n_frames": self.dataset.N,
             "analysis_id": self.analysis_id,
             "bundle": self.settings.get("bundle"),
@@ -379,7 +369,7 @@ def open_live_run(env, path: str, broadcast) -> LiveRun:
         runs = env.live_runs = {}
     sources = getattr(env, "tab_sources", None)
     if sources is not None and sources.live is None:
-        sources.live = lambda: live_tabs(env)
+        sources.live = lambda layout: live_tabs(env, layout)
     run = LiveRun(env, Path(path), broadcast)
     existing = runs.get(run.run_id)
     if existing is not None and existing.task is not None and not existing.task.done():

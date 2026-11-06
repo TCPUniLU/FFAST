@@ -248,6 +248,8 @@ class TabEntry:
     replaces: str | None = None      # user tabs: the original they stand in for
     original_changed: bool = False   # that original changed since the edit
     hidden: bool = False
+    pinned: list[str] | None = None  # live tabs: the run fingerprints ticked at first (ADR 0089)
+    layout_of: str | None = None     # live tabs: the layout they are made from
 
 
 @dataclass
@@ -261,9 +263,10 @@ class TabSources:
     project: list[AnalysisTabConfig] = field(default_factory=list)
     store: UserTabStore | None = None
     registry: object = None
-    # The tabs of the live runs open on this server (ADR 0087): made by the
+    # The tabs of the live runs open on this server (ADR 0087, 0089): given the
+    # Live run layout, it returns (tab, run fingerprint) pairs. Made by the
     # server, last in the bar, never saved.
-    live: Callable[[], list[AnalysisTabConfig]] | None = None
+    live: Callable[[AnalysisTabConfig], list[tuple[AnalysisTabConfig, str]]] | None = None
 
     @classmethod
     def for_project(cls, project_config=None, store: UserTabStore | None = None,
@@ -288,9 +291,23 @@ class TabSources:
 
     # ── reading ─────────────────────────────────────────────────────────────
     def entries(self) -> list[TabEntry]:
-        """Built-in, then project, then user tabs in the order they were made,
-        then put in the order the user dragged them to (ADR 0070); a user tab
-        that replaces another sits in that one's place."""
+        """The tabs of the bar: built-in, then project, then user tabs in the
+        order they were made, then put in the order the user dragged them to
+        (ADR 0070); a user tab that replaces another sits in that one's place.
+        The Live run layout is not in the bar; its tabs, one per open run, are."""
+        return [e for e in self._all_entries() if not e.tab.live_layout]
+
+    def live_layout_tab(self) -> AnalysisTabConfig | None:
+        """The layout live-run tabs are made from: the user's edit of "Live
+        run" if there is one, else the built-in."""
+        e = self._layout_entry(self._all_entries())
+        return e.tab if e is not None else None
+
+    @staticmethod
+    def _layout_entry(entries) -> TabEntry | None:
+        return next((e for e in entries if e.tab.live_layout and e.source != "live"), None)
+
+    def _all_entries(self) -> list[TabEntry]:
         user = self.store.tabs() if self.store else []
         hidden = set(self.store.hidden) if self.store else set()
         base = [(t, "built-in") for t in self.builtin] + [(t, "project") for t in self.project]
@@ -312,9 +329,10 @@ class TabSources:
         rank = {n: i for i, n in enumerate(self.store.bar_order if self.store else [])}
         out = sorted(out, key=lambda e: rank.get(e.tab.name, len(rank)))
         taken = {e.tab.name for e in out}
-        for tab in (self.live() if self.live else []):
+        layout = self._layout_entry(out)
+        for tab, fingerprint in (self.live(layout.tab) if self.live and layout else []):
             if tab.name not in taken:
-                out.append(TabEntry(tab, "live"))
+                out.append(TabEntry(tab, "live", pinned=[fingerprint], layout_of=layout.tab.name))
         return out
 
     def layout(self) -> list[dict]:
@@ -330,7 +348,8 @@ class TabSources:
                 continue
             d.update(source=e.source, replaces=e.replaces,
                      original_changed=e.original_changed, hidden=e.hidden,
-                     revision=tab_fingerprint(e.tab))
+                     revision=tab_fingerprint(e.tab),
+                     pinned=e.pinned, layout_of=e.layout_of)
             out.append(d)
         return out
 
@@ -366,15 +385,19 @@ class TabSources:
         except ValidationError as exc:
             raise TabError(_validation_message(exc)) from None
         self._check_metrics(tab)
-        if any(p.live_run for p in tab.panels):
-            raise TabError("A live-run tab is not saved: it belongs to its run and "
-                           "closes with it. Build a new tab for the panels you want to keep.")
 
-        entries = self.entries()
+        entries = self._all_entries()
+        if previous_name is not None:   # a live tab is edited through its layout (ADR 0089)
+            previous_name = self._layout_name(previous_name, entries)
         editing = self._entry(previous_name, entries) if previous_name is not None else None
+        is_layout = editing is not None and editing.tab.live_layout
+        if is_layout and tab.name != editing.tab.name:
+            raise TabError("The live run layout keeps its name")
+        tab = tab.model_copy(update={"live_layout": is_layout})
         if any(e.tab.name == tab.name and e is not editing for e in entries):
             raise TabError(f"A tab named {tab.name} already exists")
-        after = [tab if e is editing else e.tab for e in entries if not e.hidden or e is editing]
+        bar = [e for e in entries if not e.tab.live_layout and e.source != "live"]
+        after = [tab if e is editing else e.tab for e in bar if not e.hidden or e is editing]
         if editing is None:
             after.append(tab)
         if not any(_shows_main_view(t) for t in after):
@@ -396,10 +419,10 @@ class TabSources:
         """Delete a user tab; for one that replaces another, that is "Reset to
         original"."""
         store = self._writable()
-        entry = self._entry(name)
+        entry = self._entry(self._layout_name(name))
         if entry.source != "user":
             raise TabError(f"{name} is a {entry.source} tab; only your own tabs can be deleted")
-        entries = self.entries()
+        entries = [e for e in self._all_entries() if not e.tab.live_layout and e.source != "live"]
         rest = [e.tab for e in entries if e is not entry and not e.hidden]
         original = next((t for t in self.builtin + self.project if t.name == entry.replaces), None)
         if original is not None:
@@ -423,7 +446,9 @@ class TabSources:
 
     def set_hidden(self, name: str, hidden: bool) -> None:
         store = self._writable()
-        self._entry(name)
+        entry = self._entry(name)
+        if entry.layout_of or entry.tab.live_layout:
+            raise TabError("A live run's tab closes with its run")
         if hidden:
             shown = [e.tab for e in self.entries() if not e.hidden and e.tab.name != name]
             if not any(_shows_main_view(t) for t in shown):
@@ -436,8 +461,15 @@ class TabSources:
             raise TabError("This server keeps no user tabs")
         return self.store
 
+    def _layout_name(self, name, entries=None) -> str:
+        """`name` itself, or the layout when `name` is a live tab made from it."""
+        for e in entries if entries is not None else self._all_entries():
+            if e.tab.name == name and e.layout_of:
+                return e.layout_of
+        return name
+
     def _entry(self, name, entries=None) -> TabEntry:
-        for e in entries if entries is not None else self.entries():
+        for e in entries if entries is not None else self._all_entries():
             if e.tab.name == name:
                 return e
         raise TabError(f"No tab named {name}")

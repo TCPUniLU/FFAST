@@ -1,0 +1,55 @@
+# Live run — the layout every live-run tab is made from (ADR 0089). It is not
+# in the tab bar itself: each open run with frames gets a tab built from it,
+# named after the run and opened with that run ticked in its selector.
+# Editing a live tab edits this layout; Reset brings this original back.
+[[tabs]]
+name = "Live run"
+live_layout = true
+grid = 24
+controls = ["same_step"]
+
+[[tabs.panels]]
+kind = "live"
+row = 0
+col = 0
+rowspan = 2
+colspan = 24
+title = "Run"
+options = { part = "status" }
+
+[[tabs.panels]]
+kind = "3d"
+row = 2
+col = 0
+rowspan = 10
+colspan = 8
+
+[[tabs.panels]]
+kind = "live"
+row = 2
+col = 8
+rowspan = 10
+colspan = 6
+title = "Attribution"
+options = { part = "attribution" }
+
+[[tabs.panels]]
+kind = "live"
+row = 2
+col = 14
+rowspan = 10
+colspan = 10
+title = "Worst test ÷ its threshold, against step"
+x_label = "Step"
+y_label = "Score ÷ threshold"
+legend = false
+options = { part = "scores" }
+
+[[tabs.panels]]
+kind = "live"
+row = 12
+col = 0
+rowspan = 4
+colspan = 24
+title = "Events"
+options = { part = "events" }

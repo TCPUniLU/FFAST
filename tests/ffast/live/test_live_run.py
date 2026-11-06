@@ -153,33 +153,49 @@ async def test_open_follows_until_the_dataset_is_deleted(tmp_path):
 
 # ── the run's tab (ADR 0087) ──────────────────────────────────────────────────
 
-def test_a_run_with_frames_has_a_tab_its_3d_view_beside_its_scores(tmp_path):
-    from ffast.config.user_tabs import TabSources
-    from ffast.live.live_run import live_tabs, tab_name
+def _live_sources(tmp_path):
+    """Tab sources with the built-in tabs and one open run that has frames."""
+    from ffast.config.tabs import load_builtin_tabs
+    from ffast.config.user_tabs import TabSources, UserTabStore
+    from ffast.live.live_run import live_tabs
+
+    env = _Env()
+    env.live_runs = {}
+    run = LiveRun(env, _run_folder(tmp_path), lambda m: None)
+    env.live_runs[run.run_id] = run
+    run.apply(run.read_files())
+    sources = TabSources(builtin=load_builtin_tabs(), store=UserTabStore(tmp_path / "tabs"),
+                         live=lambda layout: live_tabs(env, layout))
+    return sources, run
+
+
+def test_a_run_with_frames_has_a_tab_made_from_the_live_run_layout(tmp_path):
+    from ffast.live.live_run import tab_name
 
     assert tab_name("20261105-103335-mel0314-17254-dae9") == "Live 10:33:35 mel0314"
     assert tab_name("odd") == "Live odd"
     # The Slurm job name leads; the start time and node say which run of it.
     assert tab_name("20261105-103335-mel0314-17254-dae9", "aspirin_nvt") == "Live aspirin_nvt (10:33:35 mel0314)"
     assert tab_name("odd", "aspirin_nvt") == "Live aspirin_nvt (odd)"
-    d = _run_folder(tmp_path)
-    env = _Env()
-    env.live_runs = {}
-    run = LiveRun(env, d, lambda m: None)
-    env.live_runs[run.run_id] = run
-    assert live_tabs(env) == []                         # no frames read yet
-    run.apply(run.read_files())
-    sources = TabSources(builtin=[], live=lambda: live_tabs(env))
-    [tab] = sources.layout()
-    assert tab["name"] == "Live 12:00:00 node" and tab["source"] == "live"
-    assert tab["has_data_selector"] is False
-    kinds = [(p["kind"], p.get("live_run")) for p in tab["panels"]]
-    assert kinds == [("live", run.run_id), ("3d", None), ("live", run.run_id),
-                     ("timeline", run.run_id), ("live", run.run_id)]
+    sources, run = _live_sources(tmp_path)
+    layout = sources.layout()
+    assert "Live run" not in [t["name"] for t in layout]      # the layout is not in the bar itself
+    tab = next(t for t in layout if t["source"] == "live")
+    assert tab["name"] == "Live 12:00:00 node"
+    assert tab["pinned"] == [run.fingerprint] and tab["layout_of"] == "Live run"
+    assert [p["kind"] for p in tab["panels"]] == ["live", "3d", "live", "live", "live"]
     assert [p["options"].get("part") for p in tab["panels"]] == [
-        "status", None, "attribution", None, "events"]
-    assert tab["panels"][3]["metrics"] == {}
+        "status", None, "attribution", "scores", "events"]
+    assert all("live_run" not in p for p in tab["panels"])
+    assert tab["controls"] == ["same_step"]
+    assert all(t.get("pinned") is None for t in layout if t["source"] != "live")
     assert _kwargs(run.message())["tab"] == "Live 12:00:00 node"
+
+
+def test_the_message_carries_every_frames_step_and_the_runs_name(tmp_path):
+    _, run = _live_sources(tmp_path)
+    kw = _kwargs(run.message())
+    assert kw["steps"] == [0, 100] and kw["name"] == "12:00:00 node"
 
 
 def test_a_run_of_a_named_slurm_job_is_named_after_it(tmp_path):
@@ -191,39 +207,60 @@ def test_a_run_of_a_named_slurm_job_is_named_after_it(tmp_path):
     assert run.tab_name == "Live aspirin_nvt (12:00:00 node)"
 
 
-def test_a_live_run_tab_is_never_saved(tmp_path):
-    from ffast.config.user_tabs import TabError, TabSources, UserTabStore
+def test_editing_a_live_tab_edits_the_live_run_layout(tmp_path):
+    from ffast.config.user_tabs import TabError
 
-    sources = TabSources(builtin=[], store=UserTabStore(tmp_path / "tabs"))
-    tab = {"name": "Mine", "grid": 24, "panels": [
-        {"kind": "3d", "row": 0, "col": 0, "rowspan": 4, "colspan": 12},
-        {"kind": "timeline", "row": 0, "col": 12, "rowspan": 4, "colspan": 12, "live_run": "r1"}]}
-    with pytest.raises(TabError, match="not saved"):
-        sources.save(tab)
+    sources, run = _live_sources(tmp_path)
+    tab = next(t for t in sources.layout() if t["source"] == "live")
+    edited = {k: tab[k] for k in ("name", "grid", "controls")}
+    edited["name"] = "Live run"
+    edited["panels"] = [{k: v for k, v in p.items() if k not in ("unresolved", "metric_refs")} for p in tab["panels"]
+                        if p.get("options", {}).get("part") != "events"]
+    with pytest.raises(TabError, match="keeps its name"):
+        sources.save({**edited, "name": "Mine"}, previous_name=tab["name"])
+    assert sources.save(edited, previous_name=tab["name"]) == "Live run"
+    after = sources.layout()
+    assert [t["name"] for t in after if t["source"] == "user"] == []   # not in the bar
+    live = next(t for t in after if t["source"] == "live")
+    assert "events" not in [p["options"].get("part") for p in live["panels"]]
+    # Reset: deleting through the live tab brings the original back.
+    sources.delete(live["name"])
+    live = next(t for t in sources.layout() if t["source"] == "live")
+    assert "events" in [p["options"].get("part") for p in live["panels"]]
 
 
-def test_a_live_run_panel_is_a_timeline_without_metrics():
+def test_a_live_tab_cannot_be_hidden(tmp_path):
+    from ffast.config.user_tabs import TabError
+
+    sources, run = _live_sources(tmp_path)
+    with pytest.raises(TabError, match="closes with its run"):
+        sources.set_hidden(run.tab_name, True)
+    with pytest.raises(TabError, match="closes with its run"):
+        sources.set_hidden("Live run", True)
+
+
+def test_a_live_panel_has_a_part_and_no_run_or_metrics():
     from pydantic import ValidationError
 
     from ffast.config.models import PanelConfig
 
-    PanelConfig(kind="timeline", row=0, col=0, live_run="r1")
-    with pytest.raises(ValidationError, match="live-run panel"):
-        PanelConfig(kind="scatter", row=0, col=0, live_run="r1")
-
-
-def test_a_live_panel_names_its_run_and_its_part():
-    from pydantic import ValidationError
-
-    from ffast.config.models import PanelConfig
-
-    PanelConfig(kind="live", row=0, col=0, live_run="r", options={"part": "events"})
-    with pytest.raises(ValidationError, match="names its run"):
-        PanelConfig(kind="live", row=0, col=0, options={"part": "events"})
+    for part in ("status", "events", "attribution", "scores"):
+        PanelConfig(kind="live", row=0, col=0, options={"part": part})
     with pytest.raises(ValidationError, match="options.part"):
-        PanelConfig(kind="live", row=0, col=0, live_run="r", options={"part": "x"})
+        PanelConfig(kind="live", row=0, col=0, options={"part": "x"})
     with pytest.raises(ValidationError, match="takes no 'metrics'"):
-        PanelConfig(kind="scatter", row=0, col=0, live_run="r")
+        PanelConfig(kind="live", row=0, col=0, options={"part": "events"},
+                    metrics={"y": {"metric": "ffast.gyradius"}})
+    with pytest.raises(ValidationError):
+        PanelConfig(kind="live", row=0, col=0, live_run="r", options={"part": "events"})
+
+
+def test_the_built_in_tabs_hold_the_live_run_layout():
+    from ffast.config.tabs import load_builtin_tabs
+
+    [layout] = [t for t in load_builtin_tabs() if t.live_layout]
+    assert layout.name == "Live run" and layout.controls == ["same_step"]
+    assert any(p.kind == "live" and p.options["part"] == "scores" for p in layout.panels)
 
 
 def test_stop_now_and_stop_on_alarm_write_into_the_run_folder(tmp_path):

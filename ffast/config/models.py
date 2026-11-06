@@ -102,10 +102,11 @@ class PanelMetricRef(BaseModel):
 
 # The panel kind of a 3D panel (ADR 0056): a view, not a plot.
 PANEL_KIND_3D = "3d"
-# A part of a live run's tab that is not a plot (ADR 0087): its status and
-# stop controls, its events, or the attribution of the clicked frame.
+# A part of a live run's tab (ADR 0087, 0089): its status, its events, the
+# attribution of the clicked frame, or its scores against step. It draws the
+# runs ticked in the tab's selector.
 PANEL_KIND_LIVE = "live"
-LIVE_PARTS = ("status", "events", "attribution")
+LIVE_PARTS = ("status", "events", "attribution", "scores")
 
 
 class StartSettings(BaseModel):
@@ -155,10 +156,9 @@ class PanelConfig(BaseModel):
     legacy error tabs) at the *first* member's ``row``/``col``/span, instead of
     each taking its own grid cell.
 
-    ``live_run`` names a live LAMMPS run (ADR 0087): the panel, a timeline,
-    draws that run's scores against step instead of metrics; ``kind = "live"``
-    shows ``options.part`` of the run (status, events, attribution). Such
-    panels are in the tabs the server makes for open runs, never in saved tabs.
+    ``kind = "live"`` (ADR 0089) shows ``options.part`` (status, events,
+    attribution, scores) of the live runs ticked in the tab's selector. It
+    binds no metrics and names no run.
 
     ``kind = "3d"`` is a **3D panel** (ADR 0056): a cell showing a visualization
     view instead of plotting metrics. Browser only; it binds no metric roles.
@@ -197,15 +197,14 @@ class PanelConfig(BaseModel):
     link_frame: bool = True
     link_camera: bool = True
     start: StartSettings | None = None
-    live_run: str | None = None
 
     @model_validator(mode="after")
-    def _live_panel_is_a_timeline_of_its_run(self) -> "PanelConfig":
-        if self.kind == PANEL_KIND_LIVE and self.live_run is None:
-            raise ValueError("a 'live' panel names its run in 'live_run'")
-        if self.live_run is not None and (self.kind not in ("timeline", PANEL_KIND_LIVE) or self.metrics):
-            raise ValueError("a live-run panel is a timeline or a 'live' panel and takes no 'metrics'")
-        if self.kind == PANEL_KIND_LIVE and self.options.get("part") not in LIVE_PARTS:
+    def _live_panel_has_a_part(self) -> "PanelConfig":
+        if self.kind != PANEL_KIND_LIVE:
+            return self
+        if self.metrics:
+            raise ValueError("a 'live' panel takes no 'metrics'")
+        if self.options.get("part") not in LIVE_PARTS:
             raise ValueError(f"a 'live' panel's options.part is one of {', '.join(LIVE_PARTS)}")
         return self
 
@@ -257,6 +256,7 @@ class AnalysisTabConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
     has_data_selector: bool = True
+    live_layout: bool = False   # the one layout live-run tabs are made from (ADR 0089); not shown in the tab bar itself
     selector: str | None = None
     controls: list[str] = Field(default_factory=list)
     panels: list[PanelConfig] = Field(default_factory=list)
