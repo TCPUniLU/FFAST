@@ -166,6 +166,7 @@ class ServerSession:
             TraceRequest, RequestMetricBoxesRequest, OpenLiveRunRequest,
             LiveStopRequest, LiveSetStopOnAlarmRequest, LiveAttributionRequest,
             ForgetLiveRunRequest, MakeReferenceRequest, RunWithFfastRequest, WriteRunWithFfastRequest,
+            SubmitJobRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -227,6 +228,7 @@ class ServerSession:
             control.WRITE_RUN_WITH_FFAST:       _Route(self._on_write_run_with_ffast,
                                                        ["input", "job", "bundle", "originals"],
                                                        WriteRunWithFfastRequest),
+            control.SUBMIT_JOB:                 _Route(self._on_submit_job, ["folder", "script"], SubmitJobRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -1019,6 +1021,22 @@ class ServerSession:
         from ffast.live.run_with_ffast import write
 
         await self._run_with_ffast(control.RUN_WITH_FFAST_WRITTEN, write, input, job, bundle, originals, **kwargs)
+
+    async def _on_submit_job(self, folder, script, **kwargs) -> None:
+        """Submit a job script from this node, without this server job's Slurm
+        variables ("Run with FFAST", submit from the server's node)."""
+        import os
+
+        from ffast.live.job_submit import SubmitError, submit_on_node
+        from ffast.protocol.rpc import pack
+
+        folder = os.path.expanduser(folder)
+        try:
+            job_id = await asyncio.to_thread(submit_on_node, folder, script)
+            out = {"job_id": job_id, "via": "server", "folder": folder, "script": script}
+        except SubmitError as exc:
+            out = {"error": str(exc), "folder": folder, "script": script}
+        await self._emit(pack(control.JOB_SUBMITTED, (), out))
 
     async def _run_with_ffast(self, reply, fn, *args, **kwargs) -> None:
         from ffast.live.detectana_api import DetectAnaMissing

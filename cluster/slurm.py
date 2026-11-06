@@ -1,10 +1,19 @@
 import asyncio
 import os
 import re
+import shlex
 import tempfile
 from typing import Optional
 
 from .backend import ClusterBackend, ClusterError, JobSpec, JobStatus
+
+
+def _job_id(stdout: str) -> str:
+    """The job id from ``Submitted batch job 123``."""
+    match = re.search(r"Submitted batch job (\d+)", stdout) or re.search(r"(\d+)", stdout)
+    if not match:
+        raise ClusterError("Could not parse job ID from sbatch output", stdout)
+    return match.group(1)
 
 
 class SlurmBackend(ClusterBackend):
@@ -38,6 +47,22 @@ class SlurmBackend(ClusterBackend):
             return match.group(1)
         finally:
             os.unlink(script_path)
+
+    async def submit_file(self, folder: str, script: str) -> str:
+        """Submit an existing job script from its own folder ("Run with FFAST").
+
+        ``cd folder && sbatch script`` rather than ``sbatch --chdir``: the job
+        then starts in ``folder`` and ``$SLURM_SUBMIT_DIR`` is ``folder`` too,
+        as when the user submits by hand.
+        """
+        proc = await asyncio.create_subprocess_exec(
+            "sbatch", script, cwd=folder,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise ClusterError(f"sbatch failed (exit {proc.returncode})", stderr.decode())
+        return _job_id(stdout.decode())
 
     async def poll_status(self, job_id: str) -> JobStatus:
         proc = await asyncio.create_subprocess_exec(
@@ -274,6 +299,15 @@ class RemoteSlurmBackend(SlurmBackend):
                 "Could not parse job ID from sbatch output", stdout
             )
         return match.group(1)
+
+    async def submit_file(self, folder: str, script: str) -> str:
+        """``cd folder && sbatch script`` on the login node (see SlurmBackend)."""
+        # ssh joins its arguments into one command line for the remote shell.
+        remote = f"cd {shlex.quote(folder)} && sbatch {shlex.quote(script)}"
+        stdout, stderr, rc = await self._run_remote(remote)
+        if rc != 0:
+            raise ClusterError(f"sbatch failed on {self._host} (exit {rc})", stderr)
+        return _job_id(stdout)
 
     async def my_job_ids(self) -> set[str]:
         stdout, stderr, rc = await self._run_remote(

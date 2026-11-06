@@ -95,6 +95,11 @@ async def _job_log(profile, job_id) -> str:
         return ""
 
 
+async def _submit_file(profile, folder: str, script: str) -> str:
+    """``cd folder && sbatch script`` on the profile's login node ("Run with FFAST")."""
+    return await _conn._build_backend(profile).submit_file(folder, script)
+
+
 async def _my_job_ids(profile) -> set[str]:
     """The job ids SLURM still lists for this profile's user; raises when the
     login node cannot be asked."""
@@ -112,7 +117,7 @@ class ClusterBroker:
     request threads."""
 
     def __init__(self, config: ClusterConfig | None = None, *, connect=None,
-                 reconnect=None, cancel_job=None, job_log=None, job_ids=None):
+                 reconnect=None, cancel_job=None, job_log=None, job_ids=None, submit_file=None):
         self._config = config if config is not None else ClusterConfig()
         self._lock = threading.Lock()
         self._status = _idle_status()
@@ -121,6 +126,7 @@ class ClusterBroker:
         self._cancel_job = cancel_job or _scancel
         self._job_log = job_log or _job_log
         self._job_ids = job_ids or _my_job_ids
+        self._submit_file = submit_file or _submit_file
         self._session = None   # the ServerConnection whose tunnel is open
         self._profile = None
         self._future = None
@@ -162,8 +168,28 @@ class ClusterBroker:
                    for r in _conn.load_session_records()]
         with self._lock:
             status = dict(self._status, messages=list(self._status["messages"]))
+            can_submit = self._session is not None and bool(getattr(self._profile, "host", ""))
         return {"profiles": [dataclasses.asdict(p) for p in self._config.all_profiles()],
-                "records": records, "status": status}
+                "records": records, "status": status, "can_submit": can_submit}
+
+    def submit(self, folder: str, script: str) -> dict:
+        """Submit a job script on the connected profile's login node ("Run with
+        FFAST", from this computer over SSH). Only while connected through a profile."""
+        folder, script = str(folder or ""), str(script or "")
+        if not folder or not script or "/" in script:
+            raise ValueError("A folder and a script name in it are needed.")
+        with self._lock:
+            session, profile = self._session, self._profile
+        if session is None or not getattr(profile, "host", ""):
+            raise ValueError("Not connected through a cluster profile; submit from the server's node instead.")
+        try:
+            job_id = asyncio.run_coroutine_threadsafe(
+                self._submit_file(profile, folder, script), self._loop).result(timeout=90)
+        except ClusterError as exc:
+            detail = (getattr(exc, "stderr", "") or "").strip()
+            return {"error": f"{exc}" + (f": {detail}" if detail else "")}
+        self._say(f"Submitted {script} as job {job_id}")
+        return {"job_id": job_id, "via": "laptop"}
 
     def check_records(self) -> dict:
         """Forget the Session Records of jobs SLURM no longer lists, then
@@ -323,6 +349,8 @@ class ClusterBroker:
             if method == "POST" and path == "/cluster/stop":
                 self.stop()
                 return 200, self.state()
+            if method == "POST" and path == "/cluster/submit":
+                return 200, self.submit(body.get("folder"), body.get("script"))
             return 404, {"error": "Unknown cluster request"}
         except ValueError as exc:
             return 400, {"error": str(exc)}

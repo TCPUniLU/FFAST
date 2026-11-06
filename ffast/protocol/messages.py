@@ -478,6 +478,15 @@ class WriteRunWithFfastRequest(RunWithFfastRequest):
     originals: dict[str, str]
 
 
+class SubmitJobRequest(BaseModel):
+    """Typed payload for ``SUBMIT_JOB``: a job script by name inside ``folder``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    folder: str = Field(min_length=1)
+    script: str = Field(min_length=1, pattern=r"^[^/]+$")
+
+
 class ListDirRequest(BaseModel):
     """Typed payload for ``LIST_DIR``. ``path=None`` starts at the server
     user's home directory."""
