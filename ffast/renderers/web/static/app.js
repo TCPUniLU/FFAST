@@ -225,6 +225,11 @@ export class FFastApp {
     this._colours = new ObjectColours(() => plotTheme().series);
     /** Fingerprints this window asked the server to delete. */
     this._deleting = new Set();
+    /** What happened, for the guided tours (ADR 0088): example-loaded,
+     * example-load-failed, dataset-deleted, frame-changed, quick-style-applied. */
+    this.tourEvents = new EventTarget();
+    /** A Load Example this window asked for: the dataset it brought, once known. */
+    this._exampleWatch = null;
     // User tabs on the server (ADR 0056): save, delete, hide, export.
     this._tabOps = new TabOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
     // User metrics on the server (ADR 0057): the Metrics pane's wire.
@@ -670,6 +675,11 @@ export class FFastApp {
     return '';
   }
 
+  /** Tell the guided tours (ADR 0088) that `name` happened. */
+  _tourSignal(name, detail = {}) {
+    this.tourEvents.dispatchEvent(new CustomEvent(name, { detail }));
+  }
+
   _buildActions() {
     const needsControl = () => this._needsControl();
     return [
@@ -687,6 +697,7 @@ export class FFastApp {
       // The example pair in examples/data: the server knows where it lives.
       { id: 'load-example', label: 'Load Example Dataset and Prediction', menu: 'file',
         run: () => {
+          this._exampleWatch = { datasetFp: null };
           this._conn.send(OUT.LOAD_EXAMPLE, {}, []);
           this._setStatus('Loading example…', 'connected');
         },
@@ -711,7 +722,7 @@ export class FFastApp {
         run: () => {
           const modelFp = this._focusedModelFp();
           const meta = this._models.get(modelFp);
-          this._applyQuickStyle(forceErrorStyle(meta?.name || modelFp.slice(0, 8)));
+          this._applyQuickStyle(forceErrorStyle(meta?.name || modelFp.slice(0, 8)), 'style-force');
           this._sections.open('Colour By');
         },
         unavailable: () => {
@@ -720,10 +731,10 @@ export class FFastApp {
         } },
       { id: 'style-publication', label: 'Quick style: Publication', short: 'Publication',
         title: 'White background, orthographic view, no axes',
-        run: () => this._applyQuickStyle(PUBLICATION_STYLE) },
+        run: () => this._applyQuickStyle(PUBLICATION_STYLE, 'style-publication') },
       { id: 'style-reset', label: 'Quick style: Reset', short: 'Reset',
         title: 'Back to the default colouring, background and projection',
-        run: () => this._applyQuickStyle(RESET_STYLE) },
+        run: () => this._applyQuickStyle(RESET_STYLE, 'style-reset') },
     ];
   }
 
@@ -903,9 +914,11 @@ export class FFastApp {
     this._setStatus(`${done} ${r.name}`, 'connected');
   }
 
-  _applyQuickStyle(steps) {
+  /** Apply a quick style's `steps`; `id` is its action, for the tours. */
+  _applyQuickStyle(steps, id) {
     const missed = applyStyle(document.getElementById('loupe-sidebar'), steps);
     if (missed.length) console.warn('Quick style: could not set', missed);
+    this._tourSignal('quick-style-applied', { id });
   }
 
   /** The quick-style buttons, drawn from the action list. */
@@ -1714,6 +1727,10 @@ export class FFastApp {
         const name = String(kw.path || '').split(/[\\/]/).pop();
         this._browser.settled(kw.kind, false);
         this._setStatus(`Could not load ${name}: ${kw.error}`, 'error');
+        if (this._exampleWatch) {
+          this._exampleWatch = null;
+          this._tourSignal('example-load-failed', { error: kw.error });
+        }
       });
 
       // Asked while the handshake runs, so it adds no wait.
@@ -1809,6 +1826,7 @@ export class FFastApp {
     const before = this._datasets.get(fp);
     this._datasets.set(fp, meta);
     if (!before && !meta.is_sub) {
+      if (this._exampleWatch && !this._exampleWatch.datasetFp) this._exampleWatch.datasetFp = fp;
       this._browser.settled('dataset', true, fp);   // its "ready" below ends the "Loading…"
       this._readyStatus = `Dataset "${meta.name || fp.slice(0, 8)}" ready · ${framesText(meta.n)}`;
       // It replaces a "Loading…" that is over, not a result the user should
@@ -1892,6 +1910,12 @@ export class FFastApp {
     this._independent.ensureShown();
     if (this._focusedIndependent) this._syncPanelSection();
     this._syncCaptions();
+    // The prediction of a Load Example this window asked for: the pair is in.
+    const watch = this._exampleWatch;
+    if (!before && watch?.datasetFp && (meta?.dataset_fingerprints || []).includes(watch.datasetFp)) {
+      this._exampleWatch = null;
+      this._tourSignal('example-loaded', { datasetFp: watch.datasetFp, modelFp: fp });
+    }
   }
 
   /** A rail row's ⋯ menu. A live SUB subset belongs to its plot: it can be
@@ -1972,6 +1996,29 @@ export class FFastApp {
     this._conn.send(OUT.DELETE_OBJECT, { fingerprint: fp });
   }
 
+  /** For the tour's Back on step 1: only the pair that the tour itself loaded.
+   * Deletes prediction `modelFp`, then dataset `datasetFp`, without asking,
+   * and settles once the server says the dataset is gone. */
+  _removeLoaded(datasetFp, modelFp) {
+    const why = this._needsControl();
+    if (why) return Promise.reject(new Error(why));
+    if (!this._datasets.has(datasetFp)) return Promise.resolve();
+    const gone = new Promise((resolve) => {
+      const onDeleted = (e) => {
+        if (e.detail.fp !== datasetFp) return;
+        this.tourEvents.removeEventListener('dataset-deleted', onDeleted);
+        resolve();
+      };
+      this.tourEvents.addEventListener('dataset-deleted', onDeleted);
+    });
+    for (const fp of [modelFp, datasetFp]) {
+      if (!fp || !(this._models.has(fp) || this._datasets.has(fp))) continue;
+      this._deleting.add(fp);
+      this._conn.send(OUT.DELETE_OBJECT, { fingerprint: fp });
+    }
+    return gone;
+  }
+
   /** Dataset `fp` was cut from `from`, directly or through other subsets. */
   _cutFrom(fp, from) {
     let cur = this._datasets.get(fp)?.parent;
@@ -2035,6 +2082,7 @@ export class FFastApp {
     if (this._focusedIndependent) this._syncPanelSection();
     this._syncCaptions();
     this._setStatus(this._deletedText(fp, meta), 'connected');
+    this._tourSignal('dataset-deleted', { fp });
   }
 
   /** A prediction was deleted. The rail drops it; the views that showed it
@@ -2780,6 +2828,7 @@ export class FFastApp {
     const frame = parseInt(document.getElementById('frame-slider').value, 10);
     this._updateFrameLabel(frame, this._frameCount);
     this._sendSetFrame(frame);
+    this._tourSignal('frame-changed');
   }
 
   /** The view the playback strip moves: the focused independent panel when
