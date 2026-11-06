@@ -525,6 +525,14 @@
     .analysis-panel .live-part {
       flex: 1; min-height: 0; overflow: auto; padding: 2px 12px 8px; font-size: var(--fs-s);
     }
+    .live-hint {
+      display: flex; gap: 8px; align-items: center; justify-content: space-between;
+      padding: 4px 12px; font-size: var(--fs-s); color: var(--muted, inherit);
+    }
+    .live-hint[hidden] { display: none; }
+    .live-hint-close { border: 0; background: none; cursor: pointer; font-size: 1.2em; line-height: 1; color: inherit; }
+    .live-status-row + .live-status-row { margin-top: 6px; }
+    .live-event-list th { text-align: left; font-weight: 600; padding-right: 10px; }
     .live-chips { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
     .live-chip {
       border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; white-space: nowrap;

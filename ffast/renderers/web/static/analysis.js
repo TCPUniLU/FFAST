@@ -62,6 +62,8 @@ const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions 
 const CONTROL_PARAM = { energy_shift: 'shifted', smoothing: 'window' };
 
 /** Plot kinds whose view picks out structures, so SUB can make a subset. */
+const COMPARE_HINT = "Compare runs: tick several runs in this tab's selector.";
+const COMPARE_HINT_KEY = 'ffast.hint.compareRuns';
 const SUB_KINDS = new Set(['timeline', 'overlay_timeline', 'scatter', 'parity', 'density']);
 // Roles a kind draws, when it names others too. A parity panel's x and y are
 // every force component (>4 GB on a large dataset): only the server reads
@@ -292,6 +294,7 @@ export class AnalysisManager {
    * screen when the run is among the runs ticked in it (ADR 0087, 0089). */
   setLiveRun(kw) {
     this._live.set(kw.run_id, kw);
+    this._syncCompareHint();
     const t = this._activeTab();
     if (!t || !t.slots.every((slot) => slot.cards)) return;
     if (!this._tabRuns(t).some((r) => r.fp === kw.fingerprint)) return;
@@ -612,6 +615,29 @@ export class AnalysisManager {
     this.clear();
     (tabs || []).forEach((spec, i) => this._buildTab(spec, i));
     this._syncTabbarFade();
+    this._syncCompareHint();
+  }
+
+  /** Show the compare hint in every live tab while two or more runs are open,
+   * unless it was dismissed or some live tab already compares runs. */
+  _syncCompareHint() {
+    let show = false;
+    if (!this._compareHintDismissed()) {
+      const open = [...this._live.values()].filter((kw) => kw.fingerprint).length;
+      show = open >= 2 && !this._tabs.some((t) => t.spec.layout_of && this._tabRuns(t).length >= 2);
+    }
+    for (const t of this._tabs) t.hintEl.hidden = !(show && t.spec.layout_of);
+  }
+
+  _compareHintDismissed() {
+    if (this._hintGone) return true;
+    try { return localStorage.getItem(COMPARE_HINT_KEY) === '1'; } catch { return false; }
+  }
+
+  _dismissCompareHint() {
+    this._hintGone = true;
+    try { localStorage.setItem(COMPARE_HINT_KEY, '1'); } catch { /* the hint stays gone for this page */ }
+    this._syncCompareHint();
   }
 
   /** @returns {Array<{id: string, name: string}>} the tabs, in bar order */
@@ -860,13 +886,28 @@ export class AnalysisManager {
     msgEl.hidden = true;
     const gridEl = document.createElement('div');
     gridEl.className = 'analysis-grid';
-    mainEl.append(msgEl, gridEl);
+    // Live tabs: one line on how to compare runs (ADR 0089), shown while it helps.
+    const hintEl = document.createElement('div');
+    hintEl.className = 'live-hint';
+    hintEl.hidden = true;
+    if (spec.layout_of) {
+      const text = document.createElement('span');
+      text.textContent = COMPARE_HINT;
+      const close = document.createElement('button');
+      close.type = 'button';
+      close.className = 'live-hint-close';
+      close.textContent = '×';
+      close.setAttribute('aria-label', 'Dismiss this hint');
+      close.addEventListener('click', () => { this._dismissCompareHint(); });
+      hintEl.append(text, close);
+    }
+    mainEl.append(hintEl, msgEl, gridEl);
     bodyEl.append(mainEl);
     panelEl.append(controlsEl, bodyEl);
     this._tabpanels.appendChild(panelEl);
 
     const t = {
-      id, spec, tabEl, panelEl, controlsEl, bodyEl, mainEl, msgEl, gridEl,
+      id, spec, tabEl, panelEl, controlsEl, bodyEl, mainEl, msgEl, hintEl, gridEl,
       slots: [],                        // 2D grid cells: {el, specs}
       cells3d: [],                      // 3D grid cells, for app.js
       sharedParams: {},                 // shifted / window
@@ -1327,6 +1368,7 @@ export class AnalysisManager {
     if (which === 'datasets' && !list.length) list = [...this._tabDatasets(t)];
     t[key] = list;
     this._keep(t);
+    this._syncCompareHint();
     this._renderSeriesSelector(t);
     this._refreshTab(t);
   }

@@ -786,3 +786,37 @@ async def test_web_a_live_tab_draws_the_runs_ticked_in_its_selector(tmp_path):
                 assert cmd["run_id"] == RUN_B
             finally:
                 await browser.close()
+
+
+async def test_web_a_hint_says_how_to_compare_runs(tmp_path):
+    a, b = _two_runs(tmp_path)
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1600, "height": 1000})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _open_run(page, a)
+                tab_a = page.locator("#tabbar .tab", has_text="Live 12:00:00 node")
+                await expect(tab_a).to_be_visible(timeout=15000)
+                hint = page.locator(f"{ACTIVE} .live-hint")
+                await page.wait_for_timeout(1500)
+                await expect(hint).to_be_hidden()          # one run: never shown
+                await _open_run(page, b)
+                await expect(page.locator("#tabbar .tab", has_text="Live 13:00:00 node")).to_be_visible(timeout=15000)
+                await tab_a.click()
+                await expect(hint).to_be_visible(timeout=15000)
+                await expect(hint).to_contain_text("Compare runs: tick several runs in this tab's selector.")
+                await page.locator("#tabbar .tab", has_text="Live 13:00:00 node").click()
+                await expect(hint).to_be_visible()          # in both tabs
+                await hint.get_by_role("button").click()
+                await expect(hint).to_be_hidden()
+                await page.reload(wait_until="networkidle")
+                await _expect_connected(page)
+                await page.locator("#tabbar .tab", has_text="Live 12:00:00 node").click()
+                await page.wait_for_timeout(1500)
+                await expect(page.locator(f"{ACTIVE} .live-hint")).to_be_hidden()   # dismissed for good
+            finally:
+                await browser.close()
