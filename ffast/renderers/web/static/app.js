@@ -43,6 +43,8 @@ import { setTimingSink } from './timing.js';
 import { ClusterDialog } from './cluster_dialog.js';
 import { FILE_SHORTCUTS, isMac, matchShortcut, shortcutLabel } from './shortcuts.js';
 import { showWarning } from './toasts.js';
+import { startTour } from './tour_runner.js';
+import { buildTours } from './tours.js';
 import { applyStaticIcons, icon } from './icons.js';
 import { initBell } from './notification_bell.js';
 import { initFullTextTitles } from './hover_tip.js';
@@ -228,7 +230,7 @@ export class FFastApp {
     /** What happened, for the guided tours (ADR 0088): example-loaded,
      * example-load-failed, dataset-deleted, frame-changed, quick-style-applied. */
     this.tourEvents = new EventTarget();
-    /** A Load Example this window asked for: the dataset it brought, once known. */
+    /** A Load Example this window asked for: the dataset and prediction it brought, once known. */
     this._exampleWatch = null;
     // User tabs on the server (ADR 0056): save, delete, hide, export.
     this._tabOps = new TabOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
@@ -617,6 +619,7 @@ export class FFastApp {
     document.getElementById('add-dataset-btn').addEventListener('click', () => this._browser.open('dataset'));
     document.getElementById('add-prediction-btn').addEventListener('click', () => this._browser.open('prediction'));
 
+    this._tours = buildTours(this);
     this._actions = this._buildActions();
     const mac = isMac();
     for (const s of FILE_SHORTCUTS) {
@@ -627,7 +630,7 @@ export class FFastApp {
     }
     this._fillEmptyKeys();
     this._palette = createPalette(
-      () => this._actions.filter((a) => a.id !== 'command-palette'),
+      () => this._actions.filter((a) => a.id !== 'command-palette' && !a.separator),
       (why) => this._setStatus(why, 'error'),
     );
     this._initFileShortcuts();
@@ -659,6 +662,8 @@ export class FFastApp {
       () => runAction(this._action('load-dataset')));
     document.getElementById('empty-example-btn').addEventListener('click',
       () => runAction(this._action('load-example')));
+    document.getElementById('empty-tour-btn').addEventListener('click',
+      () => runAction(this._defaultTourAction()));
     this._syncEmptyState();
     // Each modal owns its own controls (ADR 0050).
     this._browser.bindControls();
@@ -673,6 +678,24 @@ export class FFastApp {
     if (!this._conn) return 'Connect to a server first';
     if (this._conn.role === 'READ_ONLY') return 'Read-only connection';
     return '';
+  }
+
+  /** Run guided tour `tour` (ADR 0088); how it ended goes to the status line. */
+  _startTour(tour) {
+    startTour(tour, {
+      events: this.tourEvents,
+      onEnd: (how, message) => {
+        if (how === 'done') this._setStatus('Tour finished. Take it again from the File menu.', 'connected');
+        else if (how === 'skip') this._setStatus('Tour skipped. Take it again from the File menu.', 'connected');
+        else showWarning(message);
+      },
+    });
+  }
+
+  /** The action of the tour the empty screen's Take the Tour button starts. */
+  _defaultTourAction() {
+    const tour = this._tours.find((t) => t.isDefault);
+    return tour && this._action(`tour-${tour.id}`);
   }
 
   /** Tell the guided tours (ADR 0088) that `name` happened. */
@@ -697,7 +720,7 @@ export class FFastApp {
       // The example pair in examples/data: the server knows where it lives.
       { id: 'load-example', label: 'Load Example Dataset and Prediction', menu: 'file',
         run: () => {
-          this._exampleWatch = { datasetFp: null };
+          this._exampleWatch = { datasetFp: null, modelFp: null };
           this._conn.send(OUT.LOAD_EXAMPLE, {}, []);
           this._setStatus('Loading example…', 'connected');
         },
@@ -713,6 +736,12 @@ export class FFastApp {
       { id: 'connect-cluster', label: 'Connect to Cluster…', menu: 'file',
         run: () => this._clusterDialog.open(),
         unavailable: () => (this._clusterReady ? '' : 'Start FFAST with ffast-web to reach a cluster') },
+      // The guided tours (ADR 0088), after a line in the File menu.
+      { separator: true, menu: 'file' },
+      ...this._tours.map((t) => ({
+        id: `tour-${t.id}`, label: `Tour: ${t.title}`, menu: 'file',
+        run: () => this._startTour(t), unavailable: t.unavailable,
+      })),
       // No `menu`: the File menu does not change; the Alt+Shift+N shortcut runs it.
       { id: 'open-popout', label: 'Open 3D View in New Window', run: () => this._openPopout(),
         unavailable: () => (document.getElementById('popout-btn').disabled ? 'Open a dataset first' : '') },
@@ -1037,6 +1066,10 @@ export class FFastApp {
     const btn = document.getElementById('empty-load-btn');
     btn.disabled = !!why;
     document.getElementById('empty-example-btn').disabled = !!why;
+    const tour = this._defaultTourAction();
+    const tourBtn = document.getElementById('empty-tour-btn');
+    tourBtn.disabled = !tour || !!whyUnavailable(tour);
+    tourBtn.title = tour ? whyUnavailable(tour) : '';
     document.getElementById('overlay-hint').textContent = why || 'Load a dataset to see it here.';
     this._syncHint();
   }
@@ -1912,10 +1945,20 @@ export class FFastApp {
     this._syncCaptions();
     // The prediction of a Load Example this window asked for: the pair is in.
     const watch = this._exampleWatch;
-    if (!before && watch?.datasetFp && (meta?.dataset_fingerprints || []).includes(watch.datasetFp)) {
-      this._exampleWatch = null;
-      this._tourSignal('example-loaded', { datasetFp: watch.datasetFp, modelFp: fp });
+    if (!before && watch?.datasetFp && !watch.modelFp
+        && (meta?.dataset_fingerprints || []).includes(watch.datasetFp)) {
+      watch.modelFp = fp;
+      this._signalExampleLoaded();
     }
+  }
+
+  /** A Load Example this window asked for is done once its pair is in and
+   * the view shows it: the 3D chrome is hidden until the first frame is drawn. */
+  _signalExampleLoaded() {
+    const watch = this._exampleWatch;
+    if (!watch?.datasetFp || !watch.modelFp || !this._viewShown) return;
+    this._exampleWatch = null;
+    this._tourSignal('example-loaded', { datasetFp: watch.datasetFp, modelFp: watch.modelFp });
   }
 
   /** A rail row's ⋯ menu. A live SUB subset belongs to its plot: it can be
@@ -2266,6 +2309,7 @@ export class FFastApp {
     }
     this._viewShown = true;
     this._syncEmptyState();
+    this._signalExampleLoaded();
     document.getElementById('reset-camera-btn').disabled = false;
     for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = false;
 

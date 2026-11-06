@@ -626,8 +626,8 @@
       text-align: center; color: var(--ink-3); pointer-events: none;
     }
     #overlay.hidden { display: none; }
-    #empty-load-btn, #empty-example-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: var(--fs-m); }
-    #empty-example-btn { margin-left: 8px; }
+    #empty-load-btn, #empty-example-btn, #empty-tour-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: var(--fs-m); }
+    #empty-example-btn, #empty-tour-btn { margin-left: 8px; }
     #empty-load-btn { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
     #empty-load-btn:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); filter: brightness(1.1); }
     #empty-load-btn:disabled { background: var(--surface-2); color: var(--ink-3); font-weight: normal; }
@@ -1582,6 +1582,7 @@
       <div class="small" id="overlay-hint">Load a dataset to see it here.</div>
       <button id="empty-load-btn">Load Dataset…</button>
       <button id="empty-example-btn">Load Example</button>
+      <button id="empty-tour-btn">Take the Tour</button>
       <ul id="empty-keys" aria-label="Keyboard shortcuts"></ul>
     </div>
     <!-- hint bar (ADR 0055): numbered next steps, dismissable -->
