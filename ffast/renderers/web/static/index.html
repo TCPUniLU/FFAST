@@ -561,6 +561,10 @@
     table.live-runs-table th { text-align: left; font-weight: 500; color: var(--ink-3); padding: 6px 8px; border-bottom: 1px solid var(--line); }
     table.live-runs-table td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
     .live-runs-sub { color: var(--ink-3); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+    .live-runs-more { color: var(--ink-3); font-size: var(--fs-xs); }
+    .live-runs-more summary { cursor: pointer; width: max-content; }
+    .live-runs-more dl { display: grid; grid-template-columns: max-content 1fr; gap: 1px 8px; margin: 2px 0 0; }
+    .live-runs-more dd { margin: 0; overflow-wrap: anywhere; color: var(--ink-2, var(--ink-3)); }
     .live-runs-bar { position: relative; height: 6px; width: 150px; margin: 2px 0 4px; border-radius: 3px; background: var(--surface-3); }
     .live-runs-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--ink-3); }
     .live-runs-bar i.scored { background: var(--accent); }

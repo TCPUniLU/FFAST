@@ -28,8 +28,11 @@ function share(step, row) {
  *   alarm: {text: string, tone: string}, state: {text: string, tone: string}, canOpen: boolean}}
  */
 export function liveRunRow(row) {
+  // Where the run lives is detail, behind "More info"; the row names the reference.
+  const more = [['Folder', row.run_dir], ['Run ID', row.run_id], ['Slurm job', row.slurm_job_id]]
+    .filter(([, v]) => v);
   if (!row.exists) {
-    return { name: row.name, sub: row.run_dir, lammps: '', lammpsShare: null, scored: '', scoredShare: null,
+    return { name: row.name, sub: '', more, lammps: '', lammpsShare: null, scored: '', scoredShare: null,
       scorer: { text: '', tone: '' }, alarm: { text: '', tone: '' },
       state: { text: 'folder not found', tone: 'warn' }, canOpen: false };
   }
@@ -55,7 +58,7 @@ export function liveRunRow(row) {
     : st === 'terminated' ? { text: `terminated at step ${fmt(at)}`, tone: 'bad' }
     : st === 'finished' ? { text: 'finished', tone: '' }
     : st === 'running' ? { text: 'running', tone: 'ok' } : { text: st, tone: 'warn' };
-  return { name: row.name, sub: [row.bundle, row.run_dir].filter(Boolean).join(' · '),
+  return { name: row.name, sub: row.bundle || '', more,
     lammps, lammpsShare: share(row.last_step, row), scored, scoredShare: share(row.scored_through_step, row),
     scorer, alarm, state, canOpen: true };
 }
@@ -119,6 +122,7 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget }) {
   };
   const chip = ({ text, tone }) => (text ? cell('span', `live-chip${tone ? ` ${tone}` : ''}`, text) : cell('span'));
 
+  const openMore = new Set();   // rows whose "More info" is open, kept across refreshes
   function update(rows) {
     if (!modal.isConnected) return;
     if (!rows.length) {
@@ -134,7 +138,15 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget }) {
       const tr = cell('tr');
       tr.dataset.runId = row.run_id;
       const name = cell('td');
-      name.append(cell('b', '', v.name), cell('div', 'live-runs-sub', v.sub));
+      name.append(cell('b', '', v.name));
+      if (v.sub) name.appendChild(cell('div', 'live-runs-sub', v.sub));
+      const more = cell('details', 'live-runs-more');
+      more.open = openMore.has(row.run_id);   // the list refreshes every few seconds
+      more.addEventListener('toggle', () => (more.open ? openMore.add(row.run_id) : openMore.delete(row.run_id)));
+      const dl = cell('dl');
+      for (const [k, val] of v.more) dl.append(cell('dt', '', k), cell('dd', '', val));
+      more.append(cell('summary', '', 'More info'), dl);
+      name.appendChild(more);
       const prog = cell('td');
       if (row.exists) {
         prog.append(cell('div', 'live-runs-sub', v.lammps), bar(v.lammpsShare, 'lammps'),
