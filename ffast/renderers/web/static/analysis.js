@@ -54,6 +54,20 @@ const NARROW_3D_PX = 460;
 /** A row of a narrow grid is at least this high, in px: one panel of the stack. */
 const NARROW_ROW_PX = 300;
 
+/** What a live run's score plot shows (its "?"): one line per legend entry. */
+const SCORES_LEGEND_HELP = [
+  'Score ÷ threshold: for each saved frame, the worst test\'s score divided by that test\'s threshold. '
+    + 'Above the dashed line at 1, the frame looks unlike the reference.',
+  'Marked (ticks along the bottom): a frame above 1. One mark alone is not an alarm.',
+  'Chemistry flag (ticks just above them): a bond broke, or two atoms came too close.',
+  'Estimated onset (dotted line) and confirmed (solid line): an alarm. It is confirmed when enough '
+    + 'frames are marked within a time window (the alarm rule, behind the "?" in the Run card), or '
+    + 'after 3 chemistry-flagged frames in a row. The shaded band runs from the estimated start to '
+    + 'the confirmation.',
+  'Stop observed: the step where LAMMPS stopped.',
+  'Click a point to show that frame in the 3D panel.',
+].join('\n');
+
 const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
   + 'Outlined buttons follow the selection in the left list; click one to pin this '
   + "tab's choice, then click others to add them. The 3D view is not affected.";
@@ -382,8 +396,20 @@ export class AnalysisManager {
     else if (part === 'attribution') this._drawLiveAttribution(spec, card, ready);
   }
 
+  /** A "?" in the score card's title; its note, under the plot, says what
+   * the curve, the marks and the lines mean. Made once per card. */
+  _scoresHelp(t, card) {
+    if (card.scoresHelp) return;
+    const { button, note } = this._liveHelp(`scores:${t.spec.name}`, SCORES_LEGEND_HELP,
+      'this plot', 'live-scores-explain');
+    card.title.insertBefore(button, card.more);
+    card.el.insertBefore(note, card.params);
+    card.scoresHelp = true;
+  }
+
   /** The scores panel: one curve per ticked run against step, on one threshold line. */
   async _drawLiveScores(t, spec, card, token, ready, runs, plain) {
+    this._scoresHelp(t, card);
     const seq = card.seq = (card.seq || 0) + 1;
     const nameOf = (kw) => kw.name || kw.tab || kw.run_id;
     const scored = ready.filter((r) => r.kw.series?.step?.length);

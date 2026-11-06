@@ -572,6 +572,12 @@
     .live-attribution th .help-btn { width: 16px; height: 16px; margin-left: 2px; vertical-align: middle; }
     .live-attribution th .help-btn .icon { width: 14px; height: 14px; }
     .live-attribution .live-att-explain { font-size: var(--fs-xs); color: var(--ink-2); margin: 0 0 6px; }
+    /* the score plot's "?" note: one line per legend entry, under the plot */
+    .analysis-panel .live-scores-explain {
+      font-size: var(--fs-xs); line-height: 1.4; color: var(--ink-2); margin: 4px 10px 8px; white-space: pre-line;
+    }
+    .panel-title .help-btn { align-self: center; }
+    body.journal .live-scores-explain { display: none !important; }
     select.live-att-explains { max-width: calc(100% - 4em); font-size: var(--fs-xs); }
     .live-attribution select { max-width: 100%; margin-bottom: 6px; }
     .live-attribution .live-att-modes { display: flex; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }

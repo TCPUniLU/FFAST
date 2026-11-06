@@ -353,6 +353,14 @@ async def test_web_a_stopped_run_shows_its_alarm_moments_and_events(tmp_path):
                 assert plot["hover"] == ["confirmed · step %{x:,}<extra></extra>"]
                 assert plot["rects"] == 1
                 assert plot["caption"] == 1     # the caption still counts one data series
+                # The "?" in the plot's title says what each legend entry means.
+                scores = active.locator('.analysis-panel[data-part="scores"]')
+                legend = scores.locator(".live-scores-explain")
+                await expect(legend).to_be_hidden()
+                await scores.locator(".panel-title .help-btn").click()
+                await expect(legend).to_be_visible()
+                for entry in ("Marked", "Chemistry flag", "Estimated onset", "Stop observed"):
+                    await expect(legend).to_contain_text(entry)
             finally:
                 await browser.close()
 
