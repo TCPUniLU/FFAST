@@ -61,7 +61,8 @@ def test_a_build_that_runs_everything():
 
 
 def test_a_build_that_refuses_reset_timestep_after_a_dump():
-    err = "ERROR: Cannot reset timestep with active dump - must undump first (src/reset_timestep.cpp:81)"
+    # the line LAMMPS 2 Aug 2023 printed on MeluXina (step-5 proof, 2026-11-06)
+    err = "ERROR: Cannot reset timestep with active dump - must undump first (src/output.cpp:640)"
     shell = FakeShell((0, HELP), (1, _run_output("reset_after_dump", err)))
     res = check_lammps(MODULES, "LAMMPS/x", "lmp", runner=shell, use_cache=False)
     assert res.ffast_commands_ok and not res.reset_after_dump_ok

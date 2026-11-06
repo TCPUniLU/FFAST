@@ -150,6 +150,17 @@ def test_reset_timestep_after_the_dump_refused_only_when_the_build_refuses_it():
     assert bad.refusal is not None and bad.refusal.line == 5
 
 
+@pytest.mark.parametrize("name", ["minimize.in", "simple.in"])
+def test_reset_timestep_before_the_first_run_is_fine_on_any_build(name):
+    """MeluXina 2 Aug 2023: "Cannot reset timestep with active dump" comes only
+    once the dump has written, at the first run. minimize; reset_timestep 0;
+    run is the common form and must pass (found by the step-5 proof)."""
+    plan = _plan(name, reset_after_dump_ok=False)
+    assert plan.refusal is None, plan.refusal and plan.refusal.text()
+    text = "units metal\nread_data a.data\nreset_timestep 0\nrun 10\n"
+    assert plan_input(text, include_path=INCLUDE, elements=ELEMENTS, reset_after_dump_ok=False).refusal is None
+
+
 def test_no_run_is_refused():
     plan = plan_input("units metal\nread_data a.data\n", include_path=INCLUDE, elements=ELEMENTS)
     assert plan.refusal is not None and "no `run`" in plan.refusal.reason

@@ -387,8 +387,13 @@ def plan_input(text: str, *, include_path: str, elements: list[str], data_file: 
 
     if not plan.already_included:
         for c in commands:
-            if c.name == "reset_timestep" and c.first > start.first and not reset_after_dump_ok:
-                return refuse("`reset_timestep` after the dump has started; this LAMMPS build refuses that", c,
+            # LAMMPS refuses reset_timestep only once a dump has written a frame
+            # (Output::reset_timestep, last_dump >= 0); the dump writes its
+            # first frame when the first run starts, so only a reset after the
+            # first run matters. A reset between minimize and run is fine.
+            if c.name == "reset_timestep" and c.first > first_run.first and not reset_after_dump_ok:
+                return refuse("`reset_timestep` after the first `run`, once the dump has written; "
+                              "this LAMMPS build refuses that", c,
                               f"move line {c.first} before the first `run`, or remove it")
 
     pc_refusal, pc_check = _pair_coeff_order(commands, elements)
