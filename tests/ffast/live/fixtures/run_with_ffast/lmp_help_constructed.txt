@@ -1,0 +1,37 @@
+
+Large-scale Atomic/Molecular Massively Parallel Simulator - 2 Aug 2023 - Update 1
+
+Usage example: lmp -var t 300 -echo screen -in in.alloy
+
+List of command line options supported by this LAMMPS executable:
+
+-echo none/screen/log/both  : echoing of input script (-e)
+-help                       : print this help message (-h)
+-in none/filename           : read input from file or stdin (default) (-i)
+
+OS: Linux "Red Hat Enterprise Linux 8.8 (Ootpa)" 4.18.0-477.27.1.el8_8.x86_64 x86_64
+
+Installed packages:
+
+KOKKOS KSPACE MANYBODY ML-IAP MOLECULE PYTHON 
+
+List of individual style options included in this LAMMPS executable
+
+* Atom styles:
+
+atomic          body            charge          ellipsoid       full            
+
+* Pair styles:
+
+born            buck            coul/cut        lj/cut          lj/cut/kk       
+mace            mace/kk         zbl             zero            hybrid          
+hybrid/overlay  
+
+* Bond styles:
+
+harmonic        morse           zero            
+
+* Fix styles
+
+halt            nve             nvt             
+
