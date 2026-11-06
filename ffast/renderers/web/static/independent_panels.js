@@ -180,7 +180,7 @@ export class IndependentPanels {
       view_id: view.viewId, dataset_ref: view.datasetFp, prediction_ref: view.modelFp,
     });
     this._ports.start(view);
-    if (view.links.frame) this.followMainFrame(view);
+    if (!this._ownFrame(view)) this.followMainFrame(view);
     else if (datasetChanged) this.setFrame(view, 0);
     this.syncCaption(view);
   }
@@ -231,6 +231,12 @@ export class IndependentPanels {
 
   // ── frame link ────────────────────────────────────────────────────────
 
+  /** Whether the panel's frame is its own: it does not follow the main view's,
+   * or it shows a live run in a tab with Same step (ADR 0089), which moves it. */
+  _ownFrame(view) {
+    return !view.links.frame || !!this._ports.sameStepOwns?.(view);
+  }
+
   /** Show frame `frame` in an independent panel. */
   setFrame(view, frame) {
     view.frame = frame;
@@ -244,6 +250,7 @@ export class IndependentPanels {
    * structure where both are cut from one dataset, else the same number,
    * else it greys out and says why (rule 3). */
   followMainFrame(view) {
+    if (this._ownFrame(view)) return;
     const main = this._ports.main();
     if (!view.isOpen || !main.datasetFp) return;
     const linked = linkedFrame(main.datasetFp, main.frame, view.datasetFp, this._ports.datasets());
@@ -254,7 +261,7 @@ export class IndependentPanels {
 
   /** Every frame-linked independent panel follows the main view's frame. */
   syncLinkedFrames() {
-    for (const view of this.forTab(this._ports.activeTab())) if (view.links.frame) this.followMainFrame(view);
+    for (const view of this.forTab(this._ports.activeTab())) if (!this._ownFrame(view)) this.followMainFrame(view);
   }
 
   // ── camera link ───────────────────────────────────────────────────────

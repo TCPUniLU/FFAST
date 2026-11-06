@@ -849,3 +849,122 @@ async def test_web_a_hint_says_how_to_compare_runs(tmp_path):
                 await expect(page.locator(f"{ACTIVE} .live-hint")).to_be_hidden()   # dismissed for good
             finally:
                 await browser.close()
+
+
+# ── Same step in all 3D panels (ADR 0089) ────────────────────────────────────
+
+async def test_nearest_step_frame(static_origin):
+    script = f"""async () => {{
+      const f = await import('{static_origin}/frame_links.js');
+      const n = f.nearestStepFrame;
+      return [n([0, 100, 200], 100), n([0, 100, 200], 120), n([0, 100, 200], 160), n([0, 100, 200], -1),
+              n([0, 100, 200], 201), n([], 5), n([0, 50, 100, 0, 50, 100], 50), n([0, 100], 50)];
+    }}"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            got = await page.evaluate(script)
+        finally:
+            await browser.close()
+    # exact; between two (the nearer); between two (the nearer, the later); before first;
+    # after last; no frames; repeated steps after a restart (the last of them); a tie (the later)
+    assert got == [1, 1, 2, None, None, None, 4, 1]
+
+
+def _stepped_run(root, run_id, every, n, level=0.5):
+    """A run folder with `n` frames `every` steps apart, scored at each."""
+    root.mkdir()
+    run = _run_folder(root, frames=n, scores=False)
+    meta = rf.read_json(run / rf.RUN_JSON)
+    meta["run_id"] = run_id
+    rf.write_json_atomic(run / rf.RUN_JSON, meta)
+    from tests.ffast.live.dump_helpers import dump_text
+    (run / rf.FRAMES).write_text(dump_text(random_frames(n), every=every))
+    a = run / rf.ANALYSIS_DIR / "0123456789abcdef"
+    a.mkdir(parents=True)
+    rf.write_json_atomic(a / rf.SETTINGS, {"bundle": "/b.bundle", "scores_format": 2, "role": "centroid"})
+    rf.ScoresWriter(a / rf.SCORES).append([
+        {"segment": 0, "frame": k, "step": every * k, "time": 0.05 * k, "identity": "proven", "tracks": {},
+         "exceedance": level, "test": ["bonds", "T2"], "marked": False, "chem": {"broken": 0, "close": 0}}
+        for k in range(n)])
+    return run
+
+
+def _seed_two_own_view_live_layout(tabs):
+    """A user "Live run" layout with two own-view 3D panels and the Same step control."""
+    import tomli_w
+
+    tabs.mkdir()
+    panels = [
+        {"kind": "3d", "view": "independent", "row": 0, "col": 0, "rowspan": 8, "colspan": 8},
+        {"kind": "3d", "view": "independent", "row": 0, "col": 8, "rowspan": 8, "colspan": 8},
+        {"kind": "live", "row": 0, "col": 16, "rowspan": 8, "colspan": 8, "title": "Scores",
+         "options": {"part": "scores"}},
+    ]
+    tab = {"name": "Live run", "live_layout": True, "grid": 24, "controls": ["same_step"], "panels": panels}
+    (tabs / "live-run.toml").write_text(tomli_w.dumps({"tabs": [tab]}))
+    (tabs / "state.json").write_text(json.dumps(
+        {"replaces": {"live-run.toml": {"tab": "Live run", "original": None}}, "order": ["live-run.toml"]}))
+
+
+async def test_web_same_step_links_own_view_panels_of_runs_saved_at_different_intervals(tmp_path):
+    a = _stepped_run(tmp_path / "a", RUN_A, every=100, n=5)     # steps 0, 100 … 400
+    b = _stepped_run(tmp_path / "b", RUN_B, every=25, n=17, level=0.9)     # steps 0, 25 … 400
+    tabs = tmp_path / "tabs"
+    _seed_two_own_view_live_layout(tabs)
+    async with _spawn_server("--tabs-dir", str(tabs)) as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1600, "height": 1000})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _open_run(page, a)
+                await expect(page.locator("#tabbar .tab", has_text="Live 12:00:00 node")).to_be_visible(timeout=15000)
+                await _open_run(page, b)
+                await expect(page.locator("#tabbar .tab", has_text="Live 13:00:00 node")).to_be_visible(timeout=15000)
+                await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
+                await page.locator("#tabbar .tab", has_text="Live 12:00:00 node").click()
+                active = page.locator(ACTIVE)
+                await active.locator(f'.ac-series button[data-fp="live:{RUN_B}"]').click()
+                # Panel 1 shows run A, panel 2 run B; each is its own view.
+                await page.evaluate("""(b) => {
+                  const app = window.ffastApp, tab = app._analysis.tab(app._activeTab);
+                  const [v1, v2] = app._independent.forTab(tab);
+                  v2.datasetFp = 'live:' + b; app._independent.open(v2);
+                  window.__v = [v1, v2];
+                }""", RUN_B)
+                await page.wait_for_function("() => window.__v[0].isOpen && window.__v[1].isOpen", timeout=15000)
+                await expect(active.locator('.ac-item[data-control="same_step"]')).to_contain_text(
+                    "Same step in all 3D panels")
+                async def click_curve(name, index):
+                    xy = await page.evaluate("""([sel, name, i]) => {
+                      const el = document.querySelector(sel + ' .analysis-panel[data-part="scores"] .panel-plot');
+                      const tr = el.data.find((t) => t.name === name);
+                      const fl = el._fullLayout, r = el.getBoundingClientRect();
+                      return {x: r.left + fl._size.l + fl.xaxis.l2p(tr.x[i]),
+                              y: r.top + fl._size.t + fl.yaxis.l2p(tr.y[i])};
+                    }""", [ACTIVE, name, index])
+                    await page.mouse.move(xy["x"], xy["y"])
+                    await page.mouse.click(xy["x"], xy["y"])
+
+                frames = "() => window.__v.map((v) => v.frame ?? 0)"
+                # Off by default: a click on A's curve (step 100) moves only A's panel.
+                await click_curve("12:00:00 node", 1)
+                await page.wait_for_function("() => window.__v[0].frame === 1", timeout=10000)
+                await page.wait_for_timeout(500)
+                assert await page.evaluate(frames) == [1, 0]
+                # On: the same click moves B's panel to B's frame at step 100 (frame 4).
+                await active.locator('.ac-item[data-control="same_step"] input').check()
+                await click_curve("12:00:00 node", 2)       # step 200
+                await page.wait_for_function("() => window.__v[1].frame === 8", timeout=10000)
+                assert await page.evaluate(frames) == [2, 8]
+                # And from B's curve back to A (B's frame 12 is step 300; A's frame 3).
+                await click_curve("13:00:00 node", 12)
+                await page.wait_for_function("() => window.__v[0].frame === 3", timeout=10000)
+                assert await page.evaluate(frames) == [3, 12]
+            finally:
+                await browser.close()

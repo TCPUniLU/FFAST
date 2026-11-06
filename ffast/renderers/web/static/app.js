@@ -12,7 +12,7 @@ import {
   ensureMainView, isLinked3D, MAIN_VIEW_CHOICE, MAIN_VIEW_RULE, movedBefore, panelChoices, showsMainView,
   steppedOrder, whyPanelStays,
 } from './tab_rules.js';
-import { sameConfiguration, predictionApplies } from './frame_links.js';
+import { nearestStepFrame, sameConfiguration, predictionApplies } from './frame_links.js';
 import { infoReadout } from './measure.js';
 import { elementSymbol } from './panels.js';
 import { toolHint, toolHintKey } from './tool_hints.js';
@@ -166,7 +166,9 @@ export class FFastApp {
       },
       chosen: () => { this._syncPanelSection(); this._syncSidebarTitle(); this._syncMetricsContext(); },
       focusedCamera: (cam) => this._panes?.camera.syncFromCamera(cam),
+      sameStepOwns: (view) => this._sameStepOwns(view),
       frameShown: (view) => {
+        this._syncSameStep({ view, datasetFp: view.datasetFp, frame: view.frame ?? 0 });
         if (this._playbackView() === view) this._syncPlayback();
         if (view === this._focused()) this._reloadForcePicks();
       },
@@ -322,6 +324,8 @@ export class FFastApp {
         seriesColourOwner(datasetFp, modelFp, !!this._datasets.get(datasetFp)?.parent)),
       onPointFrame: (o) => this._onPlotPoint(o),
       onLive: (cmd) => this._liveCommand(cmd),
+      onSameStep: () => this._syncSameStep({ view: null, datasetFp: this._currentDatasetFp,
+        frame: this._main.current?.frame ?? 0 }),
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
       onLoadPrediction: (datasetFp) => this._browser.open('prediction', { datasetFp }),
     });
@@ -469,7 +473,7 @@ export class FFastApp {
     // now catches up.
     for (const view of this._independent.forTab(tab)) {
       this._independent.ensureData(view, tab);
-      if (view.links.frame) this._independent.followMainFrame(view);
+      this._independent.followMainFrame(view);   // a panel with its own frame stays
       if (view.links.camera && this._mainView.camera)
         view.renderers.setCamera(this._mainView.camera, { keepCenter: true });
     }
@@ -1470,6 +1474,9 @@ export class FFastApp {
       ...models.map(([fp, meta]) => option(fp, meta.name || fp.slice(0, 8))));
     this._panelModel.value = view.modelFp || '';
     this._panelLinkFrame.checked = view.links.frame;
+    // One switch, not two: in a tab with Same step, a panel showing a run is moved by it.
+    const linkRow = this._panelLinkFrame.closest('.ctl-row');
+    if (linkRow) linkRow.style.display = this._sameStepOwns(view) ? 'none' : '';
     this._panelLinkCamera.checked = view.links.camera;
     this._panelNote.textContent = view.note;
     this._panelNote.hidden = !view.note;
@@ -1853,7 +1860,7 @@ export class FFastApp {
         const at = before?.parent_frames ? before.parent_frames[view.frame ?? 0] : view.frame;
         view.datasetFp = meta.parent;
         this._independent.open(view);
-        if (!view.links.frame && at != null) this._independent.setFrame(view, at);
+        if (this._ownFrame(view) && at != null) this._independent.setFrame(view, at);
       }
     }
     if (before && fp === this._currentDatasetFp && this._followMainViewSubset(fp, before, meta)) return;
@@ -2051,7 +2058,7 @@ export class FFastApp {
         view.modelFp = null;
       if (!target) { this._independent.empty(view); continue; }
       this._independent.open(view);
-      if (!view.links.frame) this._independent.setFrame(view, frameIn(view.frame ?? 0));
+      if (this._ownFrame(view)) this._independent.setFrame(view, frameIn(view.frame ?? 0));
     }
     if (fp === this._currentDatasetFp) {
       if (target) this._showInMainView(target, frameIn(mainFrame));
@@ -2714,7 +2721,7 @@ export class FFastApp {
     const holds = (c) => c.ds && sameConfiguration(datasetFp, frame, c.ds, this._datasets) != null;
     const chosen = shown.find((c) => c.ds === datasetFp && (c.model || null) === (modelFp || null))
       || shown.find((c) => c.ds === datasetFp) || shown.find(holds);
-    if (chosen?.view && !chosen.view.links.frame) {
+    if (chosen?.view && this._ownFrame(chosen.view)) {
       this._independent.setFrame(chosen.view, sameConfiguration(datasetFp, frame, chosen.view.datasetFp, this._datasets));
       return;
     }
@@ -2897,12 +2904,65 @@ export class FFastApp {
     this._sendSetFrame(frame);
   }
 
+  /** The active tab when it has the Same step control (ADR 0089), else null. */
+  _sameStepTab() {
+    const tab = this._analysis?.tab(this._activeTab);
+    return tab && (tab.spec.controls || []).includes('same_step') ? tab : null;
+  }
+
+  /** Whether the panel shows a live run in a tab with Same step: then its
+   * frame is its own, whatever "Follow main view's frame" says. */
+  _sameStepOwns(view) {
+    return !!this._sameStepTab() && !!this._analysis.liveRunOf(view.datasetFp);
+  }
+
+  /** Whether the panel keeps a frame of its own: it does not follow the main
+   * view's, or Same step moves it. */
+  _ownFrame(view) {
+    return !view.links.frame || this._sameStepOwns(view);
+  }
+
+  /** Same step in all 3D panels (ADR 0089): the frame of a live run just
+   * shown (`source`: its panel's view, or null for the main view) sets the
+   * step every other 3D panel showing a live run goes to: its frame nearest
+   * that step, or greyed out when the run has none in range. */
+  _syncSameStep(source) {
+    if (this._syncingStep) return;
+    const tab = this._sameStepTab();
+    if (!tab || !this._analysis.sameStepOn(tab.id)) return;
+    const step = this._analysis.liveRunOf(source.datasetFp)?.steps?.[source.frame];
+    if (step == null) return;
+    this._syncingStep = true;
+    try {
+      const where = (kw, fp) => {
+        const i = nearestStepFrame(kw.steps, step);
+        return i == null ? { missing: `No frame near step ${step} (${kw.name} runs `
+          + `${kw.steps[0]}–${kw.steps[kw.steps.length - 1]})` } : { frame: i };
+      };
+      for (const view of this._independent.forTab(tab)) {
+        const kw = view !== source.view && view.isOpen && this._analysis.liveRunOf(view.datasetFp);
+        if (!kw) continue;
+        const at = where(kw);
+        view.missing = at.missing || '';
+        if (at.frame != null && at.frame !== view.frame) this._independent.setFrame(view, at.frame);
+        else this._independent.syncCaption(view);
+      }
+      const mainKw = source.view && showsMainView(tab.spec) && this._analysis.liveRunOf(this._currentDatasetFp);
+      if (mainKw) {
+        const at = where(mainKw);
+        if (at.frame != null && at.frame !== this._main.current?.frame) this._setMainFrame(at.frame);
+      }
+    } finally {
+      this._syncingStep = false;
+    }
+  }
+
   /** The view the playback strip moves: the focused independent panel when
    * its frame is its own, else the main view, which frame-linked panels
    * follow (ADR 0056 rule 2). */
   _playbackView() {
     const owner = this._focusedIndependent;
-    return owner && !owner.links.frame ? owner : null;
+    return owner && this._ownFrame(owner) ? owner : null;
   }
 
   /** The frame of the view the sidebar acts on. */
@@ -2942,6 +3002,7 @@ export class FFastApp {
       frame_index: frame,
     });
     view.frame = frame;
+    this._syncSameStep({ view: null, datasetFp: view.datasetFp, frame });
     this._liveUi?.sync();   // attribution colours belong to one frame
     if (view === this._focused()) this._reloadForcePicks();
     this._independent.syncLinkedFrames();

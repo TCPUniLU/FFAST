@@ -69,6 +69,28 @@ export function predictionApplies(modelMeta, fp, datasets) {
   return false;
 }
 
+/**
+ * The frame of a live run that is nearest to simulation step `step` (ADR 0089,
+ * "Same step in all 3D panels"): `steps[i]` is frame i's step. Null when there
+ * are no frames or `step` is outside the steps the run has. Steps increase
+ * within a segment but may repeat after a restart; of equally near frames the
+ * last wins.
+ * @param {number[]} steps @param {number} step
+ * @returns {number|null}
+ */
+export function nearestStepFrame(steps, step) {
+  if (!steps || !steps.length || !Number.isFinite(step)) return null;
+  let lo = Infinity, hi = -Infinity;
+  for (const s of steps) { if (s < lo) lo = s; if (s > hi) hi = s; }
+  if (step < lo || step > hi) return null;
+  let best = null, bestDistance = Infinity;
+  for (let i = 0; i < steps.length; i++) {
+    const d = Math.abs(steps[i] - step);
+    if (d <= bestDistance) { best = i; bestDistance = d; }
+  }
+  return best;
+}
+
 /** The loaded dataset `fp` was cut from (itself if it was loaded), or null. */
 export function rootOf(fp, datasets) {
   let cur = fp;

@@ -206,6 +206,7 @@ export class AnalysisManager {
     this._onSub = deps.onSub;
     // A live run's stop controls and attribution ask the app (live_ui.js).
     this._onLive = deps.onLive;
+    this._onSameStep = deps.onSameStep;
     this._onFreeze = deps.onFreeze;
     this._seriesColour = deps.seriesColour;
     this._openFrame = deps.onPointFrame;
@@ -329,6 +330,11 @@ export class AnalysisManager {
   _tabRuns(t) {
     return this._tabDatasets(t).map((fp) => ({ fp, kw: this.liveRunOf(fp) })).filter((r) => r.kw
       || String(r.fp).startsWith('live:'));
+  }
+
+  /** Whether tab `id` has Same step in all 3D panels switched on (ADR 0089). */
+  sameStepOn(id) {
+    return !!this._tabs.find((x) => x.id === id)?.sameStep;
   }
 
   /** The live run whose frames are dataset `fp` (its last LIVE_RUN_UPDATE), or null. */
@@ -955,6 +961,7 @@ export class AnalysisManager {
     t.selectedModels = known(kept.models, this._available.models);
     t.zoom = { ...(kept.zoom || {}) };
     t.peaksOn = new Set(kept.peaksOn || []);
+    t.sameStep = !!kept.sameStep;
     const sub = t.spec.panels.findIndex((sp) => panelKey(sp) === kept.sub);
     if (sub >= 0 && t.selectedDatasets) t.subbing.set(sub, []);
   }
@@ -967,6 +974,7 @@ export class AnalysisManager {
       sub: driver == null ? null : panelKey(t.spec.panels[driver]),
       zoom: t.zoom,
       peaksOn: [...t.peaksOn],
+      sameStep: !!t.sameStep,
     });
   }
 
@@ -1201,6 +1209,24 @@ export class AnalysisManager {
       });
       const lbl = document.createElement('label');
       lbl.textContent = 'Energy shift';
+      item.append(lbl, cb);
+      el.appendChild(item);
+    }
+
+    if (names.has('same_step')) {
+      const item = document.createElement('div');
+      item.className = 'ac-item';
+      item.dataset.control = 'same_step';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !!t.sameStep;
+      cb.addEventListener('change', () => {
+        t.sameStep = cb.checked;
+        this._keep(t);
+        if (t.sameStep) this._onSameStep?.(t.id);   // the panels catch up with the frame shown
+      });
+      const lbl = document.createElement('label');
+      lbl.textContent = 'Same step in all 3D panels';
       item.append(lbl, cb);
       el.appendChild(item);
     }
