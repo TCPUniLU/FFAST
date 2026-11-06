@@ -109,6 +109,9 @@ def make_reference(train: np.ndarray, valid: np.ndarray, symbols: list[str], out
     bundle_dir.parent.mkdir(parents=True, exist_ok=True)
     bundle.save(bundle_dir)
     include_path.write_text(include_text(str(bundle_dir), elements, every))
+    from ffast.live.references import record_reference
+
+    record_reference(bundle_dir)   # so Run with FFAST can offer it in a list
     return {
         "bundle": str(bundle_dir), "include": str(include_path),
         "n_train": int(len(train)), "n_valid": int(len(valid)), "n_atoms": int(train.shape[1]),

@@ -2,6 +2,18 @@
 import pytest
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _live_records_in_tmp(tmp_path_factory):
+    """Making a reference records it under ~/.ffast/references, and Run with
+    FFAST remembers folders in ~/.ffast/run-with-ffast.json; tests (and the
+    servers they spawn) use temporary ones. Session-wide: module-scoped
+    fixtures that make bundles run before function-scoped ones."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("FFAST_REFERENCES", str(tmp_path_factory.mktemp("references")))
+        mp.setenv("FFAST_RUN_WITH_FFAST", str(tmp_path_factory.mktemp("rwf") / "run-with-ffast.json"))
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _frame_index_cache_in_tmp(tmp_path_factory, monkeypatch):
     """Loading an .xyz file saves its frame index under ~/.ffast/frame-index,
