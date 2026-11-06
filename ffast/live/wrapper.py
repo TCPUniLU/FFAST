@@ -217,6 +217,8 @@ class Wrapper:
             "segments": [{"id": 0, "started_utc": rf.utc_now()}],
             "command": lmp_cmd, "cwd": self.cwd,
             "slurm_job_id": self.environ.get("SLURM_JOB_ID"),
+            # the job's name (#SBATCH -J) names the run in the list and its tab
+            "slurm_job_name": self.environ.get("SLURM_JOB_NAME"),
             "end": None,
         }
         rf.append_event(self.run_dir, "start", run_id=run_id, command=lmp_cmd,

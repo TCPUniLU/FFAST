@@ -35,11 +35,15 @@ def _row(pointer: dict, now: _dt.datetime) -> dict:
 
     run_id = str(pointer.get("run_id", ""))
     run_dir = Path(str(pointer.get("run_dir", "")))
-    row = {"run_id": run_id, "run_dir": str(run_dir), "name": tab_name(run_id),
+    row = {"run_id": run_id, "run_dir": str(run_dir),
+           "name": tab_name(run_id, pointer.get("slurm_job_name")),
+           "slurm_job_id": pointer.get("slurm_job_id"),
            "started_utc": pointer.get("started_utc"), "exists": False}
     run = rf.read_json(run_dir / rf.RUN_JSON)
     if not isinstance(run, dict):
         return row
+    row["name"] = tab_name(run_id, run.get("slurm_job_name") or pointer.get("slurm_job_name"))
+    row["slurm_job_id"] = run.get("slurm_job_id") or row["slurm_job_id"]
     analyses = run.get("analyses") or {}
     progress = next(iter(analyses.values()), {}) if analyses else {}
     end = run.get("end")

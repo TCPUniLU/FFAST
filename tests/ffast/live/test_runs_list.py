@@ -12,7 +12,7 @@ from ffast.live.runs_list import forget_run, list_runs
 NOW = dt.datetime(2026, 11, 5, 12, 0, 0, tzinfo=dt.timezone.utc)
 
 
-def _run(tmp_path, run_id, started, *, end=None, beat_s_ago=3, alarms=(), state="scoring"):
+def _run(tmp_path, run_id, started, *, end=None, beat_s_ago=3, alarms=(), state="scoring", job=None):
     d = tmp_path / "runs" / run_id
     a = d / rf.ANALYSIS_DIR / "0123456789abcdef"
     a.mkdir(parents=True)
@@ -20,6 +20,7 @@ def _run(tmp_path, run_id, started, *, end=None, beat_s_ago=3, alarms=(), state=
     beat = (NOW - dt.timedelta(seconds=beat_s_ago)).isoformat()
     rf.write_json_atomic(d / rf.RUN_JSON, {
         "format": rf.RUN_FORMAT, "run_id": run_id, "end": end,
+        "slurm_job_id": "5428960" if job else None, "slurm_job_name": job,
         "producer": {"last_step": 412300},
         "analyses": {"0123456789abcdef": {
             "analysis_id": "0123456789abcdef", "state": state, "heartbeat_utc": beat,
@@ -35,12 +36,13 @@ def _run(tmp_path, run_id, started, *, end=None, beat_s_ago=3, alarms=(), state=
 def test_rows_are_newest_first_with_progress_heartbeat_and_alarms(tmp_path):
     _run(tmp_path, "20261105-091202-mel0207-1-aaaa", "2026-11-05T09:12:02+00:00", beat_s_ago=240)
     _run(tmp_path, "20261105-103335-mel0314-2-bbbb", "2026-11-05T10:33:35+00:00",
-         alarms=[{"kind": "ood", "confirmation": {"step": 386000}}])
+         alarms=[{"kind": "ood", "confirmation": {"step": 386000}}], job="aspirin_nvt")
     _run(tmp_path, "20261104-174012-mel0110-3-cccc", "2026-11-04T17:40:12+00:00",
          end={"state": "finished"}, beat_s_ago=60000, state="done")
     rows = list_runs(tmp_path / "pointers", now=NOW)
-    assert [r["name"] for r in rows] == ["Live 10:33:35 mel0314", "Live 09:12:02 mel0207",
+    assert [r["name"] for r in rows] == ["Live aspirin_nvt (10:33:35 mel0314)", "Live 09:12:02 mel0207",
                                          "Live 17:40:12 mel0110"]
+    assert rows[0]["slurm_job_id"] == "5428960" and rows[1]["slurm_job_id"] is None
     new, stalled, ended = rows
     assert new["exists"] and new["bundle"] == "aspirin_mace" and new["state"] == "running"
     assert (new["last_step"], new["scored_through_step"], new["planned_end_step"]) == (412300, 411900, 1_000_000)

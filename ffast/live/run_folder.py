@@ -76,7 +76,8 @@ def register_run(run_id, run_dir, environ=None):
         # The Slurm job id lets "Run with FFAST" find the run of the job it submitted.
         write_json_atomic(d / ("%s.json" % run_id),
                           {"run_id": run_id, "run_dir": str(run_dir), "started_utc": utc_now(),
-                           "slurm_job_id": environ.get("SLURM_JOB_ID")})
+                           "slurm_job_id": environ.get("SLURM_JOB_ID"),
+                           "slurm_job_name": environ.get("SLURM_JOB_NAME")})
         return True
     except OSError:
         return False

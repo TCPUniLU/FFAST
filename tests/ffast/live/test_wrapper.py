@@ -217,10 +217,15 @@ def _kinds(d):
 
 
 def test_the_run_is_listed_by_a_pointer(env):
+    env.update(SLURM_JOB_ID="5428960", SLURM_JOB_NAME="aspirin_nvt")
     _wrapper(env).main()
     d = _run_dir(env)
     [p] = list(Path(env["FFAST_LIVE_RUNS"]).iterdir())
-    assert rf.read_json(p)["run_dir"] == str(d) and p.name == d.name + ".json"
+    pointer = rf.read_json(p)
+    assert pointer["run_dir"] == str(d) and p.name == d.name + ".json"
+    # The job's name is kept: the run is listed and its tab named after it.
+    assert pointer["slurm_job_name"] == "aspirin_nvt"
+    assert rf.read_json(d / rf.RUN_JSON)["slurm_job_name"] == "aspirin_nvt"
 
 
 def test_a_one_process_run_stops_cleanly_through_fix_halt(env, tmp_path):

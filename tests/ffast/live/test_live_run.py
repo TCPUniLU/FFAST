@@ -159,6 +159,9 @@ def test_a_run_with_frames_has_a_tab_its_3d_view_beside_its_scores(tmp_path):
 
     assert tab_name("20261105-103335-mel0314-17254-dae9") == "Live 10:33:35 mel0314"
     assert tab_name("odd") == "Live odd"
+    # The Slurm job name leads; the start time and node say which run of it.
+    assert tab_name("20261105-103335-mel0314-17254-dae9", "aspirin_nvt") == "Live aspirin_nvt (10:33:35 mel0314)"
+    assert tab_name("odd", "aspirin_nvt") == "Live aspirin_nvt (odd)"
     d = _run_folder(tmp_path)
     env = _Env()
     env.live_runs = {}
@@ -177,6 +180,15 @@ def test_a_run_with_frames_has_a_tab_its_3d_view_beside_its_scores(tmp_path):
         "status", None, "attribution", None, "events"]
     assert tab["panels"][3]["metrics"] == {}
     assert _kwargs(run.message())["tab"] == "Live 12:00:00 node"
+
+
+def test_a_run_of_a_named_slurm_job_is_named_after_it(tmp_path):
+    d = _run_folder(tmp_path)
+    meta = rf.read_json(d / rf.RUN_JSON)
+    meta["slurm_job_name"] = "aspirin_nvt"
+    rf.write_json_atomic(d / rf.RUN_JSON, meta)
+    run = LiveRun(_Env(), d, lambda m: None)
+    assert run.tab_name == "Live aspirin_nvt (12:00:00 node)"
 
 
 def test_a_live_run_tab_is_never_saved(tmp_path):

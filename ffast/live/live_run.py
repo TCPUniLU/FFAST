@@ -89,13 +89,16 @@ class LiveRunDataset(FlatDatasetLoader):
         self.molecule_offsets = np.arange(self.N + 1, dtype=np.int64) * self._n_atoms
 
 
-def tab_name(run_id: str) -> str:
-    """"Live 10:33:35 mel0314" from "20261105-103335-mel0314-17254-dae9"."""
+def tab_name(run_id: str, job_name: str | None = None) -> str:
+    """"Live 10:33:35 mel0314" from "20261105-103335-mel0314-17254-dae9";
+    "Live aspirin_nvt (10:33:35 mel0314)" for a Slurm job named aspirin_nvt."""
     parts = run_id.split("-")
     if len(parts) >= 3 and len(parts[1]) == 6 and parts[1].isdigit():
         t = parts[1]
-        return f"Live {t[:2]}:{t[2:4]}:{t[4:]} {parts[2]}"
-    return f"Live {run_id}"
+        when = f"{t[:2]}:{t[2:4]}:{t[4:]} {parts[2]}"
+    else:
+        when = run_id
+    return f"Live {job_name} ({when})" if job_name else f"Live {when}"
 
 
 def live_tab(run: "LiveRun"):
@@ -185,7 +188,7 @@ class LiveRun:
         self.env = env
         self.run_dir = run_dir
         self.run_id = str(run["run_id"])
-        self.tab_name = tab_name(self.run_id)
+        self.tab_name = tab_name(self.run_id, run.get("slurm_job_name"))
         self.run = run
         self.broadcast = broadcast
         from ffast.live.dump_reader import DumpReader
