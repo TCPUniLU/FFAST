@@ -84,6 +84,7 @@ async def test_the_live_run_helpers_and_the_timeline_with_steps(static_origin):
 
 
 ACTIVE = "#tabpanels .tabpanel.active"
+CHROME = ".tabpanel.active .edit-chrome"
 
 
 async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_path):
@@ -966,5 +967,65 @@ async def test_web_same_step_links_own_view_panels_of_runs_saved_at_different_in
                 await click_curve("13:00:00 node", 12)
                 await page.wait_for_function("() => window.__v[0].frame === 3", timeout=10000)
                 assert await page.evaluate(frames) == [3, 12]
+            finally:
+                await browser.close()
+
+
+# ── editing a live tab edits the Live run layout (ADR 0089) ──────────────────
+
+async def test_web_editing_a_live_tab_edits_the_layout_of_every_live_tab(tmp_path):
+    from tests.ffast.renderers.web.test_web_runtime import _tab_menu
+
+    a, b = _two_runs(tmp_path)
+    tabs = tmp_path / "tabs"
+    tabs.mkdir()
+    async with _spawn_server("--tabs-dir", str(tabs)) as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1600, "height": 1000})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _open_run(page, a)
+                tab_a = page.locator("#tabbar .tab", has_text="Live 12:00:00 node")
+                await expect(tab_a).to_be_visible(timeout=15000)
+                await _open_run(page, b)
+                tab_b = page.locator("#tabbar .tab", has_text="Live 13:00:00 node")
+                await expect(tab_b).to_be_visible(timeout=15000)
+                await tab_a.click()
+                events = page.locator(f"{ACTIVE} .live-events")
+                await expect(events).to_have_count(1)
+                # A live tab offers no Reset while the built-in layout is in use.
+                await page.locator("#tab-menu-btn").click()
+                await expect(page.locator("#tab-menu-list").get_by_role("menuitem", name="Export as TOML…")).to_be_visible()
+                await expect(page.locator("#tab-menu-list").get_by_role("menuitem", name="Reset to original…")).to_have_count(0)
+                await page.keyboard.press("Escape")
+
+                # Edit mode edits the layout: its name is fixed; remove the events panel; save.
+                await page.locator("#tab-edit-btn").click()
+                await page.locator("[data-edit=tab-settings]").click()
+                await expect(page.locator(".edit-modal input[data-field=name]")).to_have_value("Live run")
+                await expect(page.locator(".edit-modal input[data-field=name]")).to_be_disabled()
+                await page.locator(".edit-modal").get_by_role("button", name="Cancel").click()
+                await page.locator(f'{CHROME}[data-panel="4"] [data-edit=remove]').click()   # the events panel
+                await page.locator("[data-edit=save]").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0, timeout=15000)
+                assert (tabs / "live-run.toml").exists()
+                await expect(page.locator(f"{ACTIVE} .live-status")).to_have_count(1)
+                await expect(page.locator(f"{ACTIVE} .live-events")).to_have_count(0)
+                await tab_b.click()
+                await expect(page.locator(f"{ACTIVE} .live-status")).to_have_count(1)
+                await expect(page.locator(f"{ACTIVE} .live-events")).to_have_count(0)
+                # The edited layout is not a tab of the bar.
+                await expect(page.locator("#tabbar .tab", has_text="Live run")).to_have_count(0)
+
+                # Reset brings the original layout back in both.
+                await _tab_menu(page, "Reset to original…")
+                await page.locator(".ask-dialog").get_by_role("button", name="Confirm").click()
+                await expect(page.locator(f"{ACTIVE} .live-events")).to_have_count(1, timeout=15000)
+                await tab_a.click()
+                await expect(page.locator(f"{ACTIVE} .live-events")).to_have_count(1)
+                assert not (tabs / "live-run.toml").exists()
             finally:
                 await browser.close()

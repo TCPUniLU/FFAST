@@ -250,6 +250,7 @@ class TabEntry:
     hidden: bool = False
     pinned: list[str] | None = None  # live tabs: the run fingerprints ticked at first (ADR 0089)
     layout_of: str | None = None     # live tabs: the layout they are made from
+    layout_user: bool = False        # live tabs: that layout is the user's edit, not the built-in
 
 
 @dataclass
@@ -332,7 +333,8 @@ class TabSources:
         layout = self._layout_entry(out)
         for tab, fingerprint in (self.live(layout.tab) if self.live and layout else []):
             if tab.name not in taken:
-                out.append(TabEntry(tab, "live", pinned=[fingerprint], layout_of=layout.tab.name))
+                out.append(TabEntry(tab, "live", pinned=[fingerprint], layout_of=layout.tab.name,
+                                    layout_user=layout.source == "user"))
         return out
 
     def layout(self) -> list[dict]:
@@ -349,7 +351,7 @@ class TabSources:
             d.update(source=e.source, replaces=e.replaces,
                      original_changed=e.original_changed, hidden=e.hidden,
                      revision=tab_fingerprint(e.tab),
-                     pinned=e.pinned, layout_of=e.layout_of)
+                     pinned=e.pinned, layout_of=e.layout_of, layout_user=e.layout_user)
             out.append(d)
         return out
 

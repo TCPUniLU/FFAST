@@ -62,7 +62,12 @@ export class TabEditor {
   editTab(name) {
     const tab = this._deps.serverTabs().find((t) => t.name === name);
     if (!tab) return;
-    this._begin(toFineGrid(structuredClone(tab)), name, tab.revision);
+    const draft = toFineGrid(structuredClone(tab));
+    // A live tab is made from the Live run layout (ADR 0089): editing it edits
+    // that layout, under its own fixed name; the live tab shows it again after.
+    this._liveTab = tab.layout_of ? name : null;
+    if (tab.layout_of) draft.name = tab.layout_of;
+    this._begin(draft, name, tab.revision);
   }
 
   /** "+" ▸ Empty tab / Copy of…: Tab settings first, then Edit mode on a tab
@@ -101,6 +106,7 @@ export class TabEditor {
     const show = this._previous;
     this._draft = null;
     this._previous = null;
+    this._liveTab = null;
     if (redraw) this._deps.refresh({ show: show ?? undefined });
   }
 
@@ -142,10 +148,12 @@ export class TabEditor {
       this._deps.refresh({ show: name });
       return;
     }
+    const show = this._liveTab ?? r.name;
     this._draft = null;
     this._previous = null;
+    this._liveTab = null;
     this._deps.setStatus(`Saved ${r.name}`, 'connected');
-    this._deps.refresh({ show: r.name });
+    this._deps.refresh({ show });
   }
 
   // ── drawing the edit chrome ─────────────────────────────────────────────
@@ -531,6 +539,7 @@ export class TabEditor {
     body.className = 'tab-settings';
     const name = Object.assign(document.createElement('input'), { type: 'text', value: draft.name });
     name.dataset.field = 'name';
+    name.disabled = !!draft.layout_of;   // the Live run layout keeps its name (ADR 0089)
     const [shiftRow, shift] = checkField('Energy shift', (draft.controls || []).includes('energy_shift'), 'energy_shift');
     const [elemRow, elems] = checkField('Element picker', draft.selector === 'atomic', 'element_picker');
     const why = document.createElement('div');

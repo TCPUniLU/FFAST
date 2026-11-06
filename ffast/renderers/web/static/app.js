@@ -782,7 +782,11 @@ export class FFastApp {
       run: () => this._exportTab(name),
       unavailable: () => (this._conn ? '' : 'Connect to a server first'),
     }];
-    if (spec?.source === 'user' && spec.replaces) {
+    if (spec?.layout_of) {
+      // A live tab: Reset goes back to the built-in Live run layout, once it was edited.
+      if (spec.layout_user) actions.push({ id: 'tab-reset', label: 'Reset to original…',
+        run: () => this._removeTab(name, 'reset', spec.layout_of), unavailable: needsControl });
+    } else if (spec?.source === 'user' && spec.replaces) {
       actions.push({ id: 'tab-reset', label: 'Reset to original…',
         run: () => this._removeTab(name, 'reset'), unavailable: needsControl });
     } else if (spec?.source === 'user') {
@@ -861,17 +865,18 @@ export class FFastApp {
 
   /** Why tab `name` cannot be hidden: the main view needs a visible place. */
   _whyTabStays(name) {
+    if (this._layoutTabs.find((t) => t.name === name)?.layout_of) return "A live run's tab closes with its run";
     const others = this._layoutTabs.filter((t) => !t.hidden && t.name !== name);
     return others.some(showsMainView) ? '' : MAIN_VIEW_RULE;
   }
 
-  async _removeTab(name, how) {
+  async _removeTab(name, how, label = name) {
     const reset = how === 'reset';
     const yes = reset ? 'Confirm' : 'Delete';   // the red button; focus starts on Cancel
     const answer = await askDialog({
       title: reset ? 'Reset to original' : 'Delete tab',
       message: reset
-        ? `Reset ${name} to the original? Your edited version is deleted.`
+        ? `Reset ${label} to the original? Your edited version is deleted.`
         : `Delete ${name}? Its file on the server is deleted.`,
       buttons: ['Cancel', yes],
       danger: yes,
