@@ -472,6 +472,61 @@ FILE_MENU = [
 LAMMPS_MENU = ["Run with FFAST…", "Live Runs…", "Open Live Run…", "Make Reference…"]
 
 
+_FOOTER_CHECK = """([panelSel, footSel]) => {
+  const panel = document.querySelector(panelSel);
+  const foot = panel.querySelector(footSel);
+  const p = panel.getBoundingClientRect(), f = foot.getBoundingClientRect();
+  const buttons = [...foot.querySelectorAll('button')].filter((b) => b.offsetParent);
+  return {
+    // every visible button lies wholly inside the dialog and is not covered
+    inside: buttons.every((b) => {
+      const r = b.getBoundingClientRect();
+      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return r.left >= p.left - 1 && r.right <= p.right + 1 && r.top >= p.top - 1 && r.bottom <= p.bottom + 1
+        && (top === b || b.contains(top));
+    }),
+    buttons: buttons.length,
+    gapBelowFooter: Math.round(p.bottom - f.bottom),
+  };
+}"""
+
+
+async def _check_dialog_resizes(page, panel_sel, foot_sel):
+    """Squeeze the dialog as small as it goes, then stretch it as tall as it
+    goes: the buttons stay whole and in view, pinned to the bottom edge."""
+    for w, h in (("10px", "10px"), ("2000px", "2000px")):
+        await page.eval_on_selector(panel_sel, f"(p) => {{ p.style.width = '{w}'; p.style.height = '{h}'; }}")
+        got = await page.evaluate(_FOOTER_CHECK, [panel_sel, foot_sel])
+        assert got["buttons"] >= 1, (panel_sel, got)
+        assert got["inside"], (panel_sel, w, got)
+        assert abs(got["gapBelowFooter"]) <= 2, (panel_sel, w, got)
+
+
+async def test_web_every_dialog_keeps_its_buttons_at_the_bottom_when_resized(shared_server):
+    ws_port, web_port = shared_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 800})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _lammps_menu(page, "Live Runs…")
+            await _check_dialog_resizes(page, "#live-runs-dialog .warning-modal-panel", ".warning-modal-footer")
+            await page.keyboard.press("Escape")
+            await _lammps_menu(page, "Run with FFAST…")
+            await _check_dialog_resizes(page, "#run-with-ffast-dialog .warning-modal-panel", ".warning-modal-footer")
+            await page.keyboard.press("Escape")
+            await expect(page.locator("#run-with-ffast-dialog")).to_have_count(0)
+            await _file_menu(page, "Connect to Server…")
+            await _check_dialog_resizes(page, "#conn-dialog .warning-modal-panel", ".warning-modal-footer")
+            await page.keyboard.press("Escape")
+            await _file_menu(page, "Load Dataset…")
+            await _check_dialog_resizes(page, "#fb-panel", "#fb-footer")
+        finally:
+            await browser.close()
+
+
 async def test_web_lammps_menu_holds_every_live_run_action(shared_server):
     """The LAMMPS menu sits right after File and holds the live-run actions;
     File no longer lists them. Without a server they wait for one."""

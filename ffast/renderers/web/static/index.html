@@ -1293,6 +1293,17 @@
       border-top: 1px solid var(--bg3);
     }
 
+    /* Every dialog, however it is resized: the title stays on top, the
+       buttons stay whole at the bottom edge, and only the part between them
+       shrinks and scrolls. The smallest size still shows the buttons. */
+    .warning-modal-panel { display: flex; flex-direction: column; min-height: 160px; }
+    .warning-modal-panel > * { flex: none; }
+    .warning-modal-panel > :not(.warning-modal-title):not(.warning-modal-footer) {
+      flex: 0 1 auto; min-height: 0; overflow: auto;
+    }
+    .warning-modal-panel > .warning-modal-footer { margin-top: auto; flex-wrap: wrap; }
+    #fb-panel > #fb-footer { margin-top: auto; flex: none; flex-wrap: wrap; }
+
     /* connection dialog (ADR 0055) */
     #conn-body { padding: 12px; display: flex; flex-direction: column; gap: 6px; }
     #conn-body label {
