@@ -2621,6 +2621,7 @@ export class FFastApp {
       send: (event, kw) => this._conn?.send(event, kw, []),
       analysis: this._analysis, mainView: this._mainView,
       shown: () => ({ datasetFp: this._currentDatasetFp, frame: this._main.current?.frame ?? null }),
+      runOf: (fp) => this._analysis.liveRunOf(fp),
       follow: (path) => this._followLiveRun(path),
       askPath: () => this._openLiveRun(),
     });
@@ -2636,6 +2637,7 @@ export class FFastApp {
       return;
     }
     this._analysis.setLiveRun(kw);
+    this._live().sync();   // the shown frame is explained once the run has a bundle
     const tabId = kw.tab && this._analysis.liveTabId(kw.tab);
     if (!this._liveRunWanted || !kw.fingerprint || !tabId) return;
     this._liveRunWanted = false;

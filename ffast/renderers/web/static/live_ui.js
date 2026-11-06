@@ -3,9 +3,13 @@
  * - asks before "Stop now", and sends the stop and stop-on-alarm requests
  *   (the server writes them into the run folder; the run's wrapper and scorer
  *   act on them);
- * - asks for the attribution of a clicked frame, shows it in the run's
- *   attribution panel and colours the main view by it while that frame is
- *   shown. A frame change takes the colours off; the list stays, naming its step.
+ * - asks for the attribution of the frame the main view shows (the frame
+ *   slider, playback, a clicked score point), shows it in the run's
+ *   attribution panel and colours the main view by it. One request per run
+ *   is in flight: frames passed while it is computed are skipped and the
+ *   last one is asked next, so dragging the slider does not queue work. Until
+ *   the new frame's answer comes the colours are off and the list stays,
+ *   naming its step.
  */
 import { askDialog } from './dialogs.js';
 import { IN, OUT } from './events.js';
@@ -31,10 +35,11 @@ export class LiveUi {
    *   analysis?: {setLiveAttribution: (runId: string, state: object) => void},
    *   mainView?: {setAttribution: (att: object|null) => void},
    *   shown?: () => {datasetFp: string|null, frame: number|null},
+   *   runOf?: (datasetFp: string|null) => {run_id: string, bundle: string|null}|null,
    *   follow?: (path: string) => void, askPath?: () => void}} deps
    */
   constructor({ send, analysis = null, mainView = null, shown = () => ({ datasetFp: null, frame: null }),
-    follow = () => {}, askPath = () => {} }) {
+    runOf = () => null, follow = () => {}, askPath = () => {} }) {
     this._send = send;
     this._follow = follow;
     this._askPath = askPath;
@@ -42,8 +47,11 @@ export class LiveUi {
     this._analysis = analysis;
     this._mainView = mainView;
     this._shown = shown;
-    /** run id → {frame, mode, pending, result} */
+    this._runOf = runOf;
+    /** run id → {frame, test, mode, pending, result}: the frame wanted and the last answer. */
     this._att = new Map();
+    /** run id → the request in flight ("frame|track|score"). */
+    this._inFlight = new Map();
     this._coloured = null;   // the run id whose attribution colours the main view
   }
 
@@ -56,11 +64,7 @@ export class LiveUi {
         buttons: ['Cancel', 'Stop run'], danger: 'Stop run' });
       if (answer === 'Stop run') this._send(OUT.LIVE_STOP, { run_id: cmd.run_id });
     } else if (cmd.action === 'attribute') {
-      const old = this._att.get(cmd.run_id);
-      this._set(cmd.run_id, { frame: cmd.frame, mode: old?.mode || 'attribution', pending: true, result: null });
-      const kw = { run_id: cmd.run_id, frame: cmd.frame };
-      if (cmd.track && cmd.score) Object.assign(kw, { track: cmd.track, score: cmd.score });
-      this._send(OUT.LIVE_ATTRIBUTION, kw);
+      this._want(cmd.run_id, cmd.frame, cmd.track && cmd.score ? [cmd.track, cmd.score] : null);
     } else if (cmd.action === 'attribution_mode') {
       const state = this._att.get(cmd.run_id);
       if (state) this._set(cmd.run_id, { ...state, mode: cmd.mode });
@@ -115,15 +119,43 @@ export class LiveUi {
 
   /** LIVE_ATTRIBUTION_RESULT: the server's answer for one frame. */
   onResult(kw) {
+    const sent = this._inFlight.get(kw.run_id);
+    this._inFlight.delete(kw.run_id);
     const state = this._att.get(kw.run_id);
-    if (!state || state.frame !== kw.frame) return;   // a newer click replaced it
-    this._set(kw.run_id, { ...state, pending: false, result: kw });
+    if (!state) return;
+    // An answer for a frame passed meanwhile is dropped; the wanted one is asked next.
+    if (state.frame === kw.frame) this._set(kw.run_id, { ...state, pending: _key(state) !== sent, result: kw });
+    this._ask(kw.run_id);
   }
 
-  /** The main view changed (a new frame or dataset): colours only on the explained frame. */
+  /** Ask for frame `frame` of run `runId` (test: [track, score], or null for the frame's worst). */
+  _want(runId, frame, test) {
+    const old = this._att.get(runId);
+    this._set(runId, { frame, test, mode: old?.mode || 'attribution', pending: true, result: old?.result ?? null });
+    this._ask(runId);
+  }
+
+  /** Send the wanted request unless one is in flight (its answer sends the next). */
+  _ask(runId) {
+    const state = this._att.get(runId);
+    if (!state?.pending || this._inFlight.has(runId)) return;
+    this._inFlight.set(runId, _key(state));
+    const kw = { run_id: runId, frame: state.frame };
+    if (state.test) Object.assign(kw, { track: state.test[0], score: state.test[1] });
+    this._send(OUT.LIVE_ATTRIBUTION, kw);
+  }
+
+  /** The main view changed (a new frame or dataset) or a run's state came:
+   * a live run's shown frame is asked for; colours only on the explained frame. */
   sync() {
-    let want = null;
     const shown = this._shown();
+    const run = this._runOf(shown.datasetFp);
+    // No bundle yet means no scores to explain: the run's next update brings one.
+    if (run?.bundle && Number.isInteger(shown.frame) && this._att.get(run.run_id)?.frame !== shown.frame) {
+      this._want(run.run_id, shown.frame, null);   // _set calls sync again, now with that frame
+      return;
+    }
+    let want = null;
     for (const [runId, s] of this._att) {
       const r = s.result;
       if (s.mode === 'attribution' && r && !r.error && r.fingerprint === shown.datasetFp
@@ -140,4 +172,9 @@ export class LiveUi {
     this._coloured = undefined;   // the colours may have changed with the state
     this.sync();
   }
+}
+
+/** One request's identity: its frame and test. */
+function _key(state) {
+  return `${state.frame}|${state.test ? state.test.join('|') : ''}`;
 }

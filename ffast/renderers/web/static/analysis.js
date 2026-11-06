@@ -313,6 +313,13 @@ export class AnalysisManager {
     }
   }
 
+  /** The live run whose frames are dataset `fp` (its last LIVE_RUN_UPDATE), or null. */
+  liveRunOf(fp) {
+    if (!fp) return null;
+    for (const kw of this._live.values()) if (kw.fingerprint === fp) return kw;
+    return null;
+  }
+
   /** The name of a live run's tab, once the server lists it. */
   liveTabId(name) {
     return this._tabs.find((t) => t.spec.name === name)?.id ?? null;
@@ -425,17 +432,20 @@ export class AnalysisManager {
       return e;
     };
     if (!state) {
-      card.body.replaceChildren(el('div', 'live-att-note', 'Click a point on the score plot to see what drove that frame\'s score.'));
+      card.body.replaceChildren(el('div', 'live-att-note',
+        'Show one of this run\'s frames (frame slider, or a point on the score plot) to see what drove its score.'));
       return;
     }
-    if (state.pending) {
-      card.body.replaceChildren(el('div', 'live-att-note', `Asking DetectAna about frame ${state.frame}…`));
+    const asking = el('div', 'live-att-note', `Asking DetectAna about frame ${state.frame}…`);
+    if (state.pending && (!r || r.error)) {
+      card.body.replaceChildren(asking);
       return;
     }
     if (r?.error) {
       card.body.replaceChildren(el('div', 'live-problem', r.error));
       return;
     }
+    // While the next frame is asked for, the last answer stays: its head names its step.
     const head = el('div', 'live-att-head',
       `Step ${Number(r.step).toLocaleString('en-US')} · ${r.test.join(' ')} ${r.ratio.toFixed(2)}× threshold`);
     const modes = el('div', 'live-att-modes');
@@ -474,7 +484,7 @@ export class AnalysisManager {
     const scale = el('div', 'live-att-scale');
     const ticks = el('div', 'live-att-ticks');
     ticks.append(el('span', '', '0'), el('span', '', '1'), el('span', '', '≥ 2'));
-    card.body.replaceChildren(head, modes, pick, table, note, scale, ticks);
+    card.body.replaceChildren(...(state.pending ? [asking] : []), head, modes, pick, table, note, scale, ticks);
   }
 
   _drawLiveEvents(card, kw) {

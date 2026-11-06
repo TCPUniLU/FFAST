@@ -57,9 +57,11 @@ ADR 0075 stays as written. When the run ends, the frames can be opened as a norm
 dataset; its fingerprint is geometry only, and the scores stay in their analysis
 folder. Joining scores into exported subsets is deferred, and the page says so.
 
-**Attribution is computed when asked.** Clicking a frame asks DetectAna, through
-its public API and the bundle, for the reconstruction-based contribution of each
-descriptor group. It is shown as attribution strength on a fixed scale, never as
+**Attribution is computed when asked.** The frame the main view shows (frame
+slider, playback, or a clicked score point) asks DetectAna, through its public
+API and the bundle, for the reconstruction-based contribution of each
+descriptor group. One request per run is in flight; frames passed meanwhile are
+skipped and the last one shown is asked next. It is shown as attribution strength on a fixed scale, never as
 shares of the score, because the values overlap. Only alarm reports are stored.
 
 **"Live runs" list**: from the run folders, with producer progress, scored-through

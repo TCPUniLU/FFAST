@@ -372,10 +372,11 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 await page.locator("#text-ask input").press("Enter")
                 active = page.locator(ACTIVE)
                 att = active.locator(".live-attribution")
-                await expect(att).to_contain_text("Click a point", timeout=15000)
                 caption = active.locator('.analysis-panel[data-kind="timeline"] .panel-caption-line')
                 await expect(caption).to_contain_text("3 frames · 3 scored", timeout=15000)
                 await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=10000)
+                # The shown frame is explained without a click.
+                await expect(att).to_contain_text("Step 0", timeout=15000)
 
                 xy = await page.evaluate("""(sel) => {
                   const el = document.querySelector(sel + ' .analysis-panel[data-kind="timeline"] .panel-plot');
@@ -396,17 +397,66 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 await att.locator("select.live-att-test").select_option("bonds|T2")
                 await expect(att.locator("table.live-att-groups tr").nth(1)).to_contain_text("bond C0-H14",
                                                                                             timeout=15000)
-                # Element colours take the attribution off; another frame does too.
+                # Element colours take the attribution off.
                 await att.locator('button[data-mode="element"]').click()
                 await page.wait_for_function(f"() => !({shown[6:]})", timeout=10000)
                 await att.locator('button[data-mode="attribution"]').click()
                 await page.wait_for_function(shown, timeout=10000)
+                # The frame buttons and slider move the attribution with the frame.
                 await page.locator("#prev-frame-btn").click()
                 await expect(page.locator("#frame-label")).to_have_text("1 / 2", timeout=10000)
-                await page.wait_for_function(f"() => !({shown[6:]})", timeout=10000)
-                await expect(att).to_contain_text("Step 200")         # the list stays, naming its step
+                await expect(att.locator(".live-att-head")).to_contain_text("Step 100", timeout=15000)
+                await expect(att).not_to_contain_text("Asking DetectAna")
+                await page.wait_for_function(shown, timeout=10000)
+                await page.locator("#frame-slider").fill("0")
+                await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=10000)
+                await expect(att.locator(".live-att-head")).to_contain_text("Step 0", timeout=15000)
+                await expect(att).not_to_contain_text("Asking DetectAna")
             finally:
                 await browser.close()
+
+
+async def test_attribution_follows_the_shown_frame_one_request_at_a_time(static_origin):
+    """Frames passed while an answer is computed are skipped; the last one is asked next."""
+    script = """async () => {
+      const { LiveUi } = await import('./live_ui.js');
+      const sent = [];
+      const shown = { datasetFp: 'fpA', frame: 0 };
+      let run = { run_id: 'r1', bundle: null };
+      const ui = new LiveUi({ send: (e, kw) => sent.push(kw), shown: () => shown,
+        runOf: (fp) => (fp === 'fpA' ? run : null) });
+      const frames = () => sent.map((kw) => kw.frame);
+      const out = {};
+      ui.sync();
+      out.noBundle = frames();                       // no scores yet: nothing asked
+      run = { run_id: 'r1', bundle: '/b' };
+      ui.sync();
+      out.first = frames();
+      for (const f of [1, 2, 3]) { shown.frame = f; ui.sync(); }
+      out.whileBusy = frames();                      // still only frame 0 in flight
+      ui.onResult({ run_id: 'r1', frame: 0, groups: [] });
+      out.afterFirst = frames();                     // 1 and 2 skipped
+      ui.onResult({ run_id: 'r1', frame: 3, groups: [] });
+      out.settled = frames();
+      ui.command({ action: 'attribute', run_id: 'r1', frame: 3, track: 'bonds', score: 'T2' });
+      out.test = sent.at(-1);
+      shown.datasetFp = 'other'; shown.frame = 7; ui.sync();
+      out.otherDataset = sent.length;
+      return out;
+    }"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            got = await page.evaluate(script)
+        finally:
+            await browser.close()
+    assert got["noBundle"] == []
+    assert got["first"] == [0] and got["whileBusy"] == [0]
+    assert got["afterFirst"] == [0, 3] and got["settled"] == [0, 3]
+    assert got["test"] == {"run_id": "r1", "frame": 3, "track": "bonds", "score": "T2"}
+    assert got["otherDataset"] == 3
 
 
 async def test_live_runs_rows_show_progress_heartbeat_alarm_and_end(static_origin):
