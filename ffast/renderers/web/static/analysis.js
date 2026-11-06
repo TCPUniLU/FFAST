@@ -525,9 +525,11 @@ export class AnalysisManager {
     const titleEl = card.title.querySelector('.panel-letter')?.nextElementSibling;
     const setTitle = (text) => { if (titleEl) titleEl.textContent = text; };
     setTitle(spec.title || 'Attribution');
-    const asking = el('div', 'live-att-note', `Asking DetectAna about frame ${state.frame}…`);
+    // A line of its own, kept empty when nothing is asked, so the rest does
+    // not move each time the next frame is asked for.
+    const status = el('div', 'live-att-status', state.pending ? `Asking DetectAna about frame ${state.frame}…` : '');
     if (state.pending && (!r || r.error)) {
-      card.body.replaceChildren(asking);
+      card.body.replaceChildren(status);
       return;
     }
     if (r?.error) {
@@ -537,7 +539,7 @@ export class AnalysisManager {
     setTitle(`${spec.title || 'Attribution'} · ${kw.name || kw.tab || kw.run_id}, step ${Number(r.step).toLocaleString('en-US')}`);
     // While the next frame is asked for, the last answer stays: its head names its step.
     const head = el('div', 'live-att-head',
-      `Step ${Number(r.step).toLocaleString('en-US')} · ${r.test.join(' ')} ${r.ratio.toFixed(2)}× threshold`);
+      `Step ${Number(r.step).toLocaleString('en-US')} · ${r.test.join(' ')} at ${r.ratio.toFixed(2)}× its threshold`);
     const modes = el('div', 'live-att-modes');
     for (const m of ['element', 'attribution']) {
       const b = el('button', state.mode === m ? 'active' : '', m === 'element' ? 'Element colours' : 'Attribution');
@@ -559,25 +561,34 @@ export class AnalysisManager {
       const [track, score] = pick.value.split('|');
       this._onLive?.({ action: 'attribute', run_id: kw.run_id, frame: r.frame, track, score });
     });
+    // What a strength means: a "?" beside the Strength column, its note just above the table.
+    const { button: noteBtn, note } = this._liveHelp(`att:${kw.run_id}`, 'Strength: how much the score '
+      + 'would drop if only this group looked normal again, in thresholds (1.00 = one whole threshold). '
+      + 'Groups share atoms, so strengths do not add up to the score. A bigger group (Size: how many '
+      + 'numbers it has) can explain more: compare groups of similar size.', 'a strength', 'live-att-explain');
     const table = el('table', 'live-att-groups');
     const headRow = el('tr', 'live-att-cols');
-    headRow.append(el('th', '', 'Group'), el('th', 'num', 'Strength'), el('th', 'num', 'Numbers'));
+    const strengthTh = el('th', 'num', 'Strength');
+    strengthTh.appendChild(noteBtn);
+    const sizeTh = el('th', 'num', 'Size');
+    sizeTh.title = 'How many numbers (bond lengths, angles, dihedrals) the group has';
+    headRow.append(el('th', '', 'Group'), strengthTh, sizeTh);
     table.appendChild(headRow);
     for (const g of r.groups || []) {
       const tr = el('tr');
-      tr.append(el('td', '', g.label), el('td', `num${g.strength >= 1 ? ' strong' : ''}`, g.strength.toFixed(2)),
+      // "dihedral C3-C1-C6-C5": a narrow card breaks the line at the space, not inside the atoms.
+      const name = el('td');
+      const cut = g.label.indexOf(' ');
+      if (cut > 0) name.append(`${g.label.slice(0, cut)} `, el('span', 'live-att-atoms', g.label.slice(cut + 1)));
+      else name.textContent = g.label;
+      tr.append(name, el('td', `num${g.strength >= 1 ? ' strong' : ''}`, g.strength.toFixed(2)),
         el('td', 'num', String(g.size)));
       table.appendChild(tr);
     }
-    // What a strength means is small print, behind a "?" in the head line.
-    const { button: noteBtn, note } = this._liveHelp(`att:${kw.run_id}`, 'Strength ÷ threshold. Strengths '
-      + 'overlap: they do not add up to the score. Larger groups tend to score higher.',
-      'a strength', 'live-att-explain');
-    head.appendChild(noteBtn);
     const scale = el('div', 'live-att-scale');
     const ticks = el('div', 'live-att-ticks');
     ticks.append(el('span', '', '0'), el('span', '', '1'), el('span', '', '≥ 2'));
-    card.body.replaceChildren(...(state.pending ? [asking] : []), head, modes, pick, table, note, scale, ticks);
+    card.body.replaceChildren(status, head, modes, pick, note, table, scale, ticks);
   }
 
   _drawLiveEvents(card, ready) {

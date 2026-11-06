@@ -479,7 +479,12 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 await expect(page.locator("#frame-label")).to_have_text("2 / 2", timeout=10000)
                 await expect(att).to_contain_text("Step 200", timeout=15000)
                 await expect(att.locator("table.live-att-groups tr").nth(1)).to_be_visible()
-                # What a strength means is small print, behind the card's "?".
+                # "Asking DetectAna…" has a line of its own, there and empty while
+                # nothing is asked, so the card does not move when it is.
+                status = att.locator(".live-att-status")
+                await expect(status).to_have_text("")
+                assert (await status.bounding_box())["height"] > 0
+                # What a strength means is small print, behind the "?" by Strength.
                 explain = att.locator(".live-att-explain")
                 await expect(explain).to_be_hidden()
                 await att.locator(".help-btn").click()
