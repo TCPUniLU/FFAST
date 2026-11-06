@@ -712,11 +712,11 @@ export class FFastApp {
       // Live LAMMPS runs (ADR 0086/0087): the LAMMPS menu, in this order.
       { id: 'run-with-ffast', label: 'Run with FFAST…', menu: 'lammps',
         run: () => this._runWithFfast(), unavailable: needsControl },
+      // The one way in to live runs: the list, whose "Open run folder…" opens
+      // any other run folder on the server's disk (no second menu item to
+      // choose between).
       { id: 'live-runs', label: 'Live Runs…', menu: 'lammps',
         run: () => this._live().openRuns(), unavailable: needsControl },
-      // A live LAMMPS run folder on the server's disk.
-      { id: 'open-live-run', label: 'Open Live Run…', menu: 'lammps',
-        run: () => this._openLiveRun(), unavailable: needsControl },
       { id: 'make-reference', label: 'Make Reference…', menu: 'lammps',
         run: () => this._makeReference(), unavailable: needsControl },
       { id: 'save-session', label: 'Save Session…', menu: 'file',

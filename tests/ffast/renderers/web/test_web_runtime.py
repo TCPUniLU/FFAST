@@ -469,7 +469,7 @@ FILE_MENU = [
     "Save Session…", "Load Session…", "Export Selected Dataset…", "Connect to Server…", "Connect to Cluster…",
 ]
 # Everything for live LAMMPS runs (ADR 0086/0087) has a top-bar menu of its own.
-LAMMPS_MENU = ["Run with FFAST…", "Live Runs…", "Open Live Run…", "Make Reference…"]
+LAMMPS_MENU = ["Run with FFAST…", "Live Runs…", "Make Reference…"]
 
 
 _FOOTER_CHECK = """([panelSel, footSel]) => {

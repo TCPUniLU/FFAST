@@ -920,8 +920,10 @@ def _two_runs(tmp_path):
 
 
 async def _open_run(page, folder):
-    """Open Live Run…: go to `folder` in the server's file browser and open it."""
-    await _lammps_menu(page, "Open Live Run…")
+    """Live Runs… → Open run folder…: go to `folder` in the server's file
+    browser and open it."""
+    await _lammps_menu(page, "Live Runs…")
+    await page.get_by_role("button", name="Open run folder…", exact=True).click()
     await expect(page.locator("#fb-modal")).to_be_visible()
     await page.locator("#fb-path").fill(str(folder))
     await page.locator("#fb-path").press("Enter")

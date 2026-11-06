@@ -69,6 +69,9 @@ shares of the score, because the values overlap. Only alarm reports are stored.
 **"Live runs" list**: from the run folders, with producer progress, scored-through
 progress and heartbeat shown separately, so a stalled scorer is not mistaken for a
 stalled simulation. Opening a run folder by path works too.
+*Amended 2026-11-07:* the list is the only way in. Its "Open run folder…" picks any
+other run folder in the server's file browser; the separate "Open Live Run…" menu
+item is gone, so there is no second item to choose between.
 
 ## Alternatives that were live
 

@@ -67,7 +67,8 @@ export function liveRunRow(row) {
 
 /**
  * Open the dialog. `ask()` asks the server for the rows (they arrive through
- * `update`), `open(path)` follows a run, `openByPath()` asks for a folder,
+ * `update`), `open(path)` follows a run, `openByPath()` picks any other run
+ * folder ("Open run folder…": the only way to one not in the list),
  * `forget(runId)` drops a gone run from the list, `stop(row)` asks to stop a
  * running run, `highlight` is a run ID whose row is marked and scrolled to.
  * @returns {{update: (rows: object[]) => void, close: () => void}}
@@ -91,7 +92,7 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () =>
   const foot = document.createElement('div');
   foot.className = 'warning-modal-footer';
   const byPath = document.createElement('button');
-  byPath.textContent = 'Open run folder by path…';
+  byPath.textContent = 'Open run folder…';
   const closeBtn = document.createElement('button');
   closeBtn.textContent = 'Close';
   foot.append(byPath, closeBtn);
