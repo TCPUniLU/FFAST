@@ -252,7 +252,8 @@ def provision_launch_cmd(
     """Job command that provisions the venv *then* launches the server (ADR 0028).
 
     With ``detectana_wheel``, also installs DetectAna (``--no-deps``: its
-    dependencies are the heavy ones the modules provide). Every provision also
+    dependencies are the heavy ones the modules provide) and RDKit, which
+    finds a reference's bonds. Every provision also
     sets the node up for live LAMMPS runs (``ffast.live.node_setup``, ADR 0086).
 
     Run as the SLURM job on the allocated node: load modules, create a
@@ -287,6 +288,9 @@ def provision_launch_cmd(
         parts.append(timed(
             "install detectana", f"uv pip install --no-deps --reinstall {detectana_wheel}"
         ))
+        # RDKit finds a reference's bonds over its frames (Make reference runs
+        # on the server). A binary wheel; its numpy is the module's.
+        parts.append(timed("install rdkit", "uv pip install rdkit"))
     setup = [f"python -m ffast.live.node_setup --venv {venv_path}"]
     setup += [f"--module {shlex.quote(m)}" for m in modules]
     parts.append(timed("live setup", " ".join(setup)))

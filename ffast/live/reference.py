@@ -46,6 +46,22 @@ def dataset_frames(ds, name: str) -> tuple[list[str], np.ndarray]:
     return [chemical_symbols[int(v)] for v in z], pos
 
 
+def _refuse_broken_chemistry(bundle, train: np.ndarray, valid: np.ndarray, symbols: list[str]) -> None:
+    """Refuse a reference whose own frames already set off the live chemistry
+    check (a broken bond or a close contact): every live frame would too."""
+    for name, frames in (("training", train), ("validation", valid)):
+        flags = bundle.check_chemistry(frames)
+        bad = [k for k, f in enumerate(flags) if f.broken_bonds or f.close_contacts]
+        if bad:
+            f = flags[bad[0]]
+            what = [f"{symbols[i]}{i}–{symbols[j]}{j} {d:.2f} Å"
+                    for i, j, d in [*f.broken_bonds, *f.close_contacts][:3]]
+            raise ReferenceRefused(
+                f"{len(bad)} of {len(frames)} {name} frames already show a broken bond or a close "
+                f"contact (frame {bad[0]}: {', '.join(what)}); the live chemistry check would flag "
+                "every run. Check those frames, or the bonds found in them.")
+
+
 def make_reference(train: np.ndarray, valid: np.ndarray, symbols: list[str], output: str | Path, *,
                    elements: list[str] | None = None, every: int = 100,
                    valid_symbols: list[str] | None = None) -> dict:
@@ -55,6 +71,7 @@ def make_reference(train: np.ndarray, valid: np.ndarray, symbols: list[str], out
     (default: order of first appearance). Returns what was written and the
     lines the user adds to the input and the job script.
     """
+    from ffast.live.bonds import consensus_bonds
     from ffast.live.detectana_api import require_detectana
     from ffast.live.include_file import include_text
 
@@ -80,8 +97,15 @@ def make_reference(train: np.ndarray, valid: np.ndarray, symbols: list[str], out
     if any(ch.isspace() for ch in str(bundle_dir)):
         raise ReferenceRefused(f"{bundle_dir} contains a space; LAMMPS cannot read it")
 
-    topology = build_topology(Atoms(symbols=list(symbols), positions=train[0]))
+    try:
+        bonds, unsure = consensus_bonds(list(symbols), np.concatenate([train, valid]))
+    except ImportError as e:
+        raise ReferenceRefused(str(e)) from e
+    if not bonds:
+        raise ReferenceRefused("no bonds found in the reference frames")
+    topology = build_topology(Atoms(symbols=list(symbols), positions=train[0]), bonds=bonds)
     bundle = detectana.fit(train, valid, topology)
+    _refuse_broken_chemistry(bundle, train, valid, list(symbols))
     bundle_dir.parent.mkdir(parents=True, exist_ok=True)
     bundle.save(bundle_dir)
     include_path.write_text(include_text(str(bundle_dir), elements, every))
@@ -89,5 +113,7 @@ def make_reference(train: np.ndarray, valid: np.ndarray, symbols: list[str], out
         "bundle": str(bundle_dir), "include": str(include_path),
         "n_train": int(len(train)), "n_valid": int(len(valid)), "n_atoms": int(train.shape[1]),
         "elements": elements, "tests": [list(t) for t in bundle.tests],
+        "n_bonds": len(bonds),
+        "unsure_bonds": [[symbols[i] + str(i), symbols[j] + str(j), s] for (i, j), s in unsure.items()],
         "lines": [f"include {include_path}", "ffast-lammps srun lmp -in <your input>"],
     }

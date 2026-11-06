@@ -90,6 +90,9 @@ def cmd_bundle(args: argparse.Namespace) -> None:
     print(f"  {made['n_train']} training and {made['n_valid']} validation frames, "
           f"{made['n_atoms']} atoms, {len(made['tests'])} tests: "
           + ", ".join(f"{t} {s}" for t, s in made["tests"]))
+    print(f"  {made['n_bonds']} bonds, each found by RDKit in most reference frames")
+    for a, b, share in made["unsure_bonds"]:
+        print(f"  unsure: {a}–{b} found in {share:.0%} of the frames")
     print(f"LAMMPS include file: {made['include']}")
     print(f"  Add `include {made['include']}` to your input after the atoms exist,")
     print("  and run the job as `ffast-lammps srun lmp ...`.")

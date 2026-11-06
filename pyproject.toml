@@ -54,7 +54,8 @@ zstd = ["zstandard>=0.21"]
 # yet, and the bundle API (0.3.0) is only on its unpublished lammps-live
 # branch: install that from a checkout (`pip install -e ~/GitHub/DetectAna`).
 # The cluster gets a wheel built from the local checkout by the bootstrap.
-live = ["detectana @ git+https://github.com/AntonCh-G/DetectAna.git"]
+# RDKit finds a reference's bonds over its frames (ffast/live/bonds.py).
+live = ["detectana @ git+https://github.com/AntonCh-G/DetectAna.git", "rdkit>=2023.9"]
 
 [project.scripts]
 # Two clients, one protocol. `ffast` dispatches: the Qt/Vispy desktop when the

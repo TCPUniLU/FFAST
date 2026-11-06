@@ -314,6 +314,8 @@ def test_provision_launch_cmd_installs_detectana_and_sets_up_live_runs():
                              detectana_wheel="~/.ffast/detectana-0.3.0-py3-none-any.whl")
     assert "uv pip install --no-deps --reinstall ~/.ffast/detectana-0.3.0-py3-none-any.whl" in s
     assert s.index("~/w.whl") < s.index("detectana-0.3.0")
+    # RDKit finds a reference's bonds (Make reference runs on the server)
+    assert "uv pip install rdkit" in s and s.index("rdkit") < s.index("printf '%s' sha")
     assert ("python -m ffast.live.node_setup --venv ~/v --module env/staging/2024.1 "
             "--module Python/3.11") in s
     # both before the marker, so a failed step is never recorded as current
