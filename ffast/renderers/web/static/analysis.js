@@ -43,7 +43,7 @@ import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState } from './layout_state.js';
 import {
   liveEventLine, liveNoScoreMessage, liveRunChips, liveRunProblem, liveRunRuleText, liveRunSeries,
-  liveRunStatus, liveRunThreshold, liveRunsEvents, liveRunsOverlays, sameRunUpdate,
+  liveRunThreshold, liveRunsEvents, liveRunsOverlays, sameRunUpdate,
 } from './live_run.js';
 
 /** Two columns of the smallest plot, and the gap between cells, in px (the grid gap in index.html). */
@@ -389,12 +389,12 @@ export class AnalysisManager {
     const scored = ready.filter((r) => r.kw.series?.step?.length);
     const notes = plain.map((fp) => liveNoScoreMessage(this._nameOf('datasets', fp)));
     if (!scored.length) {
-      const status = ready.map((r) => liveRunStatus(r.kw)).join('\n');
+      // Why there is no curve; the run's state is in the Run card above.
       const problem = ready.map((r) => liveRunProblem(r.kw)).filter(Boolean).join('\n');
       card.body.className = '';
       const msg = document.createElement('div');
       msg.className = 'panel-msg';
-      msg.textContent = [runs.length && !ready.length ? 'Waiting for the run…' : status, problem,
+      msg.textContent = [runs.length && !ready.length ? 'Waiting for the run…' : '', problem,
         ...notes, ready.length ? 'No scores yet.' : ''].filter(Boolean).join('\n');
       clearPlot(card.body);
       card.body.replaceChildren(msg);
@@ -413,14 +413,10 @@ export class AnalysisManager {
     card.body.className = 'panel-plot';
     await this._drawPanel(t, plotSpec, card, series, token, seq);
     if (token !== this._renderToken || seq !== card.seq) return;
-    // The caption says where each run is, in place of the figure caption.
-    card.captionEl.hidden = false;
-    card.captionText.textContent = [...scored.map((r) => {
-      const problem = liveRunProblem(r.kw);
-      const status = liveRunStatus(r.kw);
-      const line = problem ? `${status}. ${problem}` : status;
-      return scored.length > 1 ? `${nameOf(r.kw)}: ${line}` : line;
-    }), ...notes].join('\n');
+    // No caption: each run's state is in the Run card, its warnings in Events.
+    // Only a plain dataset ticked here says why it has no curve.
+    card.captionEl.hidden = !notes.length;
+    card.captionText.textContent = notes.join('\n');
   }
 
   _drawLiveStatus(spec, card, ready) {

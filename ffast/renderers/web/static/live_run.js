@@ -20,13 +20,15 @@ export function liveRunStatus(kw) {
   return parts.join(' · ');
 }
 
-/** The newest problem worth showing (a refusal, a warning, a read error), or ''. */
+/** The newest problem that stops scores (a read error, a refusal, a failed
+ * scorer), or ''. Warnings, such as "the input writes no restart file", are
+ * in the Events list only: there is nothing to do about them here. */
 export function liveRunProblem(kw) {
   if (kw.error) return kw.error;
   const p = kw.progress || {};
   if (p.reason) return p.reason;
   const ev = [...(kw.events || [])].reverse()
-    .find((e) => ['warning', 'refused', 'scorer_failed'].includes(e.kind));
+    .find((e) => ['refused', 'scorer_failed'].includes(e.kind));
   return ev ? (ev.reason || ev.text || '') : '';
 }
 

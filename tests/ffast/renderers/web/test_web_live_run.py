@@ -76,7 +76,8 @@ async def test_the_live_run_helpers_and_the_timeline_with_steps(static_origin):
             await browser.close()
     assert got["status"] == "3 frames · 2 scored · atom order unverified · running"
     assert got["ended"] == "3 frames · 2 scored · run finished · scorer refused"
-    assert got["problem"] == "slow disk" and got["refused"] == "units lj"
+    # A warning is for the Events list; only what stops scores is a problem.
+    assert got["problem"] == "" and got["refused"] == "units lj"
     assert got["frames"] == [0, 1] and got["fp"] == "live:r1"
     assert got["x"] == [0, 100] and got["y"] == [0.2, 1.2] and got["xTitle"] == "Step"
     assert got["line"] == 1
@@ -131,6 +132,9 @@ async def test_a_long_runs_marks_are_one_path_per_row_and_a_resend_is_recognised
 
 
 ACTIVE = "#tabpanels .tabpanel.active"
+# The score curve of the tab on screen has `n` points (args: [ACTIVE, n]).
+SCORE_POINTS = """([sel, n]) => document.querySelector(
+  sel + ' .analysis-panel[data-part="scores"] .panel-plot')?.data?.[0]?.x?.length === n"""
 CHROME = ".tabpanel.active .edit-chrome"
 
 
@@ -153,8 +157,10 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
                 await expect(tab).to_have_class(re.compile(r"\bactive\b"), timeout=15000)
                 active = page.locator(ACTIVE)
                 await expect(active.locator(".panel-3d")).to_have_count(1)
+                await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 2], timeout=15000)
+                # No caption under the scores: the run's state is in the Run card.
                 caption = active.locator('.analysis-panel[data-part="scores"] .panel-caption-line')
-                await expect(caption).to_contain_text("2 frames · 2 scored")
+                await expect(caption).to_be_hidden()
                 # Status strip and events list are panels of the tab too.
                 await expect(active.locator(".live-status .live-chip").first).to_contain_text("LAMMPS")
                 await expect(active.locator(".live-event-list tr")).to_have_count(0)
@@ -170,9 +176,9 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
                     "segment": 0, "frame": 2, "step": 200, "time": 0.1, "identity": "proven",
                     "tracks": {"bonds": {"T2": 2.0, "SPE": 0.5}}, "exceedance": 0.4,
                     "test": ["bonds", "T2"], "marked": False}])
-                await expect(caption).to_contain_text("3 frames · 3 scored", timeout=15000)
-                # The plot's caption comes with the run's update; the dataset's new
-                # length comes in its own message. The click needs both.
+                await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 3], timeout=15000)
+                # The plot's third point comes with the run's update; the dataset's
+                # new length comes in its own message. The click needs both.
                 await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=15000)
 
                 # A click on the last point shows that frame in the 3D view.
@@ -461,8 +467,7 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 await page.locator("#text-ask input").press("Enter")
                 active = page.locator(ACTIVE)
                 att = active.locator(".live-attribution")
-                caption = active.locator('.analysis-panel[data-part="scores"] .panel-caption-line')
-                await expect(caption).to_contain_text("3 frames · 3 scored", timeout=15000)
+                await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 3], timeout=15000)
                 await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=10000)
                 # The shown frame is explained without a click.
                 await expect(att).to_contain_text("Step 0", timeout=15000)
