@@ -541,6 +541,9 @@ export class RemoteBrowser {
   pick({ mode, title, okLabel, name = '', formats = null, format = null, onPick }) {
     this._mode = mode;
     this._pick = { onPick, formats };
+    // Picked from inside another dialog (Run with FFAST, Make reference):
+    // open above it, or the browser is hidden behind it and cannot be used.
+    $('fb-modal').classList.toggle('over-dialog', !!document.querySelector('.warning-modal:not(.hidden)'));
     $('fb-title').textContent = title;
     $('fb-load').textContent = okLabel;
     $('fb-dataset-fields').style.display = 'none';
@@ -596,6 +599,7 @@ export class RemoteBrowser {
     this._untrap?.();
     this._untrap = null;
     $('fb-modal').classList.add('hidden');
+    $('fb-modal').classList.remove('over-dialog');
   }
 
   /** Server replied to LIST_DIR. */

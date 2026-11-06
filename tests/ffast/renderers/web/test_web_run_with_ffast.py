@@ -190,3 +190,39 @@ async def test_web_a_refused_input_shows_the_reason_and_the_hand_edit(tmp_path, 
             finally:
                 await browser.close()
     assert not (work / "run.ffast.in").exists()
+
+
+async def test_web_the_file_browser_opens_above_the_dialog_and_fills_the_field(tmp_path):
+    """The … button opened the server's file browser behind the Run-with-FFAST
+    dialog, where it could not be used (user report 2026-11-06)."""
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "run.in").write_text("units metal\n")
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _file_menu(page, "Run with FFAST…")
+                d = page.locator("#run-with-ffast-dialog")
+                await d.locator("#rwf-input + button").click()
+                await expect(page.locator("#fb-modal")).to_be_visible()
+                on_top = await page.evaluate(
+                    "() => document.getElementById('fb-modal').contains("
+                    "document.elementFromPoint(innerWidth / 2, innerHeight / 2))")
+                assert on_top, "the file browser is behind the dialog"
+                await page.locator("#fb-path").fill(str(work))
+                await page.locator("#fb-path").press("Enter")
+                await page.locator(".fb-row", has_text="run.in").click()
+                await page.locator("#fb-load").click()
+                await expect(page.locator("#fb-modal")).to_be_hidden()
+                await expect(d.locator("#rwf-input")).to_have_value(str(work / "run.in"))
+                # A browser opened on its own (no dialog) keeps its usual place.
+                await d.locator(".rwf-go").page.keyboard.press("Escape")
+                await expect(d).to_have_count(0)
+                assert not await page.evaluate("document.getElementById('fb-modal').classList.contains('over-dialog')")
+            finally:
+                await browser.close()

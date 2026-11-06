@@ -1126,6 +1126,8 @@
       background: rgba(0,0,0,0.6);
       display: flex; align-items: center; justify-content: center;
     }
+    /* a pick from inside another dialog opens above it (dialogs are z-index 200) */
+    #fb-modal.over-dialog { z-index: 250; }
     /* ── warning pop-ups (toasts.js) ─────────────────────────────────── */
     #toasts {
       position: fixed; right: 16px; bottom: 56px; z-index: 300;   /* above the bell */
