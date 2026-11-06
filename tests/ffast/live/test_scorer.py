@@ -270,9 +270,10 @@ def test_a_persisting_anomaly_raises_one_alarm_with_onset_confirmation_and_repor
     assert not any(r["marked"] for r in rows[:30]) and all(r["marked"] for r in rows[30:])
     assert rows[0]["chem"] == {"broken": 0, "close": 0, "planarity": rows[0]["chem"]["planarity"]}
     [alarm] = _events(run, "alarm")
-    # Windows start every frame; the first holding 2 marks is frames 22..31.
+    # Windows start every frame; the first holding 2 marks is frames 22..31, and
+    # its first marked frame (the estimated onset) is 30, where the stretch began.
     assert alarm["alarm"] == "ood"
-    assert alarm["onset"]["frame"] == 22 and alarm["confirmation"]["frame"] == 31
+    assert alarm["onset"]["frame"] == 30 and alarm["confirmation"]["frame"] == 31
     assert alarm["confirmation"]["step"] == 3100
     progress = rf.read_json(a / rf.PROGRESS)
     assert progress["rule"]["window_frames"] == 10 and progress["rule"]["step_frames"] == 1

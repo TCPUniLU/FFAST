@@ -110,7 +110,10 @@ class AlarmTracker:
             if self._stream.push(1.0 if rec["marked"] else 0.0) is not None:
                 window = list(self._window)
                 worst = max(window, key=lambda r: r["exceedance"])
-                fired.append(self._latch(Alarm("ood", window[0], rec, worst)))
+                # Estimated onset: the window's first marked frame. Its first
+                # frame can lie a whole persistence time before any mark.
+                onset = next(r for r in window if r["marked"])
+                fired.append(self._latch(Alarm("ood", onset, rec, worst)))
         if "chem" not in self.alarms:
             self._streak = self._streak + [rec] if rec.get("chem") else []
             if len(self._streak) >= self.chem_streak:

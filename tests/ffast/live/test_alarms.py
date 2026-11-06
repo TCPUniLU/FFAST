@@ -38,7 +38,7 @@ def test_single_marks_never_alarm():
     assert fired == []
 
 
-def test_the_ood_alarm_equals_detectanas_batch_onset_and_latches():
+def test_the_ood_alarm_fires_on_detectanas_window_and_latches():
     from detectana.onset import _windowed_onset
 
     rng = np.random.default_rng(3)
@@ -51,7 +51,9 @@ def test_the_ood_alarm_equals_detectanas_batch_onset_and_latches():
         fired += t.push(_rec(k, marked=bool(m), e=1.0 + k / 1000 if m else 0.5))
     want = _windowed_onset(marks, 20, 5, 0.5)
     [a] = fired
-    assert a.kind == "ood" and a.onset["frame"] == want
+    # The estimated onset is the window's first MARKED frame, not its first frame
+    # (stop proof 2026-11-06: the window start lay 70 calm frames before the heating).
+    assert a.kind == "ood" and a.onset["frame"] == want + int(np.argmax(marks[want:want + 20]))
     assert a.confirmation["frame"] == want + 19
     assert a.worst["frame"] == max(range(want, want + 20), key=lambda k: (marks[k], k))
     assert t.alarms["ood"] is a
