@@ -119,13 +119,14 @@ def test_data_file_from_the_bundle_geometry_is_written_and_recorded(work, bundle
     out = _prepare(work, bundle, data="bundle")
     assert out["ok"], out.get("refusal")
     data = next(c for c in out["copies"] if c["kind"] == "data")
-    assert data["copy"] == str(work / "run.ffast.data") and data["atoms"] == 21
-    assert f"+read_data {work / 'run.ffast.data'}" in out["copies"][0]["diff"]
+    # named after the data file it replaces: minimize.in reads aspirin.data
+    assert data["copy"] == str(work / "aspirin.ffast.data") and data["atoms"] == 21
+    assert f"+read_data {work / 'aspirin.ffast.data'}" in out["copies"][0]["diff"]
     rwf.write(str(work / "run.in"), str(work / "job.sh"), str(bundle[0]), out["originals"],
               data="bundle", runner=_shell())
-    assert "written by ffast lammps data" in (work / "run.ffast.data").read_text().splitlines()[0]
+    assert "written by ffast lammps data" in (work / "aspirin.ffast.data").read_text().splitlines()[0]
     rec = find_record(detectana.load(bundle[0]).reference_positions)
-    assert rec is not None and rec["data_file"] == str(work / "run.ffast.data")
+    assert rec is not None and rec["data_file"] == str(work / "aspirin.ffast.data")
 
 
 def test_data_file_from_a_structure_file_frame(work, bundle):

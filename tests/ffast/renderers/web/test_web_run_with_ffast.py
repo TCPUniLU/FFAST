@@ -152,7 +152,7 @@ async def test_web_run_with_ffast_checks_reviews_submits_and_opens_the_run(tmp_p
                 await browser.close()
 
     assert (work / "run.ffast.in").exists() and (work / "job.ffast.sh").exists()
-    assert (work / "run.ffast.data").exists()
+    assert (work / "aspirin.ffast.data").exists()
     assert (fake / "sbatch_cwd").read_text().strip() == str(work.resolve())
     assert (fake / "sbatch_script").read_text().strip() == "job.ffast.sh"
     assert (fake / "sbatch_slurm_vars").read_text().strip() == "0"

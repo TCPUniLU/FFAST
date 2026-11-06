@@ -24,7 +24,7 @@ from pathlib import Path
 
 from ffast.live import job_script as js
 from ffast.live.lammps_check import check_lammps, check_pair_styles
-from ffast.live.lammps_input import Check, Refusal, plan_input
+from ffast.live.lammps_input import Check, Refusal, plan_input, read_commands
 
 MARKER = "Written by Run with FFAST"
 DATA_MARKERS = (MARKER, "written by ffast lammps data")
@@ -171,8 +171,11 @@ def _prepare(input_path, job_path, bundle, data, data_path, data_index, stop_on_
     # Data file (R5, P6).
     data_copy = None
     if data != "none":
-        stem = inp.name.partition(".")[0] or inp.name
-        data_copy = inp.parent / f"{stem}.ffast.data"
+        # Named after the data file it replaces (aspirin.data → aspirin.ffast.data),
+        # in the input's folder; the input's own name when read_data names none.
+        reads = [c for c in read_commands(input_text) if c.name == "read_data" and c.args]
+        name = Path(reads[0].args[0]).name if reads and "$" not in reads[0].args[0] else f"{inp.name}.data"
+        data_copy = inp.parent / js.copy_name(name)
         _no_space(data_copy, "data file", "data")
 
     # Input placement, before the module check: the check needs to know whether a snapshot is used.
