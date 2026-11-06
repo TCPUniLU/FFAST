@@ -123,6 +123,9 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
                     "tracks": {"bonds": {"T2": 2.0, "SPE": 0.5}}, "exceedance": 0.4,
                     "test": ["bonds", "T2"], "marked": False}])
                 await expect(caption).to_contain_text("3 frames · 3 scored", timeout=15000)
+                # The plot's caption comes with the run's update; the dataset's new
+                # length comes in its own message. The click needs both.
+                await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=15000)
 
                 # A click on the last point shows that frame in the 3D view.
                 xy = await page.evaluate("""(sel) => {
