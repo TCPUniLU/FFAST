@@ -1316,6 +1316,59 @@
     #fb-name { width: 220px; }
     #fb-energy-unit, #fb-force-unit { width: 100px; }
 
+    /* guided tour (ADR 0088): tour_runner.js sets position, z-index
+       (shades 2000, ring 2001, box 2002) and pointer handling itself */
+    .tour-shade { background: rgba(4, 6, 8, 0.7); }
+    .tour-ring {
+      border: 2px solid var(--accent); border-radius: 8px;
+      animation: tour-pulse 1.6s ease-out infinite;
+    }
+    @keyframes tour-pulse {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+      100% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 0%, transparent); }
+    }
+    .tour-box {
+      width: 300px; max-width: calc(100vw - 32px); box-sizing: border-box;
+      display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 12px;
+      background: var(--surface); color: var(--ink-2); font-family: var(--font); font-size: var(--fs-m);
+      border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+    }
+    .tour-box [hidden] { display: none !important; }
+    .tour-head { display: flex; align-items: center; gap: 10px; }
+    .tour-count { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+    .tour-dots { display: flex; gap: 4px; margin-left: auto; }
+    .tour-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--surface-3); }
+    .tour-dots i.done { background: var(--ink-3); }
+    .tour-dots i.now { background: var(--accent); }
+    .tour-title { margin: 0; font-size: var(--fs-l); font-weight: 600; color: var(--ink); text-wrap: balance; }
+    .tour-body { margin: 0; line-height: 1.4; }
+    .tour-foot { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+    .tour-skip {
+      background: transparent; border: 0; padding: 0; height: auto; color: var(--ink-3);
+      text-decoration: underline; text-underline-offset: 2px;
+    }
+    .tour-skip:hover { background: transparent; color: var(--ink); }
+    .tour-back { margin-left: auto; background: transparent; }
+    .tour-wait {
+      margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+      font-size: var(--fs-s); color: var(--accent);
+    }
+    .tour-wait::before {
+      content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+      animation: tour-blink 1.2s ease-in-out infinite;
+    }
+    @keyframes tour-blink { 50% { opacity: 0.25; } }
+    .tour-back:not([hidden]) ~ .tour-wait, .tour-back:not([hidden]) ~ .tour-next,
+    .tour-wait:not([hidden]) ~ .tour-next { margin-left: 0; }
+    .tour-next {
+      margin-left: auto; padding: 4px 16px; font-weight: 600;
+      background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
+    }
+    .tour-next:hover { background: var(--accent); color: var(--accent-ink); filter: brightness(1.08); }
+    @media (prefers-reduced-motion: reduce) {
+      .tour-ring, .tour-wait::before { animation: none; }
+    }
+
   </style>
 
   <!-- Three.js is vendored under vendor/three/ (no CDN — the client must work
