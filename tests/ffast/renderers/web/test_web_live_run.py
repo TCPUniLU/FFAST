@@ -950,8 +950,13 @@ async def test_web_a_live_tab_draws_the_runs_ticked_in_its_selector(tmp_path):
                 await expect(scores.locator(".main-svg").first).to_be_attached(timeout=15000)
                 names = lambda: page.evaluate("""(sel) => {  // noqa
                   const el = document.querySelector(sel + ' .analysis-panel[data-part="scores"] .panel-plot');
-                  return el.data.filter((t) => t.showlegend !== false || t.mode).map((t) => t.name)
-                    .filter((n) => /node|Score/.test(n));
+                  return el.data.filter((t) => t.meta !== 'overlay' && (t.showlegend !== false || t.mode))
+                    .map((t) => t.name).filter((n) => /node|Score/.test(n));
+                }""", ACTIVE)
+                marks = lambda: page.evaluate("""(sel) => {  // noqa
+                  const el = document.querySelector(sel + ' .analysis-panel[data-part="scores"] .panel-plot');
+                  return el.data.filter((t) => t.meta === 'overlay' && t.showlegend && /marked/.test(t.name))
+                    .map((t) => t.name);
                 }""", ACTIVE)
                 assert await names() == ["Score ÷ threshold"]      # one run: as before
                 await expect(active.locator(".live-status .live-chips")).to_have_count(1)
@@ -961,6 +966,9 @@ async def test_web_a_live_tab_draws_the_runs_ticked_in_its_selector(tmp_path):
                 await pick(RUN_B).click()
                 await expect(active.locator(".live-status .live-chips")).to_have_count(2, timeout=15000)
                 assert sorted(await names()) == ["12:00:00 node", "13:00:00 node"]
+                # Each run's marks are its own legend entry, not pooled.
+                got = await marks()
+                assert got and all(n.endswith("node: marked") for n in got), got
                 await expect(active.locator(".live-event-list tr:not(:has(th))")).to_have_count(2)
                 await expect(active.locator(".live-event-list")).to_contain_text("13:00:00 node")
                 await expect(active.locator(".live-event-list")).to_contain_text("slow disk in A")
