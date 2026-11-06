@@ -31,9 +31,10 @@ layout, **Live run**, with its run already ticked.
 5. With several runs ticked: one score curve per run on a shared threshold line;
    one status row per run; one events list merged by time with a Run column;
    attribution explains the frame clicked last and names its run and step.
-6. 3D: the default panel stays linked (the main view). A plot click moves the 3D
-   panel of the tab showing the clicked run (ADR 0056 rule 4, unchanged), so one
-   own-view panel per run compares runs side by side.
+6. 3D: the default panel is the run's own view (amended 2026-11-06, see the
+   amendment below; it was the main view). A plot click moves the 3D panel of
+   the tab showing the clicked run (ADR 0056 rule 4, unchanged), so one own-view
+   panel per run compares runs side by side.
 7. A new tab control, **Same step in all 3D panels**, available to any tab like
    Energy shift. When on, panels showing different runs follow the same
    simulation step (nearest frame); between other datasets the ADR 0056 rule 3
@@ -75,3 +76,19 @@ recorded now so step 1 keeps the slot open instead of reshaping tabs twice.
 - A live tab is no longer guaranteed to show only its own run; its name says
   which run it was opened for, not everything ticked in it.
 - "Stop now" is one dialog away from where the scores are watched.
+
+## Amendment — a live tab's 3D panel is the run's own view (2026-11-06)
+
+Rule 6 made the Live run layout's 3D panel the main view. Opening a run then
+replaced whatever the main view showed, and two live tabs fought over the one
+main view. The layout's 3D panel is now an own view (`view = "independent"`,
+`link_frame = false`): it shows the run ticked in its tab, at its own frame.
+Opening a run only opens its tab; the main view keeps what it shows (an empty
+main view still takes the first dataset that arrives, as for any dataset).
+
+Attribution follows this: an attribution card explains one 3D panel of its tab,
+chosen in the card's caption ("Explains b · …"), the tab's first 3D panel by
+default. It asks DetectAna about that panel's frame and colours that panel. The
+choice is saved in the card's `options.explains` (the panel's place among the
+tab's 3D panels, in layout order). A tab without an attribution card leaves
+attribution on the main view, as before (ADR 0087).
