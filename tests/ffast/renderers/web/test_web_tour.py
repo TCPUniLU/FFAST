@@ -125,9 +125,16 @@ async def test_first_steps_clicks_through_from_the_empty_screen(ffast_web_server
             title, nxt = page.locator(".tour-title"), page.locator(".tour-next")
             await nxt.click()
             await expect(title).to_have_text(_TITLES[2])
-            # A "do this" step: the slider has focus, and moving it moves on.
-            await expect(page.locator("#frame-slider")).to_be_focused()
+            # A "do this" step: the slider has focus. Moving it shows Next, and
+            # the frames can still be changed until Next is pressed.
+            slider = page.locator("#frame-slider")
+            await expect(slider).to_be_focused()
             await page.keyboard.press("ArrowRight")
+            await expect(nxt).to_be_visible()
+            await page.keyboard.press("ArrowRight")
+            await expect(slider).to_have_value("2")
+            await expect(title).to_have_text(_TITLES[2])
+            await nxt.click()
             await expect(title).to_have_text(_TITLES[3])
             await nxt.click()
             await expect(title).to_have_text(_TITLES[4])

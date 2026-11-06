@@ -11,6 +11,7 @@
  * @property {'top'|'bottom'|'left'|'right'|'inside'} [side]  where the box goes
  * @property {string} [until]  the event that ends a "do this" step; without it the step has Next
  * @property {string} [wait]  what the box says while it waits for `until`
+ * @property {boolean} [stay]  after `until` fires, show Next instead of moving on, so the user can keep trying it
  * @property {() => boolean} [done]  true when the action is already done: show Next instead of waiting
  * @property {string} [failOn]  an event that stops the tour with its `detail.error`
  * @property {() => boolean} [skip]  leave the step out when the tour starts
@@ -130,16 +131,24 @@ export function startTour(tour, { events, onEnd, doc = document }) {
     title.textContent = step.title;
     body.textContent = step.body;
     back.hidden = i === 0;
+    const showNext = () => {
+      wait.hidden = true;
+      next.hidden = false;
+      next.textContent = last ? 'Done' : 'Next';
+    };
     const waiting = !!step.until && !didThisRun.has(step) && !step.done?.();
     if (waiting) {
       next.hidden = true;
       wait.hidden = false;
       wait.textContent = step.wait || '';
-      listen(step.until, () => { didThisRun.add(step); advance(); });
+      // Focus stays on the control in use, so a step that stays can be tried again.
+      listen(step.until, () => {
+        didThisRun.add(step);
+        if (step.stay) showNext();
+        else advance();
+      });
     } else {
-      wait.hidden = true;
-      next.hidden = false;
-      next.textContent = last ? 'Done' : 'Next';
+      showNext();
     }
     if (step.failOn) listen(step.failOn, (e) => end('stopped', e.detail?.error || step.title));
     const first = resolve(step.targets[0]);

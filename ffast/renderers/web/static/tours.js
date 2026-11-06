@@ -48,7 +48,7 @@ export function buildTours(app) {
     slider: {
       targets: ['#frame-slider'], side: 'top', title: 'Move through frames',
       body: 'Drag the slider. Each frame is one geometry from the file, with its reference energy and forces.',
-      until: 'frame-changed', wait: 'Drag the slider', prepare: toMainView,
+      until: 'frame-changed', wait: 'Drag the slider', stay: true, prepare: toMainView,
     },
     loaded: {
       targets: ['#dataset-list', '#model-list'], side: 'right', title: 'What is loaded',

@@ -202,3 +202,19 @@ async def test_a_second_tour_does_not_start_while_one_runs(page):
     assert second is None
     await expect(page.locator(".tour-title")).to_have_text("One")
     assert await page.locator(".tour-box").count() == 1
+
+
+async def test_a_step_that_stays_shows_next_after_its_event_and_waits_for_it(page):
+    await page.evaluate("""() => window.run([
+      { title: 'One', body: '', targets: ['#a'], until: 'go', wait: 'Click A', stay: true },
+      { title: 'Two', body: '', targets: ['#b'] }])""")
+    await page.locator("#a").focus()
+    await expect(page.locator(".tour-next")).to_be_hidden()
+    for _ in range(2):   # the action can be repeated; the step stays
+        await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('go'))")
+        await expect(page.locator(".tour-next")).to_be_visible()
+        await expect(page.locator(".tour-wait")).to_be_hidden()
+        await expect(page.locator(".tour-title")).to_have_text("One")
+    await expect(page.locator("#a")).to_be_focused()   # focus stays on the control in use
+    await page.locator(".tour-next").click()
+    await expect(page.locator(".tour-title")).to_have_text("Two")
