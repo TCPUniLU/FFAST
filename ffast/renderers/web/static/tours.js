@@ -61,7 +61,7 @@ export function buildTours(app) {
     },
     readColours: {
       targets: [view, '#frame-slider'], side: 'inside', title: 'Read the colours',
-      body: 'Bright yellow atoms have the largest force error. Dark purple atoms are close to the reference. The colour bar gives the scale. Drag the slider to see it change between frames.',
+      body: 'Blue atoms are close to the reference. The colours run through green and yellow to red, where the force error is largest. The colour bar gives the scale. Drag the slider to see it change between frames.',
       prepare: toMainView,
     },
     hints: {
