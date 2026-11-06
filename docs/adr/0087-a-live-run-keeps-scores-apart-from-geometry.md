@@ -1,6 +1,8 @@
 # A live run keeps its scores apart from its geometry
 
-Status: Accepted 2026-11-04. Not built. Companion to ADR 0086 (how a LAMMPS run
+Status: Accepted 2026-11-04. Built 2026-11-05/06 on the local branch
+`lammps-live`, not merged (run folder, live-run tab, Live runs list,
+attribution, Make reference; plan steps 2 and 4). Companion to ADR 0086 (how a LAMMPS run
 is watched). Leaves ADR 0075 (dataset preview) unchanged. Design and reviews:
 `docs/research/lammps-live-2026-11-04/`.
 

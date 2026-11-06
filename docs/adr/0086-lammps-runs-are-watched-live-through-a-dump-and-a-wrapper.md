@@ -1,6 +1,10 @@
 # LAMMPS runs are watched live through a dump and a wrapper
 
-Status: Accepted 2026-11-04. Not built. Supersedes ADR 0068 in part (live
+Status: Accepted 2026-11-04. Built 2026-11-05/06 on the local branch
+`lammps-live`, not merged: the thin slice (plan step 2, proof
+`thin-slice-proof.md`) and alarms, stopping and views (plan step 4, proof
+`stop-proof.md`, both LAMMPS builds on MeluXina). Not built yet: beads (i-PI).
+Supersedes ADR 0068 in part (live
 watching and out-of-distribution scoring now; its one-molecule, no-periodic-
 boundary scope stays). Design, two outside reviews and a MeluXina trial:
 `docs/research/lammps-live-2026-11-04/` (`plan.md`, `critique.md`,

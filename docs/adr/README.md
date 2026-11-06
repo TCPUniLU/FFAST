@@ -117,8 +117,8 @@ things came up.
 ## LAMMPS runs
 
 - [0068](0068-first-lammps-analysis-scope.md) First LAMMPS analysis scope: one molecule, no periodic boundaries (superseded in part by 0086)
-- [0086](0086-lammps-runs-are-watched-live-through-a-dump-and-a-wrapper.md) LAMMPS runs are watched live through a dump and a wrapper: DetectAna scores, FFAST plumbs; alarms need persistence; stop off by default (accepted, trial-checked on MeluXina)
-- [0087](0087-a-live-run-keeps-scores-apart-from-geometry.md) A live run keeps its scores apart from its geometry: run folder, one incremental LAMMPS-dump reader, attribution on demand (accepted)
+- [0086](0086-lammps-runs-are-watched-live-through-a-dump-and-a-wrapper.md) LAMMPS runs are watched live through a dump and a wrapper: DetectAna scores, FFAST plumbs; alarms need persistence; stop off by default (built on branch `lammps-live`, proven on MeluXina)
+- [0087](0087-a-live-run-keeps-scores-apart-from-geometry.md) A live run keeps its scores apart from its geometry: run folder, one incremental LAMMPS-dump reader, attribution on demand (built on branch `lammps-live`)
 
 ## Environment structure
 
