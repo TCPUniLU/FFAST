@@ -3,7 +3,9 @@
 Status: Accepted 2026-11-04. Built 2026-11-05/06 on the local branch
 `lammps-live`, not merged: the thin slice (plan step 2, proof
 `thin-slice-proof.md`) and alarms, stopping and views (plan step 4, proof
-`stop-proof.md`, both LAMMPS builds on MeluXina). Not built yet: beads (i-PI).
+`stop-proof.md`, both LAMMPS builds on MeluXina), and "Run with FFAST" (plan
+step 5, proof `run-with-ffast-proof.md`, the 2 Aug 2023 build). Not built yet:
+beads (i-PI).
 Supersedes ADR 0068 in part (live
 watching and out-of-distribution scoring now; its one-molecule, no-periodic-
 boundary scope stays). Design, two outside reviews and a MeluXina trial:
@@ -104,7 +106,9 @@ quoted or not.
 ## What this gives up
 
 - Two edits instead of one: a line in the input and a word in the job script
-  ("Run with FFAST" will later make both in copies).
+  ("Run with FFAST" makes both in copies since plan step 5; by hand when it
+  refuses an input it cannot place safely: `clear`, `jump`, a second
+  `read_data`, …).
 - A frame reaches the scorer only after LAMMPS writes it; finer than the dump
   interval needs a denser dump.
 - A multi-process anomaly stop is abrupt: nothing after the run executes.
