@@ -90,18 +90,19 @@ export class LiveUi {
   }
 
   /** "Run with FFAST" (ADR 0086): pick, check, review, submit, follow to the first frame. */
-  openRunWithFfast({ pickFile, laptop, submitFromLaptop, status = () => {} }) {
+  openRunWithFfast({ pick, laptop, submitFromLaptop, status = () => {} }) {
     this._rwf = openRunWithFfastDialog({
-      send: (event, kw) => this._send(event, kw), pickFile, laptop, submitFromLaptop, status,
+      send: (event, kw) => this._send(event, kw), pick, laptop, submitFromLaptop, status,
       openRun: (folder) => this._follow(folder),
     });
   }
 
-  /** RUN_WITH_FFAST_PREPARED, RUN_WITH_FFAST_WRITTEN, JOB_SUBMITTED, JOB_STATE. */
+  /** RUN_FOLDER_SCANNED, RUN_WITH_FFAST_PREPARED, RUN_WITH_FFAST_WRITTEN, JOB_SUBMITTED, JOB_STATE. */
   onRunWithFfast(event, kw) {
     const d = this._rwf;
     if (!d) return;
-    if (event === IN.RUN_WITH_FFAST_PREPARED) d.onPrepared(kw);
+    if (event === IN.RUN_FOLDER_SCANNED) d.onScanned(kw);
+    else if (event === IN.RUN_WITH_FFAST_PREPARED) d.onPrepared(kw);
     else if (event === IN.RUN_WITH_FFAST_WRITTEN) d.onWritten(kw);
     else if (event === IN.JOB_SUBMITTED) d.onSubmitted(kw);
     else if (event === IN.JOB_STATE) d.onJobState(kw);

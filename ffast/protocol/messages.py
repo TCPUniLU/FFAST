@@ -494,6 +494,7 @@ class ScanRunFolderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     folder: Optional[str] = None
+    job: Optional[str] = None   # the job script chosen among several
 
 
 class WatchJobRequest(BaseModel):

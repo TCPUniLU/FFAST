@@ -538,9 +538,10 @@ export class RemoteBrowser {
    *   name?: string, formats?: Array<{format: string, label: string, ext: string}>,
    *   format?: string, onPick: (path: string, choice: {format: string|null}) => void}} o
    */
-  pick({ mode, title, okLabel, name = '', formats = null, format = null, onPick }) {
+  pick({ mode, title, okLabel, name = '', formats = null, format = null, itemDirs = null, onPick }) {
     this._mode = mode;
-    this._pick = { onPick, formats };
+    // itemDirs: a RegExp; folders whose names match are chosen like files, not opened.
+    this._pick = { onPick, formats, itemDirs };
     // Picked from inside another dialog (Run with FFAST, Make reference):
     // open above it, or the browser is hidden behind it and cannot be used.
     $('fb-modal').classList.toggle('over-dialog', !!document.querySelector('.warning-modal:not(.hidden)'));
@@ -825,7 +826,10 @@ export class RemoteBrowser {
         row.append(size);
       }
       row.tabIndex = 0;
-      if (e.is_dir) {
+      // A pick may treat some folders as one item (a reference's .bundle).
+      const item = e.is_dir && this._pick?.itemDirs?.test(e.name);
+      if (item) row.classList.add('item');
+      if (e.is_dir && !item) {
         row.addEventListener('click', () => this._navigate(joinPath(this._path, e.name)));
       } else {
         row.addEventListener('click', () => this._selectFile(row, e.name));

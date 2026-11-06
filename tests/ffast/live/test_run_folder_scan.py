@@ -52,6 +52,8 @@ def test_copies_are_skipped_and_several_jobs_are_listed(run):
     (run / "long.sh").write_text(JOB.format(inp="in.long"))
     out = rfs.scan(str(run))
     assert [j["name"] for j in out["jobs"]] == ["job.sh", "long.sh"]
+    chosen = rfs.scan(str(run), job=str(run / "long.sh"))
+    assert chosen["input"] == str(run / "in.long") and chosen["data"] == str(run / "aspirin.data")
 
 
 def test_a_job_whose_input_is_missing_says_so(run):
@@ -91,7 +93,8 @@ def test_what_was_used_last_comes_first_and_an_empty_folder_means_the_last_one(r
     assert out["reference"] == str(other.resolve())
 
 
-def test_no_folder_yet():
+def test_no_folder_yet(tmp_path, monkeypatch):
+    monkeypatch.setenv("FFAST_RUN_WITH_FFAST", str(tmp_path / "memory.json"))
     assert rfs.scan(None)["problem"].startswith("Pick the folder")
 
 

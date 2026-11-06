@@ -1682,7 +1682,8 @@ export class FFastApp {
       conn.on(IN.LIVE_ATTRIBUTION_RESULT, (kw) => this._live().onResult(kw));
       conn.on(IN.LIVE_RUNS, (kw) => this._live().onRuns(kw));
       conn.on(IN.REFERENCE_MADE, (kw) => this._live().onReferenceMade(kw));
-      for (const ev of [IN.RUN_WITH_FFAST_PREPARED, IN.RUN_WITH_FFAST_WRITTEN, IN.JOB_SUBMITTED, IN.JOB_STATE]) {
+      for (const ev of [IN.RUN_FOLDER_SCANNED, IN.RUN_WITH_FFAST_PREPARED, IN.RUN_WITH_FFAST_WRITTEN,
+        IN.JOB_SUBMITTED, IN.JOB_STATE]) {
         conn.on(ev, (kw) => this._live().onRunWithFfast(ev, kw));
       }
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
@@ -2599,7 +2600,10 @@ export class FFastApp {
   _runWithFfast() {
     const client = this._clusterClient;
     this._live().openRunWithFfast({
-      pickFile: (title, onPick) => this._browser.pick({ mode: 'save-file', title, okLabel: 'Choose', onPick }),
+      // a folder (the run folder), a file, or a reference: a .bundle folder chosen as one item
+      pick: (kind, title, onPick) => this._browser.pick({
+        mode: kind === 'folder' ? 'open-folder' : 'save-file', title, okLabel: 'Choose', onPick,
+        itemDirs: kind === 'bundle' ? /\.bundle$/ : null }),
       laptop: async () => {
         if (!client) return { ok: false, reason: 'FFAST was not started with ffast-web' };
         const s = await client.state();

@@ -116,9 +116,16 @@ async def test_web_run_with_ffast_checks_reviews_submits_and_opens_the_run(tmp_p
                 d = page.locator("#run-with-ffast-dialog")
                 go = d.locator(".rwf-go")
                 await expect(go).to_be_disabled()
-                await d.locator("#rwf-input").fill(str(work / "run.in"))
-                await d.locator("#rwf-job").fill(str(work / "job.sh"))
-                await d.locator("#rwf-bundle").fill(str(bundle_dir))
+                # 1 Choose: one folder; FFAST finds the job script, its input, the data file
+                # and the reference (the one this test made, recorded when it was made).
+                await d.locator("#rwf-folder").fill(str(work))
+                await d.locator("#rwf-folder").press("Enter")
+                found = d.locator("#rwf-found")
+                # wait for THIS folder's lines (the last folder used opens first)
+                await expect(found).to_have_attribute("data-folder", str(work.resolve()), timeout=15000)
+                await expect(found).to_contain_text("run by job.sh: srun lmp -in run.in")
+                await expect(found).to_contain_text("aspirin.data")
+                await expect(d.locator("#rwf-bundle")).to_have_value(str(bundle_dir.resolve()))
                 await expect(go).to_be_enabled()
                 await go.click()
 
@@ -164,7 +171,7 @@ async def test_web_a_refused_input_shows_the_reason_and_the_hand_edit(tmp_path, 
     work = tmp_path / "w"
     work.mkdir()
     shutil.copy(FIX / "inputs" / "jump_loop.in", work / "run.in")
-    (work / "job.sh").write_text("#!/bin/bash\nsrun lmp -in run.in\n")
+    (work / "job.sh").write_text("#!/bin/bash\n#SBATCH --ntasks=1\nsrun lmp -in run.in\n")
     fake = tmp_path / "bin"
     _fake_cluster(fake)
     monkeypatch.setenv("PATH", f"{fake}{os.pathsep}{os.environ['PATH']}")
@@ -178,9 +185,11 @@ async def test_web_a_refused_input_shows_the_reason_and_the_hand_edit(tmp_path, 
                 await _expect_connected(page)
                 await _file_menu(page, "Run with FFAST…")
                 d = page.locator("#run-with-ffast-dialog")
-                await d.locator("#rwf-input").fill(str(work / "run.in"))
-                await d.locator("#rwf-job").fill(str(work / "job.sh"))
-                await d.locator("#rwf-bundle").fill(str(bundle_dir))
+                await d.locator("#rwf-folder").fill(str(work))
+                await d.locator("#rwf-folder").press("Enter")
+                await expect(d.locator("#rwf-found")).to_have_attribute(
+                    "data-folder", str(work.resolve()), timeout=15000)
+                await d.locator("#rwf-bundle").select_option(str(bundle_dir.resolve()))
                 await d.locator("#rwf-data-on").uncheck()
                 await d.locator(".rwf-go").click()
                 refusal = d.locator(".rwf-refusal")
@@ -197,7 +206,13 @@ async def test_web_the_file_browser_opens_above_the_dialog_and_fills_the_field(t
     dialog, where it could not be used (user report 2026-11-06)."""
     work = tmp_path / "w"
     work.mkdir()
-    (work / "run.in").write_text("units metal\n")
+    (work / "run.in").write_text("units metal\nread_data a.data\nrun 10\n")
+    (work / "job.sh").write_text("#!/bin/bash\n#SBATCH --ntasks=1\nsrun lmp -in run.in\n")
+    elsewhere = tmp_path / "refs"
+    toy = elsewhere / "toy.bundle"
+    toy.mkdir(parents=True)
+    (toy / "manifest.json").write_text('{"molecule": {"n_atoms": 3, "elements": ["O", "H", "H"]}}')
+    (elsewhere / "toy.lmp").write_text("elements O H\n")
     async with _spawn_server() as (ws_port, web_port):
         await _wait_for_server_ready(ws_port)
         async with async_playwright() as p:
@@ -208,7 +223,7 @@ async def test_web_the_file_browser_opens_above_the_dialog_and_fills_the_field(t
                 await _expect_connected(page)
                 await _file_menu(page, "Run with FFAST…")
                 d = page.locator("#run-with-ffast-dialog")
-                await d.locator("#rwf-input + button").click()
+                await d.locator("#rwf-folder + button").click()
                 await expect(page.locator("#fb-modal")).to_be_visible()
                 on_top = await page.evaluate(
                     "() => document.getElementById('fb-modal').contains("
@@ -216,10 +231,22 @@ async def test_web_the_file_browser_opens_above_the_dialog_and_fills_the_field(t
                 assert on_top, "the file browser is behind the dialog"
                 await page.locator("#fb-path").fill(str(work))
                 await page.locator("#fb-path").press("Enter")
-                await page.locator(".fb-row", has_text="run.in").click()
-                await page.locator("#fb-load").click()
+                await expect(page.locator("#fb-path")).to_have_value(str(work))
+                await page.locator("#fb-load").click()       # "Choose" this folder
                 await expect(page.locator("#fb-modal")).to_be_hidden()
-                await expect(d.locator("#rwf-input")).to_have_value(str(work / "run.in"))
+                await expect(d.locator("#rwf-folder")).to_have_value(str(work.resolve()))
+                await expect(d.locator("#rwf-found")).to_contain_text("run by job.sh", timeout=15000)
+
+                # "Other…" for the reference: the .bundle folder is one item, not a folder to open.
+                await d.locator("#rwf-bundle").select_option("__other__")
+                await expect(page.locator("#fb-modal")).to_be_visible()
+                await page.locator("#fb-path").fill(str(elsewhere))
+                await page.locator("#fb-path").press("Enter")
+                item = page.locator(".fb-row.item", has_text="toy.bundle")
+                await item.click()
+                await expect(page.locator("#fb-path")).to_have_value(str(elsewhere))   # did not open it
+                await page.locator("#fb-load").click()
+                await expect(d.locator("#rwf-bundle")).to_have_value(str(toy))
                 # A browser opened on its own (no dialog) keeps its usual place.
                 await d.locator(".rwf-go").page.keyboard.press("Escape")
                 await expect(d).to_have_count(0)

@@ -48,7 +48,8 @@ export function jobStateText(kw) {
 
 /** Why the Choose step cannot go on, or '' (pure, for tests). */
 export function chooseProblem(v) {
-  if (!v.input || !v.job || !v.bundle) return 'Pick the input script, the job script and the reference.';
+  if (!v.job || !v.input) return 'Pick the run folder: the one that holds your job script.';
+  if (!v.bundle) return 'Choose a reference.';
   if (v.data === 'file' && !v.dataPath) return 'Pick the structure file the data file is written from.';
   if (/\s/.test(v.input + v.job + v.bundle)) return 'LAMMPS cannot read paths with spaces.';
   return '';
@@ -58,12 +59,12 @@ const SECTION_TITLES = { module: 'LAMMPS module', input: 'Input script', job: 'J
 
 /**
  * @param {{send: (event: string, kw: object) => void,
- *   pickFile: (title: string, onPick: (path: string) => void) => void,
+ *   pick: (kind: 'folder'|'file'|'bundle', title: string, onPick: (path: string) => void) => void,
  *   laptop: () => Promise<{ok: boolean, reason?: string}>,
  *   submitFromLaptop: (folder: string, script: string) => Promise<{job_id?: string, error?: string}>,
  *   openRun: (folder: string) => void, status?: (text: string, kind?: string) => void}} o
  */
-export function openRunWithFfastDialog({ send, pickFile, laptop, submitFromLaptop, openRun, status = () => {} }) {
+export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, openRun, status = () => {} }) {
   document.getElementById('run-with-ffast-dialog')?.remove();
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
@@ -88,8 +89,8 @@ export function openRunWithFfastDialog({ send, pickFile, laptop, submitFromLapto
   panel.append(head, body, foot);
   modal.appendChild(panel);
 
-  // ── step 1: choose ──────────────────────────────────────────────────────
-  const field = (id, placeholder, pickTitle) => {
+  // ── step 1: choose a run folder; FFAST finds the rest (plan §7) ─────────
+  const field = (id, placeholder, kind, pickTitle, onChosen) => {
     const input = el('input', 'rwf-path');
     input.id = id;
     input.placeholder = placeholder;
@@ -97,12 +98,17 @@ export function openRunWithFfastDialog({ send, pickFile, laptop, submitFromLapto
     const btn = el('button', '', '…');
     btn.type = 'button';
     btn.title = 'Choose on the server';
-    btn.addEventListener('click', () => pickFile(pickTitle, (p) => { input.value = p; check(); }));
+    btn.addEventListener('click', () => pick(kind, pickTitle, (p) => { input.value = p; onChosen?.(p); check(); }));
     return { input, btn };
   };
-  const inp = field('rwf-input', 'run.in on the cluster', 'LAMMPS input script');
-  const job = field('rwf-job', 'job.sh on the cluster', 'Slurm job script');
-  const ref = field('rwf-bundle', 'aspirin.bundle (or its .lmp)', 'Reference (.bundle folder or .lmp file)');
+  const folder = field('rwf-folder', 'the folder that holds your job script', 'folder', 'Run folder',
+    (p) => scanFolder(p));
+  const found = el('div', 'rwf-found');
+  found.id = 'rwf-found';
+  const jobSel = el('select', 'rwf-select');
+  jobSel.id = 'rwf-job';
+  const refSel = el('select', 'rwf-select');
+  refSel.id = 'rwf-bundle';
   const dataOn = el('input');
   dataOn.type = 'checkbox';
   dataOn.id = 'rwf-data-on';
@@ -114,7 +120,7 @@ export function openRunWithFfastDialog({ send, pickFile, laptop, submitFromLapto
     o.value = v;
     dataFrom.appendChild(o);
   }
-  const dataFile = field('rwf-data-path', 'structure file (extxyz, xyz, …)', 'Structure file');
+  const dataFile = field('rwf-data-path', 'structure file (extxyz, xyz, …)', 'file', 'Structure file');
   const dataIndex = el('input', 'rwf-index');
   dataIndex.id = 'rwf-data-index';
   dataIndex.type = 'number';
@@ -136,18 +142,118 @@ export function openRunWithFfastDialog({ send, pickFile, laptop, submitFromLapto
   const stopLabel = el('label', 'rwf-check');
   stopLabel.append(stopOn, el('span', '', ' stop LAMMPS when an alarm fires'));
   const choose = el('div', 'rwf-step');
+  const folderRow = el('label', 'rwf-row');
+  folderRow.append(el('span', '', 'Run folder'), folder.input, folder.btn);
   choose.append(
-    row('Input script', inp.input, inp.btn), row('Job script', job.input, job.btn),
-    row('Reference', ref.input, ref.btn),
+    folderRow, found,
     row('Data file', dataLabel),
     el('div', 'rwf-note', "Proves the atom order. Replaces the input's read_data file in the copy."),
     row('Frame from', dataFrom), fileRow, row('Stop on alarm', stopLabel), problem);
 
-  const values = () => ({
-    input: inp.input.value.trim(), job: job.input.value.trim(), bundle: ref.input.value.trim(),
-    data: dataOn.checked ? dataFrom.value : 'none', dataPath: dataFile.input.value.trim(),
-    dataIndex: parseInt(dataIndex.value, 10) || 0, stop: stopOn.checked,
+  // The scan's answer, and what it leads to.
+  let scanned = null;
+  let scanAsked = null;
+  const selectedJob = () => (scanned?.jobs || []).find((j) => j.path === jobSel.value) || null;
+  const base = (p) => String(p || '').split('/').pop();
+  function scanFolder(path) {
+    scanAsked = path;
+    found.replaceChildren(el('div', 'rwf-wait', path ? `Looking in ${path}…` : 'Opening the last run folder…'));
+    found.dataset.folder = '';
+    scanned = null;
+    send(OUT.SCAN_RUN_FOLDER, path ? { folder: path } : {});
+    check();
+  }
+  function renderFound() {
+    const s = scanned;
+    if (!s) return;
+    if (s.folder && !folder.input.value) folder.input.value = s.folder;
+    const parts = [];
+    const line = (key, valueEl, how) => {
+      const r = el('div', 'rwf-found-row');
+      r.append(el('span', 'rwf-k', key), valueEl);
+      parts.push(r);
+      if (how) parts.push(el('div', 'rwf-how', how));
+    };
+    const jobs = s.jobs || [];
+    jobSel.replaceChildren(...jobs.map((j) => {
+      const o = el('option', '', j.problem ? `${j.name} — ${j.problem}` : `${j.name} — ${j.launch}`);
+      o.value = j.path;
+      o.disabled = !!j.problem;
+      return o;
+    }));
+    if (s.job) jobSel.value = s.job;
+    if (jobs.length) {
+      const usable = jobs.filter((j) => !j.problem).length;
+      const j = selectedJob();
+      line('Job script', jobs.length > 1 ? jobSel : el('span', 'rwf-v', base(s.job) || jobs[0].name),
+        usable > 1 ? `${usable} job scripts here; choose one`
+          : j ? `the only file here with #SBATCH lines that starts LAMMPS (line ${j.line})` : '');
+      if (j) {
+        line('Input', el('span', 'rwf-v', base(j.input)), `run by ${j.name}: ${j.launch}`);
+        if (s.data && j.path === s.job) line('Data file', el('span', 'rwf-v', base(s.data)), `read by ${base(j.input)}`);
+      }
+    }
+    const refs = s.references || [];
+    refSel.replaceChildren(...refs.map((r) => {
+      const what = [r.name, r.n_atoms ? `${r.n_atoms} atoms` : null, (r.types || []).join(' ') || null]
+        .filter(Boolean).join(' · ');
+      const why = r.problem || (r.match === false ? 'its elements do not match the input' : r.where);
+      const o = el('option', '', `${what} — ${why}`);
+      o.value = r.bundle;
+      o.title = r.bundle;
+      o.disabled = !!r.problem;
+      return o;
+    }), Object.assign(el('option', '', 'Other… (browse; a .bundle folder is one item)'), { value: '__other__' }));
+    if (s.reference) refSel.value = s.reference;
+    else refSel.value = '__other__';
+    const ref = refs.find((r) => r.bundle === refSel.value);
+    if (jobs.length || refs.length) {
+      line('Reference', refSel, ref ? ref.bundle : 'no reference found here or made by FFAST; choose one with Other…');
+    }
+    if (s.problem) parts.push(el('div', 'rwf-refusal-inline', s.problem));
+    found.replaceChildren(...parts);
+    found.dataset.folder = s.folder || '';   // which folder these lines describe
+    check();
+  }
+  jobSel.addEventListener('change', () => {
+    // another job script: its input, data file and element order may differ
+    scanAsked = scanned.folder;
+    send(OUT.SCAN_RUN_FOLDER, { folder: scanned.folder, job: jobSel.value });
   });
+  refSel.addEventListener('change', () => {
+    if (!scanned) return;   // a scan is on its way; its lines replace these
+    if (refSel.value === '__other__') {
+      pick('bundle', 'Reference (a .bundle folder)', (p) => {
+        const path = p.replace(/\/+$/, '');
+        scanned.references = [...(scanned.references || []),
+          { bundle: path, name: base(path).replace(/\.bundle$/, ''), where: 'chosen', match: null }];
+        scanned.reference = path;
+        renderFound();
+      });
+      return;
+    }
+    scanned.reference = refSel.value;
+    renderFound();
+  });
+  // Typing drops an answer still on its way (the last folder, asked on opening),
+  // so it never overwrites what is being typed.
+  folder.input.addEventListener('input', () => { scanAsked = undefined; });
+  folder.input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); scanFolder(folder.input.value.trim()); }
+  });
+  folder.input.addEventListener('change', () => {
+    const v = folder.input.value.trim();
+    if (v && v !== scanAsked && v !== scanned?.folder) scanFolder(v);
+  });
+
+  const values = () => {
+    const j = selectedJob();
+    return {
+      input: j?.input || '', job: j?.path || '', bundle: scanned && refSel.value !== '__other__' ? refSel.value : '',
+      data: dataOn.checked ? dataFrom.value : 'none', dataPath: dataFile.input.value.trim(),
+      dataIndex: parseInt(dataIndex.value, 10) || 0, stop: stopOn.checked,
+    };
+  };
   const request = () => {
     const v = values();
     const kw = { input: v.input, job: v.job, bundle: v.bundle, data: v.data, stop_on_alarm: v.stop };
@@ -303,14 +409,25 @@ export function openRunWithFfastDialog({ send, pickFile, laptop, submitFromLapto
   };
   cancel.addEventListener('click', close);
   modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
-  for (const f of [inp.input, job.input, ref.input, dataFile.input, dataIndex]) f.addEventListener('input', check);
+  for (const f of [dataFile.input, dataIndex]) f.addEventListener('input', check);
   dataOn.addEventListener('change', check);
   dataFrom.addEventListener('change', check);
 
   show(0);
   untrap = trapFocus(modal);
   document.body.appendChild(modal);
-  inp.input.focus();
+  // The last run folder, if there is one. The field waits for that answer (a
+  // moment; at most 5 s), so the answer never lands in the middle of typing.
+  folder.input.readOnly = true;
+  folder.input.placeholder = 'opening the last run folder…';
+  const unlock = () => {
+    if (!folder.input.readOnly) return;
+    folder.input.readOnly = false;
+    folder.input.placeholder = 'the folder that holds your job script';
+    folder.input.focus();
+  };
+  setTimeout(unlock, 5000);
+  scanFolder('');
 
   const failed = (text) => {
     progress.replaceChildren(el('div', 'rwf-error', text));
@@ -326,6 +443,14 @@ export function openRunWithFfastDialog({ send, pickFile, laptop, submitFromLapto
   };
 
   return {
+    /** RUN_FOLDER_SCANNED: what the folder holds; an answer to an older question is dropped. */
+    onScanned(kw) {
+      if (!state.open || (kw.asked || '') !== (scanAsked || '')) return;
+      scanned = kw;
+      if (kw.folder) folder.input.value = kw.folder;
+      renderFound();
+      unlock();
+    },
     /** RUN_WITH_FFAST_PREPARED */
     onPrepared(kw) {
       if (!state.open || state.step !== 1) return;

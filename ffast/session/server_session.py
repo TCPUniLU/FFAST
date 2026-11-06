@@ -232,7 +232,7 @@ class ServerSession:
                                                        WriteRunWithFfastRequest),
             control.SUBMIT_JOB:                 _Route(self._on_submit_job, ["folder", "script"], SubmitJobRequest),
             control.WATCH_JOB:                  _Route(self._on_watch_job, ["job_id"], WatchJobRequest),
-            control.SCAN_RUN_FOLDER:            _Route(self._on_scan_run_folder, ["?folder"], ScanRunFolderRequest),
+            control.SCAN_RUN_FOLDER:            _Route(self._on_scan_run_folder, ["?folder", "?job"], ScanRunFolderRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -1042,14 +1042,14 @@ class ServerSession:
             out = {"error": str(exc), "folder": folder, "script": script}
         await self._emit(pack(control.JOB_SUBMITTED, (), out))
 
-    async def _on_scan_run_folder(self, folder=None, **kwargs) -> None:
+    async def _on_scan_run_folder(self, folder=None, job=None, **kwargs) -> None:
         """Run with FFAST: what a run folder holds (job scripts, inputs,
         references), for the Choose step. Reads only."""
         from ffast.live.run_folder_scan import scan
         from ffast.protocol.rpc import pack
 
         try:
-            out = await asyncio.to_thread(scan, folder)
+            out = await asyncio.to_thread(scan, folder, job)
         except Exception as exc:   # a scan that breaks must say so, not leave the dialog waiting
             logger.exception("SCAN_RUN_FOLDER %r failed", folder)
             out = {"folder": folder, "problem": f"{type(exc).__name__}: {exc}"}

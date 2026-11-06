@@ -88,7 +88,7 @@ def test_inbound_events_are_things_the_server_sends(in_events):
         control.SESSION_METRICS, control.SERVER_WARNING, control.LOADER_TYPES, control.TASK_INFO,
         control.TIMING, control.LIVE_RUN_UPDATE, control.LIVE_ATTRIBUTION_RESULT,
         control.LIVE_RUNS, control.REFERENCE_MADE, control.RUN_WITH_FFAST_PREPARED,
-        control.RUN_WITH_FFAST_WRITTEN, control.JOB_SUBMITTED, control.JOB_STATE,
+        control.RUN_WITH_FFAST_WRITTEN, control.JOB_SUBMITTED, control.JOB_STATE, control.RUN_FOLDER_SCANNED,
     }
     known = set(SERVER_TO_CLIENT) | set(control.REPLY_EVENTS) | announcements
     unknown = sorted(set(in_events.values()) - known)

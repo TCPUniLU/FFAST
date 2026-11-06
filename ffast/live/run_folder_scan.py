@@ -158,8 +158,9 @@ def _references(folder: Path, last: str | None, elements: list[str] | None, envi
     return rows
 
 
-def scan(folder: str | None, environ=None) -> dict:
-    """What "Run with FFAST" would use from ``folder`` (the last folder used when empty)."""
+def scan(folder: str | None, job: str | None = None, environ=None) -> dict:
+    """What "Run with FFAST" would use from ``folder`` (the last folder used when
+    empty); ``job``: the job script the user chose among several."""
     memory = read_memory(environ)
     if not folder:
         folder = memory.get("last_folder")
@@ -179,7 +180,8 @@ def scan(folder: str | None, environ=None) -> dict:
     elif not usable:
         out["problem"] = f"{out['jobs'][0]['name']}: {out['jobs'][0]['problem']}"
     before = (memory.get("folders") or {}).get(str(path)) or {}
-    job = next((j for j in usable if j["path"] == before.get("job")), usable[0] if usable else None)
+    wanted = job or before.get("job")
+    job = next((j for j in usable if j["path"] == wanted), usable[0] if usable else None)
     if job:
         out.update(job=job["path"], input=job["input"])
         out["data"], out["pair_elements"] = _input_facts(job["input"])
