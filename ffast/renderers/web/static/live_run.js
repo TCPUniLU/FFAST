@@ -109,6 +109,10 @@ export function liveRunRuleText(kw) {
   return text;
 }
 
+// Chemistry flags and the chemistry alarm: violet, far from the OOD alarm's
+// red, the score's blue and the marks' orange on both themes.
+const CHEM_COLOUR = '#9b6dff';
+
 /**
  * Marks, chemistry flags, alarm bands and the three moments, for the score
  * plot (panels.js addOverlays). x is the step.
@@ -119,19 +123,23 @@ export function liveRunOverlays(kw) {
   const pick = (flags) => steps.filter((_, i) => flags?.[i]);
   const overlays = {
     ticks: [{ xs: pick(s.marked), color: 'warn', row: 0, name: 'marked' },
-            { xs: pick(s.chem), color: '#cc79a7', row: 1, name: 'chemistry flag' }],
+            { xs: pick(s.chem), color: CHEM_COLOUR, row: 1, name: 'chemistry flag' }],
     bands: [], lines: [],
   };
+  // Every moment has a line style of its own (colour: which alarm; dotted:
+  // onset, solid: confirmed), so the legend names each line however close
+  // the lines are.
   for (const a of kw.progress?.alarms || []) {
     const chem = a.kind === 'chem';
     const x0 = a.onset?.step, x1 = a.confirmation?.step;
     if (x0 == null || x1 == null) continue;
-    overlays.bands.push({ x0, x1, color: 'danger' });
-    overlays.lines.push({ x: x0, label: chem ? 'chemistry onset' : 'estimated onset', color: 'danger', dash: 'dot' });
-    overlays.lines.push({ x: x1, label: chem ? 'chemistry confirmed' : 'confirmed', color: 'danger' });
+    const color = chem ? CHEM_COLOUR : 'danger';
+    overlays.bands.push({ x0, x1, color });
+    overlays.lines.push({ x: x0, label: chem ? 'chemistry onset' : 'estimated onset', color, dash: 'dot' });
+    overlays.lines.push({ x: x1, label: chem ? 'chemistry confirmed' : 'confirmed', color, dash: 'solid' });
   }
   const at = kw.stop?.observed_step ?? kw.end?.stop_observed_step;
-  if (at != null) overlays.lines.push({ x: at, label: 'stop observed', color: 'ink', width: 1.6 });
+  if (at != null) overlays.lines.push({ x: at, label: 'stop observed', color: 'ink', dash: 'solid', width: 2 });
   return overlays;
 }
 

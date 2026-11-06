@@ -132,8 +132,9 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
                   const el = document.querySelector(sel + ' .analysis-panel .panel-plot');
                   const fl = el._fullLayout, tr = el.data[0], r = el.getBoundingClientRect();
                   const i = tr.x.length - 1;
-                  return {x: r.left + fl.margin.l + fl.xaxis.l2p(tr.x[i]),
-                          y: r.top + fl.margin.t + fl.yaxis.l2p(tr.y[i])};
+                  // _size: the margins as drawn, after the legend pushed them
+                  return {x: r.left + fl._size.l + fl.xaxis.l2p(tr.x[i]),
+                          y: r.top + fl._size.t + fl.yaxis.l2p(tr.y[i])};
                 }""", ACTIVE)
                 await page.mouse.move(xy["x"], xy["y"])
                 await page.mouse.click(xy["x"], xy["y"])
@@ -220,8 +221,10 @@ async def test_the_status_overlays_and_event_helpers(static_origin):
     o = got["overlays"]
     assert o["ticks"][0]["xs"] == [100, 300] and o["ticks"][1]["xs"] == [300]
     assert o["bands"] == [{"x0": 380000, "x1": 386000, "color": "danger"}]
-    assert [(l["x"], l["label"]) for l in o["lines"]] == [
-        (380000, "estimated onset"), (386000, "confirmed"), (386500, "stop observed")]
+    # Each moment has its own line style, so the legend can name it.
+    assert [(l["x"], l["label"], l["color"], l["dash"]) for l in o["lines"]] == [
+        (380000, "estimated onset", "danger", "dot"), (386000, "confirmed", "danger", "solid"),
+        (386500, "stop observed", "ink", "solid")]
     texts = [e["text"] for e in got["events"]]
     assert texts[0] == "Alarm · estimated onset step 380,000 · confirmed at step 386,000 · dihedrals SPE"
     assert got["events"][0]["report"] == "analysis/a/alarms/1.json"
@@ -278,14 +281,24 @@ async def test_web_a_stopped_run_shows_its_alarm_moments_and_events(tmp_path):
                 await expect(events).to_contain_text("Alarm · estimated onset step 100 · confirmed at step 300")
                 await expect(events).to_contain_text("Stop observed at step 300")
                 await expect(active.locator(".analysis-panel .panel-plot .main-svg").first).to_be_attached()
-                notes = await page.evaluate("""(sel) => {
+                plot = await page.evaluate("""(sel) => {
                   const el = document.querySelector(sel + ' .analysis-panel[data-kind="timeline"] .panel-plot');
                   return {notes: (el.layout.annotations || []).map((a) => a.text),
                           rects: (el.layout.shapes || []).filter((s) => s.type === 'rect').length,
-                          traces: el.data.length};
+                          legend: !!el.layout.showlegend,
+                          named: el.data.filter((t) => t.showlegend !== false).map((t) => t.name),
+                          hover: el.data.filter((t) => t.name === 'confirmed').map((t) => t.hovertemplate),
+                          caption: el._figureInfo.nSeries};
                 }""", ACTIVE)
-                assert {"estimated onset", "confirmed", "stop observed"} <= set(notes["notes"])
-                assert notes["rects"] == 1 and notes["traces"] == 2     # scores, marks (no chemistry flag)
+                # The moments are named by the legend, not by text floating near the
+                # lines (which landed beside the wrong line when lines were close).
+                assert plot["legend"] is True
+                assert plot["named"] == ["Score ÷ threshold", "marked", "estimated onset", "confirmed",
+                                         "stop observed"]
+                assert not {"estimated onset", "confirmed", "stop observed"} & set(plot["notes"])
+                assert plot["hover"] == ["confirmed · step %{x:,}<extra></extra>"]
+                assert plot["rects"] == 1
+                assert plot["caption"] == 1     # the caption still counts one data series
             finally:
                 await browser.close()
 
@@ -398,8 +411,9 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 xy = await page.evaluate("""(sel) => {
                   const el = document.querySelector(sel + ' .analysis-panel[data-kind="timeline"] .panel-plot');
                   const fl = el._fullLayout, tr = el.data[0], r = el.getBoundingClientRect();
-                  return {x: r.left + fl.margin.l + fl.xaxis.l2p(tr.x[2]),
-                          y: r.top + fl.margin.t + fl.yaxis.l2p(tr.y[2])};
+                  // _size: the margins as drawn, after the legend pushed them
+                  return {x: r.left + fl._size.l + fl.xaxis.l2p(tr.x[2]),
+                          y: r.top + fl._size.t + fl.yaxis.l2p(tr.y[2])};
                 }""", ACTIVE)
                 await page.mouse.move(xy["x"], xy["y"])
                 await page.mouse.click(xy["x"], xy["y"])

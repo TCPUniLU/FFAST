@@ -436,39 +436,50 @@ function buildTableTimeline(spec, series, ctx) {
  * - `ticks`: [{xs, color, row}] short marks along the bottom of the plot, on a
  *   hidden axis of their own (row 0 lowest), one per x;
  * - `bands`: [{x0, x1, color}] shaded spans of x;
- * - `lines`: [{x, label, color, dash}] vertical lines, labelled at the top.
+ * - `lines`: [{x, label, color, dash, width}] vertical lines, named in the
+ *   legend and on hover (text beside a line read as naming its neighbour).
  * Colours are theme names (warn, danger, ink, ink3, median) or CSS colours.
+ * Overlay traces carry `meta: 'overlay'`: not data series (figure caption).
  */
 export function addOverlays(traces, layout, overlays) {
   const theme = plotTheme();
   const colour = (c) => theme[c] || c;
   const ticks = overlays.ticks || [];
-  if (ticks.length) {
+  const lines = overlays.lines || [];
+  if (ticks.length || lines.length) {
     layout.yaxis2 = { overlaying: 'y', range: [0, 1], visible: false, fixedrange: true };
-    ticks.forEach((t) => {
-      if (!t.xs?.length) return;
-      traces.push({ x: t.xs, y: t.xs.map(() => 0.025 + 0.04 * (t.row || 0)), yaxis: 'y2',
-        type: 'scatter', mode: 'markers', hoverinfo: 'skip', showlegend: false, name: t.name || '',
-        marker: { symbol: 'line-ns-open', size: 8, line: { width: 1.5, color: colour(t.color) } } });
-    });
   }
+  ticks.forEach((t) => {
+    if (!t.xs?.length) return;
+    traces.push({ x: t.xs, y: t.xs.map(() => 0.025 + 0.04 * (t.row || 0)), yaxis: 'y2',
+      type: 'scatter', mode: 'markers', hoverinfo: 'skip', name: t.name || '', meta: 'overlay',
+      showlegend: !!t.name,
+      // an open symbol is stroked in marker.color: without it Plotly paints
+      // the series colour of the trace's index (chemistry flags came out green)
+      marker: { symbol: 'line-ns-open', size: 8, color: colour(t.color),
+                line: { width: 1.5, color: colour(t.color) } } });
+  });
   const shapes = layout.shapes || [];
   for (const b of overlays.bands || []) {
     shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: b.x0, x1: b.x1, y0: 0, y1: 1,
       fillcolor: colour(b.color), opacity: 0.12, line: { width: 0 }, layer: 'below' });
   }
-  const notes = layout.annotations || [];
-  (overlays.lines || []).forEach((l, i) => {
-    shapes.push({ type: 'line', xref: 'x', yref: 'paper', x0: l.x, x1: l.x, y0: 0, y1: 1,
-      line: { color: colour(l.color), width: l.width || 1.2, dash: l.dash || 'solid' } });
-    if (l.label) {
-      notes.push({ x: l.x, xref: 'x', y: 1 - 0.07 * (i % 3), yref: 'paper', text: l.label,
-        showarrow: false, xanchor: 'left', yanchor: 'top', xshift: 3,
-        font: { color: colour(l.color), size: theme.fsPlot } });
-    }
-  });
+  // A line is a trace across the plot's height (hidden 0–1 axis): it gets a
+  // legend entry in its own style, and hovering anywhere on it names it.
+  const ys = Array.from({ length: 21 }, (_, k) => k / 20);
+  for (const l of lines) {
+    traces.push({ x: ys.map(() => l.x), y: ys, yaxis: 'y2', type: 'scatter', mode: 'lines',
+      name: l.label || '', meta: 'overlay', showlegend: !!l.label,
+      line: { color: colour(l.color), width: l.width || 1.4, dash: l.dash || 'solid' },
+      hovertemplate: `${l.label} · step %{x:,}<extra></extra>` });
+  }
+  if (lines.length || ticks.some((t) => t.name && t.xs?.length)) {
+    layout.showlegend = true;
+    layout.legend = { orientation: 'h', y: 1.02, yanchor: 'bottom', x: 0, xanchor: 'left',
+      font: { size: theme.fsPlot } };
+    layout.margin.t = Math.max(layout.margin.t, 22);
+  }
   if (shapes.length) layout.shapes = shapes;
-  if (notes.length) layout.annotations = notes;
 }
 
 export function buildTimeline(spec, series, ctx) {
@@ -1069,7 +1080,7 @@ export function renderPanel(el, spec, series, ctx) {
   el._figureInfo = {
     xTitle: built.layout.xaxis?.title?.text || '',
     yTitle: built.layout.yaxis?.title?.text || '',
-    nSeries: built.traces.filter((t) => t.showlegend !== false).length,
+    nSeries: built.traces.filter((t) => t.showlegend !== false && t.meta !== 'overlay').length,
     peaks: built.peaks || [],
   };
   el.querySelectorAll('.main-svg').forEach((svg) => { svg.style.transform = ''; });   // see followSize
