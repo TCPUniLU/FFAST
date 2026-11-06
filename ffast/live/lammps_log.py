@@ -20,6 +20,52 @@ GRID_RE = re.compile(r"^\s*(\d+)\s+by\s+(\d+)\s+by\s+(\d+)\s+MPI processor grid"
 HALT_RE = re.compile(r"Fix halt condition for fix-id (\S+) met on step (\d+)")
 RESTART_RE = re.compile(r"^\s*(restart|write_restart)\s")
 MAX_READ = 1 << 20
+COMMAND_RE = re.compile(r"^\s*(\w+)")
+
+
+def input_path(command, cwd):
+    """The input script of a LAMMPS command (``-in``/``-i`` after the ``lmp``
+    executable), resolved against ``cwd``; None when it reads stdin."""
+    cmd = list(command or [])
+    start = 0
+    for i, arg in enumerate(cmd):
+        name = os.path.basename(arg)
+        if name.startswith("lmp") or name == "lammps":
+            start = i + 1
+            break
+    for i in range(start, len(cmd) - 1):
+        if cmd[i] in ("-in", "-i"):
+            p = cmd[i + 1]
+            return p if os.path.isabs(p) else os.path.join(cwd or ".", p)
+    return None
+
+
+def restart_in_input(path):
+    """Where the input writes restart files: ``before`` the first ``run``,
+    only ``after`` it, ``none``, or None when the input cannot be read.
+
+    The log shows only the commands LAMMPS has reached, so a ``write_restart``
+    after the run is not in it while the run goes on; the input file has it.
+    """
+    try:
+        with open(path) as fh:
+            lines = fh.read().splitlines()
+    except (OSError, TypeError, UnicodeDecodeError):
+        return None
+    seen_run = False
+    found_after = False
+    for line in lines:
+        m = COMMAND_RE.match(line.split("#", 1)[0])
+        if not m:
+            continue
+        name = m.group(1)
+        if name == "run":
+            seen_run = True
+        elif name in ("restart", "write_restart"):
+            if not seen_run:
+                return "before"
+            found_after = True
+    return "after" if found_after else "none"
 
 
 class PlannedLength(object):

@@ -230,12 +230,32 @@ class Scorer:
             if kind == "planned":
                 changed = True
             elif kind == "first_run" and not value:
-                rf.append_event(self.run_dir, "warning",
-                                text="the input writes no restart file; a stopped run cannot be continued")
+                text = self._restart_warning()
+                if text:
+                    rf.append_event(self.run_dir, "warning", text=text)
             elif kind == "processes":
                 self._write_progress(processes=value)
         if changed:
             self._planned_changed()
+
+    def _restart_warning(self) -> str | None:
+        """No restart command before the first run: what the input file says.
+
+        A ``write_restart`` after the run still runs after a clean
+        (one-process) stop, but not when several processes are terminated.
+        """
+        from ffast.live.lammps_log import input_path, restart_in_input
+
+        run = rf.read_json(self.run_dir / rf.RUN_JSON) or {}
+        where = restart_in_input(input_path(run.get("command"), run.get("cwd")))
+        if where == "before":
+            return None
+        if where == "after":
+            return ("the input writes a restart file only after the run: a run stopped cleanly "
+                    "(one process) still writes it, a terminated run (several processes) does not")
+        if where == "none":
+            return "the input writes no restart file; a stopped run cannot be continued"
+        return "no restart command before the first run (input file not readable); a stopped run may not be continuable"
 
     def _planned_changed(self) -> None:
         if self.first is None:

@@ -80,3 +80,22 @@ def test_another_fix_halt_is_not_ours(tmp_path):
 
 def test_a_missing_log_is_not_yet(tmp_path):
     assert LogFollower(tmp_path / "nope").poll() == []
+
+
+def test_where_the_input_writes_restart_files(tmp_path):
+    """The log shows only what LAMMPS reached; the input file shows a
+    write_restart after the run too (found by the step-5 MeluXina proof)."""
+    from ffast.live.lammps_log import input_path, restart_in_input
+
+    def where(text):
+        p = tmp_path / "in.x"
+        p.write_text(text)
+        return restart_in_input(str(p))
+
+    assert where("units metal\nrestart 1000 a.rst\nrun 10\n") == "before"
+    assert where("units metal\nrun 10\nwrite_restart a.rst\n") == "after"
+    assert where("units metal\n# write_restart a.rst\nrun 10\nprint 'restart'\n") == "none"
+    assert restart_in_input(str(tmp_path / "missing.in")) is None
+    assert input_path(["srun", "-n", "2", "lmp", "-in", "run.in", "-var", "x", "1"], "/w") == "/w/run.in"
+    assert input_path(["lmp", "-i", "/abs/run.in"], "/w") == "/abs/run.in"
+    assert input_path(["srun", "-i", "x", "lmp"], "/w") is None      # srun's -i is not the input

@@ -400,3 +400,24 @@ def test_the_log_gives_the_planned_length_and_the_false_alarm_chance(tmp_path, b
     fa = p["false_alarm"]
     assert fa["over"] == "run" and fa["planned_frames"] == 31 and fa["at_least"] is True
     assert 0.0 <= fa["probability"] <= 1.0 and fa["alpha"] == pytest.approx(0.01)
+
+
+@pytest.mark.parametrize("input_text, words", [
+    ("units metal\nrun 1000\nwrite_restart a.rst\n", "only after the run"),
+    ("units metal\nrun 1000\n", "writes no restart file"),
+    ("units metal\nrestart 500 a.rst\nrun 1000\n", None),
+])
+def test_the_restart_warning_reads_the_input_file(tmp_path, bundle_dir, records, input_text, words):
+    run = _run_dir(tmp_path, bundle_dir)
+    (tmp_path / "run.in").write_text(input_text)
+    rf.write_json_atomic(run / rf.RUN_JSON, {"command": ["srun", "lmp", "-in", "run.in"], "cwd": str(tmp_path)})
+    frames = _frames(3)
+    _record(frames[0], bundle_dir)
+    (run / rf.FRAMES).write_text(dump_text(frames))
+    (run / rf.LOG).write_text("  1 by 1 by 1 MPI processor grid\nrun 1000\n")   # restart 500 … would be echoed first
+    if words is None:
+        (run / rf.LOG).write_text("  1 by 1 by 1 MPI processor grid\nrestart 500 a.rst\nrun 1000\n")
+    _done(run)
+    Scorer(run, poll_s=0.01).run()
+    texts = [e["text"] for e in _events(run, "warning") if "restart" in e["text"]]
+    assert (texts == []) if words is None else (len(texts) == 1 and words in texts[0])
