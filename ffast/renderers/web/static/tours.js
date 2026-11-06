@@ -21,6 +21,20 @@ export function buildTours(app) {
     if (document.getElementById('content').classList.contains('sidebar-hidden')) app._setSidebarHidden(false, false);
   };
   const view = () => app._activePanel?.viewport ?? null;
+
+  // Basic Errors (a built-in tab; a user's own tabs can hide or replace it).
+  const BASIC = 'Basic Errors';
+  const TIMELINE = 'Forces MAE timeline';
+  const tabNamed = (name) => app._analysis.tabList.find((t) => t.name === name);
+  const onBasic = () => tabNamed(BASIC)?.id === app._activeTab;
+  const hasTimeline = () => {
+    const tab = tabNamed(BASIC);
+    return !!tab && app._analysis.tab(tab.id).spec.panels.some((p) => p.title === TIMELINE);
+  };
+  const toBasic = () => { if (!onBasic()) app._selectTab(tabNamed(BASIC).id); };
+  const activeTab = () => document.querySelector('#tabpanels .tabpanel.active');
+  const timeline = () => document.querySelector(
+    `#tabpanels .tabpanel.active .analysis-panel[data-title="${TIMELINE}"]`);
   /** The Load Example button; once clicked, the 3D view opens with the
    * dataset and hides it before the prediction is in, so the view is lit. */
   const exampleButton = () => {
@@ -64,6 +78,29 @@ export function buildTours(app) {
       body: 'Blue atoms are close to the reference. The colours run through green and yellow to red, where the force error is largest. The colour bar gives the scale. Drag the slider to see it change between frames.',
       prepare: toMainView,
     },
+    openBasic: {
+      targets: [`#tabbar .tab[data-name="${BASIC}"]`], side: 'bottom', title: 'Open the error plots',
+      body: 'The tabs above the view hold plots of the whole dataset. Click Basic Errors.',
+      until: 'tab-selected', accept: (d) => d.name === BASIC, wait: 'Click Basic Errors',
+      done: onBasic, skip: () => !hasTimeline(),
+    },
+    basicPlots: {
+      targets: [activeTab], side: 'inside', title: 'Errors over the whole dataset',
+      body: 'Each panel measures the model’s error over all frames. The distribution shows how many frames have each size of force error. The timeline shows the error frame by frame, so its peaks are the frames where the model does worst.',
+      prepare: toBasic, skip: () => !hasTimeline(),
+    },
+    clickPoint: {
+      targets: [timeline], side: 'left', title: 'Open a bad frame',
+      body: 'Click a high point on the Forces MAE timeline. FFAST opens that frame in the 3D view.',
+      until: 'point-picked', wait: 'Click a point',
+      prepare: () => { toBasic(); timeline()?.scrollIntoView({ block: 'nearest' }); },
+      skip: () => !hasTimeline(),
+    },
+    pickedFrame: {
+      targets: [view, '#frame-slider'], side: 'inside', title: 'The frame you clicked',
+      body: 'The 3D view now shows the frame you clicked, coloured by force error, so you can see which atoms the model gets wrong. Later, to look at another frame, go back to Basic Errors and click another point. Click Next to go on.',
+      prepare: toMainView, skip: () => !hasTimeline(),
+    },
     hints: {
       targets: ['#hint-bar'], side: 'top', title: 'Next steps',
       body: 'This bar suggests what to try next. To take a tour again, use the File menu.',
@@ -72,13 +109,14 @@ export function buildTours(app) {
   };
 
   const firstSteps = {
-    id: 'first-steps', title: 'First steps', about: '7 steps', isDefault: true,
+    id: 'first-steps', title: 'First steps', about: '11 steps', isDefault: true,
     unavailable: () => app._needsControl()
       || (app._datasets.size && !(app._currentDatasetFp && app._currentModelFp)
         ? 'Open a dataset with a prediction first, or start with nothing loaded' : ''),
     onStart: () => { loadedHere = null; },
     steps: [steps.loadExample, steps.oneFrame, steps.slider, steps.loaded,
-      steps.forceError, steps.readColours, steps.hints],
+      steps.forceError, steps.readColours,
+      steps.openBasic, steps.basicPlots, steps.clickPoint, steps.pickedFrame, steps.hints],
   };
   return [firstSteps];
 }

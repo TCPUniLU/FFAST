@@ -4,6 +4,7 @@ the tours, and the "First steps" tour on the example pair."""
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 
@@ -97,8 +98,30 @@ async def test_remove_loaded_deletes_the_example_pair_and_the_empty_screen_retur
 
 _TITLES = [
     "Load the example", "One frame of the dataset", "Move through frames", "What is loaded",
-    "Show where the model is wrong", "Read the colours", "Next steps",
+    "Show where the model is wrong", "Read the colours", "Open the error plots",
+    "Errors over the whole dataset", "Open a bad frame", "The frame you clicked", "Next steps",
 ]
+
+# Where the highest point of the first half of the first curve in a plot on
+# screen is, in page pixels, and its frame: for a real mouse click through the
+# tour's lit area. The second half can sit under Plotly's toolbar.
+_HIGHEST_POINT = """(title) => {
+  const el = document.querySelector(
+    `#tabpanels .tabpanel.active .analysis-panel[data-title="${title}"] .panel-plot`);
+  const tr = el.data[0], ys = Array.from(tr.y), xs = Array.from(tr.x);
+  const half = ys.slice(0, Math.floor(ys.length / 2));
+  const i = half.indexOf(Math.max(...half.filter(Number.isFinite)));
+  const fl = el._fullLayout, r = el.getBoundingClientRect();
+  return { x: r.left + fl._size.l + fl.xaxis.l2p(xs[i]), y: r.top + fl._size.t + fl.yaxis.l2p(ys[i]),
+           frame: xs[i] };
+}"""
+
+_PLOT_DRAWN = """(title) => {
+  const el = document.querySelector(
+    `#tabpanels .tabpanel.active .analysis-panel[data-title="${title}"] .panel-plot`);
+  return !!el && el.classList.contains('js-plotly-plot') && Array.isArray(el.data)
+    && el.data.length > 0 && el.data[0].x && el.data[0].x.length > 0;
+}"""
 
 
 async def _start_first_steps(page, ws_port, web_port):
@@ -120,7 +143,7 @@ async def test_first_steps_clicks_through_from_the_empty_screen(ffast_web_server
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
             await _start_first_steps(page, ws_port, web_port)
-            await expect(page.locator(".tour-count")).to_have_text("Step 1 of 7")
+            await expect(page.locator(".tour-count")).to_have_text("Step 1 of 11")
             await _through_step_1(page)
             title, nxt = page.locator(".tour-title"), page.locator(".tour-next")
             await nxt.click()
@@ -141,7 +164,20 @@ async def test_first_steps_clicks_through_from_the_empty_screen(ffast_web_server
             await page.locator('#quick-styles [data-action="style-force"]').click()
             await expect(title).to_have_text(_TITLES[5])
             await nxt.click()
+            # Basic Errors: open the tab, look, click a point, see its frame.
             await expect(title).to_have_text(_TITLES[6])
+            await page.locator('#tabbar .tab[data-name="Basic Errors"]').click()
+            await expect(title).to_have_text(_TITLES[7])
+            await nxt.click()
+            await expect(title).to_have_text(_TITLES[8])
+            await page.wait_for_function(_PLOT_DRAWN, arg="Forces MAE timeline", timeout=30000)
+            point = await page.evaluate(_HIGHEST_POINT, "Forces MAE timeline")
+            await page.mouse.move(point["x"], point["y"])
+            await page.mouse.click(point["x"], point["y"])
+            await expect(title).to_have_text(_TITLES[9])
+            await expect(page.locator("#frame-label")).to_have_text(re.compile(rf"^{point['frame']} /"))
+            await nxt.click()
+            await expect(title).to_have_text(_TITLES[10])
             await expect(nxt).to_have_text("Done")
             await nxt.click()
             await expect(page.locator(".tour-layer")).to_have_count(0)

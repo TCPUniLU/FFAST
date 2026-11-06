@@ -218,3 +218,15 @@ async def test_a_step_that_stays_shows_next_after_its_event_and_waits_for_it(pag
     await expect(page.locator("#a")).to_be_focused()   # focus stays on the control in use
     await page.locator(".tour-next").click()
     await expect(page.locator(".tour-title")).to_have_text("Two")
+
+
+async def test_accept_ignores_an_event_whose_detail_does_not_match(page):
+    await page.evaluate("""() => window.run([
+      { title: 'One', body: '', targets: ['#a'], until: 'tab', wait: 'Open B',
+        accept: (d) => d.name === 'B' },
+      { title: 'Two', body: '', targets: ['#b'] }])""")
+    await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('tab', { detail: { name: 'A' } }))")
+    await expect(page.locator(".tour-title")).to_have_text("One")
+    await expect(page.locator(".tour-wait")).to_have_text("Open B")
+    await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('tab', { detail: { name: 'B' } }))")
+    await expect(page.locator(".tour-title")).to_have_text("Two")

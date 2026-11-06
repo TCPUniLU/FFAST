@@ -10,6 +10,7 @@
  * @property {Array<string | (() => Element|null)>} targets  selectors, or functions that find an element; joined into one lit area
  * @property {'top'|'bottom'|'left'|'right'|'inside'} [side]  where the box goes
  * @property {string} [until]  the event that ends a "do this" step; without it the step has Next
+ * @property {(detail: object) => boolean} [accept]  which `until` events count, by their detail; all when absent
  * @property {string} [wait]  what the box says while it waits for `until`
  * @property {boolean} [stay]  after `until` fires, show Next instead of moving on, so the user can keep trying it
  * @property {() => boolean} [done]  true when the action is already done: show Next instead of waiting
@@ -142,7 +143,8 @@ export function startTour(tour, { events, onEnd, doc = document }) {
       wait.hidden = false;
       wait.textContent = step.wait || '';
       // Focus stays on the control in use, so a step that stays can be tried again.
-      listen(step.until, () => {
+      listen(step.until, (e) => {
+        if (step.accept && !step.accept(e.detail ?? {})) return;
         didThisRun.add(step);
         if (step.stay) showNext();
         else advance();

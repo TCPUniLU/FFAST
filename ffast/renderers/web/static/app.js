@@ -228,7 +228,8 @@ export class FFastApp {
     /** Fingerprints this window asked the server to delete. */
     this._deleting = new Set();
     /** What happened, for the guided tours (ADR 0088): example-loaded,
-     * example-load-failed, dataset-deleted, frame-changed, quick-style-applied. */
+     * example-load-failed, dataset-deleted, frame-changed, quick-style-applied,
+     * tab-selected {name}, point-picked {frame} (a click on a 2D plot). */
     this.tourEvents = new EventTarget();
     /** A Load Example this window asked for: the dataset and prediction it brought, once known. */
     this._exampleWatch = null;
@@ -324,7 +325,10 @@ export class FFastApp {
       onFreeze: (fp) => this._freezeSubset(fp),
       seriesColour: ({ datasetFp, modelFp }) => this._colours.get(
         seriesColourOwner(datasetFp, modelFp, !!this._datasets.get(datasetFp)?.parent)),
-      onPointFrame: (o) => this._onPlotPoint(o),
+      onPointFrame: (o) => {
+        this._onPlotPoint(o);
+        this._tourSignal('point-picked', { frame: o.frame });
+      },
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
       onLoadPrediction: (datasetFp) => this._browser.open('prediction', { datasetFp }),
     });
@@ -479,6 +483,7 @@ export class FFastApp {
     // 2D panels render (or refresh) lazily on activation.
     this._analysis.activate(id);
     this._syncEmptyState();
+    this._tourSignal('tab-selected', { name: tab.name });
   }
 
   /** The 3D controls go into a tab with a 3D panel: the pick bar above its
