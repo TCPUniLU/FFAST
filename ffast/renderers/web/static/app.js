@@ -634,6 +634,11 @@ export class FFastApp {
       this._actions.filter((a) => a.menu === 'file'),
     );
     bindMenu(
+      document.getElementById('lammps-menu-btn'),
+      document.getElementById('lammps-menu-list'),
+      this._actions.filter((a) => a.menu === 'lammps'),
+    );
+    bindMenu(
       document.getElementById('tab-menu-btn'),
       document.getElementById('tab-menu-list'),
       () => this._tabMenuActions(),
@@ -693,15 +698,16 @@ export class FFastApp {
           this._setStatus('Loading example…', 'connected');
         },
         unavailable: needsControl },
-      // A live LAMMPS run folder on the server's disk (ADR 0087).
-      { id: 'open-live-run', label: 'Open Live Run…', menu: 'file',
-        run: () => this._openLiveRun(), unavailable: needsControl },
-      { id: 'live-runs', label: 'Live Runs…', menu: 'file',
-        run: () => this._live().openRuns(), unavailable: needsControl },
-      { id: 'make-reference', label: 'Make Reference…', menu: 'file',
-        run: () => this._makeReference(), unavailable: needsControl },
-      { id: 'run-with-ffast', label: 'Run with FFAST…', menu: 'file',
+      // Live LAMMPS runs (ADR 0086/0087): the LAMMPS menu, in this order.
+      { id: 'run-with-ffast', label: 'Run with FFAST…', menu: 'lammps',
         run: () => this._runWithFfast(), unavailable: needsControl },
+      { id: 'live-runs', label: 'Live Runs…', menu: 'lammps',
+        run: () => this._live().openRuns(), unavailable: needsControl },
+      // A live LAMMPS run folder on the server's disk.
+      { id: 'open-live-run', label: 'Open Live Run…', menu: 'lammps',
+        run: () => this._openLiveRun(), unavailable: needsControl },
+      { id: 'make-reference', label: 'Make Reference…', menu: 'lammps',
+        run: () => this._makeReference(), unavailable: needsControl },
       { id: 'save-session', label: 'Save Session…', menu: 'file',
         run: () => this._sessionOps.saveSession(), unavailable: needsControl },
       { id: 'load-session', label: 'Load Session…', menu: 'file',

@@ -1113,6 +1113,7 @@
     body.loupe-only .analysis-scrollstrip,
     body.loupe-only #popout-btn,
     body.loupe-only #file-menu,
+    body.loupe-only #lammps-menu,
     body.loupe-only #loupe-sidebar,
     body.loupe-only #pick-bar,
     body.loupe-only #prev-frame-btn,
@@ -1460,6 +1461,11 @@
     <div id="file-menu" class="menu">
       <button id="file-menu-btn" aria-haspopup="menu" aria-expanded="false">File</button>
       <div id="file-menu-list" class="menu-list hidden" role="menu"></div>
+    </div>
+    <!-- Live LAMMPS runs (ADR 0086/0087): every live-run action in one menu. -->
+    <div id="lammps-menu" class="menu">
+      <button id="lammps-menu-btn" aria-haspopup="menu" aria-expanded="false">LAMMPS</button>
+      <div id="lammps-menu-list" class="menu-list hidden" role="menu"></div>
     </div>
     <!-- Your own metrics, on every tab (app.js _initMetricsDrawer). -->
     <button id="metrics-btn" type="button" aria-pressed="false" aria-controls="metrics-drawer"

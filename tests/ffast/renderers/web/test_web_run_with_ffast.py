@@ -20,7 +20,7 @@ from ffast.live import run_folder as rf  # noqa: E402
 from tests.ffast.live.bundle_helpers import make_bundle  # noqa: E402
 from tests.ffast.live.test_live_run import _run_folder  # noqa: E402
 from tests.ffast.renderers.web.test_web_runtime import (  # noqa: E402
-    _expect_connected, _file_menu, _spawn_server, _wait_for_server_ready,
+    _expect_connected, _lammps_menu, _spawn_server, _wait_for_server_ready,
 )
 
 pytestmark = pytest.mark.integration
@@ -112,7 +112,7 @@ async def test_web_run_with_ffast_checks_reviews_submits_and_opens_the_run(tmp_p
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _file_menu(page, "Run with FFAST…")
+                await _lammps_menu(page, "Run with FFAST…")
                 d = page.locator("#run-with-ffast-dialog")
                 go = d.locator(".rwf-go")
                 await expect(go).to_be_disabled()
@@ -183,7 +183,7 @@ async def test_web_a_refused_input_shows_the_reason_and_the_hand_edit(tmp_path, 
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _file_menu(page, "Run with FFAST…")
+                await _lammps_menu(page, "Run with FFAST…")
                 d = page.locator("#run-with-ffast-dialog")
                 await d.locator("#rwf-folder").fill(str(work))
                 await d.locator("#rwf-folder").press("Enter")
@@ -221,7 +221,7 @@ async def test_web_the_file_browser_opens_above_the_dialog_and_fills_the_field(t
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _file_menu(page, "Run with FFAST…")
+                await _lammps_menu(page, "Run with FFAST…")
                 d = page.locator("#run-with-ffast-dialog")
                 await d.locator("#rwf-folder + button").click()
                 await expect(page.locator("#fb-modal")).to_be_visible()

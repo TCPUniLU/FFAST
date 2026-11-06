@@ -458,11 +458,53 @@ async def _file_menu(page, label):
     await page.locator("#file-menu-list").get_by_role("menuitem", name=label, exact=True).click()
 
 
+async def _lammps_menu(page, label):
+    """Run a LAMMPS menu action by its label."""
+    await page.locator("#lammps-menu-btn").click()
+    await page.locator("#lammps-menu-list").get_by_role("menuitem", name=label, exact=True).click()
+
+
 FILE_MENU = [
     "Load Dataset…", "Load Prediction…", "Load Model…", "Load Zero Model", "Load Example Dataset and Prediction",
-    "Open Live Run…", "Live Runs…", "Make Reference…", "Run with FFAST…", "Save Session…", "Load Session…",
-    "Export Selected Dataset…", "Connect to Server…", "Connect to Cluster…",
+    "Save Session…", "Load Session…", "Export Selected Dataset…", "Connect to Server…", "Connect to Cluster…",
 ]
+# Everything for live LAMMPS runs (ADR 0086/0087) has a top-bar menu of its own.
+LAMMPS_MENU = ["Run with FFAST…", "Live Runs…", "Open Live Run…", "Make Reference…"]
+
+
+async def test_web_lammps_menu_holds_every_live_run_action(shared_server):
+    """The LAMMPS menu sits right after File and holds the live-run actions;
+    File no longer lists them. Without a server they wait for one."""
+    ws_port, web_port = shared_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            order = await page.locator("#topbar > *").evaluate_all("(els) => els.map((e) => e.id)")
+            assert order.index("lammps-menu") == order.index("file-menu") + 1
+            await expect(page.locator("#lammps-menu-btn")).to_have_text("LAMMPS")
+            await page.locator("#lammps-menu-btn").click()
+            items = page.locator("#lammps-menu-list [role=menuitem]")
+            await expect(items).to_have_text(LAMMPS_MENU)
+            for item in await items.all():
+                await expect(item).to_be_enabled()
+            await page.keyboard.press("Escape")
+            await expect(page.locator("#lammps-menu-list")).to_be_hidden()
+            await page.locator("#file-menu-btn").click()
+            await expect(page.locator("#file-menu-list [role=menuitem]")).to_have_text(FILE_MENU)
+            await page.keyboard.press("Escape")
+
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await page.locator("#conn-close").click()
+            await page.locator("#lammps-menu-btn").click()
+            for item in await page.locator("#lammps-menu-list [role=menuitem]").all():
+                await expect(item).to_be_disabled()
+                await expect(item).to_have_attribute("title", re.compile("Connect to a server"))
+        finally:
+            await browser.close()
 
 
 async def test_web_file_menu_holds_the_session_actions(shared_server):

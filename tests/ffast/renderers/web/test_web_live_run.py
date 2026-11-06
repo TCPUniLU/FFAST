@@ -19,7 +19,7 @@ from ffast.live import run_folder as rf  # noqa: E402
 from tests.ffast.live.dump_helpers import ASPIRIN_ELEMENTS, frame_text, random_frames  # noqa: E402
 from tests.ffast.live.test_live_run import _run_folder  # noqa: E402
 from tests.ffast.renderers.web.test_web_runtime import (  # noqa: E402
-    _expect_connected, _file_menu, _spawn_server, _wait_for_server_ready,
+    _expect_connected, _lammps_menu, _spawn_server, _wait_for_server_ready,
 )
 
 pytestmark = pytest.mark.integration
@@ -96,7 +96,7 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _file_menu(page, "Open Live Run…")
+                await _lammps_menu(page, "Open Live Run…")
                 await page.locator("#text-ask input").fill(str(run))
                 await page.locator("#text-ask input").press("Enter")
 
@@ -151,7 +151,7 @@ async def test_web_a_folder_that_is_not_a_run_says_so(tmp_path):
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _file_menu(page, "Open Live Run…")
+                await _lammps_menu(page, "Open Live Run…")
                 await page.locator("#text-ask input").fill(str(tmp_path))
                 await page.locator("#text-ask input").press("Enter")
                 await expect(page.locator("#status")).to_contain_text("not a live-run folder", timeout=15000)
@@ -267,7 +267,7 @@ async def test_web_a_stopped_run_shows_its_alarm_moments_and_events(tmp_path):
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _file_menu(page, "Open Live Run…")
+                await _lammps_menu(page, "Open Live Run…")
                 await page.locator("#text-ask input").fill(str(run))
                 await page.locator("#text-ask input").press("Enter")
                 active = page.locator(ACTIVE)
@@ -300,7 +300,7 @@ async def test_web_stop_now_asks_first_and_stop_on_alarm_switches(tmp_path):
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _file_menu(page, "Open Live Run…")
+                await _lammps_menu(page, "Open Live Run…")
                 await page.locator("#text-ask input").fill(str(run))
                 await page.locator("#text-ask input").press("Enter")
                 active = page.locator(ACTIVE)
@@ -370,7 +370,7 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                     {"segment": 0, "frame": k, "step": 100 * k, "time": 0.05 * k, "identity": "proven",
                      "tracks": {}, "exceedance": [0.2, 3.0, 1.5][k], "test": ["bonds", "T2"],
                      "marked": k == 2, "chem": {"broken": 0, "close": 0}} for k in range(3)])
-                await _file_menu(page, "Open Live Run…")
+                await _lammps_menu(page, "Open Live Run…")
                 await page.locator("#text-ask input").fill(str(run))
                 await page.locator("#text-ask input").press("Enter")
                 active = page.locator(ACTIVE)
@@ -518,7 +518,7 @@ async def test_web_the_live_runs_dialog_lists_opens_and_forgets(tmp_path, monkey
             try:
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
-                await _file_menu(page, "Live Runs…")
+                await _lammps_menu(page, "Live Runs…")
                 dialog = page.locator("#live-runs-dialog")
                 rows = dialog.locator("table.live-runs-table tr[data-run-id]")
                 await expect(rows).to_have_count(2, timeout=10000)
@@ -582,7 +582,7 @@ async def test_web_make_reference_fits_a_bundle_from_two_loaded_datasets(tmp_pat
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
                 await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
-                await _file_menu(page, "Make Reference…")
+                await _lammps_menu(page, "Make Reference…")
                 dialog = page.locator("#make-reference-dialog")
                 await expect(dialog.locator("#make-ref-train option")).to_have_count(2)
                 # The same dataset twice is refused before anything is sent.
