@@ -433,17 +433,19 @@ function buildTableTimeline(spec, series, ctx) {
 
 /**
  * Draw `overlays` on a timeline (a live run, ADR 0087):
- * - `ticks`: [{xs, color, row}] short marks along the bottom of the plot
- *   (row 0 lowest), one per x, one path shape per row;
+ * - `ticks`: [{xs, color, row, series}] short marks along the bottom of the
+ *   plot (row 0 lowest), one per x, one path shape per row; with `series`
+ *   (an index into the plot's series) a row takes that curve's colour;
  * - `bands`: [{x0, x1, color}] shaded spans of x;
  * - `lines`: [{x, label, color, dash, width}] vertical lines, named in the
  *   legend and on hover (text beside a line read as naming its neighbour).
  * Colours are theme names (warn, danger, ink, ink3, median) or CSS colours.
  * Overlay traces carry `meta: 'overlay'`: not data series (figure caption).
  */
-export function addOverlays(traces, layout, overlays) {
+export function addOverlays(traces, layout, overlays, curveColour = () => null) {
   const theme = plotTheme();
   const colour = (c) => theme[c] || c;
+  const tickColour = (t) => (Number.isInteger(t.series) && curveColour(t.series)) || colour(t.color);
   const ticks = overlays.ticks || [];
   const lines = overlays.lines || [];
   if (ticks.length || lines.length) {
@@ -459,15 +461,15 @@ export function addOverlays(traces, layout, overlays) {
     shapes.push({ type: 'path', xref: 'x', yref: 'paper', ysizemode: 'pixel',
       yanchor: 0.025 + 0.04 * (t.row || 0), layer: 'above',
       path: t.xs.map((x) => `M${x},-4V4`).join(''),
-      line: { width: 1.5, color: colour(t.color) } });
+      line: { width: 1.5, color: tickColour(t) } });
     // The legend entry: a trace with no points, drawn as one mark.
     traces.push({ x: [null], y: [null], yaxis: 'y2',
       type: 'scatter', mode: 'markers', hoverinfo: 'skip', name: t.name || '', meta: 'overlay',
       showlegend: !!t.name,
       // an open symbol is stroked in marker.color: without it Plotly paints
       // the series colour of the trace's index (chemistry flags came out green)
-      marker: { symbol: 'line-ns-open', size: 8, color: colour(t.color),
-                line: { width: 1.5, color: colour(t.color) } } });
+      marker: { symbol: 'line-ns-open', size: 8, color: tickColour(t),
+                line: { width: 1.5, color: tickColour(t) } } });
   });
   for (const b of overlays.bands || []) {
     shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: b.x0, x1: b.x1, y0: 0, y1: 1,
@@ -540,7 +542,9 @@ export function buildTimeline(spec, series, ctx) {
   }
   // A live run's marks, alarm band and moments: after the data curves, which
   // keep their indices for clicks and peaks.
-  if (spec.overlays) addOverlays(traces, layout, spec.overlays);
+  if (spec.overlays) {
+    addOverlays(traces, layout, spec.overlays, (i) => (series?.[i] ? paint(ctx, series[i], i) : null));
+  }
   return { traces, layout, peaks, extraHeight, peakUnit: u.y, peaksEligible: dataCurveCount === 1,
     subInfo: { perFrame: true, curveSeries, dataCurveCount }, unitAxes: { x: 'x', y: 'y' } };
 }

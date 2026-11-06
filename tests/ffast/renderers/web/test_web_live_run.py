@@ -131,6 +131,50 @@ async def test_a_long_runs_marks_are_one_path_per_row_and_a_resend_is_recognised
     assert got["newScore"] is False and got["newKey"] is False
 
 
+async def test_with_several_runs_each_runs_marks_take_its_curves_colour(static_origin):
+    # Two runs on one score plot: each run's marked and chemistry rows are
+    # drawn, and named in the legend, in that run's curve colour.
+    def run(rid, marked, chem):
+        return {"run_id": rid, "fingerprint": f"live:{rid}",
+                "series": {"frame": [0, 1], "step": [0, 100], "exceedance": [0.5, 1.5],
+                           "marked": marked, "chem": chem},
+                "progress": {}, "end": None, "events": []}
+    runs = [{"name": "a", "kw": run("a", [False, True], [True, False])},
+            {"name": "b", "kw": run("b", [True, False], [False, True])}]
+    script = f"""async (runs) => {{
+      const lr = await import('{static_origin}/live_run.js');
+      const pn = await import('{static_origin}/panels.js');
+      const el = document.createElement('div');
+      el.style.cssText = 'width:900px;height:300px';
+      document.body.append(el);
+      const series = runs.map((r) => ({{ ...lr.liveRunSeries(r.kw)[0], name: r.name }}));
+      const spec = {{ kind: 'timeline', x_label: 'Step', y_line: 1, legend: true,
+                      overlays: lr.liveRunsOverlays(runs) }};
+      pn.renderPanel(el, spec, series, {{ peaks: false, units: {{}} }});
+      const curves = el.data.filter((t) => t.meta !== 'overlay').map((t) => t.line.color);
+      return {{
+        curves,
+        paths: (el.layout.shapes || []).filter((s) => s.type === 'path').map((s) => s.line.color),
+        legend: el.data.filter((t) => t.meta === 'overlay' && t.showlegend)
+          .map((t) => [t.name, t.marker.color]),
+      }};
+    }}"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            await page.add_script_tag(url=f"{static_origin}/vendor/plotly/plotly.min.js")
+            got = await page.evaluate(script, runs)
+        finally:
+            await browser.close()
+    a, b = got["curves"]
+    assert a != b
+    assert got["paths"] == [a, a, b, b]
+    assert got["legend"] == [["a: marked", a], ["a: chemistry flag", a],
+                             ["b: marked", b], ["b: chemistry flag", b]]
+
+
 ACTIVE = "#tabpanels .tabpanel.active"
 # The score curve of the tab on screen has `n` points (args: [ACTIVE, n]).
 SCORE_POINTS = """([sel, n]) => document.querySelector(
@@ -840,7 +884,8 @@ async def test_the_helpers_that_merge_several_runs(static_origin):
         oneLabels: one.lines.map((l) => l.label),
         twoLabels: two.lines.map((l) => l.label),
         twoBands: two.bands.length,
-        marked: two.ticks[0].xs,
+        oneTicks: one.ticks.map((t) => [t.name, t.row, t.xs, t.series ?? null]),
+        twoTicks: two.ticks.map((t) => [t.name, t.row, t.xs, t.series ?? null]),
         events: lr.liveRunsEvents([a, b]).map((e) => [e.run, e.event.text]),
         msg: lr.liveNoScoreMessage('ethanol'),
       }};
@@ -856,7 +901,13 @@ async def test_the_helpers_that_merge_several_runs(static_origin):
     assert got["oneLabels"] == ["estimated onset", "confirmed"]
     assert got["twoLabels"] == ["aspirin_nvt: estimated onset", "aspirin_nvt: confirmed",
                                 "other: estimated onset", "other: confirmed"]
-    assert got["twoBands"] == 2 and got["marked"] == [100, 0]
+    assert got["twoBands"] == 2
+    # One run: its two rows, plain names, their own colours. Several: each run
+    # its own pair of rows, named for it and in its curve's colour (`series`),
+    # so one run's marks are never read as another's.
+    assert got["oneTicks"] == [["marked", 0, [100], None], ["chemistry flag", 1, [], None]]
+    assert got["twoTicks"] == [["aspirin_nvt: marked", 0, [100], 0], ["aspirin_nvt: chemistry flag", 1, [], 0],
+                               ["other: marked", 2, [0], 1], ["other: chemistry flag", 3, [], 1]]
     assert got["events"] == [["other", "b1"], ["aspirin_nvt", "a1"]]    # by time, oldest first
     assert got["msg"] == "No score for ethanol: only live runs have scores for now."
 

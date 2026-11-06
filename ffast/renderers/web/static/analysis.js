@@ -60,6 +60,8 @@ const SCORES_LEGEND_HELP = [
     + 'Above the dashed line at 1, the frame looks unlike the reference.',
   'Marked (ticks along the bottom): a frame above 1. One mark alone is not an alarm.',
   'Chemistry flag (ticks just above them): a bond broke, or two atoms came too close.',
+  'With several runs, each run has its own two rows of ticks in its curve\'s colour, the first run '
+    + 'lowest: marked below, chemistry flag above. The legend names them.',
   'Estimated onset (dotted line) and confirmed (solid line): an alarm. It is confirmed when enough '
     + 'frames are marked within a time window (the alarm rule, behind the "?" in the Run card), or '
     + 'after 3 chemistry-flagged frames in a row. The shaded band runs from the estimated start to '

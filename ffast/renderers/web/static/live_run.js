@@ -251,21 +251,23 @@ export function sameRunUpdate(a, b) {
 // A tab draws every run ticked in its selector. These take `runs`, a list of
 // {name, kw}: the run's name in plots and its last LIVE_RUN_UPDATE.
 
-/** Marks, bands and lines of every run, for one score plot. With several runs
- * each line's label starts with its run's name, so the legend says whose it is. */
+/** Marks, bands and lines of every run, for one score plot. Each run's marks
+ * keep rows of their own (the first run lowest): pooled, one run's marks read
+ * as another's. With several runs each mark row takes its run's curve colour
+ * (`series`: the run's position in `runs`, which is the plot's series order),
+ * and each mark row's and line's label starts with its run's name, so the
+ * legend says whose it is. */
 export function liveRunsOverlays(runs) {
   const merged = { ticks: [], bands: [], lines: [] };
   const many = runs.length > 1;
-  const marked = [], chem = [];
-  for (const { name, kw } of runs) {
+  runs.forEach(({ name, kw }, i) => {
     const o = liveRunOverlays(kw);
-    marked.push(...o.ticks[0].xs);
-    chem.push(...o.ticks[1].xs);
+    const label = (text) => (many ? `${name}: ${text}` : text);
+    merged.ticks.push(...o.ticks.map((t) => ({
+      ...t, row: i * o.ticks.length + (t.row || 0), name: label(t.name), ...(many ? { series: i } : {}) })));
     merged.bands.push(...o.bands);
-    merged.lines.push(...o.lines.map((l) => (many ? { ...l, label: `${name}: ${l.label}` } : l)));
-  }
-  const [m, c] = liveRunOverlays(runs[0]?.kw || {}).ticks;
-  merged.ticks = [{ ...m, xs: marked }, { ...c, xs: chem }];
+    merged.lines.push(...o.lines.map((l) => ({ ...l, label: label(l.label) })));
+  });
   return merged;
 }
 
