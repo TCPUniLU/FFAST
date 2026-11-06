@@ -263,9 +263,10 @@ export function liveRunsOverlays(runs) {
   runs.forEach(({ name, kw }, i) => {
     const o = liveRunOverlays(kw);
     const label = (text) => (many ? `${name}: ${text}` : text);
-    merged.ticks.push(...o.ticks.map((t) => ({
-      ...t, row: i * o.ticks.length + (t.row || 0), name: label(t.name), ...(many ? { series: i } : {}) })));
-    merged.bands.push(...o.bands);
+    merged.ticks.push(...o.ticks.map((t) => ({ ...t, curve: i,
+      row: i * o.ticks.length + (t.row || 0), name: label(t.name), ...(many ? { series: i } : {}) })));
+    // `curve`: hidden with its run's curve in the legend.
+    merged.bands.push(...o.bands.map((b) => ({ ...b, curve: i })));
     merged.lines.push(...o.lines.map((l) => ({ ...l, label: label(l.label) })));
   });
   return merged;

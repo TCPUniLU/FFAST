@@ -175,6 +175,72 @@ async def test_with_several_runs_each_runs_marks_take_its_curves_colour(static_o
                              ["b: marked", b], ["b: chemistry flag", b]]
 
 
+async def test_marks_and_bands_hide_with_their_legend_entry_and_their_runs_curve(static_origin):
+    # Marks and alarm bands are shapes, which Plotly's legend does not hide.
+    # Hiding "a: marked" hides a's marked row; hiding b's curve hides b's rows
+    # and band; both stay hidden when the plot is drawn again with new frames.
+    def run(rid):
+        return {"run_id": rid, "fingerprint": f"live:{rid}",
+                "series": {"frame": [0, 1], "step": [0, 100], "exceedance": [0.5, 1.5],
+                           "marked": [False, True], "chem": [True, False]},
+                "progress": {"alarms": [{"kind": "ood", "onset": {"step": 0}, "confirmation": {"step": 100}}]},
+                "end": None, "events": []}
+    runs = [{"name": "a", "kw": run("a")}, {"name": "b", "kw": run("b")}]
+    setup = f"""async (runs) => {{
+      const lr = await import('{static_origin}/live_run.js');
+      const pn = await import('{static_origin}/panels.js');
+      const el = document.createElement('div');
+      el.id = 'plot';
+      el.style.cssText = 'width:900px;height:300px';
+      document.body.append(el);
+      window.draw = (rs) => pn.renderPanel(el, {{ kind: 'timeline', x_label: 'Step', y_line: 1, legend: true,
+          overlays: lr.liveRunsOverlays(rs) }},
+        rs.map((r) => ({{ ...lr.liveRunSeries(r.kw)[0], name: r.name }})), {{ peaks: false, units: {{}} }});
+      draw(runs);
+    }}"""
+    # Shapes in order (the threshold line left out): a marked, a chem,
+    # b marked, b chem, a band, b band. True: shown.
+    shown = """() => document.getElementById('plot').layout.shapes
+      .filter((s) => s.type !== 'line').map((s) => s.visible !== false)"""
+    # a new frame for each run: the plot is drawn again
+    redraw = """(runs) => draw(runs.map((r) => ({ ...r, kw: { ...r.kw, series: {
+      frame: [0, 1, 2], step: [0, 100, 200], exceedance: [0.5, 1.5, 1.2],
+      marked: [false, true, true], chem: [true, false, false] } } })))"""
+    every = [True] * 6
+    hidden = [False, True, False, False, True, False]
+
+    async def click_legend(page, name):
+        # The legend's own click (Plotly keeps only what the viewer did across
+        # drawings, not a restyle from code); it waits out the double-click delay.
+        item = page.locator("#plot .legend .traces").filter(
+            has=page.locator(".legendtext", has_text=re.compile(f"^{re.escape(name)}$")))
+        await item.locator(".legendtoggle").click()
+
+    async def wait_shown(page, want):
+        await page.wait_for_function(f"(want) => JSON.stringify(({shown})()) === JSON.stringify(want)", arg=want)
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            await page.add_script_tag(url=f"{static_origin}/vendor/plotly/plotly.min.js")
+            await page.evaluate(setup, runs)
+            assert await page.evaluate(shown) == every
+            await click_legend(page, "a: marked")
+            await wait_shown(page, [False] + every[1:])
+            await click_legend(page, "b")
+            await wait_shown(page, hidden)
+            await page.evaluate(redraw, runs)
+            assert await page.evaluate(shown) == hidden     # still hidden after new frames
+            await click_legend(page, "a: marked")
+            await wait_shown(page, [True] + hidden[1:])
+            await click_legend(page, "b")
+            await wait_shown(page, every)
+        finally:
+            await browser.close()
+
+
 ACTIVE = "#tabpanels .tabpanel.active"
 # The score curve of the tab on screen has `n` points (args: [ACTIVE, n]).
 SCORE_POINTS = """([sel, n]) => document.querySelector(

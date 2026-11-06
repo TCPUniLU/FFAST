@@ -433,27 +433,43 @@ function buildTableTimeline(spec, series, ctx) {
 
 /**
  * Draw `overlays` on a timeline (a live run, ADR 0087):
- * - `ticks`: [{xs, color, row, series}] short marks along the bottom of the
- *   plot (row 0 lowest), one per x, one path shape per row; with `series`
+ * - `ticks`: [{xs, color, row, series, curve}] short marks along the bottom of
+ *   the plot (row 0 lowest), one per x, one path shape per row; with `series`
  *   (an index into the plot's series) a row takes that curve's colour;
- * - `bands`: [{x0, x1, color}] shaded spans of x;
+ * - `bands`: [{x0, x1, color, curve}] shaded spans of x;
  * - `lines`: [{x, label, color, dash, width}] vertical lines, named in the
  *   legend and on hover (text beside a line read as naming its neighbour).
+ * `curve`: the index of the series a tick row or band belongs to.
  * Colours are theme names (warn, danger, ink, ink3, median) or CSS colours.
  * Overlay traces carry `meta: 'overlay'`: not data series (figure caption).
+ *
+ * Shapes do not follow the legend as traces do, so each tick row and band is
+ * returned with its owners' trace uids, `[{shape, uids}]`: it shows only
+ * while every owner does (its own legend entry, its curve). `curveUid(i)`
+ * names series i's trace.
  */
-export function addOverlays(traces, layout, overlays, curveColour = () => null) {
+/** A trace uid made from any text: Plotly puts a uid into CSS selectors
+ * ('.cb' + uid), so every other character is written as _<hex>_ (one-to-one). */
+export function traceUid(text) {
+  return String(text).replace(/[^A-Za-z0-9-]/g, (c) => `_${c.codePointAt(0).toString(16)}_`);
+}
+
+export function addOverlays(traces, layout, overlays, curveColour = () => null, curveUid = () => null) {
   const theme = plotTheme();
   const colour = (c) => theme[c] || c;
   const tickColour = (t) => (Number.isInteger(t.series) && curveColour(t.series)) || colour(t.color);
+  const owners = [];
+  const ownedBy = (uids) => owners.push({ shape: shapes.length - 1, uids: uids.filter(Boolean) });
+  const curveOf = (o) => (Number.isInteger(o.curve) ? curveUid(o.curve) : null);
   const ticks = overlays.ticks || [];
   const lines = overlays.lines || [];
   if (ticks.length || lines.length) {
     layout.yaxis2 = { overlaying: 'y', range: [0, 1], visible: false, fixedrange: true };
   }
   const shapes = layout.shapes || [];
-  ticks.forEach((t) => {
+  ticks.forEach((t, k) => {
     if (!t.xs?.length) return;
+    const uid = traceUid(`overlay:tick:${t.name || k}`);
     // All of a row's marks are one path: a marker each made one SVG element
     // per mark, and a long run's 28,000 marks took most of every redraw. The
     // path's x is data, its y pixels around the row, so each mark stays 8 px
@@ -462,8 +478,9 @@ export function addOverlays(traces, layout, overlays, curveColour = () => null) 
       yanchor: 0.025 + 0.04 * (t.row || 0), layer: 'above',
       path: t.xs.map((x) => `M${x},-4V4`).join(''),
       line: { width: 1.5, color: tickColour(t) } });
+    ownedBy([uid, curveOf(t)]);
     // The legend entry: a trace with no points, drawn as one mark.
-    traces.push({ x: [null], y: [null], yaxis: 'y2',
+    traces.push({ uid, x: [null], y: [null], yaxis: 'y2',
       type: 'scatter', mode: 'markers', hoverinfo: 'skip', name: t.name || '', meta: 'overlay',
       showlegend: !!t.name,
       // an open symbol is stroked in marker.color: without it Plotly paints
@@ -474,23 +491,43 @@ export function addOverlays(traces, layout, overlays, curveColour = () => null) 
   for (const b of overlays.bands || []) {
     shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: b.x0, x1: b.x1, y0: 0, y1: 1,
       fillcolor: colour(b.color), opacity: 0.12, line: { width: 0 }, layer: 'below' });
+    ownedBy([curveOf(b)]);
   }
   // A line is a trace across the plot's height (hidden 0–1 axis): it gets a
   // legend entry in its own style, and hovering anywhere on it names it.
   const ys = Array.from({ length: 21 }, (_, k) => k / 20);
-  for (const l of lines) {
-    traces.push({ x: ys.map(() => l.x), y: ys, yaxis: 'y2', type: 'scatter', mode: 'lines',
+  lines.forEach((l, k) => {
+    traces.push({ uid: traceUid(`overlay:line:${l.label || k}`),
+      x: ys.map(() => l.x), y: ys, yaxis: 'y2', type: 'scatter', mode: 'lines',
       name: l.label || '', meta: 'overlay', showlegend: !!l.label,
       line: { color: colour(l.color), width: l.width || 1.4, dash: l.dash || 'solid' },
       hovertemplate: `${l.label} · step %{x:,}<extra></extra>` });
-  }
+  });
   if (lines.length || ticks.some((t) => t.name && t.xs?.length)) {
     layout.showlegend = true;
     layout.legend = { orientation: 'h', y: 1.02, yanchor: 'bottom', x: 0, xanchor: 'left',
       font: { size: theme.fsPlot } };
     layout.margin.t = Math.max(layout.margin.t, 22);
   }
+  // A live plot is drawn again with each new frame: what was hidden in its
+  // legend stays hidden (traces are matched by uid).
+  if (layout.legend) layout.legend.uirevision = 'overlays';
   if (shapes.length) layout.shapes = shapes;
+  return owners;
+}
+
+/** Hide each owned shape while any of its owners is hidden in the legend,
+ * from the traces as drawn (`fullData`). Returns {shapes[i].visible} for the
+ * shapes whose visibility differs from `shapes`. */
+export function shapeVisibility(owners, shapes, fullData) {
+  const hidden = new Set((fullData || [])
+    .filter((t) => t.uid && (t.visible === 'legendonly' || t.visible === false)).map((t) => t.uid));
+  const update = {};
+  for (const { shape, uids } of owners || []) {
+    const show = !uids.some((u) => hidden.has(u));
+    if ((shapes?.[shape]?.visible !== false) !== show) update[`shapes[${shape}].visible`] = show;
+  }
+  return update;
 }
 
 export function buildTimeline(spec, series, ctx) {
@@ -498,12 +535,18 @@ export function buildTimeline(spec, series, ctx) {
   const u = ctx.units || {};
   const traces = [];
   const curveSeries = [];
+  // With overlays, each curve has a uid its marks name as owner, kept from
+  // one drawing to the next (a live run's dataset), so a curve hidden in the
+  // legend stays hidden as new frames come.
+  const curveUid = (i) => (spec.overlays && series?.[i]
+    ? traceUid(`curve:${series[i].datasetFp || series[i].name || i}`) : null);
   (series || []).forEach((s, i) => {
     const y = values1d(s.data.y);
     if (!y.length) return;
     // x is the frame index unless the series brings its own (a live run's steps).
     const xs = s.data.x ? values1d(s.data.x) : null;
     traces.push({
+      ...(curveUid(i) ? { uid: curveUid(i) } : {}),
       x: xs && xs.length === y.length ? xs : y.map((_, k) => k), y, type: 'scatter', mode: 'lines',
       line: { color: paint(ctx, s, i), width: 1.5 },
       name: s.name || '',
@@ -542,10 +585,12 @@ export function buildTimeline(spec, series, ctx) {
   }
   // A live run's marks, alarm band and moments: after the data curves, which
   // keep their indices for clicks and peaks.
+  let shapeOwners = null;
   if (spec.overlays) {
-    addOverlays(traces, layout, spec.overlays, (i) => (series?.[i] ? paint(ctx, series[i], i) : null));
+    shapeOwners = addOverlays(traces, layout, spec.overlays,
+      (i) => (series?.[i] ? paint(ctx, series[i], i) : null), curveUid);
   }
-  return { traces, layout, peaks, extraHeight, peakUnit: u.y, peaksEligible: dataCurveCount === 1,
+  return { traces, layout, peaks, extraHeight, peakUnit: u.y, peaksEligible: dataCurveCount === 1, shapeOwners,
     subInfo: { perFrame: true, curveSeries, dataCurveCount }, unitAxes: { x: 'x', y: 'y' } };
 }
 
@@ -1101,7 +1146,21 @@ export function renderPanel(el, spec, series, ctx) {
   Plotly().react(el, built.traces, built.layout, PLOT_CONFIG);
   el._drawMs = performance.now() - start;
   el._subInfo = built.subInfo;
+  el._shapeOwners = built.shapeOwners || null;
+  syncShapes(el);
   followSize(el);
+}
+
+/** Marks and bands follow their owners in the legend (addOverlays): after a
+ * drawing, which keeps hidden traces hidden, and after each legend click. */
+function syncShapes(el) {
+  if (!el._shapeOwners?.length) return;
+  if (!el._shapeSyncWired && typeof el.on === 'function') {
+    el._shapeSyncWired = true;
+    el.on('plotly_restyle', () => syncShapes(el));
+  }
+  const update = shapeVisibility(el._shapeOwners, el.layout?.shapes, el._fullData);
+  if (Object.keys(update).length) Plotly().relayout(el, update);
 }
 
 /** A plot that takes longer than this to draw is stretched while its size
