@@ -105,6 +105,9 @@ WRITE_RUN_WITH_FFAST = "WRITE_RUN_WITH_FFAST"
 SUBMIT_JOB = "SUBMIT_JOB"
 # Follow a submitted job until its run's first frame (then the page opens it).
 WATCH_JOB = "WATCH_JOB"
+# What Run with FFAST would use from a run folder: job scripts, the input each
+# runs, references (reads only; an empty folder means the last one used).
+SCAN_RUN_FOLDER = "SCAN_RUN_FOLDER"
 
 CLIENT_TO_SERVER = frozenset(
     {
@@ -120,6 +123,7 @@ CLIENT_TO_SERVER = frozenset(
         REQUEST_METRIC_BOXES, ADD_SESSION_METRICS, TRACE, OPEN_LIVE_RUN,
         LIVE_STOP, LIVE_SET_STOP_ON_ALARM, LIVE_ATTRIBUTION, LIST_LIVE_RUNS, FORGET_LIVE_RUN,
         MAKE_REFERENCE, PREPARE_RUN_WITH_FFAST, WRITE_RUN_WITH_FFAST, SUBMIT_JOB, WATCH_JOB,
+        SCAN_RUN_FOLDER,
     }
 )
 
@@ -188,6 +192,8 @@ JOB_SUBMITTED = "JOB_SUBMITTED"
 # Pushed to the window that asked WATCH_JOB on each change: queued, running,
 # started, frame (open the run folder now) or ended.
 JOB_STATE = "JOB_STATE"
+# The answer to SCAN_RUN_FOLDER, to the asking window.
+RUN_FOLDER_SCANNED = "RUN_FOLDER_SCANNED"
 # Pushed to a window on connect and to every window after a change (ADR 0062);
 # also the answer to REQUEST_METRIC_CATALOG, which only the asker gets.
 METRIC_CATALOG = "METRIC_CATALOG"

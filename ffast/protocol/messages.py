@@ -487,6 +487,15 @@ class SubmitJobRequest(BaseModel):
     script: str = Field(min_length=1, pattern=r"^[^/]+$")
 
 
+class ScanRunFolderRequest(BaseModel):
+    """Typed payload for ``SCAN_RUN_FOLDER``: a folder on the server's disk
+    (``~`` allowed); empty or absent means the last folder used."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    folder: Optional[str] = None
+
+
 class WatchJobRequest(BaseModel):
     """Typed payload for ``WATCH_JOB``: a Slurm job id."""
 

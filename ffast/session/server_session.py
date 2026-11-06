@@ -168,7 +168,7 @@ class ServerSession:
             TraceRequest, RequestMetricBoxesRequest, OpenLiveRunRequest,
             LiveStopRequest, LiveSetStopOnAlarmRequest, LiveAttributionRequest,
             ForgetLiveRunRequest, MakeReferenceRequest, RunWithFfastRequest, WriteRunWithFfastRequest,
-            SubmitJobRequest, WatchJobRequest,
+            SubmitJobRequest, WatchJobRequest, ScanRunFolderRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -232,6 +232,7 @@ class ServerSession:
                                                        WriteRunWithFfastRequest),
             control.SUBMIT_JOB:                 _Route(self._on_submit_job, ["folder", "script"], SubmitJobRequest),
             control.WATCH_JOB:                  _Route(self._on_watch_job, ["job_id"], WatchJobRequest),
+            control.SCAN_RUN_FOLDER:            _Route(self._on_scan_run_folder, ["?folder"], ScanRunFolderRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -1040,6 +1041,20 @@ class ServerSession:
         except SubmitError as exc:
             out = {"error": str(exc), "folder": folder, "script": script}
         await self._emit(pack(control.JOB_SUBMITTED, (), out))
+
+    async def _on_scan_run_folder(self, folder=None, **kwargs) -> None:
+        """Run with FFAST: what a run folder holds (job scripts, inputs,
+        references), for the Choose step. Reads only."""
+        from ffast.live.run_folder_scan import scan
+        from ffast.protocol.rpc import pack
+
+        try:
+            out = await asyncio.to_thread(scan, folder)
+        except Exception as exc:   # a scan that breaks must say so, not leave the dialog waiting
+            logger.exception("SCAN_RUN_FOLDER %r failed", folder)
+            out = {"folder": folder, "problem": f"{type(exc).__name__}: {exc}"}
+        out["asked"] = folder or ""
+        await self._emit(pack(control.RUN_FOLDER_SCANNED, (), out))
 
     async def _on_watch_job(self, job_id, **kwargs) -> None:
         """Follow a submitted job and push JOB_STATE on each change until its

@@ -290,6 +290,9 @@ def write(input_path: str, job_path: str, bundle: str, originals: dict[str, str]
         data_copy = Path(out["copies"][2]["copy"])
         record_data_file(positions, bundle_sha256=bundle_sha256(out["_bundle_dir"]), source=label,
                          data_file=data_copy)
-    out.pop("_bundle_dir", None)
+    from ffast.live.run_folder_scan import remember
+
+    job_path = Path(out["copies"][1]["original"])
+    remember(job_path.parent, job_path, out.pop("_bundle_dir"))   # "used last time with this folder"
     out["written"] = written
     return out

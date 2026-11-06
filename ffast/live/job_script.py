@@ -103,8 +103,9 @@ def _starts_command(tokens: list[str], index: int) -> bool:
     return os.path.basename(words[0]) in LAUNCHERS or "ffast-lammps" in words[0]
 
 
-def find_launch(text: str, input_path: str, job_dir: str) -> Launch | Refusal:
-    """The one command of ``text`` that starts LAMMPS on ``input_path``, or why not."""
+def find_launch(text: str, input_path: str | None, job_dir: str) -> Launch | Refusal:
+    """The one command of ``text`` that starts LAMMPS on ``input_path``, or why not.
+    With ``input_path`` None, whatever input it names is accepted."""
     hits = []
     for logical in logical_lines(text):
         if logical.text.lstrip().startswith("#"):
@@ -151,7 +152,8 @@ def find_launch(text: str, input_path: str, job_dir: str) -> Launch | Refusal:
         return Refusal(f"the input file is named through a variable ({token}); FFAST cannot tell which file runs",
                        logical.first, "write the input file name out in the launch line")
     resolved = os.path.normpath(token if os.path.isabs(token) else os.path.join(job_dir, token))
-    if resolved != os.path.normpath(input_path):
+    # input_path None: finding the input from the job script (a run folder scan)
+    if input_path is not None and resolved != os.path.normpath(input_path):
         return Refusal(f"the job script runs {token}, not the picked input {input_path}", logical.first,
                        "pick the input the job script runs, or change the job script")
     launcher = next((t for t in seg[:k] if os.path.basename(t) in LAUNCHERS), None)
