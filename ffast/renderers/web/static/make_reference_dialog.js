@@ -5,6 +5,7 @@
  * the server; the dialog then shows the two lines to add.
  */
 import { labelBy, trapFocus } from './dialogs.js';
+import { helpToggle } from './help.js';
 
 export const DEFAULT_FOLDER = '~/ffast-references';
 
@@ -76,11 +77,14 @@ export function openMakeReferenceDialog({ datasets, send, pickFolder = null }) {
   browse.title = 'Choose a folder on the server';
   browse.hidden = !pickFolder;
   browse.addEventListener('click', () => pickFolder?.((path) => { folder.value = path; check(); }));
-  const settings = el('details', 'make-ref-settings');
-  settings.append(el('summary', '', 'Detection settings'),
-    el('div', '', 'False-alarm rate per frame 1 % · tracks: bonds, angles, dihedrals, ring · alarm when '
-      + '20 % of frames are marked within the persistence time (5 ps; set per input with '
-      + 'ffast_persist_ps).'));
+  // Small print behind a "?", as in the settings sidebar.
+  const settingsHelp = helpToggle('False-alarm rate per frame 1 % · tracks: bonds, angles, dihedrals, ring · '
+    + 'alarm when 20 % of frames are marked within the persistence time (5 ps; set per input with '
+    + 'ffast_persist_ps).', { subject: 'the detection settings' });
+  settingsHelp.note.classList.add('make-ref-settings');
+  const settingsHead = el('div', 'make-ref-settings-head');
+  settingsHead.append(el('span', '', 'Detection settings'), settingsHelp.button);
+  const settings = [settingsHead, settingsHelp.note];
   const problem = el('div', 'make-ref-problem');
   const result = el('div', 'make-ref-result');
 
@@ -90,7 +94,7 @@ export function openMakeReferenceDialog({ datasets, send, pickFolder = null }) {
     return l;
   };
   body.append(row('Training frames', train), row('Validation frames', valid), row('Name', name),
-    row('Save in', folder, browse), settings, problem, result);
+    row('Save in', folder, browse), ...settings, problem, result);
 
   const foot = el('div', 'warning-modal-footer');
   const cancel = el('button', '', 'Cancel');

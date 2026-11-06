@@ -14,6 +14,7 @@
  */
 import { labelBy, trapFocus } from './dialogs.js';
 import { OUT } from './events.js';
+import { helpToggle } from './help.js';
 
 /** A unified diff as lines with a class each (pure, for tests). */
 export function diffLines(diff) {
@@ -144,13 +145,18 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
   const choose = el('div', 'rwf-step');
   const folderRow = el('label', 'rwf-row');
   folderRow.append(el('span', '', 'Run folder'), folder.input, folder.btn);
+  // Small print sits behind a "?", as in the settings sidebar.
+  const dataHelp = helpToggle("Proves the atom order. Replaces the input's read_data file in the copy.",
+    { subject: 'the new data file' });
+  dataHelp.note.classList.add('rwf-note');
   choose.append(
     folderRow, found,
-    row('Data file', dataLabel),
-    el('div', 'rwf-note', "Proves the atom order. Replaces the input's read_data file in the copy."),
+    row('Data file', dataLabel, dataHelp.button),
+    dataHelp.note,
     row('Frame from', dataFrom), fileRow, row('Stop on alarm', stopLabel), problem);
 
   // The scan's answer, and what it leads to.
+  const howOpen = new Set();   // "?" notes left open, kept when the lines are redrawn
   let scanned = null;
   let scanAsked = null;
   const selectedJob = () => (scanned?.jobs || []).find((j) => j.path === jobSel.value) || null;
@@ -168,11 +174,22 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     if (!s) return;
     if (s.folder && !folder.input.value) folder.input.value = s.folder;
     const parts = [];
-    const line = (key, valueEl, how) => {
+    // How a file was found is small print behind the row's "?"; a line that
+    // asks the user to do something (`ask`) stays in view.
+    const line = (key, valueEl, how, ask = false) => {
       const r = el('div', 'rwf-found-row');
       r.append(el('span', 'rwf-k', key), valueEl);
       parts.push(r);
-      if (how) parts.push(el('div', 'rwf-how', how));
+      if (!how) return;
+      if (ask) {
+        parts.push(el('div', 'rwf-how', how));
+        return;
+      }
+      const h = helpToggle(how, { subject: `how the ${key.toLowerCase()} was found`, open: howOpen.has(key),
+        onToggle: (open) => (open ? howOpen.add(key) : howOpen.delete(key)) });
+      h.note.classList.add('rwf-how');
+      r.appendChild(h.button);
+      parts.push(h.note);
     };
     const jobs = s.jobs || [];
     jobSel.replaceChildren(...jobs.map((j) => {
@@ -187,7 +204,8 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
       const j = selectedJob();
       line('Job script', jobs.length > 1 ? jobSel : el('span', 'rwf-v', base(s.job) || jobs[0].name),
         usable > 1 ? `${usable} job scripts here; choose one`
-          : j ? `the only file here with #SBATCH lines that starts LAMMPS (line ${j.line})` : '');
+          : j ? `the only file here with #SBATCH lines that starts LAMMPS (line ${j.line})` : '',
+        usable > 1);
       if (j) {
         line('Input', el('span', 'rwf-v', base(j.input)), `run by ${j.name}: ${j.launch}`);
         if (s.data && j.path === s.job) line('Data file', el('span', 'rwf-v', base(s.data)), `read by ${base(j.input)}`);
@@ -208,7 +226,8 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     else refSel.value = '__other__';
     const ref = refs.find((r) => r.bundle === refSel.value);
     if (jobs.length || refs.length) {
-      line('Reference', refSel, ref ? ref.bundle : 'no reference found here or made by FFAST; choose one with Other…');
+      line('Reference', refSel, ref ? ref.bundle : 'no reference found here or made by FFAST; choose one with Other…',
+        !ref);
     }
     if (s.problem) parts.push(el('div', 'rwf-refusal-inline', s.problem));
     found.replaceChildren(...parts);
@@ -285,6 +304,8 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
   const cancel = el('button', '', 'Cancel');
   const next = el('button', 'rwf-go', 'Check ›');
   const footLeft = el('span', 'rwf-foot-note');
+  const copiesHelp = helpToggle('Copies are written next to the originals; the originals are never changed.',
+    { subject: 'what gets written' });
   foot.append(footLeft, back, cancel, next);
 
   const state = { step: 0, prepared: null, request: null, jobId: null, via: 'laptop', laptopOk: false,
@@ -296,7 +317,7 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     body.replaceChildren([choose, checkStep, review][step]);
     back.hidden = step === 0;
     next.textContent = ['Check ›', 'Review ›', 'Write copies and submit'][step];
-    footLeft.textContent = step === 2 ? 'Copies are written next to the originals; the originals are never changed.' : '';
+    footLeft.replaceChildren(...(step === 2 ? [copiesHelp.button, copiesHelp.note] : []));
     next.disabled = false;
     if (step === 0) check();
     if (step === 1) next.disabled = !(state.prepared && state.prepared.ok);

@@ -592,6 +592,11 @@
     .rwf-row { display: grid; grid-template-columns: 130px 1fr auto; gap: 8px; align-items: center; }
     .rwf-row > input, .rwf-row > select { min-width: 0; }
     .rwf-row > select, .rwf-row > .rwf-check { grid-column: 2 / 4; }
+    /* a row with a "?" keeps it on the same line; its note lines up under the value */
+    .rwf-row:has(> .help-btn) > .rwf-check { grid-column: 2 / 3; }
+    .rwf-found-row:has(> .help-btn) { grid-template-columns: 130px 1fr auto; }
+    .rwf-step > .rwf-note { margin: -1px 0 4px 138px; }
+    .make-ref-settings-head { display: flex; align-items: center; gap: 4px; color: var(--ink-3); font-size: var(--fs-xs); }
     .rwf-row[hidden] { display: none; }
     #rwf-data-path { grid-column: 2; }
     .rwf-row .rwf-index { width: 64px; }

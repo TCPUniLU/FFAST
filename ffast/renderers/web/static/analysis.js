@@ -381,20 +381,35 @@ export class AnalysisManager {
       chip.textContent = c.text;
       strip.appendChild(chip);
     }
-    const rule = document.createElement('div');
-    rule.className = 'live-rule';
-    rule.textContent = liveRunRuleText(kw);
+    // The alarm rule is small print, behind a "?" at the end of the chips.
+    const ruleText = liveRunRuleText(kw);
+    const children = [strip];
+    let ruleBtn = null;
+    if (ruleText) {
+      const help = this._liveHelp(`rule:${kw.run_id}`, ruleText, 'the alarm rule', 'live-rule');
+      ruleBtn = help.button;
+      children.push(help.note);
+    }
     const problem = liveRunProblem(kw);
-    const children = [strip, rule];
     if (problem) {
       const p = document.createElement('div');
       p.className = 'live-problem';
       p.textContent = problem;
       children.push(p);
     }
+    if (ruleBtn) strip.appendChild(ruleBtn);
     const controls = this._liveControls?.(spec, kw);
     if (controls) strip.appendChild(controls);
     card.body.replaceChildren(...children);
+  }
+
+  /** A "?" and its note for a live card; the note stays open across redraws. */
+  _liveHelp(key, text, subject, cls) {
+    this._liveHelpOpen ??= new Set();
+    const help = helpToggle(text, { subject, open: this._liveHelpOpen.has(key),
+      onToggle: (open) => (open ? this._liveHelpOpen.add(key) : this._liveHelpOpen.delete(key)) });
+    help.note.classList.add(cls);
+    return help;
   }
 
   /** "Stop on alarm" and "Stop now…" for a running run; nothing once it ended. */
@@ -479,8 +494,11 @@ export class AnalysisManager {
         el('td', 'num', String(g.size)));
       table.appendChild(tr);
     }
-    const note = el('div', 'live-att-note', 'Strength ÷ threshold. Strengths overlap: they do not add up to '
-      + 'the score. Larger groups tend to score higher.');
+    // What a strength means is small print, behind a "?" in the head line.
+    const { button: noteBtn, note } = this._liveHelp(`att:${kw.run_id}`, 'Strength ÷ threshold. Strengths '
+      + 'overlap: they do not add up to the score. Larger groups tend to score higher.',
+      'a strength', 'live-att-explain');
+    head.appendChild(noteBtn);
     const scale = el('div', 'live-att-scale');
     const ticks = el('div', 'live-att-ticks');
     ticks.append(el('span', '', '0'), el('span', '', '1'), el('span', '', '≥ 2'));

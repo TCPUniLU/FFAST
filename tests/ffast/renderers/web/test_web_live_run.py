@@ -292,6 +292,10 @@ async def test_web_a_stopped_run_shows_its_alarm_moments_and_events(tmp_path):
 
 async def test_web_stop_now_asks_first_and_stop_on_alarm_switches(tmp_path):
     run = _run_folder(tmp_path, frames=2)
+    meta = rf.read_json(run / rf.RUN_JSON)
+    meta["analyses"] = {"0123456789abcdef": {"state": "scoring", "rule": {
+        "window_frames": 100, "step_frames": 10, "fraction_threshold": 0.2, "persist_ps": 5.0, "frame_ps": 0.05}}}
+    rf.write_json_atomic(run / rf.RUN_JSON, meta)
     async with _spawn_server() as (ws_port, web_port):
         await _wait_for_server_ready(ws_port)
         async with async_playwright() as p:
@@ -306,6 +310,16 @@ async def test_web_stop_now_asks_first_and_stop_on_alarm_switches(tmp_path):
                 active = page.locator(ACTIVE)
                 tick = active.locator(".live-stop-on-alarm")
                 await expect(tick).not_to_be_checked(timeout=15000)
+                # The alarm rule is small print: behind the status card's "?", and it
+                # stays open while the card redraws.
+                status = active.locator(".live-status")
+                rule = status.locator(".live-rule")
+                await expect(rule).to_be_hidden()
+                await status.locator(".help-btn").click()
+                await expect(rule).to_be_visible()
+                await expect(rule).to_contain_text("Alarm rule: 20 %")
+                await page.wait_for_timeout(1500)   # the card redraws every second
+                await expect(rule).to_be_visible()
                 await tick.check()
                 await expect(tick).to_be_checked(timeout=10000)
                 assert rf.read_json(run / rf.CONTROL)["stop_on_alarm"] is True
@@ -392,7 +406,12 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 await expect(page.locator("#frame-label")).to_have_text("2 / 2", timeout=10000)
                 await expect(att).to_contain_text("Step 200", timeout=15000)
                 await expect(att.locator("table.live-att-groups tr").nth(1)).to_be_visible()
-                await expect(att).to_contain_text("do not add up to the score")
+                # What a strength means is small print, behind the card's "?".
+                explain = att.locator(".live-att-explain")
+                await expect(explain).to_be_hidden()
+                await att.locator(".help-btn").click()
+                await expect(explain).to_be_visible()
+                await expect(explain).to_contain_text("do not add up to the score")
                 shown = "() => window.ffastApp.renderer.attributionShown"
                 await page.wait_for_function(shown, timeout=10000)
 
@@ -415,6 +434,7 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=10000)
                 await expect(att.locator(".live-att-head")).to_contain_text("Step 0", timeout=15000)
                 await expect(att).not_to_contain_text("Asking DetectAna")
+                await expect(explain).to_be_visible()   # stays open from frame to frame
             finally:
                 await browser.close()
 
@@ -585,6 +605,12 @@ async def test_web_make_reference_fits_a_bundle_from_two_loaded_datasets(tmp_pat
                 await _lammps_menu(page, "Make Reference…")
                 dialog = page.locator("#make-reference-dialog")
                 await expect(dialog.locator("#make-ref-train option")).to_have_count(2)
+                # The detection settings are small print, behind a "?".
+                settings = dialog.locator(".make-ref-settings")
+                await expect(settings).to_be_hidden()
+                await dialog.locator(".help-btn").click()
+                await expect(settings).to_be_visible()
+                await expect(settings).to_contain_text("False-alarm rate per frame 1 %")
                 # The same dataset twice is refused before anything is sent.
                 train_fp = await dialog.locator("#make-ref-train").input_value()
                 await dialog.locator("#make-ref-valid").select_option(train_fp)
