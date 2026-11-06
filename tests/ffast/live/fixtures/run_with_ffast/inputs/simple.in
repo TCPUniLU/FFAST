@@ -1,0 +1,16 @@
+# Aspirin NVT with a MACE potential
+units        metal
+atom_style   atomic
+boundary     f f f
+
+read_data    aspirin.data
+
+pair_style   mace no_domain_decomposition
+pair_coeff   * * aspirin.model-lammps.pt C H O
+
+timestep     0.0005
+velocity     all create 300.0 4928459 mom yes rot yes dist gaussian
+fix          nvt all nvt temp 300.0 300.0 0.05
+thermo       100
+restart      10000 aspirin.restart
+run          1000000

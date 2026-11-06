@@ -1,0 +1,6 @@
+units        metal
+variable     fresh index 1
+if "${fresh} == 1" then "read_data aspirin.data" else "read_restart aspirin.restart"
+pair_style   mace no_domain_decomposition
+fix          nve all nve
+run          1000

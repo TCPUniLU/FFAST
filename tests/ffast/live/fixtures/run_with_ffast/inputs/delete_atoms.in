@@ -1,0 +1,6 @@
+units        metal
+read_data    aspirin.data
+group        h type 2
+delete_atoms group h
+fix          nve all nve
+run          1000

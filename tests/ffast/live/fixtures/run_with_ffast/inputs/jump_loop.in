@@ -1,0 +1,11 @@
+units        metal
+read_data    aspirin.data
+pair_style   mace no_domain_decomposition
+pair_coeff   * * aspirin.model-lammps.pt C H O
+fix          nve all nve
+variable     a loop 3
+label        loop
+run          10000
+write_restart  aspirin.${a}.restart
+next         a
+jump         SELF loop

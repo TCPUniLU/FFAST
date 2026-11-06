@@ -1,0 +1,12 @@
+units        metal
+print """
+This input will run the aspirin model.
+clear notes: none
+run length below
+"""
+read_data    aspirin.data  # the start
+pair_style   mace no_domain_decomposition
+pair_coeff   * * aspirin.model-lammps.pt &
+             C H O
+fix          nve all nve
+run          1000

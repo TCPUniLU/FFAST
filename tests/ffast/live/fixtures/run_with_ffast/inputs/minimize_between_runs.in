@@ -1,0 +1,6 @@
+units        metal
+read_data    aspirin.data
+fix          nve all nve
+run          1000
+minimize     1.0e-6 1.0e-8 1000 10000
+run          1000

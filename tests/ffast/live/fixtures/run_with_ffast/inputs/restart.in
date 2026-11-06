@@ -1,0 +1,7 @@
+units        metal
+atom_style   atomic
+read_restart aspirin.restart.50000
+pair_style   mace no_domain_decomposition
+pair_coeff   * * aspirin.model-lammps.pt C H O
+fix          nvt all nvt temp 300.0 300.0 0.05
+run          500000 upto

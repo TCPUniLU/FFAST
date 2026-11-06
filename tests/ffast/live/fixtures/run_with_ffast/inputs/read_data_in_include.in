@@ -1,0 +1,6 @@
+units        metal
+include      setup.in
+pair_style   mace no_domain_decomposition
+pair_coeff   * * aspirin.model-lammps.pt C H O
+fix          nve all nve
+run          1000

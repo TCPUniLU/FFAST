@@ -1,0 +1,7 @@
+units        metal
+read_data    aspirin.data
+include      /project/home/pXXXXXX/refs/aspirin_mace.lmp
+pair_style   mace no_domain_decomposition
+pair_coeff   * * aspirin.model-lammps.pt C H O
+fix          nve all nve
+run          1000

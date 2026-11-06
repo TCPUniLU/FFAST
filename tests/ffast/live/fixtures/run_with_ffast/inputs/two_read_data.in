@@ -1,0 +1,5 @@
+units        metal
+read_data    aspirin.data
+read_data    water.data
+pair_style   mace no_domain_decomposition
+run          1000

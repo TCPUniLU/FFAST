@@ -1,0 +1,14 @@
+units        metal
+atom_style   atomic
+region       box block -10 10 -10 10 -10 10
+create_box   3 box
+create_atoms 1 single 0.0 0.0 0.0
+create_atoms 2 single 1.1 0.0 0.0
+create_atoms 3 single -1.2 0.0 0.0
+mass         1 12.011
+mass         2 1.008
+mass         3 15.999
+pair_style   mace no_domain_decomposition
+pair_coeff   * * model.pt C H O
+fix          nve all nve
+run          1000

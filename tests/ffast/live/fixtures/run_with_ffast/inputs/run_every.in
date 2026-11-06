@@ -1,0 +1,6 @@
+units        metal
+read_data    aspirin.data
+pair_style   mace no_domain_decomposition
+pair_coeff   * * aspirin.model-lammps.pt C H O
+fix          nve all nve
+run          10000 every 1000 "print 'checkpoint'"

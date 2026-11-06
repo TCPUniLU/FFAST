@@ -1,0 +1,14 @@
+units        metal
+atom_style   atomic
+read_data    aspirin.data
+pair_style   mace no_domain_decomposition
+pair_coeff   * * aspirin.model-lammps.pt C H O
+velocity     all create 100.0 1
+fix          t all nvt temp 100.0 100.0 0.05
+run          10000
+unfix        t
+fix          t all nvt temp 100.0 300.0 0.05
+run          50000
+unfix        t
+fix          t all nvt temp 300.0 300.0 0.05
+run          500000

@@ -1,0 +1,4 @@
+units        lj
+read_data    aspirin.data
+fix          nve all nve
+run          1000

@@ -1,0 +1,10 @@
+units        metal
+read_data    aspirin.data
+pair_style   mace no_domain_decomposition
+pair_coeff   * * aspirin.model-lammps.pt C H O
+fix          nve all nve
+run          1000
+clear
+units        metal
+read_data    other.data
+run          1000

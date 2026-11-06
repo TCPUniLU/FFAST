@@ -1,0 +1,5 @@
+variable     file index aspirin.data
+units        metal
+read_data    ${file}
+fix          nve all nve
+run          1000
