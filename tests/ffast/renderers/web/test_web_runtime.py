@@ -4578,6 +4578,74 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
                 await browser.close()
 
 
+# The smallest gap between a dialog's left edge and any words or control in
+# its body (title and buttons aside), in pixels.
+_DIALOG_INSET = """() => {
+  const panel = [...document.querySelectorAll('.warning-modal-panel')].find((p) => p.offsetWidth);
+  const left = panel.getBoundingClientRect().left;
+  let min = Infinity;
+  const walk = document.createTreeWalker(panel, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  while (walk.nextNode()) {
+    const n = walk.currentNode;
+    const el = n.nodeType === 3 ? n.parentElement : n;
+    if (el.closest('.warning-modal-title, .warning-modal-footer')) continue;
+    if (n.nodeType === 3 ? !n.textContent.trim() : !['INPUT', 'SELECT', 'BUTTON'].includes(n.tagName)) continue;
+    const range = document.createRange();
+    range.selectNodeContents(n);
+    const r = n.nodeType === 3 ? range.getBoundingClientRect() : n.getBoundingClientRect();
+    if (r.width) min = Math.min(min, r.left - left);
+  }
+  return min;
+}"""
+
+
+async def test_web_tab_settings_and_the_tab_being_edited(tmp_path):
+    """Dialogs keep their words off the left edge; Tab settings shows one tick
+    box per line, Same step in all 3D panels among them, and saves it; while a
+    tab is edited it is marked in the tab bar, and from another tab ✎ reads
+    Back to <tab> and leads back to it."""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 860})
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _lammps_menu(page, "Live Runs…")
+                assert await page.evaluate(_DIALOG_INSET) >= 10
+                await page.get_by_role("button", name="Close", exact=True).click()
+
+                await _open_analysis_tab(page, "Gyration")
+                await page.locator("#tab-edit-btn").click()
+                await page.locator("[data-edit=tab-settings]").click()
+                assert await page.evaluate(_DIALOG_INSET) >= 10
+                boxes = page.locator(".edit-modal .edit-check")
+                await expect(boxes).to_have_text(["Energy shift", "Same step in all 3D panels", "Element picker"])
+                tops = [(await boxes.nth(i).bounding_box())["y"] for i in range(3)]
+                assert tops[0] < tops[1] < tops[2], tops   # one per line
+                await page.locator(".edit-modal input[data-field=same_step]").check()
+                await page.get_by_role("button", name="Apply", exact=True).click()
+                assert "same_step" in await page.evaluate("() => window.ffastApp._editor.draft.controls")
+
+                edited = page.locator("#tabbar .tab", has_text="Gyration")
+                edit = page.locator("#tab-edit-btn")
+                await expect(edited).to_have_class(re.compile(r"\bediting\b"))
+                await expect(edit).to_be_disabled()   # on the edited tab: already editing
+                await _open_analysis_tab(page, "Basic Errors")
+                await expect(edited).to_have_class(re.compile(r"\bediting\b"))
+                await expect(page.locator("#tabbar .tab.editing")).to_have_count(1)
+                await expect(edit).to_have_text("Back to Gyration")
+                await edit.click()
+                await expect(edited).to_have_class(re.compile(r"\bactive\b"))
+                await expect(edit).to_have_text("Edit tab")
+
+                await page.locator("[data-edit=save]").click()
+                await expect(page.locator("#tabbar .tab.editing")).to_have_count(0)
+                assert "same_step" in (tabs_dir / "gyration.toml").read_text()
+                await expect(page.locator('.tabpanel.active .ac-item[data-control="same_step"]')).to_have_count(1)
+            finally:
+                await browser.close()
+
+
 async def test_web_edit_mode_plots_follow_their_cells_while_dragging(tmp_path):
     """Step 7 trial, redone for ADR 0069: resizing a panel by its corner shows
     a ghost, then the plot follows its cell in one step, not drawn again: moving

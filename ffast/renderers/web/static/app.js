@@ -761,7 +761,16 @@ export class FFastApp {
    * right-click menu. */
   _editCurrentTab() {
     const name = this._analysis.tab(this._activeTab)?.name;
-    if (!this._editor.editing && !this._whyNoEdit()) this._editor.editTab(name);
+    const away = this._editedTabAway();
+    if (away) this._selectTab(away);
+    else if (!this._editor.editing && !this._whyNoEdit()) this._editor.editTab(name);
+  }
+
+  /** The id of the tab being edited when another tab is on screen, else null. */
+  _editedTabAway() {
+    const draft = this._editor.draft;
+    if (!draft || this._analysis.tab(this._activeTab)?.name === draft.name) return null;
+    return this._analysis.tabList.find((t) => t.name === draft.name)?.id ?? null;
   }
 
   /** Right-click on a tab: open it, then show the tab menu under it with
@@ -860,10 +869,27 @@ export class FFastApp {
     const edit = document.getElementById('tab-edit-btn');
     const spec = this._analysis.tab(this._activeTab)?.spec;
     const fromServer = this._layoutTabs.some((t) => t.name === spec?.name);
-    const why = this._whyNoEdit() || (fromServer ? '' : 'This tab is not from the server');
+    // While a tab is edited and another is on screen, ✎ leads back to it, and
+    // the edited tab is marked in the bar, so it is plain which one is edited.
+    const draft = this._editor.draft;
+    const away = this._editedTabAway();
+    const why = away ? '' : this._whyNoEdit() || (fromServer ? '' : 'This tab is not from the server');
     edit.disabled = !!why;
-    edit.title = why || 'Edit this tab';
-    edit.classList.toggle('active', this._editor.editing);
+    edit.title = away ? `Go back to ${draft.name}, the tab being edited` : why || 'Edit this tab';
+    const text = away ? `Back to ${draft.name}` : 'Edit tab';
+    if (edit.dataset.text !== text) {
+      edit.dataset.text = text;
+      edit.innerHTML = `${icon('pencil')} `;
+      edit.append(text);
+      edit.setAttribute('aria-label', away ? `Back to editing ${draft.name}` : 'Edit this tab');
+    }
+    edit.classList.toggle('active', !!draft);
+    edit.classList.toggle('away', !!away);
+    for (const el of document.querySelectorAll('#tabbar .tab')) {
+      const edited = !!draft && el.dataset.name === draft.name;
+      el.classList.toggle('editing', edited);
+      if (edited) el.title = 'Being edited: Save or Cancel in its edit bar';
+    }
     // the caption drop-downs grey what would change a tab that cannot change now
     this._syncCaptions();
   }
