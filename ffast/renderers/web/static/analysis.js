@@ -206,6 +206,9 @@ export class AnalysisManager {
     this._onSub = deps.onSub;
     // A live run's stop controls and attribution ask the app (live_ui.js).
     this._onLive = deps.onLive;
+    // The 3D panel an attribution card explains: its caption picker (app.js).
+    this._explainsChoices = deps.explainsChoices;
+    this._onExplains = deps.onExplains;
     this._onSameStep = deps.onSameStep;
     this._onFreeze = deps.onFreeze;
     this._seriesColour = deps.seriesColour;
@@ -367,6 +370,7 @@ export class AnalysisManager {
     const plain = this._tabDatasets(t).filter((fp) => !String(fp).startsWith('live:'));
     if (part === 'scores') return this._drawLiveScores(t, spec, card, token, ready, runs, plain);
     card.captionEl.hidden = true;
+    if (part === 'attribution') this._drawExplains(t, spec, card);
     card.body.className = `live-part live-${part}`;
     if (!ready.length) {
       const own = plain[0] ? liveNoScoreMessage(this._nameOf('datasets', plain[0])) : '';
@@ -498,6 +502,44 @@ export class AnalysisManager {
 
   /** The clicked frame's strongest descriptor groups, as strength ÷ threshold
    * (never shares), with the test explained and the colour switch. */
+  /** A 3D panel of the tab on screen changed what it shows: the attribution
+   * cards' "Explains" pickers name it anew. */
+  syncExplains() {
+    const t = this._activeTab();
+    if (!t || !t.slots.every((slot) => slot.cards)) return;
+    for (const slot of t.slots) {
+      slot.cards.forEach((card, i) => {
+        const spec = slot.specs[i];
+        if (spec.kind === 'live' && spec.options?.part === 'attribution') this._drawExplains(t, spec, card);
+      });
+    }
+  }
+
+  /** The attribution card's caption line: "Explains:" and a drop-down of the
+   * tab's 3D panels, like a 3D panel's own caption picker. Saved in the tab. */
+  _drawExplains(t, spec, card) {
+    const choices = this._explainsChoices?.(t, spec);
+    if (!choices?.options.length) return;
+    let pick = card.captionText.querySelector('select.live-att-explains');
+    if (!pick) {
+      pick = document.createElement('select');
+      pick.className = 'live-att-explains';
+      pick.setAttribute('aria-label', 'The 3D panel this attribution explains');
+      pick.addEventListener('change', () => this._onExplains?.(t.spec.name, spec, Number(pick.value)));
+      card.captionText.replaceChildren('Explains ', pick);
+    }
+    pick.replaceChildren(...choices.options.map((o) => {
+      const option = document.createElement('option');
+      option.value = String(o.value);
+      option.textContent = o.label;
+      return option;
+    }));
+    pick.value = String(choices.value);
+    pick.disabled = !!choices.why;
+    pick.title = choices.why || '';
+    card.captionEl.hidden = false;
+  }
+
   _drawLiveAttribution(spec, card, ready) {
     // The run clicked or shown last, when it is ticked in this tab.
     const kw = ready.find((x) => x.kw.run_id === this._attRun)?.kw;

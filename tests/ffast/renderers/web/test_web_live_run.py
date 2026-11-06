@@ -466,6 +466,16 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=10000)
                 # The shown frame is explained without a click.
                 await expect(att).to_contain_text("Step 0", timeout=15000)
+                # The tab's 3D panel is the run's own view, and attribution
+                # explains that panel, as its "Explains" picker says.
+                where = await page.evaluate("""() => {
+                  const app = window.ffastApp, tab = app._analysis.tab(app._activeTab);
+                  const [view] = app._independent.forTab(tab);
+                  return {own: view?.datasetFp, explains: app._attributionSource().view === view?.renderers};
+                }""")
+                assert where == {"own": f"live:{run.name}", "explains": True}
+                await expect(att.locator("xpath=..").locator("select.live-att-explains")).to_contain_text(
+                    "(own view)")
 
                 xy = await page.evaluate("""(sel) => {
                   const el = document.querySelector(sel + ' .analysis-panel[data-part="scores"] .panel-plot');
@@ -513,6 +523,48 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 await expect(att.locator(".live-att-head")).to_contain_text("Step 0", timeout=15000)
                 await expect(att).not_to_contain_text("Asking DetectAna")
                 await expect(explain).to_be_visible()   # stays open from frame to frame
+            finally:
+                await browser.close()
+
+
+async def test_web_the_attribution_card_explains_the_3d_panel_picked_in_it(tmp_path):
+    from tests.ffast.live.test_live_run import _scored_run_with_bundle
+
+    run, _ = _scored_run_with_bundle(tmp_path)
+    [adir] = list((run / rf.ANALYSIS_DIR).iterdir())
+    rf.ScoresWriter(adir / rf.SCORES).append([
+        {"segment": 0, "frame": k, "step": 100 * k, "time": 0.05 * k, "identity": "proven",
+         "tracks": {}, "exceedance": 0.5, "test": ["bonds", "T2"], "marked": False,
+         "chem": {"broken": 0, "close": 0}} for k in range(3)])
+    tabs = tmp_path / "tabs"
+    _seed_two_own_view_live_layout(tabs, attribution=True)
+    async with _spawn_server("--tabs-dir", str(tabs)) as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1600, "height": 1000})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _open_run(page, run)
+                active = page.locator(ACTIVE)
+                att = active.locator(".live-attribution")
+                pick = active.locator("select.live-att-explains")
+                # Both panels show the run; the second is moved to frame 2.
+                await expect(att.locator(".live-att-head")).to_contain_text("Step 0", timeout=20000)
+                await page.evaluate("""() => {
+                  const app = window.ffastApp, tab = app._analysis.tab(app._activeTab);
+                  const [, v2] = app._independent.forTab(tab);
+                  app._independent.setFrame(v2, 2);
+                }""")
+                await expect(pick.locator("option")).to_have_count(2)
+                await expect(pick).to_have_value("0")   # the first 3D panel by default
+                await expect(att.locator(".live-att-head")).to_contain_text("Step 0")
+                # Picking the second panel explains its frame, and is saved in the layout.
+                await pick.select_option("1")
+                await expect(active.locator("select.live-att-explains")).to_have_value("1", timeout=15000)
+                await expect(att.locator(".live-att-head")).to_contain_text("Step 200", timeout=15000)
+                assert "explains = 1" in (tabs / "live-run.toml").read_text()
             finally:
                 await browser.close()
 
@@ -811,6 +863,14 @@ async def test_web_a_live_tab_draws_the_runs_ticked_in_its_selector(tmp_path):
                 await _open_run(page, b)
                 await expect(page.locator("#tabbar .tab", has_text="Live 13:00:00 node")).to_be_visible(timeout=15000)
                 await expect(page.locator("#dataset-list .obj-row")).to_have_count(2, timeout=15000)
+                # Run B's tab shows it in its own 3D panel: opening B left the main
+                # view on run A (the first dataset, shown there as any first one is).
+                shows = """() => {
+                  const app = window.ffastApp, tab = app._analysis.tab(app._activeTab);
+                  return [app._currentDatasetFp, app._independent.forTab(tab).map((v) => v.datasetFp)];
+                }"""
+                await page.wait_for_function(f"() => ({shows})()[1][0]", timeout=15000)
+                assert await page.evaluate(shows) == [f"live:{RUN_A}", [f"live:{RUN_B}"]]
 
                 # Each run has its own tab, opened with that run ticked and no other.
                 await page.locator("#tabbar .tab", has_text="Live 12:00:00 node").click()
@@ -945,8 +1005,9 @@ def _stepped_run(root, run_id, every, n, level=0.5):
     return run
 
 
-def _seed_two_own_view_live_layout(tabs):
-    """A user "Live run" layout with two own-view 3D panels and the Same step control."""
+def _seed_two_own_view_live_layout(tabs, attribution=False):
+    """A user "Live run" layout with two own-view 3D panels and the Same step
+    control; with `attribution`, an attribution card below them."""
     import tomli_w
 
     tabs.mkdir()
@@ -956,6 +1017,9 @@ def _seed_two_own_view_live_layout(tabs):
         {"kind": "live", "row": 0, "col": 16, "rowspan": 8, "colspan": 8, "title": "Scores",
          "options": {"part": "scores"}},
     ]
+    if attribution:
+        panels.append({"kind": "live", "row": 8, "col": 0, "rowspan": 8, "colspan": 24,
+                       "title": "Attribution", "options": {"part": "attribution"}})
     tab = {"name": "Live run", "live_layout": True, "grid": 24, "controls": ["same_step"], "panels": panels}
     (tabs / "live-run.toml").write_text(tomli_w.dumps({"tabs": [tab]}))
     (tabs / "state.json").write_text(json.dumps(

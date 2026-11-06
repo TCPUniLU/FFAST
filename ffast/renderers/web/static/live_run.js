@@ -221,6 +221,13 @@ export function attributionColours(result) {
   };
 }
 
+/** Which of a tab's `count` 3D panels (in layout order) an attribution card
+ * explains: its `explains` option, else the first. */
+export function explainsIndex(spec, count) {
+  const i = spec?.options?.explains;
+  return Number.isInteger(i) && i >= 0 && i < count ? i : 0;
+}
+
 /** Whether two LIVE_RUN_UPDATEs say the same: the server sends a run again
  * every 10 s for windows that connect later, mostly unchanged. Compares
  * plain decoded values (objects, arrays, numbers, strings, null). */

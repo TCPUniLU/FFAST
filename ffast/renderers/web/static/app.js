@@ -28,6 +28,7 @@ import { createAlignPane } from './panes/align.js';
 import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
 import { LiveUi } from './live_ui.js';
+import { explainsIndex } from './live_run.js';
 import { Rail, framesText, nameProblem } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
@@ -171,6 +172,7 @@ export class FFastApp {
         this._syncSameStep({ view, datasetFp: view.datasetFp, frame: view.frame ?? 0 });
         if (this._playbackView() === view) this._syncPlayback();
         if (view === this._focused()) this._reloadForcePicks();
+        this._liveUi?.sync();   // attribution may explain this panel's frame
       },
       sceneAtoms: (view, atoms) => {
         if (this._focusedIndependent === view) this._panes.colorBy.setColorBy(atoms.color_by || null);
@@ -324,6 +326,8 @@ export class FFastApp {
         seriesColourOwner(datasetFp, modelFp, !!this._datasets.get(datasetFp)?.parent)),
       onPointFrame: (o) => this._onPlotPoint(o),
       onLive: (cmd) => this._liveCommand(cmd),
+      explainsChoices: (t, spec) => this._explainsChoices(t, spec),
+      onExplains: (tabName, spec, index) => this._setExplains(tabName, spec, index),
       onSameStep: () => this._syncSameStep({ view: null, datasetFp: this._currentDatasetFp,
         frame: this._main.current?.frame ?? 0 }),
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
@@ -480,6 +484,7 @@ export class FFastApp {
     // 2D panels render (or refresh) lazily on activation.
     this._analysis.activate(id);
     this._syncEmptyState();
+    this._liveUi?.sync();   // attribution explains a 3D panel of the tab on screen
   }
 
   /** The 3D controls go into a tab with a 3D panel: the pick bar above its
@@ -1390,6 +1395,7 @@ export class FFastApp {
       linked: panel.linked, shows: view?.datasetFp ?? null, datasets, stays,
       noSave: this._whyNoCaptionSave(place),
     }), model, view?.note || '');
+    this._analysis?.syncExplains();   // the attribution pickers name what each 3D panel shows
   }
 
   _syncCaptions() {
@@ -1414,6 +1420,51 @@ export class FFastApp {
     const r = await this._tabOps.save(toSaved(setPanelLabels(server, index, patch)), server.name);
     this._reportTab(r);
     return r;
+  }
+
+  /** What attribution explains: the 3D panel picked in the attribution card
+   * of the tab on screen (the tab's first 3D panel by default), its dataset,
+   * frame and renderers; the main view when the tab has no such card. */
+  _attributionSource() {
+    const main = { datasetFp: this._currentDatasetFp, frame: this._main.current?.frame ?? null,
+      view: this._mainView };
+    const tab = this._analysis?.tab(this._activeTab);
+    const card = tab?.spec.panels.find((p) => p.kind === 'live' && p.options?.part === 'attribution');
+    const cells = tab?.cells3d || [];
+    if (!card || !cells.length) return main;
+    const view = this._panels3d.get(cells[explainsIndex(card, cells.length)].el)?.independent;
+    return view ? { datasetFp: view.datasetFp, frame: view.frame ?? null, view: view.renderers } : main;
+  }
+
+  /** The choices of an attribution card's "Explains" picker: the tab's 3D
+   * panels, each by its letter and what it shows. */
+  _explainsChoices(t, spec) {
+    const cells = t.cells3d || [];
+    const name = (fp) => (fp ? this._datasets.get(fp)?.name || fp.slice(0, 8) : 'nothing yet');
+    const options = cells.map((cell, i) => {
+      const view = this._panels3d.get(cell.el)?.independent;
+      const letter = t.letters?.get(t.spec.panels.indexOf(cell.spec)) || String(i + 1);
+      const what = view ? `${name(view.datasetFp)} (own view)` : `Main view (${name(this._currentDatasetFp)})`;
+      return { value: i, label: `${letter} · ${what}` };
+    });
+    const fromServer = this._layoutTabs.some((x) => x.name === t.spec.name);
+    return { options, value: explainsIndex(spec, cells.length),
+      why: this._whyNoEdit() || (fromServer ? '' : 'This tab is not from the server') };
+  }
+
+  /** The "Explains" picker chose the tab's `index`-th 3D panel: saved in the
+   * tab, as a 3D panel's caption choice is (a live tab saves the Live run
+   * layout, ADR 0089). */
+  async _setExplains(tabName, spec, index) {
+    const server = this._layoutTabs.find((t) => t.name === tabName);
+    const at = (server?.panels || []).findIndex(
+      (p) => p.kind === spec.kind && p.row === spec.row && p.col === spec.col);
+    const why = this._whyNoEdit() || (at < 0 ? 'This tab is not from the server' : '');
+    if (why) { this._setStatus(why, 'error'); return; }
+    const panels = server.panels.map((p, i) => (i === at
+      ? { ...p, options: { ...(p.options || {}), explains: index } } : p));
+    const next = { ...server, name: server.layout_of || server.name, panels };
+    this._reportTab(await this._tabOps.save(toSaved(next), server.name));
   }
 
   async _chooseShown(panel, value) {
@@ -2640,7 +2691,7 @@ export class FFastApp {
     this._liveUi ??= new LiveUi({
       send: (event, kw) => this._conn?.send(event, kw, []),
       analysis: this._analysis, mainView: this._mainView,
-      shown: () => ({ datasetFp: this._currentDatasetFp, frame: this._main.current?.frame ?? null }),
+      shown: () => this._attributionSource(),
       runOf: (fp) => this._analysis.liveRunOf(fp),
       follow: (path) => this._followLiveRun(path),
       askPath: () => this._openLiveRun(),
@@ -2649,8 +2700,8 @@ export class FFastApp {
   }
 
   /** A live run's state and scores (ADR 0087): its tab's score panel draws
-   * them. The window that opened the run goes to the run's tab and shows its
-   * frames in the main view, once the run has frames and its tab is listed. */
+   * them. The window that opened the run goes to the run's tab, once the run
+   * has frames and its tab is listed; the tab's own 3D panel shows them. */
   _onLiveRunUpdate(kw) {
     if (!kw.run_id) {
       if (kw.error) this._setStatus(`Live run: ${kw.error}`, 'error');
@@ -2662,9 +2713,8 @@ export class FFastApp {
     if (!this._liveRunWanted || !kw.fingerprint || !tabId) return;
     this._liveRunWanted = false;
     this._setStatus(`Live run ${kw.run_id}`, 'connected');
+    // The tab's own 3D panel shows the run; the main view keeps what it shows.
     this._selectTab(tabId);
-    if (this._datasets.has(kw.fingerprint)) this._showInMainView(kw.fingerprint);
-    else this._showWhenKnown = kw.fingerprint;
   }
 
   _showInMainView(fp, frame = null) {

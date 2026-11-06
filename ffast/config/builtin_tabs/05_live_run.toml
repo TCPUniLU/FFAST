@@ -17,12 +17,16 @@ colspan = 24
 title = "Run"
 options = { part = "status" }
 
+# The run's own view: it shows the run ticked in the tab (the tab opens with
+# its run ticked), whatever the main view shows; its frame is its own.
 [[tabs.panels]]
 kind = "3d"
 row = 2
 col = 0
 rowspan = 10
 colspan = 8
+view = "independent"
+link_frame = false
 
 [[tabs.panels]]
 kind = "live"

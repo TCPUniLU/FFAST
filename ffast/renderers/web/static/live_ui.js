@@ -3,9 +3,10 @@
  * - asks before "Stop now", and sends the stop and stop-on-alarm requests
  *   (the server writes them into the run folder; the run's wrapper and scorer
  *   act on them);
- * - asks for the attribution of the frame the main view shows (the frame
- *   slider, playback, a clicked score point), shows it in the run's
- *   attribution panel and colours the main view by it. One request per run
+ * - asks for the attribution of the frame the 3D panel its attribution card
+ *   explains shows (the frame slider, playback, a clicked score point; the
+ *   main view where no card says), shows it in the card and colours that
+ *   panel by it. One request per run
  *   is in flight: frames passed while it is computed are skipped and the
  *   last one is asked next, so dragging the slider does not queue work. Until
  *   the new frame's answer comes the colours are off and the list stays,
@@ -34,7 +35,8 @@ export class LiveUi {
    * @param {{send: (event: string, kw: object) => void,
    *   analysis?: {setLiveAttribution: (runId: string, state: object) => void},
    *   mainView?: {setAttribution: (att: object|null) => void},
-   *   shown?: () => {datasetFp: string|null, frame: number|null},
+   *   shown?: () => {datasetFp: string|null, frame: number|null,
+   *     view?: {setAttribution: (att: object|null) => void}|null},
    *   runOf?: (datasetFp: string|null) => {run_id: string, bundle: string|null}|null,
    *   follow?: (path: string) => void, askPath?: () => void}} deps
    */
@@ -52,7 +54,8 @@ export class LiveUi {
     this._att = new Map();
     /** run id → the request in flight ("frame|track|score"). */
     this._inFlight = new Map();
-    this._coloured = null;   // the run id whose attribution colours the main view
+    this._coloured = null;   // the run id whose attribution colours a view
+    this._colouredView = null;   // ...and that view
   }
 
   /** A command from a live panel: {action: 'stop' | 'manage' | 'stop_on_alarm' | 'attribute' | 'attribution_mode', run_id, …}. */
@@ -149,8 +152,10 @@ export class LiveUi {
     this._send(OUT.LIVE_ATTRIBUTION, kw);
   }
 
-  /** The main view changed (a new frame or dataset) or a run's state came:
-   * a live run's shown frame is asked for; colours only on the explained frame. */
+  /** The shown 3D view changed (a new frame, dataset, or another view) or a
+   * run's state came: a live run's shown frame is asked for; colours only on
+   * the explained frame, in the view that shows it (`shown().view`, else the
+   * main view). */
   sync() {
     const shown = this._shown();
     const run = this._runOf(shown.datasetFp);
@@ -165,9 +170,13 @@ export class LiveUi {
       if (s.mode === 'attribution' && r && !r.error && r.fingerprint === shown.datasetFp
           && r.frame === shown.frame) want = runId;
     }
-    if (want === this._coloured) return;
+    const target = shown.view ?? this._mainView;
+    if (want === this._coloured && target === this._colouredView) return;
+    // The colours leave a view the attribution no longer explains.
+    if (this._colouredView && this._colouredView !== target) this._colouredView.setAttribution(null);
     this._coloured = want;
-    this._mainView?.setAttribution(want ? attributionColours(this._att.get(want).result) : null);
+    this._colouredView = target;
+    target?.setAttribution(want ? attributionColours(this._att.get(want).result) : null);
   }
 
   _set(runId, state) {
