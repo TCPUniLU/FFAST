@@ -346,6 +346,8 @@ class Scorer:
         if not self.tracker:
             return
         for alarm in self.tracker.push(rec):
+            if alarm.kind == "ood":
+                self._update_chance()   # the last update: the chance freezes at the first alarm
             self._raise(bundle, alarm)
         self._since_chance += 1
         if self._since_chance >= CHANCE_EVERY and "ood" not in self.tracker.alarms:

@@ -284,6 +284,16 @@ def test_a_persisting_anomaly_raises_one_alarm_with_onset_confirmation_and_repor
     assert not (run / rf.STOP_REQUEST).exists() and _events(run, "stop_requested") == []
 
 
+def test_the_false_alarm_chance_counts_the_frames_up_to_the_first_alarm(tmp_path, bundle_dir, records):
+    # The chance is updated every 100 frames and frozen at the first alarm; an
+    # alarm before frame 100 must still leave the chance measured on its frames.
+    run = _alarm_run(tmp_path, bundle_dir)
+    _done(run)
+    Scorer(run, poll_s=0.01).run()
+    fa = rf.read_json(_analysis(run) / rf.PROGRESS)["false_alarm"]
+    assert fa["rho_frames"] == 32   # frames 0..31, the confirmation frame included
+
+
 def test_stop_on_alarm_asks_the_wrapper_to_stop(tmp_path, bundle_dir, records):
     run = _alarm_run(tmp_path, bundle_dir, extra="persist_ps 0.5\nstop_on_alarm 1\n")
     _done(run)
