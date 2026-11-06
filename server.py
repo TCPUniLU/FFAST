@@ -818,6 +818,30 @@ async def _main(
     await asyncio.gather(*coros)
 
 
+def parent_gone(pid: int) -> bool:
+    """True once ``pid`` is no longer this process's parent (it exited, and
+    this process was handed to another parent)."""
+    return os.getppid() != pid
+
+
+def _exit_with_parent(pid: int, interval: float = 2.0, gone=parent_gone) -> "threading.Thread":
+    """Watch the launcher that started this server; when it is gone, stop as
+    Ctrl-C would (``ffast-web`` killed with ``kill -9`` cannot stop us itself)."""
+    import signal
+    import threading
+    import time
+
+    def watch():
+        while not gone(pid):
+            time.sleep(interval)
+        logger.info("The launcher (pid %d) is gone; shutting down", pid)
+        os.kill(os.getpid(), signal.SIGINT)
+
+    t = threading.Thread(target=watch, name="ffast-parent-watch", daemon=True)
+    t.start()
+    return t
+
+
 def cli():
     _setupServerLogger()
 
@@ -931,7 +955,18 @@ def cli():
              "DIR/trace-<date-time>.log (default DIR: ~/.ffast/logs), to find "
              "the source of a bug. The last 10 trace files are kept.",
     )
+    parser.add_argument(
+        "--exit-with-parent",
+        type=int,
+        default=None,
+        metavar="PID",
+        help="Shut down when process PID (the launcher that started this server) "
+             "is gone, even if it was killed without a chance to stop us. "
+             "The `ffast-web` launcher passes its own PID.",
+    )
     args = parser.parse_args()
+    if args.exit_with_parent:
+        _exit_with_parent(args.exit_with_parent)
     if args.frame_index_dir:
         from pathlib import Path
 

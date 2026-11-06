@@ -203,7 +203,10 @@ def _spawn_server(ws_port: int, host: str = LOOPBACK, trace: bool = False,
     process's folder (no ``cwd`` is passed), which is where the file browser
     then starts.
     """
-    args = ["--host", host, "--port", str(ws_port), "--snapshot-interval", "0"]
+    # --exit-with-parent: the server stops itself if this launcher dies
+    # without stopping it (kill -9); SIGTERM/SIGHUP are handled in run().
+    args = ["--host", host, "--port", str(ws_port), "--snapshot-interval", "0",
+            "--exit-with-parent", str(os.getpid())]
     if trace:
         args.append("--trace")
     if workdir:
@@ -220,6 +223,23 @@ def _terminate(proc: subprocess.Popen) -> None:
             proc.terminate()
     except Exception:  # pragma: no cover - best-effort teardown
         pass
+
+
+def _interrupt(signum, _frame):
+    raise KeyboardInterrupt(f"signal {signum}")
+
+
+def _stop_on_signals() -> None:
+    """SIGTERM and SIGHUP raise KeyboardInterrupt, as Ctrl-C does (main thread only)."""
+    import signal
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        return
+    for name in ("SIGTERM", "SIGHUP"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            signal.signal(sig, _interrupt)
 
 
 def run(
@@ -287,6 +307,10 @@ def run(
     if not block:
         return result
 
+    # `kill` (SIGTERM) or a closed terminal (SIGHUP) end the launcher like
+    # Ctrl-C, so the cleanup below stops the server; before, they left it
+    # running and holding its port.
+    _stop_on_signals()
     try:
         proc.wait()
     except KeyboardInterrupt:
