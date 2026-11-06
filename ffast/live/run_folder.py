@@ -52,6 +52,9 @@ ALARMS_DIR = "alarms"
 CONTROL = "control.json"
 STOP_REQUEST = "stop_request.json"
 STOP = "STOP"
+# One-off snapshot of the atoms as loaded, written by a "Run with FFAST" copy
+# that minimizes before its first run; proves atom order (ADR 0086).
+START_SNAPSHOT = "start.lammpstrj"
 
 RUN_DIR_ENV = "FFAST_RUN_DIR"
 LIVE_RUNS_ENV = "FFAST_LIVE_RUNS"

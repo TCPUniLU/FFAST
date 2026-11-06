@@ -116,6 +116,51 @@ def test_a_record_for_another_bundle_does_not_prove_identity(tmp_path, bundle_di
     assert rf.read_scores(_analysis(run) / rf.SCORES)[0]["identity"] == "unverified"
 
 
+def _snapshot(run_dir, positions, elements=ASPIRIN_ELEMENTS):
+    """``start.lammpstrj`` as the Run-with-FFAST copy's write_dump writes it."""
+    (run_dir / rf.START_SNAPSHOT).write_text(frame_text(0, positions, elements, units="metal"))
+
+
+def test_a_start_snapshot_proves_the_order_of_a_minimized_run(tmp_path, bundle_dir, records):
+    run = _run_dir(tmp_path, bundle_dir)
+    loaded = _frames(1)[0]
+    _record(loaded, bundle_dir)                     # the data file FFAST wrote
+    _snapshot(run, loaded)
+    minimized = _frames(3, seed=4, first_exact=False)   # atoms moved by minimize
+    (run / rf.FRAMES).write_text(dump_text(minimized))
+    _done(run)
+    Scorer(run, poll_s=0.01).run()
+    rows = rf.read_scores(_analysis(run) / rf.SCORES)
+    assert [r["identity"] for r in rows] == ["proven"] * 3
+    [ident] = [e for e in rf.read_events(run) if e["kind"] == "identity"]
+    assert ident["from"] == "snapshot" and ident["data_file"] == "run.data"
+
+
+def test_a_snapshot_with_other_atoms_proves_nothing(tmp_path, bundle_dir, records):
+    run = _run_dir(tmp_path, bundle_dir)
+    loaded = _frames(1)[0]
+    _record(loaded, bundle_dir)
+    swapped = list(ASPIRIN_ELEMENTS)
+    swapped[0], swapped[-1] = swapped[-1], swapped[0]
+    _snapshot(run, loaded, swapped)
+    (run / rf.FRAMES).write_text(dump_text(_frames(2, seed=4, first_exact=False)))
+    _done(run)
+    Scorer(run, poll_s=0.01).run()
+    assert rf.read_scores(_analysis(run) / rf.SCORES)[0]["identity"] == "unverified"
+
+
+def test_an_unrecorded_snapshot_leaves_the_order_unverified(tmp_path, bundle_dir, records):
+    run = _run_dir(tmp_path, bundle_dir)
+    frames = _frames(2)
+    _record(frames[0], bundle_dir)
+    _snapshot(run, frames[0] + 0.001)               # not the recorded coordinates
+    (run / rf.FRAMES).write_text(dump_text(frames))
+    _done(run)
+    Scorer(run, poll_s=0.01).run()
+    rows = rf.read_scores(_analysis(run) / rf.SCORES)
+    assert rows[0]["identity"] == "unverified"      # the snapshot, when present, decides
+
+
 def test_units_other_than_metal_or_real_are_refused(tmp_path, bundle_dir, records):
     run = _run_dir(tmp_path, bundle_dir)
     (run / rf.FRAMES).write_text(dump_text(_frames(2), units="lj"))

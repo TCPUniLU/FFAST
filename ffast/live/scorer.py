@@ -258,20 +258,46 @@ class Scorer:
         return (end - self.first["step"]) // self.every + 1
 
     # ── frames ──────────────────────────────────────────────────────────────
-    def _check_first(self, bundle, frame) -> None:
-        from ffast.live.data_file import find_record
+    def _identity_source(self, frame) -> tuple[str, dict | None]:
+        """Which frame proves atom order, and its data-file record (or None).
 
+        A copy that minimizes first writes ``start.lammpstrj`` right after the
+        atoms are loaded and starts the dump only before the first ``run``.
+        Minimizing moves atoms but never renumbers them, and both files are
+        sorted by atom id, so the snapshot proves the order of every frame
+        when its ids and elements equal the first frame's.
+        """
+        from ffast.live.data_file import find_record
+        from ffast.live.dump_reader import DumpReader
+
+        path = self.run_dir / rf.START_SNAPSHOT
+        if not path.exists():
+            return "first_frame", find_record(frame.positions)
+        try:
+            snaps, _ = DumpReader(path).finish()
+        except Exception as exc:   # an unreadable snapshot proves nothing
+            log.warning("start snapshot unreadable: %s", exc)
+            return "snapshot", None
+        if not snaps:
+            return "snapshot", None
+        snap = snaps[0]
+        if not (np.array_equal(snap.ids, frame.ids) and tuple(snap.elements) == tuple(frame.elements)):
+            log.warning("start snapshot has other atoms than the first frame")
+            return "snapshot", None
+        return "snapshot", find_record(snap.positions)
+
+    def _check_first(self, bundle, frame) -> None:
         if frame.units not in ACCEPTED_UNITS:
             raise Refused(f"LAMMPS units {frame.units!r}; FFAST scores only metal and real (Å)")
         try:
             check = bundle.validate_frame(frame.elements, frame.positions)
         except Exception as exc:
             raise Refused(f"first frame (step {frame.step}) does not match the bundle: {exc}") from exc
-        rec = find_record(frame.positions)
+        source, rec = self._identity_source(frame)
         proven = rec is not None and rec.get("bundle_sha256") == self.bundle_sha
         identity = "proven" if proven else "unverified"
         rf.append_event(self.run_dir, "identity", identity=identity, step=frame.step,
-                        data_file=(rec or {}).get("data_file"), check=check.summary)
+                        data_file=(rec or {}).get("data_file"), check=check.summary, **{"from": source})
         if not proven and not check.ok:
             raise Refused(
                 "atom order unverified and the first frame fails the bond check: either the "
