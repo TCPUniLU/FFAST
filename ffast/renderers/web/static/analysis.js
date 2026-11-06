@@ -461,7 +461,8 @@ export class AnalysisManager {
     return help;
   }
 
-  /** "Stop on alarm" and "Stop now…" for a running run; nothing once it ended. */
+  /** "Stop on alarm" and a "Manage…" link to the Live Runs dialog, where "Stop
+   * now…" is (ADR 0089); nothing once the run ended. */
   _liveControls(spec, kw) {
     if (kw.end || !this._onLive) return null;
     const box = document.createElement('span');
@@ -473,14 +474,12 @@ export class AnalysisManager {
     tick.checked = !!kw.stop_on_alarm;
     tick.addEventListener('change', () => this._onLive({ action: 'stop_on_alarm', run_id: kw.run_id, on: tick.checked }));
     label.append(tick, 'Stop on alarm');
-    const stop = document.createElement('button');
-    stop.type = 'button';
-    stop.className = 'danger live-stop-now';
-    stop.textContent = kw.stop_requested ? 'Stop requested' : 'Stop now…';
-    stop.disabled = !!kw.stop_requested;
-    stop.addEventListener('click', () => this._onLive({ action: 'stop', run_id: kw.run_id,
-      processes: kw.progress?.processes ?? null }));
-    box.append(label, stop);
+    const manage = document.createElement('button');
+    manage.type = 'button';
+    manage.className = 'live-manage';
+    manage.textContent = 'Manage…';
+    manage.addEventListener('click', () => this._onLive({ action: 'manage', run_id: kw.run_id }));
+    box.append(label, manage);
     return box;
   }
 

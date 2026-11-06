@@ -30,7 +30,7 @@ def _age_s(utc: str | None, now: _dt.datetime) -> float | None:
     return max(0.0, (now - t).total_seconds())
 
 
-def _row(pointer: dict, now: _dt.datetime) -> dict:
+def _row(pointer: dict, now: _dt.datetime, open_ids=()) -> dict:
     from ffast.live.live_run import tab_name
 
     run_id = str(pointer.get("run_id", ""))
@@ -38,7 +38,8 @@ def _row(pointer: dict, now: _dt.datetime) -> dict:
     row = {"run_id": run_id, "run_dir": str(run_dir),
            "name": tab_name(run_id, pointer.get("slurm_job_name")),
            "slurm_job_id": pointer.get("slurm_job_id"),
-           "started_utc": pointer.get("started_utc"), "exists": False}
+           "started_utc": pointer.get("started_utc"), "exists": False,
+           "open": run_id in open_ids}
     run = rf.read_json(run_dir / rf.RUN_JSON)
     if not isinstance(run, dict):
         return row
@@ -65,19 +66,23 @@ def _row(pointer: dict, now: _dt.datetime) -> dict:
         "end": end,
         "state": (end or {}).get("state") or "running",
         "stop": run.get("stop"),
+        "processes": progress.get("processes"),
+        "stop_requested": (run_dir / rf.STOP_REQUEST).exists(),
     })
     return row
 
 
-def list_runs(pointer_dir: Path, limit: int = LIMIT, now: _dt.datetime | None = None) -> list[dict]:
-    """Rows for the newest ``limit`` pointers, newest first."""
+def list_runs(pointer_dir: Path, limit: int = LIMIT, now: _dt.datetime | None = None,
+              open_ids=()) -> list[dict]:
+    """Rows for the newest ``limit`` pointers, newest first. ``open_ids`` are
+    the runs open on this server: only those can be stopped from the viewer."""
     now = now or _dt.datetime.now(_dt.timezone.utc)
     pointer_dir = Path(pointer_dir)
     if not pointer_dir.is_dir():
         return []
     pointers = [p for p in (rf.read_json(f) for f in pointer_dir.glob("*.json")) if isinstance(p, dict)]
     pointers.sort(key=lambda p: (str(p.get("started_utc") or ""), str(p.get("run_id"))), reverse=True)
-    return [_row(p, now) for p in pointers[:limit]]
+    return [_row(p, now, open_ids) for p in pointers[:limit]]
 
 
 def forget_run(pointer_dir: Path, run_id: str) -> bool:

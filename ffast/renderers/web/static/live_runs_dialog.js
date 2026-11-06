@@ -34,7 +34,7 @@ export function liveRunRow(row) {
   if (!row.exists) {
     return { name: row.name, sub: '', more, lammps: '', lammpsShare: null, scored: '', scoredShare: null,
       scorer: { text: '', tone: '' }, alarm: { text: '', tone: '' },
-      state: { text: 'folder not found', tone: 'warn' }, canOpen: false };
+      state: { text: 'folder not found', tone: 'warn' }, canOpen: false, canStop: false };
   }
   const end = row.planned_end_step;
   const lammps = `LAMMPS ${fmt(row.last_step)}${end != null ? ` / ${fmt(end)}` : ''}`;
@@ -60,16 +60,19 @@ export function liveRunRow(row) {
     : st === 'running' ? { text: 'running', tone: 'ok' } : { text: st, tone: 'warn' };
   return { name: row.name, sub: row.bundle || '', more,
     lammps, lammpsShare: share(row.last_step, row), scored, scoredShare: share(row.scored_through_step, row),
-    scorer, alarm, state, canOpen: true };
+    scorer, alarm, state, canOpen: true,
+    // Stopping is for a run this server follows that has not ended (ADR 0089).
+    canStop: !!row.open && !row.end };
 }
 
 /**
  * Open the dialog. `ask()` asks the server for the rows (they arrive through
  * `update`), `open(path)` follows a run, `openByPath()` asks for a folder,
- * `forget(runId)` drops a gone run from the list.
+ * `forget(runId)` drops a gone run from the list, `stop(row)` asks to stop a
+ * running run, `highlight` is a run ID whose row is marked and scrolled to.
  * @returns {{update: (rows: object[]) => void, close: () => void}}
  */
-export function openLiveRunsDialog({ ask, open, openByPath, forget }) {
+export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () => {}, highlight = null }) {
   document.getElementById('live-runs-dialog')?.remove();
   const modal = document.createElement('div');
   modal.id = 'live-runs-dialog';
@@ -122,6 +125,7 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget }) {
   };
   const chip = ({ text, tone }) => (text ? cell('span', `live-chip${tone ? ` ${tone}` : ''}`, text) : cell('span'));
 
+  let scrolled = false;
   const openMore = new Set();   // rows whose "More info" is open, kept across refreshes
   function update(rows) {
     if (!modal.isConnected) return;
@@ -137,6 +141,7 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget }) {
       const v = liveRunRow(row);
       const tr = cell('tr');
       tr.dataset.runId = row.run_id;
+      if (row.run_id === highlight) tr.className = 'live-runs-highlight';
       const name = cell('td');
       name.append(cell('b', '', v.name));
       if (v.sub) name.appendChild(cell('div', 'live-runs-sub', v.sub));
@@ -161,10 +166,20 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget }) {
         if (v.canOpen) { close(); open(row.run_dir); } else forget(row.run_id);
       });
       act.appendChild(btn);
+      if (v.canStop) {
+        const stopBtn = cell('button', 'danger live-runs-stop', row.stop_requested || row.stop ? 'Stop requested' : 'Stop now…');
+        stopBtn.disabled = !!(row.stop_requested || row.stop);
+        stopBtn.addEventListener('click', () => stop(row));
+        act.appendChild(stopBtn);
+      }
       tr.append(name, prog, scorer, alarm, state, act);
       table.appendChild(tr);
     }
     body.replaceChildren(table);
+    if (highlight && !scrolled) {
+      const hit = table.querySelector('tr.live-runs-highlight');
+      if (hit) { hit.scrollIntoView?.({ block: 'nearest' }); scrolled = true; }
+    }
   }
   return { update, close };
 }

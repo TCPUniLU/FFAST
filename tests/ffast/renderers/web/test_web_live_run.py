@@ -303,8 +303,13 @@ async def test_web_a_stopped_run_shows_its_alarm_moments_and_events(tmp_path):
                 await browser.close()
 
 
-async def test_web_stop_now_asks_first_and_stop_on_alarm_switches(tmp_path):
+async def test_web_stop_now_is_in_the_live_runs_dialog_and_stop_on_alarm_in_the_tab(tmp_path, monkeypatch):
     run = _run_folder(tmp_path, frames=2)
+    pointers = tmp_path / "pointers"
+    pointers.mkdir()
+    rf.write_json_atomic(pointers / f"{run.name}.json",
+                         {"run_id": run.name, "run_dir": str(run), "started_utc": "2026-11-05T12:00:00+00:00"})
+    monkeypatch.setenv("FFAST_LIVE_RUNS", str(pointers))
     meta = rf.read_json(run / rf.RUN_JSON)
     meta["analyses"] = {"0123456789abcdef": {"state": "scoring", "rule": {
         "window_frames": 100, "step_frames": 10, "fraction_threshold": 0.2, "persist_ps": 5.0, "frame_ps": 0.05}}}
@@ -337,18 +342,24 @@ async def test_web_stop_now_asks_first_and_stop_on_alarm_switches(tmp_path):
                 await expect(tick).to_be_checked(timeout=10000)
                 assert rf.read_json(run / rf.CONTROL)["stop_on_alarm"] is True
 
-                # Stop now asks first; Cancel leaves the run alone.
-                await active.locator(".live-stop-now").click()
-                dialog = page.locator(".ask-dialog")
-                await expect(dialog).to_contain_text("Stop this run?")
-                await dialog.get_by_role("button", name="Cancel").click()
+                # Stop now is not in the tab: a "Manage…" link opens the Live Runs
+                # dialog on this run's row, and the stop is asked for there.
+                await expect(active.locator(".live-stop-now")).to_have_count(0)
+                await active.locator(".live-manage").click()
+                dialog = page.locator("#live-runs-dialog")
+                row = dialog.locator(f'tr[data-run-id="{run.name}"]')
+                await expect(row).to_have_class(re.compile("live-runs-highlight"), timeout=10000)
+                await row.locator("button.live-runs-stop").click()
+                ask = page.locator(".ask-dialog")
+                await expect(ask).to_contain_text("Stop Live 12:00:00 node?")
+                await ask.get_by_role("button", name="Cancel").click()
                 assert not (run / rf.STOP_REQUEST).exists()
-                await active.locator(".live-stop-now").click()
+                await row.locator("button.live-runs-stop").click()
                 await page.locator(".ask-dialog").get_by_role("button", name="Stop run").click()
-                await expect(active.locator(".live-stop-now")).to_have_text("Stop requested", timeout=10000)
-                await expect(active.locator(".live-stop-now")).to_be_disabled()
+                await expect(row.locator("button.live-runs-stop")).to_be_disabled(timeout=10000)
                 assert rf.read_json(run / rf.STOP_REQUEST)["by"] == "user"
-                await expect(active.locator(".live-status")).to_contain_text("stop requested")
+                await dialog.get_by_role("button", name="Close").click()
+                await expect(active.locator(".live-status")).to_contain_text("stop requested", timeout=10000)
             finally:
                 await browser.close()
 
@@ -496,6 +507,20 @@ async def test_attribution_follows_the_shown_frame_one_request_at_a_time(static_
     assert got["otherDataset"] == 3
 
 
+async def _row_can_stop(static_origin, row):
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            return await page.evaluate(f"""async () => {{
+              const d = await import('{static_origin}/live_runs_dialog.js');
+              return d.liveRunRow({json.dumps(row)}).canStop;
+            }}""")
+        finally:
+            await browser.close()
+
+
 async def test_live_runs_rows_show_progress_heartbeat_alarm_and_end(static_origin):
     rows = [
         {"run_id": "a", "name": "Live 10:33:35 mel0314", "run_dir": "/r/a", "exists": True, "bundle": "aspirin_mace",
@@ -537,6 +562,10 @@ async def test_live_runs_rows_show_progress_heartbeat_alarm_and_end(static_origi
     assert c["lammpsShare"] is None and c["scorer"]["text"] == "done"
     assert c["alarm"]["text"] == "chemistry step 58,000" and c["state"]["text"] == "terminated at step 61,500"
     assert d["state"]["text"] == "folder not found" and not d["canOpen"]
+    # Stop now only for a run open on this server that has not ended.
+    assert [x.get("canStop") for x in (a, b, c, d)] == [False, False, False, False]
+    assert (await _row_can_stop(static_origin, {**rows[0], "open": True})) is True
+    assert (await _row_can_stop(static_origin, {**rows[2], "open": True})) is False
 
 
 async def test_web_the_live_runs_dialog_lists_opens_and_forgets(tmp_path, monkeypatch):

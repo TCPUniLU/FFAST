@@ -979,7 +979,8 @@ class ServerSession:
         from ffast.live.runs_list import list_runs
         from ffast.protocol.rpc import pack
 
-        rows = await asyncio.to_thread(list_runs, rf.live_runs_dir(os.environ))
+        open_ids = set(getattr(self.env, "live_runs", None) or {})
+        rows = await asyncio.to_thread(list_runs, rf.live_runs_dir(os.environ), open_ids=open_ids)
         await self._emit(pack(control.LIVE_RUNS, (), {"runs": rows}))
 
     async def _on_forget_live_run(self, run_id, **kwargs) -> None:

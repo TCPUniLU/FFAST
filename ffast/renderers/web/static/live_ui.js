@@ -55,14 +55,16 @@ export class LiveUi {
     this._coloured = null;   // the run id whose attribution colours the main view
   }
 
-  /** A command from a live panel: {action: 'stop' | 'stop_on_alarm' | 'attribute' | 'attribution_mode', run_id, …}. */
+  /** A command from a live panel: {action: 'stop' | 'manage' | 'stop_on_alarm' | 'attribute' | 'attribution_mode', run_id, …}. */
   async command(cmd) {
     if (cmd.action === 'stop_on_alarm') {
       this._send(OUT.LIVE_SET_STOP_ON_ALARM, { run_id: cmd.run_id, on: !!cmd.on });
     } else if (cmd.action === 'stop') {
-      const answer = await askDialog({ title: 'Stop this run?', message: stopMessage(cmd.processes),
+      const answer = await askDialog({ title: `Stop ${cmd.name || 'this run'}?`, message: stopMessage(cmd.processes),
         buttons: ['Cancel', 'Stop run'], danger: 'Stop run' });
       if (answer === 'Stop run') this._send(OUT.LIVE_STOP, { run_id: cmd.run_id });
+    } else if (cmd.action === 'manage') {
+      this.openRuns({ highlight: cmd.run_id });
     } else if (cmd.action === 'attribute') {
       this._want(cmd.run_id, cmd.frame, cmd.track && cmd.score ? [cmd.track, cmd.score] : null);
     } else if (cmd.action === 'attribution_mode') {
@@ -72,8 +74,10 @@ export class LiveUi {
   }
 
   /** The "Live runs" dialog; its rows come back in LIVE_RUNS (onRuns). */
-  openRuns() {
+  openRuns({ highlight = null } = {}) {
     this._runsDialog = openLiveRunsDialog({
+      highlight,
+      stop: (row) => this.command({ action: 'stop', run_id: row.run_id, name: row.name, processes: row.processes ?? null }),
       ask: () => this._send(OUT.LIST_LIVE_RUNS, {}),
       open: (path) => this._follow(path),
       openByPath: () => this._askPath(),

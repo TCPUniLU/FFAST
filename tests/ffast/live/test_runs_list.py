@@ -72,3 +72,14 @@ def test_the_list_is_cut_to_the_newest(tmp_path):
         _run(tmp_path, f"2026110{k}-000000-n-{k}-0000", f"2026-11-0{k + 1}T00:00:00+00:00")
     assert [r["run_id"][:8] for r in list_runs(tmp_path / "pointers", limit=2, now=NOW)] == [
         "20261104", "20261103"]
+
+
+def test_a_row_says_whether_the_run_is_open_here_and_how_many_processes_it_has(tmp_path):
+    _run(tmp_path, "20261105-091202-mel0207-1-aaaa", "2026-11-05T09:12:02+00:00")
+    _run(tmp_path, "20261105-103335-mel0314-2-bbbb", "2026-11-05T10:33:35+00:00")
+    rows = list_runs(tmp_path / "pointers", now=NOW, open_ids={"20261105-091202-mel0207-1-aaaa"})
+    by_id = {r["run_id"]: r for r in rows}
+    assert by_id["20261105-091202-mel0207-1-aaaa"]["open"] is True
+    assert by_id["20261105-103335-mel0314-2-bbbb"]["open"] is False
+    assert "processes" in rows[0]
+    assert list_runs(tmp_path / "pointers", now=NOW)[0]["open"] is False
