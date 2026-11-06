@@ -56,8 +56,10 @@ Only `metal` and `real` units are accepted; simulated time comes from the dump.
 alarm is DetectAna's existing window rule, with persistence set as a time and the
 false-alarm chance estimated over the planned length read from `run N`. The first
 alarm ends detection for that run segment. Chemistry flags alarm after three
-flagged frames in a row. The run records three moments: estimated onset (where
-the bad window starts), confirmation, and stop.
+flagged frames in a row. The run records three moments: estimated onset (the
+first marked frame of the window that raised the alarm; changed 2026-11-06 from
+the window's first frame, which could lie a whole persistence time before any
+mark), confirmation, and stop.
 
 **Stopping is off by default.** A one-process run stops cleanly: the scorer
 writes `STOP`, `fix halt … error soft` ends the run, later input commands still
