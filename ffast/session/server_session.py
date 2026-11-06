@@ -165,7 +165,7 @@ class ServerSession:
             CancelTryMetricRequest, CancelMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
             TraceRequest, RequestMetricBoxesRequest, OpenLiveRunRequest,
             LiveStopRequest, LiveSetStopOnAlarmRequest, LiveAttributionRequest,
-            ForgetLiveRunRequest, MakeReferenceRequest,
+            ForgetLiveRunRequest, MakeReferenceRequest, RunWithFfastRequest, WriteRunWithFfastRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -222,6 +222,11 @@ class ServerSession:
             control.FORGET_LIVE_RUN:            _Route(self._on_forget_live_run, ["run_id"], ForgetLiveRunRequest),
             control.MAKE_REFERENCE:             _Route(self._on_make_reference, ["train", "valid", "name", "folder"],
                                                        MakeReferenceRequest),
+            control.PREPARE_RUN_WITH_FFAST:     _Route(self._on_prepare_run_with_ffast, ["input", "job", "bundle"],
+                                                       RunWithFfastRequest),
+            control.WRITE_RUN_WITH_FFAST:       _Route(self._on_write_run_with_ffast,
+                                                       ["input", "job", "bundle", "originals"],
+                                                       WriteRunWithFfastRequest),
         }
 
     # ── dispatch ────────────────────────────────────────────────────────────
@@ -999,6 +1004,37 @@ class ServerSession:
             logger.exception("MAKE_REFERENCE failed")
             out = {"error": f"{type(exc).__name__}: {exc}"}
         await self._emit(pack(control.REFERENCE_MADE, (), out))
+
+    async def _on_prepare_run_with_ffast(self, input, job, bundle, **kwargs) -> None:
+        """"Run with FFAST" check and review (ADR 0086): loads the job's LAMMPS
+        module on this node, places the include, returns the copies as diffs.
+        Writes nothing. Answered to this window only."""
+        from ffast.live.run_with_ffast import prepare
+
+        await self._run_with_ffast(control.RUN_WITH_FFAST_PREPARED, prepare, input, job, bundle, **kwargs)
+
+    async def _on_write_run_with_ffast(self, input, job, bundle, originals, **kwargs) -> None:
+        """"Write copies": the approved copies next to the originals, after
+        checking the originals did not change since the review."""
+        from ffast.live.run_with_ffast import write
+
+        await self._run_with_ffast(control.RUN_WITH_FFAST_WRITTEN, write, input, job, bundle, originals, **kwargs)
+
+    async def _run_with_ffast(self, reply, fn, *args, **kwargs) -> None:
+        from ffast.live.detectana_api import DetectAnaMissing
+        from ffast.protocol.rpc import pack
+
+        opts = {k: kwargs[k] for k in ("data", "data_path", "data_index", "stop_on_alarm") if k in kwargs}
+        try:
+            out = await asyncio.to_thread(fn, *args, **opts)
+        except DetectAnaMissing as exc:
+            out = {"ok": False, "refusal": {"file": "bundle", "reason": str(exc), "line": None,
+                                            "hand_edit": "", "text": str(exc)}}
+        except Exception as exc:   # an unexpected failure is worth reading in full
+            logger.exception("%s failed", reply)
+            out = {"ok": False, "refusal": {"file": None, "reason": f"{type(exc).__name__}: {exc}",
+                                            "line": None, "hand_edit": "", "text": f"{type(exc).__name__}: {exc}"}}
+        await self._emit(pack(reply, (), out))
 
     def _make_reference(self, train, valid, name, folder, every) -> dict:
         import os

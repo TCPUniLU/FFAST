@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -452,6 +452,30 @@ class MakeReferenceRequest(BaseModel):
     name: str = Field(min_length=1)
     folder: str = Field(min_length=1)
     every: int = Field(default=100, ge=1)
+
+
+class RunWithFfastRequest(BaseModel):
+    """Typed payload for ``PREPARE_RUN_WITH_FFAST``: paths on the server's disk
+    (``~`` allowed). ``bundle`` is the ``.bundle`` folder (or its ``.lmp``).
+    ``data``: ``none``, ``bundle`` (the reference's own geometry) or ``file``
+    (frame ``data_index`` of ``data_path``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    input: str = Field(min_length=1)
+    job: str = Field(min_length=1)
+    bundle: str = Field(min_length=1)
+    data: Literal["none", "bundle", "file"] = "none"
+    data_path: Optional[str] = None
+    data_index: int = 0
+    stop_on_alarm: bool = False
+
+
+class WriteRunWithFfastRequest(RunWithFfastRequest):
+    """Typed payload for ``WRITE_RUN_WITH_FFAST``: the reviewed request and the
+    sha256 of each original as the review saw it."""
+
+    originals: dict[str, str]
 
 
 class ListDirRequest(BaseModel):
