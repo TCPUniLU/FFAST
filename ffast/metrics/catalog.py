@@ -61,6 +61,7 @@ def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
     """
     from ffast.metrics.builtin.equivalents import equivalent_of
     from ffast.metrics.expr import _ExprFn
+    from ffast.metrics.run_values import group_and_level
     catalog = []
     for mid in sorted(registry.list_metrics()):
         schema, fn = registry.get(mid)
@@ -74,6 +75,8 @@ def build_metric_catalog(registry, user_metrics=None) -> list[dict]:
             "expr": fn.expr if is_formula else None,
             "vars": fn.user_vars if is_formula else None,
             "id": mid,
+            "group": group_and_level(mid)[0],
+            "level": group_and_level(mid)[1],
             "label": schema.label or mid,
             "shape": shape_to_str(schema.shape),
             "unit": schema.unit,

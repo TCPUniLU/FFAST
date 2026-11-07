@@ -33,7 +33,7 @@ class MetricGraph:
                     If None, symbolic ref validation is skipped.
         """
         from ffast.metrics.dims import Dim
-        from ffast.metrics.inputs import is_field_ref
+        from ffast.metrics.inputs import is_field_ref, parse_run_ref
 
         errors: list[tuple[str, str]] = []
         graph: dict[str, set[str]] = {}
@@ -46,7 +46,8 @@ class MetricGraph:
                     metric_deps.add(input_ref)
                 else:
                     # Valid if in the closed set OR a Dataset Field ref (ADR 0023).
-                    if valid_refs is not None and input_ref not in valid_refs and not is_field_ref(input_ref):
+                    if valid_refs is not None and input_ref not in valid_refs and not is_field_ref(input_ref) \
+                            and parse_run_ref(input_ref) is None:
                         errors.append((mid, f"Unknown symbolic ref '{input_ref}' for input '{input_key}'"))
 
             # shape validation

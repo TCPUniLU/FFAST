@@ -188,6 +188,7 @@ class LiveRun:
         self.settings: dict = {}
         self.rows: list[dict] = []
         self._tail: rf.ScoresTail | None = None
+        self._listed: tuple = ()        # the values listed as metrics (run_values)
         self.events: list[dict] = []
         self._last_sent = 0.0
         self.task: asyncio.Task | None = None
@@ -246,6 +247,11 @@ class LiveRun:
             else:
                 self.dataset.eventPush("SUBDATASET_INDICES_CHANGED", self.fingerprint)
         self.rows += got["rows"]
+        from ffast.metrics import run_values
+
+        if self.registered and run_values.keys_of(self) != list(self._listed):
+            self._listed = tuple(run_values.keys_of(self))
+            run_values.sync(self.env)
         if got["frames"] or got["rows"]:
             # Results stored before the growth (or a failure for scores that were
             # not there yet) would otherwise be served for the longer run.
@@ -385,6 +391,9 @@ class LiveRun:
                 logger.info("live run %s: dataset closed, no longer followed", self.run_id)
                 self.env.live_runs.pop(self.run_id, None)
                 _tabs_changed(self.env)
+                from ffast.metrics import run_values
+
+                run_values.sync(self.env)
                 return
             if self.apply(got) or time.monotonic() - self._last_sent > RESEND_S:
                 self.announce()

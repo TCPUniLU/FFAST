@@ -387,10 +387,10 @@ def test_the_result_store_really_forgets_a_live_fingerprint():
 
 # ── ADR 0090 step 2: analysis values ────────────────────────────────────────
 
-def _format2_run_folder(tmp_path, frames=4, scored=2):
+def _format2_run_folder(tmp_path, frames=4, scored=2, name="20261107-120000-node-1-abcd"):
     """A format-2 run: bonds and angles tracks, T² and SPE; only the first
     ``scored`` frames have a score row."""
-    d = tmp_path / "20261107-120000-node-1-abcd"
+    d = tmp_path / name
     d.mkdir()
     rf.write_json_atomic(d / rf.RUN_JSON, {"format": rf.RUN_FORMAT, "format_version": 1,
                                            "run_id": d.name, "end": None})
