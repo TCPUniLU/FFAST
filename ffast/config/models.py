@@ -236,6 +236,10 @@ class AnalysisTabConfig(BaseModel):
     fit. The browser reads them; the desktop ignores them."""
     model_config = ConfigDict(extra="forbid")
     name: str
+    #: A built-in tab shows when a new install starts only if this is true; the
+    #: others wait under "From template" in the browser's + menu. The desktop
+    #: ignores it.
+    start: bool = True
     has_data_selector: bool = True
     selector: str | None = None
     controls: list[str] = Field(default_factory=list)

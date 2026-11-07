@@ -26,7 +26,7 @@ export function runAction(action) {
  * A drop-down menu over `actions`. Items are rebuilt each time it opens, so
  * their enabled state is always current; `actions` may be a function, for a
  * menu whose items change (the tab menu's hidden tabs), and an entry
- * `{separator: true}` draws a line. Closes on Escape, on a click outside and
+ * `{separator: true}` draws a line, `{heading: 'text'}` a small title. Closes on Escape, on a click outside and
  * after running an item.
  * @param {HTMLButtonElement} button @param {HTMLElement} list
  * @param {Action[] | (() => Array<Action|{separator: true}>)} actions
@@ -103,6 +103,13 @@ export function keepInWindow(list) {
  * gives focus back to the menu's button) first. */
 function fillMenu(list, entries, close) {
   list.replaceChildren(...entries.map((action) => {
+    if (action.heading) {
+      const head = document.createElement('div');
+      head.setAttribute('role', 'presentation');
+      head.className = 'menu-head';
+      head.textContent = action.heading;
+      return head;
+    }
     if (action.separator) {
       const line = document.createElement('div');
       line.setAttribute('role', 'separator');

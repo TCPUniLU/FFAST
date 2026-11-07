@@ -285,6 +285,7 @@
     /* The empty alt text keeps the shortcut out of the item's name (aria-keyshortcuts says it). */
     .menu-list [role=menuitem][data-keys]::after { content: attr(data-keys) / ""; margin-left: auto; color: var(--muted); }
     .menu-sep { height: 1px; margin: 4px 6px; background: var(--bg3); }
+    .menu-head { padding: 4px 10px 2px; font-size: var(--fs-xs); color: var(--dim, inherit); opacity: 0.75; }
     /* a user tab that replaces a built-in or project one (rule 10) */
     .tab .tab-mark {
       margin-left: 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--hl2); opacity: 0.85;

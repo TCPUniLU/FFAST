@@ -402,9 +402,57 @@ def test_label_edits_are_saved_in_the_tab_file_and_go_with_export(store, tmp_pat
 def test_a_tab_without_label_edits_keeps_its_fingerprint():
     tab = _tab("Gyration", SMOOTH)
     data = tab.model_dump(mode="json")
+    del data["start"]   # also added later (2026-11-07): not part of a tab's content
     for panel in data["panels"]:
         for key in LABEL_FIELDS:
             del panel[key]
     old = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
     assert old == tab_fingerprint(tab)
     assert tab_fingerprint(_tab("Gyration", {**SMOOTH, "y_title": "Rg"})) != old
+
+
+# ── tabs that start, and tabs that wait as templates (to_fix_v3 #3) ─────────
+
+def _start_tabs():
+    waiting = AnalysisTabConfig.model_validate({"name": "Gyration", "start": False, "panels": [SMOOTH]})
+    return [_tab("3D", VIEW), _tab("Basic", TABLE), waiting]
+
+
+def test_a_tab_starts_unless_its_file_says_it_does_not():
+    assert _tab("X", VIEW).start is True
+    assert [t.name for t in _start_tabs() if not t.start] == ["Gyration"]
+
+
+def test_a_new_folder_hides_the_tabs_that_do_not_start_and_keeps_them_as_templates(store, tmp_path):
+    sources = _sources(store, builtin=_start_tabs())
+    assert _names(sources, visible=True) == ["3D", "Basic"]
+    assert _names(sources) == ["3D", "Basic", "Gyration"]
+    assert json.loads((tmp_path / "tabs" / "state.json").read_text())["hidden"] == ["Gyration"]
+    assert all(d["template"] for d in sources.layout())      # all three are templates
+    # picking the template shows the built-in tab itself
+    store.set_hidden("Gyration", False)
+    assert _names(sources, visible=True) == ["3D", "Basic", "Gyration"]
+    assert [e.source for e in sources.entries()] == ["built-in"] * 3
+
+
+def test_a_folder_with_a_state_file_is_not_seeded(store, tmp_path):
+    store.set_hidden("Basic", True)         # an existing install: it has a state.json
+    sources = _sources(store, builtin=_start_tabs())
+    assert _names(sources, visible=True) == ["3D", "Gyration"]
+    assert json.loads((tmp_path / "tabs" / "state.json").read_text())["hidden"] == ["Basic"]
+
+
+def test_a_copy_of_a_template_is_still_a_template_and_a_new_tab_is_not(store):
+    sources = _sources(store, builtin=_start_tabs())
+    sources.save({"name": "Mine", "panels": [VIEW]})
+    sources.save({"name": "Basic", "panels": [VIEW, TABLE]}, previous_name="Basic")
+    flags = {d["name"]: d["template"] for d in sources.layout()}
+    assert flags == {"3D": True, "Basic": True, "Gyration": True, "Mine": False}
+
+
+def test_where_a_tab_starts_is_not_part_of_its_fingerprint_or_its_saved_file(store, tmp_path):
+    waiting = AnalysisTabConfig.model_validate({"name": "Gyration", "start": False, "panels": [SMOOTH]})
+    assert tab_fingerprint(waiting) == tab_fingerprint(_tab("Gyration", SMOOTH))
+    sources = _sources(store, builtin=[_tab("3D", VIEW), waiting])
+    sources.save({"name": "Gyration", "start": False, "panels": [SMOOTH]}, previous_name="Gyration")
+    assert "start" not in (tmp_path / "tabs" / "gyration.toml").read_text()

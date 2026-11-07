@@ -865,7 +865,25 @@ export class FFastApp {
       actions.push({ id: `tab-new-copy:${t.name}`, label: `Copy of ${t.name}`,
         run: () => this._editor.newTab(t), unavailable: why });
     }
+    const templates = this._layoutTabs.filter((t) => t.template);
+    if (templates.length) actions.push({ separator: true }, { heading: 'From template' });
+    for (const t of templates) {
+      actions.push({ id: `tab-template:${t.name}`, label: t.name,
+        run: () => this._showTemplate(t), unavailable: () => this._needsControl() });
+    }
     return actions;
+  }
+
+  /** "From template": show the built-in tab itself. One already in the bar is
+   * only switched to; a waiting one is un-hidden and shown. */
+  _showTemplate(t) {
+    const shown = this._analysis.tabList.find((x) => x.name === t.name);
+    if (shown) { this._selectTab(shown.id); return; }
+    this._pendingShow = t.name;
+    this._tabOps.setHidden(t.name, false).then((r) => {
+      if (!r.ok) this._pendingShow = null;
+      this._reportTab(r);
+    });
   }
 
   /** Why tabs cannot be edited now, or ''. */

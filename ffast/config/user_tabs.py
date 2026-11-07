@@ -56,6 +56,7 @@ def tab_fingerprint(tab: AnalysisTabConfig) -> str:
     edits keeps the fingerprint it had before they existed and no edited
     tab is wrongly marked "original changed"."""
     data = tab.model_dump(mode="json")
+    data.pop("start", None)   # where a built-in tab starts is not its content (2026-11-07)
     for panel in data["panels"]:
         for key in LABEL_FIELDS:
             if panel.get(key) is None:
@@ -68,6 +69,7 @@ def _authoring(tab: AnalysisTabConfig) -> dict:
     """The tab as someone would write it: no defaults, no nulls, and whole
     sizes as whole numbers (``[2, 1]``, not ``[2.0, 1.0]``)."""
     data = tab.model_dump(mode="json", exclude_defaults=True, exclude_none=True)
+    data.pop("start", None)   # a saved copy is a tab on screen; it has no starting rule
     for key in ("column_widths", "row_heights"):
         if key in data:
             data[key] = [int(v) if float(v).is_integer() else v for v in data[key]]
@@ -136,6 +138,19 @@ class UserTabStore:
         self._kept = None
         self.root.mkdir(parents=True, exist_ok=True)
         (self.root / STATE_FILE).write_text(json.dumps(state, indent=2) + "\n")
+
+    def seed_hidden(self, names: list[str]) -> None:
+        """A folder with no ``state.json`` is a new install: hide `names` (the
+        built-in tabs that wait under "From template") and write the file, so
+        the choice is made once. A folder that has the file is left alone."""
+        if (self.root / STATE_FILE).exists():
+            return
+        state = self._state()
+        state["hidden"] = list(names)
+        try:
+            self._write_state(state)
+        except OSError as exc:
+            logger.warning("User tabs: could not write %s (%s)", STATE_FILE, exc)
 
     @property
     def hidden(self) -> list[str]:
@@ -247,6 +262,7 @@ class TabEntry:
     replaces: str | None = None      # user tabs: the original they stand in for
     original_changed: bool = False   # that original changed since the edit
     hidden: bool = False
+    template: bool = False           # a built-in tab, or the user's copy of one
 
 
 @dataclass
@@ -287,21 +303,25 @@ class TabSources:
         """Built-in, then project, then user tabs in the order they were made,
         then put in the order the user dragged them to (ADR 0070); a user tab
         that replaces another sits in that one's place."""
+        if self.store:
+            self.store.seed_hidden([t.name for t in self.builtin if not t.start])
         user = self.store.tabs() if self.store else []
         hidden = set(self.store.hidden) if self.store else set()
         base = [(t, "built-in") for t in self.builtin] + [(t, "project") for t in self.project]
         base_names = {t.name for t, _ in base}
+        builtin_names = {t.name for t in self.builtin}
         standing_in = {u.replaces: u for u in user if u.replaces in base_names}
         out = []
         for tab, source in base:
             u = standing_in.get(tab.name)
             if u is None:
-                out.append(TabEntry(tab, source, hidden=tab.name in hidden))
+                out.append(TabEntry(tab, source, hidden=tab.name in hidden,
+                                    template=source == "built-in"))
             else:
                 out.append(TabEntry(
                     u.tab, "user", u.file, tab.name,
                     original_changed=u.original is not None and u.original != tab_fingerprint(tab),
-                    hidden=u.tab.name in hidden))
+                    hidden=u.tab.name in hidden, template=tab.name in builtin_names))
         for u in user:
             if u.replaces not in base_names:   # a new tab, or its original is gone
                 out.append(TabEntry(u.tab, "user", u.file, hidden=u.tab.name in hidden))
@@ -321,6 +341,7 @@ class TabSources:
                 continue
             d.update(source=e.source, replaces=e.replaces,
                      original_changed=e.original_changed, hidden=e.hidden,
+                     template=e.template,
                      revision=tab_fingerprint(e.tab))
             out.append(d)
         return out

@@ -4,6 +4,7 @@
 # was retired once this reached parity.
 [[tabs]]
 name = "Gyration"
+start = false
 has_data_selector = true
 
 [[tabs.panels]]

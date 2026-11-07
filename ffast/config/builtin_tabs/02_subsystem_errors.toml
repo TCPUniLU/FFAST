@@ -3,6 +3,7 @@
 # was retired once this reached parity.
 [[tabs]]
 name = "Subsystem Errors"
+start = false
 has_data_selector = true
 
 [[tabs.panels]]

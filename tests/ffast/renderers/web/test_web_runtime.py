@@ -950,11 +950,11 @@ async def test_web_the_loader_names_units_only_when_asked_and_lists_the_last_use
             await browser.close()
 
 
-async def test_web_element_picker_buttons_wear_the_3d_element_colours(shared_prediction_server):
+async def test_web_element_picker_buttons_wear_the_3d_element_colours(ffast_web_server):
     """Each element button's outline and symbol use the element's colour in the
     3D view; selected, it is filled with that colour and the symbol is black or
     white. "All" stays neutral."""
-    ws_port, web_port = shared_prediction_server
+    ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -4109,7 +4109,10 @@ async def test_web_user_tabs_reach_every_window_and_can_be_reset_hidden_exported
                 await expect(tabbar.last).to_have_text("Mine")
                 assert (tabs_dir / "mine.toml").exists()
 
-                # An edited built-in tab, in its place, marked.
+                # An edited built-in tab, in its place, marked. (Gyration waits
+                # as a template on a new install: show it first.)
+                answer = await _tab_request(ws_port, "HIDE_TAB", {"name": "Gyration", "hidden": False})
+                assert answer["ok"], answer
                 answer = await _tab_request(ws_port, "SAVE_TAB", {"previous_name": "Gyration", "tab": {
                     "name": "Gyration", "panels": [{"kind": "table", "row": 0, "col": 0, "title": "MAE",
                         "metrics": {"value": {"metric": "ffast.force_difference[dataset;component;mae]"}}}]}})
@@ -4185,6 +4188,49 @@ async def test_web_new_tab_button_follows_the_last_tab(tmp_path):
                 edit = await page.locator("#tab-edit-btn").bounding_box()
                 assert plus["x"] >= 0 and plus["x"] + plus["width"] <= 700
                 assert plus["x"] + plus["width"] <= edit["x"]
+            finally:
+                await browser.close()
+
+
+async def test_web_a_new_install_starts_with_two_tabs_and_the_rest_are_templates(tmp_path):
+    """to_fix_v3 #3: a fresh tabs folder shows 3D and Basic Errors. + lists all
+    five built-in tabs under From template; picking one shows that tab itself,
+    it can be edited and Reset to original brings the built-in one back."""
+    tabs_dir = tmp_path / "tabs"
+    config = tmp_path / "ffast.toml"
+    config.write_text("")
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            tabbar = page.locator("#tabbar .tab")
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await expect(tabbar).to_have_text(["3D", "Basic Errors"])
+                await page.locator("#tab-new-btn").click()
+                menu = page.locator("#tab-new-list")
+                await expect(menu.locator(".menu-head")).to_have_text("From template")
+                items = menu.locator("[data-action^='tab-template:']")
+                await expect(items).to_have_text(
+                    ["3D", "Basic Errors", "Subsystem Errors", "Atomic Errors", "Gyration"])
+                await items.filter(has_text="Gyration").click()
+                await expect(tabbar).to_have_text(["3D", "Basic Errors", "Gyration"])
+                await expect(page.locator("#tabbar .tab.active")).to_have_text("Gyration")
+                # a tab already showing is only switched to
+                await page.locator("#tab-new-btn").click()
+                await menu.locator("[data-action='tab-template:3D']").click()
+                await expect(tabbar).to_have_count(3)
+                await expect(page.locator("#tabbar .tab.active")).to_have_text("3D")
+                # it is the built-in tab itself: an edit replaces it, Reset brings it back
+                answer = await _tab_request(ws_port, "SAVE_TAB", {"previous_name": "Gyration", "tab": {
+                    "name": "Gyration", "panels": [{"kind": "3d", "row": 0, "col": 0}]}})
+                assert answer["ok"], answer
+                assert (tabs_dir / "gyration.toml").exists()
+                await page.locator("#tabbar .tab", has_text="Gyration").click()
+                await _tab_menu(page, "Reset to original…")
+                await page.locator(".ask-dialog").get_by_role("button", name="Confirm").click()
+                await expect(page.locator(".tabpanel.active .analysis-panel[data-kind='overlay_timeline']")).not_to_have_count(0)
             finally:
                 await browser.close()
 
@@ -6109,6 +6155,11 @@ _PANEL_HAS_POINTS = """(title) => {
 
 async def _open_analysis_tab(page, name):
     tab = page.locator("#tabbar .tab", has_text=name)
+    if await tab.count() == 0:
+        # a new install starts with 3D and Basic Errors only; the others wait
+        # under "From template" in the + menu (to_fix_v3 #3)
+        await page.locator("#tab-new-btn").click()
+        await page.locator(f"#tab-new-list [data-action='tab-template:{name}']").click()
     await expect(tab).to_have_count(1)
     await tab.click()
 
