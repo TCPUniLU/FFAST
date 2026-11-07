@@ -241,6 +241,8 @@ export class FFastApp {
     this._exampleWatch = null;
     /** The server's example files, {folder, files}, from LOADER_TYPES; null without them. */
     this._examples = null;
+    /** The id of the guided tour that runs now, or null. */
+    this._tourId = null;
     /** Datasets Load Example brought into this window, until they are deleted. */
     this._exampleFps = new Set();
     // User tabs on the server (ADR 0056): save, delete, hide, export.
@@ -698,9 +700,12 @@ export class FFastApp {
 
   /** Run guided tour `tour` (ADR 0088); how it ended goes to the status line. */
   _startTour(tour) {
+    if (this._tourId) return;   // one tour at a time (the runner says the same)
+    this._tourId = tour.id;
     startTour(tour, {
       events: this.tourEvents,
       onEnd: (how, message) => {
+        this._tourId = null;
         if (how === 'done') this._setStatus('Tour finished. Take it again from the File menu.', 'connected');
         else if (how === 'skip') this._setStatus('Tour skipped. Take it again from the File menu.', 'connected');
         else showWarning(message);

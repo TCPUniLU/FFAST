@@ -524,6 +524,16 @@ export class RemoteBrowser {
     return this.mode() === null ? null : this._path;
   }
 
+  /** The next open starts in `path` (a tour opens the examples folder). */
+  startIn(path) {
+    this._path = path;
+  }
+
+  /** Show folder `path` in the open dialog. */
+  goTo(path) {
+    this._navigate(path);
+  }
+
   /**
    * @param {'dataset'|'prediction'|'model'} mode
    * @param {{datasetFp?: string|null, folder?: string|null}} [opts]  `folder`: open there

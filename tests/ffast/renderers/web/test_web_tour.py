@@ -242,10 +242,14 @@ async def test_every_target_of_every_tour_is_on_screen_with_the_example(ffast_we
               return out;
             }""")
             assert len(found) >= 9
+            assert {t["tour"] for t in found} == {"first-steps", "load-data"}
             for t in found:
                 assert t["inDom"], t
-                if t["step"] != "Load the example":   # its button is hidden once a view is open
-                    assert t["sized"], t
+                if t["step"] == "Load the example":   # its button is hidden once a view is open
+                    continue
+                if "#fb-keys" in t["target"]:   # shown only when a file offers a choice of columns
+                    continue
+                assert t["sized"], t
         finally:
             await browser.close()
 
@@ -426,3 +430,178 @@ async def test_load_example_fingerprints_are_kept_until_deleted(ffast_web_server
             assert await page.evaluate("() => window.ffastApp._exampleFps.size") == 0
         finally:
             await browser.close()
+
+
+
+# ── The loading tour (plan 2026-11-06, revised 2026-11-07) ─────────────────
+
+_LOAD_TITLE = "Tour: Load a dataset and a prediction"
+
+
+async def _menu_item(page, name):
+    await page.locator("#file-menu-btn").click()
+    return page.locator("#file-menu-list").get_by_role("menuitem", name=name)
+
+
+async def _start_loading_tour(page, ws_port, web_port):
+    await _open(page, ws_port, web_port)
+    await page.wait_for_function("() => window.ffastApp._examples !== null")
+    await (await _menu_item(page, _LOAD_TITLE)).click()
+    await expect(page.locator(".tour-title")).to_have_text("Open the file browser")
+
+
+async def _step(page, title, timeout=30000):
+    await expect(page.locator(".tour-title")).to_have_text(title, timeout=timeout)
+
+
+async def _load_round(page, k, folder, dataset, prediction):
+    """Steps of one round, with real clicks through the lit area."""
+    first = k == 0
+    await page.locator("#add-dataset-btn").click()
+    await _step(page, "Open the example’s folder" if first else "Open the crystals folder")
+    await (await _row(page, folder)).click()
+    await _step(page, "Find the dataset file" if first else "Find the second dataset file")
+    await (await _row(page, dataset)).click()
+    await _step(page, "Units and frames")
+    await page.locator(".tour-next").click()
+    await _step(page, "Load the dataset" if first else "Load the second dataset")
+    await page.locator("#fb-load").click()
+    await _step(page, "Load its prediction" if first else "Load the second prediction", timeout=60000)
+    await page.locator("#add-prediction-btn").click()
+    await _step(page, "Open the same folder")
+    await (await _row(page, folder)).click()
+    await _step(page, "Find the prediction file")
+    await (await _row(page, prediction)).click()
+    await _step(page, "Choose its dataset")
+    if await page.locator(".tour-wait").is_visible():
+        fp = await page.evaluate("(k) => [...window.ffastApp._datasets.keys()][k]", k)
+        await page.locator("#fb-target-ds").select_option(fp)
+    else:
+        await page.locator(".tour-next").click()
+    await _step(page, "Energy and force columns")
+    await page.locator(".tour-next").click()
+    await _step(page, "Load the prediction" if first else "Load the second prediction")
+    await page.locator("#fb-load").click()
+
+
+async def test_the_loading_tour_is_unavailable_without_its_files(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open(page, ws_port, web_port)
+            await page.wait_for_function("() => window.ffastApp._examples !== null")
+            await page.evaluate("""() => { const e = window.ffastApp._examples;
+              e.files = e.files.filter((f) => f !== 'variable-sized periodic/predictions_mptrj_sampled.xyz'); }""")
+            item = await _menu_item(page, _LOAD_TITLE)
+            await expect(item).to_be_disabled()
+            await expect(item).to_have_attribute(
+                "title", "Needs variable-sized periodic/predictions_mptrj_sampled.xyz in the examples folder")
+            await page.keyboard.press("Escape")
+            await page.evaluate("() => { window.ffastApp._examples = null; }")
+            item = await _menu_item(page, _LOAD_TITLE)
+            await expect(item).to_have_attribute("title", "This server has no example files")
+        finally:
+            await browser.close()
+
+
+async def test_the_loading_tour_is_unavailable_after_load_example(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open(page, ws_port, web_port)
+            await _load_example_watched(page)
+            item = await _menu_item(page, _LOAD_TITLE)
+            await expect(item).to_be_disabled()
+            await expect(item).to_have_attribute("title", "The example is loaded: delete it first")
+        finally:
+            await browser.close()
+
+
+async def test_the_loading_tour_clicks_through_to_both_pairs_on_basic_errors(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _start_loading_tour(page, ws_port, web_port)
+            await expect(page.locator(".tour-count")).to_have_text("Step 1 of 25")
+            await _load_round(page, 0, "variable-sized molecular", "dataset.xyz", "prediction.xyz")
+            await _step(page, "Add a second dataset", timeout=60000)
+            await _load_round(page, 1, "variable-sized periodic",
+                              "mptrj_sampled_over_200.extxyz", "predictions_mptrj_sampled.xyz")
+            await _step(page, "Compare them in the plots", timeout=60000)
+            await page.locator('#tabbar .tab[data-name="Basic Errors"]').click()
+            await _step(page, "Choose what the plots show")
+            await expect(page.locator(".tour-wait")).to_contain_text("Turn on")
+            series = "#tabpanels .tabpanel.active .ac-series"
+            for group, key in (("datasets", "_datasets"), ("models", "_models")):
+                for fp in await page.evaluate(f"() => [...window.ffastApp.{key}.keys()]"):
+                    button = page.locator(f'{series} [data-series="{group}"] button[data-fp="{fp}"]')
+                    if "active" not in (await button.get_attribute("class") or ""):
+                        await button.click()
+            await _step(page, "One series per pair")
+            for group in ("datasets", "models"):
+                await expect(page.locator(f'{series} [data-series="{group}"] button.active')).to_have_count(2)
+            await page.locator(".tour-next").click()
+            await expect(page.locator("#status")).to_contain_text("Tour finished")
+        finally:
+            await browser.close()
+
+
+async def test_the_loading_tour_refuses_the_wrong_folder_and_file(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _start_loading_tour(page, ws_port, web_port)
+            await page.locator("#add-dataset-btn").click()
+            await _step(page, "Open the example’s folder")
+            await (await _row(page, "fixed-sized molecular")).click()
+            await expect(page.locator(".tour-wait")).to_have_text("Click ↑, then variable-sized molecular")
+            await page.locator("#fb-up").click()
+            await expect(page.locator(".tour-wait")).to_have_text("Click variable-sized molecular")
+            await (await _row(page, "variable-sized molecular")).click()
+            await _step(page, "Find the dataset file")
+            await (await _row(page, "prediction.xyz")).click()
+            await expect(page.locator(".tour-wait")).to_have_text("This tour uses dataset.xyz. Click it.")
+            await _step(page, "Find the dataset file")
+
+            # Back from the pick step: the folder is open already, so Next shows.
+            await page.locator(".tour-back").click()
+            await _step(page, "Open the example’s folder")
+            await expect(page.locator(".tour-next")).to_be_visible()
+            folder = await page.evaluate("() => window.ffastApp._browser.folder()")
+            assert folder.endswith("/variable-sized molecular")
+        finally:
+            await browser.close()
+
+
+async def test_cancel_while_loading_ends_the_loading_tour(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _start_loading_tour(page, ws_port, web_port)
+            await page.locator("#add-dataset-btn").click()
+            await (await _row(page, "variable-sized molecular")).click()
+            await (await _row(page, "dataset.xyz")).click()
+            await page.locator(".tour-next").click()
+            await _step(page, "Load the dataset")
+            await page.locator("#fb-cancel").click()
+            await expect(page.locator(".tour-box")).to_have_count(0)
+            await expect(page.get_by_text(re.compile("“Load the dataset” was cancelled"))).to_be_visible()
+            assert await page.evaluate("() => window.ffastApp._datasets.size") == 0
+        finally:
+            await browser.close()
+
