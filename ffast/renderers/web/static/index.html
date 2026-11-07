@@ -524,6 +524,7 @@
     .analysis-panel .panel-title .peaks-toggle[hidden] { display: none; }
     .panel-menu { position: fixed; }
     .fields-dialog label { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+    .fields-dialog label + label { margin-top: 0; }   /* flex items' margins don't merge */
     .fields-dialog label input { flex: 1; min-width: 0; }
     .analysis-panel .panel-title .panel-more { height: auto; padding: 1px 4px; flex-shrink: 0; }
     .analysis-panel .panel-title .sub-toggle input,
@@ -1146,6 +1147,8 @@
       min-width: 280px;
       min-height: 120px;
       resize: both;              /* drag the bottom-right corner to enlarge */
+      display: flex;             /* a column, so the footer can sit on the bottom edge */
+      flex-direction: column;
 
       background: var(--bg2);
       color: var(--text1);
@@ -1197,6 +1200,8 @@
     .warning-modal-footer {
       display: flex;
       justify-content: flex-end;
+      flex-shrink: 0;
+      margin-top: auto;          /* stays on the bottom edge when the dialog is enlarged */
 
       padding: 8px 10px;
       border-top: 1px solid var(--bg3);

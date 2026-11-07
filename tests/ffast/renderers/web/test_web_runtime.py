@@ -1177,6 +1177,30 @@ async def test_web_status_label_opens_the_connection_dialog(shared_server):
             await browser.close()
 
 
+async def test_web_dialog_buttons_stay_on_the_bottom_edge_when_enlarged(shared_server):
+    """Dragging a dialog's corner to enlarge it keeps the button row on the
+    bottom edge, not floating under the last field."""
+    ws_port, web_port = shared_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await expect(page.locator("#conn-dialog")).to_be_visible()
+            gap = await page.evaluate(
+                """() => {
+                    const panel = document.querySelector('#conn-dialog .warning-modal-panel');
+                    panel.style.height = '600px';   // what dragging the corner does
+                    const foot = panel.querySelector('.warning-modal-footer');
+                    return panel.getBoundingClientRect().bottom - foot.getBoundingClientRect().bottom;
+                }"""
+            )
+            assert abs(gap) <= 2, f"footer is {gap}px above the dialog's bottom edge"
+        finally:
+            await browser.close()
+
+
 async def test_web_dialog_opens_by_itself_and_remembers_the_last_five_servers(shared_server):
     """With no port in the URL there is no server to connect to, so the dialog
     opens. Servers that connected are remembered (newest first, five at most)
