@@ -33,11 +33,11 @@ from ffast.protocol.rpc import pack, unpack
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-DATASET_PATH = REPO_ROOT / "examples" / "data" / "dataset.xyz"
+DATASET_PATH = REPO_ROOT / "examples" / "data" / "variable-sized molecular" / "dataset.xyz"
 # The canvas of the focused 3D panel on screen (ADR 0056: each 3D panel has
 # its own, and the 3D controls act on the focused one).
 CANVAS = ".tabpanel.active .panel-3d.focused canvas.view3d"
-PREDICTION_PATH = REPO_ROOT / "examples" / "data" / "prediction.xyz"
+PREDICTION_PATH = REPO_ROOT / "examples" / "data" / "variable-sized molecular" / "prediction.xyz"
 
 
 pytestmark = [
@@ -854,6 +854,9 @@ async def test_web_the_loader_suggests_paths_while_typing(shared_server):
             await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
             await _expect_connected(page)
             await _file_menu(page, "Load Dataset…")
+            # The opening listing focuses its first row. Let it arrive before
+            # typing so that focus change cannot close the suggestions.
+            await expect(page.locator("#fb-list .name", has_text=re.compile(r"^examples$"))).to_be_visible()
             path = page.locator("#fb-path")
             await path.fill(f"{REPO_ROOT}/exa")
             options = page.locator("#fb-suggest .fb-suggestion")
@@ -862,7 +865,7 @@ async def test_web_the_loader_suggests_paths_while_typing(shared_server):
             await expect(options.first).to_have_class(re.compile(r"\bactive\b"))
             await path.press("Tab")
             await expect(path).to_have_value(f"{REPO_ROOT}/examples/")
-            await path.fill(f"{REPO_ROOT}/examples/data/data")
+            await path.fill(f"{DATASET_PATH.parent}/data")
             await expect(options).to_have_text(["dataset.xyz"])
             await path.press("Enter")                       # today's behaviour: go to the path as typed
             await expect(page.locator("#fb-suggest")).to_be_hidden()

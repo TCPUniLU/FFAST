@@ -1,10 +1,7 @@
 """The web client against the real example datasets in examples/data/.
 
-Those folders are git-ignored (they are large and not part of the repository),
-so every test here skips itself when its folder is missing. On a machine that
-has them, they run the web features on real data: a fixed-size molecule, a
-periodic crystal, a graphene sheet with an .npz prediction, and datasets whose
-atoms change between frames.
+The cleared datasets are bundled with the repository. AM26 and graphene remain on dev until permission and unit questions,
+respectively, are resolved. Their tests skip when those folders are absent. The bundled examples must exist: a misspelled path fails.
 """
 import re
 
@@ -13,6 +10,7 @@ import pytest
 from playwright.async_api import async_playwright, expect
 
 from ffast.protocol.rpc import pack
+from tests.ffast.test_example_corpus import PAIRS
 
 from .test_web_runtime import (
     REPO_ROOT, _RECORD_SENDS, _connect_headless_client, _expect_connected, _file_menu,
@@ -25,10 +23,15 @@ EXAMPLES = REPO_ROOT / "examples" / "data"
 
 
 def example(folder, name):
-    """A file of the real example data, or a skip when this machine lacks it."""
+    """Require bundled examples; only the explicitly deferred corpora are optional."""
     path = EXAMPLES / folder / name
-    if not path.is_file():
-        pytest.skip(f"{path} is not here (git-ignored example data)")
+    deferred = {
+        "fixed-sized periodic": "AM26 is withheld pending redistribution permission",
+        "fixed-sized subsystem": "Graphene is withheld pending source-unit verification",
+    }
+    if folder in deferred and not path.parent.exists():
+        pytest.skip(deferred[folder])
+    assert path.is_file(), f"bundled example is missing: {path}"
     return path
 
 
@@ -70,10 +73,40 @@ async def _sent(page, event):
         "(e) => window.__sent.filter(([name]) => name === e).map(([, kw]) => kw)", event)
 
 
+@pytest.mark.parametrize("folder,reference,prediction,count,ref_prefix,pred_prefix", PAIRS)
+async def test_published_pair_loads_from_browser_with_default_fields(
+        ffast_web_server, folder, reference, prediction, count, ref_prefix, pred_prefix):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser, page = await _page(p, web_port, ws_port)
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Load Dataset…")
+            path = page.locator("#fb-path")
+            await path.fill(str(EXAMPLES / folder))
+            await path.press("Enter")
+            await page.locator("#fb-list .fb-row", has_text=reference).click()
+            await expect(page.locator("#fb-keys")).to_be_hidden()
+            await expect(page.locator("#fb-load")).to_be_enabled()
+            await page.locator("#fb-load").click()
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(1, timeout=30000)
+            await _file_menu(page, "Load Prediction…")
+            await path.fill(str(EXAMPLES / folder))
+            await path.press("Enter")
+            await page.locator("#fb-list .fb-row", has_text=prediction).click()
+            await expect(page.locator("#fb-load")).to_be_enabled()
+            await page.locator("#fb-load").click()
+            await expect(page.locator("#model-list .obj-row", has_text=prediction)).to_be_visible(timeout=30000)
+        finally:
+            await browser.close()
+
+
 async def test_three_atom_alignment_and_origin_com_on_a_real_molecule(ffast_web_server):
     """Same 87 atoms in every frame, so alignment is allowed (web parity plan 2026-10-29)."""
     ws_port, web_port = ffast_web_server
-    fp = await _load(ws_port, example("fixed-sized-molecular", "md22_stachyose_sampled.xyz"))
+    fp = await _load(ws_port, example("fixed-sized molecular", "md22_stachyose_sampled.xyz"))
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
@@ -95,7 +128,7 @@ async def test_three_atom_alignment_and_origin_com_on_a_real_molecule(ffast_web_
 
 async def test_alignment_is_off_where_the_atoms_change_between_frames(ffast_web_server):
     ws_port, web_port = ffast_web_server
-    fp = await _load(ws_port, example("variable-sized-periodic", "mptrj_sampled_over_200.extxyz"))
+    fp = await _load(ws_port, example("variable-sized periodic", "mptrj_sampled_over_200.extxyz"))
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
@@ -110,8 +143,8 @@ async def test_alignment_is_off_where_the_atoms_change_between_frames(ffast_web_
 
 async def test_info_names_a_real_molecule_and_a_variable_dataset(ffast_web_server):
     ws_port, web_port = ffast_web_server
-    fixed = await _load(ws_port, example("fixed-sized-molecular", "md22_stachyose_sampled.xyz"))
-    variable = await _load(ws_port, example("variable-sized-periodic", "mptrj_sampled_over_200.extxyz"))
+    fixed = await _load(ws_port, example("fixed-sized molecular", "md22_stachyose_sampled.xyz"))
+    variable = await _load(ws_port, example("variable-sized periodic", "mptrj_sampled_over_200.extxyz"))
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
@@ -136,8 +169,8 @@ async def test_info_names_a_real_molecule_and_a_variable_dataset(ffast_web_serve
 
 async def test_an_npz_prediction_loads_on_a_real_graphene_dataset(ffast_web_server):
     ws_port, web_port = ffast_web_server
-    fp = await _load(ws_port, example("fixed-sized-subsystem", "graphene_sampled.xyz"))
-    npz = example("fixed-sized-subsystem", "graphene_prediction.npz")
+    fp = await _load(ws_port, example("fixed-sized subsystem", "graphene_sampled.xyz"))
+    npz = example("fixed-sized subsystem", "graphene_prediction.npz")
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
@@ -158,8 +191,8 @@ async def test_an_npz_prediction_loads_on_a_real_graphene_dataset(ffast_web_serv
 
 async def test_a_prediction_file_loads_on_a_real_periodic_dataset(ffast_web_server):
     ws_port, web_port = ffast_web_server
-    fp = await _load(ws_port, example("fixed-sized-periodic", "am26_subbed_100.extxyz"))
-    pred = example("fixed-sized-periodic", "predictions_am26_subbed.xyz")
+    fp = await _load(ws_port, example("fixed-sized periodic", "am26_subbed_100.extxyz"))
+    pred = example("fixed-sized periodic", "predictions_am26_subbed.xyz")
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
@@ -178,7 +211,7 @@ async def test_a_prediction_file_loads_on_a_real_periodic_dataset(ffast_web_serv
 
 async def test_the_unit_cell_checkbox_on_a_real_crystal(ffast_web_server):
     ws_port, web_port = ffast_web_server
-    fp = await _load(ws_port, example("fixed-sized-periodic", "am26_subbed_100.extxyz"))
+    fp = await _load(ws_port, example("fixed-sized periodic", "am26_subbed_100.extxyz"))
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
@@ -199,7 +232,7 @@ async def test_the_unit_cell_checkbox_on_a_real_crystal(ffast_web_server):
 async def test_a_real_crystal_exports_in_an_ase_format(ffast_web_server, tmp_path, fmt):
     """216 atoms x 100 frames with a cell, written as an ASE trajectory or database."""
     ws_port, web_port = ffast_web_server
-    source = example("fixed-sized-periodic", "am26_subbed_100.extxyz")
+    source = example("fixed-sized periodic", "am26_subbed_100.extxyz")
     fp = await _load(ws_port, source)
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
@@ -224,7 +257,7 @@ async def test_a_real_crystal_exports_in_an_ase_format(ffast_web_server, tmp_pat
 async def test_exporting_many_structures_to_poscar_is_refused_with_the_reason(ffast_web_server, tmp_path):
     """VASP takes one structure: a dataset of 100 is refused and the status says why."""
     ws_port, web_port = ffast_web_server
-    fp = await _load(ws_port, example("fixed-sized-periodic", "am26_subbed_100.extxyz"))
+    fp = await _load(ws_port, example("fixed-sized periodic", "am26_subbed_100.extxyz"))
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:

@@ -107,10 +107,14 @@ A local server starts in the background and the desktop window opens. Then:
    by force error, step through the frames and see what the molecule is actually
    doing there.
 
-No data of your own yet? `examples/data/` has a small variable-sized organic set
-with a matching prediction, enough to see every tab populated. A wider corpus —
-fixed- and variable-sized, molecular, periodic and subsystem — is being prepared
-and will be published once its provenance and licences are confirmed. `examples/MACE/` and `examples/Nequip/` are saved sessions with
+No data of your own yet? `examples/data/` includes MD22 molecules, a random SPICE sample
+and periodic MPtrj structures, with matching
+predictions. **Load Example** opens the SPICE pair from
+`examples/data/variable-sized molecular/`. See the
+[dataset README](examples/data/README.md) for sources, permissions and units.
+AM26 and graphene remain on `dev` pending redistribution permission and
+source-unit verification, respectively.
+`examples/MACE/` and `examples/Nequip/` are saved sessions with
 pre-computed predictions for two MD22 systems, loadable with Load Session.
 
 Full reference: [docs/usage.md](docs/usage.md).

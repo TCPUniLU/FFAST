@@ -35,7 +35,7 @@ PROBE_DATASET_LENGTH = "PROBE_DATASET_LENGTH"
 CANCEL_PROBE_DATASET_LENGTH = "CANCEL_PROBE_DATASET_LENGTH"
 LIST_DIR = "LIST_DIR"
 LOAD_PREDICTION = "LOAD_PREDICTION"
-# Load the bundled example pair (examples/data: dataset.xyz, then prediction.xyz
+# Load the SPICE pair (examples/data/variable-sized molecular: dataset.xyz, then prediction.xyz
 # against it). The server knows where the examples live; the window does not.
 LOAD_EXAMPLE = "LOAD_EXAMPLE"
 # Load the zero baseline model (all energies and forces zero). Only ever sent

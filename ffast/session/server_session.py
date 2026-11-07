@@ -974,11 +974,11 @@ class ServerSession:
         self.env.taskLoadZeroModel()
 
     async def _on_load_example(self, **kwargs) -> None:
-        """Load the example pair in ``examples/data``: the dataset, then the
-        prediction against it, in one task so the prediction waits for the
-        dataset. Both announce themselves like any other load. A server
+        """Load the SPICE pair in ``examples/data/variable-sized molecular``:
+        the dataset, then its prediction, in one task so the prediction waits
+        for the dataset. Both announce themselves like any other load. A server
         installed without the repository has no examples; the window is told."""
-        data = Path(__file__).resolve().parents[2] / "examples" / "data"
+        data = Path(__file__).resolve().parents[2] / "examples" / "data" / "variable-sized molecular"
         dataset_path = str(data / "dataset.xyz")
         prediction_path = str(data / "prediction.xyz")
         if not (data / "dataset.xyz").is_file() or not (data / "prediction.xyz").is_file():
@@ -1006,8 +1006,6 @@ class ServerSession:
                 try:
                     env.loading.loadPrepredictedDataset(
                         prediction_path, dataset_fp,
-                        selected_energy_key="MACE_energy",
-                        selected_force_key="MACE_forces",
                         on_error=prediction_failed,
                     )
                 except Exception as exc:
