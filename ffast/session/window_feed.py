@@ -141,7 +141,8 @@ class WindowFeed:
 
     def loader_types(self) -> bytes:
         """LOADER_TYPES: the dataset and model loaders the plugins registered,
-        so the web loader lists the server's types instead of a fixed pair."""
+        so the web loader lists the server's types instead of a fixed pair,
+        and the example files the guided tours load (``None`` without them)."""
         from ffast.protocol.rpc import pack
 
         def rows(registry, attr):
@@ -149,9 +150,12 @@ class WindowFeed:
             return [{"name": name, "extension": getattr(cls, attr, None) or "*"}
                     for name, cls in items]
 
+        from ffast.session import examples
+
         return pack(control.LOADER_TYPES, [], {
             "datasets": rows(getattr(self.env, "datasetTypes", None), "datasetFileExtension"),
             "models": rows(getattr(self.env, "modelTypes", None), "modelFileExtension"),
+            "examples": examples.example_listing(),
         })
 
     # ── sending again after a change ────────────────────────────────────────

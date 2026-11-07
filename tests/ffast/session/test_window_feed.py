@@ -1,5 +1,6 @@
 """The window feed (ADR 0062): builds every piece the windows share, once."""
 import asyncio
+import os
 
 import ffast.metrics.builtin  # noqa: F401
 from ffast.protocol import control
@@ -71,7 +72,25 @@ def test_loader_types_lists_the_registered_loaders_sorted():
 
 def test_loader_types_without_an_env_is_empty():
     _, _, kw = unpack(WindowFeed(None, lambda d: None).loader_types())
-    assert kw == {"datasets": [], "models": []}
+    assert kw["datasets"] == [] and kw["models"] == []
+
+
+def test_loader_types_names_the_example_files_one_folder_deep():
+    _, _, kw = unpack(WindowFeed(None, lambda d: None).loader_types())
+    examples = kw["examples"]
+    assert examples["folder"].endswith(os.path.join("examples", "data"))
+    assert os.path.isabs(examples["folder"])
+    assert "variable-sized molecular/dataset.xyz" in examples["files"]
+    assert "variable-sized periodic/mptrj_sampled_over_200.extxyz" in examples["files"]
+    assert "README.md" in examples["files"]
+    assert examples["files"] == sorted(examples["files"])
+
+
+def test_loader_types_without_the_examples_folder_says_none(monkeypatch, tmp_path):
+    from ffast.session import examples
+    monkeypatch.setattr(examples, "example_data_dir", lambda: tmp_path / "missing")
+    _, _, kw = unpack(WindowFeed(None, lambda d: None).loader_types())
+    assert kw["examples"] is None
 
 
 def test_a_piece_is_broadcast_once_until_it_changes():

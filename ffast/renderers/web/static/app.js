@@ -233,6 +233,8 @@ export class FFastApp {
     this.tourEvents = new EventTarget();
     /** A Load Example this window asked for: the dataset and prediction it brought, once known. */
     this._exampleWatch = null;
+    /** The server's example files, {folder, files}, from LOADER_TYPES; null without them. */
+    this._examples = null;
     // User tabs on the server (ADR 0056): save, delete, hide, export.
     this._tabOps = new TabOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
     // User metrics on the server (ADR 0057): the Metrics pane's wire.
@@ -1717,7 +1719,11 @@ export class FFastApp {
       conn.on(IN.REMOTE_MODEL_META,   (kw, args) => this._onModelMeta(args[0], kw));
       conn.on(IN.DATASET_DELETED,     (kw, args) => this._onDatasetDeleted(args[0]));
       conn.on(IN.MODEL_DELETED,       (kw, args) => this._onModelDeleted(args[0]));
-      conn.on(IN.LOADER_TYPES, (kw) => this._browser.setLoaderTypes(kw));
+      conn.on(IN.LOADER_TYPES, (kw) => {
+        // The example files the guided tours load: {folder, files}, or null.
+        this._examples = kw.examples ?? null;
+        this._browser.setLoaderTypes(kw);
+      });
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.DATASET_LENGTH_RESPONSE, (kw, args) => this._browser.onDatasetLength(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));

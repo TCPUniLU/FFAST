@@ -31,7 +31,6 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -978,7 +977,9 @@ class ServerSession:
         the dataset, then its prediction, in one task so the prediction waits
         for the dataset. Both announce themselves like any other load. A server
         installed without the repository has no examples; the window is told."""
-        data = Path(__file__).resolve().parents[2] / "examples" / "data" / "variable-sized molecular"
+        from ffast.session.examples import example_data_dir
+
+        data = example_data_dir() / "variable-sized molecular"
         dataset_path = str(data / "dataset.xyz")
         prediction_path = str(data / "prediction.xyz")
         if not (data / "dataset.xyz").is_file() or not (data / "prediction.xyz").is_file():
