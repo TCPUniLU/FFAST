@@ -1569,3 +1569,96 @@ async def test_web_every_panel_showing_a_live_run_follows_it_and_keeps_its_zoom(
         rng = await page.evaluate("""() => document.querySelector(
           '.tabpanel.active .analysis-panel[data-title="Gyradius"] .panel-plot').layout.xaxis.range""")
         assert [round(v, 3) for v in rng] == [0.5, 1.5]                 # the zoom is kept
+
+
+# ── ADR 0090 step 6: pause a tab ────────────────────────────────────────────
+
+PAUSE = f"{ACTIVE} .analysis-controls [data-control=pause] button"
+LAST_Y = """(t) => { const y = document.querySelector(
+  `.tabpanel.active .analysis-panel[data-title="${t}"] .panel-plot`).data[0].y; return y.length; }"""
+
+
+async def _tab_with_two_timelines(page):
+    await page.locator("#tab-edit-btn").click()
+    await _add_timeline(page, "ffast.gyradius", "Gyradius")
+    await _add_timeline(page, "ffast.run_score_worst", "Worst")
+    await page.locator("[data-edit=save]").click()
+    await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0, timeout=15000)
+    await page.wait_for_function(_points("Gyradius"), arg=3, timeout=20000)
+    await page.wait_for_function(_points("Worst"), arg=3, timeout=20000)
+
+
+def _raise_alarm(run):
+    run_json = rf.read_json(run / rf.RUN_JSON)
+    [aid] = list((run / rf.ANALYSIS_DIR).iterdir())
+    run_json["analyses"] = {aid.name: {"alarms": [{
+        "kind": "ood", "onset": {"frame": 1, "step": 100, "time": 0.05},
+        "confirmation": {"frame": 2, "step": 200, "time": 0.1}}]}}
+    rf.write_json_atomic(run / rf.RUN_JSON, run_json)
+
+
+async def test_web_a_paused_tab_stops_following_its_run_until_it_resumes(tmp_path):
+    from tests.ffast.live.test_live_run import _format2_run_folder
+
+    run = _format2_run_folder(tmp_path, frames=3, scored=3)
+    async with _live_page_without_scores_wait(run, points=3) as page:
+        await _tab_with_two_timelines(page)
+        await expect(page.locator("#frame-label")).to_have_text("0 / 2")
+        button = page.locator(PAUSE)
+        await expect(button).to_have_text("Pause")
+        await button.click()
+        await expect(button).to_have_text("Resume")
+
+        _write_frame(run, 300, seed=11)
+        _score_frame(run, 3, 300)
+        run_json = rf.read_json(run / rf.RUN_JSON)
+        run_json["producer"] = {"last_step": 300}
+        rf.write_json_atomic(run / rf.RUN_JSON, run_json)
+        # The Run card keeps up...
+        await expect(page.locator(f"{ACTIVE} .live-status")).to_contain_text("step 300", timeout=15000)
+        # ...the plots and the frame range do not. Give the page time to wrongly follow.
+        await page.wait_for_timeout(1500)
+        assert await page.evaluate(f"({LAST_Y})('Gyradius')") == 3
+        assert await page.evaluate(f"({LAST_Y})('Worst')") == 3
+        assert await page.evaluate(
+            "(sel) => document.querySelector(sel + ' .analysis-panel[data-part=\"scores\"] .panel-plot').data[0].x.length",
+            ACTIVE) == 3
+        await expect(page.locator("#frame-label")).to_have_text("0 / 2")
+
+        await button.click()                                  # resume: all catch up
+        await expect(button).to_have_text("Pause")
+        await page.wait_for_function(_points("Gyradius"), arg=4, timeout=20000)
+        await page.wait_for_function(_points("Worst"), arg=4, timeout=20000)
+        await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 4], timeout=20000)
+        await expect(page.locator("#frame-label")).to_have_text("0 / 3")
+
+
+async def test_web_a_new_alarm_during_a_pause_turns_the_button_to_a_warning(tmp_path):
+    from tests.ffast.live.test_live_run import _format2_run_folder
+
+    run = _format2_run_folder(tmp_path, frames=3, scored=3)
+    async with _live_page_without_scores_wait(run, points=3) as page:
+        button = page.locator(PAUSE)
+        await button.click()
+        await expect(button).to_have_text("Resume")
+        assert "warn" not in (await button.get_attribute("class") or "")
+        _raise_alarm(run)
+        await expect(button).to_have_text("Resume · new alarm", timeout=15000)
+        assert "warn" in (await button.get_attribute("class") or "")
+        await button.click()
+        await expect(button).to_have_text("Pause")
+
+
+async def test_web_a_pause_is_never_saved_nor_sent(tmp_path):
+    from tests.ffast.live.test_live_run import _format2_run_folder
+
+    run = _format2_run_folder(tmp_path, frames=3, scored=3)
+    async with _live_page_without_scores_wait(run, points=3) as page:
+        await page.locator(PAUSE).click()
+        await expect(page.locator(PAUSE)).to_have_text("Resume")
+        await page.wait_for_timeout(300)
+        stored = await page.evaluate("() => JSON.stringify({...localStorage})")
+        assert "paus" not in stored.lower()
+        await page.reload(wait_until="networkidle")
+        await _expect_connected(page)
+        await expect(page.locator(PAUSE)).to_have_text("Pause", timeout=20000)

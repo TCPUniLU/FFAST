@@ -226,6 +226,7 @@ export class AnalysisManager {
     this._explainsChoices = deps.explainsChoices;
     this._onExplains = deps.onExplains;
     this._onSameStep = deps.onSameStep;
+    this._onPauseChange = deps.onPauseChange;
     this._onFreeze = deps.onFreeze;
     this._seriesColour = deps.seriesColour;
     this._openFrame = deps.onPointFrame;
@@ -247,6 +248,9 @@ export class AnalysisManager {
     this._subsets = new Map();
     /** Live runs (ADR 0087): run id → the last LIVE_RUN_UPDATE. */
     this._live = new Map();
+    /** Paused tabs (ADR 0090): tab name → what the tab held when it was paused.
+     * Never saved: a reload ends every pause, and nothing is sent to the server. */
+    this._pauses = new Map();
     /** run id → {result, mode, pending}: the clicked frame's attribution (live_ui.js). */
     this._liveAtt = new Map();
 
@@ -316,9 +320,15 @@ export class AnalysisManager {
     const before = this._live.get(kw.run_id);
     this._live.set(kw.run_id, kw);
     this._syncCompareHint();
+    for (const x of this._tabs) this._syncPause(x);
     const t = this._activeTab();
     if (!t || !t.slots.every((slot) => slot.cards)) return;
     if (!this._tabRuns(t).some((r) => r.fp === kw.fingerprint)) return;
+    if (t.pause) {      // the Run card and the events go on; the plots wait (ADR 0090)
+      this._redrawLiveParts(t, 'status');
+      this._redrawLiveParts(t, 'events');
+      return;
+    }
     // The same state sent again (every 10 s): only the status is drawn again,
     // for its "heartbeat N s ago". Redrawing the scores of a long run froze
     // the page for seconds each time.
@@ -801,7 +811,8 @@ export class AnalysisManager {
    * the one with SUB ticked draw (the subsets, which move with the zoom). */
   _drawnKeys(t) {
     const key = (refs) => JSON.stringify(
-      refs.map((r) => [r.datasetFp, framesKey(this._available.datasets.get(r.datasetFp))]));
+      refs.map((r) => [r.datasetFp,
+        t.pause?.keys.get(r.datasetFp) ?? framesKey(this._available.datasets.get(r.datasetFp))]));
     const refs = this.seriesRefs(t);
     const units = refs.map((r) => datasetUnits(r.datasetFp, this._available.datasets));
     const all = JSON.stringify([refs, key(refs), this._elementOrder || [], t.selectedElements, units]);
@@ -870,6 +881,7 @@ export class AnalysisManager {
   activate(id) {
     this._activeId = id;
     const t = this._tabs.find((x) => x.id === id);
+    if (t) this._syncPause(t);
     if (t) this._refreshTab(t);
   }
 
@@ -1040,6 +1052,7 @@ export class AnalysisManager {
       t.selectedDatasets = [...spec.pinned];
       t.pinWaiting = !spec.pinned.every((fp) => this._available.datasets.has(fp));
     }
+    t.pause = this._pauses.get(spec.name) || null;      // a layout rebuild keeps a pause
     this._tabs.push(t);
     this._layoutGrid(t);
     this._buildControls(t);
@@ -1380,7 +1393,70 @@ export class AnalysisManager {
       this._renderSeriesSelector(t);
     }
 
-    el.hidden = !el.children.length;
+    // Pause (ADR 0090): shown while a live run is ticked in the tab.
+    const pause = document.createElement('div');
+    pause.className = 'ac-item';
+    pause.dataset.control = 'pause';
+    t.pauseBtn = document.createElement('button');
+    t.pauseBtn.type = 'button';
+    t.pauseBtn.className = 'ac-pause';
+    t.pauseBtn.addEventListener('click', () => this._togglePause(t));
+    pause.appendChild(t.pauseBtn);
+    el.appendChild(pause);
+    t.pauseEl = pause;
+    this._syncPause(t);
+  }
+
+  /** Whether a run ticked in the tab has raised an alarm since the pause began. */
+  _pauseAlarm(t) {
+    if (!t.pause) return false;
+    for (const [fp, was] of t.pause.alarms) {
+      if ((this.liveRunOf(fp)?.progress?.alarms?.length || 0) > was) return true;
+    }
+    return false;
+  }
+
+  /** The Pause button of tab `t`: shown only with a live run ticked; reads
+   * Resume while paused, and warns when an alarm came meanwhile. */
+  _syncPause(t) {
+    if (!t.pauseEl) return;
+    const live = this._tabDatasets(t).some((fp) => this.liveRunOf(fp));
+    t.pauseEl.hidden = !live;
+    const alarm = this._pauseAlarm(t);
+    t.pauseBtn.textContent = !t.pause ? 'Pause' : alarm ? 'Resume · new alarm' : 'Resume';
+    t.pauseBtn.classList.toggle('warn', alarm);
+    t.controlsEl.hidden = ![...t.controlsEl.children].some((c) => !c.hidden);
+  }
+
+  /** Pause the tab: its plots and the frame range of its 3D panels stay as
+   * they are while the Run card and the events keep going. Resume draws all once. */
+  _togglePause(t) {
+    if (t.pause) {
+      t.pause = null;
+      this._pauses.delete(t.spec.name);
+      this._syncPause(t);
+      this._refreshTab(t);
+      this._onPauseChange?.();
+      return;
+    }
+    const pause = { alarms: new Map(), keys: new Map(), n: new Map() };
+    for (const fp of this._tabDatasets(t)) {
+      const kw = this.liveRunOf(fp);
+      if (!kw) continue;
+      const meta = this._available.datasets.get(fp);
+      pause.alarms.set(fp, kw.progress?.alarms?.length || 0);
+      pause.keys.set(fp, framesKey(meta));
+      pause.n.set(fp, meta?.n ?? kw.n_frames ?? 0);
+    }
+    t.pause = pause;
+    this._pauses.set(t.spec.name, pause);
+    this._syncPause(t);
+  }
+
+  /** The frame count a paused tab on screen holds for dataset `fp`, else null. */
+  pausedFrameCount(fp) {
+    const t = this._tabs.find((x) => x.id === this._activeId);
+    return t?.pause?.n.get(fp) ?? null;
   }
 
   // ── series resolution (dataset × prediction) ────────────────────────────

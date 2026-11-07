@@ -328,6 +328,7 @@ export class FFastApp {
       onLive: (cmd) => this._liveCommand(cmd),
       explainsChoices: (t, spec) => this._explainsChoices(t, spec),
       onExplains: (tabName, spec, index) => this._setExplains(tabName, spec, index),
+      onPauseChange: () => this._syncPlayback(),
       onSameStep: () => this._syncSameStep({ view: null, datasetFp: this._currentDatasetFp,
         frame: this._main.current?.frame ?? 0 }),
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
@@ -3061,7 +3062,8 @@ export class FFastApp {
     const view = this._playbackView();
     const fp = view ? view.datasetFp : this._currentDatasetFp;
     if (!fp) return;
-    const n = this._datasets.get(fp)?.n || 1;
+    // A paused tab keeps the frame range it had (ADR 0090).
+    const n = this._analysis.pausedFrameCount(fp) || this._datasets.get(fp)?.n || 1;
     const frame = view ? (view.frame ?? 0) : (this._main.current?.frame ?? 0);
     this._frameCount = n;
     const slider = document.getElementById('frame-slider');
