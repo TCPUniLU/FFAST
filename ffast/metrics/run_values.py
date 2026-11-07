@@ -94,5 +94,7 @@ def sync(env, registry=None) -> bool:
     if feed is not None:
         from ffast.protocol import control
 
-        feed.changed(control.METRIC_CATALOG)
+        # The layout too: a saved tab's density of a run score could not be
+        # compiled while no run had it (sent only if it changed).
+        feed.changed(control.METRIC_CATALOG, control.TAB_LAYOUT)
     return True

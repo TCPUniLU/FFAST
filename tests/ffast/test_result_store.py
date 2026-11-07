@@ -351,3 +351,48 @@ def test_a_restarted_computation_keeps_its_own_running_task():
     rows, after = _run(scenario())
     assert rows == 2
     assert after == {}
+
+
+# ── ADR 0090: a growing live run does not stop other results being stored ───
+
+def test_a_run_growing_meanwhile_does_not_stop_another_datasets_result_being_stored():
+    env = _Env()
+    env.release = threading.Event()
+    store = MetricResultStore(env)
+
+    async def scenario():
+        asked = asyncio.ensure_future(store.get(PLAIN, {}, "ds", None))
+        await asyncio.to_thread(env.started.wait, 5)
+        store.dataset_grew("live:run1")          # another dataset grows while it computes
+        env.release.set()
+        return await asked
+
+    got = _run(scenario())
+    assert isinstance(got, MetricResult)
+    assert store.peek(PLAIN, {}, "ds", None) is got
+
+
+def test_a_result_of_a_run_that_grew_while_it_was_computed_is_not_stored():
+    env = _Env()
+    env.release = threading.Event()
+    store = MetricResultStore(env)
+
+    async def scenario():
+        asked = asyncio.ensure_future(store.get(PLAIN, {}, "ds", None))
+        await asyncio.to_thread(env.started.wait, 5)
+        store.dataset_grew("ds")                 # its own dataset grew: the result is old
+        env.release.set()
+        return await asked
+
+    assert isinstance(_run(scenario()), MetricResult)    # still given to who asked
+    assert store.peek(PLAIN, {}, "ds", None) is None
+
+
+def test_growth_drops_what_was_stored_for_that_dataset_only():
+    env = _Env()
+    store = MetricResultStore(env)
+    _run(store.get(PLAIN, {}, "ds", None))
+    store.dataset_grew("other")
+    assert store.peek(PLAIN, {}, "ds", None) is not None
+    store.dataset_grew("ds")
+    assert store.peek(PLAIN, {}, "ds", None) is None

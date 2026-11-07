@@ -359,7 +359,7 @@ def test_growth_makes_the_result_store_forget_the_run(tmp_path):
     d = _run_folder(tmp_path)
     env = _Env()
     env.results = type("Store", (), {"forgotten": [],
-                                      "forget_objects": lambda self, fp: self.forgotten.append(fp)})()
+                                      "dataset_grew": lambda self, fp: self.forgotten.append(fp)})()
     run = LiveRun(env, d, lambda m: None)
     run.apply(run.read_files())
     env.results.forgotten.clear()
@@ -493,3 +493,46 @@ def test_the_store_says_why_there_is_no_analysis_value_quietly():
     assert isinstance(out, Missing) and out.kind == "no_analysis_value"
     assert out.text == "No worst score ÷ threshold for shard_03: only live runs have scores."
     assert env.calls == []
+
+
+def test_a_run_scores_density_on_a_plain_dataset_is_quiet_too():
+    """The density reads the score metric, not the run.* ref itself."""
+    from tests.ffast.test_result_store import _Env as StoreEnv, _run
+    from ffast.metrics import dims, units
+    from ffast.metrics.fields import field_passthrough
+    from ffast.metrics.registry import default_registry
+    from ffast.metrics.result_store import Missing, MetricResultStore
+    from ffast.metrics.transforms import compile_transform
+
+    default_registry.metric(id="ffast.test_run_close", label="close", inputs={"value": "run.chem.close"},
+                            shape=(dims.N_frames,), unit=units.dimensionless)(field_passthrough)
+    density = compile_transform("ffast.test_run_close", "value_kde")
+    env = StoreEnv()
+    env.dataset.getDisplayName = lambda: "shard_03"
+    try:
+        out = _run(MetricResultStore(env).get(density, {}, "ds", None))
+    finally:
+        default_registry.unregister(density)
+        default_registry.unregister("ffast.test_run_close")
+    assert isinstance(out, Missing) and out.kind == "no_analysis_value"
+    assert out.text == "No too-close pairs for shard_03: only live runs have scores."
+    assert env.calls == []
+
+
+def test_an_inputs_name_is_taken_before_its_value_is_read(tmp_path):
+    """A score row that comes while the value is read must not be named in its key."""
+    from ffast.metrics.input_resolver import InputResolver, _ResolverSource
+
+    run = _open_format2(tmp_path)
+    resolver = InputResolver(object())
+    source = _ResolverSource(resolver, None, run.dataset)
+    real = run.analysis_value
+
+    def read_then_a_row_comes(key):
+        value = real(key)
+        run.rows.append({"frame": 3, "exceedance": 2.0})
+        return value
+
+    run.analysis_value = read_then_a_row_comes
+    _, value = source.get("m", "value", "run.score.worst")
+    assert source.identity("run.score.worst").endswith("|r2")       # the 2 rows the value holds

@@ -258,7 +258,7 @@ class LiveRun:
             # not there yet) would otherwise be served for the longer run.
             store = getattr(self.env, "results", None)
             if store is not None:
-                store.forget_objects(self.fingerprint)
+                store.dataset_grew(self.fingerprint)
         return changed
 
     def message(self) -> bytes:

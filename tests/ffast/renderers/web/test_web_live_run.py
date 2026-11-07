@@ -1476,6 +1476,13 @@ async def test_web_a_run_score_is_picked_under_run_scores_and_drawn_with_a_gap_a
         assert any(t.startswith("bonds T² ÷ threshold") for t in labels)
         assert any(t.startswith("broken bonds") for t in labels)
         assert await select.locator("> option").count() > 1             # the others come first
+        # A density panel lists each value's density under the same group.
+        await page.locator(".edit-modal select[data-field=kind]").select_option("density")
+        dens = page.locator(".edit-modal select[data-role=value] optgroup[label='Run scores'] option")
+        assert "ffast.run_score_bonds_T2__value_kde" in [
+            await o.get_attribute("value") for o in await dens.all()]
+        await page.locator(".edit-modal select[data-field=kind]").select_option("timeline")
+        select = page.locator(".edit-modal select[data-role=y]")
         await select.select_option("ffast.run_score_bonds_T2")
         await page.locator(".edit-modal input[data-field=title]").fill("Bonds T2")
         await page.get_by_role("button", name="Add", exact=True).click()

@@ -60,14 +60,18 @@ def _name(obj, fallback) -> str:
 class _Run:
     """One computation and the requests waiting for it. ``forgets`` is the
     store's count of forget calls when it started: an outcome is filed only
-    when nothing was forgotten meanwhile (ADR 0085 decision 6)."""
+    when nothing was forgotten meanwhile (ADR 0085 decision 6). ``grown`` is
+    how often its dataset had grown then (ADR 0090): a live run grows every
+    second, so its growth is counted per dataset, not as a forget."""
 
-    def __init__(self, stop, forgets, task_id) -> None:
+    def __init__(self, stop, forgets, task_id, dataset_fp=None, grown=0) -> None:
         self.future = None
         self.waiters = 0
         self.stop = stop
         self.forgets = forgets
         self.task_id = task_id
+        self.dataset_fp = dataset_fp
+        self.grown = grown
 
 
 class MetricResultStore:
@@ -90,6 +94,7 @@ class MetricResultStore:
         self._failures: OrderedDict[str, Missing] = OrderedDict()
         self._running: dict[str, _Run] = {}                 # event-loop thread only
         self._forgets = 0                                   # forget calls so far
+        self._grown: dict[str, int] = {}                    # dataset fp → growths so far
         self._runs = 0                                      # computations started
 
     # ── reading ────────────────────────────────────────────────────────────
@@ -148,6 +153,28 @@ class MetricResultStore:
             return ck is not None and (ck.matches_dataset(fingerprint) or ck.matches_model(fingerprint))
 
         self._forget(gone)
+
+    def dataset_grew(self, fingerprint) -> None:
+        """A dataset gained frames under the same fingerprint (a live run, ADR
+        0090): drop what is stored for it, and file no outcome of a computation
+        of it that started before. Computations of other datasets are not touched."""
+        from ffast.cache import CacheKey
+
+        def gone(key) -> bool:
+            ck = CacheKey.try_parse(key)
+            return ck is not None and ck.matches_dataset(fingerprint)
+
+        with self._lock:
+            self._grown[fingerprint] = self._grown.get(fingerprint, 0) + 1
+            for key in [k for k in self._index if gone(k)]:
+                del self._index[key]
+            for key in [k for k in self._failures if gone(k)]:
+                del self._failures[key]
+
+    def _current(self, run) -> bool:
+        """Whether nothing ``run`` read was forgotten or grew while it ran (lock held)."""
+        return (self._forgets == run.forgets
+                and self._grown.get(run.dataset_fp, 0) == run.grown)
 
     def forget_metrics(self, metric_ids) -> None:
         """Drop what is stored for these metrics, whatever their parameters."""
@@ -222,10 +249,20 @@ class MetricResultStore:
         from ffast.metrics.inputs import parse_run_ref, run_value_label
         from ffast.metrics.registry import default_registry
 
-        try:
-            refs = default_registry.get(metric_id)[0].inputs.values()
-        except KeyError:
-            return None
+        # The run.* refs it reads, through the metrics it reads (a density of a
+        # run score reads the score metric, not the ref).
+        refs, seen, todo = [], set(), [metric_id]
+        while todo:
+            mid = todo.pop()
+            if mid in seen:
+                continue
+            seen.add(mid)
+            try:
+                schema = default_registry.get(mid)[0]
+            except KeyError:
+                continue
+            for ref in (schema.inputs or {}).values():
+                (todo if default_registry.has(ref) else refs).append(ref)
         for ref in refs:
             key = parse_run_ref(ref)
             if key is None:
@@ -242,9 +279,11 @@ class MetricResultStore:
         loop = asyncio.get_running_loop()
         asked = time.monotonic()
         self._runs += 1
+        dataset_fp = getattr(dataset, "fingerprint", None)
         with self._lock:
             forgets = self._forgets
-        run = _Run(threading.Event(), forgets, f"metric:{key}#{self._runs}")
+            grown = self._grown.get(dataset_fp, 0)
+        run = _Run(threading.Event(), forgets, f"metric:{key}#{self._runs}", dataset_fp, grown)
 
         def work():
             if run.stop.is_set():   # left while it waited for a thread: read nothing
@@ -298,7 +337,7 @@ class MetricResultStore:
         if isinstance(outcome, MetricResult):
             if step_key is not None:
                 with self._lock:
-                    if self._forgets == run.forgets:
+                    if self._current(run):
                         self._index[key] = step_key
             return outcome
         failure: MetricFailure = outcome
@@ -309,7 +348,7 @@ class MetricResultStore:
         missing = Missing(failure.kind, reason)
         if failure.kind in ("failed", "missing_input"):
             with self._lock:
-                if self._forgets != run.forgets:
+                if not self._current(run):
                     return missing      # its dataset or model changed meanwhile
                 self._failures.pop(key, None)
                 self._failures[key] = missing

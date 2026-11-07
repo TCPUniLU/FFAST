@@ -139,8 +139,13 @@ class _ResolverSource(InputSource):
         self._model = model
         self._dataset = dataset
         self._asked_to_stop = stopped
+        self._names: dict = {}      # ref → its name, taken before a growing dataset's value is read
 
     def get(self, metric_id, local_key, ref):
+        if getattr(self._dataset, "grows", False):
+            # Named before it is read: frames or scores that come meanwhile are
+            # then in the value but not in its name, which only costs a recompute.
+            self._names[ref] = self._name(ref)
         return True, self._resolver.resolve(ref, model=self._model, dataset=self._dataset)
 
     def stopped(self):
@@ -153,6 +158,9 @@ class _ResolverSource(InputSource):
         input): their arrays do not change once loaded. A subset that follows
         the zoom changes its frames under one fingerprint, and a selection
         changes with the plot, so neither is named."""
+        return self._names[ref] if ref in self._names else self._name(ref)
+
+    def _name(self, ref):
         if ref == "selection.indices":
             return None
         dataset_fp = getattr(self._dataset, "fingerprint", None)

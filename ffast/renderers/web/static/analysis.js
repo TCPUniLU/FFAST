@@ -1416,12 +1416,13 @@ export class AnalysisManager {
     return false;
   }
 
-  /** The Pause button of tab `t`: shown only with a live run ticked; reads
+  /** The Pause button of tab `t`: shown with a live run ticked (or while paused); reads
    * Resume while paused, and warns when an alarm came meanwhile. */
   _syncPause(t) {
     if (!t.pauseEl) return;
     const live = this._tabDatasets(t).some((fp) => this.liveRunOf(fp));
-    t.pauseEl.hidden = !live;
+    // A paused tab keeps its button even if the run is unticked: it must be resumable.
+    t.pauseEl.hidden = !live && !t.pause;
     const alarm = this._pauseAlarm(t);
     t.pauseBtn.textContent = !t.pause ? 'Pause' : alarm ? 'Resume · new alarm' : 'Resume';
     t.pauseBtn.classList.toggle('warn', alarm);
