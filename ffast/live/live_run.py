@@ -281,6 +281,51 @@ class LiveRun:
             "error": self.error,
         })
 
+    # ── analysis values (ADR 0090; any thread) ─────────────────────────────
+    def analysis_value_problem(self, key) -> str | None:
+        """Why this run has no value for ``key`` (see ``parse_run_ref``), or None."""
+        if key[0] != "score" or key == ("worst",):
+            return None
+        _, track, stat = key
+        if not self.settings:
+            return "it has no scores yet"
+        if self.settings.get("scores_format") != 2:
+            return "its scores were written before per-test scores were kept"
+        if [track, stat] not in [list(t) for t in self.settings.get("tests") or []]:
+            return f"its reference has no {track} {'T²' if stat == 'T2' else stat} test"
+        return None
+
+    def analysis_value(self, key) -> np.ndarray | None:
+        """One number per frame of the run, NaN where no score row has the frame
+        (a gap: the viewer never scores a frame itself), or None when the run
+        has no such value. ``key``: ``("score", track, stat)``, ``("worst",)`` or
+        ``("chem", "broken" | "close")``."""
+        if self.analysis_value_problem(key):
+            return None
+        out = np.full(self.dataset.N, np.nan)
+        rows = list(self.rows)          # the event loop appends while a worker reads
+        role = self.settings.get("role", "centroid")
+        limit = None
+        if key[0] == "score" and key != ("worst",):
+            _, track, stat = key
+            limit = (((self.settings.get("thresholds") or {}).get(track) or {}).get(stat) or {}).get(role)
+            if not limit:
+                return out
+        for r in rows:
+            frame = r.get("frame")
+            if not isinstance(frame, int) or not 0 <= frame < len(out):
+                continue
+            if key == ("worst",):
+                value = r["exceedance"] if "exceedance" in r else _v1_exceedance(r, self.settings)[0]
+            elif key[0] == "chem":
+                value = (r.get("chem") or {}).get(key[1])
+            else:
+                score = ((r.get("tracks") or {}).get(track) or {}).get(stat)
+                value = None if score is None else score / limit
+            if value is not None:
+                out[frame] = value
+        return out
+
     # ── attribution (any thread) ────────────────────────────────────────────
     def _attribution_bundle(self):
         """The run's bundle, loaded once; ``ValueError`` saying why it cannot be used."""

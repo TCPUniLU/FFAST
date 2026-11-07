@@ -26,7 +26,7 @@ import numpy as np
 
 from ffast.core.flat_frames import FlatFrames
 from ffast.metrics.execution import InputSource
-from ffast.metrics.inputs import parse_field_ref, parse_missing_ref
+from ffast.metrics.inputs import parse_field_ref, parse_missing_ref, parse_run_ref
 
 logger = logging.getLogger("FFAST")
 
@@ -104,6 +104,28 @@ def _flatPerAtom(value, axes):
     return value
 
 
+def _live_run_of(env, dataset):
+    """The open live run whose frames ``dataset`` is, else None (ADR 0090)."""
+    from ffast.live.live_run import LIVE_PREFIX, LiveRunDataset
+
+    if not isinstance(dataset, LiveRunDataset):
+        return None
+    fp = getattr(dataset, "fingerprint", "") or ""
+    return (getattr(env, "live_runs", None) or {}).get(fp.removeprefix(LIVE_PREFIX))
+
+
+def run_value_problem(env, ref, dataset) -> str | None:
+    """Why the analysis value ``ref`` has no value for ``dataset`` ("only live
+    runs have scores", ...), or None when it has one."""
+    key = parse_run_ref(ref)
+    if key is None:
+        return None
+    run = _live_run_of(env, dataset)
+    if run is None:
+        return "only live runs have scores"
+    return run.analysis_value_problem(key)
+
+
 class _ResolverSource(InputSource):
     """Metric Execution Context input source backed by an ``InputResolver``.
 
@@ -140,6 +162,9 @@ class _ResolverSource(InputSource):
         if getattr(self._dataset, "grows", False):
             # A live run adds frames under one fingerprint: name the count.
             dataset_fp = f"{dataset_fp}|n{self._dataset.N}"
+            if parse_run_ref(ref) is not None:      # and scores: name how many
+                run = _live_run_of(getattr(self._resolver, "env", None), self._dataset)
+                dataset_fp += f"|r{len(run.rows) if run else 0}"
         if not ref.startswith("prediction"):
             return f"{ref}|{dataset_fp}"
         model_fp = getattr(self._model, "fingerprint", None)
@@ -186,6 +211,11 @@ class InputResolver:
                 if side == "reference":
                     return _flatPerAtom(dataset.getAtomFieldMissing(key), axes=0)
                 return self._prediction_field(model, dataset, "atoms", key, missing=True)
+            # Analysis values of a live run (ADR 0090)
+            key = parse_run_ref(ref)
+            if key is not None:
+                run = _live_run_of(self.env, dataset)
+                return None if run is None else run.analysis_value(key)
             # Dataset Field refs (ADR 0023): {reference,prediction}.{info,atoms}.<key>
             parsed = parse_field_ref(ref)
             if parsed is not None:

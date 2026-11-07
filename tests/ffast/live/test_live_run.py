@@ -383,3 +383,112 @@ def test_the_result_store_really_forgets_a_live_fingerprint():
     assert store.peek(PLAIN, {}, "live:run1", None) is not None
     store.forget_objects("live:run1")
     assert store.peek(PLAIN, {}, "live:run1", None) is None
+
+
+# ── ADR 0090 step 2: analysis values ────────────────────────────────────────
+
+def _format2_run_folder(tmp_path, frames=4, scored=2):
+    """A format-2 run: bonds and angles tracks, T² and SPE; only the first
+    ``scored`` frames have a score row."""
+    d = tmp_path / "20261107-120000-node-1-abcd"
+    d.mkdir()
+    rf.write_json_atomic(d / rf.RUN_JSON, {"format": rf.RUN_FORMAT, "format_version": 1,
+                                           "run_id": d.name, "end": None})
+    (d / rf.FRAMES).write_text(dump_text(random_frames(frames)))
+    a = d / rf.ANALYSIS_DIR / "0123456789abcdef"
+    a.mkdir(parents=True)
+    rf.write_json_atomic(a / rf.SETTINGS, {
+        "bundle": "/b.bundle", "scores_format": 2, "role": "centroid",
+        "tracks": ["bonds", "angles"],
+        "tests": [["bonds", "T2"], ["bonds", "SPE"], ["angles", "T2"]],
+        "thresholds": {"bonds": {"T2": {"centroid": 10.0, "bead": 12.0},
+                                 "SPE": {"centroid": 2.0, "bead": 2.5}},
+                       "angles": {"T2": {"centroid": 5.0, "bead": 6.0}}}})
+    rf.ScoresWriter(a / rf.SCORES).append([
+        {"segment": 0, "frame": k, "step": 100 * k, "time": 0.05 * k, "identity": "proven",
+         "tracks": {"bonds": {"T2": 5.0 * (k + 1), "SPE": 1.0},
+                    "angles": {"T2": 2.5, "SPE": 9.0}},
+         "exceedance": 0.5 * (k + 1), "test": ["bonds", "T2"], "marked": False,
+         "chem": {"broken": k, "close": 2 * k, "planarity": 0.1}}
+        for k in range(scored)])
+    return d
+
+
+def _open_format2(tmp_path, **kw):
+    d = _format2_run_folder(tmp_path, **kw)
+    run = LiveRun(_Env(), d, lambda m: None)
+    run.apply(run.read_files())
+    return run
+
+
+def test_analysis_values_are_the_scores_over_their_thresholds_with_gaps(tmp_path):
+    run = _open_format2(tmp_path)
+    v = run.analysis_value(("score", "bonds", "T2"))
+    assert v.shape == (4,)
+    assert v[:2].tolist() == [0.5, 1.0] and np.isnan(v[2:]).all()
+    assert run.analysis_value(("score", "angles", "T2"))[:2].tolist() == [0.5, 0.5]
+    assert run.analysis_value(("worst",))[:2].tolist() == [0.5, 1.0]
+    assert run.analysis_value(("chem", "broken"))[:2].tolist() == [0.0, 1.0]
+    assert run.analysis_value(("chem", "close"))[:2].tolist() == [0.0, 2.0]
+    assert np.isnan(run.analysis_value(("chem", "close"))[2:]).all()
+
+
+def test_a_test_the_run_does_not_have_gives_no_value_and_says_why(tmp_path):
+    run = _open_format2(tmp_path)
+    assert run.analysis_value(("score", "angles", "SPE")) is None
+    assert run.analysis_value_problem(("score", "angles", "SPE")) == "its reference has no angles SPE test"
+    assert run.analysis_value_problem(("score", "bonds", "T2")) is None
+
+
+def test_format_1_scores_give_the_worst_value_only(tmp_path):
+    d = _run_folder(tmp_path)
+    run = LiveRun(_Env(), d, lambda m: None)
+    run.apply(run.read_files())
+    assert run.analysis_value(("worst",)).tolist() == [0.2, 1.2]
+    assert run.analysis_value(("score", "geometric", "T2")) is None
+    assert "before per-test scores were kept" in run.analysis_value_problem(("score", "geometric", "T2"))
+
+
+def test_run_refs_are_valid_inputs_but_not_dataset_fields():
+    from ffast.metrics.inputs import is_field_ref, is_valid_ref
+
+    for ref in ("run.score.bonds.T2", "run.score.angles.SPE", "run.score.worst",
+                "run.chem.broken", "run.chem.close"):
+        assert is_valid_ref(ref) and not is_field_ref(ref)
+    for ref in ("run.score.bonds", "run.score.bonds.X", "run.chem.other", "run.score.a.b.T2"):
+        assert not is_valid_ref(ref)
+
+
+def test_the_resolver_reads_a_runs_value_and_refuses_a_plain_dataset(tmp_path):
+    from ffast.metrics.input_resolver import InputResolver, run_value_problem
+
+    run = _open_format2(tmp_path)
+    env = run.env
+    env.live_runs = {run.run_id: run}
+    resolver = InputResolver(env)
+    got = resolver.resolve("run.score.bonds.T2", dataset=run.dataset)
+    assert got[:2].tolist() == [0.5, 1.0]
+    assert resolver.resolve("run.score.angles.SPE", dataset=run.dataset) is None
+    plain = type("Plain", (), {"fingerprint": "abc", "getDisplayName": lambda self: "shard"})()
+    assert resolver.resolve("run.score.worst", dataset=plain) is None
+    assert run_value_problem(env, "run.score.worst", plain) == "only live runs have scores"
+    assert run_value_problem(env, "run.score.bonds.T2", run.dataset) is None
+
+
+def test_the_store_says_why_there_is_no_analysis_value_quietly():
+    from tests.ffast.test_result_store import _Env as StoreEnv, _run
+    from ffast.metrics.registry import default_registry
+    from ffast.metrics.result_store import Missing, MetricResultStore
+    from ffast.metrics import dims, units
+    from ffast.metrics.fields import field_passthrough
+
+    default_registry.metric(id="ffast.test_run_worst", label="worst", inputs={"value": "run.score.worst"},
+                            shape=(dims.N_frames,), unit=units.dimensionless)(field_passthrough)
+    env = StoreEnv()
+    env.live_runs = {}
+    env.dataset.getDisplayName = lambda: "shard_03"
+    out = _run(MetricResultStore(env).get("ffast.test_run_worst", {}, "ds", None))
+    default_registry.unregister("ffast.test_run_worst")
+    assert isinstance(out, Missing) and out.kind == "no_analysis_value"
+    assert out.text == "No worst score ÷ threshold for shard_03: only live runs have scores."
+    assert env.calls == []

@@ -27,8 +27,8 @@ _ATTEMPTS = 3
 class Missing:
     """Why there is no result: a kind (ADR 0085) and a sentence.
 
-    Kinds: ``needs_prediction``, ``failed``, ``missing_input``, ``temporary``,
-    ``object_gone``."""
+    Kinds: ``needs_prediction``, ``no_analysis_value``, ``failed``,
+    ``missing_input``, ``temporary``, ``object_gone``."""
     kind: str
     text: str
 
@@ -104,7 +104,8 @@ class MetricResultStore:
         no failure is remembered, and no prediction is missing. Safe from any
         thread."""
         model, dataset, _, known = self._known(metric_id, params, dataset_fp, model_fp)
-        return known is None and self._needs_prediction(metric_id, model, dataset) is None
+        return (known is None and self._needs_prediction(metric_id, model, dataset) is None
+                and self._no_analysis_value(metric_id, dataset) is None)
 
     async def get(self, metric_id, params, dataset_fp, model_fp) -> MetricResult | Missing:
         """The result, computing it if needed, or why there is none."""
@@ -115,6 +116,9 @@ class MetricResultStore:
         needs = await asyncio.to_thread(self._needs_prediction, metric_id, model, dataset)
         if needs is not None:
             return needs
+        no_value = self._no_analysis_value(metric_id, dataset)
+        if no_value is not None:
+            return no_value
         known = self._known(metric_id, params, dataset_fp, model_fp)[3]
         if known is not None:       # stored by a run that ended meanwhile
             return known
@@ -210,6 +214,27 @@ class MetricResultStore:
         if model is not None:
             text += f" of {_name(dataset, 'the dataset')} by {_name(model, 'the model')}"
         return Missing("needs_prediction", text)
+
+    def _no_analysis_value(self, metric_id, dataset) -> Missing | None:
+        """Quiet reason (ADR 0090): the metric reads a live run's score the
+        dataset does not have. Read from the metric's own inputs only."""
+        from ffast.metrics.input_resolver import run_value_problem
+        from ffast.metrics.inputs import parse_run_ref, run_value_label
+        from ffast.metrics.registry import default_registry
+
+        try:
+            refs = default_registry.get(metric_id)[0].inputs.values()
+        except KeyError:
+            return None
+        for ref in refs:
+            key = parse_run_ref(ref)
+            if key is None:
+                continue
+            problem = run_value_problem(self._env, ref, dataset)
+            if problem is not None:
+                return Missing("no_analysis_value", f"No {run_value_label(key)} for "
+                               f"{_name(dataset, 'the dataset')}: {problem}.")
+        return None
 
     # ── computing ──────────────────────────────────────────────────────────
 

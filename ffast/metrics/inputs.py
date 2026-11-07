@@ -121,6 +121,48 @@ def is_field_ref(ref) -> bool:
     return parse_field_ref(ref) is not None
 
 
+# Analysis value refs (ADR 0090): one number per frame of a live run, read from
+# its first analysis. Not Dataset fields: they are not in any file.
+#   run.score.<track>.<T2|SPE>   that test's score ÷ its threshold
+#   run.score.worst              the worst test's score ÷ its threshold
+#   run.chem.broken / .close     broken bonds / too-close pairs
+_RUN_REF_RE = re.compile(
+    r"^run\.(?:score\.(?P<track>[^.#]+)\.(?P<stat>T2|SPE)|(?P<worst>score\.worst)|chem\.(?P<chem>broken|close))$")
+
+
+def parse_run_ref(ref):
+    """The analysis value ``ref`` names, else ``None``: ``("score", track, stat)``,
+    ``("worst",)`` or ``("chem", "broken" | "close")``."""
+    if not isinstance(ref, str):
+        return None
+    m = _RUN_REF_RE.match(ref)
+    if m is None:
+        return None
+    if m.group("worst"):
+        return ("worst",)
+    if m.group("chem"):
+        return ("chem", m.group("chem"))
+    return ("score", m.group("track"), m.group("stat"))
+
+
+def run_ref(key) -> str:
+    """The ref of an analysis value key (the inverse of ``parse_run_ref``)."""
+    if key == ("worst",):
+        return "run.score.worst"
+    if key[0] == "chem":
+        return f"run.chem.{key[1]}"
+    return f"run.score.{key[1]}.{key[2]}"
+
+
+def run_value_label(key) -> str:
+    """How an analysis value is named in the metric list and in notes."""
+    if key == ("worst",):
+        return "worst score ÷ threshold"
+    if key[0] == "chem":
+        return "broken bonds" if key[1] == "broken" else "too-close pairs"
+    return f"{key[1]} {'T²' if key[2] == 'T2' else 'SPE'} ÷ threshold"
+
+
 def is_valid_ref(ref) -> bool:
-    """A ref is valid if it is in the closed set or matches the field pattern."""
-    return ref in ALL_VALID_REFS or is_field_ref(ref)
+    """A ref is valid if it is in the closed set or matches a pattern."""
+    return ref in ALL_VALID_REFS or is_field_ref(ref) or parse_run_ref(ref) is not None
