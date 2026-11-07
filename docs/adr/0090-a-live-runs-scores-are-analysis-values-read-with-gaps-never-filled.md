@@ -1,7 +1,7 @@
 # A live run's scores are analysis values: read with gaps, never filled
 
-Status: Proposed 2026-11-07 (grilled; 9 questions). Branch `lammps-live`. Plan:
-`docs/implementation/2026-11-07-analysis-values-and-pause.md`.
+Status: Built 2026-11-07 on branch `lammps-live` (9bc222f..47bac35), not merged.
+Plan: `docs/implementation/2026-11-07-analysis-values-and-pause.md`.
 
 ## The problem
 
