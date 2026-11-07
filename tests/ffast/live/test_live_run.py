@@ -336,3 +336,50 @@ def test_attribution_says_when_the_bundle_is_gone_or_changed(tmp_path):
     shutil.rmtree(bundle_dir)
     with pytest.raises(ValueError, match="is gone"):
         run.attribution(0)
+
+
+# ── ADR 0090 step 1: a metric drawn on a growing run grows with it ──────────
+
+def test_a_growing_runs_inputs_are_named_by_their_frame_count(tmp_path):
+    from ffast.metrics.input_resolver import _ResolverSource
+
+    d = _run_folder(tmp_path)
+    run = LiveRun(_Env(), d, lambda m: None)
+    run.apply(run.read_files())
+    source = _ResolverSource(None, None, run.dataset)
+    before = source.identity("reference.positions")
+    with open(d / rf.FRAMES, "a") as fh:
+        fh.write(frame_text(200, random_frames(1, seed=4)[0], ASPIRIN_ELEMENTS))
+    run.apply(run.read_files())
+    after = source.identity("reference.positions")
+    assert before and after and before != after
+
+
+def test_growth_makes_the_result_store_forget_the_run(tmp_path):
+    d = _run_folder(tmp_path)
+    env = _Env()
+    env.results = type("Store", (), {"forgotten": [],
+                                      "forget_objects": lambda self, fp: self.forgotten.append(fp)})()
+    run = LiveRun(env, d, lambda m: None)
+    run.apply(run.read_files())
+    env.results.forgotten.clear()
+    with open(d / rf.FRAMES, "a") as fh:
+        fh.write(frame_text(200, random_frames(1, seed=4)[0], ASPIRIN_ELEMENTS))
+    run.apply(run.read_files())
+    assert env.results.forgotten == [f"live:{d.name}"]
+    run.apply(run.read_files())                      # nothing new: nothing forgotten
+    assert env.results.forgotten == [f"live:{d.name}"]
+
+
+def test_the_result_store_really_forgets_a_live_fingerprint():
+    from tests.ffast.test_result_store import PLAIN, _Env as StoreEnv, _run
+    from ffast.metrics.result_store import MetricResultStore
+
+    env = StoreEnv()
+    env.dataset.fingerprint = "live:run1"
+    env.datasets.get = lambda fp: env.dataset if fp == "live:run1" else None
+    store = MetricResultStore(env)
+    _run(store.get(PLAIN, {}, "live:run1", None))
+    assert store.peek(PLAIN, {}, "live:run1", None) is not None
+    store.forget_objects("live:run1")
+    assert store.peek(PLAIN, {}, "live:run1", None) is None

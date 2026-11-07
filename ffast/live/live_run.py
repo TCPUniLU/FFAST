@@ -4,7 +4,9 @@ Opening a run folder registers its frames as a dataset whose fingerprint is
 the run ID (``live:<run id>``) and whose frame count grows: the 3D views,
 slider and plots work on it as on any dataset. Each new batch of frames is
 announced like a live subset whose frames changed (``SUBDATASET_INDICES_CHANGED``),
-so every window gets the new count and stale metric results are dropped.
+so every window gets the new count. A metric result is keyed by the dataset's
+fingerprint, which stays the same, so the run names its frame count in each
+input (``grows``) and makes the result store forget the run when it changes.
 
 Scores stay apart from geometry: they travel in ``LIVE_RUN_UPDATE``, one
 message per change (and every ``RESEND_S`` seconds, for windows that connect
@@ -41,6 +43,7 @@ class LiveRunDataset(FlatDatasetLoader):
 
     isVariable = False
     datasetName = "LAMMPS live run"
+    grows = True        # a metric input names the frame count (see InputSource.identity)
 
     def __init__(self, run_dir: Path, run_id: str) -> None:
         super().__init__(str(Path(run_dir) / rf.FRAMES))
@@ -243,6 +246,12 @@ class LiveRun:
             else:
                 self.dataset.eventPush("SUBDATASET_INDICES_CHANGED", self.fingerprint)
         self.rows += got["rows"]
+        if got["frames"] or got["rows"]:
+            # Results stored before the growth (or a failure for scores that were
+            # not there yet) would otherwise be served for the longer run.
+            store = getattr(self.env, "results", None)
+            if store is not None:
+                store.forget_objects(self.fingerprint)
         return changed
 
     def message(self) -> bytes:

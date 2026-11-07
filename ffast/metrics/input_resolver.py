@@ -137,6 +137,9 @@ class _ResolverSource(InputSource):
         dataset_fp = getattr(self._dataset, "fingerprint", None)
         if not dataset_fp or getattr(self._dataset, "isSubDataset", True):
             return None
+        if getattr(self._dataset, "grows", False):
+            # A live run adds frames under one fingerprint: name the count.
+            dataset_fp = f"{dataset_fp}|n{self._dataset.N}"
         if not ref.startswith("prediction"):
             return f"{ref}|{dataset_fp}"
         model_fp = getattr(self._model, "fingerprint", None)
