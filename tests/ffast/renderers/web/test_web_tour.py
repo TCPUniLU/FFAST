@@ -306,3 +306,123 @@ async def test_step_1_holds_while_the_example_dataset_is_in_and_its_prediction_i
             await expect(page.locator(".tour-wait")).to_have_text("Click Load Example")
         finally:
             await browser.close()
+
+
+# ── Loading signals (the loading tour, plan 2026-11-06) ────────────────────
+
+# Collects the loading tour's events into `window.seen`.
+_COLLECT_LOADING = """() => {
+  window.seen = [];
+  for (const name of ['browser-opened', 'folder-listed', 'file-selected', 'target-changed',
+                      'browser-cancelled', 'dataset-loaded', 'prediction-loaded', 'load-failed',
+                      'load-duplicate', 'series-changed']) {
+    window.ffastApp.tourEvents.addEventListener(name, (e) => window.seen.push({ name, detail: e.detail }));
+  }
+}"""
+
+
+async def _seen(page, name, timeout=30000):
+    """The detail of the last `name` event seen, once there is one."""
+    await page.wait_for_function(
+        "(n) => window.seen.some((g) => g.name === n)", arg=name, timeout=timeout)
+    return await page.evaluate(
+        "(n) => window.seen.filter((g) => g.name === n).pop().detail", name)
+
+
+async def _row(page, name):
+    return page.locator("#fb-list .fb-row", has=page.locator(".name", has_text=re.compile(f"^{re.escape(name)}/?$")))
+
+
+async def test_the_browser_tells_tours_about_folders_files_and_loads(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open(page, ws_port, web_port)
+            await page.wait_for_function("() => window.ffastApp._examples !== null")
+            await page.evaluate(_COLLECT_LOADING)
+            root = await page.evaluate("() => window.ffastApp._examples.folder")
+            folder = root + "/variable-sized molecular"
+
+            await page.evaluate("(f) => window.ffastApp._browser.open('dataset', { folder: f })", root)
+            assert (await _seen(page, "browser-opened"))["mode"] == "dataset"
+            await expect(page.locator("#fb-path")).to_have_value(root)
+            await (await _row(page, "variable-sized molecular")).click()
+            listed = await _seen(page, "folder-listed")
+            assert listed == {"mode": "dataset", "path": folder}
+            assert await page.evaluate("() => window.ffastApp._browser.folder()") == folder
+            await (await _row(page, "dataset.xyz")).click()
+            assert await _seen(page, "file-selected") == {
+                "mode": "dataset", "name": "dataset.xyz", "path": folder + "/dataset.xyz"}
+            await expect(page.locator("#fb-load")).to_be_enabled()
+            await page.locator("#fb-load").click()
+            fp = (await _seen(page, "dataset-loaded"))["fp"]
+            assert await page.evaluate("(fp) => window.ffastApp._datasets.has(fp)", fp)
+            assert await page.evaluate("() => window.ffastApp._browser.mode()") is None
+
+            # The prediction dialog: its dataset choice, then Cancel.
+            await page.evaluate("(f) => window.ffastApp._browser.open('prediction', { folder: f })", folder)
+            assert (await _seen(page, "browser-opened"))["mode"] == "prediction"
+            await page.evaluate("""() => { const s = document.getElementById('fb-target-ds');
+              s.dispatchEvent(new Event('change')); }""")
+            assert await _seen(page, "target-changed") == {"datasetFp": fp}
+            await page.locator("#fb-cancel").click()
+            await _seen(page, "browser-cancelled")
+            assert await page.evaluate("() => window.ffastApp._browser.mode()") is None
+
+            # The prediction, loaded.
+            await page.evaluate("(f) => window.ffastApp._browser.open('prediction', { folder: f })", folder)
+            await (await _row(page, "prediction.xyz")).click()
+            await expect(page.locator("#fb-load")).to_be_enabled()
+            await page.locator("#fb-load").click()
+            model = (await _seen(page, "prediction-loaded"))["fp"]
+            assert await page.evaluate("(fp) => window.ffastApp._models.has(fp)", model)
+
+            # The same dataset again: the server has it already.
+            await page.evaluate("(f) => window.ffastApp._browser.open('dataset', { folder: f })", folder)
+            await (await _row(page, "dataset.xyz")).click()
+            await expect(page.locator("#fb-load")).to_be_enabled()
+            await page.locator("#fb-load").click()
+            assert (await _seen(page, "load-duplicate"))["kind"] == "dataset"
+        finally:
+            await browser.close()
+
+
+async def test_the_plots_tell_tours_what_a_tab_shows(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open(page, ws_port, web_port)
+            loaded = await _load_example_watched(page)
+            await page.evaluate(_COLLECT_LOADING)
+            await page.locator('#tabbar .tab[data-name="Basic Errors"]').click()
+            button = page.locator(
+                f'#tabpanels .tabpanel.active .ac-series [data-series="datasets"] button[data-fp="{loaded["datasetFp"]}"]')
+            await button.click()
+            changed = await _seen(page, "series-changed")
+            assert changed == {"tab": "Basic Errors", "datasets": [loaded["datasetFp"]],
+                               "models": [loaded["modelFp"]]}
+        finally:
+            await browser.close()
+
+
+async def test_load_example_fingerprints_are_kept_until_deleted(ffast_web_server):
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open(page, ws_port, web_port)
+            loaded = await _load_example_watched(page)
+            assert await page.evaluate("(d) => window.ffastApp._exampleFps.has(d.datasetFp)", loaded)
+            await asyncio.wait_for(page.evaluate(
+                "(d) => window.ffastApp._removeLoaded(d.datasetFp, d.modelFp)", loaded), timeout=30)
+            assert await page.evaluate("() => window.ffastApp._exampleFps.size") == 0
+        finally:
+            await browser.close()

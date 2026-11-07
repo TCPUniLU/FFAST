@@ -199,6 +199,7 @@ export class FFastApp {
       setStatus: (text, kind) => this._setStatus(text, kind),
       serverKey: () => document.getElementById('ws-url').value.trim(),
       setUnit: (fp, dimension, unit) => this._setDatasetUnit(fp, dimension, unit),
+      signal: (name, detail) => this._tourSignal(name, detail),
     });
     this._sessionOps = new SessionOps({
       send,
@@ -229,12 +230,19 @@ export class FFastApp {
     this._deleting = new Set();
     /** What happened, for the guided tours (ADR 0088): example-loaded,
      * example-load-failed, dataset-deleted, frame-changed, quick-style-applied,
-     * tab-selected {name}, point-picked {frame} (a click on a 2D plot). */
+     * tab-selected {name}, point-picked {frame} (a click on a 2D plot);
+     * from the file browser: browser-opened {mode}, folder-listed {mode, path},
+     * file-selected {mode, name, path}, target-changed {datasetFp},
+     * browser-cancelled, load-duplicate {kind, name}; dataset-loaded {fp} and
+     * prediction-loaded {fp} (a load this window's browser asked for),
+     * load-failed {kind, error}; series-changed {tab, datasets, models}. */
     this.tourEvents = new EventTarget();
     /** A Load Example this window asked for: the dataset and prediction it brought, once known. */
     this._exampleWatch = null;
     /** The server's example files, {folder, files}, from LOADER_TYPES; null without them. */
     this._examples = null;
+    /** Datasets Load Example brought into this window, until they are deleted. */
+    this._exampleFps = new Set();
     // User tabs on the server (ADR 0056): save, delete, hide, export.
     this._tabOps = new TabOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
     // User metrics on the server (ADR 0057): the Metrics pane's wire.
@@ -333,6 +341,7 @@ export class FFastApp {
       },
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
       onLoadPrediction: (datasetFp) => this._browser.open('prediction', { datasetFp }),
+      onSeriesChanged: (detail) => this._tourSignal('series-changed', detail),
     });
     this._applyLayout([]);
   }
@@ -1771,6 +1780,7 @@ export class FFastApp {
         const name = String(kw.path || '').split(/[\\/]/).pop();
         this._browser.settled(kw.kind, false);
         this._setStatus(`Could not load ${name}: ${kw.error}`, 'error');
+        this._tourSignal('load-failed', { kind: kw.kind, error: kw.error });
         if (this._exampleWatch) {
           this._exampleWatch = null;
           this._tourSignal('example-load-failed', { error: kw.error });
@@ -1871,7 +1881,7 @@ export class FFastApp {
     this._datasets.set(fp, meta);
     if (!before && !meta.is_sub) {
       if (this._exampleWatch && !this._exampleWatch.datasetFp) this._exampleWatch.datasetFp = fp;
-      this._browser.settled('dataset', true, fp);   // its "ready" below ends the "Loading…"
+      if (this._browser.settled('dataset', true, fp)) this._tourSignal('dataset-loaded', { fp });   // its "ready" below ends the "Loading…"
       this._readyStatus = `Dataset "${meta.name || fp.slice(0, 8)}" ready · ${framesText(meta.n)}`;
       // It replaces a "Loading…" that is over, not a result the user should
       // still read, such as "Loaded session from …", which can arrive first.
@@ -1931,6 +1941,7 @@ export class FFastApp {
     const loaded = !this._models.has(fp)
       && (asked === 'prediction' || asked === 'model') && this._browser.settled(asked);
     this._models.set(fp, meta || {});
+    if (loaded && asked === 'prediction') this._tourSignal('prediction-loaded', { fp });
     // Auto-select a freshly loaded prediction that applies to the current
     // dataset and refresh the view so its force overlay appears. A live
     // pop-out with a requested prediction (ADR 0044 Phase 4) only settles on
@@ -1969,6 +1980,7 @@ export class FFastApp {
     const watch = this._exampleWatch;
     if (!watch?.datasetFp || !watch.modelFp || !this._viewShown) return;
     this._exampleWatch = null;
+    this._exampleFps.add(watch.datasetFp);
     this._tourSignal('example-loaded', { datasetFp: watch.datasetFp, modelFp: watch.modelFp });
   }
 
@@ -2107,6 +2119,7 @@ export class FFastApp {
     const meta = this._datasets.get(fp);
     if (!meta) return;
     this._datasets.delete(fp);
+    this._exampleFps.delete(fp);
     if (this._showWhenKnown === fp) this._showWhenKnown = null;
     const mainFrame = this._main.current?.frame ?? 0;
     const gone = this._main.drop(fp);

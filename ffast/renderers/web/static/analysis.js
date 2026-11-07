@@ -205,6 +205,8 @@ export class AnalysisManager {
     this._visited = new Set();
     this._onSetUnit = deps.onSetUnit;
     this._onLoadPrediction = deps.onLoadPrediction;
+    /** Told what a tab plots after a click on its data choice: {tab, datasets, models}. */
+    this._onSeriesChanged = deps.onSeriesChanged;
 
     /** @type {Map<string, object>} id → catalog entry */
     this._catalog = new Map();
@@ -992,6 +994,9 @@ export class AnalysisManager {
     this._keep(t);
     this._renderSeriesSelector(t);
     this._refreshTab(t);
+    this._onSeriesChanged?.({
+      tab: t.spec.name, datasets: [...this._tabDatasets(t)], models: this._tabModels(t).filter(Boolean),
+    });
   }
 
   _renderElementPicker(t) {
