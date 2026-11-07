@@ -267,3 +267,21 @@ async def test_any_of_several_fail_events_stops_the_tour(page, event, detail, me
     await page.evaluate(f"() => window.events.dispatchEvent(new CustomEvent('{event}', {{ detail: {detail} }}))")
     await page.wait_for_function("() => window.ended !== null")
     assert await page.evaluate("() => window.ended") == {"how": "stopped", "message": message}
+
+
+async def test_without_room_beside_the_lit_area_the_box_covers_as_little_of_it_as_it_can(page):
+    """A lit area as big as the file dialog: the box must not sit on its top-left corner."""
+    await page.evaluate("""() => {
+      const big = document.createElement('div');
+      big.id = 'big';
+      Object.assign(big.style, { position: 'absolute', left: '100px', top: '100px', width: '800px', height: '500px' });
+      document.body.append(big);
+      window.run([{ title: 'Big', body: 'Lit big', targets: ['#big'], side: 'right' }]);
+    }""")
+    await expect(page.locator(".tour-title")).to_have_text("Big")
+    hit = await page.evaluate("() => document.elementFromPoint(116, 116)?.id")
+    assert hit == "big"
+    box = await page.locator(".tour-box").bounding_box()
+    covered = (max(0, min(box["x"] + box["width"], 906) - max(box["x"], 94))
+               * max(0, min(box["y"] + box["height"], 606) - max(box["y"], 94)))
+    assert covered < box["width"] * box["height"] / 2

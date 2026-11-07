@@ -248,14 +248,20 @@ export function startTour(tour, { events, onEnd, doc = document }) {
     };
     const fits = ([l, t]) => l >= edge && t >= edge && l + bw <= W - edge && t + bh <= H - edge;
     const clamp = ([l, t]) => [Math.min(Math.max(edge, l), W - bw - edge), Math.min(Math.max(edge, t), H - bh - edge)];
+    /** How much of the hole the box at `c` covers, in px². */
+    const covered = (c) => Math.max(0, Math.min(c[0] + bw, hole.x + hole.w) - Math.max(c[0], hole.x))
+      * Math.max(0, Math.min(c[1] + bh, hole.y + hole.h) - Math.max(c[1], hole.y));
     let pos;
     if (side !== 'inside') {
+      let least = null;
       for (const s of [side || 'bottom', 'bottom', 'top', 'right', 'left']) {
         const c = clamp(at[s]);
         // A clamped spot must still clear the hole.
-        const overlaps = c[0] < hole.x + hole.w && c[0] + bw > hole.x && c[1] < hole.y + hole.h && c[1] + bh > hole.y;
-        if (fits(at[s]) || !overlaps) { pos = c; break; }
+        if (fits(at[s]) || covered(c) === 0) { pos = c; break; }
+        if (!least || covered(c) < covered(least)) least = c;
       }
+      // No side has room (a lit area as big as a dialog): cover as little of it as can be.
+      pos ??= least;
     }
     pos ??= clamp([hole.x + 16, hole.y + 16]);
     box.style.left = `${pos[0]}px`;
