@@ -42,6 +42,7 @@ export function bindMenu(button, list, actions) {
   const open = () => {
     fillMenu(list, typeof actions === 'function' ? actions() : actions, back);
     list.classList.remove('hidden');
+    keepInWindow(list);
     button.setAttribute('aria-expanded', 'true');
     list.querySelector('[role=menuitem]:not(:disabled)')?.focus();
   };
@@ -79,6 +80,7 @@ export function sharedMenu(list) {
     list.style.left = `${at.left}px`;
     list.style.top = `${at.bottom + 4}px`;
     list.classList.remove('hidden');
+    keepInWindow(list);
     button.setAttribute('aria-expanded', 'true');
     list.querySelector('[role=menuitem]:not(:disabled)')?.focus();
   };
@@ -87,6 +89,14 @@ export function sharedMenu(list) {
     if (owner && !list.contains(e.target) && !owner.contains(e.target)) close();
   });
   return { open, close };
+}
+
+/** Slide an open menu left until its right edge is inside the window (8 px
+ * margin), wherever its own style put it. Menus near the left edge stay. */
+export function keepInWindow(list) {
+  list.style.translate = '';
+  const over = list.getBoundingClientRect().right - (window.innerWidth - 8);
+  if (over > 0) list.style.translate = `${-over}px 0`;
 }
 
 /** Fill a menu `list` with `entries`; choosing an item runs `close` (which

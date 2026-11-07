@@ -4189,6 +4189,34 @@ async def test_web_new_tab_button_follows_the_last_tab(tmp_path):
                 await browser.close()
 
 
+async def test_web_the_new_tab_menu_stays_inside_the_window(tmp_path):
+    """to_fix_v3 #5: with many tabs "+" sits near the right edge and its menu
+    was cut by the window. The menu now slides left to fit."""
+    tabs_dir = tmp_path / "tabs"
+    config = tmp_path / "ffast.toml"
+    config.write_text("")
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1024, "height": 768})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                before = await page.locator("#tabbar .tab").count()
+                for i in range(8):
+                    answer = await _tab_request(ws_port, "SAVE_TAB", {"tab": {
+                        "name": f"Tab {i}", "panels": [{"kind": "3d", "row": 0, "col": 0}]}})
+                    assert answer["ok"], answer
+                await expect(page.locator("#tabbar .tab")).to_have_count(before + 8)
+                await page.locator("#tab-new-btn").click()
+                menu = page.locator("#tab-new-list")
+                await expect(menu).to_be_visible()
+                box = await menu.bounding_box()
+                assert box["x"] >= 0 and box["x"] + box["width"] <= 1024, box
+            finally:
+                await browser.close()
+
+
 async def test_web_a_dragged_tab_moves_for_every_window(tmp_path):
     """ADR 0070. Dropping a tab on the left half of another puts it before
     that one, for every window, and the order is written to state.json. While
