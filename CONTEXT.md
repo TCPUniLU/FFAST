@@ -91,6 +91,23 @@ A (dataset, model) pair. The unit of comparison in every error plot. Inference i
 always server-side. Whether a prediction was computed by a live model or read
 from a file is a server concern the client never sees.
 
+### Example pair
+
+A reference dataset and corresponding prediction files published for trying
+FFAST. Their frames and atoms correspond, their compared quantities use matching
+units, and their energy and force fields are identified so loading them yields
+meaningful errors; the predictions may still be inaccurate.
+Different example pairs may use different units, including eV or kcal/mol for
+energy and the corresponding force units.
+Default field selection identifies the intended reference and prediction
+quantities without requiring the user to choose alternate fields.
+
+### Perturbed-reference control
+
+A reference dataset's energies and forces with added noise, used as a comparison
+alongside model predictions. Labelled "reference + noise" to identify its origin;
+it satisfies the same compatibility requirements as an example pair.
+
 ## Metrics
 
 ### Metric
