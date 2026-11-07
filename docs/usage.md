@@ -19,14 +19,14 @@ the [README](../README.md) is shorter.
 
 ## The interface
 
-Two clients, same server, same protocol. The desktop client is the complete one;
-use it unless you have a reason not to.
+Two clients, same server, same protocol. The browser client (`ffast`) is the
+main one. The desktop client (`ffast-qt`) is the older one and is being retired.
 
 ### The desktop client (`ffast-qt`)
 
 ```bash
 pip install -e ".[gui]"
-ffast-qt [--workdir PATH]     # or just `ffast`, which prefers this client
+ffast-qt [--workdir PATH]     # `ffast` starts the browser client, not this one
 ```
 
 It starts a managed local `ffast-server` in the background and connects to it,
@@ -75,8 +75,7 @@ the browser keeps these per address, port included. If 8764 is taken, for
 example by a second `ffast-web`, that window gets a free port and starts with
 the default layout.
 
-The bare `ffast` command lands here too when PySide6 is not installed, but it
-takes no arguments of its own — use `ffast-web` when you need these flags.
+The bare `ffast` command starts this client too (ADR 0090).
 
 Everything binds `127.0.0.1`, so a local session is not reachable from the
 network. It needs no native GL or Qt libraries, which is the point of it: it

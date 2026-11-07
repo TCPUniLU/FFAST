@@ -107,6 +107,7 @@ things came up.
 - [0078](0078-the-force-scatter-is-a-density-with-the-worst-as-dots.md) The force scatter is a density of every component with the worst 50,000 as dots you can hover, click and Sub; the density is an image, since the vendored Plotly has no heatmap (built)
 - [0079](0079-ffast-code-runs-in-the-server-outside-code-in-workers.md) FFAST's own metric code (built-ins, every formula) runs in the server, several steps at once as memory allows; only outside code runs in workers, which grow and shrink (planned)
 - [0071](0071-the-web-launcher-opens-cluster-connections.md) The web launcher opens cluster connections for the page (built)
+- [0090](0090-ffast-starts-the-browser-client.md) `ffast` always starts the browser client; `ffast-qt` starts the desktop one (built)
 - [0075](0075-a-dataset-being-read-is-a-preview-without-a-fingerprint.md) A dataset still being read is a preview, without a fingerprint (proposed, on hold since ADR 0076)
 - [0076](0076-a-dataset-file-is-read-once-into-arrays.md) A dataset file is read once, into arrays, by our own extxyz reader (built)
 - [0080](0080-predicted-forces-are-stored-flat-like-reference-forces.md) Predicted forces are stored flat, like reference forces: force reads 45 s to 2 ms (built)
