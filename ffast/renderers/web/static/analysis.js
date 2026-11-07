@@ -322,7 +322,22 @@ export class AnalysisManager {
     // The same state sent again (every 10 s): only the status is drawn again,
     // for its "heartbeat N s ago". Redrawing the scores of a long run froze
     // the page for seconds each time.
-    this._redrawLiveParts(t, sameRunUpdate(before, kw) ? 'status' : null);
+    const same = sameRunUpdate(before, kw);
+    this._redrawLiveParts(t, same ? 'status' : null);
+    if (!same) this._redrawRunPanels(t, kw.fingerprint);
+  }
+
+  /** Redraw the tab's metric panels that show run `fp` (ADR 0090): the run has
+   * new frames or scores, so what they read has changed. A zoom is kept. */
+  _redrawRunPanels(t, fp) {
+    t.slots.forEach((slot) => {
+      slot.cards.forEach((card, i) => {
+        const spec = slot.specs[i];
+        if (spec.kind === 'live' || !Object.keys(spec.metrics || {}).length) return;
+        if (this._cardRefs(t, spec).some((r) => r.datasetFp === fp))
+          this._fetchAndRenderPanel(t, spec, card, this._renderToken);
+      });
+    });
   }
 
   /** A live run's attribution state changed (live_ui.js): it is the run the

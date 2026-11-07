@@ -1495,8 +1495,8 @@ async def test_web_a_run_score_is_picked_under_run_scores_and_drawn_with_a_gap_a
 
 
 @contextlib.asynccontextmanager
-async def _live_page_without_scores_wait(run):
-    """Like `_live_page`, for a run whose score card has fewer points than frames."""
+async def _live_page_without_scores_wait(run, points=2):
+    """Like `_live_page`, for a run whose score card has `points` points."""
     async with _spawn_server() as (ws_port, web_port):
         await _wait_for_server_ready(ws_port)
         async with async_playwright() as p:
@@ -1506,7 +1506,66 @@ async def _live_page_without_scores_wait(run):
                 await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
                 await _expect_connected(page)
                 await _open_run(page, run)
-                await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 2], timeout=15000)
+                await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, points], timeout=15000)
                 yield page
             finally:
                 await browser.close()
+
+
+# ── ADR 0090 step 5: every panel showing a live run follows it ──────────────
+
+async def _add_timeline(page, metric, title):
+    """In the tab's edit mode: add a custom timeline of `metric` (leaves edit mode on)."""
+    await page.locator("[data-edit=add-panel]").click()
+    await page.get_by_role("button", name="Custom panel…").click()
+    await page.locator(".edit-modal select[data-role=y]").select_option(metric)
+    await page.locator(".edit-modal input[data-field=title]").fill(title)
+    await page.get_by_role("button", name="Add", exact=True).click()
+
+
+def _write_frame(run, step, seed):
+    with open(run / rf.FRAMES, "a") as fh:
+        fh.write(frame_text(step, random_frames(1, seed=seed)[0], ASPIRIN_ELEMENTS))
+
+
+def _score_frame(run, frame, step):
+    [adir] = list((run / rf.ANALYSIS_DIR).iterdir())
+    rf.ScoresWriter(adir / rf.SCORES).append([{
+        "segment": 0, "frame": frame, "step": step, "time": 0.05 * frame, "identity": "proven",
+        "tracks": {"bonds": {"T2": 5.0, "SPE": 1.0}, "angles": {"T2": 2.5, "SPE": 9.0}},
+        "exceedance": 0.7, "test": ["bonds", "T2"], "marked": False,
+        "chem": {"broken": 0, "close": 0, "planarity": 0.1}}])
+
+
+def _points(title):
+    return f"""(n) => document.querySelector(
+      '.tabpanel.active .analysis-panel[data-title="{title}"] .panel-plot')?.data?.[0]?.y?.length === n"""
+
+
+async def test_web_every_panel_showing_a_live_run_follows_it_and_keeps_its_zoom(tmp_path):
+    from tests.ffast.live.test_live_run import _format2_run_folder
+
+    run = _format2_run_folder(tmp_path, frames=3, scored=3)
+    async with _live_page_without_scores_wait(run, points=3) as page:
+        await page.locator("#tab-edit-btn").click()
+        await _add_timeline(page, "ffast.gyradius", "Gyradius")
+        await _add_timeline(page, "ffast.run_score_worst", "Worst")
+        await page.locator("[data-edit=save]").click()
+        await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0, timeout=15000)
+        await page.wait_for_function(_points("Gyradius"), arg=3, timeout=20000)
+        await page.wait_for_function(_points("Worst"), arg=3, timeout=20000)
+        # Zoom the geometry timeline, then let the run grow.
+        await page.evaluate("""() => {
+          const el = document.querySelector('.tabpanel.active .analysis-panel[data-title="Gyradius"] .panel-plot');
+          return Plotly.relayout(el, {'xaxis.range': [0.5, 1.5]});
+        }""")
+        _write_frame(run, 300, seed=11)
+        await page.wait_for_function(_points("Gyradius"), arg=4, timeout=20000)
+        await page.wait_for_function(_points("Worst"), arg=4, timeout=20000)     # frame 3: a gap
+        last = "(t) => { const y = document.querySelector(`.tabpanel.active .analysis-panel[data-title=\"${t}\"] .panel-plot`).data[0].y; return y[y.length - 1]; }"
+        assert await page.evaluate(f"!Number.isFinite(({last})('Worst'))")
+        _score_frame(run, 3, 300)                       # its score comes later: the gap fills
+        await page.wait_for_function(f"({last})('Worst') === 0.7", timeout=20000)
+        rng = await page.evaluate("""() => document.querySelector(
+          '.tabpanel.active .analysis-panel[data-title="Gyradius"] .panel-plot').layout.xaxis.range""")
+        assert [round(v, 3) for v in rng] == [0.5, 1.5]                 # the zoom is kept
