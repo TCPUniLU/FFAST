@@ -5726,6 +5726,72 @@ async def _front_atom(page, zoom=1.0):
     )
 
 
+async def _pick_two_atoms_with_info(page):
+    await page.locator("#pick-toolbar button[data-tool='info']").click()
+    await page.evaluate(
+        "() => window.ffastApp._onPick([{displayIndex: 0, atomId: 0}, {displayIndex: 1, atomId: 1}])")
+    await expect(page.locator("#pick-strip-count")).to_contain_text("2 picked")
+    await expect(page.locator("#pick-readout")).to_contain_text("Distance")
+
+
+async def test_web_picked_atoms_follow_to_the_next_frame_of_the_same_structure(ffast_web_server, tmp_path):
+    """to_fix_v3 #12: with the same elements in the same order, a new frame keeps
+    the picks and the Info readout is worked out for that frame."""
+    ws_port, web_port = ffast_web_server
+    first = ase.io.read(DATASET_PATH, index=0)
+    frames = []
+    for i in range(3):
+        frame = first.copy()
+        positions = frame.get_positions()
+        positions[1, 0] += 0.5 * i     # only the distance between atoms 0 and 1 changes
+        frame.set_positions(positions)
+        frames.append(frame)
+    path = tmp_path / "same_structure.xyz"
+    ase.io.write(path, frames, format="extxyz")
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("LOAD_DATASET", (str(path), "ase (auto)"), {}))
+        dataset_fp = (await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30))["args"][0]
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _pick_two_atoms_with_info(page)
+            before = await page.locator("#pick-readout").inner_text()
+            await page.evaluate("() => window.ffastApp._setMainFrame(2)")
+            await page.wait_for_function(
+                "(b) => document.getElementById('pick-readout').textContent !== b", arg=before)
+            await expect(page.locator("#pick-readout")).to_contain_text("Distance")
+            await expect(page.locator("#pick-strip-count")).to_contain_text("2 picked")
+        finally:
+            await browser.close()
+
+
+async def test_web_picks_clear_when_the_next_frame_has_a_different_structure(shared_dataset_server):
+    """to_fix_v3 #12: a frame with other elements, or another count of atoms,
+    clears the picks and says so."""
+    ws_port, web_port = shared_dataset_server
+    dataset_fp = await _preload_dataset(ws_port)
+    frames = ase.io.read(DATASET_PATH, index=":")
+    same = lambda a, b: list(a.numbers) == list(b.numbers)  # noqa: E731
+    other = next(i for i, f in enumerate(frames) if not same(f, frames[0]))
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _pick_two_atoms_with_info(page)
+            await page.evaluate("(i) => window.ffastApp._setMainFrame(i)", other)
+            await expect(page.locator("#pick-strip-count")).to_contain_text("0 picked")
+            await expect(page.locator("#status")).to_contain_text("Selection cleared: different structure")
+        finally:
+            await browser.close()
+
+
 async def test_web_pick_tools_show_their_names(shared_dataset_server):
     """ADR 0055: pick tools show their names next to their icons."""
     ws_port, web_port = shared_dataset_server

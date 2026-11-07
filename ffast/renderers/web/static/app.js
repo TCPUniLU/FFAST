@@ -2352,6 +2352,7 @@ export class FFastApp {
       view.frame = scene.frame_index;
       if (view === this._focused()) this._reloadForcePicks();
     }
+    if (view === this._focused() && scene.atoms) this._followPicks();
     if (this._getViewDataset(scene)) this._syncPlayback();
     this._independent.syncLinkedFrames();
     // A plot click that had to open the view first (_onPlotPoint): the
@@ -2382,6 +2383,7 @@ export class FFastApp {
     if (changed.includes('atoms') && kw.atoms) {
       if (this._isFocused(view)) this._panes.colorBy.setColorBy(kw.atoms.color_by || null);
       this._trackCameraCOM(kw.atoms.positions, view);
+      if (this._isFocused(view)) this._followPicks();
     }
     // Playback: unblock the wait in _playLoop once the view it moves answers.
     if ((this._playbackView() ?? this._main.current) === view) this._patchPending = false;
@@ -2544,6 +2546,7 @@ export class FFastApp {
     for (const e of entries) this._togglePick(e, tool);
     if (!tool.cycle && this._picked.length > tool.multiselect)
       this._picked.splice(0, this._picked.length - tool.multiselect);
+    this._pickStructure = this._atomSignature();
     this._reactTool(this._activeTool);
     this._updatePickStrip();
   }
@@ -2555,12 +2558,7 @@ export class FFastApp {
     // clear the set after acting so the overlay tracks the fresh set.
     this._sendSetSelection('picked', 'current_structure', ids);
     if (id === 'info') {
-      const pts = this._picked.map((e) => this.renderer.atomPosition(e.displayIndex)).filter(Boolean);
-      const symbols = this._picked.map((e) => {
-        const z = this.renderer.atomElement(e.displayIndex);
-        return z == null ? null : elementSymbol(z);
-      });
-      this._pickReadout = infoReadout(pts, ids, symbols);
+      this._pickReadout = this._infoReadoutNow();
     } else if (id === 'extract') {
       this._panes.extract.setPickedIndices(ids);
     } else if (id === 'forces') {
@@ -2579,6 +2577,43 @@ export class FFastApp {
         this._setActiveTool(null);   // Qt auto-disarms the align tool after 3
       }
     }
+  }
+
+  /** The info readout of the picked atoms as drawn now. */
+  _infoReadoutNow() {
+    const ids = this._picked.map((e) => e.atomId);
+    const pts = this._picked.map((e) => this.renderer.atomPosition(e.displayIndex)).filter(Boolean);
+    const symbols = this._picked.map((e) => {
+      const z = this.renderer.atomElement(e.displayIndex);
+      return z == null ? null : elementSymbol(z);
+    });
+    return infoReadout(pts, ids, symbols);
+  }
+
+  /** The atomic numbers of the focused view's atoms, in order: two frames with
+   * the same signature are the same atoms in the same places in the list. */
+  _atomSignature() {
+    const r = this.renderer;
+    const n = r?.atomCount || 0;
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) out[i] = r.atomElement(i);
+    return out.join(',');
+  }
+
+  /** A new frame drew in the focused view (to_fix_v3 #12). The picked atoms
+   * stay when the frame has the same elements in the same order, and the info
+   * readout is worked out again; otherwise the picks are cleared with a note. */
+  _followPicks() {
+    if (!this._picked.length || this._activeTool === 'forces') return;
+    if (this._atomSignature() === this._pickStructure) {
+      if (this._activeTool === 'info') {
+        this._pickReadout = this._infoReadoutNow();
+        this._updatePickStrip();
+      }
+      return;
+    }
+    this._clearPicks();
+    this._setStatus('Selection cleared: different structure', 'connected');
   }
 
   /** Forget the picks and clear them in `view` (default: the view the sidebar acts on). */
