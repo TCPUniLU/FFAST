@@ -1416,3 +1416,27 @@ async def test_web_a_click_on_a_mark_opens_its_frame(tmp_path):
         await page.mouse.move(xy["x"], xy["y"])
         await page.mouse.click(xy["x"], xy["y"])
         await expect(page.locator("#frame-label")).to_have_text("2 / 2", timeout=10000)
+
+
+async def test_arrows_on_a_dataset_without_forces_say_why_none_show(static_origin):
+    got = await _pure(static_origin, f"""async () => {{
+      const fo = await import('{static_origin}/panes/forces.js');
+      const gt = {{ show: true, modelKey: null }};
+      return {{
+        noForces: fo.noForcesReason(gt, {{ name: 'run7', has_forces: false }}),
+        withForces: fo.noForcesReason(gt, {{ name: 'aspirin', has_forces: true }}),
+        prediction: fo.noForcesReason({{ show: true, modelKey: 'm' }}, {{ has_forces: false }}),
+        off: fo.noForcesReason({{ show: false, modelKey: null }}, {{ has_forces: false }}),
+      }};
+    }}""")
+    assert got["noForces"].startswith("run7 has no forces in its file")
+    assert got["withForces"] == got["prediction"] == got["off"] == ""
+
+
+async def test_web_force_arrows_on_a_live_run_say_it_has_no_forces(tmp_path):
+    """to_fix_v3: a dump has no forces; turning arrows on drew nothing and said nothing."""
+    async with _live_page(_three_scored_frames(tmp_path)) as page:
+        await page.evaluate("() => window.ffastApp._panes.forces.armShow()")
+        toast = page.locator(".toast", has_text="has no forces in its file")
+        await expect(toast).to_be_visible(timeout=5000)
+        await expect(page.locator(".forces-note")).to_contain_text("has no forces in its file")

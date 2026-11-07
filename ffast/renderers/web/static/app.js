@@ -22,7 +22,7 @@ import { createColorByPane } from './panes/colorby.js';
 import { createCameraPane } from './panes/camera.js';
 import { createDisplayPane } from './panes/display.js';
 import { createBondsPane } from './panes/bonds.js';
-import { createForcesPane } from './panes/forces.js';
+import { createForcesPane, noForcesReason } from './panes/forces.js';
 import { createExtractPane } from './panes/extract.js';
 import { createAlignPane } from './panes/align.js';
 import { createExportPane } from './panes/export.js';
@@ -1245,8 +1245,14 @@ export class FFastApp {
         const forces = this._focused()?.settings?.forces;
         if (forces) Object.assign(forces, state);
         this._applyForceVectorsState(state);
+        // Arrows asked for where there are no forces: said once, as it happens
+        // (the pane's note keeps saying it; the pane may be closed).
+        const why = noForcesReason(state, this._datasets.get(this._focusedDatasetFp()));
+        if (why && why !== this._noForcesSaid) showWarning(why);
+        this._noForcesSaid = why;
       },
       getModels: () => this._models,
+      getDatasetMeta: () => this._datasets.get(this._focusedDatasetFp()),
     });
 
     const extract = createExtractPane(sidebarEl, {

@@ -38,11 +38,25 @@ function showOnlyForcesWarning() {
   okButton.focus();
 }
 /**
+ * Why the arrows asked for cannot show, or '' when they can: the reference
+ * data (Ground Truth) of a dataset whose file has no forces, such as a live
+ * run's dump.
+ * @param {{show: boolean, modelKey: string|null}} state
+ * @param {{name?: string, has_forces?: boolean}|undefined} datasetMeta the shown dataset's
+ */
+export function noForcesReason(state, datasetMeta) {
+  if (!state.show || state.modelKey != null || datasetMeta?.has_forces !== false) return '';
+  return `${datasetMeta.name || 'This dataset'} has no forces in its file, so there are no arrows `
+    + 'to draw. Pick a prediction as Source to see its forces.';
+}
+
+/**
  * @param {HTMLElement} sidebarEl
  * @param {{
  *   onApply: (state: {show: boolean, onlyForces: boolean, modelKey: string|null, length: number, normalised: boolean, thickness: number, filterEnabled: boolean, atomIndices: number[]}) => void,
  *   getModels: () => Map<string, {name?: string}>,
- * }} callbacks
+ *   getDatasetMeta?: () => ({name?: string, has_forces?: boolean}|undefined),
+ * }} callbacks getDatasetMeta: the shown dataset's, for the "no forces" note
  */
 export function createForcesPane(sidebarEl, callbacks) {
   const { el, body } = createPane('Force Vectors');
@@ -61,6 +75,7 @@ export function createForcesPane(sidebarEl, callbacks) {
       showOnlyForcesWarning();} apply();})
   const sourceSelect = selectRow(body, 'Source', ['Ground Truth'], 'Ground Truth', (label) => {
     state.modelKey = label === 'Ground Truth' ? null : keyByLabel.get(label) ?? null;
+    _syncVisibility();
     apply();
   });
 
@@ -68,9 +83,17 @@ export function createForcesPane(sidebarEl, callbacks) {
   const lengthInput = sliderRow(body, 'Length', state.length, { min: 1, max: 200 }, (v) => { state.length = v; apply(); });
   const thicknessInput = sliderRow(body, 'Arrow thickness', state.thickness, { min: 20, max: 300 }, (v) => { state.thickness = v; apply(); });
   const filterInput = checkboxRow(body, 'Filter to selection', state.filterEnabled, (v) => { state.filterEnabled = v; apply(); });
+  // Why no arrows show, while that is so (a dataset without forces).
+  const note = document.createElement('div');
+  note.className = 'forces-note';
+  note.hidden = true;
+  body.insertBefore(note, rowElement(onlyForces));
 
   function _syncVisibility() {
     const show = state.show;
+    const why = noForcesReason(state, callbacks.getDatasetMeta?.());
+    note.textContent = why;
+    note.hidden = !why;
     const needsShow = show ? '' : 'Turn on "Show force vectors" first';
     for (const control of [onlyForces, normalisedInput, lengthInput, thicknessInput, filterInput]) setRowNeeds(rowElement(control), needsShow);
     setRowNeeds(rowElement(sourceSelect), hasPredictions ? needsShow : 'Load a prediction first');
@@ -78,6 +101,8 @@ export function createForcesPane(sidebarEl, callbacks) {
   _syncVisibility();
 
   return {
+    /** The shown dataset changed: say again whether it has forces. */
+    syncNote() { _syncVisibility(); },
     /** Fill the filter atom set from the Force pick tool; enable filtering.
      * With a `frame` (a variable dataset), the picks belong to that frame only. */
     setPickedIndices(ids, frame = null) {
