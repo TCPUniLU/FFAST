@@ -571,8 +571,7 @@ def test_load_example_loads_the_dataset_then_its_prediction_once():
     _run(scenario())
     assert env.calls == [
         ("dataset", "dataset.xyz", "ase (auto)"),
-        ("prediction", "prediction.xyz", "ds-fp",
-         {"selected_energy_key": "MACE_energy", "selected_force_key": "MACE_forces"}),
+        ("prediction", "prediction.xyz", "ds-fp", {}),
     ]
 
 
