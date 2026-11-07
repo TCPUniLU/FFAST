@@ -348,15 +348,26 @@ export class TabEditor {
    * built-in and project tabs; then "Custom panel…", the builder. */
   async _addPanelDialog() {
     const body = document.createElement('div');
-    body.className = 'panel-list';
+    body.className = 'panel-add';
+    const search = Object.assign(document.createElement('input'), { type: 'search' });
+    search.className = 'panel-search';
+    search.placeholder = 'Search by panel, tab or metric';
+    search.setAttribute('aria-label', 'Search panels');
+    const list = document.createElement('div');
+    list.className = 'panel-list';
+    body.append(search, list);
     let chosen = null;
-    const choice = (label, panel, detail = '') => {
+    // every row, with the text the search looks in (its group's name too)
+    const rows = [];
+    const choice = (label, panel, detail = '', group = '') => {
       const btn = button(label, () => { chosen = panel; close('Add'); });
       btn.className = 'panel-choice';
       if (detail) btn.title = detail;
+      rows.push({ btn, group, text: `${label} ${group} ${detail}`.toLowerCase() });
       return btn;
     };
-    body.appendChild(choice('3D panel', new3DPanel(), 'Shows the main view, like the 3D tab'));
+    list.appendChild(choice('3D panel', new3DPanel(), 'Shows the main view, like the 3D tab'));
+    const heads = [];
     for (const tab of this._deps.serverTabs()) {
       if (tab.source === 'user') continue;
       const panels = (tab.panels || []).filter((p) => p.kind !== KIND_3D);
@@ -364,12 +375,32 @@ export class TabEditor {
       const head = document.createElement('div');
       head.className = 'panel-list-head';
       head.textContent = tab.name;
-      body.appendChild(head);
+      heads.push({ head, group: tab.name });
+      list.appendChild(head);
       for (const p of panels) {
-        body.appendChild(choice(p.title || KIND_ROLES[p.kind]?.label || p.kind, p,
-          Object.values(p.metrics || {}).flat().join(', ')));
+        list.appendChild(choice(p.title || KIND_ROLES[p.kind]?.label || p.kind, p,
+          Object.values(p.metrics || {}).flat().join(', '), tab.name));
       }
     }
+    const none = document.createElement('div');
+    none.className = 'panel-none';
+    none.textContent = 'No panel matches.';
+    none.hidden = true;
+    list.appendChild(none);
+    // A panel shows when every word typed is in its title, its tab's name or its metrics.
+    const filter = () => {
+      const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+      for (const r of rows) r.btn.hidden = !words.every((w) => r.text.includes(w));
+      for (const h of heads) h.head.hidden = !rows.some((r) => r.group === h.group && !r.btn.hidden);
+      none.hidden = rows.some((r) => !r.btn.hidden);
+    };
+    search.addEventListener('input', filter);
+    search.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const shown = rows.filter((r) => !r.btn.hidden);
+      if (shown.length === 1) shown[0].btn.click();   // exactly one match: add it
+    });
     const { answer, close } = modal('Add panel', body, ['Cancel', 'Custom panel…']);
     const result = await answer;
     const catalog = this._deps.catalog();

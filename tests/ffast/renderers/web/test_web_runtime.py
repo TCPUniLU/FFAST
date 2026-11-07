@@ -4432,6 +4432,55 @@ async def test_web_edit_mode_head_covers_no_half_hidden_title(tmp_path):
                 await browser.close()
 
 
+async def test_web_the_add_panel_list_can_be_searched(tmp_path):
+    """to_fix_v3 #4: a search box matches a panel's title, its tab's name and
+    its metrics; tabs with no match are hidden; the list includes the panels of
+    template tabs that are not in the bar; Enter adds the only match."""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 820})
+            try:
+                await _open_app(page, web_port, ws_port)
+                await page.locator("#tabbar .tab", has_text="Basic Errors").click()
+                await page.locator("#tab-edit-btn").click()
+                await page.locator("[data-edit=add-panel]").click()
+                search = page.get_by_label("Search panels")
+                await expect(search).to_be_focused()
+                every = page.locator(".panel-choice:visible")
+                total = await every.count()
+                heads = page.locator(".panel-list-head:visible")
+                await expect(heads.filter(has_text="Gyration")).to_have_count(1)   # a template, not in the bar
+
+                await search.fill("gyration")      # a tab's name: only its group
+                await expect(heads).to_have_text(["Gyration"])
+                assert 0 < await every.count() < total
+
+                await search.fill("MAE")           # a metric: every panel shown has it
+                assert 0 < await every.count() < total
+                texts = await page.evaluate(
+                    "() => [...document.querySelectorAll('.panel-choice')].filter((b) => !b.hidden)"
+                    ".map((b) => (b.textContent + ' ' + b.title).toLowerCase())")
+                assert all("mae" in t for t in texts), texts
+
+                await search.fill("zzz no such panel")
+                await expect(every).to_have_count(0)
+                await expect(page.locator(".panel-none")).to_have_text("No panel matches.")
+                await expect(heads).to_have_count(0)
+
+                await search.fill("")
+                await expect(every).to_have_count(total)
+                await expect(page.locator(".panel-none")).to_be_hidden()
+
+                await search.fill("3d panel")      # exactly one match: Enter adds it
+                await expect(every).to_have_count(1)
+                before = await page.locator(_CHROME).count()
+                await search.press("Enter")
+                await expect(page.locator(_CHROME)).to_have_count(before + 1)
+            finally:
+                await browser.close()
+
+
 async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
     """ADR 0056 rules 11, 12 and 15. ✎ opens Edit mode: remove a panel, add a
     ready-made 3D panel and a custom one from the builder, drag one to the top
