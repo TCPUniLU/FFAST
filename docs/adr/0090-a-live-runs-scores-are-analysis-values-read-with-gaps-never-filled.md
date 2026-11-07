@@ -1,6 +1,6 @@
 # A live run's scores are analysis values: read with gaps, never filled
 
-Status: Built 2026-11-07 on branch `lammps-live` (9bc222f..47bac35), not merged.
+Status: Built 2026-11-07 on branch `lammps-live` (9bc222f..a2183f4), not merged.
 Plan: `docs/implementation/2026-11-07-analysis-values-and-pause.md`.
 
 ## The problem
