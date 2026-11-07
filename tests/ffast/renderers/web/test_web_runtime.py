@@ -4485,6 +4485,41 @@ async def test_web_the_add_panel_list_can_be_searched(tmp_path):
                 await browser.close()
 
 
+async def test_web_edit_mode_names_itself_and_only_the_panel_in_use_wears_the_accent(tmp_path):
+    """to_fix_v3 #6d (spec 5.2): "Editing layout" stays in the bar; panels keep a
+    neutral solid border; the panel being held or reached by keyboard gets the
+    accent outline, one at a time; the grips show where they can be used."""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 820})
+            border = """(el) => { const cs = getComputedStyle(el);
+                return [cs.borderTopStyle, cs.borderTopColor, getComputedStyle(document.body).getPropertyValue('--accent').trim()]; }"""
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _open_analysis_tab(page, "Gyration")
+                await page.locator("#tab-edit-btn").click()
+                await expect(page.locator(".tabpanel.active .edit-mode-label")).to_have_text("Editing layout")
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_contain_text("Editing Gyration")
+                chromes = page.locator(_CHROME)
+                assert await chromes.count() >= 3
+                styles = await chromes.evaluate_all(f"(els) => els.map({border})")
+                assert all(style == "solid" for style, _, _ in styles), styles
+                assert all(color != "rgb(179, 167, 232)" for _, color, _ in styles), styles   # none wears the accent
+
+                # one panel reached by keyboard: only it gets the accent outline
+                await chromes.nth(1).locator("[data-edit=remove]").focus()
+                styles = await chromes.evaluate_all(f"(els) => els.map({border})")
+                lit = [i for i, (_, color, _) in enumerate(styles) if color == "rgb(179, 167, 232)"]
+                assert lit == [1], styles
+                # the grips are there when the panel is in use, and hidden when not
+                grip = lambda i: chromes.nth(i).locator(".edit-resize")   # noqa: E731
+                await expect(grip(1)).to_have_css("opacity", "1")
+                await expect(grip(0)).to_have_css("opacity", "0")
+            finally:
+                await browser.close()
+
+
 async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
     """ADR 0056 rules 11, 12 and 15. ✎ opens Edit mode: remove a panel, add a
     ready-made 3D panel and a custom one from the builder, drag one to the top

@@ -189,6 +189,9 @@ export class TabEditor {
   _editBar() {
     const bar = document.createElement('div');
     bar.className = 'edit-bar';
+    const mode = document.createElement('span');
+    mode.className = 'edit-mode-label';
+    mode.textContent = 'Editing layout';
     const title = document.createElement('span');
     title.className = 'edit-title';
     title.append('Editing ', Object.assign(document.createElement('b'), { textContent: this._draft.name }));
@@ -212,7 +215,7 @@ export class TabEditor {
     const save = button('Save', () => this.save());
     save.dataset.edit = 'save';
     save.className = 'primary';
-    bar.append(title, add, settings, ...(origin ? [origin] : []), note, spacer, cancel, save);
+    bar.append(mode, title, add, settings, ...(origin ? [origin] : []), note, spacer, cancel, save);
     return bar;
   }
 
@@ -331,6 +334,8 @@ export class TabEditor {
       handle.setPointerCapture(e.pointerId);
       handle.classList.add('dragging');
       grid.classList.add('dragging');
+      const chrome = handle.closest('.edit-chrome');
+      chrome?.classList.add('held');   // the panel being moved or sized wears the accent outline
       const ghost = document.createElement('div');
       ghost.className = 'edit-ghost';
       grid.appendChild(ghost);
@@ -352,6 +357,7 @@ export class TabEditor {
         handle.removeEventListener('pointerup', up);
         handle.classList.remove('dragging');
         grid.classList.remove('dragging');
+        chrome?.classList.remove('held');
         ghost.remove();
         if (cell) this.change(apply(cell));
       };

@@ -312,10 +312,25 @@
     .edit-bar .edit-note { color: var(--warn); font-size: var(--fs-s); }
     .edit-bar button.primary { background: var(--accent); color: var(--accent-ink); }
     .analysis-grid.editing-grid { position: relative; }
+    /* The mode is named in the edit bar. Panels keep a neutral border; the one
+       being moved, sized or reached by keyboard wears the accent outline, one at a time. */
+    .edit-mode-label {
+      font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+      color: var(--accent-ink); background: var(--accent); border-radius: 3px; padding: 2px 6px;
+    }
     .edit-chrome {
       position: relative; z-index: 6; min-width: 0; min-height: 0;
-      border: 1px dashed var(--hl2); border-radius: 5px; background: color-mix(in srgb, var(--accent) 7%, transparent);
+      border: 1px solid var(--line); border-radius: 5px;
     }
+    .edit-chrome:hover { border-color: var(--ink-3); }
+    .edit-chrome:focus-within, .edit-chrome.held {
+      border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent);
+    }
+    /* grips show where they can be used: on hover, from the keyboard, while held */
+    .edit-chrome .edit-resize, .edit-chrome .edit-edge { opacity: 0; }
+    .edit-chrome:hover .edit-resize, .edit-chrome:focus-within .edit-resize, .edit-chrome.held .edit-resize,
+    .edit-chrome:hover .edit-edge, .edit-chrome:focus-within .edit-edge, .edit-chrome.held .edit-edge { opacity: 1; }
+    .edit-chrome:not(:hover):not(:focus-within):not(.held) .edit-handle { font-weight: 600; opacity: 0.85; }
     .edit-head {
       display: flex; align-items: center; gap: 4px; padding: 2px 4px;
       background: color-mix(in srgb, var(--ground) 92%, transparent); border-radius: 5px 5px 0 0;
