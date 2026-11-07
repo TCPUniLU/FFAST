@@ -843,43 +843,92 @@ function valueCell(v, precision) {
   return `<td${raw}>${v === undefined ? '—' : fmt(v, precision)}</td>`;
 }
 
+/** The sort a table is drawn with, as `[column title, 'asc'|'desc']`, or null. */
+function sortOf(spec, ctx) {
+  const s = (ctx && ctx.sort) || spec.sort;
+  return Array.isArray(s) && s.length === 2 && (s[1] === 'asc' || s[1] === 'desc') ? s : null;
+}
+
+/** The next sort when the header `key` is clicked: ascending, then descending,
+ * then the original order. @returns {[string, 'asc'|'desc']|null} */
+export function nextSort(current, key) {
+  if (!current || current[0] !== key) return [key, 'asc'];
+  return current[1] === 'asc' ? [key, 'desc'] : null;
+}
+
 /**
- * Scalar metric over the dataset × prediction grid — the desktop's
- * `TableKind` (rows are predictions, columns are datasets).
- *
- * A single series still renders as a 1×1 grid, so the daily-driver case is
- * unchanged in content while gaining the headers that name it.
+ * The rows and columns of a table panel: one row per (dataset, prediction)
+ * pair that has a value, one column per metric that has a value for some row.
+ * Pure, so the layout tests without a page.
+ * @returns {{columns: Array<{key: string, label: string, unit: string, role: string}>,
+ *   rows: Array<{dataset: string, prediction: string, values: Array<number|null|undefined>}>}}
+ */
+export function tableModel(spec, series, ctx) {
+  const labels = (spec.options && spec.options.column_labels) || [];
+  const units = (ctx && ctx.units) || {};
+  const asList = (s) => (Array.isArray(s.data.value) ? s.data.value : [s.data.value]);
+  const count = Math.max(0, ...series.map((s) => asList(s).length));
+  const rows = series.map((s) => ({
+    dataset: s.datasetName || 'Dataset',
+    prediction: s.modelName || 'Reference',
+    values: asList(s).map(scalarOf),
+  })).filter((r) => r.values.some((v) => v != null));
+  const columns = [];
+  for (let k = 0; k < count; k++) {
+    if (!rows.some((r) => r.values[k] != null)) continue;
+    const label = labels[k] || (count === 1 ? spec.title || 'Value' : `Value ${k + 1}`);
+    const role = count === 1 ? 'value' : `value:${k}`;
+    columns.push({ key: label, label, unit: units[role] ?? units.value ?? '', role, k });
+  }
+  return { columns, rows };
+}
+
+/** `rows` in the order of `sort` ([column title, direction]); the original
+ * order when there is none or the column is not there. */
+export function sortedRows(model, sort) {
+  if (!sort) return model.rows;
+  const [key, dir] = sort;
+  const pick = key === 'Dataset' ? (r) => r.dataset
+    : key === 'Prediction' ? (r) => r.prediction
+      : (() => { const c = model.columns.find((x) => x.key === key); return c ? (r) => r.values[c.k] : null; })();
+  if (!pick) return model.rows;
+  const sign = dir === 'desc' ? -1 : 1;
+  return model.rows.map((r, i) => [r, i]).sort(([a, i], [b, j]) => {
+    const x = pick(a), y = pick(b);
+    if (x == null || y == null) return x == null && y == null ? i - j : x == null ? 1 : -1;   // empty last
+    const c = typeof x === 'string' ? x.localeCompare(y, undefined, { numeric: true }) : x - y;
+    return c ? sign * c : i - j;
+  }).map(([r]) => r);
+}
+
+/**
+ * Scalar metrics over the dataset × prediction pairs: one table, a row per
+ * pair that has values, a column per metric (to_fix_v3 #8). A header sorts;
+ * a unit under a header is clickable.
  */
 export function buildTable(spec, series, ctx) {
   const list = series || [];
   if (!list.length) return '<div class="panel-msg">No data for this selection.</div>';
-
-  // Column and row order follow first appearance in the series list, which is
-  // the selector's order (dataset-major), not a re-sort.
-  const cols = [];
-  const rows = [];
-  const cellOf = new Map();
-  for (const s of list) {
-    const cKey = s.datasetFp || '';
-    const rKey = s.modelFp || '';
-    if (!cols.some((c) => c.key === cKey)) {
-      cols.push({ key: cKey, label: s.datasetName || 'Dataset' });
-    }
-    if (!rows.some((r) => r.key === rKey)) {
-      rows.push({ key: rKey, label: s.modelName || 'Reference' });
-    }
-    cellOf.set(`${rKey}|${cKey}`, scalarOf(s.data.value));
-  }
-
-  const unit = (ctx && ctx.units && ctx.units.value) || '';
-  const head = `<thead><tr><th${unitAttr(ctx, 'value')}>${esc(withUnit(spec.title || 'Value', unit))}</th>`
-    + cols.map((c) => `<th>${esc(c.label)}</th>`).join('') + '</tr></thead>';
-  const body = '<tbody>' + rows.map((r) =>
-    `<tr><td>${esc(r.label)}</td>` + cols.map((c) => {
-      const v = cellOf.get(`${r.key}|${c.key}`);
-      return valueCell(v, spec.precision);
-    }).join('') + '</tr>').join('') + '</tbody>';
-  return `<table class="panel-table">${head}${body}</table>`;
+  const model = tableModel(spec, list, ctx);
+  if (!model.rows.length) return '<div class="panel-msg">No data for this selection.</div>';
+  const sort = sortOf(spec, ctx);
+  const mark = (key) => (sort && sort[0] === key ? (sort[1] === 'asc' ? '▲' : '▼') : '');
+  const aria = (key) => (sort && sort[0] === key ? ` aria-sort="${sort[1] === 'asc' ? 'ascending' : 'descending'}"` : '');
+  const th = (key, label, unit = '', role = '') => {
+    const u = displayUnit(unit);
+    const shown = !u ? '' : u.startsWith('[') ? u : `[${u}]`;   // "[unit]" is the placeholder
+    const unitSpan = shown ? `<span class="th-unit"${unitAttr(ctx, role)}>${esc(shown)}</span>` : '';
+    return `<th data-sort="${esc(key)}" data-value="${esc(shown ? `${label} ${shown}` : label)}"${aria(key)} tabindex="0">`
+      + `<span class="th-name">${esc(label)}</span><span class="th-sort" aria-hidden="true">${mark(key)}</span>${unitSpan}</th>`;
+  };
+  const head = '<thead><tr>' + th('Dataset', 'Dataset') + th('Prediction', 'Prediction')
+    + model.columns.map((c) => th(c.key, c.label, c.unit, c.role)).join('') + '</tr></thead>';
+  const body = '<tbody>' + sortedRows(model, sort).map((r) =>
+    `<tr><td class="cell-name" title="${esc(r.dataset)}">${esc(r.dataset)}</td>`
+    + `<td class="cell-name" title="${esc(r.prediction)}">${esc(r.prediction)}</td>`
+    + model.columns.map((c) => valueCell(r.values[c.k], spec.precision)).join('')
+    + '</tr>').join('') + '</tbody>';
+  return `<div class="panel-table-wrap"><table class="panel-table sortable">${head}${body}</table></div>`;
 }
 
 /**

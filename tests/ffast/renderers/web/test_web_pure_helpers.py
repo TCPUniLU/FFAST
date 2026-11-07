@@ -471,7 +471,7 @@ CASES = {
         "          twoNames: two.traces.map(t => t.name)};"
         "})()"
     ),
-    # table = the desktop's model x dataset grid (rows predictions, cols datasets)
+    # table = a row per (dataset, prediction) with values, a column per metric
     "panel_table_grid": (
         "(() => {"
         "  const s = (v) => ({nd: {values: [v], shape: [1]}});"
@@ -483,10 +483,58 @@ CASES = {
         "  ], {}).html;"
         "  const doc = new DOMParser().parseFromString(html, 'text/html');"
         "  return {"
-        "    head: [...doc.querySelectorAll('thead th')].map(e => e.textContent),"
+        "    head: [...doc.querySelectorAll('thead th')].map(e => e.dataset.value),"
         "    rows: [...doc.querySelectorAll('tbody tr')].map("
         "      tr => [...tr.children].map(td => td.textContent)),"
         "  };"
+        "})()"
+    ),
+    "panel_table_four_metrics": (
+        "(() => {"
+        "  const s = (v) => ({nd: {values: [v], shape: [1]}});"
+        "  const mk = (d,dn,vs) => ({datasetFp:d, datasetName:dn, modelFp:'m1', modelName:'MACE',"
+        "     data:{value: vs.map(s)}});"
+        "  const html = pn.buildPanel({kind:'table', precision:2, title:'Errors',"
+        "    options:{column_labels:['Energy MAE','Energy RMSE','Forces MAE','Forces RMSE']}}, ["
+        "    mk('d1','aspirin',[1,2,3,4]), mk('d2','ethanol',[5,6,7,8])],"
+        "    {units:{'value:0':'meV','value:1':'meV','value:2':'meV/Å','value:3':'meV/Å'},"
+        "     unitDims:{'value:0':'energy','value:1':'energy','value:2':'force','value:3':'force'}}).html;"
+        "  const doc = new DOMParser().parseFromString(html, 'text/html');"
+        "  return {"
+        "    head: [...doc.querySelectorAll('thead th')].map(e => e.dataset.value),"
+        "    unitRoles: [...doc.querySelectorAll('thead th')].map("
+        "      e => e.querySelector('[data-unit-role]')?.dataset.unitRole || null),"
+        "    rows: [...doc.querySelectorAll('tbody tr')].map("
+        "      tr => [...tr.children].map(td => td.textContent)),"
+        "    wrapped: !!doc.querySelector('.panel-table-wrap > table.panel-table'),"
+        "  };"
+        "})()"
+    ),
+    "panel_table_empty_column": (
+        "(() => {"
+        "  const s = (v) => v == null ? null : ({nd: {values: [v], shape: [1]}});"
+        "  const html = pn.buildPanel({kind:'table', options:{column_labels:['A','B','C']}}, ["
+        "    {datasetFp:'d1', datasetName:'x', modelFp:'m1', modelName:'M', data:{value:[s(1), null, s(3)]}}], {}).html;"
+        "  return [...new DOMParser().parseFromString(html, 'text/html')"
+        "    .querySelectorAll('thead th')].map(e => e.dataset.value);"
+        "})()"
+    ),
+    "panel_table_sort": (
+        "(() => {"
+        "  const s = (v) => ({nd: {values: [v], shape: [1]}});"
+        "  const mk = (n, v) => ({datasetFp:n, datasetName:n, modelFp:'m', modelName:'M', data:{value:[s(v)]}});"
+        "  const series = [mk('b', 2), mk('c', 3), mk('a', 1)];"
+        "  const spec = {kind:'table', options:{column_labels:['Forces MAE']}};"
+        "  const names = (ctx) => [...new DOMParser().parseFromString(pn.buildPanel(spec, series, ctx).html, 'text/html')"
+        "    .querySelectorAll('tbody tr')].map(tr => tr.children[0].textContent);"
+        "  const doc = new DOMParser().parseFromString(pn.buildPanel(spec, series, {sort: ['Forces MAE', 'asc']}).html, 'text/html');"
+        "  const ths = [...doc.querySelectorAll('thead th')];"
+        "  const c1 = pn.nextSort(null, 'Forces MAE'), c2 = pn.nextSort(c1, 'Forces MAE'), c3 = pn.nextSort(c2, 'Forces MAE');"
+        "  return {original: names({}), asc: names({sort: ['Forces MAE', 'asc']}), desc: names({sort: ['Forces MAE', 'desc']}),"
+        "    byName: names({sort: ['Dataset', 'asc']}), byNameDesc: names({sort: ['Dataset', 'desc']}),"
+        "    marks: ths.slice(2).concat(ths.slice(0, 2)).map(t => t.querySelector('.th-sort').textContent),"
+        "    aria: ths[2].getAttribute('aria-sort'),"
+        "    cycle: [c1, c2, c3, pn.nextSort(c2, 'Other')]};"
         "})()"
     ),
     "panel_table_tiny_value": (
@@ -584,7 +632,7 @@ CASES = {
     "table_headers_carry_units": (
         "(() => {"
         "  const heads = (html) => [...new DOMParser().parseFromString(html, 'text/html')"
-        "    .querySelectorAll('thead th')].map(e => e.textContent);"
+        "    .querySelectorAll('thead th')].map(e => e.dataset.value ?? e.textContent);"
         "  const one = [{datasetFp:'d1', datasetName:'aspirin', modelFp:'m1', modelName:'MACE',"
         "     data:{value: {nd: {values: [1], shape: [1]}}}}];"
         "  const a = (v) => ({nd: {values: v, shape: [v.length]}});"
@@ -618,7 +666,8 @@ CASES = {
         "(() => {"
         "  const doc = (html) => new DOMParser().parseFromString(html, 'text/html');"
         "  const heads = (html) => [...doc(html).querySelectorAll('thead th')]"
-        "    .map(e => [e.textContent, e.dataset.unitRole || null]);"
+        "    .map(e => [e.dataset.value ?? e.textContent,"
+        "      (e.dataset.unitRole || e.querySelector('[data-unit-role]')?.dataset.unitRole) || null]);"
         "  const one = [{datasetFp:'d1', datasetName:'aspirin', modelFp:'m1', modelName:'MACE',"
         "     data:{value: {nd: {values: [1], shape: [1]}}}}];"
         "  const a = (v) => ({nd: {values: v, shape: [v.length]}});"
@@ -1783,7 +1832,7 @@ def test_plot_csv_is_one_row_per_point_without_helper_traces(results):
 
 def test_table_csv_keeps_the_full_number_the_screen_rounds(results):
     csv, shown = results["table_csv"]
-    assert csv == "MAE,aspirin\nMACE,0.123456\n"
+    assert csv == "Dataset,Prediction,MAE\naspirin,MACE,0.123456\n"
     assert shown == "0.12"
 
 
@@ -2205,24 +2254,46 @@ def test_density_fill_is_a_single_series_affordance(results):
     assert r["twoNames"] == ["A", "B"]
 
 
-def test_table_is_a_prediction_by_dataset_grid(results):
-    """The desktop's TableKind: rows are predictions, columns are datasets.
-
-    This replaces a one-cell table whose comment conceded the shortcut.
-    """
+def test_table_has_a_row_per_dataset_and_prediction_and_a_column_per_metric(results):
+    """to_fix_v3 #8: rows are (dataset, prediction) pairs, columns are metrics."""
     r = results["panel_table_grid"]
-    assert r["head"] == ["MAE", "aspirin", "ethanol"]
+    assert r["head"] == ["Dataset", "Prediction", "MAE"]
     assert r["rows"] == [
-        ["MACE", "1.00", "2.00"],
-        ["SchNet", "3.00", "4.00"],
+        ["aspirin", "MACE", "1.00"],
+        ["ethanol", "MACE", "2.00"],
+        ["aspirin", "SchNet", "3.00"],
+        ["ethanol", "SchNet", "4.00"],
     ]
 
 
-def test_table_shows_a_dash_for_a_pair_that_was_not_computed(results):
+def test_a_pair_that_was_not_computed_has_no_row(results):
     assert results["panel_table_missing_pair_is_dashed"] == [
-        ["MACE", "1.00", "—"],
-        ["SchNet", "—", "4.00"],
+        ["aspirin", "MACE", "1.00"],
+        ["ethanol", "SchNet", "4.00"],
     ]
+
+
+def test_two_datasets_with_four_metrics_make_two_rows_and_four_columns_with_no_dash(results):
+    r = results["panel_table_four_metrics"]
+    assert r["head"] == ["Dataset", "Prediction", "Energy MAE [meV]", "Energy RMSE [meV]",
+                         "Forces MAE [meV/Å]", "Forces RMSE [meV/Å]"]
+    assert r["rows"] == [["aspirin", "MACE", "1.00", "2.00", "3.00", "4.00"],
+                         ["ethanol", "MACE", "5.00", "6.00", "7.00", "8.00"]]
+    assert not any("—" in cell for row in r["rows"] for cell in row)
+    assert r["wrapped"] and r["unitRoles"] == [None, None, "value:0", "value:1", "value:2", "value:3"]
+
+
+def test_a_metric_with_no_value_anywhere_is_no_column(results):
+    assert results["panel_table_empty_column"] == ["Dataset", "Prediction", "A", "C"]
+
+
+def test_a_table_sorts_by_a_header_and_the_sort_cycle_ends_at_the_original_order(results):
+    r = results["panel_table_sort"]
+    assert r["original"] == ["b", "c", "a"]
+    assert r["asc"] == ["a", "b", "c"] and r["desc"] == ["c", "b", "a"]
+    assert r["byName"] == ["a", "b", "c"] and r["byNameDesc"] == ["c", "b", "a"]
+    assert r["marks"] == ["▲", "", ""] and r["aria"] == "ascending"
+    assert r["cycle"] == [["Forces MAE", "asc"], ["Forces MAE", "desc"], None, ["Other", "asc"]]
 
 
 def test_an_element_keeps_its_3d_colour_unless_it_would_vanish(results):
@@ -2331,8 +2402,8 @@ def test_axis_title_prints_a_unit_but_not_a_dimension(results):
 
 def test_table_headers_carry_a_declared_unit(results):
     r = results["table_headers_carry_units"]
-    assert r["table"] == ["Energy MAE (meV)", "aspirin"]
-    assert r["tableDim"] == ["Energy MAE", "aspirin"]
+    assert r["table"] == ["Dataset", "Prediction", "Energy MAE [meV]"]
+    assert r["tableDim"] == ["Dataset", "Prediction", "Energy MAE"]
     assert r["grouped"] == ["Object", "C MAE (meV/Å)", "C RMSE"]
 
 
@@ -2351,9 +2422,9 @@ def test_a_subset_shows_the_units_of_the_dataset_it_was_cut_from(results):
 
 def test_table_headers_whose_unit_can_be_named_are_marked(results):
     r = results["unit_headers_are_marked"]
-    assert r["table"] == [["Energy MAE [unit]", "value"], ["aspirin", None]]
+    assert r["table"] == [["Dataset", None], ["Prediction", None], ["Energy MAE [unit]", "value"]]
     assert r["grouped"] == [["Object", None], ["C MAE (eV/Å)", "mae"], ["C RMSE [unit]", "rmse"]]
-    assert r["plain"] == [["Gyration", None], ["aspirin", None]]
+    assert r["plain"] == [["Dataset", None], ["Prediction", None], ["Gyration", None]]
 
 
 def test_a_click_finds_the_role_of_a_header_or_axis_title(results):
@@ -2372,7 +2443,7 @@ def test_table_value_never_prints_a_non_zero_value_as_zero(results):
 
 
 def test_table_prints_a_tiny_force_error_with_significant_digits(results):
-    assert results["panel_table_tiny_value"] == [["MACE", "0.00213"]]
+    assert results["panel_table_tiny_value"] == [["aspirin", "MACE", "0.00213"]]
 
 
 def test_grouped_table_rows_are_series_when_one_element_is_selected(results):

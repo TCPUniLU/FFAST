@@ -172,6 +172,9 @@ class PanelConfig(BaseModel):
     y_label: AxisLabel = None
     diagonal: bool = False
     precision: int | None = None   # table decimals; unset = 3 significant digits
+    # A table's starting sort: [column title, "asc" or "desc"]. The browser
+    # remembers the user's own sort apart from the file; the desktop ignores it.
+    sort: list[str] | None = None
     # Label edits made in the browser (web parity plan 2026-10-29). Each
     # replaces what the panel draws by default; unset = the default.
     x_title: str | None = Field(default=None, min_length=1)   # the whole x axis title, unit included
@@ -201,6 +204,14 @@ class PanelConfig(BaseModel):
                 "'link_frame', 'link_camera' and 'start' are for an "
                 "independent 3D panel (view = \"independent\"); a linked "
                 "one shows the main view")
+        return self
+
+    @model_validator(mode="after")
+    def _sort_names_a_direction(self) -> "PanelConfig":
+        if self.sort is not None and not (len(self.sort) == 2 and self.sort[1] in ("asc", "desc")):
+            raise ValueError("'sort' is [column title, \"asc\" or \"desc\"]")
+        if self.sort is not None and self.kind != "table":
+            raise ValueError("only a table panel has a 'sort'")
         return self
 
     @model_validator(mode="after")

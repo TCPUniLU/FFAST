@@ -525,7 +525,21 @@
     }
     .analysis-scrollstrip .analysis-panel { flex: 0 0 auto; }
     /* HTML tables for table / grouped_table kinds */
+    /* a table of errors: its body scrolls past about 10 rows, its header stays */
+    .panel-table-wrap { max-height: 340px; overflow: auto; }
     table.panel-table { width: 100%; border-collapse: collapse; font-size: var(--fs-s); }
+    table.panel-table.sortable thead th {
+      position: sticky; top: 0; z-index: 1; background: var(--bg2); vertical-align: bottom;
+      cursor: pointer; user-select: none;
+    }
+    table.panel-table .th-name, table.panel-table .th-unit { display: block; }
+    table.panel-table .th-unit { font-weight: 400; font-size: var(--fs-xs); }
+    table.panel-table .th-sort { margin-left: 4px; font-size: var(--fs-xs); }
+    table.panel-table .th-sort:empty { display: none; }
+    table.panel-table .th-name, table.panel-table .th-sort { display: inline; }
+    table.panel-table td.cell-name {
+      max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     table.panel-table th, table.panel-table td {
       padding: 3px 8px; text-align: right; border-bottom: 1px solid var(--bg3);
       font-variant-numeric: tabular-nums;
@@ -534,11 +548,14 @@
     table.panel-table th:first-child, table.panel-table td:first-child {
       text-align: left; color: var(--text1);
     }
+    table.panel-table.sortable th:nth-child(2), table.panel-table.sortable td:nth-child(2) {
+      text-align: left; color: var(--text1);
+    }
     /* A unit the user names: click an axis title, an error table header or
        the colourbar label (units.js). Plotly makes its titles click-through. */
     .panel-plot[data-unit-x] .g-xtitle text,
     .panel-plot[data-unit-y] .g-ytitle text { pointer-events: all !important; cursor: pointer; }
-    table.panel-table th[data-unit-role], #colorbar-label.unit-editable { cursor: pointer; }
+    table.panel-table [data-unit-role], #colorbar-label.unit-editable { cursor: pointer; }
     #unit-popover {
       position: fixed; z-index: 1000; padding: 8px 10px;
       background: var(--bg2); border: 1px solid var(--bg3); border-radius: 6px;

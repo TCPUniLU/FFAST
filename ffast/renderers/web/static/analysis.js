@@ -24,7 +24,7 @@
  */
 
 import { helpToggle, PICKER_HELP } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, neededPredictions, clearPlot } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, neededPredictions, clearPlot, nextSort } from './panels.js';
 import { showOnce } from './toasts.js';
 import { attachTip } from './hover_tip.js';
 import { spinner } from './spinner.js';
@@ -40,7 +40,7 @@ import { plotCsv, tableCsv, panelFileName, downloadText, downloadPlot } from './
 import { KIND_3D } from './tab_rules.js';
 import { GRID_COLUMNS, ROW_UNIT_PX, LABEL_FIELDS, toFineGrid } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
-import { loadTabState, saveTabState } from './layout_state.js';
+import { loadTabState, saveTabState, loadLayout, saveLayout } from './layout_state.js';
 
 /** Two columns of the smallest plot, and the gap between cells, in px (the grid gap in index.html). */
 const COLUMN_MIN = 360;
@@ -1113,6 +1113,13 @@ export class AnalysisManager {
     const card = { el, title, more, body, params, letter, letterEl, captionEl, captionLetter, captionText };
     more.addEventListener('click', () => this._panelMenu.open(more, this._panelActions(t, spec, card)));
     body.addEventListener('click', (e) => this._onUnitClick(card, e));
+    body.addEventListener('click', (e) => this._onSortClick(t, spec, card, e));
+    body.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('th[data-sort]')) {
+        e.preventDefault();
+        this._onSortClick(t, spec, card, e);
+      }
+    });
     captionEl.addEventListener('click', (e) => this._onUnitClick(card, e));
     return card;
   }
@@ -1190,6 +1197,23 @@ export class AnalysisManager {
       return span;
     });
     card.captionText.replaceChildren(...nodes);
+  }
+
+  /** The sort a table panel shows: the user's own (kept in this browser, never
+   * in a tab file), else the one its tab file starts with. */
+  _tableSort(t, spec) {
+    const mine = loadLayout().tableSort?.[`${t.spec.name}|${panelKey(spec)}`];
+    return mine === undefined ? spec.sort || null : mine;
+  }
+
+  /** A click on a table header sorts by it: ascending, descending, original order. */
+  _onSortClick(t, spec, card, e) {
+    const th = e.target.closest?.('th[data-sort]');
+    if (!th || e.target.closest('[data-unit-role]') || !card.series) return;
+    const next = nextSort(this._tableSort(t, spec), th.dataset.sort);
+    const all = { ...(loadLayout().tableSort || {}), [`${t.spec.name}|${panelKey(spec)}`]: next };
+    saveLayout({ tableSort: all });
+    this._drawPanel(t, spec, card, card.series, this._renderToken, card.seq);
   }
 
   /** A click on a "[unit]" (or a unit) in an axis title or a table header
@@ -1348,6 +1372,7 @@ export class AnalysisManager {
     const ctx = {
       units: this._panelUnits(spec, series),
       unitDims: this._panelUnitDims(spec),
+      sort: spec.kind === 'table' ? this._tableSort(t, spec) : null,
       perFrame: this._isPerFrameScatter(spec),
       elementOrder: this._elementOrder || [],
       selectedElements: t.selectedElements,
@@ -1470,6 +1495,13 @@ export class AnalysisManager {
     const units = {};
     for (const [role, entry] of this._roleEntries(spec))
       units[role] = entry ? resolveUnit(entry.unit, dsUnits) : '';
+    // a list of metrics (a table's columns): one unit each, as `role:k`
+    for (const [role, val] of Object.entries(spec.metrics || {})) {
+      if (Array.isArray(val)) val.forEach((id, k) => {
+        const entry = this._catalog.get(id);
+        units[`${role}:${k}`] = entry ? resolveUnit(entry.unit, dsUnits) : '';
+      });
+    }
     return units;
   }
 
@@ -1479,6 +1511,12 @@ export class AnalysisManager {
     for (const [role, entry] of this._roleEntries(spec)) {
       const dim = entry && editableDimension(entry.unit);
       if (dim) dims[role] = dim;
+    }
+    for (const [role, val] of Object.entries(spec.metrics || {})) {
+      if (Array.isArray(val)) val.forEach((id, k) => {
+        const dim = this._catalog.get(id) && editableDimension(this._catalog.get(id).unit);
+        if (dim) dims[`${role}:${k}`] = dim;
+      });
     }
     return dims;
   }

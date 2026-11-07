@@ -3449,9 +3449,8 @@ async def test_web_a_unit_named_on_one_plot_shows_on_every_plot_and_window(ffast
 
             await page.wait_for_function(
                 f"() => ({_AXIS_TITLE})(['Energy MAE timeline', 'y']) === 'Energy MAE (eV)'", timeout=15000)
-            await expect(page.locator(
-                '.tabpanel.active .analysis-panel[data-title="Energy MAE"] th[data-unit-role]'
-            )).to_have_text("Energy MAE (eV)", timeout=15000)
+            units = page.locator('.tabpanel.active .analysis-panel[data-title="Errors"] thead .th-unit')
+            await expect(units).to_have_text(["[eV]", "[eV]", "[unit]", "[unit]"], timeout=15000)
             await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
             assert await page.evaluate(_AXIS_TITLE, ["Forces MAE timeline", "y"]) == "Forces MAE [unit]"
         finally:
@@ -6538,7 +6537,9 @@ async def test_web_only_the_rows_with_peak_labels_grow(shared_prediction_server,
             # labels start off: tick every timeline's, as they once all were
             for box in await page.locator(".tabpanel.active .peaks-toggle input").all():
                 await box.check()
-            await expect(page.locator(_sub_panel("Forces MAE timeline") + " .panel-plot .annotation")).to_have_count(5)
+            # every timeline draws its labels (each grows its row) before the rows are measured
+            for title in ("Energy MAE timeline", "Forces MAE timeline", "Forces RMSE timeline"):
+                await expect(page.locator(_sub_panel(title) + " .panel-plot .annotation")).to_have_count(5)
             slots = await page.evaluate(_SLOT_BOXES, "Basic Errors")
             timeline_tops = {top for kinds, top, _ in slots if "timeline" in kinds}
             assert timeline_tops, slots
@@ -6546,7 +6547,9 @@ async def test_web_only_the_rows_with_peak_labels_grow(shared_prediction_server,
                 if "timeline" in kinds:
                     assert height > 300, slots
                 elif top not in timeline_tops:
-                    assert abs(height - (300 if width < 1000 else 350)) <= 2, (kinds, slots)
+                    # a table row is shorter (its row height is 0.5 of 300 px, to_fix_v3 #8)
+                    want = 300 if width < 1000 else 170 if "table" in kinds else 350
+                    assert abs(height - want) <= 2, (kinds, slots)
             assert any("table" in kinds for kinds, top, _ in slots if top not in timeline_tops)
             # and every row holds its panels: none reaches into the row below
             for _, top, height in slots:
@@ -7327,6 +7330,50 @@ async def test_web_a_plot_downloads_svg_and_csv(shared_prediction_server):
             await browser.close()
 
 
+async def test_web_basic_errors_is_one_table_inside_its_panel_and_headers_sort(shared_prediction_server):
+    """to_fix_v3 #8: one table (not four side by side), a row per dataset and
+    prediction, a column per metric with its unit under the name, inside its
+    panel; a header click sorts: ascending, descending, original order."""
+    ws_port, web_port = shared_prediction_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            tab = page.locator(".tabpanel.active")
+            panel = tab.locator(".analysis-panel[data-title='Errors']")
+            table = panel.locator("table.panel-table")
+            await expect(table).to_be_visible(timeout=25000)
+            await expect(tab.locator("table.panel-table")).to_have_count(1)
+            await expect(table.locator("thead .th-name")).to_have_text(
+                ["Dataset", "Prediction", "Energy MAE", "Energy RMSE", "Forces MAE", "Forces RMSE"])
+            await expect(table.locator("thead .th-unit")).to_have_count(4)   # a unit line under each metric
+            await expect(table.locator("tbody tr")).to_have_count(1)
+            assert "—" not in await table.locator("tbody").inner_text()
+            inside = await page.evaluate(
+                """() => { const p = document.querySelector(".tabpanel.active .analysis-panel[data-title='Errors']");
+                  const t = p.querySelector('table').getBoundingClientRect(), r = p.getBoundingClientRect();
+                  return [t.left >= r.left - 1, t.right <= r.right + 1, t.bottom <= r.bottom + 1]; }""")
+            assert inside == [True, True, True]
+
+            head = table.locator("thead th", has_text="Forces MAE")
+            await head.locator(".th-name").click()
+            await expect(head).to_have_attribute("aria-sort", "ascending")
+            await expect(head.locator(".th-sort")).to_have_text("▲")
+            await head.locator(".th-name").click()
+            await expect(head).to_have_attribute("aria-sort", "descending")
+            await expect(head.locator(".th-sort")).to_have_text("▼")
+            await head.locator(".th-name").click()
+            await expect(head).not_to_have_attribute("aria-sort", re.compile("."))
+        finally:
+            await browser.close()
+
+
 async def test_web_a_table_downloads_as_csv(shared_prediction_server):
     """Web parity plan 2026-10-29: a table's ⋯ menu downloads it as CSV."""
     ws_port, web_port = shared_prediction_server
@@ -7340,16 +7387,17 @@ async def test_web_a_table_downloads_as_csv(shared_prediction_server):
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await _open_analysis_tab(page, "Basic Errors")
-            panel = page.locator(".tabpanel.active .analysis-panel[data-title='Energy MAE']")
+            panel = page.locator(".tabpanel.active .analysis-panel[data-title='Errors']")
             await expect(panel.locator("table.panel-table")).to_be_visible(timeout=25000)
             await panel.locator(".panel-more").click()
             async with page.expect_download() as dl:
                 await page.locator("#panel-menu-list [data-action='panel-table-csv']").click()
             download = await dl.value
-            assert download.suggested_filename == "Energy_MAE.csv"
+            assert download.suggested_filename == "Errors.csv"
             with open(await download.path()) as f:
                 lines = f.read().splitlines()
             assert len(lines) >= 2
+            assert lines[0].startswith("Dataset,Prediction,Energy MAE") and "Forces RMSE" in lines[0]
             assert re.search(r"\d", lines[1])
         finally:
             await browser.close()

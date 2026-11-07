@@ -22,14 +22,10 @@ tooltip = "Difference (MAE) between predicted and ab-initio net force on the sys
 kind = "table"
 row = 1
 col = 0
-title = "Forces MAE"
-  [tabs.panels.metrics.value]
+colspan = 2
+title = "Errors"
+options = { column_labels = ["Forces MAE", "Forces RMSE"] }
+  [[tabs.panels.metrics.value]]
   metric = "ffast.force_net_residual[dataset;component;mae]"
-
-[[tabs.panels]]
-kind = "table"
-row = 1
-col = 1
-title = "Forces RMSE"
-  [tabs.panels.metrics.value]
+  [[tabs.panels.metrics.value]]
   metric = "ffast.force_net_residual[dataset;component;rmse]"

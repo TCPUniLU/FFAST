@@ -25,7 +25,7 @@ export const KIND_ROLES = Object.freeze({
   timeline: { label: 'Timeline', roles: { y: ['N_frames', '(N_frames, N_elements)'] } },
   density: { label: 'Density', roles: { value: ['(curve_xy, grid)'] } },
   scatter: { label: 'Scatter', roles: { x: ['N_frames'], y: ['N_frames'] } },
-  table: { label: 'Table', roles: { value: ['scalar'] } },
+  table: { label: 'Table', roles: { value: ['scalar'] }, list: ['value'] },
   overlay_timeline: { label: 'Overlay timeline', roles: { series: ['N_frames'] }, list: ['series'] },
   grouped_density: { label: 'Density per element', roles: { value: ['(N_elements, curve_xy, grid)'] } },
   grouped_table: { label: 'Table per element', roles: { mae: ['N_elements'], rmse: ['N_elements'] } },
