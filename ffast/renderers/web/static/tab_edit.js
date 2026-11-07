@@ -344,7 +344,7 @@ export function emptyTab(name) {
 
 /** A copy of `tab` under a new name, with nothing that says where it came from. */
 export function copyOf(tab, name) {
-  const { source, replaces, original_changed, hidden, revision, ...rest } = clone(tab);
+  const { source, replaces, original_changed, hidden, revision, template, ...rest } = clone(tab);
   return { ...rest, name };
 }
 

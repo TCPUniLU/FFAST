@@ -238,6 +238,7 @@ export class FFastApp {
       refresh: ({ show } = {}) => this._applyLayout(this._layoutTabs, { show }),
       place: (draft) => this._placeDraft(draft),
       setStatus: (text, kind) => this._setStatus(text, kind),
+      resetTab: (name) => this._removeTab(name, 'reset'),
       currentStart: (tabName, panel) => this._currentStart(tabName, panel),
     });
 
@@ -910,8 +911,10 @@ export class FFastApp {
       buttons: ['Cancel', yes],
       danger: yes,
     });
-    if (answer === yes)
-      this._reportTab(await this._tabOps.remove(name), reset ? 'Reset' : 'Deleted');
+    if (answer !== yes) return false;
+    const r = await this._tabOps.remove(name);
+    this._reportTab(r, reset ? 'Reset' : 'Deleted');
+    return !!r.ok;
   }
 
   async _exportTab(name) {

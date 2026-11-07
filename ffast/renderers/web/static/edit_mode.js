@@ -199,6 +199,7 @@ export class TabEditor {
       if (next) this.change(next);
     });
     settings.dataset.edit = 'tab-settings';
+    const origin = this._originLine();
     const note = document.createElement('span');
     note.className = 'edit-note';
     note.textContent = this._error
@@ -211,8 +212,26 @@ export class TabEditor {
     const save = button('Save', () => this.save());
     save.dataset.edit = 'save';
     save.className = 'primary';
-    bar.append(title, add, settings, note, spacer, cancel, save);
+    bar.append(title, add, settings, ...(origin ? [origin] : []), note, spacer, cancel, save);
     return bar;
+  }
+
+  /** For a tab that stands in for a built-in or project one: one line that
+   * says so, with the Reset to original button (to_fix_v3 #9). */
+  _originLine() {
+    const d = this._draft;
+    if (d.source !== 'user' || !d.replaces) return null;
+    const line = document.createElement('span');
+    line.className = 'edit-origin';
+    const kind = this._deps.serverTabs().find((t) => t.name === d.replaces)?.source === 'project'
+      ? 'Project' : 'Built-in';
+    line.append(`${kind} tab, edited by you${d.original_changed ? ' (updated since)' : ''} · `);
+    const reset = button('Reset to original', async () => {
+      if (await this._deps.resetTab(this._previous)) this.end();
+    });
+    reset.dataset.edit = 'reset';
+    line.append(reset);
+    return line;
   }
 
   /** The handle strip over one panel (or one scroll strip). */

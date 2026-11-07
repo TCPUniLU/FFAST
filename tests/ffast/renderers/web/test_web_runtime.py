@@ -4123,7 +4123,7 @@ async def test_web_user_tabs_reach_every_window_and_can_be_reset_hidden_exported
                         "metrics": {"value": {"metric": "ffast.force_difference[dataset;component;mae]"}}}]}})
                 assert answer["ok"], answer
                 gyration = page.locator("#tabbar .tab", has_text="Gyration")
-                await expect(gyration.locator(".tab-mark")).to_have_text("edited")
+                await expect(gyration.locator(".tab-mark")).to_have_count(0)   # no mark in the bar (to_fix_v3 #9)
                 await gyration.click()
                 await _tab_menu(page, "Reset to original…")
                 dialog = page.locator(".ask-dialog")
@@ -4561,10 +4561,45 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
                 await page.locator(_CHROME, has_text="Gyradius distribution").locator("[data-edit=remove]").click()
                 await page.locator("[data-edit=save]").click()
                 await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
-                await expect(page.locator("#tabbar .tab.active .tab-mark")).to_have_text("edited")
+                await expect(page.locator("#tabbar .tab.active .tab-mark")).to_have_count(0)
+                await page.locator("#tab-edit-btn").click()
+                await expect(page.locator(".tabpanel.active .edit-origin")).to_contain_text(
+                    "Built-in tab, edited by you · Reset to original")
+                await page.locator("[data-edit=cancel]").click()
                 await expect(page.locator(".tabpanel.active .analysis-panel[data-title='Gyradius distribution']")).to_have_count(0)
                 saved = (tabs_dir / "gyration.toml").read_text()
                 assert "Gyradius distribution" not in saved and "Total gyration radius" in saved
+            finally:
+                await browser.close()
+
+
+async def test_web_edit_mode_says_a_tab_replaces_a_built_in_one_and_resets_it(tmp_path):
+    """to_fix_v3 #9: an edited built-in tab has no mark in the bar. Edit mode
+    shows "Built-in tab, edited by you · Reset to original", and the button
+    brings the original back; a tab that is not a copy shows no such line."""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 820})
+            line = page.locator(".tabpanel.active .edit-origin")
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _open_analysis_tab(page, "Gyration")
+                await page.locator("#tab-edit-btn").click()
+                await expect(line).to_have_count(0)           # still the built-in tab itself
+                await page.locator(_CHROME, has_text="Gyradius distribution").locator("[data-edit=remove]").click()
+                await page.locator("[data-edit=save]").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                assert (tabs_dir / "gyration.toml").exists()
+                await expect(page.locator("#tabbar .tab-mark")).to_have_count(0)
+
+                await page.locator("#tab-edit-btn").click()
+                await expect(line).to_have_text("Built-in tab, edited by you · Reset to original")
+                await line.get_by_role("button", name="Reset to original").click()
+                await page.locator(".ask-dialog").get_by_role("button", name="Confirm").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                await expect(page.locator(".tabpanel.active .analysis-panel[data-title='Gyradius distribution']")).to_have_count(1)
+                assert not (tabs_dir / "gyration.toml").exists()
             finally:
                 await browser.close()
 

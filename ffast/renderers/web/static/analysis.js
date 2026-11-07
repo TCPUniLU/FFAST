@@ -440,17 +440,8 @@ export class AnalysisManager {
     tabEl.setAttribute('role', 'tab');
     tabEl.setAttribute('aria-selected', 'false');
     tabEl.tabIndex = -1;   // app.js makes the tab on screen the one tab stop
-    // An edited copy of a built-in or project tab says so (ADR 0056 rule 10),
-    // and says when the original has changed since.
-    if (spec.source === 'user' && spec.replaces) {
-      const mark = document.createElement('span');
-      mark.className = 'tab-mark' + (spec.original_changed ? ' changed' : '');
-      mark.textContent = spec.original_changed ? 'edited · original changed' : 'edited';
-      tabEl.title = `Your edited copy of the ${spec.replaces} tab`
-        + (spec.original_changed ? '; the original has changed since you edited it' : '')
-        + '. Tab actions ⋯ ▸ Reset to original brings the original back.';
-      tabEl.appendChild(mark);
-    }
+    // No mark on a tab that replaces a built-in or project one (to_fix_v3 #9):
+    // Edit mode says so, and has the Reset to original button.
     tabEl.addEventListener('click', () => this._onSelectTab(id));
     tabEl.addEventListener('contextmenu', (e) => {
       e.preventDefault();
