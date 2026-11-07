@@ -1280,3 +1280,98 @@ async def test_web_editing_a_live_tab_edits_the_layout_of_every_live_tab(tmp_pat
                 assert not (tabs / "live-run.toml").exists()
             finally:
                 await browser.close()
+
+
+import contextlib  # noqa: E402  (to_fix_v3 tests below)
+
+
+async def _pure(static_origin, script):
+    """Run `script` (an async JS function) in a page that can import the static modules."""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        try:
+            page = await browser.new_page()
+            await page.goto(f"{static_origin}/jsconfig.json")
+            return await page.evaluate(script)
+        finally:
+            await browser.close()
+
+
+def _three_scored_frames(tmp_path):
+    """A run of 3 frames, frame 2 marked; every score high on the plot, so a
+    click by the marks along the bottom is not on the curve."""
+    run = _run_folder(tmp_path, frames=3, scores=False)
+    adir = run / rf.ANALYSIS_DIR / "0123456789abcdef"
+    adir.mkdir(parents=True)
+    rf.write_json_atomic(adir / rf.SETTINGS, {"bundle": "/b.bundle",
+                                              "thresholds": {"geometric": {"bead": 5.0, "centroid": 5.0}}})
+    rf.ScoresWriter(adir / rf.SCORES).append([
+        {"segment": 0, "frame": k, "step": 100 * k, "time": 0.05 * k, "identity": "proven",
+         "tracks": {}, "exceedance": [2.5, 3.0, 2.8][k], "test": ["bonds", "T2"],
+         "marked": k == 2, "chem": {"broken": 0, "close": 0}} for k in range(3)])
+    return run
+
+
+@contextlib.asynccontextmanager
+async def _live_page(run):
+    """A page showing `run` in its live tab, its score curve drawn."""
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900}, accept_downloads=True)
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _open_run(page, run)
+                await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 3], timeout=15000)
+                yield page
+            finally:
+                await browser.close()
+
+
+async def test_a_picture_has_the_background_asked_for_and_the_csv_only_the_scores(static_origin):
+    """to_fix_v3: a PNG with a transparent background or with one; the CSV
+    leaves out a live run's marks and lines."""
+    got = await _pure(static_origin, f"""async () => {{
+      const ex = await import('{static_origin}/panel_export.js');
+      return {{
+        transparent: ex.pictureLayout({{ a: 1 }}, null), filled: ex.pictureLayout({{ a: 1 }}, 'rgb(1, 2, 3)'),
+        csv: ex.plotCsv([{{ name: 's', x: [0, 100], y: [1, 2] }},
+          {{ name: 'confirmed', meta: 'overlay', x: [100, 100], y: [0, 1] }}], {{ xTitle: 'Step', yTitle: 'Score' }}),
+      }};
+    }}""")
+    assert got["transparent"] == {"a": 1, "paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)"}
+    assert got["filled"]["paper_bgcolor"] == "rgb(1, 2, 3)"
+    assert got["csv"].splitlines() == ["series,Step,Score", "s,0,1", "s,100,2"]
+
+
+def _png_corner_alpha(path):
+    from PIL import Image
+    with Image.open(path) as im:
+        return im.convert("RGBA").getpixel((1, 1))[3]
+
+
+async def test_web_a_live_score_plot_downloads_as_png_and_csv(tmp_path):
+    """to_fix_v3: the live score plot's ⋯ menu offered a table download that
+    never worked; it downloads as any plot does."""
+    async with _live_page(_three_scored_frames(tmp_path)) as page:
+        scores = page.locator(f'{ACTIVE} .analysis-panel[data-part="scores"]')
+        menu = page.locator("#panel-menu-list")
+        await scores.locator(".panel-more").click()
+        await expect(menu.locator("[data-action='panel-table-csv']")).to_have_count(0)
+        async with page.expect_download() as dl:
+            await menu.locator("[data-action='panel-png']").click()
+        png = await dl.value
+        assert png.suggested_filename.endswith(".png")
+        assert _png_corner_alpha(await png.path()) == 0
+        await scores.locator(".panel-more").click()
+        async with page.expect_download() as dl:
+            await menu.locator("[data-action='panel-png-bg']").click()
+        assert _png_corner_alpha(await (await dl.value).path()) == 255
+        await scores.locator(".panel-more").click()
+        async with page.expect_download() as dl:
+            await menu.locator("[data-action='panel-csv']").click()
+        with open(await (await dl.value).path()) as f:
+            lines = f.read().splitlines()
+        assert len(lines) == 4 and lines[1].endswith(",0,2.5")

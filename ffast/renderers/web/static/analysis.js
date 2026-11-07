@@ -36,7 +36,7 @@ import { datasetUnits, editableDimension, resolveUnit } from './units.js';
 import { unitPopover, fieldsDialog } from './dialogs.js';
 import { sharedMenu } from './actions.js';
 import { icon } from './icons.js';
-import { plotCsv, tableCsv, panelFileName, downloadText, downloadPlot } from './panel_export.js';
+import { plotCsv, tableCsv, panelFileName, downloadText, downloadPlot, backgroundBehind } from './panel_export.js';
 import { KIND_3D } from './tab_rules.js';
 import { GRID_COLUMNS, ROW_UNIT_PX, LABEL_FIELDS, toFineGrid } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
@@ -1621,18 +1621,30 @@ export class AnalysisManager {
   _panelActions(t, spec, card) {
     const el = card.body;
     const stem = panelFileName(spec);
+    const notDrawn = () => (el.querySelector('.main-svg') ? '' : 'Nothing is drawn yet');
+    const pictures = [
+      { id: 'panel-png', label: 'Download PNG (transparent background)', unavailable: notDrawn,
+        run: () => downloadPlot(el, 'png', stem) },
+      { id: 'panel-png-bg', label: 'Download PNG (with background)', unavailable: notDrawn,
+        run: () => downloadPlot(el, 'png', stem, { background: backgroundBehind(card.el) }) },
+      { id: 'panel-svg', label: 'Download SVG', run: () => downloadPlot(el, 'svg', stem), unavailable: notDrawn },
+      { id: 'panel-csv', label: 'Download data (CSV)', unavailable: notDrawn,
+        run: () => downloadText(plotCsv(el.data, el._figureInfo || {}), `${stem}.csv`) },
+    ];
+    // A live card: its score plot downloads as a plot does; the run's state,
+    // events and attribution are not figures.
+    if (spec.kind === 'live') {
+      return (spec.options?.part || 'scores') === 'scores' ? pictures
+        : [{ id: 'panel-none', label: 'Nothing to download', unavailable: () => 'Only the score plot downloads' }];
+    }
     if (!PLOT_KINDS.has(spec.kind)) {
       const table = () => el.querySelector('table.panel-table');
       return [{ id: 'panel-table-csv', label: 'Download table (CSV)',
         unavailable: () => (table() ? '' : 'Nothing is drawn yet'),
         run: () => downloadText(tableCsv(table()), `${stem}.csv`) }];
     }
-    const notDrawn = () => (el.querySelector('.main-svg') ? '' : 'Nothing is drawn yet');
     return [
-      { id: 'panel-png', label: 'Download PNG', run: () => downloadPlot(el, 'png', stem), unavailable: notDrawn },
-      { id: 'panel-svg', label: 'Download SVG', run: () => downloadPlot(el, 'svg', stem), unavailable: notDrawn },
-      { id: 'panel-csv', label: 'Download data (CSV)', unavailable: notDrawn,
-        run: () => downloadText(plotCsv(el.data, el._figureInfo || {}), `${stem}.csv`) },
+      ...pictures,
       { separator: true },
       { id: 'panel-labels', label: 'Edit labels…',
         unavailable: () => notDrawn() || this._whyNoMove?.() || '',
