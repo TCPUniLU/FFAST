@@ -1,6 +1,6 @@
 # Architecture decision records
 
-Fifty-four records of why the code looks like this. Each one states the problem
+Eighty-four records of why the code looks like this. Each one states the problem
 it hit, what was chosen, and what that cost. They are dated documents: a record
 that has since been superseded stays as written, with a pointer to whatever
 replaced it. Nothing here is edited to look right in hindsight.
