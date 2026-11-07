@@ -23,7 +23,7 @@
  *     grouped_* kinds draw (their row order = the dataset's sorted-unique-Z).
  */
 
-import { helpToggle } from './help.js';
+import { helpToggle, PICKER_HELP } from './help.js';
 import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, neededPredictions, clearPlot } from './panels.js';
 import { showOnce } from './toasts.js';
 import { attachTip } from './hover_tip.js';
@@ -49,10 +49,6 @@ const GRID_GAP = 10;
 const NARROW_3D_PX = 460;
 /** A row of a narrow grid is at least this high, in px: one panel of the stack. */
 const NARROW_ROW_PX = 300;
-
-const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
-  + 'Outlined buttons follow the selection in the left list; click one to pin this '
-  + "tab's choice, then click others to add them. The 3D view is not affected.";
 
 /** control name → the shared compute-param it drives. */
 const CONTROL_PARAM = { energy_shift: 'shifted', smoothing: 'window' };

@@ -3169,6 +3169,9 @@ async def test_web_dialogs_and_repeated_controls_have_their_own_names(shared_pre
             await _open_loupe(page, ws_port, web_port, dataset_fp)
             await expect(page.locator(".pane[data-pane='Colour By'] .help-btn")).to_have_attribute(
                 "aria-label", "What is Colour By?")
+            # the hover text is the note's first sentence, then an invitation (to_fix_v3 #7)
+            await expect(page.locator(".pane[data-pane='Colour By'] .help-btn")).to_have_attribute(
+                "title", "Chooses what colours the atoms: element, movement or a per-atom metric. Click for more.")
             tool = page.locator("#pick-toolbar .pick-tool-btn").first
             await expect(tool).to_have_attribute("aria-pressed", "false")
             await tool.click()
@@ -3196,6 +3199,8 @@ async def test_web_dialogs_and_repeated_controls_have_their_own_names(shared_pre
                 "aria-label", "Peaks on Forces MAE timeline")
             await expect(page.locator(".tabpanel.active .analysis-controls .help-btn")).to_have_attribute(
                 "aria-label", "What is this tab's choice of data?")
+            await expect(page.locator(".tabpanel.active .analysis-controls .help-btn")).to_have_attribute(
+                "title", "Chooses which datasets and predictions this tab compares. Click for more.")
         finally:
             await browser.close()
 

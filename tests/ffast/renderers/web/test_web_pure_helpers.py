@@ -1197,6 +1197,15 @@ CASES.update({
         "})()"
     ),
     "timing_bytes": "[tm.fmtBytes(512), tm.fmtBytes(2048), tm.fmtBytes(3355443)]",
+    # to_fix_v3 #7: each "?" shows the first sentence of its note on hover
+    "help_first_sentences": (
+        "Object.fromEntries([...Object.entries(hp.SECTION_HELP), ['picker', hp.PICKER_HELP]]"
+        ".map(([k, v]) => [k, hp.firstSentence(v)]))"
+    ),
+    "help_first_sentence_rule": (
+        "[hp.firstSentence('One. Two.'), hp.firstSentence('Is it? Yes.'), hp.firstSentence('No stop'),"
+        " hp.firstSentence('Keys: a/b. Then c.'), hp.firstSentence('Use e.g. this. Next.')]"
+    ),
     # Cut-off text gets its full text as the hover title; text that fits,
     # and an element with its own title, are left alone.
     "full_text_titles": (
@@ -1217,6 +1226,19 @@ CASES.update({
         "})()"
     ),
 })
+
+
+def test_every_help_note_starts_with_a_short_sentence_that_stands_alone(results):
+    sentences = results["help_first_sentences"]
+    assert len(sentences) == 9
+    for name, first in sentences.items():
+        assert len(first) <= 90, (name, len(first), first)
+        assert first.endswith("."), (name, first)
+
+
+def test_the_first_sentence_stops_at_a_full_stop_before_a_capital(results):
+    assert results["help_first_sentence_rule"] == [
+        "One.", "Is it?", "No stop", "Keys: a/b.", "Use e.g. this."]
 
 
 @pytest.fixture(scope="module")
@@ -1273,6 +1295,7 @@ def results():
         f"  const tm = await import('{origin}/timing.js');\n"
         f"  const ht = await import('{origin}/hover_tip.js');\n"
         f"  const mc = await import('{origin}/metrics.js');\n"
+        f"  const hp = await import('{origin}/help.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"

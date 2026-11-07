@@ -56,6 +56,7 @@ import { bindMenu, runAction, sharedMenu, whyUnavailable } from './actions.js';
 import { loadLayout, loadMainView, saveLayout, saveMainView } from './layout_state.js';
 import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './quick_styles.js';
 import { DEFAULT_LOOK, startCommands, startFromCurrent } from './start_settings.js';
+import { SECTION_HELP } from './help.js';
 import { addSectionHelp, bindSidebarSearch, checkboxRow, oneSectionOpen, selectRow } from './sidebar.js';
 import { makeResizable } from './resizers.js';
 import { ObjectColours, seriesColourOwner } from './object_colours.js';
@@ -82,29 +83,6 @@ const PICK_TOOLS = {
     tip: 'Shows force arrows; click atoms or drag a box to keep them on those atoms only' },
   extract: { label: 'Extract', icon: 'scissors', multiselect: 10000, rectangle: true, section: 'Extract Subset',
     tip: 'Pick atoms to make a new dataset with only those atoms' },
-};
-
-/** What each sidebar section is for, behind its "?" (ADR 0055). */
-const SECTION_HELP = {
-  'Colour By': 'Colours atoms by element, by how far each atom moved, or by a per-atom '
-    + 'metric such as force error. Any colouring other than Elements shows a colour bar.',
-  'Camera': 'Where you look from. Drag to orbit, scroll to zoom. XY, XZ and YZ snap to an '
-    + 'axis view; "Exact angles" sets the angles by number. '
-    + 'Keys: ←/→ frame, Space play, Esc puts down a pick tool, / search.',
-  'Display': 'How atoms are drawn. Hide atoms by index (0 1 2) or element (C, -H); '
-    + 'highlight atoms by index.',
-  'Bonds': 'Dynamic bonds follow atom distances in every frame. Fixed bonds use your own '
-    + 'list of pairs; the Bonds pick tool adds or removes a pair.',
-  'Force Vectors': 'Arrows for the force on each atom. Source is the reference data '
-    + '(Ground Truth) or a loaded prediction. The Force pick tool limits the arrows to chosen atoms.',
-  'Extract Subset': 'Makes a new dataset that keeps only the atoms you choose, in every frame, '
-    + 'for example one molecule out of a solvent box. Type atom numbers (0 1 2) or elements '
-    + '(C keeps carbon, -H drops hydrogen), or arm the Extract pick tool and click atoms. '
-    + 'Then press Extract as Subset Dataset: the new dataset appears in the list on the left, '
-    + 'and it can be plotted, coloured and exported like any other.',
-  'Export': 'Saves the current 3D frame as a PNG, on a background colour or transparent.',
-  'Alignment': 'Rotates every frame onto a reference so the motion you see is internal. Kabsch '
-    + 'aligns the whole structure; 3-atom frame align uses three atoms you pick or type.',
 };
 
 /** Numbered next steps for the hint bar, by situation (ADR 0055). */
