@@ -305,12 +305,26 @@ export function panelFailures(refs, results, labelOf) {
   const out = new Map();
   refs.forEach((ref, i) => {
     for (const r of results[i] || []) {
-      if (!r?.failed || r.kind === 'needs_prediction') continue;
+      if (!r?.failed || r.kind === 'needs_prediction' || r.kind === 'no_analysis_value') continue;
       const key = `${r.metricId}|${ref.datasetFp}|${ref.modelFp}|${r.error}`;
       if (!out.has(key)) out.set(key, { key, text: `Could not compute ${labelOf(r.metricId)}: ${r.error}` });
     }
   });
   return [...out.values()];
+}
+
+/**
+ * The quiet reasons a panel has no value (ADR 0090): "No bonds T² ÷ threshold
+ * for shard_03: only live runs have scores." One sentence each, never a pop-up.
+ * @param {Array<Array<{failed?: boolean, kind?: string, error?: string}|null>>} results one list per ref
+ * @returns {string[]}
+ */
+export function panelNotes(results) {
+  const out = new Set();
+  for (const list of results) {
+    for (const r of list || []) if (r?.failed && r.kind === 'no_analysis_value' && r.error) out.add(r.error);
+  }
+  return [...out];
 }
 
 /**

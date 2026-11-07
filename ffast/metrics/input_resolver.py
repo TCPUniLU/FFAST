@@ -104,14 +104,13 @@ def _flatPerAtom(value, axes):
     return value
 
 
-def _live_run_of(env, dataset):
-    """The open live run whose frames ``dataset`` is, else None (ADR 0090)."""
-    from ffast.live.live_run import LIVE_PREFIX, LiveRunDataset
+def _live_run_of(dataset):
+    """The live run whose frames ``dataset`` is, else None (ADR 0090). The
+    resolver's env is the DataService, which does not know the open runs, so the
+    dataset names its run."""
+    from ffast.live.live_run import LiveRunDataset
 
-    if not isinstance(dataset, LiveRunDataset):
-        return None
-    fp = getattr(dataset, "fingerprint", "") or ""
-    return (getattr(env, "live_runs", None) or {}).get(fp.removeprefix(LIVE_PREFIX))
+    return getattr(dataset, "live_run", None) if isinstance(dataset, LiveRunDataset) else None
 
 
 def run_value_problem(env, ref, dataset) -> str | None:
@@ -120,7 +119,7 @@ def run_value_problem(env, ref, dataset) -> str | None:
     key = parse_run_ref(ref)
     if key is None:
         return None
-    run = _live_run_of(env, dataset)
+    run = _live_run_of(dataset)
     if run is None:
         return "only live runs have scores"
     return run.analysis_value_problem(key)
@@ -163,7 +162,7 @@ class _ResolverSource(InputSource):
             # A live run adds frames under one fingerprint: name the count.
             dataset_fp = f"{dataset_fp}|n{self._dataset.N}"
             if parse_run_ref(ref) is not None:      # and scores: name how many
-                run = _live_run_of(getattr(self._resolver, "env", None), self._dataset)
+                run = _live_run_of(self._dataset)
                 dataset_fp += f"|r{len(run.rows) if run else 0}"
         if not ref.startswith("prediction"):
             return f"{ref}|{dataset_fp}"
@@ -214,7 +213,7 @@ class InputResolver:
             # Analysis values of a live run (ADR 0090)
             key = parse_run_ref(ref)
             if key is not None:
-                run = _live_run_of(self.env, dataset)
+                run = _live_run_of(dataset)
                 return None if run is None else run.analysis_value(key)
             # Dataset Field refs (ADR 0023): {reference,prediction}.{info,atoms}.<key>
             parsed = parse_field_ref(ref)

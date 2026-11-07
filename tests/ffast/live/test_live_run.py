@@ -464,8 +464,7 @@ def test_the_resolver_reads_a_runs_value_and_refuses_a_plain_dataset(tmp_path):
 
     run = _open_format2(tmp_path)
     env = run.env
-    env.live_runs = {run.run_id: run}
-    resolver = InputResolver(env)
+    resolver = InputResolver(object())      # the real one's env is a DataService: it knows no runs
     got = resolver.resolve("run.score.bonds.T2", dataset=run.dataset)
     assert got[:2].tolist() == [0.5, 1.0]
     assert resolver.resolve("run.score.angles.SPE", dataset=run.dataset) is None

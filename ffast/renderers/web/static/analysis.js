@@ -24,7 +24,7 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, neededPredictions, clearPlot, tickAt } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, panelNotes, neededPredictions, clearPlot, tickAt } from './panels.js';
 import { showOnce } from './toasts.js';
 import { attachTip } from './hover_tip.js';
 import { spinner } from './spinner.js';
@@ -1817,6 +1817,7 @@ export class AnalysisManager {
       showOnce(`needs_prediction|${n.datasetFp}|${n.modelFp}`, text, 'warning',
         this._onLoadPrediction ? { label: 'Load prediction…', run: () => this._onLoadPrediction(n.datasetFp) } : null);
     }
+    const notes = panelNotes(perSeries);
     for (const results of perSeries) results.forEach((r, i) => { if (r?.failed) results[i] = null; });
 
     // A series whose every metric came back empty is dropped rather than drawn
@@ -1842,6 +1843,7 @@ export class AnalysisManager {
       const msg = document.createElement('div');
       msg.className = 'panel-msg';
       msg.textContent = failures.length ? failures.map((f) => f.text).join('\n')
+        : notes.length ? notes.join('\n')
         : needed.length ? needed.map((n) => `Needs a prediction of this dataset by ${this._nameOf('models', n.modelFp)}.`).join('\n')
         : anyModel ? 'No data for this selection.' : 'Select a prediction to compute this panel.';
       clearPlot(card.body);
@@ -1868,7 +1870,10 @@ export class AnalysisManager {
       visited: this._visited,
       peaks: t.peaksOn.has(panelKey(spec)),
     };
-    renderPanel(card.body, spec, series, ctx);
+    // A ÷ threshold value draws a dashed line at 1 (ADR 0090).
+    const level = spec.kind === 'timeline' && !Number.isFinite(spec.y_line)
+      ? this._catalog.get(spec.metrics?.y)?.level : null;
+    renderPanel(card.body, Number.isFinite(level) ? { ...spec, y_line: level } : spec, series, ctx);
     this._showWarnings(card, series);
     card.series = series;
     card.unitDims = ctx.unitDims;

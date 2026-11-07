@@ -1440,3 +1440,73 @@ async def test_web_force_arrows_on_a_live_run_say_it_has_no_forces(tmp_path):
         toast = page.locator(".toast", has_text="has no forces in its file")
         await expect(toast).to_be_visible(timeout=5000)
         await expect(page.locator(".forces-note")).to_contain_text("has no forces in its file")
+
+
+# ── ADR 0090 step 4: Run scores in the panel builder ────────────────────────
+
+async def test_a_panel_has_quiet_notes_for_a_missing_analysis_value_and_no_popup(static_origin):
+    got = await _pure(static_origin, f"""async () => {{
+      const p = await import('{static_origin}/panels.js');
+      const note = {{ failed: true, kind: 'no_analysis_value', metricId: 'm',
+                      error: 'No bonds T² ÷ threshold for shard: only live runs have scores.' }};
+      const bad = {{ failed: true, kind: 'failed', metricId: 'm', error: 'boom' }};
+      const refs = [{{ datasetFp: 'a', modelFp: null }}];
+      return {{
+        popups: p.panelFailures(refs, [[note]], (id) => id).length,
+        popupsForARealFailure: p.panelFailures(refs, [[bad]], (id) => id).length,
+        notes: p.panelNotes([[note, note], [bad]]),
+      }};
+    }}""")
+    assert got["popups"] == 0 and got["popupsForARealFailure"] == 1
+    assert got["notes"] == ["No bonds T² ÷ threshold for shard: only live runs have scores."]
+
+
+async def test_web_a_run_score_is_picked_under_run_scores_and_drawn_with_a_gap_and_a_line_at_one(tmp_path):
+    from tests.ffast.live.test_live_run import _format2_run_folder
+
+    run = _format2_run_folder(tmp_path, frames=3, scored=2)
+    async with _live_page_without_scores_wait(run) as page:
+        await page.locator("#tab-edit-btn").click()
+        await page.locator("[data-edit=add-panel]").click()
+        await page.get_by_role("button", name="Custom panel…").click()
+        select = page.locator(".edit-modal select[data-role=y]")
+        group = select.locator("optgroup")
+        await expect(group).to_have_attribute("label", "Run scores")
+        labels = await group.locator("option").all_inner_texts()
+        assert any(t.startswith("bonds T² ÷ threshold") for t in labels)
+        assert any(t.startswith("broken bonds") for t in labels)
+        assert await select.locator("> option").count() > 1             # the others come first
+        await select.select_option("ffast.run_score_bonds_T2")
+        await page.locator(".edit-modal input[data-field=title]").fill("Bonds T2")
+        await page.get_by_role("button", name="Add", exact=True).click()
+        panel = '.tabpanel.active .analysis-panel[data-title="Bonds T2"] .panel-plot'
+        await page.wait_for_function("""(sel) => {
+          const el = document.querySelector(sel);
+          return el && el.data && el.data[0] && el.data[0].y.length === 3;
+        }""", arg=panel, timeout=20000)
+        got = await page.evaluate("""(sel) => {
+          const el = document.querySelector(sel);
+          return {y: Array.from(el.data[0].y).map((v) => (Number.isFinite(v) ? v : null)),
+                  shapes: (el.layout.shapes || []).map((s) => [s.y0, s.y1, s.line.dash])};
+        }""", panel)
+        assert got["y"] == [0.5, 1.0, None]                              # a gap for the unscored frame
+        assert got["shapes"] == [[1.0, 1.0, "dash"]]
+        assert await page.locator(".toast").count() == 0
+
+
+@contextlib.asynccontextmanager
+async def _live_page_without_scores_wait(run):
+    """Like `_live_page`, for a run whose score card has fewer points than frames."""
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _open_run(page, run)
+                await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 2], timeout=15000)
+                yield page
+            finally:
+                await browser.close()

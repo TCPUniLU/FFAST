@@ -411,7 +411,15 @@ export class TabEditor {
       select.dataset.role = role;
       select.append(new Option('— choose a metric —', ''));
       const options = metricsFor(kind.value, role, catalog);
-      for (const m of options) select.append(new Option(m.label && m.label !== m.id ? `${m.label} (${m.id})` : m.id, m.id));
+      const option = (m) => new Option(m.label && m.label !== m.id ? `${m.label} (${m.id})` : m.id, m.id);
+      for (const m of options) if (!m.group) select.append(option(m));
+      // A group of metrics (ADR 0090: "Run scores") comes after the others.
+      for (const name of [...new Set(options.filter((m) => m.group).map((m) => m.group))]) {
+        const group = document.createElement('optgroup');
+        group.label = name;
+        for (const m of options) if (m.group === name) group.append(option(m));
+        select.append(group);
+      }
       if (value && !options.some((m) => m.id === value)) select.append(new Option(value, value));
       select.value = value || '';
       select.addEventListener('change', sync);

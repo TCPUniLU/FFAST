@@ -182,6 +182,7 @@ class LiveRun:
         self.reader = DumpReader(run_dir / rf.FRAMES)
         self.dataset = LiveRunDataset(run_dir, self.run_id)
         self.dataset.initialise()
+        self.dataset.live_run = self        # metric inputs read the run's scores through it
         self.registered = False
         self.error: str | None = None
         self.analysis_id: str | None = None
