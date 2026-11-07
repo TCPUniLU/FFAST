@@ -291,13 +291,15 @@ class LiveRun:
     # ── analysis values (ADR 0090; any thread) ─────────────────────────────
     def analysis_value_problem(self, key) -> str | None:
         """Why this run has no value for ``key`` (see ``parse_run_ref``), or None."""
-        if key[0] != "score" or key == ("worst",):
+        if key == ("worst",):
             return None
-        _, track, stat = key
         if not self.settings:
             return "it has no scores yet"
         if self.settings.get("scores_format") != 2:
             return "its scores were written before per-test scores were kept"
+        if key[0] != "score":
+            return None
+        _, track, stat = key
         if [track, stat] not in [list(t) for t in self.settings.get("tests") or []]:
             return f"its reference has no {track} {'T²' if stat == 'T2' else stat} test"
         return None

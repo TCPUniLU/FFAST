@@ -447,6 +447,8 @@ def test_format_1_scores_give_the_worst_value_only(tmp_path):
     assert run.analysis_value(("worst",)).tolist() == [0.2, 1.2]
     assert run.analysis_value(("score", "geometric", "T2")) is None
     assert "before per-test scores were kept" in run.analysis_value_problem(("score", "geometric", "T2"))
+    assert run.analysis_value(("chem", "broken")) is None
+    assert "before per-test scores were kept" in run.analysis_value_problem(("chem", "broken"))
 
 
 def test_run_refs_are_valid_inputs_but_not_dataset_fields():
