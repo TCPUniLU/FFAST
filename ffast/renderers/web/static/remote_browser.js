@@ -599,6 +599,13 @@ export class RemoteBrowser {
     $('fb-modal').classList.remove('hidden');
     this._hideSuggestions();
     this._untrap ||= trapFocus($('fb-modal'));
+    // Focus goes into the dialog now, not when the listing arrives: Escape and
+    // Tab are heard by the dialog only while focus is inside it, and a slow
+    // listing left the first Escape going nowhere.
+    const modal = $('fb-modal');
+    modal.tabIndex = -1;
+    modal.style.outline = 'none';
+    modal.focus({ preventScroll: true });
     this._focusFirstRow = true;   // once the listing arrives (_render)
     this._selected = null;
     $('fb-load').disabled = true;
@@ -634,6 +641,10 @@ export class RemoteBrowser {
     this._untrap?.();
     this._untrap = null;
     $('fb-modal').classList.add('hidden');
+    // A hidden field keeps focus until the browser next lays the page out, and
+    // a key typed in that gap (the next shortcut) was taken for typing in it.
+    const at = document.activeElement;
+    if (at && $('fb-modal').contains(at)) at.blur();
   }
 
   /** Server replied to LIST_DIR. */
