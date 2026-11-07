@@ -6,15 +6,17 @@
 /**
  * @typedef {object} Step
  * @property {string} title
- * @property {string} body
+ * @property {string | (() => string)} body  text, or a function read each time the step shows
  * @property {Array<string | (() => Element|null)>} targets  selectors, or functions that find an element; joined into one lit area
  * @property {'top'|'bottom'|'left'|'right'|'inside'} [side]  where the box goes
  * @property {string} [until]  the event that ends a "do this" step; without it the step has Next
  * @property {(detail: object) => boolean} [accept]  which `until` events count, by their detail; all when absent
- * @property {string} [wait]  what the box says while it waits for `until`
+ * @property {(detail: object) => string} [refused]  what the wait text becomes when `accept` rejects an event
+ * @property {string | (() => string)} [wait]  what the box says while it waits for `until`
  * @property {boolean} [stay]  after `until` fires, show Next instead of moving on, so the user can keep trying it
  * @property {() => boolean} [done]  true when the action is already done: show Next instead of waiting
- * @property {string} [failOn]  an event that stops the tour with its `detail.error`
+ * @property {string | string[]} [failOn]  events that stop the tour, with `detail.error`, else `failText`, else the title
+ * @property {string | ((detail: object) => string)} [failText]  the stop message when the event carries no error
  * @property {() => boolean} [skip]  leave the step out when the tour starts
  * @property {() => void} [prepare]  runs before the step is shown
  * @property {() => (void | Promise<unknown>)} [undo]  runs when Back returns to this step
@@ -130,7 +132,8 @@ export function startTour(tour, { events, onEnd, doc = document }) {
     count.textContent = `Step ${i + 1} of ${steps.length}`;
     dots.replaceChildren(...steps.map((_, k) => el('i', k < i ? 'done' : k === i ? 'now' : '')));
     title.textContent = step.title;
-    body.textContent = step.body;
+    const text = (v, ...a) => (typeof v === 'function' ? v(...a) : v);
+    body.textContent = text(step.body);
     back.hidden = i === 0;
     const showNext = () => {
       wait.hidden = true;
@@ -141,10 +144,13 @@ export function startTour(tour, { events, onEnd, doc = document }) {
     if (waiting) {
       next.hidden = true;
       wait.hidden = false;
-      wait.textContent = step.wait || '';
+      wait.textContent = text(step.wait) || '';
       // Focus stays on the control in use, so a step that stays can be tried again.
       listen(step.until, (e) => {
-        if (step.accept && !step.accept(e.detail ?? {})) return;
+        if (step.accept && !step.accept(e.detail ?? {})) {
+          if (step.refused) wait.textContent = step.refused(e.detail ?? {});
+          return;
+        }
         didThisRun.add(step);
         if (step.stay) showNext();
         else advance();
@@ -152,7 +158,9 @@ export function startTour(tour, { events, onEnd, doc = document }) {
     } else {
       showNext();
     }
-    if (step.failOn) listen(step.failOn, (e) => end('stopped', e.detail?.error || step.title));
+    for (const name of [step.failOn ?? []].flat()) {
+      listen(name, (e) => end('stopped', e.detail?.error || text(step.failText, e.detail ?? {}) || step.title));
+    }
     const first = resolve(step.targets[0]);
     if (waiting && first?.disabled) {
       end('stopped', first.title || `Tour stopped: “${step.title}” cannot be done now.`);

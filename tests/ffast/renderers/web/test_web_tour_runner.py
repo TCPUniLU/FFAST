@@ -230,3 +230,40 @@ async def test_accept_ignores_an_event_whose_detail_does_not_match(page):
     await expect(page.locator(".tour-wait")).to_have_text("Open B")
     await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('tab', { detail: { name: 'B' } }))")
     await expect(page.locator(".tour-title")).to_have_text("Two")
+
+
+async def test_a_body_function_is_read_each_time_the_step_shows(page):
+    await page.evaluate("""() => { window.n = 0; window.run([
+      { title: 'One', body: () => `Shown ${++window.n}`, targets: ['#a'] },
+      { title: 'Two', body: 'Lit B', targets: ['#b'] }]); }""")
+    await expect(page.locator(".tour-body")).to_have_text("Shown 1")
+    await page.locator(".tour-next").click()
+    await expect(page.locator(".tour-title")).to_have_text("Two")
+    await page.locator(".tour-back").click()
+    await expect(page.locator(".tour-body")).to_have_text("Shown 2")
+
+
+async def test_a_refused_event_keeps_the_step_waiting_and_says_why(page):
+    await page.evaluate("""() => window.run([
+      { title: 'One', body: 'Do it', targets: ['#a'], until: 'go', wait: () => 'Send the right one',
+        accept: (d) => d.ok, refused: (d) => `Not ${d.name}` },
+      { title: 'Two', body: 'Lit B', targets: ['#b'] }])""")
+    await expect(page.locator(".tour-wait")).to_have_text("Send the right one")
+    await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('go', { detail: { ok: false, name: 'x' } }))")
+    await expect(page.locator(".tour-wait")).to_have_text("Not x")
+    await expect(page.locator(".tour-title")).to_have_text("One")
+    await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('go', { detail: { ok: true } }))")
+    await expect(page.locator(".tour-title")).to_have_text("Two")
+
+
+@pytest.mark.parametrize("event, detail, message", [
+    ("a-fail", "{ error: 'the server said no' }", "the server said no"),
+    ("b-fail", "{ name: 'f.xyz' }", "f.xyz was refused"),
+])
+async def test_any_of_several_fail_events_stops_the_tour(page, event, detail, message):
+    await page.evaluate("""() => window.run([
+      { title: 'One', body: 'Do it', targets: ['#a'], until: 'go',
+        failOn: ['a-fail', 'b-fail'], failText: (d) => `${d.name} was refused` }])""")
+    await page.evaluate(f"() => window.events.dispatchEvent(new CustomEvent('{event}', {{ detail: {detail} }}))")
+    await page.wait_for_function("() => window.ended !== null")
+    assert await page.evaluate("() => window.ended") == {"how": "stopped", "message": message}
