@@ -1328,15 +1328,16 @@
       100% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 0%, transparent); }
     }
     .tour-box {
-      width: 300px; max-width: calc(100vw - 32px); box-sizing: border-box;
+      width: 380px; max-width: calc(100vw - 32px); box-sizing: border-box;
       display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 12px;
       background: var(--surface); color: var(--ink-2); font-family: var(--font); font-size: var(--fs-m);
       border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
     }
     .tour-box [hidden] { display: none !important; }
     .tour-head { display: flex; align-items: center; gap: 10px; }
-    .tour-count { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; }
-    .tour-dots { display: flex; gap: 4px; margin-left: auto; }
+    .tour-count { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    /* A long tour's dots wrap to a second row in a narrow box rather than cross its border. */
+    .tour-dots { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-left: auto; min-width: 0; }
     .tour-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--surface-3); }
     .tour-dots i.done { background: var(--ink-3); }
     .tour-dots i.now { background: var(--accent); }

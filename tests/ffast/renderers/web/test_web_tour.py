@@ -605,3 +605,25 @@ async def test_cancel_while_loading_ends_the_loading_tour(ffast_web_server):
         finally:
             await browser.close()
 
+
+
+async def test_the_step_count_and_every_dot_fit_inside_the_tour_box(ffast_web_server):
+    """25 steps: the count stays on one line and no dot crosses the box's border."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        for width in (1100, 420):
+            page = await browser.new_page(viewport={"width": width, "height": 760})
+            await _start_loading_tour(page, ws_port, web_port)
+            fit = await page.evaluate("""() => {
+              const box = document.querySelector('.tour-box').getBoundingClientRect();
+              const count = document.querySelector('.tour-count');
+              const line = parseFloat(getComputedStyle(count).lineHeight) || 16;
+              const dots = [...document.querySelectorAll('.tour-dots i')].map((d) => d.getBoundingClientRect());
+              return { n: dots.length, oneLine: count.getBoundingClientRect().height < 1.5 * line,
+                       inside: dots.every((d) => d.left >= box.left && d.right <= box.right - 8) };
+            }""")
+            assert fit == {"n": 25, "oneLine": True, "inside": True}, width
+            await page.close()
+        await browser.close()
