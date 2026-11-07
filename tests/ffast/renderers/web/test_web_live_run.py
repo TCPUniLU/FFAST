@@ -1375,3 +1375,44 @@ async def test_web_a_live_score_plot_downloads_as_png_and_csv(tmp_path):
         with open(await (await dl.value).path()) as f:
             lines = f.read().splitlines()
         assert len(lines) == 4 and lines[1].endswith(",0,2.5")
+
+
+async def test_a_click_finds_the_mark_under_it(static_origin):
+    """to_fix_v3: a mark is a path, not a point; tickAt finds the one clicked."""
+    got = await _pure(static_origin, f"""async () => {{
+      const pn = await import('{static_origin}/panels.js');
+      const ticks = [{{ xs: [0, 100, 200], row: 0 }}, {{ xs: [150], row: 1 }}];
+      // x px = step; plot area 100 px high: row 0 at 97.5 px, row 1 at 93.5 px
+      const geom = {{ h: 100, xToPx: (x) => x }};
+      const at = (px, py, shown = new Set([0, 1])) => pn.tickAt(ticks, shown, px, py, geom);
+      return {{ onMark: at(102, 97), nearest: at(147, 94), between: at(50, 97), above: at(100, 60),
+               hidden: at(102, 97, new Set([1])) }};
+    }}""")
+    assert got["onMark"] == {"tick": 0, "x": 100}
+    assert got["nearest"] == {"tick": 1, "x": 150}
+    assert got["between"] is None and got["above"] is None
+    assert got["hidden"] is None   # a row hidden in the legend is not clicked
+
+
+async def test_web_a_click_on_a_mark_opens_its_frame(tmp_path):
+    """to_fix_v3: a click on a mark opens its frame, as a click on its point does."""
+    async with _live_page(_three_scored_frames(tmp_path)) as page:
+        await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=10000)
+        # The tab's grid settles after the run opens and moves the plot by
+        # hundreds of pixels: aim once it has kept its place for 10 frames.
+        await page.wait_for_function("""(sel) => {
+          const el = document.querySelector(sel + ' .analysis-panel[data-part="scores"] .panel-plot');
+          const r = el.getBoundingClientRect(), at = `${r.left},${r.top},${r.width},${r.height}`;
+          window.__plotAt = window.__plotAt === undefined || window.__plotAt.at !== at
+            ? { at, n: 0 } : { at, n: window.__plotAt.n + 1 };
+          return window.__plotAt.n >= 10;
+        }""", arg=ACTIVE, polling="raf", timeout=10000)
+        xy = await page.evaluate("""(sel) => {
+          const el = document.querySelector(sel + ' .analysis-panel[data-part="scores"] .panel-plot');
+          const fl = el._fullLayout, r = el.getBoundingClientRect();
+          return {x: r.left + fl._size.l + fl.xaxis.l2p(200),
+                  y: r.top + fl._size.t + fl._size.h * (1 - 0.025)};
+        }""", ACTIVE)
+        await page.mouse.move(xy["x"], xy["y"])
+        await page.mouse.click(xy["x"], xy["y"])
+        await expect(page.locator("#frame-label")).to_have_text("2 / 2", timeout=10000)

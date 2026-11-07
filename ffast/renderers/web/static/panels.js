@@ -474,8 +474,9 @@ export function addOverlays(traces, layout, overlays, curveColour = () => null, 
     // per mark, and a long run's 28,000 marks took most of every redraw. The
     // path's x is data, its y pixels around the row, so each mark stays 8 px
     // tall and 1.5 px wide at any zoom.
-    shapes.push({ type: 'path', xref: 'x', yref: 'paper', ysizemode: 'pixel',
-      yanchor: 0.025 + 0.04 * (t.row || 0), layer: 'above',
+    // `name` says which tick row the shape draws, for a click on a mark (tickAt).
+    shapes.push({ type: 'path', name: `tick:${k}`, xref: 'x', yref: 'paper', ysizemode: 'pixel',
+      yanchor: tickRowY(t.row), layer: 'above',
       path: t.xs.map((x) => `M${x},-4V4`).join(''),
       line: { width: 1.5, color: tickColour(t) } });
     ownedBy([uid, curveOf(t)]);
@@ -514,6 +515,34 @@ export function addOverlays(traces, layout, overlays, curveColour = () => null, 
   if (layout.legend) layout.legend.uirevision = 'overlays';
   if (shapes.length) layout.shapes = shapes;
   return owners;
+}
+
+/** Where tick row `row` (0 lowest) sits, as a fraction of the plot's height
+ * from its bottom. */
+export function tickRowY(row) {
+  return 0.025 + 0.04 * (row || 0);
+}
+
+/**
+ * The mark under a click on a plot with tick rows (addOverlays), or null.
+ * A mark is a path, not a point: Plotly reports no click on it.
+ * @param {Array<{xs: number[], row?: number}>} ticks the overlays' tick rows
+ * @param {Set<number>} shown indices into `ticks` of the rows drawn now
+ * @param {number} px @param {number} py the click, in pixels from the plot area's top-left
+ * @param {{h: number, xToPx: (x: number) => number}} geom the plot area's height; x data → px
+ * @returns {{tick: number, x: number}|null} the row (index into `ticks`) and the mark's x
+ */
+export function tickAt(ticks, shown, px, py, { h, xToPx }, tol = { x: 5, y: 6 }) {
+  let best = null;
+  (ticks || []).forEach((t, k) => {
+    if (!shown.has(k) || !t.xs?.length) return;
+    if (Math.abs(py - h * (1 - tickRowY(t.row))) > tol.y) return;
+    for (const x of t.xs) {
+      const d = Math.abs(xToPx(x) - px);
+      if (d <= tol.x && (!best || d < best.d)) best = { tick: k, x, d };
+    }
+  });
+  return best && { tick: best.tick, x: best.x };
 }
 
 /** Hide each owned shape while any of its owners is hidden in the legend,

@@ -24,7 +24,7 @@
  */
 
 import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, neededPredictions, clearPlot } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, neededPredictions, clearPlot, tickAt } from './panels.js';
 import { showOnce } from './toasts.js';
 import { attachTip } from './hover_tip.js';
 import { spinner } from './spinner.js';
@@ -2213,6 +2213,25 @@ export class AnalysisManager {
     if (series.length) this._onSub?.({ name, series, active: false });
   }
 
+  /** The frame of the live-run mark under a mouse click on a score plot, or null. */
+  _tickFrame(card, spec, ev) {
+    const el = card.body, fl = el._fullLayout;
+    if (!fl?.xaxis || !fl._size) return null;
+    const shown = new Set((el.layout?.shapes || [])
+      .filter((s) => s.visible !== false && String(s.name || '').startsWith('tick:'))
+      .map((s) => Number(s.name.slice(5))));
+    const r = el.getBoundingClientRect();
+    const ticks = spec.overlays.ticks;
+    const hit = tickAt(ticks, shown, ev.clientX - r.left - fl._size.l, ev.clientY - r.top - fl._size.t,
+      { h: fl._size.h, xToPx: (x) => fl.xaxis.l2p(x) });
+    if (!hit) return null;
+    const src = (card.series || [])[ticks[hit.tick].curve ?? 0];
+    const steps = src?.data?.x?.nd?.values;
+    const i = steps ? Array.prototype.indexOf.call(steps, hit.x) : -1;
+    if (i < 0 || src.frames?.[i] == null) return null;
+    return { datasetFp: src.datasetFp, modelFp: src.modelFp, frame: src.frames[i] };
+  }
+
   // ── subbing + point→frame (PRD 61-63) ──────────────────────────────────────
   _wirePanelInteractions(t, spec, card) {
     const el = card.body;
@@ -2232,6 +2251,21 @@ export class AnalysisManager {
     card.frameTimer = null;
     if (!el._subInfo || !el._subInfo.perFrame) return;   // only per-frame kinds
 
+    // Open a clicked frame, after Plotly's double-click delay.
+    const openFrame = (frame, mouse) => {
+      clearTimeout(card.frameTimer);
+      card.frameTimer = null;
+      // Plotly reports a double-click's second click too, after plotly_doubleclick.
+      if (mouse?.detail > 1) return;
+      card.frameTimer = setTimeout(() => {
+        card.frameTimer = null;
+        this._onPointFrame(frame);
+        // A live run's frame is also explained (ADR 0087): its attribution is asked for.
+        const run = this.liveRunOf(frame.datasetFp);
+        if (run) this._onLive?.({ action: 'attribute', run_id: run.run_id, frame: frame.frame });
+      }, PLOT_CONFIG.doubleClickDelay ?? 300);
+    };
+
     // Point → frame: click a per-frame point to show that structure (PRD 63).
     // The click names the clicked curve's data, so the structure is looked up
     // in the 3D view that holds it (ADR 0056 rule 4). It waits out Plotly's
@@ -2248,19 +2282,21 @@ export class AnalysisManager {
       const index = info.frameField != null ? pt.customdata?.[info.frameField]
         : src?.frames ? src.frames[pt.pointIndex] : pt.pointIndex;
       if (index == null || !src) return;
-      const frame = { datasetFp: src.datasetFp, modelFp: src.modelFp, frame: index };
-      clearTimeout(card.frameTimer);
-      card.frameTimer = null;
-      // Plotly reports a double-click's second click too, after plotly_doubleclick.
-      if (ev.event?.detail > 1) return;
-      card.frameTimer = setTimeout(() => {
-        card.frameTimer = null;
-        this._onPointFrame(frame);
-        // A live run's frame is also explained (ADR 0087): its attribution is asked for.
-        const run = this.liveRunOf(frame.datasetFp);
-        if (run) this._onLive?.({ action: 'attribute', run_id: run.run_id, frame: frame.frame });
-      }, PLOT_CONFIG.doubleClickDelay ?? 300);
+      openFrame({ datasetFp: src.datasetFp, modelFp: src.modelFp, frame: index }, ev.event);
     });
+    // A live run's marks (ticks) are paths, not points: Plotly reports no
+    // click on them, but passes the plain click on, after plotly_click. A
+    // click on a mark opens the mark's frame, as a click on the curve does
+    // (and wins over a curve point picked by the same click).
+    if (card.tickClick) el.removeEventListener('click', card.tickClick);
+    card.tickClick = null;
+    if (spec.liveScores && spec.overlays?.ticks?.length) {
+      card.tickClick = (ev) => {
+        const frame = this._tickFrame(card, spec, ev);
+        if (frame) openFrame(frame, ev);
+      };
+      el.addEventListener('click', card.tickClick);
+    }
     if (el.removeAllListeners) el.removeAllListeners('plotly_doubleclick');
     el.on('plotly_doubleclick', () => {
       clearTimeout(card.frameTimer);
