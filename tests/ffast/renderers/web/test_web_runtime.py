@@ -7374,6 +7374,35 @@ async def test_web_basic_errors_is_one_table_inside_its_panel_and_headers_sort(s
             await browser.close()
 
 
+async def test_web_the_bar_has_the_logo_and_the_accent_is_periwinkle_but_plots_keep_their_blue(shared_dataset_server):
+    """to_fix_v3 #6c: the Dual Traces mark sits before the wordmark (hidden from
+    screen readers: the wordmark names the app); the UI accent is periwinkle
+    (a darker one on the Journal page, for text contrast), and plot series 1
+    stays blue."""
+    ws_port, web_port = shared_dataset_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            logo = page.locator("#topbar h1 svg.logo")
+            await expect(logo).to_have_attribute("aria-hidden", "true")
+            await expect(page.get_by_role("heading", name="FFAST", level=1)).to_be_visible()
+            box = await logo.bounding_box()
+            text = await page.locator("#topbar h1").bounding_box()
+            assert box["x"] <= text["x"] + 2 and 18 <= box["height"] <= 22, (box, text)
+            read = """(sel) => { const cs = getComputedStyle(document.querySelector(sel));
+                return [cs.getPropertyValue('--accent').trim(), cs.getPropertyValue('--series').split(',')[0].trim()]; }"""
+            assert await page.evaluate(read, "body") == ["#b3a7e8", "#56b4e9"]
+            await page.get_by_role("radio", name="Journal page").click()
+            await page.wait_for_function("() => document.body.classList.contains('journal')")
+            accent, series1 = await page.evaluate(read, ".analysis-grid")
+            assert accent == "#6554a6" and series1 == "#0072b2"
+        finally:
+            await browser.close()
+
+
 async def test_web_a_table_downloads_as_csv(shared_prediction_server):
     """Web parity plan 2026-10-29: a table's ⋯ menu downloads it as CSV."""
     ws_port, web_port = shared_prediction_server
