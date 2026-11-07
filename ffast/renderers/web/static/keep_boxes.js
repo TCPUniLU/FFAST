@@ -69,21 +69,24 @@ export function createKeepBoxes(onChoose) {
 
   let current = null;
   let allowed = [];
+  // The server answers a choice later. A second choice made before the answer
+  // must build on the first, not on the setting last drawn.
+  const choose = (next) => { current = next; onChoose(next); };
   for (const [box, { cb }] of Object.entries(keepInputs)) {
     cb.addEventListener('change', () => {
       const next = toggleBox(current, box, allowed);
-      if (next) onChoose(next); else cb.checked = !cb.checked;
+      if (next) choose(next); else cb.checked = !cb.checked;
     });
   }
   for (const [value, { radio }] of Object.entries(combineInputs)) {
     radio.addEventListener('change', () => {
       const next = chooseSetting(current, 'combine', value, allowed);
-      if (next) onChoose(next);
+      if (next) choose(next);
     });
   }
   statSelect.addEventListener('change', () => {
     const next = chooseSetting(current, 'statistic', statSelect.value, allowed);
-    if (next) onChoose(next);
+    if (next) choose(next);
   });
 
   return {
