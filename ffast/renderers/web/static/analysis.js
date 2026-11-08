@@ -42,7 +42,7 @@ import { GRID_COLUMNS, ROW_UNIT_PX, LABEL_FIELDS, toFineGrid } from './tab_edit.
 import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState, loadLayout, saveLayout } from './layout_state.js';
 import {
-  liveEventLine, liveNoScoreMessage, liveRunChips, liveRunProblem, liveRunRuleText, liveRunSeries,
+  liveEventLine, liveNoScoreMessage, liveRunRow, liveRunProblem, liveRunRuleText, liveRunSeries,
   liveRunThreshold, liveRunsEvents, liveRunsOverlays, sameRunUpdate,
 } from './live_run.js';
 
@@ -470,50 +470,107 @@ export class AnalysisManager {
     card.captionText.textContent = notes.join('\n');
   }
 
+  /** The Run panel: a table with a row per ticked run, in the error table's
+   * look (one shape for one run or many, so runs compare by column). Its
+   * buttons sit in the title row like every panel's: the alarm rule's "?" and
+   * "Manage runs…". A problem that stops scores is a line under the table. */
   _drawLiveStatus(spec, card, ready) {
-    const rows = ready.map((r) => this._liveStatusRow(spec, r.kw, ready.length > 1));
-    card.body.replaceChildren(...rows);
-  }
+    const named = ready.length > 1;
+    const now = Date.now();
+    const kws = ready.map((r) => r.kw);
+    this._liveStatusTitle(card, kws);
 
-  /** One run's status: chips, the alarm rule's "?" and note, a problem, the controls. */
-  _liveStatusRow(spec, kw, named) {
-    const strip = document.createElement('div');
-    strip.className = 'live-chips';
-    if (named) {
-      const who = document.createElement('span');
-      who.className = 'live-chip live-run-name';
-      who.textContent = kw.name || kw.tab || kw.run_id;
-      strip.appendChild(who);
+    const table = document.createElement('table');
+    table.className = 'panel-table live-status-table';
+    const head = table.createTHead().insertRow();
+    const cols = [['Run', ''], ['LAMMPS step', 'num'], ['Scored to', 'num'], ['Scorer', ''],
+      ['Atom order', ''], ['State', ''], ['Stop on alarm', 'tick']];
+    for (const [text, cls] of cols) {
+      const th = document.createElement('th');
+      th.textContent = text;
+      if (cls) th.className = cls;
+      head.appendChild(th);
     }
-    for (const c of liveRunChips(kw, Date.now())) {
-      const chip = document.createElement('span');
-      chip.className = `live-chip${c.tone ? ` ${c.tone}` : ''}`;
-      chip.textContent = c.text;
-      strip.appendChild(chip);
+    const body = table.createTBody();
+    for (const kw of kws) {
+      const row = liveRunRow(kw, now);
+      const tr = body.insertRow();
+      tr.dataset.runId = kw.run_id;
+      this._liveCell(tr, { text: row.name, tone: '' }, 'cell-name');
+      const lammps = this._liveCell(tr, row.lammps, 'num');
+      if (row.lammps.fraction != null) {
+        const bar = document.createElement('span');
+        bar.className = 'live-bar';
+        bar.setAttribute('aria-hidden', 'true');
+        const fill = document.createElement('i');
+        fill.style.width = `${(row.lammps.fraction * 100).toFixed(1)}%`;
+        bar.appendChild(fill);
+        lammps.appendChild(bar);
+      }
+      this._liveCell(tr, row.scored, 'num');
+      this._liveCell(tr, row.scorer);
+      this._liveCell(tr, row.atoms);
+      this._liveCell(tr, row.state, 'live-state');
+      const tick = tr.insertCell();
+      tick.className = 'tick';
+      const box = this._liveStopOnAlarm(kw);
+      if (box) tick.appendChild(box);
+      else { tick.textContent = '—'; tick.classList.add('muted'); }
     }
-    // The alarm rule is small print, behind a "?" at the end of the chips.
-    const ruleText = liveRunRuleText(kw);
-    const children = [strip];
-    let ruleBtn = null;
-    if (ruleText) {
-      const help = this._liveHelp(`rule:${kw.run_id}`, ruleText, 'the alarm rule', 'live-rule');
-      ruleBtn = help.button;
-      children.push(help.note);
-    }
-    const problem = liveRunProblem(kw);
-    if (problem) {
+    const parts = [table];
+    for (const kw of kws) {
+      const problem = liveRunProblem(kw);
+      if (!problem) continue;
       const p = document.createElement('div');
       p.className = 'live-problem';
-      p.textContent = problem;
-      children.push(p);
+      p.innerHTML = icon('warning');
+      p.append(named ? `${kw.name || kw.tab || kw.run_id}: ${problem}` : problem);
+      parts.push(p);
     }
-    if (ruleBtn) strip.appendChild(ruleBtn);
-    const controls = this._liveControls?.(spec, kw);
-    if (controls) strip.appendChild(controls);
-    const row = document.createElement('div');
-    row.className = 'live-status-row';
-    row.append(...children);
-    return row;
+    if (card.ruleNote) parts.push(card.ruleNote);
+    card.body.replaceChildren(...parts);
+  }
+
+  /** A table cell; trouble gets its colour and the warning icon, never colour alone. */
+  _liveCell(tr, { text, tone, title }, cls = '') {
+    const td = tr.insertCell();
+    if (cls) td.className = cls;
+    if (tone) {
+      td.classList.add(tone);
+      td.innerHTML = icon('warning');
+    }
+    td.append(text);
+    if (title) td.title = title;
+    return td;
+  }
+
+  /** The Run panel's title-row buttons, made once per card: the alarm rule's
+   * "?" (its note, under the table, stays open across the redraws) and
+   * "Manage runs…", which opens the Live Runs dialog on the first running run. */
+  _liveStatusTitle(card, kws) {
+    const rules = kws.map((kw) => [kw, liveRunRuleText(kw)]).filter(([, text]) => text);
+    const text = rules.map(([kw, rule]) => (kws.length > 1
+      ? `${kw.name || kw.tab || kw.run_id}: ${rule}` : rule)).join('\n');
+    if (text && !card.ruleBtn) {
+      const help = this._liveHelp(`rule:${kws[0]?.run_id}`, text, 'the alarm rule', 'live-rule');
+      card.ruleBtn = help.button;
+      card.ruleNote = help.note;
+      card.title.insertBefore(help.button, card.more);
+    }
+    if (card.ruleBtn) {
+      card.ruleBtn.hidden = !text;
+      card.ruleNote.textContent = text;
+    }
+    if (this._onLive && !card.manageBtn) {
+      const manage = document.createElement('button');
+      manage.type = 'button';
+      manage.className = 'live-manage';
+      manage.textContent = 'Manage runs…';
+      manage.addEventListener('click', () => this._onLive({ action: 'manage', run_id: card.manageRun }));
+      card.manageBtn = manage;
+      card.title.insertBefore(manage, card.ruleBtn || card.more);
+    }
+    card.manageRun = (kws.find((kw) => !kw.end) || kws[0])?.run_id;
   }
 
   /** A "?" and its note for a live card; the note stays open across redraws. */
@@ -525,26 +582,17 @@ export class AnalysisManager {
     return help;
   }
 
-  /** "Stop on alarm" and a "Manage…" link to the Live Runs dialog, where "Stop
-   * now…" is (ADR 0089); nothing once the run ended. */
-  _liveControls(spec, kw) {
+  /** A run's "Stop on alarm" tick box; null once the run ended. "Stop now…"
+   * is in the Live Runs dialog only (ADR 0089). */
+  _liveStopOnAlarm(kw) {
     if (kw.end || !this._onLive) return null;
-    const box = document.createElement('span');
-    box.className = 'live-controls';
-    const label = document.createElement('label');
     const tick = document.createElement('input');
     tick.type = 'checkbox';
     tick.className = 'live-stop-on-alarm';
     tick.checked = !!kw.stop_on_alarm;
+    tick.setAttribute('aria-label', `Stop ${kw.name || kw.tab || kw.run_id} on alarm`);
     tick.addEventListener('change', () => this._onLive({ action: 'stop_on_alarm', run_id: kw.run_id, on: tick.checked }));
-    label.append(tick, 'Stop on alarm');
-    const manage = document.createElement('button');
-    manage.type = 'button';
-    manage.className = 'live-manage';
-    manage.textContent = 'Manage…';
-    manage.addEventListener('click', () => this._onLive({ action: 'manage', run_id: kw.run_id }));
-    box.append(label, manage);
-    return box;
+    return tick;
   }
 
   /** The clicked frame's strongest descriptor groups, as strength ÷ threshold

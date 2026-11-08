@@ -28,6 +28,7 @@ const PATHS = {
   help: '<circle cx="8" cy="8" r="6"/><path d="M6.2 6.3a1.9 1.9 0 1 1 2.6 1.8c-.5.3-.8.7-.8 1.3M8 11.6v.01"/>',
   check: '<path d="M3 8.5l3.5 3.5L13 4.5"/>',
   bell: '<path d="M4 11V7a4 4 0 0 1 8 0v4l1.5 1.5h-11z"/><path d="M6.5 14a1.5 1.5 0 0 0 3 0"/>',
+  warning: '<path d="M8 2.2 14.3 13.3H1.7z"/><path d="M8 6.5v3M8 11.6v.01"/>',
 };
 
 /** The names `icon()` knows. */

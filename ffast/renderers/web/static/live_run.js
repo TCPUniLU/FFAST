@@ -50,45 +50,64 @@ function ago(s) {
 const STALLED_S = 30;   // 3 × the scorer's 10 s heartbeat (runs_list.py)
 
 /**
- * The status strip's chips: [{text, tone}], tone '' | 'ok' | 'warn' | 'bad'.
+ * One run's row of the Run panel's table: each cell {text, tone, title?},
+ * tone '' | 'warn' | 'bad'. Colour is kept for trouble (an alarm, a crash, a
+ * stalled scorer, an unproven atom order); a run that is fine reads plain.
  * Producer progress, scored-through progress and the scorer's heartbeat are
- * separate, so a stalled scorer is not read as a stalled simulation.
+ * separate cells, so a stalled scorer is not read as a stalled simulation.
+ * `lammps.fraction` is how far the run is (0–1), or null when the planned end
+ * is unknown.
  * @param {object} kw  the run's LIVE_RUN_UPDATE
  * @param {number} nowMs  Date.now()
  */
-export function liveRunChips(kw, nowMs) {
+export function liveRunRow(kw, nowMs) {
   const p = kw.progress || {};
-  const chips = [];
   const last = kw.producer?.last_step;
   const end = p.planned_end_step;
-  chips.push({ text: last == null ? 'LAMMPS: no frame written yet'
-    : `LAMMPS step ${fmt(last)}${end != null ? ` / ${fmt(end)}` : ''}`, tone: '' });
-  if (p.scored_through_step != null) chips.push({ text: `scored through ${fmt(p.scored_through_step)}`, tone: '' });
+  const first = p.first_step ?? 0;
+  const lammps = {
+    text: last == null ? 'no frame yet' : `${fmt(last)}${end != null ? ` / ${fmt(end)}` : ''}`,
+    tone: '',
+    fraction: last != null && end != null && end > first
+      ? Math.min(1, Math.max(0, (last - first) / (end - first))) : null,
+  };
+  const scored = { text: p.scored_through_step != null ? fmt(p.scored_through_step) : '—', tone: '' };
+
+  let scorer;
   if (p.heartbeat_utc && !kw.end && !['done', 'refused', 'failed'].includes(p.state)) {
     const age = Math.max(0, (nowMs - Date.parse(p.heartbeat_utc)) / 1000);
-    chips.push(age > STALLED_S
-      ? { text: `scorer heartbeat ${ago(age)} ago — stalled?`, tone: 'warn' }
-      : { text: `scorer heartbeat ${ago(age)} ago`, tone: 'ok' });
-  } else if (p.state && !['scoring', 'done', 'ready'].includes(p.state)) {
-    chips.push({ text: `scorer ${p.state}`, tone: p.state === 'starting' ? '' : 'bad' });
+    scorer = age > STALLED_S
+      ? { text: `silent ${ago(age)} — stalled?`, tone: 'warn' }
+      : { text: 'running', tone: '', title: `Last heartbeat ${ago(age)} ago` };
+  } else if (p.state) {
+    const words = { scoring: 'running', ready: 'ready', done: 'done', starting: 'starting' };
+    scorer = { text: words[p.state] || p.state, tone: words[p.state] ? '' : 'bad' };
+  } else {
+    scorer = { text: '—', tone: '' };
   }
-  if (p.identity) {
-    chips.push(p.identity === 'proven' ? { text: 'atom order proven', tone: '' }
-      : { text: 'atom order unverified', tone: 'warn' });
-  }
-  for (const a of p.alarms || []) {
-    chips.push({ text: `${a.kind === 'chem' ? 'CHEMISTRY ALARM' : 'ALARM'} at step ${fmt(a.confirmation?.step)}`, tone: 'bad' });
-  }
+
+  const atoms = !p.identity ? { text: '—', tone: '' }
+    : p.identity === 'proven' ? { text: 'proven', tone: '' } : { text: 'unverified', tone: 'warn' };
+
+  // State: the alarms, then how the run ended (or that a stop is asked for).
+  const words = (p.alarms || []).map((a) =>
+    `${a.kind === 'chem' ? 'Chemistry alarm' : 'Alarm'} at step ${fmt(a.confirmation?.step)}`);
+  let tone = words.length ? 'bad' : '';
   if (kw.end) {
     const st = kw.end.state;
     const at = kw.end.stop_observed_step;
-    const text = st === 'stopped' ? `stopped at step ${fmt(at)}`
-      : st === 'terminated' ? `terminated; last saved frame at step ${fmt(at)}` : `run ${st}`;
-    chips.push({ text, tone: st === 'finished' ? 'ok' : st === 'stopped' || st === 'terminated' ? 'bad' : 'warn' });
+    words.push(st === 'stopped' ? `stopped at step ${fmt(at)}`
+      : st === 'terminated' ? `terminated; last saved frame at step ${fmt(at)}` : st);
+    if (st === 'terminated') tone = 'bad';
+    else if (!['finished', 'stopped'].includes(st) && !tone) tone = 'warn';
   } else if (kw.stop_requested) {
-    chips.push({ text: 'stop requested', tone: 'bad' });
+    words.push('stop requested');
+    tone ||= 'warn';
   }
-  return chips;
+  const text = words.length ? words.join(' · ') : 'no alarm';
+  const state = { text: text[0].toUpperCase() + text.slice(1), tone };
+
+  return { name: kw.name || kw.tab || kw.run_id, lammps, scored, scorer, atoms, state };
 }
 
 /** The alarm rule and its estimated false-alarm chance, in words; '' before the rule is known. */

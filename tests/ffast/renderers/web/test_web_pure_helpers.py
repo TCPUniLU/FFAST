@@ -1664,7 +1664,7 @@ ICON_NAMES = [
     "pencil", "plus", "more", "play", "pause", "step-back", "step-forward", "gear",
     "close", "new-window", "chevron-right", "chevron-down", "folder", "file",
     "arrow-up", "home", "info", "bond", "align", "force", "scissors", "sliders",
-    "help", "check", "bell",
+    "help", "check", "bell", "warning",
 ]
 
 

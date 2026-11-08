@@ -270,7 +270,7 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
                 caption = active.locator('.analysis-panel[data-part="scores"] .panel-caption-line')
                 await expect(caption).to_be_hidden()
                 # Status strip and events list are panels of the tab too.
-                await expect(active.locator(".live-status .live-chip").first).to_contain_text("LAMMPS")
+                await expect(active.locator(".live-status thead")).to_contain_text("LAMMPS step")
                 await expect(active.locator(".live-event-list tr")).to_have_count(0)
                 await expect(active.locator(".analysis-panel .panel-plot .main-svg").first).to_be_attached()
                 await expect(active.locator(".sub-toggle")).to_have_count(0)
@@ -352,9 +352,12 @@ async def test_the_status_overlays_and_event_helpers(static_origin):
       const early = {{ ...kw, progress: {{ ...kw.progress,
         false_alarm: {{ probability: 0.0004, at_least: true, over: 'run' }} }} }};
       return {{
-        chips: lr.liveRunChips(kw, now),
-        stalled: lr.liveRunChips(stalled, now).map((c) => c.text),
-        ended: lr.liveRunChips({{ ...kw, end: {{ state: 'terminated', stop_observed_step: 386400 }} }}, now).map((c) => c.text),
+        row: lr.liveRunRow(kw, now),
+        stalled: lr.liveRunRow(stalled, now).scorer,
+        ended: lr.liveRunRow({{ ...kw, end: {{ state: 'terminated', stop_observed_step: 386400 }} }}, now).state,
+        fine: lr.liveRunRow({{ ...kw, stop_requested: false, progress: {{ ...kw.progress, alarms: [] }} }}, now).state,
+        finished: lr.liveRunRow({{ ...kw, progress: {{ ...kw.progress, alarms: [] }},
+          end: {{ state: 'stopped', stop_observed_step: 500 }} }}, now).state,
         rule: lr.liveRunRuleText(kw), early: lr.liveRunRuleText(early),
         overlays: lr.liveRunOverlays(kw),
         events: {json.dumps(events)}.map(lr.liveEventLine),
@@ -369,12 +372,20 @@ async def test_the_status_overlays_and_event_helpers(static_origin):
             got = await page.evaluate(script)
         finally:
             await browser.close()
-    chips = [(c["text"], c["tone"]) for c in got["chips"]]
-    assert chips == [("LAMMPS step 412,300 / 1,000,000", ""), ("scored through 411,900", ""),
-                     ("scorer heartbeat 3 s ago", "ok"), ("atom order proven", ""),
-                     ("ALARM at step 386,000", "bad"), ("stop requested", "bad")]
-    assert "scorer heartbeat 4 min ago — stalled?" in got["stalled"]
-    assert "terminated; last saved frame at step 386,400" in got["ended"]
+    # One row of the Run panel's table: plain while fine, coloured only for trouble.
+    row = got["row"]
+    assert row["name"] == "r1"
+    assert (row["lammps"]["text"], row["lammps"]["tone"]) == ("412,300 / 1,000,000", "")
+    assert row["lammps"]["fraction"] == pytest.approx(0.4123)
+    assert (row["scored"]["text"], row["scored"]["tone"]) == ("411,900", "")
+    assert row["scorer"] == {"text": "running", "tone": "", "title": "Last heartbeat 3 s ago"}
+    assert (row["atoms"]["text"], row["atoms"]["tone"]) == ("proven", "")
+    assert row["state"] == {"text": "Alarm at step 386,000 · stop requested", "tone": "bad"}
+    assert got["stalled"] == {"text": "silent 4 min — stalled?", "tone": "warn"}
+    assert got["ended"] == {"text": "Alarm at step 386,000 · terminated; last saved frame at step 386,400",
+                            "tone": "bad"}
+    assert got["fine"] == {"text": "No alarm", "tone": ""}
+    assert got["finished"] == {"text": "Stopped at step 500", "tone": ""}   # a stop asked for is not trouble
     assert got["rule"] == ("Alarm rule: 20 % of frames marked within 5 ps (100 frames), checked every "
                            "0.5 ps. False-alarm chance over the planned 1,000,000 steps: ≤ 1.8 % (estimated).")
     assert "≥ 0.04 % (estimated; frames taken as uncorrelated until 200 are scored)" in got["early"]
@@ -433,8 +444,10 @@ async def test_web_a_stopped_run_shows_its_alarm_moments_and_events(tmp_path):
                 await _open_run(page, run)
                 active = page.locator(ACTIVE)
                 status = active.locator(".live-status")
-                await expect(status).to_contain_text("ALARM at step 300", timeout=15000)
-                await expect(status).to_contain_text("stopped at step 300")
+                state = status.locator("td.live-state")
+                await expect(state).to_have_text("Alarm at step 300 · stopped at step 300", timeout=15000)
+                await expect(state).to_have_class(re.compile(r"\bbad\b"))
+                await expect(state.locator("svg.icon")).to_have_count(1)   # never colour alone
                 events = active.locator(".live-events")
                 await expect(events).to_contain_text("Alarm · estimated onset step 100 · confirmed at step 300")
                 await expect(events).to_contain_text("Stop observed at step 300")
@@ -492,9 +505,9 @@ async def test_web_stop_now_is_in_the_live_runs_dialog_and_stop_on_alarm_in_the_
                 active = page.locator(ACTIVE)
                 tick = active.locator(".live-stop-on-alarm")
                 await expect(tick).not_to_be_checked(timeout=15000)
-                # The alarm rule is small print: behind the status card's "?", and it
-                # stays open while the card redraws.
-                status = active.locator(".live-status")
+                # The alarm rule is small print: behind the "?" in the Run panel's
+                # title row, and it stays open while the table redraws.
+                status = active.locator('.analysis-panel[data-part="status"]')
                 rule = status.locator(".live-rule")
                 await expect(rule).to_be_hidden()
                 await status.locator(".help-btn").click()
@@ -506,7 +519,7 @@ async def test_web_stop_now_is_in_the_live_runs_dialog_and_stop_on_alarm_in_the_
                 await expect(tick).to_be_checked(timeout=10000)
                 assert rf.read_json(run / rf.CONTROL)["stop_on_alarm"] is True
 
-                # Stop now is not in the tab: a "Manage…" link opens the Live Runs
+                # Stop now is not in the tab: "Manage runs…" opens the Live Runs
                 # dialog on this run's row, and the stop is asked for there.
                 await expect(active.locator(".live-stop-now")).to_have_count(0)
                 await active.locator(".live-manage").click()
@@ -523,7 +536,7 @@ async def test_web_stop_now_is_in_the_live_runs_dialog_and_stop_on_alarm_in_the_
                 await expect(row.locator("button.live-runs-stop")).to_be_disabled(timeout=10000)
                 assert rf.read_json(run / rf.STOP_REQUEST)["by"] == "user"
                 await dialog.get_by_role("button", name="Close").click()
-                await expect(active.locator(".live-status")).to_contain_text("stop requested", timeout=10000)
+                await expect(active.locator(".live-status td.live-state")).to_contain_text("Stop requested", timeout=10000)
             finally:
                 await browser.close()
 
@@ -1027,12 +1040,12 @@ async def test_web_a_live_tab_draws_the_runs_ticked_in_its_selector(tmp_path):
                     .map((t) => t.name);
                 }""", ACTIVE)
                 assert await names() == ["Score ÷ threshold"]      # one run: as before
-                await expect(active.locator(".live-status .live-chips")).to_have_count(1)
+                await expect(active.locator(".live-status tbody tr")).to_have_count(1)
                 await expect(active.locator(".live-event-list th")).to_have_count(0)
 
                 # Ticking the other run adds its curve, status row and events.
                 await pick(RUN_B).click()
-                await expect(active.locator(".live-status .live-chips")).to_have_count(2, timeout=15000)
+                await expect(active.locator(".live-status tbody tr")).to_have_count(2, timeout=15000)
                 assert sorted(await names()) == ["12:00:00 node", "13:00:00 node"]
                 # Each run's marks are its own legend entry, not pooled.
                 got = await marks()
@@ -1622,7 +1635,7 @@ async def test_web_a_paused_tab_stops_following_its_run_until_it_resumes(tmp_pat
         run_json["producer"] = {"last_step": 300}
         rf.write_json_atomic(run / rf.RUN_JSON, run_json)
         # The Run card keeps up...
-        await expect(page.locator(f"{ACTIVE} .live-status")).to_contain_text("step 300", timeout=15000)
+        await expect(page.locator(f"{ACTIVE} .live-status tbody td.num").first).to_have_text("300", timeout=15000)
         # ...the plots and the frame range do not. Give the page time to wrongly follow.
         await page.wait_for_timeout(1500)
         assert await page.evaluate(f"({LAST_Y})('Gyradius')") == 3

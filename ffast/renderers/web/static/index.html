@@ -560,16 +560,13 @@
       flex: 1; min-height: 0; overflow: auto; padding: 2px 12px 8px; font-size: var(--fs-s);
     }
     .live-runs-highlight { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; }
-    .live-manage { background: none; border: 0; padding: 0 4px; text-decoration: underline; cursor: pointer; color: inherit; }
     .live-hint {
       display: flex; gap: 8px; align-items: center; justify-content: space-between;
       padding: 4px 12px; font-size: var(--fs-s); color: var(--muted, inherit);
     }
     .live-hint[hidden] { display: none; }
     .live-hint-close { border: 0; background: none; cursor: pointer; font-size: 1.2em; line-height: 1; color: inherit; }
-    .live-status-row + .live-status-row { margin-top: 6px; }
     .live-event-list th { text-align: left; font-weight: 600; padding-right: 10px; }
-    .live-chips { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
     .live-chip {
       border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; white-space: nowrap;
       color: var(--ink-2);
@@ -580,9 +577,29 @@
     .live-chip.bad { border-color: var(--danger); color: var(--danger); }
     .live-rule { color: var(--ink-3); font-size: var(--fs-xs); margin-top: 4px; }
     .live-problem { color: var(--warn); font-size: var(--fs-xs); margin-top: 2px; }
-    .live-controls { margin-left: auto; display: flex; gap: 10px; align-items: center; }
-    .live-controls label { display: flex; gap: 4px; align-items: center; color: var(--ink-2); }
-    .live-controls button.danger { border-color: var(--danger); color: var(--danger); }
+    /* The Run panel: the error table's look, a row per run. Colour only for
+       trouble, always with the warning icon and words. */
+    .analysis-panel .live-part.live-status { padding-top: 0; }
+    .analysis-panel[data-part="status"] .panel-title .live-manage { font-size: var(--fs-s); padding: 2px 8px; }
+    /* as wide as its columns, not stretched across a full-width panel */
+    table.panel-table.live-status-table { width: auto; min-width: min(100%, 640px); }
+    table.live-status-table th:not(.num), table.live-status-table td:not(.num) { text-align: left; }
+    table.live-status-table :is(th, td) { white-space: nowrap; padding-right: 16px; }
+    table.live-status-table td { color: var(--ink-2); }
+    table.live-status-table :is(th, td).tick { text-align: center; width: 1%; }
+    table.live-status-table td.muted { color: var(--ink-3); }
+    table.live-status-table td.warn { color: var(--warn); }
+    table.live-status-table td.bad { color: var(--danger); }
+    table.live-status-table td.live-state { white-space: normal; }
+    :is(table.live-status-table td, .live-problem) > .icon { width: 12px; height: 12px; margin-right: 4px; vertical-align: -2px; }
+    table.live-status-table input { margin: 0; vertical-align: middle; }
+    .live-bar {
+      display: inline-block; position: relative; width: 56px; height: 4px; margin-left: 8px;
+      vertical-align: middle; border-radius: 2px; background: var(--surface-3);
+    }
+    .live-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--ink-3); }
+    .live-status .live-problem { font-size: var(--fs-s); margin-top: 6px; }
+    .live-status .live-rule { margin-top: 6px; white-space: pre-line; }
     table.live-event-list { border-collapse: collapse; width: 100%; }
     table.live-event-list td { padding: 2px 6px; border-top: 1px solid var(--line); vertical-align: top; }
     table.live-event-list td:first-child { color: var(--ink-3); white-space: nowrap; width: 1%; }
