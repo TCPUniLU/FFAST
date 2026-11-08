@@ -1,13 +1,15 @@
-# Basic Errors — energy/force MAE+RMSE distributions, timelines, scalar tables
-# (in a horizontal scroll strip) and true-vs-predicted scatter. A tab-level
+# Basic Errors — energy/force MAE+RMSE distributions, timelines, one table of
+# the scalar errors and true-vs-predicted scatter. A tab-level
 # energy-shift toggle drives the shared `shifted` compute-param across every
 # energy Panel. Fully declarative (ADR 0021); the legacy modules/basicErrors.py
-# was retired once this reached parity. Uses the `scroll_group` layout hint and
-# the `energy_shift` tab control.
+# was retired once this reached parity. Uses the `energy_shift` tab control.
 [[tabs]]
 name = "Basic Errors"
 has_data_selector = true
 controls = ["energy_shift"]
+# Rows are 300 px; the table row is half of that (a row per dataset and
+# prediction, 10 rows before it scrolls).
+row_heights = [1, 1, 1, 0.5, 1]
 
 # --- row 0: MAE distributions --------------------------------------------- #
 [[tabs.panels]]
@@ -68,49 +70,24 @@ y_label = ["Forces RMSE", "forceUnit"]
   [tabs.panels.metrics.y]
   metric = "ffast.force_rmse_smoothed"
 
-# --- row 3: scalar tables in a horizontal scroll strip --------------------- #
+# --- row 3: one table of the errors: a row per dataset and prediction ------- #
 [[tabs.panels]]
 kind = "table"
 row = 3
 col = 0
 colspan = 2
-scroll_group = "tables"
-title = "Energy MAE"
+title = "Errors"
 hidden_params = ["shifted"]
-  [tabs.panels.metrics.value]
+options = { column_labels = ["Energy MAE", "Energy RMSE", "Forces MAE", "Forces RMSE"] }
+  [[tabs.panels.metrics.value]]
   metric = "ffast.energy_difference"
   transform = ["shift", "mean_abs"]
-
-[[tabs.panels]]
-kind = "table"
-row = 3
-col = 0
-colspan = 2
-scroll_group = "tables"
-title = "Energy RMSE"
-hidden_params = ["shifted"]
-  [tabs.panels.metrics.value]
+  [[tabs.panels.metrics.value]]
   metric = "ffast.energy_difference"
   transform = ["shift", "rmse"]
-
-[[tabs.panels]]
-kind = "table"
-row = 3
-col = 0
-colspan = 2
-scroll_group = "tables"
-title = "Forces MAE"
-  [tabs.panels.metrics.value]
+  [[tabs.panels.metrics.value]]
   metric = "ffast.force_difference[dataset;component;mae]"
-
-[[tabs.panels]]
-kind = "table"
-row = 3
-col = 0
-colspan = 2
-scroll_group = "tables"
-title = "Forces RMSE"
-  [tabs.panels.metrics.value]
+  [[tabs.panels.metrics.value]]
   metric = "ffast.force_difference[dataset;component;rmse]"
 
 # --- row 4: true-vs-predicted scatter -------------------------------------- #

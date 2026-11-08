@@ -335,3 +335,17 @@ def test_a_server_without_a_broker_answers_404():
         assert err.value.code == 404
     finally:
         httpd.shutdown()
+
+
+def test_the_ffast_command_starts_the_web_client_even_when_pyside6_imports(monkeypatch):
+    """ADR 0090: `ffast` no longer looks for PySide6."""
+    import sys
+    import types
+
+    import launcher as command
+
+    monkeypatch.setitem(sys.modules, "PySide6", types.ModuleType("PySide6"))
+    seen = []
+    monkeypatch.setattr(launcher, "main", lambda argv=None: seen.append(argv))
+    command.main(["--no-browser"])
+    assert seen == [["--no-browser"]]

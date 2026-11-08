@@ -197,6 +197,9 @@ export class TabEditor {
   _editBar() {
     const bar = document.createElement('div');
     bar.className = 'edit-bar';
+    const mode = document.createElement('span');
+    mode.className = 'edit-mode-label';
+    mode.textContent = 'Editing layout';
     const title = document.createElement('span');
     title.className = 'edit-title';
     title.append('Editing ', Object.assign(document.createElement('b'), { textContent: this._draft.name }));
@@ -207,6 +210,7 @@ export class TabEditor {
       if (next) this.change(next);
     });
     settings.dataset.edit = 'tab-settings';
+    const origin = this._originLine();
     const note = document.createElement('span');
     note.className = 'edit-note';
     note.textContent = this._error
@@ -219,8 +223,26 @@ export class TabEditor {
     const save = button('Save', () => this.save());
     save.dataset.edit = 'save';
     save.className = 'primary';
-    bar.append(title, add, settings, note, spacer, cancel, save);
+    bar.append(mode, title, add, settings, ...(origin ? [origin] : []), note, spacer, cancel, save);
     return bar;
+  }
+
+  /** For a tab that stands in for a built-in or project one: one line that
+   * says so, with the Reset to original button (to_fix_v3 #9). */
+  _originLine() {
+    const d = this._draft;
+    if (d.source !== 'user' || !d.replaces) return null;
+    const line = document.createElement('span');
+    line.className = 'edit-origin';
+    const kind = this._deps.serverTabs().find((t) => t.name === d.replaces)?.source === 'project'
+      ? 'Project' : 'Built-in';
+    line.append(`${kind} tab, edited by you${d.original_changed ? ' (updated since)' : ''} · `);
+    const reset = button('Reset to original', async () => {
+      if (await this._deps.resetTab(this._previous)) this.end();
+    });
+    reset.dataset.edit = 'reset';
+    line.append(reset);
+    return line;
   }
 
   /** The handle strip over one panel (or one scroll strip). */
@@ -320,6 +342,8 @@ export class TabEditor {
       handle.setPointerCapture(e.pointerId);
       handle.classList.add('dragging');
       grid.classList.add('dragging');
+      const chrome = handle.closest('.edit-chrome');
+      chrome?.classList.add('held');   // the panel being moved or sized wears the accent outline
       const ghost = document.createElement('div');
       ghost.className = 'edit-ghost';
       grid.appendChild(ghost);
@@ -341,6 +365,7 @@ export class TabEditor {
         handle.removeEventListener('pointerup', up);
         handle.classList.remove('dragging');
         grid.classList.remove('dragging');
+        chrome?.classList.remove('held');
         ghost.remove();
         if (cell) this.change(apply(cell));
       };
@@ -356,15 +381,26 @@ export class TabEditor {
    * built-in and project tabs; then "Custom panel…", the builder. */
   async _addPanelDialog() {
     const body = document.createElement('div');
-    body.className = 'panel-list';
+    body.className = 'panel-add';
+    const search = Object.assign(document.createElement('input'), { type: 'search' });
+    search.className = 'panel-search';
+    search.placeholder = 'Search by panel, tab or metric';
+    search.setAttribute('aria-label', 'Search panels');
+    const list = document.createElement('div');
+    list.className = 'panel-list';
+    body.append(search, list);
     let chosen = null;
-    const choice = (label, panel, detail = '') => {
+    // every row, with the text the search looks in (its group's name too)
+    const rows = [];
+    const choice = (label, panel, detail = '', group = '') => {
       const btn = button(label, () => { chosen = panel; close('Add'); });
       btn.className = 'panel-choice';
       if (detail) btn.title = detail;
+      rows.push({ btn, group, text: `${label} ${group} ${detail}`.toLowerCase() });
       return btn;
     };
-    body.appendChild(choice('3D panel', new3DPanel(), 'Shows the main view, like the 3D tab'));
+    list.appendChild(choice('3D panel', new3DPanel(), 'Shows the main view, like the 3D tab'));
+    const heads = [];
     for (const tab of this._deps.serverTabs()) {
       if (tab.source === 'user') continue;
       const panels = (tab.panels || []).filter((p) => p.kind !== KIND_3D);
@@ -372,12 +408,32 @@ export class TabEditor {
       const head = document.createElement('div');
       head.className = 'panel-list-head';
       head.textContent = tab.name;
-      body.appendChild(head);
+      heads.push({ head, group: tab.name });
+      list.appendChild(head);
       for (const p of panels) {
-        body.appendChild(choice(p.title || KIND_ROLES[p.kind]?.label || p.kind, p,
-          Object.values(p.metrics || {}).flat().join(', ')));
+        list.appendChild(choice(p.title || KIND_ROLES[p.kind]?.label || p.kind, p,
+          Object.values(p.metrics || {}).flat().join(', '), tab.name));
       }
     }
+    const none = document.createElement('div');
+    none.className = 'panel-none';
+    none.textContent = 'No panel matches.';
+    none.hidden = true;
+    list.appendChild(none);
+    // A panel shows when every word typed is in its title, its tab's name or its metrics.
+    const filter = () => {
+      const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+      for (const r of rows) r.btn.hidden = !words.every((w) => r.text.includes(w));
+      for (const h of heads) h.head.hidden = !rows.some((r) => r.group === h.group && !r.btn.hidden);
+      none.hidden = rows.some((r) => !r.btn.hidden);
+    };
+    search.addEventListener('input', filter);
+    search.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const shown = rows.filter((r) => !r.btn.hidden);
+      if (shown.length === 1) shown[0].btn.click();   // exactly one match: add it
+    });
     const { answer, close } = modal('Add panel', body, ['Cancel', 'Custom panel…']);
     const result = await answer;
     const catalog = this._deps.catalog();

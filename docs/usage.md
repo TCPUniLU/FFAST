@@ -19,14 +19,14 @@ the [README](../README.md) is shorter.
 
 ## The interface
 
-Two clients, same server, same protocol. The desktop client is the complete one;
-use it unless you have a reason not to.
+Two clients, same server, same protocol. The browser client (`ffast`) is the
+main one. The desktop client (`ffast-qt`) is the older one and is being retired.
 
 ### The desktop client (`ffast-qt`)
 
 ```bash
 pip install -e ".[gui]"
-ffast-qt [--workdir PATH]     # or just `ffast`, which prefers this client
+ffast-qt [--workdir PATH]     # `ffast` starts the browser client, not this one
 ```
 
 It starts a managed local `ffast-server` in the background and connects to it,
@@ -75,8 +75,7 @@ the browser keeps these per address, port included. If 8764 is taken, for
 example by a second `ffast-web`, that window gets a free port and starts with
 the default layout.
 
-The bare `ffast` command lands here too when PySide6 is not installed, but it
-takes no arguments of its own — use `ffast-web` when you need these flags.
+The bare `ffast` command starts this client too (ADR 0090).
 
 Everything binds `127.0.0.1`, so a local session is not reachable from the
 network. It needs no native GL or Qt libraries, which is the point of it: it
@@ -176,17 +175,17 @@ people use. Generate predictions where you trained the model and load the file.
 
 ## Example data
 
-`examples/data/dataset.xyz` and `prediction.xyz` are what ship today: 100
-configurations of mixed organic molecules, 4 to 50 atoms each, so atom count
-varies between configurations. Enough to see every tab populated.
+`examples/data/` contains MD22 molecules, a random 100-configuration SPICE
+sample and periodic MPtrj structures, with matching
+predictions. **Load Example** opens the SPICE pair in
+`examples/data/variable-sized molecular/`. Paths with spaces must be quoted
+in shell commands.
 
-A wider corpus is being prepared: fixed- and
-variable-sized systems, molecular, periodic and subsystem, so a change can be
-checked against the cases that behave differently. It is not published yet —
-these are samples of datasets other people published, and their provenance and
-licence terms have to be confirmed before this repository can redistribute them.
-[examples/data/README.md](../examples/data/README.md) tracks what is still
-outstanding.
+AM26 remains on `dev` pending redistribution permission; graphene is deferred
+until its source units have been established and its pair uses matching units.
+[examples/data/README.md](../examples/data/README.md) documents each source,
+sampling method, permission and units. Published pairs load correctly with
+default energy and force selection; controls are labelled "reference + noise".
 
 `examples/MACE/` and `examples/Nequip/` are saved sessions rather than raw data;
 open them with Load Session.
@@ -770,7 +769,7 @@ Then check it before launching anything:
 ffast-cli config validate ffast.toml
 ffast-cli metrics validate
 ffast-cli metrics test my_lab.max_force_per_frame
-ffast-cli metrics run my_lab.max_force_per_frame --dataset examples/data/dataset.xyz
+ffast-cli metrics run my_lab.max_force_per_frame --dataset "examples/data/variable-sized molecular/dataset.xyz"
 ```
 
 Anything you pass to `@metric(...)` overrides what would be inferred, so the
@@ -785,11 +784,11 @@ For batch work, drive the Environment directly. A complete example is in
 from ffast.core.environment import startHeadlessEnvironment
 
 env = startHeadlessEnvironment()
-env.taskLoadDataset("examples/data/dataset.xyz", "ase (auto)")
+env.taskLoadDataset("examples/data/variable-sized molecular/dataset.xyz", "ase (auto)")
 env.waitForTasks(verbose=True)
 
-dataset = env.getDatasetFromPath("examples/data/dataset.xyz")
-env.loadPrepredictedDataset("examples/data/prediction.xyz", dataset.fingerprint)
+dataset = env.getDatasetFromPath("examples/data/variable-sized molecular/dataset.xyz")
+env.loadPrepredictedDataset("examples/data/variable-sized molecular/prediction.xyz", dataset.fingerprint)
 model = env.models.all()[0]
 
 energy_mae = "ffast.energy_difference[dataset;mae]"    # a keep-box setting

@@ -61,7 +61,7 @@ configurations come back to the user's machine.
 
 ## Evidence on Hand
 
-- Example data: `examples/data/dataset.xyz`, `examples/data/prediction.xyz`.
+- Example data: `examples/data/variable-sized molecular/dataset.xyz`, `examples/data/variable-sized molecular/prediction.xyz`.
 - Hero screenshot: `docs/images/hero.png`.
 - No user testimonials, benchmarks or adoption figures exist; do not invent any.
 

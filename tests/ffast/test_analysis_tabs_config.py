@@ -192,20 +192,22 @@ def test_3d_panels_compile_no_metrics_and_reach_the_layout():
 
 def test_basic_errors_tab_is_declarative():
     """Basic Errors is the fully-config end state (no imperative module): a tab
-    with the energy-shift tab control, a `tables` scroll strip, and scatter x/y."""
+    with the energy-shift tab control, one table of errors, and scatter x/y."""
     tabs = {t.name: t for t in load_builtin_tabs()}
     be = tabs["Basic Errors"]
     assert be.controls == ["energy_shift"]
 
-    # The four scalar tables share one horizontal scroll strip.
-    grouped = [p for p in be.panels if p.scroll_group == "tables"]
-    assert len(grouped) == 4
-    assert all(p.kind == "table" for p in grouped)
+    # One table of the four scalar errors: a row per dataset and prediction, a
+    # column per metric (to_fix_v3 #8).
+    tables = [p for p in be.panels if p.kind == "table"]
+    assert len(tables) == 1 and tables[0].scroll_group is None
+    assert len(tables[0].metrics["value"]) == 4
+    assert tables[0].options["column_labels"] == ["Energy MAE", "Energy RMSE", "Forces MAE", "Forces RMSE"]
 
     # Energy panels hide the per-panel `shifted` control (driven by the tab toggle):
-    # energy distribution + timeline + scatter + the two energy tables.
+    # energy distribution + timeline + scatter + the table that has energy columns.
     energy = [p for p in be.panels if "shifted" in p.hidden_params]
-    assert len(energy) == 5
+    assert len(energy) == 4
 
     scatters = [p for p in be.panels if p.kind == "scatter"]
     assert scatters and all(set(p.metrics) == {"x", "y"} for p in scatters)

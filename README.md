@@ -17,18 +17,16 @@ The compute half runs wherever your data is, which for most people means an HPC
 cluster: FFAST will submit the SLURM job and install itself there on first
 connect, and only the configurations you select come back to your machine.
 
-There are two clients, and they speak the same protocol to the same server.
-`ffast` starts the desktop one, which is the complete one. Where Qt cannot be
-installed — a cluster login node, a container — the same command starts the
-browser client instead, which needs no native GL or Qt libraries but is younger
-and does not cover everything the desktop does yet. See
-[Two clients](#two-clients).
+`ffast` opens FFAST in your browser. The browser client is the main client; it
+needs no native GL or Qt libraries, so it runs on a laptop and on a cluster login
+node alike. An older desktop client still exists, is being retired, and starts
+with `ffast-qt`.
 
 ![Two force fields compared in FFAST: energy and force error distributions and per-frame timelines for both models on the left, and the same trajectory in the 3D view with atoms coloured by per-atom force error on the right.](docs/images/hero.png)
 
 *Here to read the code rather than run it?* Start with
 [docs/architecture.md](docs/architecture.md) and the
-[54 ADRs](docs/adr/README.md); [If you came to read the
+[84 ADRs](docs/adr/README.md); [If you came to read the
 code](#if-you-came-to-read-the-code) says which ones are worth your time.
 
 ## Why it exists
@@ -51,17 +49,14 @@ breaks on anything newer.
 git clone https://github.com/TCPUniLU/FFAST.git
 cd FFAST
 python3.11 -m venv .venv && source .venv/bin/activate
-pip install -e ".[gui]"
+pip install -e .
 ```
 
-The `gui` extra pulls PySide6 and vispy, which the desktop client needs. Leave it
-off and you still get the browser client, the server and the CLI with no native
-libraries at all — that is the install to use on a cluster login node, where a
-Qt/OpenGL stack is a fight you don't want:
+That gives you the server, the CLI and the browser client, with no native
+libraries at all, so the same install works on a cluster login node.
 
-```bash
-pip install -e .                 # server + CLI + browser client, no Qt
-```
+The legacy desktop client is one extra, `pip install -e ".[gui]"` (PySide6 and
+vispy).
 
 ML backends are one extra each:
 
@@ -88,37 +83,42 @@ ffast-cli metrics list
 ffast
 ```
 
-A local server starts in the background and the desktop window opens. Then:
+A local server starts in the background and FFAST opens in your browser. Then:
 
-1. **Load a dataset** — File > Load Dataset, or `Ctrl+d`. sGDML `.npz` files
+1. **Load a dataset** — File > Load Dataset, or `Alt+Shift+D`. sGDML `.npz` files
    work, and so does anything ASE can read (`.extxyz`, `.traj`, `.db`, …).
    Configurations with different atom counts are fine and are detected
    automatically.
-2. **Load predictions** — File > Load Prediction, or `Ctrl+p`. An `.npz` with
-   `E` and `F`, or an ASE-readable file carrying energies and forces. Pick which
-   dataset it belongs to; FFAST checks fingerprints so you cannot attach it to
-   the wrong one by accident.
+2. **Load predictions** — File > Load Prediction, or `Alt+Shift+P`. An `.npz`
+   with `E` and `F`, or an ASE-readable file carrying energies and forces. Pick
+   which dataset it belongs to; FFAST checks fingerprints so you cannot attach it
+   to the wrong one by accident.
 3. **Open Basic Errors.** Error along the trajectory, error distributions,
-   true-versus-predicted scatter, MAE and RMSE tables. Select several predictions
-   to compare models in the same panel.
+   true-versus-predicted scatter and a table of MAE and RMSE for every dataset
+   and prediction. Select several predictions to compare models in the same
+   panel.
 4. **Zoom into a bad region and click Sub.** A new dataset appears in the
    sidebar holding exactly those configurations.
-5. **Open it in the 3D view** — `Ctrl+n`. Turn on force vectors, colour the atoms
-   by force error, step through the frames and see what the molecule is actually
-   doing there.
+5. **Open it in the 3D view.** Turn on force vectors, colour the atoms by force
+   error, step through the frames and see what the molecule is actually doing
+   there.
 
-No data of your own yet? `examples/data/` has a small variable-sized organic set
-with a matching prediction, enough to see every tab populated. A wider corpus —
-fixed- and variable-sized, molecular, periodic and subsystem — is being prepared
-and will be published once its provenance and licences are confirmed. `examples/MACE/` and `examples/Nequip/` are saved sessions with
+New to it? The File menu has guided tours (**Tour: …**) that walk through
+loading a dataset and a prediction on the bundled examples.
+
+No data of your own yet? `examples/data/` includes MD22 molecules, a random SPICE sample
+and periodic MPtrj structures, with matching
+predictions. **Load Example** opens the SPICE pair from
+`examples/data/variable-sized molecular/`. See the
+[dataset README](examples/data/README.md) for sources, permissions and units.
+AM26 and graphene remain on `dev` pending redistribution permission and
+source-unit verification, respectively.
+`examples/MACE/` and `examples/Nequip/` are saved sessions with
 pre-computed predictions for two MD22 systems, loadable with Load Session.
 
 Full reference: [docs/usage.md](docs/usage.md).
 
 ## How it is built
-
-Roughly 54k lines of Python and 5k of hand-written JavaScript, no build step on
-the front end.
 
 The one structural decision everything follows from: the compute half and the
 display half talk over a WebSocket, even when both are on your laptop. The client
@@ -129,8 +129,7 @@ cluster node" the same code path as "run this locally".
 The consequence is a hard rule: `ffast/`, the core package, imports no Qt and no
 OpenGL, so it runs on a node with no display. That is enforced by a test
 (`tests/ffast/test_ffast_core_boundary.py`) and by a CI job that installs
-*without* the GUI extra and checks the server still starts — a claim that decays
-silently otherwise.
+*without* the GUI extra and checks the server still starts.
 
 Metrics are pure functions of arrays. A metric never sees the Environment, a
 Dataset or a Model; it gets the arrays it declared and returns numbers. Its
@@ -141,7 +140,7 @@ and the server never learns what a plot is.
 ### If you came to read the code
 
 [docs/architecture.md](docs/architecture.md) is the map, and it ends with a
-section on what is still wrong. The design record is [54
+section on what is still wrong. The design record is [84
 ADRs](docs/adr/README.md) — what the problem was, what was chosen, what it cost.
 They include the decisions that did not survive:
 
@@ -158,32 +157,19 @@ They include the decisions that did not survive:
 [CONTEXT.md](CONTEXT.md) is the vocabulary, including an explicit list of terms
 that exist only in design documents and have no code behind them.
 
-## Two clients
+## The two clients
 
-Both clients talk to the same `ffast-server` over the same WebSocket protocol,
-and neither holds any scientific state of its own. The difference is what they
-are made of and how finished they are.
+Both talk to the same `ffast-server` over the same WebSocket protocol, and
+neither holds any scientific state of its own.
 
-**`ffast-qt` — the desktop client.** PySide6 and vispy, and the client this tool
-grew up as. It is the complete one: if a feature exists in FFAST, it exists here.
-Needs the `gui` extra and a working native Qt/OpenGL stack.
+**`ffast` (and `ffast-web`) — the browser client.** Hand-written ES modules with
+Three.js and Plotly vendored in, no build step, no npm. It is the client that
+gets new features, and the place to contribute: the client is plain JavaScript
+you can edit and reload with no toolchain. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-`ffast` runs this one when PySide6 is importable and falls back to the browser
-client when it is not, so the bare command does the right thing on both a
-workstation and a login node.
-
-**`ffast-web` — the browser client.** Hand-written ES modules with Three.js and
-Plotly vendored in, no build step, no npm. It exists because the native Qt and
-GL bundle refused to install on too many machines — most painfully on shared
-Linux clusters, where you cannot fix the graphics stack and the person who needs
-the tool is not the person who administers the box. A browser is already there.
-
-It is under active development and does not yet match the desktop. That makes it
-the most useful place to contribute: the server side is done and typed, the
-protocol events already exist for nearly everything, and the client is plain
-JavaScript you can edit and reload with no toolchain to install. Pick something
-the desktop does that the browser doesn't, and wire it up. See
-[CONTRIBUTING.md](CONTRIBUTING.md).
+**`ffast-qt` — the legacy desktop client.** PySide6 and vispy. It is being
+retired and gets no new features. It needs the `gui` extra and a working native
+Qt/OpenGL stack.
 
 ## What it does
 
@@ -201,9 +187,11 @@ a special case anyone had to implement twice.
 
 **New analyses without writing code.** Any numeric key in an extxyz file can be
 declared in a config file and becomes a plottable metric. So can element-wise
-algebra over existing metrics. So can whole new tabs of plots. The four built-in
+algebra over existing metrics. So can whole new tabs of plots. The built-in
 tabs are defined this way and have no special status — they are TOML files in
-`ffast/config/builtin_tabs/`.
+`ffast/config/builtin_tabs/`. A new install shows 3D and Basic Errors; the others
+wait under **+ ▸ From template**. You can build your own tabs, panel by panel,
+with the ✎ Edit tab button.
 
 **Remote execution.** Connect to a cluster and everything heavy runs on a compute
 node while the UI stays on your laptop. Large datasets never move; only the
@@ -225,19 +213,18 @@ session recomputes nothing.
 Being straight about this, since it matters if you are deciding whether to use
 it:
 
-- **The browser client is not finished.** Use `ffast-qt` for real work. See
-  [Two clients](#two-clients).
 - **Pre-computed predictions are the well-trodden path.** Loading a trained model
   and running inference from the UI works (server-side, ADR 0030) but is rough.
   Generate predictions where you trained the model.
 - **No PyPI release yet.** Install from source.
+- **The desktop client is being retired.** Use the browser client.
 - **Leftovers from the restructuring are still visible**: `client/` is down to
   three files, `datasetLoaders/` and `modelLoaders/` are empty directories, and
   plugin discovery still globs the source tree. Written down in
   [docs/architecture.md](docs/architecture.md#where-the-bodies-are-buried) rather
   than quietly left for you to find.
 
-Tests: about 1200, running in 20 seconds. `pytest -m "not integration"`.
+Tests: about 3,400. `pytest -m "not integration" --ignore=tests/browser` is the quick run and takes under a minute.
 
 ## Credits and history
 

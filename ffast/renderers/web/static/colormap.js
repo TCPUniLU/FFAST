@@ -29,7 +29,7 @@ const COLORMAP_STOPS = {
     [0.5, 0.1, 0.1], [0.9, 0.1, 0.1],
   ],
   // Blue-grey to yellow: readable with any colour vision and in greyscale
-  // (matplotlib's cividis at 9 even stops). The Force error quick style uses it.
+  // (matplotlib's cividis at 9 even stops).
   cividis: [
     [0.000, 0.135, 0.305], [0.103, 0.220, 0.436], [0.264, 0.308, 0.423],
     [0.381, 0.395, 0.436], [0.489, 0.485, 0.471], [0.609, 0.580, 0.464],

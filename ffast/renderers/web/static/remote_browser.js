@@ -253,6 +253,7 @@ export class RemoteBrowser {
    *   setStatus: (text: string, kind?: string) => void,
    *   serverKey?: () => string,
    *   setUnit?: (fp: string, dimension: string, unit: string) => void,
+   *   signal?: (name: string, detail?: object) => void,
    * }} ports
    */
   constructor(ports) {
@@ -279,7 +280,8 @@ export class RemoteBrowser {
 
   /** Wire the modal's own controls. Called once, at app setup. */
   bindControls() {
-    $('fb-cancel').addEventListener('click', () => this.close());
+    $('fb-cancel').addEventListener('click', () => this.cancel());
+    $('fb-target-ds').addEventListener('change', () => this._signal('target-changed', { datasetFp: $('fb-target-ds').value }));
     $('fb-load').addEventListener('click', () => this._load());
     $('fb-force-key').addEventListener('change', () => this._refreshLoadEnabled());
     $('fb-type').addEventListener('change', () => this._refreshDatasetKeys());
@@ -301,10 +303,10 @@ export class RemoteBrowser {
     });
     $('fb-home').addEventListener('click', () => this._navigate(this._home || null));
     $('fb-modal').addEventListener('click', (e) => {
-      if (e.target.id === 'fb-modal') this.close();
+      if (e.target.id === 'fb-modal') this.cancel();
     });
     $('fb-modal').addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') this.close();
+      if (e.key === 'Escape') this.cancel();
     });
     // The path can be typed: Enter goes there.
     $('fb-path').addEventListener('keydown', (e) => this._pathKey(e));
@@ -507,9 +509,38 @@ export class RemoteBrowser {
     saveRecentFiles(server, rememberFile(loadRecentFiles(server), { path, kind }));
   }
 
-  /** @param {'dataset'|'prediction'|'model'} mode */
-  open(mode = 'dataset', { datasetFp = null } = {}) {
+  /** Tell the guided tours (ADR 0088) that `name` happened. */
+  _signal(name, detail = {}) {
+    this._ports.signal?.(name, detail);
+  }
+
+  /** The mode the dialog is open in, or null when it is hidden. */
+  mode() {
+    return $('fb-modal').classList.contains('hidden') ? null : this._mode;
+  }
+
+  /** The folder on screen, or null when the dialog is hidden. */
+  folder() {
+    return this.mode() === null ? null : this._path;
+  }
+
+  /** The next open starts in `path` (a tour opens the examples folder). */
+  startIn(path) {
+    this._path = path;
+  }
+
+  /** Show folder `path` in the open dialog. */
+  goTo(path) {
+    this._navigate(path);
+  }
+
+  /**
+   * @param {'dataset'|'prediction'|'model'} mode
+   * @param {{datasetFp?: string|null, folder?: string|null}} [opts]  `folder`: open there
+   */
+  open(mode = 'dataset', { datasetFp = null, folder = null } = {}) {
     this._mode = mode;
+    if (folder) this._path = folder;
     const titles = { dataset: 'Load Remote Dataset', prediction: 'Load Prediction', model: 'Load Model' };
     $('fb-title').textContent = titles[mode];
     $('fb-dataset-fields').style.display = mode === 'dataset' ? '' : 'none';
@@ -527,6 +558,7 @@ export class RemoteBrowser {
     this._renderRecent();
     this._renderUnitChoices();
     this._show();
+    this._signal('browser-opened', { mode });
   }
 
   /**
@@ -571,6 +603,13 @@ export class RemoteBrowser {
     $('fb-modal').classList.remove('hidden');
     this._hideSuggestions();
     this._untrap ||= trapFocus($('fb-modal'));
+    // Focus goes into the dialog now, not when the listing arrives: Escape and
+    // Tab are heard by the dialog only while focus is inside it, and a slow
+    // listing left the first Escape going nowhere.
+    const modal = $('fb-modal');
+    modal.tabIndex = -1;
+    modal.style.outline = 'none';
+    modal.focus({ preventScroll: true });
     this._focusFirstRow = true;   // once the listing arrives (_render)
     this._selected = null;
     $('fb-load').disabled = true;
@@ -593,6 +632,12 @@ export class RemoteBrowser {
     this._home = null;
   }
 
+  /** Close without loading (Cancel, a click beside the dialog, Escape). */
+  cancel() {
+    this.close();
+    this._signal('browser-cancelled');
+  }
+
   close() {
     this._dropCount();
     this._loadWhenReady = false;
@@ -601,6 +646,10 @@ export class RemoteBrowser {
     this._untrap = null;
     $('fb-modal').classList.add('hidden');
     $('fb-modal').classList.remove('over-dialog');
+    // A hidden field keeps focus until the browser next lays the page out, and
+    // a key typed in that gap (the next shortcut) was taken for typing in it.
+    const at = document.activeElement;
+    if (at && $('fb-modal').contains(at)) at.blur();
   }
 
   /** Server replied to LIST_DIR. */
@@ -632,6 +681,7 @@ export class RemoteBrowser {
     $('fb-up').disabled = !kw.parent;
     this._render(kw.entries || []);
     this._refreshLoadEnabled();   // in a pick mode the folder on screen enables the button
+    if (this.mode() !== null) this._signal('folder-listed', { mode: this._mode, path: this._path });
     if (this._focusAfterListing) {
       // Going up leaves the cursor on the folder we came from.
       const name = this._focusAfterListing;
@@ -849,6 +899,7 @@ export class RemoteBrowser {
 
   _selectFile(row, name) {
     this._selected = name;
+    this._signal('file-selected', { mode: this._mode, name, path: joinPath(this._path, name) });
     for (const r of document.querySelectorAll('#fb-list .fb-row.selected')) {
       r.classList.remove('selected');
     }
@@ -965,6 +1016,7 @@ export class RemoteBrowser {
     if (!this._pending) return;
     this._ports.setStatus(`"${this._pending.name}" is already loaded`, 'connected');
     if (this._pending.path) this._remember(this._pending.path, this._pending.kind);
+    this._signal('load-duplicate', { kind: this._pending.kind, name: this._pending.name });
     this._pending = null;
   }
 

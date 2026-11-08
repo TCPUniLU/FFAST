@@ -86,6 +86,6 @@ FILES = {
     "plain.xyz": PLAIN,
 }
 
-_EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "data"
-# Tracked in git (the other example folders are local only).
+_EXAMPLES = Path(__file__).resolve().parents[2] / "examples" / "data" / "variable-sized molecular"
+# The original SPICE pair retains its golden fingerprints after relocation.
 REPO_FILES = [_EXAMPLES / "dataset.xyz", _EXAMPLES / "prediction.xyz"]

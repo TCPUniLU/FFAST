@@ -8,6 +8,7 @@
 # modules/atomicErrors.py was retired once this reached parity.
 [[tabs]]
 name = "Atomic Errors"
+start = false
 selector = "atomic"
 
 [[tabs.panels]]

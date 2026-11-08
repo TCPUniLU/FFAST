@@ -181,6 +181,9 @@ class PanelConfig(BaseModel):
     y_label: AxisLabel = None
     diagonal: bool = False
     precision: int | None = None   # table decimals; unset = 3 significant digits
+    # A table's starting sort: [column title, "asc" or "desc"]. The browser
+    # remembers the user's own sort apart from the file; the desktop ignores it.
+    sort: list[str] | None = None
     # Label edits made in the browser (web parity plan 2026-10-29). Each
     # replaces what the panel draws by default; unset = the default.
     x_title: str | None = Field(default=None, min_length=1)   # the whole x axis title, unit included
@@ -223,6 +226,14 @@ class PanelConfig(BaseModel):
         return self
 
     @model_validator(mode="after")
+    def _sort_names_a_direction(self) -> "PanelConfig":
+        if self.sort is not None and not (len(self.sort) == 2 and self.sort[1] in ("asc", "desc")):
+            raise ValueError("'sort' is [column title, \"asc\" or \"desc\"]")
+        if self.sort is not None and self.kind != "table":
+            raise ValueError("only a table panel has a 'sort'")
+        return self
+
+    @model_validator(mode="after")
     def _label_edits_fit(self) -> "PanelConfig":
         """A 3D panel has no axes or legend; a legend place needs both x and y."""
         if self.kind == PANEL_KIND_3D and any(getattr(self, f) is not None for f in LABEL_FIELDS):
@@ -255,6 +266,10 @@ class AnalysisTabConfig(BaseModel):
     fit. The browser reads them; the desktop ignores them."""
     model_config = ConfigDict(extra="forbid")
     name: str
+    #: A built-in tab shows when a new install starts only if this is true; the
+    #: others wait under "From template" in the browser's + menu. The desktop
+    #: ignores it.
+    start: bool = True
     has_data_selector: bool = True
     live_layout: bool = False   # the one layout live-run tabs are made from (ADR 0089); not shown in the tab bar itself
     selector: str | None = None

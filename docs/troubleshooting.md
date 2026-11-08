@@ -6,7 +6,7 @@
 resolved something odd or an import fails in a way that makes no sense, check
 `python -V` first.
 
-**`command not found: ffast-qt`, or `ffast` opens the wrong client.** Console
+**`command not found: ffast-qt`, or `ffast` does not start.** Console
 scripts are written at install time, not read from `pyproject.toml` at run time,
 so an editable install made before the entry points changed keeps the old ones.
 Check what your environment actually has:
@@ -20,9 +20,8 @@ You should see five: `ffast` pointing at `launcher:main`, plus `ffast-qt`
 (`main:cli`), `ffast-web`, `ffast-server` and `ffast-cli`. Anything else means a
 stale install — reinstall to rewrite the scripts: `pip install -e . --no-deps`.
 
-`ffast` runs the desktop client when PySide6 is importable and the browser
-client when it is not. If it starts the browser on a machine where you expect
-the desktop, PySide6 is missing or broken: `pip install -e ".[gui]"`.
+`ffast` always starts the browser client (ADR 0090). For the desktop client run
+`ffast-qt`; it needs PySide6: `pip install -e ".[gui]"`.
 
 **The browser tab opens but stays disconnected.** The web page and the server are
 two ports. Run `ffast --no-browser`, read the URL it prints, and open that; if the

@@ -33,11 +33,11 @@ from ffast.protocol.rpc import pack, unpack
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
-DATASET_PATH = REPO_ROOT / "examples" / "data" / "dataset.xyz"
+DATASET_PATH = REPO_ROOT / "examples" / "data" / "variable-sized molecular" / "dataset.xyz"
 # The canvas of the focused 3D panel on screen (ADR 0056: each 3D panel has
 # its own, and the 3D controls act on the focused one).
 CANVAS = ".tabpanel.active .panel-3d.focused canvas.view3d"
-PREDICTION_PATH = REPO_ROOT / "examples" / "data" / "prediction.xyz"
+PREDICTION_PATH = REPO_ROOT / "examples" / "data" / "variable-sized molecular" / "prediction.xyz"
 
 
 pytestmark = [
@@ -466,7 +466,8 @@ async def _lammps_menu(page, label):
 
 FILE_MENU = [
     "Load Dataset…", "Load Prediction…", "Load Model…", "Load Zero Model", "Load Example Dataset and Prediction",
-    "Save Session…", "Load Session…", "Export Selected Dataset…", "Connect to Server…", "Connect to Cluster…",
+    "Save Session…", "Load Session…", "Export Selected Dataset…", "Connect to Server…",
+    "Connect to Cluster…", "Tour: First steps", "Tour: Load a dataset and a prediction",
 ]
 # Everything for live LAMMPS runs (ADR 0086/0087) has a top-bar menu of its own.
 LAMMPS_MENU = ["Run with FFAST…", "Live Runs…", "Make Reference…"]
@@ -951,6 +952,9 @@ async def test_web_the_loader_suggests_paths_while_typing(shared_server):
             await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
             await _expect_connected(page)
             await _file_menu(page, "Load Dataset…")
+            # The opening listing focuses its first row. Let it arrive before
+            # typing so that focus change cannot close the suggestions.
+            await expect(page.locator("#fb-list .name", has_text=re.compile(r"^examples$"))).to_be_visible()
             path = page.locator("#fb-path")
             await path.fill(f"{REPO_ROOT}/exa")
             options = page.locator("#fb-suggest .fb-suggestion")
@@ -959,7 +963,7 @@ async def test_web_the_loader_suggests_paths_while_typing(shared_server):
             await expect(options.first).to_have_class(re.compile(r"\bactive\b"))
             await path.press("Tab")
             await expect(path).to_have_value(f"{REPO_ROOT}/examples/")
-            await path.fill(f"{REPO_ROOT}/examples/data/data")
+            await path.fill(f"{DATASET_PATH.parent}/data")
             await expect(options).to_have_text(["dataset.xyz"])
             await path.press("Enter")                       # today's behaviour: go to the path as typed
             await expect(page.locator("#fb-suggest")).to_be_hidden()
@@ -1044,11 +1048,11 @@ async def test_web_the_loader_names_units_only_when_asked_and_lists_the_last_use
             await browser.close()
 
 
-async def test_web_element_picker_buttons_wear_the_3d_element_colours(shared_prediction_server):
+async def test_web_element_picker_buttons_wear_the_3d_element_colours(ffast_web_server):
     """Each element button's outline and symbol use the element's colour in the
     3D view; selected, it is filled with that colour and the symbol is black or
     white. "All" stays neutral."""
-    ws_port, web_port = shared_prediction_server
+    ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -1267,6 +1271,30 @@ async def test_web_status_label_opens_the_connection_dialog(shared_server):
             await dialog.locator("#connect-btn").click()
             await _expect_connected(page)
             await expect(dialog).to_be_hidden()
+        finally:
+            await browser.close()
+
+
+async def test_web_dialog_buttons_stay_on_the_bottom_edge_when_enlarged(shared_server):
+    """Dragging a dialog's corner to enlarge it keeps the button row on the
+    bottom edge, not floating under the last field."""
+    ws_port, web_port = shared_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
+            await expect(page.locator("#conn-dialog")).to_be_visible()
+            gap = await page.evaluate(
+                """() => {
+                    const panel = document.querySelector('#conn-dialog .warning-modal-panel');
+                    panel.style.height = '600px';   // what dragging the corner does
+                    const foot = panel.querySelector('.warning-modal-footer');
+                    return panel.getBoundingClientRect().bottom - foot.getBoundingClientRect().bottom;
+                }"""
+            )
+            assert abs(gap) <= 2, f"footer is {gap}px above the dialog's bottom edge"
         finally:
             await browser.close()
 
@@ -3306,6 +3334,9 @@ async def test_web_dialogs_and_repeated_controls_have_their_own_names(shared_pre
             await _open_loupe(page, ws_port, web_port, dataset_fp)
             await expect(page.locator(".pane[data-pane='Colour By'] .help-btn")).to_have_attribute(
                 "aria-label", "What is Colour By?")
+            # the hover text is the note's first sentence, then an invitation (to_fix_v3 #7)
+            await expect(page.locator(".pane[data-pane='Colour By'] .help-btn")).to_have_attribute(
+                "title", "Chooses what colours the atoms: element, movement or a per-atom metric. Click for more.")
             tool = page.locator("#pick-toolbar .pick-tool-btn").first
             await expect(tool).to_have_attribute("aria-pressed", "false")
             await tool.click()
@@ -3333,6 +3364,8 @@ async def test_web_dialogs_and_repeated_controls_have_their_own_names(shared_pre
                 "aria-label", "Peaks on Forces MAE timeline")
             await expect(page.locator(".tabpanel.active .analysis-controls .help-btn")).to_have_attribute(
                 "aria-label", "What is this tab's choice of data?")
+            await expect(page.locator(".tabpanel.active .analysis-controls .help-btn")).to_have_attribute(
+                "title", "Chooses which datasets and predictions this tab compares. Click for more.")
         finally:
             await browser.close()
 
@@ -3581,9 +3614,8 @@ async def test_web_a_unit_named_on_one_plot_shows_on_every_plot_and_window(ffast
 
             await page.wait_for_function(
                 f"() => ({_AXIS_TITLE})(['Energy MAE timeline', 'y']) === 'Energy MAE (eV)'", timeout=15000)
-            await expect(page.locator(
-                '.tabpanel.active .analysis-panel[data-title="Energy MAE"] th[data-unit-role]'
-            )).to_have_text("Energy MAE (eV)", timeout=15000)
+            units = page.locator('.tabpanel.active .analysis-panel[data-title="Errors"] thead .th-unit')
+            await expect(units).to_have_text(["[eV]", "[eV]", "[unit]", "[unit]"], timeout=15000)
             await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
             assert await page.evaluate(_AXIS_TITLE, ["Forces MAE timeline", "y"]) == "Forces MAE [unit]"
         finally:
@@ -4246,13 +4278,16 @@ async def test_web_user_tabs_reach_every_window_and_can_be_reset_hidden_exported
                 await expect(tabbar.last).to_have_text("Mine")
                 assert (tabs_dir / "mine.toml").exists()
 
-                # An edited built-in tab, in its place, marked.
+                # An edited built-in tab, in its place, marked. (Gyration waits
+                # as a template on a new install: show it first.)
+                answer = await _tab_request(ws_port, "HIDE_TAB", {"name": "Gyration", "hidden": False})
+                assert answer["ok"], answer
                 answer = await _tab_request(ws_port, "SAVE_TAB", {"previous_name": "Gyration", "tab": {
                     "name": "Gyration", "panels": [{"kind": "table", "row": 0, "col": 0, "title": "MAE",
                         "metrics": {"value": {"metric": "ffast.force_difference[dataset;component;mae]"}}}]}})
                 assert answer["ok"], answer
                 gyration = page.locator("#tabbar .tab", has_text="Gyration")
-                await expect(gyration.locator(".tab-mark")).to_have_text("edited")
+                await expect(gyration.locator(".tab-mark")).to_have_count(0)   # no mark in the bar (to_fix_v3 #9)
                 await gyration.click()
                 await _tab_menu(page, "Reset to original…")
                 dialog = page.locator(".ask-dialog")
@@ -4322,6 +4357,77 @@ async def test_web_new_tab_button_follows_the_last_tab(tmp_path):
                 edit = await page.locator("#tab-edit-btn").bounding_box()
                 assert plus["x"] >= 0 and plus["x"] + plus["width"] <= 700
                 assert plus["x"] + plus["width"] <= edit["x"]
+            finally:
+                await browser.close()
+
+
+async def test_web_a_new_install_starts_with_two_tabs_and_the_rest_are_templates(tmp_path):
+    """to_fix_v3 #3: a fresh tabs folder shows 3D and Basic Errors. + lists all
+    five built-in tabs under From template; picking one shows that tab itself,
+    it can be edited and Reset to original brings the built-in one back."""
+    tabs_dir = tmp_path / "tabs"
+    config = tmp_path / "ffast.toml"
+    config.write_text("")
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1300, "height": 820})
+            tabbar = page.locator("#tabbar .tab")
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await expect(tabbar).to_have_text(["3D", "Basic Errors"])
+                await page.locator("#tab-new-btn").click()
+                menu = page.locator("#tab-new-list")
+                await expect(menu.locator(".menu-head")).to_have_text("From template")
+                items = menu.locator("[data-action^='tab-template:']")
+                await expect(items).to_have_text(
+                    ["3D", "Basic Errors", "Subsystem Errors", "Atomic Errors", "Gyration"])
+                await items.filter(has_text="Gyration").click()
+                await expect(tabbar).to_have_text(["3D", "Basic Errors", "Gyration"])
+                await expect(page.locator("#tabbar .tab.active")).to_have_text("Gyration")
+                # a tab already showing is only switched to
+                await page.locator("#tab-new-btn").click()
+                await menu.locator("[data-action='tab-template:3D']").click()
+                await expect(tabbar).to_have_count(3)
+                await expect(page.locator("#tabbar .tab.active")).to_have_text("3D")
+                # it is the built-in tab itself: an edit replaces it, Reset brings it back
+                answer = await _tab_request(ws_port, "SAVE_TAB", {"previous_name": "Gyration", "tab": {
+                    "name": "Gyration", "panels": [{"kind": "3d", "row": 0, "col": 0}]}})
+                assert answer["ok"], answer
+                assert (tabs_dir / "gyration.toml").exists()
+                await page.locator("#tabbar .tab", has_text="Gyration").click()
+                await _tab_menu(page, "Reset to original…")
+                await page.locator(".ask-dialog").get_by_role("button", name="Confirm").click()
+                await expect(page.locator(".tabpanel.active .analysis-panel[data-kind='overlay_timeline']")).not_to_have_count(0)
+            finally:
+                await browser.close()
+
+
+async def test_web_the_new_tab_menu_stays_inside_the_window(tmp_path):
+    """to_fix_v3 #5: with many tabs "+" sits near the right edge and its menu
+    was cut by the window. The menu now slides left to fit."""
+    tabs_dir = tmp_path / "tabs"
+    config = tmp_path / "ffast.toml"
+    config.write_text("")
+    async with _spawn_server("--tabs-dir", str(tabs_dir), "--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1024, "height": 768})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                before = await page.locator("#tabbar .tab").count()
+                for i in range(8):
+                    answer = await _tab_request(ws_port, "SAVE_TAB", {"tab": {
+                        "name": f"Tab {i}", "panels": [{"kind": "3d", "row": 0, "col": 0}]}})
+                    assert answer["ok"], answer
+                await expect(page.locator("#tabbar .tab")).to_have_count(before + 8)
+                await page.locator("#tab-new-btn").click()
+                menu = page.locator("#tab-new-list")
+                await expect(menu).to_be_visible()
+                box = await menu.bounding_box()
+                assert box["x"] >= 0 and box["x"] + box["width"] <= 1024, box
             finally:
                 await browser.close()
 
@@ -4495,6 +4601,90 @@ async def test_web_edit_mode_head_covers_no_half_hidden_title(tmp_path):
                 await browser.close()
 
 
+async def test_web_the_add_panel_list_can_be_searched(tmp_path):
+    """to_fix_v3 #4: a search box matches a panel's title, its tab's name and
+    its metrics; tabs with no match are hidden; the list includes the panels of
+    template tabs that are not in the bar; Enter adds the only match."""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 820})
+            try:
+                await _open_app(page, web_port, ws_port)
+                await page.locator("#tabbar .tab", has_text="Basic Errors").click()
+                await page.locator("#tab-edit-btn").click()
+                await page.locator("[data-edit=add-panel]").click()
+                search = page.get_by_label("Search panels")
+                await expect(search).to_be_focused()
+                every = page.locator(".panel-choice:visible")
+                total = await every.count()
+                heads = page.locator(".panel-list-head:visible")
+                await expect(heads.filter(has_text="Gyration")).to_have_count(1)   # a template, not in the bar
+
+                await search.fill("gyration")      # a tab's name: only its group
+                await expect(heads).to_have_text(["Gyration"])
+                assert 0 < await every.count() < total
+
+                await search.fill("MAE")           # a metric: every panel shown has it
+                assert 0 < await every.count() < total
+                texts = await page.evaluate(
+                    "() => [...document.querySelectorAll('.panel-choice')].filter((b) => !b.hidden)"
+                    ".map((b) => (b.textContent + ' ' + b.title).toLowerCase())")
+                assert all("mae" in t for t in texts), texts
+
+                await search.fill("zzz no such panel")
+                await expect(every).to_have_count(0)
+                await expect(page.locator(".panel-none")).to_have_text("No panel matches.")
+                await expect(heads).to_have_count(0)
+
+                await search.fill("")
+                await expect(every).to_have_count(total)
+                await expect(page.locator(".panel-none")).to_be_hidden()
+
+                await search.fill("3d panel")      # exactly one match: Enter adds it
+                await expect(every).to_have_count(1)
+                before = await page.locator(_CHROME).count()
+                await search.press("Enter")
+                await expect(page.locator(_CHROME)).to_have_count(before + 1)
+            finally:
+                await browser.close()
+
+
+async def test_web_edit_mode_names_itself_and_only_the_panel_in_use_wears_the_accent(tmp_path):
+    """to_fix_v3 #6d (spec 5.2): "Editing layout" stays in the bar; panels keep a
+    neutral solid border; the panel being held or reached by keyboard gets the
+    accent outline, one at a time; the grips show where they can be used."""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 820})
+            border = """(el) => { const cs = getComputedStyle(el);
+                return [cs.borderTopStyle, cs.borderTopColor, getComputedStyle(document.body).getPropertyValue('--accent').trim()]; }"""
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _open_analysis_tab(page, "Gyration")
+                await page.locator("#tab-edit-btn").click()
+                await expect(page.locator(".tabpanel.active .edit-mode-label")).to_have_text("Editing layout")
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_contain_text("Editing Gyration")
+                chromes = page.locator(_CHROME)
+                assert await chromes.count() >= 3
+                styles = await chromes.evaluate_all(f"(els) => els.map({border})")
+                assert all(style == "solid" for style, _, _ in styles), styles
+                assert all(color != "rgb(179, 167, 232)" for _, color, _ in styles), styles   # none wears the accent
+
+                # one panel reached by keyboard: only it gets the accent outline
+                await chromes.nth(1).locator("[data-edit=remove]").focus()
+                styles = await chromes.evaluate_all(f"(els) => els.map({border})")
+                lit = [i for i, (_, color, _) in enumerate(styles) if color == "rgb(179, 167, 232)"]
+                assert lit == [1], styles
+                # the grips are there when the panel is in use, and hidden when not
+                grip = lambda i: chromes.nth(i).locator(".edit-resize")   # noqa: E731
+                await expect(grip(1)).to_have_css("opacity", "1")
+                await expect(grip(0)).to_have_css("opacity", "0")
+            finally:
+                await browser.close()
+
+
 async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
     """ADR 0056 rules 11, 12 and 15. ✎ opens Edit mode: remove a panel, add a
     ready-made 3D panel and a custom one from the builder, drag one to the top
@@ -4570,7 +4760,11 @@ async def test_web_edit_mode_changes_a_tab_only_on_save(tmp_path):
                 await page.locator(_CHROME, has_text="Gyradius distribution").locator("[data-edit=remove]").click()
                 await page.locator("[data-edit=save]").click()
                 await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
-                await expect(page.locator("#tabbar .tab.active .tab-mark")).to_have_text("edited")
+                await expect(page.locator("#tabbar .tab.active .tab-mark")).to_have_count(0)
+                await page.locator("#tab-edit-btn").click()
+                await expect(page.locator(".tabpanel.active .edit-origin")).to_contain_text(
+                    "Built-in tab, edited by you · Reset to original")
+                await page.locator("[data-edit=cancel]").click()
                 await expect(page.locator(".tabpanel.active .analysis-panel[data-title='Gyradius distribution']")).to_have_count(0)
                 saved = (tabs_dir / "gyration.toml").read_text()
                 assert "Gyradius distribution" not in saved and "Total gyration radius" in saved
@@ -4642,6 +4836,37 @@ async def test_web_tab_settings_and_the_tab_being_edited(tmp_path):
                 await expect(page.locator("#tabbar .tab.editing")).to_have_count(0)
                 assert "same_step" in (tabs_dir / "gyration.toml").read_text()
                 await expect(page.locator('.tabpanel.active .ac-item[data-control="same_step"]')).to_have_count(1)
+            finally:
+                await browser.close()
+
+
+async def test_web_edit_mode_says_a_tab_replaces_a_built_in_one_and_resets_it(tmp_path):
+    """to_fix_v3 #9: an edited built-in tab has no mark in the bar. Edit mode
+    shows "Built-in tab, edited by you · Reset to original", and the button
+    brings the original back; a tab that is not a copy shows no such line."""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 820})
+            line = page.locator(".tabpanel.active .edit-origin")
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _open_analysis_tab(page, "Gyration")
+                await page.locator("#tab-edit-btn").click()
+                await expect(line).to_have_count(0)           # still the built-in tab itself
+                await page.locator(_CHROME, has_text="Gyradius distribution").locator("[data-edit=remove]").click()
+                await page.locator("[data-edit=save]").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                assert (tabs_dir / "gyration.toml").exists()
+                await expect(page.locator("#tabbar .tab-mark")).to_have_count(0)
+
+                await page.locator("#tab-edit-btn").click()
+                await expect(line).to_have_text("Built-in tab, edited by you · Reset to original")
+                await line.get_by_role("button", name="Reset to original").click()
+                await page.locator(".ask-dialog").get_by_role("button", name="Confirm").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                await expect(page.locator(".tabpanel.active .analysis-panel[data-title='Gyradius distribution']")).to_have_count(1)
+                assert not (tabs_dir / "gyration.toml").exists()
             finally:
                 await browser.close()
 
@@ -5903,6 +6128,72 @@ async def _front_atom(page, zoom=1.0):
     )
 
 
+async def _pick_two_atoms_with_info(page):
+    await page.locator("#pick-toolbar button[data-tool='info']").click()
+    await page.evaluate(
+        "() => window.ffastApp._onPick([{displayIndex: 0, atomId: 0}, {displayIndex: 1, atomId: 1}])")
+    await expect(page.locator("#pick-strip-count")).to_contain_text("2 picked")
+    await expect(page.locator("#pick-readout")).to_contain_text("Distance")
+
+
+async def test_web_picked_atoms_follow_to_the_next_frame_of_the_same_structure(ffast_web_server, tmp_path):
+    """to_fix_v3 #12: with the same elements in the same order, a new frame keeps
+    the picks and the Info readout is worked out for that frame."""
+    ws_port, web_port = ffast_web_server
+    first = ase.io.read(DATASET_PATH, index=0)
+    frames = []
+    for i in range(3):
+        frame = first.copy()
+        positions = frame.get_positions()
+        positions[1, 0] += 0.5 * i     # only the distance between atoms 0 and 1 changes
+        frame.set_positions(positions)
+        frames.append(frame)
+    path = tmp_path / "same_structure.xyz"
+    ase.io.write(path, frames, format="extxyz")
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("LOAD_DATASET", (str(path), "ase (auto)"), {}))
+        dataset_fp = (await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30))["args"][0]
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _pick_two_atoms_with_info(page)
+            before = await page.locator("#pick-readout").inner_text()
+            await page.evaluate("() => window.ffastApp._setMainFrame(2)")
+            await page.wait_for_function(
+                "(b) => document.getElementById('pick-readout').textContent !== b", arg=before)
+            await expect(page.locator("#pick-readout")).to_contain_text("Distance")
+            await expect(page.locator("#pick-strip-count")).to_contain_text("2 picked")
+        finally:
+            await browser.close()
+
+
+async def test_web_picks_clear_when_the_next_frame_has_a_different_structure(shared_dataset_server):
+    """to_fix_v3 #12: a frame with other elements, or another count of atoms,
+    clears the picks and says so."""
+    ws_port, web_port = shared_dataset_server
+    dataset_fp = await _preload_dataset(ws_port)
+    frames = ase.io.read(DATASET_PATH, index=":")
+    same = lambda a, b: list(a.numbers) == list(b.numbers)  # noqa: E731
+    other = next(i for i, f in enumerate(frames) if not same(f, frames[0]))
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _pick_two_atoms_with_info(page)
+            await page.evaluate("(i) => window.ffastApp._setMainFrame(i)", other)
+            await expect(page.locator("#pick-strip-count")).to_contain_text("0 picked")
+            await expect(page.locator("#status")).to_contain_text("Selection cleared: different structure")
+        finally:
+            await browser.close()
+
+
 async def test_web_pick_tools_show_their_names(shared_dataset_server):
     """ADR 0055: pick tools show their names next to their icons."""
     ws_port, web_port = shared_dataset_server
@@ -6220,6 +6511,11 @@ _PANEL_HAS_POINTS = """(title) => {
 
 async def _open_analysis_tab(page, name):
     tab = page.locator("#tabbar .tab", has_text=name)
+    if await tab.count() == 0:
+        # a new install starts with 3D and Basic Errors only; the others wait
+        # under "From template" in the + menu (to_fix_v3 #3)
+        await page.locator("#tab-new-btn").click()
+        await page.locator(f"#tab-new-list [data-action='tab-template:{name}']").click()
     await expect(tab).to_have_count(1)
     await tab.click()
 
@@ -6509,7 +6805,9 @@ async def test_web_only_the_rows_with_peak_labels_grow(shared_prediction_server,
             # labels start off: tick every timeline's, as they once all were
             for box in await page.locator(".tabpanel.active .peaks-toggle input").all():
                 await box.check()
-            await expect(page.locator(_sub_panel("Forces MAE timeline") + " .panel-plot .annotation")).to_have_count(5)
+            # every timeline draws its labels (each grows its row) before the rows are measured
+            for title in ("Energy MAE timeline", "Forces MAE timeline", "Forces RMSE timeline"):
+                await expect(page.locator(_sub_panel(title) + " .panel-plot .annotation")).to_have_count(5)
             slots = await page.evaluate(_SLOT_BOXES, "Basic Errors")
             timeline_tops = {top for kinds, top, _ in slots if "timeline" in kinds}
             assert timeline_tops, slots
@@ -6517,7 +6815,9 @@ async def test_web_only_the_rows_with_peak_labels_grow(shared_prediction_server,
                 if "timeline" in kinds:
                     assert height > 300, slots
                 elif top not in timeline_tops:
-                    assert abs(height - (300 if width < 1000 else 350)) <= 2, (kinds, slots)
+                    # a table row is shorter (its row height is 0.5 of 300 px, to_fix_v3 #8)
+                    want = 300 if width < 1000 else 170 if "table" in kinds else 350
+                    assert abs(height - want) <= 2, (kinds, slots)
             assert any("table" in kinds for kinds, top, _ in slots if top not in timeline_tops)
             # and every row holds its panels: none reaches into the row below
             for _, top, height in slots:
@@ -7298,6 +7598,79 @@ async def test_web_a_plot_downloads_svg_and_csv(shared_prediction_server):
             await browser.close()
 
 
+async def test_web_basic_errors_is_one_table_inside_its_panel_and_headers_sort(shared_prediction_server):
+    """to_fix_v3 #8: one table (not four side by side), a row per dataset and
+    prediction, a column per metric with its unit under the name, inside its
+    panel; a header click sorts: ascending, descending, original order."""
+    ws_port, web_port = shared_prediction_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            tab = page.locator(".tabpanel.active")
+            panel = tab.locator(".analysis-panel[data-title='Errors']")
+            table = panel.locator("table.panel-table")
+            await expect(table).to_be_visible(timeout=25000)
+            await expect(tab.locator("table.panel-table")).to_have_count(1)
+            await expect(table.locator("thead .th-name")).to_have_text(
+                ["Dataset", "Prediction", "Energy MAE", "Energy RMSE", "Forces MAE", "Forces RMSE"])
+            await expect(table.locator("thead .th-unit")).to_have_count(4)   # a unit line under each metric
+            await expect(table.locator("tbody tr")).to_have_count(1)
+            assert "—" not in await table.locator("tbody").inner_text()
+            inside = await page.evaluate(
+                """() => { const p = document.querySelector(".tabpanel.active .analysis-panel[data-title='Errors']");
+                  const t = p.querySelector('table').getBoundingClientRect(), r = p.getBoundingClientRect();
+                  return [t.left >= r.left - 1, t.right <= r.right + 1, t.bottom <= r.bottom + 1]; }""")
+            assert inside == [True, True, True]
+
+            head = table.locator("thead th", has_text="Forces MAE")
+            await head.locator(".th-name").click()
+            await expect(head).to_have_attribute("aria-sort", "ascending")
+            await expect(head.locator(".th-sort")).to_have_text("▲")
+            await head.locator(".th-name").click()
+            await expect(head).to_have_attribute("aria-sort", "descending")
+            await expect(head.locator(".th-sort")).to_have_text("▼")
+            await head.locator(".th-name").click()
+            await expect(head).not_to_have_attribute("aria-sort", re.compile("."))
+        finally:
+            await browser.close()
+
+
+async def test_web_the_bar_has_the_logo_and_the_accent_is_periwinkle_but_plots_keep_their_blue(shared_dataset_server):
+    """to_fix_v3 #6c: the Dual Traces mark sits before the wordmark (hidden from
+    screen readers: the wordmark names the app); the UI accent is periwinkle
+    (a darker one on the Journal page, for text contrast), and plot series 1
+    stays blue."""
+    ws_port, web_port = shared_dataset_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            logo = page.locator("#topbar h1 svg.logo")
+            await expect(logo).to_have_attribute("aria-hidden", "true")
+            await expect(page.get_by_role("heading", name="FFAST", level=1)).to_be_visible()
+            box = await logo.bounding_box()
+            text = await page.locator("#topbar h1").bounding_box()
+            assert box["x"] <= text["x"] + 2 and 18 <= box["height"] <= 22, (box, text)
+            read = """(sel) => { const cs = getComputedStyle(document.querySelector(sel));
+                return [cs.getPropertyValue('--accent').trim(), cs.getPropertyValue('--series').split(',')[0].trim()]; }"""
+            assert await page.evaluate(read, "body") == ["#b3a7e8", "#56b4e9"]
+            await page.get_by_role("radio", name="Journal page").click()
+            await page.wait_for_function("() => document.body.classList.contains('journal')")
+            accent, series1 = await page.evaluate(read, ".analysis-grid")
+            assert accent == "#6554a6" and series1 == "#0072b2"
+        finally:
+            await browser.close()
+
+
 async def test_web_a_table_downloads_as_csv(shared_prediction_server):
     """Web parity plan 2026-10-29: a table's ⋯ menu downloads it as CSV."""
     ws_port, web_port = shared_prediction_server
@@ -7311,16 +7684,17 @@ async def test_web_a_table_downloads_as_csv(shared_prediction_server):
             await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await _open_analysis_tab(page, "Basic Errors")
-            panel = page.locator(".tabpanel.active .analysis-panel[data-title='Energy MAE']")
+            panel = page.locator(".tabpanel.active .analysis-panel[data-title='Errors']")
             await expect(panel.locator("table.panel-table")).to_be_visible(timeout=25000)
             await panel.locator(".panel-more").click()
             async with page.expect_download() as dl:
                 await page.locator("#panel-menu-list [data-action='panel-table-csv']").click()
             download = await dl.value
-            assert download.suggested_filename == "Energy_MAE.csv"
+            assert download.suggested_filename == "Errors.csv"
             with open(await download.path()) as f:
                 lines = f.read().splitlines()
             assert len(lines) >= 2
+            assert lines[0].startswith("Dataset,Prediction,Energy MAE") and "Forces RMSE" in lines[0]
             assert re.search(r"\d", lines[1])
         finally:
             await browser.close()

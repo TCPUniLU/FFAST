@@ -21,9 +21,10 @@
       --ink: #f2f3f5; /* strong text, active tab */
       --ink-2: #c3c8cf; /* default text */
       --ink-3: #9aa1ab; /* muted text, captions, axis ticks */
-      --accent: #56b4e9; /* active, focus ring, selection, series 1 */
+      --accent: #b3a7e8; /* active, focus ring, selection (the UI accent, not a plot colour) */
       --accent-ink: #0b1a24; /* text on an --accent fill */
-      --sel: rgba(86, 180, 233, 0.18);
+      --sel: rgba(179, 167, 232, 0.18);
+      --logo-reference: #929daa; /* the mark's reference trace; its prediction trace is --accent */
       --peak: #d55e00; /* peak tick */
       --peak-ink: #ff9a55; /* peak label text */
       --median: #2bbf93; /* median and reference lines */
@@ -69,7 +70,7 @@
       color-scheme: light;
       --ground: #ffffff; --surface: #ffffff; --surface-2: #f3f4f6; --surface-3: #e6e8eb;
       --line: #cfd4da; --ink: #111418; --ink-2: #2b3036; --ink-3: #59616c;
-      --accent: #0072b2; --accent-ink: #ffffff; --sel: rgba(0, 114, 178, 0.12);
+      --accent: #6554a6; --accent-ink: #ffffff; --sel: rgba(101, 84, 166, 0.12);
       --peak: #d55e00; --peak-ink: #a84600; --median: #00795a; --warn: #9a6a00; --danger: #c0392b;
       --series: #0072b2, #e69f00, #009e73, #b8a900, #cc79a7, #d55e00, #56b4e9, #59616c;
       --bg1: var(--ground); --bg2: var(--surface); --bg3: var(--line); --bg4: var(--surface-3);
@@ -147,7 +148,13 @@
     #topbar h1 {
       font-size: var(--fs-l); font-weight: 700;
       color: var(--hl2); margin-right: 6px;
+      display: inline-flex; align-items: center; gap: 6px;
     }
+    /* The Dual Traces mark (spec section 3): reference in grey, prediction in the accent. */
+    .logo { height: 20px; width: auto; flex: none; }
+    .logo path { fill: none; stroke-width: 3.2; stroke-linecap: round; stroke-linejoin: round; }
+    .logo .ref { stroke: var(--logo-reference, #929daa); }
+    .logo .pred { stroke: var(--logo-prediction, var(--accent, #b3a7e8)); }
 
     button {
       padding: 4px 10px; border: none; border-radius: 3px;
@@ -294,11 +301,9 @@
     /* The empty alt text keeps the shortcut out of the item's name (aria-keyshortcuts says it). */
     .menu-list [role=menuitem][data-keys]::after { content: attr(data-keys) / ""; margin-left: auto; color: var(--muted); }
     .menu-sep { height: 1px; margin: 4px 6px; background: var(--bg3); }
+    .menu-head { padding: 4px 10px 2px; font-size: var(--fs-xs); color: var(--dim, inherit); opacity: 0.75; }
     /* a user tab that replaces a built-in or project one (rule 10) */
-    .tab .tab-mark {
-      margin-left: 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--hl2); opacity: 0.85;
-    }
-    .tab .tab-mark.changed { color: var(--warn); }
+    .edit-origin { font-size: var(--fs-xs); opacity: 0.85; display: inline-flex; align-items: center; gap: 6px; }
     .tab.drop-before { box-shadow: inset 2px 0 0 var(--hl2); }
     .tab.drop-after { box-shadow: inset -2px 0 0 var(--hl2); }
     #tab-edit-btn.active { color: var(--hl2); box-shadow: inset 0 0 0 1px var(--hl2); }
@@ -322,10 +327,25 @@
     .edit-bar .edit-note { color: var(--warn); font-size: var(--fs-s); }
     .edit-bar button.primary { background: var(--accent); color: var(--accent-ink); }
     .analysis-grid.editing-grid { position: relative; }
+    /* The mode is named in the edit bar. Panels keep a neutral border; the one
+       being moved, sized or reached by keyboard wears the accent outline, one at a time. */
+    .edit-mode-label {
+      font-size: var(--fs-xs); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+      color: var(--accent-ink); background: var(--accent); border-radius: 3px; padding: 2px 6px;
+    }
     .edit-chrome {
       position: relative; z-index: 6; min-width: 0; min-height: 0;
-      border: 1px dashed var(--hl2); border-radius: 5px; background: color-mix(in srgb, var(--accent) 7%, transparent);
+      border: 1px solid var(--line); border-radius: 5px;
     }
+    .edit-chrome:hover { border-color: var(--ink-3); }
+    .edit-chrome:focus-within, .edit-chrome.held {
+      border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent);
+    }
+    /* grips show where they can be used: on hover, from the keyboard, while held */
+    .edit-chrome .edit-resize, .edit-chrome .edit-edge { opacity: 0; }
+    .edit-chrome:hover .edit-resize, .edit-chrome:focus-within .edit-resize, .edit-chrome.held .edit-resize,
+    .edit-chrome:hover .edit-edge, .edit-chrome:focus-within .edit-edge, .edit-chrome.held .edit-edge { opacity: 1; }
+    .edit-chrome:not(:hover):not(:focus-within):not(.held) .edit-handle { font-weight: 600; opacity: 0.85; }
     .edit-head {
       display: flex; align-items: center; gap: 4px; padding: 2px 4px;
       background: color-mix(in srgb, var(--ground) 92%, transparent); border-radius: 5px 5px 0 0;
@@ -370,6 +390,10 @@
     .builder-list { flex: 1; display: flex; flex-direction: column; gap: 4px; }
     .builder-row { display: flex; gap: 4px; }
     .builder-row select { flex: 1; }
+    .panel-add { display: flex; flex-direction: column; gap: 6px; }
+    .panel-search { width: 100%; box-sizing: border-box; }
+    .panel-none { padding: 6px 8px; opacity: 0.75; }
+    .panel-choice[hidden], .panel-list-head[hidden] { display: none; }
     .panel-list { display: flex; flex-direction: column; gap: 2px; }
     .panel-list-head {
       margin-top: 8px; font-size: var(--fs-s); font-weight: 600; color: var(--muted);
@@ -518,6 +542,7 @@
     .analysis-panel .panel-title .peaks-toggle[hidden] { display: none; }
     .panel-menu { position: fixed; }
     .fields-dialog label { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+    .fields-dialog label + label { margin-top: 0; }   /* flex items' margins don't merge */
     .fields-dialog label input { flex: 1; min-width: 0; }
     .analysis-panel .panel-title .panel-more { height: auto; padding: 1px 4px; flex-shrink: 0; }
     .analysis-panel .panel-title .sub-toggle input,
@@ -697,7 +722,21 @@
     }
     .analysis-scrollstrip .analysis-panel { flex: 0 0 auto; }
     /* HTML tables for table / grouped_table kinds */
+    /* a table of errors: its body scrolls past about 10 rows, its header stays */
+    .panel-table-wrap { max-height: 340px; overflow: auto; }
     table.panel-table { width: 100%; border-collapse: collapse; font-size: var(--fs-s); }
+    table.panel-table.sortable thead th {
+      position: sticky; top: 0; z-index: 1; background: var(--bg2); vertical-align: bottom;
+      cursor: pointer; user-select: none;
+    }
+    table.panel-table .th-name, table.panel-table .th-unit { display: block; }
+    table.panel-table .th-unit { font-weight: 400; font-size: var(--fs-xs); }
+    table.panel-table .th-sort { margin-left: 4px; font-size: var(--fs-xs); }
+    table.panel-table .th-sort:empty { display: none; }
+    table.panel-table .th-name, table.panel-table .th-sort { display: inline; }
+    table.panel-table td.cell-name {
+      max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     table.panel-table th, table.panel-table td {
       padding: 3px 8px; text-align: right; border-bottom: 1px solid var(--bg3);
       font-variant-numeric: tabular-nums;
@@ -706,11 +745,14 @@
     table.panel-table th:first-child, table.panel-table td:first-child {
       text-align: left; color: var(--text1);
     }
+    table.panel-table.sortable th:nth-child(2), table.panel-table.sortable td:nth-child(2) {
+      text-align: left; color: var(--text1);
+    }
     /* A unit the user names: click an axis title, an error table header or
        the colourbar label (units.js). Plotly makes its titles click-through. */
     .panel-plot[data-unit-x] .g-xtitle text,
     .panel-plot[data-unit-y] .g-ytitle text { pointer-events: all !important; cursor: pointer; }
-    table.panel-table th[data-unit-role], #colorbar-label.unit-editable { cursor: pointer; }
+    table.panel-table [data-unit-role], #colorbar-label.unit-editable { cursor: pointer; }
     #unit-popover {
       position: fixed; z-index: 1000; padding: 8px 10px;
       background: var(--bg2); border: 1px solid var(--bg3); border-radius: 6px;
@@ -800,8 +842,8 @@
       text-align: center; color: var(--ink-3); pointer-events: none;
     }
     #overlay.hidden { display: none; }
-    #empty-load-btn, #empty-example-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: var(--fs-m); }
-    #empty-example-btn { margin-left: 8px; }
+    #empty-load-btn, #empty-example-btn, #empty-tour-btn { margin-top: 14px; pointer-events: auto; height: auto; padding: 7px 16px; font-size: var(--fs-m); }
+    #empty-example-btn, #empty-tour-btn { margin-left: 8px; }
     #empty-load-btn { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
     #empty-load-btn:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); filter: brightness(1.1); }
     #empty-load-btn:disabled { background: var(--surface-2); color: var(--ink-3); font-weight: normal; }
@@ -1283,6 +1325,8 @@
       min-width: 280px;
       min-height: 120px;
       resize: both;              /* drag the bottom-right corner to enlarge */
+      display: flex;             /* a column, so the footer can sit on the bottom edge */
+      flex-direction: column;
 
       background: var(--bg2);
       color: var(--text1);
@@ -1334,6 +1378,8 @@
     .warning-modal-footer {
       display: flex;
       justify-content: flex-end;
+      flex-shrink: 0;
+      margin-top: auto;          /* stays on the bottom edge when the dialog is enlarged */
 
       padding: 8px 10px;
       border-top: 1px solid var(--bg3);
@@ -1511,6 +1557,60 @@
     #fb-name { width: 220px; }
     #fb-energy-unit, #fb-force-unit { width: 100px; }
 
+    /* guided tour (ADR 0088): tour_runner.js sets position, z-index
+       (shades 2000, ring 2001, box 2002) and pointer handling itself */
+    .tour-shade { background: rgba(4, 6, 8, 0.7); }
+    .tour-ring {
+      border: 2px solid var(--accent); border-radius: 8px;
+      animation: tour-pulse 1.6s ease-out infinite;
+    }
+    @keyframes tour-pulse {
+      0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+      100% { box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 0%, transparent); }
+    }
+    .tour-box {
+      width: 380px; max-width: calc(100vw - 32px); box-sizing: border-box;
+      display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 12px;
+      background: var(--surface); color: var(--ink-2); font-family: var(--font); font-size: var(--fs-m);
+      border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+    }
+    .tour-box [hidden] { display: none !important; }
+    .tour-head { display: flex; align-items: center; gap: 10px; }
+    .tour-count { font-size: var(--fs-xs); font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    /* A long tour's dots wrap to a second row in a narrow box rather than cross its border. */
+    .tour-dots { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; margin-left: auto; min-width: 0; }
+    .tour-dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--surface-3); }
+    .tour-dots i.done { background: var(--ink-3); }
+    .tour-dots i.now { background: var(--accent); }
+    .tour-title { margin: 0; font-size: var(--fs-l); font-weight: 600; color: var(--ink); text-wrap: balance; }
+    .tour-body { margin: 0; line-height: 1.4; }
+    .tour-foot { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+    .tour-skip {
+      background: transparent; border: 0; padding: 0; height: auto; color: var(--ink-3);
+      text-decoration: underline; text-underline-offset: 2px;
+    }
+    .tour-skip:hover { background: transparent; color: var(--ink); }
+    .tour-back { margin-left: auto; background: transparent; }
+    .tour-wait {
+      margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+      font-size: var(--fs-s); color: var(--accent);
+    }
+    .tour-wait::before {
+      content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+      animation: tour-blink 1.2s ease-in-out infinite;
+    }
+    @keyframes tour-blink { 50% { opacity: 0.25; } }
+    .tour-back:not([hidden]) ~ .tour-wait, .tour-back:not([hidden]) ~ .tour-next,
+    .tour-wait:not([hidden]) ~ .tour-next { margin-left: 0; }
+    .tour-next {
+      margin-left: auto; padding: 4px 16px; font-weight: 600;
+      background: var(--accent); color: var(--accent-ink); border-color: var(--accent);
+    }
+    .tour-next:hover { background: var(--accent); color: var(--accent-ink); filter: brightness(1.08); }
+    @media (prefers-reduced-motion: reduce) {
+      .tour-ring, .tour-wait::before { animation: none; }
+    }
+
   </style>
 
   <!-- Three.js is vendored under vendor/three/ (no CDN — the client must work
@@ -1528,7 +1628,10 @@
 <body>
 
   <div id="topbar">
-    <h1>FFAST</h1>
+    <h1><svg class="logo" viewBox="0 0 48 40" aria-hidden="true" focusable="false">
+        <path class="ref" d="M4 30 L15 13 L27 23 L44 7"/>
+        <path class="pred" d="M4 30 L15 20 L27 17 L44 7"/>
+      </svg>FFAST</h1>
     <!-- File menu (ADR 0055), built from the action list in app.js. -->
     <div id="file-menu" class="menu">
       <button id="file-menu-btn" aria-haspopup="menu" aria-expanded="false">File</button>
@@ -1729,6 +1832,7 @@
       <div class="small" id="overlay-hint">Load a dataset to see it here.</div>
       <button id="empty-load-btn">Load Dataset…</button>
       <button id="empty-example-btn">Load Example</button>
+      <button id="empty-tour-btn">Take the Tour</button>
       <ul id="empty-keys" aria-label="Keyboard shortcuts"></ul>
     </div>
     <!-- hint bar (ADR 0055): numbered next steps, dismissable -->

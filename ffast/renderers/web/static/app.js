@@ -45,6 +45,8 @@ import { setTimingSink } from './timing.js';
 import { ClusterDialog } from './cluster_dialog.js';
 import { FILE_SHORTCUTS, isMac, matchShortcut, shortcutLabel } from './shortcuts.js';
 import { showWarning } from './toasts.js';
+import { startTour } from './tour_runner.js';
+import { buildTours } from './tours.js';
 import { applyStaticIcons, icon } from './icons.js';
 import { initBell } from './notification_bell.js';
 import { initFullTextTitles } from './hover_tip.js';
@@ -57,6 +59,7 @@ import { bindMenu, runAction, sharedMenu, whyUnavailable } from './actions.js';
 import { loadLayout, loadMainView, saveLayout, saveMainView } from './layout_state.js';
 import { applyStyle, forceErrorStyle, PUBLICATION_STYLE, RESET_STYLE } from './quick_styles.js';
 import { DEFAULT_LOOK, startCommands, startFromCurrent } from './start_settings.js';
+import { SECTION_HELP } from './help.js';
 import { addSectionHelp, bindSidebarSearch, checkboxRow, oneSectionOpen, selectRow } from './sidebar.js';
 import { makeResizable } from './resizers.js';
 import { ObjectColours, seriesColourOwner } from './object_colours.js';
@@ -83,29 +86,6 @@ const PICK_TOOLS = {
     tip: 'Shows force arrows; click atoms or drag a box to keep them on those atoms only' },
   extract: { label: 'Extract', icon: 'scissors', multiselect: 10000, rectangle: true, section: 'Extract Subset',
     tip: 'Pick atoms to make a new dataset with only those atoms' },
-};
-
-/** What each sidebar section is for, behind its "?" (ADR 0055). */
-const SECTION_HELP = {
-  'Colour By': 'Colours atoms by element, by how far each atom moved, or by a per-atom '
-    + 'metric such as force error. Any colouring other than Elements shows a colour bar.',
-  'Camera': 'Where you look from. Drag to orbit, scroll to zoom. XY, XZ and YZ snap to an '
-    + 'axis view; "Exact angles" sets the angles by number. '
-    + 'Keys: ←/→ frame, Space play, Esc puts down a pick tool, / search.',
-  'Display': 'How atoms are drawn. Hide atoms by index (0 1 2) or element (C, -H); '
-    + 'highlight atoms by index.',
-  'Bonds': 'Dynamic bonds follow atom distances in every frame. Fixed bonds use your own '
-    + 'list of pairs; the Bonds pick tool adds or removes a pair.',
-  'Force Vectors': 'Arrows for the force on each atom. Source is the reference data '
-    + '(Ground Truth) or a loaded prediction. The Force pick tool limits the arrows to chosen atoms.',
-  'Extract Subset': 'Makes a new dataset that keeps only the atoms you choose, in every frame, '
-    + 'for example one molecule out of a solvent box. Type atom numbers (0 1 2) or elements '
-    + '(C keeps carbon, -H drops hydrogen), or arm the Extract pick tool and click atoms. '
-    + 'Then press Extract as Subset Dataset: the new dataset appears in the list on the left, '
-    + 'and it can be plotted, coloured and exported like any other.',
-  'Export': 'Saves the current 3D frame as a PNG, on a background colour or transparent.',
-  'Alignment': 'Rotates every frame onto a reference so the motion you see is internal. Kabsch '
-    + 'aligns the whole structure; 3-atom frame align uses three atoms you pick or type.',
 };
 
 /** Numbered next steps for the hint bar, by situation (ADR 0055). */
@@ -204,6 +184,7 @@ export class FFastApp {
       setStatus: (text, kind) => this._setStatus(text, kind),
       serverKey: () => document.getElementById('ws-url').value.trim(),
       setUnit: (fp, dimension, unit) => this._setDatasetUnit(fp, dimension, unit),
+      signal: (name, detail) => this._tourSignal(name, detail),
     });
     this._sessionOps = new SessionOps({
       send,
@@ -232,6 +213,23 @@ export class FFastApp {
     this._colours = new ObjectColours(() => plotTheme().series);
     /** Fingerprints this window asked the server to delete. */
     this._deleting = new Set();
+    /** What happened, for the guided tours (ADR 0088): example-loaded,
+     * example-load-failed, dataset-deleted, frame-changed, quick-style-applied,
+     * tab-selected {name}, point-picked {frame} (a click on a 2D plot);
+     * from the file browser: browser-opened {mode}, folder-listed {mode, path},
+     * file-selected {mode, name, path}, target-changed {datasetFp},
+     * browser-cancelled, load-duplicate {kind, name}; dataset-loaded {fp} and
+     * prediction-loaded {fp} (a load this window's browser asked for),
+     * load-failed {kind, error}; series-changed {tab, datasets, models}. */
+    this.tourEvents = new EventTarget();
+    /** A Load Example this window asked for: the dataset and prediction it brought, once known. */
+    this._exampleWatch = null;
+    /** The server's example files, {folder, files}, from LOADER_TYPES; null without them. */
+    this._examples = null;
+    /** The id of the guided tour that runs now, or null. */
+    this._tourId = null;
+    /** Datasets Load Example brought into this window, until they are deleted. */
+    this._exampleFps = new Set();
     // User tabs on the server (ADR 0056): save, delete, hide, export.
     this._tabOps = new TabOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
     // User metrics on the server (ADR 0057): the Metrics pane's wire.
@@ -247,6 +245,7 @@ export class FFastApp {
       refresh: ({ show } = {}) => this._applyLayout(this._layoutTabs, { show }),
       place: (draft) => this._placeDraft(draft),
       setStatus: (text, kind) => this._setStatus(text, kind),
+      resetTab: (name) => this._removeTab(name, 'reset'),
       currentStart: (tabName, panel) => this._currentStart(tabName, panel),
     });
 
@@ -324,7 +323,10 @@ export class FFastApp {
       onFreeze: (fp) => this._freezeSubset(fp),
       seriesColour: ({ datasetFp, modelFp }) => this._colours.get(
         seriesColourOwner(datasetFp, modelFp, !!this._datasets.get(datasetFp)?.parent)),
-      onPointFrame: (o) => this._onPlotPoint(o),
+      onPointFrame: (o) => {
+        this._onPlotPoint(o);
+        this._tourSignal('point-picked', { frame: o.frame });
+      },
       onLive: (cmd) => this._liveCommand(cmd),
       explainsChoices: (t, spec) => this._explainsChoices(t, spec),
       onExplains: (tabName, spec, index) => this._setExplains(tabName, spec, index),
@@ -333,6 +335,7 @@ export class FFastApp {
         frame: this._main.current?.frame ?? 0 }),
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
       onLoadPrediction: (datasetFp) => this._browser.open('prediction', { datasetFp }),
+      onSeriesChanged: (detail) => this._tourSignal('series-changed', detail),
     });
     this._applyLayout([]);
   }
@@ -486,6 +489,7 @@ export class FFastApp {
     this._analysis.activate(id);
     this._syncEmptyState();
     this._liveUi?.sync();   // attribution explains a 3D panel of the tab on screen
+    this._tourSignal('tab-selected', { name: tab.name });
   }
 
   /** The 3D controls go into a tab with a 3D panel: the pick bar above its
@@ -626,6 +630,7 @@ export class FFastApp {
     document.getElementById('add-dataset-btn').addEventListener('click', () => this._browser.open('dataset'));
     document.getElementById('add-prediction-btn').addEventListener('click', () => this._browser.open('prediction'));
 
+    this._tours = buildTours(this);
     this._actions = this._buildActions();
     const mac = isMac();
     for (const s of FILE_SHORTCUTS) {
@@ -636,7 +641,7 @@ export class FFastApp {
     }
     this._fillEmptyKeys();
     this._palette = createPalette(
-      () => this._actions.filter((a) => a.id !== 'command-palette'),
+      () => this._actions.filter((a) => a.id !== 'command-palette' && !a.separator),
       (why) => this._setStatus(why, 'error'),
     );
     this._initFileShortcuts();
@@ -673,6 +678,8 @@ export class FFastApp {
       () => runAction(this._action('load-dataset')));
     document.getElementById('empty-example-btn').addEventListener('click',
       () => runAction(this._action('load-example')));
+    document.getElementById('empty-tour-btn').addEventListener('click',
+      () => runAction(this._defaultTourAction()));
     this._syncEmptyState();
     // Each modal owns its own controls (ADR 0050).
     this._browser.bindControls();
@@ -687,6 +694,32 @@ export class FFastApp {
     if (!this._conn) return 'Connect to a server first';
     if (this._conn.role === 'READ_ONLY') return 'Read-only connection';
     return '';
+  }
+
+  /** Run guided tour `tour` (ADR 0088); how it ended goes to the status line. */
+  _startTour(tour) {
+    if (this._tourId) return;   // one tour at a time (the runner says the same)
+    this._tourId = tour.id;
+    startTour(tour, {
+      events: this.tourEvents,
+      onEnd: (how, message) => {
+        this._tourId = null;
+        if (how === 'done') this._setStatus('Tour finished. Take it again from the File menu.', 'connected');
+        else if (how === 'skip') this._setStatus('Tour skipped. Take it again from the File menu.', 'connected');
+        else showWarning(message);
+      },
+    });
+  }
+
+  /** The action of the tour the empty screen's Take the Tour button starts. */
+  _defaultTourAction() {
+    const tour = this._tours.find((t) => t.isDefault);
+    return tour && this._action(`tour-${tour.id}`);
+  }
+
+  /** Tell the guided tours (ADR 0088) that `name` happened. */
+  _tourSignal(name, detail = {}) {
+    this.tourEvents.dispatchEvent(new CustomEvent(name, { detail }));
   }
 
   _buildActions() {
@@ -706,6 +739,7 @@ export class FFastApp {
       // The example pair in examples/data: the server knows where it lives.
       { id: 'load-example', label: 'Load Example Dataset and Prediction', menu: 'file',
         run: () => {
+          this._exampleWatch = { datasetFp: null, modelFp: null };
           this._conn.send(OUT.LOAD_EXAMPLE, {}, []);
           this._setStatus('Loading example…', 'connected');
         },
@@ -731,6 +765,12 @@ export class FFastApp {
       { id: 'connect-cluster', label: 'Connect to Cluster…', menu: 'file',
         run: () => this._clusterDialog.open(),
         unavailable: () => (this._clusterReady ? '' : 'Start FFAST with ffast-web to reach a cluster') },
+      // The guided tours (ADR 0088), after a line in the File menu.
+      { separator: true, menu: 'file' },
+      ...this._tours.map((t) => ({
+        id: `tour-${t.id}`, label: `Tour: ${t.title}`, menu: 'file',
+        run: () => this._startTour(t), unavailable: t.unavailable,
+      })),
       // No `menu`: the File menu does not change; the Alt+Shift+N shortcut runs it.
       { id: 'open-popout', label: 'Open 3D View in New Window', run: () => this._openPopout(),
         unavailable: () => (document.getElementById('popout-btn').disabled ? 'Open a dataset first' : '') },
@@ -740,7 +780,7 @@ export class FFastApp {
         run: () => {
           const modelFp = this._focusedModelFp();
           const meta = this._models.get(modelFp);
-          this._applyQuickStyle(forceErrorStyle(meta?.name || modelFp.slice(0, 8)));
+          this._applyQuickStyle(forceErrorStyle(meta?.name || modelFp.slice(0, 8)), 'style-force');
           this._sections.open('Colour By');
         },
         unavailable: () => {
@@ -749,10 +789,10 @@ export class FFastApp {
         } },
       { id: 'style-publication', label: 'Quick style: Publication', short: 'Publication',
         title: 'White background, orthographic view, no axes',
-        run: () => this._applyQuickStyle(PUBLICATION_STYLE) },
+        run: () => this._applyQuickStyle(PUBLICATION_STYLE, 'style-publication') },
       { id: 'style-reset', label: 'Quick style: Reset', short: 'Reset',
         title: 'Back to the default colouring, background and projection',
-        run: () => this._applyQuickStyle(RESET_STYLE) },
+        run: () => this._applyQuickStyle(RESET_STYLE, 'style-reset') },
     ];
   }
 
@@ -846,7 +886,25 @@ export class FFastApp {
       actions.push({ id: `tab-new-copy:${t.name}`, label: `Copy of ${t.name}`,
         run: () => this._editor.newTab(t), unavailable: why });
     }
+    const templates = this._layoutTabs.filter((t) => t.template);
+    if (templates.length) actions.push({ separator: true }, { heading: 'From template' });
+    for (const t of templates) {
+      actions.push({ id: `tab-template:${t.name}`, label: t.name,
+        run: () => this._showTemplate(t), unavailable: () => this._needsControl() });
+    }
     return actions;
+  }
+
+  /** "From template": show the built-in tab itself. One already in the bar is
+   * only switched to; a waiting one is un-hidden and shown. */
+  _showTemplate(t) {
+    const shown = this._analysis.tabList.find((x) => x.name === t.name);
+    if (shown) { this._selectTab(shown.id); return; }
+    this._pendingShow = t.name;
+    this._tabOps.setHidden(t.name, false).then((r) => {
+      if (!r.ok) this._pendingShow = null;
+      this._reportTab(r);
+    });
   }
 
   /** Why tabs cannot be edited now, or ''. */
@@ -913,8 +971,10 @@ export class FFastApp {
       buttons: ['Cancel', yes],
       danger: yes,
     });
-    if (answer === yes)
-      this._reportTab(await this._tabOps.remove(name), reset ? 'Reset' : 'Deleted');
+    if (answer !== yes) return false;
+    const r = await this._tabOps.remove(name);
+    this._reportTab(r, reset ? 'Reset' : 'Deleted');
+    return !!r.ok;
   }
 
   async _exportTab(name) {
@@ -963,9 +1023,11 @@ export class FFastApp {
     this._setStatus(`${done} ${r.name}`, 'connected');
   }
 
-  _applyQuickStyle(steps) {
+  /** Apply a quick style's `steps`; `id` is its action, for the tours. */
+  _applyQuickStyle(steps, id) {
     const missed = applyStyle(document.getElementById('loupe-sidebar'), steps);
     if (missed.length) console.warn('Quick style: could not set', missed);
+    this._tourSignal('quick-style-applied', { id });
   }
 
   /** The quick-style buttons, drawn from the action list. */
@@ -1084,6 +1146,10 @@ export class FFastApp {
     const btn = document.getElementById('empty-load-btn');
     btn.disabled = !!why;
     document.getElementById('empty-example-btn').disabled = !!why;
+    const tour = this._defaultTourAction();
+    const tourBtn = document.getElementById('empty-tour-btn');
+    tourBtn.disabled = !tour || !!whyUnavailable(tour);
+    tourBtn.title = tour ? whyUnavailable(tour) : '';
     document.getElementById('overlay-hint').textContent = why || 'Load a dataset to see it here.';
     this._syncHint();
   }
@@ -1781,7 +1847,11 @@ export class FFastApp {
       conn.on(IN.REMOTE_MODEL_META,   (kw, args) => this._onModelMeta(args[0], kw));
       conn.on(IN.DATASET_DELETED,     (kw, args) => this._onDatasetDeleted(args[0]));
       conn.on(IN.MODEL_DELETED,       (kw, args) => this._onModelDeleted(args[0]));
-      conn.on(IN.LOADER_TYPES, (kw) => this._browser.setLoaderTypes(kw));
+      conn.on(IN.LOADER_TYPES, (kw) => {
+        // The example files the guided tours load: {folder, files}, or null.
+        this._examples = kw.examples ?? null;
+        this._browser.setLoaderTypes(kw);
+      });
       conn.on(IN.LIVE_RUN_UPDATE, (kw) => this._onLiveRunUpdate(kw));
       conn.on(IN.LIVE_ATTRIBUTION_RESULT, (kw) => this._live().onResult(kw));
       conn.on(IN.LIVE_RUNS, (kw) => this._live().onRuns(kw));
@@ -1837,6 +1907,11 @@ export class FFastApp {
         const name = String(kw.path || '').split(/[\\/]/).pop();
         this._browser.settled(kw.kind, false);
         this._setStatus(`Could not load ${name}: ${kw.error}`, 'error');
+        this._tourSignal('load-failed', { kind: kw.kind, error: kw.error });
+        if (this._exampleWatch) {
+          this._exampleWatch = null;
+          this._tourSignal('example-load-failed', { error: kw.error });
+        }
       });
 
       // Asked while the handshake runs, so it adds no wait.
@@ -1932,7 +2007,8 @@ export class FFastApp {
     const before = this._datasets.get(fp);
     this._datasets.set(fp, meta);
     if (!before && !meta.is_sub) {
-      this._browser.settled('dataset', true, fp);   // its "ready" below ends the "Loading…"
+      if (this._exampleWatch && !this._exampleWatch.datasetFp) this._exampleWatch.datasetFp = fp;
+      if (this._browser.settled('dataset', true, fp)) this._tourSignal('dataset-loaded', { fp });   // its "ready" below ends the "Loading…"
       this._readyStatus = `Dataset "${meta.name || fp.slice(0, 8)}" ready · ${framesText(meta.n)}`;
       // It replaces a "Loading…" that is over, not a result the user should
       // still read, such as "Loaded session from …", which can arrive first.
@@ -1992,6 +2068,7 @@ export class FFastApp {
     const loaded = !this._models.has(fp)
       && (asked === 'prediction' || asked === 'model') && this._browser.settled(asked);
     this._models.set(fp, meta || {});
+    if (loaded && asked === 'prediction') this._tourSignal('prediction-loaded', { fp });
     // Auto-select a freshly loaded prediction that applies to the current
     // dataset and refresh the view so its force overlay appears. A live
     // pop-out with a requested prediction (ADR 0044 Phase 4) only settles on
@@ -2015,6 +2092,23 @@ export class FFastApp {
     this._independent.ensureShown();
     if (this._focusedIndependent) this._syncPanelSection();
     this._syncCaptions();
+    // The prediction of a Load Example this window asked for: the pair is in.
+    const watch = this._exampleWatch;
+    if (!before && watch?.datasetFp && !watch.modelFp
+        && (meta?.dataset_fingerprints || []).includes(watch.datasetFp)) {
+      watch.modelFp = fp;
+      this._signalExampleLoaded();
+    }
+  }
+
+  /** A Load Example this window asked for is done once its pair is in and
+   * the view shows it: the 3D chrome is hidden until the first frame is drawn. */
+  _signalExampleLoaded() {
+    const watch = this._exampleWatch;
+    if (!watch?.datasetFp || !watch.modelFp || !this._viewShown) return;
+    this._exampleWatch = null;
+    this._exampleFps.add(watch.datasetFp);
+    this._tourSignal('example-loaded', { datasetFp: watch.datasetFp, modelFp: watch.modelFp });
   }
 
   /** A rail row's ⋯ menu. A live SUB subset belongs to its plot: it can be
@@ -2095,6 +2189,29 @@ export class FFastApp {
     this._conn.send(OUT.DELETE_OBJECT, { fingerprint: fp });
   }
 
+  /** For the tour's Back on step 1: only the pair that the tour itself loaded.
+   * Deletes prediction `modelFp`, then dataset `datasetFp`, without asking,
+   * and settles once the server says the dataset is gone. */
+  _removeLoaded(datasetFp, modelFp) {
+    const why = this._needsControl();
+    if (why) return Promise.reject(new Error(why));
+    if (!this._datasets.has(datasetFp)) return Promise.resolve();
+    const gone = new Promise((resolve) => {
+      const onDeleted = (e) => {
+        if (e.detail.fp !== datasetFp) return;
+        this.tourEvents.removeEventListener('dataset-deleted', onDeleted);
+        resolve();
+      };
+      this.tourEvents.addEventListener('dataset-deleted', onDeleted);
+    });
+    for (const fp of [modelFp, datasetFp]) {
+      if (!fp || !(this._models.has(fp) || this._datasets.has(fp))) continue;
+      this._deleting.add(fp);
+      this._conn.send(OUT.DELETE_OBJECT, { fingerprint: fp });
+    }
+    return gone;
+  }
+
   /** Dataset `fp` was cut from `from`, directly or through other subsets. */
   _cutFrom(fp, from) {
     let cur = this._datasets.get(fp)?.parent;
@@ -2129,6 +2246,7 @@ export class FFastApp {
     const meta = this._datasets.get(fp);
     if (!meta) return;
     this._datasets.delete(fp);
+    this._exampleFps.delete(fp);
     if (this._showWhenKnown === fp) this._showWhenKnown = null;
     const mainFrame = this._main.current?.frame ?? 0;
     const gone = this._main.drop(fp);
@@ -2158,6 +2276,7 @@ export class FFastApp {
     if (this._focusedIndependent) this._syncPanelSection();
     this._syncCaptions();
     this._setStatus(this._deletedText(fp, meta), 'connected');
+    this._tourSignal('dataset-deleted', { fp });
   }
 
   /** A prediction was deleted. The rail drops it; the views that showed it
@@ -2341,6 +2460,7 @@ export class FFastApp {
     }
     this._viewShown = true;
     this._syncEmptyState();
+    this._signalExampleLoaded();
     document.getElementById('reset-camera-btn').disabled = false;
     for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = false;
 
@@ -2355,6 +2475,7 @@ export class FFastApp {
       this._liveUi?.sync();   // attribution colours belong to one frame
       if (view === this._focused()) this._reloadForcePicks();
     }
+    if (view === this._focused() && scene.atoms) this._followPicks();
     if (this._getViewDataset(scene)) this._syncPlayback();
     this._independent.syncLinkedFrames();
     // A plot click that had to open the view first (_onPlotPoint): the
@@ -2385,6 +2506,7 @@ export class FFastApp {
     if (changed.includes('atoms') && kw.atoms) {
       if (this._isFocused(view)) this._panes.colorBy.setColorBy(kw.atoms.color_by || null);
       this._trackCameraCOM(kw.atoms.positions, view);
+      if (this._isFocused(view)) this._followPicks();
     }
     // Playback: unblock the wait in _playLoop once the view it moves answers.
     if ((this._playbackView() ?? this._main.current) === view) this._patchPending = false;
@@ -2547,6 +2669,7 @@ export class FFastApp {
     for (const e of entries) this._togglePick(e, tool);
     if (!tool.cycle && this._picked.length > tool.multiselect)
       this._picked.splice(0, this._picked.length - tool.multiselect);
+    this._pickStructure = this._atomSignature();
     this._reactTool(this._activeTool);
     this._updatePickStrip();
   }
@@ -2558,12 +2681,7 @@ export class FFastApp {
     // clear the set after acting so the overlay tracks the fresh set.
     this._sendSetSelection('picked', 'current_structure', ids);
     if (id === 'info') {
-      const pts = this._picked.map((e) => this.renderer.atomPosition(e.displayIndex)).filter(Boolean);
-      const symbols = this._picked.map((e) => {
-        const z = this.renderer.atomElement(e.displayIndex);
-        return z == null ? null : elementSymbol(z);
-      });
-      this._pickReadout = infoReadout(pts, ids, symbols);
+      this._pickReadout = this._infoReadoutNow();
     } else if (id === 'extract') {
       this._panes.extract.setPickedIndices(ids);
     } else if (id === 'forces') {
@@ -2582,6 +2700,43 @@ export class FFastApp {
         this._setActiveTool(null);   // Qt auto-disarms the align tool after 3
       }
     }
+  }
+
+  /** The info readout of the picked atoms as drawn now. */
+  _infoReadoutNow() {
+    const ids = this._picked.map((e) => e.atomId);
+    const pts = this._picked.map((e) => this.renderer.atomPosition(e.displayIndex)).filter(Boolean);
+    const symbols = this._picked.map((e) => {
+      const z = this.renderer.atomElement(e.displayIndex);
+      return z == null ? null : elementSymbol(z);
+    });
+    return infoReadout(pts, ids, symbols);
+  }
+
+  /** The atomic numbers of the focused view's atoms, in order: two frames with
+   * the same signature are the same atoms in the same places in the list. */
+  _atomSignature() {
+    const r = this.renderer;
+    const n = r?.atomCount || 0;
+    const out = new Array(n);
+    for (let i = 0; i < n; i++) out[i] = r.atomElement(i);
+    return out.join(',');
+  }
+
+  /** A new frame drew in the focused view (to_fix_v3 #12). The picked atoms
+   * stay when the frame has the same elements in the same order, and the info
+   * readout is worked out again; otherwise the picks are cleared with a note. */
+  _followPicks() {
+    if (!this._picked.length || this._activeTool === 'forces') return;
+    if (this._atomSignature() === this._pickStructure) {
+      if (this._activeTool === 'info') {
+        this._pickReadout = this._infoReadoutNow();
+        this._updatePickStrip();
+      }
+      return;
+    }
+    this._clearPicks();
+    this._setStatus('Selection cleared: different structure', 'connected');
   }
 
   /** Forget the picks and clear them in `view` (default: the view the sidebar acts on). */
@@ -2989,6 +3144,7 @@ export class FFastApp {
     const frame = parseInt(document.getElementById('frame-slider').value, 10);
     this._updateFrameLabel(frame, this._frameCount);
     this._sendSetFrame(frame);
+    this._tourSignal('frame-changed');
   }
 
   /** The active tab when it has the Same step control (ADR 0089), else null. */

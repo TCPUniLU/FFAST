@@ -26,7 +26,7 @@ export function runAction(action) {
  * A drop-down menu over `actions`. Items are rebuilt each time it opens, so
  * their enabled state is always current; `actions` may be a function, for a
  * menu whose items change (the tab menu's hidden tabs), and an entry
- * `{separator: true}` draws a line. Closes on Escape, on a click outside and
+ * `{separator: true}` draws a line, `{heading: 'text'}` a small title. Closes on Escape, on a click outside and
  * after running an item.
  * @param {HTMLButtonElement} button @param {HTMLElement} list
  * @param {Action[] | (() => Array<Action|{separator: true}>)} actions
@@ -42,6 +42,7 @@ export function bindMenu(button, list, actions) {
   const open = () => {
     fillMenu(list, typeof actions === 'function' ? actions() : actions, back);
     list.classList.remove('hidden');
+    keepInWindow(list);
     button.setAttribute('aria-expanded', 'true');
     list.querySelector('[role=menuitem]:not(:disabled)')?.focus();
   };
@@ -79,6 +80,7 @@ export function sharedMenu(list) {
     list.style.left = `${at.left}px`;
     list.style.top = `${at.bottom + 4}px`;
     list.classList.remove('hidden');
+    keepInWindow(list);
     button.setAttribute('aria-expanded', 'true');
     list.querySelector('[role=menuitem]:not(:disabled)')?.focus();
   };
@@ -89,10 +91,25 @@ export function sharedMenu(list) {
   return { open, close };
 }
 
+/** Slide an open menu left until its right edge is inside the window (8 px
+ * margin), wherever its own style put it. Menus near the left edge stay. */
+export function keepInWindow(list) {
+  list.style.translate = '';
+  const over = list.getBoundingClientRect().right - (window.innerWidth - 8);
+  if (over > 0) list.style.translate = `${-over}px 0`;
+}
+
 /** Fill a menu `list` with `entries`; choosing an item runs `close` (which
  * gives focus back to the menu's button) first. */
 function fillMenu(list, entries, close) {
   list.replaceChildren(...entries.map((action) => {
+    if (action.heading) {
+      const head = document.createElement('div');
+      head.setAttribute('role', 'presentation');
+      head.className = 'menu-head';
+      head.textContent = action.heading;
+      return head;
+    }
     if (action.separator) {
       const line = document.createElement('div');
       line.setAttribute('role', 'separator');

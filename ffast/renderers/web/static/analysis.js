@@ -23,8 +23,8 @@
  *     grouped_* kinds draw (their row order = the dataset's sorted-unique-Z).
  */
 
-import { helpToggle } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, panelNotes, neededPredictions, clearPlot, tickAt } from './panels.js';
+import { helpToggle, PICKER_HELP } from './help.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, panelNotes, neededPredictions, clearPlot, tickAt, nextSort } from './panels.js';
 import { showOnce } from './toasts.js';
 import { attachTip } from './hover_tip.js';
 import { spinner } from './spinner.js';
@@ -40,7 +40,7 @@ import { plotCsv, tableCsv, panelFileName, downloadText, downloadPlot, backgroun
 import { KIND_3D } from './tab_rules.js';
 import { GRID_COLUMNS, ROW_UNIT_PX, LABEL_FIELDS, toFineGrid } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
-import { loadTabState, saveTabState } from './layout_state.js';
+import { loadTabState, saveTabState, loadLayout, saveLayout } from './layout_state.js';
 import {
   liveEventLine, liveNoScoreMessage, liveRunChips, liveRunProblem, liveRunRuleText, liveRunSeries,
   liveRunThreshold, liveRunsEvents, liveRunsOverlays, sameRunUpdate,
@@ -69,10 +69,6 @@ const SCORES_LEGEND_HELP = [
   'Stop observed: the step where LAMMPS stopped.',
   'Click a point to show that frame in the 3D panel.',
 ].join('\n');
-
-const PICKER_HELP = 'Each analysis tab chooses its own datasets and predictions to compare. '
-  + 'Outlined buttons follow the selection in the left list; click one to pin this '
-  + "tab's choice, then click others to add them. The 3D view is not affected.";
 
 /** control name → the shared compute-param it drives. */
 const CONTROL_PARAM = { energy_shift: 'shifted', smoothing: 'window' };
@@ -234,6 +230,8 @@ export class AnalysisManager {
     this._visited = new Set();
     this._onSetUnit = deps.onSetUnit;
     this._onLoadPrediction = deps.onLoadPrediction;
+    /** Told what a tab plots after a click on its data choice: {tab, datasets, models}. */
+    this._onSeriesChanged = deps.onSeriesChanged;
 
     /** @type {Map<string, object>} id → catalog entry */
     this._catalog = new Map();
@@ -915,17 +913,8 @@ export class AnalysisManager {
     tabEl.setAttribute('role', 'tab');
     tabEl.setAttribute('aria-selected', 'false');
     tabEl.tabIndex = -1;   // app.js makes the tab on screen the one tab stop
-    // An edited copy of a built-in or project tab says so (ADR 0056 rule 10),
-    // and says when the original has changed since.
-    if (spec.source === 'user' && spec.replaces) {
-      const mark = document.createElement('span');
-      mark.className = 'tab-mark' + (spec.original_changed ? ' changed' : '');
-      mark.textContent = spec.original_changed ? 'edited · original changed' : 'edited';
-      tabEl.title = `Your edited copy of the ${spec.replaces} tab`
-        + (spec.original_changed ? '; the original has changed since you edited it' : '')
-        + '. Tab actions ⋯ ▸ Reset to original brings the original back.';
-      tabEl.appendChild(mark);
-    }
+    // No mark on a tab that replaces a built-in or project one (to_fix_v3 #9):
+    // Edit mode says so, and has the Reset to original button.
     tabEl.addEventListener('click', () => this._onSelectTab(id));
     tabEl.addEventListener('contextmenu', (e) => {
       e.preventDefault();
@@ -1572,6 +1561,9 @@ export class AnalysisManager {
     this._syncCompareHint();
     this._renderSeriesSelector(t);
     this._refreshTab(t);
+    this._onSeriesChanged?.({
+      tab: t.spec.name, datasets: [...this._tabDatasets(t)], models: this._tabModels(t).filter(Boolean),
+    });
   }
 
   _renderElementPicker(t) {
@@ -1705,6 +1697,13 @@ export class AnalysisManager {
     const card = { el, title, more, body, params, letter, letterEl, captionEl, captionLetter, captionText };
     more.addEventListener('click', () => this._panelMenu.open(more, this._panelActions(t, spec, card)));
     body.addEventListener('click', (e) => this._onUnitClick(card, e));
+    body.addEventListener('click', (e) => this._onSortClick(t, spec, card, e));
+    body.addEventListener('keydown', (e) => {
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('th[data-sort]')) {
+        e.preventDefault();
+        this._onSortClick(t, spec, card, e);
+      }
+    });
     captionEl.addEventListener('click', (e) => this._onUnitClick(card, e));
     return card;
   }
@@ -1794,6 +1793,23 @@ export class AnalysisManager {
       return span;
     });
     card.captionText.replaceChildren(...nodes);
+  }
+
+  /** The sort a table panel shows: the user's own (kept in this browser, never
+   * in a tab file), else the one its tab file starts with. */
+  _tableSort(t, spec) {
+    const mine = loadLayout().tableSort?.[`${t.spec.name}|${panelKey(spec)}`];
+    return mine === undefined ? spec.sort || null : mine;
+  }
+
+  /** A click on a table header sorts by it: ascending, descending, original order. */
+  _onSortClick(t, spec, card, e) {
+    const th = e.target.closest?.('th[data-sort]');
+    if (!th || e.target.closest('[data-unit-role]') || !card.series) return;
+    const next = nextSort(this._tableSort(t, spec), th.dataset.sort);
+    const all = { ...(loadLayout().tableSort || {}), [`${t.spec.name}|${panelKey(spec)}`]: next };
+    saveLayout({ tableSort: all });
+    this._drawPanel(t, spec, card, card.series, this._renderToken, card.seq);
   }
 
   /** A click on a "[unit]" (or a unit) in an axis title or a table header
@@ -1955,6 +1971,7 @@ export class AnalysisManager {
     const ctx = {
       units: this._panelUnits(spec, series),
       unitDims: this._panelUnitDims(spec),
+      sort: spec.kind === 'table' ? this._tableSort(t, spec) : null,
       perFrame: this._isPerFrameScatter(spec),
       elementOrder: this._elementOrder || [],
       selectedElements: t.selectedElements,
@@ -2081,6 +2098,13 @@ export class AnalysisManager {
     const units = {};
     for (const [role, entry] of this._roleEntries(spec))
       units[role] = entry ? resolveUnit(entry.unit, dsUnits) : '';
+    // a list of metrics (a table's columns): one unit each, as `role:k`
+    for (const [role, val] of Object.entries(spec.metrics || {})) {
+      if (Array.isArray(val)) val.forEach((id, k) => {
+        const entry = this._catalog.get(id);
+        units[`${role}:${k}`] = entry ? resolveUnit(entry.unit, dsUnits) : '';
+      });
+    }
     return units;
   }
 
@@ -2090,6 +2114,12 @@ export class AnalysisManager {
     for (const [role, entry] of this._roleEntries(spec)) {
       const dim = entry && editableDimension(entry.unit);
       if (dim) dims[role] = dim;
+    }
+    for (const [role, val] of Object.entries(spec.metrics || {})) {
+      if (Array.isArray(val)) val.forEach((id, k) => {
+        const dim = this._catalog.get(id) && editableDimension(this._catalog.get(id).unit);
+        if (dim) dims[`${role}:${k}`] = dim;
+      });
     }
     return dims;
   }
