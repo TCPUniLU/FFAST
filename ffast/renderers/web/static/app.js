@@ -67,6 +67,14 @@ import { plotTheme } from './theme.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 import { pageCodeFingerprint, serverCodeNotice } from './code_fingerprint.js';
 
+/** What a tab in Edit mode locks (see _syncEditLock): all that is not the layout. The
+ * dataset rail, the pick tools and the 3D Settings sidebar, the Metrics drawer,
+ * Screen / Journal and Density, and every tab's controls row (data selector, Pause, ...).
+ * Left: the tab bar, the frame bar and the 3D view (a 3D panel's start look is set from
+ * them), and the run safety controls. */
+const EDIT_LOCKED = '#objectbar, #pick-toolbar, #loupe-sidebar, #metrics-btn, #metrics-drawer, '
+  + '#view-mode, #density, .analysis-controls';
+
 /**
  * The five pick tools (ADR 0045 Phase 2). Each mirrors a Qt AtomSelectionBase
  * subclass: `multiselect` caps the picked set, `cycle` makes it a rolling
@@ -724,6 +732,16 @@ export class FFastApp {
 
   _buildActions() {
     const needsControl = () => this._needsControl();
+    // While a tab is edited the rest of the window is for looking only (CONTEXT.md,
+    // "Edit mode"): each action but these says why not. Live Runs… stays, since it
+    // holds Stop now (a run safety control); the popout only opens the view in a window.
+    const ALWAYS = new Set(['command-palette', 'live-runs', 'open-popout']);
+    return this._buildActionList(needsControl).map((a) => (a.separator || ALWAYS.has(a.id) ? a : {
+      ...a, unavailable: () => (this._editor.editing ? this._whyNoEdit() : '') || a.unavailable?.() || '',
+    }));
+  }
+
+  _buildActionList(needsControl) {
     return [
       // No `menu`: only the shortcut and this entry open it.
       { id: 'command-palette', label: 'Command Palette', run: () => this._palette.open() },
@@ -951,6 +969,21 @@ export class FFastApp {
     }
     // the caption drop-downs grey what would change a tab that cannot change now
     this._syncCaptions();
+    this._syncEditLock();
+  }
+
+  /** While a tab is in Edit mode the rest of the window is for looking only
+   * (CONTEXT.md, "Edit mode"): what loads, deletes, runs or changes something
+   * outside the edit is greyed out and cannot be reached, by mouse or keyboard,
+   * until Save or Cancel. The tab bar, the frame bar, the 3D view, Journal page
+   * and Density stay, and so do the run safety controls. Menus and shortcuts
+   * give their reason through their actions (_buildActions). */
+  _syncEditLock() {
+    const locked = this._editor.editing;
+    document.body.classList.toggle('edit-locked', locked);
+    for (const el of document.querySelectorAll(EDIT_LOCKED)) el.inert = locked;
+    if (locked && this._activeTool) this._setActiveTool(null);   // no tool stays armed
+    this._analysis.syncExplains?.();
   }
 
   /** Why tab `name` cannot be hidden: the main view needs a visible place. */
@@ -2117,7 +2150,7 @@ export class FFastApp {
    * frozen but not deleted (unticking SUB hides it), as on the desktop. */
   _railRowActions(kind, fp) {
     const meta = kind === 'dataset' ? this._datasets.get(fp) : null;
-    const why = () => this._needsControl();
+    const why = () => this._whyNoEdit();
     const rename = { id: `${kind}-rename`, label: 'Rename…', run: () => this._renameObject(kind, fp), unavailable: why };
     const main = meta?.parent_frames && !meta.frozen
       ? { id: 'dataset-freeze', label: 'Freeze', run: () => this._freezeSubset(fp), unavailable: why }
@@ -2884,6 +2917,8 @@ export class FFastApp {
       runOf: (fp) => this._analysis.liveRunOf(fp),
       follow: (path) => this._followLiveRun(path),
       askPath: () => this._openLiveRun(),
+      // following a run changes the datasets: not while a tab is edited
+      whyNoOpen: () => (this._editor.editing ? this._whyNoEdit() : ''),
     });
     return this._liveUi;
   }

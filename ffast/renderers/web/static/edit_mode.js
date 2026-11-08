@@ -216,6 +216,10 @@ export class TabEditor {
     note.textContent = this._error
       || (this._conflict === 'changed' ? 'Changed in another window since you began.' : '')
       || (this._conflict === 'deleted' ? 'Deleted in another window since you began.' : '');
+    // Why so much is greyed out: said once here, not on every greyed control.
+    const locked = document.createElement('span');
+    locked.className = 'edit-locked-note';
+    locked.textContent = 'The rest of the window is for looking only until you Save or Cancel.';
     const spacer = document.createElement('span');
     spacer.className = 'spacer';
     const cancel = button('Cancel', () => this.end());
@@ -223,7 +227,7 @@ export class TabEditor {
     const save = button('Save', () => this.save());
     save.dataset.edit = 'save';
     save.className = 'primary';
-    bar.append(mode, title, add, settings, ...(origin ? [origin] : []), note, spacer, cancel, save);
+    bar.append(mode, title, add, settings, ...(origin ? [origin] : []), note, locked, spacer, cancel, save);
     return bar;
   }
 

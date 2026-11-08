@@ -8270,3 +8270,73 @@ async def test_web_a_tab_control_redraws_its_plots_in_place(ffast_web_server):
             assert await page.evaluate("() => window.__removedPanels") == 0
         finally:
             await browser.close()
+
+
+async def test_web_while_a_tab_is_edited_the_rest_of_the_window_is_for_looking_only(tmp_path):
+    """Edit mode: all that is not the layout is greyed out until Save or Cancel:
+    the menus, the dataset rail, the 3D tools and Settings sidebar, Screen /
+    Journal and Density, every controls row. Other tabs can still be visited and
+    looked at, the frame bar and the 3D view stay (a 3D panel's start look is
+    set from them), and so do the run safety controls (Live Runs…)."""
+    why = "Finish editing the tab first (Save or Cancel)"
+    locked = """() => ({
+      toolbar: document.getElementById('pick-toolbar').inert,
+      rail: document.getElementById('objectbar').inert,
+      sidebar: document.getElementById('loupe-sidebar').inert,
+      view: [document.getElementById('view-mode').inert, document.getElementById('density').inert],
+      frame: [document.getElementById('frame-slider').closest('#loupe-controls').inert,
+              document.getElementById('sidebar-toggle').inert],
+      metrics: [document.getElementById('metrics-btn').inert, document.getElementById('metrics-drawer').inert],
+      controls: [...document.querySelectorAll('.analysis-controls')].map((e) => e.inert),
+    })"""
+    async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 860})
+            try:
+                await _open_app(page, web_port, ws_port)
+                await _open_analysis_tab(page, "Basic Errors")
+                before = await page.evaluate(locked)
+                assert before["toolbar"] is False and before["metrics"] == [False, False]
+                assert before["rail"] is False and before["sidebar"] is False and before["view"] == [False, False]
+                assert not any(before["controls"])
+
+                await page.locator("#tab-edit-btn").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_be_visible()
+                now = await page.evaluate(locked)
+                assert now["toolbar"] is True and now["metrics"] == [True, True]
+                assert now["rail"] is True and now["sidebar"] is True and now["view"] == [True, True]
+                assert now["frame"] == [False, False]      # the frame bar and the Settings button stay
+                assert all(now["controls"]) and now["controls"]
+                # Menus: everything that loads or runs says why not; Live Runs… stays.
+                await page.locator("#file-menu-btn").click()
+                load = page.locator("#file-menu-list").get_by_role("menuitem", name="Load Dataset…", exact=True)
+                await expect(load).to_be_disabled()
+                await expect(load).to_have_attribute("title", why)
+                await page.keyboard.press("Escape")
+                await page.locator("#lammps-menu-btn").click()
+                lammps = page.locator("#lammps-menu-list")
+                await expect(lammps.get_by_role("menuitem", name="Run with FFAST…", exact=True)).to_be_disabled()
+                await expect(lammps.get_by_role("menuitem", name="Make Reference…", exact=True)).to_be_disabled()
+                await expect(lammps.get_by_role("menuitem", name="Live Runs…", exact=True)).to_be_enabled()
+                await page.keyboard.press("Escape")
+
+                # Looking stays possible: leave the edited tab, see another, go back.
+                await page.locator("#tabbar .tab", has_text="3D").first.click()
+                await expect(page.locator("#tab-edit-btn")).to_have_text("Back to Basic Errors")
+                assert await page.evaluate(
+                    "() => document.querySelector('#tabpanels .tabpanel.active .analysis-controls').inert")
+                await page.locator("#tab-edit-btn").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_be_visible()
+
+                await page.locator("[data-edit=cancel]").click()
+                await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
+                after = await page.evaluate(locked)
+                assert after["toolbar"] is False and after["rail"] is False and after["sidebar"] is False
+                assert after["view"] == [False, False]
+                assert after["metrics"] == [False, False] and not any(after["controls"])
+                await page.locator("#file-menu-btn").click()
+                await expect(page.locator("#file-menu-list").get_by_role(
+                    "menuitem", name="Load Dataset…", exact=True)).to_be_enabled()
+            finally:
+                await browser.close()

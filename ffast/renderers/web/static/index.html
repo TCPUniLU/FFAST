@@ -310,6 +310,8 @@
     #tab-edit-btn.away { color: var(--accent-ink); background: var(--accent); box-shadow: none; }
     /* the tab being edited, wherever you are: a dashed frame and the word "editing" */
     .tab.editing { outline: 1px dashed var(--hl2); outline-offset: -4px; }
+    /* what a tab in Edit mode locks reads as greyed out (app.js _syncEditLock) */
+    body.edit-locked [inert] { opacity: 0.45; }
     .tab.editing::after {
       content: "editing" / ""; margin-left: 6px; font-size: var(--fs-xs); font-weight: 600; color: var(--hl2);
     }
@@ -325,6 +327,7 @@
     }
     .edit-bar .spacer { flex: 1; }
     .edit-bar .edit-note { color: var(--warn); font-size: var(--fs-s); }
+    .edit-bar .edit-locked-note { color: var(--ink-3); font-size: var(--fs-xs); }
     .edit-bar button.primary { background: var(--accent); color: var(--accent-ink); }
     .analysis-grid.editing-grid { position: relative; }
     /* The mode is named in the edit bar. Panels keep a neutral border; the one

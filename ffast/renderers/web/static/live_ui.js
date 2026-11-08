@@ -38,13 +38,14 @@ export class LiveUi {
    *   shown?: () => {datasetFp: string|null, frame: number|null,
    *     view?: {setAttribution: (att: object|null) => void}|null},
    *   runOf?: (datasetFp: string|null) => {run_id: string, bundle: string|null}|null,
-   *   follow?: (path: string) => void, askPath?: () => void}} deps
+   *   follow?: (path: string) => void, askPath?: () => void, whyNoOpen?: () => string}} deps
    */
   constructor({ send, analysis = null, mainView = null, shown = () => ({ datasetFp: null, frame: null }),
-    runOf = () => null, follow = () => {}, askPath = () => {} }) {
+    runOf = () => null, follow = () => {}, askPath = () => {}, whyNoOpen = () => '' }) {
     this._send = send;
     this._follow = follow;
     this._askPath = askPath;
+    this._whyNoOpen = whyNoOpen;
     this._runsDialog = null;
     this._analysis = analysis;
     this._mainView = mainView;
@@ -79,7 +80,7 @@ export class LiveUi {
   /** The "Live runs" dialog; its rows come back in LIVE_RUNS (onRuns). */
   openRuns({ highlight = null } = {}) {
     this._runsDialog = openLiveRunsDialog({
-      highlight,
+      highlight, whyNoOpen: this._whyNoOpen,
       stop: (row) => this.command({ action: 'stop', run_id: row.run_id, name: row.name, processes: row.processes ?? null }),
       ask: () => this._send(OUT.LIST_LIVE_RUNS, {}),
       open: (path) => this._follow(path),

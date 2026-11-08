@@ -59,10 +59,12 @@ export function liveRunRow(row) {
  * `update`), `open(path)` follows a run, `openByPath()` picks any other run
  * folder ("Open run folder…": the only way to one not in the list),
  * `forget(runId)` drops a gone run from the list, `stop(row)` asks to stop a
- * running run, `highlight` is a run ID whose row is marked and scrolled to.
+ * running run, `highlight` is a run ID whose row is marked and scrolled to,
+ * `whyNoOpen()` is why following a run is not allowed now (a tab is being edited), or ''.
  * @returns {{update: (rows: object[]) => void, close: () => void}}
  */
-export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () => {}, highlight = null }) {
+export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () => {}, highlight = null,
+  whyNoOpen = () => '' }) {
   document.getElementById('live-runs-dialog')?.remove();
   const modal = document.createElement('div');
   modal.id = 'live-runs-dialog';
@@ -82,6 +84,9 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () =>
   foot.className = 'warning-modal-footer';
   const byPath = document.createElement('button');
   byPath.textContent = 'Open run folder…';
+  const noOpen = whyNoOpen();
+  byPath.disabled = !!noOpen;
+  byPath.title = noOpen;
   const closeBtn = document.createElement('button');
   closeBtn.textContent = 'Close';
   foot.append(byPath, closeBtn);
@@ -153,6 +158,7 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () =>
       btn.addEventListener('click', () => {
         if (v.canOpen) { close(); open(row.run_dir); } else forget(row.run_id);
       });
+      if (v.canOpen && noOpen) { btn.disabled = true; btn.title = noOpen; }
       act.appendChild(btn);
       if (v.canStop) {
         const stopBtn = cell('button', 'danger live-runs-stop', row.stop_requested || row.stop ? 'Stop requested' : 'Stop now…');

@@ -1023,6 +1023,7 @@ export class AnalysisManager {
 
     const controlsEl = document.createElement('div');
     controlsEl.className = 'analysis-controls';
+    controlsEl.inert = document.body.classList.contains('edit-locked');   // a tab made during an edit
     const bodyEl = document.createElement('div');
     bodyEl.className = 'tab-body';
     const mainEl = document.createElement('div');

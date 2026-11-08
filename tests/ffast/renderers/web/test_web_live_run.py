@@ -1515,7 +1515,8 @@ async def test_web_a_run_score_is_picked_under_run_scores_and_drawn_with_a_gap_a
         }""", panel)
         assert got["y"] == [0.5, 1.0, None]                              # a gap for the unscored frame
         assert got["shapes"] == [[1.0, 1.0, "dash"]]
-        assert await page.locator(".toast").count() == 0
+        toasts = await page.locator(".toast").all_inner_texts()
+        assert toasts == [], toasts      # a toast says what went wrong; show it
 
 
 @contextlib.asynccontextmanager
@@ -1758,3 +1759,30 @@ async def test_web_the_legend_of_the_live_score_plot_can_be_hidden_from_its_menu
                 assert not any("legend = false" in f.read_text() for f in tabs.glob("*.toml"))
             finally:
                 await browser.close()
+
+
+async def test_the_live_runs_dialog_greys_out_opening_a_run_while_a_tab_is_edited(static_origin):
+    """Following a run changes the datasets, so while a tab is edited the Open
+    buttons and "Open run folder…" say why not. Forget and Stop now stay."""
+    row = {"run_id": "a", "name": "Live a", "run_dir": "/r/a", "exists": True, "last_step": 10,
+           "planned_end_step": 100, "first_step": 0, "scorer_state": "scoring", "heartbeat_age_s": 3,
+           "alarms": [], "end": None, "state": "running", "open": True}
+    gone = {"run_id": "b", "name": "Live b", "run_dir": "/gone", "exists": False}
+    got = await _pure(static_origin, f"""async () => {{
+      const d = await import('{static_origin}/live_runs_dialog.js');
+      const dlg = d.openLiveRunsDialog({{ ask() {{}}, open() {{}}, openByPath() {{}}, forget() {{}}, stop() {{}},
+        whyNoOpen: () => 'Finish editing the tab first (Save or Cancel)' }});
+      dlg.update({json.dumps([row, gone])});
+      const q = (s) => document.querySelector(s);
+      const out = {{
+        open: [q('button.live-runs-open').disabled, q('button.live-runs-open').title],
+        forget: q('button.live-runs-forget').disabled, stop: q('button.live-runs-stop').disabled,
+        path: [...document.querySelectorAll('#live-runs-dialog .warning-modal-footer button')]
+          .map((b) => [b.textContent, b.disabled]),
+      }};
+      dlg.close();
+      return out;
+    }}""")
+    assert got["open"] == [True, "Finish editing the tab first (Save or Cancel)"]
+    assert got["forget"] is False and got["stop"] is False
+    assert got["path"] == [["Open run folder…", True], ["Close", False]]
