@@ -373,6 +373,10 @@ The hidden list and the **tab order** are app state kept on the server
 
 A tab changes only in **Edit mode** (✎ in the browser): the edits go to a
 draft, Save writes it and Cancel drops it, so exploring never rewrites a tab.
+While a tab is in Edit mode the rest of the window is for looking only: other
+tabs can be visited and viewed but not changed, and nothing is loaded, deleted,
+opened or run until Save or Cancel. The **run safety controls** are the
+exception: they are never blocked.
 
 Don't call it: overriding a tab ("override" is taken by display overrides).
 
@@ -703,6 +707,9 @@ section exists so nobody goes looking for it.
 - **Estimated onset, confirmation, stop observed** — where the persisting anomaly
   began, when the alarm fired, and the step at which LAMMPS actually stopped.
 - **Alarm report** — the small permanent record of why an alarm fired.
+- **Run safety control** — a control that stops a live run or arms its stop:
+  Stop now (in the Live Runs list) and Stop on alarm. No other state of the
+  window, such as a tab in Edit mode, ever blocks one.
 - **Geometry edit, edit target, edit log, derived dataset, dataset provenance,
   materialization** — editing atoms in the viewer and saving the result as a new
   dataset with a reproducibility record.
