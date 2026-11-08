@@ -44,21 +44,29 @@ def _wait(cond, timeout: float) -> bool:
     return False
 
 
-def _launch():
+def _launch(log_path: Path):
     ws, web = _free_port(), _free_port()
     code = ("import sys; from ffast.renderers.web.launcher import main; "
             f"sys.argv = ['ffast-web', '--no-browser', '--ws-port', '{ws}', '--web-port', '{web}']; main()")
-    proc = subprocess.Popen([sys.executable, "-c", code], cwd=str(REPO),
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    assert _wait(lambda: _listening(ws), 60), "the server never started"
+    # The launcher's and the server's output go to a file, so a failed start
+    # says why (e.g. the server rejecting an argument) instead of only
+    # "never started". The server inherits the launcher's stdout/stderr.
+    with open(log_path, "wb") as log:
+        proc = subprocess.Popen([sys.executable, "-c", code], cwd=str(REPO),
+                                stdout=log, stderr=subprocess.STDOUT)
+    if not _wait(lambda: _listening(ws) or proc.poll() is not None, 60) or not _listening(ws):
+        if proc.poll() is None:
+            proc.kill()
+        out = log_path.read_text(errors="replace")[-4000:]
+        pytest.fail(f"the server never started (launcher exit code {proc.poll()}); output:\n{out}")
     return proc, ws
 
 
 @pytest.mark.integration
 @pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGHUP, signal.SIGKILL],
                          ids=["kill", "closed-terminal", "kill-9"])
-def test_the_server_stops_when_the_launcher_ends(sig):
-    proc, ws = _launch()
+def test_the_server_stops_when_the_launcher_ends(sig, tmp_path):
+    proc, ws = _launch(tmp_path / "launcher.log")
     try:
         os.kill(proc.pid, sig)
         proc.wait(timeout=30)
