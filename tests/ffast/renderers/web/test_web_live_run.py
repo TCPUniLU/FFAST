@@ -1682,3 +1682,40 @@ async def test_web_a_pause_is_never_saved_nor_sent(tmp_path):
         await page.reload(wait_until="networkidle")
         await _expect_connected(page)
         await expect(page.locator(PAUSE)).to_have_text("Pause", timeout=20000)
+
+
+async def test_web_a_legend_click_hides_the_marks_it_names_and_they_stay_hidden(tmp_path):
+    """The marks (ticks along the bottom) hid with their legend entry only until
+    the plot was first drawn again: the plot then lost its legend listener and
+    kept it lost. A hidden entry's marks stay hidden through the redraws a live
+    plot gets, and come back when the entry does."""
+    run = _alarmed_run_folder(tmp_path)
+    shapes = """(sel) => {
+      const el = document.querySelector(sel + ' .analysis-panel[data-part="scores"] .panel-plot');
+      return (el.layout.shapes || []).filter((s) => s.type === 'path').map((s) => s.visible !== false);
+    }"""
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _open_run(page, run)
+                await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 4], timeout=15000)
+                legend = page.locator(f'{ACTIVE} .analysis-panel[data-part="scores"] .legend .traces')
+                marked = legend.filter(has_text="marked")
+                assert await page.evaluate(shapes, ACTIVE) == [True]
+                await marked.locator(".legendtoggle").click()
+                await page.wait_for_function(
+                    "(sel) => document.querySelector(sel + ' .analysis-panel[data-part=\"scores\"] .panel-plot')"
+                    ".layout.shapes.filter((s) => s.type === 'path').every((s) => s.visible === false)", arg=ACTIVE, timeout=5000)
+                await page.wait_for_timeout(1500)       # a live plot is drawn again every second
+                assert await page.evaluate(shapes, ACTIVE) == [False]
+                await marked.locator(".legendtoggle").click()
+                await page.wait_for_function(
+                    "(sel) => document.querySelector(sel + ' .analysis-panel[data-part=\"scores\"] .panel-plot')"
+                    ".layout.shapes.filter((s) => s.type === 'path').every((s) => s.visible !== false)", arg=ACTIVE, timeout=5000)
+            finally:
+                await browser.close()

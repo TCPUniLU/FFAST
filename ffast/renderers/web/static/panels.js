@@ -1247,9 +1247,16 @@ export function renderPanel(el, spec, series, ctx) {
  * drawing, which keeps hidden traces hidden, and after each legend click. */
 function syncShapes(el) {
   if (!el._shapeOwners?.length) return;
-  if (!el._shapeSyncWired && typeof el.on === 'function') {
-    el._shapeSyncWired = true;
-    el.on('plotly_restyle', () => syncShapes(el));
+  // Wired on every drawing: Plotly's purge (a panel drawn from scratch again)
+  // drops an element's listeners, and a "wired once" flag stayed set, so the
+  // marks stopped following the legend for good. The old handler goes first,
+  // so there is only ever one.
+  if (typeof el.on === 'function') {
+    if (el._shapeSyncHandler && typeof el.removeListener === 'function') {
+      el.removeListener('plotly_restyle', el._shapeSyncHandler);
+    }
+    el._shapeSyncHandler = () => syncShapes(el);
+    el.on('plotly_restyle', el._shapeSyncHandler);
   }
   const update = shapeVisibility(el._shapeOwners, el.layout?.shapes, el._fullData);
   if (Object.keys(update).length) Plotly().relayout(el, update);
