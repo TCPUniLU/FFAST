@@ -61,7 +61,7 @@ class _Run:
     """One computation and the requests waiting for it. ``forgets`` is the
     store's count of forget calls when it started: an outcome is filed only
     when nothing was forgotten meanwhile (ADR 0085 decision 6). ``grown`` is
-    how often its dataset had grown then (ADR 0090): a live run grows every
+    how often its dataset had grown then (ADR 0091): a live run grows every
     second, so its growth is counted per dataset, not as a forget."""
 
     def __init__(self, stop, forgets, task_id, dataset_fp=None, grown=0) -> None:
@@ -156,7 +156,7 @@ class MetricResultStore:
 
     def dataset_grew(self, fingerprint) -> None:
         """A dataset gained frames under the same fingerprint (a live run, ADR
-        0090): drop what is stored for it, and file no outcome of a computation
+        0091): drop what is stored for it, and file no outcome of a computation
         of it that started before. Computations of other datasets are not touched."""
         from ffast.cache import CacheKey
 
@@ -243,7 +243,7 @@ class MetricResultStore:
         return Missing("needs_prediction", text)
 
     def _no_analysis_value(self, metric_id, dataset) -> Missing | None:
-        """Quiet reason (ADR 0090): the metric reads a live run's score the
+        """Quiet reason (ADR 0091): the metric reads a live run's score the
         dataset does not have. Read from the metric's own inputs only."""
         from ffast.metrics.input_resolver import run_value_problem
         from ffast.metrics.inputs import parse_run_ref, run_value_label

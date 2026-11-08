@@ -105,7 +105,7 @@ def _flatPerAtom(value, axes):
 
 
 def _live_run_of(dataset):
-    """The live run whose frames ``dataset`` is, else None (ADR 0090). The
+    """The live run whose frames ``dataset`` is, else None (ADR 0091). The
     resolver's env is the DataService, which does not know the open runs, so the
     dataset names its run."""
     from ffast.live.live_run import LiveRunDataset
@@ -218,7 +218,7 @@ class InputResolver:
                 if side == "reference":
                     return _flatPerAtom(dataset.getAtomFieldMissing(key), axes=0)
                 return self._prediction_field(model, dataset, "atoms", key, missing=True)
-            # Analysis values of a live run (ADR 0090)
+            # Analysis values of a live run (ADR 0091)
             key = parse_run_ref(ref)
             if key is not None:
                 run = _live_run_of(dataset)

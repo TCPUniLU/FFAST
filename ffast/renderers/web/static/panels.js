@@ -314,7 +314,7 @@ export function panelFailures(refs, results, labelOf) {
 }
 
 /**
- * The quiet reasons a panel has no value (ADR 0090): "No bonds T² ÷ threshold
+ * The quiet reasons a panel has no value (ADR 0091): "No bonds T² ÷ threshold
  * for shard_03: only live runs have scores." One sentence each, never a pop-up.
  * @param {Array<Array<{failed?: boolean, kind?: string, error?: string}|null>>} results one list per ref
  * @returns {string[]}

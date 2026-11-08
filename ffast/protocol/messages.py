@@ -115,7 +115,7 @@ class MetricCatalogEntry(BaseModel):
     equivalent_vars: Optional[dict[str, str]] = None
     # The refs it reads: raw inputs (``prediction.forces``) or metric ids.
     inputs: list[str] = Field(default_factory=list)
-    # ADR 0090: a group the metric list shows it under ("Run scores"), and the
+    # ADR 0091: a group the metric list shows it under ("Run scores"), and the
     # value a timeline of it draws a dashed line at (1.0 for ÷ threshold).
     group: Optional[str] = None
     level: Optional[float] = None

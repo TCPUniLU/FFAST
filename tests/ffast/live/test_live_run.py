@@ -338,7 +338,7 @@ def test_attribution_says_when_the_bundle_is_gone_or_changed(tmp_path):
         run.attribution(0)
 
 
-# ── ADR 0090 step 1: a metric drawn on a growing run grows with it ──────────
+# ── ADR 0091 step 1: a metric drawn on a growing run grows with it ──────────
 
 def test_a_growing_runs_inputs_are_named_by_their_frame_count(tmp_path):
     from ffast.metrics.input_resolver import _ResolverSource
@@ -385,7 +385,7 @@ def test_the_result_store_really_forgets_a_live_fingerprint():
     assert store.peek(PLAIN, {}, "live:run1", None) is None
 
 
-# ── ADR 0090 step 2: analysis values ────────────────────────────────────────
+# ── ADR 0091 step 2: analysis values ────────────────────────────────────────
 
 def _format2_run_folder(tmp_path, frames=4, scored=2, name="20261107-120000-node-1-abcd"):
     """A format-2 run: bonds and angles tracks, T² and SPE; only the first

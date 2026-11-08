@@ -1442,7 +1442,7 @@ async def test_web_force_arrows_on_a_live_run_say_it_has_no_forces(tmp_path):
         await expect(page.locator(".forces-note")).to_contain_text("has no forces in its file")
 
 
-# ── ADR 0090 step 4: Run scores in the panel builder ────────────────────────
+# ── ADR 0091 step 4: Run scores in the panel builder ────────────────────────
 
 async def test_a_panel_has_quiet_notes_for_a_missing_analysis_value_and_no_popup(static_origin):
     got = await _pure(static_origin, f"""async () => {{
@@ -1519,7 +1519,7 @@ async def _live_page_without_scores_wait(run, points=2):
                 await browser.close()
 
 
-# ── ADR 0090 step 5: every panel showing a live run follows it ──────────────
+# ── ADR 0091 step 5: every panel showing a live run follows it ──────────────
 
 async def _add_timeline(page, metric, title):
     """In the tab's edit mode: add a custom timeline of `metric` (leaves edit mode on)."""
@@ -1578,7 +1578,7 @@ async def test_web_every_panel_showing_a_live_run_follows_it_and_keeps_its_zoom(
         assert [round(v, 3) for v in rng] == [0.5, 1.5]                 # the zoom is kept
 
 
-# ── ADR 0090 step 6: pause a tab ────────────────────────────────────────────
+# ── ADR 0091 step 6: pause a tab ────────────────────────────────────────────
 
 PAUSE = f"{ACTIVE} .analysis-controls [data-control=pause] button"
 LAST_Y = """(t) => { const y = document.querySelector(

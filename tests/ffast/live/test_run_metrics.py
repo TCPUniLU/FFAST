@@ -1,4 +1,4 @@
-"""A live run's scores as metrics under "Run scores" (ADR 0090 step 3)."""
+"""A live run's scores as metrics under "Run scores" (ADR 0091 step 3)."""
 
 from __future__ import annotations
 

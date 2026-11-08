@@ -1,4 +1,4 @@
-"""A live run's analysis values as metrics under "Run scores" (ADR 0090).
+"""A live run's analysis values as metrics under "Run scores" (ADR 0091).
 
 Each value of an open run (one per test, the worst score, broken bonds,
 too-close pairs) is a pass-through metric reading a ``run.*`` input ref

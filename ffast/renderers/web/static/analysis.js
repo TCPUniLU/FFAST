@@ -248,7 +248,7 @@ export class AnalysisManager {
     this._subsets = new Map();
     /** Live runs (ADR 0087): run id → the last LIVE_RUN_UPDATE. */
     this._live = new Map();
-    /** Paused tabs (ADR 0090): tab name → what the tab held when it was paused.
+    /** Paused tabs (ADR 0091): tab name → what the tab held when it was paused.
      * Never saved: a reload ends every pause, and nothing is sent to the server. */
     this._pauses = new Map();
     /** run id → {result, mode, pending}: the clicked frame's attribution (live_ui.js). */
@@ -324,7 +324,7 @@ export class AnalysisManager {
     const t = this._activeTab();
     if (!t || !t.slots.every((slot) => slot.cards)) return;
     if (!this._tabRuns(t).some((r) => r.fp === kw.fingerprint)) return;
-    if (t.pause) {      // the Run card and the events go on; the plots wait (ADR 0090)
+    if (t.pause) {      // the Run card and the events go on; the plots wait (ADR 0091)
       this._redrawLiveParts(t, 'status');
       this._redrawLiveParts(t, 'events');
       return;
@@ -337,7 +337,7 @@ export class AnalysisManager {
     if (!same) this._redrawRunPanels(t, kw.fingerprint);
   }
 
-  /** Redraw the tab's metric panels that show run `fp` (ADR 0090): the run has
+  /** Redraw the tab's metric panels that show run `fp` (ADR 0091): the run has
    * new frames or scores, so what they read has changed. A zoom is kept. */
   _redrawRunPanels(t, fp) {
     t.slots.forEach((slot) => {
@@ -1393,7 +1393,7 @@ export class AnalysisManager {
       this._renderSeriesSelector(t);
     }
 
-    // Pause (ADR 0090): shown while a live run is ticked in the tab.
+    // Pause (ADR 0091): shown while a live run is ticked in the tab.
     const pause = document.createElement('div');
     pause.className = 'ac-item';
     pause.dataset.control = 'pause';
@@ -1962,7 +1962,7 @@ export class AnalysisManager {
       visited: this._visited,
       peaks: t.peaksOn.has(panelKey(spec)),
     };
-    // A ÷ threshold value draws a dashed line at 1 (ADR 0090).
+    // A ÷ threshold value draws a dashed line at 1 (ADR 0091).
     const level = spec.kind === 'timeline' && !Number.isFinite(spec.y_line)
       ? this._catalog.get(spec.metrics?.y)?.level : null;
     renderPanel(card.body, Number.isFinite(level) ? { ...spec, y_line: level } : spec, series, ctx);

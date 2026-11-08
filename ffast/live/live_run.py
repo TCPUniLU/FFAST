@@ -288,7 +288,7 @@ class LiveRun:
             "error": self.error,
         })
 
-    # ── analysis values (ADR 0090; any thread) ─────────────────────────────
+    # ── analysis values (ADR 0091; any thread) ─────────────────────────────
     def analysis_value_problem(self, key) -> str | None:
         """Why this run has no value for ``key`` (see ``parse_run_ref``), or None."""
         if key == ("worst",):

@@ -413,7 +413,7 @@ export class TabEditor {
       const options = metricsFor(kind.value, role, catalog);
       const option = (m) => new Option(m.label && m.label !== m.id ? `${m.label} (${m.id})` : m.id, m.id);
       for (const m of options) if (!m.group) select.append(option(m));
-      // A group of metrics (ADR 0090: "Run scores") comes after the others.
+      // A group of metrics (ADR 0091: "Run scores") comes after the others.
       for (const name of [...new Set(options.filter((m) => m.group).map((m) => m.group))]) {
         const group = document.createElement('optgroup');
         group.label = name;

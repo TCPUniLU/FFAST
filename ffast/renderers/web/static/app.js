@@ -3062,7 +3062,7 @@ export class FFastApp {
     const view = this._playbackView();
     const fp = view ? view.datasetFp : this._currentDatasetFp;
     if (!fp) return;
-    // A paused tab keeps the frame range it had (ADR 0090).
+    // A paused tab keeps the frame range it had (ADR 0091).
     const n = this._analysis.pausedFrameCount(fp) || this._datasets.get(fp)?.n || 1;
     const frame = view ? (view.frame ?? 0) : (this._main.current?.frame ?? 0);
     this._frameCount = n;

@@ -121,7 +121,7 @@ def is_field_ref(ref) -> bool:
     return parse_field_ref(ref) is not None
 
 
-# Analysis value refs (ADR 0090): one number per frame of a live run, read from
+# Analysis value refs (ADR 0091): one number per frame of a live run, read from
 # its first analysis. Not Dataset fields: they are not in any file.
 #   run.score.<track>.<T2|SPE>   that test's score ÷ its threshold
 #   run.score.worst              the worst test's score ÷ its threshold
