@@ -374,9 +374,10 @@ The hidden list and the **tab order** are app state kept on the server
 A tab changes only in **Edit mode** (✎ in the browser): the edits go to a
 draft, Save writes it and Cancel drops it, so exploring never rewrites a tab.
 While a tab is in Edit mode the rest of the window is for looking only: other
-tabs can be visited and viewed but not changed, and nothing is loaded, deleted,
-opened or run until Save or Cancel. The **run safety controls** are the
-exception: they are never blocked.
+tabs can be visited but not used, the contents of every panel are greyed so the
+panel frames being arranged stand out, and nothing is loaded, deleted, opened
+or run until Save or Cancel. The **run safety controls** are the exception:
+they are never blocked.
 
 Don't call it: overriding a tab ("override" is taken by display overrides).
 
