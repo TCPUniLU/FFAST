@@ -52,12 +52,34 @@ A run folder can hold several analyses, but today the scorer makes one and the
 viewer reads the first. The selector therefore offers no analysis row: a choice
 with one option is a control that does nothing, the bug this ADR removes.
 
-**Target, not built:** scoring becomes an ordinary calculation of a (dataset,
-reference bundle) pair, on demand, for any dataset whose atoms match the bundle.
-References become loadable objects that fill the selector's second row, the
-place predictions take for metrics. A run's own analysis is then a
-pre-calculated copy of one pair, and only that pair can stop the run. This is
-recorded now so step 1 keeps the slot open instead of reshaping tabs twice.
+**Idea, parked 2026-11-06 (not a commitment):** scoring could become an
+ordinary calculation of a (dataset, reference bundle) pair, on demand, for any
+dataset whose atoms match the bundle, with references filling the selector's
+second row. A run's own analysis would then be a pre-calculated copy of one
+pair, and only that pair could stop the run. Step 1 does not depend on it.
+
+The user parked it after a first look: it changes the architecture for a need
+nobody has yet. What that look found, so it is not redone:
+
+- A reference cannot simply be a dataset. It is fitted on a training set and
+  its thresholds calibrated on a *different* validation set; it holds inferred
+  bonds and fitted statistics; a live run depends on the exact saved file
+  (`bundle_sha256`). The same training set with another validation set gives
+  other alarms.
+- A reference acting as a model (a "prediction" in the second row) would reuse
+  the plumbing but put references among force fields in every error metric.
+- The cleanest shape found: a separate kind of object, "Reference", beside
+  Predictions in the selector, recording which datasets it was made from
+  (bundles record none today; `manifest.json` has the molecule and date only).
+- Scoring needs only DetectAna's `score`, `exceedance` and `check_chemistry`
+  on positions, plus the atom-order check. Alarms also need time, which plain
+  datasets lack.
+
+Reopen when a real need appears: scoring a training set or a finished
+trajectory, rescoring a run with a new reference, or more than one analysis
+per run. A cheaper first answer to "rescore this run" is a command that writes
+a second analysis folder (the run folder already allows it) and a choice of
+analysis in the viewer.
 
 ## Considered and rejected
 

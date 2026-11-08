@@ -57,6 +57,12 @@ which is why deleted objects used to come back after a save and reload.
 Runs heavy work as async tasks, or threads for IO. Emits `TASK_PROGRESS`,
 `TASK_DONE`, `TASK_FAILED`. Every prediction goes through it.
 
+A **Running Task** is server work the user sees in the Tasks list, in every
+window connected to that server: a load (dataset, prediction, model, session)
+or one metric being computed. A metric answered from the cache is never a
+Running Task. A task that cannot be stopped says so instead of offering Cancel.
+_Avoid_: job (that word is a SLURM job on the cluster).
+
 ### Dataset
 
 A loaded set of configurations: positions, energies, forces, atomic numbers.
@@ -70,9 +76,40 @@ follows the plot's zoom, and unticking hides it. It is also how a tractable
 slice of a large remote dataset reaches the local viewer. A **frozen subset**
 keeps its frames: it no longer follows the zoom, but still reads them through
 its parent. An **atom subset** keeps every frame but only some of its atoms;
-it is refused when a structure lacks one of those atoms. A view of a view is
+it is refused when a structure lacks one of those atoms. An **element subset**
+keeps, in every frame, the atoms of the chosen elements ("C", or all but "-H"),
+decided atom by atom as `by=element` and `where=element(...)` decide it. It
+keeps every frame: one without those elements stays, empty, so its frame
+numbers are its parent's. On a
+dataset whose structures differ, it is the only atom subset allowed, since an
+atom number names a different atom from one structure to the next. A view of a view is
 a subset of a subset. Deleting a dataset deletes everything cut from it; to
 keep some of its frames, export them to a file and load that.
+
+### Frame index
+
+Where each frame of a text dataset file starts. Its length is the file's frame
+count. One pass over the file makes it; counting frames and reading frame N both
+come from it, so a file is never walked again just to count or to find a frame.
+_Avoid_: offsets, frame table
+
+### Frame arrays
+
+Every frame of a dataset file, read once into joined arrays: elements,
+positions, forces, energies, cells, and the numeric header values and atom
+columns. The fingerprint, one-frame reads and Dataset Fields all come from
+them, so a load never parses the file twice. Our own extxyz reader makes them
+for indexed `.xyz`/`.extxyz` files; ASE reads everything else.
+_Avoid_: cache, chunk
+
+### Dataset preview
+
+A dataset whose frames are still being read: you can look at it, and its frame
+count grows. It has no fingerprint yet, so nothing can be cut from it, saved
+or matched to a prediction. When the last frame is read it becomes a dataset.
+**Stop** ends the read early and keeps the frames read so far as a dataset;
+**Cancel** ends it and keeps nothing.
+_Avoid_: partial dataset, streaming dataset
 
 ### Model, GhostModel
 
@@ -90,6 +127,10 @@ inference; a ghost backed by a prediction file cannot compute anything new.
 A (dataset, model) pair. The unit of comparison in every error plot. Inference is
 always server-side. Whether a prediction was computed by a live model or read
 from a file is a server concern the client never sees.
+
+**Ground Truth** is the dataset's own (reference) values, where a choice of
+prediction is offered: "whose numbers". It is offered only where a metric can
+be read from the dataset alone; an error needs a prediction.
 
 ## Metrics
 
@@ -137,8 +178,10 @@ the pool and the desktop gets the in-process one.
 
 ### Metric worker pool
 
-Metrics run in separate processes, not in the long-lived server. That buys
-cancellation, timeouts and crash containment.
+**Outside code** runs in separate processes, not in the long-lived server.
+That buys cancellation, timeouts and crash containment. Code FFAST ships —
+built-in metrics and every formula, whatever its origin — runs in the server
+itself (ADR 0079).
 
 The catch worth knowing before you write a metric: the whole registry is pickled
 once to each worker, so **every registered metric must be picklable**. Module
@@ -188,6 +231,26 @@ reductions. Not a **bad value**: a bad value fails the metric, no value does
 not. Only a formula's own `by=` / `where=` make one; a `nan` from a Python
 metric is a bad value (ADR 0064).
 
+### Metric result store
+
+The one place the server asks "this metric, on this dataset, with this model":
+it answers with a **metric result** (the values and their label: unit, shape,
+warnings) or with why there is none. It computes a result at most once however
+many ask at the same time, and keeps results within a memory limit. Plots,
+atom colouring, a subset following a plot's zoom, and Try's references to
+saved metrics all ask it. A metric result is the answer; the store is where
+answers are asked for. The desktop client does not use it.
+
+### Missing result, needs a prediction
+
+When a metric over a whole dataset has no result, the server says why, as one
+of a short fixed list of kinds, not only as text. **Needs a prediction** is one
+kind: the metric reads a prediction that this (dataset, model) pair does not
+have yet. The server never starts a whole-dataset prediction to fill it; the
+user is offered to load a prediction file for that dataset instead. Making a
+prediction stays a deliberate user action. A metric that ran and raised is a
+different kind (**failed**).
+
 ### Metric origin: built-in, project, user
 
 Where a metric's definition comes from. **Built-in** ships with FFAST.
@@ -199,6 +262,15 @@ built-in or project metric with the same ID (ADR 0057).
 
 Don't call it: a custom metric (every non-built-in metric is custom), a live
 metric.
+
+### Outside code
+
+A metric written in Python that did not ship with FFAST: a project's metric
+module or a plugin outside the `ffast` package. Only outside code needs a
+worker process. Not the same as a non-built-in metric: a project or user
+formula is FFAST's own evaluator at work, so it is not outside code.
+
+Don't call it: a custom metric (that is any non-built-in metric), user code.
 
 ### Metrics pane
 
@@ -263,6 +335,13 @@ schemas of the metrics it binds.
 A named grid of panels sharing one data selector. In the browser a tab may mix 2D
 panels with 3D panels.
 
+Every tab works the same way: its data selector chooses what its panels draw,
+and no panel is pinned to one dataset or one live run. A live run's tab is an
+ordinary tab with a ready-made layout and that run already ticked; ticking a
+second run in its selector compares the two. The **live run layout** is one
+built-in tab layout; each opened run gets a tab made from it, pinned to that
+run. Editing it follows the same replace-and-reset rule as any built-in tab.
+
 A tab comes from one of three places: **built-in** (shipped with FFAST),
 **project** (`[[visualization.tabs]]` in a project's `ffast.toml`, written by
 hand), or **user** (built in the browser and saved by the app on the server
@@ -271,7 +350,9 @@ between them by copying it.
 
 Editing a built-in or project tab in the browser saves a user tab that
 **replaces** it; resetting deletes that user tab and the original returns. Any
-tab can be **hidden** from the tab bar.
+tab can be **hidden** from the tab bar, and dragged to another place in it.
+The hidden list and the **tab order** are app state kept on the server
+(`state.json`), the same for every window, and never part of a tab file.
 
 A tab changes only in **Edit mode** (✎ in the browser): the edits go to a
 draft, Save writes it and Cancel drops it, so exploring never rewrites a tab.
@@ -292,12 +373,15 @@ window. It is either **linked** or **independent**:
   each can be unlinked separately (to compare two frames of one trajectory, or
   to orbit one side alone). A linked frame means the same configuration where
   both sides contain it (a prediction and its dataset, a subset and its parent),
+  or the frame nearest the same simulation step between two live runs,
   otherwise the same frame number. When there is no counterpart, the panel says
   so instead of showing a different structure. Its starting look (colouring,
   display, bonds, force arrows) can be saved with the tab; which dataset or
   prediction it shows, and its camera, never are.
 
-The user switches a 3D panel between linked and independent.
+The user switches a 3D panel between linked and independent by choosing what
+it shows: the main view, or a dataset of its own. Screens call an independent
+panel an **own view**, since "independent" wrongly suggests it follows nothing.
 
 **Focused 3D panel**: the one 3D panel in a tab that the tab's 3D controls
 (settings sidebar, pick toolbar, playback strip) act on. The user focuses a panel
@@ -518,8 +602,8 @@ client cannot name or overwrite a stored result (ADR 0061).
 implementation. **JobSpec** is a scheduler-agnostic resource request translated
 into a submission script. **JobStatus** is `PENDING`, `RUNNING`, `FAILED`,
 `COMPLETED`, resolved via `sacct` once a job leaves `squeue`. **Dataset length
-probe** counts frames in a cluster-side file before loading so the stride dialog
-can offer a stride against the true count. **Remote task IDs** are namespaced
+probe** counts frames in a cluster-side file before loading, by building its
+frame index, so the stride dialog can offer a stride against the true count. **Remote task IDs** are namespaced
 `remote_<n>` so replayed progress events cannot collide with local task IDs.
 
 ## Rules that hold everywhere
@@ -552,6 +636,17 @@ These terms come from design work that has not been built. They appear in older
 ADRs and in planning documents. None of them has code behind it today, and this
 section exists so nobody goes looking for it.
 
+- **Simulation system** — the atoms, their identities, and the boundary conditions
+  that give a trajectory's configurations their physical meaning. A molecule in
+  vacuum and a periodic cell are different simulation systems even when their
+  coordinate arrays have the same shape.
+- **Simulation trajectory** — ordered configurations from one simulation, each
+  associated with its simulation step. A saved frame number is a position in the
+  output; it is not necessarily the simulation step.
+- **Chemistry flag** — a per-configuration finding that a declared geometric
+  rule was crossed, such as an initially bonded pair exceeding a distance limit
+  or a nonbonded pair coming too close. It is distinct from an out-of-distribution
+  score, which compares a configuration with reference data.
 - **Live run** — one LAMMPS job watched through the `ffast-lammps` wrapper: its
   run folder, its frames, one or more analyses of them, its events and its end
   state (ADR 0086, 0087). Don't call it a session (that is a client connection)
@@ -562,7 +657,25 @@ section exists so nobody goes looking for it.
   segment in the same run history.
 - **Analysis** (of a live run) — the scores of one run against one reference
   bundle with one set of settings, kept in its own folder. Two analyses of the
-  same frames coexist; the dataset fingerprint knows nothing about them.
+  same frames coexist; the dataset fingerprint knows nothing about them. Today
+  the viewer shows one analysis per run: the one the run was started with. Only
+  that analysis can stop the run. In the data selector a run is listed among the
+  datasets; it has no second row to choose from yet.
+- **Analysis value** — one number per frame read from a live run's analysis,
+  such as one track's T² or the chemistry count of broken bonds. A frame the
+  scorer has not scored has no value: a gap, never a value filled in by the
+  viewer, because the plot must show what the alarm rule saw. Distinct from a
+  **Dataset field**, which a file carries for every frame or not at all.
+  Don't call it: a dataset field, a metric (it is read, not calculated).
+- **Paused tab** — a tab whose plots and 3D frame range stop following its
+  live runs while the user studies them; its Run card and Events keep updating,
+  and an alarm during the pause is flagged on the Pause button. Pausing changes
+  only what one tab shows: the run, the scorer and Stop on alarm go on.
+  Don't call it: stopping, pausing the run.
+- **OOD score as a metric** (idea, parked; ADR 0089) — scoring is a value of a
+  (dataset, reference bundle) pair, calculated on demand like any metric, for
+  any dataset whose atoms match the bundle. A run's own analysis is then a
+  pre-calculated copy of one such pair.
 - **Reference bundle** — DetectAna's saved fit for one force field: atom order,
   topology, units, descriptor tracks, fitted model and calibrated thresholds.
 - **Track** — a group of descriptor numbers fitted and thresholded together

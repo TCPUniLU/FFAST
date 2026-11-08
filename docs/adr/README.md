@@ -53,6 +53,7 @@ things came up.
 - [0064](0064-formulas-can-average-by-structure-element-or-all.md) Formulas can average, total and take extremes by structure, element or all, over chosen atoms (built)
 - [0065](0065-errors-are-a-base-metric-plus-keep-boxes.md) Errors are a base metric plus keep boxes, not a list of fixed variants (built)
 - [0061](0061-only-the-server-names-metric-results.md) Only the server names metric results, and a metric change cannot mix formulas (built)
+- [0085](0085-one-metric-result-store-on-the-server.md) One metric result store on the server: computes once, keeps within a memory limit, says why there is no result, never starts a prediction (built)
 - [0035](0035-metric-execution-context.md) Resolve metric inputs once instead of three times
 - [0046](0046-finish-metric-execution-context.md) Finishing that: one seam, one injected executor
 - [0036](0036-datawatcher-configure-once.md) DataWatcher configures once (proposed)
@@ -94,6 +95,7 @@ things came up.
 - [0060](0060-every-browser-3d-view-is-one-view-object.md) Every 3D view in the browser is one view object, carrying its own sidebar settings (accepted)
 - [0063](0063-the-web-client-looks-like-a-journal-figure.md) The web client looks like a journal figure: panel letters and captions, labelled peaks, one set of tokens (built)
 - [0066](0066-every-warning-and-error-is-also-a-pop-up.md) Every warning and error is also a pop-up (built)
+- [0088](0088-a-guided-tour-teaches-the-web-client-step-by-step.md) A guided tour teaches the web client step by step: tours are data, started from File ▸ Tours, locked and dimmed, Back can undo (proposed)
 
 ## Running on a cluster
 
@@ -119,6 +121,8 @@ things came up.
 - [0068](0068-first-lammps-analysis-scope.md) First LAMMPS analysis scope: one molecule, no periodic boundaries (superseded in part by 0086)
 - [0086](0086-lammps-runs-are-watched-live-through-a-dump-and-a-wrapper.md) LAMMPS runs are watched live through a dump and a wrapper: DetectAna scores, FFAST plumbs; alarms need persistence; stop off by default (built on branch `lammps-live`, proven on MeluXina)
 - [0087](0087-a-live-run-keeps-scores-apart-from-geometry.md) A live run keeps its scores apart from its geometry: run folder, one incremental LAMMPS-dump reader, attribution on demand (built on branch `lammps-live`)
+- [0089](0089-live-tabs-are-ordinary-tabs-a-run-is-chosen-in-the-selector.md) Live tabs are ordinary tabs: panels read the runs ticked in the selector, pinned to their run, compare by step, Stop now only in the Live Runs dialog; scoring as a metric is the target (proposed)
+- [0090](0090-a-live-runs-scores-are-analysis-values-read-with-gaps-never-filled.md) A live run's scores are analysis values: metrics with gaps, never filled by the viewer; a tab can be paused (proposed)
 
 ## Environment structure
 
