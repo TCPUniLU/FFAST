@@ -1,3 +1,5 @@
+import { icon } from './icons.js';
+
 /**
  * Pure helpers for live LAMMPS runs (ADR 0087). A run's tab comes from the
  * server like any other (ADR 0089); its `live` panels (status, events,
@@ -50,6 +52,60 @@ function ago(s) {
 const STALLED_S = 30;   // 3 × the scorer's 10 s heartbeat (runs_list.py)
 
 /**
+ * The scorer's cell, the same in the Run panel and the Live Runs list: plain
+ * while it works, coloured when it is silent, refused or failed.
+ * @param {{state?: string, ended: boolean, ageS: number|null, stalled: boolean}} x
+ *   `ageS` is seconds since its last heartbeat, null before the first.
+ * @returns {{text: string, tone: string, title?: string}}
+ */
+export function liveScorerCell({ state, ended, ageS, stalled }) {
+  if (!ended && ageS != null && !['done', 'refused', 'failed'].includes(state)) {
+    return stalled ? { text: `silent ${ago(ageS)} — stalled?`, tone: 'warn' }
+      : { text: 'running', tone: '', title: `Last heartbeat ${ago(ageS)} ago` };
+  }
+  const words = { scoring: 'running', ready: 'ready', done: 'done', starting: 'starting' };
+  if (state) return { text: words[state] || state, tone: words[state] ? '' : 'bad' };
+  return { text: 'not started', tone: '' };
+}
+
+/**
+ * The State cell, the same in the Run panel and the Live Runs list: the alarms,
+ * then how the run ended or that a stop is asked for. An alarm or a terminated
+ * run is trouble (bad); a stop the user asked for is not.
+ * @param {{alarms?: {kind: string, step: number}[], end?: {state: string, step: number}|null,
+ *   stopRequested?: boolean}} x
+ * @returns {{text: string, tone: string}}
+ */
+export function liveStateCell({ alarms = [], end = null, stopRequested = false }) {
+  const words = alarms.map((a) => `${a.kind === 'chem' ? 'Chemistry alarm' : 'Alarm'} at step ${fmt(a.step)}`);
+  let tone = words.length ? 'bad' : '';
+  if (end) {
+    const { state: st, step: at } = end;
+    words.push(st === 'stopped' ? `stopped at step ${fmt(at)}`
+      : st === 'terminated' ? `terminated; last saved frame at step ${fmt(at)}` : st);
+    if (st === 'terminated') tone = 'bad';
+    else if (!['finished', 'stopped'].includes(st)) tone ||= 'warn';
+  } else if (stopRequested) {
+    words.push('stop requested');
+    tone ||= 'warn';
+  }
+  const text = words.length ? words.join(' · ') : 'No alarm';
+  return { text: text[0].toUpperCase() + text.slice(1), tone };
+}
+
+/** Fill a table cell with a cell of the cells above: trouble gets its colour and
+ * the warning icon, never colour alone. */
+export function tonedText(td, { text, tone, title }) {
+  if (tone) {
+    td.classList.add(tone);
+    td.innerHTML = icon('warning');
+  }
+  td.append(text);
+  if (title) td.title = title;
+  return td;
+}
+
+/**
  * One run's row of the Run panel's table: each cell {text, tone, title?},
  * tone '' | 'warn' | 'bad'. Colour is kept for trouble (an alarm, a crash, a
  * stalled scorer, an unproven atom order); a run that is fine reads plain.
@@ -73,39 +129,17 @@ export function liveRunRow(kw, nowMs) {
   };
   const scored = { text: p.scored_through_step != null ? fmt(p.scored_through_step) : '—', tone: '' };
 
-  let scorer;
-  if (p.heartbeat_utc && !kw.end && !['done', 'refused', 'failed'].includes(p.state)) {
-    const age = Math.max(0, (nowMs - Date.parse(p.heartbeat_utc)) / 1000);
-    scorer = age > STALLED_S
-      ? { text: `silent ${ago(age)} — stalled?`, tone: 'warn' }
-      : { text: 'running', tone: '', title: `Last heartbeat ${ago(age)} ago` };
-  } else if (p.state) {
-    const words = { scoring: 'running', ready: 'ready', done: 'done', starting: 'starting' };
-    scorer = { text: words[p.state] || p.state, tone: words[p.state] ? '' : 'bad' };
-  } else {
-    scorer = { text: '—', tone: '' };
-  }
+  const ageS = p.heartbeat_utc ? Math.max(0, (nowMs - Date.parse(p.heartbeat_utc)) / 1000) : null;
+  const scorer = liveScorerCell({ state: p.state, ended: !!kw.end, ageS, stalled: ageS > STALLED_S });
 
   const atoms = !p.identity ? { text: '—', tone: '' }
     : p.identity === 'proven' ? { text: 'proven', tone: '' } : { text: 'unverified', tone: 'warn' };
 
-  // State: the alarms, then how the run ended (or that a stop is asked for).
-  const words = (p.alarms || []).map((a) =>
-    `${a.kind === 'chem' ? 'Chemistry alarm' : 'Alarm'} at step ${fmt(a.confirmation?.step)}`);
-  let tone = words.length ? 'bad' : '';
-  if (kw.end) {
-    const st = kw.end.state;
-    const at = kw.end.stop_observed_step;
-    words.push(st === 'stopped' ? `stopped at step ${fmt(at)}`
-      : st === 'terminated' ? `terminated; last saved frame at step ${fmt(at)}` : st);
-    if (st === 'terminated') tone = 'bad';
-    else if (!['finished', 'stopped'].includes(st) && !tone) tone = 'warn';
-  } else if (kw.stop_requested) {
-    words.push('stop requested');
-    tone ||= 'warn';
-  }
-  const text = words.length ? words.join(' · ') : 'no alarm';
-  const state = { text: text[0].toUpperCase() + text.slice(1), tone };
+  const state = liveStateCell({
+    alarms: (p.alarms || []).map((x) => ({ kind: x.kind, step: x.confirmation?.step })),
+    end: kw.end ? { state: kw.end.state, step: kw.end.stop_observed_step } : null,
+    stopRequested: !!kw.stop_requested,
+  });
 
   return { name: kw.name || kw.tab || kw.run_id, lammps, scored, scorer, atoms, state };
 }

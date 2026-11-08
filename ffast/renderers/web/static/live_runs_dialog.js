@@ -5,13 +5,10 @@
  * not read as a stalled simulation. Refreshed every few seconds while open.
  */
 import { labelBy, trapFocus } from './dialogs.js';
+import { liveScorerCell, liveStateCell, tonedText } from './live_run.js';
 
 const fmt = (n) => (n == null ? '?' : Number(n).toLocaleString('en-US'));
 export const REFRESH_MS = 5000;
-
-function ago(s) {
-  return s < 90 ? `${Math.round(s)} s` : s < 5400 ? `${Math.round(s / 60)} min` : `${Math.round(s / 3600)} h`;
-}
 
 /** Share of the planned steps a step reaches, 0–1, or null when unknown. */
 function share(step, row) {
@@ -23,9 +20,11 @@ function share(step, row) {
 
 /**
  * What one row shows (pure, for tests).
+ * Scorer and State say it as the Run panel does (live_run.js): plain text,
+ * colour only for trouble, the alarms part of State.
  * @returns {{name: string, sub: string, lammps: string, lammpsShare: number|null,
- *   scored: string, scoredShare: number|null, scorer: {text: string, tone: string},
- *   alarm: {text: string, tone: string}, state: {text: string, tone: string}, canOpen: boolean}}
+ *   scored: string, scoredShare: number|null, scorer: {text: string, tone: string, title?: string},
+ *   state: {text: string, tone: string}, canOpen: boolean}}
  */
 export function liveRunRow(row) {
   // Where the run lives is detail, behind "More info"; the row names the reference.
@@ -33,34 +32,24 @@ export function liveRunRow(row) {
     .filter(([, v]) => v);
   if (!row.exists) {
     return { name: row.name, sub: '', more, lammps: '', lammpsShare: null, scored: '', scoredShare: null,
-      scorer: { text: '', tone: '' }, alarm: { text: '', tone: '' },
-      state: { text: 'folder not found', tone: 'warn' }, canOpen: false, canStop: false };
+      scorer: { text: '', tone: '' }, state: { text: 'Folder not found', tone: 'warn' },
+      canOpen: false, canStop: false };
   }
   const end = row.planned_end_step;
   const lammps = `LAMMPS ${fmt(row.last_step)}${end != null ? ` / ${fmt(end)}` : ''}`;
   const scored = row.scored_through_step == null ? 'nothing scored yet' : `scored ${fmt(row.scored_through_step)}`;
-  let scorer;
-  if (row.end || ['done', 'refused', 'failed'].includes(row.scorer_state)) {
-    scorer = { text: row.scorer_state || 'not started', tone: ['refused', 'failed'].includes(row.scorer_state) ? 'bad' : '' };
-  } else if (row.heartbeat_age_s == null) {
-    scorer = { text: 'not started yet', tone: '' };
-  } else {
-    scorer = row.stalled ? { text: `${ago(row.heartbeat_age_s)} ago — stalled?`, tone: 'warn' }
-      : { text: `${ago(row.heartbeat_age_s)} ago`, tone: 'ok' };
-  }
-  const alarms = row.alarms || [];
-  const alarm = alarms.length
-    ? { text: alarms.map((a) => `${a.kind === 'chem' ? 'chemistry ' : ''}step ${fmt(a.step)}`).join(', '), tone: 'bad' }
-    : { text: 'none', tone: '' };
-  const st = row.state || 'running';
-  const at = row.end?.stop_observed_step;
-  const state = st === 'stopped' ? { text: `stopped at step ${fmt(at)}`, tone: 'bad' }
-    : st === 'terminated' ? { text: `terminated at step ${fmt(at)}`, tone: 'bad' }
-    : st === 'finished' ? { text: 'finished', tone: '' }
-    : st === 'running' ? { text: 'running', tone: 'ok' } : { text: st, tone: 'warn' };
+  const scorer = liveScorerCell({ state: row.scorer_state, ended: !!row.end,
+    ageS: row.heartbeat_age_s, stalled: !!row.stalled });
+  // The run's end, from its record; a state with no record (a failure) still counts.
+  const ended = row.end ? { state: row.end.state || row.state, step: row.end.stop_observed_step }
+    : row.state && row.state !== 'running' ? { state: row.state, step: null } : null;
+  const state = liveStateCell({
+    alarms: (row.alarms || []).map((x) => ({ kind: x.kind, step: x.step })),
+    end: ended, stopRequested: !!(row.stop_requested || row.stop),
+  });
   return { name: row.name, sub: row.bundle || '', more,
     lammps, lammpsShare: share(row.last_step, row), scored, scoredShare: share(row.scored_through_step, row),
-    scorer, alarm, state, canOpen: true,
+    scorer, state, canOpen: true,
     // Stopping is for a run this server follows that has not ended (ADR 0089).
     canStop: !!row.open && !row.end };
 }
@@ -124,7 +113,6 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () =>
     b.appendChild(i);
     return b;
   };
-  const chip = ({ text, tone }) => (text ? cell('span', `live-chip${tone ? ` ${tone}` : ''}`, text) : cell('span'));
 
   let scrolled = false;
   const openMore = new Set();   // rows whose "More info" is open, kept across refreshes
@@ -136,7 +124,7 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () =>
     }
     const table = cell('table', 'live-runs-table');
     const hr = cell('tr');
-    for (const h of ['Run', 'Progress', 'Scorer', 'Alarm', 'State', '']) hr.appendChild(cell('th', '', h));
+    for (const h of ['Run', 'Progress', 'Scorer', 'State', '']) hr.appendChild(cell('th', '', h));
     table.appendChild(hr);
     for (const row of rows) {
       const v = liveRunRow(row);
@@ -158,9 +146,8 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () =>
         prog.append(cell('div', 'live-runs-sub', v.lammps), bar(v.lammpsShare, 'lammps'),
           cell('div', 'live-runs-sub', v.scored), bar(v.scoredShare, row.stalled ? 'stalled' : 'scored'));
       }
-      const scorer = cell('td'); scorer.appendChild(chip(v.scorer));
-      const alarm = cell('td'); alarm.appendChild(chip(v.alarm));
-      const state = cell('td', `live-runs-state ${v.state.tone}`, v.state.text);
+      const scorer = tonedText(cell('td'), v.scorer);
+      const state = tonedText(cell('td', 'live-runs-state'), v.state);
       const act = cell('td');
       const btn = cell('button', v.canOpen ? 'live-runs-open' : 'live-runs-forget', v.canOpen ? 'Open' : 'Forget');
       btn.addEventListener('click', () => {
@@ -173,7 +160,7 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () =>
         stopBtn.addEventListener('click', () => stop(row));
         act.appendChild(stopBtn);
       }
-      tr.append(name, prog, scorer, alarm, state, act);
+      tr.append(name, prog, scorer, state, act);
       table.appendChild(tr);
     }
     body.replaceChildren(table);

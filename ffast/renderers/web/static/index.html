@@ -567,14 +567,7 @@
     .live-hint[hidden] { display: none; }
     .live-hint-close { border: 0; background: none; cursor: pointer; font-size: 1.2em; line-height: 1; color: inherit; }
     .live-event-list th { text-align: left; font-weight: 600; padding-right: 10px; }
-    .live-chip {
-      border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; white-space: nowrap;
-      color: var(--ink-2);
-    }
-    .live-chip.ok { border-color: var(--median); color: var(--median); }
-    .live-chip.warn { border-color: var(--warn); color: var(--warn); }
     .ac-pause.warn { border-color: var(--warn); color: var(--warn); }
-    .live-chip.bad { border-color: var(--danger); color: var(--danger); }
     .live-rule { color: var(--ink-3); font-size: var(--fs-xs); margin-top: 4px; }
     .live-problem { color: var(--warn); font-size: var(--fs-xs); margin-top: 2px; }
     /* The Run panel: the error table's look, a row per run. Colour only for
@@ -656,9 +649,10 @@
     .live-runs-bar i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--ink-3); }
     .live-runs-bar i.scored { background: var(--accent); }
     .live-runs-bar i.stalled { background: var(--warn); }
-    .live-runs-state.ok { color: var(--median); }
-    .live-runs-state.bad { color: var(--danger); }
-    .live-runs-state.warn { color: var(--warn); }
+    /* Scorer and State: plain text; colour only for trouble, with the warning icon */
+    table.live-runs-table td.warn { color: var(--warn); }
+    table.live-runs-table td.bad { color: var(--danger); }
+    table.live-runs-table td > .icon { width: 12px; height: 12px; margin-right: 4px; vertical-align: -2px; }
     /* the "Make reference" dialog */
     #make-reference-dialog .warning-modal-panel { width: min(620px, calc(100vw - 32px)); max-width: none; }
     .make-ref-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 12px; font-size: var(--fs-s); }

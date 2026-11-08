@@ -43,7 +43,7 @@ import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState, loadLayout, saveLayout } from './layout_state.js';
 import {
   liveEventLine, liveNoScoreMessage, liveRunRow, liveRunProblem, liveRunRuleText, liveRunSeries,
-  liveRunThreshold, liveRunsEvents, liveRunsOverlays, sameRunUpdate,
+  liveRunThreshold, liveRunsEvents, liveRunsOverlays, sameRunUpdate, tonedText,
 } from './live_run.js';
 
 /** Two columns of the smallest plot, and the gap between cells, in px (the grid gap in index.html). */
@@ -531,16 +531,10 @@ export class AnalysisManager {
   }
 
   /** A table cell; trouble gets its colour and the warning icon, never colour alone. */
-  _liveCell(tr, { text, tone, title }, cls = '') {
+  _liveCell(tr, cellValue, cls = '') {
     const td = tr.insertCell();
     if (cls) td.className = cls;
-    if (tone) {
-      td.classList.add(tone);
-      td.innerHTML = icon('warning');
-    }
-    td.append(text);
-    if (title) td.title = title;
-    return td;
+    return tonedText(td, cellValue);
   }
 
   /** The Run panel's title-row buttons, made once per card: the alarm rule's

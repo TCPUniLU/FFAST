@@ -752,7 +752,8 @@ async def _row_can_stop(static_origin, row):
             await browser.close()
 
 
-async def test_live_runs_rows_show_progress_heartbeat_alarm_and_end(static_origin):
+async def test_live_runs_rows_say_it_in_the_run_panels_words(static_origin):
+    # Plain text, colour only for trouble; the alarms are part of State.
     rows = [
         {"run_id": "a", "name": "Live 10:33:35 mel0314", "run_dir": "/r/a", "exists": True, "bundle": "aspirin_mace",
          "slurm_job_id": "5428960",
@@ -782,17 +783,20 @@ async def test_live_runs_rows_show_progress_heartbeat_alarm_and_end(static_origi
         finally:
             await browser.close()
     assert a["lammps"] == "LAMMPS 412,300 / 1,000,000" and a["scored"] == "scored 411,900"
-    assert round(a["lammpsShare"], 3) == 0.412 and a["scorer"] == {"text": "3 s ago", "tone": "ok"}
-    assert a["alarm"] == {"text": "step 386,000", "tone": "bad"} and a["state"]["text"] == "running"
+    assert round(a["lammpsShare"], 3) == 0.412
+    assert a["scorer"] == {"text": "running", "tone": "", "title": "Last heartbeat 3 s ago"}
+    assert a["state"] == {"text": "Alarm at step 386,000", "tone": "bad"} and "alarm" not in a
     # The row names the reference; the folder, run ID and job are "More info".
     assert a["sub"] == "aspirin_mace" and a["canOpen"]
     assert a["more"] == [["Folder", "/r/a"], ["Run ID", "a"], ["Slurm job", "5428960"]]
     assert c["sub"] == "" and c["more"] == [["Folder", "/r/c"], ["Run ID", "c"]]
     assert d["sub"] == "" and d["more"] == [["Folder", "/gone/d"], ["Run ID", "d"]]
-    assert b["scorer"] == {"text": "4 min ago — stalled?", "tone": "warn"}
-    assert c["lammpsShare"] is None and c["scorer"]["text"] == "done"
-    assert c["alarm"]["text"] == "chemistry step 58,000" and c["state"]["text"] == "terminated at step 61,500"
-    assert d["state"]["text"] == "folder not found" and not d["canOpen"]
+    assert b["scorer"] == {"text": "silent 4 min — stalled?", "tone": "warn"}
+    assert b["state"] == {"text": "No alarm", "tone": ""}
+    assert c["lammpsShare"] is None and c["scorer"] == {"text": "done", "tone": ""}
+    assert c["state"] == {"text": "Chemistry alarm at step 58,000 · terminated; last saved frame at step 61,500",
+                          "tone": "bad"}
+    assert d["state"] == {"text": "Folder not found", "tone": "warn"} and not d["canOpen"]
     # Stop now only for a run open on this server that has not ended.
     assert [x.get("canStop") for x in (a, b, c, d)] == [False, False, False, False]
     assert (await _row_can_stop(static_origin, {**rows[0], "open": True})) is True
@@ -827,7 +831,7 @@ async def test_web_the_live_runs_dialog_lists_opens_and_forgets(tmp_path, monkey
                 await expect(folder).to_be_hidden()
                 await rows.nth(0).locator(".live-runs-more summary").click()
                 await expect(folder).to_be_visible()
-                await expect(rows.nth(1)).to_contain_text("folder not found")
+                await expect(rows.nth(1)).to_contain_text("Folder not found")
                 await rows.nth(1).locator("button.live-runs-forget").click()
                 await expect(rows).to_have_count(1, timeout=10000)
                 assert not (pointers / "20261104-080000-n-1-0000.json").exists()
