@@ -1719,3 +1719,38 @@ async def test_web_a_legend_click_hides_the_marks_it_names_and_they_stay_hidden(
                     ".layout.shapes.filter((s) => s.type === 'path').every((s) => s.visible !== false)", arg=ACTIVE, timeout=5000)
             finally:
                 await browser.close()
+
+
+async def test_web_the_legend_of_the_live_score_plot_can_be_hidden_from_its_menu(tmp_path):
+    """The score plot opens with its legend (it names the marks and lines).
+    ⋯ → Hide legend removes it and saves `legend = false` in the Live run
+    layout; ⋯ → Show legend brings the automatic legend back and drops the field."""
+    run = _alarmed_run_folder(tmp_path)
+    tabs = tmp_path / "tabs"
+    tabs.mkdir()
+    async with _spawn_server("--tabs-dir", str(tabs)) as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _open_run(page, run)
+                await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 4], timeout=15000)
+                scores = page.locator(f'{ACTIVE} .analysis-panel[data-part="scores"]')
+                menu = page.locator("#panel-menu-list")
+                legend = scores.locator(".legend .traces")
+                await expect(legend).to_have_count(5)
+                await scores.locator(".panel-more").click()
+                await expect(menu.locator("[data-action='panel-legend']")).to_have_text("Hide legend")
+                await menu.locator("[data-action='panel-legend']").click()
+                await expect(legend).to_have_count(0, timeout=15000)
+                assert any("legend = false" in f.read_text() for f in tabs.glob("*.toml"))
+                await scores.locator(".panel-more").click()
+                await expect(menu.locator("[data-action='panel-legend']")).to_have_text("Show legend")
+                await menu.locator("[data-action='panel-legend']").click()
+                await expect(legend).to_have_count(5, timeout=15000)
+                assert not any("legend = false" in f.read_text() for f in tabs.glob("*.toml"))
+            finally:
+                await browser.close()

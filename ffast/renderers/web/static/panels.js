@@ -145,6 +145,12 @@ export function applyPanelLabels(spec, built) {
     legendSize: layout.legend?.font?.size ?? null,
     legend: !!layout.showlegend,
   };
+  // "Hide legend" (the panel's `legend = false`): `labelDefaults.legend` above
+  // still says whether the plot would show one, so "Show legend" stays on offer.
+  if (spec.legend === false && layout.showlegend) {
+    layout.showlegend = false;
+    layout.margin = { ...layout.margin, t: 8 };   // the room the legend had
+  }
   const axes = [layout.xaxis, layout.yaxis].filter(Boolean);
   if (spec.x_title && layout.xaxis) layout.xaxis.title = { ...layout.xaxis.title, text: spec.x_title };
   if (spec.y_title && layout.yaxis) layout.yaxis.title = { ...layout.yaxis.title, text: spec.y_title };

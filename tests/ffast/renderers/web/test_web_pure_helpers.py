@@ -128,6 +128,8 @@ CASES = {
     "hover_bars": "(() => { const b = pn.buildPanel({kind: 'bars'}, [{name: 'MACE', data: {value: {nd: {values: [0.1, 0.2], shape: [2]}}}}], {elementOrder: [1, 6], selectedElements: ['All']}); return b.traces[0].hovertemplate; })()",
     "te_set_labels": "(() => { const a = te.setPanelLabels(TE(), 2, {y_title: 'Mine', label_size: 14, colour: 'red'}); const b = te.setPanelLabels(a, 2, {y_title: null}); return [a.panels[2], b.panels[2], te.toSaved(b).panels[2], TE().panels[2]]; })()",
     "pn_labels_applied": "(() => { const S = (name) => ({datasetFp: 'D', modelFp: name, name, data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}); const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u'], y_title: 'Mine', label_size: 15, legend_size: 9, legend_x: 0.1, legend_y: 0.9}, [S('MACE'), S('SchNet')], {units: {}, peaks: false}); return [b.layout.yaxis.title.text, b.layout.yaxis.title.font.size, b.layout.xaxis.title.font.size, b.layout.legend.font.size, b.layout.legend.x, b.layout.legend.y, b.labelDefaults, b.traces[0].hovertemplate]; })()",
+    "pn_legend_off": "(() => { const S = (name) => ({datasetFp: 'D', modelFp: name, name, data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}); const draw = (extra) => pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u'], ...extra}, [S('MACE'), S('SchNet')], {units: {}, peaks: false}); const on = draw({}); const off = draw({legend: false}); return [on.layout.showlegend, on.layout.margin.t, off.layout.showlegend, off.layout.margin.t, off.labelDefaults.legend]; })()",
+    "te_set_legend": "(() => { const off = te.setPanelLabels(TE(), 2, {legend: false}); const on = te.setPanelLabels(off, 2, {legend: null}); const odd = te.setPanelLabels(TE(), 2, {legend: true}); return [off.panels[2].legend, 'legend' in on.panels[2], 'legend' in odd.panels[2], te.toSaved(off).panels[2].legend]; })()",
     "pn_labels_one_series": "(() => { const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u'], y_title: 'Mine', label_size: 15, legend_size: 9, legend_x: 0.1, legend_y: 0.9}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}], {units: {}, peaks: false}); return [b.layout.legend?.x ?? null, b.labelDefaults.legend, b.layout.yaxis.title.text]; })()",
     "fields_dialog": (
         "await (async () => {"
@@ -1905,6 +1907,19 @@ def test_a_panels_label_fields_are_drawn_and_keep_the_defaults(results):
     assert (title, y_size, x_size, legend_size, lx, ly) == ("Mine", 15, 15, 9, 0.1, 0.9)
     assert defaults["y"].startswith("Force MAE") and defaults["legend"] is True
     assert "Mine = %{y:.6g}" in template
+
+
+def test_a_plot_with_its_legend_off_has_none_and_still_says_it_could_have_one(results):
+    on_shown, on_top, off_shown, off_top, could = results["pn_legend_off"]
+    assert on_shown is True and on_top > off_top        # the legend's room is given back
+    assert off_shown is False and off_top == 8
+    assert could is True                                  # "Show legend" stays on offer
+
+
+def test_set_panel_labels_writes_a_hidden_legend_and_removes_the_default(results):
+    off, back_to_default, true_stays_out, saved = results["te_set_legend"]
+    assert off is False and back_to_default is False and true_stays_out is False
+    assert saved is False
 
 
 def test_the_legend_fields_count_only_when_a_legend_shows(results):

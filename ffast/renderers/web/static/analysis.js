@@ -458,7 +458,6 @@ export class AnalysisManager {
     const series = scored.map((r) => (scored.length > 1
       ? { ...liveRunSeries(r.kw)[0], name: nameOf(r.kw) } : liveRunSeries(r.kw)[0]));
     const plotSpec = { ...spec, kind: 'timeline', metrics: {}, liveScores: true,
-      legend: scored.length > 1 || spec.legend,
       y_line: liveRunThreshold(), overlays: liveRunsOverlays(named) };
     card.plotSpec = plotSpec;
     card.body.className = 'panel-plot';
@@ -1770,10 +1769,18 @@ export class AnalysisManager {
       { id: 'panel-csv', label: 'Download data (CSV)', unavailable: notDrawn,
         run: () => downloadText(plotCsv(el.data, el._figureInfo || {}), `${stem}.csv`) },
     ];
+    // "Hide legend" / "Show legend": saved in the tab as `legend = false`; the
+    // default is the automatic rule (a legend once there is more than one thing to name).
+    const legend = {
+      id: 'panel-legend', label: spec.legend === false ? 'Show legend' : 'Hide legend',
+      unavailable: () => notDrawn() || this._whyNoMove?.()
+        || (el._labelDefaults?.legend ? '' : 'This plot has nothing to name'),
+      run: () => this._onPanelLabels?.(t.spec.name, spec, { legend: spec.legend === false ? null : false }),
+    };
     // A live card: its score plot downloads as a plot does; the run's state,
     // events and attribution are not figures.
     if (spec.kind === 'live') {
-      return (spec.options?.part || 'scores') === 'scores' ? pictures
+      return (spec.options?.part || 'scores') === 'scores' ? [...pictures, { separator: true }, legend]
         : [{ id: 'panel-none', label: 'Nothing to download', unavailable: () => 'Only the score plot downloads' }];
     }
     if (!PLOT_KINDS.has(spec.kind)) {
@@ -1785,6 +1792,7 @@ export class AnalysisManager {
     return [
       ...pictures,
       { separator: true },
+      legend,
       { id: 'panel-labels', label: 'Edit labels…',
         unavailable: () => notDrawn() || this._whyNoMove?.() || '',
         run: () => this._editLabels(t, spec, card) },

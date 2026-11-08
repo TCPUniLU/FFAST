@@ -1516,7 +1516,9 @@ export class FFastApp {
       (p) => p.kind === spec.kind && p.row === spec.row && p.col === spec.col);
     const why = this._whyNoEdit() || (index < 0 ? 'This tab is not from the server' : '');
     if (why) { this._setStatus(why, 'error'); return { ok: false, error: why }; }
-    const r = await this._tabOps.save(toSaved(setPanelLabels(server, index, patch)), server.name);
+    // A live tab saves the Live run layout it is made from (ADR 0089).
+    const next = { ...setPanelLabels(server, index, patch), name: server.layout_of || server.name };
+    const r = await this._tabOps.save(toSaved(next), server.name);
     this._reportTab(r);
     return r;
   }
