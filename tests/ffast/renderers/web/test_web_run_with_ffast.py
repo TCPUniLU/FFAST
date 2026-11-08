@@ -142,8 +142,11 @@ async def test_web_run_with_ffast_checks_reviews_submits_and_opens_the_run(tmp_p
                 await expect(d.locator(".rwf-checks li.ok", has_text="2 Aug 2023")).to_have_count(1, timeout=60000)
                 await expect(d.locator(".rwf-checks li", has_text="snapshot after line 3")).to_have_count(1)
                 await expect(go).to_have_text("Review ›")
+                await expect(d.locator('.rwf-steps [aria-current="step"]')).to_have_text("2 Check")
+                await expect(d.locator(".rwf-steps .done")).to_have_text("1 Choose")
                 await expect(go).to_be_enabled()
                 await go.click()
+                await expect(d.locator('.rwf-steps [aria-current="step"]')).to_have_text("3 Review")
 
                 # 3 Review: three copies; the input diff shows the include.
                 await expect(d.locator(".rwf-tab")).to_have_count(3)

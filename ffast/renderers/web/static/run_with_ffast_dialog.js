@@ -15,6 +15,7 @@
 import { labelBy, trapFocus } from './dialogs.js';
 import { OUT } from './events.js';
 import { helpToggle } from './help.js';
+import { icon } from './icons.js';
 
 /** A unified diff as lines with a class each (pure, for tests). */
 export function diffLines(diff) {
@@ -81,8 +82,24 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
   const head = el('div', 'warning-modal-title rwf-head');
   const title = el('span', '', 'Run with FFAST');
   const steps = el('span', 'rwf-steps');
-  const stepEls = ['1 Choose', '2 Check', '3 Review'].map((t) => el('span', '', t));
-  steps.append(...stepEls);
+  // Like the tab bar: the step you are on is bold with the accent underline, the
+  // ones behind you carry a tick, a "›" lies between them.
+  const stepEls = ['1 Choose', '2 Check', '3 Review'].map((t) => {
+    const s = el('span');
+    const tick = el('span', 'rwf-tick');
+    tick.innerHTML = icon('check');
+    s.append(tick, t);
+    return s;
+  });
+  stepEls.forEach((s, i) => {
+    if (i) {
+      const sep = el('span', 'rwf-sep');
+      sep.setAttribute('aria-hidden', 'true');
+      sep.innerHTML = icon('chevron-right');
+      steps.append(sep);
+    }
+    steps.append(s);
+  });
   head.append(title, steps);
   labelBy(modal, title);
   const body = el('div', 'rwf-body');
@@ -313,7 +330,10 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
 
   function show(step) {
     state.step = step;
-    stepEls.forEach((s, i) => { s.className = i < step ? 'done' : i === step ? 'on' : ''; });
+    stepEls.forEach((s, i) => {
+      s.className = i < step ? 'done' : i === step ? 'on' : '';
+      if (i === step) s.setAttribute('aria-current', 'step'); else s.removeAttribute('aria-current');
+    });
     body.replaceChildren([choose, checkStep, review][step]);
     back.hidden = step === 0;
     next.textContent = ['Check ›', 'Review ›', 'Write copies and submit'][step];

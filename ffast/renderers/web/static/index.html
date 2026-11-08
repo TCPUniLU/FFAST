@@ -674,10 +674,18 @@
     /* the "Run with FFAST" dialog (ADR 0086) */
     #run-with-ffast-dialog .warning-modal-panel { width: min(860px, calc(100vw - 32px)); max-width: none; }
     .rwf-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-    .rwf-steps { display: flex; gap: 4px; font-size: var(--fs-xs); font-weight: 400; }
-    .rwf-steps span { padding: 1px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--ink-3); }
-    .rwf-steps span.on { border-color: var(--accent); color: var(--accent); }
-    .rwf-steps span.done { border-color: var(--median); color: var(--median); }
+    /* the steps read like the tab bar: where you are is bold with the accent underline */
+    .rwf-steps { display: flex; gap: 6px; align-items: center; font-size: var(--fs-s); font-weight: 400; }
+    .rwf-steps > span:not(.rwf-sep) {
+      display: inline-flex; align-items: center; gap: 4px; padding: 2px 0 3px;
+      color: var(--ink-3); border-bottom: 2px solid transparent;
+    }
+    .rwf-steps > span.done { color: var(--ink-2); }
+    .rwf-steps > span.on { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+    .rwf-steps .rwf-tick { display: none; }
+    .rwf-steps .done .rwf-tick { display: inline-flex; }
+    .rwf-steps .icon { width: 12px; height: 12px; vertical-align: 0; }
+    .rwf-steps .rwf-sep { display: inline-flex; color: var(--ink-3); }
     .rwf-body { max-height: 65vh; overflow: auto; padding: 8px 14px; font-size: var(--fs-s); }
     .rwf-step { display: flex; flex-direction: column; gap: 8px; }
     .rwf-row { display: grid; grid-template-columns: 130px 1fr auto; gap: 8px; align-items: center; }
