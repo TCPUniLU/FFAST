@@ -440,6 +440,21 @@ def test_a_test_the_run_does_not_have_gives_no_value_and_says_why(tmp_path):
     assert run.analysis_value_problem(("score", "bonds", "T2")) is None
 
 
+@pytest.mark.parametrize("limit", [None, 0.0], ids=["missing", "zero"])
+def test_a_missing_or_zero_threshold_gives_no_value_and_says_why(tmp_path, limit):
+    # Before: the value was all NaN, so the panel drew an empty line, not a note.
+    run = _open_format2(tmp_path)
+    bonds_t2 = run.settings["thresholds"]["bonds"]["T2"]
+    if limit is None:
+        del bonds_t2["centroid"]
+    else:
+        bonds_t2["centroid"] = limit
+    assert run.analysis_value(("score", "bonds", "T2")) is None
+    assert run.analysis_value_problem(("score", "bonds", "T2")) == \
+        "its reference has no usable centroid threshold for bonds T²"
+    assert run.analysis_value(("score", "angles", "T2"))[:2].tolist() == [0.5, 0.5]
+
+
 def test_format_1_scores_give_the_worst_value_only(tmp_path):
     d = _run_folder(tmp_path)
     run = LiveRun(_Env(), d, lambda m: None)

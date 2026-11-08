@@ -300,9 +300,19 @@ class LiveRun:
         if key[0] != "score":
             return None
         _, track, stat = key
+        name = f"{track} {'T²' if stat == 'T2' else stat}"
         if [track, stat] not in [list(t) for t in self.settings.get("tests") or []]:
-            return f"its reference has no {track} {'T²' if stat == 'T2' else stat} test"
+            return f"its reference has no {name} test"
+        if not self._threshold(track, stat):
+            # A missing or zero threshold cannot divide a score: a note, not an empty line.
+            return f"its reference has no usable {self._role()} threshold for {name}"
         return None
+
+    def _role(self) -> str:
+        return self.settings.get("role", "centroid")
+
+    def _threshold(self, track, stat):
+        return (((self.settings.get("thresholds") or {}).get(track) or {}).get(stat) or {}).get(self._role())
 
     def analysis_value(self, key) -> np.ndarray | None:
         """One number per frame of the run, NaN where no score row has the frame
@@ -313,13 +323,10 @@ class LiveRun:
             return None
         out = np.full(self.dataset.N, np.nan)
         rows = list(self.rows)          # the event loop appends while a worker reads
-        role = self.settings.get("role", "centroid")
         limit = None
         if key[0] == "score" and key != ("worst",):
             _, track, stat = key
-            limit = (((self.settings.get("thresholds") or {}).get(track) or {}).get(stat) or {}).get(role)
-            if not limit:
-                return out
+            limit = self._threshold(track, stat)      # non-zero: checked by analysis_value_problem
         for r in rows:
             frame = r.get("frame")
             if not isinstance(frame, int) or not 0 <= frame < len(out):
