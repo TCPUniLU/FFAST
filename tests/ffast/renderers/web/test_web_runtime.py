@@ -8276,8 +8276,9 @@ async def test_web_while_a_tab_is_edited_the_rest_of_the_window_is_for_looking_o
     """Edit mode: all that is not the layout is greyed out until Save or Cancel:
     the menus, the dataset rail, the 3D tools and Settings sidebar, Screen /
     Journal and Density, every controls row. Other tabs can still be visited and
-    looked at, the frame bar and the 3D view stay (a 3D panel's start look is
-    set from them), and so do the run safety controls (Live Runs…)."""
+    looked at, the frame bar stays, and so do the run safety controls (Live
+    Runs…). Panel contents are greyed too; the edited tab's panel frames (the
+    edit chrome) are what stays live."""
     why = "Finish editing the tab first (Save or Cancel)"
     locked = """() => ({
       toolbar: document.getElementById('pick-toolbar').inert,
@@ -8288,6 +8289,8 @@ async def test_web_while_a_tab_is_edited_the_rest_of_the_window_is_for_looking_o
               document.getElementById('sidebar-toggle').inert],
       metrics: [document.getElementById('metrics-btn').inert, document.getElementById('metrics-drawer').inert],
       controls: [...document.querySelectorAll('.analysis-controls')].map((e) => e.inert),
+      panels: [...document.querySelectorAll('.tabpanel.active .analysis-panel')].map((e) => e.inert),
+      chrome: [...document.querySelectorAll('.tabpanel.active .edit-chrome')].map((e) => e.inert),
     })"""
     async with _tab_server(tmp_path) as (ws_port, web_port, tabs_dir):
         async with async_playwright() as p:
@@ -8299,7 +8302,7 @@ async def test_web_while_a_tab_is_edited_the_rest_of_the_window_is_for_looking_o
                 before = await page.evaluate(locked)
                 assert before["toolbar"] is False and before["metrics"] == [False, False]
                 assert before["rail"] is False and before["sidebar"] is False and before["view"] == [False, False]
-                assert not any(before["controls"])
+                assert not any(before["controls"]) and before["panels"] and not any(before["panels"])
 
                 await page.locator("#tab-edit-btn").click()
                 await expect(page.locator(".tabpanel.active .edit-bar")).to_be_visible()
@@ -8308,6 +8311,8 @@ async def test_web_while_a_tab_is_edited_the_rest_of_the_window_is_for_looking_o
                 assert now["rail"] is True and now["sidebar"] is True and now["view"] == [True, True]
                 assert now["frame"] == [False, False]      # the frame bar and the Settings button stay
                 assert all(now["controls"]) and now["controls"]
+                assert all(now["panels"]) and now["panels"]            # the contents are greyed...
+                assert now["chrome"] and not any(now["chrome"])        # ...the frames to arrange are not
                 # Menus: everything that loads or runs says why not; Live Runs… stays.
                 await page.locator("#file-menu-btn").click()
                 load = page.locator("#file-menu-list").get_by_role("menuitem", name="Load Dataset…", exact=True)
@@ -8333,7 +8338,7 @@ async def test_web_while_a_tab_is_edited_the_rest_of_the_window_is_for_looking_o
                 await expect(page.locator(".tabpanel.active .edit-bar")).to_have_count(0)
                 after = await page.evaluate(locked)
                 assert after["toolbar"] is False and after["rail"] is False and after["sidebar"] is False
-                assert after["view"] == [False, False]
+                assert after["view"] == [False, False] and not any(after["panels"])
                 assert after["metrics"] == [False, False] and not any(after["controls"])
                 await page.locator("#file-menu-btn").click()
                 await expect(page.locator("#file-menu-list").get_by_role(

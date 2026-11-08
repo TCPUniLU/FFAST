@@ -255,6 +255,9 @@ export class TabEditor {
     const el = document.createElement('div');
     el.className = 'edit-chrome';
     el.dataset.panel = String(unit.indices[0]);
+    // The Run panel holds Stop on alarm, which must stay reachable while its tab is
+    // edited: its chrome lets clicks through its empty area (head and grips still work).
+    if (first?.options?.part === 'status') el.dataset.through = '';
     el.style.gridColumn = unit.el.style.gridColumn;
     el.style.gridRow = unit.el.style.gridRow;
 

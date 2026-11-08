@@ -69,11 +69,12 @@ import { pageCodeFingerprint, serverCodeNotice } from './code_fingerprint.js';
 
 /** What a tab in Edit mode locks (see _syncEditLock): all that is not the layout. The
  * dataset rail, the pick tools and the 3D Settings sidebar, the Metrics drawer,
- * Screen / Journal and Density, and every tab's controls row (data selector, Pause, ...).
- * Left: the tab bar, the frame bar and the 3D view (a 3D panel's start look is set from
- * them), and the run safety controls. */
+ * Screen / Journal and Density, every tab's controls row (data selector, Pause, ...) and
+ * every panel's contents, so the panel frames being arranged stand out (the edit chrome is
+ * a sibling of the panels, not inside them). Left: the tab bar, the frame bar, and the
+ * run safety controls: the Run panel holds Stop on alarm, so it is not greyed. */
 const EDIT_LOCKED = '#objectbar, #pick-toolbar, #loupe-sidebar, #metrics-btn, #metrics-drawer, '
-  + '#view-mode, #density, .analysis-controls';
+  + '#view-mode, #density, .analysis-controls, .analysis-panel:not([data-part="status"])';
 
 /**
  * The five pick tools (ADR 0045 Phase 2). Each mirrors a Qt AtomSelectionBase

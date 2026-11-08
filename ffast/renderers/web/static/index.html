@@ -341,6 +341,9 @@
       border: 1px solid var(--line); border-radius: 5px;
     }
     .edit-chrome:hover { border-color: var(--ink-3); }
+    /* the Run panel's chrome: clicks pass through its empty area to Stop on alarm */
+    .edit-chrome[data-through] { pointer-events: none; }
+    .edit-chrome[data-through] > * { pointer-events: auto; }
     .edit-chrome:focus-within, .edit-chrome.held {
       border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent);
     }

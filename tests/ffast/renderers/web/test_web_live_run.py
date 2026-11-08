@@ -1786,3 +1786,39 @@ async def test_the_live_runs_dialog_greys_out_opening_a_run_while_a_tab_is_edite
     assert got["open"] == [True, "Finish editing the tab first (Save or Cancel)"]
     assert got["forget"] is False and got["stop"] is False
     assert got["path"] == [["Open run folder…", True], ["Close", False]]
+
+
+async def test_web_while_a_live_tab_is_edited_its_panels_are_greyed_but_stop_on_alarm_works(tmp_path):
+    """Panel contents are greyed in Edit mode so the frames stand out; the Run
+    panel is not (Stop on alarm is a run safety control) and neither are the edit
+    chrome's grips and buttons."""
+    run = _three_scored_frames(tmp_path)
+    tabs = tmp_path / "tabs"
+    tabs.mkdir()
+    async with _spawn_server("--tabs-dir", str(tabs)) as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _open_run(page, run)
+                await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 3], timeout=15000)
+                await page.locator("#tab-edit-btn").click()
+                await expect(page.locator(f"{ACTIVE} .edit-bar")).to_be_visible()
+                inert = await page.evaluate("""(sel) => Object.fromEntries([...document.querySelectorAll(sel + ' .analysis-panel')]
+                  .map((e) => [e.dataset.part || (e.classList.contains('panel-3d') ? '3d' : 'plot'), e.inert]))""", ACTIVE)
+                assert inert["scores"] is True and inert["attribution"] is True and inert["3d"] is True
+                assert inert["status"] is False
+                tick = page.locator(f"{ACTIVE} .live-stop-on-alarm")
+                await tick.check()
+                await expect(tick).to_be_checked(timeout=10000)      # a run safety control works mid-edit
+                assert rf.read_json(run / rf.CONTROL)["stop_on_alarm"] is True
+                await page.locator(f"{ACTIVE} .edit-chrome .edit-head").first.hover()   # the frames stay live
+                await page.locator("[data-edit=cancel]").click()
+                still = await page.evaluate("""(sel) => [...document.querySelectorAll(sel + ' .analysis-panel')]
+                  .some((e) => e.inert)""", ACTIVE)
+                assert still is False
+            finally:
+                await browser.close()
