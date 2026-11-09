@@ -78,6 +78,11 @@ of steps. Adding a guide means adding entries, not changing the runner.
 | `skip` | Leave the step out when the tour starts (for example, the example is already loaded). |
 | `undo` | Runs when Back returns to this step. It may return a promise; the box says "Undoing…" until it settles. |
 
+On entering each step, the runner scrolls its first target into view before
+measuring the highlight, including through nested scroll containers. It uses
+an immediate scroll, and does not force the scroll position again while the
+step is shown, so the user can still scroll to read a panel.
+
 The runner is one small module with no library. On every animation frame it
 finds the targets, measures them, places four shade rectangles around them, and
 places the box. Measuring every frame means the lit area follows resizes and

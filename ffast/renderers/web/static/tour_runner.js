@@ -210,6 +210,10 @@ export function startTour(tour, { events, onEnd, doc = document }) {
       end('stopped', first.title || `Tour stopped: “${step.title}” cannot be done now.`);
       return;
     }
+    // Each step starts with its control visible, including inside nested
+    // scrolling panels. Do this once, before measuring the highlight; the
+    // animation loop must still let the user scroll freely within a step.
+    first?.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'nearest' });
     if (!place()) return;
     win.requestAnimationFrame(() => {
       if (!ended && index === i) (waiting ? [...actions.querySelectorAll('button')].find((b) => !b.disabled) || first : next.hidden ? actions.querySelector('button') : next)?.focus?.({ preventScroll: true });

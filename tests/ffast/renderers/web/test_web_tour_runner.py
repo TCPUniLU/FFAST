@@ -328,3 +328,31 @@ async def test_documentation_links_survive_updates_and_open_without_leaving_the_
     await expect(page.locator(".tour-title")).to_have_text("Warning")
     await page.locator(".tour-next").click()
     await expect(link).to_have_count(0)
+
+
+async def test_the_next_step_reveals_its_target_after_scrolling_a_nested_panel(page):
+    await page.evaluate("""() => {
+      const panel = document.createElement('div'); panel.id = 'scroller';
+      panel.style.cssText = 'position:absolute;left:40px;top:40px;width:300px;height:240px;overflow:auto';
+      panel.innerHTML = `<div style="position:relative;height:1400px">
+        <button id="upper" style="position:absolute;top:30px">Stop on alarm</button>
+        <button id="lower" style="position:absolute;top:1100px">Events</button></div>`;
+      document.body.append(panel); panel.scrollTop = 1000;
+      window.upperClicks = 0;
+      document.getElementById('upper').addEventListener('click', () => { window.upperClicks++; });
+      window.run([
+        { title: 'Events', body: '', targets: ['#lower'] },
+        { title: 'Stop on alarm', body: '', targets: ['#upper'], until: 'enabled' }]);
+    }""")
+    await expect(page.locator("#lower")).to_be_in_viewport(ratio=1)
+    await page.locator(".tour-next").click()
+    await expect(page.locator(".tour-title")).to_have_text("Stop on alarm")
+    await expect(page.locator("#upper")).to_be_in_viewport(ratio=1)
+    await page.locator("#upper").click()
+    assert await page.evaluate("() => window.upperClicks") == 1
+    # Revealing a new step must not fight manual scrolling within that step.
+    await page.evaluate("""async () => {
+      document.getElementById('scroller').scrollTop = 1000;
+      await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame);
+    }""")
+    assert await page.locator("#scroller").evaluate("(el) => el.scrollTop") == 1000

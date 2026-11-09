@@ -60,7 +60,16 @@ async def test_watch_a_lammps_run_from_start_to_delete(
                 ]:
                     await page.locator(".tour-next").click()
                     await expect(title).to_have_text(expected)
-                await active.locator(".live-stop-on-alarm").check()
+                    if expected == "Events":
+                        # Read the events below the fold, as in the hand-test.
+                        await active.locator('.analysis-panel[data-title="Events"]').evaluate(
+                            "(el) => el.scrollIntoView({behavior: 'instant', block: 'end'})"
+                        )
+                        await expect(active.locator(".live-stop-on-alarm")).not_to_be_in_viewport()
+                tick = active.locator(".live-stop-on-alarm")
+                await expect(tick).to_be_in_viewport(ratio=1)
+                await expect(active.locator(".live-status-table th.tick")).to_be_in_viewport(ratio=1)
+                await tick.check()
                 await expect(title).to_have_text("Heat it up", timeout=15000)
                 heat = page.get_by_role(
                     "button", name="Heat it up", exact=True
