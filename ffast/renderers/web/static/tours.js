@@ -344,7 +344,7 @@ function lammpsTour(app) {
   };
   const steps = [
     { title: 'Start a practice run', targets: ['#tabbar'], side: 'bottom',
-      body: 'A practice run replays a toy aspirin run recorded on an HPC cluster. The real FFAST wrapper and scorer watch it, as they would watch LAMMPS. No LAMMPS is needed.',
+      body: 'This tutorial replays a toy aspirin run recorded on an HPC cluster. The real FFAST wrapper and scorer watch it, as they would watch a LAMMPS run. Therefore, no LAMMPS is needed.',
       actions: [{ label: 'Start practice run', primary: true, run: () => send(OUT.START_PRACTICE_RUN, { kind: 'replay' }) }],
       until: 'live-first-frame', accept: sameRun, wait: 'Click Start practice run' },
     { title: 'The run, one row', targets: [status], side: 'bottom',
