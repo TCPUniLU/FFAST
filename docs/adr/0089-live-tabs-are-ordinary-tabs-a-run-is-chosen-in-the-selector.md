@@ -114,3 +114,23 @@ default. It asks DetectAna about that panel's frame and colours that panel. The
 choice is saved in the card's `options.explains` (the panel's place among the
 tab's 3D panels, in layout order). A tab without an attribution card leaves
 attribution on the main view, as before (ADR 0087).
+
+
+## Amendment — own live views follow incoming frames (2026-11-09)
+
+An own 3D view of a running live run follows its newest available frame by
+default. Merely extending the slider range left the molecule frozen at frame
+0, contrary to the live tutorial's promise. Following now reacts to both
+dataset-length announcements and live-run updates, whichever arrives first.
+
+Selecting an older frame through the slider, frame buttons, or score plot
+holds it for inspection. Selecting the newest frame resumes following. Tab
+Pause freezes the frame and its range without forgetting whether the view
+was following; Resume catches up only for a view that was following. With
+Same step enabled, the focused view drives the others rather than each run
+choosing a different newest step. Frame-linked panels keep their existing
+main-view link. A run opened after it has ended starts at frame 0 as before.
+
+Following is transient state of each own view, kept across a layout rebuild
+that keeps that view; it is not a tab-file setting or a change to server-owned
+geometry. Frame changes still go through the ordinary SET_FRAME command.

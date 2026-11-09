@@ -414,6 +414,11 @@ window. It is either **linked** or **independent**:
   display, bonds, force arrows) can be saved with the tab; which dataset or
   prediction it shows, and its camera, never are.
 
+An own view of a running live run follows the newest frame by default.
+Selecting an older frame holds it for inspection; selecting the newest frame
+resumes following. Tab Pause holds it too, and Resume preserves this choice.
+A frame-linked panel follows the main view instead (ADR 0089).
+
 The user switches a 3D panel between linked and independent by choosing what
 it shows: the main view, or a dataset of its own. Screens call an independent
 panel an **own view**, since "independent" wrongly suggests it follows nothing.

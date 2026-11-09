@@ -276,6 +276,8 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
                 await expect(active.locator(".sub-toggle")).to_have_count(0)
                 await expect(page.locator("#dataset-list .obj-row")).to_have_count(1, timeout=15000)
 
+                await expect(page.locator("#frame-label")).to_have_text("1 / 1", timeout=15000)
+
                 # LAMMPS writes another frame, the scorer scores it.
                 with open(run / rf.FRAMES, "a") as fh:
                     fh.write(frame_text(200, random_frames(1, seed=9)[0], ASPIRIN_ELEMENTS))
@@ -287,20 +289,42 @@ async def test_web_a_live_run_opens_in_its_own_tab_and_follows_new_frames(tmp_pa
                 await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 3], timeout=15000)
                 # The plot's third point comes with the run's update; the dataset's
                 # new length comes in its own message. The click needs both.
-                await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=15000)
+                await expect(page.locator("#frame-label")).to_have_text("2 / 2", timeout=15000)
 
-                # A click on the last point shows that frame in the 3D view.
+                # Picking an older score point holds it for inspection.
                 xy = await page.evaluate("""(sel) => {
                   const el = document.querySelector(sel + ' .analysis-panel .panel-plot');
                   const fl = el._fullLayout, tr = el.data[0], r = el.getBoundingClientRect();
-                  const i = tr.x.length - 1;
+                  const i = 1;
                   // _size: the margins as drawn, after the legend pushed them
                   return {x: r.left + fl._size.l + fl.xaxis.l2p(tr.x[i]),
                           y: r.top + fl._size.t + fl.yaxis.l2p(tr.y[i])};
                 }""", ACTIVE)
                 await page.mouse.move(xy["x"], xy["y"])
                 await page.mouse.click(xy["x"], xy["y"])
-                await expect(page.locator("#frame-label")).to_have_text("2 / 2", timeout=10000)
+                await expect(page.locator("#frame-label")).to_have_text("1 / 2", timeout=10000)
+
+                # Inspecting an older frame holds it as new frames arrive.
+                with open(run / rf.FRAMES, "a") as fh:
+                    fh.write(frame_text(300, random_frames(1, seed=10)[0], ASPIRIN_ELEMENTS))
+                await expect(page.locator("#frame-label")).to_have_text("1 / 3", timeout=15000)
+
+                # Returning to the newest frame resumes following.
+                await page.locator("#frame-slider").fill("3")
+                with open(run / rf.FRAMES, "a") as fh:
+                    fh.write(frame_text(400, random_frames(1, seed=11)[0], ASPIRIN_ELEMENTS))
+                await expect(page.locator("#frame-label")).to_have_text("4 / 4", timeout=15000)
+
+                # Tab Pause holds both the frame and its range; Resume catches up.
+                pause = active.locator(".ac-pause")
+                await pause.click()
+                await expect(pause).to_have_text("Resume")
+                with open(run / rf.FRAMES, "a") as fh:
+                    fh.write(frame_text(500, random_frames(1, seed=12)[0], ASPIRIN_ELEMENTS))
+                await page.wait_for_function("() => [...window.ffastApp._datasets.values()].some((d) => d.n === 6)", timeout=15000)
+                await expect(page.locator("#frame-label")).to_have_text("4 / 4")
+                await pause.click()
+                await expect(page.locator("#frame-label")).to_have_text("5 / 5", timeout=15000)
             finally:
                 await browser.close()
 
@@ -589,6 +613,7 @@ async def test_web_clicking_a_live_frame_explains_and_colours_it(tmp_path):
                 active = page.locator(ACTIVE)
                 att = active.locator(".live-attribution")
                 await page.wait_for_function(SCORE_POINTS, arg=[ACTIVE, 3], timeout=15000)
+                await page.locator("#frame-slider").fill("0")
                 await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=10000)
                 # The shown frame is explained without a click.
                 await expect(att).to_contain_text("Step 0", timeout=15000)
@@ -676,7 +701,13 @@ async def test_web_the_attribution_card_explains_the_3d_panel_picked_in_it(tmp_p
                 active = page.locator(ACTIVE)
                 att = active.locator(".live-attribution")
                 pick = active.locator("select.live-att-explains")
-                # Both panels show the run; the second is moved to frame 2.
+                # With Same step off, both own views start at the latest frame.
+                await page.wait_for_function("""() => {
+                  const app = window.ffastApp, tab = app._analysis.tab(app._activeTab);
+                  const views = app._independent.forTab(tab);
+                  return views.length === 2 && views.every((v) => v.frame === 2);
+                }""", timeout=20000)
+                await page.locator("#frame-slider").fill("0")
                 await expect(att.locator(".live-att-head")).to_contain_text("Step 0", timeout=20000)
                 await page.evaluate("""() => {
                   const app = window.ffastApp, tab = app._analysis.tab(app._activeTab);
@@ -1414,6 +1445,7 @@ async def test_a_click_finds_the_mark_under_it(static_origin):
 async def test_web_a_click_on_a_mark_opens_its_frame(tmp_path):
     """to_fix_v3: a click on a mark opens its frame, as a click on its point does."""
     async with _live_page(_three_scored_frames(tmp_path)) as page:
+        await page.locator("#frame-slider").fill("0")
         await expect(page.locator("#frame-label")).to_have_text("0 / 2", timeout=10000)
         # The tab's grid settles after the run opens and moves the plot by
         # hundreds of pixels: aim once it has kept its place for 10 frames.
@@ -1628,6 +1660,8 @@ async def test_web_a_paused_tab_stops_following_its_run_until_it_resumes(tmp_pat
     run = _format2_run_folder(tmp_path, frames=3, scored=3)
     async with _live_page_without_scores_wait(run, points=3) as page:
         await _tab_with_two_timelines(page)
+        # A manually held frame stays held across Pause/Resume.
+        await page.locator("#frame-slider").fill("0")
         await expect(page.locator("#frame-label")).to_have_text("0 / 2")
         button = page.locator(PAUSE)
         await expect(button).to_have_text("Pause")

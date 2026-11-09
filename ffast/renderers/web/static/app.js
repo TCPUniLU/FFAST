@@ -143,6 +143,8 @@ export class FFastApp {
       connected: () => !!this._conn,
       datasets: () => this._datasets,
       main: () => ({ datasetFp: this._currentDatasetFp, modelFp: this._currentModelFp, frame: this._main.current?.frame ?? 0 }),
+      liveRun: (fp) => this._analysis?.liveRunOf(fp) ?? null,
+      pausedFrameCount: (fp) => this._analysis?.pausedFrameCount(fp) ?? null,
       mainView: () => this._mainView,
       sendCamera: (view, cam) => this._sendSetCamera(view, cam),
       sendMainCamera: (cam) => this._sendSetCamera(this._main.current, cam),
@@ -157,6 +159,7 @@ export class FFastApp {
       chosen: () => { this._syncPanelSection(); this._syncSidebarTitle(); this._syncMetricsContext(); },
       focusedCamera: (cam) => this._panes?.camera.syncFromCamera(cam),
       sameStepOwns: (view) => this._sameStepOwns(view),
+      sameStepOn: () => this._analysis?.sameStepOn(this._activeTab) ?? false,
       frameShown: (view) => {
         this._syncSameStep({ view, datasetFp: view.datasetFp, frame: view.frame ?? 0 });
         if (this._playbackView() === view) this._syncPlayback();
@@ -339,7 +342,7 @@ export class FFastApp {
       onLive: (cmd) => this._liveCommand(cmd),
       explainsChoices: (t, spec) => this._explainsChoices(t, spec),
       onExplains: (tabName, spec, index) => this._setExplains(tabName, spec, index),
-      onPauseChange: () => this._syncPlayback(),
+      onPauseChange: () => { this._independent.followLiveFrames(); this._syncPlayback(); },
       onSameStep: () => this._syncSameStep({ view: null, datasetFp: this._currentDatasetFp,
         frame: this._main.current?.frame ?? 0 }),
       onSetUnit: ({ datasetFp, dimension, unit }) => this._setDatasetUnit(datasetFp, dimension, unit),
@@ -550,6 +553,7 @@ export class FFastApp {
     const index = tab?.cells3d.findIndex((cell) => cell.el === panel.viewport.parentElement);
     if (index == null || index < 0) return;
     this._setActivePanel(panel);
+    this._independent.followLiveFrames();
     saveLayout({ focus: { ...(loadLayout().focus || {}), [tab.name]: index } });
   }
 
@@ -2059,6 +2063,7 @@ export class FFastApp {
   _onDatasetMeta(fp, meta) {
     const before = this._datasets.get(fp);
     this._datasets.set(fp, meta);
+    this._independent.followLiveFrames();
     if (!before && !meta.is_sub) {
       if (this._exampleWatch && !this._exampleWatch.datasetFp) this._exampleWatch.datasetFp = fp;
       if (this._browser.settled('dataset', true, fp)) this._tourSignal('dataset-loaded', { fp });   // its "ready" below ends the "Loading…"
@@ -2953,6 +2958,7 @@ export class FFastApp {
     const practice = kw.run_id === this._practiceId;
     if (practice) this._practiceRun = kw;
     this._analysis.setLiveRun(kw);
+    this._independent.followLiveFrames();
     this._live().sync();   // the shown frame is explained once the run has a bundle
     const tabId = kw.tab && this._analysis.liveTabId(kw.tab);
     if (practice) {
@@ -3272,7 +3278,10 @@ export class FFastApp {
         if (!kw) continue;
         const at = where(kw);
         view.missing = at.missing || '';
-        if (at.frame != null && at.frame !== view.frame) this._independent.setFrame(view, at.frame);
+        const following = source.view ? source.view.followingLive
+          : source.frame === (this._datasets.get(source.datasetFp)?.n || 0) - 1;
+        if (following != null) view.followingLive = following;
+        if (at.frame != null && at.frame !== view.frame) this._independent.setFrame(view, at.frame, { live: true });
         else this._independent.syncCaption(view);
       }
       const mainKw = source.view && showsMainView(tab.spec) && this._analysis.liveRunOf(this._currentDatasetFp);

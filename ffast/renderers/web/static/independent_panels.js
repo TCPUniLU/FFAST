@@ -31,13 +31,16 @@ export function independentKey(tabName, spec) {
  *   connected: () => boolean,
  *   datasets: () => Map<string, object>,
  *   main: () => {datasetFp: string|null, modelFp: string|null, frame: number},
+ *   liveRun?: (datasetFp: string) => object|null,
+ *   pausedFrameCount?: (datasetFp: string) => number|null,
+ *   sameStepOwns?: (view: IndependentView) => boolean,
+ *   sameStepOn?: () => boolean,
  *   mainView: () => import('./views3d.js').ViewRenderers,
  *   sendCamera: (view: IndependentView, cam: object) => void,
  *   sendMainCamera: (cam: object) => void,
  *   focused: () => IndependentView|null,
  *   activeTab: () => object|null,
  *   tabPairs: (tabId: string) => Array<{datasetFp: string, modelFp: string|null}>,
- *   pairName: (datasetFp: string, modelFp: string|null) => string,
  *   placePanel: (el: HTMLElement, panel: object) => void,
  *   start: (view: IndependentView) => void,
  *   retired: (view: IndependentView) => void,
@@ -167,6 +170,7 @@ export class IndependentPanels {
   ensureShown() {
     const tab = this._ports.activeTab();
     for (const view of this.forTab(tab)) this.ensureData(view, tab);
+    this.followLiveFrames();
   }
 
   /** Open (or point) an independent panel's server view at its data. */
@@ -181,7 +185,10 @@ export class IndependentPanels {
     });
     this._ports.start(view);
     if (!this._ownFrame(view)) this.followMainFrame(view);
-    else if (datasetChanged) this.setFrame(view, 0);
+    else if (datasetChanged) {
+      view.followingLive = null;
+      this.setFrame(view, 0, { live: true });
+    }
     this.syncCaption(view);
   }
 
@@ -193,6 +200,7 @@ export class IndependentPanels {
     view.restart();
     view.started = false;
     view.frame = null;
+    view.followingLive = null;
     view.framed = false;
     view.renderers.clear();
     this.syncCaption(view);
@@ -238,12 +246,41 @@ export class IndependentPanels {
   }
 
   /** Show frame `frame` in an independent panel. */
-  setFrame(view, frame) {
+  setFrame(view, frame, { live = false } = {}) {
+    if (!live && this._ports.liveRun?.(view.datasetFp)) {
+      const n = this._ports.datasets().get(view.datasetFp)?.n || 0;
+      view.followingLive = frame === n - 1;
+    }
     view.frame = frame;
     if (view.isOpen) {
       this._ports.send(OUT.VIEW_COMMAND, { type: 'SET_FRAME', view_id: view.viewId, view_version: 0, frame_index: frame });
     }
     this._ports.frameShown(view);
+  }
+
+  /** Own views of running live datasets start at the newest frame. Moving
+   * back holds that frame; choosing the newest frame resumes following.
+   * Tab Pause freezes the view too, without discarding its following mode. */
+  followLiveFrames() {
+    const tab = this._ports.activeTab();
+    if (!tab) return;
+    for (const view of this.forTab(tab)) {
+      if (!view.isOpen || !this._ownFrame(view)) continue;
+      if (this._ports.pausedFrameCount?.(view.datasetFp) != null) continue;
+      const run = this._ports.liveRun?.(view.datasetFp);
+      if (!run) continue;
+      if (view.followingLive == null) view.followingLive = !run.end;
+      if (!view.followingLive) continue;
+      // Same step has one driver; its frameShown callback moves the others.
+      const sameStep = this._ports.sameStepOn?.() && this._ports.sameStepOwns?.(view);
+      if (sameStep && view !== this._ports.focused()) continue;
+      const n = this._ports.datasets().get(view.datasetFp)?.n || 0;
+      // Geometry counts and step numbers travel separately. Wait for the
+      // driver's step before moving a group whose views must stay aligned.
+      if (sameStep && n > (run.steps?.length || 0)) continue;
+      if (n > 0 && view.frame !== n - 1) this.setFrame(view, n - 1, { live: true });
+      else if (sameStep && n > 0) this._ports.frameShown(view);
+    }
   }
 
   /** A frame-linked independent panel takes the main view's frame: the same

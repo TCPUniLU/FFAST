@@ -300,6 +300,7 @@ export class IndependentView extends View {
     this.panel = null;
     this.renderers = new ViewRenderers({ onCameraChange: (cam) => onCameraChange(this, cam) });
     this.frame = null;
+    this.followingLive = null; // undecided until this dataset's live-run state arrives
     this.links = { frame: spec.link_frame !== false, camera: spec.link_camera !== false };
     this.applyingScene = false;   // a scene of its own is being drawn
     this.started = false;    // its starting look has been sent
