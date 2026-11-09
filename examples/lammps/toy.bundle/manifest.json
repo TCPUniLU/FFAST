@@ -1,0 +1,1992 @@
+{
+  "format": "detectana-reference-bundle",
+  "format_version": 2,
+  "detectana_version": "0.3.0",
+  "created_utc": "2026-11-06T10:49:20+00:00",
+  "molecule": {
+    "n_atoms": 21,
+    "elements": [
+      "C",
+      "C",
+      "C",
+      "C",
+      "C",
+      "C",
+      "C",
+      "O",
+      "O",
+      "O",
+      "C",
+      "C",
+      "O",
+      "H",
+      "H",
+      "H",
+      "H",
+      "H",
+      "H",
+      "H",
+      "H"
+    ],
+    "index_base": 0,
+    "reference_geometry": {
+      "source": "topology",
+      "state_key": "molecule/reference_positions"
+    },
+    "topology": {
+      "bonds": [
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          5
+        ],
+        [
+          0,
+          14
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          15
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          16
+        ],
+        [
+          3,
+          17
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          18
+        ],
+        [
+          4,
+          19
+        ],
+        [
+          4,
+          20
+        ],
+        [
+          5,
+          6
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          6,
+          12
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          8,
+          11
+        ],
+        [
+          9,
+          10
+        ],
+        [
+          9,
+          13
+        ],
+        [
+          11,
+          12
+        ]
+      ],
+      "angles": [
+        [
+          2,
+          0,
+          5
+        ],
+        [
+          2,
+          0,
+          14
+        ],
+        [
+          5,
+          0,
+          14
+        ],
+        [
+          3,
+          1,
+          6
+        ],
+        [
+          3,
+          1,
+          15
+        ],
+        [
+          6,
+          1,
+          15
+        ],
+        [
+          0,
+          2,
+          3
+        ],
+        [
+          0,
+          2,
+          16
+        ],
+        [
+          3,
+          2,
+          16
+        ],
+        [
+          1,
+          3,
+          2
+        ],
+        [
+          1,
+          3,
+          17
+        ],
+        [
+          2,
+          3,
+          17
+        ],
+        [
+          11,
+          4,
+          18
+        ],
+        [
+          11,
+          4,
+          19
+        ],
+        [
+          11,
+          4,
+          20
+        ],
+        [
+          18,
+          4,
+          19
+        ],
+        [
+          18,
+          4,
+          20
+        ],
+        [
+          19,
+          4,
+          20
+        ],
+        [
+          0,
+          5,
+          6
+        ],
+        [
+          0,
+          5,
+          10
+        ],
+        [
+          6,
+          5,
+          10
+        ],
+        [
+          1,
+          6,
+          5
+        ],
+        [
+          1,
+          6,
+          12
+        ],
+        [
+          5,
+          6,
+          12
+        ],
+        [
+          10,
+          9,
+          13
+        ],
+        [
+          5,
+          10,
+          7
+        ],
+        [
+          5,
+          10,
+          9
+        ],
+        [
+          7,
+          10,
+          9
+        ],
+        [
+          4,
+          11,
+          8
+        ],
+        [
+          4,
+          11,
+          12
+        ],
+        [
+          8,
+          11,
+          12
+        ],
+        [
+          6,
+          12,
+          11
+        ]
+      ],
+      "dihedrals": [
+        [
+          3,
+          2,
+          0,
+          5
+        ],
+        [
+          5,
+          0,
+          2,
+          16
+        ],
+        [
+          3,
+          2,
+          0,
+          14
+        ],
+        [
+          14,
+          0,
+          2,
+          16
+        ],
+        [
+          2,
+          0,
+          5,
+          6
+        ],
+        [
+          2,
+          0,
+          5,
+          10
+        ],
+        [
+          6,
+          5,
+          0,
+          14
+        ],
+        [
+          10,
+          5,
+          0,
+          14
+        ],
+        [
+          2,
+          3,
+          1,
+          6
+        ],
+        [
+          6,
+          1,
+          3,
+          17
+        ],
+        [
+          2,
+          3,
+          1,
+          15
+        ],
+        [
+          15,
+          1,
+          3,
+          17
+        ],
+        [
+          3,
+          1,
+          6,
+          5
+        ],
+        [
+          3,
+          1,
+          6,
+          12
+        ],
+        [
+          5,
+          6,
+          1,
+          15
+        ],
+        [
+          12,
+          6,
+          1,
+          15
+        ],
+        [
+          0,
+          2,
+          3,
+          1
+        ],
+        [
+          0,
+          2,
+          3,
+          17
+        ],
+        [
+          1,
+          3,
+          2,
+          16
+        ],
+        [
+          16,
+          2,
+          3,
+          17
+        ],
+        [
+          8,
+          11,
+          4,
+          18
+        ],
+        [
+          12,
+          11,
+          4,
+          18
+        ],
+        [
+          8,
+          11,
+          4,
+          19
+        ],
+        [
+          12,
+          11,
+          4,
+          19
+        ],
+        [
+          8,
+          11,
+          4,
+          20
+        ],
+        [
+          12,
+          11,
+          4,
+          20
+        ],
+        [
+          0,
+          5,
+          6,
+          1
+        ],
+        [
+          0,
+          5,
+          6,
+          12
+        ],
+        [
+          1,
+          6,
+          5,
+          10
+        ],
+        [
+          10,
+          5,
+          6,
+          12
+        ],
+        [
+          0,
+          5,
+          10,
+          7
+        ],
+        [
+          0,
+          5,
+          10,
+          9
+        ],
+        [
+          6,
+          5,
+          10,
+          7
+        ],
+        [
+          6,
+          5,
+          10,
+          9
+        ],
+        [
+          1,
+          6,
+          12,
+          11
+        ],
+        [
+          5,
+          6,
+          12,
+          11
+        ],
+        [
+          5,
+          10,
+          9,
+          13
+        ],
+        [
+          7,
+          10,
+          9,
+          13
+        ],
+        [
+          4,
+          11,
+          12,
+          6
+        ],
+        [
+          6,
+          12,
+          11,
+          8
+        ]
+      ],
+      "ring_atoms": [
+        0,
+        1,
+        2,
+        3,
+        5,
+        6
+      ]
+    }
+  },
+  "units": {
+    "length": "angstrom",
+    "angle": "radian"
+  },
+  "descriptors": {
+    "bonds": {
+      "reference": "detectana.descriptors:bonds",
+      "builtin": true,
+      "code_sha256": "80df537245c1dac5d0df9338f1f0c78049a7b383cdb6f67abe729e540cb2044d",
+      "feature_names": [
+        "bond_C0-C2_\u00c5",
+        "bond_C0-C5_\u00c5",
+        "bond_C0-H14_\u00c5",
+        "bond_C1-C3_\u00c5",
+        "bond_C1-C6_\u00c5",
+        "bond_C1-H15_\u00c5",
+        "bond_C2-C3_\u00c5",
+        "bond_C2-H16_\u00c5",
+        "bond_C3-H17_\u00c5",
+        "bond_C4-C11_\u00c5",
+        "bond_C4-H18_\u00c5",
+        "bond_C4-H19_\u00c5",
+        "bond_C4-H20_\u00c5",
+        "bond_C5-C6_\u00c5",
+        "bond_C5-C10_\u00c5",
+        "bond_C6-O12_\u00c5",
+        "bond_O7-C10_\u00c5",
+        "bond_O8-C11_\u00c5",
+        "bond_O9-C10_\u00c5",
+        "bond_O9-H13_\u00c5",
+        "bond_C11-O12_\u00c5"
+      ]
+    },
+    "angles": {
+      "reference": "detectana.descriptors:angles",
+      "builtin": true,
+      "code_sha256": "204dddf17423fa04799c491d1db538509e5d6235f9a5f08364ee1a7f003b5c2c",
+      "feature_names": [
+        "angle_C2-C0-C5_rad",
+        "angle_C2-C0-H14_rad",
+        "angle_C5-C0-H14_rad",
+        "angle_C3-C1-C6_rad",
+        "angle_C3-C1-H15_rad",
+        "angle_C6-C1-H15_rad",
+        "angle_C0-C2-C3_rad",
+        "angle_C0-C2-H16_rad",
+        "angle_C3-C2-H16_rad",
+        "angle_C1-C3-C2_rad",
+        "angle_C1-C3-H17_rad",
+        "angle_C2-C3-H17_rad",
+        "angle_C11-C4-H18_rad",
+        "angle_C11-C4-H19_rad",
+        "angle_C11-C4-H20_rad",
+        "angle_H18-C4-H19_rad",
+        "angle_H18-C4-H20_rad",
+        "angle_H19-C4-H20_rad",
+        "angle_C0-C5-C6_rad",
+        "angle_C0-C5-C10_rad",
+        "angle_C6-C5-C10_rad",
+        "angle_C1-C6-C5_rad",
+        "angle_C1-C6-O12_rad",
+        "angle_C5-C6-O12_rad",
+        "angle_C10-O9-H13_rad",
+        "angle_C5-C10-O7_rad",
+        "angle_C5-C10-O9_rad",
+        "angle_O7-C10-O9_rad",
+        "angle_C4-C11-O8_rad",
+        "angle_C4-C11-O12_rad",
+        "angle_O8-C11-O12_rad",
+        "angle_C6-O12-C11_rad"
+      ]
+    },
+    "dihedrals": {
+      "reference": "detectana.descriptors:dihedrals",
+      "builtin": true,
+      "code_sha256": "2006f4197573bb233fe48928815b7a2c36371a7f9dfd5d60869ae6d37a528cb5",
+      "feature_names": [
+        "sin_dih_C3-C2-C0-C5",
+        "sin_dih_C5-C0-C2-H16",
+        "sin_dih_C3-C2-C0-H14",
+        "sin_dih_H14-C0-C2-H16",
+        "sin_dih_C2-C0-C5-C6",
+        "sin_dih_C2-C0-C5-C10",
+        "sin_dih_C6-C5-C0-H14",
+        "sin_dih_C10-C5-C0-H14",
+        "sin_dih_C2-C3-C1-C6",
+        "sin_dih_C6-C1-C3-H17",
+        "sin_dih_C2-C3-C1-H15",
+        "sin_dih_H15-C1-C3-H17",
+        "sin_dih_C3-C1-C6-C5",
+        "sin_dih_C3-C1-C6-O12",
+        "sin_dih_C5-C6-C1-H15",
+        "sin_dih_O12-C6-C1-H15",
+        "sin_dih_C0-C2-C3-C1",
+        "sin_dih_C0-C2-C3-H17",
+        "sin_dih_C1-C3-C2-H16",
+        "sin_dih_H16-C2-C3-H17",
+        "sin_dih_O8-C11-C4-H18",
+        "sin_dih_O12-C11-C4-H18",
+        "sin_dih_O8-C11-C4-H19",
+        "sin_dih_O12-C11-C4-H19",
+        "sin_dih_O8-C11-C4-H20",
+        "sin_dih_O12-C11-C4-H20",
+        "sin_dih_C0-C5-C6-C1",
+        "sin_dih_C0-C5-C6-O12",
+        "sin_dih_C1-C6-C5-C10",
+        "sin_dih_C10-C5-C6-O12",
+        "sin_dih_C0-C5-C10-O7",
+        "sin_dih_C0-C5-C10-O9",
+        "sin_dih_C6-C5-C10-O7",
+        "sin_dih_C6-C5-C10-O9",
+        "sin_dih_C1-C6-O12-C11",
+        "sin_dih_C5-C6-O12-C11",
+        "sin_dih_C5-C10-O9-H13",
+        "sin_dih_O7-C10-O9-H13",
+        "sin_dih_C4-C11-O12-C6",
+        "sin_dih_C6-O12-C11-O8",
+        "cos_dih_C3-C2-C0-C5",
+        "cos_dih_C5-C0-C2-H16",
+        "cos_dih_C3-C2-C0-H14",
+        "cos_dih_H14-C0-C2-H16",
+        "cos_dih_C2-C0-C5-C6",
+        "cos_dih_C2-C0-C5-C10",
+        "cos_dih_C6-C5-C0-H14",
+        "cos_dih_C10-C5-C0-H14",
+        "cos_dih_C2-C3-C1-C6",
+        "cos_dih_C6-C1-C3-H17",
+        "cos_dih_C2-C3-C1-H15",
+        "cos_dih_H15-C1-C3-H17",
+        "cos_dih_C3-C1-C6-C5",
+        "cos_dih_C3-C1-C6-O12",
+        "cos_dih_C5-C6-C1-H15",
+        "cos_dih_O12-C6-C1-H15",
+        "cos_dih_C0-C2-C3-C1",
+        "cos_dih_C0-C2-C3-H17",
+        "cos_dih_C1-C3-C2-H16",
+        "cos_dih_H16-C2-C3-H17",
+        "cos_dih_O8-C11-C4-H18",
+        "cos_dih_O12-C11-C4-H18",
+        "cos_dih_O8-C11-C4-H19",
+        "cos_dih_O12-C11-C4-H19",
+        "cos_dih_O8-C11-C4-H20",
+        "cos_dih_O12-C11-C4-H20",
+        "cos_dih_C0-C5-C6-C1",
+        "cos_dih_C0-C5-C6-O12",
+        "cos_dih_C1-C6-C5-C10",
+        "cos_dih_C10-C5-C6-O12",
+        "cos_dih_C0-C5-C10-O7",
+        "cos_dih_C0-C5-C10-O9",
+        "cos_dih_C6-C5-C10-O7",
+        "cos_dih_C6-C5-C10-O9",
+        "cos_dih_C1-C6-O12-C11",
+        "cos_dih_C5-C6-O12-C11",
+        "cos_dih_C5-C10-O9-H13",
+        "cos_dih_O7-C10-O9-H13",
+        "cos_dih_C4-C11-O12-C6",
+        "cos_dih_C6-O12-C11-O8"
+      ]
+    },
+    "ring": {
+      "reference": "detectana.descriptors:ring",
+      "builtin": true,
+      "code_sha256": "d4169215d3a4abdd98227f8becf1c293a8795c0b17b8b9a52d5067fe3f597c3b",
+      "feature_names": [
+        "ring_planarity_rmsd_\u00c5"
+      ]
+    }
+  },
+  "scores": [
+    "T2",
+    "SPE"
+  ],
+  "tracks": {
+    "bonds": {
+      "descriptors": [
+        "bonds"
+      ],
+      "feature_names": [
+        "bond_C0-C2_\u00c5",
+        "bond_C0-C5_\u00c5",
+        "bond_C0-H14_\u00c5",
+        "bond_C1-C3_\u00c5",
+        "bond_C1-C6_\u00c5",
+        "bond_C1-H15_\u00c5",
+        "bond_C2-C3_\u00c5",
+        "bond_C2-H16_\u00c5",
+        "bond_C3-H17_\u00c5",
+        "bond_C4-C11_\u00c5",
+        "bond_C4-H18_\u00c5",
+        "bond_C4-H19_\u00c5",
+        "bond_C4-H20_\u00c5",
+        "bond_C5-C6_\u00c5",
+        "bond_C5-C10_\u00c5",
+        "bond_C6-O12_\u00c5",
+        "bond_O7-C10_\u00c5",
+        "bond_O8-C11_\u00c5",
+        "bond_O9-C10_\u00c5",
+        "bond_O9-H13_\u00c5",
+        "bond_C11-O12_\u00c5"
+      ],
+      "feature_atoms": [
+        [
+          0,
+          2
+        ],
+        [
+          0,
+          5
+        ],
+        [
+          0,
+          14
+        ],
+        [
+          1,
+          3
+        ],
+        [
+          1,
+          6
+        ],
+        [
+          1,
+          15
+        ],
+        [
+          2,
+          3
+        ],
+        [
+          2,
+          16
+        ],
+        [
+          3,
+          17
+        ],
+        [
+          4,
+          11
+        ],
+        [
+          4,
+          18
+        ],
+        [
+          4,
+          19
+        ],
+        [
+          4,
+          20
+        ],
+        [
+          5,
+          6
+        ],
+        [
+          5,
+          10
+        ],
+        [
+          6,
+          12
+        ],
+        [
+          7,
+          10
+        ],
+        [
+          8,
+          11
+        ],
+        [
+          9,
+          10
+        ],
+        [
+          9,
+          13
+        ],
+        [
+          11,
+          12
+        ]
+      ],
+      "feature_groups": [
+        "bonds:bond_C0-C2_\u00c5",
+        "bonds:bond_C0-C5_\u00c5",
+        "bonds:bond_C0-H14_\u00c5",
+        "bonds:bond_C1-C3_\u00c5",
+        "bonds:bond_C1-C6_\u00c5",
+        "bonds:bond_C1-H15_\u00c5",
+        "bonds:bond_C2-C3_\u00c5",
+        "bonds:bond_C2-H16_\u00c5",
+        "bonds:bond_C3-H17_\u00c5",
+        "bonds:bond_C4-C11_\u00c5",
+        "bonds:bond_C4-H18_\u00c5",
+        "bonds:bond_C4-H19_\u00c5",
+        "bonds:bond_C4-H20_\u00c5",
+        "bonds:bond_C5-C6_\u00c5",
+        "bonds:bond_C5-C10_\u00c5",
+        "bonds:bond_C6-O12_\u00c5",
+        "bonds:bond_O7-C10_\u00c5",
+        "bonds:bond_O8-C11_\u00c5",
+        "bonds:bond_O9-C10_\u00c5",
+        "bonds:bond_O9-H13_\u00c5",
+        "bonds:bond_C11-O12_\u00c5"
+      ],
+      "n_features": 21,
+      "n_components": 18,
+      "pca_variance_explained": 0.956247055625529,
+      "parameters": {
+        "pca_variance": 0.95,
+        "random_seed": 42
+      },
+      "scores": {
+        "T2": {
+          "active": true,
+          "thresholds": {
+            "bead": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 41.65015723487531
+            },
+            "centroid": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 41.65015723487531
+            }
+          }
+        },
+        "SPE": {
+          "active": true,
+          "thresholds": {
+            "bead": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 5.420338695266491
+            },
+            "centroid": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 5.420338695266491
+            }
+          }
+        }
+      },
+      "state_keys": [
+        "bonds/scaler_mean",
+        "bonds/scaler_scale",
+        "bonds/pca_mean",
+        "bonds/pca_components",
+        "bonds/t2_mean",
+        "bonds/t2_inv_cov"
+      ]
+    },
+    "angles": {
+      "descriptors": [
+        "angles"
+      ],
+      "feature_names": [
+        "angle_C2-C0-C5_rad",
+        "angle_C2-C0-H14_rad",
+        "angle_C5-C0-H14_rad",
+        "angle_C3-C1-C6_rad",
+        "angle_C3-C1-H15_rad",
+        "angle_C6-C1-H15_rad",
+        "angle_C0-C2-C3_rad",
+        "angle_C0-C2-H16_rad",
+        "angle_C3-C2-H16_rad",
+        "angle_C1-C3-C2_rad",
+        "angle_C1-C3-H17_rad",
+        "angle_C2-C3-H17_rad",
+        "angle_C11-C4-H18_rad",
+        "angle_C11-C4-H19_rad",
+        "angle_C11-C4-H20_rad",
+        "angle_H18-C4-H19_rad",
+        "angle_H18-C4-H20_rad",
+        "angle_H19-C4-H20_rad",
+        "angle_C0-C5-C6_rad",
+        "angle_C0-C5-C10_rad",
+        "angle_C6-C5-C10_rad",
+        "angle_C1-C6-C5_rad",
+        "angle_C1-C6-O12_rad",
+        "angle_C5-C6-O12_rad",
+        "angle_C10-O9-H13_rad",
+        "angle_C5-C10-O7_rad",
+        "angle_C5-C10-O9_rad",
+        "angle_O7-C10-O9_rad",
+        "angle_C4-C11-O8_rad",
+        "angle_C4-C11-O12_rad",
+        "angle_O8-C11-O12_rad",
+        "angle_C6-O12-C11_rad"
+      ],
+      "feature_atoms": [
+        [
+          2,
+          0,
+          5
+        ],
+        [
+          2,
+          0,
+          14
+        ],
+        [
+          5,
+          0,
+          14
+        ],
+        [
+          3,
+          1,
+          6
+        ],
+        [
+          3,
+          1,
+          15
+        ],
+        [
+          6,
+          1,
+          15
+        ],
+        [
+          0,
+          2,
+          3
+        ],
+        [
+          0,
+          2,
+          16
+        ],
+        [
+          3,
+          2,
+          16
+        ],
+        [
+          1,
+          3,
+          2
+        ],
+        [
+          1,
+          3,
+          17
+        ],
+        [
+          2,
+          3,
+          17
+        ],
+        [
+          11,
+          4,
+          18
+        ],
+        [
+          11,
+          4,
+          19
+        ],
+        [
+          11,
+          4,
+          20
+        ],
+        [
+          18,
+          4,
+          19
+        ],
+        [
+          18,
+          4,
+          20
+        ],
+        [
+          19,
+          4,
+          20
+        ],
+        [
+          0,
+          5,
+          6
+        ],
+        [
+          0,
+          5,
+          10
+        ],
+        [
+          6,
+          5,
+          10
+        ],
+        [
+          1,
+          6,
+          5
+        ],
+        [
+          1,
+          6,
+          12
+        ],
+        [
+          5,
+          6,
+          12
+        ],
+        [
+          10,
+          9,
+          13
+        ],
+        [
+          5,
+          10,
+          7
+        ],
+        [
+          5,
+          10,
+          9
+        ],
+        [
+          7,
+          10,
+          9
+        ],
+        [
+          4,
+          11,
+          8
+        ],
+        [
+          4,
+          11,
+          12
+        ],
+        [
+          8,
+          11,
+          12
+        ],
+        [
+          6,
+          12,
+          11
+        ]
+      ],
+      "feature_groups": [
+        "angles:angle_C2-C0-C5_rad",
+        "angles:angle_C2-C0-H14_rad",
+        "angles:angle_C5-C0-H14_rad",
+        "angles:angle_C3-C1-C6_rad",
+        "angles:angle_C3-C1-H15_rad",
+        "angles:angle_C6-C1-H15_rad",
+        "angles:angle_C0-C2-C3_rad",
+        "angles:angle_C0-C2-H16_rad",
+        "angles:angle_C3-C2-H16_rad",
+        "angles:angle_C1-C3-C2_rad",
+        "angles:angle_C1-C3-H17_rad",
+        "angles:angle_C2-C3-H17_rad",
+        "angles:angle_C11-C4-H18_rad",
+        "angles:angle_C11-C4-H19_rad",
+        "angles:angle_C11-C4-H20_rad",
+        "angles:angle_H18-C4-H19_rad",
+        "angles:angle_H18-C4-H20_rad",
+        "angles:angle_H19-C4-H20_rad",
+        "angles:angle_C0-C5-C6_rad",
+        "angles:angle_C0-C5-C10_rad",
+        "angles:angle_C6-C5-C10_rad",
+        "angles:angle_C1-C6-C5_rad",
+        "angles:angle_C1-C6-O12_rad",
+        "angles:angle_C5-C6-O12_rad",
+        "angles:angle_C10-O9-H13_rad",
+        "angles:angle_C5-C10-O7_rad",
+        "angles:angle_C5-C10-O9_rad",
+        "angles:angle_O7-C10-O9_rad",
+        "angles:angle_C4-C11-O8_rad",
+        "angles:angle_C4-C11-O12_rad",
+        "angles:angle_O8-C11-O12_rad",
+        "angles:angle_C6-O12-C11_rad"
+      ],
+      "n_features": 32,
+      "n_components": 17,
+      "pca_variance_explained": 0.9518686364292621,
+      "parameters": {
+        "pca_variance": 0.95,
+        "random_seed": 42
+      },
+      "scores": {
+        "T2": {
+          "active": true,
+          "thresholds": {
+            "bead": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 38.92505804012911
+            },
+            "centroid": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 38.92505804012911
+            }
+          }
+        },
+        "SPE": {
+          "active": true,
+          "thresholds": {
+            "bead": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 6.426234485025404
+            },
+            "centroid": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 6.426234485025404
+            }
+          }
+        }
+      },
+      "state_keys": [
+        "angles/scaler_mean",
+        "angles/scaler_scale",
+        "angles/pca_mean",
+        "angles/pca_components",
+        "angles/t2_mean",
+        "angles/t2_inv_cov"
+      ]
+    },
+    "dihedrals": {
+      "descriptors": [
+        "dihedrals"
+      ],
+      "feature_names": [
+        "sin_dih_C3-C2-C0-C5",
+        "sin_dih_C5-C0-C2-H16",
+        "sin_dih_C3-C2-C0-H14",
+        "sin_dih_H14-C0-C2-H16",
+        "sin_dih_C2-C0-C5-C6",
+        "sin_dih_C2-C0-C5-C10",
+        "sin_dih_C6-C5-C0-H14",
+        "sin_dih_C10-C5-C0-H14",
+        "sin_dih_C2-C3-C1-C6",
+        "sin_dih_C6-C1-C3-H17",
+        "sin_dih_C2-C3-C1-H15",
+        "sin_dih_H15-C1-C3-H17",
+        "sin_dih_C3-C1-C6-C5",
+        "sin_dih_C3-C1-C6-O12",
+        "sin_dih_C5-C6-C1-H15",
+        "sin_dih_O12-C6-C1-H15",
+        "sin_dih_C0-C2-C3-C1",
+        "sin_dih_C0-C2-C3-H17",
+        "sin_dih_C1-C3-C2-H16",
+        "sin_dih_H16-C2-C3-H17",
+        "sin_dih_O8-C11-C4-H18",
+        "sin_dih_O12-C11-C4-H18",
+        "sin_dih_O8-C11-C4-H19",
+        "sin_dih_O12-C11-C4-H19",
+        "sin_dih_O8-C11-C4-H20",
+        "sin_dih_O12-C11-C4-H20",
+        "sin_dih_C0-C5-C6-C1",
+        "sin_dih_C0-C5-C6-O12",
+        "sin_dih_C1-C6-C5-C10",
+        "sin_dih_C10-C5-C6-O12",
+        "sin_dih_C0-C5-C10-O7",
+        "sin_dih_C0-C5-C10-O9",
+        "sin_dih_C6-C5-C10-O7",
+        "sin_dih_C6-C5-C10-O9",
+        "sin_dih_C1-C6-O12-C11",
+        "sin_dih_C5-C6-O12-C11",
+        "sin_dih_C5-C10-O9-H13",
+        "sin_dih_O7-C10-O9-H13",
+        "sin_dih_C4-C11-O12-C6",
+        "sin_dih_C6-O12-C11-O8",
+        "cos_dih_C3-C2-C0-C5",
+        "cos_dih_C5-C0-C2-H16",
+        "cos_dih_C3-C2-C0-H14",
+        "cos_dih_H14-C0-C2-H16",
+        "cos_dih_C2-C0-C5-C6",
+        "cos_dih_C2-C0-C5-C10",
+        "cos_dih_C6-C5-C0-H14",
+        "cos_dih_C10-C5-C0-H14",
+        "cos_dih_C2-C3-C1-C6",
+        "cos_dih_C6-C1-C3-H17",
+        "cos_dih_C2-C3-C1-H15",
+        "cos_dih_H15-C1-C3-H17",
+        "cos_dih_C3-C1-C6-C5",
+        "cos_dih_C3-C1-C6-O12",
+        "cos_dih_C5-C6-C1-H15",
+        "cos_dih_O12-C6-C1-H15",
+        "cos_dih_C0-C2-C3-C1",
+        "cos_dih_C0-C2-C3-H17",
+        "cos_dih_C1-C3-C2-H16",
+        "cos_dih_H16-C2-C3-H17",
+        "cos_dih_O8-C11-C4-H18",
+        "cos_dih_O12-C11-C4-H18",
+        "cos_dih_O8-C11-C4-H19",
+        "cos_dih_O12-C11-C4-H19",
+        "cos_dih_O8-C11-C4-H20",
+        "cos_dih_O12-C11-C4-H20",
+        "cos_dih_C0-C5-C6-C1",
+        "cos_dih_C0-C5-C6-O12",
+        "cos_dih_C1-C6-C5-C10",
+        "cos_dih_C10-C5-C6-O12",
+        "cos_dih_C0-C5-C10-O7",
+        "cos_dih_C0-C5-C10-O9",
+        "cos_dih_C6-C5-C10-O7",
+        "cos_dih_C6-C5-C10-O9",
+        "cos_dih_C1-C6-O12-C11",
+        "cos_dih_C5-C6-O12-C11",
+        "cos_dih_C5-C10-O9-H13",
+        "cos_dih_O7-C10-O9-H13",
+        "cos_dih_C4-C11-O12-C6",
+        "cos_dih_C6-O12-C11-O8"
+      ],
+      "feature_atoms": [
+        [
+          3,
+          2,
+          0,
+          5
+        ],
+        [
+          5,
+          0,
+          2,
+          16
+        ],
+        [
+          3,
+          2,
+          0,
+          14
+        ],
+        [
+          14,
+          0,
+          2,
+          16
+        ],
+        [
+          2,
+          0,
+          5,
+          6
+        ],
+        [
+          2,
+          0,
+          5,
+          10
+        ],
+        [
+          6,
+          5,
+          0,
+          14
+        ],
+        [
+          10,
+          5,
+          0,
+          14
+        ],
+        [
+          2,
+          3,
+          1,
+          6
+        ],
+        [
+          6,
+          1,
+          3,
+          17
+        ],
+        [
+          2,
+          3,
+          1,
+          15
+        ],
+        [
+          15,
+          1,
+          3,
+          17
+        ],
+        [
+          3,
+          1,
+          6,
+          5
+        ],
+        [
+          3,
+          1,
+          6,
+          12
+        ],
+        [
+          5,
+          6,
+          1,
+          15
+        ],
+        [
+          12,
+          6,
+          1,
+          15
+        ],
+        [
+          0,
+          2,
+          3,
+          1
+        ],
+        [
+          0,
+          2,
+          3,
+          17
+        ],
+        [
+          1,
+          3,
+          2,
+          16
+        ],
+        [
+          16,
+          2,
+          3,
+          17
+        ],
+        [
+          8,
+          11,
+          4,
+          18
+        ],
+        [
+          12,
+          11,
+          4,
+          18
+        ],
+        [
+          8,
+          11,
+          4,
+          19
+        ],
+        [
+          12,
+          11,
+          4,
+          19
+        ],
+        [
+          8,
+          11,
+          4,
+          20
+        ],
+        [
+          12,
+          11,
+          4,
+          20
+        ],
+        [
+          0,
+          5,
+          6,
+          1
+        ],
+        [
+          0,
+          5,
+          6,
+          12
+        ],
+        [
+          1,
+          6,
+          5,
+          10
+        ],
+        [
+          10,
+          5,
+          6,
+          12
+        ],
+        [
+          0,
+          5,
+          10,
+          7
+        ],
+        [
+          0,
+          5,
+          10,
+          9
+        ],
+        [
+          6,
+          5,
+          10,
+          7
+        ],
+        [
+          6,
+          5,
+          10,
+          9
+        ],
+        [
+          1,
+          6,
+          12,
+          11
+        ],
+        [
+          5,
+          6,
+          12,
+          11
+        ],
+        [
+          5,
+          10,
+          9,
+          13
+        ],
+        [
+          7,
+          10,
+          9,
+          13
+        ],
+        [
+          4,
+          11,
+          12,
+          6
+        ],
+        [
+          6,
+          12,
+          11,
+          8
+        ],
+        [
+          3,
+          2,
+          0,
+          5
+        ],
+        [
+          5,
+          0,
+          2,
+          16
+        ],
+        [
+          3,
+          2,
+          0,
+          14
+        ],
+        [
+          14,
+          0,
+          2,
+          16
+        ],
+        [
+          2,
+          0,
+          5,
+          6
+        ],
+        [
+          2,
+          0,
+          5,
+          10
+        ],
+        [
+          6,
+          5,
+          0,
+          14
+        ],
+        [
+          10,
+          5,
+          0,
+          14
+        ],
+        [
+          2,
+          3,
+          1,
+          6
+        ],
+        [
+          6,
+          1,
+          3,
+          17
+        ],
+        [
+          2,
+          3,
+          1,
+          15
+        ],
+        [
+          15,
+          1,
+          3,
+          17
+        ],
+        [
+          3,
+          1,
+          6,
+          5
+        ],
+        [
+          3,
+          1,
+          6,
+          12
+        ],
+        [
+          5,
+          6,
+          1,
+          15
+        ],
+        [
+          12,
+          6,
+          1,
+          15
+        ],
+        [
+          0,
+          2,
+          3,
+          1
+        ],
+        [
+          0,
+          2,
+          3,
+          17
+        ],
+        [
+          1,
+          3,
+          2,
+          16
+        ],
+        [
+          16,
+          2,
+          3,
+          17
+        ],
+        [
+          8,
+          11,
+          4,
+          18
+        ],
+        [
+          12,
+          11,
+          4,
+          18
+        ],
+        [
+          8,
+          11,
+          4,
+          19
+        ],
+        [
+          12,
+          11,
+          4,
+          19
+        ],
+        [
+          8,
+          11,
+          4,
+          20
+        ],
+        [
+          12,
+          11,
+          4,
+          20
+        ],
+        [
+          0,
+          5,
+          6,
+          1
+        ],
+        [
+          0,
+          5,
+          6,
+          12
+        ],
+        [
+          1,
+          6,
+          5,
+          10
+        ],
+        [
+          10,
+          5,
+          6,
+          12
+        ],
+        [
+          0,
+          5,
+          10,
+          7
+        ],
+        [
+          0,
+          5,
+          10,
+          9
+        ],
+        [
+          6,
+          5,
+          10,
+          7
+        ],
+        [
+          6,
+          5,
+          10,
+          9
+        ],
+        [
+          1,
+          6,
+          12,
+          11
+        ],
+        [
+          5,
+          6,
+          12,
+          11
+        ],
+        [
+          5,
+          10,
+          9,
+          13
+        ],
+        [
+          7,
+          10,
+          9,
+          13
+        ],
+        [
+          4,
+          11,
+          12,
+          6
+        ],
+        [
+          6,
+          12,
+          11,
+          8
+        ]
+      ],
+      "feature_groups": [
+        "dihedrals:dih_C3-C2-C0-C5",
+        "dihedrals:dih_C5-C0-C2-H16",
+        "dihedrals:dih_C3-C2-C0-H14",
+        "dihedrals:dih_H14-C0-C2-H16",
+        "dihedrals:dih_C2-C0-C5-C6",
+        "dihedrals:dih_C2-C0-C5-C10",
+        "dihedrals:dih_C6-C5-C0-H14",
+        "dihedrals:dih_C10-C5-C0-H14",
+        "dihedrals:dih_C2-C3-C1-C6",
+        "dihedrals:dih_C6-C1-C3-H17",
+        "dihedrals:dih_C2-C3-C1-H15",
+        "dihedrals:dih_H15-C1-C3-H17",
+        "dihedrals:dih_C3-C1-C6-C5",
+        "dihedrals:dih_C3-C1-C6-O12",
+        "dihedrals:dih_C5-C6-C1-H15",
+        "dihedrals:dih_O12-C6-C1-H15",
+        "dihedrals:dih_C0-C2-C3-C1",
+        "dihedrals:dih_C0-C2-C3-H17",
+        "dihedrals:dih_C1-C3-C2-H16",
+        "dihedrals:dih_H16-C2-C3-H17",
+        "dihedrals:dih_O8-C11-C4-H18",
+        "dihedrals:dih_O12-C11-C4-H18",
+        "dihedrals:dih_O8-C11-C4-H19",
+        "dihedrals:dih_O12-C11-C4-H19",
+        "dihedrals:dih_O8-C11-C4-H20",
+        "dihedrals:dih_O12-C11-C4-H20",
+        "dihedrals:dih_C0-C5-C6-C1",
+        "dihedrals:dih_C0-C5-C6-O12",
+        "dihedrals:dih_C1-C6-C5-C10",
+        "dihedrals:dih_C10-C5-C6-O12",
+        "dihedrals:dih_C0-C5-C10-O7",
+        "dihedrals:dih_C0-C5-C10-O9",
+        "dihedrals:dih_C6-C5-C10-O7",
+        "dihedrals:dih_C6-C5-C10-O9",
+        "dihedrals:dih_C1-C6-O12-C11",
+        "dihedrals:dih_C5-C6-O12-C11",
+        "dihedrals:dih_C5-C10-O9-H13",
+        "dihedrals:dih_O7-C10-O9-H13",
+        "dihedrals:dih_C4-C11-O12-C6",
+        "dihedrals:dih_C6-O12-C11-O8",
+        "dihedrals:dih_C3-C2-C0-C5",
+        "dihedrals:dih_C5-C0-C2-H16",
+        "dihedrals:dih_C3-C2-C0-H14",
+        "dihedrals:dih_H14-C0-C2-H16",
+        "dihedrals:dih_C2-C0-C5-C6",
+        "dihedrals:dih_C2-C0-C5-C10",
+        "dihedrals:dih_C6-C5-C0-H14",
+        "dihedrals:dih_C10-C5-C0-H14",
+        "dihedrals:dih_C2-C3-C1-C6",
+        "dihedrals:dih_C6-C1-C3-H17",
+        "dihedrals:dih_C2-C3-C1-H15",
+        "dihedrals:dih_H15-C1-C3-H17",
+        "dihedrals:dih_C3-C1-C6-C5",
+        "dihedrals:dih_C3-C1-C6-O12",
+        "dihedrals:dih_C5-C6-C1-H15",
+        "dihedrals:dih_O12-C6-C1-H15",
+        "dihedrals:dih_C0-C2-C3-C1",
+        "dihedrals:dih_C0-C2-C3-H17",
+        "dihedrals:dih_C1-C3-C2-H16",
+        "dihedrals:dih_H16-C2-C3-H17",
+        "dihedrals:dih_O8-C11-C4-H18",
+        "dihedrals:dih_O12-C11-C4-H18",
+        "dihedrals:dih_O8-C11-C4-H19",
+        "dihedrals:dih_O12-C11-C4-H19",
+        "dihedrals:dih_O8-C11-C4-H20",
+        "dihedrals:dih_O12-C11-C4-H20",
+        "dihedrals:dih_C0-C5-C6-C1",
+        "dihedrals:dih_C0-C5-C6-O12",
+        "dihedrals:dih_C1-C6-C5-C10",
+        "dihedrals:dih_C10-C5-C6-O12",
+        "dihedrals:dih_C0-C5-C10-O7",
+        "dihedrals:dih_C0-C5-C10-O9",
+        "dihedrals:dih_C6-C5-C10-O7",
+        "dihedrals:dih_C6-C5-C10-O9",
+        "dihedrals:dih_C1-C6-O12-C11",
+        "dihedrals:dih_C5-C6-O12-C11",
+        "dihedrals:dih_C5-C10-O9-H13",
+        "dihedrals:dih_O7-C10-O9-H13",
+        "dihedrals:dih_C4-C11-O12-C6",
+        "dihedrals:dih_C6-O12-C11-O8"
+      ],
+      "n_features": 80,
+      "n_components": 28,
+      "pca_variance_explained": 0.9504429669819981,
+      "parameters": {
+        "pca_variance": 0.95,
+        "random_seed": 42
+      },
+      "scores": {
+        "T2": {
+          "active": true,
+          "thresholds": {
+            "bead": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 111.72302912681758
+            },
+            "centroid": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 111.72302912681758
+            }
+          }
+        },
+        "SPE": {
+          "active": true,
+          "thresholds": {
+            "bead": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 25.53634996419282
+            },
+            "centroid": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 25.53634996419282
+            }
+          }
+        }
+      },
+      "state_keys": [
+        "dihedrals/scaler_mean",
+        "dihedrals/scaler_scale",
+        "dihedrals/pca_mean",
+        "dihedrals/pca_components",
+        "dihedrals/t2_mean",
+        "dihedrals/t2_inv_cov"
+      ]
+    },
+    "ring": {
+      "descriptors": [
+        "ring"
+      ],
+      "feature_names": [
+        "ring_planarity_rmsd_\u00c5"
+      ],
+      "feature_atoms": [
+        [
+          0,
+          1,
+          2,
+          3,
+          5,
+          6
+        ]
+      ],
+      "feature_groups": [
+        "ring:ring_planarity_rmsd_\u00c5"
+      ],
+      "n_features": 1,
+      "n_components": 1,
+      "pca_variance_explained": 1.0,
+      "parameters": {
+        "pca_variance": 0.95,
+        "random_seed": 42
+      },
+      "scores": {
+        "T2": {
+          "active": true,
+          "thresholds": {
+            "bead": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 12.02349865614058
+            },
+            "centroid": {
+              "percentile_total": 99.0,
+              "percentile_test": 99.85714285714286,
+              "value": 12.02349865614058
+            }
+          }
+        },
+        "SPE": {
+          "active": false,
+          "reason": "PCA keeps every direction"
+        }
+      },
+      "state_keys": [
+        "ring/scaler_mean",
+        "ring/scaler_scale",
+        "ring/pca_mean",
+        "ring/pca_components",
+        "ring/t2_mean",
+        "ring/t2_inv_cov"
+      ]
+    }
+  },
+  "dropped_tracks": {},
+  "budget": {
+    "rule": "bonferroni",
+    "tests": [
+      [
+        "bonds",
+        "T2"
+      ],
+      [
+        "bonds",
+        "SPE"
+      ],
+      [
+        "angles",
+        "T2"
+      ],
+      [
+        "angles",
+        "SPE"
+      ],
+      [
+        "dihedrals",
+        "T2"
+      ],
+      [
+        "dihedrals",
+        "SPE"
+      ],
+      [
+        "ring",
+        "T2"
+      ]
+    ],
+    "n_tests": 7,
+    "roles": {
+      "bead": {
+        "percentile": 99.0,
+        "alpha": 0.010000000000000009,
+        "alpha_per_test": 0.0014285714285714299,
+        "percentile_per_test": 99.85714285714286,
+        "expected_valid_exceedances_per_test": 2.1442857142857163
+      },
+      "centroid": {
+        "percentile": 99.0,
+        "alpha": 0.010000000000000009,
+        "alpha_per_test": 0.0014285714285714299,
+        "percentile_per_test": 99.85714285714286,
+        "expected_valid_exceedances_per_test": 2.1442857142857163
+      }
+    }
+  },
+  "onset_rule": {
+    "window_frames": 500,
+    "step_frames": 50,
+    "fraction_threshold": 0.2
+  },
+  "fit_data": {
+    "n_train": 3001,
+    "n_valid": 1501
+  }
+}

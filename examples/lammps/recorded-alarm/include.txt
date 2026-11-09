@@ -1,0 +1,7 @@
+ffast-include 1
+bundle /mnt/tier2/users/USER/ffast_lammps_live/stop/results/2023/toy.bundle
+every 100
+persist_ps 5
+stop_on_alarm 0
+elements C H O
+end

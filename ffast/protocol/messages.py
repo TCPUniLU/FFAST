@@ -407,6 +407,13 @@ class OpenLiveRunRequest(BaseModel):
     path: str
 
 
+class StartPracticeRunRequest(BaseModel):
+    """Start a tutorial replay on the server machine (ADR 0092)."""
+
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["replay"] = "replay"
+
+
 class LiveStopRequest(BaseModel):
     """Typed payload for ``LIVE_STOP``: "Stop now" for an open live run."""
 

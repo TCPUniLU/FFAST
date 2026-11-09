@@ -268,6 +268,8 @@ class LiveRun:
         progress = (self.run.get("analyses") or {}).get(self.analysis_id or "", {})
         return pack(control.LIVE_RUN_UPDATE, (self.run_id,), {
             "run_id": self.run_id,
+            "practice": self.run.get("practice"),
+            "paused": rf.practice_paused(self.run_dir, self.run),
             "path": str(self.run_dir),
             "fingerprint": self.fingerprint if self.registered else None,
             "tab": self.tab_name if self.registered else None,

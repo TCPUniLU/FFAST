@@ -1,0 +1,161 @@
+LAMMPS (2 Aug 2023 - Update 2)
+OMP_NUM_THREADS environment is not set. Defaulting to 1 thread. (src/comm.cpp:98)
+  using 1 OpenMP thread(s) per MPI task
+# Stop proof (plan step 4): the toy aspirin at 300 K, then suddenly at
+# ${hot} K, so the reference (fitted at 300 K) sees frames it was not
+# trained on. Two run commands, the second with a variable; no restart
+# command, so FFAST should warn that a stopped run cannot be continued.
+units           metal
+atom_style      atomic
+boundary        s s s
+variable        data index aspirin.data
+read_data       ${data}
+read_data       /home/users/USER/ffast_lammps_live/stop/results/2023/toy.data
+Reading data file ...
+  orthogonal box = (25.4457 46.0314 13.1411) to (48.7927 73.7369 38.5788)
+  1 by 1 by 1 MPI processor grid
+  reading atoms ...
+  21 atoms
+  read_data CPU = 0.027 seconds
+pair_style      lj/cut 6.0
+pair_coeff      * * 0.002 1.0
+velocity        all create 300.0 4242 mom yes rot yes
+fix             nve all nve
+fix             tether all spring/self 5.0
+fix             heat all langevin 300.0 300.0 0.05 4242
+timestep        0.0005
+thermo          5000
+variable        n1 index 10000
+variable        n2 index 40000
+variable        hot index 3000
+variable        ffast_include index aspirin.lmp
+include         ${ffast_include}
+include         /home/users/USER/ffast_lammps_live/stop/results/2023/toy.lmp
+# Written by `ffast bundle`. Reference bundle: /mnt/tier2/users/USER/ffast_lammps_live/stop/results/2023/toy.bundle
+# Add once to a LAMMPS input, after the atoms exist:   include <this file>
+# Run the job as `ffast-lammps srun lmp ...`; the wrapper sets ffast_on and ffast_dir.
+# LAMMPS atom types 1..3 are: C H O
+# To change a setting for one input, define it before the include line
+# (LAMMPS keeps the first definition of an index variable), e.g.
+#   variable ffast_stop_on_alarm index 1
+variable ffast_on    index 0
+variable ffast_every index 100
+variable ffast_persist_ps    index 5   # an alarm needs this long a persisting anomaly
+variable ffast_stop_on_alarm index 0   # 1: stop LAMMPS when an alarm fires
+if "${ffast_on} == 0" then "print 'FFAST: not run through ffast-lammps; monitoring off'" "jump SELF ffast_end"
+print """ffast-include 1
+bundle /mnt/tier2/users/USER/ffast_lammps_live/stop/results/2023/toy.bundle
+every ${ffast_every}
+persist_ps ${ffast_persist_ps}
+stop_on_alarm ${ffast_stop_on_alarm}
+elements C H O
+end""" file ${ffast_dir}/include.txt screen no
+print """ffast-include 1
+bundle /mnt/tier2/users/USER/ffast_lammps_live/stop/results/2023/toy.bundle
+every ${ffast_every}
+persist_ps ${ffast_persist_ps}
+stop_on_alarm ${ffast_stop_on_alarm}
+elements C H O
+end""" file /home/users/USER/ffast_lammps_live/stop/results/2023/runs/S4_alarm_no_stop/20261106-105509-mel0516-24400-6ff5/include.txt screen no
+dump        ffast all custom ${ffast_every} ${ffast_dir}/frames.lammpstrj id type element x y z
+dump        ffast all custom 100 ${ffast_dir}/frames.lammpstrj id type element x y z
+dump        ffast all custom 100 /home/users/USER/ffast_lammps_live/stop/results/2023/runs/S4_alarm_no_stop/20261106-105509-mel0516-24400-6ff5/frames.lammpstrj id type element x y z
+dump_modify ffast sort id flush yes element C H O time yes units yes format float %.17g
+variable    ffast_stop equal is_file(${ffast_dir}/STOP)
+variable    ffast_stop equal is_file(/home/users/USER/ffast_lammps_live/stop/results/2023/runs/S4_alarm_no_stop/20261106-105509-mel0516-24400-6ff5/STOP)
+fix         ffast_halt all halt ${ffast_every} v_ffast_stop != 0 error soft
+fix         ffast_halt all halt 100 v_ffast_stop != 0 error soft
+label       ffast_end
+run             ${n1}
+run             10000
+Generated 0 of 3 mixed pair_coeff terms from geometric mixing rule
+Neighbor list info ...
+  update: every = 1 steps, delay = 0 steps, check = yes
+  max neighbors/atom: 2000, page size: 100000
+  master list distance cutoff = 8
+  ghost atom cutoff = 8
+  binsize = 4, bins = 1 2 2
+  1 neighbor lists, perpetual/occasional/extra = 1 0 0
+  (1) pair lj/cut, perpetual
+      attributes: half, newton on
+      pair build: half/bin/atomonly/newton
+      stencil: half/bin/3d
+      bin: standard
+Per MPI rank memory allocation (min/avg/max) = 3.286 | 3.286 | 3.286 Mbytes
+   Step          Temp          E_pair         E_mol          TotEng         Press          Volume
+         0   300           -0.0220448      0              0.75351607     6483.7363      140.66808
+      5000   199.57636      0.024232857    0              0.54017825     6929.342       140.66808
+     10000   229.97162     -0.00090058681  0              0.59362271     6269.4662      140.66808
+Loop time of 0.0584654 on 1 procs for 10000 steps with 21 atoms
+
+Performance: 7388.992 ns/day, 0.003 hours/ns, 171041.477 timesteps/s, 3.592 Matom-step/s
+68.3% CPU use with 1 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.014614   | 0.014614   | 0.014614   |   0.0 | 25.00
+Neigh   | 0          | 0          | 0          |   0.0 |  0.00
+Comm    | 0.00076465 | 0.00076465 | 0.00076465 |   0.0 |  1.31
+Output  | 0.0058933  | 0.0058933  | 0.0058933  |   0.0 | 10.08
+Modify  | 0.035122   | 0.035122   | 0.035122   |   0.0 | 60.07
+Other   |            | 0.002072   |            |       |  3.54
+
+Nlocal:             21 ave          21 max          21 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Nghost:              0 ave           0 max           0 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Neighs:            209 ave         209 max         209 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+
+Total # of neighbors = 209
+Ave neighs/atom = 9.952381
+Neighbor list builds = 0
+Dangerous builds = 0
+unfix           heat
+fix             heat all langevin ${hot} ${hot} 0.05 777
+fix             heat all langevin 3000 ${hot} 0.05 777
+fix             heat all langevin 3000 3000 0.05 777
+run             ${n2}
+run             40000
+Generated 0 of 3 mixed pair_coeff terms from geometric mixing rule
+Per MPI rank memory allocation (min/avg/max) = 4.538 | 4.538 | 4.538 Mbytes
+   Step          Temp          E_pair         E_mol          TotEng         Press          Volume
+     10000   229.97162     -0.00090058681  0              0.59362271     6350.1432      138.88093
+     15000   4362.0106     -0.0094855307   0              11.267197      94840.945      128.65104
+     20000   2458.4249      0.061311035    0              6.4168382      48527.63       154.25424
+     25000   3371.8035     -0.025416241    0              8.6913799      62116.161      149.51607
+     30000   3084.9485     -0.024309594    0              7.9509082      69389.607      122.71394
+     35000   3315.8675      0.026607001    0              8.5987973      62679.755      153.11086
+     40000   2593.3436      0.00039076255  0              6.7047102      45652.442      161.31509
+     45000   3659.5432      0.28982666     0              9.7504884      84112.183      147.44817
+     50000   4277.5393      0.0043663446   0              11.062673      77690.336      155.51818
+Loop time of 0.222339 on 1 procs for 40000 steps with 21 atoms
+
+Performance: 7771.918 ns/day, 0.003 hours/ns, 179905.500 timesteps/s, 3.778 Matom-step/s
+73.8% CPU use with 1 MPI tasks x 1 OpenMP threads
+
+MPI task timing breakdown:
+Section |  min time  |  avg time  |  max time  |%varavg| %total
+---------------------------------------------------------------
+Pair    | 0.059523   | 0.059523   | 0.059523   |   0.0 | 26.77
+Neigh   | 0.0039397  | 0.0039397  | 0.0039397  |   0.0 |  1.77
+Comm    | 0.004239   | 0.004239   | 0.004239   |   0.0 |  1.91
+Output  | 0.024426   | 0.024426   | 0.024426   |   0.0 | 10.99
+Modify  | 0.11929    | 0.11929    | 0.11929    |   0.0 | 53.65
+Other   |            | 0.01092    |            |       |  4.91
+
+Nlocal:             21 ave          21 max          21 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Nghost:              0 ave           0 max           0 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+Neighs:            208 ave         208 max         208 min
+Histogram: 1 0 0 0 0 0 0 0 0 0
+
+Total # of neighbors = 208
+Ave neighs/atom = 9.9047619
+Neighbor list builds = 1296
+Dangerous builds = 0
+print           "AFTER_RUN_EXECUTED"
+AFTER_RUN_EXECUTED
+Total wall time: 0:00:00

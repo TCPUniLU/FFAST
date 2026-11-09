@@ -31,3 +31,8 @@ def example_listing() -> dict | None:
         elif entry.is_dir():
             files.extend(f"{entry.name}/{sub.name}" for sub in entry.iterdir() if sub.is_file())
     return {"folder": os.path.abspath(root), "files": sorted(files)}
+
+
+def lammps_example_dir() -> Path:
+    """The repository's shipped LAMMPS practice input and recorded run."""
+    return Path(__file__).resolve().parents[2] / "examples" / "lammps"

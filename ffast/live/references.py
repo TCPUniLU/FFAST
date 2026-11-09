@@ -35,7 +35,7 @@ def _record_id(bundle: Path) -> str:
     return hashlib.sha256(str(bundle).encode()).hexdigest()[:16]
 
 
-def record_reference(bundle_dir, environ=None) -> Path | None:
+def record_reference(bundle_dir, environ=None, *, name=None) -> Path | None:
     """Remember ``bundle_dir``; never fails the caller (returns None on an OS error)."""
     bundle = Path(bundle_dir).expanduser().resolve()
     d = references_dir(environ)
@@ -43,7 +43,7 @@ def record_reference(bundle_dir, environ=None) -> Path | None:
         d.mkdir(parents=True, exist_ok=True)
         path = d / f"{_record_id(bundle)}.json"
         tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({"bundle": str(bundle),
+        tmp.write_text(json.dumps({"bundle": str(bundle), "name": name,
                                    "recorded_utc": datetime.now(timezone.utc).isoformat(timespec="seconds")}))
         os.replace(tmp, path)
         return path
@@ -93,6 +93,6 @@ def recorded(environ=None) -> list[dict]:
             continue
         bundle = Path(rec.get("bundle", ""))
         if bundle.is_dir():
-            rows.append((rec.get("recorded_utc") or "", bundle))
+            rows.append((rec.get("recorded_utc") or "", bundle, rec.get("name")))
     rows.sort(key=lambda r: r[0], reverse=True)
-    return [describe(b) for _, b in rows]
+    return [{**describe(b), **({"name": name} if name else {})} for _, b, name in rows]

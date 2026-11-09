@@ -329,6 +329,19 @@ A Python file or importable module named in configuration that registers
 metrics. Distinct from a **plugin module**, which is found by the startup glob
 over `modules/`.
 
+## Live tutorials
+
+### Practice run, gate, paused
+
+A **practice run** is an ordinary live run started by a tour, marked in
+`run.json` by `practice.gate_step`. Its folder is under
+`~/.ffast/practice-runs/` (`FFAST_PRACTICE_RUNS` overrides); its pointer is
+in the normal Live Runs list. The **gate** waits before the heat until `GO`
+exists. A practice run is **paused** when its last saved step is the gate
+step, it has not ended, and `GO` is absent. **Heat it up** writes `GO`.
+STOP works while paused. Deleting an ended practice run removes its pointer
+and folder; ordinary runs are never deleted this way (ADR 0092).
+
 ## Plots
 
 ### Panel kind

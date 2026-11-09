@@ -52,6 +52,8 @@ def _row(pointer: dict, now: _dt.datetime, open_ids=()) -> dict:
     settings = rf.read_json(run_dir / rf.ANALYSIS_DIR / progress.get("analysis_id", "-") / rf.SETTINGS) or {}
     row.update({
         "exists": True,
+        "practice": run.get("practice"),
+        "paused": rf.practice_paused(run_dir, run),
         "bundle": Path(settings["bundle"]).stem if settings.get("bundle") else None,
         "last_step": (run.get("producer") or {}).get("last_step"),
         "planned_end_step": progress.get("planned_end_step"),

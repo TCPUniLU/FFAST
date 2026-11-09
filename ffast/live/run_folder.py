@@ -52,6 +52,31 @@ ALARMS_DIR = "alarms"
 CONTROL = "control.json"
 STOP_REQUEST = "stop_request.json"
 STOP = "STOP"
+GO = "GO"
+PRACTICE_RUNS_ENV = "FFAST_PRACTICE_RUNS"
+
+
+def practice_runs_dir(environ=None):
+    environ = os.environ if environ is None else environ
+    return Path(
+        os.path.expanduser(
+            environ.get(PRACTICE_RUNS_ENV) or "~/.ffast/practice-runs"
+        )
+    )
+
+
+def practice_paused(run_dir, run):
+    """One file-based pause rule for replay and real LAMMPS."""
+    practice = run.get("practice") or {}
+    return bool(
+        practice
+        and not run.get("end")
+        and (run.get("producer") or {}).get("last_step")
+        == practice.get("gate_step")
+        and not (Path(run_dir) / GO).exists()
+    )
+
+
 # One-off snapshot of the atoms as loaded, written by a "Run with FFAST" copy
 # that minimizes before its first run; proves atom order (ADR 0086).
 START_SNAPSHOT = "start.lammpstrj"

@@ -26,6 +26,7 @@ Standard library only, Python 3.6 compatible: it runs under whatever
 ``run_folder.py`` and ``lammps_log.py``.
 """
 
+import argparse
 import json
 import os
 import shutil
@@ -55,7 +56,10 @@ GRID_WAIT_S = 30.0           # a stop request with no process count yet: termina
 USAGE = """usage: ffast-lammps <command that runs LAMMPS>
   e.g.  ffast-lammps srun lmp -in run.in
 Runs LAMMPS with FFAST watching it; the input must include the file written by
-`ffast bundle`. Run folders go to $FFAST_RUN_DIR, or ./ffast-runs."""
+`ffast bundle`. Run folders go to $FFAST_RUN_DIR, or ./ffast-runs.
+  ffast-lammps --replay <recorded run folder> [--sleep S] [--gate-step N]
+  --practice-gate N   mark the run as practice; use ~/.ffast/practice-runs
+  --exit-with-parent PID   interrupt the run when its starting process exits"""
 
 
 class UsageError(Exception):
@@ -162,8 +166,21 @@ def lammps_version(run_dir):
 
 
 class Wrapper:
-    def __init__(self, cmd, environ=None, cwd=None, drain_s=DRAIN_S,
-                 drain_interrupted_s=DRAIN_INTERRUPTED_S, poll_s=POLL_S):
+    def __init__(
+        self,
+        cmd,
+        environ=None,
+        cwd=None,
+        drain_s=DRAIN_S,
+        drain_interrupted_s=DRAIN_INTERRUPTED_S,
+        poll_s=POLL_S,
+        practice_gate=None,
+        parent_pid=None,
+        practice_sleep=None,
+    ):
+        self.practice_sleep = practice_sleep
+        self.practice_gate = practice_gate
+        self.parent_pid = parent_pid
         self.cmd = list(cmd)
         self.environ = dict(os.environ if environ is None else environ)
         self.cwd = cwd or os.getcwd()
@@ -207,36 +224,76 @@ class Wrapper:
 
     def main(self):
         check_command(self.cmd)
-        base = rf.run_base(self.environ, self.cwd)
+        run_env = self.environ
+        if self.practice_gate is not None:
+            run_env = {rf.RUN_DIR_ENV: str(rf.practice_runs_dir(self.environ))}
+        base = rf.run_base(run_env, self.cwd)
         run_id, self.run_dir = rf.claim_run_folder(base)
         scorer_argv, scorer_env = scorer_command(self.run_dir, self.environ)
         lmp_cmd = lammps_command(self.cmd, self.run_dir)
         self.run = {
-            "format": rf.RUN_FORMAT, "format_version": rf.RUN_FORMAT_VERSION,
-            "run_id": run_id, "run_dir": str(self.run_dir),
+            "format": rf.RUN_FORMAT,
+            "format_version": rf.RUN_FORMAT_VERSION,
+            "run_id": run_id,
+            "run_dir": str(self.run_dir),
             "segments": [{"id": 0, "started_utc": rf.utc_now()}],
-            "command": lmp_cmd, "cwd": self.cwd,
+            "command": lmp_cmd,
+            "cwd": self.cwd,
             "slurm_job_id": self.environ.get("SLURM_JOB_ID"),
             # the job's name (#SBATCH -J) names the run in the list and its tab
             "slurm_job_name": self.environ.get("SLURM_JOB_NAME"),
             "end": None,
         }
-        rf.append_event(self.run_dir, "start", run_id=run_id, command=lmp_cmd,
-                        slurm_job_id=self.environ.get("SLURM_JOB_ID"))
+        if self.practice_gate is not None:
+            self.run["practice"] = {"gate_step": self.practice_gate}
+            if self.practice_sleep is not None:
+                self.run["practice"]["sleep_s"] = self.practice_sleep
+        rf.append_event(
+            self.run_dir,
+            "start",
+            run_id=run_id,
+            command=lmp_cmd,
+            slurm_job_id=self.environ.get("SLURM_JOB_ID"),
+        )
         rf.append_event(self.run_dir, "segment", segment=0)
         self._save()
-        rf.register_run(run_id, self.run_dir, self.environ)
         self.log = lammps_log.LogFollower(rf.log_path(self.run_dir, lmp_cmd, self.cwd))
         sys.stderr.write("ffast-lammps: run folder %s\n" % self.run_dir)
 
         log = open(str(self.run_dir / rf.SCORER_LOG), "wb")
-        scorer = subprocess.Popen(scorer_argv, env=scorer_env, stdout=log,
-                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                                  start_new_session=True)
-        previous = {s: signal.signal(s, self._on_signal) for s in (signal.SIGTERM, signal.SIGINT)}
+        scorer = None
+        previous = {
+            s: signal.signal(s, self._on_signal)
+            for s in (signal.SIGTERM, signal.SIGINT)
+        }
         try:
-            self.lammps = subprocess.Popen(lmp_cmd, env=self.environ, cwd=self.cwd)
+            scorer = subprocess.Popen(
+                scorer_argv,
+                env=scorer_env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            self.lammps = subprocess.Popen(
+                lmp_cmd, env=self.environ, cwd=self.cwd
+            )
+            # A pointer is the local launcher's startup handoff. Publish it
+            # only after both children could actually be started.
+            rf.register_run(run_id, self.run_dir, self.environ)
             return self._watch(scorer, log)
+        except OSError:
+            if scorer is not None and scorer.poll() is None:
+                try:
+                    os.killpg(scorer.pid, signal.SIGTERM)
+                except OSError:
+                    pass
+                try:
+                    scorer.wait(10)
+                except subprocess.TimeoutExpired:
+                    scorer.kill()
+                    scorer.wait()
+            raise
         finally:
             for s, h in previous.items():
                 signal.signal(s, h)
@@ -246,15 +303,31 @@ class Wrapper:
         t0 = time.monotonic()
         scorer_reported = False
         while self.lammps.poll() is None:
+            if (
+                self.parent_pid is not None
+                and os.getppid() != self.parent_pid
+                and not self.signal_received
+            ):
+                self._on_signal(signal.SIGTERM, None)
             if not scorer_reported and scorer.poll() is not None:
                 scorer_reported = True
                 self._scorer_ended_early(scorer.returncode)
-            elif (not scorer_reported and time.monotonic() - t0 > SCORER_START_S
-                  and not any(e["kind"] == "scorer_start" for e in rf.read_events(self.run_dir))):
+            elif (
+                not scorer_reported
+                and time.monotonic() - t0 > SCORER_START_S
+                and not any(
+                    e["kind"] == "scorer_start"
+                    for e in rf.read_events(self.run_dir)
+                )
+            ):
                 scorer_reported = True
-                rf.append_event(self.run_dir, "warning",
-                                text="the scorer has not started after %d s" % SCORER_START_S,
-                                scorer_log=_tail(self.run_dir / rf.SCORER_LOG))
+                rf.append_event(
+                    self.run_dir,
+                    "warning",
+                    text="the scorer has not started after %d s"
+                    % SCORER_START_S,
+                    scorer_log=_tail(self.run_dir / rf.SCORER_LOG),
+                )
             self.log.poll()
             self._check_stop()
             self._save()
@@ -363,8 +436,50 @@ def main(argv=None):
         sys.stderr.write(USAGE + "\n")
         return 0 if cmd else 2
     try:
-        return Wrapper(cmd).main()
-    except (UsageError, ValueError) as exc:
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--practice-gate", type=int)
+        parser.add_argument("--exit-with-parent", type=int)
+        parser.add_argument("--replay")
+        parser.add_argument("--sleep", type=float, default=0.3)
+        parser.add_argument("--gate-step", type=int)
+        # Only wrapper options preceding the LAMMPS command are parsed.
+        options_end = 0
+        wrapper_options = {
+            "--practice-gate",
+            "--exit-with-parent",
+            "--replay",
+            "--sleep",
+            "--gate-step",
+        }
+        while (
+            options_end < len(cmd)
+            and cmd[options_end].split("=", 1)[0] in wrapper_options
+        ):
+            options_end += 1 if "=" in cmd[options_end] else 2
+        options = parser.parse_args(cmd[:options_end])
+        command = cmd[options_end:]
+        if command[:1] == ["--"]:
+            command = command[1:]
+        if options.practice_gate is not None and options.practice_gate < 0:
+            raise UsageError("--practice-gate must be nonnegative")
+        if options.replay:
+            command = [
+                sys.executable,
+                "-m",
+                "ffast.live.replay",
+                options.replay,
+                "--sleep",
+                str(options.sleep),
+            ] + command
+            if options.gate_step is not None:
+                command += ["--gate-step", str(options.gate_step)]
+        return Wrapper(
+            command,
+            practice_gate=options.practice_gate,
+            parent_pid=options.exit_with_parent,
+            practice_sleep=options.sleep if options.replay else None,
+        ).main()
+    except (UsageError, ValueError, OSError) as exc:
         sys.stderr.write("%s\n" % exc)
         return 2
 

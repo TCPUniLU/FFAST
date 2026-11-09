@@ -166,7 +166,7 @@ class ServerSession:
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
             CancelTryMetricRequest, CancelMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
             TraceRequest, RequestMetricBoxesRequest, OpenLiveRunRequest,
-            LiveStopRequest, LiveSetStopOnAlarmRequest, LiveAttributionRequest,
+            StartPracticeRunRequest, LiveStopRequest, LiveSetStopOnAlarmRequest, LiveAttributionRequest,
             ForgetLiveRunRequest, MakeReferenceRequest, RunWithFfastRequest, WriteRunWithFfastRequest,
             SubmitJobRequest, WatchJobRequest, ScanRunFolderRequest,
         )
@@ -215,6 +215,9 @@ class ServerSession:
             control.ADD_SESSION_METRICS:        _Route(self._on_add_session_metrics, ["offer_id"], AddSessionMetricsRequest),
             control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
             control.TRACE:                      _Route(self._on_trace, ["kind", "text"], TraceRequest),
+            control.START_PRACTICE_RUN: _Route(self._on_start_practice_run, ["?kind"], StartPracticeRunRequest),
+            control.HEAT_PRACTICE_RUN: _Route(self._on_heat_practice_run, ["run_id"], LiveStopRequest),
+            control.DELETE_PRACTICE_RUN: _Route(self._on_delete_practice_run, ["run_id"], LiveStopRequest),
             control.OPEN_LIVE_RUN:              _Route(self._on_open_live_run, ["path"], OpenLiveRunRequest),
             control.LIVE_STOP:                  _Route(self._on_live_stop, ["run_id"], LiveStopRequest),
             control.LIVE_SET_STOP_ON_ALARM:     _Route(self._on_live_set_stop_on_alarm, ["run_id", "on"],
@@ -919,6 +922,47 @@ class ServerSession:
     async def _on_cancel_probe_dataset_length(self, **kwargs) -> None:
         """The Load dialog moved on to another file, or closed without Load."""
         self._stop_length_probe()
+
+    async def _on_start_practice_run(self, kind="replay", **kwargs) -> None:
+        from ffast.live.local_launch import start_practice_run
+        from ffast.live.live_run import open_live_run
+        from ffast.protocol.rpc import pack
+
+        try:
+            run_id, folder = await start_practice_run(kind or "replay")
+            open_live_run(self.env, folder, self._broadcast)
+            out = {"run_id": run_id}
+        except (ValueError, OSError) as exc:
+            logger.warning("START_PRACTICE_RUN: %s", exc)
+            out = {"error": str(exc)}
+        await self._emit(pack(control.PRACTICE_RUN_STARTED, (), out))
+
+    async def _on_heat_practice_run(self, run_id, **kwargs) -> None:
+        from ffast.live.local_launch import heat_practice_run
+        from ffast.protocol.rpc import pack
+
+        out = {"run_id": run_id, "action": "heat"}
+        try:
+            heat_practice_run(run_id)
+        except (ValueError, OSError) as exc:
+            out["error"] = str(exc)
+        await self._emit(pack(control.PRACTICE_RUN_RESULT, (), out))
+
+    async def _on_delete_practice_run(self, run_id, **kwargs) -> None:
+        from ffast.live.local_launch import delete_practice_run
+        from ffast.protocol.rpc import pack
+
+        out = {"run_id": run_id, "action": "delete"}
+        try:
+            delete_practice_run(run_id)
+            runs = getattr(self.env, "live_runs", {})
+            run = runs.get(run_id)
+            if run and run.registered:
+                await self._on_delete_object(run.fingerprint)
+        except (ValueError, OSError) as exc:
+            out["error"] = str(exc)
+        await self._emit(pack(control.PRACTICE_RUN_RESULT, (), out))
+        await self._on_list_live_runs()
 
     async def _on_open_live_run(self, path, **kwargs) -> None:
         """Follow a live LAMMPS run folder (ADR 0087). Its frames appear as a
