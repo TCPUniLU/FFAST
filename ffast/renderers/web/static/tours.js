@@ -373,7 +373,7 @@ function lammpsTour(app) {
       until: 'live-alarm', accept: sameRun, wait: 'Waiting for the alarm',
       done: () => !!run()?.progress?.alarms?.length, stay: true },
     { title: 'It stopped itself', targets: [status, events], side: 'bottom',
-      body: () => run()?.end ? `Stop on alarm wrote STOP; the replay saw it at its next check and stopped at step ${run().end.stop_observed_step?.toLocaleString('en-US')}. Events shows each part: requested, written, observed.`
+      body: () => run()?.end ? `Stop on alarm wrote STOP; the replay saw it at its next check and stopped at step ${run().end.stop_observed_step?.toLocaleString('en-US')}. In the Events panel, “Stop requested” means the alarm asked for a stop, “STOP written” means the wrapper created the stop file, and “Stop observed” means the log confirmed that the replay had stopped.`
         : 'Stop on alarm writes a STOP file. The replay checks it before each frame, as one-process LAMMPS checks it through fix halt.',
       until: 'live-stopped', accept: sameRun, wait: 'Waiting for the run to stop', done: () => !!run()?.end, stay: true },
     { title: 'Go to the onset', targets: [score, view], side: 'left',
