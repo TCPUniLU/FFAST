@@ -351,7 +351,7 @@ function lammpsTour(app) {
       links: [{ label: 'Atom-order warning: meaning and fix (README, opens in a new tab)', href: 'https://github.com/TCPUniLU/FFAST/blob/main/README.md' }],
       body: 'LAMMPS step: how far LAMMPS got, with a bar towards the planned end. Scored to: how far the scorer got. Atom order: this recording is unverified; its first frame passes the bond check, but it has no saved data-file proof. State: alarms and how the run ended. “practice” marks runs made by a tour.' },
     { title: 'What LAMMPS writes', targets: [view], side: 'right',
-      body: 'The run’s own 3D view follows the newest frame. Here it is the toy aspirin at 300 K, the temperature the reference was made from.' },
+      body: 'The run’s own 3D view shows the selected frame. Use the frame slider or playback controls to explore the frames. The calm part is toy aspirin at 300 K, the temperature the reference was made from.' },
     { title: 'The score', targets: [score], side: 'left',
       body: 'Each point is one frame: the worst test’s score divided by its threshold. Under the dashed line at 1, the frame looks like the reference. An orange tick marks a frame over 1; one stray tick is normal.' },
     { title: 'Events', targets: [events], side: 'top',
