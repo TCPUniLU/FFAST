@@ -377,7 +377,7 @@ function lammpsTour(app) {
         : 'Stop on alarm writes a STOP file. The replay checks it before each frame, as one-process LAMMPS checks it through fix halt.',
       until: 'live-stopped', accept: sameRun, wait: 'Waiting for the run to stop', done: () => !!run()?.end, stay: true },
     { title: 'Go to the onset', targets: [score, view], side: 'left',
-      body: 'The dotted line is the estimated onset: the first frame of the trouble. Click it, or a point between it and the solid confirmation line. The 3D view jumps to that frame.',
+      body: 'Look for the vertical violet dotted line labeled “chemistry onset”. It marks the start of the three consecutive flagged frames that confirmed the chemistry alarm. The score may start changing earlier. The solid violet line marks confirmation; the horizontal dashed line at 1 is the score threshold. Hover a line for its label and step, then click the onset line or a point between it and confirmation. The 3D view jumps to that frame.',
       until: 'point-picked', accept: (d) => d.datasetFp === run()?.fingerprint
         && run()?.progress?.alarms?.some((a) => d.frame >= a.onset?.frame && d.frame <= a.confirmation?.frame),
       refused: () => 'Click the dotted line, or a point between it and the solid line', wait: 'Click the dotted onset line', stay: true },
