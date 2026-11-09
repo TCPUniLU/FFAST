@@ -45,7 +45,7 @@ export function liveRunRow(row) {
     : row.state && row.state !== 'running' ? { state: row.state, step: null } : null;
   const state = liveStateCell({
     alarms: (row.alarms || []).map((x) => ({ kind: x.kind, step: x.step })),
-    end: ended, stopRequested: !!(row.stop_requested || row.stop),
+    end: ended, stopRequested: !!(row.stop_requested || row.stop), paused: !!row.paused,
   });
   return { name: row.name, sub: row.bundle || '', more,
     lammps, lammpsShare: share(row.last_step, row), scored, scoredShare: share(row.scored_through_step, row),
@@ -64,7 +64,7 @@ export function liveRunRow(row) {
  * @returns {{update: (rows: object[]) => void, close: () => void}}
  */
 export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () => {}, highlight = null,
-  whyNoOpen = () => '' }) {
+  whyNoOpen = () => '', deletePractice = (runId) => {} }) {
   document.getElementById('live-runs-dialog')?.remove();
   const modal = document.createElement('div');
   modal.id = 'live-runs-dialog';
@@ -138,6 +138,7 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () =>
       if (row.run_id === highlight) tr.className = 'live-runs-highlight';
       const name = cell('td');
       name.append(cell('b', '', v.name));
+      if (row.practice) name.append(cell('span', 'practice-chip', 'practice'));
       if (v.sub) name.appendChild(cell('div', 'live-runs-sub', v.sub));
       const more = cell('details', 'live-runs-more');
       more.open = openMore.has(row.run_id);   // the list refreshes every few seconds
@@ -165,6 +166,13 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () =>
         stopBtn.disabled = !!(row.stop_requested || row.stop);
         stopBtn.addEventListener('click', () => stop(row));
         act.appendChild(stopBtn);
+      }
+      if (row.practice) {
+        const del = cell('button', 'live-runs-delete', 'Delete practice run');
+        del.disabled = !row.end || !!noOpen;
+        del.title = !row.end ? 'Stop the practice run before deleting it' : noOpen;
+        del.addEventListener('click', () => deletePractice(row.run_id));
+        act.append(del);
       }
       tr.append(name, prog, scorer, state, act);
       table.appendChild(tr);

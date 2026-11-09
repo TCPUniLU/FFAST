@@ -80,6 +80,7 @@ export class LiveUi {
   /** The "Live runs" dialog; its rows come back in LIVE_RUNS (onRuns). */
   openRuns({ highlight = null } = {}) {
     this._runsDialog = openLiveRunsDialog({
+      deletePractice: (runId) => this._send(OUT.DELETE_PRACTICE_RUN, { run_id: runId }),
       highlight, whyNoOpen: this._whyNoOpen,
       stop: (row) => this.command({ action: 'stop', run_id: row.run_id, name: row.name, processes: row.processes ?? null }),
       ask: () => this._send(OUT.LIST_LIVE_RUNS, {}),

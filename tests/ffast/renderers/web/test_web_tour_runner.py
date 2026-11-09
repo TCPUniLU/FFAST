@@ -251,6 +251,8 @@ async def test_a_refused_event_keeps_the_step_waiting_and_says_why(page):
     await expect(page.locator(".tour-wait")).to_have_text("Send the right one")
     await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('go', { detail: { ok: false, name: 'x' } }))")
     await expect(page.locator(".tour-wait")).to_have_text("Not x")
+    await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('app-event'))")
+    await expect(page.locator(".tour-wait")).to_have_text("Not x")
     await expect(page.locator(".tour-title")).to_have_text("One")
     await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('go', { detail: { ok: true } }))")
     await expect(page.locator(".tour-title")).to_have_text("Two")
@@ -285,3 +287,24 @@ async def test_without_room_beside_the_lit_area_the_box_covers_as_little_of_it_a
     covered = (max(0, min(box["x"] + box["width"], 906) - max(box["x"], 94))
                * max(0, min(box["y"] + box["height"], 606) - max(box["y"], 94)))
     assert covered < box["width"] * box["height"] / 2
+
+
+async def test_actions_refresh_on_app_events_and_run_once_while_waiting(page):
+    await page.evaluate("""() => { window.ready = false; window.used = 0; window.run([
+      { title: 'Heat', body: 'Wait for the gate', targets: ['#a'], until: 'heated',
+        wait: () => window.ready ? 'Heat now' : 'Still running',
+        actions: [{ label: 'Heat it up', primary: true, enabled: () => window.ready,
+          run: () => { window.used += 1; } }] },
+      { title: 'Done', body: '', targets: ['#b'] }]); }""")
+    button = page.get_by_role("button", name="Heat it up")
+    await expect(button).to_be_disabled()
+    await page.evaluate("() => { window.ready = true; window.events.dispatchEvent(new CustomEvent('app-event')); }")
+    await expect(button).to_be_enabled()
+    await expect(page.locator(".tour-wait")).to_have_text("Heat now")
+    await button.click()
+    await expect(button).to_be_disabled()
+    await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('app-event'))")
+    await expect(button).to_be_disabled()
+    assert await page.evaluate("() => window.used") == 1
+    await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('heated'))")
+    await expect(page.locator(".tour-title")).to_have_text("Done")

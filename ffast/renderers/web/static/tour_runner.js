@@ -6,13 +6,15 @@
 /**
  * @typedef {object} Step
  * @property {string} title
- * @property {string | (() => string)} body  text, or a function read each time the step shows
+ * @property {string | (() => string)} body  text, or a function read on show and each app event
  * @property {Array<string | (() => Element|null)>} targets  selectors, or functions that find an element; joined into one lit area
  * @property {'top'|'bottom'|'left'|'right'|'inside'} [side]  where the box goes
  * @property {string} [until]  the event that ends a "do this" step; without it the step has Next
  * @property {(detail: object) => boolean} [accept]  which `until` events count, by their detail; all when absent
  * @property {(detail: object) => string} [refused]  what the wait text becomes when `accept` rejects an event
  * @property {string | (() => string)} [wait]  what the box says while it waits for `until`
+ * @property {Array<{label: string, primary?: boolean, run: () => (void|Promise<unknown>), enabled?: () => boolean}>} [actions] buttons in the tour box
+ * @property {boolean} [noNext] hide Next after completion (for final choices)
  * @property {boolean} [stay]  after `until` fires, show Next instead of moving on, so the user can keep trying it
  * @property {() => boolean} [done]  true when the action is already done: show Next instead of waiting
  * @property {string | string[]} [failOn]  events that stop the tour, with `detail.error`, else `failText`, else the title
@@ -91,6 +93,7 @@ export function startTour(tour, { events, onEnd, doc = document }) {
   head.append(count, dots);
   const title = el('h2', 'tour-title', { id: 'tour-title' });
   const body = el('p', 'tour-body', { id: 'tour-body' });
+  const actions = el('div', 'tour-actions');
   const foot = el('div', 'tour-foot');
   const skip = el('button', 'tour-skip', { type: 'button' });
   skip.textContent = 'Skip tour';
@@ -99,7 +102,7 @@ export function startTour(tour, { events, onEnd, doc = document }) {
   const wait = el('span', 'tour-wait', { 'aria-live': 'polite' });
   const next = el('button', 'tour-next', { type: 'button' });
   foot.append(skip, back, wait, next);
-  box.append(head, title, body, foot);
+  box.append(head, title, body, actions, foot);
   layer.append(...shades, ring, box);
   doc.body.append(layer);
 
@@ -137,10 +140,40 @@ export function startTour(tour, { events, onEnd, doc = document }) {
     back.hidden = i === 0;
     const showNext = () => {
       wait.hidden = true;
-      next.hidden = false;
+      next.hidden = !!step.noNext;
+      if (step.until) actions.querySelectorAll('button').forEach((b) => { b.disabled = true; });
       next.textContent = last ? 'Done' : 'Next';
     };
     const waiting = !!step.until && !didThisRun.has(step) && !step.done?.();
+    let refusal = null;
+    actions.replaceChildren();
+    const actionButtons = (step.actions || []).map((action) => {
+      const button = el('button', action.primary ? 'primary' : '', { type: 'button' });
+      button.textContent = action.label;
+      let used = false;
+      const refresh = () => { button.disabled = !!step.until && (!waiting || used) || !!action.enabled && !action.enabled(); };
+      button.addEventListener('click', async () => {
+        if (button.disabled) return;
+        if (step.until) used = true;
+        refresh();
+        try { await action.run(); }
+        catch (err) { end('stopped', err instanceof Error ? err.message : String(err)); }
+      });
+      refresh();
+      actions.append(button);
+      return refresh;
+    });
+    // The app emits this after every named event, so gates and countdowns
+    // refresh from app state without the runner polling or knowing the app.
+    listen('app-event', () => {
+      if (ended || index !== i) return;
+      body.textContent = text(step.body);
+      if (!wait.hidden) {
+        const currentWait = text(step.wait) || '';
+        wait.textContent = refusal ?? currentWait;
+        actionButtons.forEach((refresh) => refresh());
+      }
+    });
     if (waiting) {
       next.hidden = true;
       wait.hidden = false;
@@ -148,10 +181,14 @@ export function startTour(tour, { events, onEnd, doc = document }) {
       // Focus stays on the control in use, so a step that stays can be tried again.
       listen(step.until, (e) => {
         if (step.accept && !step.accept(e.detail ?? {})) {
-          if (step.refused) wait.textContent = step.refused(e.detail ?? {});
+          if (step.refused) {
+            refusal = step.refused(e.detail ?? {});
+            wait.textContent = refusal;
+          }
           return;
         }
         didThisRun.add(step);
+        body.textContent = text(step.body);
         if (step.stay) showNext();
         else advance();
       });
@@ -168,7 +205,7 @@ export function startTour(tour, { events, onEnd, doc = document }) {
     }
     if (!place()) return;
     win.requestAnimationFrame(() => {
-      if (!ended && index === i) (waiting ? first : next)?.focus?.({ preventScroll: true });
+      if (!ended && index === i) (waiting ? [...actions.querySelectorAll('button')].find((b) => !b.disabled) || first : next.hidden ? actions.querySelector('button') : next)?.focus?.({ preventScroll: true });
     });
   }
 

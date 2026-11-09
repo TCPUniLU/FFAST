@@ -495,7 +495,12 @@ export class AnalysisManager {
       const row = liveRunRow(kw, now);
       const tr = body.insertRow();
       tr.dataset.runId = kw.run_id;
-      this._liveCell(tr, { text: row.name, tone: '' }, 'cell-name');
+      const name = this._liveCell(tr, { text: row.name, tone: '' }, 'cell-name');
+      if (kw.practice) {
+        const chip = document.createElement('span');
+        chip.className = 'practice-chip'; chip.textContent = 'practice';
+        name.append(chip);
+      }
       const lammps = this._liveCell(tr, row.lammps, 'num');
       if (row.lammps.fraction != null) {
         const bar = document.createElement('span');
@@ -2402,11 +2407,28 @@ export class AnalysisManager {
     const ticks = spec.overlays.ticks;
     const hit = tickAt(ticks, shown, ev.clientX - r.left - fl._size.l, ev.clientY - r.top - fl._size.t,
       { h: fl._size.h, xToPx: (x) => fl.xaxis.l2p(x) });
-    if (!hit) return null;
-    const src = (card.series || [])[ticks[hit.tick].curve ?? 0];
+    if (hit) return this._liveFrameAt(card, ticks[hit.tick].curve ?? 0, hit.x);
+    // The translucent onset-to-confirmation band is clickable too. Ignore
+    // hidden bands and clicks outside the plot (including its legend).
+    const px = ev.clientX - r.left - fl._size.l, py = ev.clientY - r.top - fl._size.t;
+    if (px < 0 || px > fl._size.w || py < 0 || py > fl._size.h) return null;
+    const shapes = el.layout?.shapes || [];
+    const band = (spec.overlays.bands || []).find((b, k) =>
+      shapes.some((shape) => shape.name === `alarm-band:${k}` && shape.visible !== false)
+      && px >= fl.xaxis.l2p(b.x0) && px <= fl.xaxis.l2p(b.x1));
+    return band ? this._liveFrameAt(card, band.curve ?? 0, fl.xaxis.p2d(px)) : null;
+  }
+
+  /** The frame nearest a step in one live series. */
+  _liveFrameAt(card, curve, step) {
+    const src = (card.series || [])[curve];
     const steps = src?.data?.x?.nd?.values;
-    const i = steps ? Array.prototype.indexOf.call(steps, hit.x) : -1;
-    if (i < 0 || src.frames?.[i] == null) return null;
+    if (!steps?.length) return null;
+    let i = 0;
+    for (let j = 1; j < steps.length; j++) {
+      if (Math.abs(steps[j] - step) < Math.abs(steps[i] - step)) i = j;
+    }
+    if (src.frames?.[i] == null) return null;
     return { datasetFp: src.datasetFp, modelFp: src.modelFp, frame: src.frames[i] };
   }
 
@@ -2453,7 +2475,13 @@ export class AnalysisManager {
       const info = el._subInfo;
       const pt = ev && ev.points && ev.points[0];
       if (!pt || !info) return;
-      if (info.dataCurveCount != null && pt.curveNumber >= info.dataCurveCount) return;
+      if (info.dataCurveCount != null && pt.curveNumber >= info.dataCurveCount) {
+        // Alarm lines are overlay series on y2, not scientific curve points.
+        const line = spec.liveScores && (spec.overlays?.lines || []).find((l) => l.label === pt.data?.name && l.x === pt.x);
+        const frame = line && this._liveFrameAt(card, line.curve ?? 0, line.x);
+        if (frame) openFrame(frame, ev.event);
+        return;
+      }
       const src = (card.series || [])[(info.curveSeries || [])[pt.curveNumber] ?? 0];
       // A point that is not a frame carries its frame in its data (a parity dot).
       // A live run's points are its scored frames, in order (ADR 0087).

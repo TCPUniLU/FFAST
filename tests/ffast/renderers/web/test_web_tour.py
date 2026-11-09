@@ -227,7 +227,9 @@ async def test_every_target_of_every_tour_is_on_screen_with_the_example(ffast_we
             found = await page.evaluate("""async () => {
               const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
               const out = [];
-              for (const tour of window.ffastApp._tours) {
+              // LAMMPS tour targets need its practice run, covered by
+              // test_web_lammps_tour.py rather than this example pair.
+              for (const tour of window.ffastApp._tours.filter((t) => !t.lammps)) {
                 for (const step of tour.steps) {
                   step.prepare?.();
                   await frame();

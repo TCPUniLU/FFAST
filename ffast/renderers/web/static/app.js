@@ -334,7 +334,7 @@ export class FFastApp {
         seriesColourOwner(datasetFp, modelFp, !!this._datasets.get(datasetFp)?.parent)),
       onPointFrame: (o) => {
         this._onPlotPoint(o);
-        this._tourSignal('point-picked', { frame: o.frame });
+        this._tourSignal('point-picked', { frame: o.frame, datasetFp: o.datasetFp });
       },
       onLive: (cmd) => this._liveCommand(cmd),
       explainsChoices: (t, spec) => this._explainsChoices(t, spec),
@@ -729,6 +729,7 @@ export class FFastApp {
   /** Tell the guided tours (ADR 0088) that `name` happened. */
   _tourSignal(name, detail = {}) {
     this.tourEvents.dispatchEvent(new CustomEvent(name, { detail }));
+    this.tourEvents.dispatchEvent(new CustomEvent('app-event', { detail: { name, ...detail } }));
   }
 
   _buildActions() {
@@ -788,6 +789,10 @@ export class FFastApp {
       { separator: true, menu: 'file' },
       ...this._tours.map((t) => ({
         id: `tour-${t.id}`, label: `Tour: ${t.title}`, menu: 'file',
+        run: () => this._startTour(t), unavailable: t.unavailable,
+      })),
+      ...this._tours.filter((t) => t.lammps).map((t) => ({
+        id: `lammps-tour-${t.id}`, label: `Tour: ${t.title}`, menu: 'lammps',
         run: () => this._startTour(t), unavailable: t.unavailable,
       })),
       // No `menu`: the File menu does not change; the Alt+Shift+N shortcut runs it.
@@ -1888,6 +1893,18 @@ export class FFastApp {
         this._examples = kw.examples ?? null;
         this._browser.setLoaderTypes(kw);
       });
+      conn.on(IN.PRACTICE_RUN_STARTED, (kw) => {
+        if (kw.error) { this._tourSignal('practice-failed', kw); return; }
+        this._practiceId = kw.run_id;
+        this._liveRunWanted = true;
+        this._tourSignal('practice-started', kw);
+      });
+      conn.on(IN.PRACTICE_RUN_RESULT, (kw) => {
+        if (kw.error) {
+          this._setStatus(`Practice run: ${kw.error}`, 'error');
+          this._tourSignal('practice-failed', kw);
+        } else this._tourSignal(kw.action === 'heat' ? 'practice-heated' : 'practice-deleted', kw);
+      });
       conn.on(IN.LIVE_RUN_UPDATE, (kw) => this._onLiveRunUpdate(kw));
       conn.on(IN.LIVE_ATTRIBUTION_RESULT, (kw) => this._live().onResult(kw));
       conn.on(IN.LIVE_RUNS, (kw) => this._live().onRuns(kw));
@@ -2932,14 +2949,44 @@ export class FFastApp {
       if (kw.error) this._setStatus(`Live run: ${kw.error}`, 'error');
       return;
     }
+    const previous = this._practiceRun;
+    const practice = kw.run_id === this._practiceId;
+    if (practice) this._practiceRun = kw;
     this._analysis.setLiveRun(kw);
     this._live().sync();   // the shown frame is explained once the run has a bundle
     const tabId = kw.tab && this._analysis.liveTabId(kw.tab);
-    if (!this._liveRunWanted || !kw.fingerprint || !tabId) return;
+    if (practice) {
+      const detail = { run_id: kw.run_id };
+      if (kw.paused && !previous?.paused) this._tourSignal('practice-paused', detail);
+      if (kw.stop_on_alarm !== previous?.stop_on_alarm) this._tourSignal('stop-on-alarm-changed', { ...detail, on: kw.stop_on_alarm });
+      for (const alarm of kw.progress?.alarms || []) {
+        if (!(previous?.progress?.alarms || []).some((a) => a.kind === alarm.kind)) this._tourSignal('live-alarm', { ...detail, kind: alarm.kind });
+      }
+      if (kw.end && !previous?.end) {
+        if (kw.end.state === 'stopped') this._tourSignal('live-stopped', detail);
+        else this._tourSignal('practice-failed', { ...detail, error: `Practice run ${kw.end.state}` });
+      }
+      // A refusal can precede the analysis directory and its progress file.
+      const failure = (kw.events || []).find((e) => ['refused', 'scorer_failed'].includes(e.kind));
+      const error = kw.error || failure?.reason || (['failed', 'refused'].includes(kw.progress?.state)
+        ? kw.progress?.reason || 'The practice scorer could not read this run' : '');
+      if (error) {
+        this._setStatus(`Practice run: ${error}`, 'error');
+        this._tourSignal('practice-failed', { ...detail, error });
+        if (!kw.end && !kw.stop_requested && !(previous?.events || []).some((e) => ['refused', 'scorer_failed'].includes(e.kind))) {
+          this._conn?.send(OUT.LIVE_STOP, { run_id: kw.run_id }, []);
+        }
+        this._liveRunWanted = false;
+        return;
+      }
+      this._tourSignal('practice-progress', detail);
+    }
+    if (!this._liveRunWanted || !kw.fingerprint || !tabId || this._tourId === 'watch-lammps' && this._practiceId && !practice) return;
     this._liveRunWanted = false;
     this._setStatus(`Live run ${kw.run_id}`, 'connected');
     // The tab's own 3D panel shows the run; the main view keeps what it shows.
     this._selectTab(tabId);
+    if (practice) this._tourSignal('live-first-frame', { run_id: kw.run_id });
   }
 
   _showInMainView(fp, frame = null) {

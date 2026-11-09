@@ -468,9 +468,10 @@ FILE_MENU = [
     "Load Dataset…", "Load Prediction…", "Load Model…", "Load Zero Model", "Load Example Dataset and Prediction",
     "Save Session…", "Load Session…", "Export Selected Dataset…", "Connect to Server…",
     "Connect to Cluster…", "Tour: First steps", "Tour: Load a dataset and a prediction",
+    "Tour: Watch a LAMMPS run",
 ]
 # Everything for live LAMMPS runs (ADR 0086/0087) has a top-bar menu of its own.
-LAMMPS_MENU = ["Run with FFAST…", "Live Runs…", "Make Reference…"]
+LAMMPS_MENU = ["Run with FFAST…", "Live Runs…", "Make Reference…", "Tour: Watch a LAMMPS run"]
 
 
 _FOOTER_CHECK = """([panelSel, footSel]) => {

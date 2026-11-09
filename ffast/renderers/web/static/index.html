@@ -1636,7 +1636,12 @@
       .tour-ring, .tour-wait::before { animation: none; }
     }
 
-  </style>
+
+.practice-chip { display: inline-block; margin-left: 6px; padding: 1px 5px; border: 1px solid currentColor; border-radius: 3px; font-size: 10px; font-weight: normal; }
+.tour-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.tour-actions:empty { display: none; }
+.tour-actions button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+</style>
 
   <!-- Three.js is vendored under vendor/three/ (no CDN — the client must work
        offline and on a cluster with no outbound network). The import map

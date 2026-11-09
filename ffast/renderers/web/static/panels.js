@@ -509,11 +509,11 @@ export function addOverlays(traces, layout, overlays, curveColour = () => null, 
       marker: { symbol: 'line-ns-open', size: 8, color: tickColour(t),
                 line: { width: 1.5, color: tickColour(t) } } });
   });
-  for (const b of overlays.bands || []) {
-    shapes.push({ type: 'rect', xref: 'x', yref: 'paper', x0: b.x0, x1: b.x1, y0: 0, y1: 1,
+  (overlays.bands || []).forEach((b, k) => {
+    shapes.push({ name: `alarm-band:${k}`, type: 'rect', xref: 'x', yref: 'paper', x0: b.x0, x1: b.x1, y0: 0, y1: 1,
       fillcolor: colour(b.color), opacity: 0.12, line: { width: 0 }, layer: 'below' });
     ownedBy([curveOf(b)]);
-  }
+  });
   // A line is a trace across the plot's height (hidden 0–1 axis): it gets a
   // legend entry in its own style, and hovering anywhere on it names it.
   const ys = Array.from({ length: 21 }, (_, k) => k / 20);

@@ -73,10 +73,10 @@ export function liveScorerCell({ state, ended, ageS, stalled }) {
  * then how the run ended or that a stop is asked for. An alarm or a terminated
  * run is trouble (bad); a stop the user asked for is not.
  * @param {{alarms?: {kind: string, step: number}[], end?: {state: string, step: number}|null,
- *   stopRequested?: boolean}} x
+ *   stopRequested?: boolean, paused?: boolean}} x
  * @returns {{text: string, tone: string}}
  */
-export function liveStateCell({ alarms = [], end = null, stopRequested = false }) {
+export function liveStateCell({ alarms = [], end = null, stopRequested = false, paused = false }) {
   const words = alarms.map((a) => `${a.kind === 'chem' ? 'Chemistry alarm' : 'Alarm'} at step ${fmt(a.step)}`);
   let tone = words.length ? 'bad' : '';
   if (end) {
@@ -89,6 +89,7 @@ export function liveStateCell({ alarms = [], end = null, stopRequested = false }
     words.push('stop requested');
     tone ||= 'warn';
   }
+  if (!end && paused && !stopRequested) words.push('Paused before the heat');
   const text = words.length ? words.join(' · ') : 'No alarm';
   return { text: text[0].toUpperCase() + text.slice(1), tone };
 }
@@ -138,7 +139,7 @@ export function liveRunRow(kw, nowMs) {
   const state = liveStateCell({
     alarms: (p.alarms || []).map((x) => ({ kind: x.kind, step: x.confirmation?.step })),
     end: kw.end ? { state: kw.end.state, step: kw.end.stop_observed_step } : null,
-    stopRequested: !!kw.stop_requested,
+    stopRequested: !!kw.stop_requested, paused: !!kw.paused,
   });
 
   return { name: kw.name || kw.tab || kw.run_id, lammps, scored, scorer, atoms, state };
@@ -320,7 +321,7 @@ export function liveRunsOverlays(runs) {
       row: i * o.ticks.length + (t.row || 0), name: label(t.name), ...(many ? { series: i } : {}) })));
     // `curve`: hidden with its run's curve in the legend.
     merged.bands.push(...o.bands.map((b) => ({ ...b, curve: i })));
-    merged.lines.push(...o.lines.map((l) => ({ ...l, label: label(l.label) })));
+    merged.lines.push(...o.lines.map((l) => ({ ...l, curve: i, label: label(l.label) })));
   });
   return merged;
 }

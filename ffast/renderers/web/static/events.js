@@ -69,6 +69,9 @@ export const OUT = Object.freeze({
   // Follow a live LAMMPS run folder (ADR 0087)
   OPEN_LIVE_RUN: 'OPEN_LIVE_RUN',
   // "Stop now" and stop on alarm for an open live run (ADR 0086)
+  START_PRACTICE_RUN: 'START_PRACTICE_RUN',
+  HEAT_PRACTICE_RUN: 'HEAT_PRACTICE_RUN',
+  DELETE_PRACTICE_RUN: 'DELETE_PRACTICE_RUN',
   LIVE_STOP: 'LIVE_STOP',
   LIVE_SET_STOP_ON_ALARM: 'LIVE_SET_STOP_ON_ALARM',
   // What drove one live frame's score (ADR 0087)
@@ -111,6 +114,8 @@ export const IN = Object.freeze({
   LIVE_ATTRIBUTION_RESULT: 'LIVE_ATTRIBUTION_RESULT',
   // The "Live runs" list's rows (ADR 0087)
   LIVE_RUNS: 'LIVE_RUNS',
+  PRACTICE_RUN_STARTED: 'PRACTICE_RUN_STARTED',
+  PRACTICE_RUN_RESULT: 'PRACTICE_RUN_RESULT',
   // The answer to MAKE_REFERENCE (ADR 0086)
   REFERENCE_MADE: 'REFERENCE_MADE',
   // "Run with FFAST" answers and the followed job's state (ADR 0086)

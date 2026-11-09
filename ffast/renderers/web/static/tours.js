@@ -1,11 +1,11 @@
 // The guided tours (ADR 0088). Each tour is data for tour_runner.js: steps
 // that name what to light up, what to say, and which app event ends them.
-// The functions here only read the app, except the undo of First steps'
-// step 1, which deletes the example pair it loaded, and the loading tour,
-// which opens and closes the file browser.
+// Steps read app state; actions load examples, control a practice run, or
+// undo an earlier action. The loading tour uses the real file browser.
 
 import { loadLayout } from './layout_state.js';
 import { joinPath } from './remote_browser.js';
+import { OUT } from './events.js';
 
 /** The example files the loading tour loads, one round per pair, each in its
  * example's folder under examples/data. Both pairs use eV and eV/Å, so Basic
@@ -138,7 +138,7 @@ export function buildTours(app) {
       steps.forceError, steps.readColours,
       steps.openBasic, steps.basicPlots, steps.clickPoint, steps.pickedFrame, steps.hints],
   };
-  return [firstSteps, loadingTour(app, { tabNamed, BASIC })];
+  return [firstSteps, loadingTour(app, { tabNamed, BASIC }), lammpsTour(app)];
 }
 
 /** The tour "Load a dataset and a prediction": two rounds of loading through
@@ -320,4 +320,81 @@ function loadingTour(app, { tabNamed, BASIC }) {
     onStart: () => { own.datasets = []; own.predictions = []; },
     steps: [...datasetSteps(0), ...predictionSteps(0), ...datasetSteps(1), ...predictionSteps(1), ...basicSteps],
   };
+}
+
+
+/** Watch a real wrapper/scorer run, with recorded frames instead of LAMMPS. */
+function lammpsTour(app) {
+  const run = () => app._practiceRun;
+  const tab = () => document.querySelector('#tabpanels .tabpanel.active');
+  const panel = (title) => tab()?.querySelector(`.analysis-panel[data-title="${title}"]`) ?? null;
+  const status = () => panel('Run');
+  const score = () => panel('Worst test ÷ its threshold, against step');
+  const view = () => app._activePanel?.viewport ?? panel('3D');
+  const events = () => panel('Events');
+  const send = (event, kw) => app._conn?.send(event, kw, []);
+  const sameRun = (d) => d.run_id === app._practiceId;
+  const gateWait = () => {
+    if (run()?.paused) return 'Click Heat it up';
+    const gate = run()?.practice?.gate_step;
+    const step = run()?.producer?.last_step ?? 0;
+    // The shared tutorial settings arrive with the run; every 100 steps is one frame.
+    const seconds = Math.ceil(Math.max(0, (gate - step) / 100) * (run()?.practice?.sleep_s ?? 0));
+    return `Calm part: step ${step.toLocaleString('en-US')} of ${gate?.toLocaleString('en-US') ?? '?'} · about ${seconds} s to the pause`;
+  };
+  const steps = [
+    { title: 'Start a practice run', targets: ['#tabbar'], side: 'bottom',
+      body: 'A practice run replays a toy aspirin run recorded on an HPC cluster. The real FFAST wrapper and scorer watch it, as they would watch LAMMPS. No LAMMPS is needed.',
+      actions: [{ label: 'Start practice run', primary: true, run: () => send(OUT.START_PRACTICE_RUN, { kind: 'replay' }) }],
+      until: 'live-first-frame', accept: sameRun, wait: 'Click Start practice run' },
+    { title: 'The run, one row', targets: [status], side: 'bottom',
+      body: 'LAMMPS step: how far LAMMPS got, with a bar towards the planned end. Scored to: how far the scorer got. Atom order: this recording is unverified; its first frame passes the bond check, but it has no saved data-file proof. State: alarms and how the run ended. “practice” marks runs made by a tour.' },
+    { title: 'What LAMMPS writes', targets: [view], side: 'right',
+      body: 'The run’s own 3D view follows the newest frame. Here it is the toy aspirin at 300 K, the temperature the reference was made from.' },
+    { title: 'The score', targets: [score], side: 'left',
+      body: 'Each point is one frame: the worst test’s score divided by its threshold. Under the dashed line at 1, the frame looks like the reference. An orange tick marks a frame over 1; one stray tick is normal.' },
+    { title: 'Events', targets: [events], side: 'top',
+      body: 'Everything that happens to the run, in order: start, the atom-order check, alarms, stop requests. The same list is kept in the run folder.' },
+    { title: 'Turn on Stop on alarm', targets: [() => status()?.querySelector('td.tick'), () => status()?.querySelector('th.tick')], side: 'bottom',
+      body: 'With this on, FFAST stops LAMMPS when an alarm fires. It is off by default. On a cluster it saves the hours a broken run would waste.',
+      until: 'stop-on-alarm-changed', accept: (d) => sameRun(d) && d.on,
+      done: () => !!run()?.stop_on_alarm, wait: 'Tick Stop on alarm' },
+    { title: 'Heat it up', targets: [status, score], side: 'bottom',
+      body: () => (run()?.paused ? 'The run is paused before the heat. ' : 'The run first plays its calm part, then pauses. ')
+        + 'Heating takes the molecule from 300 K to 3000 K, far outside what the reference has seen.',
+      actions: [{ label: 'Heat it up', primary: true, enabled: () => !!run()?.paused,
+        run: () => send(OUT.HEAT_PRACTICE_RUN, { run_id: app._practiceId }) }],
+      until: 'practice-heated', accept: sameRun, wait: gateWait },
+    { title: 'An alarm', targets: [score, status], side: 'left',
+      body: () => run()?.progress?.alarms?.length
+        ? 'A chemistry alarm: a bond broke and stayed broken over several frames. One odd frame never raises an alarm; it has to last.'
+        : 'Watch the score climb over 1. An alarm needs the trouble to last over several frames, not one stray frame.',
+      until: 'live-alarm', accept: sameRun, wait: 'Waiting for the alarm',
+      done: () => !!run()?.progress?.alarms?.length, stay: true },
+    { title: 'It stopped itself', targets: [status, events], side: 'bottom',
+      body: () => run()?.end ? `Stop on alarm wrote STOP; the replay saw it at its next check and stopped at step ${run().end.stop_observed_step?.toLocaleString('en-US')}. Events shows each part: requested, written, observed.`
+        : 'Stop on alarm writes a STOP file. The replay checks it before each frame, as one-process LAMMPS checks it through fix halt.',
+      until: 'live-stopped', accept: sameRun, wait: 'Waiting for the run to stop', done: () => !!run()?.end, stay: true },
+    { title: 'Go to the onset', targets: [score, view], side: 'left',
+      body: 'The dotted line is the estimated onset: the first frame of the trouble. Click it, or a point between it and the solid confirmation line. The 3D view jumps to that frame.',
+      until: 'point-picked', accept: (d) => d.datasetFp === run()?.fingerprint
+        && run()?.progress?.alarms?.some((a) => d.frame >= a.onset?.frame && d.frame <= a.confirmation?.frame),
+      refused: () => 'Click the dotted line, or a point between it and the solid line', wait: 'Click the dotted onset line', stay: true },
+    { title: 'What explains it', targets: [() => panel('Attribution'), view], side: 'right',
+      body: 'Attribution lists the coordinates that push the score up at the picked frame. Strength says how much the score would drop if a group looked normal again, in thresholds. The test picker chooses the test; Explains chooses the 3D panel.' },
+    { title: 'Two kinds of alarm', targets: [score, events], side: 'left',
+      body: 'Violet ticks: chemistry flags (a bond broke or formed). Orange ticks: the score was over 1. Each has its own alarm. Here the chemistry alarm came first and stopped the run.' },
+    { title: 'Keep the practice run?', targets: ['#tabbar', status], side: 'bottom',
+      body: 'It stays in Live Runs, marked “practice”, until you delete it. You can take this tour again from the LAMMPS menu.',
+      actions: [{ label: 'Keep it', run: () => app._tourSignal('practice-kept', { run_id: app._practiceId }) },
+        { label: 'Delete practice run', run: () => send(OUT.DELETE_PRACTICE_RUN, { run_id: app._practiceId }) }],
+      until: 'practice-finished', noNext: true, wait: 'Choose Keep it or Delete practice run' },
+  ];
+  for (const step of steps) step.failOn = 'practice-failed';
+  for (const name of ['practice-kept', 'practice-deleted']) app.tourEvents.addEventListener(name, (e) => {
+    if (sameRun(e.detail)) app._tourSignal('practice-finished', e.detail);
+  });
+  return { id: 'watch-lammps', title: 'Watch a LAMMPS run', about: '13 steps', lammps: true,
+    unavailable: () => app._needsControl(),
+    onStart: () => { app._practiceId = null; app._practiceRun = null; }, steps };
 }
