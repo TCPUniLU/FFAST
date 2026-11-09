@@ -308,3 +308,23 @@ async def test_actions_refresh_on_app_events_and_run_once_while_waiting(page):
     assert await page.evaluate("() => window.used") == 1
     await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('heated'))")
     await expect(page.locator(".tour-title")).to_have_text("Done")
+
+
+async def test_documentation_links_survive_updates_and_open_without_leaving_the_tour(page):
+    await page.evaluate("""() => window.run([
+      { title: 'Warning', body: 'Read about atom order', targets: ['#a'],
+        links: [{ label: 'Atom-order warning (README)', href: location.origin + '/events.js' }] },
+      { title: 'Next step', body: '', targets: ['#b'] }])""")
+    link = page.get_by_role("link", name="Atom-order warning (README)")
+    await expect(link).to_be_visible()
+    await page.evaluate("() => window.events.dispatchEvent(new CustomEvent('app-event'))")
+    await expect(link).to_be_visible()
+    async with page.expect_popup() as popup_info:
+        await link.click()
+    popup = await popup_info.value
+    await popup.wait_for_load_state()
+    assert popup.url.endswith('/events.js')
+    await popup.close()
+    await expect(page.locator(".tour-title")).to_have_text("Warning")
+    await page.locator(".tour-next").click()
+    await expect(link).to_have_count(0)

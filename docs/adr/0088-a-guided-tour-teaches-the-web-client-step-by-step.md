@@ -70,6 +70,7 @@ of steps. Adding a guide means adding entries, not changing the runner.
 | `title`, `body` | The text. |
 | `until` | The app event that ends a "do this" step. No `until` means a Next button. |
 | `wait` | Text or a function, refreshed on every app event while waiting for `until`. |
+| `links` | Documentation links (`label`, `href`), opened in a new tab so the tour stays in place. |
 | `actions` | Buttons in the box: `{label, primary?, run, enabled?}`. `enabled()` refreshes on every app event; a waiting step uses an action once. |
 | `noNext` | Hide Next, for a final Keep/Delete choice. |
 | `done` | True when the action is already done. The step then shows Next. |

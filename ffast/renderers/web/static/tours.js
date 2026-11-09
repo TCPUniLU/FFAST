@@ -348,6 +348,7 @@ function lammpsTour(app) {
       actions: [{ label: 'Start practice run', primary: true, run: () => send(OUT.START_PRACTICE_RUN, { kind: 'replay' }) }],
       until: 'live-first-frame', accept: sameRun, wait: 'Click Start practice run' },
     { title: 'The run, one row', targets: [status], side: 'bottom',
+      links: [{ label: 'Atom-order warning: meaning and fix (README, opens in a new tab)', href: 'https://github.com/TCPUniLU/FFAST/blob/main/README.md' }],
       body: 'LAMMPS step: how far LAMMPS got, with a bar towards the planned end. Scored to: how far the scorer got. Atom order: this recording is unverified; its first frame passes the bond check, but it has no saved data-file proof. State: alarms and how the run ended. “practice” marks runs made by a tour.' },
     { title: 'What LAMMPS writes', targets: [view], side: 'right',
       body: 'The run’s own 3D view follows the newest frame. Here it is the toy aspirin at 300 K, the temperature the reference was made from.' },

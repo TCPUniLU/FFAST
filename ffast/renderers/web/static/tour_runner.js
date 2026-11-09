@@ -14,6 +14,7 @@
  * @property {(detail: object) => string} [refused]  what the wait text becomes when `accept` rejects an event
  * @property {string | (() => string)} [wait]  what the box says while it waits for `until`
  * @property {Array<{label: string, primary?: boolean, run: () => (void|Promise<unknown>), enabled?: () => boolean}>} [actions] buttons in the tour box
+ * @property {Array<{label: string, href: string}>} [links] documentation links, opened in a new tab
  * @property {boolean} [noNext] hide Next after completion (for final choices)
  * @property {boolean} [stay]  after `until` fires, show Next instead of moving on, so the user can keep trying it
  * @property {() => boolean} [done]  true when the action is already done: show Next instead of waiting
@@ -93,6 +94,7 @@ export function startTour(tour, { events, onEnd, doc = document }) {
   head.append(count, dots);
   const title = el('h2', 'tour-title', { id: 'tour-title' });
   const body = el('p', 'tour-body', { id: 'tour-body' });
+  const links = el('div', 'tour-links');
   const actions = el('div', 'tour-actions');
   const foot = el('div', 'tour-foot');
   const skip = el('button', 'tour-skip', { type: 'button' });
@@ -102,7 +104,7 @@ export function startTour(tour, { events, onEnd, doc = document }) {
   const wait = el('span', 'tour-wait', { 'aria-live': 'polite' });
   const next = el('button', 'tour-next', { type: 'button' });
   foot.append(skip, back, wait, next);
-  box.append(head, title, body, actions, foot);
+  box.append(head, title, body, links, actions, foot);
   layer.append(...shades, ring, box);
   doc.body.append(layer);
 
@@ -137,6 +139,11 @@ export function startTour(tour, { events, onEnd, doc = document }) {
     title.textContent = step.title;
     const text = (v, ...a) => (typeof v === 'function' ? v(...a) : v);
     body.textContent = text(step.body);
+    links.replaceChildren(...(step.links || []).map((reference) => {
+      const link = el('a', '', { href: reference.href, target: '_blank', rel: 'noopener noreferrer' });
+      link.textContent = reference.label;
+      return link;
+    }));
     back.hidden = i === 0;
     const showNext = () => {
       wait.hidden = true;
@@ -324,7 +331,7 @@ export function startTour(tour, { events, onEnd, doc = document }) {
     const lit = undoing ? [] : litElements(steps[index]);
     const pool = [
       ...lit.flatMap((t) => [...(t.matches(FOCUSABLE) ? [t] : []), ...t.querySelectorAll(FOCUSABLE)]),
-      ...box.querySelectorAll('button'),
+      ...box.querySelectorAll(FOCUSABLE),
     ].filter((n) => !n.disabled && !n.hidden && n.getClientRects().length);
     if (!pool.length) return;
     const k = pool.indexOf(doc.activeElement);
