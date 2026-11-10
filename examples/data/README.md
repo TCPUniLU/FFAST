@@ -10,6 +10,7 @@ matching units. Every bundled pair works with default energy and force selection
 | Folder | Reference | Frames | Atoms per frame | Energy | Force |
 | --- | --- | --- | --- | --- | --- |
 | `fixed-sized molecular/` | MD22 Stachyose | 273 | 87 | kcal/mol | kcal/(mol·Å) |
+| `fixed-sized subsystem/` | Graphene + 1,8-naphthyridine | 100 | 114 | kcal/mol | kcal/(mol·Å) |
 | `variable-sized molecular/` | SPICE | 100 | 4–50 | eV | eV/Å |
 | `variable-sized periodic/` | MPtrj | 202 | 1–96 | eV | eV/Å |
 
@@ -53,6 +54,36 @@ Used with the authors' permission.
 Reference: Chmiela et al., *Accurate global machine learning force fields for
 molecules with hundreds of atoms*, Science Advances 9, eadf0873 (2023).
 [doi:10.1126/sciadv.adf0873](https://doi.org/10.1126/sciadv.adf0873).
+
+## Graphene with 1,8-naphthyridine: `fixed-sized subsystem/`
+
+Files:
+
+- `graphene_naphthyridine_sampled.xyz`: reference.
+- `predictions_graphene_naphthyridine.xyz`: sGDML prediction.
+
+A 1,8-naphthyridine molecule (`C8H6N2`) above a periodic graphene sheet of 98
+carbon atoms: 114 atoms (`C106H6N2`), periodic in all three directions.
+
+Source: [Zenodo record 15041256](https://doi.org/10.5281/zenodo.15041256),
+files `Graphene_molecule/Datasets/Graphene_1-8-naphthyridine_perm.npz`
+(reference) and
+`Graphene_molecule/Predictions/Graphene_1-8-naphthyridine_perm_test_PREDICT.npz`
+(prediction on the test set). Licence: CC BY 4.0. Used with the authors'
+permission.
+
+Sampling: the 12,182 test-set frames, with repeated geometries removed (9,688
+remain), then every 96th starting at index 0, giving 100 configurations. The
+reference values of each frame are looked up by its exact positions. Exported
+to extended XYZ, lattice vectors as rows.
+
+Units: kcal/mol and kcal/(mol·Å), as stated in the source file (`e_unit`).
+No conversion was applied. Energy MAE 0.58 kcal/mol, force MAE
+0.48 kcal/(mol·Å) on this sample.
+
+Reference: Charkin-Gorbulin et al., *Atomic orbits in molecules and materials
+for improving machine learning force fields*, MLST 6, 035005 (2025),
+[doi:10.1088/2632-2153/adea0b](https://doi.org/10.1088/2632-2153/adea0b).
 
 ## SPICE: `variable-sized molecular/`
 
@@ -149,19 +180,10 @@ Any later changes to sampling, fields or units must be recorded here.
 
 ## Deferred examples
 
-These files remain on `dev` and are not bundled in this publication:
+These files are not bundled:
 
 - **AM26 amorphous carbon:** redistribution permission is still pending.
   Source: [Fragapane and Deringer's AM26](https://github.com/vldgroup/AM26).
-- **Graphene system:** redistribution permission has been obtained. Source:
-  Charkin-Gorbulin et al., *Atomic orbits in molecules and materials for
-  improving machine learning force fields*, MLST 6, 035005 (2025),
-  [doi:10.1088/2632-2153/adea0b](https://doi.org/10.1088/2632-2153/adea0b),
-  [data archive](https://doi.org/10.5281/zenodo.15041256).
-  The stored reference and prediction show a scale difference consistent with
-  an eV/kcal/mol mismatch, but their source units have not been established.
-  Add the pair only once its units are verified and aligned; a fitted scale
-  factor alone is not sufficient evidence for conversion.
 
 ## MPtrj MIT notice
 

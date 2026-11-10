@@ -1,11 +1,12 @@
 """The web client against the real example datasets in examples/data/.
 
-The cleared datasets are bundled with the repository. AM26 and graphene remain on dev until permission and unit questions,
-respectively, are resolved. Their tests skip when those folders are absent. The bundled examples must exist: a misspelled path fails.
+The cleared datasets are bundled with the repository. AM26 is not bundled until its redistribution permission
+is confirmed; its tests skip when that folder is absent. The bundled examples must exist: a misspelled path fails.
 """
 import re
 
 import ase.io
+import numpy as np
 import pytest
 from playwright.async_api import async_playwright, expect
 
@@ -27,7 +28,6 @@ def example(folder, name):
     path = EXAMPLES / folder / name
     deferred = {
         "fixed-sized periodic": "AM26 is withheld pending redistribution permission",
-        "fixed-sized subsystem": "Graphene is withheld pending source-unit verification",
     }
     if folder in deferred and not path.parent.exists():
         pytest.skip(deferred[folder])
@@ -167,10 +167,14 @@ async def test_info_names_a_real_molecule_and_a_variable_dataset(ffast_web_serve
             await browser.close()
 
 
-async def test_an_npz_prediction_loads_on_a_real_graphene_dataset(ffast_web_server):
+async def test_an_npz_prediction_loads_on_a_real_graphene_dataset(ffast_web_server, tmp_path):
     ws_port, web_port = ffast_web_server
-    fp = await _load(ws_port, example("fixed-sized subsystem", "graphene_sampled.xyz"))
-    npz = example("fixed-sized subsystem", "graphene_prediction.npz")
+    fp = await _load(ws_port, example("fixed-sized subsystem", "graphene_naphthyridine_sampled.xyz"))
+    # The bundled prediction is extxyz; the same values as an .npz exercise that path.
+    frames = ase.io.read(example("fixed-sized subsystem", "predictions_graphene_naphthyridine.xyz"), ":")
+    npz = tmp_path / "graphene_prediction.npz"
+    np.savez(npz, E=np.array([a.get_potential_energy() for a in frames]),
+             F=np.array([a.get_forces() for a in frames]))
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:

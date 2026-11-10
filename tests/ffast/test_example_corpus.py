@@ -16,6 +16,8 @@ PAIRS = [
      "predictions_md22_stachyose.xyz", 273, None, None),
     ("fixed-sized molecular", "md22_stachyose_sampled.xyz",
      "reference_plus_noise.xyz", 273, None, None),
+    ("fixed-sized subsystem", "graphene_naphthyridine_sampled.xyz",
+     "predictions_graphene_naphthyridine.xyz", 100, None, None),
     ("variable-sized molecular", "dataset.xyz",
      "prediction.xyz", 100, "REF", "MACE"),
     ("variable-sized periodic", "mptrj_sampled_over_200.extxyz",
