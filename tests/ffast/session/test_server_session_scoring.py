@@ -74,6 +74,7 @@ def _ask(env, event, kwargs, after=None):
     async def scenario():
         s = ServerSession(env, asyncio.Queue(), broadcast=broadcasts.append)
         await s.dispatch(event, [], kwargs)
+        await asyncio.gather(*s._score_asks)     # the dialog's answer comes from a task of its own
         if after:
             await asyncio.to_thread(after)
             await asyncio.sleep(0)

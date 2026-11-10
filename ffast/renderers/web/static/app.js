@@ -28,6 +28,7 @@ import { createAlignPane } from './panes/align.js';
 import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
 import { LiveUi } from './live_ui.js';
+import { openScoreDialog } from './score_dialog.js';
 import { explainsIndex } from './live_run.js';
 import { Rail, framesText, nameProblem } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
@@ -225,6 +226,9 @@ export class FFastApp {
     this._colours = new ObjectColours(() => plotTheme().series);
     /** Fingerprints this window asked the server to delete. */
     this._deleting = new Set();
+    this._scoreInfo = new Map();     // dataset fp → its last SCORE_DIALOG_INFO_RESULT (ADR 0093)
+    this._scoreFor = null;           // the dataset whose Score dialog was asked for
+    this._scoreWanted = null;        // the scored item whose tab opens when it has one
     /** What happened, for the guided tours (ADR 0088): example-loaded,
      * example-load-failed, dataset-deleted, frame-changed, quick-style-applied,
      * tab-selected {name}, point-picked {frame} (a click on a 2D plot);
@@ -1916,6 +1920,7 @@ export class FFastApp {
         } else this._tourSignal(kw.action === 'heat' ? 'practice-heated' : 'practice-deleted', kw);
       });
       conn.on(IN.LIVE_RUN_UPDATE, (kw) => this._onLiveRunUpdate(kw));
+      conn.on(IN.SCORE_DIALOG_INFO_RESULT, (kw) => this._onScoreDialogInfo(kw));
       conn.on(IN.SCORE_STARTED, (kw) => this._onScoreStarted(kw));
       conn.on(IN.LIVE_ATTRIBUTION_RESULT, (kw) => this._live().onResult(kw));
       conn.on(IN.LIVE_RUNS, (kw) => this._live().onRuns(kw));
@@ -2074,6 +2079,8 @@ export class FFastApp {
     const before = this._datasets.get(fp);
     this._datasets.set(fp, meta);
     this._independent.followLiveFrames();
+    // Whether DetectAna is there decides if Score against reference… is greyed out.
+    if (!before && this._canScore(meta)) this._conn?.send(OUT.SCORE_DIALOG_INFO, { fingerprint: fp });
     if (!before && !meta.is_sub) {
       if (this._exampleWatch && !this._exampleWatch.datasetFp) this._exampleWatch.datasetFp = fp;
       if (this._browser.settled('dataset', true, fp)) this._tourSignal('dataset-loaded', { fp });   // its "ready" below ends the "Loading…"
@@ -2190,7 +2197,43 @@ export class FFastApp {
       : { id: `${kind}-delete`, label: 'Delete…', run: () => this._deleteObject(kind, fp), unavailable: why };
     const info = { id: `${kind}-info`, label: 'Info', run: () => this._showInfo(kind, fp) };
     if (meta?.scored) return this._scoredRowActions(fp, info, rename, why);
-    return [info, rename, { separator: true }, main];
+    // Any loaded dataset, and a live run, can be scored. Without DetectAna the item
+    // stays in the menu, greyed out, and says how to install it.
+    const score = this._canScore(meta)
+      ? [{ id: 'dataset-score', label: 'Score against reference…', run: () => this._scoreAgainstReference(fp),
+        unavailable: () => why() || this._scoreInfo.get(fp)?.detectana || '' }] : [];
+    return [info, rename, ...score, { separator: true }, main];
+  }
+
+  /** Whether a dataset row offers Score against reference…: loaded datasets, frozen
+   * subsets and live runs; not a subset that follows a zoom, nor a scored item. */
+  _canScore(meta) {
+    return !!meta && !meta.scored && (!meta.is_sub || !!meta.frozen);
+  }
+
+  /** Ask the server what the dialog needs for dataset `fp`; the dialog opens on the answer. */
+  _scoreAgainstReference(fp) {
+    if (this._needsControl()) return;
+    this._scoreFor = fp;
+    this._conn.send(OUT.SCORE_DIALOG_INFO, { fingerprint: fp });
+  }
+
+  /** SCORE_DIALOG_INFO_RESULT: remember it (it decides the greyed menu item), and open
+   * the dialog when this is the answer to a click. */
+  _onScoreDialogInfo(kw) {
+    if (kw.error) {
+      if (this._scoreFor === kw.fingerprint) { this._scoreFor = null; this._setStatus(`Scoring: ${kw.error}`, 'error'); }
+      return;
+    }
+    this._scoreInfo.set(kw.fingerprint, kw);
+    if (this._scoreFor !== kw.fingerprint) return;
+    this._scoreFor = null;
+    openScoreDialog({
+      info: kw,
+      send: (payload) => this._conn.send(OUT.SCORE_DATASET, payload),
+      pickBundle: (onPick) => this._browser.pick({ mode: 'save-file', title: 'Choose a reference', okLabel: 'Choose',
+        itemDirs: /\.bundle$/, onPick }),
+    });
   }
 
   /** A scored item's ⋯ menu (ADR 0093): never Freeze (its frames do not move) and no
@@ -3071,10 +3114,11 @@ export class FFastApp {
 
   /** Open the tab of the scored item this window asked for, once it has frames and a tab. */
   _openScoredTab(kw) {
-    const tabId = kw.tab && this._analysis.liveTabId(kw.tab);
-    if (this._scoreWanted !== kw.run_id || !kw.fingerprint || !tabId) return;
+    if (this._scoreWanted !== kw.run_id || !kw.fingerprint || !kw.tab) return;
     this._scoreWanted = null;
-    this._selectTab(tabId);
+    const tabId = this._analysis.liveTabId(kw.tab);
+    if (tabId) this._selectTab(tabId);
+    else this._pendingShow = kw.tab;     // the tab list that brings it shows it
   }
 
   /** The answer to Score / Continue scoring: open the item's tab (now, or when its

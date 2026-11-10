@@ -142,6 +142,7 @@ class ServerSession:
         # Running Tries of this connection (ADR 0057 rule 12): try_id → (stop
         # flag, task). The task is held here so it is not garbage-collected.
         self._tries: dict = {}
+        self._score_asks: set = set()      # SCORE_DIALOG_INFO answers in flight (ADR 0093)
         # REQUEST_METRIC handlers by request id, so CANCEL_METRIC can stop one;
         # and cancels that came before their request started (ADR 0085).
         self._metric_requests: dict = {}
@@ -1036,7 +1037,14 @@ class ServerSession:
     async def _on_score_dialog_info(self, fingerprint, **kwargs) -> None:
         """What the Score dialog needs: the recorded references, whether DetectAna is
         there, the time between frames the file suggests, a refusal, the items made
-        already. To this window only."""
+        already. To this window only. Answered from a task of its own: the first answer
+        imports DetectAna, and the window's other messages (a view command waiting for
+        its view to open) must not wait for that."""
+        task = asyncio.create_task(self._score_dialog_info(fingerprint))
+        self._score_asks.add(task)
+        task.add_done_callback(self._score_asks.discard)
+
+    async def _score_dialog_info(self, fingerprint) -> None:
         from ffast.live import scored_items as si
         from ffast.protocol.rpc import pack
 
@@ -1067,10 +1075,14 @@ class ServerSession:
         try:
             if dataset is None:
                 raise ValueError(f"dataset {fingerprint!r} is not loaded")
-            require_detectana()
             bundle_dir = Path(os.path.expanduser(bundle))
             settings = si.make_settings(None if frame_dt_fs is None else frame_dt_fs / 1000.0, persist_ps)
-            iid, folder, existed = await asyncio.to_thread(si.prepare_item, dataset, bundle_dir, settings)
+
+            def prepare():
+                require_detectana()         # the first import takes a moment: not on the event loop
+                return si.prepare_item(dataset, bundle_dir, settings)
+
+            iid, folder, existed = await asyncio.to_thread(prepare)
             scored = open_scored_item(self.env, folder, dataset, self._broadcast)
             state = (si.read_item(folder) or {}).get("state")
             started = not existed or state != "done"

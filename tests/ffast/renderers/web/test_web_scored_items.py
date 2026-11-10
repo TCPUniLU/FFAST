@@ -171,3 +171,166 @@ async def test_web_a_frame_the_reference_cannot_score_is_a_gap_with_its_reason_a
                 await expect(page.locator(f"{ACTIVE} .live-scored-table")).to_contain_text("4 of 5 frames", timeout=30000)
             finally:
                 await browser.close()
+
+
+# ── the dialog (ADR 0093 step 7) ────────────────────────────────────────────
+
+async def _open_score_dialog(page, fp):
+    await page.locator(f"#dataset-list .obj-row[data-fp='{fp}'] .obj-menu-btn").click()
+    await page.locator(".rail-menu [data-action='dataset-score']").click()
+    dialog = page.locator("#score-dialog")
+    await expect(dialog).to_be_visible(timeout=15000)
+    return dialog
+
+
+async def test_web_the_score_dialog_scores_a_dataset_and_shows_saved_scores_the_second_time(setup, tmp_path):
+    from ffast.live import references
+
+    bundle, xyz = setup
+    references.record_reference(bundle)
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        await _load(ws_port, xyz)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                rows = page.locator("#dataset-list .obj-row")
+                await expect(rows).to_have_count(1, timeout=15000)
+                fp = await rows.first.get_attribute("data-fp")
+                dialog = await _open_score_dialog(page, fp)
+                await expect(dialog.locator("#score-ref option")).to_have_count(1)
+                await expect(dialog.locator("#score-ref")).to_contain_text("aspirin")
+                # No time in this file: the field is empty and says what that means.
+                await expect(dialog.locator("#score-time")).to_have_value("")
+                await expect(dialog.locator(".score-note").first).to_contain_text("alarms are off")
+                await expect(dialog.locator("#score-persist")).to_have_value("5")
+                await expect(dialog.locator(".score-go")).to_have_text("Score")
+                await dialog.locator("#score-persist").fill("0")
+                await expect(dialog.locator(".make-ref-problem")).to_contain_text("persistence")
+                await expect(dialog.locator(".score-go")).to_be_disabled()
+                await dialog.locator("#score-persist").fill("5")
+                await dialog.locator("#score-time").fill("500")
+                await dialog.locator(".score-go").click()
+                await expect(dialog).to_be_hidden()
+                await expect(rows).to_have_count(2, timeout=15000)
+                await expect(page.locator("#tabbar .tab.active")).to_contain_text("Scores f", timeout=15000)
+                await page.wait_for_function(CURVE_POINTS, arg=[ACTIVE, 6], timeout=30000)
+                await expect(page.locator(f"{ACTIVE} .live-scored-table")).to_contain_text("Done", timeout=15000)
+
+                # The same settings again: the saved scores are shown, nothing is scored again.
+                dialog = await _open_score_dialog(page, fp)
+                await dialog.locator("#score-time").fill("500")
+                await expect(dialog.locator(".score-go")).to_have_text("Show saved scores")
+                await dialog.locator("#score-persist").fill("2")
+                await expect(dialog.locator(".score-go")).to_have_text("Score")
+                await dialog.locator("button", has_text="Cancel").click()
+                await expect(dialog).to_be_hidden()
+            finally:
+                await browser.close()
+
+
+async def test_web_the_score_dialog_fills_in_the_time_from_the_files_time_field(setup, tmp_path):
+    from ase.io import read, write
+
+    from ffast.live import references
+
+    bundle, _ = setup
+    references.record_reference(bundle)
+    frames = read(str(write_frames(tmp_path / "t.xyz", 4, seed=6)), index=":")
+    for i, a in enumerate(frames):
+        a.info["time"] = 2.0 * i
+    write(str(tmp_path / "timed.xyz"), frames, format="extxyz")
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        await _load(ws_port, tmp_path / "timed.xyz")
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                rows = page.locator("#dataset-list .obj-row")
+                await expect(rows).to_have_count(1, timeout=15000)
+                dialog = await _open_score_dialog(page, await rows.first.get_attribute("data-fp"))
+                await expect(dialog.locator("#score-time")).to_have_value("2")
+                await expect(dialog.locator(".score-note").first).to_contain_text("fs, from the file's time field: check the unit")
+            finally:
+                await browser.close()
+
+
+async def test_web_without_detectana_the_score_item_is_greyed_out_with_the_install_hint(setup):
+    bundle, xyz = setup
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        await _load(ws_port, xyz)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                rows = page.locator("#dataset-list .obj-row")
+                await expect(rows).to_have_count(1, timeout=15000)
+                fp = await rows.first.get_attribute("data-fp")
+                # Pretend the server said DetectAna is missing (the answer to SCORE_DIALOG_INFO).
+                await page.evaluate("""(fp) => {
+                  const app = window.ffastApp;
+                  app._scoreInfo.set(fp, { ...app._scoreInfo.get(fp), detectana: 'DetectAna is not installed; install it with pip' });
+                }""", fp)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{fp}'] .obj-menu-btn").click()
+                item = page.locator(".rail-menu [data-action='dataset-score']")
+                await expect(item).to_be_visible()
+                await expect(item).to_be_disabled()
+                await expect(item).to_have_attribute("title", re.compile("DetectAna is not installed"))
+            finally:
+                await browser.close()
+
+
+async def test_the_score_dialogs_pure_helpers():
+    import functools
+    import http.server
+    import threading
+    from pathlib import Path
+
+    static = Path(__file__).resolve().parents[4] / "ffast" / "renderers" / "web" / "static"
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(static))
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page()
+                await page.goto(f"{origin}/jsconfig.json")
+                got = await page.evaluate(f"""async () => {{
+                  const m = await import('{origin}/score_dialog.js');
+                  const existing = [{{ bundle: '/b.bundle', settings: {{ frame_dt_ps: 0.0005, persist_ps: 5 }}, state: 'done' }}];
+                  return {{
+                    nums: ['', ' 2 ', '0', '-1', 'x'].map((t) => m.positiveNumber(t)),
+                    ok: m.scoreProblem({{ info: {{}}, bundle: '/b', timeText: '', persistText: '5' }}),
+                    noRef: m.scoreProblem({{ info: {{}}, bundle: '', timeText: '', persistText: '5' }}),
+                    badTime: m.scoreProblem({{ info: {{}}, bundle: '/b', timeText: 'x', persistText: '5' }}),
+                    badPersist: m.scoreProblem({{ info: {{}}, bundle: '/b', timeText: '', persistText: '' }}),
+                    refusal: m.scoreProblem({{ info: {{ refusal: 'has a cell' }}, bundle: '/b', timeText: '', persistText: '5' }}),
+                    nodet: m.scoreProblem({{ info: {{ detectana: 'not installed' }}, bundle: '/b', timeText: '', persistText: '5' }}),
+                    same: !!m.existingItem(existing, '/b.bundle', 0.5, 5),
+                    otherPersist: !!m.existingItem(existing, '/b.bundle', 0.5, 2),
+                    otherBundle: !!m.existingItem(existing, '/c.bundle', 0.5, 5),
+                    noTime: !!m.existingItem(existing, '/b.bundle', null, 5),
+                  }};
+                }}""")
+            finally:
+                await browser.close()
+    finally:
+        server.shutdown()
+    # empty → null; a positive number → itself; zero, negative and text → NaN (JSON null in Python)
+    assert got["nums"][0] is None and got["nums"][1] == 2
+    assert got["ok"] == "" and "Pick a reference" in got["noRef"]
+    assert "time between frames" in got["badTime"] and "persistence" in got["badPersist"]
+    assert got["refusal"] == "has a cell" and got["nodet"] == "not installed"
+    assert got["same"] is True and got["otherPersist"] is False
+    assert got["otherBundle"] is False and got["noTime"] is False

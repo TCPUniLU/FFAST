@@ -671,6 +671,10 @@
     .make-ref-wait { color: var(--ink-3); }
     .make-ref-line { display: flex; gap: 8px; align-items: center; margin: 2px 0 6px; }
     .make-ref-line code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--surface-2); padding: 3px 6px; border-radius: 3px; }
+    /* the "Score against reference" dialog (ADR 0093) */
+    #score-dialog .warning-modal-panel { width: min(640px, calc(100vw - 32px)); max-width: none; }
+    .score-dataset { font-weight: 600; }
+    .score-note { color: var(--ink-3); font-size: var(--fs-xs); min-height: 1em; }
     /* the "Run with FFAST" dialog (ADR 0086) */
     #run-with-ffast-dialog .warning-modal-panel { width: min(860px, calc(100vw - 32px)); max-width: none; }
     .rwf-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
