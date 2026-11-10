@@ -147,7 +147,15 @@ class AnalysisWriter:
         self.append_rows(rows)
         self.write_progress(scored_frames=self.progress["scored_frames"] + len(frames),
                             scored_through_step=frames[-1].step)
+        self.replay(rows)
+
+    def replay(self, rows: list[dict]) -> None:
+        """Run rows through the alarm rule. Rows already on disk (a scoring that
+        continues) come back this way, so the rule sees every frame in order;
+        an alarm already reported is not reported twice."""
         for r in rows:
+            if "refused" in r:
+                continue
             self._push({**r, "chem": bool(r["chem"]["broken"] or r["chem"]["close"]),
                         "chem_detail": r["chem"]})
 
@@ -207,6 +215,9 @@ class AnalysisWriter:
 
     # ── alarms ──────────────────────────────────────────────────────────────
     def _raise(self, alarm) -> None:
+        if any(e["kind"] == alarm.kind and e["confirmation"]["frame"] == alarm.confirmation["frame"]
+               for e in self.progress["alarms"]):
+            return
         n = len(self.progress["alarms"]) + 1
         report = self._write_report(alarm, n)
         entry = {"n": n, "kind": alarm.kind, "onset": _moment(alarm.onset),
