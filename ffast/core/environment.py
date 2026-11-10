@@ -1,6 +1,7 @@
 import ase.io.formats
 from ffast.core.events import EventClass
 from ffast.core.tasks import TaskManager
+from ffast.core.work_gate import WorkGate
 from ffast.cache.store import DataCache
 from ffast.core.model_registry import ModelRegistry
 from ffast.core.dataset_registry import DatasetRegistry
@@ -16,6 +17,7 @@ import numpy as np
 import asyncio
 import json
 import threading, time
+import warnings
 
 # NOTE (ADR 0047 Phase 4): the Desktop-Client loaders this module uses
 # (datasetLoaders.loader SubDataset/FrozenSubDataset/AtomFilteredDataset,
@@ -501,6 +503,9 @@ class HeadlessEnvironment(Environment, threading.Thread):
         Environment.__init__(self, headless=True)
         threading.Thread.__init__(self)
         self.loop = None
+        # Scripts have no event loop to react in; waitForTasks waits on this
+        # gate, which the loop marks once per iteration (ADR 0094).
+        self._workGate = WorkGate()
 
     def run(self):
         """Own the asyncio event loop inside the headless worker thread."""
@@ -523,52 +528,110 @@ class HeadlessEnvironment(Environment, threading.Thread):
                 await taskManager.handleTaskQueue()
             except Exception:
                 logger.exception("headlessEventLoop: iteration error (continuing)")
+            # Checked after everything above has run, so it sees the settled state.
+            self._workGate.mark_iteration(self._loopIsIdle())
             await asyncio.sleep(0.1)
 
         await self.eventHandle()
         await taskManager.eventHandle()
+        self._workGate.mark_iteration(self._loopIsIdle())
+
+    def _loopIsIdle(self) -> bool:
+        """True when no task, generation or queued event is outstanding.
+
+        Cheap on purpose (``len``/``qsize`` only): the server runs it too.
+        """
+        tm = self.tm
+        return not (
+            tm.taskQueue.qsize()
+            or len(tm.runningTasks)
+            or len(self.data.generationQueue)
+            or len(self.eventQueue)
+            or len(tm.eventQueue)
+            or any(len(child.eventQueue) for child in list(self.eventChildren))
+        )
 
     def headlessQuit(self):
         """Signal the headless loop to stop cleanly."""
         self.quitReady = True
+        self._workGate.wake()
 
-    def waitForTasks(self, verbose=False, dt=5):
-        """Block scripted callers until queued, running, and deferred work has settled."""
+    def _workFingerprint(self):
+        """Snapshot of work state; changes whenever anything moves forward."""
         tm = self.tm
-        while (
-                (tm.taskQueue.qsize() > 0)
-                or (len(tm.runningTasks) > 0)
-                or (len(self.data.generationQueue) > 0)
-        ) and not self.quitReady:
-            if verbose:
-                print("-" * 20)
-                lTaskQueue = tm.taskQueue.qsize()
-                if lTaskQueue > 0:
-                    print(f"{lTaskQueue} tasks queued.\n")
+        # Copy before reading: the loop thread inserts and deletes entries.
+        # Sort by str(taskID): remote tasks carry string IDs, local ones ints.
+        running = tuple(
+            sorted(
+                (str(taskID), task["progress"], task["progressMessage"])
+                for taskID, task in list(tm.runningTasks.items())
+            )
+        )
+        return (tm.taskQueue.qsize(), running, len(self.data.generationQueue))
 
-                lRunningTasks = len(tm.runningTasks)
-                if lRunningTasks > 0:
-                    print(f"{lRunningTasks} tasks running:")
-                    for taskID in tm.runningTasks:
-                        task = tm.getTask(taskID)
-                        prog = "?%"
-                        if task["progress"] is not None:
-                            prog = f'{task["progress"] * 100:.0f}%'
+    def _describePendingWork(self) -> str:
+        tm = self.tm
+        running = list(tm.runningTasks.values())
+        parts = []
+        if running:
+            names = ", ".join(str(task["name"]) for task in running)
+            parts.append(f"{len(running)} task(s) running: {names}")
+        if tm.taskQueue.qsize():
+            parts.append(f"{tm.taskQueue.qsize()} task(s) queued")
+        if len(self.data.generationQueue):
+            parts.append(f"{len(self.data.generationQueue)} metric(s) to generate")
+        return "; ".join(parts) if parts else "nothing"
 
-                        print(
-                            f'{prog:<4} {task["name"]:<20}  {task["progressMessage"]}'
-                        )
-                    print()
+    def waitForTasks(self, verbose=False, dt=None, stall_timeout_s=None):
+        """Block until queued, running and deferred work has settled.
 
-                lGenQueue = len(self.data.generationQueue)
-                if lGenQueue > 0:
-                    print(f"{lGenQueue} tasks in generation queue:")
-                    for i in self.data.generationQueue:
-                        print(i)
+        Returns as soon as the loop reports an idle iteration, or once
+        ``headlessQuit()`` was called.
 
-                print(flush=True)
+        ``stall_timeout_s`` (off by default): raise TimeoutError naming the
+        outstanding work once nothing has progressed for that many seconds. A
+        task that keeps reporting progress never trips it.
 
-            time.sleep(dt)
+        ``dt`` is ignored and only kept so old scripts still run.
+        """
+        if dt is not None:
+            warnings.warn(
+                "waitForTasks(dt=...) is ignored: it no longer polls.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+        self._workGate.wait(
+            should_stop=lambda: self.quitReady,
+            on_tick=self._printProgress if verbose else None,
+            stall_timeout_s=stall_timeout_s,
+            fingerprint=self._workFingerprint,
+            describe=self._describePendingWork,
+        )
+
+    def _printProgress(self) -> None:
+        tm = self.tm
+        print("-" * 20)
+        lTaskQueue = tm.taskQueue.qsize()
+        if lTaskQueue > 0:
+            print(f"{lTaskQueue} tasks queued.\n")
+
+        running = list(tm.runningTasks.values())  # copy: the loop thread mutates it
+        if running:
+            print(f"{len(running)} tasks running:")
+            for task in running:
+                prog = "?%"
+                if task["progress"] is not None:
+                    prog = f'{task["progress"] * 100:.0f}%'
+                print(f'{prog:<4} {task["name"]:<20}  {task["progressMessage"]}')
+            print()
+
+        generating = list(self.data.generationQueue)
+        if generating:
+            print(f"{len(generating)} tasks in generation queue:")
+            for i in generating:
+                print(i)
+
+        print(flush=True)
 
 
 def startHeadlessEnvironment():
