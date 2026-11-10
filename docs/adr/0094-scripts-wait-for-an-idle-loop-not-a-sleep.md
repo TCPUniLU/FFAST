@@ -54,7 +54,9 @@ waiter goes back to sleep. The loop must signal after both queues are drained.
 
 ## Consequences
 
-- A wait ends at most one loop iteration (0.1 s) after work settles.
+- A wait ends at most about two loop iterations (~0.2 s) after work settles:
+  a task can finish during the loop's 0.1 s pause, and the next iteration
+  must first handle its `TASK_DONE` before it can report idle.
 - `dt` has no effect. Old scripts keep working but get a warning.
 - The idle check runs every loop iteration, also on the server.
 
