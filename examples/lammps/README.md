@@ -14,9 +14,14 @@ The launcher registers a working copy as **toy aspirin (tutorial)** and writes
 its local include beside that copy under the practice-runs folder.
 
 `aspirin.data` is copied from
-`docs/research/lammps-live-2026-11-04/meluxina-trial/aspirin.data`.
-**Its original geometry source is still unverified. Resolve provenance before
-pushing these examples to a public repository.**
+`docs/research/lammps-live-2026-11-04/meluxina-trial/aspirin.data`, written for
+a small LAMMPS test run. Its aspirin geometry comes from the MD17 dataset:
+
+- S. Chmiela, A. Tkatchenko, H. E. Sauceda, I. Poltavsky, K. T. Schütt and
+  K.-R. Müller, "Machine learning of accurate energy-conserving molecular force
+  fields", *Science Advances* 3, e1603015 (2017),
+  [doi:10.1126/sciadv.1603015](https://doi.org/10.1126/sciadv.1603015).
+  Data: [sgdml.org](http://www.sgdml.org/#datasets).
 
 `tutorial/in.tutorial` is the toy input for the second tutorial: Lennard-Jones,
 a spring tether and Langevin heating, with tutorial-only pacing and a GO/STOP
