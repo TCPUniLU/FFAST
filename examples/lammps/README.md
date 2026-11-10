@@ -23,9 +23,8 @@ a small LAMMPS test run. Its aspirin geometry comes from the MD17 dataset:
   [doi:10.1126/sciadv.1603015](https://doi.org/10.1126/sciadv.1603015).
   Data: [sgdml.org](http://www.sgdml.org/#datasets).
 
-Permission: redistribution permission obtained from Stefan Chmiela, confirmed by
-Anton Charkin-Gorbulin on 2026-11-10. This permission does not relicense the
-source dataset under FFAST's software licence. Retain this attribution.
+Used with the permission of Stefan Chmiela; our group took part in creating
+MD17.
 
 `tutorial/in.tutorial` is the toy input for the second tutorial: Lennard-Jones,
 a spring tether and Langevin heating, with tutorial-only pacing and a GO/STOP
