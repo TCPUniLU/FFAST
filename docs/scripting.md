@@ -28,6 +28,12 @@ env.persistence.save("results")     # opens later in the UI
 env.headlessQuit()
 ```
 
+`waitForTasks()` returns as soon as the work has settled, so a script does not
+lose seconds to a fixed sleep. To stop a script from hanging on work that never
+ends, pass `stall_timeout_s=60`: it raises `TimeoutError` naming the unfinished
+work once nothing has progressed for that many seconds (off by default). The
+old `dt` argument is ignored and gives a deprecation warning.
+
 For a single number, don't write a script; `ffast-cli metrics run` already does
 it.
 

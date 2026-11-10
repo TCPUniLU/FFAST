@@ -60,4 +60,14 @@ waiter goes back to sleep. The loop must signal after both queues are drained.
 
 ## Timing
 
-Before: 11.3 s wall time (see above). After: to be filled in at step 4.
+`examples/headless/headless.py`, `/usr/bin/time -p`, same Mac, 2026-11-10:
+
+| | wall time |
+|---|---|
+| Before | 11.3 s (0.9 s CPU) |
+| After, run 1 | 1.07 s |
+| After, run 2 | 1.06 s |
+| After, run 3 | 1.12 s |
+
+The example prints the same results as before. `ffast-cli metrics run`
+prints the same value (energy MAE 0.0218) in about 1.2 s.
