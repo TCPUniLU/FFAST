@@ -1,12 +1,25 @@
 # Troubleshooting
 
+For browser connection problems, start here:
+
+```mermaid
+flowchart LR
+    accTitle: Browser connection troubleshooting
+    accDescr: Open the URL printed by the no-browser launcher. If the page fails, check startup and the HTTP port. If the page loads but is disconnected, check WebSocket settings, token and any SSH tunnel. Once connected, inspect data and panel errors.
+    Start["Open the URL printed by<br/>ffast --no-browser"] --> Page{"Page loads?"}
+    Page -->|No| HTTP["Check startup errors<br/>and the HTTP port"]
+    Page -->|Yes| Connected{"Status connected?"}
+    Connected -->|No| WS["Check WebSocket address and port,<br/>token, and SSH tunnel if remote"]
+    Connected -->|Yes| Inspect["Connection works:<br/>check the data or affected panel"]
+```
+
 ## Install and launch
 
 **Wrong Python.** FFAST pins 3.11 (`requires-python = "==3.11.*"`). If pip
 resolved something odd or an import fails in a way that makes no sense, check
 `python -V` first.
 
-**`command not found: ffast-qt`, or `ffast` does not start.** Console
+**`command not found: ffast`, or FFAST does not start.** Console
 scripts are written at install time, not read from `pyproject.toml` at run time,
 so an editable install made before the entry points changed keeps the old ones.
 Check what your environment actually has:
@@ -16,12 +29,10 @@ python -c "from importlib.metadata import entry_points
 print([f'{e.name} -> {e.value}' for e in entry_points(group='console_scripts') if 'ffast' in e.name])"
 ```
 
-You should see five: `ffast` pointing at `launcher:main`, plus `ffast-qt`
-(`main:cli`), `ffast-web`, `ffast-server` and `ffast-cli`. Anything else means a
-stale install — reinstall to rewrite the scripts: `pip install -e . --no-deps`.
-
-`ffast` always starts the browser client (ADR 0090). For the desktop client run
-`ffast-qt`; it needs PySide6: `pip install -e ".[gui]"`.
+`ffast` should point to `launcher:main`; the browser, server and CLI commands
+include `ffast-web`, `ffast-server` and `ffast-cli`. If commands are missing or
+stale, reinstall from the checkout: `uv pip install -e . --no-deps` (or
+`python -m pip install -e . --no-deps` with pip).
 
 **The browser tab opens but stays disconnected.** The web page and the server are
 two ports. Run `ffast --no-browser`, read the URL it prints, and open that; if the
@@ -36,34 +47,7 @@ copy of the package.
 
 **Anything involving a synced folder.** Do not install into a virtualenv that
 lives in iCloud Drive, Dropbox or OneDrive. The sync client deletes and rewrites
-`.pyc` files under you, and on macOS it breaks the Qt plugin layout badly enough
-that the app cannot find its platform plugin. Move the venv out and reinstall.
-
-## The desktop client specifically
-
-Nearly every problem here is the native OpenGL/Qt stack rather than FFAST
-itself, which is why the browser client exists as an alternative when the stack
-cannot be fixed.
-
-**"Could not find the Qt platform plugin 'cocoa'" (macOS).** Almost always the
-synced-folder problem above. Recreate the venv somewhere local:
-
-```bash
-python3.11 -m venv ~/venvs/ffast && source ~/venvs/ffast/bin/activate && pip install -e ".[gui]"
-```
-
-**Segmentation fault at startup.** Usually a mismatched PySide6. Pin it:
-`pip install "pyside6>=6.8,<6.9"`. Two Qt widget base classes cannot be mixed
-under 6.8, so if you wrote a widget recently, suspect that.
-
-**OpenGL errors, or a blank 3D window.** Update graphics drivers. On Linux,
-`sudo apt install libgl1-mesa-glx` and check `glxinfo | grep OpenGL`.
-`LIBGL_ALWAYS_SOFTWARE=1` sometimes gets you a picture. The vispy renderer has no
-software fallback of its own, so if GL is broken, the 3D view is simply gone.
-
-**Plots are sluggish when panning.** This has bitten twice, both times software
-rasterisation of antialiased lines rather than anything about point counts.
-If you hit it in new plot code, that is where to look.
+environment files while the app is running. Move the venv out and reinstall.
 
 ## Data
 
@@ -80,12 +64,11 @@ reconstructed from cached predictions when the original model file was not
 available. They work for everything already computed and cannot compute anything
 new. Delete them if you do not want them.
 
-**Axes read `[energyUnit]` or `[forceUnit]`.** Working as intended: no unit has
-been set, and FFAST won't guess one from your data. Double-click the label to
-type one, or set `energyUnit` / `forceUnit` in `config/default.json` to apply it
-everywhere. See [usage.md](usage.md#units-and-editing-labels-by-hand).
+**Axes show `[unit]`.** No unit has been named for those values. Click the axis
+unit or table unit header to enter it. Labels do not convert numbers. See
+[units and plot labels](usage.md#units-and-editing-labels-by-hand).
 
-**Plots say there is no data.** Both a dataset and a prediction have to be
+**Error plots say there is no data.** Both a dataset and a prediction have to be
 selected, and the computation has to have finished. Watch the task list.
 
 **A metric silently produces nothing.** Run `ffast-cli metrics validate`. It
@@ -107,7 +90,34 @@ and inspect that locally.
 
 ## Still stuck
 
-The server prints its errors to the terminal it runs in; the Qt client writes
-`debug.log`; the web client puts client-side errors in the browser console. All
-three are worth reading before opening an issue, and worth pasting into it if you
-do.
+Read the server terminal, the browser console, or the trace produced by
+`ffast --trace`. Include the relevant error and reproduction steps in an issue.
+
+## Legacy Qt desktop client
+
+The desktop client is being retired and is planned for removal. It requires
+the `gui` extra and a working native Qt/OpenGL stack; launch it with `ffast-qt`.
+The following notes apply to this legacy client.
+
+**"Could not find the Qt platform plugin 'cocoa'" (macOS).** Almost always the
+synced-folder problem above. Recreate the venv somewhere local:
+
+```bash
+python3.11 -m venv ~/venvs/ffast && source ~/venvs/ffast/bin/activate && pip install -e ".[gui]"
+```
+
+**Segmentation fault at startup.** Usually a mismatched PySide6. Pin it:
+`pip install "pyside6>=6.8,<6.9"`. Two Qt widget base classes cannot be mixed
+under 6.8, so if you wrote a widget recently, suspect that.
+
+**OpenGL errors, or a blank 3D window.** Update graphics drivers. On Linux,
+`sudo apt install libgl1-mesa-glx` and check `glxinfo | grep OpenGL`.
+`LIBGL_ALWAYS_SOFTWARE=1` sometimes gets you a picture. The vispy renderer has no
+software fallback of its own, so if GL is broken, the 3D view is simply gone.
+
+**Plots are sluggish when panning.** This has bitten twice, both times software
+rasterisation of antialiased lines rather than anything about point counts.
+If you hit it in new plot code, that is where to look.
+
+The legacy client writes its diagnostics to `debug.log`. See the
+[legacy usage notes](legacy-qt.md) for installation and shortcuts.

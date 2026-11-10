@@ -1,0 +1,56 @@
+# Scripting and configuration
+
+[README](../README.md) · [Documentation](README.md) · [Using FFAST](usage.md)
+
+## Scripting without a UI
+
+For batch work, drive the Environment directly. A complete example is in
+[examples/headless/headless.py](../examples/headless/headless.py):
+
+```python
+from ffast.core.environment import startHeadlessEnvironment
+
+env = startHeadlessEnvironment()
+env.taskLoadDataset("examples/data/variable-sized molecular/dataset.xyz", "ase (auto)")
+env.waitForTasks(verbose=True)
+
+dataset = env.getDatasetFromPath("examples/data/variable-sized molecular/dataset.xyz")
+env.loadPrepredictedDataset("examples/data/variable-sized molecular/prediction.xyz", dataset.fingerprint)
+model = env.models.all()[0]
+
+energy_mae = "ffast.energy_difference[dataset;mae]"    # a keep-box setting
+key = env.data.make_metric_cache_key(energy_mae, {}, model, dataset)
+env.data.taskGenerateMetric(energy_mae, {}, model, dataset, key)
+env.waitForTasks(verbose=True)
+print(float(env.data.getCacheByKey(key, subChecks=False).values))
+
+env.persistence.save("results")     # opens later in the UI
+env.headlessQuit()
+```
+
+For a single number, don't write a script; `ffast-cli metrics run` already does
+it.
+
+## Configuration files
+
+| File | Holds |
+|------|-------|
+| `config/default.json` | App defaults: plot parameters, 3D view defaults, colours |
+| `config/userConfig.py` | Overrides of the above |
+| `config/atoms.py` | Element data: colours, covalent radii, names |
+| `config/clusters.json` | Saved cluster profiles |
+| `ffast.toml` | Project config: metrics, dataset fields, tabs |
+
+Settings in `default.json` you are most likely to want:
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `plotDistNum` | 500 | Points in a KDE distribution |
+| `scatterPlotNPoints` | 50000 | Cap on scatter plot points |
+| `plotPenWidth` | 3 | Plot line width |
+| `loupeBondsWidth` | 25 | Default bond width |
+| `loupeAtomSizeScale` | 1.0 | Default atom size multiplier |
+| `loupeBondsLenience` | 1.1 | Multiplier on the bond detection distance |
+| `loupeBGColor` | `#000000` | 3D view background |
+| `loupeBondsColor` | `#404040` | Default bond colour |
+| `loupeForceErrorPercentile` | 0.995 | Percentile that saturates the force-error colour scale |

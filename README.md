@@ -1,230 +1,124 @@
 # FFAST
 
 [![tests](https://github.com/TCPUniLU/FFAST/actions/workflows/tests.yml/badge.svg)](https://github.com/TCPUniLU/FFAST/actions/workflows/tests.yml)
-[![python](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/release/python-3110/)
+[![python](https://img.shields.io/badge/python-3.11-blue.svg)](pyproject.toml)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**Force Field Analysis and Screening Tool** — find out where your machine-learned
-force field is wrong, and what the molecule was doing when it went wrong.
+**Force Field Analysis and Screening Tool** — compare machine-learned force
+fields, inspect the structures where they fail, and monitor molecular dynamics.
 
-You point FFAST at a dataset and a set of predictions. It shows you the error
-along the trajectory, the error distributions, and per-element and per-structure
-breakdowns. When a plot shows something odd, you select that region and the
-offending configurations open in a 3D viewer, force vectors and all. That loop —
-spot it in a plot, look at it in 3D — is the whole point of the tool.
+Load reference data and predictions to compare energy and force errors. Click
+an outlier to inspect its geometry and force vectors in 3D. For live LAMMPS
+runs, FFAST uses DetectAna to flag structures that depart from a fitted reference
+and can stop the simulation on an alarm.
 
-The compute half runs wherever your data is, which for most people means an HPC
-cluster: FFAST will submit the SLURM job and install itself there on first
-connect, and only the configurations you select come back to your machine.
+The interface runs in your browser. A Python server loads data and computes
+analyses on your computer or a SLURM compute node. For cluster sessions, the
+trajectory stays on the cluster, and the analysis results and the structures you inspect
+are sent to your browser.
 
-`ffast` opens FFAST in your browser. The browser client is the main client; it
-needs no native GL or Qt libraries, so it runs on a laptop and on a cluster login
-node alike. An older desktop client still exists, is being retired, and starts
-with `ffast-qt`.
+![FFAST browser interface comparing SchNet and a reference-plus-noise control on MD22 Stachyose, with error plots beside a 3D view coloured by SchNet force error.](docs/images/hero.png)
 
-![Two force fields compared in FFAST: energy and force error distributions and per-frame timelines for both models on the left, and the same trajectory in the 3D view with atoms coloured by per-atom force error on the right.](docs/images/hero.png)
+*A custom comparison tab using bundled MD22 data. Reference + noise is a
+perturbed-reference control.*
 
-*Here to read the code rather than run it?* Start with
-[docs/architecture.md](docs/architecture.md) and the
-[84 ADRs](docs/adr/README.md); [If you came to read the
-code](#if-you-came-to-read-the-code) says which ones are worth your time.
+| Guide | Contents |
+| --- | --- |
+| [Installation](docs/installation.md) | uv, pip, optional dependencies and launch options |
+| [Using FFAST](docs/usage.md) | Data, plots, 3D views, subsets and sessions |
+| [Custom metrics and tabs](docs/custom-metrics.md) | Formulas, dataset fields, panels and Python metrics |
+| [LAMMPS](docs/lammps.md) | Reference fitting, monitored jobs, alarms and stopping |
+| [Cluster setup](docs/clusters.md) | SSH/SLURM profiles, remote servers and reconnecting |
+| [Development](CONTRIBUTING.md) | Setup, tests and contributing |
 
-## Why it exists
-
-Force-field papers report a single MAE. That number tells you almost nothing
-about whether a model is usable: two models with the same MAE can fail in
-completely different places, one of them harmless and one of them exactly on the
-transition state you care about. Aggregate metrics hide this by construction.
-
-FFAST is built on the assumption that you want to see the distribution and then
-go look at the outliers, and that the data is too big to move. Everything else
-follows from those two things.
+The [documentation index](docs/README.md) also links architecture and design records.
 
 ## Install
 
-Python 3.11, exactly. Nothing else is supported, because at least one ML backend
-breaks on anything newer.
+FFAST currently requires **Python 3.11**. From a source checkout, using
+[uv](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
 git clone https://github.com/TCPUniLU/FFAST.git
 cd FFAST
-python3.11 -m venv .venv && source .venv/bin/activate
-pip install -e .
-```
-
-That gives you the server, the CLI and the browser client, with no native
-libraries at all, so the same install works on a cluster login node.
-
-The legacy desktop client is one extra, `pip install -e ".[gui]"` (PySide6 and
-vispy).
-
-ML backends are one extra each:
-
-```bash
-pip install -e ".[mace]"         # also: nequip, schnetpack, sgdml
-```
-
-SpookyNet has no PyPI package; install it from
-[the vendor](https://github.com/OUnke/SpookyNet) if you need it.
-
-There is also a [`pixi.toml`](pixi.toml) and a conda
-[recipe](recipe/meta.yaml). PyTorch tends to resolve more cleanly from
-conda-forge than from PyPI.
-
-Check it worked:
-
-```bash
+uv venv --python 3.11
+source .venv/bin/activate
+uv pip install -e .
 ffast-cli metrics list
-```
-
-## Quick start
-
-```bash
 ffast
 ```
 
-A local server starts in the background and FFAST opens in your browser. Then:
+uv installs Python 3.11 if needed, independently of your system Python.
+For pip, Windows activation and optional dependencies, see
+[Installation](docs/installation.md). The base install includes the browser
+client, server and CLI; it needs no native Qt or OpenGL libraries.
 
-1. **Load a dataset** — File > Load Dataset, or `Alt+Shift+D`. sGDML `.npz` files
-   work, and so does anything ASE can read (`.extxyz`, `.traj`, `.db`, …).
-   Configurations with different atom counts are fine and are detected
-   automatically.
-2. **Load predictions** — File > Load Prediction, or `Alt+Shift+P`. An `.npz`
-   with `E` and `F`, or an ASE-readable file carrying energies and forces. Pick
-   which dataset it belongs to; FFAST checks fingerprints so you cannot attach it
-   to the wrong one by accident.
-3. **Open Basic Errors.** Error along the trajectory, error distributions,
-   true-versus-predicted scatter and a table of MAE and RMSE for every dataset
-   and prediction. Select several predictions to compare models in the same
-   panel.
-4. **Zoom into a bad region and click Sub.** A new dataset appears in the
-   sidebar holding exactly those configurations.
-5. **Open it in the 3D view.** Turn on force vectors, colour the atoms by force
-   error, step through the frames and see what the molecule is actually doing
-   there.
+## Quick start
 
-New to it? The File menu has guided tours (**Tour: …**) that walk through
-loading a dataset and a prediction on the bundled examples.
+1. Choose **File → Load Example Dataset and Prediction** for the bundled SPICE
+   pair, or **File → Tour: First steps** for a guided introduction.
+2. Open **Basic Errors**. Select datasets and predictions in the tab's selector;
+   select several predictions to compare them.
+3. Click a timeline point to inspect its configuration in 3D. Show force vectors
+   or colour atoms by force error.
+4. Zoom a plot and enable **Sub** to analyse the configurations in that region.
+5. **Save Session** retains loaded objects, settings and cached results. Keep
+   the original data files available: sessions store their paths.
 
-No data of your own yet? `examples/data/` includes MD22 molecules, a random SPICE sample
-and periodic MPtrj structures, with matching
-predictions. **Load Example** opens the SPICE pair from
-`examples/data/variable-sized molecular/`. See the
-[dataset README](examples/data/README.md) for sources, permissions and units.
-AM26 and graphene remain on `dev` pending redistribution permission and
-source-unit verification, respectively.
-`examples/MACE/` and `examples/Nequip/` are saved sessions with
-pre-computed predictions for two MD22 systems, loadable with Load Session.
+For your own files, use **File → Load Dataset** and **Load Prediction**, or the
+`+` buttons in the left rail. FFAST reads sGDML `.npz` datasets and ASE formats
+such as `.extxyz`, `.traj` and `.db`, including periodic and variable-sized
+structures. Predictions can be `.npz` files with `E` and `F`, or ASE-readable
+files carrying energies and forces.
 
-Full reference: [docs/usage.md](docs/usage.md).
+Check the selected fields and units: unit labels do not convert values. See the
+[example data guide](examples/data/README.md) for MD22, SPICE and MPtrj sources
+and units. `examples/MACE/` and `examples/Nequip/` contain saved sessions.
 
-## How it is built
+## Analysis
 
-The one structural decision everything follows from: the compute half and the
-display half talk over a WebSocket, even when both are on your laptop. The client
-holds no scientific state. It knows what is selected and where the camera is;
-every number it draws came over the wire. That is what makes "run this on a
-cluster node" the same code path as "run this locally".
+- **Errors:** energy and force MAE/RMSE, timelines, distributions, scatter,
+  per-element breakdowns and net force residuals. An energy-shift control removes
+  a constant prediction offset.
+- **3D:** metric colouring, force vectors, bonds, unit cells, measurements,
+  alignment, playback and PNG export. Use independent panels to compare structures.
+- **Custom metrics and tabs:** write and try formulas in **Metrics**, or define
+  file fields, metrics and layouts in `ffast.toml`. Add templates with
+  **+ → From template**, or build a tab in Edit mode.
+- **Batch work:** use `ffast-cli` for metric inspection, validation and
+  calculation. The [headless example](examples/headless/headless.py) shows a
+  Python workflow that saves a session for later viewing.
 
-The consequence is a hard rule: `ffast/`, the core package, imports no Qt and no
-OpenGL, so it runs on a node with no display. That is enforced by a test
-(`tests/ffast/test_ffast_core_boundary.py`) and by a CI job that installs
-*without* the GUI extra and checks the server still starts.
+## Live LAMMPS runs
 
-Metrics are pure functions of arrays. A metric never sees the Environment, a
-Dataset or a Model; it gets the arrays it declared and returns numbers. Its
-inputs, output shape, parameters and label are read off its Python signature, so
-adding one is mostly writing the function. Presentation lives entirely in config,
-and the server never learns what a plot is.
+After [installing the live dependencies](docs/lammps.md#installation), try
+**LAMMPS → Tour: Watch a LAMMPS run**. It replays bundled geometry through the
+real scorer and needs no LAMMPS installation.
 
-### If you came to read the code
+For your own run, use **Make Reference…**, then **Run with FFAST…** to check,
+review and submit copies of a SLURM input and job script. **Live Runs…** opens
+running or completed runs. The [LAMMPS guide](docs/lammps.md) also covers manual
+setup, scores, attribution and stop controls.
 
-[docs/architecture.md](docs/architecture.md) is the map, and it ends with a
-section on what is still wrong. The design record is [84
-ADRs](docs/adr/README.md) — what the problem was, what was chosen, what it cost.
-They include the decisions that did not survive:
+Live scoring supports **one molecule with fixed atom order, no periodic-boundary
+handling, and LAMMPS `metal` or `real` units**. Scores measure structural
+departure from the reference. Stopping is off by default; a multi-process stop
+terminates the launch, and FFAST writes no checkpoint.
 
-- [ADR 0049](docs/adr/0049-demote-the-pipeline-executor.md) deletes a pipeline
-  executor after measuring that the live graph held exactly one stage-to-stage
-  dependency, and that the stages needing orchestration could not use it anyway.
-- [ADR 0038](docs/adr/0038-pipeline-stage-output-contracts.md) is a rejection,
-  kept with the measurements that rejected it.
-- [ADR 0031](docs/adr/0031-result-buffers-and-zstd-codec-deferred.md) explains
-  why a working, tested compression path is deliberately left unwired.
-- [ADR 0051](docs/adr/0051-retire-hollowed-shells.md) removes three abstractions
-  that had stopped abstracting anything.
+**Atom order unverified** means the starting geometry lacks a matching local
+record proving reference order. A passing bond check does not establish that
+proof. See [atom identity](docs/lammps.md#atom-identity), including how to generate
+verified starting data.
 
-[CONTEXT.md](CONTEXT.md) is the vocabulary, including an explicit list of terms
-that exist only in design documents and have no code behind them.
+## Status
 
-## The two clients
+This is the version 2 development tree; install from source. The browser is the
+main client. Precomputed predictions are the main model-comparison workflow;
+trained-model inference requires its backend and remains less polished. Browser
+submission of LAMMPS jobs uses SLURM; local runs use the command-line wrapper.
 
-Both talk to the same `ffast-server` over the same WebSocket protocol, and
-neither holds any scientific state of its own.
-
-**`ffast` (and `ffast-web`) — the browser client.** Hand-written ES modules with
-Three.js and Plotly vendored in, no build step, no npm. It is the client that
-gets new features, and the place to contribute: the client is plain JavaScript
-you can edit and reload with no toolchain. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-**`ffast-qt` — the legacy desktop client.** PySide6 and vispy. It is being
-retired and gets no new features. It needs the `gui` extra and a working native
-Qt/OpenGL stack.
-
-## What it does
-
-**Error analysis.** Energy and force MAE/RMSE along the trajectory and as
-distributions, true-versus-predicted scatter, per-element breakdowns, per-
-structure net force error, radius of gyration correlated against error. Energy
-predictions usually carry a constant offset; one toggle removes it everywhere at
-once.
-
-**A 3D viewer wired to the analysis.** Atoms coloured by any per-atom metric,
-force arrows, dynamic or fixed bonds, unit cells, distance/angle/dihedral
-measurement, Kabsch alignment onto the first frame, trajectory playback, PNG
-export. It reads the same metrics the plots do, so "colour by force error" is not
-a special case anyone had to implement twice.
-
-**New analyses without writing code.** Any numeric key in an extxyz file can be
-declared in a config file and becomes a plottable metric. So can element-wise
-algebra over existing metrics. So can whole new tabs of plots. The built-in
-tabs are defined this way and have no special status — they are TOML files in
-`ffast/config/builtin_tabs/`. A new install shows 3D and Basic Errors; the others
-wait under **+ ▸ From template**. You can build your own tabs, panel by panel,
-with the ✎ Edit tab button.
-
-**Remote execution.** Connect to a cluster and everything heavy runs on a compute
-node while the UI stays on your laptop. Large datasets never move; only the
-subsets you select cross the network. If FFAST is not installed on the cluster it
-builds a wheel, pushes it over SSH and installs itself. Sessions survive a
-dropped connection, and reconnecting to a job that is still running is one click
-rather than a new job.
-
-**A CLI.** `ffast-cli` validates configs, lists and inspects metrics, runs their
-declared test cases, computes a metric against a file, and reports which keys in
-a dataset can be used as metrics — all without a UI.
-
-**Caching that works.** Every result is keyed by a content fingerprint of the
-model and dataset that produced it. Restarting, reconnecting or reloading a
-session recomputes nothing.
-
-## Status and limits
-
-Being straight about this, since it matters if you are deciding whether to use
-it:
-
-- **Pre-computed predictions are the well-trodden path.** Loading a trained model
-  and running inference from the UI works (server-side, ADR 0030) but is rough.
-  Generate predictions where you trained the model.
-- **No PyPI release yet.** Install from source.
-- **The desktop client is being retired.** Use the browser client.
-- **Leftovers from the restructuring are still visible**: `client/` is down to
-  three files, `datasetLoaders/` and `modelLoaders/` are empty directories, and
-  plugin discovery still globs the source tree. Written down in
-  [docs/architecture.md](docs/architecture.md#where-the-bodies-are-buried) rather
-  than quietly left for you to find.
-
-Tests: about 3,400. `pytest -m "not integration" --ignore=tests/browser` is the quick run and takes under a minute.
+For implementation details, see the [architecture](docs/architecture.md),
+[domain vocabulary](CONTEXT.md) and [design decisions](docs/adr/README.md).
 
 ## Credits and history
 
@@ -274,3 +168,8 @@ Bug reports and small fixes welcome; open an issue first for anything larger. Se
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+## Legacy desktop client
+
+`ffast-qt` is being retired and is planned for removal. Existing users can find
+[legacy instructions](docs/legacy-qt.md) at the end of the usage guide.
