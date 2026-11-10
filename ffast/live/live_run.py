@@ -28,6 +28,7 @@ from pathlib import Path
 import numpy as np
 
 from ffast.live import run_folder as rf
+from ffast.live.analysis_reader import AnalysisReader, _v1_exceedance
 from ffast.loaders.dataset import FlatDatasetLoader
 
 logger = logging.getLogger("FFAST")
@@ -125,16 +126,6 @@ def _tabs_changed(env) -> None:
         feed.changed(control.TAB_LAYOUT)
 
 
-def _v1_exceedance(row: dict, settings: dict) -> tuple[float | None, list | None]:
-    """A step-2 row (one track, T² only): T² ÷ its centroid threshold."""
-    name, track = next(iter((row.get("tracks") or {}).items()), (None, {}))
-    limit = ((settings.get("thresholds") or {}).get(name) or {}).get("centroid")
-    t2 = track.get("t2")
-    if t2 is None or not limit:
-        return None, None
-    return t2 / limit, [name, "T2"]
-
-
 def _series_of(rows: list[dict], settings: dict | None = None) -> dict:
     """Per scored frame: the worst test's score ÷ its threshold, that test, and
     whether the frame is marked. Reads format 2 rows and step-2 (format 1) rows."""
@@ -161,7 +152,7 @@ SHOWN_EVENTS = ("start", "identity", "planned", "warning", "refused", "scorer_fa
 EVENTS_KEPT = 200
 
 
-class LiveRun:
+class LiveRun(AnalysisReader):
     """One opened run folder: follows its dump, scores and state."""
 
     def __init__(self, env, run_dir: Path, broadcast) -> None:
@@ -185,10 +176,7 @@ class LiveRun:
         self.dataset.live_run = self        # metric inputs read the run's scores through it
         self.registered = False
         self.error: str | None = None
-        self.analysis_id: str | None = None
-        self.settings: dict = {}
-        self.rows: list[dict] = []
-        self._tail: rf.ScoresTail | None = None
+        self._init_analysis()
         self._listed: tuple = ()        # the values listed as metrics (run_values)
         self.events: list[dict] = []
         self._last_sent = 0.0
@@ -217,16 +205,7 @@ class LiveRun:
         except Exception as exc:  # replaced or foreign dump: stop following it
             error = f"{type(exc).__name__}: {exc}"
         run = rf.read_json(self.run_dir / rf.RUN_JSON) or self.run
-        if self._tail is None:
-            adir = self.run_dir / rf.ANALYSIS_DIR
-            ids = sorted(p.name for p in adir.iterdir() if p.is_dir()) if adir.is_dir() else []
-            if ids:
-                self.analysis_id = ids[0]
-                self._tail = rf.ScoresTail(adir / ids[0] / rf.SCORES)
-        rows = self._tail.poll() if self._tail is not None else []
-        if self.analysis_id and not self.settings:
-            self.settings = rf.read_json(
-                self.run_dir / rf.ANALYSIS_DIR / self.analysis_id / rf.SETTINGS) or {}
+        rows = self.read_analysis(self.run_dir)
         events = [e for e in rf.read_events(self.run_dir) if e.get("kind") in SHOWN_EVENTS]
         return {"frames": frames, "rows": rows, "run": run, "events": events, "error": error}
 
@@ -289,100 +268,6 @@ class LiveRun:
             "events": self.events[-EVENTS_KEPT:],
             "error": self.error,
         })
-
-    # ── analysis values (ADR 0091; any thread) ─────────────────────────────
-    def analysis_value_problem(self, key) -> str | None:
-        """Why this run has no value for ``key`` (see ``parse_run_ref``), or None."""
-        if key == ("worst",):
-            return None
-        if not self.settings:
-            return "it has no scores yet"
-        if self.settings.get("scores_format") != 2:
-            return "its scores were written before per-test scores were kept"
-        if key[0] != "score":
-            return None
-        _, track, stat = key
-        name = f"{track} {'T²' if stat == 'T2' else stat}"
-        if [track, stat] not in [list(t) for t in self.settings.get("tests") or []]:
-            return f"its reference has no {name} test"
-        if not self._threshold(track, stat):
-            # A missing or zero threshold cannot divide a score: a note, not an empty line.
-            return f"its reference has no usable {self._role()} threshold for {name}"
-        return None
-
-    def _role(self) -> str:
-        return self.settings.get("role", "centroid")
-
-    def _threshold(self, track, stat):
-        return (((self.settings.get("thresholds") or {}).get(track) or {}).get(stat) or {}).get(self._role())
-
-    def analysis_value(self, key) -> np.ndarray | None:
-        """One number per frame of the run, NaN where no score row has the frame
-        (a gap: the viewer never scores a frame itself), or None when the run
-        has no such value. ``key``: ``("score", track, stat)``, ``("worst",)`` or
-        ``("chem", "broken" | "close")``."""
-        if self.analysis_value_problem(key):
-            return None
-        out = np.full(self.dataset.N, np.nan)
-        rows = list(self.rows)          # the event loop appends while a worker reads
-        limit = None
-        if key[0] == "score" and key != ("worst",):
-            _, track, stat = key
-            limit = self._threshold(track, stat)      # non-zero: checked by analysis_value_problem
-        for r in rows:
-            frame = r.get("frame")
-            if not isinstance(frame, int) or not 0 <= frame < len(out):
-                continue
-            if key == ("worst",):
-                value = r["exceedance"] if "exceedance" in r else _v1_exceedance(r, self.settings)[0]
-            elif key[0] == "chem":
-                value = (r.get("chem") or {}).get(key[1])
-            else:
-                score = ((r.get("tracks") or {}).get(track) or {}).get(stat)
-                value = None if score is None else score / limit
-            if value is not None:
-                out[frame] = value
-        return out
-
-    # ── attribution (any thread) ────────────────────────────────────────────
-    def _attribution_bundle(self):
-        """The run's bundle, loaded once; ``ValueError`` saying why it cannot be used."""
-        if getattr(self, "_bundle", None) is not None:
-            return self._bundle
-        from ffast.live.data_file import bundle_sha256
-        from ffast.live.detectana_api import DetectAnaMissing, require_detectana
-
-        path = self.settings.get("bundle")
-        if not path:
-            raise ValueError("this run has no scores yet, so no bundle to explain them with")
-        if not Path(path).is_dir():
-            raise ValueError(f"the reference bundle {path} is gone; attribution needs it")
-        want = self.settings.get("bundle_sha256")
-        if want and bundle_sha256(Path(path)) != want:
-            raise ValueError(f"the bundle at {path} changed after this run was scored; "
-                             "attribution would explain other scores")
-        try:
-            detectana = require_detectana()
-        except DetectAnaMissing as exc:
-            raise ValueError(str(exc)) from exc
-        try:
-            self._bundle = detectana.load(path)
-        except detectana.BundleError as exc:
-            raise ValueError(f"DetectAna {detectana.__version__} cannot use the bundle {path}: {exc}") from exc
-        return self._bundle
-
-    def attribution(self, frame: int, test: tuple[str, str] | None = None) -> dict:
-        """What drove frame ``frame``'s score (ADR 0087): computed now, never stored."""
-        from ffast.live.attribution import frame_attribution
-
-        if not 0 <= frame < self.dataset.N:
-            raise ValueError(f"frame {frame} is not read yet ({self.dataset.N} frames)")
-        bundle = self._attribution_bundle()
-        positions = np.array(self.dataset.getCoordinates(frame), dtype=np.float64)
-        out = frame_attribution(bundle, positions, self.settings.get("role", "centroid"), test)
-        out.update(run_id=self.run_id, frame=frame, step=self.dataset.steps[frame],
-                   fingerprint=self.fingerprint)
-        return out
 
     def _stop_on_alarm(self, progress: dict) -> bool:
         """The viewer's last choice (control.json) if any, else the scorer's setting."""
