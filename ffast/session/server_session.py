@@ -1019,7 +1019,7 @@ class ServerSession:
 
         test = (track, score) if track and score else None
         try:
-            run = find_run(self.env, run_id)
+            run = find_run(self.env, run_id, scored=True)
             out = await asyncio.to_thread(run.attribution, int(frame), test)
         except (ValueError, OSError) as exc:
             out = {"run_id": run_id, "frame": frame, "error": str(exc)}

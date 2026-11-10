@@ -112,10 +112,15 @@ def live_tab(run: "LiveRun", layout):
     return layout.model_copy(deep=True, update={"name": run.tab_name, "live_layout": False})
 
 
+def open_sources(env) -> list:
+    """Every open run and every open scored item (ADR 0093): what has scores to show."""
+    return (list((getattr(env, "live_runs", None) or {}).values())
+            + list((getattr(env, "scored_items", None) or {}).values()))
+
+
 def live_tabs(env, layout) -> list:
-    """(tab, run fingerprint) for each open run that has frames, oldest first."""
-    return [(live_tab(r, layout), r.fingerprint)
-            for r in getattr(env, "live_runs", {}).values() if r.registered]
+    """(tab, fingerprint) for each open run or scored item that has frames, oldest first."""
+    return [(live_tab(r, layout), r.fingerprint) for r in open_sources(env) if r.registered]
 
 
 def _tabs_changed(env) -> None:
@@ -173,7 +178,7 @@ class LiveRun(AnalysisReader):
         self.reader = DumpReader(run_dir / rf.FRAMES)
         self.dataset = LiveRunDataset(run_dir, self.run_id)
         self.dataset.initialise()
-        self.dataset.live_run = self        # metric inputs read the run's scores through it
+        self.dataset.analysis_source = self  # metric inputs read the run's scores through it
         self.registered = False
         self.error: str | None = None
         self._init_analysis()
@@ -297,9 +302,13 @@ class LiveRun(AnalysisReader):
             await asyncio.sleep(poll_s)
 
 
-def find_run(env, run_id: str) -> LiveRun:
-    """The open run ``run_id``; ``ValueError`` when no window opened it."""
+def find_run(env, run_id: str, *, scored: bool = False) -> LiveRun:
+    """The open run ``run_id``; ``ValueError`` when no window opened it. With
+    ``scored`` a scored item (ADR 0093) is found too: for attribution only, never
+    for stopping."""
     run = (getattr(env, "live_runs", None) or {}).get(run_id)
+    if run is None and scored:
+        run = (getattr(env, "scored_items", None) or {}).get(run_id)
     if run is None:
         raise ValueError(f"live run {run_id!r} is not open")
     return run

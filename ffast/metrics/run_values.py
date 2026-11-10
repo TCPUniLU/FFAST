@@ -72,7 +72,9 @@ def sync(env, registry=None) -> bool:
     window when the list changed. Returns whether it did."""
     registry = registry if registry is not None else default_registry
     wanted: dict[str, tuple] = {}
-    for run in list((getattr(env, "live_runs", None) or {}).values()):
+    from ffast.live.live_run import open_sources
+
+    for run in open_sources(env):
         for key in keys_of(run):
             wanted[metric_id(key)] = key
     have = {m for m in registry.list_metrics()

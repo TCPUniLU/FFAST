@@ -104,25 +104,41 @@ def _flatPerAtom(value, axes):
     return value
 
 
-def _live_run_of(dataset):
-    """The live run whose frames ``dataset`` is, else None (ADR 0091). The
-    resolver's env is the DataService, which does not know the open runs, so the
-    dataset names its run."""
-    from ffast.live.live_run import LiveRunDataset
+def _analysis_source_of(dataset):
+    """The live run or scored item whose scores ``dataset`` shows, and the views
+    between them (outermost first), else ``(None, [])`` (ADR 0091, 0093).
 
-    return getattr(dataset, "live_run", None) if isinstance(dataset, LiveRunDataset) else None
+    A live run's dataset names its run and a scored item's names its item. A view
+    cut from one (a subset, an atom subset) shows the scores of the frames it
+    keeps: the caller applies each view's frame map to the values. The resolver's
+    env is the DataService, which does not know the open runs, so the dataset
+    names its source.
+    """
+    from ffast.loaders.dataset import DatasetView
+
+    views = []
+    ds = dataset
+    while ds is not None:
+        source = getattr(ds, "analysis_source", None)
+        if source is not None:
+            return source, views
+        if not isinstance(ds, DatasetView):
+            break
+        views.append(ds)
+        ds = ds.parent
+    return None, []
 
 
 def run_value_problem(env, ref, dataset) -> str | None:
     """Why the analysis value ``ref`` has no value for ``dataset`` ("only live
-    runs have scores", ...), or None when it has one."""
+    runs and scored items have scores", ...), or None when it has one."""
     key = parse_run_ref(ref)
     if key is None:
         return None
-    run = _live_run_of(dataset)
-    if run is None:
-        return "only live runs have scores"
-    return run.analysis_value_problem(key)
+    source, _views = _analysis_source_of(dataset)
+    if source is None:
+        return "only live runs and scored items have scores"
+    return source.analysis_value_problem(key)
 
 
 class _ResolverSource(InputSource):
@@ -142,7 +158,7 @@ class _ResolverSource(InputSource):
         self._names: dict = {}      # ref → its name, taken before a growing dataset's value is read
 
     def get(self, metric_id, local_key, ref):
-        if getattr(self._dataset, "grows", False):
+        if getattr(self._dataset, "grows", False) or getattr(self._dataset, "score_parent", None) is not None:
             # Named before it is read: frames or scores that come meanwhile are
             # then in the value but not in its name, which only costs a recompute.
             self._names[ref] = self._name(ref)
@@ -163,14 +179,24 @@ class _ResolverSource(InputSource):
     def _name(self, ref):
         if ref == "selection.indices":
             return None
-        dataset_fp = getattr(self._dataset, "fingerprint", None)
-        if not dataset_fp or getattr(self._dataset, "isSubDataset", True):
+        dataset = self._dataset
+        parent = getattr(dataset, "score_parent", None)
+        if parent is not None:
+            # A scored item (ADR 0093). Its scores are its own, named by how many rows
+            # there are; every other value is its parent's and is stored as the parent's
+            # (guard a: nothing is computed twice).
+            if parse_run_ref(ref) is not None:
+                source = getattr(dataset, "analysis_source", None)
+                return f"{ref}|{dataset.fingerprint}|r{len(source.rows) if source else 0}"
+            dataset = parent
+        dataset_fp = getattr(dataset, "fingerprint", None)
+        if not dataset_fp or getattr(dataset, "isSubDataset", True):
             return None
-        if getattr(self._dataset, "grows", False):
+        if getattr(dataset, "grows", False):
             # A live run adds frames under one fingerprint: name the count.
-            dataset_fp = f"{dataset_fp}|n{self._dataset.N}"
+            dataset_fp = f"{dataset_fp}|n{dataset.N}"
             if parse_run_ref(ref) is not None:      # and scores: name how many
-                run = _live_run_of(self._dataset)
+                run, _views = _analysis_source_of(dataset)
                 dataset_fp += f"|r{len(run.rows) if run else 0}"
         if not ref.startswith("prediction"):
             return f"{ref}|{dataset_fp}"
@@ -221,8 +247,15 @@ class InputResolver:
             # Analysis values of a live run (ADR 0091)
             key = parse_run_ref(ref)
             if key is not None:
-                run = _live_run_of(dataset)
-                return None if run is None else run.analysis_value(key)
+                source, views = _analysis_source_of(dataset)
+                if source is None:
+                    return None
+                values = source.analysis_value(key)
+                if values is None:
+                    return None
+                for view in reversed(views):          # a view shows the frames it keeps
+                    values = np.asarray(values)[view._parentFrames()]
+                return values
             # Dataset Field refs (ADR 0023): {reference,prediction}.{info,atoms}.<key>
             parsed = parse_field_ref(ref)
             if parsed is not None:

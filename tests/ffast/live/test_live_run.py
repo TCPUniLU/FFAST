@@ -487,7 +487,7 @@ def test_the_resolver_reads_a_runs_value_and_refuses_a_plain_dataset(tmp_path):
     assert resolver.resolve("run.score.angles.SPE", dataset=run.dataset) is None
     plain = type("Plain", (), {"fingerprint": "abc", "getDisplayName": lambda self: "shard"})()
     assert resolver.resolve("run.score.worst", dataset=plain) is None
-    assert run_value_problem(env, "run.score.worst", plain) == "only live runs have scores"
+    assert run_value_problem(env, "run.score.worst", plain) == "only live runs and scored items have scores"
     assert run_value_problem(env, "run.score.bonds.T2", run.dataset) is None
 
 
@@ -506,7 +506,7 @@ def test_the_store_says_why_there_is_no_analysis_value_quietly():
     out = _run(MetricResultStore(env).get("ffast.test_run_worst", {}, "ds", None))
     default_registry.unregister("ffast.test_run_worst")
     assert isinstance(out, Missing) and out.kind == "no_analysis_value"
-    assert out.text == "No worst score ÷ threshold for shard_03: only live runs have scores."
+    assert out.text == "No worst score ÷ threshold for shard_03: only live runs and scored items have scores."
     assert env.calls == []
 
 
@@ -530,7 +530,7 @@ def test_a_run_scores_density_on_a_plain_dataset_is_quiet_too():
         default_registry.unregister(density)
         default_registry.unregister("ffast.test_run_close")
     assert isinstance(out, Missing) and out.kind == "no_analysis_value"
-    assert out.text == "No too-close pairs for shard_03: only live runs have scores."
+    assert out.text == "No too-close pairs for shard_03: only live runs and scored items have scores."
     assert env.calls == []
 
 

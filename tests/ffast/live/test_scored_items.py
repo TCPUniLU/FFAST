@@ -148,3 +148,130 @@ def test_the_time_field_gives_the_time_between_frames(tmp_path):
     frames[3].info["time"] = 9.0
     write(str(path), frames, format="extxyz")
     assert si.suggest_frame_dt_fs(_load(path)) is None
+
+
+# ── step 4: the scored item on the server ────────────────────────────────────
+
+class _Registry(dict):
+    def add(self, dataset):
+        self[dataset.fingerprint] = dataset
+        dataset.loaded = True
+
+
+class _Env:
+    def __init__(self):
+        self.datasets = _Registry()
+        self.scored_items = {}
+
+
+def _open(tmp_path, bundle_dir, n=4, refuse_frame=None):
+    """A scored item opened on a fake env; the server loop is not needed to read it."""
+    import asyncio
+
+    from ffast.live.scored_item import ScoredItem, ScoredItemDataset, item_name
+
+    frames = [initial_atoms().copy() for _ in range(n)]
+    for k, a in enumerate(frames):
+        a.positions += np.random.default_rng(k).normal(0, 0.02, a.positions.shape)
+    for a in frames:
+        a.info["energy"] = 1.0
+    if refuse_frame is not None:
+        frames[refuse_frame] = Atoms("H2O", positions=[[0, 0, 0], [0.9, 0, 0], [0, 0.9, 0]])
+        frames[refuse_frame].info["energy"] = 1.0
+    path = tmp_path / "f.xyz"
+    write(str(path), frames, format="extxyz")
+    parent = _load(path)
+    parent.initialise()
+    settings = si.make_settings(0.5)
+    folder = si.score_dataset(parent, bundle_dir, settings)
+    item = si.read_item(folder)
+    env = _Env()
+    env.datasets.add(parent)
+    ds = ScoredItemDataset(parent, item["item_id"], item_name(parent.getName(), bundle_dir, settings))
+    ds.initialise()
+    env.datasets.add(ds)
+    scored = ScoredItem(env, folder, ds, lambda m: None)
+    scored.registered = True
+    env.scored_items[scored.run_id] = scored
+    scored.apply(scored.read_files())
+    return env, parent, ds, scored
+
+
+def test_a_scored_items_values_are_its_rows_and_a_refused_frame_is_nan(tmp_path, bundle_dir):
+    from ffast.metrics.input_resolver import InputResolver
+
+    env, parent, ds, scored = _open(tmp_path, bundle_dir, refuse_frame=2)
+    got = InputResolver(object()).resolve("run.score.worst", dataset=ds)
+    want = [next((r["exceedance"] for r in scored.rows if r["frame"] == i and "exceedance" in r), np.nan)
+            for i in range(4)]
+    assert np.array_equal(got, want, equal_nan=True) and np.isnan(got[2]) and not np.isnan(got[0])
+    assert ds.fingerprint.startswith("live:scored-") and not getattr(ds, "grows", False)
+    assert ds.lineageMeta()["scored"] is True
+    assert scored.refused_frames()[2].startswith("atom order") or "atoms" in scored.refused_frames()[2]
+
+
+def test_every_value_but_the_scores_is_named_as_the_parents(tmp_path, bundle_dir):
+    from ffast.metrics.input_resolver import _ResolverSource
+
+    env, parent, ds, scored = _open(tmp_path, bundle_dir)
+    for ref in ("reference.energies", "reference.positions", "reference.forces"):
+        assert _ResolverSource(None, None, ds).identity(ref) == _ResolverSource(None, None, parent).identity(ref)
+    assert _ResolverSource(None, None, parent).identity("reference.energies") is not None
+    before = _ResolverSource(None, None, ds).identity("run.score.worst")
+    assert before and ds.fingerprint in before
+    scored.rows.append({"frame": 99, "step": 99, "refused": "x"})
+    assert _ResolverSource(None, None, ds).identity("run.score.worst") != before
+
+
+def test_energy_of_a_scored_item_reuses_the_parents_cached_result(tmp_path, bundle_dir):
+    """The key the metric executor stores a result under is built from these names."""
+    from ffast.metrics.input_resolver import _ResolverSource
+
+    env, parent, ds, scored = _open(tmp_path, bundle_dir)
+    a = _ResolverSource(None, None, parent)
+    b = _ResolverSource(None, None, ds)
+    assert [a.identity(r) for r in ("reference.energies", "offsets")] == \
+        [b.identity(r) for r in ("reference.energies", "offsets")]
+
+
+def test_a_frozen_subset_of_a_scored_item_gets_the_items_values_for_its_frames(tmp_path, bundle_dir):
+    from ffast.loaders.dataset import DatasetView
+    from ffast.metrics.input_resolver import InputResolver, run_value_problem
+
+    env, parent, ds, scored = _open(tmp_path, bundle_dir)
+    sub = DatasetView.frozenSubset(ds, None, [3, 1], "pick")
+    sub.initialise()
+    resolver = InputResolver(object())
+    whole = resolver.resolve("run.score.worst", dataset=ds)
+    assert resolver.resolve("run.score.worst", dataset=sub).tolist() == [whole[3], whole[1]]
+    assert run_value_problem(None, "run.score.worst", sub) is None
+    plain = DatasetView.frozenSubset(parent, None, [0], "p")
+    plain.initialise()
+    assert resolver.resolve("run.score.worst", dataset=plain) is None
+
+
+def test_the_run_scores_metrics_appear_when_only_a_scored_item_is_open(tmp_path, bundle_dir):
+    from ffast.metrics import run_values
+    from ffast.metrics.registry import default_registry
+
+    env, parent, ds, scored = _open(tmp_path, bundle_dir)
+    try:
+        # Opening listed them: the item's own follow loop syncs when its scores arrive.
+        assert default_registry.has("ffast.run_score_worst") and default_registry.has("ffast.run_chem_broken")
+    finally:
+        env.scored_items.clear()
+        run_values.sync(env)
+    assert not default_registry.has("ffast.run_score_worst")
+
+
+def test_the_message_says_it_is_scored_and_has_no_stop(tmp_path, bundle_dir):
+    import msgpack
+
+    env, parent, ds, scored = _open(tmp_path, bundle_dir, refuse_frame=1)
+    m = msgpack.unpackb(scored.message(), raw=False, strict_map_key=False)
+    kw = m.get("kwargs", m) if isinstance(m, dict) else m[-1]
+    assert kw["kind"] == "scored" and kw["parent"] == parent.fingerprint and kw["state"] == "done"
+    assert kw["n_frames"] == 4 and kw["stop"] is None and kw["stop_on_alarm"] is False and kw["producer"] is None
+    assert kw["fingerprint"] == ds.fingerprint and kw["tab"].startswith("Scores ")
+    assert list(kw["refused_frames"]) == [1]
+    assert len(kw["series"]["frame"]) == 4
