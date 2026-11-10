@@ -445,7 +445,7 @@ class DatasetLoader(EventClass):
         when frame ``i`` is the parent's frame ``i``. A loaded dataset has
         neither. The browser uses this to show the same structure, not the
         same frame number, in two related views."""
-        return {"parent": None, "parent_frames": None}
+        return {"parent": None, "parent_frames": None, "scored": False}
 
     def to_transfer_arrays(self) -> dict:
         """Serialize geometry arrays for SubDataset transfer over the RPC channel.
@@ -955,7 +955,7 @@ class DatasetView(DatasetLoader):
 
     def lineageMeta(self) -> dict:
         frames = None if self.frames is None else self._frameIdx().tolist()
-        return {"parent": self.parent.fingerprint, "parent_frames": frames}
+        return {"parent": self.parent.fingerprint, "parent_frames": frames, "scored": False}
 
     def isDependentOn(self, obj):
         return obj is not None and (obj is self.parent or obj is self.model)

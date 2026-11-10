@@ -296,11 +296,19 @@ def all_items(parent_fp: str, environ=None) -> list[dict]:
     return out
 
 
-def dialog_info(dataset, environ=None) -> dict:
-    """What the Score dialog shows about ``dataset`` (reads only)."""
-    from ffast.live import references
-    from ffast.live.detectana_api import DetectAnaMissing, require_detectana
+def dialog_info(dataset, environ=None, quick: bool = False) -> dict:
+    """What the Score dialog shows about ``dataset`` (reads only). ``quick``: only whether
+    DetectAna is installed, without importing it (an import takes seconds and would
+    compete with the views the window is opening)."""
+    from importlib.util import find_spec
 
+    from ffast.live import references
+    from ffast.live.detectana_api import INSTALL_HINT, DetectAnaMissing, require_detectana
+
+    if quick:
+        found = find_spec("detectana") is not None
+        return {"fingerprint": dataset.getFingerprint(), "quick": True,
+                "detectana": None if found else f"DetectAna is not installed; {INSTALL_HINT}"}
     try:
         require_detectana()
         missing = None

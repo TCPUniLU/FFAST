@@ -20,7 +20,7 @@ UNIFORM = {
     "variable": False, "elements": [6, 1, 1, 8], "element_set": [1, 6, 8],
     "first_elements": None, "offsets": None,
     "path": "/data/aspirin.xyz", "source_type": "ASE",
-    "parent": None, "parent_frames": None, "active": True, "frozen": False,
+    "parent": None, "parent_frames": None, "scored": False, "active": True, "frozen": False,
     "units": {"energy": "eV"},
 }
 VARIABLE = {
@@ -28,7 +28,7 @@ VARIABLE = {
     "variable": True, "elements": None, "element_set": [1, 6, 8],
     "first_elements": [6, 1], "offsets": [0, 2, 3],
     "path": "/data/mixed.xyz", "source_type": "Variable ASE",
-    "parent": "aspirinfp", "parent_frames": [4, 9], "active": False,
+    "parent": "aspirinfp", "parent_frames": [4, 9], "scored": False, "active": False,
     "frozen": True, "units": {},
 }
 
@@ -48,7 +48,7 @@ def test_model_fields_match_tometadict_keys():
     assert set(DatasetMeta.model_fields) == {
         "name", "n", "has_forces", "is_sub", "variable",
         "elements", "element_set", "first_elements", "offsets", "path", "source_type",
-        "parent", "parent_frames", "active", "frozen", "units",
+        "parent", "parent_frames", "scored", "active", "frozen", "units",
     }
 
 

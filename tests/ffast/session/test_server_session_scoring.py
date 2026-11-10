@@ -200,3 +200,12 @@ def test_new_commands_are_known_and_only_the_mutating_ones_are_blocked_for_viewe
     assert control.SCORE_DATASET in control.MUTATING_CLIENT_EVENTS
     assert control.CONTINUE_SCORING in control.MUTATING_CLIENT_EVENTS
     assert control.SCORE_DIALOG_INFO not in control.MUTATING_CLIENT_EVENTS
+
+
+def test_a_quick_ask_only_says_whether_detectana_is_installed(tmp_path):
+    env = _Env()
+    ds = _dataset(tmp_path)
+    env.datasets.add(ds)
+    own, _ = _ask(env, control.SCORE_DIALOG_INFO, {"fingerprint": ds.fingerprint, "quick": True})
+    info = _answer(own, control.SCORE_DIALOG_INFO_RESULT)
+    assert info == {"fingerprint": ds.fingerprint, "quick": True, "detectana": None}

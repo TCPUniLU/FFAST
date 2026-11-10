@@ -229,7 +229,7 @@ class ServerSession:
                                                        LiveAttributionRequest),
             control.LIST_LIVE_RUNS:             _Route(self._on_list_live_runs, [], EmptyRequest),
             control.FORGET_LIVE_RUN:            _Route(self._on_forget_live_run, ["run_id"], ForgetLiveRunRequest),
-            control.SCORE_DIALOG_INFO:           _Route(self._on_score_dialog_info, ["fingerprint"],
+            control.SCORE_DIALOG_INFO:           _Route(self._on_score_dialog_info, ["fingerprint", "?quick"],
                                                        ScoreDialogInfoRequest),
             control.SCORE_DATASET:              _Route(self._on_score_dataset, ["fingerprint", "bundle", "?frame_dt_fs", "?persist_ps"],
                                                        ScoreDatasetRequest),
@@ -1034,17 +1034,17 @@ class ServerSession:
         await self._emit(pack(control.LIVE_ATTRIBUTION_RESULT, (), out))
 
     # ── scoring any dataset (ADR 0093) ──────────────────────────────────────
-    async def _on_score_dialog_info(self, fingerprint, **kwargs) -> None:
+    async def _on_score_dialog_info(self, fingerprint, quick=False, **kwargs) -> None:
         """What the Score dialog needs: the recorded references, whether DetectAna is
         there, the time between frames the file suggests, a refusal, the items made
         already. To this window only. Answered from a task of its own: the first answer
         imports DetectAna, and the window's other messages (a view command waiting for
         its view to open) must not wait for that."""
-        task = asyncio.create_task(self._score_dialog_info(fingerprint))
+        task = asyncio.create_task(self._score_dialog_info(fingerprint, bool(quick)))
         self._score_asks.add(task)
         task.add_done_callback(self._score_asks.discard)
 
-    async def _score_dialog_info(self, fingerprint) -> None:
+    async def _score_dialog_info(self, fingerprint, quick=False) -> None:
         from ffast.live import scored_items as si
         from ffast.protocol.rpc import pack
 
@@ -1053,7 +1053,7 @@ class ServerSession:
             out = {"fingerprint": fingerprint, "error": f"dataset {fingerprint!r} is not loaded"}
         else:
             try:
-                out = await asyncio.to_thread(si.dialog_info, dataset)
+                out = await asyncio.to_thread(si.dialog_info, dataset, None, quick)
             except Exception as exc:
                 logger.warning("SCORE_DIALOG_INFO %r: %s", fingerprint, exc)
                 out = {"fingerprint": fingerprint, "error": f"{type(exc).__name__}: {exc}"}
@@ -1092,7 +1092,10 @@ class ServerSession:
         except (ValueError, OSError, DetectAnaMissing) as exc:
             logger.warning("SCORE_DATASET %r: %s", fingerprint, exc)
             out = {"error": str(exc)}
+            scored = None
         await self._emit(pack(control.SCORE_STARTED, (), out))
+        if scored is not None:
+            scored.announce()       # after the answer: the window opens the item's tab on this
 
     async def _on_continue_scoring(self, fingerprint, **kwargs) -> None:
         """Score the frames an incomplete scored item is missing."""
@@ -1107,6 +1110,8 @@ class ServerSession:
             self._start_scoring(scored.dataset.parent, scored.folder, scored.run_id)
             out = {"item_id": scored.run_id, "fingerprint": scored.fingerprint, "started": True}
         await self._emit(pack(control.SCORE_STARTED, (), out))
+        if scored is not None:
+            scored.announce()
 
     def _start_scoring(self, parent, folder, iid) -> None:
         """Run ``score_dataset`` for the item in ``folder`` as a visible, cancellable task."""

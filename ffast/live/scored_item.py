@@ -104,6 +104,7 @@ class ScoredItem(AnalysisReader):
         self._listed: tuple = ()
         self._last_sent = 0.0
         self.task: asyncio.Task | None = None
+        self._closed = False
         self._steps = si._steps_of(dataset.parent)
 
     # ── names ───────────────────────────────────────────────────────────────
@@ -207,6 +208,12 @@ class ScoredItem(AnalysisReader):
         from ffast.live.live_run import _tabs_changed
         from ffast.metrics import run_values
 
+        if self._closed:
+            return
+        self._closed = True
+        current = self.env.scored_items.get(self.run_id)
+        if current is not None and current is not self:
+            return              # scored again since: the new item owns the folder and the tab
         if not getattr(self.dataset.parent, "deleted", False):
             si.set_hidden(self.folder, True)
         if self.env.scored_items.pop(self.run_id, None) is not None:

@@ -275,3 +275,19 @@ def test_the_message_says_it_is_scored_and_has_no_stop(tmp_path, bundle_dir):
     assert kw["fingerprint"] == ds.fingerprint and kw["tab"].startswith("Scores ")
     assert list(kw["refused_frames"]) == [1]
     assert len(kw["series"]["frame"]) == 4
+
+
+def test_an_item_scored_again_is_not_hidden_when_the_old_one_notices_it_was_closed(tmp_path, bundle_dir):
+    from ffast.live.scored_item import ScoredItem
+
+    env, parent, ds, old = _open(tmp_path, bundle_dir)
+    # removed, then scored again with the same settings: a new object under the same id
+    new = ScoredItem(env, old.folder, ds, lambda m: None)
+    env.scored_items[old.run_id] = new
+    old.closed()
+    assert env.scored_items[old.run_id] is new
+    assert not si.read_item(old.folder)["hidden"]
+    # and closing the current one hides it, once
+    new.closed()
+    new.closed()
+    assert old.run_id not in env.scored_items and si.read_item(old.folder)["hidden"]

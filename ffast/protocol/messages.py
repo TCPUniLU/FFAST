@@ -460,6 +460,9 @@ class ScoreDialogInfoRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     fingerprint: str
+    # Only whether DetectAna is installed (a find_spec, no import): asked when a dataset
+    # arrives, so the menu item can be greyed out without a slow import in the server.
+    quick: bool | None = None
 
 
 class ScoreDatasetRequest(BaseModel):

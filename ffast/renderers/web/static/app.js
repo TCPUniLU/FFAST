@@ -2080,7 +2080,7 @@ export class FFastApp {
     this._datasets.set(fp, meta);
     this._independent.followLiveFrames();
     // Whether DetectAna is there decides if Score against reference… is greyed out.
-    if (!before && this._canScore(meta)) this._conn?.send(OUT.SCORE_DIALOG_INFO, { fingerprint: fp });
+    if (!before && this._canScore(meta)) this._conn?.send(OUT.SCORE_DIALOG_INFO, { fingerprint: fp, quick: true });
     if (!before && !meta.is_sub) {
       if (this._exampleWatch && !this._exampleWatch.datasetFp) this._exampleWatch.datasetFp = fp;
       if (this._browser.settled('dataset', true, fp)) this._tourSignal('dataset-loaded', { fp });   // its "ready" below ends the "Loading…"
@@ -2225,8 +2225,9 @@ export class FFastApp {
       if (this._scoreFor === kw.fingerprint) { this._scoreFor = null; this._setStatus(`Scoring: ${kw.error}`, 'error'); }
       return;
     }
-    this._scoreInfo.set(kw.fingerprint, kw);
-    if (this._scoreFor !== kw.fingerprint) return;
+    // A quick answer only says whether DetectAna is there; keep the full one's other parts.
+    this._scoreInfo.set(kw.fingerprint, kw.quick ? { ...this._scoreInfo.get(kw.fingerprint), ...kw } : kw);
+    if (kw.quick || this._scoreFor !== kw.fingerprint) return;
     this._scoreFor = null;
     openScoreDialog({
       info: kw,
@@ -3125,9 +3126,10 @@ export class FFastApp {
    * first update arrives), or say why nothing started. */
   _onScoreStarted(kw) {
     if (kw.error) { this._setStatus(`Scoring: ${kw.error}`, 'error'); return; }
+    // The server announces the item again right after this answer, on the same queue:
+    // its tab opens on that update. (Not on one held from before: an item removed and
+    // scored again still has its old update here, naming a tab that is going away.)
     this._scoreWanted = kw.item_id;
-    const known = this._analysis.liveRunOf(kw.fingerprint);
-    if (known) this._openScoredTab(known);
   }
 
   _showInMainView(fp, frame = null) {
