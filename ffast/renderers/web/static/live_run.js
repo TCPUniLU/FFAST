@@ -27,6 +27,7 @@ export function liveRunStatus(kw) {
  * in the Events list only: there is nothing to do about them here. */
 export function liveRunProblem(kw) {
   if (kw.error) return kw.error;
+  if (kw.kind === 'scored' && ['refused', 'failed'].includes(kw.state) && kw.reason) return kw.reason;
   const p = kw.progress || {};
   if (p.reason) return p.reason;
   const ev = [...(kw.events || [])].reverse()
@@ -221,6 +222,10 @@ export function liveEventLine(e) {
     case 'end': return { time: t, text: `Run ${e.state}`, tone: e.state === 'finished' ? '' : 'warn' };
     case 'refused': return { time: t, text: `Scorer refused: ${e.reason}`, tone: 'bad' };
     case 'scorer_failed': return { time: t, text: `Scorer failed: ${e.reason}`, tone: 'bad' };
+    case 'scoring_start': return { time: t, text: `Scoring started · ${fmt(e.frames)} frames`, tone: '' };
+    case 'scoring_done': return { time: t, text: `Scoring done · ${fmt(e.scored_frames)} frames scored`, tone: '' };
+    case 'scoring_cancelled': return { time: t, text: `Scoring cancelled · ${fmt(e.scored_frames)} frames scored so far`, tone: 'warn' };
+    case 'failed': return { time: t, text: `Scoring failed: ${e.reason}`, tone: 'bad' };
     default: return { time: t, text: e.text || e.reason || e.kind, tone: e.kind === 'warning' ? 'warn' : '' };
   }
 }
@@ -336,5 +341,40 @@ export function liveRunsEvents(runs) {
 
 /** What a plain dataset ticked in a live panel says instead of a score. */
 export function liveNoScoreMessage(name) {
-  return `No score for ${name}: only live runs have scores for now.`;
+  return `No score for ${name}: only live runs and scored items have scores. Score it from its ⋯ menu.`;
+}
+
+/** How many frames of a scored item have a score (not a gap). */
+export function scoredCount(kw) {
+  return (kw.series?.exceedance || []).filter((v) => v != null).length;
+}
+
+/**
+ * One scored item's row of the Run panel's table (ADR 0093): where it was scored
+ * from and how far, then its state. No stop controls: nothing is running that
+ * the viewer could stop. Cells are {text, tone}.
+ * @param {object} kw  the item's LIVE_RUN_UPDATE (`kind: "scored"`)
+ * @param {string} parentName
+ */
+export function liveScoredRow(kw, parentName) {
+  const total = kw.n_frames || 0;
+  const gaps = Object.keys(kw.refused_frames || {}).length;
+  const alarms = (kw.progress?.alarms || []).map((a) => ({ kind: a.kind, step: a.confirmation?.step }));
+  const alarm = alarms.length ? liveStateCell({ alarms }) : null;
+  let words = '';
+  let tone = '';
+  switch (kw.state) {
+    case 'scoring': words = 'Scoring…'; break;
+    case 'done': words = gaps ? `Done · ${fmt(gaps)} ${gaps === 1 ? 'frame' : 'frames'} not scored` : 'Done'; tone = gaps ? 'warn' : ''; break;
+    case 'cancelled': words = 'Incomplete (cancelled)'; tone = 'warn'; break;
+    case 'refused': words = `Refused: ${kw.reason || 'the reference cannot score this dataset'}`; tone = 'bad'; break;
+    case 'failed': words = `Failed: ${kw.reason || 'scoring stopped'}`; tone = 'bad'; break;
+    default: words = kw.state || 'Waiting…';
+  }
+  if (alarm) { words = `${alarm.text} · ${words}`; tone = 'bad'; }
+  return {
+    name: kw.name || kw.tab || kw.run_id,
+    scored: { text: `Scored from ${parentName} · ${fmt(scoredCount(kw))} of ${fmt(total)} frames`, tone: '' },
+    state: { text: words, tone },
+  };
 }

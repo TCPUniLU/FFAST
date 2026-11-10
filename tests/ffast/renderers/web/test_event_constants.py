@@ -90,6 +90,7 @@ def test_inbound_events_are_things_the_server_sends(in_events):
         control.PRACTICE_INPUT_PREPARED, control.PRACTICE_RUN_STARTED, control.PRACTICE_RUN_RESULT,
         control.LIVE_RUNS, control.REFERENCE_MADE, control.RUN_WITH_FFAST_PREPARED,
         control.RUN_WITH_FFAST_WRITTEN, control.JOB_SUBMITTED, control.JOB_STATE, control.RUN_FOLDER_SCANNED,
+        control.SCORE_DIALOG_INFO_RESULT, control.SCORE_STARTED,
     }
     known = set(SERVER_TO_CLIENT) | set(control.REPLY_EVENTS) | announcements
     unknown = sorted(set(in_events.values()) - known)

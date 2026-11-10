@@ -47,6 +47,8 @@ class DatasetMeta(BaseModel):
     # subset which parent frame each of its frames is (None: the same frame).
     parent: Optional[str] = None
     parent_frames: Optional[list[int]] = None
+    # A scored item (ADR 0093): every frame of its parent, standing for one scoring of it.
+    scored: bool = False
     # False for a subset whose SUB box was unticked: kept, but not listed.
     active: bool = True
     # A frozen subset: its frames are fixed, it no longer follows the zoom.

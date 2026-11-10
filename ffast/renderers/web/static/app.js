@@ -1916,6 +1916,7 @@ export class FFastApp {
         } else this._tourSignal(kw.action === 'heat' ? 'practice-heated' : 'practice-deleted', kw);
       });
       conn.on(IN.LIVE_RUN_UPDATE, (kw) => this._onLiveRunUpdate(kw));
+      conn.on(IN.SCORE_STARTED, (kw) => this._onScoreStarted(kw));
       conn.on(IN.LIVE_ATTRIBUTION_RESULT, (kw) => this._live().onResult(kw));
       conn.on(IN.LIVE_RUNS, (kw) => this._live().onRuns(kw));
       conn.on(IN.REFERENCE_MADE, (kw) => this._live().onReferenceMade(kw));
@@ -2188,7 +2189,42 @@ export class FFastApp {
       ? { id: 'dataset-freeze', label: 'Freeze', run: () => this._freezeSubset(fp), unavailable: why }
       : { id: `${kind}-delete`, label: 'Delete…', run: () => this._deleteObject(kind, fp), unavailable: why };
     const info = { id: `${kind}-info`, label: 'Info', run: () => this._showInfo(kind, fp) };
+    if (meta?.scored) return this._scoredRowActions(fp, info, rename, why);
     return [info, rename, { separator: true }, main];
+  }
+
+  /** A scored item's ⋯ menu (ADR 0093): never Freeze (its frames do not move) and no
+   * Delete: Remove hides it, and its scores stay saved. Continue scoring only while it
+   * is incomplete. */
+  _scoredRowActions(fp, info, rename, why) {
+    const items = [info, rename];
+    if (this._analysis?.liveRunOf(fp)?.state === 'cancelled') {
+      items.push({ id: 'dataset-continue-scoring', label: 'Continue scoring',
+        run: () => this._continueScoring(fp), unavailable: why });
+    }
+    items.push({ separator: true },
+      { id: 'dataset-remove-scored', label: 'Remove…', run: () => this._removeScoredItem(fp), unavailable: why });
+    return items;
+  }
+
+  /** Score the frames an incomplete scored item is missing. */
+  _continueScoring(fp) {
+    if (this._needsControl()) return;
+    this._scoreWanted = this._analysis?.liveRunOf(fp)?.run_id ?? null;
+    this._conn.send(OUT.CONTINUE_SCORING, { fingerprint: fp });
+  }
+
+  /** Hide a scored item, once confirmed. Its analysis stays on disk. */
+  async _removeScoredItem(fp) {
+    const name = this._datasets.get(fp)?.name || fp.slice(0, 8);
+    const answer = await askDialog({
+      title: 'Remove scored item',
+      message: `Hide ${name}? Its scores stay saved and come back if you score again with the same settings.`,
+      buttons: ['Cancel', 'Remove'], danger: 'Remove',
+    });
+    if (answer !== 'Remove' || this._needsControl()) return;
+    this._deleting.add(fp);
+    this._conn.send(OUT.DELETE_OBJECT, { fingerprint: fp });
   }
 
   /** The Info dialog: what a dataset or prediction is, from the metadata this window holds. */
@@ -2979,6 +3015,7 @@ export class FFastApp {
       if (kw.error) this._setStatus(`Live run: ${kw.error}`, 'error');
       return;
     }
+    if (kw.kind === 'scored') { this._onScoredUpdate(kw); return; }
     this._live()._rwf?.onLocalUpdate(kw);
     const previous = this._practiceRun;
     const practice = kw.run_id === this._practiceId;
@@ -3020,6 +3057,33 @@ export class FFastApp {
     this._selectTab(tabId);
     this._live()._rwf?.onLocalFrame(kw);
     if (practice) this._tourSignal('live-first-frame', { run_id: kw.run_id });
+  }
+
+  /** A scored item's state and scores (ADR 0093). Its tab opens once, when the item
+   * this window asked for first has frames and a tab. Nothing of a live run's own
+   * (practice runs, Run with FFAST, stop) applies. */
+  _onScoredUpdate(kw) {
+    this._analysis.setLiveRun(kw);
+    this._independent.followLiveFrames();
+    this._live().sync();
+    this._openScoredTab(kw);
+  }
+
+  /** Open the tab of the scored item this window asked for, once it has frames and a tab. */
+  _openScoredTab(kw) {
+    const tabId = kw.tab && this._analysis.liveTabId(kw.tab);
+    if (this._scoreWanted !== kw.run_id || !kw.fingerprint || !tabId) return;
+    this._scoreWanted = null;
+    this._selectTab(tabId);
+  }
+
+  /** The answer to Score / Continue scoring: open the item's tab (now, or when its
+   * first update arrives), or say why nothing started. */
+  _onScoreStarted(kw) {
+    if (kw.error) { this._setStatus(`Scoring: ${kw.error}`, 'error'); return; }
+    this._scoreWanted = kw.item_id;
+    const known = this._analysis.liveRunOf(kw.fingerprint);
+    if (known) this._openScoredTab(known);
   }
 
   _showInMainView(fp, frame = null) {

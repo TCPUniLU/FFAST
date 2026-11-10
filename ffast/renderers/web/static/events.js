@@ -89,6 +89,10 @@ export const OUT = Object.freeze({
   SUBMIT_JOB: 'SUBMIT_JOB',
   WATCH_JOB: 'WATCH_JOB',
   SCAN_RUN_FOLDER: 'SCAN_RUN_FOLDER',
+  // Score a loaded dataset against a reference (ADR 0093)
+  SCORE_DIALOG_INFO: 'SCORE_DIALOG_INFO',
+  SCORE_DATASET: 'SCORE_DATASET',
+  CONTINUE_SCORING: 'CONTINUE_SCORING',
 });
 
 /** Server → client notifications and one-shot announcements. */
@@ -118,6 +122,9 @@ export const IN = Object.freeze({
   PRACTICE_INPUT_PREPARED: 'PRACTICE_INPUT_PREPARED',
   PRACTICE_RUN_STARTED: 'PRACTICE_RUN_STARTED',
   PRACTICE_RUN_RESULT: 'PRACTICE_RUN_RESULT',
+  // The answers to SCORE_DIALOG_INFO and to SCORE_DATASET / CONTINUE_SCORING (ADR 0093)
+  SCORE_DIALOG_INFO_RESULT: 'SCORE_DIALOG_INFO_RESULT',
+  SCORE_STARTED: 'SCORE_STARTED',
   // The answer to MAKE_REFERENCE (ADR 0086)
   REFERENCE_MADE: 'REFERENCE_MADE',
   // "Run with FFAST" answers and the followed job's state (ADR 0086)

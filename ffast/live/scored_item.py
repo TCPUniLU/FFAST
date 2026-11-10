@@ -68,6 +68,11 @@ class ScoredItemDataset(DatasetView):
     def getFingerprint(self):
         return SCORED_PREFIX + self.item_id
 
+    def onDelete(self):
+        super().onDelete()
+        if self.analysis_source is not None:
+            self.analysis_source.closed()
+
     def updatePath(self):
         self.path = self._item_name
 
@@ -194,21 +199,27 @@ class ScoredItem(AnalysisReader):
         self._last_sent = time.monotonic()
         self.broadcast(self.message())
 
-    async def follow(self, poll_s: float = POLL_S) -> None:
-        """Read new scores until the dataset is closed; then hide the item (its
-        scores stay on disk, and scoring again with the same settings brings it back)."""
+    def closed(self) -> None:
+        """The item's dataset was deleted. Removing the item hides it (its scores stay
+        on disk, and scoring again with the same settings brings it back). Deleting the
+        scored dataset deletes its items too, but does not hide them: the same file
+        loaded again brings them back."""
         from ffast.live.live_run import _tabs_changed
+        from ffast.metrics import run_values
 
+        if not getattr(self.dataset.parent, "deleted", False):
+            si.set_hidden(self.folder, True)
+        if self.env.scored_items.pop(self.run_id, None) is not None:
+            logger.info("scored item %s: dataset closed", self.run_id)
+            _tabs_changed(self.env)
+            run_values.sync(self.env)
+
+    async def follow(self, poll_s: float = POLL_S) -> None:
+        """Read new scores until the dataset is closed."""
         while True:
             got = await asyncio.to_thread(self.read_files)
             if self.registered and self.env.datasets.get(self.fingerprint) is not self.dataset:
-                logger.info("scored item %s: dataset closed, hidden", self.run_id)
-                si.set_hidden(self.folder, True)
-                self.env.scored_items.pop(self.run_id, None)
-                _tabs_changed(self.env)
-                from ffast.metrics import run_values
-
-                run_values.sync(self.env)
+                self.closed()
                 return
             if self.apply(got) or time.monotonic() - self._last_sent > RESEND_S:
                 self.announce()

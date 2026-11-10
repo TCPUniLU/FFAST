@@ -43,7 +43,7 @@ import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState, loadLayout, saveLayout } from './layout_state.js';
 import {
   liveEventLine, liveNoScoreMessage, liveRunRow, liveRunProblem, liveRunRuleText, liveRunSeries,
-  liveRunThreshold, liveRunsEvents, liveRunsOverlays, sameRunUpdate, tonedText,
+  liveRunThreshold, liveRunsEvents, liveRunsOverlays, liveScoredRow, sameRunUpdate, tonedText,
 } from './live_run.js';
 
 /** Two columns of the smallest plot, and the gap between cells, in px (the grid gap in index.html). */
@@ -465,6 +465,14 @@ export class AnalysisManager {
     if (token !== this._renderToken || seq !== card.seq) return;
     // No caption: each run's state is in the Run card, its warnings in Events.
     // Only a plain dataset ticked here says why it has no curve.
+    // A frame the reference could not score is a gap in the curve; say why, in its words.
+    for (const { kw } of scored) {
+      const gaps = Object.entries(kw.refused_frames || {});
+      if (!gaps.length) continue;
+      const [frame, why] = gaps[0];
+      notes.push(`${scored.length > 1 ? `${nameOf(kw)}: ` : ''}${gaps.length} ${gaps.length === 1 ? 'frame' : 'frames'} `
+        + `not scored (gaps in the curve). Frame ${frame}: ${why}`);
+    }
     card.captionEl.hidden = !notes.length;
     card.captionText.textContent = notes.join('\n');
   }
@@ -476,8 +484,10 @@ export class AnalysisManager {
   _drawLiveStatus(spec, card, ready) {
     const named = ready.length > 1;
     const now = Date.now();
-    const kws = ready.map((r) => r.kw);
-    this._liveStatusTitle(card, kws);
+    const all = ready.map((r) => r.kw);
+    const kws = all.filter((kw) => kw.kind !== 'scored');
+    const items = all.filter((kw) => kw.kind === 'scored');
+    this._liveStatusTitle(card, all);
 
     const table = document.createElement('table');
     table.className = 'panel-table live-status-table';
@@ -521,8 +531,9 @@ export class AnalysisManager {
       if (box) tick.appendChild(box);
       else { tick.textContent = '—'; tick.classList.add('muted'); }
     }
-    const parts = [table];
-    for (const kw of kws) {
+    const parts = kws.length ? [table] : [];
+    if (items.length) parts.push(this._scoredStatusTable(items));
+    for (const kw of all) {
       const problem = liveRunProblem(kw);
       if (!problem) continue;
       const p = document.createElement('div');
@@ -533,6 +544,29 @@ export class AnalysisManager {
     }
     if (card.ruleNote) parts.push(card.ruleNote);
     card.body.replaceChildren(...parts);
+  }
+
+  /** The scored items' rows (ADR 0093): where each was scored from, how far, its state.
+   * No stop controls and no atom-order or scorer columns: nothing runs. */
+  _scoredStatusTable(items) {
+    const table = document.createElement('table');
+    table.className = 'panel-table live-status-table live-scored-table';
+    const head = table.createTHead().insertRow();
+    for (const text of ['Scored item', 'Scored', 'State']) {
+      const th = document.createElement('th');
+      th.textContent = text;
+      head.appendChild(th);
+    }
+    const body = table.createTBody();
+    for (const kw of items) {
+      const row = liveScoredRow(kw, this._nameOf('datasets', kw.parent));
+      const tr = body.insertRow();
+      tr.dataset.runId = kw.run_id;
+      this._liveCell(tr, { text: row.name, tone: '' }, 'cell-name');
+      this._liveCell(tr, row.scored);
+      this._liveCell(tr, row.state, 'live-state');
+    }
+    return table;
   }
 
   /** A table cell; trouble gets its colour and the warning icon, never colour alone. */
@@ -583,7 +617,7 @@ export class AnalysisManager {
   /** A run's "Stop on alarm" tick box; null once the run ended. "Stop now…"
    * is in the Live Runs dialog only (ADR 0089). */
   _liveStopOnAlarm(kw) {
-    if (kw.end || !this._onLive) return null;
+    if (kw.end || kw.kind === 'scored' || !this._onLive) return null;
     const tick = document.createElement('input');
     tick.type = 'checkbox';
     tick.className = 'live-stop-on-alarm';

@@ -1020,7 +1020,7 @@ async def test_the_helpers_that_merge_several_runs(static_origin):
     assert got["twoTicks"] == [["aspirin_nvt: marked", 0, [100], 0], ["aspirin_nvt: chemistry flag", 1, [], 0],
                                ["other: marked", 2, [0], 1], ["other: chemistry flag", 3, [], 1]]
     assert got["events"] == [["other", "b1"], ["aspirin_nvt", "a1"]]    # by time, oldest first
-    assert got["msg"] == "No score for ethanol: only live runs have scores for now."
+    assert got["msg"] == "No score for ethanol: only live runs and scored items have scores. Score it from its ⋯ menu."
 
 
 async def test_web_a_live_tab_draws_the_runs_ticked_in_its_selector(tmp_path):
