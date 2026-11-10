@@ -169,6 +169,7 @@ class ServerSession:
             StartPracticeRunRequest, LiveStopRequest, LiveSetStopOnAlarmRequest, LiveAttributionRequest,
             ForgetLiveRunRequest, MakeReferenceRequest, RunWithFfastRequest, WriteRunWithFfastRequest,
             SubmitJobRequest, WatchJobRequest, ScanRunFolderRequest,
+            ScoreDialogInfoRequest, ScoreDatasetRequest, ContinueScoringRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
@@ -227,6 +228,12 @@ class ServerSession:
                                                        LiveAttributionRequest),
             control.LIST_LIVE_RUNS:             _Route(self._on_list_live_runs, [], EmptyRequest),
             control.FORGET_LIVE_RUN:            _Route(self._on_forget_live_run, ["run_id"], ForgetLiveRunRequest),
+            control.SCORE_DIALOG_INFO:           _Route(self._on_score_dialog_info, ["fingerprint"],
+                                                       ScoreDialogInfoRequest),
+            control.SCORE_DATASET:              _Route(self._on_score_dataset, ["fingerprint", "bundle", "?frame_dt_fs", "?persist_ps"],
+                                                       ScoreDatasetRequest),
+            control.CONTINUE_SCORING:           _Route(self._on_continue_scoring, ["fingerprint"],
+                                                       ContinueScoringRequest),
             control.MAKE_REFERENCE:             _Route(self._on_make_reference, ["train", "valid", "name", "folder"],
                                                        MakeReferenceRequest),
             control.PREPARE_RUN_WITH_FFAST:     _Route(self._on_prepare_run_with_ffast, ["input", "?job", "bundle"],
@@ -1024,6 +1031,102 @@ class ServerSession:
         except (ValueError, OSError) as exc:
             out = {"run_id": run_id, "frame": frame, "error": str(exc)}
         await self._emit(pack(control.LIVE_ATTRIBUTION_RESULT, (), out))
+
+    # ── scoring any dataset (ADR 0093) ──────────────────────────────────────
+    async def _on_score_dialog_info(self, fingerprint, **kwargs) -> None:
+        """What the Score dialog needs: the recorded references, whether DetectAna is
+        there, the time between frames the file suggests, a refusal, the items made
+        already. To this window only."""
+        from ffast.live import scored_items as si
+        from ffast.protocol.rpc import pack
+
+        dataset = self.env.datasets.get(fingerprint)
+        if dataset is None:
+            out = {"fingerprint": fingerprint, "error": f"dataset {fingerprint!r} is not loaded"}
+        else:
+            try:
+                out = await asyncio.to_thread(si.dialog_info, dataset)
+            except Exception as exc:
+                logger.warning("SCORE_DIALOG_INFO %r: %s", fingerprint, exc)
+                out = {"fingerprint": fingerprint, "error": f"{type(exc).__name__}: {exc}"}
+        await self._emit(pack(control.SCORE_DIALOG_INFO_RESULT, (), out))
+
+    async def _on_score_dataset(self, fingerprint, bundle, frame_dt_fs=None, persist_ps=None, **kwargs) -> None:
+        """Score a loaded dataset with a reference. The scored item appears under the
+        dataset at once and fills in as frames are scored (a task, cancellable). The
+        same key as an item made before opens it again, and scores only what is missing."""
+        import os
+        from pathlib import Path
+
+        from ffast.live import scored_items as si
+        from ffast.live.detectana_api import DetectAnaMissing, require_detectana
+        from ffast.live.scored_item import open_scored_item
+        from ffast.protocol.rpc import pack
+
+        dataset = self.env.datasets.get(fingerprint)
+        try:
+            if dataset is None:
+                raise ValueError(f"dataset {fingerprint!r} is not loaded")
+            require_detectana()
+            bundle_dir = Path(os.path.expanduser(bundle))
+            settings = si.make_settings(None if frame_dt_fs is None else frame_dt_fs / 1000.0, persist_ps)
+            iid, folder, existed = await asyncio.to_thread(si.prepare_item, dataset, bundle_dir, settings)
+            scored = open_scored_item(self.env, folder, dataset, self._broadcast)
+            state = (si.read_item(folder) or {}).get("state")
+            started = not existed or state != "done"
+            if started:
+                self._start_scoring(dataset, folder, iid)
+            out = {"item_id": iid, "fingerprint": scored.fingerprint, "started": started}
+        except (ValueError, OSError, DetectAnaMissing) as exc:
+            logger.warning("SCORE_DATASET %r: %s", fingerprint, exc)
+            out = {"error": str(exc)}
+        await self._emit(pack(control.SCORE_STARTED, (), out))
+
+    async def _on_continue_scoring(self, fingerprint, **kwargs) -> None:
+        """Score the frames an incomplete scored item is missing."""
+        from ffast.live import scored_items as si
+        from ffast.live.scored_item import SCORED_PREFIX
+        from ffast.protocol.rpc import pack
+
+        scored = (getattr(self.env, "scored_items", None) or {}).get(fingerprint.removeprefix(SCORED_PREFIX))
+        if scored is None:
+            out = {"error": f"scored item {fingerprint!r} is not open"}
+        else:
+            self._start_scoring(scored.dataset.parent, scored.folder, scored.run_id)
+            out = {"item_id": scored.run_id, "fingerprint": scored.fingerprint, "started": True}
+        await self._emit(pack(control.SCORE_STARTED, (), out))
+
+    def _start_scoring(self, parent, folder, iid) -> None:
+        """Run ``score_dataset`` for the item in ``folder`` as a visible, cancellable task."""
+        from ffast.live import scored_items as si
+        from ffast.live import run_folder as rf
+        from ffast.protocol.rpc import pack
+
+        loop = asyncio.get_running_loop()
+        item = si.read_item(folder) or {}
+        env = self.env
+
+        def work(taskID=None):
+            def stopped():
+                info = env.getTask(taskID)
+                return info is None or info["task"].cancelling() > 0 or info["task"].cancelled()
+
+            def progress(done, total):
+                data = pack("TASK_PROGRESS", [taskID], {
+                    "message": f"Scoring: {done} of {total} frames",
+                    "progress": done / total if total else 1.0, "error": False})
+                loop.call_soon_threadsafe(self._broadcast, data)
+
+            try:
+                si.score_dataset(parent, item["bundle"], item["settings"], stopped=stopped, progress=progress)
+            except Exception as exc:
+                text = f"{type(exc).__name__}: {exc}"
+                si.write_item_json(folder, state="failed", reason=text)
+                rf.append_event(folder, "failed", reason=text)
+                raise
+
+        env.newTask(work, visual=True, name=f"Scoring {parent.getName()}", threaded=True,
+                    taskKey=f"score:{iid}")
 
     async def _on_list_live_runs(self, **kwargs) -> None:
         """The "Live runs" list (ADR 0087): every run the wrapper started on

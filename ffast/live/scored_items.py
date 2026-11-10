@@ -246,6 +246,24 @@ def score_dataset(
     return folder
 
 
+def prepare_item(dataset, bundle_dir, settings: dict, *, environ=None, name: str | None = None):
+    """Make (or find) the item folder for this key, un-hidden, before scoring starts, so
+    the item can appear at once. Returns ``(item id, folder, existed)``."""
+    bundle_dir = Path(bundle_dir)
+    fp = dataset.getFingerprint()
+    iid = item_id(fp, bundle_dir, settings)
+    folder = item_dir(iid, environ)
+    old = rf.read_json(folder / ITEM)
+    folder.mkdir(parents=True, exist_ok=True)
+    if old:
+        write_item_json(folder, hidden=False)
+    else:
+        write_item_json(folder, item_id=iid, parent=fp, parent_name=name or dataset.getName(),
+                        bundle=str(bundle_dir), settings=settings, state="scoring", hidden=False,
+                        created_utc=rf.utc_now())
+    return iid, folder, bool(old)
+
+
 def read_item(folder: Path) -> dict | None:
     return rf.read_json(Path(folder) / ITEM)
 
@@ -263,3 +281,33 @@ def find_items(parent_fp: str, environ=None) -> list[Path]:
 
 def set_hidden(folder: Path, hidden: bool) -> None:
     write_item_json(Path(folder), hidden=bool(hidden))
+
+
+def all_items(parent_fp: str, environ=None) -> list[dict]:
+    """Every item made for this parent, hidden ones included: what the dialog compares with."""
+    d = analyses_dir(environ)
+    out = []
+    for p in sorted(d.iterdir()) if d.is_dir() else []:
+        item = read_item(p)
+        if item and item.get("parent") == parent_fp:
+            out.append({"item_id": item.get("item_id"), "bundle": item.get("bundle"),
+                        "settings": item.get("settings"), "state": item.get("state"),
+                        "hidden": bool(item.get("hidden"))})
+    return out
+
+
+def dialog_info(dataset, environ=None) -> dict:
+    """What the Score dialog shows about ``dataset`` (reads only)."""
+    from ffast.live import references
+    from ffast.live.detectana_api import DetectAnaMissing, require_detectana
+
+    try:
+        require_detectana()
+        missing = None
+    except DetectAnaMissing as exc:
+        missing = str(exc)
+    fp = dataset.getFingerprint()
+    return {"fingerprint": fp, "name": dataset.getName(), "n_frames": int(dataset.getN()),
+            "references": references.recorded(), "detectana": missing,
+            "frame_dt_fs": suggest_frame_dt_fs(dataset), "refusal": check_dataset(dataset),
+            "persist_ps": DEFAULT_PERSIST_PS, "existing": all_items(fp, environ)}

@@ -28,7 +28,7 @@ from ffast.loaders.dataset import DatasetView
 logger = logging.getLogger("FFAST")
 
 SCORED_PREFIX = LIVE_PREFIX + "scored-"
-SHOWN_EVENTS = ("scoring_start", "scoring_done", "scoring_cancelled", "warning", "refused", "alarm")
+SHOWN_EVENTS = ("scoring_start", "scoring_done", "scoring_cancelled", "warning", "refused", "failed", "alarm")
 EVENTS_KEPT = 200
 
 
@@ -247,3 +247,15 @@ def open_scored_item(env, folder: Path, parent, broadcast) -> ScoredItem:
     scored.announce()
     scored.task = asyncio.ensure_future(scored.follow())
     return scored
+
+
+def reopen_scored_items(env, parent, broadcast) -> list[ScoredItem]:
+    """Bring back the scored items saved for ``parent`` (not hidden), after the same
+    file is loaded again (Decided 10). Runs on the server's event loop."""
+    out = []
+    for folder in si.find_items(parent.getFingerprint()):
+        try:
+            out.append(open_scored_item(env, folder, parent, broadcast))
+        except Exception as exc:    # a damaged item folder must not stop the load
+            logger.warning("scored item %s could not be reopened: %s", folder.name, exc)
+    return out

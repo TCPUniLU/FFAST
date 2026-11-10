@@ -451,6 +451,36 @@ class ForgetLiveRunRequest(BaseModel):
     run_id: str
 
 
+class ScoreDialogInfoRequest(BaseModel):
+    """Typed payload for ``SCORE_DIALOG_INFO``: what the "Score against
+    reference" dialog needs to know about one loaded dataset."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+
+
+class ScoreDatasetRequest(BaseModel):
+    """Typed payload for ``SCORE_DATASET``: score a loaded dataset (or a live
+    run's frames so far) with the bundle folder ``bundle``. ``frame_dt_fs`` is the
+    time between frames in femtoseconds, or None when the file gives none."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+    bundle: str = Field(min_length=1)
+    frame_dt_fs: float | None = Field(default=None, gt=0)
+    persist_ps: float | None = Field(default=None, gt=0)    # None: the default, 5 ps
+
+
+class ContinueScoringRequest(BaseModel):
+    """Typed payload for ``CONTINUE_SCORING``: the fingerprint of an incomplete scored item."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+
+
 class MakeReferenceRequest(BaseModel):
     """Typed payload for ``MAKE_REFERENCE``: training and validation datasets
     (fingerprints of loaded datasets) and where the bundle goes

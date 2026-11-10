@@ -775,6 +775,20 @@ async def _main(
             logger.warning("REMOTE_DATASET_META error: %s", exc)
 
     env.eventSubscribe("DATASET_LOADED", _on_dataset_loaded_meta)
+
+    # The same file loaded again brings its saved scored items back (ADR 0093). Views and
+    # live runs are not scored files; loads can come from a worker thread.
+    _loop = asyncio.get_running_loop()
+
+    def _reopen_scored_items(fingerprint):
+        dataset = env.datasets.get(fingerprint)
+        if dataset is None or getattr(dataset, "isSubDataset", False) or str(fingerprint).startswith("live:"):
+            return
+        from ffast.live.scored_item import reopen_scored_items
+
+        _loop.call_soon_threadsafe(reopen_scored_items, env, dataset, hub.broadcast)
+
+    env.eventSubscribe("DATASET_LOADED", _reopen_scored_items)
     # A subset that follows a plot's zoom changes its frames, and unticking
     # SUB hides it: announce it again so every window sees the change.
     env.eventSubscribe("SUBDATASET_INDICES_CHANGED", _on_dataset_loaded_meta)
