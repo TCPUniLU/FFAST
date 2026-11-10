@@ -251,6 +251,44 @@ Select several runs to compare them; **Same step in all 3D panels** uses the
 nearest simulation step. **Pause** freezes a tab's plots and frame ranges while
 Run and Events update. The simulation, scorer and automatic stopping continue.
 
+## Scoring any trajectory
+
+A trajectory from another program (i-PI, ASE, CP2K, a converted LAMMPS run) can
+be scored too. Load it, open the dataset's **⋯** menu and choose **Score against
+reference…**. A live run can be scored the same way, from the frames read so far.
+
+The dialog asks for:
+
+- **Reference:** a recorded one, or a `.bundle` folder chosen with **Browse…**.
+- **Time between frames (fs):** filled in from the file's `time` field when every
+  frame has one and the steps are equal. extxyz has no standard time unit, so FFAST
+  takes it as femtoseconds: check it. Leave it empty if the file has no time:
+  frames are then marked, but no alarm is raised.
+- **Persistence (ps):** as for a live run, 5 ps by default.
+
+The result is a **scored item**: a new entry under the dataset in the list. It
+fills in frame by frame, opens a **Scores** tab like a live run's, and works like a
+run in that tab: score timeline, events, alarms, attribution, and comparison by
+ticking two items (for example, the same file with two persistence values). Nothing
+is stopped and there are no Stop controls. Energies, forces and errors of the item
+are the dataset's own and are not computed twice.
+
+Limits:
+
+- The reference decides which frames it can score (it is asked about every frame).
+  A frame it refuses is a gap in the curve, with the reference's own words under the
+  plot. If it can score no frame, the item says so.
+- A file with a unit cell is refused: FFAST does not score periodic systems yet.
+- The order of atoms in a file cannot be proven. A first frame that fails the bond
+  check refuses the item.
+- Alarms need a time between frames.
+
+Scores are saved in `~/.ffast/analyses/` (set `FFAST_ANALYSES` to move them), by the
+file's content, the reference and the settings. Load the same file in a later
+session and its scored items come back. **Cancel** keeps the frames scored so far;
+the item's menu then offers **Continue scoring**. **Remove…** hides an item; its
+scores stay saved and come back if you score again with the same settings.
+
 ## Stopping a run
 
 **Stop on alarm** is off by default; change it in the Run panel. For a manual
