@@ -27,6 +27,8 @@ export class View {
     this.frame = 0;              // its frame, as last set or reported
     this.openedPair = '';        // `dataset|prediction` of its last OPEN_VIEW; '' = not open
     this.framed = false;         // its first snapshot fitted the atoms
+    this.localCamera = null;    // latest camera, ahead of any in-flight snapshots
+    this.trackingCenter = null; // last atom centroid, for following motion
     this.frameOnSnapshot = null; // a frame to show once its next snapshot is in
     this.cameraThrottle = null;  // pending SET_CAMERA timer
     this.cameraSend = null;      // and the send it will make

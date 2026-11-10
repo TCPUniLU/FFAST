@@ -5136,6 +5136,125 @@ async def test_web_a_3d_view_shows_one_panel_letter_however_often_the_layout_is_
             await browser.close()
 
 
+async def test_web_late_initial_snapshot_keeps_the_fitted_camera(ffast_web_server):
+    """A second OPEN_VIEW can return the default camera after the first fit."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    ws = await _connect_headless_client(ws_port)
+    try:
+        path = REPO_ROOT / "examples/data/fixed-sized molecular/md22_stachyose_sampled.xyz"
+        await ws.send(pack("LOAD_DATASET", (str(path), "ase (auto)"), {}))
+        dataset_fp = (await _wait_for_event(ws, "REMOTE_DATASET_META"))["args"][0]
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            # Replay the first response immediately after its fit, as happens
+            # when another OPEN_VIEW was already in flight with the old camera.
+            await page.add_init_script("""(() => {
+              let app;
+              Object.defineProperty(window, 'ffastApp', {
+                configurable: true, get: () => app,
+                set: (value) => {
+                  app = value;
+                  const receive = app._onSceneSnapshot.bind(app);
+                  app._onSceneSnapshot = (kw) => {
+                    receive(kw);
+                    if (!window.cameraRace && kw.scene?.atoms?.positions?.length) {
+                      const before = app.renderer._exportCamera();
+                      receive(kw);
+                      window.cameraRace = { before, after: app.renderer._exportCamera() };
+                      window.staleCameraScene = kw;
+                    }
+                  };
+                },
+              });
+            })();""")
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            race = await page.evaluate("() => window.cameraRace")
+            assert race is not None
+            assert race["before"]["distance"] > 20
+            assert race["after"]["distance"] == pytest.approx(race["before"]["distance"], rel=0.01)
+            assert race["after"]["center"] == pytest.approx(race["before"]["center"], abs=0.01)
+            manual = await page.evaluate("""() => {
+              const app = window.ffastApp;
+              app.renderer.setCameraAngles({azimuth: 70, elevation: 25});
+              const before = app.renderer._exportCamera();
+              app._onSceneSnapshot(window.staleCameraScene);
+              return {before, after: app.renderer._exportCamera()};
+            }""")
+            assert manual["after"]["azimuth"] == pytest.approx(manual["before"]["azimuth"], abs=0.5)
+            assert manual["after"]["elevation"] == pytest.approx(manual["before"]["elevation"], abs=0.5)
+        finally:
+            await browser.close()
+
+
+async def test_web_initial_camera_matches_reset_and_tracks_motion(ffast_web_server, tmp_path):
+    """The initial fit is the reset fit, and tracking follows later motion."""
+    ws_port, web_port = ffast_web_server
+    source = REPO_ROOT / "examples/data/fixed-sized molecular/md22_stachyose_sampled.xyz"
+    atoms = ase.io.read(source, index=0)
+    atoms.calc = None
+    moved = atoms.copy()
+    moved.translate([2.0, -1.0, 0.5])
+    path = tmp_path / "moving-molecule.xyz"
+    ase.io.write(path, [atoms, moved], format="extxyz")
+    await _wait_for_server_ready(ws_port)
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("LOAD_DATASET", (str(path), "ase (auto)"), {}))
+        dataset_fp = (await _wait_for_event(ws, "REMOTE_DATASET_META"))["args"][0]
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            initial = await page.evaluate("() => window.ffastApp.renderer._exportCamera()")
+            await page.locator("#reset-camera-btn").click()
+            reset = await page.evaluate("() => window.ffastApp.renderer._exportCamera()")
+            assert initial["center"] == pytest.approx(reset["center"], abs=0.01)
+            assert initial["distance"] == pytest.approx(reset["distance"], rel=0.01)
+
+            await page.locator("#next-frame-btn").click()
+            await expect(page.locator("#frame-label")).to_have_text("1 / 1")
+            await page.wait_for_function("""x =>
+              Math.abs(window.ffastApp.renderer._cachedAtomPositions[0][0] - x) < 0.001
+            """, arg=float(atoms.positions[0, 0] + 2))
+            following = await page.evaluate("() => window.ffastApp.renderer._exportCamera()")
+            expected_center = [reset["center"][i] + d for i, d in enumerate([2.0, -1.0, 0.5])]
+            assert following["center"] == pytest.approx(expected_center, abs=0.01)
+            assert following["distance"] == pytest.approx(reset["distance"], rel=0.01)
+
+            await _open_section(page, "Camera")
+            tracking = page.locator(".pane[data-pane='Camera'] .ctl-row[data-label='Origin COM'] input")
+            await tracking.uncheck()
+            await page.locator("#prev-frame-btn").click()
+            await page.wait_for_function("""x =>
+              Math.abs(window.ffastApp.renderer._cachedAtomPositions[0][0] - x) < 0.001
+            """, arg=float(atoms.positions[0, 0]))
+            held = await page.evaluate("() => window.ffastApp.renderer._exportCamera()")
+            assert held["center"] == pytest.approx(following["center"], abs=0.01)
+
+            await tracking.check()
+            await page.locator("#next-frame-btn").click()
+            await page.wait_for_function("""x =>
+              Math.abs(window.ffastApp.renderer._cachedAtomPositions[0][0] - x) < 0.001
+            """, arg=float(atoms.positions[0, 0] + 2))
+            resumed = await page.evaluate("() => window.ffastApp.renderer._exportCamera()")
+            expected_center = [held["center"][i] + d for i, d in enumerate([2.0, -1.0, 0.5])]
+            assert resumed["center"] == pytest.approx(expected_center, abs=0.01)
+        finally:
+            await browser.close()
+
+
 async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(shared_dataset_server):
     """The first time a dataset's view opens, every atom is in view. After
     that the camera is the user's: switching tabs and back keeps it (457dcaa)."""

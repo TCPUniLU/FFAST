@@ -202,6 +202,7 @@ export class IndependentPanels {
     view.frame = null;
     view.followingLive = null;
     view.framed = false;
+    view.trackingCenter = null;
     view.renderers.clear();
     this.syncCaption(view);
   }

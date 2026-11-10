@@ -2517,7 +2517,13 @@ export class FFastApp {
     view.sync(scene.version);
     // A main view the user has moved on from is not drawn.
     if (view !== this._main.current) return;
-    this._mainView.applyScene(scene);
+    // OPEN_VIEW replies can already be in flight when the first fit or a
+    // camera movement is sent. Keep this view's latest local camera rather
+    // than letting an older snapshot undo it. Cameras belong to each view, so
+    // switching datasets still restores the camera last used for that dataset.
+    const currentScene = view.framed && view.localCamera
+      ? { ...scene, camera: view.localCamera } : scene;
+    this._mainView.applyScene(currentScene);
     // Fit the atoms only on a view's first snapshot. Later snapshots (a tab
     // switch reopens the view) carry the camera the user left, which the
     // server keeps via SET_CAMERA (457dcaa); fitting again would discard it.
@@ -3220,15 +3226,20 @@ export class FFastApp {
     this._panes.camera.setCOM(enabled);
   }
 
-  /** Origin-COM tracking (issue 04): recentre the camera on the atoms'
-   * centroid as frames advance, preserving azimuth/elevation/distance. */
+  /** Follow the atoms' centroid as frames advance, preserving the camera's
+   * offset from it. This keeps the initial and reset framing intact. */
   _trackCameraCOM(positions, view) {
     if (!positions || positions.length === 0 || !view) return;
-    if (!(view.settings?.view.originCenterOfMass ?? true)) return;
     const n = positions.length;
     const sum = [0, 0, 0];
     for (const [x, y, z] of positions) { sum[0] += x; sum[1] += y; sum[2] += z; }
-    view.renderers.shown?.recenterTo([sum[0] / n, sum[1] / n, sum[2] / n]);
+    const centroid = sum.map((v) => v / n);
+    const previous = view.trackingCenter;
+    view.trackingCenter = centroid;
+    const renderer = view.renderers.shown;
+    if (!previous || !renderer || !(view.settings?.view.originCenterOfMass ?? true)) return;
+    const center = renderer._exportCamera().center;
+    renderer.recenterTo(center.map((v, i) => v + centroid[i] - previous[i]));
   }
 
   /** Bonds "fill from dynamic" (issue 06): the wire only ships bond segments
@@ -3507,6 +3518,7 @@ export class FFastApp {
   /** Tell the server `view`'s camera, once it has stopped moving for 100 ms. */
   _sendSetCamera(view, cam) {
     if (!this._conn || !view?.isOpen) return;
+    view.localCamera = cam;
     clearTimeout(view.cameraThrottle);
     view.cameraSend = () => {
       view.cameraSend = null;
