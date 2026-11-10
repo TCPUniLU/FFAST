@@ -48,9 +48,7 @@ Sampling: every 100th source configuration starting at index 0, giving
 Reference, model prediction and control contain `energy` and `forces` in
 kcal/mol and kcal/(mol·Å). Their numerical values are unchanged from `dev`.
 
-Permission: redistribution permission obtained from the authors, confirmed by
-Anton Charkin-Gorbulin on 2026-11-07. This permission does not relicense the
-source dataset under FFAST's software licence. Retain this attribution.
+Used with the authors' permission.
 
 Reference: Chmiela et al., *Accurate global machine learning force fields for
 molecules with hundreds of atoms*, Science Advances 9, eadf0873 (2023).
@@ -123,8 +121,8 @@ converted or rescaled. The control values are unchanged; its file is renamed fro
 
 Licence: **MIT**, as stated on the original
 [Figshare record](https://doi.org/10.6084/m9.figshare.23713842), which also
-specifies eV for total energies and eV/Å for forces. The former CC BY summary
-was incorrect for this source record. Retain the attribution and MIT notice.
+specifies eV for total energies and eV/Å for forces. Retain the attribution and
+MIT notice.
 
 Attribution: Deng, Bowen (2023), *Materials Project Trajectory (MPtrj) Dataset*,
 Figshare. Scientific reference: Deng et al., *CHGNet as a pretrained universal
