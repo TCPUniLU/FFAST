@@ -13,7 +13,7 @@ split into a compute half and a display half, and the split is a network socket
 even when both halves are on the same machine.
 
 ```
-   desktop window or browser        WebSocket, msgpack           ffast-server
+   browser client                   WebSocket, msgpack           ffast-server
   ┌────────────────────────┐  ◄────────────────────────────►  ┌────────────────┐
   │ draws plots            │                                  │ Environment    │
   │ draws the 3D scene     │      scenes, metric arrays,       │ datasets       │
@@ -33,7 +33,7 @@ happens to be on loopback (ADR 0027).
 
 ## The pieces
 
-**`ffast/`** is the headless core, about 19k lines. It imports no Qt and no
+**`ffast/`** is the headless core, about 34k lines of Python. It imports no Qt and no
 OpenGL, so it runs on a compute node with no display. This is a hard rule with a
 test behind it (`tests/ffast/test_ffast_core_boundary.py`) and a CI job that
 installs without the GUI extra and checks the server still imports. The rule
@@ -59,28 +59,31 @@ Inside it:
   dataset that produced it, so restarting or reconnecting recomputes nothing.
 - `config/` holds the TOML schema and the built-in analysis tabs, which are
   themselves just TOML files.
+- `live/` watches LAMMPS runs: it reads the dump as it grows, scores frames
+  against a reference, and writes the job wrapper and include file (ADR 0086,
+  0087, 0091).
 - `cli/`, `loaders/`, `plugins/`, `session/`, `renderers/`, `io/`, `chemistry/`.
 
 **`server.py`** is the `ffast-server` entry point. It owns one `ServerSession`
 per connection with an explicit handler table, so you can read the whole protocol
 surface in one file.
 
-**The desktop client** (`UI/`, `client/`, `modules/loupe/`) is PySide6 plus
-vispy, reached as `ffast-qt`. It is the complete client: everything FFAST can do,
-it can do.
-
-**The browser client** is `ffast/renderers/web/static/`, roughly 5k lines of
-hand-written ES modules. No build step, no bundler, no npm. Three.js and Plotly
+**The browser client** is the main client, and `ffast` starts it (ADR 0090).
+It lives in `ffast/renderers/web/static/`, about 21k lines of hand-written ES
+modules. No build step, no bundler, no npm. Three.js and Plotly
 are vendored as files. You edit a `.js` and reload the tab, which was a
 deliberate trade: a scientific tool that needs a Node toolchain to change one
 line will not get changed.
 
-It exists because the native GL and Qt bundle failed to install on too many Linux
-setups, and a shared cluster login node is exactly where you cannot fix that
-(ADR 0045). It is younger than the desktop and does not cover everything yet.
-Because the server side and the protocol are already done, adding to it is
-mostly client work — which makes it the easiest place for someone new to
-contribute.
+It replaced the desktop client because the native GL and Qt bundle failed to
+install on too many Linux setups, and a shared cluster login node is exactly
+where you cannot fix that (ADR 0045). New features, including live LAMMPS runs
+and the guided tours, exist only here. Because the server side and the protocol
+are shared, adding to it is mostly client work.
+
+**The legacy desktop client** (`UI/`, `client/`, `modules/loupe/`) is PySide6
+plus vispy, reached as `ffast-qt` with the `gui` extra. It is being retired: it
+gets fixes, not features, and lacks the browser's newer tabs and live runs.
 
 **`cluster/`** submits a SLURM job, waits for it, opens an SSH tunnel to the
 compute node, and connects the same protocol to it. It will also install itself
@@ -95,8 +98,8 @@ Both grew out of the same observation: most requests for "a new plot" were the
 same five plots against different numbers.
 
 **Analysis tabs.** A tab is a grid of panels, a panel binds a metric to an axis,
-and both are TOML. The four tabs that ship (Basic Errors, Atomic Errors,
-Subsystem Errors, Gyration) are defined this way in `ffast/config/builtin_tabs/`,
+and both are TOML. The tabs that ship (3D, Basic Errors, Subsystem Errors,
+Atomic Errors, Gyration, Live run) are defined this way in `ffast/config/builtin_tabs/`,
 with no privileged status. Yours sit alongside them in a project `ffast.toml`.
 The server never learns what a plot is; it answers metric requests (ADR 0011,
 0021).
@@ -112,7 +115,7 @@ Honest notes, because the diagram above is tidier than the code.
 
 - Live inference from a trained model file works server-side (ADR 0030) but is
   rough. The path everyone actually uses is pre-computed predictions.
-- `client/` is down to three files and `datasetLoaders/`, `modelLoaders/` are
+- `client/` is down to four files and `datasetLoaders/`, `modelLoaders/` are
   empty directories kept for import compatibility. They are leftovers of the
   migration into `ffast/` and should go.
 - Plugin discovery still globs `modules/**/*.py`, which means a pip install
@@ -132,4 +135,4 @@ If you want to understand the codebase, read in this order:
    explain most of the analysis side.
 3. ADR 0010 and ADR 0016 for how a 3D scene crosses the socket.
 4. ADR 0026 and ADR 0047 for why `ffast/` looks the way it does.
-5. ADR 0045 for why there is a browser client at all.
+5. ADR 0045 and ADR 0090 for why the browser is the main client.
