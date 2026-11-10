@@ -125,6 +125,7 @@ things came up.
 - [0089](0089-live-tabs-are-ordinary-tabs-a-run-is-chosen-in-the-selector.md) Live tabs are ordinary tabs: panels read the runs ticked in the selector, pinned to their run, compare by step, Stop now only in the Live Runs dialog; scoring as a metric is the target (proposed)
 - [0091](0091-a-live-runs-scores-are-analysis-values-read-with-gaps-never-filled.md) A live run's scores are analysis values: metrics with gaps, never filled by the viewer; a tab can be paused (proposed)
 - [0092](0092-lammps-tutorials-use-practice-runs-that-wait-for-the-user.md) LAMMPS tutorials use practice runs that wait for the user: a replay tour and a run-your-own-LAMMPS tour; FFAST makes the edit, a "This computer" target, the run pauses before the heat (Phase A built; user hand-test pending; Phase B proposed)
+- [0093](0093-any-finished-trajectory-can-be-scored-against-a-reference.md) Any finished trajectory can be scored against a reference: "⋯" menu action, the reference decides per frame, each analysis a scored item compared like runs, stored by content + reference + settings; following a growing xyz file is planned (proposed)
 
 ## Environment structure
 

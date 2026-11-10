@@ -699,13 +699,15 @@ section exists so nobody goes looking for it.
   reused. Holds the dump, the analyses, `events.jsonl` and `run.json`.
 - **Run segment** — one continuous stretch of a live run; a restart starts a new
   segment in the same run history.
-- **Analysis** (of a live run) — the scores of one run against one reference
+- **Analysis** — the scores of one dataset or live run against one reference
   bundle with one set of settings, kept in its own folder. Two analyses of the
-  same frames coexist; the dataset fingerprint knows nothing about them. Today
-  the viewer shows one analysis per run: the one the run was started with. Only
-  that analysis can stop the run. In the data selector a run is listed among the
-  datasets; it has no second row to choose from yet.
-- **Analysis value** — one number per frame read from a live run's analysis,
+  same frames coexist; the dataset fingerprint knows nothing about them. A live
+  run's analysis is written while it runs; a finished dataset's is written once
+  when the user asks (ADR 0093). Today the viewer shows one analysis per run:
+  the one the run was started with. Only that analysis can stop the run. In the
+  data selector a run is listed among the datasets; it has no second row to
+  choose from yet.
+- **Analysis value** — one number per frame read from an analysis,
   such as one track's T² or the chemistry count of broken bonds. A frame the
   scorer has not scored has no value: a gap, never a value filled in by the
   viewer, because the plot must show what the alarm rule saw. Distinct from a
@@ -727,6 +729,13 @@ section exists so nobody goes looking for it.
   SPE score.
 - **Mark, alarm** — a mark is one scored frame above a threshold; an alarm needs
   the anomaly to persist (DetectAna's window rule). Only an alarm can stop a run.
+- **Persistence** — the length, as a simulated time, of the window the alarm
+  rule looks at (default 5 ps). Shorter: earlier alarms, more false ones.
+- **Scored item** — one analysis shown as its own item under the dataset or
+  live run it scores, named by dataset, reference and settings (ADR 0093). It
+  has its parent's frames and every other value of its parent; only its scores
+  are its own. Deleting it hides it; its analysis is kept.
+  Don't call it: a dataset, a subset (its frames are all of its parent's).
 - **Estimated onset, confirmation, stop observed** — where the persisting anomaly
   began, when the alarm fired, and the step at which LAMMPS actually stopped.
 - **Alarm report** — the small permanent record of why an alarm fired.
