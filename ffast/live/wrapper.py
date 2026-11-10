@@ -477,7 +477,9 @@ def main(argv=None):
             command,
             practice_gate=options.practice_gate,
             parent_pid=options.exit_with_parent,
-            practice_sleep=options.sleep if options.replay else None,
+            practice_sleep=(
+                options.sleep if options.practice_gate is not None else None
+            ),
         ).main()
     except (UsageError, ValueError, OSError) as exc:
         sys.stderr.write("%s\n" % exc)

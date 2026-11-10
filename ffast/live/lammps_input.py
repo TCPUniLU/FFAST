@@ -257,8 +257,16 @@ def _pair_coeff_order(commands: list[Command], elements: list[str]) -> tuple[Ref
     return None, Check("warn", "no `pair_coeff * * … <elements>` line: the element order of the force field is not checked")
 
 
-def plan_input(text: str, *, include_path: str, elements: list[str], data_file: str | None = None,
-               stop_on_alarm: bool = False, reset_after_dump_ok: bool = True) -> InputPlan:
+def plan_input(
+    text: str,
+    *,
+    include_path: str,
+    elements: list[str],
+    data_file: str | None = None,
+    stop_on_alarm: bool = False,
+    reset_after_dump_ok: bool = True,
+    snapshot: bool = False,
+) -> InputPlan:
     """Where the FFAST include goes in ``text``, or why it cannot go anywhere safely.
 
     ``data_file``: absolute path of a data file FFAST writes; the copy's
@@ -409,14 +417,19 @@ def plan_input(text: str, *, include_path: str, elements: list[str], data_file: 
         plan.include_after = inc.first - 1
         plan.checks.append(Check("ok", f"the input already includes the FFAST file (line {inc.first}); "
                                        "copied without a second include", inc.first))
-    elif first_min is not None:
+    elif first_min is not None or snapshot:
         plan.snapshot_after = anchor.last
         plan.insert.setdefault(anchor.last, []).extend(snapshot_lines(elements))
         plan.include_after = first_run.first - 1
         plan.insert.setdefault(first_run.first - 1, []).extend(include_lines(include_path, stop_on_alarm))
-        plan.checks.append(Check("ok", f"minimize first (line {first_min.first}): snapshot after line "
-                                       f"{anchor.last} ({anchor.name}), include before line {first_run.first} (run)",
-                                 first_run.first))
+        plan.checks.append(
+            Check(
+                "ok",
+                f"snapshot after line "
+                f"{anchor.last} ({anchor.name}), include before line {first_run.first} (run)",
+                first_run.first,
+            )
+        )
     else:
         plan.include_after = anchor.last
         plan.insert.setdefault(anchor.last, []).extend(include_lines(include_path, stop_on_alarm))

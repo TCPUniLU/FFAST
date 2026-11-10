@@ -138,7 +138,8 @@ export function buildTours(app) {
       steps.forceError, steps.readColours,
       steps.openBasic, steps.basicPlots, steps.clickPoint, steps.pickedFrame, steps.hints],
   };
-  return [firstSteps, loadingTour(app, { tabNamed, BASIC }), lammpsTour(app)];
+  const watch = lammpsTour(app);
+  return [firstSteps, loadingTour(app, { tabNamed, BASIC }), watch, ownLammpsTour(app, watch)];
 }
 
 /** The tour "Load a dataset and a prediction": two rounds of loading through
@@ -398,4 +399,85 @@ function lammpsTour(app) {
   return { id: 'watch-lammps', title: 'Watch a LAMMPS run', about: '13 steps', lammps: true,
     unavailable: () => app._needsControl(),
     onStart: () => { app._practiceId = null; app._practiceRun = null; }, steps };
+}
+
+/** Run the copied input through Run with FFAST and a real local LAMMPS. */
+function ownLammpsTour(app, watch) {
+  const run = () => app._practiceRun;
+  const dialog = () => app._live()._rwf;
+  const $ = (q) => document.querySelector(q);
+  const modal = () => $('#run-with-ffast-dialog');
+  const tab = () => $('#tabpanels .tabpanel.active');
+  const panel = (title) => tab()?.querySelector(`.analysis-panel[data-title="${title}"]`) ?? null;
+  const next = () => modal()?.querySelector('.rwf-go');
+  const send = (event, kw = {}) => app._conn?.send(event, kw, []);
+  const sameRun = (d) => d.run_id === app._practiceId;
+  const chooseDone = () => !!app._practiceInput && dialog()?.folder === app._practiceInput.folder;
+  const steps = [
+    { title: 'Open Run with FFAST', targets: ['#lammps-menu-btn', () => $('#lammps-menu-list:not([hidden])')], side: 'bottom',
+      body: () => app._practiceInput
+        ? `The tour copied the tutorial input to ${app._practiceInput.folder}. Open LAMMPS → Run with FFAST….`
+        : 'Preparing a working copy of the toy aspirin input. Then open LAMMPS → Run with FFAST….',
+      until: 'rwf-open', wait: 'Open LAMMPS → Run with FFAST…', done: () => !!modal() },
+    { title: 'Choose the run folder', targets: ['#rwf-folder'], side: 'bottom',
+      body: 'Pick the folder that holds the input. For this tour, the working copy is picked for you. Its input, data file and reference will be found when you choose This computer.',
+      until: 'rwf-chosen', accept: (d) => d.folder === app._practiceInput?.folder,
+      wait: 'Waiting for the copied folder', done: chooseDone, stay: true },
+    { title: 'Run it here', targets: ['#rwf-where'], side: 'bottom',
+      body: 'On the cluster, FFAST submits a Slurm job. This computer runs LAMMPS here, as one process, without a job script.',
+      until: 'rwf-target', accept: (d) => d.target === 'local',
+      wait: 'Choose This computer', done: () => dialog()?.target === 'local' },
+    { title: 'Check', targets: [() => modal()?.querySelector('.rwf-body'), next], side: 'left',
+      body: () => dialog()?.prepared
+        ? dialog().prepared.ok
+          ? 'The passing build can run FFAST’s snapshot, dump and STOP check. Other builds, if found, show why they failed. You can choose another passing build or give an executable path.'
+          : 'No usable LAMMPS was found. Give its executable path and check again, or take “Watch a LAMMPS run”, which needs no LAMMPS.'
+        : 'Press Check ›. FFAST looks for LAMMPS on this computer and tries the commands it adds.',
+      actions: [{ label: 'Take “Watch a LAMMPS run” instead', enabled: () => !!dialog()?.prepared && !dialog().prepared.ok,
+        run: () => {
+          app._tourHandle?.stop();
+          dialog()?.close();
+          app._startTour(watch);
+        } }],
+      until: 'rwf-checked', accept: (d) => d.ok, wait: 'Press Check ›, or check a LAMMPS path',
+      done: () => !!dialog()?.prepared?.ok, stay: true },
+    { title: 'The include line', targets: [() => dialog()?.step < 2 ? next() : $('[data-rwf="include"]')], side: 'left',
+      body: () => dialog()?.step < 2 ? 'Press Review › to see the copies as diffs.'
+        : 'The green include line before the first run loads FFAST’s monitoring: frames for the scorer and a STOP-file check. It comes after the atoms exist and before the dynamics start.',
+      until: 'rwf-review', wait: 'Press Review ›', done: () => dialog()?.step === 2, stay: true },
+    { title: 'Snapshot, and two tutorial lines', targets: [() => $('[data-rwf="snapshot"]'), () => $('[data-rwf="tutorial"]')], side: 'left',
+      body: 'Green, after read_data: a snapshot of the atoms as loaded, used to prove atom order. The shell sleep and GO/STOP wait belong to the tutorial input: they slow the run and pause it before heating. FFAST never adds those lines to your own inputs.' },
+    { title: 'The data copy', targets: [() => modal()?.querySelector('.rwf-tabs')], side: 'bottom',
+      body: 'FFAST also writes a data file from the reference geometry with atom types in the reference’s order. Open the aspirin.ffast.data tab to read where it came from.',
+      until: 'rwf-data-tab', wait: 'Open aspirin.ffast.data', stay: true },
+    { title: 'Start it', targets: [next], side: 'top',
+      body: 'Write copies and start runs the checked LAMMPS through ffast-lammps. The input you reviewed is its input; the originals stay unchanged. Its live tab opens on the first frame.',
+      until: 'live-first-frame', accept: sameRun, wait: 'Click Write copies and start' },
+    { ...watch.steps[6],
+      body: () => run()?.paused ? 'Your LAMMPS is paused before heating, in the tutorial’s shell wait. Heat it to 3000 K.'
+        : 'Your LAMMPS runs the calm part first, then pauses. Heat it up turns on at that pause.' },
+    { title: 'An alarm', targets: [() => panel('Worst test ÷ its threshold, against step'), () => panel('Run')], side: 'left',
+      body: () => run()?.progress?.alarms?.length
+        ? 'An alarm has fired. Stop on alarm is off, so LAMMPS keeps going. The alarm’s kind and step are shown in the run and Events panels; they may differ from the replay on your build.'
+        : 'Stop on alarm is off this time. Wait for a lasting anomaly to raise an alarm; LAMMPS will keep going so you can stop it yourself.',
+      until: 'live-alarm', accept: sameRun, wait: 'Waiting for an alarm', done: () => !!run()?.progress?.alarms?.length, stay: true },
+    { title: 'Stop it yourself', targets: [() => $('.ask-dialog')
+        ?? $(`#live-runs-dialog tr[data-run-id="${app._practiceId}"]`)
+        ?? $('#live-runs-dialog') ?? panel('Run')?.querySelector('.live-manage') ?? panel('Run')], side: 'bottom',
+      body: () => run()?.end
+        ? `LAMMPS stopped at step ${run().end.stop_observed_step?.toLocaleString('en-US')}. The alarm marks when the anomaly was confirmed; the stop marks when LAMMPS acted on your request. Events records the request, STOP file and observed halt.`
+        : 'Manage runs… opens Live runs. Press Stop now… for this practice run, then confirm with Stop run. FFAST writes STOP and LAMMPS halts at its next fix halt check.',
+      until: 'live-stopped', accept: sameRun, wait: 'Manage runs… → Stop now… → Stop run', done: () => !!run()?.end, stay: true },
+    { title: 'For your own runs', targets: ['#lammps-menu-btn'], side: 'bottom',
+      prepare: () => app._live()._runsDialog?.close(),
+      body: 'Use the same dialog with your own run folder. First make a reference from your data with LAMMPS → Make Reference…. FFAST adds monitoring and a start snapshot; it never adds the tutorial’s sleep or pause.' },
+    { ...watch.steps[12], body: 'It stays in Live runs, marked “practice”, until you delete it. The copied input stays in the practice-runs folder for you to inspect.' },
+  ];
+  for (const step of steps) step.failOn = 'practice-failed';
+  return { id: 'own-lammps', title: 'Run your own LAMMPS', about: '13 steps', lammps: true,
+    unavailable: () => app._needsControl() || (!app._conn?.localLammps || app._conn?._url === app._clusterServerUrl ? 'Needs FFAST running on this computer (Linux or macOS)' : ''),
+    onStart: () => {
+      app._practiceId = null; app._practiceRun = null; app._practiceInput = null;
+      send(OUT.PREPARE_PRACTICE_INPUT);
+    }, steps };
 }

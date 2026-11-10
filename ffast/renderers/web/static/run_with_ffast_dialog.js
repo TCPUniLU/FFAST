@@ -50,7 +50,8 @@ export function jobStateText(kw) {
 
 /** Why the Choose step cannot go on, or '' (pure, for tests). */
 export function chooseProblem(v) {
-  if (!v.job || !v.input) return 'Pick the run folder: the one that holds your job script.';
+  if (v.target === 'local' && !v.input) return 'Pick the folder that holds your LAMMPS input.';
+  if (v.target !== 'local' && (!v.job || !v.input)) return 'Pick the run folder: the one that holds your job script.';
   if (!v.bundle) return 'Choose a reference.';
   if (v.data === 'file' && !v.dataPath) return 'Pick the structure file the data file is written from.';
   if (/\s/.test(v.input + v.job + v.bundle)) return 'LAMMPS cannot read paths with spaces.';
@@ -64,9 +65,11 @@ const SECTION_TITLES = { module: 'LAMMPS module', input: 'Input script', job: 'J
  *   pick: (kind: 'folder'|'file'|'bundle', title: string, onPick: (path: string) => void) => void,
  *   laptop: () => Promise<{ok: boolean, reason?: string}>,
  *   submitFromLaptop: (folder: string, script: string) => Promise<{job_id?: string, error?: string}>,
- *   openRun: (folder: string) => void, status?: (text: string, kind?: string) => void}} o
+ *   openRun: (folder: string) => void, status?: (text: string, kind?: string) => void, signal?: (name: string, detail?: object) => void,
+ *   initialFolder?: string, initialReference?: string, localAvailable?: boolean, practice?: boolean}} o
  */
-export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, openRun, status = () => {} }) {
+export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, openRun, status = () => {},
+  signal = (name, detail = {}) => {}, initialFolder = '', initialReference = '', localAvailable = false, practice = false }) {
   document.getElementById('run-with-ffast-dialog')?.remove();
   const el = (tag, cls, text) => {
     const e = document.createElement(tag);
@@ -123,6 +126,9 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     (p) => scanFolder(p));
   const found = el('div', 'rwf-found');
   found.id = 'rwf-found';
+  const inputSel = el('select', 'rwf-select');
+  inputSel.id = 'rwf-input';
+  inputSel.setAttribute('aria-label', 'Input script');
   const jobSel = el('select', 'rwf-select');
   jobSel.id = 'rwf-job';
   const refSel = el('select', 'rwf-select');
@@ -150,6 +156,7 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
   stopOn.type = 'checkbox';
   stopOn.id = 'rwf-stop';
   const problem = el('div', 'rwf-problem');
+  problem.setAttribute('aria-live', 'polite');
   const row = (label, ...f) => {
     const r = el('label', 'rwf-row');
     r.append(el('span', '', label), ...f);
@@ -159,6 +166,24 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
   dataLabel.append(dataOn, el('span', '', ' Write a new data file from a reference frame'));
   const stopLabel = el('label', 'rwf-check');
   stopLabel.append(stopOn, el('span', '', ' stop LAMMPS when an alarm fires'));
+  const where = el('fieldset', 'rwf-where');
+  where.id = 'rwf-where';
+  where.append(el('legend', '', 'Where it runs'));
+  for (const [value, label] of [['cluster', 'On the cluster (Slurm)'], ['local', 'This computer']]) {
+    const lab = el('label', 'rwf-radio');
+    const r = el('input');
+    r.type = 'radio'; r.name = 'rwf-target'; r.value = value; r.checked = value === 'cluster';
+    if (value === 'local' && !localAvailable) {
+      r.disabled = true;
+      lab.title = 'Needs FFAST running on this computer (Linux or macOS)';
+    }
+    r.addEventListener('change', () => {
+      state.target = value;
+      scanFolder(folder.input.value.trim());
+      signal('rwf-target', { target: value });
+    });
+    lab.append(r, el('span', '', ` ${label}`)); where.append(lab);
+  }
   const choose = el('div', 'rwf-step');
   const folderRow = el('label', 'rwf-row');
   folderRow.append(el('span', '', 'Run folder'), folder.input, folder.btn);
@@ -167,7 +192,7 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     { subject: 'the new data file' });
   dataHelp.note.classList.add('rwf-note');
   choose.append(
-    folderRow, found,
+    folderRow, where, found,
     row('Data file', dataLabel, dataHelp.button),
     dataHelp.note,
     row('Frame from', dataFrom), fileRow, row('Stop on alarm', stopLabel), problem);
@@ -183,7 +208,7 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     found.replaceChildren(el('div', 'rwf-wait', path ? `Looking in ${path}…` : 'Opening the last run folder…'));
     found.dataset.folder = '';
     scanned = null;
-    send(OUT.SCAN_RUN_FOLDER, path ? { folder: path } : {});
+    send(OUT.SCAN_RUN_FOLDER, { ...(path ? { folder: path } : {}), target: state.target });
     check();
   }
   function renderFound() {
@@ -208,7 +233,16 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
       r.appendChild(h.button);
       parts.push(h.note);
     };
-    const jobs = s.jobs || [];
+    if (state.target === 'local') {
+      inputSel.replaceChildren(...(s.inputs || []).map((i) => {
+        const o = el('option', '', i.name); o.value = i.path; return o;
+      }));
+      if (s.input) inputSel.value = s.input;
+      line('Input', inputSel, (s.inputs || []).length > 1 ? 'Choose the input script' : 'LAMMPS input in this folder',
+        (s.inputs || []).length > 1);
+      if (s.data) line('Data file', el('span', 'rwf-v', base(s.data)), `read by ${base(s.input)}`);
+    }
+    const jobs = state.target === 'local' ? [] : s.jobs || [];
     jobSel.replaceChildren(...jobs.map((j) => {
       const o = el('option', '', j.problem ? `${j.name} — ${j.problem}` : `${j.name} — ${j.launch}`);
       o.value = j.path;
@@ -242,7 +276,7 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     if (s.reference) refSel.value = s.reference;
     else refSel.value = '__other__';
     const ref = refs.find((r) => r.bundle === refSel.value);
-    if (jobs.length || refs.length) {
+    if (state.target === 'local' || jobs.length || refs.length) {
       line('Reference', refSel, ref ? ref.bundle : 'no reference found here or made by FFAST; choose one with Other…',
         !ref);
     }
@@ -251,6 +285,10 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     found.dataset.folder = s.folder || '';   // which folder these lines describe
     check();
   }
+  inputSel.addEventListener('change', () => {
+    scanAsked = scanned.folder;
+    send(OUT.SCAN_RUN_FOLDER, { folder: scanned.folder, input: inputSel.value, target: 'local' });
+  });
   jobSel.addEventListener('change', () => {
     // another job script: its input, data file and element order may differ
     scanAsked = scanned.folder;
@@ -285,14 +323,15 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
   const values = () => {
     const j = selectedJob();
     return {
-      input: j?.input || '', job: j?.path || '', bundle: scanned && refSel.value !== '__other__' ? refSel.value : '',
+      target: state.target, input: state.target === 'local' ? inputSel.value : j?.input || '', job: j?.path || '', bundle: scanned && refSel.value !== '__other__' ? refSel.value : '',
       data: dataOn.checked ? dataFrom.value : 'none', dataPath: dataFile.input.value.trim(),
       dataIndex: parseInt(dataIndex.value, 10) || 0, stop: stopOn.checked,
     };
   };
   const request = () => {
     const v = values();
-    const kw = { input: v.input, job: v.job, bundle: v.bundle, data: v.data, stop_on_alarm: v.stop };
+    const kw = { input: v.input, job: v.job, bundle: v.bundle, data: v.data, stop_on_alarm: v.stop, target: state.target, practice };
+    if (state.target === 'local' && executable.value.trim()) kw.executable = executable.value.trim();
     if (v.data === 'file') Object.assign(kw, { data_path: v.dataPath, data_index: v.dataIndex });
     return kw;
   };
@@ -307,6 +346,18 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
 
   // ── step 2: check ───────────────────────────────────────────────────────
   const checkStep = el('div', 'rwf-step');
+  checkStep.setAttribute('aria-live', 'polite');
+  const executable = el('input', 'rwf-path');
+  executable.id = 'rwf-executable';
+  executable.setAttribute('aria-label', 'LAMMPS path');
+  executable.placeholder = '/path/to/lmp';
+  const retry = el('button', '', 'Check this path');
+  retry.type = 'button';
+  retry.addEventListener('click', () => prepare());
+  const executableRow = row('LAMMPS path', executable, retry);
+  executable.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); prepare(); }
+  });
   // ── step 3: review ──────────────────────────────────────────────────────
   const review = el('div', 'rwf-step');
   const tabs = el('div', 'rwf-tabs');
@@ -326,17 +377,18 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
   foot.append(footLeft, back, cancel, next);
 
   const state = { step: 0, prepared: null, request: null, jobId: null, via: 'laptop', laptopOk: false,
-    watching: false, open: true };
+    watching: false, open: true, target: 'cluster', localRunId: null };
 
   function show(step) {
     state.step = step;
+    modal.dataset.step = String(step);
     stepEls.forEach((s, i) => {
       s.className = i < step ? 'done' : i === step ? 'on' : '';
       if (i === step) s.setAttribute('aria-current', 'step'); else s.removeAttribute('aria-current');
     });
     body.replaceChildren([choose, checkStep, review][step]);
     back.hidden = step === 0;
-    next.textContent = ['Check ›', 'Review ›', 'Write copies and submit'][step];
+    next.textContent = ['Check ›', 'Review ›', state.target === 'local' ? 'Write copies and start' : 'Write copies and submit'][step];
     footLeft.replaceChildren(...(step === 2 ? [copiesHelp.button, copiesHelp.note] : []));
     next.disabled = false;
     if (step === 0) check();
@@ -345,11 +397,27 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
 
   function renderCheck(kw) {
     const parts = [];
+    if (state.target === 'local') {
+      const builds = el('div', 'rwf-sec');
+      builds.id = 'rwf-builds';
+      builds.append(el('h4', '', 'LAMMPS builds on this computer'));
+      const rows = kw.builds || kw.sections?.builds || [];
+      if (!rows.length) builds.append(el('p', '', 'No LAMMPS found on PATH. Give its executable path below.'));
+      for (const b of rows) {
+        const line = el('label', 'rwf-build');
+        const r = el('input'); r.type = 'radio'; r.name = 'rwf-build'; r.value = b.executable;
+        r.disabled = !b.ok; r.checked = !!b.ok && b.executable === kw.lammps?.executable;
+        r.addEventListener('change', () => { executable.value = b.executable; prepare(); });
+        line.append(r, el('span', '', `${b.executable}${b.version ? ` (${b.version})` : ''}: ${b.reason}`));
+        builds.append(line);
+      }
+      parts.push(builds, executableRow);
+    }
     for (const key of ['module', 'input', 'job']) {
       const items = (kw.sections || {})[key] || [];
       if (!items.length) continue;
       const sec = el('div', 'rwf-sec');
-      sec.appendChild(el('h4', '', SECTION_TITLES[key]));
+      sec.appendChild(el('h4', '', state.target === 'local' && key === 'module' ? 'LAMMPS commands' : SECTION_TITLES[key]));
       const ul = el('ul', 'rwf-checks');
       for (const c of items) {
         const li = el('li', c.status === 'ok' ? 'ok' : 'warn');
@@ -379,9 +447,16 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
       if (c.kind === 'data') {
         diffBox.replaceChildren(el('div', 'head', `${c.copy}: new LAMMPS data file, ${c.atoms} atoms, `
           + `from ${c.source}; recorded so the run's atom order is proven.`));
+        signal('rwf-data-tab');
         return;
       }
-      diffBox.replaceChildren(...diffLines(c.diff).map((l) => el('div', l.cls, l.text)));
+      diffBox.replaceChildren(...diffLines(c.diff).map((l) => {
+        const line = el('div', l.cls, l.text);
+        if (l.cls === 'add' && /^\+include /.test(l.text)) line.dataset.rwf = 'include';
+        if (l.cls === 'add' && l.text.includes('write_dump')) line.dataset.rwf = 'snapshot';
+        if (l.text.includes('shell sleep') || l.text.includes('/GO')) line.dataset.rwf = 'tutorial';
+        return line;
+      }));
     };
     copies.forEach((c, i) => {
       const t = el('button', 'rwf-tab', copyLabel(c));
@@ -391,6 +466,10 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
       tabs.appendChild(t);
     });
     if (copies.length) pick(0);
+    if (state.target === 'local') {
+      submitFrom.replaceChildren(el('span', '', `Start here: ${kw.launch.executable} -in ${kw.launch.input}`));
+      return;
+    }
     // where sbatch runs: this computer (SSH) by default, else the server's node
     submitFrom.replaceChildren(el('span', '', 'Submit from: '));
     const radio = (value, label) => {
@@ -420,19 +499,24 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
   }
 
   // ── actions ─────────────────────────────────────────────────────────────
+  function prepare() {
+    state.prepared = null;
+    state.request = request();
+    checkStep.replaceChildren(el('div', 'rwf-wait', state.target === 'local'
+      ? "Checking LAMMPS builds on this computer…"
+      : "Checking… (loading the job's LAMMPS module on the server's node can take a minute)"));
+    show(1);
+    next.disabled = true;
+    send(OUT.PREPARE_RUN_WITH_FFAST, state.request);
+  }
   next.addEventListener('click', () => {
     if (state.step === 0) {
       if (!check()) return;
-      state.prepared = null;
-      state.request = request();
-      checkStep.replaceChildren(el('div', 'rwf-wait',
-        "Checking… (loading the job's LAMMPS module on the server's node can take a minute)"));
-      show(1);
-      next.disabled = true;
-      send(OUT.PREPARE_RUN_WITH_FFAST, state.request);
+      prepare();
     } else if (state.step === 1) {
       renderReview(state.prepared);
       show(2);
+      signal('rwf-review');
     } else if (state.step === 2) {
       next.disabled = true;
       back.disabled = true;
@@ -446,6 +530,7 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     state.open = false;
     modal.remove();
     untrap();
+    signal('rwf-closed', { watching: state.watching, started: !!state.localRunId });
     if (state.watching) status(`Run with FFAST: following job ${state.jobId}; its tab opens on the first frame`);
   };
   cancel.addEventListener('click', close);
@@ -468,7 +553,8 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     folder.input.focus();
   };
   setTimeout(unlock, 5000);
-  scanFolder('');
+  scanFolder(initialFolder);
+  signal('rwf-open');
 
   const failed = (text) => {
     progress.replaceChildren(el('div', 'rwf-error', text));
@@ -486,23 +572,34 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
   return {
     /** RUN_FOLDER_SCANNED: what the folder holds; an answer to an older question is dropped. */
     onScanned(kw) {
-      if (!state.open || (kw.asked || '') !== (scanAsked || '')) return;
+      if (!state.open || (kw.asked || '') !== (scanAsked || '') || (kw.target || 'cluster') !== state.target) return;
       scanned = kw;
+      if (initialReference && kw.folder === initialFolder) scanned.reference = initialReference;
       if (kw.folder) folder.input.value = kw.folder;
       renderFound();
       unlock();
+      signal('rwf-chosen', { folder: kw.folder });
     },
     /** RUN_WITH_FFAST_PREPARED */
     onPrepared(kw) {
       if (!state.open || state.step !== 1) return;
       state.prepared = kw;
+      if (state.target === 'local' && kw.ok) state.request.executable = kw.lammps.executable;
       renderCheck(kw);
       next.disabled = !kw.ok;
+      signal('rwf-checked', { ok: !!kw.ok });
     },
     /** RUN_WITH_FFAST_WRITTEN: then submit from the chosen machine. */
     async onWritten(kw) {
       if (!state.open) return;
       if (!kw.ok) { failed((kw.refusal && kw.refusal.text) || 'The copies were not written.'); return; }
+      if (kw.launch) {
+        state.localRunId = kw.run_id;
+        progress.textContent = 'LAMMPS started; waiting for its first frame…';
+        cancel.textContent = 'Close (keep following)';
+        openRun(kw.run_dir);
+        return;
+      }
       progress.textContent = `Copies written: ${(kw.written || []).join(', ')}. Submitting…`;
       const { folder, script } = kw.submit;
       if (state.via === 'laptop') {
@@ -539,7 +636,19 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
         state.watching = false;
       }
     },
+    onLocalUpdate(kw) {
+      if (kw.run_id !== state.localRunId || !state.open) return;
+      const error = kw.error || (kw.events || []).find((e) => ['refused', 'scorer_failed'].includes(e.kind))?.reason;
+      if (error || kw.end && !kw.fingerprint) failed(error || `LAMMPS ${kw.end.state} before its first frame.`);
+    },
+    onLocalFrame(kw) {
+      if (kw.run_id === state.localRunId && state.open) close();
+    },
     close,
+    get prepared() { return state.prepared; },
+    get step() { return state.step; },
+    get target() { return state.target; },
+    get folder() { return scanned?.folder; },
     get jobId() { return state.jobId; },
   };
 }

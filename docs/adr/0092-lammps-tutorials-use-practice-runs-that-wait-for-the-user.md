@@ -1,7 +1,7 @@
 # LAMMPS tutorials use practice runs that wait for the user
 
-Status: Phase A built 2026-11-09 on branch `lammps-live`; awaiting user hand-test.
-Phase B remains proposed. Decided in a
+Status: Phase A built and user hand-tested 2026-11-09 on branch `lammps-live`.
+Phase B built 2026-11-10; automated and real-LAMMPS checks passed, user hand-test pending. Decided in a
 grilling session (13 questions). Clickable mockup of both tours
 (https://claude.ai/artifact/5DD39R5Nxk3Jt18ZmTU2XH; source
 `docs/research/lammps-tutorials-2026-11-08/mockup.html`). Plan:
@@ -127,14 +127,38 @@ will rank first. The mockup and tour text now say that. The toy reference has a
 server-local working copy and generated include under `practice-runs/reference`.
 A running practice run must stop before its folder can be deleted.
 
-Phase B still waits for the user's Phase A browser hand-test. No LAMMPS was
-installed in `ffast_env`, and nothing was pushed.
+Phase A hand-test corrections are implemented. Phase B was requested after
+that hand-test. LAMMPS remains outside `ffast_env`; nothing was pushed.
 
-## Open before Phase B / public push
+## Remaining before public push
 
-- The `shell` wait line and `run … every … "shell sleep"` are untested on a real
-  LAMMPS; check both, and what other processes do while process 0 waits.
 - The origin of `aspirin.data` (one 21-atom geometry) is not recorded; settle it
   before it ships in a public repo.
-- This laptop has no LAMMPS. Testing Tutorial 2 needs one in a separate
-  environment (e.g. conda-forge `lammps`), never in `ffast_env`.
+
+## Phase B evidence (2026-11-10)
+
+The existing prepare/write seam accepts `target: local` without `job`.
+It discovers passing and failing PATH builds with `check_lammps`, without
+module commands or a Slurm retry. A chosen path can be rechecked. Write
+revalidates the originals, writes the reviewed copies, then starts the chosen
+executable through the same local launcher as the replay. The wrapper remains
+the sole writer of `run.json`. The tour prepares a marked working input
+folder through `PREPARE_PRACTICE_INPUT`; it never writes into the checkout.
+
+Local inputs get a start snapshot after atom creation and the include before
+the first run. Tutorial-only pacing/gate lines remain in their original input;
+FFAST adds neither to ordinary inputs. The 13-step tour uses the real local
+dialog and real Stop now confirmation, and reads the actual alarm kind/step.
+
+Real serial and MPICH two-process checks verified pacing, a blocked gate, GO,
+and STOP followed by `fix halt` at the next 100-step check. The original quoted
+`sh -c` gate failed; the shipped gate is now `shell while …` without quotes so
+LAMMPS substitutes its run-folder variable. See
+[the experiment](../research/lammps-tutorials-2026-11-08/lammps-check.md).
+The full browser tour also passed with the real serial LAMMPS build.
+
+The handshake advertises local availability for loopback peers on Linux/macOS
+outside Slurm and SSH environments; the page also excludes its known cluster
+tunnel. A manually forwarded standalone server whose SSH environment has been
+removed cannot be distinguished from a local server by a browser alone.
+Executable discovery and launch always happen on the connected server.

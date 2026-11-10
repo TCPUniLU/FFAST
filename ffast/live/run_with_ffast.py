@@ -116,30 +116,87 @@ def _data_frame(bundle_dir: Path, source: str, path: str | None, index: int):
     return atoms.get_positions().astype(float), symbols, f"{Path(path).expanduser().resolve()}@{index}"
 
 
-def prepare(input_path: str, job_path: str, bundle: str, *, data: str = "none",
-            data_path: str | None = None, data_index: int = 0, stop_on_alarm: bool = False,
-            runner=None) -> dict:
+def prepare(
+    input_path: str,
+    job_path: str | None = None,
+    bundle: str = "",
+    *,
+    data: str = "none",
+    data_path: str | None = None,
+    data_index: int = 0,
+    stop_on_alarm: bool = False,
+    runner=None,
+    target="cluster",
+    executable=None,
+) -> dict:
     """Checks, copies and diffs for the review step; writes nothing."""
     try:
-        return _prepare(input_path, job_path, bundle, data, data_path, data_index, stop_on_alarm, runner)
+        return _prepare(
+            input_path,
+            job_path,
+            bundle,
+            data,
+            data_path,
+            data_index,
+            stop_on_alarm,
+            runner,
+            target=target,
+            executable=executable,
+        )
     except Refused as exc:
         r = exc.refusal
-        return {"ok": False, "refusal": {"file": exc.file, "reason": r.reason, "line": r.line,
-                                         "hand_edit": r.hand_edit, "text": r.text()},
-                "sections": getattr(exc, "sections", {})}
+        return {
+            "ok": False,
+            "refusal": {
+                "file": exc.file,
+                "reason": r.reason,
+                "line": r.line,
+                "hand_edit": r.hand_edit,
+                "text": r.text(),
+            },
+            "sections": getattr(exc, "sections", {}),
+            "builds": getattr(exc, "builds", []),
+        }
 
 
-def _prepare(input_path, job_path, bundle, data, data_path, data_index, stop_on_alarm, runner, *, build=False):
+def _prepare(
+    input_path,
+    job_path,
+    bundle,
+    data,
+    data_path,
+    data_index,
+    stop_on_alarm,
+    runner,
+    *,
+    build=False,
+    target="cluster",
+    executable=None,
+):
     inp = Path(os.path.expanduser(input_path)).resolve()
-    job = Path(os.path.expanduser(job_path)).resolve()
+    local = target == "local"
+    if not local and not job_path:
+        raise Refused(
+            Refusal(
+                "no job script was chosen", None, "choose a Slurm job script"
+            ),
+            "job",
+        )
+    job = Path(os.path.expanduser(job_path)).resolve() if not local else None
     sections: dict[str, list] = {"module": [], "input": [], "job": []}
+    builds = []
 
     def refuse(refusal, file):
         exc = Refused(refusal, file)
         exc.sections = {k: _checks(v) for k, v in sections.items()}
+        exc.builds = builds
         raise exc
 
-    for p, what in ((inp, "input script"), (job, "job script")):
+    for p, what in (
+        [(inp, "input script")]
+        if local
+        else [(inp, "input script"), (job, "job script")]
+    ):
         if not p.is_file():
             refuse(Refusal(f"the {what} {p} does not exist", None, f"pick the {what} again"), what.split()[0])
     bundle_dir, include = include_of(bundle)
@@ -148,25 +205,53 @@ def _prepare(input_path, job_path, bundle, data, data_path, data_index, stop_on_
                        "make the reference with `ffast bundle` or Make reference"), "bundle")
     _no_space(include, "include file", "bundle")
     elements = include_elements(include)
-    input_text, job_text = inp.read_text(), job.read_text()
+    input_text = inp.read_text()
+    job_text = job.read_text() if job else ""
 
-    # Job script: the launch and the modules.
-    launch = js.find_launch(job_text, str(inp), str(job.parent))
-    if isinstance(launch, Refusal):
-        refuse(launch, "job")
-    sections["job"].append(Check("ok", f"one LAMMPS launch (line {launch.first}): {launch.text.strip()}", launch.first))
-    sections["job"].extend(Check("warn", w, launch.first) for w in launch.warnings)
-    if launch.wrapped:
-        sections["job"].append(Check("ok", "the launch already runs through ffast-lammps"))
-    wrapper = Path("~/.ffast/bin/ffast-lammps").expanduser()
-    if wrapper.exists():
-        sections["job"].append(Check("ok", f"ffast-lammps is installed on the cluster ({wrapper})"))
-    else:
-        sections["job"].append(Check("warn", f"{wrapper} not found: connect once with this FFAST so the "
-                                             "cluster setup installs it"))
-    if any(ch.isspace() for ch in str(job.parent)):
-        sections["job"].append(Check("warn", "the job folder has a space in its path; run folders go to "
-                                             "$FFAST_RUN_DIR, which must then be set to a path without spaces"))
+    launch = None
+    if not local:
+        # Job script: the launch and the modules.
+        launch = js.find_launch(job_text, str(inp), str(job.parent))
+        if isinstance(launch, Refusal):
+            refuse(launch, "job")
+        sections["job"].append(
+            Check(
+                "ok",
+                f"one LAMMPS launch (line {launch.first}): {launch.text.strip()}",
+                launch.first,
+            )
+        )
+        sections["job"].extend(
+            Check("warn", w, launch.first) for w in launch.warnings
+        )
+        if launch.wrapped:
+            sections["job"].append(
+                Check("ok", "the launch already runs through ffast-lammps")
+            )
+        wrapper = Path("~/.ffast/bin/ffast-lammps").expanduser()
+        if wrapper.exists():
+            sections["job"].append(
+                Check(
+                    "ok",
+                    f"ffast-lammps is installed on the cluster ({wrapper})",
+                )
+            )
+        else:
+            sections["job"].append(
+                Check(
+                    "warn",
+                    f"{wrapper} not found: connect once with this FFAST so the "
+                    "cluster setup installs it",
+                )
+            )
+        if any(ch.isspace() for ch in str(job.parent)):
+            sections["job"].append(
+                Check(
+                    "warn",
+                    "the job folder has a space in its path; run folders go to "
+                    "$FFAST_RUN_DIR, which must then be set to a path without spaces",
+                )
+            )
 
     # Data file (R5, P6).
     data_copy = None
@@ -179,36 +264,78 @@ def _prepare(input_path, job_path, bundle, data, data_path, data_index, stop_on_
         _no_space(data_copy, "data file", "data")
 
     # Input placement, before the module check: the check needs to know whether a snapshot is used.
-    plan = plan_input(input_text, include_path=str(include), elements=elements,
-                      data_file=str(data_copy) if data_copy else None, stop_on_alarm=stop_on_alarm)
+    plan = plan_input(
+        input_text,
+        include_path=str(include),
+        elements=elements,
+        data_file=str(data_copy) if data_copy else None,
+        stop_on_alarm=stop_on_alarm,
+        snapshot=local,
+    )
     if plan.refusal is not None:
         refuse(plan.refusal, "input")
 
     # LAMMPS module (R6).
-    modules = js.module_lines(job_text)
-    module = js.lammps_module(modules)
-    lmp = check_lammps(modules, module, launch.executable, runner=runner)
-    module_checks, why = lmp.checks(needs_snapshot=plan.snapshot_after is not None)
+    modules = js.module_lines(job_text) if not local else []
+    module = js.lammps_module(modules) if not local else None
+    if local:
+        from ffast.live.local_lammps import checked_builds
+
+        builds = checked_builds(executable, runner=runner)
+        selected = next((b for b in builds if b["ok"]), None)
+        if selected is None:
+            exc = Refused(
+                Refusal(
+                    "No usable LAMMPS found on this computer",
+                    None,
+                    "give a LAMMPS executable path, or take Watch a LAMMPS run",
+                ),
+                "lammps",
+            )
+            exc.builds = builds
+            exc.sections = {k: _checks(v) for k, v in sections.items()}
+            raise exc
+        executable = selected["executable"]
+    lmp = check_lammps(
+        modules,
+        module,
+        executable if local else launch.executable,
+        runner=runner,
+        local=local,
+    )
+    module_checks, why = lmp.checks(
+        needs_snapshot=plan.snapshot_after is not None, local=local
+    )
     sections["module"].extend(module_checks)
     if why:
-        refuse(Refusal(why, None, "load a LAMMPS module that runs FFAST's commands, or watch this run "
-                                  "by hand (include and ffast-lammps)"), "module")
+        refuse(
+            Refusal(
+                why, None, "choose a LAMMPS build that runs FFAST's commands"
+            ),
+            "module",
+        )
     pair_checks, why = check_pair_styles(plan.pair_styles, plan.hybrid, plan.plugins, lmp)
     sections["module"].extend(pair_checks)
     if why:
         refuse(Refusal(why, None, "load the LAMMPS module that has this pair style"), "module")
     if not lmp.reset_after_dump_ok:
-        plan = plan_input(input_text, include_path=str(include), elements=elements,
-                          data_file=str(data_copy) if data_copy else None, stop_on_alarm=stop_on_alarm,
-                          reset_after_dump_ok=False)
+        plan = plan_input(
+            input_text,
+            include_path=str(include),
+            elements=elements,
+            data_file=str(data_copy) if data_copy else None,
+            stop_on_alarm=stop_on_alarm,
+            reset_after_dump_ok=False,
+            snapshot=local,
+        )
         if plan.refusal is not None:
             refuse(plan.refusal, "input")
     sections["input"].extend(plan.checks)
 
     # The copies.
     input_copy = inp.with_name(js.copy_name(inp.name))
-    job_copy = job.with_name(js.copy_name(job.name))
-    for path in (input_copy, job_copy):
+    job_copy = job.with_name(js.copy_name(job.name)) if job else None
+    for path in ([input_copy] if local else [input_copy, job_copy]):
         if path.exists() and not _has_marker(path):
             refuse(Refusal(f"{path} exists and was not written by Run with FFAST", None,
                            "rename or move that file; FFAST never overwrites a file it did not write"),
@@ -217,10 +344,14 @@ def _prepare(input_path, job_path, bundle, data, data_path, data_index, stop_on_
         refuse(Refusal(f"{data_copy} exists and was not written by FFAST", None,
                        "rename or move that file"), "data")
     new_input = plan.apply(input_text, header=[marker_line(inp)])
-    input_name = launch.input_token
-    copy_token = (str(input_copy) if os.path.isabs(input_name)
-                  else os.path.join(os.path.dirname(input_name), input_copy.name))
-    new_job = js.wrap(job_text, launch, copy_token, marker_line(job))
+    if not local:
+        input_name = launch.input_token
+        copy_token = (
+            str(input_copy)
+            if os.path.isabs(input_name)
+            else os.path.join(os.path.dirname(input_name), input_copy.name)
+        )
+        new_job = js.wrap(job_text, launch, copy_token, marker_line(job))
 
     out = {
         "ok": True,
@@ -229,14 +360,53 @@ def _prepare(input_path, job_path, bundle, data, data_path, data_index, stop_on_
         "elements": elements,
         "include": str(include),
         "copies": [
-            {"kind": "input", "original": str(inp), "copy": str(input_copy), **_diff(inp, input_copy, input_text, new_input)},
-            {"kind": "job", "original": str(job), "copy": str(job_copy), **_diff(job, job_copy, job_text, new_job)},
+            {
+                "kind": "input",
+                "original": str(inp),
+                "copy": str(input_copy),
+                **_diff(inp, input_copy, input_text, new_input),
+            },
+            *(
+                []
+                if local
+                else [
+                    {
+                        "kind": "job",
+                        "original": str(job),
+                        "copy": str(job_copy),
+                        **_diff(job, job_copy, job_text, new_job),
+                    }
+                ]
+            ),
         ],
-        "originals": {str(inp): sha256_file(inp), str(job): sha256_file(job)},
-        "submit": {"folder": str(job.parent), "script": job_copy.name},
-        "lammps": {"module": module, "version": lmp.version, "executable": launch.executable},
+        "originals": {
+            str(inp): sha256_file(inp),
+            **({str(job): sha256_file(job)} if job else {}),
+        },
+        "submit": (
+            {"folder": str(job.parent), "script": job_copy.name}
+            if job
+            else None
+        ),
+        "launch": (
+            {
+                "folder": str(inp.parent),
+                "executable": executable,
+                "input": str(input_copy),
+            }
+            if local
+            else None
+        ),
+        "builds": builds,
+        "lammps": {
+            "module": module,
+            "version": lmp.version,
+            "executable": executable if local else launch.executable,
+        },
     }
-    texts = {str(input_copy): new_input, str(job_copy): new_job}
+    texts = {str(input_copy): new_input}
+    if job:
+        texts[str(job_copy)] = new_job
     if data_copy is not None:
         from ffast.live.data_file import data_file_text
 
@@ -255,18 +425,53 @@ def _prepare(input_path, job_path, bundle, data, data_path, data_index, stop_on_
     if build:
         out["_texts"] = texts
         out["_bundle_dir"] = bundle_dir
-        out["_job_mode"] = stat.S_IMODE(job.stat().st_mode)
+        out["_job_mode"] = stat.S_IMODE(job.stat().st_mode) if job else None
     return out
 
 
-def write(input_path: str, job_path: str, bundle: str, originals: dict[str, str], *, data: str = "none",
-          data_path: str | None = None, data_index: int = 0, stop_on_alarm: bool = False, runner=None) -> dict:
+def write(
+    input_path: str,
+    job_path: str | None = None,
+    bundle: str = "",
+    originals: dict[str, str] | None = None,
+    *,
+    data: str = "none",
+    data_path: str | None = None,
+    data_index: int = 0,
+    stop_on_alarm: bool = False,
+    runner=None,
+    target="cluster",
+    executable=None,
+) -> dict:
     """Write the copies (and the data file) after the user approved the diff."""
     try:
-        out = _prepare(input_path, job_path, bundle, data, data_path, data_index, stop_on_alarm, runner, build=True)
+        out = _prepare(
+            input_path,
+            job_path,
+            bundle,
+            data,
+            data_path,
+            data_index,
+            stop_on_alarm,
+            runner,
+            build=True,
+            target=target,
+            executable=executable,
+        )
     except Refused as exc:
-        return prepare(input_path, job_path, bundle, data=data, data_path=data_path,
-                       data_index=data_index, stop_on_alarm=stop_on_alarm, runner=runner) | {"ok": False}
+        return prepare(
+            input_path,
+            job_path,
+            bundle,
+            data=data,
+            data_path=data_path,
+            data_index=data_index,
+            stop_on_alarm=stop_on_alarm,
+            runner=runner,
+            target=target,
+            executable=executable,
+        ) | {"ok": False}
+    originals = originals or {}
     changed = [p for p, sha in out["originals"].items() if originals.get(p) != sha]
     if changed:
         names = ", ".join(Path(p).name for p in changed)
@@ -281,18 +486,34 @@ def write(input_path: str, job_path: str, bundle: str, originals: dict[str, str]
         tmp.write_text(text)
         os.replace(tmp, p)
         written.append(path)
-    job_copy = Path(out["copies"][1]["copy"])
-    os.chmod(job_copy, out.pop("_job_mode") | stat.S_IXUSR)
+    mode = out.pop("_job_mode")
+    if mode is not None:
+        job_copy = Path(
+            next(c["copy"] for c in out["copies"] if c["kind"] == "job")
+        )
+        os.chmod(job_copy, mode | stat.S_IXUSR)
     if "_data" in out:
         from ffast.live.data_file import bundle_sha256, record_data_file
 
         positions, label = out.pop("_data")
-        data_copy = Path(out["copies"][2]["copy"])
+        data_copy = Path(
+            next(c["copy"] for c in out["copies"] if c["kind"] == "data")
+        )
         record_data_file(positions, bundle_sha256=bundle_sha256(out["_bundle_dir"]), source=label,
                          data_file=data_copy)
     from ffast.live.run_folder_scan import remember
 
-    job_path = Path(out["copies"][1]["original"])
-    remember(job_path.parent, job_path, out.pop("_bundle_dir"))   # "used last time with this folder"
+    original = Path(
+        next(
+            c["original"]
+            for c in out["copies"]
+            if c["kind"] == ("job" if target == "cluster" else "input")
+        )
+    )
+    remember(
+        original.parent,
+        str(original) if target == "cluster" else "",
+        out.pop("_bundle_dir"),
+    )  # "used last time with this folder"
     out["written"] = written
     return out

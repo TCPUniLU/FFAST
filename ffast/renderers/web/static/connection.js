@@ -19,6 +19,7 @@ export class FFastConnection {
     /** The server's code fingerprint from HELLO_ACK; null from an older server. */
     this.serverCodeFingerprint = null;
     /** Whether the server writes a trace this page should report to. */
+    this.localLammps = false;
     this.trace = false;
     /** The timing log (ADR 0072), or null when this page keeps none. */
     this.timing = null;
@@ -91,6 +92,7 @@ export class FFastConnection {
       const ack = msgpack.decode(ackData)?.kwargs || {};
       role = ack.role || 'READ_ONLY';
       this.serverCodeFingerprint = ack.code_fingerprint || null;
+      this.localLammps = !!ack.local_lammps;
       this.trace = !!ack.trace;
       if (timingWanted()) this._startTiming((ack.features || []).includes('timing'));
     } catch (_) {

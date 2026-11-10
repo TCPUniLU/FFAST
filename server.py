@@ -195,6 +195,25 @@ async def _do_hello_handshake(websocket, addr, token_hash: str, session=None):
         server_caps = negotiate(client_caps)
         ack_dict = server_caps.model_dump()
         ack_dict["role"] = role.value
+        # A local tour must not launch on a cluster reached through a tunnel.
+        import ipaddress
+        import sys
+
+        peer = getattr(websocket, "remote_address", None)
+        ack_dict["local_lammps"] = bool(
+            peer
+            and ipaddress.ip_address(peer[0]).is_loopback
+            and sys.platform in ("darwin", "linux")
+            and not any(
+                os.environ.get(k)
+                for k in (
+                    "SLURM_JOB_ID",
+                    "SSH_CONNECTION",
+                    "SSH_CLIENT",
+                    "SSH_TTY",
+                )
+            )
+        )
         # Tells the page to report its clicks and errors (ffast-server --trace)
         ack_dict["trace"] = trace.enabled()
         if session is not None:

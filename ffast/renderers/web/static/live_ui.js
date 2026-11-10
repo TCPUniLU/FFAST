@@ -103,9 +103,9 @@ export class LiveUi {
   }
 
   /** "Run with FFAST" (ADR 0086): pick, check, review, submit, follow to the first frame. */
-  openRunWithFfast({ pick, laptop, submitFromLaptop, status = () => {} }) {
+  openRunWithFfast({ pick, laptop, submitFromLaptop, status = () => {}, ...options }) {
     this._rwf = openRunWithFfastDialog({
-      send: (event, kw) => this._send(event, kw), pick, laptop, submitFromLaptop, status,
+      send: (event, kw) => this._send(event, kw), pick, laptop, submitFromLaptop, status, ...options,
       openRun: (folder) => this._follow(folder),
     });
   }

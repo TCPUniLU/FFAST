@@ -474,7 +474,10 @@ class RunWithFfastRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     input: str = Field(min_length=1)
-    job: str = Field(min_length=1)
+    job: Optional[str] = None
+    target: Literal["cluster", "local"] = "cluster"
+    executable: Optional[str] = None
+    practice: bool = False
     bundle: str = Field(min_length=1)
     data: Literal["none", "bundle", "file"] = "none"
     data_path: Optional[str] = None
@@ -506,6 +509,8 @@ class ScanRunFolderRequest(BaseModel):
 
     folder: Optional[str] = None
     job: Optional[str] = None   # the job script chosen among several
+    target: Literal["cluster", "local"] = "cluster"
+    input: Optional[str] = None
 
 
 class WatchJobRequest(BaseModel):

@@ -158,7 +158,14 @@ def _references(folder: Path, last: str | None, elements: list[str] | None, envi
     return rows
 
 
-def scan(folder: str | None, job: str | None = None, environ=None) -> dict:
+def scan(
+    folder: str | None,
+    job: str | None = None,
+    environ=None,
+    *,
+    target="cluster",
+    input=None,
+) -> dict:
     """What "Run with FFAST" would use from ``folder`` (the last folder used when
     empty); ``job``: the job script the user chose among several."""
     memory = read_memory(environ)
@@ -172,19 +179,53 @@ def scan(folder: str | None, job: str | None = None, environ=None) -> dict:
     if not path.is_dir():
         out["problem"] = f"{path} is not a folder"
         return out
-    out["jobs"] = _job_scripts(path)
-    usable = [j for j in out["jobs"] if not j["problem"]]
-    if not out["jobs"]:
-        out["problem"] = (f"No job script here: {path} has no file with #SBATCH lines that starts LAMMPS. "
-                          "Pick the folder that holds your job script.")
-    elif not usable:
-        out["problem"] = f"{out['jobs'][0]['name']}: {out['jobs'][0]['problem']}"
     before = (memory.get("folders") or {}).get(str(path)) or {}
-    wanted = job or before.get("job")
-    job = next((j for j in usable if j["path"] == wanted), usable[0] if usable else None)
-    if job:
-        out.update(job=job["path"], input=job["input"])
-        out["data"], out["pair_elements"] = _input_facts(job["input"])
+    if target == "local":
+        inputs = []
+        for p in sorted(path.iterdir()):
+            if (
+                not p.is_file()
+                or ".ffast." in p.name
+                or p.stat().st_size > MAX_JOB_BYTES
+            ):
+                continue
+            if not (p.name.startswith("in.") or p.suffix in (".in", ".lmp")):
+                continue
+            commands = read_commands(p.read_text(errors="replace"))
+            if any(c.name == "run" for c in commands):
+                inputs.append({"path": str(p), "name": p.name})
+        out["inputs"] = inputs
+        out["input"] = next(
+            (p["path"] for p in inputs if p["path"] == input),
+            inputs[0]["path"] if inputs else None,
+        )
+        if out["input"]:
+            out["data"], out["pair_elements"] = _input_facts(out["input"])
+        else:
+            out["problem"] = (
+                "No LAMMPS input here; pick a folder with an in.* or *.in input."
+            )
+    else:
+        out["jobs"] = _job_scripts(path)
+        usable = [j for j in out["jobs"] if not j["problem"]]
+        if not out["jobs"]:
+            out["problem"] = (
+                f"No job script here: {path} has no file with #SBATCH lines that starts LAMMPS. "
+                "Pick the folder that holds your job script."
+            )
+        elif not usable:
+            out["problem"] = (
+                f"{out['jobs'][0]['name']}: {out['jobs'][0]['problem']}"
+            )
+        before = (memory.get("folders") or {}).get(str(path)) or {}
+        wanted = job or before.get("job")
+        job = next(
+            (j for j in usable if j["path"] == wanted),
+            usable[0] if usable else None,
+        )
+        if job:
+            out.update(job=job["path"], input=job["input"])
+            out["data"], out["pair_elements"] = _input_facts(job["input"])
     out["references"] = _references(path, before.get("reference"), out["pair_elements"], environ)
     choice = next((r for r in out["references"] if r["match"] is not False and not r["problem"]), None)
     out["reference"] = choice["bundle"] if choice else None

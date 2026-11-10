@@ -185,3 +185,29 @@ def test_hybrid_pair_styles_are_listed():
     # check matches the candidates against the build's list (hybrid flag).
     assert plan.hybrid and {"mace", "zbl"} <= set(plan.pair_styles)
     assert "3.0" not in plan.pair_styles
+
+
+def test_local_tutorial_keeps_pacing_and_gate_and_adds_a_start_snapshot():
+    from ffast.session.examples import lammps_example_dir
+
+    text = (lammps_example_dir() / "tutorial" / "in.tutorial").read_text()
+    plan = plan_input(
+        text,
+        include_path="/ref/toy.lmp",
+        elements=["C", "H", "O"],
+        snapshot=True,
+    )
+    assert plan.refusal is None
+    edited = plan.apply(text)
+    assert "write_dump all custom ${ffast_dir}/start.lammpstrj" in edited
+    assert (
+        edited.index("read_data")
+        < edited.index("write_dump")
+        < edited.index("include /ref/toy.lmp")
+        < edited.index("run 10000")
+    )
+    assert 'run 10000 every 100 "shell sleep 0.3"' in edited
+    assert (
+        "shell while [ ! -e ${ffast_dir}/GO ] && [ ! -e ${ffast_dir}/STOP ]; do sleep 0.1; done"
+        in edited
+    )

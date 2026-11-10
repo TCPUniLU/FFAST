@@ -190,3 +190,85 @@ def test_server_prepares_and_writes_through_its_requests(work, bundle, monkeypat
                                         dict(req, stop_on_alarm=True, originals=prepared["originals"])))
     assert event == control.RUN_WITH_FFAST_WRITTEN and written["ok"], written
     assert (work / "run.ffast.in").exists() and (work / "job.ffast.sh").exists()
+
+
+def test_local_input_checks_and_writes_without_a_job_script(
+    work, bundle, monkeypatch
+):
+    from ffast.live import lammps_check
+
+    monkeypatch.setenv("FFAST_RUN_WITH_FFAST", str(work / "memory.json"))
+    lammps_check._CACHE.clear()
+    req = dict(
+        input_path=str(work / "run.in"),
+        bundle=str(bundle[0]),
+        target="local",
+        executable="/usr/bin/lmp",
+        data="bundle",
+    )
+    out = rwf.prepare(**req, runner=_shell())
+    assert out["ok"], out.get("refusal")
+    assert [c["kind"] for c in out["copies"]] == ["input", "data"]
+    assert out["launch"] == {
+        "folder": str(work),
+        "executable": "/usr/bin/lmp",
+        "input": str(work / "run.ffast.in"),
+    }
+    assert not (work / "run.ffast.in").exists()
+    written = rwf.write(**req, originals=out["originals"], runner=_shell())
+    assert written["ok"], written.get("refusal")
+    assert (work / "run.ffast.in").exists()
+    assert (work / "aspirin.ffast.data").exists()
+    assert not (work / "job.ffast.sh").exists()
+
+
+def test_cluster_memory_uses_the_job_folder_when_input_is_below_it(
+    work, bundle, monkeypatch
+):
+    from ffast.live.run_folder_scan import read_memory
+
+    monkeypatch.setenv("FFAST_RUN_WITH_FFAST", str(work / "memory.json"))
+    below = work / "inputs"
+    below.mkdir()
+    (work / "run.in").rename(below / "run.in")
+    (work / "job.sh").write_text(
+        JOB.replace("-in run.in", "-in inputs/run.in")
+    )
+    req = dict(
+        input_path=str(below / "run.in"),
+        job_path=str(work / "job.sh"),
+        bundle=str(bundle[0]),
+    )
+    out = rwf.prepare(**req, runner=_shell())
+    assert out["ok"], out.get("refusal")
+    assert rwf.write(**req, originals=out["originals"], runner=_shell())["ok"]
+    assert read_memory()["last_folder"] == str(work)
+
+
+async def test_server_accepts_a_local_prepare_without_a_job_field(
+    work, bundle, monkeypatch
+):
+    import asyncio
+    import types
+    from ffast.live import lammps_check
+    from ffast.protocol import control
+    from ffast.protocol.rpc import unpack
+    from ffast.session.server_session import ServerSession
+
+    lammps_check._CACHE.clear()
+    monkeypatch.setattr(lammps_check, "_subprocess_runner", _shell())
+    queue = asyncio.Queue()
+    session = ServerSession(types.SimpleNamespace(), queue)
+    await session.dispatch(
+        control.PREPARE_RUN_WITH_FFAST,
+        (),
+        {
+            "input": str(work / "run.in"),
+            "bundle": str(bundle[0]),
+            "target": "local",
+            "executable": "/usr/bin/lmp",
+        },
+    )
+    event, _, out = unpack(queue.get_nowait())
+    assert event == control.RUN_WITH_FFAST_PREPARED and out["ok"], out
+    assert [c["kind"] for c in out["copies"]] == ["input"]

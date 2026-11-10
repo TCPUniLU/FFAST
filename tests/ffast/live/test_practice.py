@@ -163,3 +163,40 @@ async def test_a_scorer_that_cannot_start_reports_the_wrapper_error(tmp_path):
     )
     with pytest.raises(ValueError, match="nonexistent-ffast-scorer"):
         await start_practice_run(environ=env)
+
+
+def test_tutorial_copy_refuses_user_folders_and_keeps_repo_input_unchanged(
+    tmp_path,
+):
+    from ffast.live.local_launch import prepare_tutorial_input
+    from ffast.session.examples import lammps_example_dir
+
+    env = dict(
+        os.environ,
+        FFAST_PRACTICE_RUNS=str(tmp_path / "practice"),
+        FFAST_REFERENCES=str(tmp_path / "references"),
+    )
+    original = (lammps_example_dir() / "tutorial" / "in.tutorial").read_bytes()
+    folder = tmp_path / "practice" / "tutorial-input"
+    folder.mkdir(parents=True)
+    mine = folder / "notes.txt"
+    mine.write_text("mine")
+    with pytest.raises(ValueError, match="not made by FFAST"):
+        prepare_tutorial_input(env)
+    assert mine.read_text() == "mine"
+    mine.unlink()
+    folder.rmdir()
+    out = prepare_tutorial_input(env)
+    assert Path(out["input"]).is_file() and Path(out["reference"]).is_dir()
+    from ffast.live.run_folder_scan import scan
+
+    found = scan(out["folder"], target="local", environ=env)
+    assert (
+        found["input"] == out["input"]
+        and found["reference"] == out["reference"]
+    )
+    assert found["data"] == str(folder / "aspirin.data")
+    assert found["problem"] is None
+    assert (
+        lammps_example_dir() / "tutorial" / "in.tutorial"
+    ).read_bytes() == original

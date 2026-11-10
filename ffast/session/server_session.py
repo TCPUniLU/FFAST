@@ -215,6 +215,7 @@ class ServerSession:
             control.ADD_SESSION_METRICS:        _Route(self._on_add_session_metrics, ["offer_id"], AddSessionMetricsRequest),
             control.EXPORT_USER_METRIC:         _Route(self._on_export_user_metric, ["id"], ExportUserMetricRequest),
             control.TRACE:                      _Route(self._on_trace, ["kind", "text"], TraceRequest),
+            control.PREPARE_PRACTICE_INPUT: _Route(self._on_prepare_practice_input, [], EmptyRequest),
             control.START_PRACTICE_RUN: _Route(self._on_start_practice_run, ["?kind"], StartPracticeRunRequest),
             control.HEAT_PRACTICE_RUN: _Route(self._on_heat_practice_run, ["run_id"], LiveStopRequest),
             control.DELETE_PRACTICE_RUN: _Route(self._on_delete_practice_run, ["run_id"], LiveStopRequest),
@@ -228,10 +229,10 @@ class ServerSession:
             control.FORGET_LIVE_RUN:            _Route(self._on_forget_live_run, ["run_id"], ForgetLiveRunRequest),
             control.MAKE_REFERENCE:             _Route(self._on_make_reference, ["train", "valid", "name", "folder"],
                                                        MakeReferenceRequest),
-            control.PREPARE_RUN_WITH_FFAST:     _Route(self._on_prepare_run_with_ffast, ["input", "job", "bundle"],
+            control.PREPARE_RUN_WITH_FFAST:     _Route(self._on_prepare_run_with_ffast, ["input", "?job", "bundle"],
                                                        RunWithFfastRequest),
             control.WRITE_RUN_WITH_FFAST:       _Route(self._on_write_run_with_ffast,
-                                                       ["input", "job", "bundle", "originals"],
+                                                       ["input", "?job", "bundle", "originals"],
                                                        WriteRunWithFfastRequest),
             control.SUBMIT_JOB:                 _Route(self._on_submit_job, ["folder", "script"], SubmitJobRequest),
             control.WATCH_JOB:                  _Route(self._on_watch_job, ["job_id"], WatchJobRequest),
@@ -923,6 +924,16 @@ class ServerSession:
         """The Load dialog moved on to another file, or closed without Load."""
         self._stop_length_probe()
 
+    async def _on_prepare_practice_input(self, **kwargs) -> None:
+        from ffast.live.local_launch import prepare_tutorial_input
+        from ffast.protocol.rpc import pack
+
+        try:
+            out = await asyncio.to_thread(prepare_tutorial_input)
+        except (ValueError, OSError) as exc:
+            out = {"error": str(exc)}
+        await self._emit(pack(control.PRACTICE_INPUT_PREPARED, (), out))
+
     async def _on_start_practice_run(self, kind="replay", **kwargs) -> None:
         from ffast.live.local_launch import start_practice_run
         from ffast.live.live_run import open_live_run
@@ -1087,18 +1098,23 @@ class ServerSession:
             out = {"error": str(exc), "folder": folder, "script": script}
         await self._emit(pack(control.JOB_SUBMITTED, (), out))
 
-    async def _on_scan_run_folder(self, folder=None, job=None, **kwargs) -> None:
+    async def _on_scan_run_folder(
+        self, folder=None, job=None, target="cluster", input=None, **kwargs
+    ) -> None:
         """Run with FFAST: what a run folder holds (job scripts, inputs,
         references), for the Choose step. Reads only."""
         from ffast.live.run_folder_scan import scan
         from ffast.protocol.rpc import pack
 
         try:
-            out = await asyncio.to_thread(scan, folder, job)
+            out = await asyncio.to_thread(
+                scan, folder, job, target=target, input=input
+            )
         except Exception as exc:   # a scan that breaks must say so, not leave the dialog waiting
             logger.exception("SCAN_RUN_FOLDER %r failed", folder)
             out = {"folder": folder, "problem": f"{type(exc).__name__}: {exc}"}
         out["asked"] = folder or ""
+        out["target"] = target
         await self._emit(pack(control.RUN_FOLDER_SCANNED, (), out))
 
     async def _on_watch_job(self, job_id, **kwargs) -> None:
@@ -1134,9 +1150,38 @@ class ServerSession:
         from ffast.live.detectana_api import DetectAnaMissing
         from ffast.protocol.rpc import pack
 
-        opts = {k: kwargs[k] for k in ("data", "data_path", "data_index", "stop_on_alarm") if k in kwargs}
+        opts = {
+            k: kwargs[k]
+            for k in (
+                "data",
+                "data_path",
+                "data_index",
+                "stop_on_alarm",
+                "target",
+                "executable",
+            )
+            if k in kwargs
+        }
         try:
             out = await asyncio.to_thread(fn, *args, **opts)
+            if (
+                reply == control.RUN_WITH_FFAST_WRITTEN
+                and out.get("ok")
+                and opts.get("target") == "local"
+            ):
+                from ffast.live.local_launch import start_local_run
+
+                launch = out["launch"]
+                run_id, folder = await start_local_run(
+                    launch["executable"],
+                    launch["input"],
+                    practice=kwargs.get("practice", False),
+                )
+                out.update(
+                    run_id=run_id,
+                    run_dir=folder,
+                    practice=kwargs.get("practice", False),
+                )
         except DetectAnaMissing as exc:
             out = {"ok": False, "refusal": {"file": "bundle", "reason": str(exc), "line": None,
                                             "hand_edit": "", "text": str(exc)}}

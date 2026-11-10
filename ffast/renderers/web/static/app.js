@@ -713,7 +713,7 @@ export class FFastApp {
   _startTour(tour) {
     if (this._tourId) return;   // one tour at a time (the runner says the same)
     this._tourId = tour.id;
-    startTour(tour, {
+    this._tourHandle = startTour(tour, {
       events: this.tourEvents,
       onEnd: (how, message) => {
         this._tourId = null;
@@ -1802,6 +1802,7 @@ export class FFastApp {
    * tunnel (web parity plan 2026-10-29). Not a recent server: the port
    * changes every time. */
   _useCluster(status) {
+    this._clusterServerUrl = status.ws_url;
     document.getElementById('ws-url').value = status.ws_url;
     document.getElementById('token-input').value = status.token || '';
     this._connect({ remember: false });
@@ -1897,6 +1898,11 @@ export class FFastApp {
         this._examples = kw.examples ?? null;
         this._browser.setLoaderTypes(kw);
       });
+      conn.on(IN.PRACTICE_INPUT_PREPARED, (kw) => {
+        if (kw.error) { this._tourSignal('practice-failed', kw); return; }
+        this._practiceInput = kw;
+        this._tourSignal('practice-input-ready', kw);
+      });
       conn.on(IN.PRACTICE_RUN_STARTED, (kw) => {
         if (kw.error) { this._tourSignal('practice-failed', kw); return; }
         this._practiceId = kw.run_id;
@@ -1915,7 +1921,10 @@ export class FFastApp {
       conn.on(IN.REFERENCE_MADE, (kw) => this._live().onReferenceMade(kw));
       for (const ev of [IN.RUN_FOLDER_SCANNED, IN.RUN_WITH_FFAST_PREPARED, IN.RUN_WITH_FFAST_WRITTEN,
         IN.JOB_SUBMITTED, IN.JOB_STATE]) {
-        conn.on(ev, (kw) => this._live().onRunWithFfast(ev, kw));
+        conn.on(ev, (kw) => {
+          if (ev === IN.RUN_WITH_FFAST_WRITTEN && kw.ok && kw.practice) this._practiceId = kw.run_id;
+          this._live().onRunWithFfast(ev, kw);
+        });
       }
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.DATASET_LENGTH_RESPONSE, (kw, args) => this._browser.onDatasetLength(args[0], kw));
@@ -2915,7 +2924,17 @@ export class FFastApp {
    * from the server's node. */
   _runWithFfast() {
     const client = this._clusterClient;
+    const practice = this._tourId === 'own-lammps';
+    if (practice && !this._practiceInput) return;
     this._live().openRunWithFfast({
+      initialFolder: practice ? this._practiceInput.folder : '',
+      initialReference: practice ? this._practiceInput.reference : '', practice,
+      localAvailable: !!this._conn?.localLammps && this._conn?._url !== this._clusterServerUrl,
+      signal: (name, detail) => {
+        this._tourSignal(name, detail);
+        if (name === 'rwf-closed' && this._tourId === 'own-lammps' && !detail.started)
+          this._tourSignal('practice-failed', { error: 'Run with FFAST was closed. Take the tour again from the LAMMPS menu.' });
+      },
       // a folder (the run folder), a file, or a reference: a .bundle folder chosen as one item
       pick: (kind, title, onPick) => this._browser.pick({
         mode: kind === 'folder' ? 'open-folder' : 'save-file', title, okLabel: 'Choose', onPick,
@@ -2954,6 +2973,7 @@ export class FFastApp {
       if (kw.error) this._setStatus(`Live run: ${kw.error}`, 'error');
       return;
     }
+    this._live()._rwf?.onLocalUpdate(kw);
     const previous = this._practiceRun;
     const practice = kw.run_id === this._practiceId;
     if (practice) this._practiceRun = kw;
@@ -2987,11 +3007,12 @@ export class FFastApp {
       }
       this._tourSignal('practice-progress', detail);
     }
-    if (!this._liveRunWanted || !kw.fingerprint || !tabId || this._tourId === 'watch-lammps' && this._practiceId && !practice) return;
+    if (!this._liveRunWanted || !kw.fingerprint || !tabId || ['watch-lammps', 'own-lammps'].includes(this._tourId) && this._practiceId && !practice) return;
     this._liveRunWanted = false;
     this._setStatus(`Live run ${kw.run_id}`, 'connected');
     // The tab's own 3D panel shows the run; the main view keeps what it shows.
     this._selectTab(tabId);
+    this._live()._rwf?.onLocalFrame(kw);
     if (practice) this._tourSignal('live-first-frame', { run_id: kw.run_id });
   }
 

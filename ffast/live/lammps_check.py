@@ -63,20 +63,34 @@ class LammpsCheck:
     def reset_after_dump_ok(self) -> bool:
         return self.reached == "done"
 
-    def checks(self, *, needs_snapshot: bool) -> tuple[list[Check], str | None]:
+    def checks(
+        self, *, needs_snapshot: bool, local: bool = False
+    ) -> tuple[list[Check], str | None]:
         """Lines for the dialog, and a refusal reason when FFAST cannot run on this build."""
         out = []
         if self.module:
             out.append(Check("ok", f"job script loads {self.module}"))
-        else:
+        elif not local:
             out.append(Check("warn", f"no LAMMPS module found in the job script; checked the "
                                      f"`{self.executable}` on the server's PATH"))
         if not self.found:
-            return out, (f"`{self.executable}` does not start after the job script's module lines"
-                         + (f": {self.error}" if self.error else ""))
+            return out, (
+                f"`{self.executable}` does not start"
+                + (
+                    " on this computer"
+                    if local
+                    else " after the job script's module lines"
+                )
+                + (f": {self.error}" if self.error else "")
+            )
         how = " (through srun)" if self.launched_with_srun else ""
-        out.append(Check("ok", f"`{self.executable}` starts on the server's node{how}; "
-                               f"version {self.version or 'unknown'}"))
+        out.append(
+            Check(
+                "ok",
+                f"`{self.executable}` starts {'on this computer' if local else 'on the server node'}{how}; "
+                f"version {self.version or 'unknown'}",
+            )
+        )
         if needs_snapshot and not self.snapshot_ok:
             return out, f"this LAMMPS refuses the start snapshot (write_dump): {self.error}"
         if not self.ffast_commands_ok:
@@ -192,17 +206,34 @@ def _scratch() -> Path:
     return Path(tempfile.mkdtemp(prefix="ffast-lmp-check-", dir=base))
 
 
-def check_lammps(module_lines: list[str], module: str | None, executable: str, *,
-                 runner: Runner | None = None, use_cache: bool = True) -> LammpsCheck:
+def check_lammps(
+    module_lines: list[str],
+    module: str | None,
+    executable: str,
+    *,
+    runner: Runner | None = None,
+    use_cache: bool = True,
+    local: bool = False,
+) -> LammpsCheck:
     """Load the job's modules and try FFAST's commands in that LAMMPS (P9)."""
-    key = (tuple(module_lines), executable)
+    key = (tuple(module_lines), executable, local)
     if use_cache and key in _CACHE:
         return _CACHE[key]
     runner = runner or _subprocess_runner
     result = LammpsCheck(module, list(module_lines), executable)
     folder = _scratch()
-    prelude = "\n".join(["module --force purge >/dev/null 2>&1 || true", *module_lines])
-    exe = executable if "$" in executable else shlex.quote(executable)
+    prelude = (
+        ""
+        if local
+        else "\n".join(
+            ["module --force purge >/dev/null 2>&1 || true", *module_lines]
+        )
+    )
+    exe = (
+        executable
+        if not local and "$" in executable
+        else shlex.quote(executable)
+    )
 
     rc, out = runner(f"{prelude}\n{exe} -h", folder, TIMEOUT_S)
     if rc != 0 or "Large-scale Atomic/Molecular" not in out:
@@ -215,7 +246,12 @@ def check_lammps(module_lines: list[str], module: str | None, executable: str, *
     run = f"{exe} -in test.in -log test.log -echo screen"
     rc, out = runner(f"{prelude}\n{run}", folder, TIMEOUT_S)
     reached, error = parse_run(out)
-    if reached is None and error is None and any(h in out for h in MPI_HINTS):
+    if (
+        not local
+        and reached is None
+        and error is None
+        and any(h in out for h in MPI_HINTS)
+    ):
         rc, out = runner(f"{prelude}\nsrun --overlap -n 1 {run}", folder, TIMEOUT_S)
         reached, error = parse_run(out)
         result.launched_with_srun = True

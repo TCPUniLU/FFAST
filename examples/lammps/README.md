@@ -20,8 +20,9 @@ pushing these examples to a public repository.**
 
 `tutorial/in.tutorial` is the toy input for the second tutorial: Lennard-Jones,
 a spring tether and Langevin heating, with tutorial-only pacing and a GO/STOP
-wait. It is shipped for Phase B; its shell commands have not yet been checked
-on the laptop's real LAMMPS. Open it with Run with FFAST to add monitoring;
+wait. Its pacing and GO/STOP wait are verified on conda-forge LAMMPS
+22 Jul 2025 Update 6 (serial and two MPICH processes); see
+[the checks](../../docs/research/lammps-tutorials-2026-11-08/lammps-check.md). Open it with Run with FFAST to add monitoring;
 that dialog also aligns the data's atom types with the reference.
 
 `tutorial.json` holds the shared gate step and replay pace. The launcher reads

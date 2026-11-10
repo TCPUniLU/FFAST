@@ -1,5 +1,5 @@
 # Toy aspirin, 300 K then 3000 K. Use Run with FFAST to add monitoring.
-# The gate and pacing are tutorial-only; Phase B verifies them on real LAMMPS.
+# The gate and pacing are tutorial-only; verified on LAMMPS 22 Jul 2025 Update 6.
 units metal
 atom_style atomic
 boundary s s s
@@ -15,7 +15,7 @@ thermo 5000
 # tutorial only: slows the run so you can watch it
 run 10000 every 100 "shell sleep 0.3"
 # tutorial only: waits before the heat; STOP also releases the shell wait
-shell sh -c "while [ ! -e '${ffast_dir}/GO' ] && [ ! -e '${ffast_dir}/STOP' ]; do sleep 0.1; done"
+shell while [ ! -e ${ffast_dir}/GO ] && [ ! -e ${ffast_dir}/STOP ]; do sleep 0.1; done
 unfix heat
 velocity all scale 3000.0
 fix heat all langevin 3000.0 3000.0 0.05 4242

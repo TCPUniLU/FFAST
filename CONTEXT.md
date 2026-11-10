@@ -339,7 +339,11 @@ A **practice run** is an ordinary live run started by a tour, marked in
 in the normal Live Runs list. The **gate** waits before the heat until `GO`
 exists. A practice run is **paused** when its last saved step is the gate
 step, it has not ended, and `GO` is absent. **Heat it up** writes `GO`.
-STOP works while paused. Deleting an ended practice run removes its pointer
+STOP works while paused. The second tutorial copies its input into a marked
+`tutorial-input` folder, then uses Run with FFAST’s **This computer** target
+to check and launch one local LAMMPS process through the same wrapper.
+The input’s shell wait checks both GO and STOP; `fix halt` observes STOP once
+dynamics resumes. Deleting an ended practice run removes its pointer
 and folder; ordinary runs are never deleted this way (ADR 0092).
 
 ## Plots
