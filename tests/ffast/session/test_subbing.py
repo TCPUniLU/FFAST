@@ -119,6 +119,8 @@ class _Registry:
     def has(self, metric_id):
         return metric_id in self._inputs
 
+    ensure = has
+
     def get(self, metric_id):
         from types import SimpleNamespace
         return SimpleNamespace(inputs=self._inputs[metric_id]), None

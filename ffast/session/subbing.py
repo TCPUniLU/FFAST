@@ -66,24 +66,24 @@ def flat_to_frames(flat, *, n_atoms: int | None = None, offsets=None) -> np.ndar
 def source_metric(registry, metric_id: str) -> str | None:
     """The per-frame metric a reduced metric (a density) was drawn from: its
     ``src`` input, else the first input that is itself a metric."""
-    if not registry.has(metric_id):
+    if not registry.ensure(metric_id):
         return None
     inputs = registry.get(metric_id)[0].inputs
     src = inputs.get("src")
-    if src and registry.has(src):
+    if src and registry.ensure(src):
         return src
-    return next((ref for ref in inputs.values() if registry.has(ref)), None)
+    return next((ref for ref in inputs.values() if registry.ensure(ref)), None)
 
 
 def _named_input(registry, metric_id: str, key: str) -> str | None:
-    if not registry.has(metric_id):
+    if not registry.ensure(metric_id):
         return None
     ref = registry.get(metric_id)[0].inputs.get(key)
-    return ref if ref and registry.has(ref) else None
+    return ref if ref and registry.ensure(ref) else None
 
 
 def _per_atom(registry, metric_id: str) -> bool:
-    if not registry.has(metric_id):
+    if not registry.ensure(metric_id):
         return False
     shape = registry.get(metric_id)[0].shape
     dims = shape if isinstance(shape, tuple) else (shape,)
