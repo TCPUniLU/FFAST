@@ -308,6 +308,7 @@ async def test_the_score_dialogs_pure_helpers():
                 await page.goto(f"{origin}/jsconfig.json")
                 got = await page.evaluate(f"""async () => {{
                   const m = await import('{origin}/score_dialog.js');
+                  const lr = await import('{origin}/live_run.js');
                   const existing = [{{ bundle: '/b.bundle', settings: {{ frame_dt_ps: 0.0005, persist_ps: 5 }}, state: 'done' }}];
                   return {{
                     nums: ['', ' 2 ', '0', '-1', 'x'].map((t) => m.positiveNumber(t)),
@@ -321,6 +322,20 @@ async def test_the_score_dialogs_pure_helpers():
                     otherPersist: !!m.existingItem(existing, '/b.bundle', 0.5, 2),
                     otherBundle: !!m.existingItem(existing, '/c.bundle', 0.5, 5),
                     noTime: !!m.existingItem(existing, '/b.bundle', null, 5),
+                    noneRecorded: (() => {{
+                      // No recorded reference: the placeholder must not count as one.
+                      const d = m.openScoreDialog({{ info: {{ fingerprint: 'f', references: [], persist_ps: 5 }},
+                        send: () => {{}} }});
+                      const disabled = document.querySelector('#score-dialog .score-go').disabled;
+                      d.close();
+                      return disabled;
+                    }})(),
+                    incomplete: (() => {{
+                      const s = (state, frames, n) => ({{ kind: 'scored', state, n_frames: n,
+                        series: {{ frame: [...Array(frames).keys()] }} }});
+                      return [s('cancelled', 2, 5), s('failed', 2, 5), s('done', 5, 8), s('done', 5, 5),
+                              s('scoring', 2, 5), s('refused', 0, 5)].map(lr.scoredIncomplete);
+                    }})(),
                   }};
                 }}""")
             finally:
@@ -334,3 +349,6 @@ async def test_the_score_dialogs_pure_helpers():
     assert got["refusal"] == "has a cell" and got["nodet"] == "not installed"
     assert got["same"] is True and got["otherPersist"] is False
     assert got["otherBundle"] is False and got["noTime"] is False
+    assert got["noneRecorded"] is True
+    # cancelled, failed part-way and a grown live run can continue; complete, running, refused cannot
+    assert got["incomplete"] == [True, True, True, False, False, False]

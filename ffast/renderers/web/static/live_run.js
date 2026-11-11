@@ -349,6 +349,13 @@ export function scoredCount(kw) {
   return (kw.series?.exceedance || []).filter((v) => v != null).length;
 }
 
+/** Whether a scored item has frames with no row yet and nothing is scoring it:
+ * cancelled, failed part-way, or a live run that grew after it was scored. */
+export function scoredIncomplete(kw) {
+  if (!kw || kw.kind !== 'scored' || ['scoring', 'refused'].includes(kw.state)) return false;
+  return (kw.series?.frame || []).length < (kw.n_frames || 0);
+}
+
 /**
  * One scored item's row of the Run panel's table (ADR 0093): where it was scored
  * from and how far, then its state. No stop controls: nothing is running that
@@ -367,8 +374,9 @@ export function liveScoredRow(kw, parentName) {
     case 'scoring': words = 'Scoring…'; break;
     case 'done': words = gaps ? `Done · ${fmt(gaps)} ${gaps === 1 ? 'frame' : 'frames'} not scored` : 'Done'; tone = gaps ? 'warn' : ''; break;
     case 'cancelled': words = 'Incomplete (cancelled)'; tone = 'warn'; break;
-    case 'refused': words = `Refused: ${kw.reason || 'the reference cannot score this dataset'}`; tone = 'bad'; break;
-    case 'failed': words = `Failed: ${kw.reason || 'scoring stopped'}`; tone = 'bad'; break;
+    // The reason is the problem line under the table (liveRunProblem), not repeated here.
+    case 'refused': words = kw.reason ? 'Refused' : 'Refused: the reference cannot score this dataset'; tone = 'bad'; break;
+    case 'failed': words = kw.reason ? 'Failed' : 'Failed: scoring stopped'; tone = 'bad'; break;
     default: words = kw.state || 'Waiting…';
   }
   if (alarm) { words = `${alarm.text} · ${words}`; tone = 'bad'; }

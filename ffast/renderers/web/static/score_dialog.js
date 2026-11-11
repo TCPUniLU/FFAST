@@ -75,7 +75,12 @@ export function openScoreDialog({ info, send, pickBundle = null }) {
   for (const r of references) {
     addReference(r.bundle, `${r.name}${r.formula ? ` · ${r.formula}` : ''} · ${r.bundle}`);
   }
-  if (!references.length) ref.appendChild(el('option', '', '— none recorded: use Browse… —'));
+  if (!references.length) {
+    // An empty value: without it the option's text would be sent as the bundle path.
+    const none = el('option', '', '— none recorded: use Browse… —');
+    none.value = '';
+    ref.appendChild(none);
+  }
   const browse = el('button', 'score-browse', 'Browse…');
   browse.type = 'button';
   browse.title = 'Choose a .bundle folder on the server';

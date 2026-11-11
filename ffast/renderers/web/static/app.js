@@ -29,7 +29,7 @@ import { createExportPane } from './panes/export.js';
 import { IN, OUT } from './events.js';
 import { LiveUi } from './live_ui.js';
 import { openScoreDialog } from './score_dialog.js';
-import { explainsIndex } from './live_run.js';
+import { explainsIndex, scoredIncomplete } from './live_run.js';
 import { Rail, framesText, nameProblem } from './rail.js';
 import { RemoteBrowser } from './remote_browser.js';
 import { SessionOps } from './session_ops.js';
@@ -2242,7 +2242,7 @@ export class FFastApp {
    * is incomplete. */
   _scoredRowActions(fp, info, rename, why) {
     const items = [info, rename];
-    if (this._analysis?.liveRunOf(fp)?.state === 'cancelled') {
+    if (scoredIncomplete(this._analysis?.liveRunOf(fp))) {
       items.push({ id: 'dataset-continue-scoring', label: 'Continue scoring',
         run: () => this._continueScoring(fp), unavailable: why });
     }
