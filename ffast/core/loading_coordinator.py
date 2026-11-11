@@ -293,7 +293,7 @@ class LoadingCoordinator:
     def loadPrepredictedDataset(self, path, datasetKey, taskID=None, selected_energy_key=None,
                                 selected_force_key=None, on_error=None):
         """Attach precomputed energies and forces to a dataset as a ghost model."""
-        if "npz" in path:
+        if path.lower().endswith(".npz"):
             d = np.load(path, allow_pickle=True)
             E, F = d["E"], d["F"]
             # Sampled like its dataset, as _readPredictionAtomsList does for
