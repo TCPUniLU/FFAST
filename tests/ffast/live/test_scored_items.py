@@ -291,3 +291,75 @@ def test_an_item_scored_again_is_not_hidden_when_the_old_one_notices_it_was_clos
     new.closed()
     new.closed()
     assert old.run_id not in env.scored_items and si.read_item(old.folder)["hidden"]
+
+
+def _water_then_aspirin(path, n_water, n_aspirin):
+    water = Atoms("H2O", positions=[[0, 0, 0], [0.9, 0, 0], [0, 0.9, 0]])
+    frames = [water.copy() for _ in range(n_water)]
+    for k in range(n_aspirin):
+        a = initial_atoms().copy()
+        a.positions += np.random.default_rng(k).normal(0, 0.02, a.positions.shape)
+        frames.append(a)
+    write(str(path), frames, format="extxyz")
+    return path
+
+
+def test_cancelling_before_any_frame_is_accepted_is_a_cancel_not_a_refusal(tmp_path, bundle_dir, monkeypatch):
+    # The first chunk holds only frames the reference refuses; the later frames could be
+    # scored. Stopping there must leave the item incomplete, so Continue scoring works.
+    monkeypatch.setattr(si, "CHUNK", 2)
+    ds = _load(_water_then_aspirin(tmp_path / "w.xyz", 2, 3))
+    settings = si.make_settings(0.5)
+    folder = si.score_dataset(ds, bundle_dir, settings, stopped=lambda: True)
+    assert si.read_item(folder)["state"] == "cancelled"
+    si.score_dataset(ds, bundle_dir, settings)
+    assert si.read_item(folder)["state"] == "done"
+    assert sorted(r["frame"] for r in _rows(folder)) == list(range(5))
+
+
+def test_without_a_time_the_alarms_off_warning_is_written_once(tmp_path, bundle_dir):
+    folder = si.score_dataset(_load(write_frames(tmp_path / "f.xyz", 4, seed=8)), bundle_dir,
+                              si.make_settings(None))
+    warnings = [e for e in rf.read_events(folder) if e["kind"] == "warning"]
+    assert [e["text"] for e in warnings] == [si.NO_TIME_EVENT]
+
+
+def test_a_scoring_cut_off_by_a_restart_reads_as_cancelled(tmp_path, bundle_dir):
+    ds = _load(write_frames(tmp_path / "f.xyz", 3, seed=9))
+    folder = si.score_dataset(ds, bundle_dir, si.make_settings(0.5))
+    si.write_item_json(folder, state="scoring")          # the server died mid-scoring
+    si.mark_interrupted(folder)
+    assert si.read_item(folder)["state"] == "cancelled"
+    si.write_item_json(folder, state="done")
+    si.mark_interrupted(folder)
+    assert si.read_item(folder)["state"] == "done"
+
+
+def test_two_scorings_of_one_item_never_run_at_once(tmp_path, bundle_dir, monkeypatch):
+    # Cancel, then Continue scoring at once: the cancelled thread may still be scoring
+    # its last chunk. The second must wait for it, not score the same frames again.
+    import threading
+
+    monkeypatch.setattr(si, "CHUNK", 2)
+    ds = _load(write_frames(tmp_path / "f.xyz", 6, seed=10))
+    settings = si.make_settings(0.5)
+    first_in_chunk = threading.Event()
+    release = threading.Event()
+
+    def slow_progress(done, total):
+        first_in_chunk.set()
+        release.wait(10)
+
+    a = threading.Thread(target=si.score_dataset, args=(ds, bundle_dir, settings),
+                         kwargs={"stopped": lambda: True, "progress": slow_progress})
+    a.start()
+    assert first_in_chunk.wait(30)
+    b = threading.Thread(target=si.score_dataset, args=(ds, bundle_dir, settings))
+    b.start()
+    b.join(0.5)
+    release.set()
+    a.join(30)
+    b.join(30)
+    frames = [r["frame"] for r in _rows(si.item_dir(si.item_id(ds.getFingerprint(), bundle_dir, settings)))]
+    assert sorted(frames) == list(range(6)) and len(frames) == 6
+    assert si.read_item(si.item_dir(si.item_id(ds.getFingerprint(), bundle_dir, settings)))["state"] == "done"

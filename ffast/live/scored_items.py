@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -134,6 +135,26 @@ def _event(directory: Path):
     return lambda kind, **fields: rf.append_event(directory, kind, **fields)
 
 
+_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _lock_for(folder: Path) -> threading.Lock:
+    """One lock per item folder. A cancelled scoring finishes its chunk in its thread
+    after the task is gone, so Continue scoring can start while it still writes: the
+    second one waits, then sees the rows the first wrote."""
+    with _locks_guard:
+        return _locks.setdefault(str(folder), threading.Lock())
+
+
+def mark_interrupted(folder: Path) -> None:
+    """An item still saying ``scoring`` when nothing scores it (the server stopped
+    mid-scoring) is incomplete: say ``cancelled`` so Continue scoring is offered."""
+    item = read_item(folder)
+    if item and item.get("state") == "scoring":
+        write_item_json(Path(folder), state="cancelled")
+
+
 def score_dataset(
     dataset,
     bundle_dir,
@@ -150,7 +171,6 @@ def score_dataset(
     Continue scoring). The state ends as ``done``, ``cancelled`` (``stopped``
     turned true) or ``refused`` (with the reason).
     """
-    from ffast.live.data_file import bundle_sha256
     from ffast.live.detectana_api import require_detectana
 
     detectana = require_detectana()
@@ -159,6 +179,14 @@ def score_dataset(
     iid = item_id(fp, bundle_dir, settings)
     folder = item_dir(iid, environ)
     folder.mkdir(parents=True, exist_ok=True)
+    with _lock_for(folder):
+        return _score_locked(dataset, bundle_dir, settings, detectana, fp, iid, folder,
+                             stopped=stopped, progress=progress, name=name)
+
+
+def _score_locked(dataset, bundle_dir, settings, detectana, fp, iid, folder, *, stopped, progress, name):
+    from ffast.live.data_file import bundle_sha256
+
     event = _event(folder)
     old = rf.read_json(folder / ITEM) or {}
     write_item_json(folder, item_id=iid, parent=fp, parent_name=name or old.get("parent_name") or dataset.getName(),
@@ -199,9 +227,10 @@ def score_dataset(
         no_time_text=NO_TIME_EVENT)
     writer.identity = "unverified"          # a file never proves atom order
     writer.write_settings()
-    writer.replay(done_rows)                # the alarm rule sees the frames scored before
     if dt is None:
+        writer.tracker = False              # alarms off; said once here, not again by the writer
         event("warning", text=NO_TIME_EVENT)
+    writer.replay(done_rows)                # the alarm rule sees the frames scored before
     accepted = sum(1 for r in done_rows if "refused" not in r)
 
     def step_of(i):
@@ -237,7 +266,7 @@ def score_dataset(
         if stopped():
             cancelled = True
             break
-    if accepted == 0:
+    if accepted == 0 and not cancelled:     # stopped early: later frames may still be scorable
         return refuse("no frame of this dataset can be scored with this reference")
     final = "cancelled" if cancelled else "done"
     writer.write_progress(state=final)

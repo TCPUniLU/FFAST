@@ -273,6 +273,7 @@ def reopen_scored_items(env, parent, broadcast) -> list[ScoredItem]:
     out = []
     for folder in si.find_items(parent.getFingerprint()):
         try:
+            si.mark_interrupted(folder)     # just loaded: nothing can be scoring it
             out.append(open_scored_item(env, folder, parent, broadcast))
         except Exception as exc:    # a damaged item folder must not stop the load
             logger.warning("scored item %s could not be reopened: %s", folder.name, exc)
