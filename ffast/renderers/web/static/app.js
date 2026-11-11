@@ -2054,7 +2054,6 @@ export class FFastApp {
     this._showWhenKnown = null;
     this._deleting.clear();
     this._playing = false;
-    this._pendingSessionOp = null;
     this._tasks.reset();
     this._setActiveTool(null);   // release any armed pick tool
     this._applyLayout([]);       // back to the default 3D tab

@@ -28,18 +28,19 @@ def loadData(env):
 
         def __call__(self, path: str, selected_energy_key=None, selected_force_key=None,
                      prediction_keys=None, show_dialog=True, slice_num=0, progress=None):
-            """Load ASE dataset with optional key selection.
+            """Load an ASE dataset with the keys the caller chose.
 
             Args:
                 path: Path to dataset file
                 selected_energy_key: Pre-selected energy key for reference
                 selected_force_key: Pre-selected force key for reference
                 prediction_keys: List of (energy_key, force_key, model_name) tuples
-                show_dialog: Whether to show selection dialog (False when loading from session)
+                show_dialog: Ignored. Keys are chosen before the load starts
+                    (the client asks); kept so existing callers still work.
                 progress: optional progress(done, total) called as frames are read (ADR 0076)
 
             Returns:
-                tuple: (dataset_loader, prediction_keys) or (None, None) if cancelled
+                tuple: (dataset_loader, prediction_keys)
             """
             # Read file ONCE
             if slice_num == 0:
@@ -54,28 +55,6 @@ def loadData(env):
                 atomsList = AtomsList(path, step=slice_num)
             else:
                 atomsList = read_every(path, slice_num)
-
-            # Handle key selection first (if dialog needed)
-            if show_dialog and (selected_energy_key is None or selected_force_key is None):
-                # A temporary loader on the first frame, just to list the energy
-                # and force keys (read from frame 0) and show the dialog.
-                temp_loader = aseDatasetLoader(path, atomsList=[atomsList[0]])
-
-                # Check if multiple keys exist
-                energy_keys = temp_loader.EneregyKeys()
-                force_keys = temp_loader.ForceKeys()
-
-                if len(energy_keys) > 1 or len(force_keys) > 1:
-                    selection = temp_loader.promptKeySelection()
-
-                    if selection is None:
-                        # User cancelled
-                        logger.info("Dataset loading cancelled by user")
-                        return None, None
-
-                    selected_energy_key = selection['energy_ref']
-                    selected_force_key = selection['force_ref']
-                    prediction_keys = selection['predictions']
 
             # One loader for every ASE file; it decides uniform or variable from
             # the frames itself, by the fixed-sample rule (ADR 0058).
