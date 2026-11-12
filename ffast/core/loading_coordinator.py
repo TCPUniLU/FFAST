@@ -551,6 +551,12 @@ class LoadingCoordinator:
         # prediction-keys path is new — that path skipped extraction entirely
         # while it carried its own copy of this body, so fields declared by a
         # metric silently resolved to None for in-file prediction columns.
+        # The same prediction loaded again: its fingerprint covers only energies
+        # and forces, so its fields may differ, and what was computed from the
+        # old ones is stale (as for a dataset, DatasetRegistry.add).
+        if fingerprint in self._env.models:
+            self._env.eventPush("OBJECT_REPLACED", fingerprint)
+
         # npz carries no fields: clear any an earlier load stored here.
         if source is not None:
             self._extractPredictionFields(source, fingerprint, dataset)

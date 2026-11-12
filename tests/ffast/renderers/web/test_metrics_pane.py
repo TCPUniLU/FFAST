@@ -783,3 +783,88 @@ async def test_a_per_structure_and_element_formula_plots_a_line_per_element_and_
                 await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
             finally:
                 await browser.close()
+
+
+def _floats(values):
+    from ffast.protocol.rpc import _decode_array
+    return [round(float(v), 6) for v in _decode_array(values)]
+
+
+def _charged_frames(path, charge):
+    """Two H2 frames with energies, forces and an info field ``charge``."""
+    import numpy as np
+    from ase import Atoms
+    from ase.calculators.singlepoint import SinglePointCalculator
+
+    frames = []
+    for i in range(2):
+        a = Atoms("H2", positions=[[0, 0, 0], [0.74 + 0.01 * i, 0, 0]])
+        a.calc = SinglePointCalculator(a, energy=-1.0 - i, forces=np.zeros((2, 3)))
+        a.info["charge"] = charge
+        frames.append(a)
+    ase.io.write(str(path), frames, format="extxyz")
+    return path
+
+
+async def test_a_file_loaded_over_one_with_its_fingerprint_gives_its_own_field_values(tmp_path):
+    """A second file with the same geometry but another field value replaces the
+    first under one fingerprint (fields are not in it, ADR 0058). Every window
+    is told (METRICS_UPDATED naming it) and gets the new values, not the old."""
+    cm, _metrics_dir = await _server(tmp_path)
+    a = _charged_frames(tmp_path / "a.extxyz", 0.1)
+    b = _charged_frames(tmp_path / "b.extxyz", 0.9)
+    async with cm as (ws_port, _web_port):
+        ws = await _connect_headless_client(ws_port)
+        try:
+            await ws.send(pack("SAVE_USER_METRIC", (), {"metric": {
+                "id": "user.charge", "label": "Charge", "unit": "",
+                "expr": "q", "vars": {"q": "reference.info.charge"}}}))
+            assert (await _wait_for_event(ws, "USER_METRIC_SAVED"))["kwargs"]["ok"]
+
+            await ws.send(pack("LOAD_DATASET", (str(a), "ase (auto)"), {}))
+            fp = (await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30))["args"][0]
+            assert _floats(await _request_values(ws, fp, "user.charge")) == [0.1, 0.1]
+
+            await ws.send(pack("LOAD_DATASET", (str(b), "ase (auto)"), {}))
+            told = await _wait_for_event(ws, "METRICS_UPDATED", timeout=30)
+            assert told["kwargs"].get("fingerprint") == fp
+            assert _floats(await _request_values(ws, fp, "user.charge")) == [0.9, 0.9]
+        finally:
+            await ws.close()
+
+
+async def test_the_tab_on_screen_asks_again_when_its_dataset_is_replaced(tmp_path):
+    """The window keeps no metric results, but a drawn plot keeps its values
+    until it asks again; a replace under the same fingerprint makes it ask.
+    Same file name (the file edited and loaded again): a new name alone would
+    already redraw the tab, as what it draws names its series."""
+    cm, _metrics_dir = await _server(tmp_path)
+    a = _charged_frames(tmp_path / "a.extxyz", 0.1)
+    (tmp_path / "edited").mkdir()
+    b = _charged_frames(tmp_path / "edited" / "a.extxyz", 0.9)
+    async with cm as (ws_port, web_port):
+        ws = await _connect_headless_client(ws_port)
+        try:
+            await ws.send(pack("LOAD_DATASET", (str(a), "ase (auto)"), {}))
+            fp = (await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30))["args"][0]
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page(viewport={"width": 1500, "height": 900})
+                try:
+                    await _open_app(page, web_port, ws_port)
+                    await _open_analysis_tab(page, "Basic Errors")
+                    await page.wait_for_function(
+                        "() => document.querySelectorAll('.tabpanel.active .analysis-panel').length > 0")
+                    await page.evaluate(_RECORD_SENDS)
+
+                    await ws.send(pack("LOAD_DATASET", (str(b), "ase (auto)"), {}))
+
+                    await page.wait_for_function(
+                        """(fp) => window.__sent.some(([event, kw]) =>
+                             event === 'REQUEST_METRIC' && kw.dataset_fp === fp)""",
+                        arg=fp, timeout=15000)
+                finally:
+                    await browser.close()
+        finally:
+            await ws.close()
+

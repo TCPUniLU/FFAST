@@ -1971,7 +1971,7 @@ export class FFastApp {
       conn.on(IN.COMMAND_RESULT, (kw) => this._onCommandResult(kw));
       conn.on(IN.DIR_LISTING,    (kw, args) => this._browser.onDirListing(kw, args));
       conn.on(IN.METRIC_CATALOG, (kw) => this._onMetricCatalog(kw));
-      conn.on(IN.METRICS_UPDATED, () => this._onMetricsUpdated());
+      conn.on(IN.METRICS_UPDATED, (kw) => this._onMetricsUpdated(kw));
       conn.on(IN.SUBSET_EXPORTED, (kw) => this._sessionOps.onSubsetExported(kw));
       // What Extract made ("C in 812 of 1000 frames"), or why it made nothing.
       conn.on(IN.SUBSET_EXTRACTED, (kw) => {
@@ -3292,8 +3292,13 @@ export class FFastApp {
    * the catalog, layout and lists that changed (ADR 0062); this forgets
    * requests in flight and has every view coloured by a metric ask for its
    * colours again. */
-  _onMetricsUpdated() {
+  /** A metric changed, or (`kw.fingerprint`) a load replaced that dataset or
+   * prediction under the same fingerprint, so its results may differ. */
+  _onMetricsUpdated(kw = {}) {
     this._metricClient?.forgetInFlight();
+    // A metric edit rebuilds the tabs through the TAB_LAYOUT that follows; a
+    // replaced object does not, so the plots showing it ask again.
+    if (kw?.fingerprint) this._analysis?.refreshFor(kw.fingerprint);
     // The metric may have been edited, and a view keeps its old colours until
     // told: the same source again rebuilds its scene.
     for (const view of [...this._main.all(), ...this._independent.values()]) {

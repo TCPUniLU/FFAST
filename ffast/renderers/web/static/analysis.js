@@ -955,6 +955,14 @@ export class AnalysisManager {
     }
   }
 
+  /** Results of dataset or prediction `fp` may have changed (a load replaced
+   * it under the same fingerprint): the tab on screen fetches its plots again
+   * if a series shows it. Another tab fetches when it is shown (activate). */
+  refreshFor(fp) {
+    const t = this._activeTab();
+    if (t && this.seriesRefs(t).some((r) => r.datasetFp === fp || r.modelFp === fp)) this._refreshTab(t);
+  }
+
   /** Called by app when a tab is activated (renders analysis tabs lazily). */
   activate(id) {
     this._activeId = id;

@@ -141,6 +141,11 @@ def run_value_problem(env, ref, dataset) -> str | None:
     return source.analysis_value_problem(key)
 
 
+def _field_of(ref):
+    """``(side, kind, key)`` of a Dataset Field ref or of its missing mask, else None."""
+    return parse_field_ref(parse_missing_ref(ref) or ref)
+
+
 class _ResolverSource(InputSource):
     """Metric Execution Context input source backed by an ``InputResolver``.
 
@@ -156,13 +161,17 @@ class _ResolverSource(InputSource):
         self._dataset = dataset
         self._asked_to_stop = stopped
         self._names: dict = {}      # ref → its name, taken before a growing dataset's value is read
+        self._fields: dict = {}     # field ref → the value read, for its digest
 
     def get(self, metric_id, local_key, ref):
         if getattr(self._dataset, "grows", False) or getattr(self._dataset, "score_parent", None) is not None:
             # Named before it is read: frames or scores that come meanwhile are
             # then in the value but not in its name, which only costs a recompute.
             self._names[ref] = self._name(ref)
-        return True, self._resolver.resolve(ref, model=self._model, dataset=self._dataset)
+        value = self._resolver.resolve(ref, model=self._model, dataset=self._dataset)
+        if _field_of(ref) is not None:
+            self._fields[ref] = value
+        return True, value
 
     def stopped(self):
         return bool(getattr(self._dataset, "deleted", False)
@@ -204,10 +213,47 @@ class _ResolverSource(InputSource):
             if parse_run_ref(ref) is not None:      # and scores: name how many
                 run, _views = _analysis_source_of(dataset)
                 dataset_fp += f"|r{len(run.rows) if run else 0}"
+        field = _field_of(ref)
+        if field is not None:
+            # A Dataset Field is not in the dataset's fingerprint (ADR 0058: only
+            # elements, positions, energies, forces), so two datasets with one
+            # fingerprint may hold different values for it: name its content.
+            if getattr(dataset, "grows", False) or ref not in self._fields:
+                return None          # hashed by content when the result is keyed
+            digest = self._field_digest(ref, field, dataset)
+            if digest is None:
+                return None
+            dataset_fp = f"{dataset_fp}|{digest}"
         if not ref.startswith("prediction"):
             return f"{ref}|{dataset_fp}"
         model_fp = getattr(self._model, "fingerprint", None)
         return f"{ref}|{dataset_fp}|{model_fp}" if model_fp else None
+
+    def _field_digest(self, ref, field, dataset):
+        """A hash of the field's values, worked out once per loaded dataset
+        (reference fields) or per prediction load (prediction fields): a big
+        per-atom field is not hashed again on every metric run."""
+        from ffast.metrics.cache import _value_fingerprint
+
+        value = self._fields[ref]
+        if value is None:
+            return None
+        if field[0] == "reference":
+            # A reload makes a new dataset object, so this cannot outlive the values.
+            own = getattr(dataset, "__dict__", None)
+            if own is None:
+                return _value_fingerprint(value)
+            held = own.setdefault("_fieldDigests", {})
+        else:
+            store = getattr(self._resolver.env, "predictionFields", None)
+            digests = getattr(store, "digests", None)
+            model_fp = getattr(self._model, "fingerprint", None)
+            if digests is None or model_fp is None:
+                return _value_fingerprint(value)
+            held = digests(model_fp, dataset.fingerprint)
+        if ref not in held:
+            held[ref] = _value_fingerprint(value)
+        return held[ref]
 
 
 class InputResolver:

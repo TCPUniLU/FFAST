@@ -726,10 +726,11 @@ async def _main(
 
     # The one place metric results over a whole dataset are asked for and
     # kept (ADR 0085). It forgets what belongs to a dataset or model that is
-    # deleted or whose frames change.
+    # deleted, whose frames change, or that a load replaced under the same
+    # fingerprint (whose Dataset Fields may differ).
     from ffast.metrics.result_store import MetricResultStore
     env.results = MetricResultStore(env)
-    for _event in ("DATASET_DELETED", "MODEL_DELETED", "SUBDATASET_INDICES_CHANGED"):
+    for _event in ("DATASET_DELETED", "MODEL_DELETED", "SUBDATASET_INDICES_CHANGED", "OBJECT_REPLACED"):
         env.eventSubscribe(_event, env.results.forget_objects)
 
     # Who uses a metric, for "Used by" and for refusing to delete one in use
@@ -776,6 +777,16 @@ async def _main(
             logger.warning("REMOTE_DATASET_META error: %s", exc)
 
     env.eventSubscribe("DATASET_LOADED", _on_dataset_loaded_meta)
+
+    # A load replaced a dataset or prediction under the same fingerprint (its
+    # Dataset Fields may differ): every window fetches again what it shows of
+    # it. Subscribed after the result store's forget above, so it runs first.
+    def _on_object_replaced(fingerprint):
+        from ffast.protocol import control
+        from ffast.protocol.rpc import pack
+        hub.broadcast(pack(control.METRICS_UPDATED, [], {"fingerprint": fingerprint}))
+
+    env.eventSubscribe("OBJECT_REPLACED", _on_object_replaced)
 
     # The same file loaded again brings its saved scored items back (ADR 0093). Views and
     # live runs are not scored files; loads can come from a worker thread.

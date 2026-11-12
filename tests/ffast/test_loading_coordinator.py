@@ -54,6 +54,7 @@ def _fake_env():
     env.remote = ConnectionManager(env)
     env.eventPush = lambda *a, **k: calls["events"].append((a, k))
     env.newTask = lambda *a, **k: calls["tasks"].append((a, k))
+    env.models = {}             # no model loaded yet
     env._calls = calls
     return env
 

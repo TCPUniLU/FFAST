@@ -60,8 +60,23 @@ class DatasetRegistry:
 
     # ── lifecycle ─────────────────────────────────────────────────────────
     def add(self, dataset, slice_num=-2):
-        """Register a dataset and announce it (was ``Environment.setNewDataset``)."""
+        """Register a dataset and announce it (was ``Environment.setNewDataset``).
+
+        A dataset with the fingerprint of one already loaded replaces it. The
+        fingerprint covers elements, positions, energies and forces only
+        (ADR 0058), so the new one may hold other Dataset Fields: what was
+        computed for the old one is announced stale with ``OBJECT_REPLACED``.
+        Datasets cut from the old one read their frames through it, so they
+        are moved onto the new one and announced stale too (their own
+        fingerprints are made from the parent's, so they stay the same)."""
+        old = self._datasets.get(dataset.fingerprint)
         self._datasets[dataset.fingerprint] = dataset
+        if old is not None and old is not dataset:
+            for ds in self._datasets.values():
+                if getattr(ds, "parent", None) is old:
+                    ds.parent = dataset
+            for fp in [dataset.fingerprint, *self.cutFrom(dataset)]:
+                self._events.eventPush("OBJECT_REPLACED", fp)
         dataset.loaded = True
         if slice_num != -2:  # -2 skips slice tracking (e.g. sub/proxy datasets)
             self.update_max_size(False, dataset)
