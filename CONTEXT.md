@@ -113,6 +113,17 @@ gives two text-format pieces (find the frames, parse whole frames) and gets the
 frame index and parallel parsing as well (ADR 0095).
 _Avoid_: loader (that is FFAST's internal dataset object), parser, importer
 
+### Energy sampling
+
+Choosing which frames of a file to load from their energies alone, before any
+positions or forces are read. The energies are split into bins; **even across
+energies** takes about the same number from each bin, **keep the energy
+distribution** takes from each in proportion to its size. Frames inside a bin
+are picked at random with a stored seed. The dataset keeps the list of frames
+it was given, and a prediction reads the same frames. Only for Level 2 readers
+(ADR 0096).
+_Avoid_: stratified sampling (says nothing about which of the two), filtering
+
 ### Dataset preview
 
 A dataset whose frames are still being read: you can look at it, and its frame
