@@ -362,10 +362,32 @@ class Environment(EventClass):
         return None
 
     def deletedWith(self, key):
-        """``key`` and every loaded dataset cut from it, at any depth: what
-        deleting ``key`` deletes (a dataset's subsets go with it)."""
+        """What deleting ``key`` deletes: ``key``; for a dataset, every loaded
+        dataset cut from it, at any depth, and every prediction read from a
+        file whose numbers are only for those datasets."""
         dataset = self.datasets.get(key)
-        return [key] if dataset is None else [key, *self.datasets.cutFrom(dataset)]
+        if dataset is None:
+            return [key]
+        gone = [key, *self.datasets.cutFrom(dataset)]
+        return gone + self.predictionsOnlyFor(gone)
+
+    def predictionsOnlyFor(self, datasetKeys):
+        """Predictions read from a file (ghost models) that hold numbers only
+        for ``datasetKeys``. Their numbers go when those datasets go, and a
+        file's numbers cannot be moved to another dataset, so nothing would be
+        left of them. A model that computes predictions is never listed: it can
+        predict any dataset."""
+        from ffast.cache import CacheKey
+        ghosts = {fp for fp, model in self.models.items() if getattr(model, "isGhost", False)}
+        if not ghosts:
+            return []
+        datasetsOf = {fp: set() for fp in ghosts}
+        for cacheKey in self.cache.keys():
+            ck = CacheKey.try_parse(cacheKey)
+            if ck is not None and ck.model_fp in datasetsOf and ck.dataset_fp:
+                datasetsOf[ck.model_fp].add(ck.dataset_fp)
+        gone = set(datasetKeys)
+        return [fp for fp, fps in datasetsOf.items() if fps and fps <= gone]
 
     def storedMetricResults(self, key):
         """The metric results deleting ``key`` with ``delete_results`` would
@@ -379,9 +401,12 @@ class Environment(EventClass):
         metric results only this object (and its subsets) used. Otherwise they
         stay in the metric cache, and a reload of the same data reuses them."""
         with self.mutation_lock:
-            gone = self.deletedWith(key) if delete_results else ()
+            gone = self.deletedWith(key)   # before the delete clears the cache it reads
             if self.datasets.exists(key):
                 self.datasets.delete(key)
+                for fp in gone:            # predictions left with no numbers
+                    if fp in self.models:
+                        self.models.delete(fp)
             elif self.models.exists(key):
                 self.models.delete(key)
             else:

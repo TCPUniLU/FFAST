@@ -39,6 +39,9 @@ class TestDeleteObjectMutationLock:
             def exists(self, key):
                 return key in ("a", "b")
 
+            def get(self, key):
+                return None   # no subsets, no predictions go with it
+
             def delete(self, key):
                 with guard:
                     state["in_section"] += 1
@@ -51,6 +54,9 @@ class TestDeleteObjectMutationLock:
 
         class _NoModels:
             def exists(self, key):
+                return False
+
+            def __contains__(self, key):
                 return False
 
         env.datasets = _SlowDatasets()

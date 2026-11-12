@@ -3298,6 +3298,29 @@ async def test_web_deleting_the_last_dataset_hides_the_colour_bar(ffast_web_serv
             await browser.close()
 
 
+async def test_web_a_prediction_file_goes_with_its_last_dataset(ffast_web_server):
+    """A prediction read from a file has numbers only for its dataset; deleting
+    the dataset deletes it too, rather than leaving a greyed-out row that no
+    other dataset can use. The status line says it went with its dataset."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    other_fp = await _load_another_dataset(ws_port, dataset_fp)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await expect(page.locator(f"#model-list .obj-row[data-fp='{model_fp}']")).to_have_count(1)
+
+            await _as_another_window(ws_port, ("DELETE_OBJECT", (dataset_fp,), {}))
+            await expect(page.locator("#dataset-list .obj-row.selected")).to_have_attribute(
+                "data-fp", other_fp, timeout=15000)
+            await expect(page.locator("#model-list .obj-empty")).to_be_visible(timeout=15000)
+            await expect(page.locator("#status")).to_contain_text("with its dataset")
+        finally:
+            await browser.close()
+
+
 async def test_web_a_deleted_dataset_or_prediction_leaves_an_independent_panel(tmp_path):
     """An independent panel on a deleted dataset moves as the main view does;
     a deleted prediction leaves the rail, and the views that showed it keep

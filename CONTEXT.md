@@ -150,6 +150,12 @@ A (dataset, model) pair. The unit of comparison in every error plot. Inference i
 always server-side. Whether a prediction was computed by a live model or read
 from a file is a server concern the client never sees.
 
+A prediction file's numbers belong to the dataset they were loaded for and
+cannot be moved to another; to compare a second dataset, load the file again
+for it. Deleting a dataset deletes every prediction read from a file that had
+numbers only for it (and its subsets). A live model stays: it can predict any
+dataset.
+
 **Ground Truth** is the dataset's own (reference) values, where a choice of
 prediction is offered: "whose numbers". It is offered only where a metric can
 be read from the dataset alone; an error needs a prediction.

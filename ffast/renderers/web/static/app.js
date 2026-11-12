@@ -2487,7 +2487,12 @@ export class FFastApp {
     this._panes?.colorBy.refreshModels(this._models);
     if (this._focusedIndependent) this._syncPanelSection();
     this._syncCaptions();
-    this._setStatus(this._deletedText(fp, meta), 'connected');
+    // A prediction from a file goes with the last dataset it had numbers for
+    // (the server deletes it after them): say so, not "in another window".
+    const fps = meta.dataset_fingerprints || [];
+    const withDataset = !this._deleting.has(fp) && fps.length && !fps.some((d) => this._datasets.has(d));
+    this._setStatus(withDataset ? `Deleted ${meta.name || fp.slice(0, 8)} with its dataset`
+      : this._deletedText(fp, meta), 'connected');
   }
 
   /** The main view with nothing left to show: the empty screen. */
