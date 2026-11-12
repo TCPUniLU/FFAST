@@ -102,6 +102,17 @@ them, so a load never parses the file twice. Our own extxyz reader makes them
 for indexed `.xyz`/`.extxyz` files; ASE reads everything else.
 _Avoid_: cache, chunk
 
+### Reader
+
+A small class that reads one file format and returns plain numpy arrays:
+how many frames, what the file holds, and the arrays for frames asked for. One
+reader serves every use of its format: a dataset, a prediction, predictions
+inside the file, and Export when it can also write. FFAST adds stride, progress,
+the memory check and the checks a prediction must pass. A **Level 2** reader
+gives two text-format pieces (find the frames, parse whole frames) and gets the
+frame index and parallel parsing as well (ADR 0095).
+_Avoid_: loader (that is FFAST's internal dataset object), parser, importer
+
 ### Dataset preview
 
 A dataset whose frames are still being read: you can look at it, and its frame
