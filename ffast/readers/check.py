@@ -73,7 +73,7 @@ def _check_round_trip(cls, sample_file, whole, contents) -> None:
                            info["format"])
             _call("write()", writer.write, whole)
             _call("close()", writer.close)
-            back = _call(f"reading back the {info['format']} file", cls(path).read, list(range(n)))
+            back = _call(f"reading back the {info['format']} file", _read_all, cls, path, n)
         skip = {"cell"} if can.get("cell") is False else set()
         for key in whole:
             if key in skip or key not in back:
@@ -85,6 +85,17 @@ def _check_round_trip(cls, sample_file, whole, contents) -> None:
                     f"'{key}' differs between what was written and read back "
                     f"({info['format']}): the writer and the reader must agree")
         return
+
+
+def _read_all(cls, path, n):
+    """Every frame of ``path``: through ``read`` (Level 1), or ``parse`` of
+    the whole file (Level 2)."""
+    if not _is_level2(cls):
+        return cls(path).read(list(range(n)))
+    starts, _ = cls.find_frames(path)
+    with open(path, "rb") as f:
+        f.seek(int(starts[0]))
+        return cls.parse(f.read(int(starts[-1]) - int(starts[0])), 0)
 
 
 def _is_level2(cls) -> bool:
@@ -149,6 +160,9 @@ def _check_level2(cls, sample_file) -> None:
         _expect(np.array_equal(joined, sample, equal_nan=_is_float(whole[key])),
                 f"'{key}' differs when frames are parsed one at a time and all at once: "
                 f"parse() must give the same values for a frame whatever else is parsed with it")
+
+    if callable(getattr(cls, "open_writer", None)):
+        _check_round_trip(cls, sample_file, whole, contents)
 
 
 def _check_attributes(cls) -> None:

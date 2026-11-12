@@ -1,6 +1,8 @@
 """Readers can write (ADR 0095, decision 11): ``open_writer(path, contents,
 format)`` gives an object with ``write(chunk)`` and ``close()``, in the same
 dict shape ``read()`` returns; ``write_formats`` says what each format holds."""
+import json
+
 import ase.io
 import numpy as np
 import pytest
@@ -13,6 +15,7 @@ from ffast.readers.dataset import ReaderDataset
 from ffast.readers.npz_reader import NpzReader
 from ffast.readers.writing import ExportItem, check_writable, write_dataset
 from tests.ffast.readers.test_ase_reader import _frames, _write
+from tests.ffast.readers.toy_reader import ToyTextReader, make_frames, write_toy
 
 
 def _dataset(path, reader):
@@ -237,3 +240,48 @@ def test_a_format_with_no_forces_writes_the_energies_and_leaves_the_forces_out(t
     assert written["contents"]["energies"] == ["energy"] and written["contents"]["forces"] == []
     assert "energy:energy" in written["chunks"][0]
     assert not any(k.startswith("forces:") for k in written["chunks"][0])
+
+
+
+class ToyTextWritten(ToyTextReader):
+    """A Level 2 reader (ToyTextReader) with a writer of its own lines.
+    Module level: check_reader pickles a Level 2 reader."""
+
+    name = "toytext-writer"
+    write_formats = [{"format": "toyt", "label": "Toy text", "ext": ".toyt", "can_write": {}}]
+    shift = 0.0                      # the writer moves every position by this
+
+    @classmethod
+    def open_writer(cls, path, contents, format=None):
+        out = open(path, "w")
+        shift = cls.shift
+
+        class W:
+            skipped = 0
+
+            def write(self, chunk):
+                first = 0
+                for i, n in enumerate(chunk["n_atoms"]):
+                    rows = slice(first, first + int(n))
+                    out.write(json.dumps({
+                        "numbers": chunk["numbers"][rows].tolist(),
+                        "positions": (chunk["positions"][rows] + shift).tolist(),
+                        "energy": float(chunk["energy:dft"][i]),
+                        "forces": chunk["forces:dft"][rows].tolist()}) + "\n")
+                    first += int(n)
+
+            def close(self):
+                out.close()
+        return W()
+
+
+class ToyTextShifted(ToyTextWritten):
+    name = "toytext-shifted"
+    shift = 1.0
+
+
+def test_a_level2_readers_writer_is_round_tripped_too(tmp_path):
+    path = write_toy(tmp_path / "d.toyt", make_frames(4, variable=True))
+    check_reader(ToyTextWritten, path)
+    with pytest.raises(AssertionError, match="positions.*written and read back"):
+        check_reader(ToyTextShifted, path)
