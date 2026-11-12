@@ -804,7 +804,6 @@ export class RemoteBrowser {
   }
 
   _fillPredictionKeys(kw) {
-    const reader = Boolean(this._predReader);
     this._fillSelect(
       $('fb-energy-key'),
       keyOptions(kw.energy_keys, {
@@ -814,11 +813,13 @@ export class RemoteBrowser {
     this._fillSelect(
       $('fb-force-key'),
       keyOptions(kw.force_keys, {
-        allowNone: reader, calculator: kw.has_calculator_forces, calculatorValue: 'forces',
+        allowNone: true, calculator: kw.has_calculator_forces, calculatorValue: 'forces',
       }),
     );
-    if (reader && !kw.error) {
-      // Names that match start paired; '' is "none", which a reader's file may want.
+    if (!kw.error) {
+      // Every prediction is read by a reader, named or picked by the server
+      // from the file's ending (ADR 0095): names that match start paired, and
+      // '' is "none", which an energy-only or forces-only file wants.
       const [energy, force] = pairNames(kw.energy_keys, kw.force_keys);
       $('fb-energy-key').value = energy;
       $('fb-force-key').value = force;
@@ -1141,10 +1142,11 @@ export class RemoteBrowser {
     if (this._mode === 'prediction') {
       const dsFp = $('fb-target-ds').value;
       const reader = this._predReader;
-      // A reader's file sends its choice as it is: '' means none (ADR 0095).
-      const eKey = reader ? $('fb-energy-key').value : ($('fb-energy-key').value || null);
-      const fKey = reader ? $('fb-force-key').value : ($('fb-force-key').value || null);
-      if (!dsFp || (!fKey && !(reader && eKey))) return;
+      // The choice goes as it is: '' means none (ADR 0095). Without a named
+      // reader the server's readers for the file's ending read it.
+      const eKey = $('fb-energy-key').value;
+      const fKey = $('fb-force-key').value;
+      if (!dsFp || (!fKey && !eKey)) return;
       // LOAD_PREDICTION reads args=[path, dataset_fp] + key kwargs; on success
       // the server fires REMOTE_MODEL_META → _onModelMeta selects it.
       this._ports.send(

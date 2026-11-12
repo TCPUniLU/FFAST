@@ -134,6 +134,56 @@ async def test_web_a_toy_prediction_with_energies_only_can_load(toy_reader_insta
                 await browser.close()
 
 
+async def test_web_an_extxyz_prediction_with_energies_only_loads(tmp_path):
+    # No Type claims .extxyz by its ending (xyz's reader is hidden, ASE's takes
+    # "*"), so the reader comes from the probe's reply; Load used to do nothing.
+    import ase.io
+    from ase import Atoms
+    from ase.calculators.singlepoint import SinglePointCalculator
+
+    from .test_web_loading import _go_to
+    from .test_web_runtime import _connect_headless_client, _open_loupe, _wait_for_event, pack
+    data = tmp_path / "data"
+    data.mkdir()
+
+    def frames(forces):
+        out = []
+        for i in range(3):
+            a = Atoms("H2O", positions=[[0, 0, 0], [0.96, 0, 0], [-0.24, 0.93, 0.1 * i]])
+            a.calc = SinglePointCalculator(
+                a, energy=-14.0 - i, **({"forces": [[0.1 * i, 0, 0]] * 3} if forces else {}))
+            out.append(a)
+        return out
+
+    ase.io.write(data / "ds.extxyz", frames(True))
+    ase.io.write(data / "pred.extxyz", frames(False))
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        ws = await _connect_headless_client(ws_port)
+        try:
+            await ws.send(pack("LOAD_DATASET", (str(data / "ds.extxyz"), "ase (auto)"), {}))
+            dataset_fp = (await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30))["args"][0]
+        finally:
+            await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+            await ws.close()
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _file_menu(page, "Load Prediction…")
+                await _go_to(page, data)
+                await page.locator("#fb-list .fb-row", has_text="pred.extxyz").click()
+                await expect(page.locator("#fb-energy-key")).to_have_value("energy")
+                await expect(page.locator("#fb-force-key")).to_have_value("")
+                await expect(page.locator("#fb-load")).to_be_enabled()
+                await page.locator("#fb-load").click()
+                await expect(page.locator("#model-list .obj-row", has_text="pred.extxyz")).to_be_visible(
+                    timeout=30000)
+            finally:
+                await browser.close()
+
+
 async def test_web_a_mismatched_toy_prediction_says_what_differs(toy_reader_installed, tmp_path):
     from .test_web_loading import _go_to
     from .test_web_runtime import _open_loupe
