@@ -21,10 +21,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[4]
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+from tests.free_ports import free_port as _free_port  # see tests/free_ports.py
 
 
 def _listening(port: int) -> bool:
@@ -33,6 +30,16 @@ def _listening(port: int) -> bool:
             return True
     except OSError:
         return False
+
+
+def _holder(port: int) -> str:
+    """The command line of whatever listens on ``port``: this test's server,
+    or another test's that was given the same port."""
+    pids = subprocess.run(["lsof", "-t", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN"],
+                          capture_output=True, text=True).stdout.split()
+    return "\n".join(subprocess.run(["ps", "-o", "pid=,ppid=,command=", "-p", pid],
+                                    capture_output=True, text=True).stdout.strip()
+                     for pid in pids) or "(no listener found)"
 
 
 def _wait(cond, timeout: float) -> bool:
@@ -72,7 +79,8 @@ def test_the_server_stops_when_the_launcher_ends(sig, tmp_path):
         proc.wait(timeout=30)
         # kill -9 gives the launcher no chance: the server notices its parent
         # is gone (checked every 2 s) and stops itself.
-        assert _wait(lambda: not _listening(ws), 20), f"the server still holds port {ws}"
+        assert _wait(lambda: not _listening(ws), 20), (
+            f"the server still holds port {ws}; held by:\n{_holder(ws)}")
     finally:
         if proc.poll() is None:
             proc.kill()

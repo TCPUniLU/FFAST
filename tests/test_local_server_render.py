@@ -30,13 +30,11 @@ pytestmark = [
 
 @pytest.fixture
 def local_server():
-    import socket
     from ffast.session.token import SessionToken
     from ffast.session.local import LocalServerManager
+    from tests.free_ports import free_port
 
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port = s.getsockname()[1]
+    port = free_port()
 
     token = SessionToken.generate()
     manager = LocalServerManager()

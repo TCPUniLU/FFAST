@@ -7,7 +7,6 @@ dataset, open a view, and verify that view commands produce scene messages.
 """
 
 import asyncio
-import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -36,10 +35,7 @@ pytestmark = [
 ]
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+from tests.free_ports import free_port as _free_port  # see tests/free_ports.py
 
 
 async def _wait_for_event(

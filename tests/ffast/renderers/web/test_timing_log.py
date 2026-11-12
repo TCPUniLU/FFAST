@@ -5,7 +5,6 @@ file per run. Only a page the launcher opened (it sends the launch id) may
 write, as for /cluster/.
 """
 import json
-import socket
 import urllib.error
 import urllib.request
 
@@ -15,10 +14,7 @@ from ffast.renderers.web.serve import start_static_server
 from ffast.renderers.web.timing_log import KEEP, TimingLogFile
 
 
-def _free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+from tests.free_ports import free_port as _free_port  # see tests/free_ports.py
 
 
 def test_lines_go_to_one_file_made_on_the_first_write(tmp_path):

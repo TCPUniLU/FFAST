@@ -10,7 +10,6 @@ import io
 import json
 import re
 import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -91,10 +90,7 @@ async def _keep_trace_on_failure(page, name: str):
         await page.context.tracing.stop()
 
 
-def _free_port() -> int:
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        return sock.getsockname()[1]
+from tests.free_ports import free_port as _free_port  # see tests/free_ports.py
 
 
 async def _wait_for_event(ws, wanted: str, timeout: float = 30.0) -> dict:
