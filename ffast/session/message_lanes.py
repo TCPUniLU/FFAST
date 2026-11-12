@@ -18,7 +18,8 @@ class MessageLanes:
     Metric requests run beside the queue (ADR 0077). View commands do too,
     one view's in the order sent, each view in its own lane (ADR 0082), so a
     view whose colours take 13 s holds up neither other messages nor other
-    views. Everything else is handled one at a time, in order.
+    views. Everything else is handled one at a time, in order. Closing a view
+    drops its commands not yet started.
     """
 
     def __init__(self, handle):
@@ -34,6 +35,13 @@ class MessageLanes:
         elif event == control.VIEW_COMMAND and isinstance(kwargs, dict) and kwargs.get("view_id"):
             self._queue_view(kwargs["view_id"], item)
         else:
+            if event == control.CLOSE_VIEW and isinstance(kwargs, dict):
+                # The view's commands still waiting were sent before the close:
+                # they no longer matter, and run after it they would find no
+                # view (the page then showed "VIEW_COMMAND for unknown view_id").
+                waiting = self._waiting.get(kwargs.get("view_id"))
+                if waiting is not None:
+                    waiting.clear()
             await self._handle(*item)
 
     def _queue_view(self, view_id: str, item) -> None:

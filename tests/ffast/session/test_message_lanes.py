@@ -111,3 +111,45 @@ def test_a_view_lane_ends_when_empty_and_a_new_command_starts_a_new_one():
 
     ended, waiting = asyncio.run(scenario())
     assert ended == ["one", "two"] and waiting == {}
+
+
+def _close(view_id, name):
+    return (control.CLOSE_VIEW, [], {"view_id": view_id}, name)
+
+
+def test_a_view_command_sent_before_its_close_does_not_run_after_it():
+    # The page sent VIEW_COMMAND then CLOSE_VIEW for one view. The command
+    # waited for its lane's task to start; the close ran at once. The command
+    # then found no view and the page showed "VIEW_COMMAND for unknown
+    # view_id='ind-1'" (docs/flaky-tests.md, test_web_live_run.py).
+    async def scenario():
+        h = _Handler()
+        lanes = MessageLanes(h)
+        await lanes.take(_view("ind-1", "SET_PARAMETER", "colour"))
+        await lanes.take(_close("ind-1", "close"))
+        await _settle(lanes)
+        return h.log
+
+    log = asyncio.run(scenario())
+    closed = log.index(("end", "close"))
+    assert ("start", "colour") not in log[closed:], log
+
+
+def test_closing_a_view_drops_its_commands_not_yet_started():
+    async def scenario():
+        h = _Handler()
+        lanes = MessageLanes(h)
+        gate = h.hold("a")
+        await lanes.take(_view("v1", "SET_PARAMETER", "a"))
+        await lanes.take(_view("v1", "TOGGLE_FEATURE", "b"))
+        await asyncio.sleep(0)               # "a" runs, "b" waits behind it
+        await lanes.take(_close("v1", "close"))
+        await lanes.take(_view("v2", "SET_FRAME", "other view"))
+        gate.set()
+        await _settle(lanes)
+        return h.log
+
+    log = asyncio.run(scenario())
+    assert ("end", "a") in log               # the one running ends
+    assert ("start", "b") not in log         # its view is gone: dropped
+    assert ("end", "other view") in log      # other views are not touched
