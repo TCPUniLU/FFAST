@@ -131,6 +131,8 @@ things came up.
 
 - [0020](0020-environment-decomposed-into-composed-managers.md) Breaking up the god object by composition
 - [0034](0034-loading-coordinator.md) One owner for all dataset, model and prediction loading
+- [0095](0095-any-file-format-loads-and-saves-through-a-reader.md) Any file format loads and saves through a reader: plain arrays in, FFAST adds stride, progress, memory check and strict prediction checks; Level 2 text readers get the frame index and parallel parsing; ASE and `.npz` become readers (proposed)
+- [0096](0096-a-text-file-can-be-sampled-by-energy-at-load.md) A text file can be sampled by energy at load: even across energy bins or keeping the distribution, random with seed 42, a histogram preview; predictions read the same frames (proposed)
 
 ## Format
 
