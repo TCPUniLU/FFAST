@@ -175,6 +175,10 @@ ffast_vsize_todo.md
 docs/agents/
 docs/issues/
 docs/legacy-thinning-plan.md
+docs/handoffs/
+docs/implementation/
+docs/research/
+/to_fix*.md
 
 # Local agent/editor state (holds absolute paths from this machine)
 .claude/
