@@ -101,26 +101,13 @@ def test_an_npz_prediction_takes_its_datasets_stride():
 
 def test_a_prediction_in_a_folder_named_npz_is_read_by_its_own_type():
     """Only the file's ending makes a prediction an .npz: ``npz_runs/pred.xyz``
-    is an ASE file, read like any other."""
-    import threading
-    from types import SimpleNamespace
+    is an .xyz file, read by the xyz reader like any other (ADR 0095)."""
     from ffast.core.loading_coordinator import LoadingCoordinator
+    from ffast.readers.xyz_reader import XyzReader
 
     folder = os.path.join(tempfile.mkdtemp(), "npz_runs")
     os.mkdir(folder)
     path = os.path.join(folder, "pred.xyz")
     with open(path, "w") as f:
         f.write("1\n\nH 0 0 0\n")
-
-    class ReadAsAse(Exception):
-        pass
-
-    def read_ase(p, key):
-        raise ReadAsAse(p)
-
-    coordinator = LoadingCoordinator.__new__(LoadingCoordinator)
-    coordinator._env = SimpleNamespace(datasets=_Datasets(), mutation_lock=threading.Lock())
-    coordinator.prepareFrameIndex = lambda p, task: None
-    coordinator._readPredictionAtomsList = read_ase
-    with pytest.raises(ReadAsAse):
-        coordinator.loadPrepredictedDataset(path, "ds")
+    assert LoadingCoordinator._predictionReader(path, None, None) is XyzReader

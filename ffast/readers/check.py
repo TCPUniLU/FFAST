@@ -16,7 +16,11 @@ _METHODS = ("n_frames", "contents", "read")
 
 def check_reader(reader_class, sample_file: str) -> None:
     """Check ``reader_class`` against ``sample_file``, a small file it reads
-    (at least a few frames, so chunking is tested)."""
+    (at least a few frames, so chunking is tested). A Level 2 reader (with
+    ``find_frames`` and ``parse``) is checked on those instead of
+    ``n_frames`` and ``read``."""
+    if _is_level2(reader_class):
+        return _check_level2(reader_class, sample_file)
     _check_attributes(reader_class)
     reader = _call("the constructor", reader_class, sample_file)
     n = _call("n_frames()", reader.n_frames)
@@ -42,6 +46,70 @@ def check_reader(reader_class, sample_file: str) -> None:
         stride = list(range(0, n, 2))
         part = _call(f"read({stride})", reader_class(sample_file).read, stride)
         _check_arrays(part, len(stride), contents, f"read({stride})")
+
+
+def _is_level2(cls) -> bool:
+    return callable(getattr(cls, "find_frames", None)) or callable(getattr(cls, "parse", None))
+
+
+def _check_level2(cls, sample_file) -> None:
+    import pickle
+
+    name = getattr(cls, "name", None)
+    _expect(isinstance(name, str) and name.strip(), "the reader needs a name: a non-empty string")
+    ext = getattr(cls, "extensions", None)
+    _expect(isinstance(ext, (list, tuple)) and ext and all(isinstance(e, str) for e in ext),
+            "extensions must be a list of patterns such as [\"*.foo\"]")
+    for method in ("contents", "find_frames", "parse"):
+        _expect(callable(getattr(cls, method, None)), f"a Level 2 reader needs a {method}() method")
+    try:
+        pickle.dumps(cls.parse)
+        pickle.dumps(cls)
+    except Exception as exc:
+        raise AssertionError(
+            f"parse() runs in worker processes, so it must be picklable (a staticmethod "
+            f"or a top-level function, on a class that can be imported): {exc}") from exc
+
+    contents = _call("contents()", _call("the constructor", cls, sample_file).contents)
+    _expect(isinstance(contents, dict), "contents() must return a dict")
+    found = _call("find_frames()", cls.find_frames, sample_file)
+    _expect(isinstance(found, tuple) and len(found) == 2,
+            "find_frames() must return (starts, atom counts)")
+    starts, counts = np.asarray(found[0]), np.asarray(found[1])
+    n = len(counts)
+    _expect(n >= 1 and len(starts) == n + 1 and (np.diff(starts) > 0).all(),
+            f"find_frames() must return {n + 1} increasing starts for {n} frames "
+            f"(the last is where the last frame ends); got {len(starts)}")
+    _expect(np.issubdtype(counts.dtype, np.integer) and (counts >= 0).all(),
+            "the atom counts must be whole numbers, one per frame")
+
+    def parse(a, b):
+        with open(sample_file, "rb") as f:
+            f.seek(int(starts[a]))
+            data = f.read(int(starts[b]) - int(starts[a]))
+        return _call(f"parse() of frames {a} to {b - 1}", cls.parse, data, a)
+
+    whole = parse(0, n)
+    _check_arrays(whole, n, contents, f"parse() of all {n} frames")
+    _expect(np.array_equal(whole["n_atoms"], counts),
+            "parse() gives a different atom count per frame than find_frames()")
+    from ffast.readers.text import per_atom
+
+    pieces = [parse(i, i + 1) for i in range(n)]
+    for key in whole:
+        # A frame range that has no value for a key may leave the key out: NaN there.
+        sample = np.asarray(whole[key])
+        parts = []
+        for piece, count in zip(pieces, counts):
+            if key in piece:
+                parts.append(np.asarray(piece[key]))
+            else:
+                rows = int(count) if per_atom(key) else 1
+                parts.append(np.full((rows,) + sample.shape[1:], np.nan))
+        joined = np.concatenate(parts)
+        _expect(np.array_equal(joined, sample, equal_nan=_is_float(whole[key])),
+                f"'{key}' differs when frames are parsed one at a time and all at once: "
+                f"parse() must give the same values for a frame whatever else is parsed with it")
 
 
 def _check_attributes(cls) -> None:

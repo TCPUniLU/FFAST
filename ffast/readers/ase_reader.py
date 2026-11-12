@@ -112,7 +112,7 @@ class AseReader:
         if c["cell"]:
             out["cell"] = np.array([np.asarray(a.cell) for a in atoms], dtype=np.float64)
         for key in c["energies"]:
-            out[f"energy:{key}"] = np.array([_energy(a, key) for a in atoms], dtype=np.float64)
+            out[f"energy:{key}"] = np.array([_energy(a, key) for a in atoms])   # an integer stays one, as ASE keeps it
         for key in c["forces"]:
             out[f"forces:{key}"] = np.concatenate([_forces(a, key) for a in atoms])
         for key in c["frame_fields"]:
@@ -139,9 +139,10 @@ def _scalar(value):
 
 def _energy(atoms, key):
     if key in atoms.info:
-        return _scalar(atoms.info[key])
-    value = _calc(atoms.get_potential_energy) if key == "energy" else None
-    return np.nan if value is None else float(value)
+        value = atoms.info[key]
+    else:
+        value = _calc(atoms.get_potential_energy) if key == "energy" else None
+    return value if isinstance(value, (int, float, np.integer, np.floating)) else np.nan
 
 
 def _forces(atoms, key):

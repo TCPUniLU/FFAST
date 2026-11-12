@@ -78,8 +78,8 @@ def test_discovery_runs_once(monkeypatch):
     assert calls == ["ffast.readers"]
 
 
-def test_the_bundled_readers_are_registered_sGDML_before_ASE():
-    assert [r.name for r in registry.all_readers()][:2] == ["sGDML", "ase (auto)"]
+def test_the_bundled_readers_are_registered_sGDML_xyz_then_ASE():
+    assert [r.name for r in registry.all_readers()][:3] == ["sGDML", "xyz", "ase (auto)"]
 
 
 def test_a_reader_that_claims_every_ending_comes_after_those_that_name_the_ending(only_my_readers):

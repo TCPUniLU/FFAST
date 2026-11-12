@@ -22,14 +22,12 @@ import time
 
 import numpy as np
 from ase.calculators.calculator import PropertyNotImplementedError
-from ase.io.trajectory import Trajectory
 
 from ffast.core.data_types import AtomsList
 from ffast.core.flat_frames import FlatFrames
 from ffast.io.extxyz_arrays import NotEnoughMemory
 from ffast.protocol import control
 from ffast.loaders.ghost import GhostModelLoader
-from ffast.loaders.dataset import framesShaped
 from ffast.readers import ReaderError
 from ffast.readers.match import Facts, PredictionRefused, check_prediction
 from ffast.readers.pairing import pair_names
@@ -302,8 +300,7 @@ class LoadingCoordinator:
         """Attach precomputed energies and forces to a dataset as a ghost model.
 
         ``reader`` names the reader (ADR 0095) that reads the file; without one
-        the readers for the file's ending choose. A file no reader claims (an
-        ``.xyz`` or ``.extxyz``, until step 4) goes through ASE as before."""
+        the readers for the file's ending choose."""
         readerClass = self._predictionReader(path, reader, on_error)
         if readerClass is False:
             return None
@@ -311,73 +308,13 @@ class LoadingCoordinator:
             return self._loadReaderPrediction(
                 readerClass, path, datasetKey, taskID, selected_energy_key,
                 selected_force_key, on_error)
-        self.prepareFrameIndex(path, taskID)
-        atomsList = self._readPredictionAtomsList(path, datasetKey)
-        try:
-            aseObject = self._aseLoaderFor(
-                path, atomsList,
-                energy_key=selected_energy_key, force_key=selected_force_key,
-                progress=self._readProgress(path, taskID),
-            )
-        except NotEnoughMemory as e:
-            # Its message as it is, as for a dataset (ADR 0083).
-            logger.error(str(e), extra={"popup": on_error is None})
-            if on_error:
-                on_error(e)
-            return None
-        facts = Facts(
-            name=os.path.basename(path), n_kept=aseObject.getN(),
-            n_file_frames=self._fileFrameCount(
-                path, aseObject.getN(), self._env.datasets.slice_numbers.get(datasetKey)),
-            counts=np.diff(aseObject.getOffsets()), numbers=aseObject.getAllElements(),
-            positions=aseObject.getAllCoordinates())
-
-        try:
-            E = np.array(aseObject.getAllEnergies())
-        except (PropertyNotImplementedError, RuntimeError):
-            logger.warning(
-                "Energy not available in prediction file. "
-                "Loading forces only."
-            )
-            E = None
-        try:
-            F = framesShaped(aseObject.getAllForces(), aseObject.getOffsets(),
-                             aseObject.isVariable)
-        except (PropertyNotImplementedError, RuntimeError):
-            logger.warning(
-                "Forces not available in prediction file. "
-                "Loading energies only."
-            )
-            F = None
-
-        # mutation_lock again (see loadModel above) — the file parse above
-        # runs unlocked.
-        with self._env.mutation_lock:
-            dataset = self._env.datasets.get(datasetKey)
-
-            available = [x for x in (E, F) if x is not None]
-            modelKey = (
-                md5FromArraysAndStrings(*available)
-                if available
-                else md5FromArraysAndStrings(path)
-            )
-
-            name = os.path.basename(path)
-            if not self._ingestPrediction(
-                dataset, E, F, path=path, name=name, fingerprint=modelKey,
-                source=aseObject, facts=facts, popup=False,
-            ):
-                # A mismatch here means the whole load fails — unlike the
-                # prediction-keys path, there is no other column to fall back
-                # to, and the cause is almost always a mis-picked file. The
-                # message says what differs (ADR 0095, decision 6).
-                logger.error(self._lastRefusal,
-                             extra={"popup": on_error is None})   # else the window says it
-                if on_error:
-                    on_error(self._lastRefusal)
-                return
-
-            self.lookForGhosts()
+        # Every file a prediction can come from has a reader (ASE's takes the
+        # formats no other does): nothing is left to read another way.
+        text = f"No reader reads {os.path.basename(path)}"
+        logger.error(text, extra={"popup": on_error is None})
+        if on_error:
+            on_error(text)
+        return None
 
     @staticmethod
     def _predictionReader(path, name, on_error):
@@ -426,9 +363,7 @@ class LoadingCoordinator:
                         f"Expected {expected} frames, got {len(kept)}.")
                 return kept
 
-            loaded = chunks.read_arrays(
-                readerClass, path, select=select,
-                progress=self._readProgress(path, taskID) if taskID is not None else None)
+            readerClass, loaded = self._readArrays(readerClass, path, taskID, select=select)
             arrays, contents = loaded.arrays, loaded.contents
             energies, forces = contents.get("energies") or [], contents.get("forces") or []
             if not energies and not forces:
@@ -457,7 +392,7 @@ class LoadingCoordinator:
         with self._env.mutation_lock:
             if not self._ingestPrediction(
                 self._env.datasets.get(datasetKey), E, F, path=path, name=name,
-                fingerprint=fingerprint, source=ReaderFieldSource(arrays, contents),
+                fingerprint=fingerprint, source=ReaderFieldSource(arrays),
                 facts=facts, popup=False,
             ):
                 logger.error(self._lastRefusal, extra={"popup": on_error is None})
@@ -465,38 +400,6 @@ class LoadingCoordinator:
                     on_error(self._lastRefusal)
                 return None
             self.lookForGhosts()
-
-    def _readPredictionAtomsList(self, path, datasetKey):
-        """Read a prediction file's frames at the parent dataset's stride.
-
-        A prediction has to be sampled exactly like the dataset it is being
-        attached to, so the stride comes from the dataset registry rather than
-        the caller.  ``slice_num == 0`` means "no stride": that is the lazy
-        path, where frames are read on demand (``AtomsList``, or ``Trajectory``
-        for ``.traj``) instead of held in RAM.
-        """
-        import ase.io
-        from ffast.io.frame_index import is_indexable, read_every
-
-        slice_num = self._env.datasets.slice_numbers.get(datasetKey)
-        if slice_num is not None and slice_num > 0:
-            logger.info(f"Loading dataset with slice number of: {slice_num}")
-            if is_indexable(path):
-                return AtomsList(path, step=slice_num)
-            return read_every(path, slice_num)
-        if slice_num is not None and slice_num == 0:
-            logger.info("Loading prediction dataset with caching.")
-            if path.endswith(".traj"):
-                logger.info("Trajectory prediction dataset detected, loading with class ase.io.Trajectory")
-                return Trajectory(path)
-            return AtomsList(path)
-        logger.info("Loading the dataset entirely on RAM.")
-        return ase.io.read(path, index=':')
-
-        # NOTE: in-process prediction load is now the no-server FALLBACK only
-        # (routing goes through requestPredictionLoad → server-side
-        # LOAD_PREDICTION when a session exists). No mirror here: reaching this
-        # method means no server was available, so there is nothing to mirror to.
 
     def _extractPredictionFields(self, aseObject, modelKey, dataset):
         """Eagerly extract the prediction Dataset Fields (ADR 0023, ADR 0061).
@@ -769,9 +672,9 @@ class LoadingCoordinator:
                    on_error=None):
         """Load dataset and create ghost models for prediction keys.
 
-        A reader (ADR 0095) serves its type for every file it takes; ASE's
-        reader does not take ``.xyz`` and ``.extxyz`` yet, which keep the
-        ``"ase (auto)"`` branch below (and its frame index) until step 4."""
+        A reader (ADR 0095) serves its type for every file it takes (the xyz
+        reader takes ``.xyz`` and ``.extxyz`` for "ase (auto)"); a dataset type
+        without a reader is a plugin loader, called as ``loaderClass(path)``."""
         loaderClass = self._datasetReader(datasetType, path)
         isReader = loaderClass is not None
         if isReader and not os.path.exists(path):
@@ -796,50 +699,10 @@ class LoadingCoordinator:
                 if on_error:
                     on_error(e)
                 return None
-        elif datasetType == "ase (auto)":
-            try:
-                if slice_num != -1:
-                    self.prepareFrameIndex(path, taskID)
-                result = loaderClass(
-                    path,
-                    selected_energy_key=selected_energy_key,
-                    selected_force_key=selected_force_key,
-                    prediction_keys=prediction_keys,
-                    show_dialog=False,  # Dialog already shown on main thread
-                    slice_num=slice_num,
-                    progress=self._readProgress(path, taskID),
-                )
-            except NotEnoughMemory as e:
-                logger.error(str(e), extra={"popup": on_error is None})
-                if on_error:
-                    on_error(e)
-                return None
-            except Exception as e:
-                logger.exception(f"Failed to load dataset {path} in method 'loadDataset'",
-                                 extra={"popup": on_error is None})
-                if on_error:
-                    on_error(e)
-                return None
         else:
             result = loaderClass(path)
 
-        # Handle SmartASELoader return value (tuple) or regular loader (dataset object)
-        if isinstance(result, tuple):
-            dataset, pred_keys = result
-            if dataset is None:
-                logger.info("Dataset loading cancelled by user")
-                return
-
-            # Merge prediction keys from dialog with any passed in.
-            # SmartASELoader echoes the caller's prediction_keys unchanged
-            # when show_dialog=False, so naïve concatenation would double
-            # every entry.  Deduplicate to prevent loading predictions twice.
-            if pred_keys:
-                seen = {tuple(k) for k in (prediction_keys or [])}
-                extra = [k for k in pred_keys if tuple(k) not in seen]
-                prediction_keys = (prediction_keys or []) + extra
-        else:
-            dataset = result
+        dataset = result
 
         if dataset is None:
             logger.warning(f"Dataset `{path}` did not load successfully",
@@ -847,12 +710,6 @@ class LoadingCoordinator:
             if on_error:
                 on_error("no dataset could be read from it")
             return
-
-        if (datasetType == "ase (auto)" and hasattr(dataset, "getN")
-                and getattr(dataset, "sourceFrameCount", None) is None):
-            # The file's frame count before the stride, which a prediction's
-            # length is checked against (ADR 0095, decision 6).
-            dataset.sourceFrameCount = self._fileFrameCount(path, dataset.getN(), slice_num)
 
         dataset.initialise()
 
@@ -886,7 +743,7 @@ class LoadingCoordinator:
             self.lookForGhosts()
 
         if isReader:
-            dataset.arrays = None   # the file's extra sets are not kept in memory
+            dataset.arrays = None   # the file's extra sets are not kept in memory (its fields are)
 
     @staticmethod
     def _datasetReader(typeName, path):
@@ -899,9 +756,37 @@ class LoadingCoordinator:
             return None
         can_read = getattr(found, "can_read", None)
         try:
-            return found if can_read is None or can_read(path) else None
+            if can_read is None or can_read(path):
+                return found
         except Exception:
             return None
+        # The type's reader leaves this file to another (ASE's does not take
+        # .xyz and .extxyz: the xyz reader does): the first that takes it.
+        others = registry.readers_for(path)
+        return others[0] if others else None
+
+    def _readArrays(self, readerClass, path, taskID, **kwargs):
+        """``(reader class that read it, Loaded)``: the arrays of ``path``
+        through ``readerClass``, with progress on the task. A Level 2 reader
+        that cannot parse the file (NotFast) hands it to its ``fallback`` reader,
+        as the fast .xyz parser always handed it to ASE."""
+        from ffast.io.extxyz_arrays import NotFast, PropertiesDiffer
+        from ffast.readers import chunks, registry
+
+        self.prepareFrameIndex(path, taskID)    # shares the Load dialog's scan, and reports it
+        progress = self._readProgress(path, taskID) if taskID is not None else None
+        try:
+            return readerClass, chunks.read_arrays(readerClass, path, progress=progress, **kwargs)
+        except NotFast as exc:
+            other = registry.get(getattr(readerClass, "fallback", None) or "")
+            if other is None:
+                raise ReaderError(f"{os.path.basename(path)} could not be read: {exc}") from exc
+            name = os.path.basename(path)
+            if isinstance(exc, PropertiesDiffer):
+                logger.warning("%s: %s Reading it with ASE, which is slower.", name, exc)
+            else:
+                logger.info("%s is read with ASE: %s", name, exc)
+            return other, chunks.read_arrays(other, path, progress=progress, **kwargs)
 
     def _loadWithReader(self, readerClass, path, slice_num, energyKey, forceKey, taskID):
         """A dataset from a reader (ADR 0095): FFAST asks for the frames the
@@ -910,9 +795,7 @@ class LoadingCoordinator:
         from ffast.readers import chunks
         from ffast.readers.dataset import ReaderDataset
 
-        loaded = chunks.read_arrays(
-            readerClass, path, stride=slice_num,
-            progress=self._readProgress(path, taskID) if taskID is not None else None)
+        readerClass, loaded = self._readArrays(readerClass, path, taskID, stride=slice_num)
         with chunks.reader_errors(readerClass.name, path):
             return ReaderDataset(path, loaded, readerClass.name,
                                  energy_key=energyKey, force_key=forceKey)
@@ -985,7 +868,7 @@ class LoadingCoordinator:
             logger.error(f"The extra values of {os.path.basename(path)} are no longer in memory")
             return
         offsets = dataset.molecule_offsets
-        source = ReaderFieldSource(arrays, contents)
+        source = ReaderFieldSource(arrays)
         for energy_key, force_key, model_name in prediction_keys:
             try:
                 ek, fk = pair_names(

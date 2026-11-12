@@ -91,9 +91,10 @@ def test_a_value_a_frame_lacks_is_nan(tmp_path):
 
 
 def test_the_readers_decline_xyz_and_extxyz_and_take_everything_else(tmp_path):
+    from ffast.readers.xyz_reader import XyzReader
     assert AseReader.can_read("/x/a.xyz") is False and AseReader.can_read("/x/a.EXTXYZ") is False
     assert AseReader.can_read("/x/a.traj") is True
-    assert registry.readers_for("/x/a.xyz") == []
+    assert registry.readers_for("/x/a.xyz") == [XyzReader]      # ASE only when its parser cannot
     assert [r.name for r in registry.readers_for("/x/a.traj")] == ["ase (auto)"]
     assert [r.name for r in registry.readers_for("/x/a.npz")] == ["sGDML", "ase (auto)"]
 
@@ -152,12 +153,12 @@ def test_loadDataset_reads_a_trajectory_through_the_reader_with_a_stride(tmp_pat
     assert ds.E.tolist() == [-1.0, -4.0, -7.0, -10.0]
 
 
-def test_loadDataset_keeps_xyz_and_extxyz_on_the_old_fast_path(tmp_path):
+def test_loadDataset_gives_xyz_and_extxyz_to_the_xyz_reader(tmp_path):
     path = _write(tmp_path, _frames(10), "d.extxyz")
     coordinator, env = _loading_env()
     coordinator.loadDataset(path, "ase (auto)", slice_num=3)
     [ds] = env.datasets.added
-    assert isinstance(ds, aseDatasetLoader) and not isinstance(ds, ReaderDataset)
+    assert isinstance(ds, ReaderDataset) and ds.reader_name == "xyz"
     assert (ds.N, ds.sourceFrameCount) == (4, 10)
 
 
@@ -189,16 +190,3 @@ def test_a_trajectory_prediction_loads_through_the_reader(tmp_path):
     assert errors == []
     stored = {k: p for k, p, _, _ in env.data.stored}
     assert stored["energy"]["energy"].tolist() == [-10.0, -11.0, -12.0, -13.0, -14.0]
-
-
-def test_an_xyz_prediction_still_takes_the_old_path(tmp_path):
-    from tests.ffast.test_loading_coordinator import _file_env, _FakeDataset
-    path = str(tmp_path / "p.extxyz")
-    ase.io.write(path, _frames(3, calc=False), format="extxyz")
-    seen = []
-    coordinator = LoadingCoordinator(_file_env(_FakeDataset(np.zeros(3))))
-    coordinator._readPredictionAtomsList = lambda p, k: seen.append(p) or ase.io.read(p, ":")
-    coordinator.prepareFrameIndex = lambda p, t: None
-    coordinator.loadPrepredictedDataset(path, "ds-fp", selected_energy_key="ref_energy",
-                                        selected_force_key="ref_forces")
-    assert seen == [path]

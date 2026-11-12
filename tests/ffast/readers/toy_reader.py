@@ -111,3 +111,46 @@ class ToyReader:
                 np.reshape(f["forces"], (-1, 3)) if "forces" in f else np.full((len(f["numbers"]), 3), np.nan)
                 for f in chosen])
         return out
+
+
+class ToyTextReader:
+    """A toy Level 2 reader over the same ``.toy`` lines: it lists where each
+    frame (line) starts, and parses whole frames' bytes. Counts its calls."""
+
+    name = "toytext"
+    extensions = ["*.toyt"]
+    package = None
+    found = []         # one entry per find_frames call
+    parsed = []        # (first_frame, number of frames) per parse call (this process only)
+
+    def __init__(self, path):
+        self.path = path
+
+    def contents(self):
+        return {"positions": True, "numbers": True, "cell": False, "energies": ["dft"],
+                "forces": ["dft"], "frame_fields": [], "atom_fields": [], "units": {}}
+
+    @classmethod
+    def find_frames(cls, path):
+        cls.found.append(path)
+        starts, counts, pos = [0], [], 0
+        with open(path, "rb") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                counts.append(len(json.loads(line)["numbers"]))
+                pos += len(line)
+                starts.append(pos)
+        return np.array(starts, dtype=np.int64), np.array(counts, dtype=np.int64)
+
+    @staticmethod
+    def parse(data, first_frame):
+        ToyTextReader.parsed.append((first_frame, data.count(b"\n")))
+        frames = [json.loads(line) for line in data.split(b"\n") if line.strip()]
+        return {
+            "n_atoms": np.array([len(f["numbers"]) for f in frames], dtype=np.int64),
+            "numbers": np.concatenate([f["numbers"] for f in frames]).astype(np.int64),
+            "positions": np.concatenate([np.reshape(f["positions"], (-1, 3)) for f in frames]),
+            "energy:dft": np.array([f["energy"] for f in frames], dtype=float),
+            "forces:dft": np.concatenate([np.reshape(f["forces"], (-1, 3)) for f in frames]),
+        }

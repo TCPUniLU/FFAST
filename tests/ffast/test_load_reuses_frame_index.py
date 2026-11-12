@@ -140,18 +140,23 @@ def _coordinator(slice_num):
 
 
 def test_a_prediction_file_at_the_datasets_stride_reads_through_the_index(xyz, no_path_reads):
+    """The xyz reader reads only the dataset's frames, by the index (ADR 0095)."""
+    from ffast.readers import chunks
+    from ffast.readers.xyz_reader import XyzReader
     path, expected = xyz
-    coord, _ = _coordinator(4)
-    frames = coord._readPredictionAtomsList(str(path), "ds")
-    assert _positions(frames) == _positions(expected[::4])
+    loaded = chunks.read_arrays(XyzReader, str(path), select=lambda n: range(0, n, 4))
+    assert loaded.frames == list(range(0, 23, 4)) and loaded.n_file_frames == 23
+    kept = expected[::4]
+    assert loaded.arrays["positions"].tolist() == np.concatenate([a.positions for a in kept]).tolist()
 
 
-def test_a_prediction_file_without_stride_is_lazy_through_the_index(xyz, no_path_reads):
+def test_a_prediction_file_without_stride_reads_every_frame_through_the_index(xyz, no_path_reads):
+    from ffast.readers import chunks
+    from ffast.readers.xyz_reader import XyzReader
     path, expected = xyz
-    coord, _ = _coordinator(0)
-    frames = coord._readPredictionAtomsList(str(path), "ds")
-    assert len(frames) == 23
-    assert frames[10].positions.tolist() == expected[10].positions.tolist()
+    loaded = chunks.read_arrays(XyzReader, str(path))
+    assert len(loaded.frames) == 23
+    assert loaded.arrays["n_atoms"].tolist() == [len(a) for a in expected]
 
 
 def test_a_load_reports_indexing_progress_on_its_task(xyz, monkeypatch):

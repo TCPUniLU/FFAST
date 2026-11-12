@@ -115,7 +115,8 @@ def readers_for(path: str) -> list:
 def type_rows() -> list[dict]:
     """The rows of the page's Type list: ``extension`` is the first ending,
     for pages that know one, and ``extensions`` all of them. ``reader`` marks
-    a type whose file can be probed for its names."""
+    a type whose file can be probed for its names. A reader with ``hidden`` is
+    not a Type of its own (xyz: "ase (auto)" resolves to it for those files)."""
     return [{"name": r.name, "extension": r.extensions[0], "extensions": list(r.extensions),
              "reader": True}
-            for r in all_readers()]
+            for r in all_readers() if not getattr(r, "hidden", False)]

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ffast.io.extxyz_arrays import MEMORY_FLOOR, MEMORY_SHARE, NotEnoughMemory, _gib
+from ffast.io.extxyz_arrays import MEMORY_FLOOR, MEMORY_SHARE, NotEnoughMemory, NotFast, _gib
 from ffast.metrics.resources import available_memory
 from ffast.readers.contract import ReaderError
 
@@ -35,12 +35,13 @@ class Loaded:
 
 @contextmanager
 def reader_errors(reader_name: str, path: str):
-    """A ReaderError and NotEnoughMemory pass as they are. Any other exception
+    """A ReaderError, NotEnoughMemory and NotFast (a Level 2 reader that cannot
+    parse this file: the caller reads it another way) pass as they are. Any other exception
     becomes "<reader> reader could not read <file>: <message>", its traceback
     logged without a pop-up."""
     try:
         yield
-    except (ReaderError, NotEnoughMemory):
+    except (ReaderError, NotEnoughMemory, NotFast):
         raise
     except Exception as exc:
         name = os.path.basename(path)
@@ -49,8 +50,14 @@ def reader_errors(reader_name: str, path: str):
         raise ReaderError(f"{reader_name} reader could not read {name}: {exc}") from exc
 
 
+def is_level2(reader_class) -> bool:
+    return callable(getattr(reader_class, "find_frames", None)) and callable(
+        getattr(reader_class, "parse", None))
+
+
 def read_arrays(reader_class, path, *, stride=0, select=None, progress=None,
-                chunk_bytes=CHUNK_BYTES, first_frames=FIRST_CHUNK_FRAMES) -> Loaded:
+                chunk_bytes=CHUNK_BYTES, first_frames=FIRST_CHUNK_FRAMES,
+                workers=None, batch=None, use_cache=True) -> Loaded:
     """Every ``stride``-th frame of ``path`` through ``reader_class``, joined.
 
     ``stride`` of 0, 1 or less keeps every frame. ``select(n_file_frames)``,
@@ -62,6 +69,13 @@ def read_arrays(reader_class, path, *, stride=0, select=None, progress=None,
     """
     reader_name = reader_class.name
     file_name = os.path.basename(path)
+    if is_level2(reader_class):
+        from ffast.readers import text
+        with reader_errors(reader_name, path):
+            arrays, contents, frames, n_file = text.read_level2(
+                reader_class, path, stride=stride, select=select, progress=progress,
+                workers=workers, batch=batch, use_cache=use_cache)
+        return Loaded(arrays, contents, frames, n_file, reader_name)
     with reader_errors(reader_name, path):
         reader = reader_class(path)
         n_file = int(reader.n_frames())

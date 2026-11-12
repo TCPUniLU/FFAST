@@ -222,8 +222,48 @@ def _parse_atoms(atom_lines, counts, layout, ncol, first_frame):
     return numbers, positions, columns
 
 
-def parse_block(data, first_frame=0):
+def header_info(data, first_frame=0):
+    """What the headers of the frames in ``data`` list, without parsing their
+    atoms: ``(numbers, layouts)``: the header keys any frame gives as a number
+    (in the order they appear), and each distinct ``Properties`` layout. The
+    atom lines are skipped, so a look at many frames stays cheap."""
+    lines = data.split(b"\n")
+    numbers, layouts = {}, {}
+    i, n_lines, frame = 0, len(lines), first_frame
+    while i < n_lines:
+        head = lines[i].strip()
+        if not head:
+            i += 1
+            continue
+        n = int(head)
+        header = lines[i + 1].decode()
+        plain = "=" not in header and not _MEANINGFUL & set(header.split())
+        props = None
+        for key, raw, junk in () if plain else _PAIR.findall(header):
+            if junk:
+                raise NotFast(f"frame {frame:,}: cannot read {junk!r} in its header")
+            raw = raw or None
+            if raw is None and key in _MEANINGFUL:
+                raise NotFast(f"frame {frame:,}: {key} without a value in its header")
+            if key == "Properties":
+                props = _value(raw)
+            elif key not in ("Lattice", "pbc") and raw is not None and key.lower() != "uid":
+                v = _value(raw)
+                if not v.startswith("_JSON ") and _number(v) is not None:
+                    numbers.setdefault(key, True)
+        props = props or _PLAIN_PROPERTIES
+        if props not in layouts:
+            layouts[props] = _layout(props)[0]
+        i += 2 + n
+        frame += 1
+    return list(numbers), list(layouts.values())
+
+
+def parse_block(data, first_frame=0, all_values=False):
     """Parse whole frames held in ``data`` (bytes).
+
+    ``values`` holds the header numbers every frame has; with ``all_values``,
+    every number any frame has, NaN (as float) where a frame lacks it.
 
     Frames may list different per-atom numbers (``_is_extra``); the others
     must match frame 0's."""
@@ -296,7 +336,14 @@ def parse_block(data, first_frame=0):
     keys = set(rows[0]) if rows else set()
     for row in rows[1:]:
         keys &= row.keys()
-    values = {k: np.array([row[k] for row in rows]) for k in keys}
+    # In the header's order (first frame first): the first energy name a file
+    # lists is its default, as for ASE's ``atoms.info``.
+    values = {}
+    for k in dict.fromkeys(k for row in rows for k in row):
+        if k in keys:
+            values[k] = np.array([row[k] for row in rows])
+        elif all_values:
+            values[k] = np.array([row.get(k, np.nan) for row in rows], dtype=np.float64)
 
     return FrameArrays(
         properties=first_props,

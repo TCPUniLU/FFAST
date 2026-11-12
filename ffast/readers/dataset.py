@@ -5,18 +5,77 @@ rename of any field in here cannot break an outside reader.
 """
 from __future__ import annotations
 
+import logging
 import os
 
 import numpy as np
 
 from ffast.cache.fingerprint import md5FromArraysAndStrings
 from ffast.loaders.ase import _same_formula_on_sample
-from ffast.loaders.dataset import FlatDatasetLoader
+from ffast.loaders.dataset import FlatDatasetLoader, isOneFrame
 from ffast.readers.contract import ReaderError
 from ffast.readers.pairing import pair_names
 
 
-class ReaderDataset(FlatDatasetLoader):
+logger = logging.getLogger("FFAST")
+
+
+class ReaderFields:
+    """Dataset Fields (ADR 0023) over the ``frame:<field>`` and ``atom:<field>``
+    arrays a reader returned: one number per frame, one per atom. A frame with
+    no value is NaN there. The rules are the old loaders': a frame field is
+    available only when every frame has it; an atom field is available with
+    NaN where a frame lacks it, and ``getAtomFieldMissing`` says where.
+
+    Needs ``field_arrays`` (the arrays), ``molecule_offsets``, ``N`` and
+    ``isVariable``."""
+
+    def _field(self, kind, key):
+        return self.field_arrays.get(f"{kind}:{key}")
+
+    def availableFieldKeys(self):
+        frame = sorted(k[6:] for k, v in self.field_arrays.items()
+                       if k.startswith("frame:") and not np.isnan(v).any())
+        atom = sorted(k[5:] for k in self.field_arrays if k.startswith("atom:"))
+        return frame, atom
+
+    def getFrameField(self, key, indices=None):
+        v = self._field("frame", key)
+        if v is None or np.isnan(v).any():
+            logger.warning("Dataset field: frame field '%s' missing or not a number in some frame; "
+                           "field unavailable", key)
+            return None
+        v = np.asarray(v, dtype=np.float64)
+        if indices is None:
+            return v
+        return v[indices] if isOneFrame(indices) else v[np.asarray(indices)]
+
+    def _atoms_of(self, flat, indices):
+        if isOneFrame(indices):
+            return flat[self.molecule_offsets[indices]:self.molecule_offsets[indices + 1]]
+        if not self.isVariable:
+            frames = flat.reshape(self.N, -1, *flat.shape[1:])
+            return frames.copy() if indices is None else frames[np.asarray(indices)]
+        indices = range(self.N) if indices is None else indices
+        return [flat[self.molecule_offsets[i]:self.molecule_offsets[i + 1]] for i in indices]
+
+    def getAtomField(self, key, indices=None):
+        col = self._field("atom", key)
+        if col is None:
+            logger.warning("Dataset field: atom field '%s' missing or not a per-atom number; "
+                           "field unavailable", key)
+            return None
+        return self._atoms_of(np.asarray(col, dtype=np.float64), indices)
+
+    def getAtomFieldMissing(self, key, indices=None):
+        """Where atom field ``key`` has no value; None when every atom has one."""
+        col = self._field("atom", key)
+        if col is None or not np.isnan(col).any():
+            return None
+        return self._atoms_of(np.isnan(col), indices)
+
+
+class ReaderDataset(ReaderFields, FlatDatasetLoader):
     """A file a reader read, in the flat storage every file dataset uses
     (ADR 0058): all atoms in one run, ``molecule_offsets`` saying where each
     frame starts. ``isVariable`` is true unless every frame has the same atoms
@@ -49,6 +108,7 @@ class ReaderDataset(FlatDatasetLoader):
         self.z_flat = np.asarray(arrays["numbers"])
 
         self.arrays = arrays          # all the file's arrays, until the predictions in it are loaded
+        self.field_arrays = {k: v for k, v in arrays.items() if k.startswith(("frame:", "atom:"))}
         self.contents = contents
         self.energy_key, self.force_key = pair_names(
             contents.get("energies") or [], contents.get("forces") or [],
@@ -88,22 +148,13 @@ class ReaderDataset(FlatDatasetLoader):
         return meta
 
 
-class ReaderFieldSource:
+class ReaderFieldSource(ReaderFields):
     """What ``_extractPredictionFields`` reads a prediction's Dataset Fields
-    from, over a reader's arrays. No fields yet: step 5 of the reader plan
-    fills these in."""
+    from: the fields in a reader's arrays, with the frames' atom counts."""
 
-    def __init__(self, arrays, contents):
-        self.arrays, self.contents = arrays, contents
-
-    def availableFieldKeys(self):
-        return [], []
-
-    def getFrameField(self, key, indices=None):
-        return None
-
-    def getAtomField(self, key, indices=None):
-        return None
-
-    def getAtomFieldMissing(self, key, indices=None):
-        return None
+    def __init__(self, arrays, contents=None):
+        self.field_arrays = {k: v for k, v in arrays.items() if k.startswith(("frame:", "atom:"))}
+        counts = np.asarray(arrays["n_atoms"], dtype=np.int64)
+        self.N = len(counts)
+        self.molecule_offsets = np.concatenate([[0], np.cumsum(counts)]).astype(int)
+        self.isVariable = bool((counts != counts[0]).any()) if self.N else False

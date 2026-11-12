@@ -127,8 +127,8 @@ class TestLoadDatasetKeepsFileReadOutsideTheLock:
 
         class _FakeDataset:
             """Stands in for both the loader class AND its returned dataset —
-            ``datasetTypes["ase (auto)"](path, **kwargs)`` constructs one of
-            these directly. Deliberately no ``.atomsList`` attribute, forcing
+            ``datasetTypes["legacy"](path)`` constructs one of these directly
+            (a dataset type with no reader: a plugin's loader). Deliberately no ``.atomsList`` attribute, forcing
             the ``ase.io.read`` fallback loadDataset must keep unlocked."""
             def __init__(self, path, **kwargs):
                 pass
@@ -149,7 +149,7 @@ class TestLoadDatasetKeepsFileReadOutsideTheLock:
 
         class _FakeEnv:
             def __init__(self):
-                self.datasetTypes = {"ase (auto)": _FakeDataset}
+                self.datasetTypes = {"legacy": _FakeDataset}
                 self.datasets = _FakeDatasets()
                 self.mutation_lock = _RecordingLock()
 
@@ -166,7 +166,7 @@ class TestLoadDatasetKeepsFileReadOutsideTheLock:
         ase.io.read = _fake_ase_read
         try:
             coord.loadDataset(
-                str(dataset_path), "ase (auto)",
+                str(dataset_path), "legacy",
                 prediction_keys=[("e", "f", "m")],
             )
         finally:
