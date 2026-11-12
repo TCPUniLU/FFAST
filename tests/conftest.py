@@ -33,3 +33,15 @@ def _frame_index_cache_in_tmp(tmp_path_factory, monkeypatch):
     monkeypatch.setattr(frame_cache, "CACHE_DIR", arrays)
     monkeypatch.setenv("FFAST_FRAME_ARRAYS_DIR", str(arrays))
     yield
+
+
+@pytest.fixture(autouse=True)
+def _event_bus_as_it_was():
+    """The in-process event bus is one subscriber table per process, holding
+    subscribers strongly (one Environment per process, by design). Every
+    Environment, TaskManager or listener a test subscribes is dropped after
+    it, so it cannot pile up nor run another test's event."""
+    from tests.event_bus import restore_subscriptions, save_subscriptions
+    saved = save_subscriptions()
+    yield
+    restore_subscriptions(saved)
