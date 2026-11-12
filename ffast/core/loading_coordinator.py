@@ -31,6 +31,8 @@ from ffast.protocol import control
 from ffast.loaders.ghost import GhostModelLoader
 from ffast.loaders.dataset import framesShaped
 from ffast.readers import ReaderError
+from ffast.readers.match import Facts, PredictionRefused, check_prediction
+from ffast.readers.pairing import pair_names
 from ffast.cache.fingerprint import md5FromArraysAndStrings
 
 logger = logging.getLogger("FFAST")
@@ -252,7 +254,7 @@ class LoadingCoordinator:
     #############
 
     def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None,
-                                    selected_force_key=None, on_error=None):
+                                    selected_force_key=None, on_error=None, reader=None):
         """Queue import of external predictions as cached model outputs for a dataset."""
         self._queueLoad(
             self.loadPrepredictedDataset,
@@ -260,7 +262,8 @@ class LoadingCoordinator:
             args=(path, datasetKey),
             kwargs={
                 'selected_energy_key': selected_energy_key,
-                'selected_force_key': selected_force_key
+                'selected_force_key': selected_force_key,
+                'reader': reader,
             },
             on_error=on_error,
         )
@@ -295,17 +298,34 @@ class LoadingCoordinator:
         )
 
     def loadPrepredictedDataset(self, path, datasetKey, taskID=None, selected_energy_key=None,
-                                selected_force_key=None, on_error=None):
-        """Attach precomputed energies and forces to a dataset as a ghost model."""
+                                selected_force_key=None, on_error=None, reader=None):
+        """Attach precomputed energies and forces to a dataset as a ghost model.
+
+        ``reader`` names the reader (ADR 0095) that reads the file; without one
+        the readers for the file's ending choose, and a file no reader claims
+        is an ``.npz`` or an ASE file, as before."""
+        readerClass = self._predictionReader(path, reader, on_error)
+        if readerClass is False:
+            return None
+        if readerClass is not None:
+            return self._loadReaderPrediction(
+                readerClass, path, datasetKey, taskID, selected_energy_key,
+                selected_force_key, on_error)
+        facts = None
         if path.lower().endswith(".npz"):
             d = np.load(path, allow_pickle=True)
             E, F = d["E"], d["F"]
+            nFile = len(E)
+            shape = np.shape(F)
             # Sampled like its dataset, as _readPredictionAtomsList does for
             # ASE files; only the per-frame arrays are read here.
             slice_num = self._env.datasets.slice_numbers.get(datasetKey)
             if slice_num is not None and slice_num > 0:
                 E, F = E[::slice_num], F[::slice_num]
             aseObject = None
+            facts = Facts(
+                name=os.path.basename(path), n_kept=len(E), n_file_frames=nFile,
+                counts=np.full(len(F), shape[1]) if len(shape) == 3 else None)
         else:
             self.prepareFrameIndex(path, taskID)
             atomsList = self._readPredictionAtomsList(path, datasetKey)
@@ -321,6 +341,12 @@ class LoadingCoordinator:
                 if on_error:
                     on_error(e)
                 return None
+            facts = Facts(
+                name=os.path.basename(path), n_kept=aseObject.getN(),
+                n_file_frames=self._fileFrameCount(
+                    path, aseObject.getN(), self._env.datasets.slice_numbers.get(datasetKey)),
+                counts=np.diff(aseObject.getOffsets()), numbers=aseObject.getAllElements(),
+                positions=aseObject.getAllCoordinates())
 
             try:
                 E = np.array(aseObject.getAllEnergies())
@@ -355,21 +381,103 @@ class LoadingCoordinator:
             name = os.path.basename(path)
             if not self._ingestPrediction(
                 dataset, E, F, path=path, name=name, fingerprint=modelKey,
-                source=aseObject,
+                source=aseObject, facts=facts, popup=False,
             ):
                 # A mismatch here means the whole load fails — unlike the
                 # prediction-keys path, there is no other column to fall back
-                # to, and the cause is almost always a mis-picked file.
-                logger.error(
-                    "Prediction load failed, you have probably selected the wrong prediction for the designated dataset. "
-                    "Please try again and choose the correct prediction file according to the dataset selected "
-                    "in the file filter dropdown.",
-                    extra={"popup": on_error is None},   # else the window says it
-                )
+                # to, and the cause is almost always a mis-picked file. The
+                # message says what differs (ADR 0095, decision 6).
+                logger.error(self._lastRefusal,
+                             extra={"popup": on_error is None})   # else the window says it
                 if on_error:
-                    on_error("it does not match the selected dataset")
+                    on_error(self._lastRefusal)
                 return
 
+            self.lookForGhosts()
+
+    @staticmethod
+    def _predictionReader(path, name, on_error):
+        """The reader class that reads a prediction file (ADR 0095): the one
+        named, else the first the file's ending and ``can_read`` pick, else
+        None for the ASE and ``.npz`` paths. False when the named reader is
+        not installed (already reported)."""
+        from ffast.readers import registry
+        if name:
+            found = registry.get(name)
+            if found is None:
+                text = f"{os.path.basename(path)} needs the {name} reader, which is not installed"
+                logger.error(text, extra={"popup": on_error is None})
+                if on_error:
+                    on_error(text)
+                return False
+            return found
+        candidates = registry.readers_for(path)
+        return candidates[0] if candidates else None
+
+    def _loadReaderPrediction(self, readerClass, path, datasetKey, taskID,
+                              energyKey, forceKey, on_error):
+        """A prediction from a reader (ADR 0095): the frames the dataset kept,
+        read in chunks, paired by name, checked, then ingested."""
+        from ffast.readers import chunks
+        from ffast.readers.dataset import ReaderFieldSource
+
+        name = os.path.basename(path)
+        try:
+            dataset = self._env.datasets.get(datasetKey)
+            slice_num = self._env.datasets.slice_numbers.get(datasetKey)
+
+            def select(nFile):
+                """The file's frames the dataset kept: every stride-th."""
+                source = getattr(dataset, "sourceFrameCount", None)
+                if source is not None and nFile != source:
+                    raise PredictionRefused(
+                        f"Prediction '{name}' has {nFile:,} frames, but the dataset's file "
+                        f"has {source:,}.")
+                step = slice_num if slice_num and slice_num > 1 else 1
+                kept = range(0, nFile if source is None else source, step)
+                if len(kept) != dataset.getN():
+                    raise PredictionRefused(
+                        f"Frame count mismatch for prediction '{name}'. "
+                        f"Expected {dataset.getN()} frames, got {len(kept)}.")
+                return kept
+
+            loaded = chunks.read_arrays(
+                readerClass, path, select=select, progress=self._readProgress(path, taskID))
+            arrays, contents = loaded.arrays, loaded.contents
+            energies, forces = contents.get("energies") or [], contents.get("forces") or []
+            if not energies and not forces:
+                raise ReaderError(f"{name} has no energies or forces, so it cannot load as a prediction")
+            ek, fk = pair_names(energies, forces, energyKey, forceKey, file=name)
+            if ek is None and fk is None:
+                raise ReaderError(f"Nothing to load from {name}: no energy and no force chosen")
+            E = arrays.get(f"energy:{ek}") if ek else None
+            E = None if E is None else np.asarray(E, dtype=np.float64).reshape(-1)
+            Fv = arrays.get(f"forces:{fk}") if fk else None
+            counts = np.asarray(arrays["n_atoms"], dtype=np.int64)
+            F = None if Fv is None else FlatFrames(Fv, np.concatenate([[0], np.cumsum(counts)]))
+            facts = Facts(
+                name=name, n_kept=len(loaded.frames), n_file_frames=loaded.n_file_frames,
+                counts=counts, numbers=arrays.get("numbers"), positions=arrays.get("positions"),
+                units=contents.get("units") or None)
+            available = [x for x in (E, Fv) if x is not None]
+            fingerprint = md5FromArraysAndStrings(*available)
+        except (ReaderError, NotEnoughMemory) as e:
+            # Its text as it is, no traceback (ADR 0095, decision 8).
+            logger.error(str(e), extra={"popup": on_error is None})
+            if on_error:
+                on_error(str(e))
+            return None
+
+        with self._env.mutation_lock:
+            if not self._ingestPrediction(
+                self._env.datasets.get(datasetKey), E, F, path=path, name=name,
+                fingerprint=fingerprint, source=ReaderFieldSource(arrays, contents),
+                facts=facts, popup=False,
+            ):
+                logger.error(self._lastRefusal, extra={"popup": on_error is None})
+                if on_error:
+                    on_error(self._lastRefusal)
+                return None
             self.lookForGhosts()
 
     def _readPredictionAtomsList(self, path, datasetKey):
@@ -479,36 +587,56 @@ class LoadingCoordinator:
         return loader
 
     @staticmethod
-    def _predictionMatchesDataset(E, dataset, name, F=None):
-        """Check a prediction has one energy per dataset frame, and, when its
-        forces come as FlatFrames, the dataset's atoms in every frame.
+    def _checkPrediction(E, dataset, name, F=None, facts=None):
+        """The one check every prediction path passes (ADR 0095, decision 6;
+        ``ffast.readers.match``). Raises PredictionRefused, else returns.
 
-        Counts frames with ``getN()``, which every dataset answers, rather than
-        reading the dataset's own energies, which a file of bare geometries
-        does not have (ADR 0058: absent, not zeros).
+        ``facts`` is what the path knows of the file; where it does not say
+        how many frames the prediction has, they come from the energies, else
+        the forces. A prediction with neither has nothing to count.
         """
-        if isinstance(F, FlatFrames) and hasattr(dataset, "getOffsets"):
-            if not np.array_equal(F.offsets, np.asarray(dataset.getOffsets())):
-                logger.error(
-                    f"Atom count mismatch for prediction '{name}': its forces "
-                    f"do not hold the dataset's atoms in every frame."
-                )
-                return False
-        if E is None:
-            return True
+        import dataclasses
 
-        n_predicted = np.asarray(E).reshape(-1).size
-        n_frames = dataset.getN()
-        if n_predicted != n_frames:
-            logger.error(
-                f"Frame count mismatch for prediction '{name}'. "
-                f"Expected {n_frames} frames, got {n_predicted}."
-            )
+        facts = facts or Facts(name=name, n_kept=None)
+        n_kept, counts = facts.n_kept, facts.counts
+        if n_kept is None:
+            if E is not None:
+                n_kept = np.asarray(E).reshape(-1).size
+            elif isinstance(F, FlatFrames):
+                n_kept = len(F.offsets) - 1
+            elif F is not None:
+                n_kept = len(F)
+        if counts is None and isinstance(F, FlatFrames):
+            counts = np.diff(F.offsets)
+        check_prediction(dataset, dataclasses.replace(facts, n_kept=n_kept, counts=counts))
+
+    @staticmethod
+    def _predictionMatchesDataset(E, dataset, name, F=None, facts=None):
+        """Whether a prediction fits its dataset; the reason is logged."""
+        try:
+            LoadingCoordinator._checkPrediction(E, dataset, name, F, facts)
+        except PredictionRefused as e:
+            logger.error(str(e))
             return False
         return True
 
+    @staticmethod
+    def _fileFrameCount(path, kept, slice_num):
+        """How many frames ``path`` has, before the stride that kept ``kept``
+        of them; None when it cannot be told."""
+        if not slice_num or slice_num <= 1:
+            return kept
+        try:
+            from ffast.io import frame_index
+            if frame_index.is_indexable(path):
+                return len(frame_index.get_frame_index(path))
+            return AtomsList.calc_dataset_length_static(path)
+        except Exception:
+            logger.debug("Could not count the frames of %s", path, exc_info=True)
+            return None
+
     def _ingestPrediction(self, dataset, E, F, *, path, name, fingerprint,
-                          source=None, **catalogExtra):
+                          source=None, facts=None, popup=True, **catalogExtra):
         """Register one prediction's arrays against ``dataset`` as a ghost model.
 
         The single body behind both prediction entry points — a standalone
@@ -526,13 +654,22 @@ class LoadingCoordinator:
         fingerprint *is* the ghost's identity in the cache and in saved
         sessions.
 
+        ``facts`` says more of the file than E and F do (ADR 0095): atoms per
+        frame, elements, positions, units, the file's length. Every path passes
+        the same check (``_checkPrediction``).
+
         Returns ``True`` when the prediction was ingested, ``False`` when its
-        arrays do not match the dataset; the caller decides whether that aborts
-        the whole load or skips this one column.
+        arrays do not match the dataset (the reason is logged, as a pop-up
+        unless ``popup=False``, and kept in ``_lastRefusal``); the caller
+        decides whether that aborts the whole load or skips this one column.
 
         Callers must hold ``mutation_lock``.
         """
-        if not self._predictionMatchesDataset(E, dataset, name, F=F):
+        try:
+            self._checkPrediction(E, dataset, name, F, facts)
+        except PredictionRefused as e:
+            self._lastRefusal = str(e)
+            logger.error(self._lastRefusal, extra={"popup": popup})
             return False
 
         if E is not None:
@@ -719,6 +856,12 @@ class LoadingCoordinator:
                 on_error("no dataset could be read from it")
             return
 
+        if (datasetType == "ase (auto)" and hasattr(dataset, "getN")
+                and getattr(dataset, "sourceFrameCount", None) is None):
+            # The file's frame count before the stride, which a prediction's
+            # length is checked against (ADR 0095, decision 6).
+            dataset.sourceFrameCount = self._fileFrameCount(path, dataset.getN(), slice_num)
+
         dataset.initialise()
 
         # NOTE: in-process load is now the no-server FALLBACK only (routing goes
@@ -735,7 +878,7 @@ class LoadingCoordinator:
         # every connection's dispatch — for its duration, not just serialize
         # the registry mutation.
         atomsList = dataset.atomsList if hasattr(dataset, 'atomsList') else None
-        if prediction_keys and atomsList is None:
+        if prediction_keys and atomsList is None and not isReader:
             import ase.io
             atomsList = ase.io.read(path, index=":")
 
@@ -749,6 +892,9 @@ class LoadingCoordinator:
                 self._loadPredictionsFromKeys(dataset, path, prediction_keys, atomsList=atomsList)
 
             self.lookForGhosts()
+
+        if isReader:
+            dataset.arrays = None   # the file's extra sets are not kept in memory
 
     def _loadWithReader(self, readerClass, path, slice_num, energyKey, forceKey, taskID):
         """A dataset from a reader (ADR 0095): FFAST asks for the frames the
@@ -780,6 +926,11 @@ class LoadingCoordinator:
             prediction_keys: List of (energy_key, force_key, model_name) tuples
             atomsList: Optional pre-loaded atoms list to avoid re-reading file
         """
+        from ffast.readers.dataset import ReaderDataset
+        if isinstance(dataset, ReaderDataset):
+            self._loadReaderPredictionsFromKeys(dataset, path, prediction_keys)
+            return
+
         # Read file only if not provided
         if atomsList is None:
             import ase.io
@@ -815,6 +966,44 @@ class LoadingCoordinator:
                 import traceback
                 logger.debug(traceback.format_exc())
                 continue
+
+    def _loadReaderPredictionsFromKeys(self, dataset, path, prediction_keys):
+        """The same for a reader's dataset (ADR 0095): the names are read from
+        the arrays the reader returned with the dataset, paired and checked
+        like any prediction. ``""`` as a name means none."""
+        from ffast.readers.dataset import ReaderFieldSource
+
+        arrays, contents = dataset.arrays, dataset.contents
+        if arrays is None:
+            logger.error(f"The extra values of {os.path.basename(path)} are no longer in memory")
+            return
+        offsets = dataset.molecule_offsets
+        source = ReaderFieldSource(arrays, contents)
+        for energy_key, force_key, model_name in prediction_keys:
+            try:
+                ek, fk = pair_names(
+                    contents.get("energies") or [], contents.get("forces") or [],
+                    energy_key or "", force_key or "", file=os.path.basename(path))
+                E = arrays.get(f"energy:{ek}") if ek else None
+                E = None if E is None else np.asarray(E, dtype=np.float64).reshape(-1)
+                Fv = arrays.get(f"forces:{fk}") if fk else None
+                if E is None and Fv is None:
+                    logger.warning(f"Prediction '{model_name}' has neither energies nor forces; skipped.")
+                    continue
+                F = None if Fv is None else FlatFrames(Fv, offsets)
+                available = [x for x in (E, Fv) if x is not None]
+                facts = Facts(name=model_name, n_kept=dataset.N,
+                              n_file_frames=dataset.sourceFrameCount, counts=np.diff(offsets))
+                if not self._ingestPrediction(
+                    dataset, E, F, path=path, name=model_name,
+                    fingerprint=md5FromArraysAndStrings(*available, model_name),
+                    source=source, facts=facts, energy_key=ek or "", force_key=fk or "",
+                ):
+                    continue
+                logger.info(f"Loaded predictions for '{model_name}' from names {ek}/{fk}")
+            except Exception as e:
+                logger.error(f"Failed to load predictions for '{model_name}': {e}")
+                logger.debug("", exc_info=True)
 
     #############
     ## SERVER TRANSPORT (async, Qt-free)

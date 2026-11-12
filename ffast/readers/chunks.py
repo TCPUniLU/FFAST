@@ -49,11 +49,13 @@ def reader_errors(reader_name: str, path: str):
         raise ReaderError(f"{reader_name} reader could not read {name}: {exc}") from exc
 
 
-def read_arrays(reader_class, path, *, stride=0, progress=None,
+def read_arrays(reader_class, path, *, stride=0, select=None, progress=None,
                 chunk_bytes=CHUNK_BYTES, first_frames=FIRST_CHUNK_FRAMES) -> Loaded:
     """Every ``stride``-th frame of ``path`` through ``reader_class``, joined.
 
-    ``stride`` of 0, 1 or less keeps every frame. ``progress(done, total)``
+    ``stride`` of 0, 1 or less keeps every frame. ``select(n_file_frames)``,
+    when given, names the frames instead (increasing); it may raise a
+    ReaderError, for a file that does not fit what it is read for. ``progress(done, total)``
     follows each chunk. NotEnoughMemory before reading on, when the first
     chunk predicts the arrays do not fit, and while reading, when free memory
     falls below ``MEMORY_FLOOR``.
@@ -64,8 +66,11 @@ def read_arrays(reader_class, path, *, stride=0, progress=None,
         reader = reader_class(path)
         n_file = int(reader.n_frames())
         contents = dict(reader.contents() or {})
-        step = int(stride) if stride and int(stride) > 1 else 1
-        frames = list(range(0, n_file, step))
+        if select is not None:
+            frames = [int(f) for f in select(n_file)]
+        else:
+            step = int(stride) if stride and int(stride) > 1 else 1
+            frames = list(range(0, n_file, step))
         total = len(frames)
         if total == 0:
             raise ReaderError(f"{file_name} has no frames")

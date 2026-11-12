@@ -74,6 +74,18 @@ CASES = {
     "type_xyz": "rb.typeForFile('a.xyz', [{name:'ase (auto)',extension:'*'},{name:'sGDML',extension:'*.npz'}])",
     "type_first": "rb.typeForFile('a.xyz', [{name:'X', extension:'*.x'}])",
     "type_none": "rb.typeForFile('a', [])",
+    # A prediction file with energies only (or forces only) can load (ADR 0095).
+    "load_pred_energy_only":
+        "rb.canLoad({selected: 'p.toy', mode: 'prediction', forceKey: '', energyKey: 'dft', targetDataset: 'fp'})",
+    "load_pred_no_key_at_all":
+        "rb.canLoad({selected: 'p.toy', mode: 'prediction', forceKey: '', energyKey: '', targetDataset: 'fp'})",
+    # Energy and force names that match are paired, as the server does.
+    "pair_match": "rb.pairNames(['dft','mace'], ['mace','dft'])",
+    "pair_first": "rb.pairNames(['a'], ['b'])",
+    "pair_energy_only": "rb.pairNames(['dft'], [])",
+    "pair_none": "rb.pairNames([], [])",
+    "reader_type": "rb.readerTypeFor('run.toy', [{name:'ase (auto)',extension:'*'},{name:'toy',extension:'*.toy',extensions:['*.toy'],reader:true}])",
+    "reader_type_ase": "rb.readerTypeFor('a.xyz', [{name:'ase (auto)',extension:'*'},{name:'toy',extension:'*.toy',extensions:['*.toy'],reader:true}])",
     # A reader lists every ending it takes (ADR 0095).
     "type_reader_second": "rb.typeForFile('run.BAR', [{name:'ase (auto)',extension:'*'},{name:'foo',extension:'*.foo',extensions:['*.foo','*.bar']}])",
     "type_reader_none": "rb.typeForFile('run.baz', [{name:'ase (auto)',extension:'*'},{name:'foo',extension:'*.foo',extensions:['*.foo','*.bar']}])",
@@ -1751,6 +1763,14 @@ def test_the_loader_type_follows_the_file_extension(results):
     assert results["type_xyz"] == "ase (auto)"
     assert results["type_first"] == "X"
     assert results["type_none"] == "ase (auto)"
+    assert results["load_pred_energy_only"] is True
+    assert results["load_pred_no_key_at_all"] is False
+    assert results["pair_match"] == ["dft", "dft"]
+    assert results["pair_first"] == ["a", "b"]
+    assert results["pair_energy_only"] == ["dft", ""]
+    assert results["pair_none"] == ["", ""]
+    assert results["reader_type"] == "toy"
+    assert results["reader_type_ase"] is None
     assert results["type_reader_second"] == "foo"
     assert results["type_reader_none"] == "ase (auto)"
 

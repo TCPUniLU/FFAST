@@ -585,6 +585,7 @@ class LoadPredictionRequest(BaseModel):
     dataset_fp: str
     selected_energy_key: Optional[str] = None
     selected_force_key: Optional[str] = None
+    reader: Optional[str] = None     # the reader's name; None: chosen by the file (ADR 0095)
 
 
 class RequestPredictionArraysRequest(BaseModel):

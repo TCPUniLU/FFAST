@@ -54,3 +54,141 @@ async def test_web_a_readers_type_is_listed_and_loads_a_dataset(toy_reader_insta
                 await expect(row).to_contain_text("run")
             finally:
                 await browser.close()
+
+
+async def _toy_dataset_fp(ws_port, path):
+    """Load ``path`` as a toy dataset through a headless client; its fingerprint."""
+    from .test_web_runtime import _connect_headless_client, _wait_for_event, pack
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("LOAD_DATASET", (str(path), "toy"), {}))
+        meta = await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30)
+        return meta["args"][0]
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+
+async def test_web_a_toy_prediction_loads_from_load_prediction(toy_reader_installed, tmp_path):
+    from .test_web_loading import _go_to, _sent
+    from .test_web_runtime import _RECORD_SENDS, _open_loupe
+    data = tmp_path / "data"
+    data.mkdir()
+    write_toy(data / "ds.toy", make_frames(5, variable=True))
+    write_toy(data / "pred.toy", make_frames(5, variable=True, extra=["mace"]))
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        dataset_fp = await _toy_dataset_fp(ws_port, data / "ds.toy")
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await page.evaluate(_RECORD_SENDS)
+                await _file_menu(page, "Load Prediction…")
+                await _go_to(page, data)
+                await page.locator("#fb-list .fb-row", has_text="pred.toy").click()
+                # the names the reader lists, paired: dft with dft
+                await expect(page.locator("#fb-energy-key")).to_have_value("dft")
+                await expect(page.locator("#fb-force-key")).to_have_value("dft")
+                values = await page.locator("#fb-force-key option").evaluate_all(
+                    "(os) => os.map((o) => o.value)")
+                assert values == ["", "dft", "mace"]
+                await page.locator("#fb-force-key").select_option("mace")
+                await page.locator("#fb-energy-key").select_option("mace")
+                await page.locator("#fb-load").click()
+                await expect(page.locator("#model-list .obj-row", has_text="pred.toy")).to_be_visible(
+                    timeout=30000)
+                assert await _sent(page, "LOAD_PREDICTION") == [{
+                    "selected_energy_key": "mace", "selected_force_key": "mace", "reader": "toy"}]
+            finally:
+                await browser.close()
+
+
+async def test_web_a_toy_prediction_with_energies_only_can_load(toy_reader_installed, tmp_path):
+    from .test_web_loading import _go_to
+    from .test_web_runtime import _open_loupe
+    data = tmp_path / "data"
+    data.mkdir()
+    write_toy(data / "ds.toy", make_frames(4))
+    write_toy(data / "pred.toy", make_frames(4, forces=False))
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        dataset_fp = await _toy_dataset_fp(ws_port, data / "ds.toy")
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _file_menu(page, "Load Prediction…")
+                await _go_to(page, data)
+                await page.locator("#fb-list .fb-row", has_text="pred.toy").click()
+                await expect(page.locator("#fb-energy-key")).to_have_value("dft")
+                await expect(page.locator("#fb-force-key")).to_have_value("")
+                await expect(page.locator("#fb-load")).to_be_enabled()
+                await page.locator("#fb-load").click()
+                await expect(page.locator("#model-list .obj-row", has_text="pred.toy")).to_be_visible(
+                    timeout=30000)
+            finally:
+                await browser.close()
+
+
+async def test_web_a_mismatched_toy_prediction_says_what_differs(toy_reader_installed, tmp_path):
+    from .test_web_loading import _go_to
+    from .test_web_runtime import _open_loupe
+    data = tmp_path / "data"
+    data.mkdir()
+    write_toy(data / "ds.toy", make_frames(6))
+    write_toy(data / "short.toy", make_frames(5))
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        dataset_fp = await _toy_dataset_fp(ws_port, data / "ds.toy")
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _file_menu(page, "Load Prediction…")
+                await _go_to(page, data)
+                await page.locator("#fb-list .fb-row", has_text="short.toy").click()
+                await expect(page.locator("#fb-force-key")).to_have_value("dft")
+                await page.locator("#fb-load").click()
+                await expect(page.locator("#status")).to_contain_text(
+                    "has 5 frames, but the dataset's file has 6", timeout=30000)
+                await expect(page.locator("#model-list .obj-row")).to_have_count(0)
+            finally:
+                await browser.close()
+
+
+async def test_web_a_toy_file_with_more_names_loads_them_as_predictions(toy_reader_installed, tmp_path):
+    from .test_web_loading import _go_to, _sent
+    from .test_web_runtime import _RECORD_SENDS
+    data = tmp_path / "data"
+    data.mkdir()
+    write_toy(data / "run.toy", make_frames(4, extra=["mace"]))
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 900})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await page.evaluate(_RECORD_SENDS)
+                await _file_menu(page, "Load Dataset…")
+                await _go_to(page, data)
+                await page.locator("#fb-list .fb-row", has_text="run.toy").click()
+                await expect(page.locator("#fb-type")).to_have_value("toy")
+                await expect(page.locator("#fb-keys")).to_be_visible()      # two names: a choice
+                assert await page.locator("#fb-ds-energy-key").input_value() == "dft"
+                await page.locator("#fb-add-pred").click()
+                rows = page.locator("#fb-pred-rows .fb-pred-row")
+                await expect(rows.locator(".fb-pred-energy")).to_have_value("mace")
+                await rows.locator(".fb-pred-name").fill("MACE")
+                await page.locator("#fb-load").click()
+                await expect(page.locator("#dataset-list .obj-row")).to_have_count(1, timeout=30000)
+                await expect(page.locator("#model-list .obj-row", has_text="MACE")).to_be_visible(timeout=30000)
+                sent = (await _sent(page, "LOAD_DATASET"))[0]
+                assert sent["selected_energy_key"] == "dft" and sent["prediction_keys"][0][:2] == ["mace", "mace"]
+            finally:
+                await browser.close()

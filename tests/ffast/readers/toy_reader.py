@@ -5,7 +5,9 @@ A ``.toy`` file has one JSON object per line, one line per frame::
     {"numbers": [8, 1, 1], "positions": [[0,0,0], ...], "energy": -1.5,
      "forces": [[0,0,0], ...], "cell": [[10,0,0], [0,10,0], [0,0,10]]}
 
-``energy``, ``forces`` and ``cell`` may be missing from a line.
+``energy``, ``forces`` and ``cell`` may be missing from a line. A line may also
+carry ``"extra": {"mace": {"energy": -2.0, "forces": [[...]]}}``: more named
+energy and force sets.
 """
 import json
 
@@ -19,15 +21,24 @@ def write_toy(path, frames):
     return str(path)
 
 
-def make_frames(n, *, atoms=3, variable=False, energy=True, forces=True, cell=False):
-    """``n`` frames; frame i has positions filled with i (+ the atom's index)."""
+def make_frames(n, *, atoms=3, variable=False, energy=True, forces=True, cell=False,
+                extra=(), shift=0.0, numbers=None):
+    """``n`` frames; frame i has positions filled with i (+ the atom's index,
+    + ``shift``). ``extra`` names more energy/force sets; ``numbers`` replaces
+    every frame's atomic numbers."""
     frames = []
     for i in range(n):
         count = atoms + (i % 3 if variable else 0)
         frame = {
-            "numbers": [8, 1, 1, 6, 7, 9][:count] if count <= 6 else [1] * count,
-            "positions": [[i + a, 0.0, 0.0] for a in range(count)],
+            "numbers": list(numbers) if numbers else
+            ([8, 1, 1, 6, 7, 9][:count] if count <= 6 else [1] * count),
+            "positions": [[i + a + shift, 0.0, 0.0] for a in range(count)],
         }
+        if extra:
+            frame["extra"] = {
+                name: {"energy": 100.0 * (k + 1) + i,
+                       "forces": [[0.5 * (k + 1), 0.0, float(a)] for a in range(count)]}
+                for k, name in enumerate(extra)}
         if energy:
             frame["energy"] = float(i) * 10
         if forces:
@@ -52,17 +63,28 @@ class ToyReader:
     def n_frames(self):
         return len(self.frames)
 
+    units = {}
+
+    def _extra_names(self):
+        names = []
+        for f in self.frames:
+            for name in f.get("extra", {}):
+                if name not in names:
+                    names.append(name)
+        return names
+
     def contents(self):
         has = lambda key: any(key in f for f in self.frames)
+        extra = self._extra_names()
         return {
             "positions": True,
             "numbers": True,
             "cell": has("cell"),
-            "energies": ["dft"] if has("energy") else [],
-            "forces": ["dft"] if has("forces") else [],
+            "energies": (["dft"] if has("energy") else []) + extra,
+            "forces": (["dft"] if has("forces") else []) + extra,
             "frame_fields": [],
             "atom_fields": [],
-            "units": {},
+            "units": dict(self.units),
         }
 
     def read(self, frames):
@@ -74,11 +96,17 @@ class ToyReader:
             "positions": np.concatenate([np.reshape(f["positions"], (-1, 3)) for f in chosen]),
         }
         has = self.contents()
+        for name in self._extra_names():
+            out[f"energy:{name}"] = np.array(
+                [f.get("extra", {}).get(name, {}).get("energy", np.nan) for f in chosen], dtype=float)
+            out[f"forces:{name}"] = np.concatenate([
+                np.reshape(f["extra"][name]["forces"], (-1, 3)) if name in f.get("extra", {})
+                else np.full((len(f["numbers"]), 3), np.nan) for f in chosen])
         if has["cell"]:
             out["cell"] = np.array([f.get("cell", np.full((3, 3), np.nan)) for f in chosen], dtype=float)
-        if has["energies"]:
+        if "dft" in has["energies"]:
             out["energy:dft"] = np.array([f.get("energy", np.nan) for f in chosen], dtype=float)
-        if has["forces"]:
+        if "dft" in has["forces"]:
             out["forces:dft"] = np.concatenate([
                 np.reshape(f["forces"], (-1, 3)) if "forces" in f else np.full((len(f["numbers"]), 3), np.nan)
                 for f in chosen])

@@ -836,37 +836,56 @@ class ServerSession:
         has_calculator_forces = False
         error: str | None = None
 
-        try:
-            from ffast.io.frame_index import read_first_frame
-            from ffast.loaders.ase import aseDatasetLoader
+        # A reader's file (ADR 0095): its contents() lists the names; the reply
+        # keeps the shape the ASE probe gives. The dataset types registered
+        # before readers keep their own name (step 3 moves ASE over).
+        from ffast.readers import chunks, registry as readers
+        reader_class = None
+        if dataset_type not in (getattr(self.env, "datasetTypes", None) or {}):
+            reader_class = readers.get(dataset_type)
 
-            first_atoms = read_first_frame(path)
-            temp_loader = aseDatasetLoader(path, atomsList=[first_atoms])
-            energy_keys = list(temp_loader.EneregyKeys())
-            force_keys = list(temp_loader.ForceKeys())
-
+        if reader_class is not None:
             try:
-                first_atoms.get_potential_energy()
-                has_calculator_energy = True
-            except Exception:
-                pass
+                with chunks.reader_errors(reader_class.name, path):
+                    contents = reader_class(path).contents() or {}
+                energy_keys = list(contents.get("energies") or [])
+                force_keys = list(contents.get("forces") or [])
+            except Exception as exc:
+                logger.warning("PROBE_DATASET_KEYS error for %r: %s", path, exc,
+                               extra={"popup": False})
+                error = str(exc)
+        else:
             try:
-                first_atoms.get_forces()
-                has_calculator_forces = True
-            except Exception:
-                pass
+                from ffast.io.frame_index import read_first_frame
+                from ffast.loaders.ase import aseDatasetLoader
 
-            logger.info(
-                "PROBE_DATASET_KEYS %r: energy_keys=%r force_keys=%r",
-                path, energy_keys, force_keys,
-            )
-        except Exception as exc:
-            logger.warning("PROBE_DATASET_KEYS error for %r: %s", path, exc, extra={"popup": False})
-            logger.warning(
-                "  server view: host=%s cwd=%s exists=%s parent_exists=%s",
-                *_probe_path_diagnostics(path), extra={"popup": False},
-            )
-            error = str(exc)
+                first_atoms = read_first_frame(path)
+                temp_loader = aseDatasetLoader(path, atomsList=[first_atoms])
+                energy_keys = list(temp_loader.EneregyKeys())
+                force_keys = list(temp_loader.ForceKeys())
+
+                try:
+                    first_atoms.get_potential_energy()
+                    has_calculator_energy = True
+                except Exception:
+                    pass
+                try:
+                    first_atoms.get_forces()
+                    has_calculator_forces = True
+                except Exception:
+                    pass
+
+                logger.info(
+                    "PROBE_DATASET_KEYS %r: energy_keys=%r force_keys=%r",
+                    path, energy_keys, force_keys,
+                )
+            except Exception as exc:
+                logger.warning("PROBE_DATASET_KEYS error for %r: %s", path, exc, extra={"popup": False})
+                logger.warning(
+                    "  server view: host=%s cwd=%s exists=%s parent_exists=%s",
+                    *_probe_path_diagnostics(path), extra={"popup": False},
+                )
+                error = str(exc)
 
         from ffast.protocol import DatasetKeysResponse
         data = pack(
@@ -1408,6 +1427,7 @@ class ServerSession:
             selected_energy_key=selected_energy_key,
             selected_force_key=selected_force_key,
             on_error=self._load_failed("prediction", path),
+            reader=kwargs.get("reader"),
         )
 
     async def _on_load_zero_model(self, **kwargs) -> None:

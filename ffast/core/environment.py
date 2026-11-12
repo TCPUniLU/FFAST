@@ -164,13 +164,14 @@ class Environment(EventClass):
         return self.loading.loadModel(path, modelType, taskID=taskID)
 
     def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None,
-                                    selected_force_key=None, on_error=None):
+                                    selected_force_key=None, on_error=None, reader=None):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.taskLoadPrepredictedDataset(
             path, datasetKey,
             selected_energy_key=selected_energy_key,
             selected_force_key=selected_force_key,
             on_error=on_error,
+            reader=reader,
         )
 
     def requestPredictionLoad(self, path, datasetKey, selected_energy_key=None,

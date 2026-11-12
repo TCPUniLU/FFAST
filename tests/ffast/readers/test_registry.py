@@ -50,7 +50,7 @@ def test_can_read_drops_a_reader_that_says_no_and_a_failing_can_read_counts_as_n
 
 
 def test_the_type_list_rows_carry_each_readers_name_and_endings(toy):
-    assert registry.type_rows() == [{"name": "toy", "extension": "*.toy", "extensions": ["*.toy"]}]
+    assert registry.type_rows() == [{"name": "toy", "extension": "*.toy", "extensions": ["*.toy"], "reader": True}]
 
 
 def test_entry_points_are_loaded_and_a_broken_one_is_skipped(monkeypatch):

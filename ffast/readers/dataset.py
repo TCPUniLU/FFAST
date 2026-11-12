@@ -11,6 +11,7 @@ import numpy as np
 
 from ffast.loaders.dataset import FlatDatasetLoader
 from ffast.readers.contract import ReaderError
+from ffast.readers.pairing import pair_names
 
 
 class ReaderDataset(FlatDatasetLoader):
@@ -45,8 +46,11 @@ class ReaderDataset(FlatDatasetLoader):
         self.R_flat = np.asarray(arrays["positions"])
         self.z_flat = np.asarray(arrays["numbers"])
 
-        self.energy_key = self._pick(energy_key, contents.get("energies") or [], "energy", file)
-        self.force_key = self._pick(force_key, contents.get("forces") or [], "force", file)
+        self.arrays = arrays          # all the file's arrays, until the predictions in it are loaded
+        self.contents = contents
+        self.energy_key, self.force_key = pair_names(
+            contents.get("energies") or [], contents.get("forces") or [],
+            energy_key, force_key, file=file)
         energy = arrays.get(f"energy:{self.energy_key}") if self.energy_key else None
         self.E = None if energy is None else np.asarray(energy, dtype=np.float64).reshape(-1)
         forces = arrays.get(f"forces:{self.force_key}") if self.force_key else None
@@ -60,16 +64,6 @@ class ReaderDataset(FlatDatasetLoader):
         self.isVariable = not same
         self.chem = self.getChemicalFormula()
 
-    @staticmethod
-    def _pick(chosen, names, what, file):
-        """The set the user chose, else the first; an unknown name is refused."""
-        if not chosen:
-            return names[0] if names else None
-        if chosen not in names:
-            listed = ", ".join(names) or "none"
-            raise ReaderError(f"{file} has no {what} named '{chosen}' (it has: {listed})")
-        return chosen
-
     def getLattice(self, indices=None):
         if self.lattice is None:
             return None
@@ -79,3 +73,24 @@ class ReaderDataset(FlatDatasetLoader):
         meta = super().toMetaDict()
         meta["source_type"] = self.reader_name     # a saved session finds the reader by it
         return meta
+
+
+class ReaderFieldSource:
+    """What ``_extractPredictionFields`` reads a prediction's Dataset Fields
+    from, over a reader's arrays. No fields yet: step 5 of the reader plan
+    fills these in."""
+
+    def __init__(self, arrays, contents):
+        self.arrays, self.contents = arrays, contents
+
+    def availableFieldKeys(self):
+        return [], []
+
+    def getFrameField(self, key, indices=None):
+        return None
+
+    def getAtomField(self, key, indices=None):
+        return None
+
+    def getAtomFieldMissing(self, key, indices=None):
+        return None

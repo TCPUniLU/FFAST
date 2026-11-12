@@ -885,8 +885,9 @@ def test_loadPrepredictedDataset_wrong_file_length_is_rejected(tmp_path):
     assert env.data.stored == []
     assert env.objects.registered == {}
     # The failure is logged and returned from, not raised; the caller still
-    # hears of it (the server tells the window that asked).
-    assert errors == ["it does not match the selected dataset"]
+    # hears of it (the server tells the window that asked). It says what
+    # differs, not only that something does (ADR 0095, decision 6).
+    assert errors == ["Frame count mismatch for prediction 'd.extxyz'. Expected 10 frames, got 3."]
 
 
 # ── in-file prediction columns over a real file ─────────────────────────────

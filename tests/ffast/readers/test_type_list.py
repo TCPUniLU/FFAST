@@ -21,7 +21,7 @@ def _rows(env):
 def test_a_reader_is_listed_after_the_dataset_types_with_all_its_endings(toy):
     assert _rows(_Env()) == [
         {"name": "ase (auto)", "extension": "*"},
-        {"name": "toy", "extension": "*.toy", "extensions": ["*.toy"]},
+        {"name": "toy", "extension": "*.toy", "extensions": ["*.toy"], "reader": True},
     ]
 
 

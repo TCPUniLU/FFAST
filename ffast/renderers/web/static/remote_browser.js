@@ -111,13 +111,13 @@ export function pickPath({ mode, dir, name }) {
  * key) and a target dataset to attach to. A dataset waits for its key check.
  */
 export function canLoad({
-  selected, mode, forceKey, targetDataset, probing = false, isNpz = false, modelType = '',
-  dir = null, name = '',
+  selected, mode, forceKey, energyKey = '', targetDataset, probing = false, isNpz = false,
+  modelType = '', dir = null, name = '',
 }) {
   if (PICK_MODES.has(mode)) return pickPath({ mode, dir, name }) !== null;
   if (!selected) return false;
   if (mode === 'model') return Boolean(modelType);
-  if (mode === 'prediction') return Boolean(targetDataset && (forceKey || isNpz));
+  if (mode === 'prediction') return Boolean(targetDataset && (forceKey || energyKey || isNpz));
   if (mode === 'dataset') return !probing;
   return true;
 }
@@ -157,6 +157,30 @@ export function typeForFile(name, types, fallback = 'ase (auto)') {
   if (hit) return hit.name;
   if ((types || []).some((t) => t.name === fallback)) return fallback;
   return types?.[0]?.name ?? fallback;
+}
+
+/**
+ * The reader type a file belongs to: the name of the first reader row (a type
+ * the server lists with `reader: true`) that takes the file's ending, else
+ * null (ASE and `.npz` files keep their own paths, ADR 0095).
+ */
+export function readerTypeFor(name, types) {
+  const lower = name.toLowerCase();
+  const hit = (types || []).find((t) => t.reader
+    && (t.extensions || [t.extension]).some((e) => e && e !== '*'
+      && lower.endsWith(e.replace(/^\*/, '').toLowerCase())));
+  return hit ? hit.name : null;
+}
+
+/**
+ * The energy and force name a file with these names starts on, as the server
+ * pairs them: the first energy name that also names forces, else each side's
+ * first. `''` means none.
+ */
+export function pairNames(energies, forces) {
+  const match = (energies || []).find((n) => (forces || []).includes(n));
+  if (match) return [match, match];
+  return [(energies || [])[0] ?? '', (forces || [])[0] ?? ''];
 }
 
 /** Whether a probed file offers a key choice: more than one energy
@@ -270,6 +294,7 @@ export class RemoteBrowser {
     this._large = null;   // {path, size, n, error, done} of a large selected file
     this._probe = null;   // the last key check's answer, for new prediction lines
     this._probing = null;   // the path whose key check is still out
+    this._predReader = null;   // the reader a prediction file is read by (ADR 0095), else null
     this._loadWhenReady = false;   // load once the key check is back
     this._pick = null;   // {onPick}: the browser is choosing where a session or export goes
     this._pending = null;   // {kind, name, path}: a load with no outcome yet
@@ -715,6 +740,7 @@ export class RemoteBrowser {
   }
 
   _fillPredictionKeys(kw) {
+    const reader = Boolean(this._predReader);
     this._fillSelect(
       $('fb-energy-key'),
       keyOptions(kw.energy_keys, {
@@ -724,9 +750,15 @@ export class RemoteBrowser {
     this._fillSelect(
       $('fb-force-key'),
       keyOptions(kw.force_keys, {
-        calculator: kw.has_calculator_forces, calculatorValue: 'forces',
+        allowNone: reader, calculator: kw.has_calculator_forces, calculatorValue: 'forces',
       }),
     );
+    if (reader && !kw.error) {
+      // Names that match start paired; '' is "none", which a reader's file may want.
+      const [energy, force] = pairNames(kw.energy_keys, kw.force_keys);
+      $('fb-energy-key').value = energy;
+      $('fb-force-key').value = force;
+    }
     if (kw.error) this._ports.setStatus(`Probe error: ${kw.error}`, 'error');
   }
 
@@ -804,10 +836,16 @@ export class RemoteBrowser {
 
   /** Ask the server which energy/force keys `path` has; its answer is
    * matched to the path (a quicker click on another file wins). */
-  _probeKeys(path) {
+  _probeKeys(path, type = 'ase (auto)') {
     this._probing = path;
-    // Server route requires (path, dataset_type); ASE auto-detect reads the keys.
-    this._ports.send(OUT.PROBE_DATASET_KEYS, {}, [path, 'ase (auto)']);
+    // Server route requires (path, dataset_type); ASE auto-detect reads the keys,
+    // a reader says its names (ADR 0095).
+    this._ports.send(OUT.PROBE_DATASET_KEYS, {}, [path, type]);
+  }
+
+  /** Whether the Type list's `type` is a reader: its file can be probed for names. */
+  _isReaderType(type) {
+    return this._types.datasets.some((t) => t.name === type && t.reader);
   }
 
   /** The Keys row follows the selected file and the Type: only an ASE
@@ -815,8 +853,9 @@ export class RemoteBrowser {
   _refreshDatasetKeys() {
     $('fb-keys').hidden = true;
     this._probing = null;
-    if (this._selected && $('fb-type').value === 'ase (auto)') {
-      this._probeKeys(joinPath(this._path, this._selected));
+    const type = $('fb-type').value;
+    if (this._selected && (type === 'ase (auto)' || this._isReaderType(type))) {
+      this._probeKeys(joinPath(this._path, this._selected), type);
     }
     this._refreshLoadEnabled();
   }
@@ -913,12 +952,15 @@ export class RemoteBrowser {
         this._fillSelect($('fb-energy-key'), only);
         this._fillSelect($('fb-force-key'), only);
         this._probing = null;
+        this._predReader = null;
       } else {
         // Probe the chosen file for the energy/force keys it actually contains.
+        // A reader's file (ADR 0095) is probed through that reader.
         const path = joinPath(this._path, name);
+        this._predReader = readerTypeFor(name, this._types.datasets);
         $('fb-energy-key').innerHTML = '<option value="">…probing…</option>';
         $('fb-force-key').innerHTML = '<option value="">…probing…</option>';
-        this._probeKeys(path);
+        this._probeKeys(path, this._predReader || 'ase (auto)');
       }
     }
     if (this._mode === 'dataset') {
@@ -972,6 +1014,7 @@ export class RemoteBrowser {
       selected: this._selected,
       mode: this._mode,
       forceKey: $('fb-force-key').value,
+      energyKey: $('fb-energy-key').value,
       targetDataset: $('fb-target-ds').value,
       probing: this._mode === 'dataset' && Boolean(this._probing),
       isNpz: this._mode === 'prediction' && isNpzFile(this._selected),
@@ -1037,14 +1080,16 @@ export class RemoteBrowser {
     const path = joinPath(this._path, this._selected);
     if (this._mode === 'prediction') {
       const dsFp = $('fb-target-ds').value;
-      const eKey = $('fb-energy-key').value || null;
-      const fKey = $('fb-force-key').value || null;
-      if (!dsFp || (!fKey && !isNpzFile(this._selected))) return;
+      const reader = this._predReader;
+      // A reader's file sends its choice as it is: '' means none (ADR 0095).
+      const eKey = reader ? $('fb-energy-key').value : ($('fb-energy-key').value || null);
+      const fKey = reader ? $('fb-force-key').value : ($('fb-force-key').value || null);
+      if (!dsFp || (!fKey && !(reader && eKey) && !isNpzFile(this._selected))) return;
       // LOAD_PREDICTION reads args=[path, dataset_fp] + key kwargs; on success
       // the server fires REMOTE_MODEL_META → _onModelMeta selects it.
       this._ports.send(
         OUT.LOAD_PREDICTION,
-        { selected_energy_key: eKey, selected_force_key: fKey },
+        { selected_energy_key: eKey, selected_force_key: fKey, ...(reader ? { reader } : {}) },
         [path, dsFp],
       );
       this._ports.setStatus(`Loading prediction ${this._selected}…`, 'connected');
