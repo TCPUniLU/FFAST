@@ -16,6 +16,7 @@
 | [Troubleshooting](troubleshooting.md) | Browser connection flowchart, installation, data and legacy Qt/OpenGL problems |
 
 For development, start with [Contributing](../CONTRIBUTING.md), the
-[architecture](architecture.md), [domain vocabulary](../CONTEXT.md) and
-[design decisions](adr/README.md). Research notes, implementation plans and
+[architecture](architecture.md), [domain vocabulary](../CONTEXT.md),
+[design decisions](adr/README.md) and the [UI design brief](ui-design-brief.md)
+(proposed refinements to [DESIGN.md](../DESIGN.md)). Research notes, implementation plans and
 handoffs record development work; they are not usage instructions.
