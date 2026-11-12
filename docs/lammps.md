@@ -36,20 +36,23 @@ Install [FFAST](installation.md), activate its Python 3.11 environment, then add
 **DetectAna 0.3.0+ with the reference-bundle API** and **RDKit** for bond inference:
 
 ```bash
-git clone --branch lammps-live https://github.com/AntonCh-G/DetectAna.git ../DetectAna
-uv pip install -e ../DetectAna "rdkit>=2023.9"
+uv pip install -e ".[live]"    # from the FFAST checkout; installs DetectAna 0.4.0 and RDKit
 python -c "from ffast.live.detectana_api import require_detectana; print(require_detectana().__version__)"
 ```
 
-With pip, replace `uv pip install` with `python -m pip install`. Use an existing
-compatible checkout if you have one. FFAST's `live` extra does not pin the
-DetectAna branch; use the explicit checkout when the default branch lacks the
-bundle API. Real simulations also need your own LAMMPS build and force-field
-packages; the replay tutorial needs neither.
+With pip, replace `uv pip install` with `python -m pip install`. Real
+simulations also need your own LAMMPS build and force-field packages; the
+replay tutorial needs neither.
 
 **For automatic cluster setup**, install DetectAna editably from a local source
-checkout before connecting. Bootstrap builds and transfers its wheel, installs
-RDKit and records the scorer environment in `~/.ffast/live.json`. Reconnect to
+checkout before connecting:
+
+```bash
+git clone --branch v0.4.0 https://github.com/AntonCh-G/DetectAna.git ../DetectAna
+uv pip install -e ../DetectAna
+```
+
+Bootstrap builds and transfers its wheel, installs RDKit and records the scorer environment in `~/.ffast/live.json`. Reconnect to
 provision changed dependencies. A DetectAna installation without source is
 insufficient for this bootstrap path. Manually managed servers need the live
 dependencies in their own environment.
