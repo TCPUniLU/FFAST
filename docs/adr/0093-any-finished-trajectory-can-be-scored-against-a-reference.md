@@ -1,7 +1,7 @@
 # Any finished trajectory can be scored against a reference
 
 Status: Proposed 2026-11-10, decisions grilled with the user the same day.
-Step 1 built 2026-11-10 to 2026-11-11 (commits 1c4b78a..74a5478; plan
+Step 1 built 2026-11-10 to 2026-11-11 (commits d37f1a3..f12ca65; plan
 `docs/implementation/2026-11-10-score-any-trajectory.md`). Step 2 is not built. Reopens
 the idea ADR 0089 parked ("scoring a finished trajectory" was one of its reopen
 triggers). Keeps ADR 0068's no-periodic-box limit and ADR 0087's rule that

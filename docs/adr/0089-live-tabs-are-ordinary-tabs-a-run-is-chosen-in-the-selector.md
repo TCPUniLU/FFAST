@@ -1,6 +1,6 @@
 # Live tabs are ordinary tabs: a run is chosen in the selector
 
-Status: Built 2026-11-06 on branch `lammps-live` (4c0fb77..5be55a9), not merged. Changes the live-run tab of ADR 0087. Plan:
+Status: Built 2026-11-06 on branch `lammps-live` (1fd606c..ae2b751), not merged. Changes the live-run tab of ADR 0087. Plan:
 `docs/implementation/2026-11-06-live-tabs-are-ordinary-tabs.md`.
 
 ## The problem
