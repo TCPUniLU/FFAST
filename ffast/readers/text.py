@@ -363,9 +363,7 @@ def read_level2(reader_class, path, *, stride=0, select=None, progress=None, wor
     arrays = joined.arrays
     if use_cache and step is not None:
         _kept_save(reader_class, path, step, arrays, n_file)
-        arrays = _kept_load(reader_class, path, step)[0] if _kept_exists(reader_class, path, step) else arrays
+        kept = _kept_load(reader_class, path, step)   # None: not kept, or cannot be opened
+        if kept is not None:
+            arrays = kept[0]
     return arrays, contents, frames, n_file
-
-
-def _kept_exists(reader_class, path, step):
-    return (frame_cache._folder() / _kept_key(reader_class, path, step) / _META).is_file()

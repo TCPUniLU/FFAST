@@ -170,3 +170,12 @@ def test_the_cache_follows_the_file_and_the_readers_version(tmp_path):
     n = len(ToyTextReader.parsed)
     chunks.read_arrays(Newer, path)
     assert len(ToyTextReader.parsed) > n
+
+
+def test_a_kept_copy_that_cannot_be_opened_gives_the_arrays_just_read(tmp_path, monkeypatch):
+    # The copy was written but cannot be opened again (a damaged file, or
+    # removed by another load making room): the load still returns its arrays.
+    path = _file(tmp_path, 6)
+    monkeypatch.setattr(text, "_kept_load", lambda *a: None)
+    loaded = chunks.read_arrays(ToyTextReader, path)
+    assert loaded.arrays["n_atoms"].tolist() == [3] * 6
