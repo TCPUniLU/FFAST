@@ -192,3 +192,63 @@ async def test_web_a_toy_file_with_more_names_loads_them_as_predictions(toy_read
                 assert sent["selected_energy_key"] == "dft" and sent["prediction_keys"][0][:2] == ["mace", "mace"]
             finally:
                 await browser.close()
+
+
+@pytest.fixture
+def more_toy_readers_installed(toy_reader_installed, tmp_path):
+    """The field reader, and two readers that both claim ``*.dat``."""
+    entry = tmp_path / "site" / "ffast_toy-0.1.dist-info" / "entry_points.txt"
+    entry.write_text(
+        "[ffast.readers]\n"
+        "toy = tests.ffast.readers.toy_reader:ToyReader\n"
+        "toyfield = tests.ffast.readers.toy_reader:ToyFieldReader\n"
+        "toydat-a = tests.ffast.readers.toy_reader:ToyDatNo\n"
+        "toydat-b = tests.ffast.readers.toy_reader:ToyDatYes\n")
+
+
+async def test_web_the_type_starts_on_the_reader_that_can_read_the_file(more_toy_readers_installed, tmp_path):
+    from .test_web_loading import _go_to, _sent
+    from .test_web_runtime import _RECORD_SENDS
+    data = tmp_path / "data"
+    data.mkdir()
+    write_toy(data / "x.dat", make_frames(3))
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await _file_menu(page, "Load Dataset…")
+                await _go_to(page, data)
+                await page.locator("#fb-list .fb-row", has_text="x.dat").click()
+                # the ending alone picks toydat-a (listed first); its can_read says no
+                await expect(page.locator("#fb-type")).to_have_value("toydat-b")
+                # a Type the user chose is kept
+                await page.locator("#fb-type").select_option("toydat-a")
+                await page.wait_for_timeout(300)
+                await expect(page.locator("#fb-type")).to_have_value("toydat-a")
+            finally:
+                await browser.close()
+
+
+async def test_web_a_reader_field_is_a_metric_input_with_its_values(more_toy_readers_installed, tmp_path):
+    from .test_metrics_pane import _floats, _request_values, _server
+    from .test_web_runtime import _connect_headless_client, _wait_for_event, pack
+    path = write_toy(tmp_path / "a.toyf", make_frames(4))
+    cm, _metrics_dir = await _server(tmp_path)
+    async with cm as (ws_port, _web_port):
+        ws = await _connect_headless_client(ws_port)
+        try:
+            await ws.send(pack("SAVE_USER_METRIC", (), {"metric": {
+                "id": "user.score", "label": "Score", "unit": "",
+                "expr": "s", "vars": {"s": "reference.info.score"}}}))
+            assert (await _wait_for_event(ws, "USER_METRIC_SAVED"))["kwargs"]["ok"]
+            await ws.send(pack("LOAD_DATASET", (str(path), "toyfield"), {}))
+            meta = await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30)
+            fp = meta["args"][0]
+            assert meta["kwargs"]["units"] == {"energy": "eV", "force": "eV/A"}
+            assert _floats(await _request_values(ws, fp, "user.score")) == [0.0, 0.5, 1.0, 1.5]
+        finally:
+            await ws.close()

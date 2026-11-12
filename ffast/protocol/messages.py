@@ -163,6 +163,7 @@ class DatasetKeysResponse(BaseModel):
     has_calculator_energy: bool = False
     has_calculator_forces: bool = False
     error: Optional[str] = None
+    reader: Optional[str] = None   # the Type that reads this file (readers_for), when listed (ADR 0095)
 
 
 class DatasetLengthResponse(BaseModel):

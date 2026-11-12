@@ -125,6 +125,7 @@ class ReaderDataset(ReaderFields, FlatDatasetLoader):
             n0 == 0 or bool((self.z_flat.reshape(self.N, n0) == self.z_flat[:n0]).all()))
         self.isVariable = not same
         self.chem = self.getChemicalFormula()
+        self._unitsOfTheFile(contents.get("units") or {}, file)
 
     def getFingerprint(self):
         """The formula the ASE and sGDML loaders used, unchanged, so saved
@@ -136,6 +137,16 @@ class ReaderDataset(ReaderFields, FlatDatasetLoader):
             z = z[:self.molecule_offsets[1]]
         arrays = (z, self.R_flat, self.E, self.F_flat)
         return md5FromArraysAndStrings(*(a for a in arrays if a is not None))
+
+    def _unitsOfTheFile(self, labels, file):
+        """The reader's unit labels become the dataset's units; the user can
+        change them. A dimension FFAST has no unit for is left out."""
+        known = {d: u for d, u in labels.items() if d in self.UNIT_DIMENSIONS}
+        for dimension in sorted(set(labels) - set(known)):
+            logger.warning("%s: a unit for '%s' is left out; FFAST names units for %s only",
+                           file, dimension, " and ".join(self.UNIT_DIMENSIONS))
+        if known:
+            self.setUnits(known)
 
     def getLattice(self, indices=None):
         if self.lattice is None:

@@ -154,3 +154,41 @@ class ToyTextReader:
             "energy:dft": np.array([f["energy"] for f in frames], dtype=float),
             "forces:dft": np.concatenate([np.reshape(f["forces"], (-1, 3)) for f in frames]),
         }
+
+
+class ToyFieldReader(ToyReader):
+    """A toy reader with a per-frame field ``score`` (0.5 * frame number), a
+    per-atom field ``weight`` (the atom's index), and units."""
+
+    name = "toyfield"
+    extensions = ["*.toyf"]
+    units = {"energy": "eV", "force": "eV/A"}
+
+    def contents(self):
+        return {**super().contents(), "frame_fields": ["score"], "atom_fields": ["weight"]}
+
+    def read(self, frames):
+        out = super().read(frames)
+        out["frame:score"] = np.array([0.5 * i for i in frames])
+        out["atom:weight"] = np.concatenate([np.arange(n, dtype=float) for n in out["n_atoms"]])
+        return out
+
+
+class ToyDatNo(ToyReader):
+    """Claims ``*.dat`` first in the Type list, but reads only a file marked ``"b"``."""
+
+    name = "toydat-a"
+    extensions = ["*.dat"]
+
+    @staticmethod
+    def can_read(path):
+        return False
+
+
+class ToyDatYes(ToyReader):
+    name = "toydat-b"
+    extensions = ["*.dat"]
+
+    @staticmethod
+    def can_read(path):
+        return True

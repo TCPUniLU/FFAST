@@ -841,7 +841,7 @@ class ServerSession:
         # file (ASE's does not take .xyz and .extxyz until step 4) leaves it to
         # the probe below.
         from ffast.core.loading_coordinator import LoadingCoordinator
-        from ffast.readers import chunks
+        from ffast.readers import chunks, registry as readers
         reader_class = LoadingCoordinator._datasetReader(dataset_type, path)
 
         if reader_class is not None:
@@ -887,11 +887,17 @@ class ServerSession:
                 )
                 error = str(exc)
 
+        # The Type the file's readers pick (the ending, then can_read): the page
+        # starts on it unless the user chose a Type (ADR 0095, decision 9).
+        suggested = next((r.name for r in readers.readers_for(path)
+                          if not getattr(r, "hidden", False)), None)
+
         from ffast.protocol import DatasetKeysResponse
         data = pack(
             control.DATASET_KEYS_RESPONSE,
             (path,),
             DatasetKeysResponse(
+                reader=suggested,
                 energy_keys=energy_keys,
                 force_keys=force_keys,
                 has_calculator_energy=has_calculator_energy,

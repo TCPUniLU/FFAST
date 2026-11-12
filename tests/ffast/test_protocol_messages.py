@@ -115,10 +115,11 @@ def test_catalog_empty_default():
 # ── probe responses (DATASET_KEYS_RESPONSE / DATASET_LENGTH_RESPONSE / DIR_LISTING) ──
 # Payloads exactly as server.py emits them (server.py:537, :569, :616).
 KEYS_OK = {"energy_keys": ["energy"], "force_keys": ["forces"],
-           "has_calculator_energy": True, "has_calculator_forces": True, "error": None}
+           "has_calculator_energy": True, "has_calculator_forces": True, "error": None,
+           "reader": "ase (auto)"}     # the Type the file's readers pick (ADR 0095)
 KEYS_ERR = {"energy_keys": [], "force_keys": [],
             "has_calculator_energy": False, "has_calculator_forces": False,
-            "error": "bad file"}
+            "error": "bad file", "reader": None}
 LENGTH_OK = {"n": 1000, "error": None, "done": True}
 LENGTH_ERR = {"n": None, "error": "not found", "done": True}
 # A count still running sends what it has so far (frame index plan 2026-11-01).

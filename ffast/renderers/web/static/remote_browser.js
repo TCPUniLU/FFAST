@@ -290,6 +290,7 @@ export class RemoteBrowser {
     this._probe = null;   // the last key check's answer, for new prediction lines
     this._probing = null;   // the path whose key check is still out
     this._predReader = null;   // the reader a prediction file is read by (ADR 0095), else null
+    this._typeTouched = false; // the user chose the Type: the server's suggestion does not replace it
     this._loadWhenReady = false;   // load once the key check is back
     this._pick = null;   // {onPick}: the browser is choosing where a session or export goes
     this._pending = null;   // {kind, name, path}: a load with no outcome yet
@@ -306,7 +307,7 @@ export class RemoteBrowser {
     $('fb-target-ds').addEventListener('change', () => this._signal('target-changed', { datasetFp: $('fb-target-ds').value }));
     $('fb-load').addEventListener('click', () => this._load());
     $('fb-force-key').addEventListener('change', () => this._refreshLoadEnabled());
-    $('fb-type').addEventListener('change', () => this._refreshDatasetKeys());
+    $('fb-type').addEventListener('change', () => { this._typeTouched = true; this._refreshDatasetKeys(); });
     $('fb-name').addEventListener('input', () => this._refreshLoadEnabled());
     $('fb-format').addEventListener('change', () => {
       const chosen = (this._pick?.formats || EXPORT_FORMATS).find((f) => f.format === $('fb-format').value);
@@ -725,6 +726,15 @@ export class RemoteBrowser {
   onDatasetKeys(path, kw) {
     if (path !== this._probing) return;   // a file no longer selected
     this._probing = null;
+    // Readers that take the file's ending are asked can_read, in turn (ADR 0095,
+    // decision 9): the Type starts on the one that can read it, unless the user
+    // chose; the file is probed again as that reader.
+    if (this._mode === 'dataset' && kw.reader && !this._typeTouched
+        && kw.reader !== $('fb-type').value && this._isReaderType(kw.reader)) {
+      $('fb-type').value = kw.reader;
+      this._refreshDatasetKeys();
+      return;
+    }
     if (this._mode === 'prediction') {
       this._fillPredictionKeys(kw);
     } else if (this._mode === 'dataset') {
@@ -951,6 +961,7 @@ export class RemoteBrowser {
       this._probeKeys(path, this._predReader || 'ase (auto)');
     }
     if (this._mode === 'dataset') {
+      this._typeTouched = false;
       $('fb-type').value = typeForFile(name, this._types.datasets);
       this._refreshDatasetKeys();
       this._refreshLarge(Number(row.dataset.size || 0));

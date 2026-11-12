@@ -106,22 +106,7 @@ class SessionPersistence:
         ## GENERATE INFO
         info = {"objects": {}}
         for o in self.getAllDatasets(excludeSubs=True):
-            obj_info = {
-                "name": o.getName(),
-                "path": o.path,
-                "type": "dataset",
-                "datasetType": getattr(o, "_source_type", None),
-            }
-
-            # Store ASE key selections if present
-            if hasattr(o, 'selected_energy_key') and o.selected_energy_key:
-                obj_info["ase_energy_key"] = o.selected_energy_key
-            if hasattr(o, 'selected_force_key') and o.selected_force_key:
-                obj_info["ase_force_key"] = o.selected_force_key
-            if o.getUnits():
-                obj_info["units"] = o.getUnits()
-
-            info["objects"][o.fingerprint] = obj_info
+            info["objects"][o.fingerprint] = self.datasetInfo(o)
 
         for o in self.getAllModels():
             info["objects"][o.fingerprint] = {
@@ -160,6 +145,37 @@ class SessionPersistence:
                 f.write(formulas_toml(formulas))
         elif os.path.exists(file):
             os.remove(file)
+
+    @staticmethod
+    def datasetInfo(o):
+        """What a session keeps of a dataset to load it again."""
+        obj_info = {
+            "name": o.getName(),
+            "path": o.path,
+            "type": "dataset",
+            "datasetType": getattr(o, "_source_type", None),
+        }
+
+        # A reader's dataset (ADR 0095): the reader's name, and its package for
+        # the message when it is not installed; the names chosen ("" is none).
+        reader = getattr(o, "reader_name", None)
+        if reader:
+            from ffast.readers import registry
+            obj_info["reader"] = reader
+            package = getattr(registry.get(reader), "package", None)
+            if package:
+                obj_info["reader_package"] = package
+            obj_info["ase_energy_key"] = o.energy_key or ""
+            obj_info["ase_force_key"] = o.force_key or ""
+        else:
+            # Store ASE key selections if present
+            if hasattr(o, 'selected_energy_key') and o.selected_energy_key:
+                obj_info["ase_energy_key"] = o.selected_energy_key
+            if hasattr(o, 'selected_force_key') and o.selected_force_key:
+                obj_info["ase_force_key"] = o.selected_force_key
+        if o.getUnits():
+            obj_info["units"] = o.getUnits()
+        return obj_info
 
     def taskLoad(self, path):
         """Queue restoration of a previously saved session."""
@@ -225,6 +241,20 @@ class SessionPersistence:
                     dataset_type = obj_info.get("datasetType")
                     if not dataset_type or dataset_type not in self.datasetTypes:
                         dataset_type = "ase (auto)"
+
+                    # A reader's dataset (ADR 0095) loads by the reader's name.
+                    # One that is not installed is named, with the package that
+                    # provides it, and the rest of the session loads.
+                    reader = obj_info.get("reader")
+                    if reader:
+                        from ffast.readers import registry
+                        if registry.get(reader) is None and reader not in self.datasetTypes:
+                            package = obj_info.get("reader_package")
+                            logger.error(
+                                f"{os.path.basename(obj_path)} needs the {reader} reader"
+                                + (f": pip install {package}" if package else ""))
+                            continue
+                        dataset_type = reader
 
                     self.loadDataset(
                         obj_path, dataset_type,

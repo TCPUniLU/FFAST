@@ -30,7 +30,8 @@ def test_a_readers_names_come_back_as_energy_and_force_keys(toy, tmp_path):
     path = write_toy(tmp_path / "a.toy", make_frames(3, extra=["mace"]))
     assert _probe(path, "toy") == {
         "energy_keys": ["dft", "mace"], "force_keys": ["dft", "mace"],
-        "has_calculator_energy": False, "has_calculator_forces": False, "error": None}
+        "has_calculator_energy": False, "has_calculator_forces": False, "error": None,
+        "reader": "toy"}
 
 
 def test_a_reader_that_cannot_read_the_file_replies_with_its_message(toy, tmp_path):
