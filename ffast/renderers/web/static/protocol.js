@@ -121,6 +121,7 @@
  * @property {ScenePatchKwargs|null} [patch]
  * @property {string|null} [error]
  * @property {string|null} [error_code]
+ * @property {string} [view_id]  added by the server beside the dump (server_session.py)
  */
 
 /**

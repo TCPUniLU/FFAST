@@ -194,12 +194,20 @@ export class AnalysisManager {
    *   onTabContext?: (id: string, el: HTMLElement) => void,
    *   onStepTab?: (name: string, dir: number, opts?: {refocus: boolean}) => void,
    *   whyNoMove?: () => string,
+   *   onPanelLabels?: (tabName: string, spec: object, patch: object) => unknown,
    *   onSub: (o: {name: string, series: Array<{parentFp: string, modelFp: string|null}>,
    *     view?: object, active?: boolean, tick?: boolean}) => void,
    *   onFreeze?: (fp: string) => void,
    *   seriesColour?: (series: {datasetFp: string, modelFp: string|null}) => string|null,
    *   onPointFrame: (o: {datasetFp: string, modelFp: string|null, frame: number}) => void,
    *   onSetUnit?: (o: {datasetFp: string, dimension: string, unit: string}) => void,
+   *   onLive?: (cmd: object) => void,
+   *   explainsChoices?: (t: object, spec: object) => unknown,
+   *   onExplains?: (tabName: string, spec: object, index: number) => unknown,
+   *   onSameStep?: () => void,
+   *   onPauseChange?: () => void,
+   *   onLoadPrediction?: (datasetFp: string) => unknown,
+   *   onSeriesChanged?: (detail: object) => void,
    * }} deps
    */
   constructor(deps) {

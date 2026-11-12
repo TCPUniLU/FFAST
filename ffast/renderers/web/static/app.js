@@ -81,7 +81,7 @@ const EDIT_LOCKED = '#objectbar, #pick-toolbar, #loupe-sidebar, #metrics-btn, #m
  * The five pick tools (ADR 0045 Phase 2). Each mirrors a Qt AtomSelectionBase
  * subclass: `multiselect` caps the picked set, `cycle` makes it a rolling
  * window, `rectangle` enables box-select drag.
- * @type {Object<string,{label:string, icon:string, multiselect:number, cycle?:boolean, rectangle?:boolean}>}
+ * @type {Object<string,{label:string, icon:string, multiselect:number, cycle?:boolean, rectangle?:boolean, section?:string, tip?:string}>}
  */
 const PICK_TOOLS = {
   // `section`: the sidebar section arming the tool opens (ADR 0055).
@@ -138,6 +138,8 @@ export class FFastApp {
     initAppearance(() => this._analysis?.rerenderAll());
     initLetterFont();
     this._conn = null;
+    /** @type {LiveUi|null} The live-run controls, made on first use by _live(). */
+    this._liveUi = null;
     // The main view (ADR 0056): the one visualization view the rail drives,
     // drawn by every linked 3D panel. Its renderers come and go with the
     // tabs; this keeps its scene, settings and camera together.
@@ -881,6 +883,7 @@ export class FFastApp {
     const spec = this._analysis.tab(this._activeTab)?.spec;
     const name = spec?.name;
     const needsControl = () => this._needsControl();
+    /** @type {import('./actions.js').MenuItem[]} */
     const actions = [{
       id: 'tab-export', label: 'Export as TOML…',
       run: () => this._exportTab(name),
@@ -925,6 +928,7 @@ export class FFastApp {
   _newTabActions() {
     const why = () => this._whyNoEdit();
     const current = this._layoutTabs.find((t) => t.name === this._analysis.tab(this._activeTab)?.name);
+    /** @type {import('./actions.js').MenuItem[]} */
     const actions = [
       { id: 'tab-new-empty', label: 'Empty tab', run: () => this._editor.newTab(), unavailable: why },
       { id: 'tab-new-copy', label: 'Copy of current tab', run: () => this._editor.newTab(current),
@@ -2979,7 +2983,9 @@ export class FFastApp {
 
   /** A plot with SUB ticked made, moved or hid subsets (analysis.js). The
    * main view moves to the one just made: the series showing the main view's
-   * dataset and prediction, else the first. */
+   * dataset and prediction, else the first.
+   * @param {{name: string, series: Array<{parentFp: string, modelFp: string|null}>,
+   *   view?: object, active?: boolean, tick?: boolean}} o */
   _onSub({ name, series, view, active, tick }) {
     for (const s of series) this._sendDeclareSubset({ ...s, name, view, active });
     if (active === false) {
@@ -3352,7 +3358,9 @@ export class FFastApp {
    * the Force Vectors pane always re-sends all four as one logical action
    * (mirrors Qt's onApplyForceVectors), so the callback and the per-view
    * show path (`_showSettings`) share this one seam.
-   * @param {{show: boolean, onlyForces, modelKey: string|null, length: number, normalised: boolean}} state
+   * @param {{show: boolean, onlyForces, modelKey: string|null, length: number, normalised: boolean,
+   *   thickness?: number, filterEnabled?: boolean, atomIndices?: number[],
+   *   atomIndicesByFrame?: object|null}} state
    */
   _applyForceVectorsState(state) {
     this._focusedRenderers()?.setArrowThickness(state.thickness ?? 100);   // drawn here, not by the server

@@ -36,6 +36,7 @@ export class TabEditor {
    *   refresh: (o: {show?: string}) => void,   // draw the layout (with the draft)
    *   place: (draft: object) => boolean,   // move the draft's cells in place; false: refresh
    *   setStatus: (text: string, kind: string) => void,
+   *   resetTab: (name: string) => Promise<boolean>|boolean,   // drop the tab's edits; true: done
    *   currentStart: (tabName: string, panel: object) => object,  // a 3D panel's look on screen
    * }} deps
    */

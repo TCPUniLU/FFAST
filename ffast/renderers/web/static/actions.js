@@ -7,8 +7,12 @@
  * first"), which the menu shows on the greyed-out item.
  */
 
-/** @typedef {{id: string, label: string, run: () => void, unavailable?: () => string,
- *   keys?: string, ariaKeys?: string}} Action  `keys` is shown at the item's right edge. */
+/** @typedef {{id: string, label: string, run: () => unknown, unavailable?: () => string,
+ *   keys?: string, ariaKeys?: string}} Action  `keys` is shown at the item's right edge;
+ *   what `run` returns is ignored. */
+
+/** @typedef {Action | {separator: true, menu?: string} | {heading: string}} MenuItem
+ *   One entry of a drop-down menu: an action, a line, or a small title. */
 
 /** @param {Action} action @returns {string} '' when the action can run */
 export function whyUnavailable(action) {
@@ -28,8 +32,8 @@ export function runAction(action) {
  * menu whose items change (the tab menu's hidden tabs), and an entry
  * `{separator: true}` draws a line, `{heading: 'text'}` a small title. Closes on Escape, on a click outside and
  * after running an item.
- * @param {HTMLButtonElement} button @param {HTMLElement} list
- * @param {Action[] | (() => Array<Action|{separator: true}>)} actions
+ * @param {HTMLElement} button @param {HTMLElement} list
+ * @param {MenuItem[] | (() => MenuItem[])} actions
  */
 export function bindMenu(button, list, actions) {
   const close = () => {
