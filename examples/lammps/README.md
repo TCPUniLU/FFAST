@@ -5,8 +5,9 @@ from `~/ffast-live-demo/cluster-runs/20261106-105509-mel0516-24400-6ff5`,
 recorded on an HPC cluster with LAMMPS 2 Aug 2023 Update 2 on 2026-11-06.
 It is the S4 alarm-without-stop proof: toy aspirin at 300 K for 10,000 steps,
 then 3000 K. Replay uses the real wrapper and scorer; no scores ship here.
-The historical paths in the log and include are evidence from the recording;
-the replay replaces the bundle path with this copy's `toy.bundle`.
+The paths in the log and include are from the recording, with the cluster
+user name replaced by `USER`; the replay replaces the bundle path with this
+copy's `toy.bundle`.
 
 `toy.bundle/` is the DetectAna 0.3.0 reference from the same demo's
 `references/toy.bundle` (manifest records its molecule, fit and calibration).
