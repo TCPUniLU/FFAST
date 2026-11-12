@@ -53,7 +53,8 @@ zstd = ["zstandard>=0.21"]
 # Live LAMMPS watching (ADR 0086): DetectAna scores the frames. Not on PyPI
 # yet; installed from its GitHub tag. FFAST needs 0.3.0 or later (the bundle
 # API) and is tested with 0.4.0.
-# The cluster gets a wheel built from the local checkout by the bootstrap.
+# The cluster bootstrap ships a wheel built from a local DetectAna checkout
+# if there is one, else from the tag pinned here (cluster/bootstrap.py).
 # RDKit finds a reference's bonds over its frames (ffast/live/bonds.py).
 live = ["detectana @ git+https://github.com/AntonCh-G/DetectAna.git@v0.4.0", "rdkit>=2023.9"]
 

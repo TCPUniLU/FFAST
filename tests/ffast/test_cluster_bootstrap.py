@@ -395,3 +395,75 @@ async def test_provision_node_ships_the_detectana_wheel(tmp_path, monkeypatch):
     assert [b.name for b in builds] == ["ffast-2.0.0-py3-none-any.whl", "detectana-2.0.0-py3-none-any.whl"]
     assert pushed == [f"{NODE_DIR}/ffast-2.0.0-py3-none-any.whl", f"{NODE_DIR}/detectana-2.0.0-py3-none-any.whl"]
     assert f"--reinstall {NODE_DIR}/detectana-2.0.0-py3-none-any.whl" in cmd
+
+
+_PIN = "git+https://github.com/AntonCh-G/DetectAna.git@v0.4.0"
+_LIVE_PYPROJECT = (
+    '[project]\ndependencies = ["torch>=2.8", "msgpack>=1.0"]\n'
+    '[project.optional-dependencies]\n'
+    f'live = ["detectana @ {_PIN}", "rdkit>=2023.9"]\n'
+)
+
+
+def test_detectana_pin_reads_the_tag_from_the_live_extra(tmp_path):
+    c = _checkout(tmp_path / "c", {"pyproject.toml": _LIVE_PYPROJECT})
+    assert bootstrap.detectana_pin(c / "pyproject.toml") == _PIN
+
+
+def test_detectana_pin_ignores_an_unpinned_or_missing_source(tmp_path):
+    assert bootstrap.detectana_pin(_checkout(tmp_path / "a") / "pyproject.toml") is None
+    unpinned = _LIVE_PYPROJECT.replace("@v0.4.0", "")
+    c = _checkout(tmp_path / "b", {"pyproject.toml": unpinned})
+    assert bootstrap.detectana_pin(c / "pyproject.toml") is None
+
+
+def test_the_marker_changes_when_the_pinned_detectana_tag_changes():
+    base = live_marker_extra("~/v", [], _PIN)
+    assert base != live_marker_extra("~/v", [], _PIN.replace("v0.4.0", "v0.5.0"))
+    assert base != live_marker_extra("~/v", [], None)
+
+
+def _provision_with_pin(tmp_path, monkeypatch, fetch):
+    builds = _install_fake_build(monkeypatch)            # no local checkout
+    monkeypatch.setattr(bootstrap, "fetch_detectana", fetch)
+    _checkout(tmp_path / "c", {"pyproject.toml": _LIVE_PYPROJECT})
+    pushed = []
+
+    async def _fake_ssh_run(profile, *args, stdin=None):
+        return ("", "", 1) if args[0] == "cat" else ("", "", 0)
+
+    async def _fake_scp(profile, local, remote):
+        pushed.append(remote)
+
+    monkeypatch.setattr(bootstrap, "_ssh_run", _fake_ssh_run)
+    monkeypatch.setattr(bootstrap, "_scp_push", _fake_scp)
+    profile = ClusterProfile(name="x", host="login.fake", provision=True, venv_path="~/v")
+    return builds, pushed, provision_node(profile, project_root=tmp_path / "c")
+
+
+async def test_provision_node_ships_the_pinned_detectana_without_a_checkout(tmp_path, monkeypatch):
+    fetched = []
+
+    def _fetch(pin, dest):
+        fetched.append(pin)
+        return _detectana_checkout(Path(dest))
+
+    builds, pushed, run = _provision_with_pin(tmp_path, monkeypatch, _fetch)
+    cmd = await run
+    assert fetched == [_PIN]
+    assert pushed[-1] == f"{NODE_DIR}/detectana-2.0.0-py3-none-any.whl"
+    assert f"--reinstall {NODE_DIR}/detectana-2.0.0-py3-none-any.whl" in cmd
+    marker = install_marker(tmp_path / "c", ["msgpack>=1.0"], live_marker_extra("~/v", [], _PIN))
+    assert f"printf '%s' {marker}" in cmd
+
+
+async def test_a_failed_detectana_fetch_still_connects_and_retries_next_time(tmp_path, monkeypatch):
+    def _fetch(pin, dest):
+        raise RuntimeError("no network")
+
+    builds, pushed, run = _provision_with_pin(tmp_path, monkeypatch, _fetch)
+    cmd = await run
+    assert "detectana" not in cmd
+    # marked as having no DetectAna, so the next connect (pin in the marker) reprovisions
+    marker = install_marker(tmp_path / "c", ["msgpack>=1.0"], live_marker_extra("~/v", [], None))
+    assert f"printf '%s' {marker}" in cmd

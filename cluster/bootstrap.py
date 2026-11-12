@@ -71,10 +71,11 @@ def light_dependencies(dependencies: list[str]) -> list[str]:
 def detectana_source() -> Optional[Path]:
     """The local DetectAna checkout to ship to the cluster (ADR 0086), or None.
 
-    DetectAna's reference-bundle API (0.3.0) is not published, so the wheel is
-    built from the checkout the local install points at (an editable install of
-    ``~/GitHub/DetectAna``). Found without importing DetectAna. None when it is
-    not installed, installed without a source folder, or older than 0.3.0.
+    A developer with an editable install of ``~/GitHub/DetectAna`` ships that
+    checkout, so DetectAna changes reach the cluster without a release. Found
+    without importing DetectAna. None when it is not installed, installed as a
+    plain package (no source folder), or older than 0.3.0; the bootstrap then
+    ships the pinned release instead (:func:`detectana_pin`).
     """
     import importlib.util
 
@@ -99,6 +100,32 @@ def detectana_source() -> Optional[Path]:
     return None
 
 
+def detectana_pin(pyproject_path: Path) -> Optional[str]:
+    """The pinned DetectAna source in the ``live`` extra, e.g.
+    ``git+https://github.com/AntonCh-G/DetectAna.git@v0.4.0``; None if absent.
+
+    Only a ``git+<repo>@<tag>`` source counts: the tag names the exact code, so
+    it can stand in for a code fingerprint in the install marker.
+    """
+    data = tomllib.loads(Path(pyproject_path).read_text())
+    extras = data.get("project", {}).get("optional-dependencies", {})
+    for req in extras.get("live", []):
+        if _dist_name(req) != "detectana" or "@" not in req:
+            continue
+        url = req.split("@", 1)[1].strip()
+        if url.startswith("git+") and "@" in url[len("git+https://"):]:
+            return url
+    return None
+
+
+def fetch_detectana(pin: str, dest: Path) -> Path:
+    """Clone the pinned DetectAna tag (``git+<repo>@<tag>``) into ``dest``."""
+    repo, ref = pin[len("git+"):].rsplit("@", 1)
+    subprocess.run(["git", "clone", "--quiet", "--depth", "1", "--branch", ref, repo, str(dest)],
+                   check=True)
+    return Path(dest)
+
+
 def detectana_fingerprint(root: Path) -> str:
     """Hash of DetectAna's code and pyproject: a change reinstalls it on the node."""
     root = Path(root)
@@ -111,11 +138,17 @@ def detectana_fingerprint(root: Path) -> str:
     return h.hexdigest()[:16]
 
 
-def live_marker_extra(venv: str, modules: list[str], detectana_root: Optional[Path]) -> str:
-    """What the live-run setup adds to the install marker: venv, modules, DetectAna code."""
+def live_marker_extra(venv: str, modules: list[str], detectana: Path | str | None) -> str:
+    """What the live-run setup adds to the install marker: venv, modules, DetectAna code.
+
+    ``detectana`` is a checkout (its code is hashed) or a pinned source from
+    :func:`detectana_pin` (the tag names the code), or None when none is shipped.
+    """
     extra = "live:" + venv + "\0" + "\0".join(modules)
-    if detectana_root is not None:
-        extra += "\0detectana:" + detectana_fingerprint(detectana_root)
+    if isinstance(detectana, str):
+        extra += "\0detectana-pin:" + detectana
+    elif detectana is not None:
+        extra += "\0detectana:" + detectana_fingerprint(detectana)
     return extra
 
 
@@ -409,7 +442,9 @@ async def provision_node(
     detectana_root = detectana_source()
     try:
         light = light_dependencies(read_dependencies(root / "pyproject.toml"))
-        marker = install_marker(root, light, live_marker_extra(venv, modules, detectana_root))
+        pin = None if detectana_root is not None else detectana_pin(root / "pyproject.toml")
+        marker = install_marker(root, light,
+                                live_marker_extra(venv, modules, detectana_root or pin))
     except Exception as exc:  # not a repo checkout
         logger.exception("auto-bootstrap: reading the checkout failed")
         raise ClusterError(
@@ -456,8 +491,24 @@ async def provision_node(
         await _scp_push(profile, wheel, remote_wheel)
 
         remote_detectana = None
-        if detectana_root is None:
-            _progress("DetectAna (0.3.0 or later) not installed here from a checkout; "
+        if detectana_root is None and pin is not None:
+            # No local checkout: build the release the live extra pins, here,
+            # so the compute node needs no GitHub access.
+            _progress(f"Fetching DetectAna {pin.rsplit('@', 1)[1]}…")
+            try:
+                src = fetch_detectana(pin, Path(tmp) / "detectana-src")
+                dwheel = build_server_wheel(src, Path(tmp) / "detectana", "detectana")
+            except Exception as exc:
+                logger.exception("auto-bootstrap: fetching DetectAna %s failed", pin)
+                _progress(f"Could not fetch DetectAna ({exc}); "
+                          "live LAMMPS scoring will not work on the cluster")
+                # Not marked as shipped, so the next connect tries again.
+                marker = install_marker(root, light, live_marker_extra(venv, modules, None))
+            else:
+                remote_detectana = f"{NODE_DIR}/{dwheel.name}"
+                await _scp_push(profile, dwheel, remote_detectana)
+        elif detectana_root is None:
+            _progress("No DetectAna to ship (no checkout here and no pinned release); "
                       "live LAMMPS scoring will not work on the cluster")
         else:
             _progress(f"Building DetectAna wheel from {detectana_root}…")
