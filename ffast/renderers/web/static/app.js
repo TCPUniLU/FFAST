@@ -63,7 +63,7 @@ import { DEFAULT_LOOK, startCommands, startFromCurrent } from './start_settings.
 import { SECTION_HELP } from './help.js';
 import { addSectionHelp, bindSidebarSearch, checkboxRow, oneSectionOpen, selectRow } from './sidebar.js';
 import { makeResizable } from './resizers.js';
-import { ObjectColours, seriesColourOwner } from './object_colours.js';
+import { ObjectColours, seriesLooks } from './object_colours.js';
 import { plotTheme } from './theme.js';
 import { loadRecentServers, rememberServer, saveRecentServers } from './recent_servers.js';
 import { pageCodeFingerprint, serverCodeNotice } from './code_fingerprint.js';
@@ -357,8 +357,8 @@ export class FFastApp {
       onPanelLabels: (tabName, spec, patch) => this._savePanelLabels(tabName, spec, patch),
       onSub: (o) => this._onSub(o),
       onFreeze: (fp) => this._freezeSubset(fp),
-      seriesColour: ({ datasetFp, modelFp }) => this._colours.get(
-        seriesColourOwner(datasetFp, modelFp, !!this._datasets.get(datasetFp)?.parent)),
+      seriesLooks: (series) => seriesLooks(series, (fp) => !!this._datasets.get(fp)?.parent)
+        .map(({ owner, style }) => ({ colour: this._colours.get(owner), style })),
       onPointFrame: (o) => {
         this._onPlotPoint(o);
         this._tourSignal('point-picked', { frame: o.frame, datasetFp: o.datasetFp });

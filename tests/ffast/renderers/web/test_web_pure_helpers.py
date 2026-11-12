@@ -983,6 +983,20 @@ CASES = {
     "next_colour": "[oc.nextIndex([], 3), oc.nextIndex([0], 3), oc.nextIndex([1, 0], 3), oc.nextIndex([0, 1, 2, 5], 3)]",
     "series_colour_owner": ("[oc.seriesColourOwner('D', 'M', false), oc.seriesColourOwner('D', null, false),"
                             " oc.seriesColourOwner('S', 'M', true), oc.seriesColourOwner('S', null, true)]"),
+    "series_looks": """(() => {
+        const sub = (fp) => fp === 'S';
+        const look = (series) => oc.seriesLooks(series, sub).map((l) => `${l.owner}:${l.style}`);
+        return {
+          distinct: look([{datasetFp: 'A', modelFp: 'M'}, {datasetFp: 'A', modelFp: 'N'}]),
+          onePrediction: look([{datasetFp: 'A', modelFp: 'M'}, {datasetFp: 'B', modelFp: 'M'}]),
+          groundTruth: look([{datasetFp: 'A', modelFp: null}, {datasetFp: 'B', modelFp: null}]),
+          grid: look([{datasetFp: 'A', modelFp: 'M'}, {datasetFp: 'A', modelFp: 'N'},
+                      {datasetFp: 'B', modelFp: 'M'}, {datasetFp: 'B', modelFp: 'N'}]),
+          subset: look([{datasetFp: 'A', modelFp: 'M'}, {datasetFp: 'S', modelFp: 'M'}]),
+        };
+      })()""",
+    "series_styles": ("[pn.dashOf({}, {}), pn.dashOf({seriesStyle: () => 1}, {}),"
+                      " pn.shapeOf({seriesStyle: () => 2}, {}), pn.hatchOf({}, {}), pn.hatchOf({seriesStyle: () => 1}, {})]"),
     "paint": "[pn.paint({seriesColour: (s) => s.c}, {c: '#abc'}, 0), pn.paint({seriesColour: () => null}, {}, 1) === pn.seriesColor(1), pn.paint({}, {}, 2) === pn.seriesColor(2)]",
     "unit_choices": "[ru.unitChoices('energy', []), ru.unitChoices('energy', ['kcal/mol', 'meV']), ru.unitChoices('force', ['eV/Å'])]",
     "remember_unit": "[ru.rememberUnit(['a', 'b'], 'b'), ru.rememberUnit(['a', 'b'], 'c')]",
@@ -3087,6 +3101,19 @@ def test_a_subset_series_takes_the_subsets_own_colour(results):
     # a subset's: its own rail colour, with or without a prediction
     assert results["series_colour_owner"] == ["M", "D", "S", "S"]
     assert results["paint"] == ["#abc", True, True]
+
+
+def test_a_panel_colours_its_series_by_what_differs_between_them(results):
+    """Option B (2026-11-12): one prediction on two datasets gave two lines of
+    one colour. Colour now goes to what differs; when both the datasets and
+    the predictions differ, the dataset sets the dash, shape or hatch."""
+    r = results["series_looks"]
+    assert r["distinct"] == ["M:0", "N:0"]                  # as before
+    assert r["onePrediction"] == ["A:0", "B:0"]             # the datasets' colours
+    assert r["groundTruth"] == ["A:0", "B:0"]
+    assert r["grid"] == ["M:0", "N:0", "M:1", "N:1"]        # prediction colour, dataset style
+    assert r["subset"] == ["M:0", "S:0"]                    # a subset keeps its own colour
+    assert results["series_styles"] == ["solid", "dash", "diamond", "", "/"]
 
 
 # ── cc: cluster client (web parity plan 2026-10-29) ─────────────────────────

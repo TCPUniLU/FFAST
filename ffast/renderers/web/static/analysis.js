@@ -198,7 +198,8 @@ export class AnalysisManager {
    *   onSub: (o: {name: string, series: Array<{parentFp: string, modelFp: string|null}>,
    *     view?: object, active?: boolean, tick?: boolean}) => void,
    *   onFreeze?: (fp: string) => void,
-   *   seriesColour?: (series: {datasetFp: string, modelFp: string|null}) => string|null,
+   *   seriesLooks?: (series: Array<{datasetFp: string, modelFp: string|null}>)
+   *     => Array<{colour: string, style: number}>,
    *   onPointFrame: (o: {datasetFp: string, modelFp: string|null, frame: number}) => void,
    *   onSetUnit?: (o: {datasetFp: string, dimension: string, unit: string}) => void,
    *   onLive?: (cmd: object) => void,
@@ -232,7 +233,7 @@ export class AnalysisManager {
     this._onSameStep = deps.onSameStep;
     this._onPauseChange = deps.onPauseChange;
     this._onFreeze = deps.onFreeze;
-    this._seriesColour = deps.seriesColour;
+    this._seriesLooks = deps.seriesLooks;
     this._openFrame = deps.onPointFrame;
     /** Frames the user opened from a plot, "dataset|model|frame"; kept for the page's life. */
     this._visited = new Set();
@@ -2074,6 +2075,9 @@ export class AnalysisManager {
    * look and the zoom the tab has now. `token`/`seq` as in
    * `_fetchAndRenderPanel`: a newer draw or fetch supersedes this one. */
   async _drawPanel(t, spec, card, series, token, seq) {
+    // Colour and style of each series, chosen across the whole panel.
+    const looks = new Map();
+    (this._seriesLooks?.(series) || []).forEach((look, i) => looks.set(series[i], look));
     const ctx = {
       units: this._panelUnits(spec, series),
       unitDims: this._panelUnitDims(spec),
@@ -2081,7 +2085,8 @@ export class AnalysisManager {
       perFrame: this._isPerFrameScatter(spec),
       elementOrder: this._elementOrder || [],
       selectedElements: t.selectedElements,
-      seriesColour: (s) => this._seriesColour?.(s) || null,
+      seriesColour: (s) => looks.get(s)?.colour || null,
+      seriesStyle: (s) => looks.get(s)?.style || 0,
       visited: this._visited,
       peaks: t.peaksOn.has(panelKey(spec)),
     };

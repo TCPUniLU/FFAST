@@ -1120,6 +1120,38 @@ async def test_web_rail_swatches_colour_the_same_series_in_every_panel(shared_pr
             await browser.close()
 
 
+async def test_web_one_prediction_on_two_datasets_draws_two_colours(ffast_web_server):
+    """One prediction on two datasets in one panel: the lines take their
+    datasets' colours, not the prediction's one colour twice."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    other_fp = await _load_another_dataset(ws_port, dataset_fp)
+    await _as_another_window(ws_port, ("LOAD_PREDICTION", (str(PREDICTION_PATH), other_fp), {
+        "selected_energy_key": "MACE_energy", "selected_force_key": "MACE_forces",
+        "wait": "REMOTE_MODEL_META"}))
+    title = "Energy MAE timeline"
+    colours = """(t) => (document.querySelector(
+        `.tabpanel.active .analysis-panel[data-title="${t}"] .panel-plot`)?.data || []).map((d) => d.line.color)"""
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1300, "height": 820})
+        swatch = lambda fp: page.locator(f"#dataset-list .obj-row[data-fp='{fp}'] .obj-swatch").input_value()
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg=title, timeout=25000)
+            await page.locator(
+                f".tabpanel.active [data-series='datasets'] button[data-fp='{other_fp}']").click()
+            await page.wait_for_function(f"(t) => ({colours})(t).length === 2", arg=title, timeout=25000)
+
+            drawn = await page.evaluate(colours, title)
+            assert drawn == [await swatch(dataset_fp), await swatch(other_fp)]
+            assert drawn[0] != drawn[1]
+        finally:
+            await browser.close()
+
+
 async def test_web_a_server_warning_pops_up_once(shared_server):
     """A warning the server logs pops up in the corner; the same one again
     within a minute does not add a second pop-up."""
@@ -7144,7 +7176,7 @@ async def test_web_sub_makes_a_subset_that_follows_the_zoom(ffast_web_server):
             assert await sub_swatch.input_value() != await parent_swatch.input_value()
             await sub_swatch.evaluate("(el) => { el.value = '#abcdef'; el.dispatchEvent(new Event('change')); }")
             assert await page.evaluate(
-                "([d, m]) => window.ffastApp._analysis._seriesColour({datasetFp: d, modelFp: m})",
+                "([d, m]) => window.ffastApp._analysis._seriesLooks([{datasetFp: d, modelFp: m}])[0].colour",
                 [sub["fp"], model_fp]) == "#abcdef"
             # Zoom only once the colour change has redrawn the timeline (it once
             # rebuilt every card, and the zoom landed on a plot not drawn yet:

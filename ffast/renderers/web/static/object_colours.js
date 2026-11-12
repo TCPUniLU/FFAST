@@ -14,6 +14,27 @@ export function seriesColourOwner(datasetFp, modelFp, isSubset) {
   return isSubset ? datasetFp : modelFp || datasetFp;
 }
 
+/**
+ * How one panel tells its series apart: whose colour each takes and a style
+ * number (0 = plain; else the line's dash, the marker's shape, the bar's
+ * hatch). Colour goes to what differs between the series:
+ * - their owners (seriesColourOwner) all differ: each its owner's colour, as before;
+ * - one prediction on several datasets: each its dataset's colour;
+ * - several datasets and several predictions: the prediction's colour, and the
+ *   dataset's place among the panel's datasets as the style.
+ * @param {Array<{datasetFp: string, modelFp: string|null}>} series
+ * @param {(datasetFp: string) => boolean} isSubset
+ * @returns {Array<{owner: string, style: number}>}
+ */
+export function seriesLooks(series, isSubset) {
+  const owners = series.map((s) => seriesColourOwner(s.datasetFp, s.modelFp, isSubset(s.datasetFp)));
+  if (new Set(owners).size === owners.length) return owners.map((owner) => ({ owner, style: 0 }));
+  const models = new Set(series.map((s) => s.modelFp || null));
+  if (models.size === 1) return series.map((s) => ({ owner: s.datasetFp, style: 0 }));
+  const datasets = [...new Set(series.map((s) => s.datasetFp))];
+  return series.map((s, i) => ({ owner: owners[i], style: datasets.indexOf(s.datasetFp) }));
+}
+
 /** The first palette position not in `used`; the palette starts over when it runs out. */
 export function nextIndex(used, size) {
   const taken = new Set(used);

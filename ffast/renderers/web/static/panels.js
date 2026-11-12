@@ -90,12 +90,25 @@ export function contrastInk(bg) {
   return lum > 0.179 ? '#000000' : '#ffffff';
 }
 
-/** The colour of series `s` (at position `i`): its prediction's, or its
- * dataset's for a Ground Truth series, when the page assigns them (`ctx.seriesColour`);
- * else its position's palette colour. */
+/** The colour of series `s` (at position `i`), as the page chose it across the
+ * panel (`ctx.seriesColour`, object_colours.js seriesLooks); else its
+ * position's palette colour. */
 export function paint(ctx, s, i) {
   return (ctx && ctx.seriesColour && ctx.seriesColour(s)) || seriesColor(i);
 }
+
+/** Series `s`'s style number (seriesLooks): 0 plain, else what tells apart
+ * datasets that share a colour. */
+function styleOf(ctx, s) {
+  return (ctx && ctx.seriesStyle && ctx.seriesStyle(s)) || 0;
+}
+const LINE_DASHES = ['solid', 'dash', 'dot', 'dashdot', 'longdash'];
+const MARKER_SHAPES = ['circle', 'square', 'diamond', 'triangle-up', 'x'];
+const BAR_HATCHES = ['', '/', '.', 'x', '\\'];
+/** The dash, marker shape and bar hatch of series `s`. */
+export const dashOf = (ctx, s) => LINE_DASHES[styleOf(ctx, s) % LINE_DASHES.length];
+export const shapeOf = (ctx, s) => MARKER_SHAPES[styleOf(ctx, s) % MARKER_SHAPES.length];
+export const hatchOf = (ctx, s) => BAR_HATCHES[styleOf(ctx, s) % BAR_HATCHES.length];
 
 // The Plotly theme: the page's tokens, read when a panel is drawn (theme.js).
 export function baseLayout() {
@@ -597,7 +610,7 @@ export function buildTimeline(spec, series, ctx) {
     traces.push({
       ...(curveUid(i) ? { uid: curveUid(i) } : {}),
       x: xs && xs.length === y.length ? xs : y.map((_, k) => k), y, type: 'scatter', mode: 'lines',
-      line: { color: paint(ctx, s, i), width: 1.5 },
+      line: { color: paint(ctx, s, i), width: 1.5, dash: dashOf(ctx, s) },
       name: s.name || '',
     });
     curveSeries.push(i);
@@ -655,7 +668,7 @@ export function buildDensity(spec, series, ctx) {
       x: row(s.data.value, 0), y: row(s.data.value, 1),
       type: 'scatter', mode: 'lines',
       ...(fill ? { fill: 'tozeroy', fillcolor: hexAlpha(paint(ctx, s, i), 0.15) } : {}),
-      line: { color: paint(ctx, s, i), width: 1.5 },
+      line: { color: paint(ctx, s, i), width: 1.5, dash: dashOf(ctx, s) },
       name: s.name || '',
     };
   });
@@ -679,7 +692,7 @@ export function buildScatter(spec, series, ctx) {
     hi = Math.max(hi, arrMax(x), arrMax(y));
     traces.push({
       x, y, type: 'scattergl', mode: 'markers',
-      marker: { color: paint(ctx, s, i), size: 4, opacity: 0.6 },
+      marker: { color: paint(ctx, s, i), size: 4, opacity: 0.6, symbol: shapeOf(ctx, s) },
       name: s.name || '',
     });
     curveSeries.push(i);
@@ -767,7 +780,7 @@ export function buildParity(spec, series, ctx) {
     traces.push({
       x: col(0), y: col(1), type: 'scattergl', mode: 'markers',
       customdata: structure.map((f, k) => [f, atom[k], 'xyz'[comp[k]]]),
-      marker: { color: single ? plotTheme().peak : paint(ctx, s, i), size: 4 },
+      marker: { color: single ? plotTheme().peak : paint(ctx, s, i), size: 4, symbol: shapeOf(ctx, s) },
       name: s.name || '',
     });
     curveSeries.push(i);
@@ -895,7 +908,7 @@ export function buildGroupedDensity(spec, series, ctx) {
       traces.push({
         x: row(s.data.aggregate, 0), y: row(s.data.aggregate, 1),
         type: 'scatter', mode: 'lines', name: `All${suffix(s.name)}`,
-        line: { color: multiElement ? plotTheme().ink2 : paint(ctx, s, si), width: 1.5 },
+        line: { color: multiElement ? plotTheme().ink2 : paint(ctx, s, si), width: 1.5, dash: dashOf(ctx, s) },
       });
       curveSeries.push(si);
     }
@@ -913,7 +926,8 @@ export function buildGroupedDensity(spec, series, ctx) {
         y: value.nd.values.slice(base + G, base + 2 * G),
         type: 'scatter', mode: 'lines',
         name: `${elementSymbol(z)}${suffix(s.name)}`,
-        line: { color: multiElement ? elementColourOn(z, plotTheme().surface) : paint(ctx, s, si), width: 1.5 },
+        line: { color: multiElement ? elementColourOn(z, plotTheme().surface) : paint(ctx, s, si), width: 1.5,
+          dash: dashOf(ctx, s) },
       });
       curveSeries.push(si);
     }
@@ -944,7 +958,8 @@ export function buildBars(spec, series, ctx) {
     if (!v.length) return;
     traces.push({
       x: labels, y: shown.map((z) => v[order.indexOf(z)] ?? NaN), type: 'bar',
-      marker: { color: paint(ctx, s, i) }, name: s.name || '',
+      marker: { color: paint(ctx, s, i), ...(hatchOf(ctx, s) ? { pattern: { shape: hatchOf(ctx, s) } } : {}) },
+      name: s.name || '',
     });
     curveSeries.push(i);
   });
