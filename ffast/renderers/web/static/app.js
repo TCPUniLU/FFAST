@@ -2069,6 +2069,7 @@ export class FFastApp {
     this._analysis.setMetricClient(null);
     this._viewShown = false;
     this._mainView.clear();
+    this._panes.colorBy.setColorBy(null);   // no atoms, so no colour bar
     this._datasets.clear();
     this._models.clear();
     this._currentDatasetFp = null;
@@ -2498,6 +2499,7 @@ export class FFastApp {
     this._playing = false;
     this._viewShown = false;
     this._mainView.clear();
+    this._panes.colorBy.setColorBy(null);   // no atoms, so no colour bar
     this._renderObjects();
     this._syncAnalysisContext();
     document.getElementById('reset-camera-btn').disabled = true;

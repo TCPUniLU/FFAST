@@ -3275,6 +3275,29 @@ async def test_web_a_dataset_deleted_elsewhere_moves_the_main_view_to_what_is_le
             await browser.close()
 
 
+async def test_web_deleting_the_last_dataset_hides_the_colour_bar(ffast_web_server):
+    """The empty 3D view shows no colour bar: deleting the last dataset while
+    its atoms are coloured by a metric leaves only the Load Dataset… screen."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        colorbar = page.locator("#colorbar")
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            await expect(colorbar).not_to_have_class(re.compile(r"\bhidden\b"), timeout=15000)
+
+            await _as_another_window(ws_port, ("DELETE_OBJECT", (dataset_fp,), {}))
+            await expect(page.locator("#dataset-list .obj-empty")).to_be_visible(timeout=15000)
+            await expect(page.locator("#overlay")).not_to_have_class(re.compile(r"\bhidden\b"))
+            await expect(colorbar).to_have_class(re.compile(r"\bhidden\b"))
+        finally:
+            await browser.close()
+
+
 async def test_web_a_deleted_dataset_or_prediction_leaves_an_independent_panel(tmp_path):
     """An independent panel on a deleted dataset moves as the main view does;
     a deleted prediction leaves the rail, and the views that showed it keep
