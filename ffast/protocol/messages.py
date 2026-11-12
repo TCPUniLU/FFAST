@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ── Control message requests (client→server, ADR 0033) ──────────────────────
 # Typed payloads for ServerSession._handlers. Validated at dispatch as a gate
@@ -266,6 +266,15 @@ class LoadDatasetRequest(BaseModel):
     selected_force_key: Optional[str] = None
     prediction_keys: Optional[list] = None
     slice_num: Optional[int] = None
+    # Load a sample by energy (ADR 0096): {method, n, bins, seed, energy};
+    # only ``n`` is required. Never together with every n-th frame.
+    sampling: Optional[dict] = None
+
+    @model_validator(mode="after")
+    def _sample_or_stride(self):
+        if self.sampling is not None and self.slice_num not in (None, 0, 1):
+            raise ValueError("Load either a sample by energy or every n-th frame, not both.")
+        return self
 
 
 class LoadModelRequest(BaseModel):

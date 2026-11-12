@@ -107,6 +107,12 @@ class SessionPersistence:
         info = {"objects": {}}
         for o in self.getAllDatasets(excludeSubs=True):
             info["objects"][o.fingerprint] = self.datasetInfo(o)
+            if getattr(o, "sampling", None) is not None:
+                # The frames an energy sample kept (ADR 0096), as they are: a
+                # restore reads them, it does not sample again.
+                file = f"kept-frames-{o.fingerprint}.npy"
+                np.save(os.path.join(path, file), np.asarray(o.sourceFrames, dtype=np.int64))
+                info["objects"][o.fingerprint]["kept_frames_file"] = file
 
         for o in self.getAllModels():
             info["objects"][o.fingerprint] = {
@@ -167,6 +173,8 @@ class SessionPersistence:
                 obj_info["reader_package"] = package
             obj_info["ase_energy_key"] = o.energy_key or ""
             obj_info["ase_force_key"] = o.force_key or ""
+            if getattr(o, "sampling", None) is not None:
+                obj_info["sampling"] = dict(o.sampling)
         else:
             # Store ASE key selections if present
             if hasattr(o, 'selected_energy_key') and o.selected_energy_key:
@@ -256,11 +264,18 @@ class SessionPersistence:
                             continue
                         dataset_type = reader
 
+                    sample = {}
+                    if obj_info.get("sampling") is not None and obj_info.get("kept_frames_file"):
+                        sample = {
+                            "sampling": obj_info["sampling"],
+                            "frames": np.load(os.path.join(path, obj_info["kept_frames_file"])).tolist(),
+                        }
                     self.loadDataset(
                         obj_path, dataset_type,
                         selected_energy_key=ase_energy_key,
                         selected_force_key=ase_force_key,
                         prediction_keys=prediction_keys or None,
+                        **sample,
                     )
                     # The units the user named; the same file gives the same
                     # fingerprint, so the loaded dataset is found by it.

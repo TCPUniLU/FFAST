@@ -51,6 +51,24 @@ def _flatForcesOrNone(loader):
     return None if values is None else FlatFrames(values, loader.getOffsets())
 
 
+def _samplingSettings(sampling, energy):
+    """The settings of a sample by energy (ADR 0096), with the defaults filled
+    in: "even" across energies, automatic bins, seed 42."""
+    from ffast.readers.sampling import DEFAULT_SEED
+    sampling = dict(sampling or {})
+    if sampling.get("n") is None:
+        raise ReaderError("A sample by energy needs N, the number of frames to keep.")
+    bins = sampling.get("bins")
+    seed = sampling.get("seed")
+    return {
+        "method": sampling.get("method") or "even",
+        "n": int(sampling["n"]),
+        "bins": None if bins in (None, "") else int(bins),
+        "seed": DEFAULT_SEED if seed in (None, "") else int(seed),
+        "energy": energy,
+    }
+
+
 class LoadingCoordinator:
     """Owns dataset/model/prediction load routing, implementations, and ghosts (ADR 0034)."""
 
@@ -345,16 +363,21 @@ class LoadingCoordinator:
         try:
             dataset = self._env.datasets.get(datasetKey)
             slice_num = self._env.datasets.slice_numbers.get(datasetKey)
+            sample = getattr(self._env.datasets, "kept_frames", {}).get(datasetKey)
 
             def select(nFile):
-                """The file's frames the dataset kept: every stride-th."""
+                """The file's frames the dataset kept: every stride-th, or
+                the ones an energy sample chose (ADR 0096)."""
                 source = getattr(dataset, "sourceFrameCount", None)
                 if source is not None and nFile != source:
                     raise PredictionRefused(
                         f"Prediction '{name}' has {nFile:,} frames, but the dataset's file "
                         f"has {source:,}.")
-                step = slice_num if slice_num and slice_num > 1 else 1
-                kept = range(0, nFile if source is None else source, step)
+                if sample is not None:
+                    kept = [int(f) for f in sample]
+                else:
+                    step = slice_num if slice_num and slice_num > 1 else 1
+                    kept = range(0, nFile if source is None else source, step)
                 expected = dataset.getN() if hasattr(dataset, "getN") else None
                 if expected is not None and len(kept) != expected:
                     raise PredictionRefused(
@@ -587,7 +610,7 @@ class LoadingCoordinator:
 
     def taskLoadDataset(self, path, datasetType, selected_energy_key=None,
                        selected_force_key=None, prediction_keys=None, slice_num=0,
-                       on_error=None):
+                       on_error=None, sampling=None):
         """Load dataset and optionally load predictions from same file.
 
         Args:
@@ -597,17 +620,21 @@ class LoadingCoordinator:
             selected_force_key: Pre-selected force key for reference (ASE only)
             prediction_keys: List of (energy_key, force_key, model_name) tuples
             :param slice_num: slicing number for sampled load of datasets.
+            sampling: a sample by energy instead (ADR 0096), see ``loadDataset``.
         """
+        kwargs = {
+            'selected_energy_key': selected_energy_key,
+            'selected_force_key': selected_force_key,
+            'prediction_keys': prediction_keys,
+            'slice_num': slice_num
+        }
+        if sampling is not None:
+            kwargs['sampling'] = sampling
         self._queueLoad(
             self.loadDataset,
             "Loading dataset",
             args=(path, datasetType),
-            kwargs={
-                'selected_energy_key': selected_energy_key,
-                'selected_force_key': selected_force_key,
-                'prediction_keys': prediction_keys,
-                'slice_num': slice_num
-            },
+            kwargs=kwargs,
             on_error=on_error,
         )
 
@@ -653,12 +680,16 @@ class LoadingCoordinator:
 
     def loadDataset(self, path, datasetType, taskID=None, selected_energy_key=None,
                    selected_force_key=None, prediction_keys=None, slice_num=0,
-                   on_error=None):
+                   on_error=None, sampling=None, frames=None):
         """Load dataset and create ghost models for prediction keys.
 
         A reader (ADR 0095) serves its type for every file it takes (the xyz
         reader takes ``.xyz`` and ``.extxyz`` for "ase (auto)"); a dataset type
-        without a reader is a plugin loader, called as ``loaderClass(path)``."""
+        without a reader is a plugin loader, called as ``loaderClass(path)``.
+
+        ``sampling`` loads a sample by energy instead (ADR 0096): ``{method, n,
+        bins, seed, energy}``. ``frames`` with it are the file frames a sample
+        already chose (a saved session): they are read as they are."""
         loaderClass = self._datasetReader(datasetType, path)
         isReader = loaderClass is not None
         if isReader and not os.path.exists(path):
@@ -666,6 +697,13 @@ class LoadingCoordinator:
                          extra={"popup": True})
             return None
         if not isReader:
+            if sampling is not None:
+                text = (f"{os.path.basename(path)} cannot be sampled by energy: "
+                        f"the {datasetType} type has no reader that lists energies")
+                logger.error(text, extra={"popup": on_error is None})
+                if on_error:
+                    on_error(ReaderError(text))
+                return None
             loaderClass = self._resolveLoad("dataset", path, datasetType)
             if loaderClass is None:
                 return None
@@ -675,7 +713,7 @@ class LoadingCoordinator:
             try:
                 result = self._loadWithReader(
                     loaderClass, path, slice_num, selected_energy_key,
-                    selected_force_key, taskID)
+                    selected_force_key, taskID, sampling=sampling, frames=frames)
             except (ReaderError, NotEnoughMemory) as e:
                 # ReaderError's text is for the user as it stands (ADR 0095,
                 # decision 8): no traceback, no "Failed to load" around it.
@@ -717,7 +755,12 @@ class LoadingCoordinator:
 
         # mutation_lock again (see loadModel above).
         with self._env.mutation_lock:
-            self._env.datasets.add(dataset, slice_num)
+            settings = getattr(dataset, "sampling", None)
+            if settings is not None:
+                self._env.datasets.add(dataset, 0, kept_frames=np.asarray(dataset.sourceFrames),
+                                       sampling=settings)
+            else:
+                self._env.datasets.add(dataset, slice_num)
             logging.info(f"Dataset `{path}` successfully loaded")
 
             # Load predictions as ghost models if specified
@@ -772,17 +815,83 @@ class LoadingCoordinator:
                 logger.info("%s is read with ASE: %s", name, exc)
             return other, chunks.read_arrays(other, path, progress=progress, **kwargs)
 
-    def _loadWithReader(self, readerClass, path, slice_num, energyKey, forceKey, taskID):
+    def _loadWithReader(self, readerClass, path, slice_num, energyKey, forceKey, taskID,
+                        sampling=None, frames=None):
         """A dataset from a reader (ADR 0095): FFAST asks for the frames the
-        stride keeps, in chunks, with progress and the memory check, then
-        builds its own dataset from the arrays."""
+        stride keeps, or the energy sample (ADR 0096), in chunks, with progress
+        and the memory check, then builds its own dataset from the arrays."""
         from ffast.readers import chunks
         from ffast.readers.dataset import ReaderDataset
 
-        readerClass, loaded = self._readArrays(readerClass, path, taskID, stride=slice_num)
+        settings = None
+        kwargs = {"stride": slice_num}
+        if sampling is not None:
+            if slice_num not in (None, 0, 1):
+                raise ReaderError("Load either a sample by energy or every n-th frame, not both.")
+            kept, settings = self._energySample(readerClass, path, sampling, energyKey, frames, taskID)
+            kwargs = {"select": self._keptFrames(path, kept)}
+        readerClass, loaded = self._readArrays(readerClass, path, taskID, **kwargs)
         with chunks.reader_errors(readerClass.name, path):
-            return ReaderDataset(path, loaded, readerClass.name,
-                                 energy_key=energyKey, force_key=forceKey)
+            dataset = ReaderDataset(path, loaded, readerClass.name,
+                                    energy_key=energyKey, force_key=forceKey)
+        if settings is not None:
+            dataset.sampling = settings
+        return dataset
+
+    @staticmethod
+    def _keptFrames(path, kept):
+        """``select`` for the frames a sample chose: refused when the file no
+        longer has them (it changed since a saved session made the sample)."""
+        def select(nFile):
+            if kept and (kept[0] < 0 or kept[-1] >= nFile):
+                raise ReaderError(
+                    f"{os.path.basename(path)} has changed since its sample was made: it has "
+                    f"{nFile:,} frames, the sample has frame {kept[-1]:,}")
+            return kept
+        return select
+
+    def _energySample(self, readerClass, path, sampling, energyKey, frames, taskID):
+        """``(kept file frames, settings)`` of a sample by energy (ADR 0096).
+        Given ``frames`` (a saved session) are kept as they are; else the
+        reader's energies are read (once per file, then kept) and sampled."""
+        from ffast.readers import sampling as energy_sampling
+        from ffast.readers import text, warn
+
+        name = os.path.basename(path)
+        if frames is not None:
+            return sorted({int(f) for f in frames}), dict(sampling)
+        if not callable(getattr(readerClass, "energies", None)):
+            raise ReaderError(f"{name} cannot be sampled by energy: the {readerClass.name} "
+                              f"reader does not list energies")
+        if taskID is not None:
+            self._progress(taskID, f"Reading the energies of {name}…")
+        energies = text.get_energies(readerClass, path)
+        if not energies:
+            raise ReaderError(f"{name} cannot be sampled by energy: it has no energies")
+        chosen = (sampling or {}).get("energy") or energyKey or None
+        if chosen is None:
+            listed = readerClass(path).contents().get("energies") or []
+            chosen = next((e for e in listed if e in energies), next(iter(energies)))
+        if chosen not in energies:
+            raise ReaderError(f"{name} has no energy named '{chosen}' to sample by; "
+                              f"it has: {', '.join(energies)}")
+        settings = _samplingSettings(sampling, chosen)
+        counts = text.get_table(readerClass, path)[1]
+        try:
+            result = energy_sampling.sample_by_energy(
+                energies[chosen], settings["n"], method=settings["method"],
+                bins=settings["bins"], seed=settings["seed"], n_atoms=counts)
+        except ValueError as e:
+            raise ReaderError(str(e)) from None
+        if result.left_out:
+            warn(f"{name}: {result.left_out:,} frames have no energy '{chosen}' and are "
+                 f"left out of the sample.")
+        if result.kept_all:
+            warn(f"{name}: {settings['n']:,} frames asked for, but only {len(result.frames):,} "
+                 f"have an energy: all {len(result.frames):,} are kept.")
+        settings.update(bins_used=result.bins_used, per_atom=result.per_atom,
+                        left_out=result.left_out, n_file_frames=len(counts))
+        return result.frames.tolist(), settings
 
     def _loadPredictionsFromKeys(self, dataset, path, prediction_keys, atomsList=None):
         """Materialize extra energy/force columns as ghost-model cache entries.

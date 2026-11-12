@@ -209,7 +209,7 @@ class Environment(EventClass):
 
     def taskLoadDataset(self, path, datasetType, selected_energy_key=None,
                        selected_force_key=None, prediction_keys=None, slice_num=0,
-                       on_error=None):
+                       on_error=None, sampling=None):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.taskLoadDataset(
             path, datasetType,
@@ -218,6 +218,7 @@ class Environment(EventClass):
             prediction_keys=prediction_keys,
             slice_num=slice_num,
             on_error=on_error,
+            sampling=sampling,
         )
 
     def requestDatasetLoad(self, path, datasetType, selected_energy_key=None,
@@ -233,7 +234,8 @@ class Environment(EventClass):
         )
 
     def loadDataset(self, path, datasetType, taskID=None, selected_energy_key=None,
-                   selected_force_key=None, prediction_keys=None, slice_num=0):
+                   selected_force_key=None, prediction_keys=None, slice_num=0,
+                   sampling=None, frames=None):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.loadDataset(
             path, datasetType, taskID=taskID,
@@ -241,6 +243,8 @@ class Environment(EventClass):
             selected_force_key=selected_force_key,
             prediction_keys=prediction_keys,
             slice_num=slice_num,
+            sampling=sampling,
+            frames=frames,
         )
 
     def declareSubDataset(self, parent, model, idx, subName):

@@ -156,6 +156,25 @@ class ToyTextReader:
         }
 
 
+def toy_energies(path, starts):
+    """Each toy line's ``energy``, NaN where it has none (ADR 0096)."""
+    out = np.full(len(starts), np.nan)
+    with open(path, "rb") as f:
+        for i, start in enumerate(np.asarray(starts).tolist()):
+            f.seek(start)
+            out[i] = json.loads(f.readline()).get("energy", np.nan)
+    return {"dft": out}
+
+
+class ToyEnergyReader(ToyTextReader):
+    """The Level 2 toy reader that also lists each frame's energy, so a file
+    can be sampled by energy."""
+
+    name = "toyenergy"
+    extensions = ["*.toys"]
+    energies = staticmethod(toy_energies)
+
+
 class ToyFieldReader(ToyReader):
     """A toy reader with a per-frame field ``score`` (0.5 * frame number), a
     per-atom field ``weight`` (the atom's index), and units."""

@@ -484,6 +484,23 @@ def test_dispatch_load_dataset_restores_prediction_key_tuples():
     assert kwargs["slice_num"] == 3
 
 
+def test_dispatch_load_dataset_carries_an_energy_sample_and_refuses_it_with_a_stride():
+    """ADR 0096: ``sampling`` reaches the load; with every n-th frame it is
+    refused before any load starts."""
+    env = _FakeEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("LOAD_DATASET", ["/data.xyz", "ase (auto)"],
+                         {"sampling": {"n": 500, "seed": 3}})
+        await s.dispatch("LOAD_DATASET", ["/data.xyz", "ase (auto)"],
+                         {"sampling": {"n": 500}, "slice_num": 4})
+
+    _run(scenario())
+    [(path, typ, kwargs)] = env.load_dataset_calls
+    assert kwargs["sampling"] == {"n": 500, "seed": 3}
+
+
 class _ZeroEnv(_FakeEnv):
     zero_calls = 0
 

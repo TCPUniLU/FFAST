@@ -25,6 +25,10 @@ class DatasetRegistry:
         # Prediction fields stored per (model, dataset); released on delete.
         self._predictionFields = prediction_fields
         self.slice_numbers = {}
+        # A dataset loaded as an energy sample (ADR 0096): the file frames it
+        # kept (int64, increasing) and the settings that chose them.
+        self.kept_frames = {}
+        self.sampling = {}
         self.max_size = 0  # largest dataset N, for plot-smoothing bounds
 
     # ── dict-compatible surface ───────────────────────────────────────────
@@ -59,7 +63,7 @@ class DatasetRegistry:
         return self._datasets.values()
 
     # ── lifecycle ─────────────────────────────────────────────────────────
-    def add(self, dataset, slice_num=-2):
+    def add(self, dataset, slice_num=-2, kept_frames=None, sampling=None):
         """Register a dataset and announce it (was ``Environment.setNewDataset``).
 
         A dataset with the fingerprint of one already loaded replaces it. The
@@ -81,6 +85,10 @@ class DatasetRegistry:
         if slice_num != -2:  # -2 skips slice tracking (e.g. sub/proxy datasets)
             self.update_max_size(False, dataset)
             self.slice_numbers[dataset.fingerprint] = slice_num
+        if kept_frames is not None:
+            import numpy as np
+            self.kept_frames[dataset.fingerprint] = np.asarray(kept_frames, dtype=np.int64)
+            self.sampling[dataset.fingerprint] = dict(sampling or {})
         self._events.eventPush("DATASET_LOADED", dataset.fingerprint)
 
     def cutFrom(self, dataset):
@@ -122,6 +130,8 @@ class DatasetRegistry:
 
         if self.slice_numbers.get(key) is not None:
             del self.slice_numbers[key]
+        self.kept_frames.pop(key, None)
+        self.sampling.pop(key, None)
 
         if self._predictionFields is not None:
             self._predictionFields.drop_object(key)
