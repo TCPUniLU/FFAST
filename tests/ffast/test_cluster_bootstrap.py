@@ -340,13 +340,29 @@ def test_the_marker_changes_when_detectana_code_or_the_modules_change(tmp_path):
     assert install_marker(c, [], base) != install_marker(c, [], "")
 
 
-def test_detectana_source_finds_the_checkout_behind_the_install():
+def test_detectana_source_finds_the_checkout_behind_the_install(tmp_path, monkeypatch):
+    # A fake checkout, so the test does not depend on how DetectAna is installed
+    # here: CI installs it as a plain package, which has no checkout behind it.
+    import importlib.machinery
     import importlib.util
 
-    src = bootstrap.detectana_source()
-    spec = importlib.util.find_spec("detectana")
-    assert src is not None and Path(spec.origin).resolve().is_relative_to(src)
-    assert (src / "src" / "detectana" / "bundle.py").is_file()
+    d = _detectana_checkout(tmp_path / "d")
+    spec = importlib.machinery.ModuleSpec("detectana", None,
+                                          origin=str(d / "src" / "detectana" / "__init__.py"))
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: spec)
+    assert bootstrap.detectana_source() == d.resolve()
+
+
+def test_detectana_source_is_none_for_a_plain_install(tmp_path, monkeypatch):
+    import importlib.machinery
+    import importlib.util
+
+    site = tmp_path / "site-packages" / "detectana"
+    site.mkdir(parents=True)
+    (site / "__init__.py").write_text("")
+    spec = importlib.machinery.ModuleSpec("detectana", None, origin=str(site / "__init__.py"))
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: spec)
+    assert bootstrap.detectana_source() is None
 
 
 def test_detectana_source_refuses_an_old_checkout(tmp_path, monkeypatch):
