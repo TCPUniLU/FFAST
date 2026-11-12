@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -169,6 +170,7 @@ class ServerSession:
             LoadDatasetRequest, LoadModelRequest,
             LoadPredictionRequest, LoadSessionRequest, OpenViewRequest,
             ProbeDatasetKeysRequest, ProbeDatasetLengthRequest,
+            ProbeDatasetEnergiesRequest, PreviewEnergySampleRequest,
             RequestMetricRequest, RequestPredictionArraysRequest,
             RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
@@ -196,6 +198,8 @@ class ServerSession:
             control.PROBE_DATASET_KEYS:         _Route(self._on_probe_dataset_keys, ["path", "dataset_type"], ProbeDatasetKeysRequest),
             control.PROBE_DATASET_LENGTH:       _Route(self._on_probe_dataset_length, ["path"], ProbeDatasetLengthRequest),
             control.CANCEL_PROBE_DATASET_LENGTH: _Route(self._on_cancel_probe_dataset_length, [], EmptyRequest),
+            control.PROBE_DATASET_ENERGIES:     _Route(self._on_probe_dataset_energies, ["path", "dataset_type"], ProbeDatasetEnergiesRequest),
+            control.PREVIEW_ENERGY_SAMPLE:      _Route(self._on_preview_energy_sample, ["path", "dataset_type"], PreviewEnergySampleRequest),
             control.LIST_DIR:                   _Route(self._on_list_dir, ["?path"], ListDirRequest),
             control.LOAD_PREDICTION:            _Route(self._on_load_prediction, ["path", "dataset_fp"], LoadPredictionRequest),
             control.LOAD_EXAMPLE:               _Route(self._on_load_example, [], EmptyRequest),
@@ -852,12 +856,16 @@ class ServerSession:
         from ffast.readers import chunks, registry as readers
         reader_class = LoadingCoordinator._datasetReader(dataset_type, path)
 
+        energy_sampling = False
         if reader_class is not None:
             try:
                 with chunks.reader_errors(reader_class.name, path):
                     contents = reader_class(path).contents() or {}
                 energy_keys = list(contents.get("energies") or [])
                 force_keys = list(contents.get("forces") or [])
+                # A sample by energy (ADR 0096) needs a reader that lists each
+                # frame's energies, and a file that names one.
+                energy_sampling = bool(energy_keys) and callable(getattr(reader_class, "energies", None))
             except Exception as exc:
                 logger.warning("PROBE_DATASET_KEYS error for %r: %s", path, exc,
                                extra={"popup": False})
@@ -911,10 +919,55 @@ class ServerSession:
                 has_calculator_energy=has_calculator_energy,
                 has_calculator_forces=has_calculator_forces,
                 error=error,
+                energy_sampling=energy_sampling,
             ).model_dump(),
         )
         await self._emit(data)
         logger.debug("DATASET_KEYS_RESPONSE queued for %r", path)
+
+    def _energy_reader(self, path, dataset_type):
+        """The reader that would load ``path`` as ``dataset_type``, or a
+        ReaderError saying the file cannot be sampled by energy."""
+        from ffast.core.loading_coordinator import LoadingCoordinator
+        from ffast.readers import ReaderError
+        reader_class = LoadingCoordinator._datasetReader(dataset_type, path)
+        if reader_class is None:
+            raise ReaderError(f"{os.path.basename(path)} cannot be sampled by energy: the "
+                              f"{dataset_type} type has no reader that lists energies")
+        return reader_class
+
+    async def _on_probe_dataset_energies(self, path, dataset_type, energy=None, **kwargs) -> None:
+        """The file's energies as a histogram, for the load dialog (ADR 0096).
+        The first ask reads every frame's energy (worker processes, seconds to a
+        minute for millions of frames); later asks use the kept copy."""
+        from ffast.protocol.rpc import pack
+        from ffast.readers.energy_sample import energy_histogram
+
+        def work():
+            return energy_histogram(self._energy_reader(path, dataset_type), path, energy)
+
+        try:
+            out = {**await asyncio.to_thread(work), "error": None}
+        except Exception as exc:
+            logger.warning("PROBE_DATASET_ENERGIES %r: %s", path, exc, extra={"popup": False})
+            out = {"error": str(exc)}
+        await self._emit(pack(control.DATASET_ENERGIES, (path,), out))
+
+    async def _on_preview_energy_sample(self, path, dataset_type, sampling=None,
+                                        preview_id=None, **kwargs) -> None:
+        """What a load with ``sampling`` would keep, per bin (ADR 0096)."""
+        from ffast.protocol.rpc import pack
+        from ffast.readers.energy_sample import energy_preview
+
+        def work():
+            return energy_preview(self._energy_reader(path, dataset_type), path, sampling or {})
+
+        try:
+            out = await asyncio.to_thread(work)
+        except Exception as exc:
+            logger.warning("PREVIEW_ENERGY_SAMPLE %r: %s", path, exc, extra={"popup": False})
+            out = {"error": str(exc)}
+        await self._emit(pack(control.ENERGY_SAMPLE_PREVIEW, (path,), {**out, "preview_id": preview_id}))
 
     async def _on_probe_dataset_length(self, path, **kwargs) -> None:
         """Count frames in the background; reply as it grows, then once with done=True.

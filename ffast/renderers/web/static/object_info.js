@@ -7,7 +7,7 @@
 
 import { elementSymbol } from './panels.js';
 import { datasetUnits } from './units.js';
-import { framesText } from './rail.js';
+import { framesText, sampleText } from './rail.js';
 
 /** The desktop's formula rule (ffast/loaders/dataset.py zToChemicalFormula):
  * C then H with their counts always written, then the other symbols in
@@ -71,7 +71,7 @@ export function objectInfo(kind, fp, meta, datasets) {
   const rows = [
     ['Kind', kindText],
     ['Cut from', meta.parent ? nameOf(meta.parent, datasets) : ''],
-    ['Frames', meta.n == null ? '' : framesText(meta.n)],
+    ['Frames', meta.n == null ? '' : meta.sampling ? sampleText(meta) : framesText(meta.n)],
     ['Atoms per structure', atoms],
     ['Formula', formula],
     ['Forces', meta.has_forces == null ? '' : meta.has_forces ? 'yes' : 'no'],

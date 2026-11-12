@@ -855,28 +855,18 @@ class LoadingCoordinator:
         Given ``frames`` (a saved session) are kept as they are; else the
         reader's energies are read (once per file, then kept) and sampled."""
         from ffast.readers import sampling as energy_sampling
-        from ffast.readers import text, warn
+        from ffast.readers import warn
+        from ffast.readers.energy_sample import choose_energy, file_energies
 
         name = os.path.basename(path)
         if frames is not None:
             return sorted({int(f) for f in frames}), dict(sampling)
-        if not callable(getattr(readerClass, "energies", None)):
-            raise ReaderError(f"{name} cannot be sampled by energy: the {readerClass.name} "
-                              f"reader does not list energies")
-        if taskID is not None:
+        if taskID is not None and callable(getattr(readerClass, "energies", None)):
             self._progress(taskID, f"Reading the energies of {name}…")
-        energies = text.get_energies(readerClass, path)
-        if not energies:
-            raise ReaderError(f"{name} cannot be sampled by energy: it has no energies")
-        chosen = (sampling or {}).get("energy") or energyKey or None
-        if chosen is None:
-            listed = readerClass(path).contents().get("energies") or []
-            chosen = next((e for e in listed if e in energies), next(iter(energies)))
-        if chosen not in energies:
-            raise ReaderError(f"{name} has no energy named '{chosen}' to sample by; "
-                              f"it has: {', '.join(energies)}")
+        energies, counts = file_energies(readerClass, path)
+        chosen = choose_energy(readerClass, path, energies,
+                               (sampling or {}).get("energy") or energyKey or None)
         settings = _samplingSettings(sampling, chosen)
-        counts = text.get_table(readerClass, path)[1]
         try:
             result = energy_sampling.sample_by_energy(
                 energies[chosen], settings["n"], method=settings["method"],

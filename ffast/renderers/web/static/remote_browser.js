@@ -220,7 +220,7 @@ export function largeFileNote({ size, n = null, stride = 1, error = null, done =
   if (!done) return `${head}. Counting frames… ${n.toLocaleString('en-US')} so far.`;
   const step = strideToSliceNum(stride);
   const all = `${head}: ${n.toLocaleString('en-US')} frames.`;
-  if (!step) return `${all} Set "Every Nth frame" to load fewer.`;
+  if (!step) return `${all} Choose Every Nth or Sample by energy under Frames to load fewer.`;
   return `${all} Every ${step}th frame: ~${Math.max(1, Math.ceil(n / step)).toLocaleString('en-US')}.`;
 }
 
@@ -244,10 +244,12 @@ export function keyPrefix(key) {
  * means "calculator" to the server, as on the desktop.
  * @param {{keysShown?: boolean, energyKey?: string, forceKey?: string,
  *   predictions?: {energyKey: string, forceKey: string, name: string}[],
- *   stride?: number|string}} c  `stride` > 1 sends `slice_num`, keys shown or not.
+ *   stride?: number|string, sampling?: object|null}} c  `stride` > 1 sends
+ *   `slice_num`, keys shown or not; `sampling` (a sample by energy, ADR 0096)
+ *   is sent instead of it, never with it.
  */
 export function datasetLoadKwargs({
-  keysShown = false, energyKey = '', forceKey = '', predictions = [], stride = 1,
+  keysShown = false, energyKey = '', forceKey = '', predictions = [], stride = 1, sampling = null,
 } = {}) {
   const kw = {};
   if (keysShown) {
@@ -258,9 +260,85 @@ export function datasetLoadKwargs({
     kw.prediction_keys = predictions.map(
       ({ energyKey: e, forceKey: f, name }) => [e || '', f || '', name || 'Model']);
   }
+  if (sampling) {
+    kw.sampling = sampling;
+    return kw;
+  }
   const sliceNum = strideToSliceNum(stride);
   if (sliceNum) kw.slice_num = sliceNum;
   return kw;
+}
+
+/** The seed a sample by energy uses when the field is empty (ADR 0096). */
+export const DEFAULT_SAMPLE_SEED = 42;
+
+/**
+ * The settings of a sample by energy from the dialog's fields (ADR 0096), or
+ * null when they cannot make one: N a whole number of at least 2, bins empty
+ * (automatic) or at least 1, the seed empty (42) or a whole number.
+ */
+export function sampleSettings({ method = 'even', n = '', bins = '', seed = '', energy = '' } = {}) {
+  const blank = (v) => String(v ?? '').trim() === '';
+  const whole = (v) => Math.floor(Number(v));
+  if (blank(n) || !(whole(n) >= 2)) return null;
+  const b = blank(bins) ? null : whole(bins);
+  if (b !== null && !(b >= 1)) return null;
+  const s = blank(seed) ? DEFAULT_SAMPLE_SEED : whole(seed);
+  if (!Number.isFinite(s)) return null;
+  return { method: method || 'even', n: whole(n), bins: b, seed: s, energy: energy || null };
+}
+
+/** The N a sample starts on: a tenth of the file, at most 5,000, at least 2. */
+export function defaultSampleSize(nFrames) {
+  return Math.max(2, Math.min(5000, Math.ceil(Number(nFrames) / 10)));
+}
+
+/**
+ * The load dialog's energy histogram as SVG text (ADR 0096): every frame's
+ * bar (`fb-h-all`) with the kept frames' bar over it (`fb-h-kept`), counts on
+ * a log scale (a few kept frames next to a million would not show otherwise).
+ * Bins beyond one per two pixels are summed into wider bars.
+ * @param {{edges?: number[], all?: number[], kept?: number[]|null,
+ *   perAtom?: boolean, width?: number, height?: number}} h
+ */
+export function energyHistogramSvg({
+  edges = [], all = [], kept = null, perAtom = false, width = 520, height = 110,
+} = {}) {
+  const groups = Math.max(1, Math.ceil(all.length / Math.floor(width / 2)));
+  const sum = (xs, i) => {
+    let t = 0;
+    for (let k = i; k < Math.min(i + groups, xs.length); k++) t += Number(xs[k]) || 0;
+    return t;
+  };
+  const allBars = [];
+  const keptBars = [];
+  for (let i = 0; i < all.length; i += groups) {
+    allBars.push(sum(all, i));
+    keptBars.push(kept ? sum(kept, i) : 0);
+  }
+  let top = 1;
+  for (const c of allBars) if (c > top) top = c;
+  const plotH = height - 24;
+  const y = (c) => (c > 0 ? Math.max(1, (Math.log10(1 + c) / Math.log10(1 + top)) * plotH) : 0);
+  const w = width / Math.max(1, allBars.length);
+  const bar = (cls, i, c) => {
+    const h = y(c);
+    return `<rect class="${cls}" x="${(i * w).toFixed(2)}" y="${(plotH - h).toFixed(2)}" `
+      + `width="${Math.max(0.5, w - 0.5).toFixed(2)}" height="${h.toFixed(2)}"></rect>`;
+  };
+  let keptTotal = 0;
+  for (const c of keptBars) keptTotal += c;
+  const num = (v) => (Number.isFinite(v) ? Number(v.toPrecision(4)).toString() : '');
+  const label = `${perAtom ? 'Energy per atom' : 'Energy'} · count, log scale`;
+  return `<svg viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" `
+    + `aria-label="${label}" data-kept="${kept ? keptTotal : ''}" data-bins="${all.length}">`
+    + allBars.map((c, i) => bar('fb-h-all', i, c)).join('')
+    + (kept ? keptBars.map((c, i) => bar('fb-h-kept', i, c)).join('') : '')
+    + `<line class="fb-h-axis" x1="0" x2="${width}" y1="${plotH}" y2="${plotH}"></line>`
+    + `<text x="0" y="${height - 6}">${num(edges[0])}</text>`
+    + `<text x="${width / 2}" y="${height - 6}" text-anchor="middle">${label}</text>`
+    + `<text x="${width}" y="${height - 6}" text-anchor="end">${num(edges[edges.length - 1])}</text>`
+    + '</svg>';
 }
 
 const $ = (id) => document.getElementById(id);
@@ -300,6 +378,13 @@ export class RemoteBrowser {
     this._suggestTimer = null;
     this._selectAfterListing = null;   // a Recent file to select once its folder is listed
     this._focusAfterListing = null;    // the folder just left, focused once the parent is listed
+    // A sample by energy (ADR 0096): {path, type, names, nFrames} once the file's
+    // energies arrived; the last preview asked (only its answer is drawn).
+    this._energies = null;
+    this._energiesAsked = null;   // the path whose energies are on their way
+    this._previewId = 0;
+    this._previewTimer = null;
+    this._sampleNTouched = false;  // the user typed N: a new file's default does not replace it
   }
 
   /** Wire the modal's own controls. Called once, at app setup. */
@@ -322,6 +407,14 @@ export class RemoteBrowser {
       if (!$('fb-load').disabled) this._load();
     });
     $('fb-stride').addEventListener('input', () => this._drawLarge());
+    $('fb-frames').addEventListener('change', () => this._onFramesChoice());
+    for (const id of ['fb-sample-method', 'fb-sample-n', 'fb-sample-bins', 'fb-sample-seed', 'fb-sample-energy']) {
+      $(id).addEventListener(id === 'fb-sample-method' || id === 'fb-sample-energy' ? 'change' : 'input', () => {
+        if (id === 'fb-sample-n') this._sampleNTouched = true;
+        this._askPreviewSoon();
+        this._refreshLoadEnabled();
+      });
+    }
     $('fb-add-pred').addEventListener('click', () => this._addPredictionRow());
     $('fb-up').addEventListener('click', () => {
       if (this._parent) this._navigate(this._parent);
@@ -701,6 +794,8 @@ export class RemoteBrowser {
     $('fb-pred-rows').replaceChildren();
     $('fb-stride').value = '1';
     $('fb-large').hidden = true;
+    this._resetSample();
+    this._sampleNTouched = false;
     this._dropCount();
     // null path → server starts at its work folder (--workdir, else its start folder)
     this._navigate(this._path || null);
@@ -798,9 +893,145 @@ export class RemoteBrowser {
       this._fillPredictionKeys(kw);
     } else if (this._mode === 'dataset') {
       this._showDatasetKeys(kw);
+      this._setSampleAvailable(!kw.error && Boolean(kw.energy_sampling));
     }
     this._refreshLoadEnabled();
     this._loadIfReady();
+  }
+
+  // ── a sample by energy (ADR 0096) ───────────────────────────────────────
+
+  /** Frames: All, Every Nth (the stride field), or Sample by energy (its
+   * fields and histogram). Never both: the other is put back. */
+  _framesChoice() {
+    return $('fb-frames').value;
+  }
+
+  _onFramesChoice() {
+    const choice = this._framesChoice();
+    $('fb-stride').hidden = choice !== 'nth';
+    if (choice !== 'nth') $('fb-stride').value = '1';
+    $('fb-sample').hidden = choice !== 'energy';
+    if (choice === 'energy') this._askEnergies();
+    this._drawLarge();
+    this._refreshLoadEnabled();
+  }
+
+  /** Back to All frames, with nothing asked (a new file, or the dialog opened). */
+  _resetSample() {
+    $('fb-frames').value = 'all';
+    $('fb-stride').hidden = true;
+    $('fb-sample').hidden = true;
+    $('fb-sample-plot').replaceChildren();
+    $('fb-sample-note').textContent = '';
+    $('fb-sample-bins').placeholder = 'auto';
+    this._energies = null;
+    this._energiesAsked = null;
+    this._previewId += 1;        // an answer still on its way is not drawn
+    clearTimeout(this._previewTimer);
+    this._setSampleAvailable(false);
+  }
+
+  /** "Sample by energy" is offered only for a file whose reader lists each
+   * frame's energy and that has energies (the key check says so). */
+  _setSampleAvailable(ok) {
+    const option = $('fb-frames').querySelector("option[value='energy']");
+    option.disabled = !ok;
+    $('fb-frames').title = ok ? ''
+      : "Sample by energy needs a reader that lists each frame's energy, and a file with energies";
+    if (!ok && this._framesChoice() === 'energy') {
+      $('fb-frames').value = 'all';
+      this._onFramesChoice();
+    }
+  }
+
+  _selectedPath() {
+    return this._selected ? joinPath(this._path, this._selected) : null;
+  }
+
+  /** Ask for the file's energies, once per file: the first time the server
+   * reads every frame's energy, which takes a while for a big file. */
+  _askEnergies() {
+    const path = this._selectedPath();
+    if (!path) return;
+    if (this._energies?.path === path) {
+      this._askPreview();
+      return;
+    }
+    if (this._energiesAsked === path) return;
+    this._energiesAsked = path;
+    $('fb-sample-note').textContent = `Reading the energies of ${this._selected}…`;
+    this._ports.send(OUT.PROBE_DATASET_ENERGIES, {}, [path, $('fb-type').value]);
+  }
+
+  /** Server replied to PROBE_DATASET_ENERGIES. */
+  onDatasetEnergies(path, kw) {
+    if (path !== this._energiesAsked) return;   // a file no longer selected
+    this._energiesAsked = null;
+    if (kw.error) {
+      $('fb-sample-note').textContent = kw.error;
+      return;
+    }
+    this._energies = { path, names: kw.names || [], nFrames: kw.n_frames };
+    // The reference energy chosen above, when there is a choice; else the server's.
+    const reference = !$('fb-keys').hidden ? $('fb-ds-energy-key').value : '';
+    this._fillSelect($('fb-sample-energy'), this._energies.names.map((n) => ({ value: n, label: n })));
+    $('fb-sample-energy').value = this._energies.names.includes(reference) ? reference : kw.energy;
+    if (!this._sampleNTouched) $('fb-sample-n').value = String(defaultSampleSize(kw.n_frames));
+    $('fb-sample-plot').innerHTML = energyHistogramSvg({
+      edges: kw.edges, all: kw.counts, perAtom: kw.per_atom });
+    this._askPreview();
+  }
+
+  /** The settings the fields make, with the energy chosen, or null. */
+  _sampleSettings() {
+    return sampleSettings({
+      method: $('fb-sample-method').value,
+      n: $('fb-sample-n').value,
+      bins: $('fb-sample-bins').value,
+      seed: $('fb-sample-seed').value,
+      energy: $('fb-sample-energy').value,
+    });
+  }
+
+  /** A preview after the user stops typing for 200 ms. */
+  _askPreviewSoon() {
+    clearTimeout(this._previewTimer);
+    this._previewTimer = setTimeout(() => this._askPreview(), 200);
+  }
+
+  _askPreview() {
+    clearTimeout(this._previewTimer);
+    const path = this._selectedPath();
+    if (this._framesChoice() !== 'energy' || !this._energies || this._energies.path !== path) return;
+    const sampling = this._sampleSettings();
+    this._previewId += 1;
+    if (!sampling) {
+      $('fb-sample-note').textContent =
+        'Frames to keep must be a whole number from 2; Bins empty (automatic) or from 1.';
+      return;
+    }
+    this._ports.send(OUT.PREVIEW_ENERGY_SAMPLE, { sampling, preview_id: this._previewId },
+      [path, $('fb-type').value]);
+  }
+
+  /** Server replied to PREVIEW_ENERGY_SAMPLE: only the answer to the latest ask is drawn. */
+  onEnergyPreview(path, kw) {
+    if (path !== this._selectedPath() || kw.preview_id !== this._previewId) return;
+    if (kw.error) {
+      $('fb-sample-note').textContent = kw.error;
+      return;
+    }
+    $('fb-sample-plot').innerHTML = energyHistogramSvg({
+      edges: kw.edges, all: kw.counts_all, kept: kw.counts_kept, perAtom: kw.per_atom });
+    $('fb-sample-bins').placeholder = `auto (${kw.bins_used})`;
+    const count = (x) => Number(x).toLocaleString('en-US');
+    const notes = [`Keeps ${count(kw.kept)} of ${count(kw.n_frames)} frames`
+      + ` in ${kw.bins_used} bin${kw.bins_used === 1 ? '' : 's'}`
+      + ` of ${kw.per_atom ? 'energy per atom' : 'energy'}.`];
+    if (kw.kept_all) notes.push('That is every frame with an energy.');
+    if (kw.left_out) notes.push(`${count(kw.left_out)} frames have no energy and are left out.`);
+    $('fb-sample-note').textContent = notes.join(' ');
   }
 
   _fillPredictionKeys(kw) {
@@ -918,6 +1149,7 @@ export class RemoteBrowser {
   _refreshDatasetKeys() {
     $('fb-keys').hidden = true;
     this._probing = null;
+    this._resetSample();   // the key check says again whether this file can be sampled by energy
     const type = $('fb-type').value;
     if (this._selected && (type === 'ase (auto)' || this._isReaderType(type))) {
       this._probeKeys(joinPath(this._path, this._selected), type);
@@ -1078,7 +1310,9 @@ export class RemoteBrowser {
       modelType: $('fb-model-type').value,
       dir: this._path,
       name: $('fb-name').value,
-    }) || Boolean(this._pick && this._exportBlocked);
+    }) || Boolean(this._pick && this._exportBlocked)
+      || (this._mode === 'dataset' && !this._pick && this._framesChoice() === 'energy'
+        && !this._sampleSettings());
   }
 
   /** File ▸ Load Zero Model: no file to pick. Its "Loading…" ends like a
@@ -1171,7 +1405,8 @@ export class RemoteBrowser {
         energyKey: $('fb-ds-energy-key').value,
         forceKey: $('fb-ds-force-key').value,
         predictions: this._predictionRows(),
-        stride: $('fb-stride').value,
+        stride: this._framesChoice() === 'nth' ? $('fb-stride').value : 1,
+        sampling: this._framesChoice() === 'energy' ? this._sampleSettings() : null,
       });
       this._ports.send(OUT.LOAD_DATASET, kwargs, [path, typ]);
       this._ports.setStatus(`Loading ${this._selected}…`, 'connected');

@@ -21,7 +21,7 @@ UNIFORM = {
     "first_elements": None, "offsets": None,
     "path": "/data/aspirin.xyz", "source_type": "ASE",
     "parent": None, "parent_frames": None, "scored": False, "active": True, "frozen": False,
-    "units": {"energy": "eV"},
+    "units": {"energy": "eV"}, "sampling": None,
 }
 VARIABLE = {
     "name": "mixed", "n": 50, "has_forces": False, "is_sub": True,
@@ -30,6 +30,9 @@ VARIABLE = {
     "path": "/data/mixed.xyz", "source_type": "Variable ASE",
     "parent": "aspirinfp", "parent_frames": [4, 9], "scored": False, "active": False,
     "frozen": True, "units": {},
+    # a sample by energy (ADR 0096)
+    "sampling": {"method": "even", "n": 50, "bins": None, "seed": 42, "energy": "dft",
+                 "bins_used": 12, "per_atom": True, "left_out": 0, "n_file_frames": 900},
 }
 
 
@@ -48,7 +51,7 @@ def test_model_fields_match_tometadict_keys():
     assert set(DatasetMeta.model_fields) == {
         "name", "n", "has_forces", "is_sub", "variable",
         "elements", "element_set", "first_elements", "offsets", "path", "source_type",
-        "parent", "parent_frames", "scored", "active", "frozen", "units",
+        "parent", "parent_frames", "scored", "active", "frozen", "units", "sampling",
     }
 
 
@@ -116,10 +119,11 @@ def test_catalog_empty_default():
 # Payloads exactly as server.py emits them (server.py:537, :569, :616).
 KEYS_OK = {"energy_keys": ["energy"], "force_keys": ["forces"],
            "has_calculator_energy": True, "has_calculator_forces": True, "error": None,
-           "reader": "ase (auto)"}     # the Type the file's readers pick (ADR 0095)
+           "reader": "ase (auto)",     # the Type the file's readers pick (ADR 0095)
+           "energy_sampling": True}    # it can be loaded as a sample by energy (ADR 0096)
 KEYS_ERR = {"energy_keys": [], "force_keys": [],
             "has_calculator_energy": False, "has_calculator_forces": False,
-            "error": "bad file", "reader": None}
+            "error": "bad file", "reader": None, "energy_sampling": False}
 LENGTH_OK = {"n": 1000, "error": None, "done": True}
 LENGTH_ERR = {"n": None, "error": "not found", "done": True}
 # A count still running sends what it has so far (frame index plan 2026-11-01).

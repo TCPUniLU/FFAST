@@ -103,6 +103,18 @@ CASES = {
     "kwargs_preds_hidden": "rb.datasetLoadKwargs({keysShown:false, predictions:[{energyKey:'E', forceKey:'F', name:'X'}]})",
     "stride_cases": "[rb.strideToSliceNum(1), rb.strideToSliceNum('10'), rb.strideToSliceNum('x')]",
     "kwargs_stride": "rb.datasetLoadKwargs({stride: 10})",
+    # ── a sample by energy (ADR 0096) ────────────────────────────────────────
+    "kwargs_sampling": "rb.datasetLoadKwargs({stride: 10, sampling: {method: 'even', n: 20, bins: null, seed: 42, energy: 'E'}})",
+    "sample_settings": "[rb.sampleSettings({method: 'proportional', n: '50', bins: '', seed: '', energy: 'E'}),"
+                       " rb.sampleSettings({n: '30', bins: '12', seed: '7'}),"
+                       " rb.sampleSettings({n: '1'}), rb.sampleSettings({n: ''}), rb.sampleSettings({n: '5', bins: '0'})]",
+    "sample_default_n": "[rb.defaultSampleSize(100), rb.defaultSampleSize(1200000), rb.defaultSampleSize(3)]",
+    "sample_text": "[rl.sampleText({n: 5000, sampling: {method: 'even', seed: 42, n_file_frames: 1200000}}),"
+                   " rl.sampleText({n: 20, sampling: {method: 'proportional', seed: 7, n_file_frames: 100}}),"
+                   " rl.sampleText({n: 4})]",
+    "info_sampled": "oi.objectInfo('dataset', 'f1', {name: 's', n: 20, sampling: {method: 'even', seed: 42, n_file_frames: 100}}, new Map()).rows",
+    "hist_svg": "(() => { const d = document.createElement('div'); d.innerHTML = rb.energyHistogramSvg({edges: [0, 1, 2, 3], all: [1000, 0, 10], kept: [5, 0, 5], perAtom: true}); const s = d.querySelector('svg'); const h = (c) => [...s.querySelectorAll('.' + c)].map((r) => Number(r.getAttribute('height'))); return {all: h('fb-h-all'), kept: h('fb-h-kept'), keptSum: s.dataset.kept, label: s.textContent}; })()",
+    "hist_svg_many_bins": "(() => { const n = 5000; const d = document.createElement('div'); d.innerHTML = rb.energyHistogramSvg({edges: Array.from({length: n + 1}, (_, i) => i), all: Array(n).fill(2), kept: Array(n).fill(1)}); return d.querySelectorAll('.fb-h-all').length; })()",
     "note_counting": "rb.largeFileNote({size: 3.5e9})",
     "note_stride": "rb.largeFileNote({size: 3.5e9, n: 100, stride: 10})",
     # ── live frame count (frame index plan 2026-11-01) ──────────────────────
@@ -1820,6 +1832,44 @@ def test_every_nth_frame_becomes_the_loaders_stride_number(results):
     assert results["kwargs_stride"] == {"slice_num": 10}
 
 
+def test_a_sample_by_energy_is_sent_instead_of_every_nth_frame(results):
+    assert results["kwargs_sampling"] == {
+        "sampling": {"method": "even", "n": 20, "bins": None, "seed": 42, "energy": "E"}}
+
+
+def test_the_sample_fields_make_settings_with_auto_bins_and_seed_42(results):
+    good, given, too_few, empty, bad_bins = results["sample_settings"]
+    assert good == {"method": "proportional", "n": 50, "bins": None, "seed": 42, "energy": "E"}
+    assert given == {"method": "even", "n": 30, "bins": 12, "seed": 7, "energy": None}
+    assert too_few is None and empty is None and bad_bins is None
+
+
+def test_the_sample_starts_on_a_tenth_of_the_file_at_most_5000(results):
+    assert results["sample_default_n"] == [10, 5000, 2]
+
+
+def test_a_sampled_dataset_says_how_it_was_sampled(results):
+    assert results["sample_text"] == [
+        "5,000 of 1,200,000 frames, sampled by energy (even, seed 42)",
+        "20 of 100 frames, sampled by energy (proportional, seed 7)",
+        "4 frames",
+    ]
+    assert ["Frames", "20 of 100 frames, sampled by energy (even, seed 42)"] in results["info_sampled"]
+
+
+def test_the_histogram_counts_on_a_log_scale_and_draws_kept_over_all(results):
+    got = results["hist_svg"]
+    assert got["keptSum"] == "10"
+    tallest, empty, small = got["all"]
+    assert empty == 0 and 0 < small < tallest
+    assert all(k <= a for k, a in zip(got["kept"], got["all"]))
+    assert "Energy per atom" in got["label"]
+
+
+def test_a_histogram_with_many_bins_draws_at_most_one_bar_per_two_pixels(results):
+    assert 0 < results["hist_svg_many_bins"] <= 260
+
+
 def test_the_large_file_note_counts_then_estimates(results):
     assert "Counting frames" in results["note_counting"]
     assert results["note_stride"].endswith("Every 10th frame: ~10.")
@@ -1828,6 +1878,7 @@ def test_the_large_file_note_counts_then_estimates(results):
 def test_the_large_file_note_shows_the_count_as_it_grows(results):
     assert results["note_partial"].endswith("Counting frames… 412,000 so far.")
     assert "100 frames" in results["note_done_default"]
+    assert "Sample by energy" in results["note_done_default"]
 
 
 def test_a_count_is_pending_until_its_last_reply(results):

@@ -184,6 +184,7 @@ async def test_web_every_nth_frame_and_the_large_file_note(ffast_web_server):
             await _go_to(page, DATASET_PATH.parent)
             await page.locator("#fb-list .fb-row", has_text="dataset.xyz").click()
             await expect(page.locator("#fb-large")).to_contain_text("100 frames", timeout=15000)
+            await page.locator("#fb-frames").select_option("nth")      # Frames: Every Nth (ADR 0096)
             await page.locator("#fb-stride").fill("10")
             await expect(page.locator("#fb-large")).to_contain_text("~10")
             await page.locator("#fb-load").click()

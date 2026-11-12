@@ -156,6 +156,8 @@ class ReaderDataset(ReaderFields, FlatDatasetLoader):
     def toMetaDict(self) -> dict:
         meta = super().toMetaDict()
         meta["source_type"] = self.reader_name     # a saved session finds the reader by it
+        if getattr(self, "sampling", None) is not None:
+            meta["sampling"] = dict(self.sampling)  # a sample by energy (ADR 0096): the rail says so
         return meta
 
 

@@ -1569,6 +1569,19 @@
     #fb-export-note { margin-top: 4px; color: var(--danger, #c0392b); }
     #fb-large { padding: 6px 12px; font-size: var(--fs-s); color: var(--muted); border-top: 1px solid var(--line); }
     #fb-large[hidden] { display: none; }
+    #fb-stride[hidden] { display: none; }
+    /* A sample by energy (ADR 0096): its fields, the histogram, a note. */
+    #fb-sample { padding: 6px 12px; font-size: var(--fs-s); border-top: 1px solid var(--line); }
+    #fb-sample[hidden] { display: none; }
+    #fb-sample .fb-sample-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    #fb-sample label { color: var(--ink-3); font-weight: 600; }
+    #fb-sample-n, #fb-sample-bins, #fb-sample-seed { width: 80px; }
+    #fb-sample-plot svg { display: block; width: 100%; height: calc(110px * var(--scale)); margin-top: 6px; }
+    #fb-sample-plot .fb-h-all { fill: var(--ink-3); fill-opacity: 0.35; }
+    #fb-sample-plot .fb-h-kept { fill: var(--accent); }
+    #fb-sample-plot .fb-h-axis { stroke: var(--line); }
+    #fb-sample-plot text { fill: var(--ink-3); font-size: var(--fs-plot); font-variant-numeric: tabular-nums; }
+    #fb-sample-note { margin-top: 4px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
     #fb-error { color: var(--danger); font-size: var(--fs-s); padding: 8px 12px; }
     #fb-footer {
       display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
@@ -1938,6 +1951,27 @@
         <button id="fb-add-pred" type="button">Also load a prediction from this file</button>
       </div>
       <div id="fb-large" hidden></div>
+      <!-- Frames ▸ Sample by energy (ADR 0096): which frames to keep, and what
+           they would be, binned by energy, before anything is read. -->
+      <div id="fb-sample" hidden>
+        <div class="fb-sample-row">
+          <label for="fb-sample-method">Method</label>
+          <select id="fb-sample-method">
+            <option value="even">Even across energies</option>
+            <option value="proportional">Keep the energy distribution</option>
+          </select>
+          <label for="fb-sample-n">Frames to keep</label>
+          <input id="fb-sample-n" type="number" min="2" step="1" value="5000">
+          <label for="fb-sample-bins">Bins</label>
+          <input id="fb-sample-bins" type="number" min="1" step="1" placeholder="auto">
+          <label for="fb-sample-seed">Seed</label>
+          <input id="fb-sample-seed" type="number" step="1" value="42">
+          <label for="fb-sample-energy">Energy</label>
+          <select id="fb-sample-energy"></select>
+        </div>
+        <div id="fb-sample-plot"></div>
+        <div id="fb-sample-note" role="status"></div>
+      </div>
       <div id="fb-export" hidden>
         <span class="fb-keys-head">Write</span>
         <span id="fb-export-items" role="group" aria-label="What to export"></span>
@@ -1949,8 +1983,13 @@
           <select id="fb-type">
             <option value="ase (auto)">ase (auto)</option>
           </select>
-          <label for="fb-stride">Every Nth frame</label>
-          <input id="fb-stride" type="number" min="1" step="1" value="1">
+          <label for="fb-frames">Frames</label>
+          <select id="fb-frames">
+            <option value="all">All</option>
+            <option value="nth">Every Nth</option>
+            <option value="energy" disabled>Sample by energy</option>
+          </select>
+          <input id="fb-stride" type="number" min="1" step="1" value="1" aria-label="Every Nth frame" hidden>
           <label for="fb-energy-unit">Energy unit</label>
           <input id="fb-energy-unit" list="fb-energy-units" autocomplete="off" spellcheck="false">
           <datalist id="fb-energy-units"></datalist>

@@ -94,9 +94,10 @@ export class Rail {
       const row = document.createElement('div');
       row.className = 'obj-row' + (fp === datasetFp ? ' selected' : '');
       row.dataset.fp = fp;
-      row.append(
-        this._text('name', meta.name || fp.slice(0, 8)),
-        this._text('meta', `${meta.frozen ? 'frozen · ' : ''}${framesText(meta.n)}`));
+      const frames = this._text('meta',
+        `${meta.frozen ? 'frozen · ' : ''}${framesText(meta.n)}${meta.sampling ? ' · energy sample' : ''}`);
+      if (meta.sampling) frames.title = sampleText(meta);
+      row.append(this._text('name', meta.name || fp.slice(0, 8)), frames);
       const swatch = this._swatch('dataset', fp);
       if (swatch) row.prepend(swatch);
       row.appendChild(this._menuButton('dataset', fp));
@@ -162,4 +163,15 @@ export function nameProblem(name) {
 /** "100 frames", or "1 frame". */
 export function framesText(n) {
   return `${n} frame${n === 1 ? '' : 's'}`;
+}
+
+/** A dataset's frames, saying how it was sampled when it is a sample by
+ * energy (ADR 0096): "5,000 of 1,200,000 frames, sampled by energy (even,
+ * seed 42)". Any other dataset: framesText. */
+export function sampleText(meta) {
+  const s = meta?.sampling;
+  if (!s) return framesText(meta?.n);
+  const count = (x) => Number(x).toLocaleString('en-US');
+  return `${count(meta.n)} of ${count(s.n_file_frames)} frames, sampled by energy `
+    + `(${s.method}, seed ${s.seed})`;
 }

@@ -239,7 +239,7 @@ function loadingTour(app, { tabNamed, BASIC }) {
     openStep(k, 'dataset'), folderStep(k, 'dataset'), pickStep(k, 'dataset'),
     {
       targets: ['#fb-dataset-fields', '#fb-keys'], side: 'top', title: 'Units and frames',
-      body: 'Energy unit and Force unit say which units your file uses. Every Nth frame loads only some of the frames of a long file. If the file holds more than one energy or force column, FFAST asks which ones to use.',
+      body: 'Energy unit and Force unit say which units your file uses. Frames loads only some of the frames of a long file: every Nth, or a sample spread over its energies. If the file holds more than one energy or force column, FFAST asks which ones to use.',
       prepare: () => ensureIn('dataset', k),
     },
     loadStep(k, 'dataset'),

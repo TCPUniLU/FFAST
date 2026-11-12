@@ -31,7 +31,7 @@ def test_a_readers_names_come_back_as_energy_and_force_keys(toy, tmp_path):
     assert _probe(path, "toy") == {
         "energy_keys": ["dft", "mace"], "force_keys": ["dft", "mace"],
         "has_calculator_energy": False, "has_calculator_forces": False, "error": None,
-        "reader": "toy"}
+        "reader": "toy", "energy_sampling": False}   # a Level 1 reader: no sample by energy (ADR 0096)
 
 
 def test_a_reader_that_cannot_read_the_file_replies_with_its_message(toy, tmp_path):

@@ -57,6 +57,9 @@ class DatasetMeta(BaseModel):
     # Only a loaded dataset carries them; a view cut from it reads its root's
     # (follow ``parent``), so a unit change announces one dataset, not each view.
     units: dict[str, str] = Field(default_factory=dict)
+    # A dataset loaded as a sample by energy (ADR 0096): method, n, seed, energy,
+    # bins_used, per_atom, left_out and the source file's frame count.
+    sampling: Optional[dict] = None
 
 
 class ModelMeta(BaseModel):
@@ -164,6 +167,9 @@ class DatasetKeysResponse(BaseModel):
     has_calculator_forces: bool = False
     error: Optional[str] = None
     reader: Optional[str] = None   # the Type that reads this file (readers_for), when listed (ADR 0095)
+    # The file can be loaded as a sample by energy (ADR 0096): its reader lists
+    # each frame's energies, and the file's first frames name an energy.
+    energy_sampling: bool = False
 
 
 class DatasetLengthResponse(BaseModel):
@@ -411,6 +417,30 @@ class ProbeDatasetKeysRequest(BaseModel):
 
     path: str
     dataset_type: str
+
+
+class ProbeDatasetEnergiesRequest(BaseModel):
+    """Typed payload for ``PROBE_DATASET_ENERGIES`` (ADR 0096): the file's
+    energies as a histogram, for ``energy`` (else the reader's first)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    dataset_type: str
+    energy: Optional[str] = None
+
+
+class PreviewEnergySampleRequest(BaseModel):
+    """Typed payload for ``PREVIEW_ENERGY_SAMPLE`` (ADR 0096): what a load
+    with ``sampling`` would keep. ``preview_id`` comes back with the answer,
+    so the dialog keeps only the answer to its latest question."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    dataset_type: str
+    sampling: dict = Field(default_factory=dict)
+    preview_id: Optional[int] = None
 
 
 class ProbeDatasetLengthRequest(BaseModel):

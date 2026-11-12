@@ -1956,6 +1956,8 @@ export class FFastApp {
       }
       conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
       conn.on(IN.DATASET_LENGTH_RESPONSE, (kw, args) => this._browser.onDatasetLength(args[0], kw));
+      conn.on(IN.DATASET_ENERGIES, (kw, args) => this._browser.onDatasetEnergies(args[0], kw));
+      conn.on(IN.ENERGY_SAMPLE_PREVIEW, (kw, args) => this._browser.onEnergyPreview(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
       conn.on(IN.TASK_INFO, (kw, args) => this._tasks.info(args[0], kw));
       conn.on(IN.TASK_PROGRESS, (kw, args) => {
