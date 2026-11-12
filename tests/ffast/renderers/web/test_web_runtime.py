@@ -3356,6 +3356,41 @@ async def test_web_a_prediction_loaded_onto_a_second_dataset_applies_to_it(ffast
             await browser.close()
 
 
+async def test_web_a_3d_panel_takes_a_prediction_of_its_dataset(tmp_path):
+    """A 3D panel switched to a dataset shows a prediction that has numbers
+    for it, not "— none —". The user's own "— none —" stays while the panel
+    keeps that dataset; a dataset with no prediction shows none."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+        other_fp = await _load_another_dataset(ws_port, dataset_fp)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            view = _INDEPENDENT
+            prediction = page.locator(_panel_control("Prediction"))
+            dataset = page.locator(_panel_control("Dataset"))
+            try:
+                await _open_compare(page, ws_port, web_port, dataset_fp)
+                await _focus_3d(page, 1)
+
+                await dataset.select_option(other_fp)
+                await page.wait_for_function(f"() => {view}.datasetFp === '{other_fp}'")
+                await expect(prediction).to_have_value("")
+
+                await dataset.select_option(dataset_fp)
+                await page.wait_for_function(f"() => {view}.modelFp === '{model_fp}'")
+                await expect(prediction).to_have_value(model_fp)
+
+                await prediction.select_option("")
+                await page.wait_for_function(f"() => {view}.modelFp === null")
+                await page.evaluate(f"() => window.ffastApp._setPanelDataset({view}, '{dataset_fp}')")
+                await expect(prediction).to_have_value("")
+            finally:
+                await browser.close()
+
+
 async def test_web_a_deleted_dataset_or_prediction_leaves_an_independent_panel(tmp_path):
     """An independent panel on a deleted dataset moves as the main view does;
     a deleted prediction leaves the rail, and the views that showed it keep

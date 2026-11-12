@@ -306,5 +306,6 @@ export class IndependentView extends View {
     this.started = false;    // its starting look has been sent
     this.note = '';          // why its starting colour metric was not used
     this.missing = '';       // why it shows no frame (rule 3)
+    this.noPrediction = false;   // the user chose "— none —" for this dataset
   }
 }

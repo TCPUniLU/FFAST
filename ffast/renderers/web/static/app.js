@@ -166,6 +166,7 @@ export class FFastApp {
       focused: () => this._focusedIndependent,
       activeTab: () => this._analysis?.tab(this._activeTab),
       tabPairs: (tabId) => this._analysis.tabPairs(tabId),
+      predictionFor: (fp) => this._predictionFor(fp),
       placePanel: (el, panel) => this._panels3d.set(el, panel),
       start: (view) => this._startIndependent(view),
       retired: (view) => {
@@ -1481,6 +1482,7 @@ export class FFastApp {
       if (!view) return;
       const old = view.modelFp;
       view.modelFp = fp || null;
+      view.noPrediction = !fp;   // the user's "— none —" stays until the dataset changes
       this._independent.open(view);
       this._followPanelPrediction(old, view.modelFp);
       this._syncSidebarTitle();
@@ -1511,9 +1513,9 @@ export class FFastApp {
   _setPanelDataset(view, fp) {
     const focused = view === this._focusedIndependent;
     if (focused) this._clearPicks();   // picked atom ids belong to the dataset left
+    if (fp !== view.datasetFp) view.noPrediction = false;   // "— none —" was for the dataset left
     view.datasetFp = fp;
-    if (view.modelFp && !predictionApplies(this._models.get(view.modelFp), fp, this._datasets))
-      view.modelFp = null;
+    view.modelFp = view.noPrediction ? null : this._predictionFor(fp, view.modelFp);
     this._independent.open(view);
     if (!focused) return;
     this._syncDatasetPanes(this._datasets.get(fp));
@@ -1651,8 +1653,7 @@ export class FFastApp {
     const own = value !== MAIN_VIEW_CHOICE;
     const next = setPanelView(place.server, place.serverIndex, { view: own ? 'independent' : 'linked' });
     if (own) {
-      const modelFp = predictionApplies(this._models.get(this._currentModelFp), value, this._datasets)
-        ? this._currentModelFp : null;
+      const modelFp = this._predictionFor(value, this._currentModelFp);
       this._independent.want(independentKey(next.name, next.panels[place.serverIndex]), { datasetFp: value, modelFp });
     }
     const r = await this._tabOps.save(toSaved(next), place.server.name);
@@ -2192,6 +2193,16 @@ export class FFastApp {
     this._panes?.forces.refreshModels();
     this._panes?.colorBy.refreshModels(this._models);
     this._renderObjects();
+    // A 3D panel on a dataset this prediction has numbers for, showing none
+    // only because there was none, takes it (not one where the user chose none).
+    if ((meta?.dataset_fingerprints || []).length) {
+      for (const view of this._independent.values()) {
+        if (!view.datasetFp || view.modelFp || view.noPrediction
+            || !predictionApplies(meta, view.datasetFp, this._datasets)) continue;
+        view.modelFp = fp;
+        this._independent.open(view);
+      }
+    }
     this._independent.ensureShown();
     if (this._focusedIndependent) this._syncPanelSection();
     this._syncCaptions();
@@ -2454,8 +2465,8 @@ export class FFastApp {
     for (const view of this._independent.values()) {
       if (view.datasetFp !== fp) continue;
       view.datasetFp = target;
-      if (view.modelFp && !(target && predictionApplies(this._models.get(view.modelFp), target, this._datasets)))
-        view.modelFp = null;
+      view.noPrediction = false;
+      view.modelFp = this._predictionFor(target, view.modelFp);
       if (!target) { this._independent.empty(view); continue; }
       this._independent.open(view);
       if (this._ownFrame(view)) this._independent.setFrame(view, frameIn(view.frame ?? 0));
@@ -2535,8 +2546,9 @@ export class FFastApp {
   }
 
   _selectDataset(fp) {
+    const moved = fp !== this._currentDatasetFp;   // the same dataset: its prediction choice stays
     this._currentDatasetFp = fp;
-    this._dropInapplicableModel();
+    if (moved) this._dropInapplicableModel();
     this._renderObjects();
     this._syncAnalysisContext();
     // Selecting an object drives the main view; a tab without one stays put
@@ -2544,11 +2556,22 @@ export class FFastApp {
     if (this._activePanel) this._openView();
   }
 
-  /** Drop a prediction that does not apply to the selected dataset. */
+  /** The main view moved to another dataset: keep the prediction if it
+   * applies, else take one that does (or none when none does). */
   _dropInapplicableModel() {
-    if (this._currentModelFp && !predictionApplies(
-      this._models.get(this._currentModelFp), this._currentDatasetFp, this._datasets))
-      this._currentModelFp = null;
+    this._currentModelFp = this._predictionFor(this._currentDatasetFp, this._currentModelFp);
+  }
+
+  /** The prediction a view on dataset `datasetFp` shows: `keep` when it
+   * applies, else the first loaded prediction with numbers for the dataset
+   * (or the one it was cut from), else null. A model with no results yet is
+   * never picked: the user picks it. */
+  _predictionFor(datasetFp, keep = null) {
+    if (!datasetFp) return null;
+    if (keep && predictionApplies(this._models.get(keep), datasetFp, this._datasets)) return keep;
+    for (const [fp, meta] of this._models)
+      if ((meta.dataset_fingerprints || []).length && predictionApplies(meta, datasetFp, this._datasets)) return fp;
+    return null;
   }
 
   _selectModel(fp) {
@@ -3190,7 +3213,7 @@ export class FFastApp {
     const from = this._currentDatasetFp;
     const same = from ? sameConfiguration(from, this._main.current?.frame ?? 0, fp, this._datasets) : null;
     this._currentDatasetFp = fp;
-    this._dropInapplicableModel();
+    if (fp !== from) this._dropInapplicableModel();
     this._renderObjects();
     this._syncAnalysisContext();
     this._main.ensure(fp).frameOnSnapshot = frame ?? same ?? 0;

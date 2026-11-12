@@ -41,6 +41,7 @@ export function independentKey(tabName, spec) {
  *   focused: () => IndependentView|null,
  *   activeTab: () => object|null,
  *   tabPairs: (tabId: string) => Array<{datasetFp: string, modelFp: string|null}>,
+ *   predictionFor: (datasetFp: string) => string|null,
  *   placePanel: (el: HTMLElement, panel: object) => void,
  *   start: (view: IndependentView) => void,
  *   retired: (view: IndependentView) => void,
@@ -160,7 +161,7 @@ export class IndependentPanels {
       const pick = startPair(pairs, shown);
       if (!pick) { this.syncCaption(view); return; }
       view.datasetFp = pick.datasetFp;
-      view.modelFp = pick.modelFp;
+      view.modelFp = pick.modelFp || this._ports.predictionFor(pick.datasetFp);
     }
     this.open(view);
     if (view === this._ports.focused()) this._ports.chosen(view);
