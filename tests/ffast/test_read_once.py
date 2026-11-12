@@ -161,9 +161,10 @@ def test_the_resolver_answers_the_missing_ref(files):
 def test_a_prediction_keeps_its_missing_mask(files):
     """Prediction fields are read once at load and stored (ADR 0023); the mask
     is stored with them."""
+    from ffast.core.prediction_fields import PredictionFieldStore
     from ffast.metrics.input_resolver import InputResolver
     loader = _load(files / "columns_change.extxyz")
-    data = types.SimpleNamespace(predictionFields={})
+    data = types.SimpleNamespace(predictionFields=PredictionFieldStore())
     env = types.SimpleNamespace(data=data, datasets=types.SimpleNamespace(slice_numbers={}))
     dataset = types.SimpleNamespace(fingerprint="ds", getName=lambda: "ds.extxyz")
     LoadingCoordinator(env)._extractPredictionFields(loader, "m", dataset)

@@ -411,17 +411,24 @@ class LoadingCoordinator:
         ``(modelKey, dataset_fp)`` (modelKey == the GhostModel fingerprint, so
         the resolver finds it from the model object). Strict per-field: an
         unavailable key just stays absent (resolves to None later).
+
+        Every exit replaces the entry: a source with no fields (or one whose
+        keys cannot be read) removes what an earlier load with the same
+        fingerprints stored, so no old value survives a reload.
         """
+        fields = self._env.data.predictionFields
         try:
             from ffast.metrics.fields import declared_field_keys
             wanted = declared_field_keys("prediction")
             frame_keys, atom_keys = aseObject.availableFieldKeys()
         except Exception:
             logger.exception("Prediction fields: failed to read declared keys")
+            fields.replace(modelKey, dataset.fingerprint, None)
             return
         wanted = {"info": set(wanted["info"]) | set(frame_keys),
                   "atoms": set(wanted["atoms"]) | set(atom_keys)}
         if not wanted["info"] and not wanted["atoms"]:
+            fields.replace(modelKey, dataset.fingerprint, None)
             return
         store = {"info": {}, "atoms": {}}
         for key in wanted["info"]:
@@ -437,8 +444,8 @@ class LoadingCoordinator:
                 missing = ask(key) if ask else None
                 if missing is not None:
                     store.setdefault("missing", {})[key] = missing
+        fields.replace(modelKey, dataset.fingerprint, store)
         if store["info"] or store["atoms"]:
-            self._env.data.predictionFields[(modelKey, dataset.fingerprint)] = store
             logger.info(
                 "Prediction fields: extracted %d frame + %d atom field(s) for %s",
                 len(store["info"]), len(store["atoms"]), os.path.basename(dataset.getName()),
@@ -544,8 +551,12 @@ class LoadingCoordinator:
         # prediction-keys path is new — that path skipped extraction entirely
         # while it carried its own copy of this body, so fields declared by a
         # metric silently resolved to None for in-file prediction columns.
+        # npz carries no fields: clear any an earlier load stored here.
         if source is not None:
             self._extractPredictionFields(source, fingerprint, dataset)
+        else:
+            self._env.data.predictionFields.replace(
+                fingerprint, dataset.fingerprint, None)
 
         self.registerGhostModel(fingerprint, path=path, name=name, **catalogExtra)
         return True

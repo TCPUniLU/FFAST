@@ -493,7 +493,8 @@ class _FakeDataType:
 class _FakeDataService:
     def __init__(self):
         self.stored = []          # (dtype, payload, model, dataset)
-        self.predictionFields = {}
+        from ffast.core.prediction_fields import PredictionFieldStore
+        self.predictionFields = PredictionFieldStore()
 
     def getDataType(self, key):
         return _FakeDataType(key)
@@ -586,6 +587,22 @@ def test_ingestPrediction_without_a_source_skips_field_extraction():
 
     coord._ingestPrediction(
         _FakeDataset(np.zeros((2,))), np.zeros((2,)), None,
+        path="/p.npz", name="pred", fingerprint="fp", source=None,
+    )
+
+    assert env.data.predictionFields == {}
+
+
+def test_ingestPrediction_without_a_source_clears_fields_an_earlier_load_stored():
+    """An npz reload under the same fingerprints must not keep the old fields."""
+    env = _ingest_env()
+    coord = LoadingCoordinator(env)
+    ds = _FakeDataset(np.zeros((2,)))
+    env.data.predictionFields.replace(
+        "fp", ds.fingerprint, {"info": {"dipole": np.array([0.1, 0.2])}, "atoms": {}})
+
+    coord._ingestPrediction(
+        ds, np.zeros((2,)), None,
         path="/p.npz", name="pred", fingerprint="fp", source=None,
     )
 

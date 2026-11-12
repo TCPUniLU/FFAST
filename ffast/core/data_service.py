@@ -45,7 +45,8 @@ class DataService:
     """Cache-key resolution, data generation, and in-process metrics (ADR 0020)."""
 
     def __init__(self, cache, models, datasets, tm, events,
-                 source=None, headless=True, executor=None):
+                 source=None, headless=True, executor=None,
+                 prediction_fields=None):
         self.cache = cache
         self._models = models
         self._datasets = datasets
@@ -71,9 +72,12 @@ class DataService:
         # Prediction Dataset Fields (ADR 0023): eagerly extracted at prediction
         # load (the prediction's ASE source is otherwise discarded). Keyed by
         # (modelKey, dataset_fp) — modelKey equals the GhostModel fingerprint, so
-        # the resolver finds it from the model object at metric time.
-        # {(model_fp, dataset_fp): {"info": {key: arr}, "atoms": {key: arr}}}
-        self.predictionFields = {}
+        # the resolver finds it from the model object at metric time. The
+        # store owns replace-on-load and release-on-delete; the Environment
+        # shares the same store with both registries.
+        from ffast.core.prediction_fields import PredictionFieldStore
+        self.predictionFields = (prediction_fields if prediction_fields is not None
+                                 else PredictionFieldStore())
 
         self.initialiseDataTypes()
 

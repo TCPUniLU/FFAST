@@ -18,10 +18,12 @@ logger = logging.getLogger("FFAST")
 class DatasetRegistry:
     """Loaded datasets keyed by fingerprint. Deps: cache, events (ADR 0020)."""
 
-    def __init__(self, cache, events):
+    def __init__(self, cache, events, prediction_fields=None):
         self._datasets = {}
         self._cache = cache
         self._events = events
+        # Prediction fields stored per (model, dataset); released on delete.
+        self._predictionFields = prediction_fields
         self.slice_numbers = {}
         self.max_size = 0  # largest dataset N, for plot-smoothing bounds
 
@@ -93,6 +95,9 @@ class DatasetRegistry:
 
         if self.slice_numbers.get(key) is not None:
             del self.slice_numbers[key]
+
+        if self._predictionFields is not None:
+            self._predictionFields.drop_object(key)
 
         dataset.onDelete()
         del self._datasets[key]

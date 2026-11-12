@@ -49,8 +49,12 @@ class Environment(EventClass):
 
         # Note: might have multiple environments at some point
         self.cache = DataCache()
-        self.models = ModelRegistry(self.cache, self)
-        self.datasets = DatasetRegistry(self.cache, self)
+        # Prediction fields (ADR 0023): one store, written by prediction loads
+        # and released by both registries when either side is deleted.
+        from ffast.core.prediction_fields import PredictionFieldStore
+        predictionFields = PredictionFieldStore()
+        self.models = ModelRegistry(self.cache, self, predictionFields)
+        self.datasets = DatasetRegistry(self.cache, self, predictionFields)
         self.modelTypes = {}
         self.datasetTypes = {}
         # Serializes dataset/model registry mutations across the threaded load
@@ -85,6 +89,7 @@ class Environment(EventClass):
             events=self,
             source=RemoteSource(self.remote),
             headless=headless,
+            prediction_fields=predictionFields,
         )
 
         # Session save/load + dataset export (ADR 0020).

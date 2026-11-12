@@ -18,10 +18,12 @@ logger = logging.getLogger("FFAST")
 class ModelRegistry:
     """Loaded models keyed by fingerprint. Deps: cache, events (ADR 0020)."""
 
-    def __init__(self, cache, events):
+    def __init__(self, cache, events, prediction_fields=None):
         self._models = {}
         self._cache = cache
         self._events = events
+        # Prediction fields stored per (model, dataset); released on delete.
+        self._predictionFields = prediction_fields
 
     # ── dict-compatible surface ───────────────────────────────────────────
     def __getitem__(self, key):
@@ -77,6 +79,9 @@ class ModelRegistry:
             lambda k: (ck := CacheKey.try_parse(k)) is not None and ck.matches_model(key)
         ):
             logger.info(f"Deleted cached data: {cache_key}")
+
+        if self._predictionFields is not None:
+            self._predictionFields.drop_object(key)
 
         model.onDelete()
         del self._models[key]
