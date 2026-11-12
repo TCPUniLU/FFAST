@@ -60,6 +60,27 @@ class XyzReader:
         return index.starts, index.atom_counts()
 
     @staticmethod
+    def energies(path, starts):
+        """The energies on the header lines of the frames starting at
+        ``starts``: {name: one float per frame, NaN where a frame has none}.
+        Only each frame's second line is read, never its atoms."""
+        import mmap
+        out = {}
+        n = len(starts)
+        if n == 0:
+            return out
+        with open(path, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            for i, start in enumerate(np.asarray(starts).tolist()):
+                head = mm.find(b"\n", start) + 1
+                end = mm.find(b"\n", head)
+                for name, value in xa.header_energies(mm[head:end if end >= 0 else len(mm)]).items():
+                    column = out.get(name)
+                    if column is None:
+                        column = out[name] = np.full(n, np.nan)
+                    column[i] = value
+        return out
+
+    @staticmethod
     def parse(data, first_frame):
         fa = xa.parse_block(data, first_frame, all_values=True)
         names = _names(list(fa.values), {k: (c.ndim, c.shape[-1] if c.ndim == 2 else 1)

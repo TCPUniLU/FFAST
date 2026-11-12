@@ -11,7 +11,10 @@ atom count) and ``parse(data, first_frame)`` (whole frames' bytes to the dict
 - progress, and the memory check (ADR 0083);
 - the read-once cache: the joined arrays kept as ``.npy`` files, opened
   memory-mapped the next time the same file is read with the same stride
-  (ADR 0076).
+  (ADR 0076);
+- each frame's energies, when the reader has ``energies(path, starts)``:
+  read only when asked for (sampling by energy, ADR 0096), split across
+  worker processes, and kept next to the frame list.
 
 ``parse`` runs in worker processes: a staticmethod (or a top-level function
 held by the class), and the class importable. A ``NotFast`` it raises passes
@@ -60,6 +63,7 @@ _tables: dict = {}
 def clear_memory_cache():
     with _lock:
         _tables.clear()
+        _energies.clear()
 
 
 def _table_file(reader_class, path):
@@ -110,6 +114,101 @@ def _save_table(reader_class, path, ident, table):
         os.replace(tmp, target)
     except Exception as exc:
         logger.warning("Could not save the frame list of %s: %s", path, exc, extra={"popup": False})
+
+
+# ── each frame's energies, for sampling by energy (ADR 0096) ────────────────
+
+# More workers were slower on a 30 GB file (MeluXina, 2026-11-12): the disk is
+# the limit. 1 worker 77 s, 8 28 s, 32 21 s, 128 26 s, 255 46 s.
+ENERGY_WORKERS = 32
+ENERGY_PARALLEL_MIN_FRAMES = xa.PARALLEL_MIN_FRAMES
+_energies: dict = {}
+
+
+def _energies_file(reader_class, path):
+    return _table_file(reader_class, path).with_name(_table_file(reader_class, path).stem + "-energies.npz")
+
+
+def get_energies(reader_class, path, *, workers=None, use_cache=True):
+    """Each frame's energies, ``{name: one float per frame}``, NaN where a
+    frame has none; None when the reader has no ``energies``. From memory, from
+    disk, else the reader's ``energies`` over the frame list, split across
+    worker processes for a big file. Saved next to the frame list."""
+    if not callable(getattr(reader_class, "energies", None)):
+        return None
+    path = os.path.abspath(path)
+    st = os.stat(path)
+    ident = (st.st_size, st.st_mtime_ns)
+    memo = (reader_class.name, path)
+    if use_cache:
+        with _lock:
+            hit = _energies.get(memo)
+            if hit is not None and hit[0] == ident:
+                return hit[1]
+        found = _load_energies(reader_class, path, ident)
+    else:
+        found = None
+    if found is None:
+        starts = get_table(reader_class, path)[0][:-1]
+        found = _read_energies(reader_class, path, starts, workers)
+        if use_cache:
+            _save_energies(reader_class, path, ident, found)
+    for column in found.values():
+        column.flags.writeable = False      # shared by every caller
+    with _lock:
+        _energies[memo] = (ident, found)
+    return found
+
+
+def _read_energies(reader_class, path, starts, workers):
+    n = len(starts)
+    if workers is None:
+        workers = min(xa.worker_count(), ENERGY_WORKERS)
+    if workers <= 1 or n < max(ENERGY_PARALLEL_MIN_FRAMES, 2):
+        pieces, parts = [starts], [reader_class.energies(path, starts)]
+    else:
+        pieces = [p for p in np.array_split(starts, workers * 4) if len(p)]
+        with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as pool:
+            parts = list(pool.map(reader_class.energies, [path] * len(pieces), pieces))
+    names = []
+    for part in parts:
+        for name in part:
+            if name not in names:
+                names.append(name)
+    out = {}
+    for name in names:
+        columns = []
+        for piece, part in zip(pieces, parts):
+            column = np.asarray(part[name], dtype=np.float64) if name in part else np.full(len(piece), np.nan)
+            if column.shape != (len(piece),):
+                raise ValueError(f"{reader_class.name} energies() gave {column.shape[0] if column.ndim else 0} "
+                                 f"values of '{name}' for {len(piece)} frames: one value per frame")
+            columns.append(column)
+        out[name] = np.concatenate(columns) if columns else np.empty(0)
+    return out
+
+
+def _load_energies(reader_class, path, ident):
+    try:
+        with np.load(_energies_file(reader_class, path)) as z:
+            if (int(z["size"]), int(z["mtime_ns"])) != ident:
+                return None
+            names = json.loads(str(z["names"]))
+            return {name: z[f"e{i}"] for i, name in enumerate(names)}
+    except Exception:
+        return None
+
+
+def _save_energies(reader_class, path, ident, energies):
+    try:
+        target = _energies_file(reader_class, path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        tmp = target.with_suffix(".tmp.npz")
+        np.savez(tmp, names=json.dumps(list(energies)), size=ident[0], mtime_ns=ident[1],
+                 **{f"e{i}": v for i, v in enumerate(energies.values())})
+        os.replace(tmp, target)
+    except Exception as exc:
+        logger.warning("Could not save the energies of %s: %s", path, exc, extra={"popup": False})
 
 
 # ── the read-once cache ─────────────────────────────────────────────────────

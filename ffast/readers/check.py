@@ -161,8 +161,56 @@ def _check_level2(cls, sample_file) -> None:
                 f"'{key}' differs when frames are parsed one at a time and all at once: "
                 f"parse() must give the same values for a frame whatever else is parsed with it")
 
+    if callable(getattr(cls, "energies", None)):
+        _check_energies(cls, sample_file, starts[:-1], whole)
+
     if callable(getattr(cls, "open_writer", None)):
         _check_round_trip(cls, sample_file, whole, contents)
+
+
+def _check_energies(cls, sample_file, starts, whole) -> None:
+    """``energies(path, starts)`` (ADR 0096): one float per frame for each
+    name, the same values ``parse`` gives as ``energy:<name>``, and the same
+    for a frame whatever other frames are asked for with it (FFAST splits the
+    frames across worker processes)."""
+    import pickle
+
+    try:
+        pickle.dumps(cls.energies)
+    except Exception as exc:
+        raise AssertionError(
+            f"energies() runs in worker processes, so it must be picklable (a staticmethod "
+            f"or a top-level function, on a class that can be imported): {exc}") from exc
+    n = len(starts)
+
+    def ask(frames, what):
+        got = _call(what, cls.energies, sample_file, frames)
+        _expect(isinstance(got, dict), f"{what} must return a dict of name -> array")
+        for name, values in got.items():
+            arr = np.asarray(values)
+            _expect(arr.shape == (len(frames),) and _is_float(arr),
+                    f"energies() must give '{name}' as floats, one value per frame "
+                    f"({len(frames)}); got shape {arr.shape} and dtype {arr.dtype}")
+        return got
+
+    every = ask(starts, f"energies() of all {n} frames")
+    half = n // 2
+    first, second = ask(starts[:half], "energies() of the first half"), ask(starts[half:], "energies() of the second half")
+    for name, values in every.items():
+        parts = [np.asarray(p.get(name, np.full(len(s), np.nan)), dtype=float)
+                 for p, s in ((first, starts[:half]), (second, starts[half:]))]
+        _expect(np.array_equal(np.concatenate(parts), np.asarray(values, dtype=float), equal_nan=True),
+                f"energies() gives other values of '{name}' when the frames are asked for in two "
+                f"halves: a frame's energy must not depend on the frames asked with it")
+    for name, values in every.items():
+        key = f"energy:{name}"
+        _expect(key in whole,
+                f"energies() lists '{name}', but parse() returns no '{key}': list only the "
+                f"energies parse() gives")
+        _expect(np.array_equal(np.asarray(values, dtype=float), np.asarray(whole[key], dtype=float),
+                               equal_nan=True),
+                f"energies() and parse() give different values of '{name}': energies() must "
+                f"read the same numbers parse() does")
 
 
 def _check_attributes(cls) -> None:

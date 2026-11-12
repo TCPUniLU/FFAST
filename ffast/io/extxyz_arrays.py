@@ -222,6 +222,124 @@ def _parse_atoms(atom_lines, counts, layout, ncol, first_frame):
     return numbers, positions, columns
 
 
+_PER_CONFIG = None
+
+
+def _per_config_properties():
+    global _PER_CONFIG
+    if _PER_CONFIG is None:
+        from ase.io.extxyz import per_config_properties
+        _PER_CONFIG = frozenset(per_config_properties)
+    return _PER_CONFIG
+
+
+_ENERGY_NAME = re.compile(rb'[A-Za-z_]\w*')
+
+
+def _quoted_values(header):
+    """(start, end) of each quoted value (``="..."`` or ``='...'``) in a header
+    line, by plain searches: a backslash escapes the character after it. A
+    quote that never closes makes no span."""
+    spans, pos = [], 0
+    a, b = header.find(b'="'), header.find(b"='")      # the next of each, searched again only once passed
+    while True:
+        if 0 <= a < pos:
+            a = header.find(b'="', pos)
+        if 0 <= b < pos:
+            b = header.find(b"='", pos)
+        if a < 0 and b < 0:
+            return spans
+        opener = b if a < 0 else a if b < 0 else min(a, b)
+        quote = header[opener + 1:opener + 2]
+        if header.startswith(b"_JSON ", opener + 2):
+            # JSON text holds many \" inside; after a ] or } only the closing quote can follow.
+            ends = [e for e in (header.find(b']' + quote, opener + 2), header.find(b'}' + quote, opener + 2))
+                    if e >= 0]
+            end = min(ends) + 1 if ends else -1
+        else:
+            end = header.find(quote, opener + 2)
+            while end > 0 and header[end - 1] == 92:       # a backslash before it: escaped, or itself escaped
+                slashes, k = 0, end - 1
+                while k > opener and header[k] == 92:
+                    slashes += 1
+                    k -= 1
+                if slashes % 2 == 0:
+                    break
+                end = header.find(quote, end + 1)
+        if end < 0:
+            return spans
+        spans.append((opener + 1, end + 1))
+        pos = end + 1
+
+
+def header_energies(header):
+    """The energies a frame's header line (bytes) gives: ``{name: float}``.
+
+    A name is an energy name as the xyz reader lists them: a key with "energy"
+    in it, but not one of ASE's own per-frame properties other than ``energy``
+    (``free_energy`` is not). A value that is not a number is left out. The atom
+    lines are never looked at. A header ``parse_block`` cannot read gives
+    nothing here; ``parse_block`` raises for it when the frame is parsed.
+
+    The same answer as ``header_energies_full``, without parsing every key: it
+    finds the word "energy", cuts out the ``key=value`` around it, and skips
+    what sits inside a quoted value. A real header can hold 3 KB of quoted
+    text, and the full parse of one took 2 ms."""
+    low = header.lower()
+    at = low.find(b"energy")
+    if at < 0 or b"=" not in header:
+        return {}
+    if b"\t" in header or b"\r" in header:
+        return header_energies_full(header)
+    spans = _quoted_values(header)
+    out = {}
+    while at >= 0:
+        nxt = at + 6
+        key_start = header.rfind(b" ", 0, at) + 1
+        eq = header.find(b"=", at)
+        space = header.find(b" ", at)
+        inside = any(a < key_start < b for a, b in spans)
+        if eq >= 0 and (space < 0 or eq < space) and not inside:
+            key = header[key_start:eq]
+            if _ENERGY_NAME.fullmatch(key) and not (key != b"energy" and key.decode() in _per_config_properties()):
+                if header[eq + 1:eq + 2] in (b'"', b"'"):
+                    quote = header[eq + 1:eq + 2]
+                    close = header.find(quote, eq + 2)
+                    raw = header[eq + 2:close] if close >= 0 else b""
+                    value = None if b"\\" in raw else raw
+                else:
+                    end = header.find(b" ", eq + 1)
+                    raw = header[eq + 1:] if end < 0 else header[eq + 1:end]
+                    value = raw.rstrip() if raw[:1] not in (b"{", b"[") else None
+                if value:
+                    try:
+                        if not value.startswith(b"_JSON "):
+                            out[key.decode()] = float(int(value)) if value.lstrip(b"+-").isdigit() else float(value)
+                    except ValueError:
+                        pass
+            nxt = max(nxt, eq)
+        at = low.find(b"energy", nxt)
+    return out
+
+
+def header_energies_full(header):
+    """``header_energies`` by the full header parse: slow, the reference."""
+    low = header.lower()
+    if b"energy" not in low or b"=" not in header:
+        return {}
+    out = {}
+    for key, raw, junk in _PAIR.findall(header.decode(errors="replace")):
+        if junk or not raw or "energy" not in key.lower():
+            continue
+        if key != "energy" and key in _per_config_properties():
+            continue
+        v = _value(raw)
+        num = _number(v) if not v.startswith("_JSON ") else None
+        if num is not None:
+            out[key] = float(num)
+    return out
+
+
 def header_info(data, first_frame=0):
     """What the headers of the frames in ``data`` list, without parsing their
     atoms: ``(numbers, layouts)``: the header keys any frame gives as a number
