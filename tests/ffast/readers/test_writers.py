@@ -285,3 +285,10 @@ def test_a_level2_readers_writer_is_round_tripped_too(tmp_path):
     check_reader(ToyTextWritten, path)
     with pytest.raises(AssertionError, match="positions.*written and read back"):
         check_reader(ToyTextShifted, path)
+
+
+def test_a_dataset_with_no_structures_is_refused_plainly(tmp_path):
+    empty = type("Empty", (), {"isVariable": False, "getN": lambda self: 0,
+                               "getLattice": lambda self, *a: None})()
+    with pytest.raises(ReaderError, match="This dataset has no structures to write"):
+        write_dataset(NpzReader, str(tmp_path / "e.npz"), empty, [], format="npz")

@@ -118,6 +118,8 @@ def write_dataset(reader_class, path, dataset, items, *, format=None, progress=N
     info = next((f for f in getattr(reader_class, "write_formats", []) if f["format"] == format),
                 {"label": reader_class.name, "can_write": {}})
     check_writable(info, dataset, items)
+    if int(dataset.getN()) == 0:
+        raise ReaderError("This dataset has no structures to write.")
     if (info.get("can_write") or {}).get("forces") == 0:
         items = _without_forces(items)
     total = int(dataset.getN())
