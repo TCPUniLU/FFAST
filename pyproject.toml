@@ -51,11 +51,11 @@ sgdml = ["sgdml"]
 dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "pytest-xdist>=3.0", "playwright>=1.40", "pillow>=10.0"]
 zstd = ["zstandard>=0.21"]
 # Live LAMMPS watching (ADR 0086): DetectAna scores the frames. Not on PyPI
-# yet, and the bundle API (0.3.0) is only on its unpublished lammps-live
-# branch: install that from a checkout (`pip install -e ~/GitHub/DetectAna`).
+# yet; installed from its GitHub tag. FFAST needs 0.3.0 or later (the bundle
+# API) and is tested with 0.4.0.
 # The cluster gets a wheel built from the local checkout by the bootstrap.
 # RDKit finds a reference's bonds over its frames (ffast/live/bonds.py).
-live = ["detectana @ git+https://github.com/AntonCh-G/DetectAna.git", "rdkit>=2023.9"]
+live = ["detectana @ git+https://github.com/AntonCh-G/DetectAna.git@v0.4.0", "rdkit>=2023.9"]
 
 [project.scripts]
 # Two clients, one protocol. `ffast` starts the browser client (ADR 0090).

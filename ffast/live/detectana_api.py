@@ -1,15 +1,15 @@
 """The one place FFAST imports DetectAna (ADR 0086: an optional, lazy dependency).
 
-The reference-bundle API exists from DetectAna 0.3.0 on, which is not
-published yet; an older install is refused with the command that fixes it.
+The reference-bundle API exists from DetectAna 0.3.0 on; an older install is
+refused with the command that fixes it.
 """
 
 from __future__ import annotations
 
 MIN_VERSION = (0, 3, 0)
 INSTALL_HINT = (
-    "install DetectAna with the reference-bundle API (0.3.0 or later, branch "
-    "lammps-live): pip install -e ~/GitHub/DetectAna"
+    "install DetectAna with the reference-bundle API (0.3.0 or later): "
+    "pip install 'ffast[live]'"
 )
 
 
