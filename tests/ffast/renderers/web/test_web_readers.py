@@ -278,7 +278,8 @@ async def test_web_the_type_starts_on_the_reader_that_can_read_the_file(more_toy
                 await expect(page.locator("#fb-type")).to_have_value("toydat-b")
                 # a Type the user chose is kept
                 await page.locator("#fb-type").select_option("toydat-a")
-                await page.wait_for_timeout(300)
+                # the choice probes the file again; its reply (which names toydat-b) has come
+                await page.wait_for_function("() => window.ffastApp._browser._probing === null")
                 await expect(page.locator("#fb-type")).to_have_value("toydat-a")
             finally:
                 await browser.close()
