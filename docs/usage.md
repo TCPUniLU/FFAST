@@ -121,11 +121,57 @@ variable-sized data), chemical formula, and the fingerprint. The fingerprint is
 an MD5 of the contents and is what the cache keys on, so the same file loaded
 twice costs nothing the second time.
 
-![Dataset-loading dialog with the bundled SPICE reference selected, frame stride set to one, and energy and force units named as eV and eV per angstrom.](images/loading-data.png)
+![Dataset-loading dialog with the bundled SPICE reference selected, Frames set to Sample by energy keeping 40 of its 100 frames, a histogram of energy per atom with the kept frames coloured over all frames, and energy and force units named as eV and eV per angstrom.](images/loading-data.png)
 
-*Select the file, choose a stride if needed, name its stored units, then Load.
-Energy and force columns are selected automatically when unambiguous; otherwise
-the dialog asks which columns to use. Naming units does not convert values.*
+*Select the file, choose which frames to load if needed (here a sample by
+energy, below), name its stored units, then Load. Energy and force columns are
+selected automatically when unambiguous; otherwise the dialog asks which
+columns to use. Naming units does not convert values.*
+
+### Loading a sample by energy
+
+A long trajectory holds many similar low-energy frames and few high-energy
+ones, and the rare high-energy frames are where a force field most often fails.
+**Frames ▸ Every Nth** keeps that mix. **Frames ▸ Sample by energy** keeps N
+frames spread over the whole energy range instead, and reads positions and
+forces for those N only, so it also works for a file too big to load whole.
+
+When you choose it, FFAST reads every frame's energy once (seconds to a minute
+for millions of frames; it remembers them for the next time) and shows a
+histogram: all frames in grey, the frames it would keep in colour. The
+histogram follows the fields as you change them:
+
+- **Method.** *Even across energies* (the default) takes about the same number
+  of frames from each energy bin, so the rare high-energy frames are not
+  drowned out. Use it to look at, or test a model on, the whole energy range.
+  *Keep the energy distribution* takes from each bin in proportion to its size,
+  so the sample looks like the file. Use it when the sample should represent
+  the data, for example a training set. Every bin that has frames keeps at
+  least one either way.
+- **Frames to keep** (N). You get exactly N, or every frame with an energy if
+  the file has fewer.
+- **Bins.** Empty means automatic: it follows how wide the energies spread and
+  how many frames you keep. The number used is shown in the field.
+- **Seed.** Inside a bin, frames are picked at random. The same seed on the same
+  file picks the same frames; another seed picks others, with the same number
+  per bin.
+- **Energy.** Which energy to bin by; it starts on the reference energy. When
+  the frames have different atom counts, FFAST bins the energy per atom, since
+  total energies of different-sized structures are not comparable. The
+  histogram's axis says which.
+
+Frames with no energy are left out of the sample, and FFAST says how many.
+
+A sampled dataset remembers which frames it kept. A prediction you load for it
+reads exactly those frames from its own file, which must have as many frames as
+the dataset's file. A saved session stores the list and loads the same frames
+again; it does not sample anew. The dataset's Info says how it was made, for
+example "5,000 of 1,200,000 frames, sampled by energy (even, seed 42)".
+
+Sampling by energy needs a reader that lists each frame's energy: `.xyz` and
+`.extxyz` files have one, and so can any reader you write
+([Writing a reader](writing-a-reader.md)). For other files the option is
+greyed out.
 
 ### Predictions
 
