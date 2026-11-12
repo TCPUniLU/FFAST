@@ -112,6 +112,10 @@ Energies come from `atoms.info['energy']` or `get_potential_energy()`, forces
 from `atoms.arrays['forces']` or `get_forces()`. Datasets whose configurations
 have different atom counts are detected and handled; you do not have to say so.
 
+**Any other format**, through a *reader*: a small Python package that turns the
+file into arrays. Its name appears in the dialog's Type list. See
+[Writing a reader](writing-a-reader.md).
+
 After loading, the rail shows the configuration count, atom count (a range for
 variable-sized data), chemical formula, and the fingerprint. The fingerprint is
 an MD5 of the contents and is what the cache keys on, so the same file loaded
@@ -133,12 +137,13 @@ The normal path is a file of pre-computed energies and forces:
 
 Load one (File > Load Prediction, or `+` in the browser's Predictions list) and
 pick the dataset it belongs to.
-FFAST checks only the shape: one energy per dataset frame, and, for datasets
-whose atom count varies, the same number of atoms in every frame. A wrong count
-fails loudly. FFAST does **not** check that the frames are the same structures,
-that atoms are in the same order, or that units match. A prediction file for a
-different trajectory with the same number of frames loads without complaint, so
-make sure the file really belongs to the dataset.
+Before a prediction attaches, FFAST checks it against its dataset. It **refuses**,
+and says what differs, when the number of frames is different, when a frame has
+a different number of atoms, or when an atom is a different element. It
+**warns** and loads when positions differ by more than 0.001 Å (files often
+round positions) or when the unit labels differ; FFAST never converts units. It
+cannot tell two trajectories apart that have the same elements in the same
+order, so make sure the file really belongs to the dataset.
 
 There is also a zero model, which predicts zero for everything. It sounds silly
 and is genuinely useful: it turns every error plot into a plot of the dataset's
@@ -343,5 +348,6 @@ you find out by staring at an empty plot.
   panels, tabs and metrics in Python.
 - [Scripting and configuration](scripting.md): using FFAST from Python without a
   UI, and the configuration files.
+- [Writing a reader](writing-a-reader.md): load and export another file format.
 - [Legacy Qt desktop client](legacy-qt.md): launch, shortcuts and plot layout for
   `ffast-qt`.

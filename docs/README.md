@@ -10,6 +10,7 @@
 | [Cluster setup](clusters.md) | SSH/SLURM profiles and remote connections |
 | [Custom metrics and tabs](custom-metrics.md) | Dataset fields, formulas, panels and Python metrics; screenshots for [formulas](custom-metrics.md#your-own-metrics-in-the-browser) and [tab editing](custom-metrics.md#panels-and-tabs) |
 | [Scripting and configuration](scripting.md) | Python without a UI; configuration files |
+| [Writing a reader](writing-a-reader.md) | Load and export a file format FFAST does not know: a small Python class, with examples |
 | [Legacy Qt client](legacy-qt.md) | `ffast-qt` launch, shortcuts and plot layout |
 | [Example datasets](../examples/data/README.md) | Sources, permissions, predictions and units |
 | [LAMMPS examples](../examples/lammps/README.md) | Replay assets and tutorial data |
