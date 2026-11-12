@@ -13,18 +13,27 @@ After a full load a user can already zoom the energy plot and tick Sub to make
 a subset. That needs the whole file in memory first, which is exactly what a
 file too big to load cannot give.
 
-An energy is one number per frame. A Level 2 reader (ADR 0095) already walks
-the whole file once in `find_frames`, and in a text format the energy sits on
-the header line that pass reads anyway. So the energies can be known before
+An energy is one number per frame. A Level 2 reader (ADR 0095) already knows
+where every frame starts, and in a text format the energy sits on the frame's
+header line. So the energies can be read from the header lines alone, before
 any positions or forces are read.
 
 ## Decision
 
-1. **Level 2 readers only.** `find_frames` may also return each frame's
-   energies, one array per energy name. FFAST saves them with the frame list
-   in `~/.ffast/frame-index`, so a second load reads no energies at all.
-   Energy sampling is offered only when the reader returned energies.
-   Level 1 readers do not get it.
+1. **Level 2 readers only, in a pass of their own.** A Level 2 reader may
+   supply `energies(path, starts)`: each frame's energies, one array per energy
+   name, read from the frames starting at `starts`. FFAST runs it only when the
+   user asks for energy sampling, splits the frames across worker processes,
+   and saves the energies next to the frame list in `~/.ffast/frame-index`, so
+   a second load reads no energies at all. `find_frames` does not change.
+   Energy sampling is offered only when the reader has `energies`. Level 1
+   readers do not get it.
+
+   Measured 2026-11-12 on MeluXina, 1.77 M frames with 3 KB header lines:
+   reading the energies inside `find_frames` made the scan of every load 2.6×
+   (30 GB) to 11× (4.8 GB) slower. Their own pass on 32 workers took 21 s for
+   30 GB (the scan: 34 s) and 13 s for 4.8 GB (the scan: 6 s), paid only by
+   users who sample, once per file.
 
 2. **Two ways to share frames among bins**, chosen in the load dialog:
    - **Even across energies** (the default): about the same number from each
@@ -90,9 +99,11 @@ any positions or forces are read.
 
 - A user can load 5,000 frames spread over the whole energy range from a file
   of millions, reading positions and forces for those 5,000 only.
-- `find_frames` must parse header energies. For xyz this adds a little work
-  to a pass that already reads every header line.
-- The frame-index cache grows by one float per frame per energy name.
+- The first energy sample of a file costs one extra pass over its header
+  lines (seconds to tens of seconds for millions of frames); loads that do not
+  sample never pay it.
+- The frame-index folder holds one float per frame per energy name for each
+  file that was sampled.
 - A dataset's kept frames are no longer always "every n-th", so every place
   that maps a dataset frame to a file frame must use the stored list.
 - NumPy does not promise the same random numbers across versions. Re-sampling
