@@ -23,7 +23,6 @@ import time
 import numpy as np
 from ase.calculators.calculator import PropertyNotImplementedError
 
-from ffast.core.data_types import AtomsList
 from ffast.core.flat_frames import FlatFrames
 from ffast.io.extxyz_arrays import NotEnoughMemory
 from ffast.protocol import control
@@ -319,9 +318,9 @@ class LoadingCoordinator:
     @staticmethod
     def _predictionReader(path, name, on_error):
         """The reader class that reads a prediction file (ADR 0095): the one
-        named, else the first the file's ending and ``can_read`` pick, else
-        None for the ASE and ``.npz`` paths. False when the named reader is
-        not installed (already reported)."""
+        named, else the first the file's ending and ``can_read`` pick (ASE's
+        catch-all reader takes what no other does), else None. False when the
+        named reader is not installed (already reported)."""
         from ffast.readers import registry
         if name:
             found = registry.get(name)
@@ -508,21 +507,6 @@ class LoadingCoordinator:
             logger.error(str(e))
             return False
         return True
-
-    @staticmethod
-    def _fileFrameCount(path, kept, slice_num):
-        """How many frames ``path`` has, before the stride that kept ``kept``
-        of them; None when it cannot be told."""
-        if not slice_num or slice_num <= 1:
-            return kept
-        try:
-            from ffast.io import frame_index
-            if frame_index.is_indexable(path):
-                return len(frame_index.get_frame_index(path))
-            return AtomsList.calc_dataset_length_static(path)
-        except Exception:
-            logger.debug("Could not count the frames of %s", path, exc_info=True)
-            return None
 
     def _ingestPrediction(self, dataset, E, F, *, path, name, fingerprint,
                           source=None, facts=None, popup=True, **catalogExtra):
