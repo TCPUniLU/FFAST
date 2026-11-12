@@ -8,6 +8,11 @@ scores, alarms and attribution, with optional stopping on alarm. These scores
 measure structural departure; use reference/prediction comparisons to assess
 energy and force accuracy.
 
+> **Experimental.** Live LAMMPS monitoring is new and has been tried on few
+> systems and clusters. Commands, file formats and defaults may change. Feedback
+> is very welcome: please [open an issue](https://github.com/TCPUniLU/FFAST/issues)
+> with what you ran, what you expected and what happened.
+
 [Setup](#installation) · [Tutorial](#try-the-replay-tutorial) ·
 [Reference](#make-a-reference) · [SLURM jobs](#submit-a-monitored-slurm-job) ·
 [Manual setup](#manual-setup) · [Atom identity](#atom-identity) ·

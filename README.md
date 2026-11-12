@@ -9,7 +9,7 @@ fields, inspect the structures where they fail, and monitor molecular dynamics.
 
 Load reference data and predictions to compare energy and force errors. Click
 an outlier to inspect its geometry and force vectors in 3D. For live LAMMPS
-runs, FFAST uses DetectAna to flag structures that depart from a fitted reference
+runs (experimental), FFAST uses DetectAna to flag structures that depart from a fitted reference
 and can stop the simulation on an alarm.
 
 The interface runs in your browser. A Python server loads data and computes
@@ -27,7 +27,7 @@ perturbed-reference control.*
 | [Installation](docs/installation.md) | uv, pip, optional dependencies and launch options |
 | [Using FFAST](docs/usage.md) | Data, plots, 3D views, subsets and sessions |
 | [Custom metrics and tabs](docs/custom-metrics.md) | Formulas, dataset fields, panels and Python metrics |
-| [LAMMPS](docs/lammps.md) | Reference fitting, monitored jobs, alarms and stopping |
+| [LAMMPS](docs/lammps.md) | Experimental: reference fitting, monitored jobs, alarms and stopping |
 | [Cluster setup](docs/clusters.md) | SSH/SLURM profiles, remote servers and reconnecting |
 | [Development](CONTRIBUTING.md) | Setup, tests and contributing |
 
@@ -89,7 +89,12 @@ and units. `examples/MACE/` and `examples/Nequip/` contain saved sessions.
   calculation. The [headless example](examples/headless/headless.py) shows a
   Python workflow that saves a session for later viewing.
 
-## Live LAMMPS runs
+## Live LAMMPS runs (experimental)
+
+Live monitoring is an experimental feature: it has been tried on few systems
+and clusters, and its commands and files may change. We would appreciate your
+feedback: please [open an issue](https://github.com/TCPUniLU/FFAST/issues)
+with what you ran and what happened.
 
 After [installing the live dependencies](docs/lammps.md#installation), try
 **LAMMPS → Tour: Watch a LAMMPS run**. It replays bundled geometry through the
