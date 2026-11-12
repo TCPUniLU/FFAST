@@ -2163,8 +2163,12 @@ export class FFastApp {
     // A model new to this window ends a pending prediction load, wherever it
     // applies; only a duplicate announces nothing (RemoteBrowser.onTaskDone).
     // A prediction or a model this window asked for ends its "Loading…".
+    // A known prediction announced again with more datasets was loaded for
+    // another dataset: that ends the load too, it is no duplicate.
+    const grew = !!before && (meta?.dataset_fingerprints || [])
+      .some((d) => !(before.dataset_fingerprints || []).includes(d));
     const asked = this._browser.pendingKind();
-    const loaded = !this._models.has(fp)
+    const loaded = (!this._models.has(fp) || grew)
       && (asked === 'prediction' || asked === 'model') && this._browser.settled(asked);
     this._models.set(fp, meta || {});
     if (loaded && asked === 'prediction') this._tourSignal('prediction-loaded', { fp });

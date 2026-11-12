@@ -591,7 +591,8 @@ class LoadingCoordinator:
         # The same prediction loaded again: its fingerprint covers only energies
         # and forces, so its fields may differ, and what was computed from the
         # old ones is stale (as for a dataset, DatasetRegistry.add).
-        if fingerprint in self._env.models:
+        known = fingerprint in self._env.models
+        if known:
             self._env.eventPush("OBJECT_REPLACED", fingerprint)
 
         # npz carries no fields: clear any an earlier load stored here.
@@ -602,6 +603,12 @@ class LoadingCoordinator:
                 fingerprint, dataset.fingerprint, None)
 
         self.registerGhostModel(fingerprint, path=path, name=name, **catalogExtra)
+        # A known prediction loaded for another dataset gets no MODEL_LOADED
+        # (it is already loaded), yet it now has numbers for one more dataset:
+        # every window must hear the new list, or it greys the prediction out
+        # on that dataset.
+        if known:
+            self._env.eventPush("MODEL_DATASETS_CHANGED", fingerprint)
         return True
 
     #############

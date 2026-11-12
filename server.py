@@ -822,6 +822,9 @@ async def _main(
             logger.warning("REMOTE_MODEL_META error: %s", exc)
 
     env.eventSubscribe("MODEL_LOADED", _on_model_loaded_meta)
+    # A known prediction loaded again, maybe for another dataset: announce it
+    # again with the datasets it now has numbers for.
+    env.eventSubscribe("MODEL_DATASETS_CHANGED", _on_model_loaded_meta)
 
     # A rename (RENAME_OBJECT) announces the object again with its new name.
     def _on_name_changed(fingerprint):

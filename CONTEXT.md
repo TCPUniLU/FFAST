@@ -152,7 +152,8 @@ from a file is a server concern the client never sees.
 
 A prediction file's numbers belong to the dataset they were loaded for and
 cannot be moved to another; to compare a second dataset, load the file again
-for it. Deleting a dataset deletes every prediction read from a file that had
+for it. When both datasets keep the same frames, the numbers are the same, so it
+is the same prediction, now with numbers for both datasets. Deleting a dataset deletes every prediction read from a file that had
 numbers only for it (and its subsets). A live model stays: it can predict any
 dataset.
 

@@ -3321,6 +3321,41 @@ async def test_web_a_prediction_file_goes_with_its_last_dataset(ffast_web_server
             await browser.close()
 
 
+async def test_web_a_prediction_loaded_onto_a_second_dataset_applies_to_it(ffast_web_server):
+    """The same prediction file loaded for a second dataset with the same
+    frames has the same numbers, so it is the same prediction. The server
+    announces it again with both datasets; the window lists it for the second
+    one, selects it there, and does not call the load a duplicate."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    other_fp = await _load_another_dataset(ws_port, dataset_fp)
+    row = f"#model-list .obj-row[data-fp='{model_fp}']"
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_loupe(page, ws_port, web_port, other_fp)
+            await page.wait_for_function(f"() => window.ffastApp._currentModelFp === null")
+            # As the file dialog's Load does: a pending prediction load, then the request.
+            await page.evaluate("""([path, fp]) => {
+                const app = window.ffastApp;
+                app._browser._pending = { kind: 'prediction', name: 'prediction.xyz', path };
+                app._conn.send('LOAD_PREDICTION',
+                  { selected_energy_key: 'MACE_energy', selected_force_key: 'MACE_forces' }, [path, fp]);
+            }""", [str(PREDICTION_PATH), other_fp])
+
+            await page.wait_for_function(
+                f"() => window.ffastApp._currentModelFp === '{model_fp}'", timeout=30000)
+            fps = await page.evaluate(
+                f"() => window.ffastApp._models.get('{model_fp}').dataset_fingerprints")
+            assert sorted(fps) == sorted([dataset_fp, other_fp])
+            await expect(page.locator(row)).to_have_class(re.compile(r"\bselected\b"))
+            await expect(page.locator("#status")).not_to_contain_text("already loaded")
+            assert await page.evaluate("() => window.ffastApp._browser.pendingKind()") is None
+        finally:
+            await browser.close()
+
+
 async def test_web_a_deleted_dataset_or_prediction_leaves_an_independent_panel(tmp_path):
     """An independent panel on a deleted dataset moves as the main view does;
     a deleted prediction leaves the rail, and the views that showed it keep
