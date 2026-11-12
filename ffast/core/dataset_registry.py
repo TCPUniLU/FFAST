@@ -68,6 +68,18 @@ class DatasetRegistry:
             self.slice_numbers[dataset.fingerprint] = slice_num
         self._events.eventPush("DATASET_LOADED", dataset.fingerprint)
 
+    def cutFrom(self, dataset):
+        """Fingerprints of every dataset cut from ``dataset``, at any depth."""
+        out = []
+        for fp, ds in self._datasets.items():
+            parent = getattr(ds, "parent", None)
+            while parent is not None:
+                if parent is dataset:
+                    out.append(fp)
+                    break
+                parent = getattr(parent, "parent", None)
+        return out
+
     def delete(self, key):
         """Remove a dataset and invalidate every cached artifact derived from it.
 

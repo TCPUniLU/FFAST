@@ -133,6 +133,12 @@ class InputSource(ABC):
         stops at its next checkpoint (ADR 0079)."""
         return False
 
+    def uses(self) -> frozenset:
+        """The ``(dataset_fp, model_fp)`` this source reads, for the result
+        cache to know what a delete may take with it. Empty when it reads
+        no loaded object."""
+        return frozenset()
+
 
 class FlatInputSource(InputSource):
     """Raw inputs read from a flat dict keyed by each metric's local input name.
@@ -266,6 +272,7 @@ def run_plan(
     run_fn: RunFn,
     stopped: Callable[[], bool] = lambda: False,
     key_out: dict | None = None,
+    uses: frozenset = frozenset(),
 ) -> dict[str, MetricResult | MetricFailure]:
     """Execute a plan's steps in order → ``{metric_id: MetricResult | MetricFailure}``.
 
@@ -282,6 +289,10 @@ def run_plan(
     When ``key_out`` is given and the plan's first root produced a result, its
     cache key goes in ``key_out["key"]`` so the result can be read back later
     (ADR 0085).
+
+    ``uses`` (the source's ``(dataset_fp, model_fp)``) is recorded against
+    every step's key, so deleting that dataset or prediction can delete the
+    results only it used.
     """
     results: dict[str, MetricResult | MetricFailure] = {}
     # Each step's cache key: a step reading another's output is keyed by that
@@ -343,6 +354,7 @@ def run_plan(
         cache_key = keys[metric_id] = cache.make_key(
             metric_id, fn, step.compute_params, kwargs, known)
         key_ms, t = _ms(t), time.monotonic()
+        cache.use(cache_key, uses)
         cached = cache.get(cache_key)
         read_ms = _ms(t)
         if cached is not None:

@@ -3494,6 +3494,35 @@ async def test_web_the_rail_menu_deletes_a_dataset_or_prediction(ffast_web_serve
             await browser.close()
 
 
+async def test_web_deleting_a_prediction_asks_whether_its_metric_results_go_too(ffast_web_server):
+    """The delete dialog counts the metric results only this prediction used
+    and offers to delete them, ticked; deleting so leaves none stored."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    [reply] = await _as_another_window(ws_port, (
+        "REQUEST_METRIC", (), {"metric_id": "ffast.energy_difference", "request_id": "t1",
+                               "dataset_fp": dataset_fp, "model_fp": model_fp,
+                               "wait": "METRIC_RESULT"}))
+    assert reply["kwargs"]["ok"], reply["kwargs"]
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            dialog = await _delete_from_rail(page, "model", model_fp)
+            check = dialog.locator(".warning-modal-check")
+            await expect(check).to_contain_text("Also delete its")
+            await expect(check).to_contain_text("in memory")
+            await expect(check.locator("input")).to_be_checked()
+            await dialog.locator("button", has_text="Delete").click()
+            await expect(page.locator("#model-list .obj-empty")).to_be_visible(timeout=15000)
+        finally:
+            await browser.close()
+    [left] = await _as_another_window(ws_port, (
+        "STORED_RESULTS", (), {"fingerprint": model_fp, "wait": "STORED_RESULTS_INFO"}))
+    assert left["kwargs"]["count"] == 0
+
+
 async def test_web_the_rail_menu_freezes_a_live_subset(ffast_web_server):
     """A live SUB subset's ⋯ menu offers Freeze, not Delete (unticking SUB
     is how it goes, as on the desktop). Freezing adds a frozen subset of the

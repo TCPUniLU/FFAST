@@ -356,15 +356,35 @@ class Environment(EventClass):
 
         return None
 
-    def deleteObject(self, key):
-        """Route generic delete requests to the appropriate registry."""
+    def deletedWith(self, key):
+        """``key`` and every loaded dataset cut from it, at any depth: what
+        deleting ``key`` deletes (a dataset's subsets go with it)."""
+        dataset = self.datasets.get(key)
+        return [key] if dataset is None else [key, *self.datasets.cutFrom(dataset)]
+
+    def storedMetricResults(self, key):
+        """The metric results deleting ``key`` with ``delete_results`` would
+        delete: count, bytes in memory, bytes on disk."""
+        return self.data.storedMetricResults(self.deletedWith(key))
+
+    def deleteObject(self, key, delete_results=False):
+        """Route generic delete requests to the appropriate registry.
+
+        ``delete_results``: also delete, from memory and disk, the computed
+        metric results only this object (and its subsets) used. Otherwise they
+        stay in the metric cache, and a reload of the same data reuses them."""
         with self.mutation_lock:
+            gone = self.deletedWith(key) if delete_results else ()
             if self.datasets.exists(key):
                 self.datasets.delete(key)
             elif self.models.exists(key):
                 self.models.delete(key)
             else:
                 return
+            if delete_results:
+                freed = self.data.forgetMetricResults(gone)
+                logger.info("Deleted %d metric result(s) of %s: %d bytes in memory, %d on disk",
+                            freed["count"], key, freed["memory_bytes"], freed["disk_bytes"])
 
         session, loop = self.remote.active_session()
         if session is not None:

@@ -482,6 +482,7 @@ class WorkerProcessExecutor(MetricExecutor):
             ),
             stopped=source.stopped,
             key_out=key_out,
+            uses=getattr(source, "uses", frozenset)(),
         )
         return results[id]
 

@@ -168,6 +168,10 @@ class MetricCache:
         self._warned: set[tuple[str, str]] = set()
         # key -> the result another thread is computing now
         self._computing: dict[CacheKey, Future] = {}
+        # key -> the (dataset_fp, model_fp) pairs whose metrics read this result.
+        # Keys hash input content, so this is how a delete finds what belongs to
+        # a dataset or prediction (forget_objects).
+        self._uses: dict[CacheKey, set[tuple]] = {}
 
     def claim(self, key: CacheKey) -> Future | None:
         """``None`` when the caller is now the one computing ``key`` and must
@@ -259,8 +263,69 @@ class MetricCache:
             files = [path for _, path, _ in self._disk.values()]
             self._disk.clear()
             self._disk_total = 0
+            self._uses.clear()
         for path in files:
             path.unlink(missing_ok=True)
+
+    # ── which dataset and prediction a result belongs to ─────────────────
+
+    def use(self, key: CacheKey, uses) -> None:
+        """Record that a metric of each ``(dataset_fp, model_fp)`` in ``uses``
+        read ``key`` (``model_fp`` None when no prediction was involved)."""
+        uses = {u for u in uses if u and u[0]}
+        if not uses:
+            return
+        with self._lock:
+            self._uses.setdefault(key, set()).update(uses)
+            if len(self._uses) > 2 * (len(self._store) + len(self._disk)) + 256:
+                # Entries pushed out of the cache: forget whom they belonged to.
+                for k in [k for k in self._uses if k not in self._store and k not in self._disk]:
+                    del self._uses[k]
+
+    def _only_for(self, fingerprints) -> list[CacheKey]:
+        """Stored keys every use of which names one of ``fingerprints`` (lock held)."""
+        gone = set(fingerprints)
+        return [k for k, uses in self._uses.items()
+                if (k in self._store or k in self._disk)
+                and all(gone.intersection(u) for u in uses)]
+
+    def stored_for(self, fingerprints) -> dict[str, int]:
+        """What :meth:`forget_objects` would delete for ``fingerprints``: how
+        many results, and the bytes they take in memory and on disk."""
+        with self._lock:
+            keys = self._only_for(fingerprints)
+            memory = sum(self._store[k][1] for k in keys if k in self._store)
+            disk = sum(self._disk[k][2] for k in keys if k in self._disk)
+        return {"count": len(keys), "memory_bytes": memory, "disk_bytes": disk}
+
+    def forget_objects(self, fingerprints) -> dict[str, int]:
+        """Delete, from memory and from disk, the results that only these
+        datasets and predictions used. A result another loaded object also
+        used stays, and only stops naming these. Returns what was deleted,
+        as :meth:`stored_for` counts it."""
+        gone = set(fingerprints)
+        files: list[Path] = []
+        memory = disk = 0
+        with self._lock:
+            keys = self._only_for(gone)
+            for key in keys:
+                entry = self._store.pop(key, None)
+                if entry is not None:
+                    self._total -= entry[1]
+                    memory += entry[1]
+                spilled = self._disk.pop(key, None)
+                if spilled is not None:
+                    self._disk_total -= spilled[2]
+                    disk += spilled[2]
+                    files.append(spilled[1])
+                del self._uses[key]
+            for key, uses in list(self._uses.items()):
+                uses.difference_update({u for u in uses if gone.intersection(u)})
+                if not uses:
+                    del self._uses[key]
+        for path in files:
+            path.unlink(missing_ok=True)
+        return {"count": len(keys), "memory_bytes": memory, "disk_bytes": disk}
 
     # ── disk ──────────────────────────────────────────────────────────────
 

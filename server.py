@@ -11,7 +11,8 @@ Client → server events:
                           kwargs={selected_energy_key, selected_force_key,
                                   prediction_keys, slice_num}
     LOAD_MODEL            args=[path, modelType]
-    DELETE_OBJECT         args=[fingerprint]
+    DELETE_OBJECT         args=[fingerprint]  kwargs={delete_results}
+    STORED_RESULTS        kwargs={fingerprint} → STORED_RESULTS_INFO
     PROBE_DATASET_LENGTH  args=[path]  → DATASET_LENGTH_RESPONSE (repeated while counting, last has done=True)
     CANCEL_PROBE_DATASET_LENGTH  (no args) — stop the running count
     LIST_DIR              args=[path?] → DIR_LISTING   (server-side filesystem browse)

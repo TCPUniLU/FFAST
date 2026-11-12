@@ -171,11 +171,13 @@ class ServerSession:
             ForgetLiveRunRequest, MakeReferenceRequest, RunWithFfastRequest, WriteRunWithFfastRequest,
             SubmitJobRequest, WatchJobRequest, ScanRunFolderRequest,
             ScoreDialogInfoRequest, ScoreDatasetRequest, ContinueScoringRequest,
+            StoredResultsRequest,
         )
         self._handlers: dict[str, _Route] = {
             control.LOAD_DATASET:               _Route(self._on_load_dataset, ["path", "dataset_type"], LoadDatasetRequest),
             control.LOAD_MODEL:                 _Route(self._on_load_model, ["path", "model_type"], LoadModelRequest),
-            control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint"], DeleteObjectRequest),
+            control.DELETE_OBJECT:              _Route(self._on_delete_object, ["fingerprint", "?delete_results"], DeleteObjectRequest),
+            control.STORED_RESULTS:             _Route(self._on_stored_results, ["fingerprint"], StoredResultsRequest),
             control.FREEZE_SUBSET:              _Route(self._on_freeze_subset, ["fingerprint"], FreezeSubsetRequest),
             control.RENAME_OBJECT:              _Route(self._on_rename_object, ["fingerprint", "name"], RenameObjectRequest),
             control.CANCEL_TASK:                _Route(self._on_cancel_task, ["task_id"], CancelTaskRequest),
@@ -539,8 +541,16 @@ class ServerSession:
     async def _on_load_model(self, path, model_type, **kwargs) -> None:
         self.env.taskLoadModel(path, model_type, on_error=self._load_failed("model", path))
 
-    async def _on_delete_object(self, fingerprint, **kwargs) -> None:
-        self.env.deleteObject(fingerprint)
+    async def _on_delete_object(self, fingerprint, delete_results=False, **kwargs) -> None:
+        self.env.deleteObject(fingerprint, delete_results=bool(delete_results))
+
+    async def _on_stored_results(self, fingerprint, **kwargs) -> None:
+        """For the delete dialog: the metric results deleting this object could
+        delete. To the asking window only."""
+        from ffast.protocol.rpc import pack
+        out = {"fingerprint": fingerprint,
+               **self.env.storedMetricResults(fingerprint)}
+        await self._emit(pack(control.STORED_RESULTS_INFO, (), out))
 
     async def _on_freeze_subset(self, fingerprint, **kwargs) -> None:
         """Freeze a live subset's frames as a frozen subset, as the desktop's

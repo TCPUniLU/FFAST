@@ -288,6 +288,19 @@ class DataService:
                 self._metricExecutor = InProcessExecutor(default_registry)
         return self._metricExecutor
 
+    def storedMetricResults(self, fingerprints):
+        """Metric results only these datasets/predictions used: how many, and
+        their bytes in memory and on disk. No executor yet: nothing stored."""
+        if self._metricExecutor is None:
+            return {"count": 0, "memory_bytes": 0, "disk_bytes": 0}
+        return self._metricExecutor.stored_for(fingerprints)
+
+    def forgetMetricResults(self, fingerprints):
+        """Delete those results from memory and disk; returns what went."""
+        if self._metricExecutor is None:
+            return {"count": 0, "memory_bytes": 0, "disk_bytes": 0}
+        return self._metricExecutor.forget_objects(fingerprints)
+
     def registerMetricRequest(self, metric_id, params, model, dataset):
         """Record a plot's metric dependency and return its cache key (ADR 0019).
 

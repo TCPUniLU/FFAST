@@ -277,7 +277,18 @@ class LoadModelRequest(BaseModel):
 
 
 class DeleteObjectRequest(BaseModel):
-    """Typed payload for ``DELETE_OBJECT``."""
+    """Typed payload for ``DELETE_OBJECT``. ``delete_results``: also delete
+    the computed metric results only this object used, from memory and disk."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    fingerprint: str
+    delete_results: bool | None = None
+
+
+class StoredResultsRequest(BaseModel):
+    """Typed payload for ``STORED_RESULTS``: what deleting this dataset or
+    prediction could delete of its computed metric results."""
 
     model_config = ConfigDict(extra="forbid")
 

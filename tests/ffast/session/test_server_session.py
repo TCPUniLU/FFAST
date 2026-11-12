@@ -89,7 +89,7 @@ class _FakeEnv:
         self.create_subset_calls = []
         self.declare_subset_calls = []
 
-    def deleteObject(self, fp):
+    def deleteObject(self, fp, delete_results=False):
         self.deleted.append(fp)
 
     def createAtomFilteredDataset(self, dataset, idxs):

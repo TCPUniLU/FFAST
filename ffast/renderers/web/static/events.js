@@ -93,6 +93,8 @@ export const OUT = Object.freeze({
   SCORE_DIALOG_INFO: 'SCORE_DIALOG_INFO',
   SCORE_DATASET: 'SCORE_DATASET',
   CONTINUE_SCORING: 'CONTINUE_SCORING',
+  // What deleting a dataset or prediction could delete of its metric results
+  STORED_RESULTS: 'STORED_RESULTS',
 });
 
 /** Server → client notifications and one-shot announcements. */
@@ -125,6 +127,8 @@ export const IN = Object.freeze({
   // The answers to SCORE_DIALOG_INFO and to SCORE_DATASET / CONTINUE_SCORING (ADR 0093)
   SCORE_DIALOG_INFO_RESULT: 'SCORE_DIALOG_INFO_RESULT',
   SCORE_STARTED: 'SCORE_STARTED',
+  // The answer to STORED_RESULTS, for the delete dialog
+  STORED_RESULTS_INFO: 'STORED_RESULTS_INFO',
   // The answer to MAKE_REFERENCE (ADR 0086)
   REFERENCE_MADE: 'REFERENCE_MADE',
   // "Run with FFAST" answers and the followed job's state (ADR 0086)

@@ -47,13 +47,15 @@ export function trapFocus(modal) {
 /**
  * Ask a question; resolves with the label of the chosen button, or null when
  * the dialog is dismissed (Escape).
- * @param {{title: string, message: string, buttons: string[], danger?: string}} o
+ * @param {{title: string, message: string, buttons: string[], danger?: string,
+ *   check?: {label: string, checked?: boolean}}} o
  *   the last button is the default, focused one, unless `danger` names a
  *   button (one that deletes something): that one is outlined in red and focus
- *   goes to the first button that is not it.
- * @returns {Promise<string|null>}
+ *   goes to the first button that is not it. `check` adds one checkbox under
+ *   the message; the dialog then resolves with `{answer, checked}`.
+ * @returns {Promise<string|null|{answer: string|null, checked: boolean}>}
  */
-export function askDialog({ title, message, buttons, danger = '' }) {
+export function askDialog({ title, message, buttons, danger = '', check = null }) {
   return new Promise((resolve) => {
     const modal = document.createElement('div');
     modal.className = 'warning-modal ask-dialog';
@@ -70,8 +72,21 @@ export function askDialog({ title, message, buttons, danger = '' }) {
     text.textContent = message;
     const foot = document.createElement('div');
     foot.className = 'warning-modal-footer';
+    let box = null;
+    let checkRow = null;
+    if (check) {
+      checkRow = document.createElement('label');
+      checkRow.className = 'warning-modal-check';
+      box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = !!check.checked;
+      checkRow.append(box, ` ${check.label}`);
+    }
     let untrap = () => {};
-    const done = (answer) => { modal.remove(); untrap(); resolve(answer); };
+    const done = (answer) => {
+      modal.remove(); untrap();
+      resolve(check ? { answer, checked: box.checked } : answer);
+    };
     for (const label of buttons) {
       const btn = document.createElement('button');
       btn.textContent = label;
@@ -81,7 +96,7 @@ export function askDialog({ title, message, buttons, danger = '' }) {
     }
     modal.addEventListener('keydown', (e) => { if (e.key === 'Escape') done(null); });
     untrap = trapFocus(modal);
-    panel.append(head, text, foot);
+    panel.append(...[head, text, checkRow, foot].filter(Boolean));
     modal.appendChild(panel);
     document.body.appendChild(modal);
     (danger ? [...foot.children].find((b) => !b.classList.contains('danger')) : foot.lastElementChild)?.focus();

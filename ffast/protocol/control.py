@@ -102,6 +102,9 @@ FORGET_LIVE_RUN = "FORGET_LIVE_RUN"
 # scoring itself (starts a task; the scored item appears at once), and continuing an
 # incomplete one.
 SCORE_DIALOG_INFO = "SCORE_DIALOG_INFO"
+# What the delete dialog of a dataset or prediction asks: the metric results
+# only it used, in memory and on disk (answered with STORED_RESULTS_INFO).
+STORED_RESULTS = "STORED_RESULTS"
 SCORE_DATASET = "SCORE_DATASET"
 CONTINUE_SCORING = "CONTINUE_SCORING"
 # Fit a reference bundle and its LAMMPS include from two loaded datasets (ADR 0086).
@@ -134,6 +137,7 @@ CLIENT_TO_SERVER = frozenset(
         PREPARE_PRACTICE_INPUT, START_PRACTICE_RUN, HEAT_PRACTICE_RUN, DELETE_PRACTICE_RUN, LIVE_STOP, LIVE_SET_STOP_ON_ALARM, LIVE_ATTRIBUTION, LIST_LIVE_RUNS, FORGET_LIVE_RUN,
         MAKE_REFERENCE, PREPARE_RUN_WITH_FFAST, WRITE_RUN_WITH_FFAST, SUBMIT_JOB, WATCH_JOB,
         SCAN_RUN_FOLDER, SCORE_DIALOG_INFO, SCORE_DATASET, CONTINUE_SCORING,
+        STORED_RESULTS,
     }
 )
 
@@ -198,6 +202,9 @@ PRACTICE_RUN_RESULT = "PRACTICE_RUN_RESULT"
 # The answers to SCORE_DIALOG_INFO (what the dialog shows) and to SCORE_DATASET and
 # CONTINUE_SCORING (the item, or ``error``), to the asking window only.
 SCORE_DIALOG_INFO_RESULT = "SCORE_DIALOG_INFO_RESULT"
+# The answer to STORED_RESULTS, to the asking window: fingerprint, count,
+# memory_bytes, disk_bytes.
+STORED_RESULTS_INFO = "STORED_RESULTS_INFO"
 SCORE_STARTED = "SCORE_STARTED"
 # The answer to MAKE_REFERENCE, to the asking window: paths written, or ``error``.
 REFERENCE_MADE = "REFERENCE_MADE"

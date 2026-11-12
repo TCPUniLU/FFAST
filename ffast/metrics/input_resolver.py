@@ -169,6 +169,12 @@ class _ResolverSource(InputSource):
                     or getattr(self._model, "deleted", False)
                     or (self._asked_to_stop is not None and self._asked_to_stop()))
 
+    def uses(self):
+        dataset_fp = getattr(self._dataset, "fingerprint", None)
+        if not dataset_fp:
+            return frozenset()
+        return frozenset({(dataset_fp, getattr(self._model, "fingerprint", None))})
+
     def identity(self, ref):
         """``ref`` of this loaded dataset (and prediction, for a prediction
         input): their arrays do not change once loaded. A subset that follows

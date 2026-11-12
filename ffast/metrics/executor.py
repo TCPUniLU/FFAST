@@ -28,6 +28,14 @@ class MetricExecutor(ABC):
         cache no longer holds it."""
         return self._cache.get(key)
 
+    def stored_for(self, fingerprints) -> dict[str, int]:
+        """Results only these datasets/predictions used (MetricCache.stored_for)."""
+        return self._cache.stored_for(fingerprints)
+
+    def forget_objects(self, fingerprints) -> dict[str, int]:
+        """Delete those results, in memory and on disk (MetricCache.forget_objects)."""
+        return self._cache.forget_objects(fingerprints)
+
     def start(self) -> None:
         """Get ready for the first metric now, so no request waits for it.
         Nothing to do when metrics run in this process."""
@@ -71,6 +79,7 @@ class InProcessExecutor(MetricExecutor):
             ),
             stopped=source.stopped if source is not None else (lambda: False),
             key_out=key_out,
+            uses=getattr(source, "uses", frozenset)(),
         )
 
     def call(self, fn: Any, kwargs: dict[str, Any], label: str = "formula") -> Any:

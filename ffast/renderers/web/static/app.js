@@ -118,6 +118,18 @@ function sameItems(a, b) {
   return x.length === y.length && x.every((v, i) => v === y[i]);
 }
 
+
+/** The delete dialog's checkbox: how many metric results go, and where they are. */
+export function storedResultsLabel({ count, memory_bytes: memory = 0, disk_bytes: disk = 0 }) {
+  const size = (n) => (n >= 1 << 30 ? `${(n / (1 << 30)).toFixed(1)} GB`
+    : n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB`
+      : `${Math.max(1, Math.round(n / 1024))} KB`);
+  const where = [disk ? `${size(disk)} on disk` : '', memory ? `${size(memory)} in memory` : '']
+    .filter(Boolean).join(', ');
+  return `Also delete its ${count} computed metric result${count === 1 ? '' : 's'}`
+    + (where ? ` (${where})` : '');
+}
+
 export class FFastApp {
   constructor() {
     applyStaticIcons();
@@ -226,6 +238,7 @@ export class FFastApp {
     this._colours = new ObjectColours(() => plotTheme().series);
     /** Fingerprints this window asked the server to delete. */
     this._deleting = new Set();
+    this._storedAsks = new Map();    // fp → resolve of the delete dialog's STORED_RESULTS
     this._scoreInfo = new Map();     // dataset fp → its last SCORE_DIALOG_INFO_RESULT (ADR 0093)
     this._scoreFor = null;           // the dataset whose Score dialog was asked for
     this._scoreWanted = null;        // the scored item whose tab opens when it has one
@@ -1922,6 +1935,7 @@ export class FFastApp {
       conn.on(IN.LIVE_RUN_UPDATE, (kw) => this._onLiveRunUpdate(kw));
       conn.on(IN.SCORE_DIALOG_INFO_RESULT, (kw) => this._onScoreDialogInfo(kw));
       conn.on(IN.SCORE_STARTED, (kw) => this._onScoreStarted(kw));
+      conn.on(IN.STORED_RESULTS_INFO, (kw) => this._storedAsks.get(kw.fingerprint)?.(kw));
       conn.on(IN.LIVE_ATTRIBUTION_RESULT, (kw) => this._live().onResult(kw));
       conn.on(IN.LIVE_RUNS, (kw) => this._live().onRuns(kw));
       conn.on(IN.REFERENCE_MADE, (kw) => this._live().onReferenceMade(kw));
@@ -2324,15 +2338,32 @@ export class FFastApp {
       const on = (meta.dataset_fingerprints || []).filter((d) => this._datasets.has(d)).length;
       also = on ? ` Its results on ${count(on, 'dataset')} are deleted.` : '';
     }
-    const answer = await askDialog({
+    const stored = await this._storedResults(fp);
+    const reply = await askDialog({
       title: dataset ? 'Delete dataset' : 'Delete prediction',
       message: `Delete ${name}?${also}`,
       buttons: ['Cancel', 'Delete'],
       danger: 'Delete',
+      check: stored?.count ? { label: storedResultsLabel(stored), checked: true } : null,
     });
+    const answer = stored?.count ? reply.answer : reply;
     if (answer !== 'Delete' || this._needsControl()) return;
     this._deleting.add(fp);
-    this._conn.send(OUT.DELETE_OBJECT, { fingerprint: fp });
+    this._conn.send(OUT.DELETE_OBJECT, {
+      fingerprint: fp, delete_results: !!(stored?.count && reply.checked),
+    });
+  }
+
+  /** The metric results deleting `fp` could delete (STORED_RESULTS), or null
+   * when the server does not answer within a few seconds: the dialog then
+   * asks only about the object. */
+  _storedResults(fp) {
+    return new Promise((resolve) => {
+      const finish = (kw) => { clearTimeout(timer); this._storedAsks.delete(fp); resolve(kw); };
+      const timer = setTimeout(() => finish(null), 3000);
+      this._storedAsks.set(fp, finish);
+      this._conn.send(OUT.STORED_RESULTS, { fingerprint: fp });
+    });
   }
 
   /** For the tour's Back on step 1: only the pair that the tour itself loaded.
