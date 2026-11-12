@@ -991,7 +991,7 @@
     /* input boxes are dark, not the browser's white (ADR 0055) */
     input[type="text"], input[type="number"], input[type="search"] {
       background: var(--surface-2); color: var(--text1); border: 1px solid var(--bg3);
-      border-radius: 3px; font-family: var(--font);
+      border-radius: 3px; font-family: var(--font); padding: 2px 6px;
     }
     input[type="text"]:focus, input[type="number"]:focus, input[type="search"]:focus {
       outline: none; border-color: var(--hl2);
@@ -1991,10 +1991,10 @@
           </select>
           <input id="fb-stride" type="number" min="1" step="1" value="1" aria-label="Every Nth frame" hidden>
           <label for="fb-energy-unit">Energy unit</label>
-          <input id="fb-energy-unit" list="fb-energy-units" autocomplete="off" spellcheck="false">
+          <input id="fb-energy-unit" type="text" list="fb-energy-units" autocomplete="off" spellcheck="false">
           <datalist id="fb-energy-units"></datalist>
           <label for="fb-force-unit">Force unit</label>
-          <input id="fb-force-unit" list="fb-force-units" autocomplete="off" spellcheck="false">
+          <input id="fb-force-unit" type="text" list="fb-force-units" autocomplete="off" spellcheck="false">
           <datalist id="fb-force-units"></datalist>
         </span>
         <span id="fb-prediction-fields" style="display:none; align-items:center; gap:6px;">
