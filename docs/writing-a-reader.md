@@ -226,7 +226,26 @@ class MolTextReader:
             "positions": np.array([a[1:4] for a in atoms], dtype=float),
             "energy:dft": np.array(energies),
         }
+
+    @staticmethod
+    def energies(path, starts):
+        """Optional: each frame's energy, from its energy line only. FFAST
+        asks for it when the user samples a file by energy."""
+        values = []
+        with open(path, "rb") as f:
+            for start in starts:
+                f.seek(start)
+                f.readline()                        # the atom count
+                values.append(float(f.readline()))
+        return {"dft": np.array(values)}
 ```
+
+`energies(path, starts)` is optional. With it, a user can load a sample of
+the file spread over its energy range. It gets the start of each frame it
+should read and returns one float per frame for each energy name, NaN where a
+frame has none, the same values `parse` gives. Read as little as you can: it
+runs over every frame of the file, in worker processes, the first time a user
+samples it. FFAST keeps the result next to the frame list.
 
 If `parse` cannot read a file, raise `ffast.io.extxyz_arrays.NotFast("why")` and
 FFAST reads the file another way (the ASE reader).

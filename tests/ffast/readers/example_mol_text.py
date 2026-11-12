@@ -49,3 +49,15 @@ class MolTextReader:
             "positions": np.array([a[1:4] for a in atoms], dtype=float),
             "energy:dft": np.array(energies),
         }
+
+    @staticmethod
+    def energies(path, starts):
+        """Optional: each frame's energy, from its energy line only. FFAST
+        asks for it when the user samples a file by energy."""
+        values = []
+        with open(path, "rb") as f:
+            for start in starts:
+                f.seek(start)
+                f.readline()                        # the atom count
+                values.append(float(f.readline()))
+        return {"dft": np.array(values)}
