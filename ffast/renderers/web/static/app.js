@@ -2350,11 +2350,12 @@ export class FFastApp {
       danger: 'Delete',
       check: stored?.count ? { label: storedResultsLabel(stored), checked: true } : null,
     });
-    const answer = stored?.count ? reply.answer : reply;
+    // With a check box the dialog answers {answer, checked}; without, the button text.
+    const answer = reply && typeof reply === 'object' ? reply.answer : reply;
     if (answer !== 'Delete' || this._needsControl()) return;
     this._deleting.add(fp);
     this._conn.send(OUT.DELETE_OBJECT, {
-      fingerprint: fp, delete_results: !!(stored?.count && reply.checked),
+      fingerprint: fp, delete_results: !!(reply && typeof reply === 'object' && reply.checked),
     });
   }
 
