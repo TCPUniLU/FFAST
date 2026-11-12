@@ -13,9 +13,7 @@ the replay replaces the bundle path with this copy's `toy.bundle`.
 The launcher registers a working copy as **toy aspirin (tutorial)** and writes
 its local include beside that copy under the practice-runs folder.
 
-`aspirin.data` is copied from
-`docs/research/lammps-live-2026-11-04/meluxina-trial/aspirin.data`, written for
-a small LAMMPS test run. Its aspirin geometry comes from the MD17 dataset:
+`aspirin.data` was written for a small LAMMPS test run on MeluXina. Its aspirin geometry comes from the MD17 dataset:
 
 - S. Chmiela, A. Tkatchenko, H. E. Sauceda, I. Poltavsky, K. T. Schütt and
   K.-R. Müller, "Machine learning of accurate energy-conserving molecular force
@@ -29,7 +27,7 @@ Used with the authors' permission.
 a spring tether and Langevin heating, with tutorial-only pacing and a GO/STOP
 wait. Its pacing and GO/STOP wait are verified on conda-forge LAMMPS
 22 Jul 2025 Update 6 (serial and two MPICH processes); see
-[the checks](../../docs/research/lammps-tutorials-2026-11-08/lammps-check.md). Open it with Run with FFAST to add monitoring;
+[the checks](lammps-check.md). Open it with Run with FFAST to add monitoring;
 that dialog also aligns the data's atom types with the reference.
 
 `tutorial.json` holds the shared gate step and replay pace. The launcher reads

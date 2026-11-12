@@ -154,7 +154,7 @@ Real serial and MPICH two-process checks verified pacing, a blocked gate, GO,
 and STOP followed by `fix halt` at the next 100-step check. The original quoted
 `sh -c` gate failed; the shipped gate is now `shell while …` without quotes so
 LAMMPS substitutes its run-folder variable. See
-[the experiment](../research/lammps-tutorials-2026-11-08/lammps-check.md).
+[the experiment](../../examples/lammps/lammps-check.md).
 The full browser tour also passed with the real serial LAMMPS build.
 
 The handshake advertises local availability for loopback peers on Linux/macOS
