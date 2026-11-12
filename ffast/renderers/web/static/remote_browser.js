@@ -150,8 +150,10 @@ export function keyOptions(keys, { allowNone = false, calculator = false, calcul
  */
 export function typeForFile(name, types, fallback = 'ase (auto)') {
   const lower = name.toLowerCase();
-  const hit = (types || []).find((t) => t.extension && t.extension !== '*'
-    && lower.endsWith(t.extension.replace(/^\*/, '').toLowerCase()));
+  // A reader lists every ending it takes (`extensions`); older rows have one.
+  const endings = (t) => (t.extensions || [t.extension]).filter((e) => e && e !== '*');
+  const hit = (types || []).find((t) => endings(t)
+    .some((e) => lower.endsWith(e.replace(/^\*/, '').toLowerCase())));
   if (hit) return hit.name;
   if ((types || []).some((t) => t.name === fallback)) return fallback;
   return types?.[0]?.name ?? fallback;

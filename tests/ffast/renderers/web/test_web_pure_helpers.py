@@ -74,6 +74,9 @@ CASES = {
     "type_xyz": "rb.typeForFile('a.xyz', [{name:'ase (auto)',extension:'*'},{name:'sGDML',extension:'*.npz'}])",
     "type_first": "rb.typeForFile('a.xyz', [{name:'X', extension:'*.x'}])",
     "type_none": "rb.typeForFile('a', [])",
+    # A reader lists every ending it takes (ADR 0095).
+    "type_reader_second": "rb.typeForFile('run.BAR', [{name:'ase (auto)',extension:'*'},{name:'foo',extension:'*.foo',extensions:['*.foo','*.bar']}])",
+    "type_reader_none": "rb.typeForFile('run.baz', [{name:'ase (auto)',extension:'*'},{name:'foo',extension:'*.foo',extensions:['*.foo','*.bar']}])",
     # ── dataset key choice (web parity plan 2026-10-29) ─────────────────────
     "need_one_each": "rb.needsKeyChoice({energy_keys:['E'], force_keys:['F']})",
     "need_two_energy": "rb.needsKeyChoice({energy_keys:['E1','E2'], force_keys:['F']})",
@@ -1748,6 +1751,8 @@ def test_the_loader_type_follows_the_file_extension(results):
     assert results["type_xyz"] == "ase (auto)"
     assert results["type_first"] == "X"
     assert results["type_none"] == "ase (auto)"
+    assert results["type_reader_second"] == "foo"
+    assert results["type_reader_none"] == "ase (auto)"
 
 
 # ── remote_browser: the dataset key choice ──────────────────────────────────

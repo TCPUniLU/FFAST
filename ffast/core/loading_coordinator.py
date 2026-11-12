@@ -30,6 +30,7 @@ from ffast.io.extxyz_arrays import NotEnoughMemory
 from ffast.protocol import control
 from ffast.loaders.ghost import GhostModelLoader
 from ffast.loaders.dataset import framesShaped
+from ffast.readers import ReaderError
 from ffast.cache.fingerprint import md5FromArraysAndStrings
 
 logger = logging.getLogger("FFAST")
@@ -159,6 +160,9 @@ class LoadingCoordinator:
 
         registry = self._env.modelTypes if kind == "model" else self._env.datasetTypes
         loaderClass = registry.get(typeName)
+        if loaderClass is None and kind == "dataset":
+            from ffast.readers import registry as readers   # ADR 0095: a reader's type
+            loaderClass = readers.get(typeName)
         if loaderClass is None:
             logger.error(
                 f"Tried to load {kind}, but {kind} type `{typeName}` not recognised",
@@ -645,8 +649,23 @@ class LoadingCoordinator:
         if loaderClass is None:
             return None
 
+        from ffast.readers import registry as readers
+        isReader = readers.get(datasetType) is loaderClass
+
         # Load dataset - pass selected keys to ASE loader
-        if datasetType == "ase (auto)":
+        if isReader:
+            try:
+                result = self._loadWithReader(
+                    loaderClass, path, slice_num, selected_energy_key,
+                    selected_force_key, taskID)
+            except (ReaderError, NotEnoughMemory) as e:
+                # ReaderError's text is for the user as it stands (ADR 0095,
+                # decision 8): no traceback, no "Failed to load" around it.
+                logger.error(str(e), extra={"popup": on_error is None})
+                if on_error:
+                    on_error(e)
+                return None
+        elif datasetType == "ase (auto)":
             try:
                 if slice_num != -1:
                     self.prepareFrameIndex(path, taskID)
@@ -730,6 +749,20 @@ class LoadingCoordinator:
                 self._loadPredictionsFromKeys(dataset, path, prediction_keys, atomsList=atomsList)
 
             self.lookForGhosts()
+
+    def _loadWithReader(self, readerClass, path, slice_num, energyKey, forceKey, taskID):
+        """A dataset from a reader (ADR 0095): FFAST asks for the frames the
+        stride keeps, in chunks, with progress and the memory check, then
+        builds its own dataset from the arrays."""
+        from ffast.readers import chunks
+        from ffast.readers.dataset import ReaderDataset
+
+        loaded = chunks.read_arrays(
+            readerClass, path, stride=slice_num,
+            progress=self._readProgress(path, taskID))
+        with chunks.reader_errors(readerClass.name, path):
+            return ReaderDataset(path, loaded, readerClass.name,
+                                 energy_key=energyKey, force_key=forceKey)
 
     def _loadPredictionsFromKeys(self, dataset, path, prediction_keys, atomsList=None):
         """Materialize extra energy/force columns as ghost-model cache entries.

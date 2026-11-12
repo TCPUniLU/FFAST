@@ -150,10 +150,18 @@ class WindowFeed:
             return [{"name": name, "extension": getattr(cls, attr, None) or "*"}
                     for name, cls in items]
 
+        from ffast.readers import registry as readers
         from ffast.session import examples
 
+        # A reader's type (ADR 0095) follows today's dataset types, which a
+        # reader of the same name does not replace until the ASE and sGDML
+        # branches go (step 3).
+        datasets = rows(getattr(self.env, "datasetTypes", None), "datasetFileExtension")
+        known = {row["name"] for row in datasets}
+        datasets += [row for row in readers.type_rows() if row["name"] not in known]
+
         return pack(control.LOADER_TYPES, [], {
-            "datasets": rows(getattr(self.env, "datasetTypes", None), "datasetFileExtension"),
+            "datasets": datasets,
             "models": rows(getattr(self.env, "modelTypes", None), "modelFileExtension"),
             "examples": examples.example_listing(),
         })
