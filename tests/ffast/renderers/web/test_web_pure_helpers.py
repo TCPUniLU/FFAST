@@ -114,8 +114,10 @@ CASES = {
         "rb.countPending({n: 5, error: null, done: false}), rb.countPending({n: 5, error: null, done: true}),"
         "rb.countPending({n: null, error: 'x', done: true})]"
     ),
-    "load_pred_npz": "rb.canLoad({selected:'p.npz', mode:'prediction', forceKey:'', targetDataset:'fp', isNpz:true})",
-    "npz_names": "[rb.isNpzFile('a.NPZ'), rb.isNpzFile('a.xyz')]",
+    # An .npz prediction is a reader's file now (ADR 0095 step 3): it needs a chosen name like any other.
+    "load_pred_npz": "rb.canLoad({selected:'p.npz', mode:'prediction', forceKey:'F', energyKey:'E', targetDataset:'fp'})",
+    "npz_reader": "rb.readerTypeFor('p.NPZ', [{name:'ase (auto)',extension:'*',extensions:['*'],reader:true},{name:'sGDML',extension:'*.npz',extensions:['*.npz'],reader:true}])",
+    "traj_no_named_reader": "rb.readerTypeFor('p.traj', [{name:'ase (auto)',extension:'*',extensions:['*'],reader:true},{name:'sGDML',extension:'*.npz',extensions:['*.npz'],reader:true}])",
     "load_model": "[rb.canLoad({selected:'m.model', mode:'model', modelType:'MACE'}), rb.canLoad({selected:'m.model', mode:'model', modelType:''})]",
     # ── ms.infoReadout (web parity plan 2026-10-29) ─────────────────────────
     "info_one_atom": "ms.infoReadout([[0,0,0]], [3], ['C'])",
@@ -1822,7 +1824,8 @@ def test_a_count_is_pending_until_its_last_reply(results):
 
 def test_an_npz_prediction_needs_no_key(results):
     assert results["load_pred_npz"] is True
-    assert results["npz_names"] == [True, False]
+    assert results["npz_reader"] == "sGDML"
+    assert results["traj_no_named_reader"] is None
 
 
 def test_a_model_needs_a_file_and_a_type(results):

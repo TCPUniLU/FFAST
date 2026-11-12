@@ -28,6 +28,7 @@ _discovered = False
 def register(reader) -> None:
     """Add a reader class. ValueError when it has no usable name or
     extensions, or its name is taken."""
+    discover()      # the bundled readers and the entry points come first, always
     name = getattr(reader, "name", None)
     if not isinstance(name, str) or not name.strip():
         raise ValueError(f"Reader {reader!r} needs a name (a non-empty string)")
@@ -91,10 +92,12 @@ def _claims(reader, path: str) -> bool:
 def readers_for(path: str) -> list:
     """The readers that can take ``path``, best first: those that claim its
     ending, in registration order, without those whose ``can_read`` says no.
-    A reader with no ``can_read`` is decided by its ending alone. A
-    ``can_read`` that fails counts as no."""
+    A reader that claims only ``*`` (ASE's) comes after the readers that name
+    the ending, as a fallback. A reader with no ``can_read`` is decided by its
+    ending alone. A ``can_read`` that fails counts as no."""
     found = []
-    for reader in all_readers():
+    catch_all = lambda r: all(e == "*" for e in r.extensions)
+    for reader in sorted(all_readers(), key=catch_all):     # stable: order kept within each group
         if not _claims(reader, path):
             continue
         can_read = getattr(reader, "can_read", None)

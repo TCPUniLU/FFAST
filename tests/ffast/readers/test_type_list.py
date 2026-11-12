@@ -18,15 +18,15 @@ def _rows(env):
     return kw["datasets"]
 
 
-def test_a_reader_is_listed_after_the_dataset_types_with_all_its_endings(toy):
+def test_a_reader_takes_the_row_of_the_dataset_type_of_its_name_and_the_others_follow(toy):
     assert _rows(_Env()) == [
-        {"name": "ase (auto)", "extension": "*"},
+        {"name": "ase (auto)", "extension": "*", "extensions": ["*"], "reader": True},
+        {"name": "sGDML", "extension": "*.npz", "extensions": ["*.npz"], "reader": True},
         {"name": "toy", "extension": "*.toy", "extensions": ["*.toy"], "reader": True},
     ]
 
 
-def test_a_reader_named_like_a_dataset_type_does_not_replace_or_double_it(toy):
-    from ffast.readers import registry
-    registry.unregister("toy")
-    registry.register(type("Ase", (toy,), {"name": "ase (auto)", "extensions": ["*.toy"]}))
-    assert _rows(_Env()) == [{"name": "ase (auto)", "extension": "*"}]
+def test_a_dataset_type_without_a_reader_keeps_its_row(toy):
+    env = _Env()
+    env.datasetTypes = {**env.datasetTypes, "Other": type("O", (), {"datasetFileExtension": "*.oth"})}
+    assert {"name": "Other", "extension": "*.oth"} in _rows(env)

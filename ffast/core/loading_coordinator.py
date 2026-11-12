@@ -302,8 +302,8 @@ class LoadingCoordinator:
         """Attach precomputed energies and forces to a dataset as a ghost model.
 
         ``reader`` names the reader (ADR 0095) that reads the file; without one
-        the readers for the file's ending choose, and a file no reader claims
-        is an ``.npz`` or an ASE file, as before."""
+        the readers for the file's ending choose. A file no reader claims (an
+        ``.xyz`` or ``.extxyz``, until step 4) goes through ASE as before."""
         readerClass = self._predictionReader(path, reader, on_error)
         if readerClass is False:
             return None
@@ -311,60 +311,44 @@ class LoadingCoordinator:
             return self._loadReaderPrediction(
                 readerClass, path, datasetKey, taskID, selected_energy_key,
                 selected_force_key, on_error)
-        facts = None
-        if path.lower().endswith(".npz"):
-            d = np.load(path, allow_pickle=True)
-            E, F = d["E"], d["F"]
-            nFile = len(E)
-            shape = np.shape(F)
-            # Sampled like its dataset, as _readPredictionAtomsList does for
-            # ASE files; only the per-frame arrays are read here.
-            slice_num = self._env.datasets.slice_numbers.get(datasetKey)
-            if slice_num is not None and slice_num > 0:
-                E, F = E[::slice_num], F[::slice_num]
-            aseObject = None
-            facts = Facts(
-                name=os.path.basename(path), n_kept=len(E), n_file_frames=nFile,
-                counts=np.full(len(F), shape[1]) if len(shape) == 3 else None)
-        else:
-            self.prepareFrameIndex(path, taskID)
-            atomsList = self._readPredictionAtomsList(path, datasetKey)
-            try:
-                aseObject = self._aseLoaderFor(
-                    path, atomsList,
-                    energy_key=selected_energy_key, force_key=selected_force_key,
-                    progress=self._readProgress(path, taskID),
-                )
-            except NotEnoughMemory as e:
-                # Its message as it is, as for a dataset (ADR 0083).
-                logger.error(str(e), extra={"popup": on_error is None})
-                if on_error:
-                    on_error(e)
-                return None
-            facts = Facts(
-                name=os.path.basename(path), n_kept=aseObject.getN(),
-                n_file_frames=self._fileFrameCount(
-                    path, aseObject.getN(), self._env.datasets.slice_numbers.get(datasetKey)),
-                counts=np.diff(aseObject.getOffsets()), numbers=aseObject.getAllElements(),
-                positions=aseObject.getAllCoordinates())
+        self.prepareFrameIndex(path, taskID)
+        atomsList = self._readPredictionAtomsList(path, datasetKey)
+        try:
+            aseObject = self._aseLoaderFor(
+                path, atomsList,
+                energy_key=selected_energy_key, force_key=selected_force_key,
+                progress=self._readProgress(path, taskID),
+            )
+        except NotEnoughMemory as e:
+            # Its message as it is, as for a dataset (ADR 0083).
+            logger.error(str(e), extra={"popup": on_error is None})
+            if on_error:
+                on_error(e)
+            return None
+        facts = Facts(
+            name=os.path.basename(path), n_kept=aseObject.getN(),
+            n_file_frames=self._fileFrameCount(
+                path, aseObject.getN(), self._env.datasets.slice_numbers.get(datasetKey)),
+            counts=np.diff(aseObject.getOffsets()), numbers=aseObject.getAllElements(),
+            positions=aseObject.getAllCoordinates())
 
-            try:
-                E = np.array(aseObject.getAllEnergies())
-            except (PropertyNotImplementedError, RuntimeError):
-                logger.warning(
-                    "Energy not available in prediction file. "
-                    "Loading forces only."
-                )
-                E = None
-            try:
-                F = framesShaped(aseObject.getAllForces(), aseObject.getOffsets(),
-                                 aseObject.isVariable)
-            except (PropertyNotImplementedError, RuntimeError):
-                logger.warning(
-                    "Forces not available in prediction file. "
-                    "Loading energies only."
-                )
-                F = None
+        try:
+            E = np.array(aseObject.getAllEnergies())
+        except (PropertyNotImplementedError, RuntimeError):
+            logger.warning(
+                "Energy not available in prediction file. "
+                "Loading forces only."
+            )
+            E = None
+        try:
+            F = framesShaped(aseObject.getAllForces(), aseObject.getOffsets(),
+                             aseObject.isVariable)
+        except (PropertyNotImplementedError, RuntimeError):
+            logger.warning(
+                "Forces not available in prediction file. "
+                "Loading energies only."
+            )
+            F = None
 
         # mutation_lock again (see loadModel above) — the file parse above
         # runs unlocked.
@@ -435,14 +419,16 @@ class LoadingCoordinator:
                         f"has {source:,}.")
                 step = slice_num if slice_num and slice_num > 1 else 1
                 kept = range(0, nFile if source is None else source, step)
-                if len(kept) != dataset.getN():
+                expected = dataset.getN() if hasattr(dataset, "getN") else None
+                if expected is not None and len(kept) != expected:
                     raise PredictionRefused(
                         f"Frame count mismatch for prediction '{name}'. "
-                        f"Expected {dataset.getN()} frames, got {len(kept)}.")
+                        f"Expected {expected} frames, got {len(kept)}.")
                 return kept
 
             loaded = chunks.read_arrays(
-                readerClass, path, select=select, progress=self._readProgress(path, taskID))
+                readerClass, path, select=select,
+                progress=self._readProgress(path, taskID) if taskID is not None else None)
             arrays, contents = loaded.arrays, loaded.contents
             energies, forces = contents.get("energies") or [], contents.get("forces") or []
             if not energies and not forces:
@@ -781,13 +767,21 @@ class LoadingCoordinator:
     def loadDataset(self, path, datasetType, taskID=None, selected_energy_key=None,
                    selected_force_key=None, prediction_keys=None, slice_num=0,
                    on_error=None):
-        """Load dataset and create ghost models for prediction keys."""
-        loaderClass = self._resolveLoad("dataset", path, datasetType)
-        if loaderClass is None:
-            return None
+        """Load dataset and create ghost models for prediction keys.
 
-        from ffast.readers import registry as readers
-        isReader = readers.get(datasetType) is loaderClass
+        A reader (ADR 0095) serves its type for every file it takes; ASE's
+        reader does not take ``.xyz`` and ``.extxyz`` yet, which keep the
+        ``"ase (auto)"`` branch below (and its frame index) until step 4."""
+        loaderClass = self._datasetReader(datasetType, path)
+        isReader = loaderClass is not None
+        if isReader and not os.path.exists(path):
+            logger.error(f"Tried to load dataset, but path `{path}` not found",
+                         extra={"popup": True})
+            return None
+        if not isReader:
+            loaderClass = self._resolveLoad("dataset", path, datasetType)
+            if loaderClass is None:
+                return None
 
         # Load dataset - pass selected keys to ASE loader
         if isReader:
@@ -826,8 +820,6 @@ class LoadingCoordinator:
                 if on_error:
                     on_error(e)
                 return None
-        elif datasetType == "sGDML":
-            result = loaderClass(path, slice_num=slice_num)
         else:
             result = loaderClass(path)
 
@@ -896,6 +888,21 @@ class LoadingCoordinator:
         if isReader:
             dataset.arrays = None   # the file's extra sets are not kept in memory
 
+    @staticmethod
+    def _datasetReader(typeName, path):
+        """The reader that serves the dataset type ``typeName`` for ``path``,
+        or None: no reader of that name, or one that does not take this file
+        (its ``can_read`` says no)."""
+        from ffast.readers import registry
+        found = registry.get(typeName)
+        if found is None:
+            return None
+        can_read = getattr(found, "can_read", None)
+        try:
+            return found if can_read is None or can_read(path) else None
+        except Exception:
+            return None
+
     def _loadWithReader(self, readerClass, path, slice_num, energyKey, forceKey, taskID):
         """A dataset from a reader (ADR 0095): FFAST asks for the frames the
         stride keeps, in chunks, with progress and the memory check, then
@@ -905,7 +912,7 @@ class LoadingCoordinator:
 
         loaded = chunks.read_arrays(
             readerClass, path, stride=slice_num,
-            progress=self._readProgress(path, taskID))
+            progress=self._readProgress(path, taskID) if taskID is not None else None)
         with chunks.reader_errors(readerClass.name, path):
             return ReaderDataset(path, loaded, readerClass.name,
                                  energy_key=energyKey, force_key=forceKey)

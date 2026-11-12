@@ -209,11 +209,16 @@ async def test_web_an_npz_prediction_loads(ffast_web_server, tmp_path):
             await _file_menu(page, "Load Prediction…")
             await _go_to(page, tmp_path)
             await page.locator("#fb-list .fb-row", has_text="pred.npz").click()
-            await expect(page.locator("#fb-force-key")).to_have_text("from the .npz file")
+            # An .npz is the sGDML reader's file (ADR 0095 step 3): probed like any
+            # other, its names E and F chosen at once.
+            await expect(page.locator("#fb-energy-key")).to_have_value("E")
+            await expect(page.locator("#fb-force-key")).to_have_value("F")
             await expect(page.locator("#fb-load")).to_be_enabled()
             await page.locator("#fb-load").click()
             await expect(page.locator("#model-list .obj-row", has_text="pred.npz")).to_be_visible(timeout=30000)
-            assert await _sent(page, "PROBE_DATASET_KEYS") == []
+            assert len(await _sent(page, "PROBE_DATASET_KEYS")) == 1
+            assert await _sent(page, "LOAD_PREDICTION") == [
+                {"selected_energy_key": "E", "selected_force_key": "F", "reader": "sGDML"}]
         finally:
             await browser.close()
 

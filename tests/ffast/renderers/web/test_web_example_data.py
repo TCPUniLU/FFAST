@@ -185,10 +185,11 @@ async def test_an_npz_prediction_loads_on_a_real_graphene_dataset(ffast_web_serv
             await page.locator("#fb-path").press("Enter")
             await expect(page.locator("#fb-path")).to_have_value(str(npz.parent))
             await page.locator("#fb-list .fb-row", has_text=npz.name).click()
-            await expect(page.locator("#fb-force-key")).to_have_text("from the .npz file")
+            # The sGDML reader's file (ADR 0095 step 3): probed, its E and F chosen.
+            await expect(page.locator("#fb-force-key")).to_have_value("F")
             await page.locator("#fb-load").click()
             await expect(page.locator("#model-list .obj-row", has_text=npz.name)).to_be_visible(timeout=60000)
-            assert await _sent(page, "PROBE_DATASET_KEYS") == []
+            assert len(await _sent(page, "PROBE_DATASET_KEYS")) == 1
         finally:
             await browser.close()
 

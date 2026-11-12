@@ -153,12 +153,13 @@ class WindowFeed:
         from ffast.readers import registry as readers
         from ffast.session import examples
 
-        # A reader's type (ADR 0095) follows today's dataset types, which a
-        # reader of the same name does not replace until the ASE and sGDML
-        # branches go (step 3).
+        # A reader's type (ADR 0095) takes the row of the dataset type of the
+        # same name (ASE and sGDML are readers now, their old classes serve the
+        # desktop); the other readers follow.
         datasets = rows(getattr(self.env, "datasetTypes", None), "datasetFileExtension")
-        known = {row["name"] for row in datasets}
-        datasets += [row for row in readers.type_rows() if row["name"] not in known]
+        by_name = {row["name"]: row for row in readers.type_rows()}
+        datasets = [by_name.pop(row["name"], row) for row in datasets]
+        datasets += list(by_name.values())
 
         return pack(control.LOADER_TYPES, [], {
             "datasets": datasets,

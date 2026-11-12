@@ -1,6 +1,8 @@
 """PROBE_DATASET_KEYS asks the chosen reader's contents(); the reply keeps the
 shape the ASE probe gives (ADR 0095, step 2)."""
 import asyncio
+
+import numpy as np
 from types import SimpleNamespace
 
 from ffast.protocol import control
@@ -48,10 +50,16 @@ def test_a_reader_that_cannot_read_the_file_replies_with_its_message(toy, tmp_pa
     assert reply["energy_keys"] == []
 
 
-def test_a_type_registered_as_a_dataset_loader_is_not_probed_as_a_reader(toy, tmp_path):
-    """Until step 3 the old types keep their own path: a dataset type named
-    like a reader wins."""
-    path = write_toy(tmp_path / "a.toy", make_frames(2))
-    reply = _probe(path, "toy", datasetTypes={"toy": object})
-    assert reply["energy_keys"] == []              # went down the ASE probe, which cannot read it
-    assert reply["error"]
+def test_ases_reader_probes_other_formats_and_leaves_xyz_to_the_old_probe(tmp_path):
+    import ase.io
+    from ase import Atoms
+    atoms = Atoms("H2", positions=[[0, 0, 0], [0, 0, 0.7]])
+    atoms.info["ref_energy"] = -1.0
+    atoms.set_array("ref_forces", np.zeros((2, 3)))
+    ase.io.write(str(tmp_path / "a.xyz"), atoms)
+    ase.io.write(str(tmp_path / "a.traj"), atoms)
+    xyz = _probe(str(tmp_path / "a.xyz"), "ase (auto)")
+    assert xyz["energy_keys"] == ["ref_energy"] and xyz["force_keys"] == ["ref_forces"]
+    assert xyz["has_calculator_energy"] is False            # the old probe's reply
+    traj = _probe(str(tmp_path / "a.traj"), "ase (auto)")
+    assert traj["energy_keys"] == ["ref_energy"] and traj["error"] is None

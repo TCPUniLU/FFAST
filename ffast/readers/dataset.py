@@ -9,6 +9,8 @@ import os
 
 import numpy as np
 
+from ffast.cache.fingerprint import md5FromArraysAndStrings
+from ffast.loaders.ase import _same_formula_on_sample
 from ffast.loaders.dataset import FlatDatasetLoader
 from ffast.readers.contract import ReaderError
 from ffast.readers.pairing import pair_names
@@ -52,7 +54,7 @@ class ReaderDataset(FlatDatasetLoader):
             contents.get("energies") or [], contents.get("forces") or [],
             energy_key, force_key, file=file)
         energy = arrays.get(f"energy:{self.energy_key}") if self.energy_key else None
-        self.E = None if energy is None else np.asarray(energy, dtype=np.float64).reshape(-1)
+        self.E = None if energy is None else np.asarray(energy).reshape(-1)
         forces = arrays.get(f"forces:{self.force_key}") if self.force_key else None
         self.F_flat = None if forces is None else np.asarray(forces)
         cell = arrays.get("cell")
@@ -63,6 +65,17 @@ class ReaderDataset(FlatDatasetLoader):
             n0 == 0 or bool((self.z_flat.reshape(self.N, n0) == self.z_flat[:n0]).all()))
         self.isVariable = not same
         self.chem = self.getChemicalFormula()
+
+    def getFingerprint(self):
+        """The formula the ASE and sGDML loaders used, unchanged, so saved
+        sessions and caches still match (ADR 0058, section 3): frame 0's
+        elements when every frame has the same formula (on the fixed sample),
+        every atom's otherwise; then positions, energies, forces."""
+        z = self.z_flat
+        if _same_formula_on_sample(self.molecule_offsets, z):
+            z = z[:self.molecule_offsets[1]]
+        arrays = (z, self.R_flat, self.E, self.F_flat)
+        return md5FromArraysAndStrings(*(a for a in arrays if a is not None))
 
     def getLattice(self, indices=None):
         if self.lattice is None:

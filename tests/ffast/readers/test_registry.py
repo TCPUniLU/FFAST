@@ -28,7 +28,7 @@ def test_a_reader_needs_a_name_and_extensions():
         registry.register(_reader("x", []))
 
 
-def test_the_ending_picks_readers_in_registration_order():
+def test_the_ending_picks_readers_in_registration_order(only_my_readers):
     first, second, other = _reader("a", ["*.foo"]), _reader("b", ["*.FOO", "*.bar"]), _reader("c", ["*.baz"])
     for r in (first, second, other):
         registry.register(r)
@@ -37,7 +37,7 @@ def test_the_ending_picks_readers_in_registration_order():
     assert registry.readers_for("/x/run.qux") == []
 
 
-def test_can_read_drops_a_reader_that_says_no_and_a_failing_can_read_counts_as_no():
+def test_can_read_drops_a_reader_that_says_no_and_a_failing_can_read_counts_as_no(only_my_readers):
     seen = []
     no = _reader("no", ["*.foo"], can_read=lambda p: seen.append(p) or False)
     boom = _reader("boom", ["*.foo"], can_read=lambda p: 1 / 0)
@@ -49,7 +49,7 @@ def test_can_read_drops_a_reader_that_says_no_and_a_failing_can_read_counts_as_n
     assert seen == ["/x/run.foo"]
 
 
-def test_the_type_list_rows_carry_each_readers_name_and_endings(toy):
+def test_the_type_list_rows_carry_each_readers_name_and_endings(only_my_readers, toy):
     assert registry.type_rows() == [{"name": "toy", "extension": "*.toy", "extensions": ["*.toy"], "reader": True}]
 
 
@@ -76,3 +76,16 @@ def test_discovery_runs_once(monkeypatch):
     registry.discover()
     registry.discover()
     assert calls == ["ffast.readers"]
+
+
+def test_the_bundled_readers_are_registered_sGDML_before_ASE():
+    assert [r.name for r in registry.all_readers()][:2] == ["sGDML", "ase (auto)"]
+
+
+def test_a_reader_that_claims_every_ending_comes_after_those_that_name_the_ending(only_my_readers):
+    catch_all = _reader("any", ["*"])
+    named = _reader("named", ["*.foo"])
+    registry.register(catch_all)            # first in registration order
+    registry.register(named)
+    assert registry.readers_for("/x/run.foo") == [named, catch_all]
+    assert registry.readers_for("/x/run.bar") == [catch_all]

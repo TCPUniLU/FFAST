@@ -837,12 +837,12 @@ class ServerSession:
         error: str | None = None
 
         # A reader's file (ADR 0095): its contents() lists the names; the reply
-        # keeps the shape the ASE probe gives. The dataset types registered
-        # before readers keep their own name (step 3 moves ASE over).
-        from ffast.readers import chunks, registry as readers
-        reader_class = None
-        if dataset_type not in (getattr(self.env, "datasetTypes", None) or {}):
-            reader_class = readers.get(dataset_type)
+        # keeps the shape the ASE probe gives. A reader that does not take the
+        # file (ASE's does not take .xyz and .extxyz until step 4) leaves it to
+        # the probe below.
+        from ffast.core.loading_coordinator import LoadingCoordinator
+        from ffast.readers import chunks
+        reader_class = LoadingCoordinator._datasetReader(dataset_type, path)
 
         if reader_class is not None:
             try:

@@ -64,15 +64,19 @@ def test_loader_types_lists_the_registered_loaders_sorted():
 
     event, _, kw = unpack(WindowFeed(_E(), lambda d: None).loader_types())
     assert event == control.LOADER_TYPES
-    assert kw["datasets"] == [{"name": "ase (auto)", "extension": "*"},
-                              {"name": "sGDML", "extension": "*.npz"}]
+    # ASE and sGDML are readers (ADR 0095 step 3): their rows say so.
+    assert kw["datasets"] == [
+        {"name": "ase (auto)", "extension": "*", "extensions": ["*"], "reader": True},
+        {"name": "sGDML", "extension": "*.npz", "extensions": ["*.npz"], "reader": True}]
     assert kw["models"] == [{"name": "MACE", "extension": "*.model"},
                             {"name": "SchNet", "extension": "*"}]
 
 
 def test_loader_types_without_an_env_is_empty():
     _, _, kw = unpack(WindowFeed(None, lambda d: None).loader_types())
-    assert kw["datasets"] == [] and kw["models"] == []
+    # The bundled readers (ADR 0095) need no environment.
+    assert [row["name"] for row in kw["datasets"]] == ["sGDML", "ase (auto)"]
+    assert kw["models"] == []
 
 
 def test_loader_types_names_the_example_files_one_folder_deep():

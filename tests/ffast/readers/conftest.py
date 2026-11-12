@@ -19,3 +19,11 @@ def _registry_as_it_was():
 def toy():
     registry.register(ToyReader)
     return ToyReader
+
+
+@pytest.fixture
+def only_my_readers():
+    """An empty registry, so a test sees exactly the readers it registers (the
+    bundled ones claim ``*`` and ``*.npz``)."""
+    registry._readers.clear()
+    registry._discovered = True

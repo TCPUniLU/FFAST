@@ -106,18 +106,17 @@ export function pickPath({ mode, dir, name }) {
  * Decide whether the modal's Load button can be pressed.
  *
  * Pure so the rule is testable without the DOM. A dataset needs only a selected
- * file; a prediction additionally needs a force key (force arrows are the point
- * of loading one; an .npz prediction carries its own E and F, so it needs no
- * key) and a target dataset to attach to. A dataset waits for its key check.
+ * file; a prediction additionally needs an energy or a force name chosen and a
+ * target dataset to attach to. A dataset waits for its key check.
  */
 export function canLoad({
-  selected, mode, forceKey, energyKey = '', targetDataset, probing = false, isNpz = false,
+  selected, mode, forceKey, energyKey = '', targetDataset, probing = false,
   modelType = '', dir = null, name = '',
 }) {
   if (PICK_MODES.has(mode)) return pickPath({ mode, dir, name }) !== null;
   if (!selected) return false;
   if (mode === 'model') return Boolean(modelType);
-  if (mode === 'prediction') return Boolean(targetDataset && (forceKey || energyKey || isNpz));
+  if (mode === 'prediction') return Boolean(targetDataset && (forceKey || energyKey));
   if (mode === 'dataset') return !probing;
   return true;
 }
@@ -162,7 +161,8 @@ export function typeForFile(name, types, fallback = 'ase (auto)') {
 /**
  * The reader type a file belongs to: the name of the first reader row (a type
  * the server lists with `reader: true`) that takes the file's ending, else
- * null (ASE and `.npz` files keep their own paths, ADR 0095).
+ * null. A type that claims only `*` (ASE's) is not named: the server's
+ * readers for the file's ending choose (ADR 0095).
  */
 export function readerTypeFor(name, types) {
   const lower = name.toLowerCase();
@@ -227,11 +227,6 @@ export function largeFileNote({ size, n = null, stride = 1, error = null, done =
 /** Whether a count is still running: asked, not yet answered for good. */
 export function countPending(large) {
   return Boolean(large) && !large.error && !large.done;
-}
-
-/** Whether a file name is an .npz file. */
-export function isNpzFile(name) {
-  return /\.npz$/i.test(name || '');
 }
 
 /** A prediction's default name from its key: the part before the first
@@ -946,22 +941,14 @@ export class RemoteBrowser {
     }
     row.classList.add('selected');
     if (this._mode === 'prediction') {
-      if (isNpzFile(name)) {
-        // An .npz prediction holds its own E and F: nothing to probe or choose.
-        const only = [{ value: '', label: 'from the .npz file' }];
-        this._fillSelect($('fb-energy-key'), only);
-        this._fillSelect($('fb-force-key'), only);
-        this._probing = null;
-        this._predReader = null;
-      } else {
-        // Probe the chosen file for the energy/force keys it actually contains.
-        // A reader's file (ADR 0095) is probed through that reader.
-        const path = joinPath(this._path, name);
-        this._predReader = readerTypeFor(name, this._types.datasets);
-        $('fb-energy-key').innerHTML = '<option value="">…probing…</option>';
-        $('fb-force-key').innerHTML = '<option value="">…probing…</option>';
-        this._probeKeys(path, this._predReader || 'ase (auto)');
-      }
+      // Probe the chosen file for the energy/force names it holds: through the
+      // reader of its ending when one names it, else as an ASE file, where the
+      // server's readers for the ending decide (ADR 0095).
+      const path = joinPath(this._path, name);
+      this._predReader = readerTypeFor(name, this._types.datasets);
+      $('fb-energy-key').innerHTML = '<option value="">…probing…</option>';
+      $('fb-force-key').innerHTML = '<option value="">…probing…</option>';
+      this._probeKeys(path, this._predReader || 'ase (auto)');
     }
     if (this._mode === 'dataset') {
       $('fb-type').value = typeForFile(name, this._types.datasets);
@@ -1017,7 +1004,6 @@ export class RemoteBrowser {
       energyKey: $('fb-energy-key').value,
       targetDataset: $('fb-target-ds').value,
       probing: this._mode === 'dataset' && Boolean(this._probing),
-      isNpz: this._mode === 'prediction' && isNpzFile(this._selected),
       modelType: $('fb-model-type').value,
       dir: this._path,
       name: $('fb-name').value,
@@ -1084,7 +1070,7 @@ export class RemoteBrowser {
       // A reader's file sends its choice as it is: '' means none (ADR 0095).
       const eKey = reader ? $('fb-energy-key').value : ($('fb-energy-key').value || null);
       const fKey = reader ? $('fb-force-key').value : ($('fb-force-key').value || null);
-      if (!dsFp || (!fKey && !(reader && eKey) && !isNpzFile(this._selected))) return;
+      if (!dsFp || (!fKey && !(reader && eKey))) return;
       // LOAD_PREDICTION reads args=[path, dataset_fp] + key kwargs; on success
       // the server fires REMOTE_MODEL_META → _onModelMeta selects it.
       this._ports.send(
