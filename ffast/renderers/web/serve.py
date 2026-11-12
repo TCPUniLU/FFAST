@@ -18,6 +18,7 @@ import http.server
 import json
 import logging
 import os
+import socketserver
 import threading
 
 logger = logging.getLogger(__name__)
@@ -32,6 +33,14 @@ class _StaticHTTPServer(http.server.ThreadingHTTPServer):
     """
     request_queue_size = 128
     daemon_threads = True
+
+    def server_bind(self):
+        # HTTPServer.server_bind also sets server_name = socket.getfqdn(host),
+        # a name lookup that took 5 s for 0.0.0.0 on a Mac (30+ s with several
+        # servers starting at once). Nothing here reads server_name.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = self.server_address[0]
+        self.server_port = self.server_address[1]
 
 
 class _SilentStaticHandler(http.server.SimpleHTTPRequestHandler):

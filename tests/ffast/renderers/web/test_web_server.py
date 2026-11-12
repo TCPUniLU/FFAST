@@ -20,10 +20,7 @@ class TestStaticDir:
         assert os.path.isfile(os.path.join(STATIC_DIR, "ffast-viewer.js"))
 
 
-def _free_port():
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+from tests.free_ports import free_port as _free_port  # see tests/free_ports.py
 
 
 class TestStartStaticServer:
@@ -47,6 +44,18 @@ class TestStartStaticServer:
             assert isinstance(httpd, http.server.HTTPServer)
         finally:
             httpd.shutdown()
+
+    def test_starting_does_no_name_lookup(self, monkeypatch):
+        # http.server.HTTPServer looks up its host's full name when it binds.
+        # For 0.0.0.0 that took 5 s on a Mac every time, and 30+ s with many
+        # servers starting at once: test servers then missed the tests'
+        # 30 s connect window (docs/flaky-tests.md, 2026-11-12).
+        def lookup(host=""):
+            raise AssertionError(f"name lookup of {host!r} while starting")
+
+        monkeypatch.setattr(socket, "getfqdn", lookup)
+        httpd = start_static_server(_free_port(), host="0.0.0.0")
+        httpd.shutdown()
 
     def test_serves_js_file(self):
         port = _free_port()
