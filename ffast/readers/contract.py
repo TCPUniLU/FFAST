@@ -41,9 +41,14 @@ class Contents(TypedDict, total=False):
 
 
 class CanWrite(TypedDict, total=False):
-    """What a format can hold when a reader also writes (step 6 of the plan).
-    A missing key means "no limit"."""
+    """What a format can hold when a reader also writes (ADR 0095, decision 11).
+    A missing key means "no limit". A reader lists its formats in
+    ``write_formats``, each ``{"format", "label", "ext", "can_write"}``, and
+    gives ``open_writer(path, contents, format)``: an object with
+    ``write(chunk)`` (several times, the dict ``read()`` returns) and
+    ``close()``, and a ``skipped`` count of frames it left out."""
 
+    frames: int                  # at most this many structures
     energies: int                # at most this many energy sets
     forces: int                  # at most this many force sets
     cell: bool                   # False: the format has no cell

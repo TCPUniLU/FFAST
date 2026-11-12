@@ -163,6 +163,8 @@ class WindowFeed:
 
         return pack(control.LOADER_TYPES, [], {
             "datasets": datasets,
+            "writers": [{"format": f["format"], "label": f["label"], "ext": f["ext"],
+                         "can_write": f["can_write"]} for f in readers.writable_formats()],
             "models": rows(getattr(self.env, "modelTypes", None), "modelFileExtension"),
             "examples": examples.example_listing(),
         })

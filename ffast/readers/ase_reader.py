@@ -10,6 +10,8 @@ the page has always sent for "calculator (built-in)").
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 
 from ffast.loaders.ase import available_field_keys
@@ -17,10 +19,28 @@ from ffast.loaders.ase import available_field_keys
 _XYZ = (".xyz", ".extxyz")
 
 
+_NO_CELL = {"cell": False}      # the cell is not written, as ASE's export never wrote it
+_ONE_STRUCTURE = {"frames": 1, "energies": 0, "forces": 0, "cell": False, "frame_fields": False,
+                  "atom_fields": False}
+
+
 class AseReader:
     name = "ase (auto)"
     extensions = ["*"]
     package = None            # bundled
+    # What Export can write (ADR 0095, decision 11), in the dialog's order.
+    write_formats = [
+        {"order": 0, "format": "extxyz", "label": "Extended XYZ", "ext": ".extxyz", "can_write": dict(_NO_CELL)},
+        {"order": 1, "format": "xyz", "label": "XYZ", "ext": ".xyz", "can_write": dict(_NO_CELL)},
+        {"order": 2, "format": "db", "label": "ASE database", "ext": ".db", "can_write": {
+            **_NO_CELL, "energies": 1, "forces": 1, "frame_fields": False, "atom_fields": False}},
+        {"order": 3, "format": "traj", "label": "ASE trajectory", "ext": ".traj", "can_write": {
+            **_NO_CELL, "forces": 1, "atom_fields": False}},
+        {"order": 4, "format": "vasp", "label": "VASP POSCAR (one structure)", "ext": ".vasp",
+         "can_write": dict(_ONE_STRUCTURE)},
+        {"order": 5, "format": "dftb", "label": "DFTB+ gen (one structure)", "ext": ".gen",
+         "can_write": dict(_ONE_STRUCTURE)},
+    ]
 
     @staticmethod
     def can_read(path):
@@ -79,6 +99,10 @@ class AseReader:
             "units": {},
         }
 
+    @staticmethod
+    def open_writer(path, contents, format=None):
+        return _AseWriter(path, format)
+
     # ── the frames ─────────────────────────────────────────────────────────
 
     def _atoms(self, frames):
@@ -120,6 +144,82 @@ class AseReader:
         for key in c["atom_fields"]:
             out[f"atom:{key}"] = np.concatenate([_per_atom(a, key) for a in atoms])
         return out
+
+
+_APPENDING = {".extxyz": "extxyz", ".xyz": "extxyz", ".traj": "traj"}   # formats written chunk by chunk
+
+
+class _AseWriter:
+    """Frame by frame, each frame with its own elements, writing the energies
+    and forces it has. The reference's ``energy`` and ``forces`` go to the
+    calculator, the other names to ``atoms.info`` and ``atoms.arrays``. A frame
+    with no atoms is left out and counted in ``skipped``. Formats that append
+    (extxyz, traj) are written chunk by chunk; the others when closed."""
+
+    def __init__(self, path, format):
+        self.path = path
+        ext = os.path.splitext(path)[1].lower()
+        self.format = format
+        self.appending = (format or _APPENDING.get(ext)) in _APPENDING.values()
+        if self.appending and format is None:
+            self.format = _APPENDING.get(ext)
+        self.atoms, self.skipped, self.started = [], 0, False
+
+    def write(self, chunk):
+        from ase import Atoms
+        from ase.calculators.calculator import Calculator
+
+        class FakeCalc(Calculator):
+            def __init__(self):
+                super().__init__()   # the .traj and .db writers read `parameters`
+
+        offsets = np.concatenate([[0], np.cumsum(chunk["n_atoms"])])
+        made = []
+        for k in range(len(chunk["n_atoms"])):
+            a, b = int(offsets[k]), int(offsets[k + 1])
+            if a == b:
+                self.skipped += 1
+                continue
+            atoms = Atoms(numbers=chunk["numbers"][a:b], positions=chunk["positions"][a:b])
+            results = {}
+            for key, value in chunk.items():
+                kind, _, name = key.partition(":")
+                if kind == "energy" and not np.isnan(value[k]):
+                    if name == "energy":
+                        results["energy"] = float(value[k])
+                    else:
+                        atoms.info[name] = float(value[k])
+                elif kind == "forces" and not np.isnan(value[a:b]).any():
+                    if name == "forces":
+                        results["forces"] = np.asarray(value[a:b])
+                    else:
+                        atoms.arrays[name] = np.asarray(value[a:b])
+                elif kind == "frame" and not np.isnan(value[k]):
+                    atoms.info[name] = float(value[k])
+                elif kind == "atom" and not np.isnan(value[a:b]).any():
+                    atoms.arrays[name] = np.asarray(value[a:b])
+            if results:
+                atoms.calc = FakeCalc()
+                atoms.calc.results = results
+            made.append(atoms)
+        if self.appending:
+            self._append(made)
+        else:
+            self.atoms.extend(made)
+
+    def _append(self, atoms):
+        import ase.io
+        if atoms:
+            ase.io.write(self.path, atoms, format=self.format, append=self.started)
+            self.started = True
+
+    def close(self):
+        import ase.io
+        if self.appending:
+            if not self.started:                        # nothing to write: an empty file, as before
+                ase.io.write(self.path, [], format=self.format)
+        else:
+            ase.io.write(self.path, self.atoms, format=self.format)
 
 
 def _calc(fn):

@@ -165,6 +165,16 @@ CASES = {
     "pick_no_name": "rb.pickPath({mode: 'save-file', dir: '/runs', name: ''})",
     "pick_no_dir": "rb.pickPath({mode: 'save-file', dir: null, name: 'a'})",
     "load_pick_mode": "rb.canLoad({selected: null, mode: 'open-folder', dir: '/runs'})",
+    # ── so.exportPlan: what a format cannot hold, said before writing (ADR 0095) ──
+    "plan_free": "so.exportPlan({label: 'Extended XYZ', can_write: {}}, [{key: 'reference', checked: true}, {key: 'p1', checked: true}])",
+    "plan_one_set_full": "so.exportPlan({label: 'sGDML', can_write: {energies: 1}}, [{key: 'reference', checked: true}, {key: 'p1', checked: false}, {key: 'p2', checked: false}])",
+    "plan_one_set_free": "so.exportPlan({label: 'sGDML', can_write: {energies: 1}}, [{key: 'reference', checked: false}, {key: 'p1', checked: false}])",
+    "plan_too_many_ticked": "so.exportPlan({label: 'sGDML', can_write: {energies: 1}}, [{key: 'reference', checked: true}, {key: 'p1', checked: true}])",
+    "plan_no_values": "so.exportPlan({label: 'VASP POSCAR', can_write: {energies: 0}}, [{key: 'reference', checked: true}, {key: 'p1', checked: false}])",
+    "plan_variable": "so.exportPlan({label: 'sGDML', can_write: {variable_atoms: false}}, [], {variable: true, n: 4})",
+    "plan_frames": "so.exportPlan({label: 'DFTB+ gen (one structure)', can_write: {frames: 1}}, [], {n: 3})",
+    "plan_progress": "so.exportProgress({progress: [250, 1000]})",
+    "plan_no_progress": "so.exportProgress({ok: true})",
     "ext_swap": "so.withExtension('water.extxyz', '.db')",
     "ext_none": "so.withExtension('water', '.traj')",
     "export_formats": "so.EXPORT_FORMATS.map(f => f.format)",
@@ -1985,6 +1995,41 @@ def test_a_pick_mode_loads_with_only_a_folder(results):
 def test_a_format_change_swaps_only_the_ending(results):
     assert results["ext_swap"] == "water.db"
     assert results["ext_none"] == "water.traj"
+
+
+def test_a_format_that_can_hold_everything_greys_nothing(results):
+    assert results["plan_free"] == {"disabled": {}, "blocked": None}
+
+
+def test_a_one_set_format_greys_the_other_boxes_once_one_is_ticked_and_says_why(results):
+    plan = results["plan_one_set_full"]
+    assert plan["blocked"] is None and set(plan["disabled"]) == {"p1", "p2"}
+    assert plan["disabled"]["p1"] == "sGDML holds 1 set of energies and forces: untick one first."
+    assert results["plan_one_set_free"]["disabled"] == {}
+
+
+def test_more_ticked_than_a_format_holds_blocks_the_export_with_the_servers_words(results):
+    assert results["plan_too_many_ticked"]["blocked"] == (
+        "sGDML holds 1 set of energies and forces; 2 are chosen.")
+
+
+def test_a_format_with_no_energies_greys_every_box(results):
+    plan = results["plan_no_values"]
+    assert set(plan["disabled"]) == {"reference", "p1"}
+    assert plan["disabled"]["reference"] == "VASP POSCAR holds no energies or forces."
+
+
+def test_a_dataset_the_format_cannot_hold_blocks_the_export(results):
+    assert results["plan_variable"]["blocked"] == (
+        "An sGDML file needs the same atoms in the same order in every structure, "
+        "and this dataset's structures differ.")
+    assert results["plan_frames"]["blocked"] == (
+        "DFTB+ gen (one structure) holds one structure; this dataset has 3.")
+
+
+def test_a_write_in_progress_has_its_own_status_line(results):
+    assert results["plan_progress"] == {"text": "Exporting: 250 of 1,000 structures…", "kind": "connected"}
+    assert results["plan_no_progress"] is None
 
 
 def test_export_offers_the_desktops_formats_plus_sgdml(results):

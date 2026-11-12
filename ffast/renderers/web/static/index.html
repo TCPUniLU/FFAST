@@ -1561,6 +1561,12 @@
     #fb-pred-rows .fb-pred-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
     #fb-add-pred { margin-top: 4px; }
     #fb-stride { width: 70px; }
+    #fb-export { padding: 6px 12px; border-top: 1px solid var(--line); font-size: var(--fs-s); }
+    #fb-export[hidden], #fb-export-items[hidden], #fb-export-note[hidden] { display: none; }
+    #fb-export-items { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+    #fb-export-items .fb-export-item.unavailable { color: var(--muted); }
+    #fb-export-items .fb-export-why { font-style: italic; }
+    #fb-export-note { margin-top: 4px; color: var(--danger, #c0392b); }
     #fb-large { padding: 6px 12px; font-size: var(--fs-s); color: var(--muted); border-top: 1px solid var(--line); }
     #fb-large[hidden] { display: none; }
     #fb-error { color: var(--danger); font-size: var(--fs-s); padding: 8px 12px; }
@@ -1932,6 +1938,11 @@
         <button id="fb-add-pred" type="button">Also load a prediction from this file</button>
       </div>
       <div id="fb-large" hidden></div>
+      <div id="fb-export" hidden>
+        <span class="fb-keys-head">Write</span>
+        <span id="fb-export-items" role="group" aria-label="What to export"></span>
+        <div id="fb-export-note" role="status" hidden></div>
+      </div>
       <div id="fb-footer">
         <span id="fb-dataset-fields">
           <label for="fb-type">Type</label>

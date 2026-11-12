@@ -20,12 +20,20 @@ class NpzReader:
     name = "sGDML"
     extensions = ["*.npz"]
     package = None            # bundled
+    write_formats = [
+        {"order": 6, "format": "sgdml", "label": "sGDML", "ext": ".npz", "can_write": {
+            "energies": 1, "forces": 1, "variable_atoms": False,
+            "frame_fields": False, "atom_fields": False}},
+    ]
 
     def __init__(self, path):
         self.path = path
         data = np.load(path, allow_pickle=True)
         self._data = {key.lower(): np.asarray(data[key]) for key in data.files if key.lower() in _KEYS}
         data.close()
+        lattice = self._data.get("lattice")
+        if lattice is not None and (lattice.dtype == object or lattice.ndim == 0):
+            del self._data["lattice"]          # an old export wrote None for "no cell"
         file = os.path.basename(path)
         per_frame = [self._data[k] for k in ("r", "e", "f") if k in self._data]
         if not per_frame:
@@ -71,3 +79,44 @@ class NpzReader:
         if "f" in d:
             out["forces:F"] = d["f"][idx].reshape(-1, 3)
         return out
+
+
+class _NpzWriter:
+    """An sGDML file: ``R``, ``E``, ``F``, ``z`` (the elements of one structure)
+    and the cell, with the md5 of the arrays. The arrays are joined when closed."""
+
+    skipped = 0
+
+    def __init__(self, path):
+        self.path, self.chunks = path, []
+
+    def write(self, chunk):
+        self.chunks.append(chunk)
+
+    def close(self):
+        joined = {key: np.concatenate([c[key] for c in self.chunks]) for key in self.chunks[0]}
+        counts = joined["n_atoms"]
+        if len(set(counts.tolist())) != 1:
+            raise ReaderError("An sGDML file needs the same atoms in the same order in every "
+                              "structure, and this dataset's structures differ.")
+        atoms = int(counts[0])
+        data = {"R": joined["positions"].reshape(-1, atoms, 3), "z": joined["numbers"][:atoms]}
+        energy = next((k for k in joined if k.startswith("energy:")), None)
+        forces = next((k for k in joined if k.startswith("forces:")), None)
+        if energy:
+            data["E"] = joined[energy]
+        if forces:
+            data["F"] = joined[forces].reshape(-1, atoms, 3)
+        if "cell" in joined:
+            data["lattice"] = joined["cell"][0]
+        data["name"] = self.path
+        from ffast.cache.fingerprint import md5FromArraysAndStrings
+        data["md5"] = md5FromArraysAndStrings(*(data[k] for k in ("R", "E", "F") if k in data))
+        np.savez_compressed(self.path, **data)
+
+
+def _open_writer(path, contents, format=None):
+    return _NpzWriter(path)
+
+
+NpzReader.open_writer = staticmethod(_open_writer)

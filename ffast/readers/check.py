@@ -47,6 +47,45 @@ def check_reader(reader_class, sample_file: str) -> None:
         part = _call(f"read({stride})", reader_class(sample_file).read, stride)
         _check_arrays(part, len(stride), contents, f"read({stride})")
 
+    if callable(getattr(reader_class, "open_writer", None)):
+        _check_round_trip(reader_class, sample_file, whole, contents)
+
+
+def _check_round_trip(cls, sample_file, whole, contents) -> None:
+    """Write what was read, read it back: the numbers must be the same. The
+    first format of ``write_formats`` that can hold the sample is tried."""
+    import os
+    import tempfile
+
+    if "positions" not in whole or "numbers" not in whole:
+        return                       # a file of values only (a prediction): nothing to write alone
+    n = len(whole["n_atoms"])
+    variable = len(set(np.asarray(whole["n_atoms"]).tolist())) > 1
+    sets = len(contents.get("energies") or [])
+    for info in getattr(cls, "write_formats", []):
+        can = info.get("can_write") or {}
+        if (can.get("frames", n) < n or (variable and can.get("variable_atoms", True) is False)
+                or (can.get("energies") is not None and can["energies"] < max(sets, 0))):
+            continue
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "roundtrip" + info["ext"])
+            writer = _call(f"open_writer() for {info['format']}", cls.open_writer, path, contents,
+                           info["format"])
+            _call("write()", writer.write, whole)
+            _call("close()", writer.close)
+            back = _call(f"reading back the {info['format']} file", cls(path).read, list(range(n)))
+        skip = {"cell"} if can.get("cell") is False else set()
+        for key in whole:
+            if key in skip or key not in back:
+                continue
+            a, b = np.asarray(back[key]), np.asarray(whole[key])
+            same = (np.allclose(a, b, rtol=1e-6, atol=1e-6, equal_nan=True)
+                    if _is_float(b) and a.shape == b.shape else np.array_equal(a, b))   # text keeps ~8 digits
+            _expect(same,
+                    f"'{key}' differs between what was written and read back "
+                    f"({info['format']}): the writer and the reader must agree")
+        return
+
 
 def _is_level2(cls) -> bool:
     return callable(getattr(cls, "find_frames", None)) or callable(getattr(cls, "parse", None))

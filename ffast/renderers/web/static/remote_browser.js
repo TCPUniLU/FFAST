@@ -19,7 +19,7 @@ import { icon as drawIcon } from './icons.js';
 import { trapFocus } from './dialogs.js';
 import { UNIT_PLACEHOLDER } from './units.js';
 import { loadRecentUnits, saveRecentUnit, unitChoices } from './recent_units.js';
-import { withExtension, EXPORT_FORMATS } from './session_ops.js';
+import { withExtension, EXPORT_FORMATS, exportPlan } from './session_ops.js';
 import { loadRecentFiles, rememberFile, saveRecentFiles } from './recent_files.js';
 
 /** Join a server-side directory and an entry name. Posix separators: the paths
@@ -285,6 +285,7 @@ export class RemoteBrowser {
     this._home = null;        // server user's home directory
     this._selected = null;    // selected filename within _path
     this._types = { datasets: [{ name: 'ase (auto)', extension: '*' }], models: [] };
+    this._writers = null;     // what the server can write (LOADER_TYPES), else the desktop's list
     this._largeBytes = LARGE_FILE_BYTES;   // tests lower it
     this._large = null;   // {path, size, n, error, done} of a large selected file
     this._probe = null;   // the last key check's answer, for new prediction lines
@@ -312,6 +313,7 @@ export class RemoteBrowser {
     $('fb-format').addEventListener('change', () => {
       const chosen = (this._pick?.formats || EXPORT_FORMATS).find((f) => f.format === $('fb-format').value);
       if (chosen) $('fb-name').value = withExtension($('fb-name').value, chosen.ext);
+      this._refreshExportItems();
       this._refreshLoadEnabled();
     });
     $('fb-name').addEventListener('keydown', (e) => {
@@ -345,6 +347,7 @@ export class RemoteBrowser {
   /** The server's loaders (LOADER_TYPES, on connect): fill the Type list. */
   setLoaderTypes(kw) {
     this._types = { datasets: kw.datasets || [], models: kw.models || [] };
+    this._writers = kw.writers?.length ? kw.writers : null;
     if (!this._types.datasets.length) this._types.datasets = [{ name: 'ase (auto)', extension: '*' }];
     this._fillSelect($('fb-type'), this._types.datasets.map((t) => ({ value: t.name, label: t.name })));
     $('fb-type').value = typeForFile('', this._types.datasets);
@@ -590,13 +593,19 @@ export class RemoteBrowser {
    * ('open-folder'), or a file name ('save-file', clicking a file puts its name
    * in the box).
    * @param {{mode: 'save-folder'|'open-folder'|'save-file', title: string, okLabel: string,
-   *   name?: string, formats?: Array<{format: string, label: string, ext: string}>,
-   *   format?: string, onPick: (path: string, choice: {format: string|null}) => void}} o
+   *   name?: string, formats?: Array<{format: string, label: string, ext: string}>|'writers',
+   *   format?: string, items?: Array<{key: string, label: string, checked: boolean}>,
+   *   dataset?: {variable: boolean, n: number},
+   *   onPick: (path: string, choice: {format: string|null, items?: string[]}) => void}} o
+   *   `formats: 'writers'` is the server's list of what it can write; `items` are tick boxes
+   *   (what to write), greyed out where the format cannot hold them (ADR 0095).
    */
-  pick({ mode, title, okLabel, name = '', formats = null, format = null, itemDirs = null, onPick }) {
+  pick({ mode, title, okLabel, name = '', formats = null, format = null, itemDirs = null,
+    items = null, dataset = null, onPick }) {
     this._mode = mode;
+    if (formats === 'writers') formats = this._writers || EXPORT_FORMATS;
     // itemDirs: a RegExp; folders whose names match are chosen like files, not opened.
-    this._pick = { onPick, formats, itemDirs };
+    this._pick = { onPick, formats, itemDirs, items: items?.map((i) => ({ ...i })) ?? null, dataset };
     // Picked from inside another dialog (Run with FFAST, Make reference):
     // open above it, or the browser is hidden behind it and cannot be used.
     $('fb-modal').classList.toggle('over-dialog', !!document.querySelector('.warning-modal:not(.hidden)'));
@@ -621,9 +630,59 @@ export class RemoteBrowser {
     }
   }
 
+  /** The Export dialog's tick boxes: what to write beside the geometry. */
+  _renderExportItems() {
+    const box = $('fb-export-items');
+    const items = this._pick?.items;
+    box.replaceChildren();
+    box.hidden = $('fb-export').hidden = !items?.length;
+    $('fb-export-note').hidden = true;
+    this._exportBlocked = null;
+    if (!items?.length) return;
+    for (const item of items) {
+      const label = document.createElement('label');
+      label.className = 'fb-export-item';
+      label.dataset.key = item.key;
+      const tick = document.createElement('input');
+      tick.type = 'checkbox';
+      tick.checked = item.checked;
+      tick.addEventListener('change', () => {
+        item.checked = tick.checked;
+        this._refreshExportItems();
+        this._refreshLoadEnabled();
+      });
+      const why = document.createElement('span');
+      why.className = 'fb-export-why';
+      label.append(tick, ` ${item.label} `, why);
+      box.appendChild(label);
+    }
+    this._refreshExportItems();
+  }
+
+  /** Grey out what the chosen format cannot hold, with the reason beside it,
+   * and block the export when the format cannot hold the dataset. */
+  _refreshExportItems() {
+    const pick = this._pick;
+    if (!pick?.items?.length) return;
+    const info = (pick.formats || []).find((f) => f.format === $('fb-format').value);
+    const plan = exportPlan(info, pick.items, pick.dataset || {});
+    for (const label of $('fb-export-items').children) {
+      const reason = plan.disabled[label.dataset.key] || '';
+      const tick = label.querySelector('input');
+      tick.disabled = Boolean(reason);
+      label.classList.toggle('unavailable', Boolean(reason));
+      label.title = reason;
+      label.querySelector('.fb-export-why').textContent = reason;
+    }
+    this._exportBlocked = plan.blocked;
+    $('fb-export-note').hidden = !plan.blocked;
+    $('fb-export-note').textContent = plan.blocked || '';
+  }
+
   /** The part of opening the modal every mode shares. */
   _show() {
     $('fb-modal').classList.remove('hidden');
+    this._renderExportItems();      // the Export tick boxes, or none (another mode)
     this._hideSuggestions();
     this._untrap ||= trapFocus($('fb-modal'));
     // Focus goes into the dialog now, not when the listing arrives: Escape and
@@ -1018,7 +1077,7 @@ export class RemoteBrowser {
       modelType: $('fb-model-type').value,
       dir: this._path,
       name: $('fb-name').value,
-    });
+    }) || Boolean(this._pick && this._exportBlocked);
   }
 
   /** File ▸ Load Zero Model: no file to pick. Its "Loading…" ends like a
@@ -1066,11 +1125,15 @@ export class RemoteBrowser {
     if (this._pick) {
       const path = pickPath({ mode: this._mode, dir: this._path, name: $('fb-name').value });
       if (!path) return;
-      const { onPick, formats } = this._pick;
+      const { onPick, formats, items } = this._pick;
       const format = formats ? $('fb-format').value : null;
+      // What is ticked and not greyed out (a greyed box holds nothing).
+      const chosen = items ? [...$('fb-export-items').children]
+        .filter((l) => !l.querySelector('input').disabled && l.querySelector('input').checked)
+        .map((l) => l.dataset.key) : null;
       this._pick = null;
       this.close();
-      onPick(path, { format });
+      onPick(path, chosen ? { format, items: chosen } : { format });
       return;
     }
     if (!this._selected) return;

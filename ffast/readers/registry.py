@@ -120,3 +120,31 @@ def type_rows() -> list[dict]:
     return [{"name": r.name, "extension": r.extensions[0], "extensions": list(r.extensions),
              "reader": True}
             for r in all_readers() if not getattr(r, "hidden", False)]
+
+
+def writable_formats() -> list[dict]:
+    """What Export can write: every format of every reader that can write, as
+    ``{"format", "label", "ext", "can_write", "reader"}``, in the order the
+    readers list them (the first reader that lists a format owns it)."""
+    seen, out = set(), []
+    for reader in all_readers():
+        if not callable(getattr(reader, "open_writer", None)):
+            continue
+        for info in getattr(reader, "write_formats", []):
+            if info["format"] not in seen:
+                seen.add(info["format"])
+                out.append({**info, "can_write": dict(info.get("can_write") or {}),
+                            "reader": reader.name})
+    out.sort(key=lambda f: f.get("order", 1000))       # stable: the dialog's order
+    return out
+
+
+def writer_for(format: str):
+    """The reader class that writes ``format``, or None."""
+    owner = next((f["reader"] for f in writable_formats() if f["format"] == format), None)
+    return get(owner) if owner else None
+
+
+def format_for_ext(ext: str):
+    """The format of a file ending (``.gen`` is dftb), or None."""
+    return next((f["format"] for f in writable_formats() if f["ext"] == ext), None)

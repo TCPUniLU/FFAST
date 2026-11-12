@@ -105,6 +105,14 @@ def _frames_of(values, frames):
     return np.asarray(values)[frames]
 
 
+def _frame_of(values, i):
+    """Frame ``i`` of per-atom values held as FlatFrames, a list of per-frame
+    arrays, or a (frames, atoms, ...) array."""
+    if isinstance(values, FlatFrames):
+        return values.values[values.offsets[i]:values.offsets[i + 1]]
+    return values[i]
+
+
 class ServerSession:
     """Owns Visualization Views, dispatches client events, replays state.
 
@@ -1831,34 +1839,99 @@ class ServerSession:
             await _reply(False, resolved, error="dataset not found")
             return
 
+        from ffast.readers import ReaderError, registry
+        from ffast.readers.writing import write_dataset
+
         fmt = kwargs.get("format")
         if fmt is None:
             ext = os.path.splitext(resolved)[1].lower()
             # .xyz too → extxyz so energies/forces survive (plain xyz drops them).
-            fmt = "extxyz" if ext in (".xyz", ".extxyz", "") else None
-
-        if fmt == "sgdml":
-            saver = getattr(self.env, "datasetTypes", {}).get("sGDML")
-            fmt = None
-            if saver is None:
-                await _reply(False, resolved, error="this server cannot write sGDML files")
+            fmt = "extxyz" if ext in (".xyz", ".extxyz", "") else registry.format_for_ext(ext)
+        writer = registry.writer_for(fmt) if fmt else None
+        if writer is None:
+            if fmt is not None:
+                await _reply(False, resolved, error=f"this server cannot write {fmt} files")
                 return
-        else:
-            # One saver, frame by frame, each frame with its own elements.
-            from ffast.loaders.ase import aseDatasetLoader as saver
+            writer = registry.writer_for("extxyz")      # ASE names the format by the ending
+        info = next((f for f in registry.writable_formats() if f["format"] == fmt),
+                    {"label": fmt, "can_write": {}})
 
         try:
-            parent = os.path.dirname(resolved)
-            if parent and not os.path.exists(parent):
-                os.makedirs(parent, exist_ok=True)
+            items = self._export_items(dataset, info, kwargs.get("reference"),
+                                       kwargs.get("predictions") or [])
+        except ReaderError as exc:
+            await _reply(False, resolved, error=str(exc))
+            return
+
+        loop = asyncio.get_running_loop()
+        last = [time.monotonic()]
+
+        def progress(done, total):
+            """A long write tells the window how far it is, at most every half
+            second; the end is the reply itself."""
+            now = time.monotonic()
+            if done >= total or now - last[0] < 0.5:
+                return
+            last[0] = now
+            from ffast.protocol.rpc import pack as _pack
+            data = _pack(control.SUBSET_EXPORTED, (), {
+                "ok": None, "path": resolved, "error": None, "progress": [done, total]})
+            asyncio.run_coroutine_threadsafe(self._emit(data), loop)
+
+        try:
             # Frames with no atoms (an element subset's) are left out and counted.
-            skipped = int(await asyncio.to_thread(saver.saveDataset, dataset, resolved, fmt) or 0)
+            skipped = int(await asyncio.to_thread(
+                write_dataset, writer, resolved, dataset, items, format=fmt, progress=progress) or 0)
             n = int(dataset.getN()) - skipped
             logger.info("EXPORT_SUBSET: wrote %d structure(s) → %s", n, resolved)
             await _reply(True, resolved, n=n, skipped=skipped)
         except Exception as exc:
             logger.warning("EXPORT_SUBSET: write failed for %r: %s", resolved, exc)
             await _reply(False, resolved, error=str(exc))
+
+    def _export_items(self, dataset, info, reference, predictions):
+        """What an export writes beside the geometry: the reference values
+        and the predictions chosen, as ``ExportItem``s. The reference follows
+        the format unless the page said (None: when the format can hold values);
+        a prediction with no values for this dataset is refused by name."""
+        import re
+        from ffast.readers import ReaderError
+        from ffast.readers.writing import ExportItem
+
+        can = info.get("can_write") or {}
+        items = []
+        if reference is None:
+            reference = can.get("energies") != 0
+        if reference:
+            has_forces = bool(dataset.hasForces())
+            try:
+                has_energies = dataset.getN() > 0 and dataset.getEnergies(0) is not None
+            except RuntimeError:
+                has_energies = False
+            if has_energies or has_forces:
+                items.append(ExportItem(
+                    "energy", "forces",
+                    (lambda i: dataset.getEnergies(i)) if has_energies else None,
+                    (lambda i: dataset.getForces(i)) if has_forces else None))
+        used = {"reference"}
+        for fp in predictions:
+            model = self.env.models.get(fp)
+            name = getattr(model, "name", None) or fp[:8]
+            stem = re.sub(r"[^\w-]+", "_", name).strip("_") or fp[:8]
+            while stem in used:
+                stem += "_2"
+            used.add(stem)
+            energy = self.env.data.getData("energy", model=fp, dataset=dataset)
+            forces = self.env.data.getData("forces", model=fp, dataset=dataset)
+            e = None if energy is None else energy.get("energy")
+            f = None if forces is None else forces.get("forces")
+            if e is None and f is None:
+                raise ReaderError(f"{name} has no values for this dataset")
+            items.append(ExportItem(
+                f"{stem}_energy", f"{stem}_forces",
+                None if e is None else (lambda i, e=np.asarray(e).reshape(-1): e[i]),
+                None if f is None else (lambda i, f=f: _frame_of(f, i))))
+        return items
 
     async def _on_request_metric(self, metric_id, request_id, **kwargs) -> None:
         """Ask the result store for a metric and reply with METRIC_RESULT

@@ -48,7 +48,56 @@ export function exportStatus(result) {
   return { text: `Export failed: ${result?.error ?? 'unknown error'}`, kind: 'error' };
 }
 
-/** What Export can write (the desktop's list, UI/SideBar.py saveDataset). */
+/**
+ * What a format cannot hold, said before writing (ADR 0095, decision 11): for
+ * the Export dialog's tick boxes, the reasons to grey some out, and a reason
+ * to refuse the export altogether. The server asks the same of the same
+ * words (`ffast/readers/writing.py`, `check_writable`). Pure.
+ * @param {{label?: string, can_write?: object}} info the format
+ * @param {{key: string, checked: boolean}[]} items the reference and the predictions
+ * @param {{variable?: boolean, n?: number}} dataset
+ * @returns {{disabled: Object<string,string>, blocked: string|null}}
+ */
+export function exportPlan(info, items, { variable = false, n = 0 } = {}) {
+  const can = info?.can_write || {};
+  const label = info?.label || 'This format';
+  const disabled = {};
+  let blocked = null;
+  if (can.variable_atoms === false && variable) {
+    blocked = `An ${label} file needs the same atoms in the same order in every structure, `
+      + "and this dataset's structures differ.";
+  } else if (can.frames != null && n > can.frames) {
+    blocked = `${label} holds ${can.frames === 1 ? 'one structure' : `${can.frames} structures`}; `
+      + `this dataset has ${n}.`;
+  }
+  const limit = can.energies;
+  if (limit != null) {
+    const ticked = items.filter((i) => i.checked);
+    const sets = limit === 1 ? 'set' : 'sets';
+    if (limit === 0) {
+      for (const i of items) disabled[i.key] = `${label} holds no energies or forces.`;
+    } else if (ticked.length > limit) {
+      blocked ||= `${label} holds ${limit} ${sets} of energies and forces; ${ticked.length} are chosen.`;
+    } else if (ticked.length === limit) {
+      for (const i of items.filter((x) => !x.checked)) {
+        disabled[i.key] = `${label} holds ${limit} ${sets} of energies and forces: untick one first.`;
+      }
+    }
+  }
+  return { disabled, blocked };
+}
+
+/** The status line of a write in progress (SUBSET_EXPORTED with `progress`), else null. Pure. */
+export function exportProgress(result) {
+  if (!result?.progress) return null;
+  const [done, total] = result.progress;
+  return {
+    text: `Exporting: ${done.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} structures…`,
+    kind: 'connected',
+  };
+}
+
+/** What Export can write when the server lists none (the desktop's list, UI/SideBar.py saveDataset). */
 export const EXPORT_FORMATS = [
   { format: 'extxyz', label: 'Extended XYZ', ext: '.extxyz' },
   { format: 'xyz', label: 'XYZ', ext: '.xyz' },
@@ -111,20 +160,32 @@ export class SessionOps {
     });
   }
 
-  /** The selected object-rail dataset is written server-side as extxyz. */
+  /** The selected object-rail dataset is written server-side: as extxyz unless
+   * another of the server's formats is chosen, with the reference values and
+   * the predictions ticked (ADR 0095). */
   exportSelectedDataset() {
     const fp = this._ports.getCurrentDatasetFp();
     if (!fp) return;
-    const base = safeName(this._ports.getDatasetMeta(fp)?.name, 'subset');
+    const meta = this._ports.getDatasetMeta(fp);
+    const base = safeName(meta?.name, 'subset');
+    const predictions = this._ports.getPredictions?.(fp) ?? [];
     this._ports.pick({
       mode: 'save-file',
       title: 'Export Dataset',
       okLabel: 'Export',
       name: `${base}.extxyz`,
-      formats: EXPORT_FORMATS,
+      formats: 'writers',
       format: 'extxyz',
-      onPick: (path, { format }) => {
-        this._ports.send(OUT.EXPORT_SUBSET, { fingerprint: fp, path, format });
+      items: [{ key: 'reference', label: 'Reference values', checked: true },
+        ...predictions.map((p) => ({ key: p.fp, label: p.name || p.fp.slice(0, 8), checked: false }))],
+      dataset: { variable: Boolean(meta?.variable), n: meta?.n ?? 0 },
+      onPick: (path, { format, items }) => {
+        const kwargs = { fingerprint: fp, path, format };
+        if (items) {
+          kwargs.reference = items.includes('reference');
+          kwargs.predictions = items.filter((k) => k !== 'reference');
+        }
+        this._ports.send(OUT.EXPORT_SUBSET, kwargs);
         this._ports.setStatus(`Exporting to ${path}…`, 'connected');
       },
     });
@@ -149,7 +210,7 @@ export class SessionOps {
   }
 
   onSubsetExported(kw) {
-    const { text, kind } = exportStatus(kw);
+    const { text, kind } = exportProgress(kw) ?? exportStatus(kw);
     this._ports.setStatus(text, kind);
   }
 }

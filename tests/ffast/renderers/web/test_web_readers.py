@@ -4,6 +4,7 @@ The toy reader is installed the way an outside reader is: a ``.dist-info``
 folder with an ``ffast.readers`` entry point, on the server process's path.
 """
 import os
+import re
 
 import pytest
 from playwright.async_api import async_playwright, expect
@@ -252,3 +253,77 @@ async def test_web_a_reader_field_is_a_metric_input_with_its_values(more_toy_rea
             assert _floats(await _request_values(ws, fp, "user.score")) == [0.0, 0.5, 1.0, 1.5]
         finally:
             await ws.close()
+
+
+async def _toy_pair(ws_port, folder):
+    """A toy dataset and a toy prediction for it, loaded through a headless client."""
+    from .test_web_runtime import _connect_headless_client, _wait_for_event, pack
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(pack("LOAD_DATASET", (str(folder / "ds.toy"), "toy"), {}))
+        dataset_fp = (await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=30))["args"][0]
+        await ws.send(pack("LOAD_PREDICTION", (str(folder / "pred.toy"), dataset_fp), {"reader": "toy"}))
+        await _wait_for_event(ws, "REMOTE_MODEL_META", timeout=30)
+        return dataset_fp
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+
+async def test_web_export_ticks_the_reference_and_the_predictions_and_greys_what_a_format_cannot_hold(
+        toy_reader_installed, tmp_path):
+    import ase.io
+    from .test_web_loading import _go_to
+    from .test_web_runtime import _open_loupe
+    data = tmp_path / "data"
+    data.mkdir()
+    write_toy(data / "ds.toy", make_frames(4))
+    write_toy(data / "pred.toy", make_frames(4))
+    out = tmp_path / "out"
+    out.mkdir()
+    async with _spawn_server() as (ws_port, web_port):
+        await _wait_for_server_ready(ws_port)
+        dataset_fp = await _toy_pair(ws_port, data)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 900})
+            try:
+                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _file_menu(page, "Export Selected Dataset…")
+                items = page.locator("#fb-export-items .fb-export-item")
+                await expect(items).to_have_count(2)
+                await expect(items.nth(0)).to_contain_text("Reference values")
+                await expect(items.nth(1)).to_contain_text("pred")
+                # only the reference is ticked, as the plan says
+                await expect(items.nth(0).locator("input")).to_be_checked()
+                await expect(items.nth(1).locator("input")).not_to_be_checked()
+                assert await page.locator("#fb-format option").evaluate_all(
+                    "(os) => os.map((o) => o.value)") == ["extxyz", "xyz", "db", "traj", "vasp", "dftb", "sgdml"]
+
+                # a one-set format: the second box is greyed out, with the reason
+                await page.locator("#fb-format").select_option("sgdml")
+                await expect(items.nth(1)).to_have_class(re.compile("unavailable"))
+                await expect(items.nth(1).locator("input")).to_be_disabled()
+                await expect(items.nth(1)).to_contain_text("sGDML holds 1 set of energies and forces")
+                await expect(items.nth(0).locator("input")).to_be_enabled()
+
+                # a one-structure format that holds no energies: both greyed out, the export blocked
+                await page.locator("#fb-format").select_option("dftb")
+                await expect(items.nth(0).locator("input")).to_be_disabled()
+                await expect(page.locator("#fb-load")).to_be_disabled()
+                await expect(page.locator("#fb-export-note")).to_contain_text(
+                    "holds one structure; this dataset has 4")
+
+                # both sets into one extxyz file
+                await page.locator("#fb-format").select_option("extxyz")
+                await items.nth(1).locator("input").check()
+                await expect(page.locator("#fb-load")).to_be_enabled()
+                await _go_to(page, out)
+                await page.locator("#fb-name").fill("both.extxyz")
+                await page.locator("#fb-load").click()
+                await expect(page.locator("#status")).to_contain_text("Exported 4 structure(s)", timeout=20000)
+                frame = ase.io.read(str(out / "both.extxyz"), index=2)
+                assert frame.get_potential_energy() == 20.0
+                assert frame.info["pred_toy_energy"] == 20.0
+            finally:
+                await browser.close()

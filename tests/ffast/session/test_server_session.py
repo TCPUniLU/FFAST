@@ -11,6 +11,7 @@ The S2b argument-resolution rule (``_resolve``) is a pure staticmethod and so te
 with no env, queue, or event loop at all.
 """
 import asyncio
+from types import SimpleNamespace
 import os
 from unittest.mock import patch
 
@@ -1102,6 +1103,12 @@ class _FakeExportDataset:
     def getN(self):
         return self._n
 
+    def hasForces(self):
+        return False
+
+    def getEnergies(self, i=None):
+        return None
+
 
 def _list_dir_reply(env):
     async def scenario():
@@ -1199,15 +1206,16 @@ def test_dispatch_export_subset_missing_dataset_emits_error():
 
 
 @pytest.mark.parametrize("is_variable, n", [(False, 5), (True, 2)], ids=["uniform", "variable"])
-def test_dispatch_export_subset_uses_the_one_ase_saver(tmp_path, is_variable, n):
+def test_dispatch_export_subset_uses_the_ase_writer(tmp_path, is_variable, n):
     """Uniform and variable datasets (plain, SubDataset or AtomFilteredDataset)
-    go to the one ``aseDatasetLoader.saveDataset``, which writes frame by
-    frame, and the reply reports getN() structures."""
+    go to the ASE reader's writer (ADR 0095), which writes frame by frame, and
+    the reply reports getN() structures."""
+    from ffast.readers.ase_reader import AseReader
     ds = _FakeExportDataset(n=n, is_variable=is_variable)
     env = _FakeEnv(datasets={"ds1": ds})
     target = tmp_path / "out.extxyz"
 
-    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset", return_value=0) as saver:
+    with patch("ffast.readers.writing.write_dataset", return_value=0) as writer:
 
         async def scenario():
             s = ServerSession(env, asyncio.Queue())
@@ -1218,39 +1226,38 @@ def test_dispatch_export_subset_uses_the_one_ase_saver(tmp_path, is_variable, n)
 
     assert event == control.SUBSET_EXPORTED
     assert kwargs == {"ok": True, "path": str(target), "error": None, "n": n, "skipped": 0}
-    saver.assert_called_once_with(ds, str(target), "extxyz")
+    (reader, path, dataset, items), options = writer.call_args
+    assert (reader, path, dataset, items, options["format"]) == (AseReader, str(target), ds, [], "extxyz")
 
 
-def test_dispatch_export_subset_writes_sgdml_with_the_sgdml_saver(tmp_path):
-    from unittest.mock import MagicMock
+def test_dispatch_export_subset_writes_sgdml_with_the_sgdml_writer(tmp_path):
+    from ffast.readers.npz_reader import NpzReader
     ds = _FakeExportDataset()
     env = _FakeEnv(datasets={"ds1": ds})
-    saver = MagicMock()
-    saver.saveDataset.return_value = None
-    env.datasetTypes = {"sGDML": saver}
     target = tmp_path / "out.npz"
 
-    async def scenario():
-        s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": str(target), "format": "sgdml"})
-        return s.outbound.get_nowait()
+    with patch("ffast.readers.writing.write_dataset", return_value=0) as writer:
+        async def scenario():
+            s = ServerSession(env, asyncio.Queue())
+            await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": str(target), "format": "sgdml"})
+            return s.outbound.get_nowait()
 
-    _, _, kwargs = unpack(_run(scenario()))
-    saver.saveDataset.assert_called_once_with(ds, str(target), None)
+        _, _, kwargs = unpack(_run(scenario()))
+    assert writer.call_args.args[0] is NpzReader and writer.call_args.kwargs["format"] == "sgdml"
     assert kwargs["ok"] is True
 
 
-def test_dispatch_export_subset_without_sgdml_says_so(tmp_path):
+def test_dispatch_export_subset_of_a_format_no_reader_writes_says_so(tmp_path):
     env = _FakeEnv(datasets={"ds1": _FakeExportDataset()})
 
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
         await s.dispatch("EXPORT_SUBSET", [], {
-            "fingerprint": "ds1", "path": str(tmp_path / "o.npz"), "format": "sgdml"})
+            "fingerprint": "ds1", "path": str(tmp_path / "o.foo"), "format": "foo"})
         return s.outbound.get_nowait()
 
     _, _, kwargs = unpack(_run(scenario()))
-    assert kwargs["ok"] is False and "sGDML" in kwargs["error"]
+    assert kwargs["ok"] is False and kwargs["error"] == "this server cannot write foo files"
 
 
 def test_export_of_an_element_subset_skips_its_empty_frames_and_says_how_many(tmp_path):
@@ -1276,7 +1283,7 @@ def test_dispatch_export_subset_expands_user_and_relative_path(tmp_path, monkeyp
     ds = _FakeExportDataset()
     env = _FakeEnv(datasets={"ds1": ds})
 
-    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as uniform:
+    with patch("ffast.readers.writing.write_dataset", return_value=0) as writer:
         async def scenario():
             s = ServerSession(env, asyncio.Queue())
             await s.dispatch(
@@ -1289,7 +1296,7 @@ def test_dispatch_export_subset_expands_user_and_relative_path(tmp_path, monkeyp
     expected = str(tmp_path / "sub" / "out.extxyz")
     assert kwargs["ok"] is True
     assert kwargs["path"] == expected
-    uniform.assert_called_once_with(ds, expected, "extxyz")
+    assert writer.call_args.args[1] == expected
 
 
 def test_dispatch_export_subset_reports_error_on_write_failure(tmp_path):
@@ -1297,10 +1304,7 @@ def test_dispatch_export_subset_reports_error_on_write_failure(tmp_path):
     env = _FakeEnv(datasets={"ds1": ds})
     target = tmp_path / "out.extxyz"
 
-    with patch(
-        "ffast.loaders.ase.aseDatasetLoader.saveDataset",
-        side_effect=OSError("disk full"),
-    ):
+    with patch("ffast.readers.writing.write_dataset", side_effect=OSError("disk full")):
         async def scenario():
             s = ServerSession(env, asyncio.Queue())
             await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", "path": str(target)})
@@ -1319,7 +1323,7 @@ def test_dispatch_export_subset_respects_explicit_format(tmp_path):
     env = _FakeEnv(datasets={"ds1": ds})
     target = tmp_path / "out.xyz"
 
-    with patch("ffast.loaders.ase.aseDatasetLoader.saveDataset") as uniform:
+    with patch("ffast.readers.writing.write_dataset", return_value=0) as writer:
         async def scenario():
             s = ServerSession(env, asyncio.Queue())
             await s.dispatch(
@@ -1330,7 +1334,112 @@ def test_dispatch_export_subset_respects_explicit_format(tmp_path):
 
         unpack(_run(scenario()))
 
-    uniform.assert_called_once_with(ds, str(target), "xyz")
+    assert writer.call_args.kwargs["format"] == "xyz"
+
+
+# ── export with predictions (ADR 0095, decision 11) ─────────────────────────
+
+class _Entity:
+    def __init__(self, **values):
+        self._values = values
+
+    def get(self, key):
+        return self._values.get(key)
+
+
+class _PredictionData:
+    """``env.data.getData`` for a ghost's energies and forces."""
+
+    def __init__(self, energies, forces=None):
+        self.energies, self.forces = energies, forces
+
+    def getData(self, key, model=None, dataset=None):
+        values = {"energy": self.energies, "forces": self.forces}[key]
+        return None if values is None else _Entity(**{key: values})
+
+
+def _export(env, **kwargs):
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("EXPORT_SUBSET", [], {"fingerprint": "ds1", **kwargs})
+        return s.outbound.get_nowait()
+
+    return unpack(_run(scenario()))[2]
+
+
+def _real_reference(n=3):
+    from ase import Atoms
+    from ffast.loaders.ase import aseDatasetLoader
+    frames = []
+    for i in range(n):
+        atoms = Atoms("CH4", positions=np.arange(15).reshape(5, 3) * 0.1 + i)
+        atoms.info["ref_energy"] = -1.0 - i
+        atoms.arrays["ref_forces"] = np.full((5, 3), 0.25 + i)
+        frames.append(atoms)
+    ds = aseDatasetLoader("mem.extxyz", atomsList=frames, selected_energy_key="ref_energy",
+                          selected_force_key="ref_forces")
+    ds.initialise()
+    return ds
+
+
+def test_export_writes_the_reference_and_a_chosen_prediction_into_one_file(tmp_path):
+    import ase.io
+    ds = _real_reference()
+    env = _FakeEnv(datasets={"ds1": ds}, models={"m1": SimpleNamespace(name="MACE small")},
+                   data=_PredictionData(np.array([-9.0, -8.0, -7.0]), np.ones((3, 5, 3)) * 2))
+    target = tmp_path / "both.extxyz"
+    reply = _export(env, path=str(target), format="extxyz", predictions=["m1"])
+    assert reply["ok"] is True and reply["n"] == 3
+    frame = ase.io.read(str(target), index=1)
+    assert frame.get_potential_energy() == -2.0                       # the reference: the calculator's
+    assert frame.info["MACE_small_energy"] == -8.0                    # the prediction beside it
+    assert np.allclose(frame.arrays["MACE_small_forces"], 2.0)
+
+
+def test_export_leaves_the_reference_out_when_the_page_says_so(tmp_path):
+    import ase.io
+    ds = _real_reference()
+    env = _FakeEnv(datasets={"ds1": ds}, models={"m1": SimpleNamespace(name="P")},
+                   data=_PredictionData(np.array([1.0, 2.0, 3.0])))
+    target = tmp_path / "p.extxyz"
+    assert _export(env, path=str(target), format="extxyz", reference=False, predictions=["m1"])["ok"]
+    frame = ase.io.read(str(target), index=0)
+    assert frame.calc is None and frame.info["P_energy"] == 1.0
+
+
+def test_export_refuses_what_the_format_cannot_hold_before_writing(tmp_path):
+    ds = _real_reference()
+    env = _FakeEnv(datasets={"ds1": ds}, models={"m1": SimpleNamespace(name="P")},
+                   data=_PredictionData(np.zeros(3), np.zeros((3, 5, 3))))
+    target = tmp_path / "o.npz"
+    reply = _export(env, path=str(target), format="sgdml", predictions=["m1"])
+    assert reply["ok"] is False
+    assert reply["error"] == "sGDML holds 1 set of energies and forces; 2 are chosen."
+    assert not target.exists()
+
+
+def test_export_of_a_prediction_with_no_values_for_the_dataset_says_which(tmp_path):
+    env = _FakeEnv(datasets={"ds1": _real_reference()}, models={"m1": SimpleNamespace(name="Lost")},
+                   data=_PredictionData(None))
+    reply = _export(env, path=str(tmp_path / "o.extxyz"), predictions=["m1"])
+    assert reply["ok"] is False and reply["error"] == "Lost has no values for this dataset"
+
+
+def test_export_to_a_format_that_holds_no_energies_still_writes_the_geometry(tmp_path):
+    """DFTB+ gen holds one structure and no energies: the reference is left
+    out on its own, not refused, and the geometry is written."""
+    import ase.io
+    ds = _real_reference(n=1)
+    target = tmp_path / "geometry.gen"
+    assert _export(_FakeEnv(datasets={"ds1": ds}), path=str(target), format="dftb")["ok"] is True
+    assert len(ase.io.read(str(target), format="gen")) == 5
+
+
+def test_export_of_many_structures_to_a_one_structure_format_says_so(tmp_path):
+    reply = _export(_FakeEnv(datasets={"ds1": _real_reference(n=3)}),
+                    path=str(tmp_path / "g.gen"), format="dftb")
+    assert reply["ok"] is False
+    assert reply["error"] == "DFTB+ gen (one structure) holds one structure; this dataset has 3."
 
 
 # ── session save/load acks (ADR 0050) ─────────────────────────────────────────

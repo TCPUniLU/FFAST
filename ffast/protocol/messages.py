@@ -834,6 +834,11 @@ class ExportSubsetRequest(BaseModel):
     fingerprint: str
     path: str
     format: Optional[str] = None
+    # What to write beside the geometry (ADR 0095, decision 11): the reference
+    # values (None: if the format can hold them) and each prediction chosen, by
+    # its fingerprint.
+    reference: Optional[bool] = None
+    predictions: list[str] = Field(default_factory=list)
 
 
 class EmptyRequest(BaseModel):

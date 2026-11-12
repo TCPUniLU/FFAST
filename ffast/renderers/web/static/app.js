@@ -216,6 +216,10 @@ export class FFastApp {
       setStatus: (text, kind) => this._setStatus(text, kind),
       getCurrentDatasetFp: () => this._currentDatasetFp,
       getDatasetMeta: (fp) => this._datasets.get(fp),
+      // The predictions loaded for a dataset, for Export's tick boxes.
+      getPredictions: (fp) => [...this._models]
+        .filter(([, m]) => (m.dataset_fingerprints || []).includes(fp))
+        .map(([modelFp, m]) => ({ fp: modelFp, name: m.name })),
       capturePng: (opts) => this._capturePng(opts),
       pick: (opts) => this._browser.pick(opts),
     });
