@@ -26,7 +26,7 @@ import socket
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Optional
+from typing import TYPE_CHECKING, Callable, NamedTuple, Optional
 
 from ffast.protocol import control
 
@@ -133,40 +133,90 @@ def _find_free_port() -> int:
 # ── request/reply correlation ──────────────────────────────────────────────────
 
 
+class _Flight:
+    """One request on the wire: its reply future, what was asked, and how many
+    callers wait on it."""
+
+    __slots__ = ("future", "same", "waiters", "heard")
+
+    def __init__(self, future, same, now):
+        self.future = future
+        self.same = same
+        self.waiters = 0
+        self.heard = now      # when it was sent, or last reported progress
+
+
+def _retrieve(future):
+    """Mark a failed future's error as seen (it may have no waiter left)."""
+    if not future.cancelled():
+        future.exception()
+
+
 class PendingRequests:
     """Correlates async request/reply traffic over a single WebSocket.
 
-    Every in-flight request registers a Future under a ``(channel, key)`` pair;
-    the listener resolves it when the matching reply arrives.  This replaces the
-    five hand-rolled ``_pending_*`` dicts (each duplicating create-future / store
-    / await-with-timeout / pop), and — crucially — the correlation logic is pure
-    data, so it is unit-testable without a live socket.
+    Every in-flight request is held under a ``(channel, key)`` pair; the
+    listener resolves it when the matching reply arrives. The correlation
+    logic is pure data, so it is unit-testable without a live socket.
 
     ``channel`` namespaces the key space: two channels may legitimately use the
     same key (the key and length probes are both keyed by file path).
+
+    This module owns every request's lifetime, so each caller gets exactly one
+    outcome — the reply, the send's error, or its own timeout:
+
+    - The same request (same key, same ``same``) asked again while one is in
+      flight joins it: one message on the wire, one reply serves all.
+    - A different request whose reply carries the same key (``same`` differs:
+      the key probe of one path for another dataset type) waits until the one
+      in flight ends, then sends its own, so neither gets the other's reply.
+    - A send that fails or is cancelled ends the request for everyone waiting
+      on it, with that error, and leaves nothing behind.
+    - A caller that times out leaves; the request ends only when nobody waits.
+    - A progress reply (:meth:`touch`) restarts every waiter's timeout: a long
+      job that keeps reporting is not given up on.
     """
 
     def __init__(self):
         self._pending: dict = {}
 
-    def _inflight(self, channel, key):
-        """Return a not-yet-done future for ``(channel, key)``, else ``None``."""
-        fut = self._pending.get((channel, key))
-        return fut if (fut is not None and not fut.done()) else None
-
     def resolve(self, channel, key, payload) -> bool:
-        """Complete and remove the future for ``(channel, key)``.
+        """Complete and remove the request for ``(channel, key)``.
 
-        Returns ``True`` if a pending future was found and resolved, ``False``
+        Returns ``True`` if a pending request was found and resolved, ``False``
         if there was no awaiter (an unexpected / duplicate reply).
         """
-        fut = self._pending.pop((channel, key), None)
-        if fut is not None and not fut.done():
-            fut.set_result(payload)
+        flight = self._pending.pop((channel, key), None)
+        if flight is not None and not flight.future.done():
+            flight.future.set_result(payload)
             return True
         return False
 
-    async def request(self, channel, key, send, *, timeout, coalesce=False):
+    def touch(self, channel, key) -> bool:
+        """The server reported progress on ``(channel, key)``: restart its
+        waiters' timeouts. ``False`` when nothing waits for it."""
+        flight = self._pending.get((channel, key))
+        if flight is None or flight.future.done():
+            return False
+        flight.heard = asyncio.get_running_loop().time()
+        return True
+
+    def _end(self, slot, flight, error=None):
+        """Remove ``flight``; fail it with ``error``, or cancel it when nobody
+        waits any more."""
+        if self._pending.get(slot) is flight:
+            del self._pending[slot]
+        if flight.future.done():
+            return
+        if error is None:
+            flight.future.cancel()
+        elif isinstance(error, Exception):
+            flight.future.set_exception(error)
+        else:   # cancelled (or interrupted) while sending: it may not have gone out
+            flight.future.set_exception(ConnectionError(
+                f"{slot[0]} request for {slot[1]!r} was stopped while being sent"))
+
+    async def request(self, channel, key, send, *, timeout, same):
         """Send a request and await its correlated reply.
 
         Parameters
@@ -176,33 +226,70 @@ class PendingRequests:
             event name; ``key`` is whatever the reply carries to correlate by.
         send : callable() -> awaitable
             Pushes the request on the wire.  Called only for a fresh request,
-            never on a coalesced join.
+            never when joining one in flight.
         timeout : float
-            Seconds to wait for the reply.
-        coalesce : bool
-            When ``True``, an identical request already in flight is joined
-            instead of re-sent — every awaiter is served by the one reply.
-            Shielded so one awaiter timing out cannot cancel the shared future.
+            Seconds to wait for a different request to end, then for the reply;
+            a progress reply (:meth:`touch`) restarts the reply's timeout.
+        same : hashable
+            What else the request asks that the reply does not carry. Required,
+            so every caller decides: ``None`` when the key names the whole
+            request; otherwise two different requests would share one reply.
         """
-        if coalesce:
-            existing = self._inflight(channel, key)
-            if existing is not None:
-                return await asyncio.wait_for(
-                    asyncio.shield(existing), timeout=timeout
-                )
+        slot = (channel, key)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
 
-        loop = asyncio.get_event_loop()
-        fut = loop.create_future()
-        self._pending[(channel, key)] = fut
-        await send()
+        def left():
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            return remaining
+
+        while True:
+            flight = self._pending.get(slot)
+            if flight is None or flight.future.done():
+                break
+            if flight.same == same:
+                flight.waiters += 1
+                try:
+                    return await self._reply(flight, left())
+                finally:
+                    self._leave(slot, flight)
+            # A different request with the same reply key is in flight.
+            await asyncio.wait({flight.future}, timeout=left())
+
+        flight = _Flight(loop.create_future(), same, loop.time())
+        flight.future.add_done_callback(_retrieve)
+        self._pending[slot] = flight
+        flight.waiters += 1
         try:
-            return await asyncio.wait_for(fut, timeout=timeout)
+            try:
+                await send()
+            except BaseException as exc:
+                self._end(slot, flight, exc)
+                raise
+            return await self._reply(flight, left())
         finally:
-            # On reply, resolve() already popped us. On timeout the listener
-            # never did (it only pops on a reply), so drop the dead future here
-            # — otherwise a later identical request coalesces onto it forever.
-            if self._pending.get((channel, key)) is fut:
-                self._pending.pop((channel, key), None)
+            self._leave(slot, flight)
+
+    @staticmethod
+    async def _reply(flight, timeout):
+        """The reply, or TimeoutError after ``timeout`` s with no reply and no
+        progress. Never cancels the shared future: others may wait on it."""
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        while True:
+            remaining = max(started, flight.heard) + timeout - loop.time()
+            if remaining <= 0:
+                raise asyncio.TimeoutError()
+            done, _ = await asyncio.wait({flight.future}, timeout=remaining)
+            if done:
+                return flight.future.result()
+
+    def _leave(self, slot, flight):
+        flight.waiters -= 1
+        if flight.waiters == 0:
+            self._end(slot, flight)
 
 
 # ── reply-channel extractors ────────────────────────────────────────────────────
@@ -211,7 +298,22 @@ class PendingRequests:
 
 
 def _reply_probe(args, kwargs):
-    # DATASET_KEYS_RESPONSE / DATASET_LENGTH_RESPONSE: keyed by file path.
+    # DATASET_KEYS_RESPONSE: keyed by file path.
+    return args[0], kwargs
+
+
+class _Progress(NamedTuple):
+    """An extractor's answer for a reply that reports progress, not the result."""
+    key: object
+
+
+def _reply_length(args, kwargs):
+    # DATASET_LENGTH_RESPONSE: keyed by file path. The server replies as the
+    # count grows (done=False) and once at the end (done=True); only the last
+    # is the answer, the others restart the wait. A server older than ``done``
+    # replies once.
+    if not kwargs.get("done", True):
+        return _Progress(args[0])
     return args[0], kwargs
 
 
@@ -249,7 +351,7 @@ def _reply_arrays(args, kwargs):
 # control.REPLY_EVENTS (ADR 0033) — see tests/ffast/test_control_events.py.
 _REPLY_CHANNELS = {
     control.DATASET_KEYS_RESPONSE: (1, _reply_probe),
-    control.DATASET_LENGTH_RESPONSE: (1, _reply_probe),
+    control.DATASET_LENGTH_RESPONSE: (1, _reply_length),
     control.PREDICTION_ARRAYS: (2, _reply_prediction),
     control.METRIC_RESULT: (1, _reply_metric),
     control.SUBDATASET_ARRAYS: (1, _reply_arrays),
@@ -352,20 +454,24 @@ class ServerConnection:
                         channel = _REPLY_CHANNELS.get(event)
                         if channel is not None:
                             min_args, extract = channel
-                            if len(args) >= min_args:
-                                key, payload = extract(args, kwargs)
-                                if not self._pending.resolve(
-                                    event, key, payload
-                                ):
-                                    logger.warning(
-                                        "Listener: %s for unknown key %r",
-                                        event, key,
-                                    )
-                            else:
+                            if len(args) < min_args:
                                 logger.warning(
                                     "Listener: malformed %s (args=%r)",
                                     event, args,
                                 )
+                            else:
+                                extracted = extract(args, kwargs)
+                                if isinstance(extracted, _Progress):
+                                    self._pending.touch(event, extracted.key)
+                                else:
+                                    key, payload = extracted
+                                    if not self._pending.resolve(
+                                        event, key, payload
+                                    ):
+                                        logger.warning(
+                                            "Listener: %s for unknown key %r",
+                                            event, key,
+                                        )
                             await asyncio.sleep(0)
                             continue  # do NOT forward to env
 
@@ -430,7 +536,7 @@ class ServerConnection:
         arrays = await self._pending.request(
             control.SUBDATASET_ARRAYS, fingerprint,
             lambda: self.push_event(control.REQUEST_SUBDATASET_ARRAYS, fingerprint),
-            timeout=timeout,
+            timeout=timeout, same=None,     # the fingerprint is the whole request
         )
         self._array_cache[fingerprint] = arrays
         logger.info("Arrays cached for %r", fingerprint)
@@ -460,10 +566,8 @@ class ServerConnection:
             Arrays keyed as ``pred__energy__<model_fp>`` and/or
             ``pred__forces__<model_fp>``.
         """
-        # Coalesce concurrent identical requests. Every panel metric fetches the
-        # same (dataset, model) predictions at once; without coalescing each call
-        # would overwrite the single pending future, orphaning the others (they
-        # hang until timeout) and the duplicate replies log "for unknown".
+        # Every panel metric fetches the same (dataset, model) predictions at
+        # once; PendingRequests joins them onto one request and one reply.
         logger.info(
             "Requesting prediction arrays: dataset=%r model=%r",
             dataset_fp[:8], model_fp[:8],
@@ -473,7 +577,7 @@ class ServerConnection:
             lambda: self.push_event(
                 control.REQUEST_PREDICTION_ARRAYS, dataset_fp, model_fp
             ),
-            timeout=timeout, coalesce=True,
+            timeout=timeout, same=None,     # (dataset, model) is the whole request
         )
 
     async def request_metric(
@@ -498,7 +602,7 @@ class ServerConnection:
                 control.REQUEST_METRIC, metric_id, request_id,
                 params=params or {}, model_fp=model_fp, dataset_fp=dataset_fp,
             ),
-            timeout=timeout,
+            timeout=timeout, same=None,     # request_id is new for every request
         )
 
     async def probe_dataset_length(
@@ -518,7 +622,7 @@ class ServerConnection:
         return await self._pending.request(
             control.DATASET_LENGTH_RESPONSE, path,
             lambda: self.push_event(control.PROBE_DATASET_LENGTH, path),
-            timeout=timeout,
+            timeout=timeout, same=None,     # the path is the whole request
         )
 
     async def probe_dataset_keys(
@@ -551,7 +655,7 @@ class ServerConnection:
         return await self._pending.request(
             control.DATASET_KEYS_RESPONSE, path,
             lambda: self.push_event(control.PROBE_DATASET_KEYS, path, typ),
-            timeout=timeout,
+            timeout=timeout, same=typ,      # the reply names the path only
         )
 
     async def list_dir(self, path: str | None = None, timeout: float = 30.0) -> dict:
@@ -575,7 +679,7 @@ class ServerConnection:
         return await self._pending.request(
             control.DIR_LISTING, path,
             lambda: self.push_event(control.LIST_DIR, path),
-            timeout=timeout,
+            timeout=timeout, same=None,     # the path is the whole request
         )
 
     async def close_websocket(self) -> None:
