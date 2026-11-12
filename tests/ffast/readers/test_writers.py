@@ -200,3 +200,40 @@ def test_check_writable_names_what_a_format_cannot_hold():
     with pytest.raises(ReaderError, match="holds no energies or forces"):
         check_writable({"label": "VASP POSCAR", "can_write": {"energies": 0, "forces": 0}}, type(
             "One", (), {"isVariable": False, "getN": lambda self: 1})(), [ExportItem("e", "f", lambda i: 0.0, None)])
+
+
+def _one(n=2):
+    return type("One", (), {"isVariable": False, "getN": lambda self: n})()
+
+
+def test_check_writable_refuses_more_force_sets_than_the_format_holds():
+    traj = {"label": "ASE trajectory", "can_write": {"forces": 1}}
+    both = [ExportItem("e", "f", lambda i: 0.0, lambda i: np.zeros((1, 3))),
+            ExportItem("m_e", "m_f", lambda i: 0.0, lambda i: np.zeros((1, 3)))]
+    with pytest.raises(ReaderError, match="ASE trajectory holds 1 set of forces; 2 are chosen"):
+        check_writable(traj, _one(), both)
+    # a set with an energy only takes no room for forces
+    check_writable(traj, _one(), [both[0], ExportItem("m_e", "m_f", lambda i: 0.0, None)])
+
+
+def test_a_format_with_no_forces_writes_the_energies_and_leaves_the_forces_out(tmp_path):
+    written = {}
+
+    class NoForces:
+        name = "noforces"
+        write_formats = [{"format": "nf", "label": "No forces", "ext": ".nf",
+                          "can_write": {"energies": 1, "forces": 0}}]
+
+        @staticmethod
+        def open_writer(path, contents, format):
+            written["contents"] = contents
+            written["chunks"] = []
+            return type("W", (), {"write": lambda self, c: written["chunks"].append(c),
+                                  "close": lambda self: None})()
+
+    src = _write(tmp_path, _frames(3), "src.traj")
+    ds = _dataset(src, AseReader)
+    write_dataset(NoForces, str(tmp_path / "out.nf"), ds, [_reference_item(ds)], format="nf")
+    assert written["contents"]["energies"] == ["energy"] and written["contents"]["forces"] == []
+    assert "energy:energy" in written["chunks"][0]
+    assert not any(k.startswith("forces:") for k in written["chunks"][0])

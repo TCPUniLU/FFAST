@@ -675,8 +675,8 @@ export class RemoteBrowser {
       label.querySelector('.fb-export-why').textContent = reason;
     }
     this._exportBlocked = plan.blocked;
-    $('fb-export-note').hidden = !plan.blocked;
-    $('fb-export-note').textContent = plan.blocked || '';
+    $('fb-export-note').hidden = !(plan.blocked || plan.note);
+    $('fb-export-note').textContent = plan.blocked || plan.note || '';
   }
 
   /** The part of opening the modal every mode shares. */

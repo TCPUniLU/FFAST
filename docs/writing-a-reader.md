@@ -275,8 +275,9 @@ class MolReaderThatWrites(MolReader):
 `can_write` may have `frames` (the most structures a file holds), `energies` and
 `forces` (the most sets), and `cell`, `frame_fields`, `atom_fields`,
 `variable_atoms` (`False` when the format cannot hold them). A missing key means
-no limit. Predictions come in the chunk as extra `energy:<name>` and
-`forces:<name>` keys.
+no limit. With `"forces": 0` the energies are still written and the forces are
+left out; the Export dialog says so. Predictions come in the chunk as extra
+`energy:<name>` and `forces:<name>` keys.
 
 ## Check your reader
 

@@ -173,6 +173,9 @@ CASES = {
     "plan_no_values": "so.exportPlan({label: 'VASP POSCAR', can_write: {energies: 0}}, [{key: 'reference', checked: true}, {key: 'p1', checked: false}])",
     "plan_variable": "so.exportPlan({label: 'sGDML', can_write: {variable_atoms: false}}, [], {variable: true, n: 4})",
     "plan_frames": "so.exportPlan({label: 'DFTB+ gen (one structure)', can_write: {frames: 1}}, [], {n: 3})",
+    "plan_forces_full": "so.exportPlan({label: 'ASE trajectory', can_write: {forces: 1}}, [{key: 'reference', checked: true}, {key: 'p1', checked: false}])",
+    "plan_forces_too_many": "so.exportPlan({label: 'ASE trajectory', can_write: {forces: 1}}, [{key: 'reference', checked: true}, {key: 'p1', checked: true}])",
+    "plan_no_forces": "so.exportPlan({label: 'Mol', can_write: {energies: 1, forces: 0}}, [{key: 'reference', checked: true}])",
     "plan_progress": "so.exportProgress({progress: [250, 1000]})",
     "plan_no_progress": "so.exportProgress({ok: true})",
     "ext_swap": "so.withExtension('water.extxyz', '.db')",
@@ -1998,7 +2001,7 @@ def test_a_format_change_swaps_only_the_ending(results):
 
 
 def test_a_format_that_can_hold_everything_greys_nothing(results):
-    assert results["plan_free"] == {"disabled": {}, "blocked": None}
+    assert results["plan_free"] == {"disabled": {}, "blocked": None, "note": None}
 
 
 def test_a_one_set_format_greys_the_other_boxes_once_one_is_ticked_and_says_why(results):
@@ -2017,6 +2020,21 @@ def test_a_format_with_no_energies_greys_every_box(results):
     plan = results["plan_no_values"]
     assert set(plan["disabled"]) == {"reference", "p1"}
     assert plan["disabled"]["reference"] == "VASP POSCAR holds no energies or forces."
+
+
+def test_a_format_with_a_force_limit_greys_and_blocks_like_the_energy_limit(results):
+    # The page does not know which set has forces, so each ticked box counts;
+    # the server counts exactly (check_writable).
+    assert results["plan_forces_full"]["disabled"] == {
+        "p1": "ASE trajectory holds 1 set of forces: untick one first."}
+    assert results["plan_forces_too_many"]["blocked"] == (
+        "ASE trajectory holds 1 set of forces; 2 are chosen.")
+
+
+def test_a_format_with_no_forces_says_they_are_left_out_without_blocking(results):
+    plan = results["plan_no_forces"]
+    assert plan["blocked"] is None and plan["disabled"] == {}
+    assert plan["note"] == "Mol holds no forces; they are left out."
 
 
 def test_a_dataset_the_format_cannot_hold_blocks_the_export(results):

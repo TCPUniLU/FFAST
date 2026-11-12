@@ -55,6 +55,18 @@ def check_writable(format_info: dict, dataset, items) -> None:
             raise ReaderError(f"{label} holds no energies or forces.")
         raise ReaderError(f"{label} holds {limit} {_plural(limit)} of energies and forces; "
                           f"{len(chosen)} are chosen.")
+    with_forces = [item for item in items if item.forces is not None]
+    force_limit = can.get("forces")
+    if force_limit and len(with_forces) > force_limit:   # 0: write_dataset leaves them out
+        raise ReaderError(f"{label} holds {force_limit} {_plural(force_limit)} of forces; "
+                          f"{len(with_forces)} are chosen.")
+
+
+def _without_forces(items):
+    """``items`` with their forces left out, for a format that holds none;
+    a set that had only forces is dropped."""
+    return [ExportItem(item.energy_name, item.force_name, item.energy, None)
+            for item in items if item.energy is not None]
 
 
 def _chunk(dataset, items, frames):
@@ -106,6 +118,8 @@ def write_dataset(reader_class, path, dataset, items, *, format=None, progress=N
     info = next((f for f in getattr(reader_class, "write_formats", []) if f["format"] == format),
                 {"label": reader_class.name, "can_write": {}})
     check_writable(info, dataset, items)
+    if (info.get("can_write") or {}).get("forces") == 0:
+        items = _without_forces(items)
     total = int(dataset.getN())
     contents = {
         "positions": True, "numbers": True,

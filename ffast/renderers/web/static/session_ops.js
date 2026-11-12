@@ -56,7 +56,8 @@ export function exportStatus(result) {
  * @param {{label?: string, can_write?: object}} info the format
  * @param {{key: string, checked: boolean}[]} items the reference and the predictions
  * @param {{variable?: boolean, n?: number}} dataset
- * @returns {{disabled: Object<string,string>, blocked: string|null}}
+ * @returns {{disabled: Object<string,string>, blocked: string|null, note: string|null}}
+ *   `note` says what is left out without refusing (a format with no forces).
  */
 export function exportPlan(info, items, { variable = false, n = 0 } = {}) {
   const can = info?.can_write || {};
@@ -70,21 +71,32 @@ export function exportPlan(info, items, { variable = false, n = 0 } = {}) {
     blocked = `${label} holds ${can.frames === 1 ? 'one structure' : `${can.frames} structures`}; `
       + `this dataset has ${n}.`;
   }
-  const limit = can.energies;
-  if (limit != null) {
-    const ticked = items.filter((i) => i.checked);
+  const ticked = items.filter((i) => i.checked);
+  // A limit greys the other boxes once it is reached and blocks above it. The
+  // page does not know which set has forces, so every ticked box counts; the
+  // server counts exactly (check_writable).
+  const limitTo = (limit, what) => {
     const sets = limit === 1 ? 'set' : 'sets';
-    if (limit === 0) {
-      for (const i of items) disabled[i.key] = `${label} holds no energies or forces.`;
-    } else if (ticked.length > limit) {
-      blocked ||= `${label} holds ${limit} ${sets} of energies and forces; ${ticked.length} are chosen.`;
+    if (ticked.length > limit) {
+      blocked ||= `${label} holds ${limit} ${sets} of ${what}; ${ticked.length} are chosen.`;
     } else if (ticked.length === limit) {
       for (const i of items.filter((x) => !x.checked)) {
-        disabled[i.key] = `${label} holds ${limit} ${sets} of energies and forces: untick one first.`;
+        disabled[i.key] ||= `${label} holds ${limit} ${sets} of ${what}: untick one first.`;
       }
     }
+  };
+  let note = null;
+  if (can.energies === 0) {
+    for (const i of items) disabled[i.key] = `${label} holds no energies or forces.`;
+  } else {
+    if (can.energies != null) limitTo(can.energies, 'energies and forces');
+    if (can.forces === 0) {
+      if (ticked.length) note = `${label} holds no forces; they are left out.`;
+    } else if (can.forces != null) {
+      limitTo(can.forces, 'forces');
+    }
   }
-  return { disabled, blocked };
+  return { disabled, blocked, note };
 }
 
 /** The status line of a write in progress (SUBSET_EXPORTED with `progress`), else null. Pure. */
