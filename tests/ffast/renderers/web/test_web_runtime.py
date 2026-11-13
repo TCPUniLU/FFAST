@@ -8666,10 +8666,15 @@ async def test_web_a_tab_control_redraws_its_plots_in_place(ffast_web_server):
             assert await page.evaluate("() => window.__removedPanels") == 0
 
             before = await page.evaluate(_PLOT_Y, "Energy MAE timeline")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy Scatter", timeout=25000)
+            scatter_before = await page.evaluate(_PLOT_Y, "Energy Scatter")
             await page.evaluate(_WATCH_REMOVED_PANELS)
             await page.locator(".tabpanel.active [data-control='energy_shift'] input").check()
             await page.wait_for_function(f"(t) => ({_PLOT_Y})(t) !== {json.dumps(before)}",
                                          arg="Energy MAE timeline", timeout=25000)
+            # The energy scatter's predicted values move by the shift too.
+            await page.wait_for_function(f"(t) => ({_PLOT_Y})(t) !== {json.dumps(scatter_before)}",
+                                         arg="Energy Scatter", timeout=25000)
             assert await page.evaluate("() => window.__removedPanels") == 0
 
             # The tab's own picker: pinning the dataset redraws in place too.
