@@ -327,3 +327,65 @@ SUBSET_DECLARED = "SUBSET_DECLARED"
 # "warning", "error" or "critical"). The web client shows it as a pop-up; the
 # same text comes at most once a minute (ffast.session.warning_relay).
 SERVER_WARNING = "SERVER_WARNING"
+
+
+# ── which reply ends each request (ADR 0097) ────────────────────────────────
+# A request's final reply carries reply_to (ffast.protocol.reply). Every
+# client message is in exactly one of the three tables below; a test holds
+# them to CLIENT_TO_SERVER and to the server's code.
+
+#: request → the event of its final reply, sent with ``replies.reply``.
+FINAL_REPLY = {
+    LOAD_DATASET: LOAD_RESULT, LOAD_PREDICTION: LOAD_RESULT, LOAD_MODEL: LOAD_RESULT,
+    LOAD_ZERO_MODEL: LOAD_RESULT, LOAD_EXAMPLE: LOAD_RESULT,
+    SAVE_TAB: TAB_SAVED, DELETE_TAB: TAB_SAVED, HIDE_TAB: TAB_SAVED, SET_TAB_ORDER: TAB_SAVED,
+    EXPORT_TAB: TAB_EXPORTED,
+    SAVE_USER_METRIC: USER_METRIC_SAVED, DELETE_USER_METRIC: USER_METRIC_SAVED,
+    ADD_SESSION_METRICS: USER_METRIC_SAVED, EXPORT_USER_METRIC: USER_METRIC_EXPORTED,
+    LIST_DIR: DIR_LISTING, PROBE_DATASET_KEYS: DATASET_KEYS_RESPONSE,
+    PROBE_DATASET_LENGTH: DATASET_LENGTH_RESPONSE, PROBE_DATASET_ENERGIES: DATASET_ENERGIES,
+    PREVIEW_ENERGY_SAMPLE: ENERGY_SAMPLE_PREVIEW,
+    SAVE_SESSION: SESSION_SAVED, LOAD_SESSION: SESSION_LOADED,
+    CREATE_SUBSET: SUBSET_EXTRACTED, DECLARE_SUBSET: SUBSET_DECLARED, EXPORT_SUBSET: SUBSET_EXPORTED,
+    STORED_RESULTS: STORED_RESULTS_INFO,
+    PREPARE_PRACTICE_INPUT: PRACTICE_INPUT_PREPARED, START_PRACTICE_RUN: PRACTICE_RUN_STARTED,
+    HEAT_PRACTICE_RUN: PRACTICE_RUN_RESULT, DELETE_PRACTICE_RUN: PRACTICE_RUN_RESULT,
+    PREPARE_RUN_WITH_FFAST: RUN_WITH_FFAST_PREPARED, WRITE_RUN_WITH_FFAST: RUN_WITH_FFAST_WRITTEN,
+    SUBMIT_JOB: JOB_SUBMITTED, SCAN_RUN_FOLDER: RUN_FOLDER_SCANNED,
+    SCORE_DIALOG_INFO: SCORE_DIALOG_INFO_RESULT, SCORE_DATASET: SCORE_STARTED,
+    CONTINUE_SCORING: SCORE_STARTED, MAKE_REFERENCE: REFERENCE_MADE,
+    LIVE_ATTRIBUTION: LIVE_ATTRIBUTION_RESULT,
+}
+
+#: request → its reply, matched by an id of its own that predates reply_to
+#: (request_id, try_id, check_id, view_id); these may fold into reply_to later.
+OWN_ID_REPLY = {
+    REQUEST_METRIC: METRIC_RESULT, REQUEST_METRIC_BOXES: METRIC_BOXES,
+    CHECK_METRIC: METRIC_CHECKED, TRY_METRIC: METRIC_TRIED,
+    REQUEST_METRIC_INPUTS: METRIC_INPUTS, OPEN_VIEW: SCENE_SNAPSHOT, VIEW_COMMAND: COMMAND_RESULT,
+}
+
+#: messages with no final reply, and why.
+NO_FINAL_REPLY = {
+    CANCEL_METRIC: "stops a request, which then ends itself",
+    CANCEL_TRY_METRIC: "stops a Try, whose METRIC_TRIED says cancelled",
+    CANCEL_PROBE_DATASET_LENGTH: "stops a count, whose final reply says cancelled",
+    CANCEL_TASK: "the task's TASK_DONE goes to every window",
+    CLOSE_VIEW: "nothing to say",
+    TRACE: "a log line",
+    DELETE_OBJECT: "every window hears DATASET_DELETED / MODEL_DELETED",
+    RENAME_OBJECT: "every window hears the new metadata",
+    FREEZE_SUBSET: "every window hears the new metadata",
+    SET_DATASET_UNIT: "every window hears the new metadata",
+    REQUEST_METRIC_CATALOG: "the answer is the catalog announcement",
+    REQUEST_TAB_LAYOUT: "the answer is the layout announcement",
+    REQUEST_USER_METRICS: "the answer is the list announcement",
+    LIST_LIVE_RUNS: "LIVE_RUNS replaces the list shown, whoever asked",
+    FORGET_LIVE_RUN: "LIVE_RUNS replaces the list shown, whoever asked",
+    OPEN_LIVE_RUN: "LIVE_RUN_UPDATE follows the run; an error is a reply",
+    LIVE_STOP: "LIVE_RUN_UPDATE follows the run; an error is a reply",
+    LIVE_SET_STOP_ON_ALARM: "LIVE_RUN_UPDATE follows the run; an error is a reply",
+    WATCH_JOB: "a subscription: JOB_STATE follows the job",
+    REQUEST_PREDICTION_ARRAYS: "desktop client only, to be removed (ADR 0098)",
+    REQUEST_SUBDATASET_ARRAYS: "desktop client only, to be removed (ADR 0098)",
+}
