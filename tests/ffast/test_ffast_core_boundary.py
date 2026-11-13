@@ -50,18 +50,10 @@ ALLOWED_EAGER = set()
 # import time. After ADR 0048 (plugin discovery relocated into
 # ffast.core.plugin_discovery) only one justified kind remains, asserted
 # exactly so a NEW one is caught:
-#   1. ConnectionManager -> cluster.*, the client-only connect-out / SLURM / bootstrap
-#      machinery. The headless server never initiates an outbound cluster connection,
-#      so cluster/ never enters its import closure and stays a Desktop-Client dir.
-#   2. the web launcher -> cluster.web_broker: the page's way to a cluster
+#   1. the web launcher -> cluster.web_broker: the page's way to a cluster
 #      (web parity plan 2026-10-29).
 ALLOWED_LAZY = {
     ("ffast/renderers/web/launcher.py", "cluster.web_broker"),
-    ("ffast/core/connection_manager.py", "cluster.backend"),
-    ("ffast/core/connection_manager.py", "cluster.bootstrap"),
-    ("ffast/core/connection_manager.py", "cluster.connection"),
-    ("ffast/core/connection_manager.py", "cluster.remote_dataset"),
-    ("ffast/core/connection_manager.py", "cluster.slurm"),
 }
 
 

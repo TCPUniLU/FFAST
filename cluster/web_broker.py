@@ -240,7 +240,7 @@ class ClusterBroker:
             self._run(profile, reconnect_job_id), self._loop)
 
     async def _run(self, profile, reconnect_job_id) -> None:
-        """The desktop's connect rules (ConnectionManager.connectToCluster)."""
+        """Connect to the cluster job, or reconnect to a running one, and report progress."""
         job_id = reconnect_job_id
 
         def submitted(jid):

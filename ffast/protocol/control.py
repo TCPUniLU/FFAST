@@ -8,10 +8,8 @@ server→client replies, the handshake, and the untyped Array messages — so a
 send site never has to spell an event name as a bare string literal, and one
 module answers "what can cross this wire?"
 
-Two groups are drift-tested (see ``tests/ffast/test_control_events.py``):
-
-- ``CLIENT_TO_SERVER`` must equal ``ServerSession._handlers.keys()``.
-- ``REPLY_EVENTS`` must equal ``cluster.connection._REPLY_CHANNELS.keys()``.
+``CLIENT_TO_SERVER`` is drift-tested (see ``tests/ffast/test_control_events.py``):
+it must equal ``ServerSession._handlers.keys()``.
 """
 
 # ── client → server Control messages (ServerSession._handlers) ──────────────
@@ -177,7 +175,7 @@ TIMING = "TIMING"
 # connection as lost, which a silently stalled socket would never report.
 HEARTBEAT = "HEARTBEAT"
 
-# ── server → client replies (cluster.connection._REPLY_CHANNELS) ────────────
+# ── server → client replies ─────────────────────────────────────────────────
 DATASET_KEYS_RESPONSE = "DATASET_KEYS_RESPONSE"
 DATASET_LENGTH_RESPONSE = "DATASET_LENGTH_RESPONSE"
 PREDICTION_ARRAYS = "PREDICTION_ARRAYS"
@@ -241,7 +239,7 @@ METRICS_UPDATED = "METRICS_UPDATED"
 # REQUEST_TAB_LAYOUT (ADR 0045 Phase 3). Like METRIC_CATALOG it is a
 # dedicated announcement, not a correlated reply channel — only the web client
 # asks for it, and it carries the whole layout in one shot, so it stays out of
-# REPLY_EVENTS (no cluster.connection correlator entry).
+# REPLY_EVENTS.
 TAB_LAYOUT = "TAB_LAYOUT"
 # Which dataset and model loaders this server has (its plugins):
 # {datasets: [{name, extension}], models: [{name, extension}]}, names sorted

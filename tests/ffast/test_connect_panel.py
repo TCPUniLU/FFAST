@@ -270,33 +270,3 @@ async def test_cancel_triggers_scancel():
 
     assert _job_id is not None, "job_id should be captured before cancel"
     assert scancel_called == ["99"], f"scancel job_id: {scancel_called}"
-
-
-async def test_error_kwarg_propagated():
-    # Drives the real production path: ConnectionManager.connectToCluster
-    # catches a ClusterError raised inside cluster.connection.connect_to_cluster
-    # (here, a SLURM submit failure from FakeSlurmBackend) and reports it to
-    # the UI as a TASK_PROGRESS event with error=True.
-    from ffast.core.connection_manager import ConnectionManager
-
-    events = []
-
-    class _FakeEnv:
-        def eventPush(self, *args, **kwargs):
-            events.append((args, kwargs))
-
-    manager = ConnectionManager(_FakeEnv())
-    profile = FakeProfile()
-    backend = FakeSlurmBackend(fail_at="submit")
-
-    import cluster.slurm as slurm_mod
-
-    with mock.patch.object(slurm_mod, "RemoteSlurmBackend", return_value=backend):
-        await manager.connectToCluster(profile, taskID="T1")
-
-    error_events = [
-        kwargs for args, kwargs in events
-        if args[:1] == ("TASK_PROGRESS",) and kwargs.get("error")
-    ]
-    assert len(error_events) == 1
-    assert "fake submit failure" in error_events[0]["message"]

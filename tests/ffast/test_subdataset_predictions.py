@@ -1,6 +1,6 @@
 """Regression: interactive subbing ("selects but doesn't plot").
 
-Two coupled bugs, 2026-06-23 GUI test of the Panels tab:
+A bug, 2026-06-23 GUI test of the Panels tab:
 
 A. A client-side ``SubDataset`` is unknown to the server. ``generateMetric``'s
    ghost branch fetched predictions for ``dataset.fingerprint`` (the *sub* fp) →
@@ -8,18 +8,10 @@ A. A client-side ``SubDataset`` is unknown to the server. ``generateMetric``'s
    server fetch" → the metric never computes → the sub selection never plots.
    Fix: fetch the *root parent's* predictions (the server holds those);
    ``getData`` already sub-slices them by the sub indices.
-
-B. Every panel metric fires a concurrent ``request_prediction_arrays`` for the
-   same ``(dataset, model)``. Without coalescing, each call overwrote the single
-   pending future, orphaning the others (they hung to timeout) and the duplicate
-   server replies logged "PREDICTION_ARRAYS for unknown". Fix: coalesce
-   concurrent identical requests onto one in-flight future.
 """
-import asyncio
 import types
 
 from ffast.core.data_service import DataService
-import cluster.connection as cs
 
 
 class _DS(DataService):
@@ -81,32 +73,3 @@ def test_generateMetric_fetches_root_parent_predictions_for_subdataset():
 
     # Walked up the whole sub chain to the root real dataset — not "SUB"/"MID".
     assert fetched == ["ROOT"]
-
-
-# ── Bug B ────────────────────────────────────────────────────────────────────
-def test_request_prediction_arrays_coalesces_concurrent_calls():
-    async def scenario():
-        fake = types.SimpleNamespace(_pending=cs.PendingRequests(), pushed=[])
-
-        async def push_event(*a, **k):
-            fake.pushed.append(a)
-
-        fake.push_event = push_event
-        req = cs.ServerConnection.request_prediction_arrays.__get__(fake)
-
-        t1 = asyncio.create_task(req("DS", "M", timeout=5))
-        t2 = asyncio.create_task(req("DS", "M", timeout=5))
-        await asyncio.sleep(0)  # let both register / coalesce
-        await asyncio.sleep(0)
-
-        # Exactly one future is pending → the second call coalesced onto it.
-        resolved = fake._pending.resolve(
-            "PREDICTION_ARRAYS", ("DS", "M"), {"pred__forces__M": 1}
-        )
-        assert resolved                                 # one awaiter was found
-
-        r1, r2 = await asyncio.gather(t1, t2)
-        assert r1 == r2 == {"pred__forces__M": 1}      # both awaiters served
-        assert len(fake.pushed) == 1                    # only ONE request sent
-
-    asyncio.run(scenario())

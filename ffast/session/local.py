@@ -22,11 +22,11 @@ class LocalServerProcess:
 
         token = SessionToken.generate()
         handle = manager.start(port, token)
-        session = await connect_direct(port=handle.port, token=token.plaintext)
+        # then connect a client to handle.port with token.plaintext
     """
 
     port: int
-    token_plaintext: str  # plaintext to pass to connect_direct()
+    token_plaintext: str  # plaintext a client sends in HELLO
     process: subprocess.Popen
 
 

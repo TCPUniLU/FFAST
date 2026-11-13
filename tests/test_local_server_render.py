@@ -43,17 +43,34 @@ def local_server():
     manager.stop(handle)
 
 
+async def _connect(host, port, token):
+    """Open a WebSocket to the server, check ping/pong, and say HELLO."""
+    import websockets
+    from cluster.connection import ServerConnection, _do_hello
+
+    websocket = await websockets.connect(f"ws://{host}:{port}", max_size=None)
+    await websocket.send("ping")
+    reply = await asyncio.wait_for(websocket.recv(), timeout=10)
+    if reply != "pong":
+        await websocket.close()
+        raise OSError(f"Unexpected ping reply: {reply!r}")
+    await _do_hello(websocket, token)
+    return ServerConnection(
+        job_id="local", ssh_proc=None, websocket=websocket, profile=None,
+        local_port=port, remote_port=port, token_plaintext=token,
+    )
+
+
 @pytest.mark.asyncio
 async def test_scene_patch_has_atoms(local_server):
     port, token_plaintext = local_server
-    from cluster.connection import connect_direct
     from ffast.protocol.rpc import unpack
 
     # Connect with retry
     session = None
     for _ in range(20):
         try:
-            session = await connect_direct("127.0.0.1", port, token=token_plaintext)
+            session = await _connect("127.0.0.1", port, token=token_plaintext)
             break
         except OSError:
             await asyncio.sleep(0.5)

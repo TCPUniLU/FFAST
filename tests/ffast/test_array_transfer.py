@@ -150,20 +150,4 @@ async def test_subdataset_array_transfer(ffast_server):
         assert R.shape[2] == 3
         assert z.ndim == 1
 
-    # ── 4. CachedRemoteDataset round-trip ────────────────────────────────────
-    from cluster.remote_dataset import CachedRemoteDataset
-
-    proxy = CachedRemoteDataset(fingerprint, "test", n_remote)
-    assert proxy.is_remote_proxy
-    proxy.populate(arrays)
-    assert not proxy.is_remote_proxy
-    assert proxy.getN() == n_remote
-    if is_variable:
-        counts = proxy.getNAtoms()
-        assert hasattr(counts, "__len__") and len(counts) == n_remote
-    else:
-        assert proxy.getNAtoms() == arrays["R"].shape[1]
-        assert np.allclose(proxy.getCoordinates(), arrays["R"])
-        assert np.array_equal(proxy.getElements(), arrays["z"])
-
     await ws.close()

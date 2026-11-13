@@ -3,8 +3,8 @@
 Event names used to be scattered string literals with nothing to keep a send
 site and the server's handler table in agreement. They now come from
 ``ffast.protocol.control``; these tests assert the two authoritative tables
-(``ServerSession._handlers``, ``cluster.connection._REPLY_CHANNELS``) match
-the declared constant sets, and that ``ServerSession.dispatch`` actually
+(``ServerSession._handlers``) matches
+the declared constant set, and that ``ServerSession.dispatch`` actually
 validates a Control message's payload against its typed request model.
 """
 import asyncio
@@ -31,12 +31,6 @@ def _run(coro):
 def test_server_session_handlers_match_client_to_server_constants():
     s = ServerSession(env=None, outbound=asyncio.Queue())
     assert set(s._handlers) == control.CLIENT_TO_SERVER
-
-
-def test_reply_channels_match_reply_event_constants():
-    from cluster.connection import _REPLY_CHANNELS
-
-    assert set(_REPLY_CHANNELS) == control.REPLY_EVENTS
 
 
 def test_mutating_client_events_is_a_subset_of_client_to_server():

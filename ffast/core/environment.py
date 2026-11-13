@@ -6,11 +6,9 @@ from ffast.cache.store import DataCache
 from ffast.core.model_registry import ModelRegistry
 from ffast.core.dataset_registry import DatasetRegistry
 from ffast.core.data_service import DataService
-from ffast.core.connection_manager import ConnectionManager
 from ffast.session.persistence import SessionPersistence
 from ffast.core.object_catalog import ObjectCatalog
 from ffast.core.loading_coordinator import LoadingCoordinator
-from ffast.protocol import control
 import logging
 import os, glob
 import numpy as np
@@ -71,23 +69,14 @@ class Environment(EventClass):
         self.objects = ObjectCatalog()
         self.tm = TaskManager()
 
-        # Remote/local server session manager (ADR 0020): owns the connection
-        # lifecycle, server→client metadata handlers, and array/metric fetch
-        # channels.  Created before DataService so the RemoteSource can wrap it.
-        self.remote = ConnectionManager(self)
-
         # Data coordinator (ADR 0020): owns the datatype registry, cache-key
         # resolution, the data-generation queue, and the in-process metric spine.
-        # The RemoteSource degrades to in-process when no session exists, so the
-        # same wiring works on the client, the server, and headless.
-        from ffast.core.prediction_source import RemoteSource
         self.data = DataService(
             cache=self.cache,
             models=self.models,
             datasets=self.datasets,
             tm=self.tm,
             events=self,
-            source=RemoteSource(self.remote),
             headless=headless,
             prediction_fields=predictionFields,
         )
@@ -109,20 +98,11 @@ class Environment(EventClass):
         self.eventSubscribe(
             "SUBDATASET_INDICES_CHANGED", self.data.deleteCacheByDataset
         )
-        self.eventSubscribe(
-            "QUIT_EVENT", self.remote._disconnectServerConnection, asynchronous=True
-        )
-        # Server→client metadata: handlers live on the ConnectionManager and
-        # build proxy datasets / ghost models when the server announces them.
-        self.eventSubscribe("REMOTE_DATASET_META", self.remote._onRemoteDatasetMeta)
-        self.eventSubscribe("REMOTE_MODEL_META", self.remote._onRemoteModelMeta)
-        self.eventSubscribe("METRIC_CATALOG", self.remote._onMetricCatalog)
 
     # Datatypes, the cache/generation/metric coordinator (self.data), the
-    # registries (self.models / self.datasets), the session manager (self.remote)
+    # registries (self.models / self.datasets)
     # and persistence (self.persistence) are composed in __init__ (ADR 0020).
-    # Callers reach them directly, e.g. env.models.get(fp), env.data.getData(...),
-    # env.remote.serverConnection.
+    # Callers reach them directly, e.g. env.models.get(fp), env.data.getData(...).
 
     def _registerPluginType(self, registry, name, value, kind):
         """Choke point shared by initialiseModelType/initialiseDatasetType.
@@ -254,19 +234,6 @@ class Environment(EventClass):
         """Create or refresh a logical subset view over a parent dataset."""
         from ffast.loaders.dataset import DatasetView  # ADR 0047 Phase 5c
 
-        # The server builds the same subset, so its 3D view can draw it. Told
-        # first: moving the subset below makes the 3D view ask the server for
-        # it, and the server must have the new frames by then. With no frames
-        # the server keeps the ones it had, so there is nothing to say.
-        if idx is not None and len(idx):
-            self.remote.tellServer(
-                control.DECLARE_SUBSET,
-                parent_fingerprint=parent.fingerprint,
-                indices=[int(i) for i in idx],
-                model_fp=None if model is None else model.fingerprint,
-                name=subName,
-            )
-
         # check if already exists
         fp = DatasetView.subsetFingerprint(parent, model, subName)
         sub = self.datasets.get(fp)
@@ -304,7 +271,6 @@ class Environment(EventClass):
         )
         sub.initialise()
         self.datasets.add(sub)
-        self.remote.tellServer(control.FREEZE_SUBSET, fingerprint=fingerprint)
 
     def createAtomFilteredDataset(self, dataset, idxs):
         """Build a per-atom filtered dataset view for atom-level analyses."""
@@ -320,9 +286,6 @@ class Environment(EventClass):
         sub = DatasetView.atomSubset(dataset, idxs)
         sub.initialise()
         self.datasets.add(sub)
-        self.remote.tellServer(
-            control.CREATE_SUBSET, parent_fingerprint=dataset.fingerprint, indices=idxs
-        )
 
     def createElementSubset(self, dataset, elements):
         """The atoms of these atomic numbers in every frame of ``dataset``
@@ -419,14 +382,6 @@ class Environment(EventClass):
                 logger.info("Deleted %d metric result(s) of %s: %d bytes in memory, %d on disk",
                             freed["count"], key, freed["memory_bytes"], freed["disk_bytes"])
 
-        session, loop = self.remote.active_session()
-        if session is not None:
-            import asyncio as _asyncio
-            _asyncio.run_coroutine_threadsafe(
-                session.push_event(control.DELETE_OBJECT, key),
-                loop,
-            )
-
     #############
     ## TASKS
     #############
@@ -475,36 +430,15 @@ class Environment(EventClass):
     #############
 
     def requestSessionSave(self, path):
-        """Save the session SERVER-SIDE so the server's datasets + prediction
-        cache (the real data) are persisted (Stage 5). Falls back to an
-        in-process save when no server is connected.
-        """
-        session, loop = self.remote.active_session()
-        if session is None:
-            self.newTask(
-                self.persistence.save, args=(path,), visual=True,
-                name="Saving session", threaded=True,
-            )
-            return
-        import asyncio as _asyncio
-        _asyncio.run_coroutine_threadsafe(
-            session.push_event(control.SAVE_SESSION, path), loop
+        """Save the session in-process, as a task."""
+        self.newTask(
+            self.persistence.save, args=(path,), visual=True,
+            name="Saving session", threaded=True,
         )
 
     def requestSessionLoad(self, path):
-        """Load the session SERVER-SIDE; the server restores its Environment
-        (datasets + prediction cache) and announces them to the client via
-        REMOTE_DATASET_META / REMOTE_MODEL_META. Falls back to in-process load.
-        """
-        session, loop = self.remote.active_session()
-        if session is None:
-            self.persistence.taskLoad(path)
-            return
-        import asyncio as _asyncio
-        _asyncio.run_coroutine_threadsafe(
-            session.push_event(control.LOAD_SESSION, path), loop
-        )
-
+        """Load the session in-process."""
+        self.persistence.taskLoad(path)
 
     #############
     ## MISC

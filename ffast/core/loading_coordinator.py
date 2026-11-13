@@ -1,19 +1,13 @@
 """Loading Coordinator for the Environment (ADR 0034).
 
 ``LoadingCoordinator`` is the single owner of turning a *what to load* request
-(dataset / model / prediction, plus source path and stride/keys) into the
-*where*: a local :class:`TaskManager` task, or a dispatch to ``ffast-server``
-over the **Server Connection** (including the connect-window fallback from
-ADR 0030).  It also owns the load implementations + validation, the one
-ghost-model register/discover chokepoint, and all load-related server transport
-(probe round-trips + ``LOAD_*`` dispatch).
+(dataset / model / prediction, plus source path and stride/keys) into a local
+:class:`TaskManager` task.  It also owns the load implementations + validation
+and the one ghost-model register/discover chokepoint.
 
-Like ``ConnectionManager`` / ``SessionPersistence`` (ADR 0020) it takes the
-owning ``Environment`` and reaches domain state through it (``self._env``); the
-method bodies are the former ``Environment`` methods, relocated verbatim.  It is
-deliberately **Qt-free** so it is the piece that can migrate into the Headless
-Core (ADR 0034): the Desktop Client UI keeps the file/key/stride dialogs and
-hands the coordinator dialog callbacks for its remote-load orchestration.
+Like ``SessionPersistence`` (ADR 0020) it takes the owning ``Environment`` and
+reaches domain state through it (``self._env``).  It is deliberately
+**Qt-free**, part of the Headless Core (ADR 0034).
 """
 
 import logging
@@ -25,7 +19,6 @@ from ase.calculators.calculator import PropertyNotImplementedError
 
 from ffast.core.flat_frames import FlatFrames
 from ffast.io.extxyz_arrays import NotEnoughMemory
-from ffast.protocol import control
 from ffast.loaders.ghost import GhostModelLoader
 from ffast.readers import ReaderError
 from ffast.readers.match import Facts, PredictionRefused, check_prediction
@@ -78,18 +71,6 @@ class LoadingCoordinator:
     #############
     ## ROUTING HELPERS
     #############
-
-    def _remoteSession(self):
-        """Resolve the active server session + its event loop, or ``(None, None)``.
-
-        The connect-window fallback guard from ADR 0030: a load routes
-        server-side only when both a ``serverConnection`` and the client's
-        asyncio ``_event_loop`` exist; otherwise the caller falls back to an
-        in-process TaskManager task. Delegates to
-        :meth:`ConnectionManager.active_session`, the one place this guard
-        lives.
-        """
-        return self._env.remote.active_session()
 
     def _queueLoad(self, fn, name, args=(), kwargs=None, on_error=None, on_done=None):
         """Queue an in-process load so disk I/O and setup stay off the main loop.
@@ -207,22 +188,8 @@ class LoadingCoordinator:
                         on_error=on_error, on_done=on_done)
 
     def requestModelLoad(self, path, modelType):
-        """Dispatch a model load through the server, or in-process as fallback.
-
-        Stage 2 of server-owned loading: when a session exists the model loads
-        *server-side* (it runs predictions there) and the client receives a
-        ghost proxy via REMOTE_MODEL_META; the server generates predictions on
-        demand.  No-server fallback loads the model in-process.
-        """
-        session, loop = self._remoteSession()
-        if session is None:
-            self.taskLoadModel(path, modelType)
-            return
-        import asyncio as _asyncio
-        _asyncio.run_coroutine_threadsafe(
-            self.dispatchModelLoad(session, path, modelType),
-            loop,
-        )
+        """Queue a model load in-process."""
+        self.taskLoadModel(path, modelType)
 
     def loadModel(self, path, modelType, taskID=None, on_error=None):
         """Validate and instantiate a concrete model from disk."""
@@ -297,31 +264,11 @@ class LoadingCoordinator:
 
     def requestPredictionLoad(self, path, datasetKey, selected_energy_key=None,
                               selected_force_key=None):
-        """Dispatch a prediction-file load through the server, or in-process (Stage 3).
-
-        When a session exists the prediction file is loaded *server-side* against
-        the server's dataset; the server materializes a ghost model and announces
-        it via REMOTE_MODEL_META, and its prediction arrays stay server-side
-        (consumed by the server-owned metric channel — Stage 4a). Only when no
-        server is reachable does the client fall back to the in-process
-        :meth:`loadPrepredictedDataset`.
-        """
-        session, loop = self._remoteSession()
-        if session is None:
-            self.taskLoadPrepredictedDataset(
-                path, datasetKey,
-                selected_energy_key=selected_energy_key,
-                selected_force_key=selected_force_key,
-            )
-            return
-        import asyncio as _asyncio
-        _asyncio.run_coroutine_threadsafe(
-            self.dispatchPredictionLoad(
-                session, path, datasetKey,
-                selected_energy_key=selected_energy_key,
-                selected_force_key=selected_force_key,
-            ),
-            loop,
+        """Queue a prediction-file load in-process."""
+        self.taskLoadPrepredictedDataset(
+            path, datasetKey,
+            selected_energy_key=selected_energy_key,
+            selected_force_key=selected_force_key,
         )
 
     def loadPrepredictedDataset(self, path, datasetKey, taskID=None, selected_energy_key=None,
@@ -661,41 +608,13 @@ class LoadingCoordinator:
     def requestDatasetLoad(self, path, datasetType, selected_energy_key=None,
                            selected_force_key=None, prediction_keys=None,
                            slice_num=0):
-        """Dispatch a dataset load through the server, or in-process as fallback.
-
-        Stage 1 of the server-owned-loading migration.  When a session exists
-        (managed local server or remote cluster) the file is loaded *server-side*
-        and the client receives a ``CachedRemoteDataset`` proxy via
-        ``REMOTE_DATASET_META`` (then eager-populated for a local server — see
-        :meth:`_onRemoteDatasetMeta`).  Only when no server is reachable does the
-        client fall back to the legacy in-process :meth:`loadDataset`.
-
-        Shared entry point: the local File→Load Dataset menu routes here; the
-        remote menu (``onRemoteDatasetLoad``) reaches the same server-side
-        ``LOAD_DATASET`` handler via :meth:`loadRemoteDataset` after its own
-        cluster-path/key probing.
-        """
-        session, loop = self._remoteSession()
-        if session is None:
-            self.taskLoadDataset(
-                path, datasetType,
-                selected_energy_key=selected_energy_key,
-                selected_force_key=selected_force_key,
-                prediction_keys=prediction_keys,
-                slice_num=slice_num,
-            )
-            return
-
-        import asyncio as _asyncio
-        _asyncio.run_coroutine_threadsafe(
-            self.dispatchDatasetLoad(
-                session, path, datasetType,
-                selected_energy_key=selected_energy_key,
-                selected_force_key=selected_force_key,
-                prediction_keys=prediction_keys,
-                slice_num=slice_num,
-            ),
-            loop,
+        """Queue a dataset load in-process."""
+        self.taskLoadDataset(
+            path, datasetType,
+            selected_energy_key=selected_energy_key,
+            selected_force_key=selected_force_key,
+            prediction_keys=prediction_keys,
+            slice_num=slice_num,
         )
 
     def loadDataset(self, path, datasetType, taskID=None, selected_energy_key=None,
@@ -754,11 +673,6 @@ class LoadingCoordinator:
             return
 
         dataset.initialise()
-
-        # NOTE: in-process load is now the no-server FALLBACK only (routing goes
-        # through requestDatasetLoad → server-side LOAD_DATASET when a session
-        # exists).  No mirror-to-local-server here: if we reached this method a
-        # server was unavailable, so there is nothing to mirror to.
 
         # Resolve the prediction-keys atomsList BEFORE the lock: a cache miss
         # here (dataset has no .atomsList) falls through to a full re-read of
@@ -999,176 +913,6 @@ class LoadingCoordinator:
                 logger.debug("", exc_info=True)
 
     #############
-    ## SERVER TRANSPORT (async, Qt-free)
-    #############
-
-    async def dispatchModelLoad(self, session, path, model_type):
-        """Send the ``LOAD_MODEL`` control message to the server."""
-        await session.push_event(control.LOAD_MODEL, path, model_type)
-
-    async def dispatchPredictionLoad(self, session, path, dataset_fp, *,
-                                     selected_energy_key=None, selected_force_key=None):
-        """Send the ``LOAD_PREDICTION`` control message to the server.
-
-        Unused (``None``) key kwargs are harmless — the server handler reads them
-        with ``.get()`` — so NPZ (fixed E/F keys) and the probe-error fallback
-        share this one path with the key-selected ASE case.
-        """
-        await session.push_event(
-            control.LOAD_PREDICTION, path, dataset_fp,
-            selected_energy_key=selected_energy_key,
-            selected_force_key=selected_force_key,
-        )
-
-    async def probeDatasetLength(self, session, path):
-        """Count frames in a server-side dataset file (Dataset Length Probe)."""
-        return await session.probe_dataset_length(path)
-
-    async def probeDatasetKeys(self, session, path, dataset_type):
-        """Probe available energy/force keys of a server-side ASE file."""
-        return await session.probe_dataset_keys(path, dataset_type)
-
-    async def dispatchDatasetLoad(self, session, path, dataset_type, *,
-                                  selected_energy_key=None, selected_force_key=None,
-                                  prediction_keys=None, slice_num=0):
-        """Send the ``LOAD_DATASET`` control message to the server.
-
-        Single owner of the dataset-load wire contract: the ``control.*``
-        constant and the ``prediction_keys`` tuple→list coercion (msgpack cannot
-        carry tuples).  Awaited directly by :meth:`loadRemoteDataset` (already on
-        the loop) and scheduled via ``run_coroutine_threadsafe`` by
-        :meth:`requestDatasetLoad` (off the loop).
-        """
-        pk = [list(k) for k in prediction_keys] if prediction_keys else None
-        await session.push_event(
-            control.LOAD_DATASET, path, dataset_type,
-            selected_energy_key=selected_energy_key,
-            selected_force_key=selected_force_key,
-            prediction_keys=pk,
-            slice_num=slice_num,
-        )
-
-    #############
-    ## REMOTE ORCHESTRATION (async, Qt-free; dialogs come in as callbacks)
-    #############
-
-    async def loadRemoteDataset(self, session, path, dataset_type, *,
-                                get_stride, get_keys, taskID=None):
-        """Drive a cluster-side dataset load: probe → stride → probe → keys → dispatch.
-
-        Owns the load *algorithm* while staying Qt-free: every user interaction
-        is an awaited callback the Desktop Client supplies (ADR 0034).
-        ``get_stride(n_total) -> slice_num | None`` and
-        ``get_keys(probe) -> (energy_key, force_key, prediction_keys) | None``
-        return fully-cooked values (``None`` == the user cancelled); the delicate
-        ``QDialog.exec()`` bridging lives inside them, in the UI.
-        """
-        self._progress(taskID, "Probing dataset length on server…")
-        n_total = None
-        try:
-            length_result = await self.probeDatasetLength(session, path)
-            if not length_result.get("error"):
-                n_total = length_result.get("n")
-        except Exception as exc:
-            logger.warning("Length probe failed (non-fatal): %s", exc)
-
-        self._progress(taskID, "Waiting for stride selection…")
-        slice_num = await get_stride(n_total)
-        if slice_num is None:
-            logger.info("Remote dataset loading cancelled by user")
-            return
-        logger.info(
-            "Requesting remote load: path=%s type=%s slice_num=%d",
-            path, dataset_type, slice_num,
-        )
-
-        if dataset_type != "ase (auto)":
-            await self.dispatchDatasetLoad(
-                session, path, dataset_type, slice_num=slice_num
-            )
-            return
-
-        self._progress(taskID, "Probing dataset keys on server…")
-        try:
-            probe = await self.probeDatasetKeys(session, path, dataset_type)
-        except Exception as exc:
-            logger.error("Key probe failed: %s", exc)
-            self._progress(taskID, f"Key probe failed: {exc}", error=True)
-            return
-
-        if probe.get("error"):
-            logger.warning("Server probe error for %r: %s", path, probe["error"])
-            # Fall back: load without explicit key selection.
-            await self.dispatchDatasetLoad(
-                session, path, dataset_type, slice_num=slice_num
-            )
-            return
-
-        self._progress(taskID, "Waiting for key selection…")
-        selection = await get_keys(probe)
-        if selection is None:
-            logger.info("Remote dataset loading cancelled by user")
-            return
-        selected_energy_key, selected_force_key, prediction_keys = selection
-
-        logger.info(
-            "Remote LOAD_DATASET: energy_key=%r force_key=%r prediction_keys=%r",
-            selected_energy_key, selected_force_key, prediction_keys,
-        )
-        await self.dispatchDatasetLoad(
-            session, path, dataset_type,
-            selected_energy_key=selected_energy_key,
-            selected_force_key=selected_force_key,
-            prediction_keys=prediction_keys,
-            slice_num=slice_num,
-        )
-
-    async def loadRemotePrediction(self, session, path, dataset_fp, *,
-                                   get_keys, taskID=None):
-        """Drive a cluster-side prediction load against an already-loaded dataset.
-
-        NPZ files carry fixed ``E``/``F`` keys, so they dispatch immediately with
-        no probe or dialog.  ASE files probe keys server-side, then ask the
-        UI-supplied ``get_keys(probe) -> (energy_key, force_key) | None`` callback
-        (``None`` == cancelled).  On a probe error, falls back to a keyless load.
-        The server materializes a ghost model and announces it via
-        ``REMOTE_MODEL_META`` (→ :meth:`registerGhostModel` + ghost discovery).
-        """
-        if path.lower().endswith(".npz"):
-            await self.dispatchPredictionLoad(session, path, dataset_fp)
-            return
-
-        self._progress(taskID, "Probing prediction file keys on server…")
-        try:
-            probe = await self.probeDatasetKeys(session, path, "ase (auto)")
-        except Exception as exc:
-            logger.error("Key probe failed: %s", exc)
-            self._progress(taskID, f"Key probe failed: {exc}", error=True)
-            return
-
-        if probe.get("error"):
-            # Fall back: load without explicit key selection.
-            await self.dispatchPredictionLoad(session, path, dataset_fp)
-            return
-
-        self._progress(taskID, "Waiting for key selection…")
-        selection = await get_keys(probe)
-        if selection is None:
-            logger.info("Remote prediction load cancelled by user")
-            return
-        selected_energy_key, selected_force_key = selection
-
-        logger.info(
-            "Remote LOAD_PREDICTION: path=%r dataset=%r energy_key=%r force_key=%r",
-            path, dataset_fp[:8], selected_energy_key, selected_force_key,
-        )
-        await self.dispatchPredictionLoad(
-            session, path, dataset_fp,
-            selected_energy_key=selected_energy_key,
-            selected_force_key=selected_force_key,
-        )
-
-    #############
     ## GHOSTS
     #############
 
@@ -1176,8 +920,7 @@ class LoadingCoordinator:
         """Record a ghost model's metadata in the Object Catalog (ADR 0034).
 
         Single chokepoint for the ``{"path","name","type":"ghost_model", ...}``
-        registration that was copy-pasted across the load paths and the
-        ConnectionManager's server→client metadata handlers.  ``initialise()`` on
+        registration that was copy-pasted across the load paths.  ``initialise()`` on
         a :class:`GhostModelLoader` reads this back to recover its display name.
         """
         self._env.objects.register(fingerprint, {
@@ -1191,9 +934,7 @@ class LoadingCoordinator:
         """Construct, initialise, and register a :class:`GhostModelLoader`.
 
         The other half of the ghost-model chokepoint alongside
-        :meth:`registerGhostModel`: both ``lookForGhosts`` and the
-        ConnectionManager's ``REMOTE_MODEL_META`` handler create a ghost model
-        the same way — this is that one body.
+        :meth:`registerGhostModel`: the place a ghost model is built.
         """
         model = GhostModelLoader(self._env, modelKey)
         model.initialise()

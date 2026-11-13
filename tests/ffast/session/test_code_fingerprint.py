@@ -88,29 +88,6 @@ def test_a_different_fingerprint_is_different_code():
     assert "different FFAST code" in server_code_notice("abd", "abc")
 
 
-# --- desktop client ---------------------------------------------------------
-
-class _Session:
-    def __init__(self, fingerprint):
-        self.server_code_fingerprint = fingerprint
-
-
-def test_desktop_sidebar_says_connected_when_the_code_matches():
-    from ffast.core.connection_manager import _connected_progress
-
-    fields = _connected_progress(_Session(code_fingerprint()), "Connected — ✕ to disconnect")
-    assert fields == {"message": "Connected — ✕ to disconnect"}
-
-
-def test_desktop_sidebar_warns_in_red_when_the_server_is_older():
-    from ffast.core.connection_manager import _connected_progress
-
-    fields = _connected_progress(_Session(None), "Connected — ✕ to disconnect")
-    assert fields["error"] is True
-    assert fields["message"].startswith("Connected — ✕ to disconnect. ")
-    assert "older FFAST code" in fields["message"]
-
-
 async def test_hello_returns_the_server_fingerprint():
     from cluster.connection import _do_hello
     from ffast.protocol import control

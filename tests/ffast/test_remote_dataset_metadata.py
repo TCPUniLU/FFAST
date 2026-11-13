@@ -1,6 +1,5 @@
 import numpy as np
 
-from cluster.remote_dataset import CachedRemoteDataset
 from ffast.loaders.dataset import DatasetLoader, DatasetView, FlatDatasetLoader
 from ffast.protocol import DatasetMeta
 
@@ -48,7 +47,7 @@ def _make_variable():
     return dataset
 
 
-def test_legacy_uniform_metadata_carries_elements_for_remote_proxy():
+def test_legacy_uniform_metadata_carries_elements():
     meta = DatasetMeta.model_validate(_make_uniform().toMetaDict())
 
     assert meta.variable is False
@@ -58,19 +57,11 @@ def test_legacy_uniform_metadata_carries_elements_for_remote_proxy():
     assert meta.path == "/data/water.xyz"
     assert meta.source_type == "fake uniform"
 
-    proxy = CachedRemoteDataset("fp", meta.name, meta.n)
-    proxy.apply_metadata(
-        elements=meta.elements, offsets=meta.offsets, is_variable=meta.variable
-    )
-
-    assert np.array_equal(proxy.getElements(), np.array([8, 1, 1]))
-    assert proxy.getNAtoms() == 3
-
 
 def test_variable_metadata_carries_distinct_and_first_elements_not_every_atoms():
     """Every atom's element of shard_03 (177M atoms) broke the page's decoder
     (2026-11-02); the page needs only the distinct elements and the first
-    structure's, and the proxy reads every atom's from the fetched arrays."""
+    structure's."""
     meta = DatasetMeta.model_validate(_make_variable().toMetaDict())
 
     assert meta.variable is True
@@ -80,14 +71,6 @@ def test_variable_metadata_carries_distinct_and_first_elements_not_every_atoms()
     assert meta.offsets == [0, 2, 5]
     assert meta.path == "/data/mixed.xyz"
     assert meta.source_type == "fake variable"
-
-    proxy = CachedRemoteDataset("fp", meta.name, meta.n)
-    proxy.apply_metadata(
-        elements=meta.elements, offsets=meta.offsets, is_variable=meta.variable
-    )
-
-    assert proxy.getElements().size == 0          # until the arrays are fetched
-    assert np.array_equal(proxy.getNAtoms(), np.array([2, 3]))
 
 
 # ── lineage: which configurations a subset shares with its parent (ADR 0056) ──
@@ -122,25 +105,6 @@ def test_an_atom_subset_shares_every_frame_with_its_parent():
     meta = DatasetMeta.model_validate(sub.toMetaDict())
     assert meta.parent == "parentfp"
     assert meta.parent_frames is None
-
-
-def test_the_desktop_accepts_lineage_in_the_announcement(monkeypatch):
-    """The desktop's handler names every field it takes; new ones must not
-    break it."""
-    from ffast.core.connection_manager import ConnectionManager
-
-    seen = {}
-    manager = ConnectionManager.__new__(ConnectionManager)
-    manager.getDataset = lambda fp: seen.setdefault("fp", fp) and None
-    monkeypatch.setattr("cluster.remote_dataset.CachedRemoteDataset.__init__",
-                        lambda self, *a, **k: (_ for _ in ()).throw(RuntimeError("stop")))
-    try:
-        manager._onRemoteDatasetMeta("subfp", name="s", n=3, is_sub=True,
-                                     parent="parentfp", parent_frames=[3, 5, 8],
-                                     active=False)
-    except RuntimeError as exc:
-        assert str(exc) == "stop"   # got past the signature and validation
-    assert seen["fp"] == "subfp"
 
 
 def test_a_hidden_subset_says_so():

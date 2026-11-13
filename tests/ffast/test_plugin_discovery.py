@@ -361,3 +361,4 @@ def test_a_headless_start_does_not_import_torch():
     out = subprocess.run([sys.executable, "-c", code], capture_output=True,
                          text=True, check=True, timeout=60)
     assert out.stdout.strip().splitlines()[-1] == "False"
+

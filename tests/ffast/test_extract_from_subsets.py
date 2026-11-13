@@ -13,7 +13,6 @@ import numpy as np
 from ffast.core.environment import Environment
 from ffast.loaders.ase import aseDatasetLoader
 from ffast.loaders.dataset import DatasetView
-from ffast.protocol import control
 
 
 def _variable():
@@ -45,13 +44,11 @@ def test_atoms_extracted_from_a_frozen_subset_need_only_its_structures():
     parent.initialise()
     frozen = DatasetView.frozenSubset(parent, None, np.array([0, 1]), "E")
     frozen.initialise()
-    told = []
+    added = []
     env = types.SimpleNamespace(
-        datasets=types.SimpleNamespace(get=lambda fp: None, add=lambda d: None),
-        remote=types.SimpleNamespace(tellServer=lambda e, *a, **k: told.append((e, k))))
+        datasets=types.SimpleNamespace(get=lambda fp: None, add=added.append))
     Environment.createAtomFilteredDataset(env, frozen, [0, 2])
-    assert told == [(control.CREATE_SUBSET,
-                     {"parent_fingerprint": frozen.fingerprint, "indices": [0, 2]})]
+    assert [d.fingerprint for d in added] == [DatasetView.atomSubsetFingerprint(frozen, [0, 2])]
 
 
 def test_elements_extracted_from_a_frozen_subset_keep_its_frames():
