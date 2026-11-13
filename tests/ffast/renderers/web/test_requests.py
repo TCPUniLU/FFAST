@@ -208,6 +208,23 @@ async (origin) => {
     FakeWS.features = [];
     FakeWS.answerBeats = true;
   }
+  { // tab saves keep their own answers, in any order; failures keep one shape
+    const { TabOps } = await import(`${origin}/tab_ops.js`);
+    const { conn, ws } = await open();
+    const tabs = new TabOps({ request: (e, k) => conn.request(e, k) });
+    const pA = tabs.save({ name: 'A' });
+    const pB = tabs.save({ name: 'B' });
+    const pC = tabs.exportToml('C');
+    const [a, b, c] = ws.sent.map((m) => m.id);
+    ws.deliver({ event: 'TAB_SAVED', args: [], reply_to: b, final: true,
+                 kwargs: { ok: true, action: 'save', name: 'B', error: null } });
+    ws.deliver({ event: 'TAB_SAVED', args: [], reply_to: a, final: true, error: 'taken',
+                 kwargs: { ok: false, action: 'save', name: 'A', error: 'taken' } });
+    await settle();
+    out.tabA = await pA; out.tabB = await pB;
+    ws.drop();
+    out.tabC = await pC;
+  }
   { // the table alone: an unknown reply_to is not consumed
     const t = new RequestTable();
     out.tableUnknown = t.answer({ event: 'X', reply_to: 4, final: true });
@@ -318,3 +335,9 @@ def test_a_server_that_falls_silent_is_a_lost_connection(results):
     assert results["waitingWhileAnswered"] <= 1
     assert results["toldWhenSilent"] == 1
     assert results["silentRequest"] == {"err": "connection lost", "lost": True}
+
+
+def test_tab_saves_are_matched_by_request_not_by_order(results):
+    assert results["tabB"] == {"ok": True, "action": "save", "name": "B", "error": None}
+    assert results["tabA"] == {"ok": False, "action": "save", "name": "A", "error": "taken"}
+    assert results["tabC"] == {"toml": None, "ok": False, "error": "Disconnected"}

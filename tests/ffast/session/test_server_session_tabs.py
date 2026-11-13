@@ -124,3 +124,28 @@ def test_label_edits_reach_every_window(env):
     _, everyone = _dispatch(env, control.SAVE_TAB, {
         "tab": {"name": "Basic", "panels": [{**TABLE, "y_title": "Mine"}]}, "previous_name": "Basic"})
     assert _layout(everyone)["tabs"][1]["panels"][0]["y_title"] == "Mine"
+
+
+def _envelopes(env, event, kwargs, msg_id):
+    """The raw messages this window gets for one numbered request."""
+    import msgpack
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue(), broadcast=lambda _: None)
+        await s.dispatch(event, [], kwargs, msg_id=msg_id)
+        out = []
+        while not s.outbound.empty():
+            out.append(msgpack.unpackb(s.outbound.get_nowait(), raw=False))
+        return out
+
+    return asyncio.run(scenario())
+
+
+def test_a_tab_change_is_the_final_reply_to_its_request(env):
+    """ADR 0097: the window matches TAB_SAVED to its request, not to a queue."""
+    [ok] = _envelopes(env, control.SAVE_TAB, {"tab": {"name": "Mine", "panels": [TABLE]}}, 7)
+    assert (ok["event"], ok["reply_to"], ok["final"]) == (control.TAB_SAVED, 7, True)
+    assert "error" not in ok
+    [refused] = _envelopes(env, control.SAVE_TAB, {"tab": {"name": "Basic", "panels": [TABLE]}}, 8)
+    assert (refused["reply_to"], refused["error"]) == (8, "A tab named Basic already exists")
+    assert refused["kwargs"]["ok"] is False

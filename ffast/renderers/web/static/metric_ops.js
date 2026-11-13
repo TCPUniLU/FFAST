@@ -2,22 +2,23 @@
  * User metrics over the wire (ADR 0057): the list, save / delete / export, the
  * check of a formula as it is typed, the inputs a formula can use, and Try.
  *
- * Saving and deleting answer the window that asked (USER_METRIC_SAVED), in the
- * order the requests went, so each waits its turn in a queue — the same
- * arrangement as tab_ops.js. The check and the inputs are different: the
+ * Saving, deleting and exporting are requests (ADR 0097): the server's final
+ * reply (USER_METRIC_SAVED, USER_METRIC_EXPORTED) names the one it answers,
+ * as in tab_ops.js. The check and the inputs are different: the
  * editor only wants the *latest* answer, so each request carries a number and
  * an older answer is dropped. A Try has its own id, which the progress
  * messages and the result carry.
  */
 
 import { OUT } from './events.js';
+import { askFor } from './tab_ops.js';
 
 export class MetricOps {
-  /** @param {{send: (event: string, kwargs?: object) => void}} deps */
-  constructor({ send }) {
+  /** @param {{send: (event: string, kwargs?: object) => void,
+   *            request: (event: string, kwargs?: object) => Promise<{kwargs: object}>}} deps */
+  constructor({ send, request }) {
     this._send = send;
-    this._saved = [];       // resolvers waiting for USER_METRIC_SAVED, oldest first
-    this._exported = [];    // resolvers waiting for USER_METRIC_EXPORTED
+    this._request = request;
     this._checkSeq = 0;
     this._boxesSeq = 0;
     this._boxes = new Map();   // request id → resolver waiting for METRIC_BOXES
@@ -35,20 +36,22 @@ export class MetricOps {
    * over a newer one.
    * @returns {Promise<{ok: boolean, action: string, id: string, error: string|null, conflict: boolean}>} */
   save(metric, { previousId = null, baseRevision = null, overwrite = false } = {}) {
-    return this._ask(this._saved, OUT.SAVE_USER_METRIC, {
+    return this._saved(OUT.SAVE_USER_METRIC, {
       metric, previous_id: previousId, base_revision: baseRevision, overwrite,
     });
   }
 
-  remove(id) { return this._ask(this._saved, OUT.DELETE_USER_METRIC, { id }); }
+  remove(id) { return this._saved(OUT.DELETE_USER_METRIC, { id }); }
 
   /** Yes to the offer a session load made (rule 15); answers like a save. */
   addSessionMetrics(offerId) {
-    return this._ask(this._saved, OUT.ADD_SESSION_METRICS, { offer_id: offerId });
+    return this._saved(OUT.ADD_SESSION_METRICS, { offer_id: offerId });
   }
 
   /** @returns {Promise<{id: string, toml: string|null, error: string|null}>} */
-  exportToml(id) { return this._ask(this._exported, OUT.EXPORT_USER_METRIC, { id }); }
+  exportToml(id) { return askFor(this._request, OUT.EXPORT_USER_METRIC, { id }, { toml: null }); }
+
+  _saved(event, kwargs) { return askFor(this._request, event, kwargs, { conflict: false }); }
 
   /** Check a formula as typed, with the pane's dataset for its warnings
    * (ADR 0066); the answer goes to `onCheck` unless a newer check was sent
@@ -98,10 +101,6 @@ export class MetricOps {
   get trying() { return this._try !== null; }
 
   // ── incoming ──────────────────────────────────────────────────────────────
-  onSaved(kw) { this._saved.shift()?.(kw); }
-
-  onExported(kw) { this._exported.shift()?.(kw); }
-
   onChecked(kw) {
     if (kw.check_id === String(this._checkSeq)) this.onCheck(kw);
   }
@@ -131,8 +130,6 @@ export class MetricOps {
 
   /** A disconnect answers nothing: whoever waits hears it failed. */
   reset() {
-    for (const resolve of this._saved.splice(0)) resolve({ ok: false, error: 'Disconnected', conflict: false });
-    for (const resolve of this._exported.splice(0)) resolve({ toml: null, error: 'Disconnected' });
     for (const resolve of this._boxes.values()) resolve({ error: 'Disconnected' });
     this._boxes.clear();
     if (this._try) {
@@ -142,10 +139,4 @@ export class MetricOps {
     }
   }
 
-  _ask(queue, event, kwargs) {
-    return new Promise((resolve) => {
-      queue.push(resolve);
-      this._send(event, kwargs);
-    });
-  }
 }

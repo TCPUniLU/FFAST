@@ -2092,7 +2092,6 @@ class ServerSession:
         new layout to every window — in that order, so the window that saved
         hears its own outcome before the layout it caused."""
         from ffast.config.user_tabs import TabError
-        from ffast.protocol.rpc import pack
         sources = getattr(self.env, "tab_sources", None)
         error = None
         try:
@@ -2106,15 +2105,15 @@ class ServerSession:
         except Exception as exc:
             logger.warning("Tab %s of %r failed: %s", action, name, exc)
             error = f"Could not {action} the tab: {exc}"
-        await self._emit(pack(control.TAB_SAVED, [], {
-            "ok": error is None, "action": action, "name": name, "error": error}))
+        # The final reply to this window's request (ADR 0097).
+        await self._emit(replies.reply(control.TAB_SAVED, (), {
+            "ok": error is None, "action": action, "name": name, "error": error}, error=error))
         if error is None:
             logger.info("Tab %s: %r; sending the layout to every window", action, name)
             self.feed.changed(control.METRIC_CATALOG, control.TAB_LAYOUT, control.METRIC_USERS)
 
     async def _on_export_tab(self, name, **kwargs) -> None:
         from ffast.config.user_tabs import TabError
-        from ffast.protocol.rpc import pack
         sources = getattr(self.env, "tab_sources", None)
         toml = error = None
         try:
@@ -2123,7 +2122,8 @@ class ServerSession:
             toml = sources.export(name)
         except TabError as exc:
             error = str(exc)
-        await self._emit(pack(control.TAB_EXPORTED, [], {"name": name, "toml": toml, "error": error}))
+        await self._emit(replies.reply(control.TAB_EXPORTED, (),
+                                       {"name": name, "toml": toml, "error": error}, error=error))
 
     # ── user metrics (ADR 0057) ─────────────────────────────────────────────
 
@@ -2167,9 +2167,10 @@ class ServerSession:
         except Exception as exc:
             logger.warning("User metric %s of %r failed: %s", action, id, exc)
             error = f"Could not {action} the metric: {exc}"
-        await self._emit(pack(control.USER_METRIC_SAVED, [], {
+        # The final reply to this window's request (ADR 0097).
+        await self._emit(replies.reply(control.USER_METRIC_SAVED, (), {
             "ok": error is None, "action": action, "id": id,
-            "error": error, "conflict": conflict}))
+            "error": error, "conflict": conflict}, error=error))
         if error is None:
             logger.info("User metric %s: %r; telling every window", action, id)
             self._broadcast(pack(control.METRICS_UPDATED, [], {}))
@@ -2196,7 +2197,6 @@ class ServerSession:
 
     async def _on_export_user_metric(self, id, **kwargs) -> None:
         from ffast.config.user_metrics import MetricError
-        from ffast.protocol.rpc import pack
         um = getattr(self.env, "user_metrics", None)
         toml = error = None
         try:
@@ -2205,7 +2205,8 @@ class ServerSession:
             toml = um.export(id)
         except MetricError as exc:
             error = str(exc)
-        await self._emit(pack(control.USER_METRIC_EXPORTED, [], {"id": id, "toml": toml, "error": error}))
+        await self._emit(replies.reply(control.USER_METRIC_EXPORTED, (),
+                                       {"id": id, "toml": toml, "error": error}, error=error))
 
     async def _on_request_metric_inputs(self, dataset_fp=None, model_fp=None, **kwargs) -> None:
         """Reply with METRIC_INPUTS, and remember the pair: it is the dataset
@@ -2488,10 +2489,10 @@ class ServerSession:
     async def _on_add_session_metrics(self, offer_id, **kwargs) -> None:
         plan = self._session_offers.pop(offer_id, None)
         if plan is None:
-            from ffast.protocol.rpc import pack
-            await self._emit(pack(control.USER_METRIC_SAVED, [], {
+            error = "That offer is no longer open; load the session again"
+            await self._emit(replies.reply(control.USER_METRIC_SAVED, (), {
                 "ok": False, "action": "add-session", "id": None,
-                "error": "That offer is no longer open; load the session again", "conflict": False}))
+                "error": error, "conflict": False}, error=error))
             return
         await self._change_metrics("add-session", None, lambda um: um.add_session(plan))
 

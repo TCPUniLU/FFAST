@@ -275,9 +275,12 @@ export class FFastApp {
     /** Datasets Load Example brought into this window, until they are deleted. */
     this._exampleFps = new Set();
     // User tabs on the server (ADR 0056): save, delete, hide, export.
-    this._tabOps = new TabOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
+    this._tabOps = new TabOps({ request: (event, kwargs) => this._request(event, kwargs) });
     // User metrics on the server (ADR 0057): the Metrics pane's wire.
-    this._metricOps = new MetricOps({ send: (event, kwargs) => this._conn?.send(event, kwargs) });
+    this._metricOps = new MetricOps({
+      send: (event, kwargs) => this._conn?.send(event, kwargs),
+      request: (event, kwargs) => this._request(event, kwargs),
+    });
     /** The last layout the server sent, hidden tabs included. */
     this._layoutTabs = [];
     this._pendingShow = null;   // a tab to show once a layout brings it
@@ -1935,13 +1938,9 @@ export class FFastApp {
       this._metricClient = new MetricClient(conn);
       this._analysis.setMetricClient(this._metricClient);
       conn.on(IN.TAB_LAYOUT, (kw) => this._applyLayout(kw.tabs || []));
-      conn.on(IN.TAB_SAVED, (kw) => this._tabOps.onSaved(kw));
-      conn.on(IN.TAB_EXPORTED, (kw) => this._tabOps.onExported(kw));
       // User metrics (ADR 0057)
       conn.on(IN.USER_METRICS, (kw) => this._panes.metrics.setUserMetrics(kw.metrics));
       conn.on(IN.METRIC_USERS, (kw) => this._panes.metrics.setMetricUsers(kw.users));
-      conn.on(IN.USER_METRIC_SAVED, (kw) => this._metricOps.onSaved(kw));
-      conn.on(IN.USER_METRIC_EXPORTED, (kw) => this._metricOps.onExported(kw));
       conn.on(IN.METRIC_CHECKED, (kw) => this._metricOps.onChecked(kw));
       conn.on(IN.METRIC_INPUTS, (kw) => this._metricOps.onInputsReply(kw));
       conn.on(IN.METRIC_TRIED, (kw) => this._metricOps.onTried(kw));
