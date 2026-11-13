@@ -349,6 +349,20 @@ async def shared_prediction_server(request, _shared_servers):
         yield ports
 
 
+async def test_the_server_sends_its_messages_uncompressed(shared_server):
+    """Metric results are arrays of numbers, which hardly compress: deflate
+    took 849 ms for 13.5 MB of energies and saved 5% (2026-11-13). The server
+    declines compression, even when the client offers it."""
+    ws_port, _ = shared_server
+    ws = await _connect_headless_client(ws_port)   # offers permessage-deflate
+    try:
+        assert "permessage-deflate" in (ws.request.headers.get("Sec-WebSocket-Extensions") or "")
+        assert ws.response.headers.get("Sec-WebSocket-Extensions") is None
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+
 async def _wait_for_server_ready(ws_port: int) -> None:
     """Block until the server accepts a WS connection (and, by extension, is
     also serving the static web app — both start together in server.py).
@@ -6520,9 +6534,11 @@ async def test_web_pick_click_and_box_render_selection_overlay(shared_dataset_se
             rect = await page.locator(CANVAS).bounding_box()
             cx, cy = rect["x"] + rect["width"] / 2, rect["y"] + rect["height"] / 2
             await page.mouse.move(cx - rect["width"] / 3, cy - rect["height"] / 3)
+            await page.keyboard.down("Shift")   # a plain drag turns the camera
             await page.mouse.down()
             await page.mouse.move(cx + rect["width"] / 3, cy + rect["height"] / 3, steps=6)
             await page.mouse.up()
+            await page.keyboard.up("Shift")
             await page.wait_for_function(
                 "() => window.ffastApp.renderer._selectionMeshes.size > 0"
             )
@@ -6797,6 +6813,56 @@ async def test_web_the_atom_under_the_pointer_is_highlighted(shared_dataset_serv
             after = await page.evaluate(drawn, atom["index"])
             assert after["scale"] == pytest.approx(base["scale"])
             assert after["light"] == pytest.approx(base["light"])
+        finally:
+            await browser.close()
+
+
+async def test_web_the_view_turns_while_a_pick_tool_is_armed(shared_dataset_server):
+    """With a pick tool armed a plain drag still turns the camera and picks
+    nothing; a click picks; Shift+drag with a box tool draws a box and leaves
+    the camera where it was."""
+    ws_port, web_port = shared_dataset_server
+    dataset_fp = await _preload_dataset(ws_port)
+    camera = "() => window.ffastApp.renderer._camera.position.toArray()"
+    picked = "() => window.ffastApp._picked.length"
+
+    async def drag(x, y, dx, dy, shift=False):
+        await page.mouse.move(x, y)
+        if shift:
+            await page.keyboard.down("Shift")
+        await page.mouse.down()
+        await page.mouse.move(x + dx, y + dy, steps=8)
+        await page.mouse.up()
+        if shift:
+            await page.keyboard.up("Shift")
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await _open_view(page, ws_port, web_port, dataset_fp)
+            rect = await page.locator(CANVAS).bounding_box()
+            cx, cy = rect["x"] + rect["width"] / 2, rect["y"] + rect["height"] / 2
+
+            for tool in ("info", "extract"):
+                await page.locator(f"#pick-toolbar button[data-tool='{tool}']").click()
+                before = await page.evaluate(camera)
+                await drag(cx, cy, 80, 30)
+                assert await page.evaluate(camera) != pytest.approx(before), tool
+                assert await page.evaluate(picked) == 0, tool
+
+            atom = await _front_atom(page)          # Extract is still armed
+            await page.mouse.click(atom["x"], atom["y"])
+            await expect(page.locator("#pick-strip-count")).to_contain_text("1 picked")
+
+            before = await page.evaluate(camera)
+            await drag(cx - 200, cy - 200, 400, 400, shift=True)
+            assert await page.evaluate(camera) == pytest.approx(before)
+            assert await page.evaluate(picked) > 1
+
+            # The camera turns again after the box.
+            await drag(cx, cy, 80, 30)
+            assert await page.evaluate(camera) != pytest.approx(before)
         finally:
             await browser.close()
 
@@ -8891,10 +8957,15 @@ async def test_web_a_tab_control_redraws_its_plots_in_place(ffast_web_server):
             assert await page.evaluate("() => window.__removedPanels") == 0
 
             before = await page.evaluate(_PLOT_Y, "Energy MAE timeline")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy Scatter", timeout=25000)
+            scatter_before = await page.evaluate(_PLOT_Y, "Energy Scatter")
             await page.evaluate(_WATCH_REMOVED_PANELS)
             await page.locator(".tabpanel.active [data-control='energy_shift'] input").check()
             await page.wait_for_function(f"(t) => ({_PLOT_Y})(t) !== {json.dumps(before)}",
                                          arg="Energy MAE timeline", timeout=25000)
+            # The energy scatter's predicted values move by the shift too.
+            await page.wait_for_function(f"(t) => ({_PLOT_Y})(t) !== {json.dumps(scatter_before)}",
+                                         arg="Energy Scatter", timeout=25000)
             assert await page.evaluate("() => window.__removedPanels") == 0
 
             # The tab's own picker: pinning the dataset redraws in place too.
@@ -8924,6 +8995,48 @@ async def test_web_a_tab_control_redraws_its_plots_in_place(ffast_web_server):
             await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy MAE timeline", timeout=25000)
             await page.wait_for_timeout(300)
             assert await page.evaluate("() => window.__removedPanels") == 0
+        finally:
+            await browser.close()
+
+
+async def test_web_a_tab_shown_again_is_told_unchanged_instead_of_sent_its_data(shared_prediction_server):
+    """The page keeps the results it was sent and names the one it holds;
+    the server answers "unchanged" with no values while it still stores it.
+    Showing a tab again cost 45 MB on 1.77M structures (2026-11-13)."""
+    ws_port, web_port = shared_prediction_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    frames = {"in": [], "out": []}
+
+    def watch(ws):
+        ws.on("framereceived", lambda payload: frames["in"].append(payload))
+        ws.on("framesent", lambda payload: frames["out"].append(payload))
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1400, "height": 900})
+        page.on("websocket", watch)
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy Scatter", timeout=25000)
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            await page.wait_for_timeout(500)
+            assert any(isinstance(f, bytes) and b"__ndarray__" in f for f in frames["in"])
+
+            await _open_analysis_tab(page, "3D")
+            frames["in"].clear()
+            frames["out"].clear()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy Scatter", timeout=25000)
+            await page.wait_for_timeout(1000)
+            asked = [f for f in frames["out"] if isinstance(f, bytes) and b"REQUEST_METRIC" in f]
+            replies = [f for f in frames["in"] if isinstance(f, bytes) and b"METRIC_RESULT" in f]
+            assert asked and all(b"have" in f for f in asked)
+            assert replies and all(b"unchanged" in f and b"__ndarray__" not in f for f in replies)
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=5000)
         finally:
             await browser.close()
 

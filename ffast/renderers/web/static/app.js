@@ -82,7 +82,7 @@ const EDIT_LOCKED = '#objectbar, #pick-toolbar, #view-sidebar, #metrics-btn, #me
 
 /**
  * The five pick tools (ADR 0045 Phase 2). Each tool sets how it picks: `multiselect` caps the picked set, `cycle` makes it a rolling
- * window, `rectangle` enables box-select drag.
+ * window, `rectangle` enables box-select Shift+drag.
  * @type {Object<string,{label:string, icon:string, multiselect:number, cycle?:boolean, rectangle?:boolean, section?:string, tip?:string}>}
  */
 const PICK_TOOLS = {
@@ -95,7 +95,7 @@ const PICK_TOOLS = {
   align:   { label: 'Align',   icon: 'align', multiselect: 3, section: 'Alignment',
     tip: 'Click three atoms to align every frame on them' },
   forces:  { label: 'Force',   icon: 'force', multiselect: 10000, rectangle: true, section: 'Force Vectors',
-    tip: 'Shows force arrows; click atoms or drag a box to keep them on those atoms only' },
+    tip: 'Shows force arrows; click atoms or Shift+drag a box to keep them on those atoms only' },
   extract: { label: 'Extract', icon: 'scissors', multiselect: 10000, rectangle: true, section: 'Extract Subset',
     tip: 'Pick atoms to make a new dataset with only those atoms' },
 };

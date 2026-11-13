@@ -244,13 +244,14 @@ def test_metric_result_extra_key_rejected():
 def test_metric_result_fields_match_metricresult():
     # Drift guard: the message's metadata fields are exactly MetricResult's
     # fields plus the transport-only `ok` flag and `error` (why a failed
-    # metric failed, ADR 0066), its `kind` (ADR 0085), and `checksum`, which
-    # older servers still send (ADR 0081).
+    # metric failed, ADR 0066), its `kind` (ADR 0085), `checksum`, which
+    # older servers still send (ADR 0081), and the stored result's `tag` with
+    # `unchanged` when the page already holds it (2026-11-13).
     from ffast.metrics.models import MetricResult
 
     assert set(MetricResultMessage.model_fields) == set(
         MetricResult.model_fields
-    ) | {"ok", "error", "kind", "checksum"}
+    ) | {"ok", "error", "kind", "checksum", "tag", "unchanged"}
 
 
 def test_a_result_from_an_older_server_with_a_checksum_still_reads():

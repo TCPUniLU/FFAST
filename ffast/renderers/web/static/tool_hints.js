@@ -36,14 +36,14 @@ export function toolHint(tool, picked, { perFrame = false } = {}) {
     case 'extract':
       // What the tool is for, then what to do next (to_fix_v2: it did not say).
       return picked === 0
-        ? [['Makes a new dataset with only the atoms you pick. ', 'Click atoms or drag a box', ''],
+        ? [['Makes a new dataset with only the atoms you pick. ', 'Click atoms or Shift+drag a box', ''],
           ['', 'Esc', ' stops']]
         : [[`${picked} atom${picked === 1 ? '' : 's'} in the Extract box. `, 'Extract as Subset Dataset',
           ' makes the new dataset'], ['Click more to add, ', 'Esc', ' stops']];
     case 'forces':
       // Arrows show on all atoms until a pick narrows them (to_fix_v2).
       return picked === 0
-        ? [['Arrows on all atoms. ', 'Click atoms or drag a box', ' to keep arrows only on those'],
+        ? [['Arrows on all atoms. ', 'Click atoms or Shift+drag a box', ' to keep arrows only on those'],
           ['', 'Esc', ' stops']]
         : [[`${picked} atom${picked === 1 ? '' : 's'} with arrows${perFrame ? ' on this frame' : ''}. `, 'Click more', ' to add'],
           ['', 'Esc', ' stops']];

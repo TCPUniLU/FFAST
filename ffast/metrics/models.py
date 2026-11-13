@@ -2,7 +2,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any, Literal, Optional, Union
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_serializer
 
 # Pipeline parameter scope (architecture §Configuration → Layers).
 # session: one value shared by the whole session.
@@ -136,6 +136,10 @@ class MetricResult(BaseModel):
     # Sentences about something the result left out but the user should know,
     # e.g. bad values in rows a formula's where= left out (ADR 0064 amendment).
     warnings: list[str] = Field(default_factory=list)
+    # Names this stored result, set by MetricCache.put: a page that holds a
+    # result with this tag is told "unchanged" instead of sent it again. A
+    # copy (spilled to disk and read back) keeps it.
+    _tag: Optional[str] = PrivateAttr(default=None)
 
 
 class WithWarnings:

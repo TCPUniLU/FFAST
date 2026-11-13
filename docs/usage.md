@@ -253,7 +253,9 @@ These edits are saved with the tab and do not change the metric calculation.
 
 ## The 3D view
 
-Left-drag rotates, right-drag pans, scroll zooms. The strip under the viewport
+Left-drag rotates, right-drag pans, scroll zooms, also while a pick tool
+(Info, Force, Extract, ...) is on: a click picks an atom, and Shift+drag draws
+a box with Force or Extract. The strip under the viewport
 steps through frames, plays them at a set frame rate and optionally skips
 frames. **New window** opens a separate browser view.
 

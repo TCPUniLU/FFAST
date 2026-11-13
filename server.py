@@ -466,6 +466,9 @@ async def _serve(
     async with websockets.serve(
         handler, host, port,
         max_size=None,
+        # Metric results are arrays of numbers, which hardly compress: deflate
+        # took 849 ms for 13.5 MB of energies and saved 5% (2026-11-13).
+        compression=None,
         ping_interval=30,
         ping_timeout=60,
     ):

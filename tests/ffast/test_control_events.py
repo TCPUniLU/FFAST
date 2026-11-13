@@ -76,7 +76,10 @@ def test_request_metric_request_shape():
         "metric_id": "ffast.force_difference[structure;length;rmse]", "request_id": "k1",
         "params": {"order": 1}, "model_fp": "m1", "dataset_fp": "d1",
     }
-    assert RequestMetricRequest.model_validate(payload).model_dump() == payload
+    assert RequestMetricRequest.model_validate(payload).model_dump(exclude_none=True) == payload
+    # The tag of the result the page holds (2026-11-13).
+    held = {**payload, "have": "abc.7"}
+    assert RequestMetricRequest.model_validate(held).model_dump(exclude_none=True) == held
 
 
 def test_delete_object_request_requires_fingerprint():

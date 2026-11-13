@@ -3072,7 +3072,7 @@ def test_pick_tool_hints_follow_the_pick_count(results):
     assert text(bonds0).startswith("Click 2 atoms") and "one more atom" in text(bonds1)
     assert "2 of 3" in text(align2)
     # to_fix_v2: arming Force says arrows are on, and how to narrow them
-    assert forces == [["Arrows on all atoms. ", "Click atoms or drag a box", " to keep arrows only on those"],
+    assert forces == [["Arrows on all atoms. ", "Click atoms or Shift+drag a box", " to keep arrows only on those"],
                       ["", "Esc", " stops"]]
     assert results["hint_forces_picked"] == [["2 atoms with arrows. ", "Click more", " to add"], ["", "Esc", " stops"]]
     # on a variable dataset the picks are this frame's

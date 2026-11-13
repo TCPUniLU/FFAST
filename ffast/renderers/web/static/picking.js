@@ -4,11 +4,12 @@
  * Turns pointer gestures on the 3D canvas into atom picks while a tool is
  * armed. Exactly one tool owns the pointer at a time (the Blender/Photoshop
  * modal-tool model, with one shared select
- * toolbar): arming disables orbit and shows a crosshair; a click resolves the
- * nearest visible atom; a drag with a rectangle-capable tool rubber-bands a
- * box. The atom under the pointer is highlighted whether or not a tool is
- * armed (ADR 0055; dragging to orbit does not highlight).
- * With no tool armed the pointer stays camera-orbit. The
+ * toolbar): arming shows a crosshair; a click resolves the nearest visible
+ * atom; a plain drag still orbits the camera, so the view can be turned while
+ * picking; Shift+drag with a rectangle-capable tool rubber-bands a box (orbit
+ * is held off for that one gesture). The atom under the pointer is highlighted
+ * whether or not a tool is armed (ADR 0055; dragging to orbit does not
+ * highlight). The
  * geometry itself lives on the renderer (pickAtom/boxSelect/setHoveredAtom);
  * this class is just gesture + arming state.
  */
@@ -46,12 +47,15 @@ export class PickController {
     this._tool = null;
     this._down = null;   // {x, y} canvas-local at pointerdown
     this._moved = false;
+    this._box = false;   // this gesture draws a box (Shift+drag, rectangle tool)
     this._rect = null;   // rubber-band div, created lazily
 
     this._onDown = this._onPointerDown.bind(this);
     this._onMove = this._onPointerMove.bind(this);
     this._onUp = this._onPointerUp.bind(this);
-    canvas.addEventListener('pointerdown', this._onDown);
+    // Capture phase: runs before the camera controls' own pointerdown on the
+    // same canvas, so a box gesture can turn orbit off before it starts.
+    canvas.addEventListener('pointerdown', this._onDown, true);
 
     // Hover: at most one pick per frame, however fast the pointer moves.
     this._hoverAt = null;
@@ -65,7 +69,7 @@ export class PickController {
   /** Release the canvas, for a 3D panel that is going away. */
   dispose() {
     this.disarm();
-    this._canvas.removeEventListener('pointerdown', this._onDown);
+    this._canvas.removeEventListener('pointerdown', this._onDown, true);
     this._canvas.removeEventListener('pointermove', this._onHover);
     this._canvas.removeEventListener('pointerleave', this._onLeave);
     this._rect?.remove();
@@ -76,17 +80,13 @@ export class PickController {
   /** Arm a tool (disarms any previous). Idempotent for the same id. */
   arm(tool) {
     this._tool = tool;
-    this._renderer.setControlsEnabled(false);
     this._canvas.style.cursor = 'crosshair';
   }
 
   disarm() {
     this._tool = null;
-    this._renderer.setControlsEnabled(true);
     this._canvas.style.cursor = '';
-    this._hideRect();
-    this._down = null;
-    this._moved = false;
+    this._endGesture();
     this._setHover(null);
   }
 
@@ -114,9 +114,13 @@ export class PickController {
 
   _onPointerDown(e) {
     if (!this._tool || e.button !== 0) return;
-    e.preventDefault();
     this._down = this._canvasXY(e);
     this._moved = false;
+    this._box = !!(this._tool.rectangle && e.shiftKey);
+    if (this._box) {
+      e.preventDefault();
+      this._renderer.setControlsEnabled(false);
+    }
     // Track move/up on window so a drag that leaves the canvas still resolves.
     window.addEventListener('pointermove', this._onMove);
     window.addEventListener('pointerup', this._onUp);
@@ -128,24 +132,33 @@ export class PickController {
     const dx = p.x - this._down.x, dy = p.y - this._down.y;
     if (!this._moved && dx * dx + dy * dy > DRAG_THRESHOLD_PX * DRAG_THRESHOLD_PX)
       this._moved = true;
-    if (this._moved && this._tool?.rectangle) this._showRect(this._down, p);
+    if (this._moved && this._box) this._showRect(this._down, p);
+  }
+
+  /** Drop any half-done gesture and give the camera back its pointer. */
+  _endGesture() {
+    window.removeEventListener('pointermove', this._onMove);
+    window.removeEventListener('pointerup', this._onUp);
+    if (this._box) this._renderer.setControlsEnabled(true);
+    this._hideRect();
+    this._down = null;
+    this._moved = false;
+    this._box = false;
   }
 
   _onPointerUp(e) {
-    window.removeEventListener('pointermove', this._onMove);
-    window.removeEventListener('pointerup', this._onUp);
-    const down = this._down;
-    this._down = null;
-    this._hideRect();
+    const down = this._down, moved = this._moved, box = this._box;
+    this._endGesture();
     if (!this._tool || !down) return;
     const up = this._canvasXY(e);
 
-    if (this._moved && this._tool.rectangle) {
+    if (box && moved) {
       const entries = this._renderer.boxSelect(down.x, down.y, up.x, up.y);
       this._cb.onPick(entries, { isBox: true });
       return;
     }
-    // Click (or a drag with a non-rectangle tool): nearest atom at release.
+    if (moved) return;   // a plain drag turned the camera; it picks nothing
+    // Click: nearest atom at release.
     const hit = this._renderer.pickAtom(up.x, up.y);
     if (hit) this._cb.onPick([hit], { isBox: false });
   }

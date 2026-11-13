@@ -1884,11 +1884,12 @@ class ServerSession:
         (Stage 4a, ADR 0085). A reply with no result says why, and of what kind."""
         from ffast.metrics.models import MetricResult
         from ffast.metrics.result_store import Missing
-        from ffast.protocol.rpc import pack_metric_result
+        from ffast.protocol.rpc import pack_metric_result, pack_metric_unchanged
 
         params = kwargs.get("params") or {}
         model_fp = kwargs.get("model_fp")
         dataset_fp = kwargs.get("dataset_fp")
+        have = kwargs.get("have")
 
         if self._cancelled_early.pop(request_id, None):
             return              # the page let go of it before it started
@@ -1910,8 +1911,13 @@ class ServerSession:
             # With no prediction chosen the reply stays quiet: the page says
             # "Select a prediction" (ADR 0085 decision 5).
             error, kind = outcome.text, outcome.kind
+        tag = getattr(result, "_tag", None)
         try:
-            data = pack_metric_result(request_id, metric_id, result is not None, result, error, kind)
+            if have and tag == have:
+                # The page holds this very result: none of its values are sent.
+                data = pack_metric_unchanged(request_id, metric_id, tag)
+            else:
+                data = pack_metric_result(request_id, metric_id, result is not None, result, error, kind)
         except Exception as exc:
             # The page waits for every reply (no timeout), so one that cannot
             # be built is answered as a failure ("bytes object is too large"
