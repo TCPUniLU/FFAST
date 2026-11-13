@@ -372,7 +372,10 @@ export class RemoteBrowser {
     this._typeTouched = false; // the user chose the Type: the server's suggestion does not replace it
     this._loadWhenReady = false;   // load once the key check is back
     this._pick = null;   // {onPick}: the browser is choosing where a session or export goes
-    this._pending = null;   // {kind, name, path}: a load with no outcome yet
+    this._pending = null;   // {kind, name, path}: the latest load with no outcome yet
+    // Loads the server answered (ADR 0097) whose dataset or model this
+    // window has not been told of yet: fingerprint → the load.
+    this._awaiting = new Map();
     this._asks = new Map();   // folder asked for suggestions → replies still to come
     this._suggest = { items: [], active: -1, dir: '' };
     this._suggestTimer = null;
@@ -1315,44 +1318,71 @@ export class RemoteBrowser {
         && !this._sampleSettings());
   }
 
-  /** File ▸ Load Zero Model: no file to pick. Its "Loading…" ends like a
-   * model's (REMOTE_MODEL_META, or "already loaded" when the task ends). */
+  /** File ▸ Load Zero Model: no file to pick. */
   loadZeroModel() {
-    this._ports.send(OUT.LOAD_ZERO_MODEL, {}, []);
     this._ports.setStatus('Loading Zero Model…', 'connected');
-    this._pending = { kind: 'model', name: 'Zero Model', path: null };
+    this._startLoad({ kind: 'model', name: 'Zero Model', path: null }, OUT.LOAD_ZERO_MODEL, {}, []);
   }
 
-  /** Which load this window is waiting for: 'dataset', 'prediction', 'model' or null. */
-  pendingKind() {
-    return this._pending?.kind ?? null;
+  /** Send one load request and follow it to its end (ADR 0097): the
+   * server's final reply names what loaded, says it was already loaded, or
+   * says why it failed. */
+  _startLoad(load, event, kwargs, args) {
+    this._pending = load;
+    const asked = this._ports.request(event, kwargs, args);
+    asked.then((reply) => this._loadAnswered(load, reply.kwargs),
+               (err) => this._loadFailed(load, err));
   }
 
-  /** A new dataset or model arrived, or a load failed: the "Loading…" status
-   * of a pending load of that `kind` ('dataset', 'prediction' or 'model') is replaced,
-   * so a later task end must not touch it. True if one was pending. */
-  settled(kind, ok = true, fp = null) {
-    if (this._pending?.kind !== kind) return false;
-    if (ok && this._pending.path) this._remember(this._pending.path, kind);
+  _loadAnswered(load, kw) {
+    if (kw.already) {
+      this._ports.setStatus(`"${load.name}" is already loaded`, 'connected');
+      if (load.path) this._remember(load.path, load.kind);
+      this._signal('load-duplicate', { kind: load.kind, name: load.name });
+      this._end(load);
+      return;
+    }
+    load.fp = kw.fingerprint;
+    // The announcement of what loaded can come before or after this reply.
+    if (this._ports.holds(load.kind, load.fp, load.datasetFp)) this._finish(load);
+    else this._awaiting.set(load.fp, load);
+  }
+
+  /** The window was told of dataset or model `fp` (its announcement). */
+  announced(fp) {
+    const load = this._awaiting.get(fp);
+    if (!load || !this._ports.holds(load.kind, fp, load.datasetFp)) return;
+    this._awaiting.delete(fp);
+    this._finish(load);
+  }
+
+  _finish(load) {
+    if (load.path) this._remember(load.path, load.kind);
     // The units typed in the loader are named on the dataset that arrived.
-    if (ok && kind === 'dataset' && fp) {
-      for (const [dimension, unit] of Object.entries(this._pending.units || {})) {
-        this._ports.setUnit?.(fp, dimension, unit);
+    if (load.kind === 'dataset') {
+      for (const [dimension, unit] of Object.entries(load.units || {})) {
+        this._ports.setUnit?.(load.fp, dimension, unit);
         saveRecentUnit(dimension, unit);
       }
     }
-    this._pending = null;
-    return true;
+    this._end(load);
+    this._ports.loaded?.(load.kind, load.fp, load.name);
   }
 
-  /** A task ended. A dataset or prediction the server already holds announces
-   * nothing new, so a task that ends while a load is still pending is that
-   * duplicate: end its status. */
-  onTaskDone() {
-    if (!this._pending) return;
-    this._ports.setStatus(`"${this._pending.name}" is already loaded`, 'connected');
-    if (this._pending.path) this._remember(this._pending.path, this._pending.kind);
-    this._signal('load-duplicate', { kind: this._pending.kind, name: this._pending.name });
+  _loadFailed(load, err) {
+    this._end(load);
+    if (err?.connectionLost) return;   // the banner says it
+    this._ports.setStatus(`Could not load ${load.name}: ${err.message}`, 'error');
+    this._signal('load-failed', { kind: load.kind, error: err.message });
+  }
+
+  _end(load) {
+    if (this._pending === load) this._pending = null;
+  }
+
+  /** The connection ended: no announcement will finish a load now. */
+  forgetLoads() {
+    this._awaiting.clear();
     this._pending = null;
   }
 
@@ -1383,19 +1413,18 @@ export class RemoteBrowser {
       if (!dsFp || (!fKey && !eKey)) return;
       // LOAD_PREDICTION reads args=[path, dataset_fp] + key kwargs; on success
       // the server fires REMOTE_MODEL_META → _onModelMeta selects it.
-      this._ports.send(
+      this._ports.setStatus(`Loading prediction ${this._selected}…`, 'connected');
+      this._startLoad(
+        { kind: 'prediction', name: this._selected, path, datasetFp: dsFp },
         OUT.LOAD_PREDICTION,
         { selected_energy_key: eKey, selected_force_key: fKey, ...(reader ? { reader } : {}) },
         [path, dsFp],
       );
-      this._ports.setStatus(`Loading prediction ${this._selected}…`, 'connected');
-      this._pending = { kind: 'prediction', name: this._selected, path };
     } else if (this._mode === 'model') {
       const typ = $('fb-model-type').value;
       // LOAD_MODEL reads args=[path, model_type]; the model runs on the server (ADR 0030).
-      this._ports.send(OUT.LOAD_MODEL, {}, [path, typ]);
       this._ports.setStatus(`Loading model ${this._selected}…`, 'connected');
-      this._pending = { kind: 'model', name: this._selected, path };
+      this._startLoad({ kind: 'model', name: this._selected, path }, OUT.LOAD_MODEL, {}, [path, typ]);
     } else {
       const typ = $('fb-type').value;
       // LOAD_DATASET reads args=[path, datasetType]; the keys travel as kwargs
@@ -1408,9 +1437,9 @@ export class RemoteBrowser {
         stride: this._framesChoice() === 'nth' ? $('fb-stride').value : 1,
         sampling: this._framesChoice() === 'energy' ? this._sampleSettings() : null,
       });
-      this._ports.send(OUT.LOAD_DATASET, kwargs, [path, typ]);
       this._ports.setStatus(`Loading ${this._selected}…`, 'connected');
-      this._pending = { kind: 'dataset', name: this._selected, path, units: this._unitsTyped() };
+      this._startLoad({ kind: 'dataset', name: this._selected, path, units: this._unitsTyped() },
+                      OUT.LOAD_DATASET, kwargs, [path, typ]);
     }
     // The load joins a count still running on the server; cancelling would not stop it.
     this._large = null;

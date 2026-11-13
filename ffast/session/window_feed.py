@@ -75,17 +75,23 @@ class WindowFeed:
         from ffast.protocol import ModelMeta
         from ffast.protocol.rpc import pack
         name = getattr(model, "name", None) or model_fp[:8]
+        dataset_fps = self.datasets_of(model_fp)
+        return pack(
+            control.REMOTE_MODEL_META,
+            (model_fp,),
+            ModelMeta(name=name, dataset_fingerprints=dataset_fps).model_dump(),
+        )
+
+    def datasets_of(self, model_fp) -> list:
+        """The datasets a model has predictions for, in cache order."""
+        from ffast.cache import CacheKey
         dataset_fps = []
         for cache_key in list(self.env.cache.keys()):
             ck = CacheKey.try_parse(cache_key)
             if ck is not None and ck.matches_model(model_fp) and ck.dataset_fp:
                 if ck.dataset_fp not in dataset_fps:
                     dataset_fps.append(ck.dataset_fp)
-        return pack(
-            control.REMOTE_MODEL_META,
-            (model_fp,),
-            ModelMeta(name=name, dataset_fingerprints=dataset_fps).model_dump(),
-        )
+        return dataset_fps
 
     def metric_catalog(self) -> bytes:
         """METRIC_CATALOG, so the client builds metric controls from the server's

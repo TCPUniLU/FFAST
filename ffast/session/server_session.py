@@ -555,12 +555,14 @@ class ServerSession:
             kwargs["prediction_keys"] = [
                 tuple(k) for k in kwargs["prediction_keys"]
             ]
+        answer = self._load_answer("dataset", path)
         self.env.taskLoadDataset(
-            path, dataset_type, on_error=self._load_failed("dataset", path), **kwargs
+            path, dataset_type, on_error=answer.failed, on_done=answer.done, **kwargs
         )
 
     async def _on_load_model(self, path, model_type, **kwargs) -> None:
-        self.env.taskLoadModel(path, model_type, on_error=self._load_failed("model", path))
+        answer = self._load_answer("model", path)
+        self.env.taskLoadModel(path, model_type, on_error=answer.failed, on_done=answer.done)
 
     async def _on_delete_object(self, fingerprint, delete_results=False, **kwargs) -> None:
         self.env.deleteObject(fingerprint, delete_results=bool(delete_results))
@@ -1498,18 +1500,21 @@ class ServerSession:
             "LOAD_PREDICTION: path=%r dataset=%r energy_key=%r force_key=%r",
             path, dataset_fp[:8], selected_energy_key, selected_force_key,
         )
+        answer = self._load_answer("prediction", path, dataset_fp=dataset_fp)
         self.env.taskLoadPrepredictedDataset(
             path, dataset_fp,
             selected_energy_key=selected_energy_key,
             selected_force_key=selected_force_key,
-            on_error=self._load_failed("prediction", path),
+            on_error=answer.failed,
+            on_done=answer.done,
             reader=kwargs.get("reader"),
         )
 
     async def _on_load_zero_model(self, **kwargs) -> None:
-        """Load the zero baseline model; a second request loads nothing
-        (the window then reads "already loaded" from the task's end)."""
-        self.env.taskLoadZeroModel()
+        """Load the zero baseline model; a second request loads nothing,
+        and its final reply says it was already loaded."""
+        answer = self._load_answer("zero", None)
+        self.env.taskLoadZeroModel(on_error=answer.failed, on_done=answer.done)
 
     async def _on_load_example(self, **kwargs) -> None:
         """Load the SPICE pair in ``examples/data/variable-sized molecular``:
@@ -1521,14 +1526,15 @@ class ServerSession:
         data = example_data_dir() / "variable-sized molecular"
         dataset_path = str(data / "dataset.xyz")
         prediction_path = str(data / "prediction.xyz")
+        answer = self._load_answer("example", dataset_path)
         if not (data / "dataset.xyz").is_file() or not (data / "prediction.xyz").is_file():
-            self._load_failed("dataset", dataset_path)(
+            answer.failed(
                 "this server has no examples (it was installed without the repository)"
             )
             return
         env = self.env
-        dataset_failed = self._load_failed("dataset", dataset_path)
-        prediction_failed = self._load_failed("prediction", prediction_path)
+        dataset_failed = answer.failed
+        prediction_failed = answer.failed
 
         def load(taskID=None):
             # The Loading Coordinator's load* take on_error; the Environment's
@@ -1551,32 +1557,22 @@ class ServerSession:
                 except Exception as exc:
                     prediction_failed(exc)
                     raise
+            model_fp = env.getKeyFromPath(prediction_path)
+            if model_fp is None:
+                answer.failed("its prediction did not load (see the server log)")
+            else:
+                answer.send(dataset_fp=dataset_fp, model_fp=model_fp)
 
         env.newTask(load, visual=True, name="Loading example", threaded=True)
 
-    def _load_failed(self, kind: str, path: str):
-        """An ``on_error`` callback that tells this window its load failed.
+    def _load_answer(self, kind: str, path, *, dataset_fp=None) -> "_LoadAnswer":
+        """The final reply to the load request being handled (ADR 0097).
 
-        A failed load task only pushes ``TASK_FAILED`` with a task id, which the
-        window cannot tie to its request, so its status stayed on "Loading…".
-        The callback runs in the task's worker thread, hence the hand-back to
-        this session's loop.
+        Built in the handler, so it knows the request's number and what the
+        server held for ``path`` before the load. The load task calls
+        ``failed(exc)`` or ``done()`` from its thread; the first call wins.
         """
-        loop = asyncio.get_running_loop()
-
-        def report(exc):
-            from ffast.protocol.rpc import pack
-
-            # The window that asked shows it (LOAD_FAILED), not every window.
-            logger.warning("Loading %s %r failed: %s", kind, path, exc,
-                           extra={"popup": False})
-            data = pack(
-                control.LOAD_FAILED, (),
-                {"kind": kind, "path": path, "error": str(exc)},
-            )
-            loop.call_soon_threadsafe(self._emit_or_drop, data, "load failed")
-
-        return report
+        return _LoadAnswer(self, kind, path, dataset_fp)
 
     async def _on_request_prediction_arrays(self, dataset_fp, model_fp, **kwargs) -> None:
         """Pack only cached prediction arrays for (dataset_fp, model_fp) and push.
@@ -2498,3 +2494,81 @@ class ServerSession:
                 "error": "That offer is no longer open; load the session again", "conflict": False}))
             return
         await self._change_metrics("add-session", None, lambda um: um.add_session(plan))
+
+
+class _LoadAnswer:
+    """One load's final reply, ``LOAD_RESULT``, to the window that asked.
+
+    ``kind`` is 'dataset', 'prediction', 'model', 'zero' or 'example'. What
+    the server holds for the file is noted when the request arrives and again
+    when the load ends: something new is the load's result; the same thing
+    means it was already loaded; nothing at all means it failed without
+    saying why (it logged it).
+    """
+
+    def __init__(self, session, kind, path, dataset_fp):
+        self._session = session
+        self._kind = kind
+        self._path = path
+        self._dataset_fp = dataset_fp
+        self._request_id = replies.current()
+        self._loop = asyncio.get_running_loop()
+        self._lock = threading.Lock()
+        self._sent = False
+        self._before = set() if kind == "example" else self._held()
+
+    def _held(self) -> set:
+        """What the server holds for this request: fingerprints, and for a
+        prediction whether it has numbers for the asked dataset."""
+        env = self._session.env
+        if self._kind == "zero":
+            from ffast.loaders.zero import ZeroModelLoader
+            fp = ZeroModelLoader.fingerprint
+            return {fp} if env.models.exists(fp) else set()
+        if self._kind in ("dataset", "example"):
+            return {d.fingerprint for d in env.datasets.all(excludeSubs=True)
+                    if getattr(d, "path", None) == self._path}
+        held = {m.fingerprint for m in env.models.all()
+                if getattr(m, "path", None) == self._path}
+        if self._kind == "prediction":
+            feed = self._session.feed
+            return {fp for fp in held if self._dataset_fp in feed.datasets_of(fp)}
+        return held
+
+    def done(self) -> None:
+        if self._kind == "example":
+            return   # the example task sends its own pair
+        after = self._held()
+        new = after - self._before
+        if new:
+            self.send(kind=self._kind, path=self._path, fingerprint=sorted(new)[0],
+                      already=False)
+        elif after:
+            self.send(kind=self._kind, path=self._path, fingerprint=sorted(after)[0],
+                      already=True)
+        else:
+            self.failed("it did not load (see the server log)")
+
+    def failed(self, exc) -> None:
+        logger.warning("Loading %s %r failed: %s", self._kind, self._path, exc,
+                       extra={"popup": False})
+        self.send(kind=self._kind, path=self._path, error=str(exc))
+
+    def send(self, error=None, **kwargs) -> None:
+        with self._lock:
+            if self._sent:
+                return
+            self._sent = True
+        data = replies.reply(control.LOAD_RESULT, (), kwargs, error=error,
+                             request_id=self._request_id)
+        try:
+            on_loop = asyncio.get_running_loop() is self._loop
+        except RuntimeError:
+            on_loop = False
+        if not on_loop:   # the load task's thread
+            asyncio.run_coroutine_threadsafe(self._session._emit(data), self._loop)
+            return
+        try:
+            self._session.outbound.put_nowait(data)
+        except asyncio.QueueFull:
+            self._loop.create_task(self._session._emit(data))

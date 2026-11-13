@@ -91,7 +91,7 @@ class LoadingCoordinator:
         """
         return self._env.remote.active_session()
 
-    def _queueLoad(self, fn, name, args=(), kwargs=None, on_error=None):
+    def _queueLoad(self, fn, name, args=(), kwargs=None, on_error=None, on_done=None):
         """Queue an in-process load so disk I/O and setup stay off the main loop.
 
         Every ``taskLoad*`` entry point wants the same task shape — visual,
@@ -102,18 +102,28 @@ class LoadingCoordinator:
         the window that asked); an error that is raised is still raised, so the
         task fails as before. The ``load*`` methods also take ``on_error``, for
         the failures they log and return from.
+
+        ``on_done()`` runs once the load returned without raising, in the
+        task's thread, also after a failure the load reported and returned
+        from: the caller tells those apart (ADR 0097, the server's final
+        reply to the window that asked).
         """
-        if on_error is not None:
+        if on_error is not None or on_done is not None:
             load = fn
-            kwargs = {**(kwargs or {}), "on_error": on_error}
+            if on_error is not None:
+                kwargs = {**(kwargs or {}), "on_error": on_error}
 
             def fn(*a, **kw):
                 try:
-                    return load(*a, **kw)
+                    out = load(*a, **kw)
                 except Exception as exc:
-                    on_error(exc)
-                    exc.ffast_reported = True   # no second pop-up (ADR 0066)
+                    if on_error is not None:
+                        on_error(exc)
+                        exc.ffast_reported = True   # no second pop-up (ADR 0066)
                     raise
+                if on_done is not None:
+                    on_done()
+                return out
 
         return self._env.newTask(
             fn,
@@ -191,10 +201,10 @@ class LoadingCoordinator:
     ## MODELS
     #############
 
-    def taskLoadModel(self, path, modelType, on_error=None):
+    def taskLoadModel(self, path, modelType, on_error=None, on_done=None):
         """Queue model loading so disk I/O and setup do not block the main loop."""
         self._queueLoad(self.loadModel, "Loading model", args=(path, modelType),
-                        on_error=on_error)
+                        on_error=on_error, on_done=on_done)
 
     def requestModelLoad(self, path, modelType):
         """Dispatch a model load through the server, or in-process as fallback.
@@ -269,7 +279,8 @@ class LoadingCoordinator:
     #############
 
     def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None,
-                                    selected_force_key=None, on_error=None, reader=None):
+                                    selected_force_key=None, on_error=None, reader=None,
+                                    on_done=None):
         """Queue import of external predictions as cached model outputs for a dataset."""
         self._queueLoad(
             self.loadPrepredictedDataset,
@@ -281,6 +292,7 @@ class LoadingCoordinator:
                 'reader': reader,
             },
             on_error=on_error,
+            on_done=on_done,
         )
 
     def requestPredictionLoad(self, path, datasetKey, selected_energy_key=None,
@@ -617,7 +629,7 @@ class LoadingCoordinator:
 
     def taskLoadDataset(self, path, datasetType, selected_energy_key=None,
                        selected_force_key=None, prediction_keys=None, slice_num=0,
-                       on_error=None, sampling=None):
+                       on_error=None, sampling=None, on_done=None):
         """Load dataset and optionally load predictions from same file.
 
         Args:
@@ -643,6 +655,7 @@ class LoadingCoordinator:
             args=(path, datasetType),
             kwargs=kwargs,
             on_error=on_error,
+            on_done=on_done,
         )
 
     def requestDatasetLoad(self, path, datasetType, selected_energy_key=None,

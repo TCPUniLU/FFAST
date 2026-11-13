@@ -151,9 +151,9 @@ class Environment(EventClass):
         return self.models.get(self.getKeyFromPath(path))
 
 
-    def taskLoadModel(self, path, modelType, on_error=None):
+    def taskLoadModel(self, path, modelType, on_error=None, on_done=None):
         """Delegate to the Loading Coordinator (ADR 0034)."""
-        return self.loading.taskLoadModel(path, modelType, on_error=on_error)
+        return self.loading.taskLoadModel(path, modelType, on_error=on_error, on_done=on_done)
 
     def requestModelLoad(self, path, modelType):
         """Delegate to the Loading Coordinator (ADR 0034)."""
@@ -164,7 +164,8 @@ class Environment(EventClass):
         return self.loading.loadModel(path, modelType, taskID=taskID)
 
     def taskLoadPrepredictedDataset(self, path, datasetKey, selected_energy_key=None,
-                                    selected_force_key=None, on_error=None, reader=None):
+                                    selected_force_key=None, on_error=None, reader=None,
+                                    on_done=None):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.taskLoadPrepredictedDataset(
             path, datasetKey,
@@ -172,6 +173,7 @@ class Environment(EventClass):
             selected_force_key=selected_force_key,
             on_error=on_error,
             reader=reader,
+            on_done=on_done,
         )
 
     def requestPredictionLoad(self, path, datasetKey, selected_energy_key=None,
@@ -209,7 +211,7 @@ class Environment(EventClass):
 
     def taskLoadDataset(self, path, datasetType, selected_energy_key=None,
                        selected_force_key=None, prediction_keys=None, slice_num=0,
-                       on_error=None, sampling=None):
+                       on_error=None, sampling=None, on_done=None):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.taskLoadDataset(
             path, datasetType,
@@ -219,6 +221,7 @@ class Environment(EventClass):
             slice_num=slice_num,
             on_error=on_error,
             sampling=sampling,
+            on_done=on_done,
         )
 
     def requestDatasetLoad(self, path, datasetType, selected_energy_key=None,
@@ -523,10 +526,24 @@ class Environment(EventClass):
         """Delegate to the Loading Coordinator (ADR 0034)."""
         return self.loading.lookForGhosts()
 
-    def taskLoadZeroModel(self):
-        """Queue loading of the built-in zero baseline model."""
+    def taskLoadZeroModel(self, on_error=None, on_done=None):
+        """Queue loading of the built-in zero baseline model. ``on_error`` /
+        ``on_done`` as for the other loads (LoadingCoordinator._queueLoad)."""
+        load = self.loadZeroModel
+
+        def run(taskID=None):
+            try:
+                load(taskID=taskID)
+            except Exception as exc:
+                if on_error is not None:
+                    on_error(exc)
+                    exc.ffast_reported = True
+                raise
+            if on_done is not None:
+                on_done()
+
         self.newTask(
-            self.loadZeroModel,
+            run,
             args=(),
             visual=True,
             name="Loading model",

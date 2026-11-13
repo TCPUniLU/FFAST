@@ -65,6 +65,12 @@ class _FakeModels:
     def items(self):
         return self._items.items()
 
+    def all(self, excludeGhosts=False):
+        return list(self._items.values())
+
+    def exists(self, fp):
+        return fp in self._items
+
 
 class _FakeCache:
     def __init__(self, entries=None):
@@ -504,7 +510,7 @@ def test_dispatch_load_dataset_carries_an_energy_sample_and_refuses_it_with_a_st
 class _ZeroEnv(_FakeEnv):
     zero_calls = 0
 
-    def taskLoadZeroModel(self):
+    def taskLoadZeroModel(self, on_error=None, on_done=None):
         self.zero_calls += 1
 
 
@@ -528,7 +534,7 @@ class _FailingLoadEnv(_FakeEnv):
     def taskLoadPrepredictedDataset(self, path, dataset_fp, on_error=None, **kwargs):
         on_error(ValueError("no forces"))
 
-    def taskLoadModel(self, path, model_type, on_error=None):
+    def taskLoadModel(self, path, model_type, on_error=None, on_done=None):
         on_error(ImportError("no module named mace"))
 
 
@@ -546,10 +552,88 @@ def test_a_failed_load_tells_the_window_which_file_and_why(event, args, kind):
     messages = _run(scenario())
 
     name, _, kwargs = messages[0]
-    assert name == control.LOAD_FAILED
+    assert name == control.LOAD_RESULT
     assert kwargs["kind"] == kind
     assert kwargs["path"] == args[0]
-    assert kwargs["error"] in ("list index out of range", "no forces", "no module named mace")
+
+
+def _decoded_replies(session):
+    import msgpack
+    out = []
+    while not session.outbound.empty():
+        out.append(msgpack.unpackb(session.outbound.get_nowait(), raw=False))
+    return out
+
+
+class _Obj:
+    def __init__(self, fp, path):
+        self.fingerprint, self.path = fp, path
+
+
+class _LoadingEnv(_FakeEnv):
+    """Loads at once, as the load task would, then calls ``on_done``."""
+
+    def __init__(self, fail_quietly=False, **kw):
+        super().__init__(**kw)
+        self.fail_quietly = fail_quietly
+
+    def taskLoadDataset(self, path, dataset_type, on_error=None, on_done=None, **kwargs):
+        if not self.fail_quietly and not any(d.path == path for d in self.datasets.all()):
+            self.datasets._items["fp-" + path] = _Obj("fp-" + path, path)
+        on_done()
+
+    def taskLoadPrepredictedDataset(self, path, dataset_fp, on_error=None, on_done=None, **kw):
+        self.models._items.setdefault("m-" + path, _Obj("m-" + path, path))
+        self.cache._entries[f"forces__m-{path}__{dataset_fp}"] = 1
+        on_done()
+
+
+def _load(env, event, args, rid):
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch(event, args, {}, msg_id=rid)
+        await asyncio.sleep(0)
+        return _decoded_replies(s)
+    return _run(scenario())
+
+
+def test_a_failed_load_is_the_final_reply_to_its_request():
+    [msg] = [m for m in _load(_FailingLoadEnv(), "LOAD_MODEL", ["/x/m.model", "MACE"], 9)
+             if m["event"] == control.LOAD_RESULT]
+    assert (msg["reply_to"], msg["final"]) == (9, True)
+    assert msg["error"] == "no module named mace"
+
+
+def test_a_new_dataset_is_named_in_the_final_reply():
+    [msg] = _load(_LoadingEnv(), "LOAD_DATASET", ["/d.xyz", "ase"], 4)
+    assert msg["event"] == control.LOAD_RESULT and msg["reply_to"] == 4
+    assert msg["kwargs"] == {"kind": "dataset", "path": "/d.xyz",
+                             "fingerprint": "fp-/d.xyz", "already": False}
+    assert "error" not in msg
+
+
+def test_a_dataset_loaded_before_is_already_loaded():
+    env = _LoadingEnv(datasets={"fp-/d.xyz": _Obj("fp-/d.xyz", "/d.xyz")})
+    [msg] = _load(env, "LOAD_DATASET", ["/d.xyz", "ase"], 5)
+    assert msg["kwargs"]["already"] is True
+    assert msg["kwargs"]["fingerprint"] == "fp-/d.xyz"
+
+
+def test_a_load_that_ends_with_nothing_held_is_a_failure():
+    [msg] = _load(_LoadingEnv(fail_quietly=True), "LOAD_DATASET", ["/d.xyz", "ase"], 6)
+    assert msg["error"].startswith("it did not load")
+
+
+def test_a_known_prediction_for_another_dataset_is_not_already_loaded():
+    from ffast.cache import CacheKey  # noqa: F401  (cache keys parse as CacheKey)
+    env = _LoadingEnv()
+    first = _load(env, "LOAD_PREDICTION", ["/p.xyz", "ds1"], 1)
+    again = _load(env, "LOAD_PREDICTION", ["/p.xyz", "ds1"], 2)
+    other = _load(env, "LOAD_PREDICTION", ["/p.xyz", "ds2"], 3)
+    assert first[0]["kwargs"]["already"] is False
+    assert again[0]["kwargs"]["already"] is True
+    assert other[0]["kwargs"]["already"] is False
+    assert other[0]["kwargs"]["fingerprint"] == "m-/p.xyz"
 
 
 class _ExampleEnv:

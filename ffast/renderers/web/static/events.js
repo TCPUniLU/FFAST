@@ -162,7 +162,7 @@ export const IN = Object.freeze({
   SESSION_SAVED: 'SESSION_SAVED',
   SESSION_LOADED: 'SESSION_LOADED',
   // A dataset or prediction load that failed, {kind, path, error}.
-  LOAD_FAILED: 'LOAD_FAILED',
+  LOAD_RESULT: 'LOAD_RESULT',
   // Outcome of SAVE_TAB / DELETE_TAB / HIDE_TAB / SET_TAB_ORDER, {ok, action, name, error},
   // and the TOML for EXPORT_TAB (ADR 0056).
   TAB_SAVED: 'TAB_SAVED',

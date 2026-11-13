@@ -268,11 +268,12 @@ SUBSET_EXTRACTED = "SUBSET_EXTRACTED"
 # generic broadcast loop).
 SESSION_SAVED = "SESSION_SAVED"
 SESSION_LOADED = "SESSION_LOADED"
-# A LOAD_DATASET / LOAD_PREDICTION / LOAD_MODEL that failed: {kind, path, error}, to the
-# window that asked. The load runs in a task whose TASK_FAILED carries only a
-# task id, so without this the window's "Loading…" never ended. One-shot
-# announcement, out of REPLY_EVENTS.
-LOAD_FAILED = "LOAD_FAILED"
+# The final reply to LOAD_DATASET / LOAD_PREDICTION / LOAD_MODEL /
+# LOAD_ZERO_MODEL / LOAD_EXAMPLE (ADR 0097), to the window that asked:
+# {kind, path, fingerprint, already}; LOAD_EXAMPLE: {dataset_fp, model_fp}.
+# A failed load's carries `error`. The dataset and model announcements still go
+# to every window, before or after it.
+LOAD_RESULT = "LOAD_RESULT"
 # Sent to every window right after TASK_CREATED: args=(task_id,),
 # {name, visual, cancellable}. TASK_CREATED carries only the id; the Tasks
 # list shows visual tasks by name; a computing metric is not cancellable. One-shot announcement, out of REPLY_EVENTS.

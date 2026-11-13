@@ -214,6 +214,13 @@ export class FFastApp {
       serverKey: () => document.getElementById('ws-url').value.trim(),
       setUnit: (fp, dimension, unit) => this._setDatasetUnit(fp, dimension, unit),
       signal: (name, detail) => this._tourSignal(name, detail),
+      // Loads are requests (ADR 0097): their final reply ends them.
+      request: (event, kwargs = {}, args = []) => this._request(event, kwargs, args),
+      holds: (kind, fp, datasetFp) => (kind === 'dataset'
+        ? this._datasets.has(fp)
+        : this._models.has(fp) && (kind !== 'prediction'
+          || (this._models.get(fp).dataset_fingerprints || []).includes(datasetFp))),
+      loaded: (kind, fp, name) => this._onLoaded(kind, fp, name),
     });
     this._sessionOps = new SessionOps({
       send,
@@ -795,9 +802,21 @@ export class FFastApp {
       // The example pair in examples/data: the server knows where it lives.
       { id: 'load-example', label: 'Load Example Dataset and Prediction', menu: 'file',
         run: () => {
-          this._exampleWatch = { datasetFp: null, modelFp: null };
-          this._conn.send(OUT.LOAD_EXAMPLE, {}, []);
+          const watch = { datasetFp: null, modelFp: null };
+          this._exampleWatch = watch;
           this._setStatus('Loading example…', 'connected');
+          this._request(OUT.LOAD_EXAMPLE).then((r) => {
+            if (this._exampleWatch !== watch) return;
+            watch.datasetFp = r.kwargs.dataset_fp;
+            watch.modelFp = r.kwargs.model_fp;
+            this._signalExampleLoaded();
+          }, (err) => {
+            if (this._exampleWatch === watch) this._exampleWatch = null;
+            if (err.connectionLost) return;
+            this._setStatus(`Could not load the example: ${err.message}`, 'error');
+            this._tourSignal('load-failed', { kind: 'dataset', error: err.message });
+            this._tourSignal('example-load-failed', { error: err.message });
+          });
         },
         unavailable: needsControl },
       // Live LAMMPS runs (ADR 0086/0087): the LAMMPS menu, in this order.
@@ -1979,13 +1998,11 @@ export class FFastApp {
         this._tasks.progress(args[0], kw);
         console.debug('TASK_PROGRESS', kw);
       });
-      // The Tasks button lists running tasks; _browser.onTaskDone still ends a
-      // pending load's status. A computing metric ("metric:<key>", from
-      // server_session._compute_once) ending is not a load ending.
+      // The Tasks button lists running tasks. A load ends with its own final
+      // reply (ADR 0097), not with a task's end.
       conn.on(IN.TASK_DONE,    (kw, args) => {
         console.debug('TASK_DONE', kw);
         this._tasks.done(args[0]);
-        if (!String(args[0]).startsWith('metric:')) this._browser.onTaskDone();
       });
       conn.on(IN.TASK_FAILED,  (kw) => console.warn('TASK_FAILED', kw));
       conn.on(IN.DATASET_LOADED, () => {});
@@ -2012,17 +2029,6 @@ export class FFastApp {
       conn.on(IN.SESSION_METRICS, (kw) => this._offerSessionMetrics(kw));
       // A warning the server logged (ffast.session.warning_relay).
       conn.on(IN.SERVER_WARNING, (kw) => showWarning(kw.message, kw.level));
-      // A load that failed: end the "Loading <file>…" status with the reason.
-      conn.on(IN.LOAD_FAILED, (kw) => {
-        const name = String(kw.path || '').split(/[\\/]/).pop();
-        this._browser.settled(kw.kind, false);
-        this._setStatus(`Could not load ${name}: ${kw.error}`, 'error');
-        this._tourSignal('load-failed', { kind: kw.kind, error: kw.error });
-        if (this._exampleWatch) {
-          this._exampleWatch = null;
-          this._tourSignal('example-load-failed', { error: kw.error });
-        }
-      });
 
       // Asked while the handshake runs, so it adds no wait.
       const pageFingerprint = pageCodeFingerprint();
@@ -2166,6 +2172,7 @@ export class FFastApp {
     document.getElementById('frame-slider').disabled = true;
     for (const id of ['prev-frame-btn', 'play-pause-btn', 'next-frame-btn']) document.getElementById(id).disabled = true;
     this._browser.close();
+    this._browser.forgetLoads();
     this._tabOps.reset();
     this._metricOps.reset();
     this._panes.metrics.disconnected();
@@ -2181,8 +2188,7 @@ export class FFastApp {
     // Whether DetectAna is there decides if Score against reference… is greyed out.
     if (!before && this._canScore(meta)) this._conn?.send(OUT.SCORE_DIALOG_INFO, { fingerprint: fp, quick: true });
     if (!before && !meta.is_sub) {
-      if (this._exampleWatch && !this._exampleWatch.datasetFp) this._exampleWatch.datasetFp = fp;
-      if (this._browser.settled('dataset', true, fp)) this._tourSignal('dataset-loaded', { fp });   // its "ready" below ends the "Loading…"
+      this._browser.announced(fp);   // its "ready" below ends the "Loading…"
       this._readyStatus = `Dataset "${meta.name || fp.slice(0, 8)}" ready · ${framesText(meta.n)}`;
       // It replaces a "Loading…" that is over, not a result the user should
       // still read, such as "Loaded session from …", which can arrive first.
@@ -2235,18 +2241,9 @@ export class FFastApp {
     }
     // meta = {name, dataset_fingerprints}. Fired on connect-replay and after
     // a LOAD_PREDICTION completes (the ghost model registers its forces cache).
-    // A model new to this window ends a pending prediction load, wherever it
-    // applies; only a duplicate announces nothing (RemoteBrowser.onTaskDone).
-    // A prediction or a model this window asked for ends its "Loading…".
-    // A known prediction announced again with more datasets was loaded for
-    // another dataset: that ends the load too, it is no duplicate.
-    const grew = !!before && (meta?.dataset_fingerprints || [])
-      .some((d) => !(before.dataset_fingerprints || []).includes(d));
-    const asked = this._browser.pendingKind();
-    const loaded = (!this._models.has(fp) || grew)
-      && (asked === 'prediction' || asked === 'model') && this._browser.settled(asked);
+    // Whether this window asked for it is the load's final reply's to say
+    // (RemoteBrowser.announced, ADR 0097).
     this._models.set(fp, meta || {});
-    if (loaded && asked === 'prediction') this._tourSignal('prediction-loaded', { fp });
     // Auto-select a freshly loaded prediction that applies to the current
     // dataset and refresh the view so its force overlay appears. A live
     // pop-out with a requested prediction (ADR 0044 Phase 4) only settles on
@@ -2261,9 +2258,9 @@ export class FFastApp {
       this._setStatus(`Prediction "${meta.name || fp.slice(0,8)}" ready`, 'connected');
       if (this._activePanel) this._openView();
       this._syncAnalysisContext();
-    } else if (loaded) {
-      this._setStatus(`${asked === 'model' ? 'Model' : 'Prediction'} "${meta?.name || fp.slice(0,8)}" loaded`, 'connected');
     }
+    // A load this window asked for that the server named (ADR 0097) ends here.
+    this._browser.announced(fp);
     this._panes?.forces.refreshModels();
     this._panes?.colorBy.refreshModels(this._models);
     this._renderObjects();
@@ -2280,13 +2277,26 @@ export class FFastApp {
     this._independent.ensureShown();
     if (this._focusedIndependent) this._syncPanelSection();
     this._syncCaptions();
-    // The prediction of a Load Example this window asked for: the pair is in.
-    const watch = this._exampleWatch;
-    if (!before && watch?.datasetFp && !watch.modelFp
-        && (meta?.dataset_fingerprints || []).includes(watch.datasetFp)) {
-      watch.modelFp = fp;
-      this._signalExampleLoaded();
-    }
+    // A Load Example whose reply came first ends once its pair is here.
+    if (this._exampleWatch?.modelFp === fp) this._signalExampleLoaded();
+  }
+
+  /** Send a request on the live connection (ADR 0097); without one it
+   * fails as a lost connection would. */
+  _request(event, kwargs = {}, args = []) {
+    if (this._conn) return this._conn.request(event, kwargs, args);
+    const err = new Error('connection lost');
+    err.connectionLost = true;
+    return Promise.reject(err);
+  }
+
+  /** A load this window asked for is in, and announced (ADR 0097). */
+  _onLoaded(kind, fp, name) {
+    if (kind === 'dataset') { this._tourSignal('dataset-loaded', { fp }); return; }
+    if (kind === 'prediction') this._tourSignal('prediction-loaded', { fp });
+    // A selected prediction already says "ready"; a model is never selected.
+    if (this._currentModelFp !== fp)
+      this._setStatus(`${kind === 'model' ? 'Model' : 'Prediction'} "${name}" loaded`, 'connected');
   }
 
   /** A Load Example this window asked for is done once its pair is in and
@@ -2294,6 +2304,7 @@ export class FFastApp {
   _signalExampleLoaded() {
     const watch = this._exampleWatch;
     if (!watch?.datasetFp || !watch.modelFp || !this._viewShown) return;
+    if (!this._datasets.has(watch.datasetFp) || !this._models.has(watch.modelFp)) return;
     this._exampleWatch = null;
     this._exampleFps.add(watch.datasetFp);
     this._tourSignal('example-loaded', { datasetFp: watch.datasetFp, modelFp: watch.modelFp });

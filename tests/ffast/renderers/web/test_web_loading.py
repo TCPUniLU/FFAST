@@ -277,3 +277,38 @@ async def test_web_the_zero_model_loads_only_when_asked(ffast_web_server):
                 '"Zero Model" is already loaded', timeout=15000)
         finally:
             await browser.close()
+
+
+async def test_web_another_task_ending_does_not_end_a_load(ffast_web_server):
+    """ADR 0097: a load ends with its own final reply. Before, the next task
+    that ended anywhere ended it as "already loaded", and the dataset that
+    then arrived was not treated as this window's load."""
+    ws_port, web_port = ffast_web_server
+    await _wait_for_server_ready(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.evaluate("""async ([path, origin]) => {
+                const { msgpack } = await import(`${origin}/msgpack.js`);
+                const app = window.ffastApp;
+                window.__signals = [];
+                app.tourEvents.addEventListener('dataset-loaded', (e) => window.__signals.push(['loaded', e.detail.fp]));
+                app.tourEvents.addEventListener('load-duplicate', () => window.__signals.push(['duplicate']));
+                app._browser._startLoad({ kind: 'dataset', name: 'dataset.xyz', path },
+                                        'LOAD_DATASET', {}, [path, 'ase (auto)']);
+                // Some other task ends before this load has answered.
+                const bytes = msgpack.encode({ event: 'TASK_DONE', args: ['other-task'], kwargs: {} });
+                app._conn._dispatch(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), 0);
+            }""", [str(DATASET_PATH), f"http://127.0.0.1:{web_port}"])
+            await expect(page.locator("#status")).not_to_contain_text("already loaded")
+            await expect(page.locator("#dataset-list .obj-row")).to_have_count(1, timeout=30000)
+            await page.wait_for_function("() => window.__signals.length > 0")
+            signals = await page.evaluate("() => window.__signals")
+            assert signals[0][0] == "loaded"
+            assert ["duplicate"] not in signals
+            assert await page.evaluate("() => window.ffastApp._browser._pending") is None
+        finally:
+            await browser.close()

@@ -3368,11 +3368,11 @@ async def test_web_a_prediction_loaded_onto_a_second_dataset_applies_to_it(ffast
         try:
             await _open_loupe(page, ws_port, web_port, other_fp)
             await page.wait_for_function(f"() => window.ffastApp._currentModelFp === null")
-            # As the file dialog's Load does: a pending prediction load, then the request.
+            # As the file dialog's Load does: a load request, followed to its end.
             await page.evaluate("""([path, fp]) => {
-                const app = window.ffastApp;
-                app._browser._pending = { kind: 'prediction', name: 'prediction.xyz', path };
-                app._conn.send('LOAD_PREDICTION',
+                window.ffastApp._browser._startLoad(
+                  { kind: 'prediction', name: 'prediction.xyz', path, datasetFp: fp },
+                  'LOAD_PREDICTION',
                   { selected_energy_key: 'MACE_energy', selected_force_key: 'MACE_forces' }, [path, fp]);
             }""", [str(PREDICTION_PATH), other_fp])
 
@@ -3383,7 +3383,7 @@ async def test_web_a_prediction_loaded_onto_a_second_dataset_applies_to_it(ffast
             assert sorted(fps) == sorted([dataset_fp, other_fp])
             await expect(page.locator(row)).to_have_class(re.compile(r"\bselected\b"))
             await expect(page.locator("#status")).not_to_contain_text("already loaded")
-            assert await page.evaluate("() => window.ffastApp._browser.pendingKind()") is None
+            assert await page.evaluate("() => window.ffastApp._browser._pending") is None
         finally:
             await browser.close()
 
