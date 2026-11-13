@@ -11,30 +11,20 @@ Everything in the first two sections exists in the code today. Terms that were
 coined for designs we have not built are quarantined at the bottom, under
 [Vocabulary for things that do not exist yet](#vocabulary-for-things-that-do-not-exist-yet).
 
-## The two halves
+## The core
 
 ### Headless core
 
 The `ffast/` package: engine, server, protocol, renderer-neutral visualization,
-CLI. It imports no Qt and no PySide6, so it runs on a compute node with no
+CLI. It imports no GUI toolkit, so it runs on a compute node with no
 display. This is the importable, distributable thing (`import ffast.*`, and the
 `ffast` / `ffast-server` / `ffast-cli` entry points).
 
 Membership has a test, not an opinion: a module belongs in the core if the
 `ffast-server` or `ffast-cli` entry points reach it. The msgpack codec is core;
-`UI/panels.py` is not. Code moves *into* the core, never out (ADR 0026).
+`cluster/` is not. Code moves *into* the core, never out (ADR 0026).
 
 Don't call it: the library, the backend, `src`.
-
-### Desktop client
-
-The flat top-level directories: `UI/` (Qt widgets), `client/` (what's left of
-client-side orchestration), `cluster/` (SLURM and SSH), `modules/` (plugin
-modules). Together they are the desktop application that drives the headless core
-over a socket. This is the application layer, not leftover rubbish, although some
-of it is now genuinely leftover (see the architecture doc).
-
-Don't call it: the frontend (it holds orchestration, not just widgets), legacy.
 
 ## Compute
 
@@ -43,7 +33,7 @@ Don't call it: the frontend (it holds orchestration, not just widgets), legacy.
 The central compute object: every loaded dataset and model, the fingerprint-keyed
 cache, the task manager. In remote mode it runs on the cluster node and the local
 machine has none of it. It used to be one class doing everything; it is now
-composed of `env.cache`, `env.models`, `env.datasets`, `env.data`, `env.remote`,
+composed of `env.cache`, `env.models`, `env.datasets`, `env.data`,
 `env.persistence` plus an injected prediction source (ADR 0020).
 
 ### Object catalog
@@ -220,7 +210,7 @@ is the point: they used to be defined in three places that disagreed (ADR 0035,
 The executor seam is one method, `run(id, source, parameters)`. Behind it sit two
 adapters that differ only in transport: an in-process one, and the worker pool.
 The executor is injected when the Environment is constructed, so the server gets
-the pool and the desktop gets the in-process one.
+the pool.
 
 ### Metric worker pool
 
@@ -285,7 +275,7 @@ warnings) or with why there is none. It computes a result at most once however
 many ask at the same time, and keeps results within a memory limit. Plots,
 atom colouring, a subset following a plot's zoom, and Try's references to
 saved metrics all ask it. A metric result is the answer; the store is where
-answers are asked for. The desktop client does not use it.
+answers are asked for.
 
 ### Missing result, needs a prediction
 
@@ -356,7 +346,7 @@ is how you get stale plots or pointless recomputation.
 
 A Python file or importable module named in configuration that registers
 metrics. Distinct from a **plugin module**, which is found by the startup glob
-over `modules/`.
+over the plugin folders.
 
 ## Live tutorials
 
@@ -425,14 +415,12 @@ panel frames being arranged stand out, and nothing is loaded, deleted, opened
 or run until Save or Cancel. The **run safety controls** are the exception:
 they are never blocked.
 
-Don't call it: overriding a tab ("override" is taken by display overrides).
+Don't call it: overriding a tab.
 
 ### 3D panel
 
 A panel that shows a visualization view in a tab's grid, beside 2D panels
-(`kind = "3d"` in a tab file). Browser only: the desktop skips a tab made only
-of 3D panels, the built-in "3D" tab among them, because it has its own 3D
-window. It is either **linked** or **independent**:
+(`kind = "3d"` in a tab file). It is either **linked** or **independent**:
 
 - **Linked** (the default): shows the main view. Every linked 3D panel, in any
   tab, shows the same thing.
@@ -478,16 +466,6 @@ clearing and rebuilding (ADR 0022).
 
 Don't call it: a trace, a curve, a line, a plot item.
 
-### Panel display override
-
-A user's client-local cosmetic edit to a panel: axis label text and size, legend
-text, size and position. Keyed by content (tab name, panel kind, bound metric
-IDs) so it survives rebuilds and TOML reordering, and it never touches
-computation identity. The app rewrites this file silently whenever you drag a
-legend, which is exactly why it is kept apart from configuration, which people
-author by hand (ADR 0029). **Colorbar display override** is the same idea applied
-to the 3D view's colourbar.
-
 ### Colour range
 
 Which values set the automatic ends of the colour bar when atoms are coloured
@@ -497,21 +475,11 @@ the ends, never the values. A typed limit wins over it (ADR 0084).
 
 ## The 3D view
 
-### Loupe
-
-The 3D molecular viewer. The name predates everything else and has stuck.
-
-As code it deliberately spans layers: the Qt shell in `UI/loupe/`, pluggable
-features in `modules/loupe/`, the renderer-neutral scene code shared with the web
-client in `ffast/visualization/`, and the vispy adapter in
-`ffast/renderers/vispy/`.
-
 ### Renderer client
 
 The process that draws a render scene and owns pointer interaction, camera,
 picking, export, playback and window layout. It holds no scientific state: it
-consumes snapshots and patches, and emits view commands. Both the browser client
-and Loupe are renderer clients.
+consumes snapshots and patches, and emits view commands. The browser client is the renderer client.
 
 ### Visualization state, visualization view
 
@@ -596,34 +564,24 @@ One per server.
 
 ### Server connection
 
-The *client's* transport handle to a server: SSH tunnel, WebSocket, SLURM job ID,
-request/reply correlator, array cache. Carries transport, not science. The
+The cluster launcher's transport handle to a server: SSH tunnel, WebSocket, SLURM job ID,
+Carries transport, not science. The
 opposite end of the wire from a server session. Formerly called RemoteSession.
 
 ### Session record
 
-Reconnect coordinates, kept client-side in `~/.ffast/sessions.json`: job ID,
+Reconnect coordinates, kept on the launching machine in `~/.ffast/sessions.json`: job ID,
 ports, profile, last snapshot. Just enough to rebuild a connection to a server
 session whose connection dropped. Purged on deliberate disconnect and when a job
 is confirmed dead, so a stale record cannot keep offering a reconnect dialog
 forever (ADR 0024).
 
-### Connection manager
-
-Client-side owner of the connection lifecycle, at `env.remote`. Its
-`active_session()` is the single "is a session live?" check that everything else
-resolves through instead of re-deriving it.
-
 ### Loading coordinator
 
-The single client-side owner of turning "load this dataset/model/prediction" into
-"and do it here": an in-process task, or a dispatch to the server. It owns the
-routing decision, the load implementations, the probe round-trips and the one
-chokepoint where ghost models are registered.
-
-It is Qt-free on purpose, which is what makes it migratable into the core and
-testable with a fake session. The desktop keeps the dialogs and hands it
-callbacks (ADR 0034).
+The single owner of turning "load this dataset/model/prediction" into an
+in-process task. It owns the load implementations and the one chokepoint where
+ghost models are registered. It has no GUI toolkit in it and is testable with a fake
+environment (ADR 0034).
 
 ### RPC channel
 
@@ -638,17 +596,11 @@ site spells one as a string literal (ADR 0033).
 ### In-process event vs broadcast event
 
 An **in-process event** is on the EventClass bus inside one process. Subscribers
-are held strongly, so a widget's lifetime is bound to an explicit `deleteEvents`
+are held strongly, so an object's lifetime is bound to an explicit `deleteEvents`
 call; this is deliberate, not a leak.
 
 A **broadcast event** crosses the server-to-client boundary and carries an
 identifier rather than a payload: something happened, go look it up.
-
-### Prediction-only array channel
-
-A sub-protocol for sending prediction arrays without re-sending geometry the
-client already has. Client asks with `REQUEST_PREDICTION_ARRAYS(dataset_fp,
-model_fp)`, server replies with just the energies and forces (ADR 0004).
 
 ### Cache key
 
@@ -676,13 +628,12 @@ implementation. **JobSpec** is a scheduler-agnostic resource request translated
 into a submission script. **JobStatus** is `PENDING`, `RUNNING`, `FAILED`,
 `COMPLETED`, resolved via `sacct` once a job leaves `squeue`. **Dataset length
 probe** counts frames in a cluster-side file before loading, by building its
-frame index, so the stride dialog can offer a stride against the true count. **Remote task IDs** are namespaced
-`remote_<n>` so replayed progress events cannot collide with local task IDs.
+frame index, so the stride dialog can offer a stride against the true count.
 
 ## Rules that hold everywhere
 
-- Python 3.11 exactly. PySide6 pinned `>=6.8,<6.9`.
-- `ffast/` imports no Qt and no OpenGL. There is a test.
+- Python 3.11 exactly.
+- `ffast/` imports no GUI toolkit and no OpenGL. There is a test.
 - Metrics are pure, deterministic and picklable, and never see the Environment,
   a Dataset or a Model.
 - Metrics raise on non-finite results rather than returning silent `inf`/`nan`.

@@ -118,5 +118,5 @@ doubles a white atom's channels to `2.0`; `dimming=-1.0` yields negative RGB.
 | Server/session | `_on_request_metric` / `_on_request_subdataset_arrays` / `_on_request_prediction_arrays` / `_on_view_command` parse-fail; session-records upsert/dedup/delete/load; inbound_router empty-args guard |
 | Cluster | bootstrap skip + mkdir/scp failure branches; `connect_to_cluster` `fail_at` poll (JobStatus.FAILED) / node (address lookup) |
 | Buffers | empty-array `[b""]` guard; end-to-end zstd through `BufferService` |
-| Visualization | color_values ASE-mass-fallback failure + Dataset-Field refs; scene_builder atom-pipeline exception fallback + force-scene filter remap; color_stages `force_error` gradient; atom_stages dimming boundaries (→ bug 6); pipeline missing-input → `StageExecutionError`; vispy zero-atom scene + NaN/empty `_map_color_by` |
+| Visualization | color_values ASE-mass-fallback failure + Dataset-Field refs; scene_builder atom-pipeline exception fallback + force-scene filter remap; color_stages `force_error` gradient; atom_stages dimming boundaries (→ bug 6); pipeline missing-input → `StageExecutionError` |
 | Misc | `loadModules` dependency-order + circular detection; CLI `dataset keys` / `stages list·inspect·test` / `metrics test`; ghost-lookup None-fp / already-loaded skip / multi-key dedup; SubDataset chem zero-atom / parent-raises |

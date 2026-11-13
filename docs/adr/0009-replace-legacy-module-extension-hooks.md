@@ -1,3 +1,5 @@
+Superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 # New extension contracts replace legacy UI and Loupe module hooks
 
 **Status:** Accepted / Implemented

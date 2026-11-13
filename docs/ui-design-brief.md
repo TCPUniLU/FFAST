@@ -7,7 +7,7 @@
 
 > **Intent.** FFAST should feel like an instrument for examining model failures, while its analytical panels should read like figures from a scientific publication. Retain the dense, functional workstation. Make its identity more deliberate, without rebuilding its layout or weakening the science.
 
-This is a **proposed extension** of the repository's existing design system, not a claim that the proposed changes are implemented. The existing design specification and accepted ADR remain authoritative for current behavior. Nothing here changes the Qt desktop client.
+This is a **proposed extension** of the repository's existing design system, not a claim that the proposed changes are implemented. The existing design specification and accepted ADR remain authoritative for current behavior.
 
 ## 1. Product experience and design principles
 

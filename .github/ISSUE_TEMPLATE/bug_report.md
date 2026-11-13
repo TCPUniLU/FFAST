@@ -12,8 +12,8 @@ labels: bug
 1.
 2.
 
-**Which client** (browser via `ffast`, or the Qt desktop via `ffast-qt`), and
-whether the server was local or on a cluster:
+**Browser** (name and version), and whether the server was local or on a
+cluster:
 
 **Data** (format, roughly how many configurations, fixed or variable atom count):
 

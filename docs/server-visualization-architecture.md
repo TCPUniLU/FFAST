@@ -8,10 +8,9 @@ This document explains how the pieces fit together.
 
 Separate scientific computation and visualization *state* from the technology that
 draws pixels. The server (`ffast-server`) owns datasets, predictions, metrics, views,
-edits, configuration, and renderer-neutral scenes. Renderer clients (Qt/Vispy today, a
-web client alongside it) consume those scenes and send commands back. This keeps the
-server renderer-free (no server-side OpenGL), modular, configuration-tunable, and able
-to drive equivalent Qt and web backends.
+edits, configuration, and renderer-neutral scenes. The renderer client (the browser) consumes those scenes and sends commands back. This
+keeps the server renderer-free (no server-side OpenGL), modular, and
+configuration-tunable.
 
 ## System Boundary
 
@@ -28,14 +27,13 @@ to drive equivalent Qt and web backends.
                                  |
                     WebSocket + msgpack protocol   (ADR 0001)
                                  |
-              +------------------+------------------+
-        Qt/Vispy renderer                       Web renderer
-        native controls, native drawing         browser controls, WebGL
+                          Web renderer
+                     browser controls, WebGL
 ```
 
-The server does not render pixels. A renderer client owns native drawing, pointer
-feedback, and window layout — never scientific state. Desktop mode starts a managed
-local `ffast-server` and speaks the same protocol as remote cluster mode.
+The server does not render pixels. The renderer client owns drawing, pointer
+feedback, and window layout — never scientific state. `ffast` starts a local
+`ffast-server` and speaks the same protocol as remote cluster mode.
 
 ## Visualization Model
 
@@ -61,7 +59,7 @@ features; the server resolves a valid dependency order. Stages are pure —
 `output = stage(inputs, resolved parameters)` — and never mutate datasets, view state,
 or other outputs. The pipeline emits a **Render Scene** of standard primitives (atom
 instances, line segments, vector arrows, text labels, unit-cell edges, selection
-overlays, camera); adapters translate these into Vispy or WebGL. Backend-specific
+overlays, camera); the browser adapter translates these into WebGL. Backend-specific
 primitives are exceptional and capability-gated.
 
 **Scene synchronization.** A versioned **Scene Snapshot** opens or recovers a view;
@@ -182,25 +180,23 @@ metadata). Camera orientation is never silently baked into coordinates.
 
 ## Session and Client Lifecycle
 
-Views belong to the server **Session**, not a desktop window. The initial protocol
+Views belong to the server **Session**, not a browser window. The initial protocol
 allows one **controlling** client; others are read-only. A random **Session Token**
 (server stores only its hash) authorizes control and recovery; SSH still secures remote
 transport but is not the sole ownership mechanism (ADR 0012). Managed local servers
 snapshot and stop on clean shutdown, stay alive for a recovery window after an
 unexpected disconnect, restore views + unsaved edit logs on reconnect, and stop when the
-window expires (ADR 0024). Legacy saved Sessions and `loadUI`/`loadLoupe` extensions are
-not migration requirements (ADR 0008/0009).
+window expires (ADR 0024). Legacy saved Sessions are not a migration requirement (ADR 0008).
 
 ## Deferred / not yet wired
 
 Some capabilities are built but parked by choice — the code exists and is tested but
 is not on the live path:
 
-- **Server-side live inference.** Server + client plumbing exists
-  (`server.py` `_send_prediction_arrays`, `client/environment.py` `requestModelLoad`),
-  but the desktop model-load handler still runs prediction in-process. Parked pending a
-  latency/correctness measurement; activating it points the handler at
-  `env.requestModelLoad` when a session exists, keeping in-process as the fallback.
+- **Server-side live inference.** Server plumbing exists
+  (`_send_prediction_arrays` in `ffast/session/server_session.py`,
+  `Environment.requestModelLoad`), but it is rough. The path in use is
+  pre-computed predictions.
 - **`zstd` transport + Result Buffers.** The buffer service exists; `zstd` is a
   negotiated codec but never activated (local transfer is same-machine, remote is
   SSH-compressed).
@@ -212,15 +208,15 @@ is not on the live path:
 The realized ownership (see also ADR 0026 for the headless-core boundary):
 
 ```text
-ffast/                 headless core — no Qt (import ffast.*)
+ffast/                 headless core — no GUI toolkit (import ffast.*)
   metrics/             registry, shapes, units, graph, executor, cache, builtin/
   visualization/       view state + scene models, stage pipeline, buffers
   protocol/            Pydantic message/event schemas + rpc (msgpack codec)
   config/              TOML/Pydantic models, discovery/merge/validation
   chemistry/           element reference tables (colors, radii, symbol maps)
-  renderers/vispy/     Qt/Vispy adapter        renderers/web/  browser adapter
+  renderers/web/       browser adapter
   session/ cli/ cache/
-UI/ client/ cluster/ modules/   Desktop Client — Qt app, orchestration, plugins
+cluster/               SLURM job submission, SSH tunnel, Session Records
 ```
 
 The msgpack transport codec lives in `ffast/protocol/rpc` alongside the typed
@@ -230,10 +226,9 @@ the server import closure).
 Each `ffast/` subpackage keeps its Pydantic schemas in a local `models.py`
 (`ffast.config.models`, `ffast.metrics.models`, `ffast.visualization.models`,
 `ffast.visualization.stages.models`) — the import path disambiguates them, so the
-repeated filename is a convention, not a name clash. Two connection-vs-session
-distinctions are worth stating once: the client's transport handle is a
-`ServerConnection` (`cluster/connection.py`) owned by a `ConnectionManager`
-(`client/connection_manager.py`, i.e. `env.remote`), while the server's live
+repeated filename is a convention, not a name clash. One connection-vs-session
+distinction is worth stating once: the cluster launcher's transport handle is a
+`ServerConnection` (`cluster/connection.py`), while the server's live
 runtime is a `ServerSession` (`ffast/session/`) — opposite ends of the wire, so
 neither carries the bare word "session". The in-process pub/sub bus is
 `events.py` (`EventClass`); the cross-wire notification catalogue is
@@ -245,10 +240,8 @@ neither carries the bare word "session". The in-process pub/sub bus is
 - [ADR 0006](adr/0006-pydantic-protocol-and-configuration-schemas.md): Pydantic schemas
 - [ADR 0007](adr/0007-toml-for-user-and-project-configuration.md): TOML config
 - [ADR 0008](adr/0008-no-legacy-session-migration.md): no legacy Session migration
-- [ADR 0009](adr/0009-replace-legacy-module-extension-hooks.md): new extension contracts
 - [ADR 0010](adr/0010-server-owned-visualization-state.md): server-owned visualization state
 - [ADR 0011](adr/0011-pure-metrics-with-configuration-driven-presentation.md): pure metrics + config-driven presentation
-- [ADR 0014](adr/0014-vispy-scene-adapter-replaces-loupe-render-path.md): VispySceneAdapter replaces the legacy render path
 - [ADR 0015](adr/0015-client-side-ray-cast-picking.md): client-side ray-cast picking
 - [ADR 0016](adr/0016-atom-color-values-plus-descriptor-client-maps.md): atom colors as values + descriptor
 - [ADR 0026](adr/0026-headless-core-migration-direction.md): headless-core packaging boundary

@@ -119,9 +119,3 @@ analysis results and requested structures.*
 Follow the [cluster setup reference](clusters.md) for profiles.
 Live LAMMPS scoring also needs an editable DetectAna checkout on the laptop
 before connecting; see [LAMMPS installation](lammps.md#installation).
-
-## Legacy Qt desktop client
-
-The desktop client is being retired and is planned for removal. If you still
-need it, install `uv pip install -e ".[gui]"` and run `ffast-qt`. It requires
-a working native Qt/OpenGL stack. See the [legacy usage notes](legacy-qt.md).

@@ -92,32 +92,3 @@ and inspect that locally.
 
 Read the server terminal, the browser console, or the trace produced by
 `ffast --trace`. Include the relevant error and reproduction steps in an issue.
-
-## Legacy Qt desktop client
-
-The desktop client is being retired and is planned for removal. It requires
-the `gui` extra and a working native Qt/OpenGL stack; launch it with `ffast-qt`.
-The following notes apply to this legacy client.
-
-**"Could not find the Qt platform plugin 'cocoa'" (macOS).** Almost always the
-synced-folder problem above. Recreate the venv somewhere local:
-
-```bash
-python3.11 -m venv ~/venvs/ffast && source ~/venvs/ffast/bin/activate && pip install -e ".[gui]"
-```
-
-**Segmentation fault at startup.** Usually a mismatched PySide6. Pin it:
-`pip install "pyside6>=6.8,<6.9"`. Two Qt widget base classes cannot be mixed
-under 6.8, so if you wrote a widget recently, suspect that.
-
-**OpenGL errors, or a blank 3D window.** Update graphics drivers. On Linux,
-`sudo apt install libgl1-mesa-glx` and check `glxinfo | grep OpenGL`.
-`LIBGL_ALWAYS_SOFTWARE=1` sometimes gets you a picture. The vispy renderer has no
-software fallback of its own, so if GL is broken, the 3D view is simply gone.
-
-**Plots are sluggish when panning.** This has bitten twice, both times software
-rasterisation of antialiased lines rather than anything about point counts.
-If you hit it in new plot code, that is where to look.
-
-The legacy client writes its diagnostics to `debug.log`. See the
-[legacy usage notes](legacy-qt.md) for installation and shortcuts.

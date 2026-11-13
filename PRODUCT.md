@@ -6,8 +6,7 @@
 
 web
 
-Scope of this record: the browser client (`ffast/renderers/web/`). The Qt desktop
-client keeps its own look and is out of scope for visual work.
+Scope of this record: the browser client (`ffast/renderers/web/`).
 
 ## Users
 

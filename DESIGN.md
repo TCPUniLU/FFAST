@@ -3,8 +3,7 @@
 The look of the browser client (`ffast/renderers/web/`). Who it is for and what it
 must keep is in [PRODUCT.md](PRODUCT.md). The reasons, the options that were
 rejected and what each step changed are in
-[ADR 0063](docs/adr/0063-the-web-client-looks-like-a-journal-figure.md). The Qt
-desktop client is not covered.
+[ADR 0063](docs/adr/0063-the-web-client-looks-like-a-journal-figure.md).
 
 The idea: every screen is a figure. A screenshot of it can go into a paper or a
 talk as it is.

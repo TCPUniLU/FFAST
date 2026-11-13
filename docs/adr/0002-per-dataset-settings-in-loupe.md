@@ -1,3 +1,5 @@
+Superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 # Per-dataset settings stored in Settings, not per-module state dicts
 
 **Status:** Accepted / Implemented

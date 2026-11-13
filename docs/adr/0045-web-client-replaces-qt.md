@@ -1,3 +1,5 @@
+Desktop part superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 Status: Accepted — implemented (Phases 0–6 complete 2026-07-23)
 
 # Web client replaces the Qt/Vispy desktop — full capability parity

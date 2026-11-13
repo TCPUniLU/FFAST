@@ -1,3 +1,5 @@
+Superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 Status: Proposed
 
 # Display Overrides: pure override state behind thin Qt presenters

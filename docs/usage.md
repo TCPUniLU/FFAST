@@ -16,7 +16,7 @@ reference fitting, monitored jobs, the replay tutorial, alarms and stopping.
 - [Subsets](#subsets)
 - [Sessions](#sessions)
 - [The command line](#the-command-line)
-- [More guides](#more-guides): clusters, custom metrics, scripting, legacy Qt
+- [More guides](#more-guides): clusters, custom metrics, scripting
 
 ## The interface
 
@@ -395,5 +395,3 @@ you find out by staring at an empty plot.
 - [Scripting and configuration](scripting.md): using FFAST from Python without a
   UI, and the configuration files.
 - [Writing a reader](writing-a-reader.md): load and export another file format.
-- [Legacy Qt desktop client](legacy-qt.md): launch, shortcuts and plot layout for
-  `ffast-qt`.

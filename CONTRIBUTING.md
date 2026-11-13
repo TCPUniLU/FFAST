@@ -35,9 +35,6 @@ server on free ports, so they do not collide; the browser tests take about 3
 minutes instead of 9. Add `-n 0` to run in one process, for example when
 debugging with `pdb` or reading `print` output.
 
-Some tests need optional dependencies. See the
-[legacy test requirements](#legacy-qt-desktop-tests) for the remaining Qt tests.
-
 Two extra checks are worth running before you push, because CI runs them:
 
 ```bash
@@ -48,7 +45,7 @@ ffast-cli metrics test        # runs the metrics' own declared test cases
 ## Style
 
 - `black` and `isort`, both at line length 79. Config is in `pyproject.toml`.
-- No new imports of PySide6, pyqtgraph or vispy from inside `ffast/`. That
+- No imports of a GUI toolkit (such as PySide6) from inside `ffast/`. That
   package has to stay importable on a compute node with no display, and
   `tests/ffast/test_ffast_core_boundary.py` will fail if you break it.
 - Metrics must be picklable and deterministic. They run in a separate worker
@@ -101,10 +98,3 @@ PR. See [docs/adr/README.md](docs/adr/README.md) for the index.
 - One logical change per PR.
 - Say how you tested it. "Ran the suite" is fine for refactors; anything
   touching the UI needs a note on what you clicked and what you saw.
-
-## Legacy Qt desktop tests
-
-The desktop client is being retired and is planned for removal. Work on current
-UI features in the browser. To run the remaining Qt-dependent tests, install
-`python -m pip install -e ".[gui,dev]"` and provide a display, or set
-`QT_QPA_PLATFORM=offscreen`. The legacy client starts with `ffast-qt`.

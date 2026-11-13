@@ -1,3 +1,5 @@
+Superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 # ADR 0032: Inbound Event Router — a client-side handler table for server→client messages
 
 **Status:** Accepted / Implemented (2026-07-05)

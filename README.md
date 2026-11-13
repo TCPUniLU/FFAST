@@ -135,7 +135,7 @@ development carried on afterwards.
 
 The version 2 rewrite is by **Anton Charkin-Gorbulin**, who took the codebase
 over in 2024, with Igor Poltavsky: the client/server split and the headless
-core, the browser client that replaced the Qt desktop, remote execution on SLURM
+core, the browser client, remote execution on SLURM
 clusters with self-installing servers, the config-driven metric and plotting
 system, and the fingerprint-keyed cache.
 
@@ -162,7 +162,7 @@ tool and the analysis approach, not this rewrite:
 }
 ```
 
-Built on ASE, PyTorch, Three.js, Plotly, vispy and pyqtgraph. Test data from the
+Built on ASE, PyTorch, Three.js, and Plotly. Test data from the
 MD22 collection by Stefan Chmiela and co-workers.
 
 ## Contributing
@@ -173,8 +173,3 @@ Bug reports and small fixes welcome; open an issue first for anything larger. Se
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-## Legacy desktop client
-
-`ffast-qt` is being retired and is planned for removal. Existing users can find
-[legacy instructions](docs/legacy-qt.md) at the end of the usage guide.

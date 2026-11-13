@@ -1,3 +1,5 @@
+Desktop part superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 Status: Accepted — 2026-07-25 (all decisions settled; ready to implement)
 
 # Split the plugin directory along the server/desktop boundary

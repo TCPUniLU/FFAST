@@ -329,5 +329,4 @@ FFAST picks it for files with your endings. Where several readers claim an
 ending, FFAST asks each one's `can_read` in turn and the first that says yes
 wins; the user can always pick another reader in the Type list.
 
-Your reader works with the server and the browser. The legacy Qt desktop client
-keeps its own ASE and `.npz` paths.
+Your reader works with the server and the browser.

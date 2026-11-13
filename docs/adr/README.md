@@ -134,6 +134,7 @@ things came up.
 - [0095](0095-any-file-format-loads-and-saves-through-a-reader.md) Any file format loads and saves through a reader: plain arrays in, FFAST adds stride, progress, memory check and strict prediction checks; Level 2 text readers get the frame index and parallel parsing; ASE and `.npz` become readers (proposed)
 - [0096](0096-a-text-file-can-be-sampled-by-energy-at-load.md) A text file can be sampled by energy at load: even across energy bins or keeping the distribution, random with seed 42, a histogram preview; predictions read the same frames (proposed)
 - [0097](0097-every-reply-names-the-request-it-answers.md) Every reply names the request it answers: `id` on requests, `reply_to` on answers, one final reply, one error shape, no time limits; the browser notices a dropped connection and reconnects (proposed)
+- [0098](0098-the-desktop-client-is-removed.md) The desktop client is removed: everything Qt goes; seven small gaps stay listed; recovery tag `last-qt` (proposed)
 
 ## Format
 

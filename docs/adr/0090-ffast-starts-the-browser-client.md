@@ -1,3 +1,5 @@
+Desktop part superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 # `ffast` starts the browser client
 
 Status: Accepted 2026-11-07. Built 2026-11-07. Supersedes the "Qt when PySide6

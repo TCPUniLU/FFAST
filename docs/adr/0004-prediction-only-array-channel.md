@@ -1,3 +1,5 @@
+Desktop part superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 # ADR 0004: Dedicated Prediction-Only Array Channel for Remote Prediction Loading
 
 **Status:** Accepted / Implemented  

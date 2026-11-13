@@ -1,3 +1,5 @@
+Superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 Status: Accepted (implemented; GUI-verified 2026-07-13)
 
 # Loupe pick tools: one toolbar, one owner, contextual strip

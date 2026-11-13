@@ -1,3 +1,5 @@
+Superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 # VispySceneAdapter replaces the legacy Loupe render path
 
 **Status:** Accepted / Implemented (Milestone 2 complete; legacy render path coexists until Milestone 5 client wiring)

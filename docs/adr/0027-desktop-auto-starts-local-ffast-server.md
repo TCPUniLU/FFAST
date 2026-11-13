@@ -1,3 +1,5 @@
+Superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 # ADR 0027: Desktop always auto-starts a managed local ffast-server
 
 **Status:** Accepted / Implemented (renumbered from a duplicate 0017 on 2026-07-01)

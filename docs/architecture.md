@@ -33,10 +33,9 @@ happens to be on loopback (ADR 0027).
 
 ## The pieces
 
-**`ffast/`** is the headless core, about 34k lines of Python. It imports no Qt and no
+**`ffast/`** is the headless core, about 34k lines of Python. It imports no GUI toolkit and no
 OpenGL, so it runs on a compute node with no display. This is a hard rule with a
-test behind it (`tests/ffast/test_ffast_core_boundary.py`) and a CI job that
-installs without the GUI extra and checks the server still imports. The rule
+test behind it (`tests/ffast/test_ffast_core_boundary.py`). The rule
 exists because the whole remote story dies the moment something in the server's
 import closure needs a display.
 
@@ -51,7 +50,7 @@ Inside it:
   are read off its Python signature (`signature.py`), so declaring a metric is
   mostly writing the function.
 - `visualization/` builds a renderer-neutral scene: atom positions, radii,
-  colour *values*, bond pairs. It does not know Three.js from vispy. The client
+  colour *values*, bond pairs. It does not know Three.js from any other renderer. The client
   maps values to pixels (ADR 0010, 0016, 0052).
 - `protocol/` is the wire format. Pydantic models both ways, msgpack on the
   socket (ADR 0001, 0006, 0033).
@@ -68,29 +67,22 @@ Inside it:
 per connection with an explicit handler table, so you can read the whole protocol
 surface in one file.
 
-**The browser client** is the main client, and `ffast` starts it (ADR 0090).
+**The browser client** is the only client, and `ffast` starts it (ADR 0090, 0098).
 It lives in `ffast/renderers/web/static/`, about 21k lines of hand-written ES
 modules. No build step, no bundler, no npm. Three.js and Plotly
 are vendored as files. You edit a `.js` and reload the tab, which was a
 deliberate trade: a scientific tool that needs a Node toolchain to change one
 line will not get changed.
 
-It replaced the desktop client because the native GL and Qt bundle failed to
-install on too many Linux setups, and a shared cluster login node is exactly
-where you cannot fix that (ADR 0045). New features, including live LAMMPS runs
-and the guided tours, exist only here. Because the server side and the protocol
-are shared, adding to it is mostly client work.
-
-**The legacy desktop client** (`UI/`, `client/`, `modules/loupe/`) is PySide6
-plus vispy, reached as `ffast-qt` with the `gui` extra. It is being retired: it
-gets fixes, not features, and lacks the browser's newer tabs and live runs.
+It needs no native GL or GUI toolkit install, which failed on too many Linux
+setups and cannot be fixed on a shared cluster login node (ADR 0045, 0098).
 
 **`cluster/`** submits a SLURM job, waits for it, opens an SSH tunnel to the
 compute node, and connects the same protocol to it. It will also install itself
 on the cluster if it is not there: build a wheel locally, push it over SSH, make
 a venv, pip install, drop a checksum marker so it does not do it twice
-(ADR 0028). Sessions survive disconnects; reconnecting to a still-running job is
-a menu item rather than a new job (ADR 0024).
+(ADR 0028). Sessions survive disconnects; the cluster dialog
+reconnects to a still-running job rather than starting a new one (ADR 0024).
 
 ## Two things are declarative rather than coded
 
@@ -115,13 +107,6 @@ Honest notes, because the diagram above is tidier than the code.
 
 - Live inference from a trained model file works server-side (ADR 0030) but is
   rough. The path everyone actually uses is pre-computed predictions.
-- `client/` is down to four files and `datasetLoaders/`, `modelLoaders/` are
-  empty directories kept for import compatibility. They are leftovers of the
-  migration into `ffast/` and should go.
-- Plugin discovery still globs `modules/**/*.py`, which means a pip install
-  without the source tree cannot register the core loaders that way. There is a
-  three-root discovery path in `ffast/core/plugin_discovery.py` covering the
-  common cases, but the glob is still there.
 - The result-buffer and zstd machinery in `visualization/buffers.py` is dormant
   by decision, not by accident. WebSocket permessage-deflate already compresses,
   so compressing again bought nothing (ADR 0031).
@@ -135,4 +120,4 @@ If you want to understand the codebase, read in this order:
    explain most of the analysis side.
 3. ADR 0010 and ADR 0016 for how a 3D scene crosses the socket.
 4. ADR 0026 and ADR 0047 for why `ffast/` looks the way it does.
-5. ADR 0045 and ADR 0090 for why the browser is the main client.
+5. ADR 0045, 0090 and 0098 for why the browser is the only client.

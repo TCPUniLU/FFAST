@@ -1,5 +1,8 @@
 # FFAST Unit Test Suite Review
 
+Written before the desktop client was removed (ADR 0098). Its desktop and vispy
+tests are gone; some other test files named below may have moved or been deleted too.
+
 Scope: 78 test files, ~13,000 lines under `tests/`. No `conftest.py` exists anywhere in the repo — each file manages its own fixtures/env doubles.
 
 ## Overall assessment
@@ -10,9 +13,8 @@ The suite is strongest exactly where the codebase's ADRs describe non-trivial co
 
 The weak tail clusters into a recognizable pattern: pydantic-model "field echo" tests (construct a model, assert the field you just set equals what you set), pure smoke tests (`imports_cleanly`, `not None`, "no exception"), and a handful of tests coupled to private internals (cache-key string formats, private attribute defaults, mocked-call identity) that would survive a broken implementation or fail on a harmless rename. These inflate file/test counts without adding regression protection.
 
-Two structural issues matter more than any individual weak test:
+One structural issue matters more than any individual weak test:
 1. `tests/test_local_server_render.py` spawns a real `ffast-server` subprocess with no `@pytest.mark.integration` and no `skipif` guard — unlike every other subprocess-based test in the suite — so it silently rides along in the "fast/unit" run (`pytest -m "not integration"`) and will hard-fail (not skip) on any machine without the console script and example data on `PATH`.
-2. `tests/ffast/renderers/vispy/test_vispy_adapter.py` and `test_local_scene.py` construct a real vispy `SceneCanvas` without `QT_QPA_PLATFORM=offscreen`, unlike four sibling Qt test files that set it explicitly — one headless-CI box away from a hard failure rather than a clean skip.
 
 Neither is visible from coverage numbers; both are exactly the kind of thing this review is meant to surface.
 
@@ -37,10 +39,6 @@ Neither is visible from coverage numbers; both are exactly the kind of thing thi
 - `tests/ffast/test_atom_coloring.py:56` — regression-locks a real historical bug (string shape predicate vs. Dim tuple).
 
 **Display overrides / config / transforms**
-- `tests/ffast/test_display_overrides.py:39-53,89-100` — nested-dict pruning on clear (exact shape after clear) and mtime-keyed disk-cache correctness.
-- `tests/ffast/test_panel_display_override.py:157-173,212-236` — content-based (not object-identity) override matching across a fresh widget instance, and a specific pyqtgraph `LegendItem.updateSize()` gotcha with coordinate assertions.
-- `tests/ffast/test_panel_display_override_identity.py:75-80` — the one true identity-collision test (same metric, different tab → no bleed-through).
-- `tests/ffast/test_colorbar_display_override.py:101-135,336-358` — exact drag-snap thresholds and per-metric override isolation across a live metric switch.
 - `tests/ffast/test_transform_compiler.py:139-154` — numeric parity between the compiled pipeline and the hand-written legacy metric it replaced.
 - `tests/test_menuLogic.py:41-52` — explicit regression test for a named historical bug ("Nona bug"), exact expected tuple.
 
@@ -55,9 +53,7 @@ Neither is visible from coverage numbers; both are exactly the kind of thing thi
 **Misc / renderers**
 - `tests/ffast/test_subdataset_predictions.py:49-112` — real parent-walk chain for metric generation, plus real concurrent-request coalescing.
 - `tests/ffast/test_generation_queue_robustness.py:41-73`, `test_look_for_ghosts_robustness.py:37-63` — verified against the actual `CacheKey.try_parse` segment-count/dtype-discriminator guards; genuine edge cases, not smoke tests.
-- `tests/ffast/test_loupe_view_commands.py:61-116` — replays real recorded commands through the real server `VisualizationView`, catching a documented stale-version regression.
 - `tests/ffast/test_cli.py:73-100` — checks specific stderr text and exit codes, not just `SystemExit`.
-- `tests/ffast/renderers/vispy/test_local_scene.py:239-289` — deliberately builds an env double *without* the `_env_facets` shortcut to prove a code path reads through the composed `env.data`/`env.datasets`/`env.models` API rather than a flat facade — good defense against a helper masking a real bug.
 
 ---
 
@@ -78,7 +74,6 @@ Neither is visible from coverage numbers; both are exactly the kind of thing thi
 - `tests/ffast/test_scene_builder.py:133` — only asserts `atoms is not None`; never checks the clamped index actually resolves to the last frame.
 - `tests/ffast/visualization/test_builtin_color_stages.py:99` — comment in the test itself admits "just check shape and no crash."
 - `tests/ffast/test_headless_closure.py:27-35` — valuable intent, but only checks import-time module names, says nothing about runtime GUI usage.
-- `tests/ffast/renderers/vispy/test_vispy_adapter.py:104-115` — asserts private-attribute defaults (`_atom_markers is None`); breaks on a harmless rename, verifies nothing behavioral.
 - `tests/ffast/test_loading_coordinator.py:169-177` — only checks identity of a method reference (`task_args[0] == coord.loadDataset`), not that anything actually loaded.
 - `tests/ffast/test_session_token.py:46-49` — trivial dataclass-immutability check.
 - `tests/ffast/test_data_cache.py:62-68` — `isinstance(k, str)` on a plain dict never touched otherwise.
@@ -90,7 +85,6 @@ Neither is visible from coverage numbers; both are exactly the kind of thing thi
 - `tests/ffast/test_pool.py:99-102` — subsumed by `test_run_returns_correct_output`; adds subprocess overhead for no new assertion.
 - `tests/ffast/test_tab_controls.py:56-57` — subsumed by the more specific `test_unknown_tab_control_raises` right after it.
 - `tests/ffast/test_analysis_tabs_config.py:14-20` — weak relative to the more specific `test_basic_errors_tab_is_declarative` immediately following it.
-- `tests/ffast/test_colorbar_display_override.py:77-81` — implicitly re-covered by every later test's first call.
 
 **Brittle / coupled to implementation internals:**
 - `tests/ffast/test_scene_builder.py:316-331` — asserts against the literal cache-key string format (`f"forces__{model}__{ds}"`) rather than `build_scene`'s public output; breaks on an unrelated cache-key refactor.
@@ -142,17 +136,15 @@ Neither is visible from coverage numbers; both are exactly the kind of thing thi
 - CLI subcommands `cmd_dataset_keys`, `cmd_stages_list`, `cmd_stages_inspect`, `cmd_stages_test`, `cmd_metrics_test` have zero coverage.
 - Ghost-lookup: the "model already loaded" skip branch is never actually hit because the test double's `__contains__` always returns `False` — the branch exists in production code but the test suite structurally can't exercise it as written.
 - `SubDataset.getChemicalFormula` on a zero-atom dataset, or where the parent chain itself raises, is untested.
-- vispy adapter: zero-atom `AtomScene`, and `_map_color_by` with NaN/empty values (only `vmin==vmax` is covered).
 
 ---
 
 ## Flakiness / isolation red flags
 
 1. **[High]** `tests/test_local_server_render.py` spawns a real `ffast-server` subprocess but is **not marked `integration`** and has **no `skipif` guard**, unlike every other subprocess-based test in the suite (`test_array_transfer.py`, `test_web_runtime.py`). It will hard-fail — not skip — on any machine lacking the console script and `examples/data/dataset.xyz`, and it slips straight through `pytest -m "not integration"`, defeating the suite's own fast/unit-vs-integration split. Fix by adding the marker and matching the `skipif` pattern used elsewhere.
-2. **[High]** `tests/ffast/renderers/vispy/test_vispy_adapter.py` / `test_local_scene.py` build a real vispy `SceneCanvas` (confirmed backend: PySide6/Qt) without setting `QT_QPA_PLATFORM=offscreen`, unlike four sibling Qt test files that do set it explicitly. `pytest.importorskip("vispy")` only guards against vispy being absent, not against a missing display — this is one headless-Linux-CI box away from a hard failure.
-3. **[Medium]** `tests/ffast/test_pool.py` runs ~15 real-subprocess tests with tight timing windows (`max_runtime_s=0.3, grace_period_s=0.1`); plausible flakiness under a loaded or throttled CI runner.
-4. **[Low]** `tests/ffast/test_connect_panel.py` uses real `asyncio.sleep(0.01/0.05)` to force task interleaving — soft timing dependency, low risk but not strictly deterministic.
-5. **[Low, informational]** Global registry state (metric registry, stage registry) is shared and populated by import-time side effects across many files (`test_stage_registry.py`, `test_atom_coloring.py`, `test_scene_builder.py`, builtin-metric test files, etc.). Harmless today because registration is append-only and duplicate IDs raise loudly, but it's a latent cross-file coupling — any future test that re-registers an id, or that reloads a module, will hard-fail unrelated tests via import order. Not currently a bug, worth knowing about.
+2. **[Medium]** `tests/ffast/test_pool.py` runs ~15 real-subprocess tests with tight timing windows (`max_runtime_s=0.3, grace_period_s=0.1`); plausible flakiness under a loaded or throttled CI runner.
+3. **[Low]** `tests/ffast/test_connect_panel.py` uses real `asyncio.sleep(0.01/0.05)` to force task interleaving — soft timing dependency, low risk but not strictly deterministic.
+4. **[Low, informational]** Global registry state (metric registry, stage registry) is shared and populated by import-time side effects across many files (`test_stage_registry.py`, `test_atom_coloring.py`, `test_scene_builder.py`, builtin-metric test files, etc.). Harmless today because registration is append-only and duplicate IDs raise loudly, but it's a latent cross-file coupling — any future test that re-registers an id, or that reloads a module, will hard-fail unrelated tests via import order. Not currently a bug, worth knowing about.
 6. `tests/ffast/renderers/web/test_web_runtime.py` needs real Playwright + Chromium + pixel-color assertions — inherently flaky by nature, but correctly marked `integration` and `skipif`-guarded, so this is acceptable as-is.
 
 ---
@@ -162,21 +154,20 @@ Neither is visible from coverage numbers; both are exactly the kind of thing thi
 | # | Recommendation | Priority | Why |
 |---|---|---|---|
 | 1 | Mark `tests/test_local_server_render.py` with `@pytest.mark.integration` and add the same `skipif`-on-missing-asset guard used in `test_array_transfer.py`. | **High** | Currently breaks the fast/unit test run's whole premise on any machine without the server script + example data on PATH. Pure hygiene fix, five minutes of work. |
-| 2 | Set `QT_QPA_PLATFORM=offscreen` before constructing `SceneCanvas` in the two vispy renderer test files (or add a shared fixture/conftest that sets it repo-wide for all Qt-touching tests). | **High** | One CI environment away from a hard failure; trivial to fix, currently masked by dev machines having a display. |
-| 3 | Add direct unit coverage for `ffast/session/server_session.py`'s `_on_request_metric` / `_on_request_subdataset_arrays` / `_on_request_prediction_arrays` — these are the highest logic-density, currently-untested handlers, only reachable today via a slow integration test. | **High** | Biggest single coverage gap found; a regression here is currently only caught end-to-end, late, and slowly. |
-| 4 | Add a cycle-detection test for `build_execution_plan`/`run_plan` on an unfrozen registry, documenting (and if needed fixing) the current silent-truncation behavior vs. `MetricGraph.freeze`'s explicit raise. | **High** | Real behavioral divergence between two supposedly equivalent paths in the metric execution stack; exactly the class of bug ADR 0035 was meant to eliminate. |
-| 5 | Add a boundary test for `atom_stages.py` dimming with `>1.0`/negative values, and either add clipping or document the current unclipped behavior as intentional. | **Medium** | Plausible latent bug (out-of-range RGB), cheap to test, cheap to fix if real. |
-| 6 | Rewrite `test_metric_adapter.py`'s `test_vmin_vmax_respected` to use data whose min/max differ from the explicit vmin/vmax, and assert actual RGB values, not just alpha. | **Medium** | As written it cannot fail even if vmin/vmax handling is broken — a false-confidence test, not a true-negative gap. |
-| 7 | Delete or consolidate the pydantic field-echo tests (`test_visualization_models.py`, `test_scene_models.py`, most of `test_metrics_models.py`, `test_view_commands.py`, `test_protocol.py`'s three near-duplicates). Replace with one or two tests per model that check something pydantic itself doesn't guarantee (e.g. discriminator routing edge cases, `extra="forbid"` on a genuinely malformed payload). | **Medium** | These inflate the file/test count without adding regression protection; not harmful, but worth pruning so the "meaningful" tests aren't diluted for future maintainers scanning the suite. |
-| 8 | Add module dependency-order / circular-dependency tests for the plugin loader (`loadModules`), and CLI coverage for `cmd_dataset_keys`/`cmd_stages_*`/`cmd_metrics_test`. | **Medium** | Currently zero coverage on a system explicitly designed around dependency ordering (Kahn's algorithm) — exactly the kind of logic that breaks silently when someone adds a new plugin. |
-| 9 | Add malformed-TOML and wrong-typed-field tests for the config loader, and an empty-`steps` test for `compile_pipeline`. | **Low** | Real gaps, but lower blast-radius (config errors surface immediately and loudly at startup in practice). |
-| 10 | Fix or exercise the "model already loaded" ghost-lookup skip branch — currently the test double structurally can't reach it (`__contains__` always `False`). | **Low** | Coverage-hygiene issue rather than evidence of an actual bug; flag it so a future refactor doesn't silently regress an already-untested branch. |
-| 11 | Collapse clearly redundant test pairs (`test_pool.py` run_multiple_calls vs. run_returns_correct_output; `test_tab_controls.py` energy_shift_registered vs. unknown_tab_control_raises; `test_builtin_atom_stages.py` shape-only vs. known-values). | **Low** | Pure suite-hygiene; saves a little CI time, no behavior change. |
+| 2 | Add direct unit coverage for `ffast/session/server_session.py`'s `_on_request_metric` / `_on_request_subdataset_arrays` / `_on_request_prediction_arrays` — these are the highest logic-density, currently-untested handlers, only reachable today via a slow integration test. | **High** | Biggest single coverage gap found; a regression here is currently only caught end-to-end, late, and slowly. |
+| 3 | Add a cycle-detection test for `build_execution_plan`/`run_plan` on an unfrozen registry, documenting (and if needed fixing) the current silent-truncation behavior vs. `MetricGraph.freeze`'s explicit raise. | **High** | Real behavioral divergence between two supposedly equivalent paths in the metric execution stack; exactly the class of bug ADR 0035 was meant to eliminate. |
+| 4 | Add a boundary test for `atom_stages.py` dimming with `>1.0`/negative values, and either add clipping or document the current unclipped behavior as intentional. | **Medium** | Plausible latent bug (out-of-range RGB), cheap to test, cheap to fix if real. |
+| 5 | Rewrite `test_metric_adapter.py`'s `test_vmin_vmax_respected` to use data whose min/max differ from the explicit vmin/vmax, and assert actual RGB values, not just alpha. | **Medium** | As written it cannot fail even if vmin/vmax handling is broken — a false-confidence test, not a true-negative gap. |
+| 6 | Delete or consolidate the pydantic field-echo tests (`test_visualization_models.py`, `test_scene_models.py`, most of `test_metrics_models.py`, `test_view_commands.py`, `test_protocol.py`'s three near-duplicates). Replace with one or two tests per model that check something pydantic itself doesn't guarantee (e.g. discriminator routing edge cases, `extra="forbid"` on a genuinely malformed payload). | **Medium** | These inflate the file/test count without adding regression protection; not harmful, but worth pruning so the "meaningful" tests aren't diluted for future maintainers scanning the suite. |
+| 7 | Add module dependency-order / circular-dependency tests for the plugin loader (`loadModules`), and CLI coverage for `cmd_dataset_keys`/`cmd_stages_*`/`cmd_metrics_test`. | **Medium** | Currently zero coverage on a system explicitly designed around dependency ordering (Kahn's algorithm) — exactly the kind of logic that breaks silently when someone adds a new plugin. |
+| 8 | Add malformed-TOML and wrong-typed-field tests for the config loader, and an empty-`steps` test for `compile_pipeline`. | **Low** | Real gaps, but lower blast-radius (config errors surface immediately and loudly at startup in practice). |
+| 9 | Fix or exercise the "model already loaded" ghost-lookup skip branch — currently the test double structurally can't reach it (`__contains__` always `False`). | **Low** | Coverage-hygiene issue rather than evidence of an actual bug; flag it so a future refactor doesn't silently regress an already-untested branch. |
+| 10 | Collapse clearly redundant test pairs (`test_pool.py` run_multiple_calls vs. run_returns_correct_output; `test_tab_controls.py` energy_shift_registered vs. unknown_tab_control_raises; `test_builtin_atom_stages.py` shape-only vs. known-values). | **Low** | Pure suite-hygiene; saves a little CI time, no behavior change. |
 
 ### Categorization, as requested
 
 - **Increase real confidence in correctness:** the "Strong tests" list above (execution-context divergence tests, pool crash/timeout tests, Kabsch alignment, cache-key pruning, per-element grouping, display-override identity/pruning, session reconnect, pending-request coalescing).
 - **Increase coverage numbers only:** pydantic field-echo tests, `imports_cleanly`/`not None` smoke tests, identity-of-registration checks (`registered_fn is fn`), trivial dataclass-frozen checks.
-- **Brittle / too coupled to implementation:** the literal cache-key-string assertion in `test_scene_builder.py:316-331`; the private-attribute-default checks in `test_vispy_adapter.py:104-115`; the JS-source substring checks in `test_web_server.py`.
+- **Brittle / too coupled to implementation:** the literal cache-key-string assertion in `test_scene_builder.py:316-331`; the JS-source substring checks in `test_web_server.py`.
 - **Should be rewritten:** `test_metric_adapter.py`'s vmin/vmax test (weak by construction, easy fix); `test_connect_panel.py`'s `test_error_kwarg_propagated` (currently tests its own fixture, not app code).
 - **Should be removed or merged:** the near-duplicate `test_protocol.py` Literal round-trip tests; the three redundant pairs in item 11 above.

@@ -1,3 +1,5 @@
+Superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 # ClientFeature and DatasetFeature descriptors replace loadLoupe and loadUI hooks
 
 **Status:** accepted

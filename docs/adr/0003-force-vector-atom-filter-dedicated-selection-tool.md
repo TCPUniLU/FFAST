@@ -1,3 +1,5 @@
+Superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 # ADR 0003 — Dedicated selection tool for force vector atom filter
 
 **Status:** Accepted

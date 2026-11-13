@@ -1,3 +1,5 @@
+Superseded by [ADR 0098](0098-the-desktop-client-is-removed.md): the desktop client is removed.
+
 # Display Overrides: client-local cosmetic state for Panel labels/legends and the 3D colorbar
 
 Users can edit axis label text, legend text/font/position (2D **Panel**s) and label/unit/font/position
