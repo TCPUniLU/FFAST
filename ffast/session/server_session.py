@@ -137,6 +137,8 @@ class ServerSession:
         self._length_probe_task: asyncio.Task | None = None
         # Views' whole-dataset colours being computed (ADR 0082).
         self._colouring: set[asyncio.Task] = set()
+        # view id -> (what it colours by, its colour task): one task per view.
+        self._colour_jobs: dict[str, tuple[object, asyncio.Task]] = {}
         # Submitted "Run with FFAST" jobs followed until their first frame.
         self._job_watches: dict[str, asyncio.Task] = {}
         self.views: dict = {}  # view_id → VisualizationView
@@ -452,11 +454,25 @@ class ServerSession:
         if not wanted:
             return
         state = view.state
+        colouring = copy.deepcopy(state.parameters.get("ffast.atom_color"))
+        # One task per view: while the metric over every structure is computed
+        # each frame change asked again, and when it came dozens of tasks each
+        # sent the frame they started on (2026-11-13). The task draws the frame
+        # on screen when it ends, so a frame change needs no task of its own.
+        what = (colouring, state.dataset_ref, state.prediction_ref)
+        job = self._colour_jobs.get(state.view_id)
+        if job is not None and job[0] == what and not job[1].done():
+            return
         task = asyncio.create_task(self._finish_colours(
-            view, wanted, copy.deepcopy(state.parameters.get("ffast.atom_color")),
-            state.dataset_ref, state.prediction_ref))
+            view, wanted, colouring, state.dataset_ref, state.prediction_ref))
+        self._colour_jobs[state.view_id] = (what, task)
         self._colouring.add(task)
-        task.add_done_callback(self._colouring.discard)
+
+        def done(t, view_id=state.view_id):
+            self._colouring.discard(t)
+            if self._colour_jobs.get(view_id, (None, None))[1] is t:
+                del self._colour_jobs[view_id]
+        task.add_done_callback(done)
 
     async def colours_settled(self) -> None:
         """Wait until no view's colours are being computed."""
@@ -493,6 +509,11 @@ class ServerSession:
                     return result
             return self.get_metric(*args, wanted=[])
 
+        # The scene is built in a thread from the live state: a frame change
+        # meanwhile is drawn by its own command, after this build started. Its
+        # patch must not be followed by this older frame's (patches carry no
+        # frame the page could check, so the view jumped back).
+        frame = state.structure_index
         try:
             scene = await asyncio.to_thread(
                 build_scene, state, self.env.datasets.get, self.get_prediction,
@@ -501,6 +522,8 @@ class ServerSession:
         except Exception as exc:
             self._log_scene_degrade("colours", state.view_id, exc)
             return
+        if state.structure_index != frame or self.views.get(state.view_id) is not view:
+            return      # the newer frame's own command draws it, with these colours
         color_by = scene.atoms.color_by if scene.atoms else None
         if problems and color_by is not None:
             color_by.note = (f"Colours over all structures could not be computed "
