@@ -14,6 +14,7 @@
  */
 import { labelBy, trapFocus } from './dialogs.js';
 import { OUT } from './events.js';
+import { answerOf } from './requests.js';
 import { helpToggle } from './help.js';
 import { icon } from './icons.js';
 
@@ -62,13 +63,16 @@ const SECTION_TITLES = { module: 'LAMMPS module', input: 'Input script', job: 'J
 
 /**
  * @param {{send: (event: string, kw: object) => void,
+ *   askServer?: (event: string, kw: object) => Promise<{kwargs: object}>,
+ *   written?: (kw: object) => void,
  *   pick: (kind: 'folder'|'file'|'bundle', title: string, onPick: (path: string) => void) => void,
  *   laptop: () => Promise<{ok: boolean, reason?: string}>,
  *   submitFromLaptop: (folder: string, script: string) => Promise<{job_id?: string, error?: string}>,
  *   openRun: (folder: string) => void, status?: (text: string, kind?: string) => void, signal?: (name: string, detail?: object) => void,
  *   initialFolder?: string, initialReference?: string, localAvailable?: boolean, practice?: boolean}} o
  */
-export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, openRun, status = () => {},
+export function openRunWithFfastDialog({ send, askServer = null, written = () => {}, pick, laptop,
+  submitFromLaptop, openRun, status = () => {},
   signal = (name, detail = {}) => {}, initialFolder = '', initialReference = '', localAvailable = false, practice = false }) {
   document.getElementById('run-with-ffast-dialog')?.remove();
   const el = (tag, cls, text) => {
@@ -499,15 +503,25 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
   }
 
   // ── actions ─────────────────────────────────────────────────────────────
+  /** Send a request and hand its final reply to `then` (ADR 0097); without
+   * `askServer` the reply comes back through the page's event handlers. */
+  const asking = (event, kw, then) => {
+    if (!askServer) { send(event, kw); return; }
+    answerOf(askServer(event, kw)).then((reply) => { if (!reply.connectionLost) then(reply); });
+  };
+
   function prepare() {
     state.prepared = null;
-    state.request = request();
+    const asked = request();
+    state.request = asked;
     checkStep.replaceChildren(el('div', 'rwf-wait', state.target === 'local'
       ? "Checking LAMMPS builds on this computer…"
       : "Checking… (loading the job's LAMMPS module on the server's node can take a minute)"));
     show(1);
     next.disabled = true;
-    send(OUT.PREPARE_RUN_WITH_FFAST, state.request);
+    // Only the latest check counts: an earlier one's answer (Back, then Next
+    // again) would carry other originals' checksums into the write.
+    asking(OUT.PREPARE_RUN_WITH_FFAST, asked, (kw) => { if (state.request === asked) api.onPrepared(kw); });
   }
   next.addEventListener('click', () => {
     if (state.step === 0) {
@@ -521,7 +535,8 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
       next.disabled = true;
       back.disabled = true;
       progress.textContent = 'Writing the copies…';
-      send(OUT.WRITE_RUN_WITH_FFAST, { ...state.request, originals: state.prepared.originals });
+      asking(OUT.WRITE_RUN_WITH_FFAST, { ...state.request, originals: state.prepared.originals },
+        (kw) => { written(kw); api.onWritten(kw); });
     }
   });
   back.addEventListener('click', () => show(Math.max(0, state.step - 1)));
@@ -569,7 +584,7 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     send(OUT.WATCH_JOB, { job_id: String(jobId) });
   };
 
-  return {
+  const api = {
     /** RUN_FOLDER_SCANNED: what the folder holds; an answer to an older question is dropped. */
     onScanned(kw) {
       if (!state.open || (kw.asked || '') !== (scanAsked || '') || (kw.target || 'cluster') !== state.target) return;
@@ -608,7 +623,7 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
         if (out.error) failed(`Submitting from this computer failed: ${out.error}`);
         else submitted(out.job_id);
       } else {
-        send(OUT.SUBMIT_JOB, { folder, script });
+        asking(OUT.SUBMIT_JOB, { folder, script }, (kw) => api.onSubmitted(kw));
       }
     },
     /** JOB_SUBMITTED (the server's node submitted it). */
@@ -651,4 +666,5 @@ export function openRunWithFfastDialog({ send, pick, laptop, submitFromLaptop, o
     get folder() { return scanned?.folder; },
     get jobId() { return state.jobId; },
   };
+  return api;
 }

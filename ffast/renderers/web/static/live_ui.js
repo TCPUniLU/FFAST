@@ -40,9 +40,11 @@ export class LiveUi {
    *   runOf?: (datasetFp: string|null) => {run_id: string, bundle: string|null}|null,
    *   follow?: (path: string) => void, askPath?: () => void, whyNoOpen?: () => string}} deps
    */
-  constructor({ send, analysis = null, mainView = null, shown = () => ({ datasetFp: null, frame: null }),
+  constructor({ send, request = null, analysis = null, mainView = null, shown = () => ({ datasetFp: null, frame: null }),
     runOf = () => null, follow = () => {}, askPath = () => {}, whyNoOpen = () => '' }) {
     this._send = send;
+    /** Requests that wait for their own final reply (ADR 0097). */
+    this._request = request;
     this._follow = follow;
     this._askPath = askPath;
     this._whyNoOpen = whyNoOpen;
@@ -105,7 +107,8 @@ export class LiveUi {
   /** "Run with FFAST" (ADR 0086): pick, check, review, submit, follow to the first frame. */
   openRunWithFfast({ pick, laptop, submitFromLaptop, status = () => {}, ...options }) {
     this._rwf = openRunWithFfastDialog({
-      send: (event, kw) => this._send(event, kw), pick, laptop, submitFromLaptop, status, ...options,
+      send: (event, kw) => this._send(event, kw), askServer: this._request,
+      pick, laptop, submitFromLaptop, status, ...options,
       openRun: (folder) => this._follow(folder),
     });
   }

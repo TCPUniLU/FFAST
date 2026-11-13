@@ -3173,6 +3173,8 @@ export class FFastApp {
     this._live().openRunWithFfast({
       initialFolder: practice ? this._practiceInput.folder : '',
       initialReference: practice ? this._practiceInput.reference : '', practice,
+      // The practice run's id, for the own-LAMMPS tour's later steps.
+      written: (kw) => { if (kw.ok && kw.practice) this._practiceId = kw.run_id; },
       localAvailable: !!this._conn?.localLammps && this._conn?._url !== this._clusterServerUrl,
       signal: (name, detail) => {
         this._tourSignal(name, detail);
@@ -3198,6 +3200,7 @@ export class FFastApp {
   _live() {
     this._liveUi ??= new LiveUi({
       send: (event, kw) => this._conn?.send(event, kw, []),
+      request: (event, kw) => this._request(event, kw, []),
       analysis: this._analysis, mainView: this._mainView,
       shown: () => this._attributionSource(),
       runOf: (fp) => this._analysis.liveRunOf(fp),

@@ -573,7 +573,7 @@ class ServerSession:
         from ffast.protocol.rpc import pack
         out = {"fingerprint": fingerprint,
                **self.env.storedMetricResults(fingerprint)}
-        await self._emit(pack(control.STORED_RESULTS_INFO, (), out))
+        await self._emit(replies.reply(control.STORED_RESULTS_INFO, (), out, error=out.get("error")))
 
     async def _on_freeze_subset(self, fingerprint, **kwargs) -> None:
         """Freeze a live subset's frames as a frozen subset, as the desktop's
@@ -1068,7 +1068,7 @@ class ServerSession:
             out = await asyncio.to_thread(prepare_tutorial_input)
         except (ValueError, OSError) as exc:
             out = {"error": str(exc)}
-        await self._emit(pack(control.PRACTICE_INPUT_PREPARED, (), out))
+        await self._emit(replies.reply(control.PRACTICE_INPUT_PREPARED, (), out, error=out.get("error")))
 
     async def _on_start_practice_run(self, kind="replay", **kwargs) -> None:
         from ffast.live.local_launch import start_practice_run
@@ -1082,7 +1082,7 @@ class ServerSession:
         except (ValueError, OSError) as exc:
             logger.warning("START_PRACTICE_RUN: %s", exc)
             out = {"error": str(exc)}
-        await self._emit(pack(control.PRACTICE_RUN_STARTED, (), out))
+        await self._emit(replies.reply(control.PRACTICE_RUN_STARTED, (), out, error=out.get("error")))
 
     async def _on_heat_practice_run(self, run_id, **kwargs) -> None:
         from ffast.live.local_launch import heat_practice_run
@@ -1093,7 +1093,7 @@ class ServerSession:
             heat_practice_run(run_id)
         except (ValueError, OSError) as exc:
             out["error"] = str(exc)
-        await self._emit(pack(control.PRACTICE_RUN_RESULT, (), out))
+        await self._emit(replies.reply(control.PRACTICE_RUN_RESULT, (), out, error=out.get("error")))
 
     async def _on_delete_practice_run(self, run_id, **kwargs) -> None:
         from ffast.live.local_launch import delete_practice_run
@@ -1108,7 +1108,7 @@ class ServerSession:
                 await self._on_delete_object(run.fingerprint)
         except (ValueError, OSError) as exc:
             out["error"] = str(exc)
-        await self._emit(pack(control.PRACTICE_RUN_RESULT, (), out))
+        await self._emit(replies.reply(control.PRACTICE_RUN_RESULT, (), out, error=out.get("error")))
         await self._on_list_live_runs()
 
     async def _on_open_live_run(self, path, **kwargs) -> None:
@@ -1122,7 +1122,7 @@ class ServerSession:
             open_live_run(self.env, path, self._broadcast)
         except (ValueError, OSError) as exc:
             logger.warning("OPEN_LIVE_RUN %r: %s", path, exc)
-            await self._emit(pack(control.LIVE_RUN_UPDATE, (), {"path": path, "error": str(exc)}))
+            await self._emit(replies.reply(control.LIVE_RUN_UPDATE, (), {"path": path, "error": str(exc)}, error=str(exc)))
 
     async def _on_live_stop(self, run_id, **kwargs) -> None:
         """"Stop now" (ADR 0086): writes the run's stop request; its wrapper
@@ -1134,7 +1134,7 @@ class ServerSession:
             stop_run(self.env, run_id)
         except (ValueError, OSError) as exc:
             logger.warning("LIVE_STOP %r: %s", run_id, exc)
-            await self._emit(pack(control.LIVE_RUN_UPDATE, (), {"run_id": None, "error": str(exc)}))
+            await self._emit(replies.reply(control.LIVE_RUN_UPDATE, (), {"run_id": None, "error": str(exc)}, error=str(exc)))
 
     async def _on_live_set_stop_on_alarm(self, run_id, on, **kwargs) -> None:
         """Turn a live run's stop on alarm on or off (``control.json``, read by its scorer)."""
@@ -1145,7 +1145,7 @@ class ServerSession:
             set_stop_on_alarm(self.env, run_id, on)
         except (ValueError, OSError) as exc:
             logger.warning("LIVE_SET_STOP_ON_ALARM %r: %s", run_id, exc)
-            await self._emit(pack(control.LIVE_RUN_UPDATE, (), {"run_id": None, "error": str(exc)}))
+            await self._emit(replies.reply(control.LIVE_RUN_UPDATE, (), {"run_id": None, "error": str(exc)}, error=str(exc)))
 
     async def _on_live_attribution(self, run_id, frame, track=None, score=None, **kwargs) -> None:
         """Attribution of one live frame (ADR 0087), computed in a thread and
@@ -1159,7 +1159,7 @@ class ServerSession:
             out = await asyncio.to_thread(run.attribution, int(frame), test)
         except (ValueError, OSError) as exc:
             out = {"run_id": run_id, "frame": frame, "error": str(exc)}
-        await self._emit(pack(control.LIVE_ATTRIBUTION_RESULT, (), out))
+        await self._emit(replies.reply(control.LIVE_ATTRIBUTION_RESULT, (), out, error=out.get("error")))
 
     # ── scoring any dataset (ADR 0093) ──────────────────────────────────────
     async def _on_score_dialog_info(self, fingerprint, quick=False, **kwargs) -> None:
@@ -1185,7 +1185,7 @@ class ServerSession:
             except Exception as exc:
                 logger.warning("SCORE_DIALOG_INFO %r: %s", fingerprint, exc)
                 out = {"fingerprint": fingerprint, "error": f"{type(exc).__name__}: {exc}"}
-        await self._emit(pack(control.SCORE_DIALOG_INFO_RESULT, (), out))
+        await self._emit(replies.reply(control.SCORE_DIALOG_INFO_RESULT, (), out, error=out.get("error")))
 
     async def _on_score_dataset(self, fingerprint, bundle, frame_dt_fs=None, persist_ps=None, **kwargs) -> None:
         """Score a loaded dataset with a reference. The scored item appears under the
@@ -1221,7 +1221,7 @@ class ServerSession:
             logger.warning("SCORE_DATASET %r: %s", fingerprint, exc)
             out = {"error": str(exc)}
             scored = None
-        await self._emit(pack(control.SCORE_STARTED, (), out))
+        await self._emit(replies.reply(control.SCORE_STARTED, (), out, error=out.get("error")))
         if scored is not None:
             scored.announce()       # after the answer: the window opens the item's tab on this
 
@@ -1237,7 +1237,7 @@ class ServerSession:
         else:
             self._start_scoring(scored.dataset.parent, scored.folder, scored.run_id)
             out = {"item_id": scored.run_id, "fingerprint": scored.fingerprint, "started": True}
-        await self._emit(pack(control.SCORE_STARTED, (), out))
+        await self._emit(replies.reply(control.SCORE_STARTED, (), out, error=out.get("error")))
         if scored is not None:
             scored.announce()
 
@@ -1313,7 +1313,7 @@ class ServerSession:
         except Exception as exc:   # a fit can fail in ways worth reading in full
             logger.exception("MAKE_REFERENCE failed")
             out = {"error": f"{type(exc).__name__}: {exc}"}
-        await self._emit(pack(control.REFERENCE_MADE, (), out))
+        await self._emit(replies.reply(control.REFERENCE_MADE, (), out, error=out.get("error")))
 
     async def _on_prepare_run_with_ffast(self, input, job, bundle, **kwargs) -> None:
         """"Run with FFAST" check and review (ADR 0086): loads the job's LAMMPS
@@ -1344,7 +1344,7 @@ class ServerSession:
             out = {"job_id": job_id, "via": "server", "folder": folder, "script": script}
         except SubmitError as exc:
             out = {"error": str(exc), "folder": folder, "script": script}
-        await self._emit(pack(control.JOB_SUBMITTED, (), out))
+        await self._emit(replies.reply(control.JOB_SUBMITTED, (), out, error=out.get("error")))
 
     async def _on_scan_run_folder(
         self, folder=None, job=None, target="cluster", input=None, **kwargs
@@ -1363,7 +1363,7 @@ class ServerSession:
             out = {"folder": folder, "problem": f"{type(exc).__name__}: {exc}"}
         out["asked"] = folder or ""
         out["target"] = target
-        await self._emit(pack(control.RUN_FOLDER_SCANNED, (), out))
+        await self._emit(replies.reply(control.RUN_FOLDER_SCANNED, (), out, error=out.get("error")))
 
     async def _on_watch_job(self, job_id, **kwargs) -> None:
         """Follow a submitted job and push JOB_STATE on each change until its
@@ -1437,7 +1437,7 @@ class ServerSession:
             logger.exception("%s failed", reply)
             out = {"ok": False, "refusal": {"file": None, "reason": f"{type(exc).__name__}: {exc}",
                                             "line": None, "hand_edit": "", "text": f"{type(exc).__name__}: {exc}"}}
-        await self._emit(pack(reply, (), out))
+        await self._emit(replies.reply(reply, (), out, error=out.get("error")))
 
     def _make_reference(self, train, valid, name, folder, every) -> dict:
         import os
