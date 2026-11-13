@@ -1,4 +1,4 @@
-"""Plot axes (gaps 1 and 2 of the Qt-removal audit,
+"""Plot axes and picture size (gaps 1, 2 and 5 of the Qt-removal audit,
 2026-11-13): the pure helpers, run in a blank page as in test_metric_client.py."""
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ async (origin) => {
   const pn = await import(`${origin}/panels.js`);
   const an = await import(`${origin}/analysis.js`);
   const dl = await import(`${origin}/dialogs.js`);
+  const ex = await import(`${origin}/panel_export.js`);
   const te = await import(`${origin}/tab_edit.js`);
   const built = (layout = {}) => ({
     data: [{ x: [0, 1, 2], y: [0.5, 10, 1000] }, { x: [9], y: [-1], hoverinfo: 'skip' }],
@@ -44,6 +45,11 @@ async (origin) => {
   out.problemOrder = dl.axisProblem('X axis', { log: false, min: 3, max: 1 });
   out.problemLog = dl.axisProblem('Y axis', { log: true, min: 0, max: null });
   out.problemNone = dl.axisProblem('Y axis', { log: true, min: 0.1, max: null });
+  out.choiceDefault = ex.pictureChoice(null, { width: 640, height: 400 });
+  out.choiceSaved = ex.pictureChoice({ width: 1200, height: 800, sharpness: 3, transparent: false },
+                                     { width: 640, height: 400 });
+  out.choiceBad = ex.pictureChoice({ width: 7, sharpness: 9 }, { width: 640, height: 400 });
+  out.pictureProblem = [ex.pictureProblem(800, 600), ex.pictureProblem(10, 600), ex.pictureProblem(800.5, 600)];
   const tab = { name: 'T', panels: [{ kind: 'timeline', title: 'P' }] };
   out.patched = te.setPanelLabels(tab, 0, { y_scale: 'log', y_min: 0.1, x_flip: true, bogus: 1 }).panels[0];
   out.cleared = te.setPanelLabels({ ...tab, panels: [{ kind: 'timeline', y_scale: 'log' }] }, 0,
@@ -126,6 +132,14 @@ def test_the_axes_dialog_refuses_what_cannot_be_drawn(results):
     assert "below" in results["problemOrder"]
     assert "above 0" in results["problemLog"]
     assert results["problemNone"] == ""
+
+
+def test_a_picture_starts_at_the_screen_size_then_keeps_the_last_choice(results):
+    assert results["choiceDefault"] == {"width": 640, "height": 400, "sharpness": 1, "transparent": True}
+    assert results["choiceSaved"] == {"width": 1200, "height": 800, "sharpness": 3, "transparent": False}
+    assert results["choiceBad"] == {"width": 640, "height": 400, "sharpness": 1, "transparent": True}
+    ok, small, fraction = results["pictureProblem"]
+    assert ok == "" and small and fraction
 
 
 def test_axis_fields_are_saved_in_the_tab_like_labels(results):

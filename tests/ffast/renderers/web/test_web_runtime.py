@@ -7895,8 +7895,9 @@ async def test_web_a_plot_downloads_svg_and_csv(shared_prediction_server):
 
             await panel.locator(".panel-more").click()
             await expect(menu).to_be_visible()
+            await menu.locator("[data-action='panel-svg']").click()
             async with page.expect_download() as dl:
-                await menu.locator("[data-action='panel-svg']").click()
+                await page.locator(".fields-dialog").get_by_role("button", name="Download").click()
             download = await dl.value
             assert download.suggested_filename.endswith(".svg")
             with open(await download.path(), "rb") as f:

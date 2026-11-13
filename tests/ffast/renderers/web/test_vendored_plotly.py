@@ -55,7 +55,7 @@ def test_every_trace_type_the_page_draws_is_in_its_plotly():
     asked = set()
     for name in PLOTTING:
         asked |= set(re.findall(r"type: '(\w+)'", (STATIC / name).read_text()))
-    asked -= {"number"}     # an <input> type, not a trace
+    asked -= {"number", "checkbox", "select"}     # form field types (fieldsDialog), not traces
     asked -= {"line"}       # a layout shape (a timeline's threshold), not a trace
     asked -= {"rect"}       # a layout shape (a live run's alarm band), not a trace
     asked -= {"path"}       # a layout shape (a row of a live run's marks), not a trace

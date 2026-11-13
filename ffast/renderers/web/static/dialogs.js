@@ -239,9 +239,21 @@ export function fieldsDialog({ title, note = '', fields, buttons = ['Cancel', 'S
     const inputs = fields.map((f) => {
       const label = document.createElement('label');
       label.append(f.label);
-      const input = document.createElement('input');
-      input.type = f.type || 'text';
-      input.value = f.value ?? '';
+      // `type: 'select'` takes `options` ([value, text] pairs); a checkbox
+      // answers true or false, the others their text.
+      const input = document.createElement(f.type === 'select' ? 'select' : 'input');
+      if (f.type === 'select') {
+        for (const [value, text] of f.options || []) {
+          const o = document.createElement('option');
+          o.value = value; o.textContent = text;
+          input.appendChild(o);
+        }
+        input.value = f.value ?? '';
+      } else {
+        input.type = f.type || 'text';
+        if (f.type === 'checkbox') input.checked = !!f.value;
+        else input.value = f.value ?? '';
+      }
       if (f.placeholder) input.placeholder = f.placeholder;
       if (f.min != null) input.min = String(f.min);
       if (f.max != null) input.max = String(f.max);
@@ -253,7 +265,7 @@ export function fieldsDialog({ title, note = '', fields, buttons = ['Cancel', 'S
     foot.className = 'warning-modal-footer';
     let untrap = () => {};
     const done = (answer) => { modal.remove(); untrap(); resolve(answer); };
-    const accept = () => done(inputs.map((i) => i.value));
+    const accept = () => done(inputs.map((i) => (i.type === 'checkbox' ? i.checked : i.value)));
     buttons.forEach((label, i) => {
       const btn = document.createElement('button');
       btn.textContent = label;

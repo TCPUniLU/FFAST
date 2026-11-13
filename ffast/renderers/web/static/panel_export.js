@@ -80,14 +80,51 @@ export function pictureLayout(layout, background) {
   return { ...layout, paper_bgcolor: bg, plot_bgcolor: bg };
 }
 
-/** Save a drawn plot as PNG or SVG at its size on screen; `background` as in
- * pictureLayout. */
-export async function downloadPlot(el, format, stem, { background = null } = {}) {
+/** Save a drawn plot as PNG or SVG; `background` as in pictureLayout. Its
+ * size is the one on screen unless `width`/`height` (px) are given; `scale`
+ * multiplies a PNG's pixels (×3 for a sharp printed figure). */
+export async function downloadPlot(el, format, stem,
+  { background = null, width = null, height = null, scale = 1 } = {}) {
   const Plotly = globalThis.Plotly;
   const url = await Plotly.toImage({ data: el.data, layout: pictureLayout(el.layout, background) },
-    { format, width: el.clientWidth, height: el.clientHeight });
+    { format, width: width || el.clientWidth, height: height || el.clientHeight,
+      scale: format === 'png' ? scale : 1 });
   const a = document.createElement('a');
   a.href = url;
   a.download = `${stem}.${format}`;
   a.click();
+}
+
+// ── the picture's size (gap 5 of the Qt-removal audit, 2026-11-13) ──────────
+
+const PICTURE_KEY = 'ffast.pictureChoice';
+export const SHARPNESS = Object.freeze([1, 2, 3, 4]);
+
+/** The size, sharpness and background a picture is saved with: the last
+ * choice in this browser, else the plot's size on screen. Pure.
+ * @param {{width?: number, height?: number, sharpness?: number, transparent?: boolean}|null} saved
+ * @param {{width: number, height: number}} screen */
+export function pictureChoice(saved, screen) {
+  const px = (v, fallback) => (Number.isInteger(v) && v >= 50 && v <= 10000 ? v : fallback);
+  return {
+    width: px(saved?.width, screen.width),
+    height: px(saved?.height, screen.height),
+    sharpness: SHARPNESS.includes(saved?.sharpness) ? saved.sharpness : 1,
+    transparent: saved?.transparent ?? true,
+  };
+}
+
+/** Why a typed size cannot be used, or ''. Pure. */
+export function pictureProblem(width, height) {
+  const ok = (v) => Number.isInteger(v) && v >= 50 && v <= 10000;
+  return ok(width) && ok(height) ? '' : 'Width and height are whole pixels, from 50 to 10000.';
+}
+
+/** The choice remembered in this browser, or null (storage may be off). */
+export function loadPictureChoice() {
+  try { return JSON.parse(localStorage.getItem(PICTURE_KEY) || 'null'); } catch (_) { return null; }
+}
+
+export function savePictureChoice(choice) {
+  try { localStorage.setItem(PICTURE_KEY, JSON.stringify(choice)); } catch (_) { /* not kept */ }
 }

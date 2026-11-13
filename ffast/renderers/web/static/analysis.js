@@ -36,7 +36,10 @@ import { datasetUnits, editableDimension, resolveUnit } from './units.js';
 import { unitPopover, fieldsDialog, axesDialog } from './dialogs.js';
 import { sharedMenu } from './actions.js';
 import { icon } from './icons.js';
-import { plotCsv, tableCsv, panelFileName, downloadText, downloadPlot, backgroundBehind } from './panel_export.js';
+import {
+  plotCsv, tableCsv, panelFileName, downloadText, downloadPlot, backgroundBehind,
+  pictureChoice, pictureProblem, loadPictureChoice, savePictureChoice, SHARPNESS,
+} from './panel_export.js';
 import { KIND_3D } from './tab_rules.js';
 import { GRID_COLUMNS, ROW_UNIT_PX, LABEL_FIELDS, AXIS_FIELDS, toFineGrid } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
@@ -1818,11 +1821,10 @@ export class AnalysisManager {
     const stem = panelFileName(spec);
     const notDrawn = () => (el.querySelector('.main-svg') ? '' : 'Nothing is drawn yet');
     const pictures = [
-      { id: 'panel-png', label: 'Download PNG (transparent background)', unavailable: notDrawn,
-        run: () => downloadPlot(el, 'png', stem) },
-      { id: 'panel-png-bg', label: 'Download PNG (with background)', unavailable: notDrawn,
-        run: () => downloadPlot(el, 'png', stem, { background: backgroundBehind(card.el) }) },
-      { id: 'panel-svg', label: 'Download SVG', run: () => downloadPlot(el, 'svg', stem), unavailable: notDrawn },
+      { id: 'panel-png', label: 'Download PNG…', unavailable: notDrawn,
+        run: () => this._downloadPicture(el, card, stem, 'png') },
+      { id: 'panel-svg', label: 'Download SVG…', unavailable: notDrawn,
+        run: () => this._downloadPicture(el, card, stem, 'svg') },
       { id: 'panel-csv', label: 'Download data (CSV)', unavailable: notDrawn,
         run: () => downloadText(plotCsv(el.data, el._figureInfo || {}), `${stem}.csv`) },
     ];
@@ -1894,6 +1896,36 @@ export class AnalysisManager {
     const patch = { x_title: text(values[0]), y_title: text(values[1]), label_size: size(values[2]) };
     if (d.legend) patch.legend_size = size(values[3]);
     await this._onPanelLabels?.(t.spec.name, spec, patch);
+  }
+
+  /** Ask the picture's size (and, for a PNG, its sharpness), then save it
+   * (gap 5 of the Qt-removal audit). The choice is kept in this browser. */
+  async _downloadPicture(el, card, stem, format) {
+    const c = pictureChoice(loadPictureChoice(), { width: el.clientWidth, height: el.clientHeight });
+    const png = format === 'png';
+    const fields = [
+      { label: 'Width (px)', type: 'number', min: 50, max: 10000, value: String(c.width) },
+      { label: 'Height (px)', type: 'number', min: 50, max: 10000, value: String(c.height) },
+      { label: 'Transparent background', type: 'checkbox', value: c.transparent },
+    ];
+    if (png) fields.push({ label: 'Sharpness', type: 'select', value: String(c.sharpness),
+      options: SHARPNESS.map((k) => [String(k), k === 1 ? '×1 (screen)' : `×${k}${k === 3 ? ' (print, about 300 dpi)' : ''}`]) });
+    let values = null;
+    for (let note = `On screen it is ${el.clientWidth} × ${el.clientHeight} px.`; ; ) {
+      values = await fieldsDialog({ title: `Download ${png ? 'PNG' : 'SVG'}`, note, fields, buttons: ['Cancel', 'Download'] });
+      if (!values) return;
+      const why = pictureProblem(Number(values[0]), Number(values[1]));
+      if (!why) break;
+      note = why;
+      fields[0].value = values[0]; fields[1].value = values[1]; fields[2].value = values[2];
+      if (png) fields[3].value = values[3];
+    }
+    const choice = { width: Number(values[0]), height: Number(values[1]), transparent: values[2],
+      sharpness: png ? Number(values[3]) : c.sharpness };
+    savePictureChoice(choice);
+    await downloadPlot(el, format, stem, {
+      width: choice.width, height: choice.height, scale: png ? choice.sharpness : 1,
+      background: choice.transparent ? null : backgroundBehind(card.el) });
   }
 
   /** Scale, range and flip of a plot's axes (gaps 1-2 of the Qt-removal

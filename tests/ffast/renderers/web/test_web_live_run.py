@@ -1408,14 +1408,28 @@ async def test_web_a_live_score_plot_downloads_as_png_and_csv(tmp_path):
         menu = page.locator("#panel-menu-list")
         await scores.locator(".panel-more").click()
         await expect(menu.locator("[data-action='panel-table-csv']")).to_have_count(0)
+        dialog = page.locator(".fields-dialog")
+        await menu.locator("[data-action='panel-png']").click()
+        # The size dialog: a transparent background unless unticked; a size
+        # and sharpness of choice (gap 5 of the Qt-removal audit).
+        await dialog.locator("input[type=number]").nth(0).fill("400")
+        await dialog.locator("input[type=number]").nth(1).fill("300")
+        await dialog.locator("select").select_option("2")
         async with page.expect_download() as dl:
-            await menu.locator("[data-action='panel-png']").click()
+            await dialog.get_by_role("button", name="Download").click()
         png = await dl.value
         assert png.suggested_filename.endswith(".png")
         assert _png_corner_alpha(await png.path()) == 0
+        from PIL import Image
+        with Image.open(await png.path()) as img:
+            assert img.size == (800, 600)
         await scores.locator(".panel-more").click()
+        await menu.locator("[data-action='panel-png']").click()
+        # The last choice comes back; untick the transparent background.
+        assert await dialog.locator("input[type=number]").nth(0).input_value() == "400"
+        await dialog.locator("input[type=checkbox]").uncheck()
         async with page.expect_download() as dl:
-            await menu.locator("[data-action='panel-png-bg']").click()
+            await dialog.get_by_role("button", name="Download").click()
         assert _png_corner_alpha(await (await dl.value).path()) == 255
         await scores.locator(".panel-more").click()
         async with page.expect_download() as dl:
