@@ -164,7 +164,10 @@ def test_cancel_stops_the_count_and_only_its_end_is_sent(tmp_path, monkeypatch):
         await s.dispatch(control.PROBE_DATASET_LENGTH, [path], {})
         await asyncio.sleep(0.1)
         await s.dispatch(control.CANCEL_PROBE_DATASET_LENGTH, [], {})
-        return await _collect(s, _final(path), timeout=2.0)
+        # The final reply comes as soon as the request stops waiting; the scan
+        # thread notices the cancel a moment later. Wait for both.
+        final = _final(path)
+        return await _collect(s, lambda out: final(out) and bool(stopped), timeout=2.0)
 
     out = asyncio.run(scenario())
     assert stopped == [path]
