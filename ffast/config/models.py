@@ -137,6 +137,9 @@ PanelRole = Union[PanelMetricRef, list[PanelMetricRef]]
 # The panel fields the browser's "Edit labels…" writes (web parity plan
 # 2026-10-29); the desktop keeps the same edits in display_overrides.json.
 LABEL_FIELDS = ("x_title", "y_title", "label_size", "legend_size", "legend_x", "legend_y")
+# The panel fields the browser's "Axes…" writes: scale, range and flip of each
+# axis (gaps 1-2 of the Qt-removal audit, 2026-11-13).
+AXIS_FIELDS = ("x_scale", "y_scale", "x_min", "x_max", "y_min", "y_max", "x_flip", "y_flip")
 
 
 class PanelConfig(BaseModel):
@@ -192,6 +195,16 @@ class PanelConfig(BaseModel):
     legend_size: int | None = Field(default=None, ge=6, le=40)   # px, the legend's text
     legend_x: float | None = Field(default=None, ge=-2, le=3)    # legend place, plot-area fractions
     legend_y: float | None = Field(default=None, ge=-2, le=3)
+    # Axis edits made in the browser ("Axes…"). Unset = linear, automatic range,
+    # not flipped. A range may set one end only; the other follows the data.
+    x_scale: Literal["log"] | None = None
+    y_scale: Literal["log"] | None = None
+    x_min: float | None = None
+    x_max: float | None = None
+    y_min: float | None = None
+    y_max: float | None = None
+    x_flip: Literal[True] | None = None
+    y_flip: Literal[True] | None = None
     hidden_params: list[str] = Field(default_factory=list)
     controls: list[str] = Field(default_factory=list)
     scroll_group: str | None = None
@@ -238,6 +251,14 @@ class PanelConfig(BaseModel):
         """A 3D panel has no axes or legend; a legend place needs both x and y."""
         if self.kind == PANEL_KIND_3D and any(getattr(self, f) is not None for f in LABEL_FIELDS):
             raise ValueError("a 3D panel draws no axes or legend; it takes no label fields")
+        if self.kind == PANEL_KIND_3D and any(getattr(self, f) is not None for f in AXIS_FIELDS):
+            raise ValueError("a 3D panel draws no axes; it takes no axis fields")
+        for axis in ("x", "y"):
+            lo, hi = getattr(self, f"{axis}_min"), getattr(self, f"{axis}_max")
+            if lo is not None and hi is not None and lo >= hi:
+                raise ValueError(f"'{axis}_min' must be below '{axis}_max'")
+            if getattr(self, f"{axis}_scale") == "log" and any(v is not None and v <= 0 for v in (lo, hi)):
+                raise ValueError(f"a log {axis} axis starts above 0: '{axis}_min' and '{axis}_max' must be positive")
         if (self.legend_x is None) != (self.legend_y is None):
             raise ValueError("'legend_x' and 'legend_y' are set together")
         return self

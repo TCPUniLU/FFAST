@@ -272,6 +272,122 @@ export function fieldsDialog({ title, note = '', fields, buttons = ['Cancel', 'S
   });
 }
 
+/** Why an axis row cannot be saved, or ''. Pure, for the tests.
+ * @param {{log: boolean, min: number|null, max: number|null}} a */
+export function axisProblem(name, a) {
+  if (a.min != null && a.max != null && a.min >= a.max) return `${name}: "From" must be below "To".`;
+  if (a.log && ((a.min != null && a.min <= 0) || (a.max != null && a.max <= 0)))
+    return `${name}: a log axis shows only values above 0.`;
+  return '';
+}
+
+/**
+ * The plot's "Axes…" dialog: per axis a scale (linear or log), a range
+ * (empty = automatic; one end alone is fine) and Flip.
+ * @param {{title: string, x: {log, min, max, flip}, y: {log, min, max, flip}}} o
+ * @returns {Promise<{x: object, y: object}|null>} null when cancelled
+ */
+export function axesDialog({ title, x, y }) {
+  return new Promise((resolve) => {
+    const modal = document.createElement('div');
+    modal.className = 'warning-modal ask-dialog fields-dialog axes-dialog';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    const panel = document.createElement('div');
+    panel.className = 'warning-modal-panel';
+    const head = document.createElement('div');
+    head.className = 'warning-modal-title';
+    head.textContent = title;
+    labelBy(modal, head);
+    panel.appendChild(head);
+    const grid = document.createElement('div');
+    grid.className = 'axes-grid';
+    for (const h of ['', 'Scale', 'From', 'To', 'Flip']) {
+      const c = document.createElement('div');
+      c.className = 'axes-head';
+      c.textContent = h;
+      grid.appendChild(c);
+    }
+    const rows = {};
+    for (const [a, v] of [['x', x], ['y', y]]) {
+      const name = `${a.toUpperCase()} axis`;
+      const label = document.createElement('div');
+      label.textContent = name;
+      const scale = document.createElement('select');
+      scale.setAttribute('aria-label', `${name} scale`);
+      for (const [value, text] of [['linear', 'linear'], ['log', 'log']]) {
+        const o = document.createElement('option');
+        o.value = value; o.textContent = text;
+        scale.appendChild(o);
+      }
+      scale.value = v.log ? 'log' : 'linear';
+      const box = (val, what) => {
+        const i = document.createElement('input');
+        i.type = 'text'; i.inputMode = 'decimal'; i.placeholder = 'auto';
+        i.value = val == null ? '' : String(val);
+        i.setAttribute('aria-label', `${name} ${what}`);
+        return i;
+      };
+      const min = box(v.min, 'from'), max = box(v.max, 'to');
+      const flip = document.createElement('input');
+      flip.type = 'checkbox'; flip.checked = !!v.flip;
+      flip.setAttribute('aria-label', `Flip the ${name}`);
+      grid.append(label, scale, min, max, flip);
+      rows[a] = { name, scale, min, max, flip };
+    }
+    panel.appendChild(grid);
+    const note = document.createElement('p');
+    note.className = 'warning-modal-message';
+    note.textContent = 'Leave From or To empty to follow the data. Double-click the plot to come back to these.';
+    panel.appendChild(note);
+    const problem = document.createElement('p');
+    problem.className = 'warning-modal-message axes-problem';
+    problem.setAttribute('role', 'alert');
+    panel.appendChild(problem);
+    const read = () => {
+      const out = {};
+      for (const [a, r] of Object.entries(rows)) {
+        const num = (input) => {
+          const t = input.value.trim();
+          if (!t) return null;
+          const n = Number(t);
+          return Number.isFinite(n) ? n : NaN;
+        };
+        out[a] = { log: r.scale.value === 'log', min: num(r.min), max: num(r.max), flip: r.flip.checked };
+        for (const k of ['min', 'max'])
+          if (Number.isNaN(out[a][k])) return { error: `${r.name}: "${k === 'min' ? 'From' : 'To'}" is not a number.` };
+        const why = axisProblem(r.name, out[a]);
+        if (why) return { error: why };
+      }
+      return out;
+    };
+    const foot = document.createElement('div');
+    foot.className = 'warning-modal-footer';
+    let untrap = () => {};
+    const done = (answer) => { modal.remove(); untrap(); resolve(answer); };
+    const accept = () => {
+      const out = read();
+      if (out.error) { problem.textContent = out.error; return; }
+      done(out);
+    };
+    ['Cancel', 'Apply'].forEach((label, i) => {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      btn.addEventListener('click', () => (i === 1 ? accept() : done(null)));
+      foot.appendChild(btn);
+    });
+    modal.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') done(null);
+      else if (e.key === 'Enter' && e.target.tagName === 'INPUT' && e.target.type === 'text') { e.preventDefault(); accept(); }
+    });
+    untrap = trapFocus(modal);
+    panel.appendChild(foot);
+    modal.appendChild(panel);
+    document.body.appendChild(modal);
+    rows.x.scale.focus();
+  });
+}
+
 /**
  * Ask for the unit of a dataset's energies or forces, in a small box at the
  * click. Enter keeps what is typed (empty: no unit), Escape or a click

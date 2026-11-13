@@ -13,7 +13,7 @@ import tomllib
 import pytest
 
 import ffast.metrics.builtin  # noqa: F401  (registers the metrics the tabs bind)
-from ffast.config.models import LABEL_FIELDS, AnalysisTabConfig, ProjectConfig
+from ffast.config.models import AXIS_FIELDS, LABEL_FIELDS, AnalysisTabConfig, ProjectConfig
 from ffast.config.user_tabs import TabError, TabSources, UserTabStore, tab_fingerprint
 
 
@@ -404,11 +404,12 @@ def test_a_tab_without_label_edits_keeps_its_fingerprint():
     data = tab.model_dump(mode="json")
     del data["start"]   # also added later (2026-11-07): not part of a tab's content
     for panel in data["panels"]:
-        for key in LABEL_FIELDS:
+        for key in (*LABEL_FIELDS, *AXIS_FIELDS):   # axis fields: added 2026-11-13
             del panel[key]
     old = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]
     assert old == tab_fingerprint(tab)
     assert tab_fingerprint(_tab("Gyration", {**SMOOTH, "y_title": "Rg"})) != old
+    assert tab_fingerprint(_tab("Gyration", {**SMOOTH, "y_scale": "log"})) != old
 
 
 # ── tabs that start, and tabs that wait as templates (to_fix_v3 #3) ─────────

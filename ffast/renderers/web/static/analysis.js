@@ -33,12 +33,12 @@ import { plotTheme } from './theme.js';
 import { visitedKey } from './peaks.js';
 import { panelLetters, readingOrder, caption, captionSegments } from './figure.js';
 import { datasetUnits, editableDimension, resolveUnit } from './units.js';
-import { unitPopover, fieldsDialog } from './dialogs.js';
+import { unitPopover, fieldsDialog, axesDialog } from './dialogs.js';
 import { sharedMenu } from './actions.js';
 import { icon } from './icons.js';
 import { plotCsv, tableCsv, panelFileName, downloadText, downloadPlot, backgroundBehind } from './panel_export.js';
 import { KIND_3D } from './tab_rules.js';
-import { GRID_COLUMNS, ROW_UNIT_PX, LABEL_FIELDS, toFineGrid } from './tab_edit.js';
+import { GRID_COLUMNS, ROW_UNIT_PX, LABEL_FIELDS, AXIS_FIELDS, toFineGrid } from './tab_edit.js';
 import { predictionApplies } from './frame_links.js';
 import { loadTabState, saveTabState, loadLayout, saveLayout } from './layout_state.js';
 import {
@@ -99,9 +99,15 @@ const SUB_DELAY_MS = 250;
 /** The visible x and y ranges of a Plotly plot, or null before it is drawn. */
 export function plotRange(el) {
   const layout = el && el._fullLayout;
-  const x = layout?.xaxis?.range, y = layout?.yaxis?.range;
-  if (!x) return null;
-  return { x: x.map(Number), y: y ? y.map(Number) : null };
+  if (!layout?.xaxis?.range) return null;
+  return { x: axisValues(layout.xaxis), y: layout.yaxis?.range ? axisValues(layout.yaxis) : null };
+}
+
+/** An axis's shown range in data values, low to high: a log axis keeps its
+ * range as log10, a flipped one runs high to low. */
+export function axisValues(axis) {
+  const r = axis.range.map(Number).map((v) => (axis.type === 'log' ? 10 ** v : v));
+  return r[0] <= r[1] ? r : [r[1], r[0]];
 }
 
 /**
@@ -1847,6 +1853,14 @@ export class AnalysisManager {
       { id: 'panel-labels', label: 'Edit labels…',
         unavailable: () => notDrawn() || this._whyNoMove?.() || '',
         run: () => this._editLabels(t, spec, card) },
+      { id: 'panel-axes', label: 'Axes…',
+        unavailable: () => notDrawn() || this._whyNoMove?.() || '',
+        run: () => this._editAxes(t, spec) },
+      { id: 'panel-axes-reset', label: 'Reset axes',
+        unavailable: () => this._whyNoMove?.()
+          || (AXIS_FIELDS.some((k) => spec[k] != null) ? '' : 'No axes changed'),
+        run: () => this._onPanelLabels?.(t.spec.name, spec,
+          Object.fromEntries(AXIS_FIELDS.map((k) => [k, null]))) },
       { id: 'panel-labels-reset', label: 'Reset labels',
         unavailable: () => this._whyNoMove?.()
           || (LABEL_FIELDS.some((k) => spec[k] != null) ? '' : 'No labels changed'),
@@ -1879,6 +1893,25 @@ export class AnalysisManager {
     const size = (v) => { const n = Number(v); return v.trim() && Number.isFinite(n) ? Math.round(n) : null; };
     const patch = { x_title: text(values[0]), y_title: text(values[1]), label_size: size(values[2]) };
     if (d.legend) patch.legend_size = size(values[3]);
+    await this._onPanelLabels?.(t.spec.name, spec, patch);
+  }
+
+  /** Scale, range and flip of a plot's axes (gaps 1-2 of the Qt-removal
+   * audit); saved in the tab like the labels. */
+  async _editAxes(t, spec) {
+    const strip = (s) => String(s ?? '').replace(/<[^>]*>/g, '');
+    const axis = (a) => ({
+      log: spec[`${a}_scale`] === 'log', min: spec[`${a}_min`] ?? null,
+      max: spec[`${a}_max`] ?? null, flip: !!spec[`${a}_flip`] });
+    const out = await axesDialog({ title: `Axes of ${strip(spec.title) || 'this plot'}`, x: axis('x'), y: axis('y') });
+    if (!out) return;
+    const patch = {};
+    for (const a of ['x', 'y']) {
+      patch[`${a}_scale`] = out[a].log ? 'log' : null;
+      patch[`${a}_min`] = out[a].min;
+      patch[`${a}_max`] = out[a].max;
+      patch[`${a}_flip`] = out[a].flip ? true : null;
+    }
     await this._onPanelLabels?.(t.spec.name, spec, patch);
   }
 

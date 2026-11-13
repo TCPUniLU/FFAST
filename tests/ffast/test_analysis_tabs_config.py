@@ -490,3 +490,26 @@ def test_a_tab_without_grid_is_the_old_form():
     tab = _sized_tab(column_widths=[2, 1])
     assert tab.grid is None
     assert build_tab_layout([tab])[0]["grid"] is None
+
+
+AXES = {**PLAIN, "x_scale": "log", "x_min": 0.01, "y_min": -1.0, "y_max": 5.0, "y_flip": True}
+
+
+def test_axis_edits_parse_and_reach_the_browser():
+    import ffast.metrics.builtin  # noqa: F401
+    from ffast.config.models import AXIS_FIELDS
+
+    tab = AnalysisTabConfig.model_validate({"name": "T", "panels": [AXES]})
+    panel = build_tab_layout([tab])[0]["panels"][0]
+    assert {k: panel[k] for k in AXIS_FIELDS} == {k: AXES.get(k) for k in AXIS_FIELDS}
+
+
+@pytest.mark.parametrize("extra, error", [
+    ({"x_scale": "sqrt"}, "x_scale"),
+    ({"x_min": 5.0, "x_max": 1.0}, "below"),
+    ({"y_scale": "log", "y_min": 0.0}, "above 0"),
+    ({"x_flip": False}, "x_flip"),
+])
+def test_axis_edits_that_do_not_fit_are_config_errors(extra, error):
+    with pytest.raises(ValidationError, match=error):
+        AnalysisTabConfig.model_validate({"name": "T", "panels": [{**PLAIN, **extra}]})

@@ -175,6 +175,57 @@ export function applyPanelLabels(spec, built) {
   return built;
 }
 
+/** The lowest and highest finite value of `axis` ('x' or 'y') over the
+ * traces a plot draws, only values above 0 when `positive`; null when none. */
+export function dataExtent(traces, axis, positive = false) {
+  let lo = Infinity, hi = -Infinity;
+  for (const tr of traces || []) {
+    if (tr.hoverinfo === 'skip') continue;
+    for (const v of Array.from(tr[axis] || [])) {
+      const n = Number(v);
+      if (!Number.isFinite(n) || (positive && n <= 0)) continue;
+      if (n < lo) lo = n;
+      if (n > hi) hi = n;
+    }
+  }
+  return lo <= hi ? [lo, hi] : null;
+}
+
+/**
+ * Put a panel's axis edits (tab fields x_scale … y_flip, written by
+ * "Axes…") onto a built plot. Pure. A log axis takes Plotly's log10 range;
+ * a range with one end typed takes the other from the data; a flipped axis
+ * runs from high to low.
+ */
+export function applyPanelAxes(spec, built) {
+  const { layout } = built;
+  for (const a of ['x', 'y']) {
+    const ax = layout[`${a}axis`];
+    if (!ax) continue;
+    const log = spec[`${a}_scale`] === 'log';
+    if (log) ax.type = 'log';
+    let lo = spec[`${a}_min`], hi = spec[`${a}_max`];
+    if (lo != null || hi != null) {
+      const data = dataExtent(built.data, a, log);
+      lo = lo ?? data?.[0];
+      hi = hi ?? data?.[1];
+    }
+    if (lo != null && hi != null && hi > lo && (!log || lo > 0)) {
+      const r = log ? [Math.log10(lo), Math.log10(hi)] : [lo, hi];
+      ax.range = spec[`${a}_flip`] ? [r[1], r[0]] : r;
+      ax.autorange = false;
+    } else if (log && ax.range) {
+      // A range drawn for a linear axis means nothing on a log one.
+      delete ax.range;
+      ax.autorange = spec[`${a}_flip`] ? 'reversed' : true;
+    } else if (spec[`${a}_flip`]) {
+      if (ax.range) ax.range = [ax.range[1], ax.range[0]];
+      else ax.autorange = 'reversed';
+    }
+  }
+  return built;
+}
+
 /**
  * The hover read-out of the desktop's plots (UI/Plots.py formatHoverText):
  * the series, then both values named by the axis titles, and dotted lines
@@ -1198,7 +1249,7 @@ export const PLOT_KINDS = new Set(Object.keys(PLOT_BUILDERS));
  */
 export function buildPanel(spec, series, ctx) {
   const plot = PLOT_BUILDERS[spec.kind];
-  if (plot) return withHoverReadout(applyPanelLabels(spec, plot(spec, series || [], ctx || {})));
+  if (plot) return withHoverReadout(applyPanelAxes(spec, applyPanelLabels(spec, plot(spec, series || [], ctx || {}))));
   const table = TABLE_BUILDERS[spec.kind];
   if (table) return { html: table(spec, series || [], ctx || {}) };
   return null;

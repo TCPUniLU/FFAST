@@ -32,7 +32,7 @@ from typing import Callable
 import tomli_w
 from pydantic import ValidationError
 
-from ffast.config.models import LABEL_FIELDS, PANEL_KIND_3D, AnalysisTabConfig
+from ffast.config.models import AXIS_FIELDS, LABEL_FIELDS, PANEL_KIND_3D, AnalysisTabConfig
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +53,13 @@ class TabError(ValueError):
 
 def tab_fingerprint(tab: AnalysisTabConfig) -> str:
     """Identifies a tab's content: equal fingerprints, equal tabs. Unset
-    label fields (added 2026-10-29) are left out, so a tab without label
-    edits keeps the fingerprint it had before they existed and no edited
-    tab is wrongly marked "original changed"."""
+    label fields (added 2026-10-29) and axis fields (2026-11-13) are left
+    out, so a tab without such edits keeps the fingerprint it had before they
+    existed and no edited tab is wrongly marked "original changed"."""
     data = tab.model_dump(mode="json")
     data.pop("start", None)   # where a built-in tab starts is not its content (2026-11-07)
     for panel in data["panels"]:
-        for key in LABEL_FIELDS:
+        for key in (*LABEL_FIELDS, *AXIS_FIELDS):
             if panel.get(key) is None:
                 panel.pop(key, None)
     text = json.dumps(data, sort_keys=True)

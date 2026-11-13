@@ -8115,6 +8115,71 @@ async def test_web_a_plots_labels_are_edited_saved_and_reset(tmp_path):
                 await browser.close()
 
 
+async def test_web_a_plots_axes_are_set_saved_and_reset(tmp_path):
+    """Gaps 1-2 of the Qt-removal audit (2026-11-13): Axes… sets a log scale,
+    a range and a flip, saved in the tab; Reset axes takes them back out."""
+    tabs_dir = tmp_path / "tabs"
+    title = "Energy MAE timeline"
+    sel = f".tabpanel.active .analysis-panel[data-title='{title}']"
+    saved = tabs_dir / "basic-errors.toml"
+    axis_keys = {"x_scale", "y_scale", "x_min", "x_max", "y_min", "y_max", "x_flip", "y_flip"}
+
+    def toml_panel():
+        panels = tomllib.loads(saved.read_text())["tabs"][0]["panels"]
+        return next(q for q in panels if q.get("title") == title)
+
+    async with _spawn_server("--tabs-dir", str(tabs_dir)) as (ws_port, web_port):
+        dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+                await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+                await _open_analysis_tab(page, "Basic Errors")
+                await page.wait_for_function(_PANEL_HAS_POINTS, arg=title, timeout=25000)
+                await page.locator(sel + " .panel-more").click()
+                await page.locator("#panel-menu-list [data-action='panel-axes']").click()
+                dialog = page.locator(".axes-dialog")
+                await dialog.get_by_label("Y axis scale").select_option("log")
+                await dialog.get_by_label("Y axis from").fill("0")
+                await dialog.get_by_role("button", name="Apply").click()
+                # A log axis cannot start at 0: the dialog says so and stays.
+                await expect(dialog.locator(".axes-problem")).to_contain_text("above 0")
+                await dialog.get_by_label("Y axis from").fill("0.001")
+                await dialog.get_by_label("Flip the X axis").check()
+                await dialog.get_by_role("button", name="Apply").click()
+                await expect(dialog).to_have_count(0)
+                await page.wait_for_function(
+                    "() => { const el = document.querySelector(\"" + sel + " .panel-plot\");"
+                    " const x = el?.layout?.xaxis;"
+                    " const flipped = x && (x.autorange === 'reversed' || (x.range && x.range[0] > x.range[1]));"
+                    " return !!flipped && el.layout.yaxis?.type === 'log'; }",
+                    timeout=15000)
+                for _ in range(50):
+                    if saved.exists() and "y_scale" in toml_panel():
+                        break
+                    await asyncio.sleep(0.1)
+                edited = toml_panel()
+                assert (edited["y_scale"], edited["y_min"], edited["x_flip"]) == ("log", 0.001, True)
+                assert "y_max" not in edited
+
+                await page.locator(sel + " .panel-more").click()
+                await page.locator("#panel-menu-list [data-action='panel-axes-reset']").click()
+                await page.wait_for_function(
+                    "() => document.querySelector(\"" + sel + " .panel-plot\")?.layout?.yaxis?.type !== 'log'",
+                    timeout=15000)
+                for _ in range(50):
+                    if not axis_keys & set(toml_panel()):
+                        break
+                    await asyncio.sleep(0.1)
+                assert not axis_keys & set(toml_panel())
+            finally:
+                await browser.close()
+
+
 async def test_web_the_file_browser_starts_in_the_workdir(tmp_path):
     """--workdir sets where the file browser opens (web parity plan 2026-10-29)."""
     (tmp_path / "start-here.xyz").write_text("")

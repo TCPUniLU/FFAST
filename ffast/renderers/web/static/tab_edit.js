@@ -376,7 +376,11 @@ export function setPanelStart(tab, index, start) {
  * plan 2026-10-29; ffast/config/models.py LABEL_FIELDS). */
 export const LABEL_FIELDS = Object.freeze(['x_title', 'y_title', 'label_size', 'legend_size', 'legend_x', 'legend_y']);
 
-/** Set label fields of panel `index`; null or '' removes that field.
+/** The panel fields "Axes…" writes: scale ('log' or unset), range ends and
+ * flip of each axis (ffast/config/models.py AXIS_FIELDS). */
+export const AXIS_FIELDS = Object.freeze(['x_scale', 'y_scale', 'x_min', 'x_max', 'y_min', 'y_max', 'x_flip', 'y_flip']);
+
+/** Set label or axis fields of panel `index`; null or '' removes that field.
  * `legend: false` hides the legend; any other `legend` value removes the field
  * (the automatic rule is the default). Other keys in `patch` are ignored. */
 export function setPanelLabels(tab, index, patch) {
@@ -387,7 +391,7 @@ export function setPanelLabels(tab, index, patch) {
     else delete panel.legend;
   }
   for (const [key, value] of Object.entries(patch)) {
-    if (!LABEL_FIELDS.includes(key)) continue;
+    if (!LABEL_FIELDS.includes(key) && !AXIS_FIELDS.includes(key)) continue;
     if (value == null || value === '') delete panel[key];
     else panel[key] = value;
   }
