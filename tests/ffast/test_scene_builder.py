@@ -957,6 +957,37 @@ class TestBuildSceneColorBy:
         # Only the metric's own parameters: the plots' stored result is reused.
         assert calls == [("ffast.force_difference[atom+structure;length]", {}, "DS", "M")]
 
+    def test_a_stored_result_s_range_is_found_once_not_on_every_frame(self, ds):
+        """The range of a stored whole-dataset result (named by its tag) is
+        kept: on 213M values the scan took ~1.3 s per frame change."""
+        from types import SimpleNamespace
+        source = "metric:ffast.force_difference[atom+structure;length]"
+        tag = f"test-{id(self)}"
+        results = iter([SimpleNamespace(values=np.arange(12.0), _tag=tag),
+                        # Same tag, other values: had it scanned again, 99 shows.
+                        SimpleNamespace(values=np.r_[np.arange(11.0), 99.0], _tag=tag)])
+        spans = []
+        for frame in (1, 2):
+            state = VisualizationState(
+                view_id="v1", dataset_ref="DS", prediction_ref="M", structure_index=frame,
+                parameters={"ffast.atom_color": {"source": source}})
+            cb = build_scene(state, get_dataset=lambda fp: ds,
+                             get_metric=lambda *a: next(results)).atoms.color_by
+            spans.append((cb.vmin, cb.vmax))
+        assert spans == [(0.0, 11.0), (0.0, 11.0)]
+
+    def test_the_whole_dataset_range_skips_gaps_and_infinities(self, ds):
+        state = VisualizationState(
+            view_id="v1", dataset_ref="DS", prediction_ref="M", structure_index=0,
+            parameters={"ffast.atom_color": {
+                "source": "metric:ffast.force_difference[atom+structure;length]"}},
+        )
+        for values, span in ((np.r_[np.nan, np.arange(1.0, 12.0)], (1.0, 11.0)),
+                             (np.r_[np.arange(11.0), np.inf], (0.0, 10.0))):
+            cb = build_scene(state, get_dataset=lambda fp: ds,
+                             get_metric=self._whole(values)).atoms.color_by
+            assert (cb.vmin, cb.vmax) == span
+
     def test_a_per_element_metric_over_the_whole_dataset_is_not_this_frame(self, ds):
         state = VisualizationState(
             view_id="v1", dataset_ref="DS", prediction_ref="M",
