@@ -268,18 +268,22 @@ const Plotly = () => globalThis.Plotly;
 function arrMin(a) { let m = Infinity; for (let i = 0; i < a.length; i++) if (a[i] < m) m = a[i]; return m; }
 function arrMax(a) { let m = -Infinity; for (let i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
 
+/** The unit settings a tab label's unit slot may name. */
+const UNIT_SETTINGS = new Set(['energyUnit', 'forceUnit']);
+
 /**
- * Resolve an axis label spec (null | "label" | ["label","unitKey"]) to display
- * text. The `unitKey` (e.g. "energyUnit") would resolve through the user
- * config; the browser has no such config, so it appends the bound metric's own
- * catalog unit (`unit`) when the label declares a unit slot — pragmatic-parity
- * units without a second config source. A catalog unit that is only a dimension
- * ("energy") is not printed (units.js).
+ * Resolve an axis label spec (null | "label" | ["label", unit]) to display
+ * text. A unit setting (`energyUnit`, `forceUnit`) or an empty slot prints the
+ * bound metric's own unit (`unit`; for an energy or force, the dataset's); a
+ * catalog unit that is only a dimension ("energy") is not printed (units.js).
+ * Any other text in the slot is a unit written in the tab file, printed as
+ * written: ["Gyradius", "Å"] → "Gyradius (Å)".
  */
 export function axisTitle(label, unit) {
   if (label == null) return '';
-  if (Array.isArray(label)) return withUnit(label[0], unit);
-  return String(label);
+  if (!Array.isArray(label)) return String(label);
+  const slot = String(label[1] ?? '').trim();
+  return slot && !UNIT_SETTINGS.has(slot) ? `${label[0]} (${slot})` : withUnit(label[0], unit);
 }
 
 /**

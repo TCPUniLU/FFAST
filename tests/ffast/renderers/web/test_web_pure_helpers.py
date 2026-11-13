@@ -674,7 +674,9 @@ CASES = {
         "[pn.axisTitle(['Energy MAE', 'energyUnit'], 'energy'),"
         " pn.axisTitle(['Energy MAE', 'energyUnit'], 'meV'),"
         " pn.axisTitle(['Energy MAE', 'energyUnit'], ''),"
-        " pn.axisTitle('Density', 'meV'), pn.axisTitle(null, 'meV')]"
+        " pn.axisTitle('Density', 'meV'), pn.axisTitle(null, 'meV'),"
+        " pn.axisTitle(['Gyradius', 'Å'], ''), pn.axisTitle(['Gyradius', 'Å'], 'nm'),"
+        " pn.axisTitle(['Forces MAE', 'forceUnit'], 'eV/Å'), pn.axisTitle(['Rg', ''], 'nm')]"
     ),
     "table_headers_carry_units": (
         "(() => {"
@@ -2585,6 +2587,9 @@ def test_axis_title_prints_a_unit_but_not_a_dimension(results):
     """"Energy MAE (energy)" named the dimension where the unit belongs."""
     assert results["axis_title_units"] == [
         "Energy MAE", "Energy MAE (meV)", "Energy MAE", "Density", "",
+        # a unit written in the tab file is printed as written (gap 6 of the
+        # Qt-removal audit, 2026-11-13); a unit setting takes the metric's
+        "Gyradius (Å)", "Gyradius (Å)", "Forces MAE (eV/Å)", "Rg (nm)",
     ]
 
 
