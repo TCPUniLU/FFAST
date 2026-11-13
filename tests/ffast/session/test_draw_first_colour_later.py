@@ -158,6 +158,91 @@ def _run(coro):
     return asyncio.run(coro)
 
 
+def _framed_build_scene(view_state, get_dataset, get_prediction, get_forces, executor,
+                        get_metric=None, prediction_fields=None):
+    """``_fake_build_scene`` whose atom sits at x = the frame drawn."""
+    scene = _fake_build_scene(view_state, get_dataset, get_prediction, get_forces,
+                              executor, get_metric, prediction_fields)
+    scene.atoms.positions = [[float(view_state.structure_index), 0.0, 0.0]]
+    return scene
+
+
+async def _set_frame(s, frame):
+    await s.dispatch("VIEW_COMMAND", [], {
+        "type": "SET_FRAME", "view_id": "v1", "view_version": 0, "frame_index": frame,
+    })
+
+
+def _gated_env():
+    """An env whose metric over every structure waits until ``env.gate`` is set."""
+    import threading
+    gate = threading.Event()
+
+    def compute(metric_id):
+        gate.wait(10)
+        return _make_metric_result(metric_id=metric_id, values=[9.0])
+
+    env = _store_env(compute, datasets={"ds1": SimpleNamespace(fingerprint="ds1")},
+                     models={"m1": SimpleNamespace(fingerprint="m1")})
+    env.data.predictionFields = {}
+    env.gate = gate
+    return env
+
+
+def test_frame_changes_while_colours_compute_give_one_late_patch_for_the_frame_on_screen():
+    # 2026-11-13, 1.77M structures: each frame change while the metric was
+    # computed started its own colour task; when it came they all sent their
+    # frame, and the view could end on an older one.
+    env = _gated_env()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("OPEN_VIEW", [], {"view_id": "v1"})
+        s.outbound.get_nowait()
+        _colour_by(s.views["v1"])
+        with patch("ffast.visualization.scene_builder.build_scene", _framed_build_scene):
+            await _colour_command(s)
+            for frame in (1, 2, 3):
+                await _set_frame(s, frame)
+            tasks = len(s._colouring)
+            _messages(s)
+            env.gate.set()
+            await s.colours_settled()
+        return tasks, _messages(s), getattr(s, "_colour_jobs", {})
+
+    tasks, later, jobs = _run(scenario())
+    assert tasks == 1
+    (patch_later,) = _patches(later)
+    assert patch_later["atoms"]["positions"] == [[3.0, 0.0, 0.0]]
+    assert patch_later["atoms"]["color_by"]["values"] == [9.0]
+    assert jobs == {}
+
+
+def test_a_late_patch_is_dropped_when_the_frame_moved_while_it_was_drawn():
+    env = _env()
+    views = {}
+
+    def moved_meanwhile(view_state, *args, get_metric=None, **kwargs):
+        scene = _framed_build_scene(view_state, *args, get_metric=get_metric, **kwargs)
+        if get_metric is not None and get_metric(METRIC, {}, "ds1", "m1") is not None:
+            views["v1"].state.structure_index = 7     # a SET_FRAME during the build
+        return scene
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("OPEN_VIEW", [], {"view_id": "v1"})
+        s.outbound.get_nowait()
+        views["v1"] = s.views["v1"]
+        _colour_by(s.views["v1"])
+        with patch("ffast.visualization.scene_builder.build_scene", moved_meanwhile):
+            await _colour_command(s)
+            _messages(s)
+            await s.colours_settled()
+        return _messages(s)
+
+    assert _patches(_run(scenario())) == []
+
+
 def test_a_closed_window_stops_its_colouring_and_its_length_probe():
     # Work started for a window ends with it: nobody reads its queue any more.
     import threading
