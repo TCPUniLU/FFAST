@@ -36,6 +36,13 @@ export class FFastConnection {
     this._disconnectListeners = [];
     /** Set by close(): a drop the page asked for is not a lost connection. */
     this._closing = false;
+    // Heartbeat (ADR 0097): a socket that stalls without closing (laptop
+    // sleep, a Wi-Fi switch) is found by hearing nothing for a while. Any
+    // message counts; the page asks every `heartbeatEveryMs`.
+    this.heartbeatEveryMs = 15000;
+    this.silentLimitMs = 60000;
+    this._lastHeard = 0;
+    this._heartbeatTimer = null;
   }
 
   connect() {
@@ -49,6 +56,7 @@ export class FFastConnection {
       let handshakeDone = false;
 
       ws.onmessage = (evt) => {
+        this._lastHeard = Date.now();
         if (handshakeDone) this._dispatch(evt.data, now());
         else buf.push(evt.data);
       };
@@ -84,7 +92,7 @@ export class FFastConnection {
         renderer: 'webgl',
         session_token: this._token,
         supported_codecs: ['raw'],
-        features: timingWanted() ? ['timing'] : [],
+        features: timingWanted() ? ['timing', 'heartbeat'] : ['heartbeat'],
         read_only: this._readOnly,
       },
     }));
@@ -107,6 +115,8 @@ export class FFastConnection {
       this.localLammps = !!ack.local_lammps;
       this.trace = !!ack.trace;
       if (timingWanted()) this._startTiming((ack.features || []).includes('timing'));
+      // An older server does not answer heartbeats: then none are sent.
+      if ((ack.features || []).includes('heartbeat')) this._startHeartbeat();
     } catch (_) {
       console.warn('FFAST: no HELLO_ACK received — using READ_ONLY (backward compat)');
     }
@@ -159,8 +169,10 @@ export class FFastConnection {
   send(event, kwargs = {}, args = []) {
     if (this._ws?.readyState !== WebSocket.OPEN) return null;
     const id = this._nextId++;
-    // The trace's own lines are not timed: they follow every click.
-    if (this.timing && event !== OUT.TRACE) this.timing.sent(event, now(), id);
+    // The trace's own lines and the heartbeat are not timed: they are not
+    // the user's.
+    if (this.timing && event !== OUT.TRACE && event !== OUT.HEARTBEAT)
+      this.timing.sent(event, now(), id);
     this._ws.send(msgpack.encode({ event, args, kwargs, id }));
     return id;
   }
@@ -185,7 +197,24 @@ export class FFastConnection {
   /** How many requests wait for their final reply. */
   get waiting() { return this._requests.size; }
 
+  _startHeartbeat() {
+    this._lastHeard = Date.now();
+    this._heartbeatTimer = setInterval(() => {
+      if (Date.now() - this._lastHeard > this.silentLimitMs) {
+        // Stalled: the socket may never report it, so stop waiting on it.
+        const ws = this._ws;
+        if (ws) { ws.onclose = null; ws.onmessage = null; try { ws.close(); } catch (_) { /* already gone */ } }
+        this._lost();
+        return;
+      }
+      // The answer only needs to arrive; any message resets the clock.
+      this.request(OUT.HEARTBEAT).catch(() => {});
+    }, this.heartbeatEveryMs);
+  }
+
   _lost() {
+    clearInterval(this._heartbeatTimer);
+    this._heartbeatTimer = null;
     clearInterval(this._pingTimer);
     this._pingTimer = null;
     this._requests.failAll(this._closing ? 'connection closed' : 'connection lost');
@@ -220,6 +249,8 @@ export class FFastConnection {
     this._closing = true;
     if (this.trace) traceTo(null);
     clearInterval(this._pingTimer);
+    clearInterval(this._heartbeatTimer);
+    this._heartbeatTimer = null;
     stopTiming(this.timing);
     this.timing = null;
     this.send(OUT.GRACEFUL_DISCONNECT, {});

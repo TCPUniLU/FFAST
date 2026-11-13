@@ -297,6 +297,7 @@ async def _handler(
 
     # ── receive / send loops ──────────────────────────────────────────────
     from ffast.protocol import control
+    from ffast.protocol import reply as replies
     from ffast.protocol.rpc import unpack, unpack_with_id
     graceful = False
     # Messages wait here, not in websockets' own buffer: when 16 wait there
@@ -317,6 +318,15 @@ async def _handler(
                 if event == control.GRACEFUL_DISCONNECT:
                     graceful = True
                     logger.info("GRACEFUL_DISCONNECT from %s", addr)
+                elif event == control.HEARTBEAT:
+                    # Answered here, not in the handler queue: a slow handler
+                    # must not make a live connection look dead (ADR 0097).
+                    if msg_id is not None:
+                        beat = replies.reply(control.HEARTBEAT, request_id=msg_id)
+                        try:
+                            session.outbound.put_nowait(beat)
+                        except asyncio.QueueFull:
+                            asyncio.ensure_future(session.outbound.put(beat))
                 else:
                     received.put_nowait((event, args, kwargs, msg_id))
             else:

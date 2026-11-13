@@ -172,6 +172,10 @@ GRACEFUL_DISCONNECT = "GRACEFUL_DISCONNECT"
 # server answers and reports, per message, when it was read, handled and sent.
 TIMING_PING = "TIMING_PING"
 TIMING = "TIMING"
+# The page's heartbeat (ADR 0097): every 15 s the page asks, the server answers
+# at once from its receive loop. A page that hears nothing for 60 s treats the
+# connection as lost, which a silently stalled socket would never report.
+HEARTBEAT = "HEARTBEAT"
 
 # ── server → client replies (cluster.connection._REPLY_CHANNELS) ────────────
 DATASET_KEYS_RESPONSE = "DATASET_KEYS_RESPONSE"

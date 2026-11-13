@@ -38,6 +38,8 @@ async (origin) => {
   class FakeWS {
     static OPEN = 1;
     static last = null;
+    static features = [];
+    static answerBeats = true;
     constructor(url) {
       this.url = url; this.readyState = 0; this.sent = []; FakeWS.last = this;
       setTimeout(() => { this.readyState = 1; this.onopen?.(); }, 0);
@@ -47,7 +49,10 @@ async (origin) => {
       const msg = msgpack.decode(data);
       this.sent.push(msg);
       if (msg.event === 'HELLO')
-        this.deliver({ event: 'HELLO_ACK', args: [], kwargs: { role: 'CONTROLLING' } });
+        this.deliver({ event: 'HELLO_ACK', args: [],
+                       kwargs: { role: 'CONTROLLING', features: FakeWS.features } });
+      if (msg.event === 'HEARTBEAT' && FakeWS.answerBeats)
+        this.deliver({ event: 'HEARTBEAT', args: [], kwargs: {}, reply_to: msg.id, final: true });
     }
     _deliver(data) { setTimeout(() => this.onmessage?.({ data }), 0); }
     deliver(msg) {
@@ -60,8 +65,10 @@ async (origin) => {
   globalThis.WebSocket = FakeWS;
   const settle = () => new Promise((r) => setTimeout(r, 5));
 
-  const open = async () => {
+  const open = async ({ beatMs = null, limitMs = null } = {}) => {
     const conn = new FFastConnection('ws://fake', null);
+    if (beatMs) conn.heartbeatEveryMs = beatMs;
+    if (limitMs) conn.silentLimitMs = limitMs;
     await conn.connect();
     const ws = FakeWS.last;
     ws.sent.length = 0;
@@ -176,6 +183,31 @@ async (origin) => {
     r.stop();
     out.activeAfterStop = r.active;
   }
+  { // a server that offers no heartbeat gets none
+    FakeWS.features = [];
+    const { conn, ws } = await open({ beatMs: 10, limitMs: 40 });
+    await new Promise((r) => setTimeout(r, 80));
+    out.beatsWithoutFeature = ws.sent.filter((m) => m.event === 'HEARTBEAT').length;
+    conn.close();
+  }
+  { // answered heartbeats keep the connection; a silent server loses it
+    FakeWS.features = ['heartbeat'];
+    FakeWS.answerBeats = true;
+    const { conn, ws } = await open({ beatMs: 10, limitMs: 60 });
+    let told = 0;
+    conn.onDisconnect(() => told++);
+    await new Promise((r) => setTimeout(r, 150));
+    out.beatsSent = ws.sent.filter((m) => m.event === 'HEARTBEAT').length;
+    out.toldWhileAnswered = told;
+    out.waitingWhileAnswered = conn.waiting;
+    FakeWS.answerBeats = false;
+    const p = track(conn.request('SAVE_TAB', {}));
+    await new Promise((r) => setTimeout(r, 200));
+    out.toldWhenSilent = told;
+    out.silentRequest = await state(p);
+    FakeWS.features = [];
+    FakeWS.answerBeats = true;
+  }
   { // the table alone: an unknown reply_to is not consumed
     const t = new RequestTable();
     out.tableUnknown = t.answer({ event: 'X', reply_to: 4, final: true });
@@ -274,3 +306,15 @@ def test_retry_waits_top_out_and_now_does_not_wait(results):
     assert results["cappedWaits"] == [1, 2, 4, 8, 16, 30, 30, 30]
     assert results["triesAfterNow"] == 8
     assert results["activeAfterStop"] is False
+
+
+def test_no_heartbeat_to_a_server_that_does_not_offer_it(results):
+    assert results["beatsWithoutFeature"] == 0
+
+
+def test_a_server_that_falls_silent_is_a_lost_connection(results):
+    assert results["beatsSent"] >= 3
+    assert results["toldWhileAnswered"] == 0
+    assert results["waitingWhileAnswered"] <= 1
+    assert results["toldWhenSilent"] == 1
+    assert results["silentRequest"] == {"err": "connection lost", "lost": True}

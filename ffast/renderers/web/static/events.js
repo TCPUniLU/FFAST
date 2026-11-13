@@ -69,6 +69,7 @@ export const OUT = Object.freeze({
   GRACEFUL_DISCONNECT: 'GRACEFUL_DISCONNECT',
   // Ask the server's clock, for the timing log (ADR 0072)
   TIMING_PING: 'TIMING_PING',
+  HEARTBEAT: 'HEARTBEAT',
   // Follow a live LAMMPS run folder (ADR 0087)
   OPEN_LIVE_RUN: 'OPEN_LIVE_RUN',
   // "Stop now" and stop on alarm for an open live run (ADR 0086)

@@ -67,6 +67,7 @@ def test_outbound_events_are_known_to_the_server(out_events):
         control.HELLO,
         control.GRACEFUL_DISCONNECT,
         control.TIMING_PING,
+        control.HEARTBEAT,
     }
     unknown = sorted(set(out_events.values()) - known)
     assert not unknown, (

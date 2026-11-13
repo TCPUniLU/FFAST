@@ -8,7 +8,7 @@ from playwright.async_api import async_playwright, expect
 
 from .test_web_runtime import (
     _expect_connected, _open_loupe, _preload_dataset, _shared_servers,  # noqa: F401
-    shared_dataset_server,  # noqa: F401
+    shared_dataset_server, shared_server,  # noqa: F401
 )
 
 pytestmark = pytest.mark.integration
@@ -90,3 +90,39 @@ async def test_web_disconnecting_on_purpose_shows_no_banner(shared_dataset_serve
             assert await page.evaluate("() => window.ffastApp._reconnector.active") is False
         finally:
             await browser.close()
+
+
+async def test_the_server_answers_a_heartbeat_with_its_number(shared_server):
+    import asyncio
+
+    import msgpack
+
+    from .test_web_runtime import _connect_headless_client
+
+    ws_port, _ = shared_server
+    ws = await _connect_headless_client(ws_port)
+    try:
+        await ws.send(msgpack.packb({"event": "HEARTBEAT", "args": [], "kwargs": {}, "id": 42}))
+        async def _beat():
+            while True:
+                msg = await ws.recv()
+                if isinstance(msg, bytes):
+                    decoded = msgpack.unpackb(msg, raw=False)
+                    if decoded.get("reply_to") == 42:
+                        return decoded
+        beat = await asyncio.wait_for(_beat(), timeout=10)
+    finally:
+        await ws.close()
+    assert beat["event"] == "HEARTBEAT"
+    assert beat["final"] is True and "error" not in beat
+
+
+def test_the_server_offers_the_heartbeat_to_a_page_that_asks():
+    from ffast.visualization.protocol import ClientCapabilities, negotiate
+
+    asked = negotiate(ClientCapabilities(protocol_version="1.0", renderer="webgl",
+                                         features=["heartbeat"]))
+    not_asked = negotiate(ClientCapabilities(protocol_version="1.0", renderer="webgl",
+                                             features=[]))
+    assert "heartbeat" in asked.features
+    assert "heartbeat" not in not_asked.features
