@@ -631,13 +631,14 @@ class ServerSession:
         outcome (``SUBSET_EXTRACTED``), or why it was refused.
         """
         from ffast.loaders.dataset import atomNumbersRefusal, structuresDiffer
-        from ffast.protocol.rpc import pack
         from ffast.visualization.scene_builder import (
             _resolve_filter_indices, parse_filter_tokens, resolve_element_tokens)
 
         async def _reply(text=None, error=None):
-            await self._emit(pack(control.SUBSET_EXTRACTED, (),
-                                  {"ok": error is None, "text": text, "error": error}))
+            # The final reply to this window's request (ADR 0097).
+            await self._emit(replies.reply(control.SUBSET_EXTRACTED, (),
+                                           {"ok": error is None, "text": text, "error": error},
+                                           error=error))
 
         parent = self.env.datasets.get(parent_fingerprint)
         if parent is None:
@@ -671,6 +672,21 @@ class ServerSession:
         await _reply(text=text)
 
     async def _on_declare_subset(self, parent_fingerprint, indices=None, **kwargs) -> None:
+        """Answer DECLARE_SUBSET with one final SUBSET_DECLARED (ADR 0097):
+        the subset made or moved; ``fingerprint: None`` when there was nothing
+        to make (SUB unticked, or a zoom onto no frames); or why not, in
+        ``error``."""
+        try:
+            out = await self._declare_subset(parent_fingerprint, indices, **kwargs)
+        except Exception as exc:
+            logger.warning("DECLARE_SUBSET failed: %s", exc)
+            out = {"error": str(exc)}
+        out = {"fingerprint": None, "parent_fingerprint": parent_fingerprint,
+               "model_fp": kwargs.get("model_fp"), "name": kwargs.get("name") or "Subset",
+               "error": None, **(out or {})}
+        await self._emit(replies.reply(control.SUBSET_DECLARED, (), out, error=out["error"]))
+
+    async def _declare_subset(self, parent_fingerprint, indices=None, **kwargs):
         """Declare, update or hide a frame-index SubDataset (subbing).
 
         The desktop's ``BasicPlotWidget`` turns a plot viewport into a set of
@@ -686,26 +702,25 @@ class ServerSession:
         subset it made (``SUBSET_DECLARED``), so it can show it.
         """
         from ffast.loaders.dataset import DatasetView  # ADR 0047 Phase 5c
-        from ffast.protocol.rpc import pack
 
         parent = self.env.datasets.get(parent_fingerprint)
         if parent is None:
             logger.warning("DECLARE_SUBSET: parent %r not found", parent_fingerprint)
-            return
+            return {"error": "That dataset is no longer loaded."}
         model_fp = kwargs.get("model_fp")
         model = self.env.models.get(model_fp) if model_fp else None
         if model_fp and model is None:
             # A model only the window holds (the zero model): a subset without
             # it would have another fingerprint than the window's.
             logger.warning("DECLARE_SUBSET: model %r not found", model_fp)
-            return
+            return {"error": "That prediction is not on the server."}
         name = kwargs.get("name") or "Subset"
         existing = self.env.datasets.get(DatasetView.subsetFingerprint(parent, model, name))
 
         if kwargs.get("active", True) is False:
             if existing is not None:
                 existing.setActive(False)
-            return
+            return None
 
         view = kwargs.get("view")
         if view is not None:
@@ -713,15 +728,15 @@ class ServerSession:
                 idx = await self._frames_in_view(view, parent, parent_fingerprint, model_fp)
             except Exception as exc:
                 logger.warning("DECLARE_SUBSET: view of %r failed: %s", parent_fingerprint, exc)
-                return
+                return {"error": f"The plot's frames could not be found: {exc}"}
             if idx is None:
-                return
+                return {"error": "A metric the plot shows is not computed yet."}
         else:
             idx = [int(i) for i in (indices or [])]
         if not idx:
             # Zoomed onto no frames: the subset keeps the frames it had.
             logger.info("DECLARE_SUBSET: no frames for %r", parent_fingerprint)
-            return
+            return None
         unchanged = (existing is not None and getattr(existing, "active", True)
                      and list(existing.frames) == idx)
         if not unchanged:   # the same frames: nothing to rebuild or announce
@@ -729,11 +744,11 @@ class ServerSession:
                 self.env.declareSubDataset(parent, model, idx, name)
             except Exception as exc:
                 logger.warning("DECLARE_SUBSET: declareSubDataset failed: %s", exc)
-                return
-        await self._emit(pack(control.SUBSET_DECLARED, [], {
+                return {"error": f"The subset could not be made: {exc}"}
+        return {
             "fingerprint": DatasetView.subsetFingerprint(parent, model, name),
             "parent_fingerprint": parent_fingerprint, "model_fp": model_fp, "name": name,
-        }))
+        }
 
     async def _frames_in_view(self, view, parent, parent_fingerprint, model_fp):
         """The parent frames a plot's view covers, or None when a metric it
@@ -1842,6 +1857,9 @@ class ServerSession:
         import os
 
         loop = asyncio.get_running_loop()
+        # The task runs later, outside this handler: its reply names the
+        # request by number (ADR 0097).
+        request_id = replies.current()
         path = os.path.abspath(os.path.expanduser(path))
         saving = kind == "save"
         event = control.SESSION_SAVED if saving else control.SESSION_LOADED
@@ -1852,9 +1870,10 @@ class ServerSession:
                 run(path, taskID=taskID)
             except Exception as exc:
                 logger.warning("%s session failed for %r: %s", kind, path, exc)
-                self._ack_from_thread(loop, event, False, path, error=str(exc))
+                self._ack_from_thread(loop, event, False, path, error=str(exc),
+                                      request_id=request_id)
                 raise
-            self._ack_from_thread(loop, event, True, path)
+            self._ack_from_thread(loop, event, True, path, request_id=request_id)
             if not saving:
                 self._offer_session_metrics(loop, path)
 
@@ -1866,12 +1885,31 @@ class ServerSession:
             threaded=True,
         )
 
-    def _ack_from_thread(self, loop, event, ok, path, error=None) -> None:
-        """Hand a session-op ack from a task worker thread onto ``loop``."""
-        from ffast.protocol.rpc import pack
+    def _ack_from_thread(self, loop, event, ok, path, error=None, request_id=None) -> None:
+        """Hand a session-op ack, the request's final reply, from a task worker
+        thread onto ``loop``. Never dropped: the window waits for it."""
+        data = replies.reply(event, (), {"ok": bool(ok), "path": path, "error": error},
+                             error=error, request_id=request_id)
+        self._emit_from_any_thread(data, loop)
 
-        data = pack(event, (), {"ok": bool(ok), "path": path, "error": error})
-        loop.call_soon_threadsafe(self._emit_or_drop, data, f"session ack {event}")
+    def _emit_from_any_thread(self, data, loop) -> None:
+        """Queue a reply the window waits for, from ``loop``'s thread or any
+        other: never dropped (unlike a replay message), and from another
+        thread in the order of the other messages it hands over."""
+        def put():
+            try:
+                self.outbound.put_nowait(data)
+            except asyncio.QueueFull:
+                loop.create_task(self._emit(data))
+
+        try:
+            on_loop = asyncio.get_running_loop() is loop
+        except RuntimeError:
+            on_loop = False
+        if on_loop:
+            put()
+        else:
+            loop.call_soon_threadsafe(put)
 
     async def _on_export_subset(self, fingerprint, path, **kwargs) -> None:
         """Write a dataset out to an extxyz server-side (ADR 0045 issue 20).
@@ -1887,13 +1925,14 @@ class ServerSession:
         ``dftb``), plus ``sgdml``.
         """
         import os
-        from ffast.protocol.rpc import pack
 
         async def _reply(ok: bool, resolved: str, error: str | None = None, n: int = 0,
                          skipped: int = 0):
-            data = pack(
+            # The final reply to this window's request (ADR 0097).
+            data = replies.reply(
                 control.SUBSET_EXPORTED, (),
                 {"ok": ok, "path": resolved, "error": error, "n": n, "skipped": skipped},
+                error=error,
             )
             await self._emit(data)
 
@@ -1930,6 +1969,7 @@ class ServerSession:
 
         loop = asyncio.get_running_loop()
         last = [time.monotonic()]
+        request_id = replies.current()
 
         def progress(done, total):
             """A long write tells the window how far it is, at most every half
@@ -1938,9 +1978,9 @@ class ServerSession:
             if done >= total or now - last[0] < 0.5:
                 return
             last[0] = now
-            from ffast.protocol.rpc import pack as _pack
-            data = _pack(control.SUBSET_EXPORTED, (), {
-                "ok": None, "path": resolved, "error": None, "progress": [done, total]})
+            data = replies.reply(control.SUBSET_EXPORTED, (), {
+                "ok": None, "path": resolved, "error": None, "progress": [done, total]},
+                final=False, request_id=request_id)
             asyncio.run_coroutine_threadsafe(self._emit(data), loop)
 
         try:
@@ -2569,14 +2609,4 @@ class _LoadAnswer:
             self._sent = True
         data = replies.reply(control.LOAD_RESULT, (), kwargs, error=error,
                              request_id=self._request_id)
-        try:
-            on_loop = asyncio.get_running_loop() is self._loop
-        except RuntimeError:
-            on_loop = False
-        if not on_loop:   # the load task's thread
-            asyncio.run_coroutine_threadsafe(self._session._emit(data), self._loop)
-            return
-        try:
-            self._session.outbound.put_nowait(data)
-        except asyncio.QueueFull:
-            self._loop.create_task(self._session._emit(data))
+        self._session._emit_from_any_thread(data, self._loop)

@@ -3,6 +3,7 @@
  */
 
 import { FFastConnection } from './connection.js';
+import { answerOf } from './requests.js';
 import { Reconnector } from './reconnect.js';
 import { Panel3D, ViewRenderers } from './views3d.js';
 import { MainViews } from './views.js';
@@ -224,6 +225,7 @@ export class FFastApp {
     });
     this._sessionOps = new SessionOps({
       send,
+      request: (event, kwargs = {}, args = [], opts = {}) => this._request(event, kwargs, args, opts),
       setStatus: (text, kind) => this._setStatus(text, kind),
       getCurrentDatasetFp: () => this._currentDatasetFp,
       getDatasetMeta: (fp) => this._datasets.get(fp),
@@ -2008,19 +2010,6 @@ export class FFastApp {
       conn.on(IN.COMMAND_RESULT, (kw) => this._onCommandResult(kw));
       conn.on(IN.METRIC_CATALOG, (kw) => this._onMetricCatalog(kw));
       conn.on(IN.METRICS_UPDATED, (kw) => this._onMetricsUpdated(kw));
-      conn.on(IN.SUBSET_EXPORTED, (kw) => this._sessionOps.onSubsetExported(kw));
-      // What Extract made ("C in 812 of 1000 frames"), or why it made nothing.
-      conn.on(IN.SUBSET_EXTRACTED, (kw) => {
-        this._panes.extract.showResult(kw);
-        this._setStatus(kw.ok ? `Extracted ${kw.text}` : `Extract refused: ${kw.error}`,
-          kw.ok ? 'connected' : 'error');
-      });
-      conn.on(IN.SUBSET_DECLARED, (kw) => this._onSubsetDeclared(kw));
-      // Session outcomes are named events now, not a guess from the next
-      // TASK_DONE — which resolved a pending save against an unrelated task's
-      // completion (ADR 0050).
-      conn.on(IN.SESSION_SAVED,  (kw) => this._sessionOps.onSessionResult('save', kw));
-      conn.on(IN.SESSION_LOADED, (kw) => this._sessionOps.onSessionResult('load', kw));
       conn.on(IN.SESSION_METRICS, (kw) => this._offerSessionMetrics(kw));
       // A warning the server logged (ffast.session.warning_relay).
       conn.on(IN.SERVER_WARNING, (kw) => showWarning(kw.message, kw.level));
@@ -3075,11 +3064,18 @@ export class FFastApp {
    * them and announces the new AtomFilteredDataset via REMOTE_DATASET_META. */
   _sendCreateSubset(tokens) {
     if (!this._conn || !this._focusedDatasetFp()) return;
-    this._conn.send(OUT.CREATE_SUBSET, {
+    this._setStatus('Extracting subset…', 'connected');
+    // What Extract made ("C in 812 of 1000 frames"), or why it made nothing.
+    answerOf(this._request(OUT.CREATE_SUBSET, {
       parent_fingerprint: this._focusedDatasetFp(),
       indices: tokens,
+    })).then((kw) => {
+      if (kw.connectionLost) return;
+      const ok = !kw.error;
+      this._panes.extract.showResult({ ...kw, ok });
+      this._setStatus(ok ? `Extracted ${kw.text}` : `Extract refused: ${kw.error}`,
+        ok ? 'connected' : 'error');
     });
-    this._setStatus('Extracting subset…', 'connected');
   }
 
   /** Make, move or hide the subset of a plot with SUB ticked (ADR 0045
@@ -3096,7 +3092,10 @@ export class FFastApp {
     if (o.active === false) msg.active = false;
     else if (o.indices) msg.indices = o.indices;
     else msg.view = o.view;
-    this._conn.send(OUT.DECLARE_SUBSET, msg);
+    // Its final reply names the subset made, or none (ADR 0097).
+    answerOf(this._request(OUT.DECLARE_SUBSET, msg)).then((kw) => {
+      if (kw.fingerprint) this._onSubsetDeclared(kw);
+    });
   }
 
   /** A plot with SUB ticked made, moved or hid subsets (analysis.js). The

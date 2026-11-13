@@ -374,9 +374,12 @@ def test_a_zoom_whose_metric_lacks_a_prediction_declares_no_subset_and_computes_
     async def scenario():
         s = ServerSession(env, asyncio.Queue())
         await s.dispatch("DECLARE_SUBSET", ["ds1"], {"model_fp": "m1", "view": view})
-        return s.outbound.empty()
+        return [unpack(s.outbound.get_nowait()) for _ in range(s.outbound.qsize())]
 
-    assert _run(scenario())
+    # The request still ends (ADR 0097): with no subset, and why.
+    [(event, _, kwargs)] = _run(scenario())
+    assert event == control.SUBSET_DECLARED
+    assert kwargs["fingerprint"] is None and kwargs["error"]
     assert env.declare_subset_calls == []
     assert "ffast.force_difference[structure;component;mae]" not in env.compute_calls
 
@@ -1772,7 +1775,7 @@ def test_the_window_that_ticked_sub_is_told_which_subset_it_made():
         env, parent_fingerprint="ds1", name="T", view=TIMELINE_VIEW)
     assert event == control.SUBSET_DECLARED
     assert kwargs == {"fingerprint": _sub_fp(parent, None, "T"), "parent_fingerprint": "ds1",
-                      "model_fp": None, "name": "T"}
+                      "model_fp": None, "name": "T", "error": None}
 
 
 def test_it_is_told_even_when_the_frames_did_not_change():
@@ -1782,12 +1785,15 @@ def test_it_is_told_even_when_the_frames_did_not_change():
     assert event == control.SUBSET_DECLARED
 
 
-def test_hiding_a_subset_or_finding_no_frames_tells_nothing():
+def test_hiding_a_subset_or_finding_no_frames_names_no_subset():
+    """The request still ends with its reply (ADR 0097), naming no subset."""
     parent = _FakeFrames()
     env = _FakeEnv(datasets={"ds1": parent, _sub_fp(parent, None, "T"): _FakeSub([1, 2, 3])})
-    assert _declare_and_read(env, parent_fingerprint="ds1", name="T", active=False) == []
-    assert _declare_and_read(env, parent_fingerprint="ds1", name="U",
-                             view={**TIMELINE_VIEW, "x": [40, 50]}) == []
+    [(_, _, hidden)] = _declare_and_read(env, parent_fingerprint="ds1", name="T", active=False)
+    [(_, _, empty)] = _declare_and_read(env, parent_fingerprint="ds1", name="U",
+                                        view={**TIMELINE_VIEW, "x": [40, 50]})
+    for kwargs in (hidden, empty):
+        assert (kwargs["fingerprint"], kwargs["error"]) == (None, None)
 
 
 class _FakeFrameSubset:

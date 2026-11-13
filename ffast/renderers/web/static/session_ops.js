@@ -15,6 +15,7 @@
  */
 
 import { OUT } from './events.js';
+import { answerOf } from './requests.js';
 
 /**
  * Status line for a finished session operation.
@@ -154,8 +155,8 @@ export class SessionOps {
       okLabel: 'Save',
       name: 'ffast-session',
       onPick: (path) => {
-        this._ports.send(OUT.SAVE_SESSION, { path });
         this._ports.setStatus(`Saving session to ${path}…`, 'connected');
+        this._ask('save', OUT.SAVE_SESSION, { path });
       },
     });
   }
@@ -166,8 +167,8 @@ export class SessionOps {
       title: 'Load Session',
       okLabel: 'Load',
       onPick: (path) => {
-        this._ports.send(OUT.LOAD_SESSION, { path });
         this._ports.setStatus(`Loading session from ${path}…`, 'connected');
+        this._ask('load', OUT.LOAD_SESSION, { path });
       },
     });
   }
@@ -197,8 +198,11 @@ export class SessionOps {
           kwargs.reference = items.includes('reference');
           kwargs.predictions = items.filter((k) => k !== 'reference');
         }
-        this._ports.send(OUT.EXPORT_SUBSET, kwargs);
         this._ports.setStatus(`Exporting to ${path}…`, 'connected');
+        // A long write reports how far it is (progress), then ends (ADR 0097).
+        const onProgress = (reply) => this.onSubsetExported(reply.kwargs);
+        answerOf(this._ports.request(OUT.EXPORT_SUBSET, kwargs, [], { onProgress }))
+          .then((kw) => { if (!kw.connectionLost) this.onSubsetExported({ ok: !kw.error, ...kw }); });
       },
     });
   }
@@ -213,6 +217,13 @@ export class SessionOps {
     a.download = `${name}_${transparent ? 'transparent' : 'opaque'}.png`;
     a.click();
     this._ports.setStatus('PNG exported', 'connected');
+  }
+
+  /** A save or load, followed to its own final reply (ADR 0097). */
+  _ask(kind, event, kwargs) {
+    answerOf(this._ports.request(event, kwargs)).then((kw) => {
+      if (!kw.connectionLost) this.onSessionResult(kind, { ok: !kw.error, ...kw });
+    });
   }
 
   /** @param {'save'|'load'} kind */
