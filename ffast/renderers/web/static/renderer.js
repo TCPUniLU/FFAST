@@ -73,7 +73,7 @@ export class MoleculeRenderer {
       canvas, antialias: true, alpha: true, preserveDrawingBuffer: true,
     });
     this._renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
-    this._background = '#000000';   // Qt loupe default (default.json loupeBGColor)
+    this._background = '#000000';   // the default; Camera > Background changes it
     this._applyBackground();
     // Journal page (body.journal, appearance.js) draws on white, in this
     // browser only; the user's own background comes back with Screen.

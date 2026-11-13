@@ -41,9 +41,9 @@ it.
 
 | File | Holds |
 |------|-------|
-| `config/default.json` | App defaults: plot parameters, 3D view defaults, colours |
-| `config/userConfig.py` | Overrides of the above |
-| `config/atoms.py` | Element data: colours, covalent radii, names |
+| `ffast/config/default.json` | App defaults: colours, units, bond detection |
+| `ffast/config/user.json` | Your overrides of the above (create it; same keys) |
+| `ffast/chemistry/atoms.py` | Element data: colours, covalent radii, names |
 | `config/clusters.json` | Saved cluster profiles |
 | `ffast.toml` | Project config: metrics, dataset fields, tabs |
 
@@ -51,12 +51,4 @@ Settings in `default.json` you are most likely to want:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
-| `plotDistNum` | 500 | Points in a KDE distribution |
-| `scatterPlotNPoints` | 50000 | Cap on scatter plot points |
-| `plotPenWidth` | 3 | Plot line width |
-| `loupeBondsWidth` | 25 | Default bond width |
-| `loupeAtomSizeScale` | 1.0 | Default atom size multiplier |
-| `loupeBondsLenience` | 1.1 | Multiplier on the bond detection distance |
-| `loupeBGColor` | `#000000` | 3D view background |
-| `loupeBondsColor` | `#404040` | Default bond colour |
-| `loupeForceErrorPercentile` | 0.995 | Percentile that saturates the force-error colour scale |
+| `bondsLenience` | 1.1 | Multiplier on the bond detection distance (was `loupeBondsLenience`, still read) |

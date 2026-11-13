@@ -103,11 +103,24 @@ _config_dir = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(_config_dir, "default.json")) as f:
     d = json.load(f)
     default.update(d)
+# Settings that were renamed: a user.json written before still sets them.
+RENAMED_KEYS = {"loupeBondsLenience": "bondsLenience"}
+
+
+def upgrade_user_settings(settings):
+    """``settings`` with each old key under its new name; the new name wins."""
+    out = {k: v for k, v in settings.items() if k not in RENAMED_KEYS}
+    for old, new in RENAMED_KEYS.items():
+        if old in settings and new not in out:
+            out[new] = settings[old]
+    return out
+
+
 _user_json = os.path.join(_config_dir, "user.json")
 if os.path.exists(_user_json):
     with open(_user_json) as f:
         c = json.load(f)
-        config.update(c)
+        config.update(upgrade_user_settings(c))
 
 
 def getConfig(key, fallback=None):

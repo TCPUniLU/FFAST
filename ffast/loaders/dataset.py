@@ -318,7 +318,7 @@ class DatasetLoader(EventClass):
         r = self.getCoordinates(index)
         z = self.getElements(index)
         from ffast.config.user import getConfig  # ADR 0047: lazy (userConfig deferred)
-        bondSizes = covalentBonds[z][:, z] * getConfig("loupeBondsLenience")
+        bondSizes = covalentBonds[z][:, z] * getConfig("bondsLenience")
         d = distance_matrix(r, r)
         return d < bondSizes
 
