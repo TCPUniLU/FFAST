@@ -11,6 +11,14 @@
  * label. The server builds the cache key itself and it never crosses the wire
  * (ADR 0061), so the browser cannot name — or overwrite — a stored result.
  *
+ * Keeping (2026-11-13): the page keeps the results it was sent, up to
+ * KEEP_VALUES numbers, and asks again naming the one it holds (`have`, the
+ * server's tag for it). While that is still the stored result the server
+ * answers "unchanged" with no values: a tab shown again, or a panel drawn
+ * again, waits for one short reply instead of megabytes. The server decides,
+ * so a result it dropped (a reload, a moved subset, a grown dataset, an
+ * edited metric) is sent again.
+ *
  * Merging: two identical requests in flight at the same time (same metric,
  * params, model and dataset) share one message and one promise. On
  * `METRICS_UPDATED` the app calls `forgetInFlight()`, so a request made after a
@@ -29,6 +37,9 @@ function requestLabel(metricId, params, modelFp, datasetFp) {
   return JSON.stringify([metricId, sorted, modelFp || null, datasetFp || null]);
 }
 
+/** Kept results hold at most this many numbers in all (8 bytes each). */
+export const KEEP_VALUES = 32_000_000;
+
 /** @typedef {{values: number[], shape: number[]}} DecodedArray */
 /** @typedef {{nd: DecodedArray|null, shape: string, unit: string, dtype: string, warnings: string[], metricId: string}} MetricResult */
 /** A metric that failed, and why (ADR 0066 rule 6).
@@ -45,6 +56,10 @@ export class MetricClient {
     /** @type {Map<string, {requestId: string, label: string, holders: number,
      *   promise: Promise<MetricResult|MetricFailure|null>}>} label → request in flight */
     this._inFlight = new Map();
+    /** @type {Map<string, {tag: string, result: MetricResult, size: number}>}
+     *   label → the result kept for it, least recently used first */
+    this._kept = new Map();
+    this._keptSize = 0;
     conn.on(IN.METRIC_RESULT, (kw, args) => this._onResult(kw, args));
   }
 
@@ -71,8 +86,9 @@ export class MetricClient {
       const requestId = `m${++this._nextId}`;
       entry = { requestId, label, holders: 0, promise: null };
       const made = entry;
+      const kept = this._kept.get(label) || null;
       entry.promise = new Promise((resolve) => {
-        this._byId.set(requestId, { resolve });
+        this._byId.set(requestId, { resolve, label, kept });
       }).finally(() => {
         if (this._inFlight.get(label) === made) this._inFlight.delete(label);
       });
@@ -83,6 +99,7 @@ export class MetricClient {
         params,
         model_fp: modelFp,
         dataset_fp: datasetFp,
+        ...(kept ? { have: kept.tag } : {}),
       });
     }
     entry.holders += 1;           // an asker with no signal holds it to the end
@@ -118,13 +135,42 @@ export class MetricClient {
     const waiter = requestId != null ? this._byId.get(requestId) : null;
     if (!waiter) return;
     this._byId.delete(requestId);
+    if (kw.ok && kw.unchanged && waiter.kept && kw.tag === waiter.kept.tag) {
+      this._keep(waiter.label, waiter.kept.tag, waiter.kept.result);   // used again: kept longest
+      waiter.resolve(waiter.kept.result);
+      return;
+    }
+    const result = kw.ok && !kw.unchanged
+      ? { nd: decodeNdarray(kw.values), shape: kw.shape, unit: kw.unit, dtype: kw.dtype,
+          warnings: kw.warnings || [], metricId: kw.metric_id }
+      : null;
+    if (result && kw.tag) this._keep(waiter.label, kw.tag, result);
+    else this._drop(waiter.label);
     waiter.resolve(
-      kw.ok
-        ? { nd: decodeNdarray(kw.values), shape: kw.shape, unit: kw.unit, dtype: kw.dtype,
-            warnings: kw.warnings || [], metricId: kw.metric_id }
-        : kw.error
-          ? { nd: null, failed: true, error: kw.error, kind: kw.kind || 'failed', metricId: args[1] }
-          : null,
+      result || (kw.error
+        ? { nd: null, failed: true, error: kw.error, kind: kw.kind || 'failed', metricId: args[1] }
+        : null),
     );
+  }
+
+  /** Keep `result` for `label`, dropping the least recently used beyond KEEP_VALUES. */
+  _keep(label, tag, result) {
+    this._drop(label);
+    const size = result.nd?.values?.length || 0;
+    if (size > KEEP_VALUES) return;
+    this._kept.set(label, { tag, result, size });
+    this._keptSize += size;
+    for (const [old, entry] of this._kept) {
+      if (this._keptSize <= KEEP_VALUES) break;
+      this._kept.delete(old);
+      this._keptSize -= entry.size;
+    }
+  }
+
+  _drop(label) {
+    const entry = this._kept.get(label);
+    if (!entry) return;
+    this._kept.delete(label);
+    this._keptSize -= entry.size;
   }
 }

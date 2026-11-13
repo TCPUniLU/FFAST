@@ -130,6 +130,21 @@ def _size(n: int) -> str:
     return f"{n / 1e9:.1f} GB" if n >= 1e8 else f"{n / 1e6:.0f} MB"
 
 
+# A stored result's tag: new for every result stored, never reused, not even
+# by another server process (the page may hold a tag from a server that was
+# restarted on the same port).
+_TAG_PREFIX = uuid.uuid4().hex[:12]
+_tag_count = 0
+_tag_lock = threading.Lock()
+
+
+def _next_tag() -> str:
+    global _tag_count
+    with _tag_lock:
+        _tag_count += 1
+        return f"{_TAG_PREFIX}.{_tag_count}"
+
+
 class MetricCache:
     """Computed metric results, bounded by the memory their arrays hold.
 
@@ -232,6 +247,7 @@ class MetricCache:
         return meta.model_copy(update={"values": values})
 
     def put(self, key: CacheKey, result: MetricResult) -> None:
+        result._tag = _next_tag()
         size = int(np.asarray(result.values).nbytes)
         out: list[tuple[CacheKey, MetricResult, int]] = []
         with self._lock:

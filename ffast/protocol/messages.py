@@ -252,6 +252,11 @@ class MetricResultMessage(BaseModel):
     # What sort of reason it is (ADR 0085): needs_prediction, failed,
     # missing_input, temporary or object_gone; sent only when ``ok`` is False.
     kind: Optional[str] = None
+    # The stored result's tag, which a later request can name as ``have``.
+    tag: Optional[str] = None
+    # True when the request's ``have`` is this result: the page keeps the
+    # values it holds, and none are sent.
+    unchanged: Optional[bool] = None
 
 
 # ── Control message requests (client→server) ─────────────────────────────────
@@ -677,6 +682,9 @@ class RequestMetricRequest(BaseModel):
     params: Optional[dict[str, Any]] = None
     model_fp: Optional[str] = None
     dataset_fp: Optional[str] = None
+    # The tag of the result the page already holds for this request: if it is
+    # still the stored one, the reply says "unchanged" and sends no values.
+    have: Optional[str] = None
 
 
 class SaveTabRequest(BaseModel):

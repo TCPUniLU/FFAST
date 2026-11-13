@@ -162,3 +162,33 @@ def test_the_folder_can_be_chosen_with_an_environment_variable(tmp_path, monkeyp
     cache = MetricCache(max_bytes=100, spill_min_bytes=1, spill_max_bytes=10_000)
     cache.put(_key("big"), _filled(100, 7.0))
     assert len(list((tmp_path / "spill").iterdir())) == 1
+
+
+# ── a stored result's tag (2026-11-13) ───────────────────────────────────────
+# The page keeps the results it was sent and names the one it holds; the
+# server answers "unchanged" while that tag is still the stored result's.
+
+def test_each_stored_result_gets_a_new_tag_that_a_spilled_copy_keeps(tmp_path):
+    cache = _spilling(tmp_path)
+    cache.put(_key("a"), _result(10))
+    first = cache.get(_key("a"))._tag
+    assert first and cache.get(_key("a"))._tag == first
+    cache.put(_key("a"), _result(10))            # computed again: a new result
+    second = cache.get(_key("a"))._tag
+    assert second and second != first
+    for name in "bcd":                           # pushes "a" out to disk
+        cache.put(_key(name), _result(10))
+    spilled = cache.get(_key("a"))
+    assert spilled is not None and spilled._tag == second
+
+
+def test_an_unchanged_reply_names_the_tag_and_sends_no_values():
+    from ffast.protocol.rpc import pack_metric_result, pack_metric_unchanged, unpack
+    cache = MetricCache(max_bytes=1000)
+    cache.put(_key("a"), _result(10))
+    result = cache.get(_key("a"))
+    _, args, kw = unpack(pack_metric_result("m1", "t.m", True, result))
+    assert kw["tag"] == result._tag and "values" in kw
+    _, args, kw = unpack(pack_metric_unchanged("m2", "t.m", result._tag))
+    assert args == ["m2", "t.m"] or args == ("m2", "t.m")
+    assert kw == {"ok": True, "metric_id": "t.m", "tag": result._tag, "unchanged": True}

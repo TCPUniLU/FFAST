@@ -231,9 +231,21 @@ def pack_metric_result(request_id: str, metric_id: str, ok: bool, result=None,
             implementation_hash=result.implementation_hash,
             values=_encode_array(np.asarray(result.values)),
             warnings=list(getattr(result, "warnings", None) or []) or None,
+            tag=getattr(result, "_tag", None),
         )
     else:
         msg = MetricResultMessage(ok=bool(ok), error=error or None, kind=kind or None)
+    return pack(
+        control.METRIC_RESULT, (request_id, metric_id), msg.model_dump(exclude_none=True)
+    )
+
+
+def pack_metric_unchanged(request_id: str, metric_id: str, tag: str) -> bytes:
+    """Serialize a METRIC_RESULT that sends no values: the page already
+    holds the stored result named ``tag`` (it asked with ``have``)."""
+    from ffast.protocol.messages import MetricResultMessage
+
+    msg = MetricResultMessage(ok=True, metric_id=metric_id, tag=tag, unchanged=True)
     return pack(
         control.METRIC_RESULT, (request_id, metric_id), msg.model_dump(exclude_none=True)
     )

@@ -8708,6 +8708,48 @@ async def test_web_a_tab_control_redraws_its_plots_in_place(ffast_web_server):
             await browser.close()
 
 
+async def test_web_a_tab_shown_again_is_told_unchanged_instead_of_sent_its_data(shared_prediction_server):
+    """The page keeps the results it was sent and names the one it holds;
+    the server answers "unchanged" with no values while it still stores it.
+    Showing a tab again cost 45 MB on 1.77M structures (2026-11-13)."""
+    ws_port, web_port = shared_prediction_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    frames = {"in": [], "out": []}
+
+    def watch(ws):
+        ws.on("framereceived", lambda payload: frames["in"].append(payload))
+        ws.on("framesent", lambda payload: frames["out"].append(payload))
+
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1400, "height": 900})
+        page.on("websocket", watch)
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy Scatter", timeout=25000)
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
+            await page.wait_for_timeout(500)
+            assert any(isinstance(f, bytes) and b"__ndarray__" in f for f in frames["in"])
+
+            await _open_analysis_tab(page, "3D")
+            frames["in"].clear()
+            frames["out"].clear()
+            await _open_analysis_tab(page, "Basic Errors")
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy Scatter", timeout=25000)
+            await page.wait_for_timeout(1000)
+            asked = [f for f in frames["out"] if isinstance(f, bytes) and b"REQUEST_METRIC" in f]
+            replies = [f for f in frames["in"] if isinstance(f, bytes) and b"METRIC_RESULT" in f]
+            assert asked and all(b"have" in f for f in asked)
+            assert replies and all(b"unchanged" in f and b"__ndarray__" not in f for f in replies)
+            await page.wait_for_function(_PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=5000)
+        finally:
+            await browser.close()
+
+
 async def test_web_while_a_tab_is_edited_the_rest_of_the_window_is_for_looking_only(tmp_path):
     """Edit mode: all that is not the layout is greyed out until Save or Cancel:
     the menus, the dataset rail, the 3D tools and Settings sidebar, Screen /
