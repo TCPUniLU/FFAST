@@ -24,7 +24,7 @@
  */
 
 import { helpToggle, PICKER_HELP } from './help.js';
-import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, panelNotes, neededPredictions, clearPlot, tickAt, nextSort } from './panels.js';
+import { renderPanel, PLOT_KINDS, PLOT_CONFIG, elementSymbol, contrastInk, unitRoleAt, refreshPeaks, panelWarnings, panelPopups, panelFailures, panelNotes, neededPredictions, clearPlot, tickAt, nextSort, rethin, fullIndex, fullTraces } from './panels.js';
 import { showOnce } from './toasts.js';
 import { attachTip } from './hover_tip.js';
 import { spinner } from './spinner.js';
@@ -1221,6 +1221,7 @@ export class AnalysisManager {
     if (zoom.x) update['xaxis.range'] = zoom.x;
     if (zoom.y) update['yaxis.range'] = zoom.y;
     await globalThis.Plotly.relayout(card.body, update);
+    await rethin(card.body);
   }
 
   /**
@@ -1826,7 +1827,7 @@ export class AnalysisManager {
       { id: 'panel-svg', label: 'Download SVG…', unavailable: notDrawn,
         run: () => this._downloadPicture(el, card, stem, 'svg') },
       { id: 'panel-csv', label: 'Download data (CSV)', unavailable: notDrawn,
-        run: () => downloadText(plotCsv(el.data, el._figureInfo || {}), `${stem}.csv`) },
+        run: () => downloadText(plotCsv(fullTraces(el), el._figureInfo || {}), `${stem}.csv`) },
     ];
     // "Hide legend" / "Show legend": saved in the tab as `legend = false`; the
     // default is the automatic rule (a legend once there is more than one thing to name).
@@ -2563,6 +2564,7 @@ export class AnalysisManager {
         const r3 = (v) => Math.round(Number(v) * 1000) / 1000;
         this._onPanelLabels?.(t.spec.name, spec, { legend_x: r3(ev['legend.x']), legend_y: r3(ev['legend.y']) });
       }
+      rethin(el, ev);   // the points the new view shows
       this._noteZoom(t, spec, card);
     });
     // A live run's scores are not a metric of a dataset: no subset from them.
@@ -2605,8 +2607,10 @@ export class AnalysisManager {
       const src = (card.series || [])[(info.curveSeries || [])[pt.curveNumber] ?? 0];
       // A point that is not a frame carries its frame in its data (a parity dot).
       // A live run's points are its scored frames, in order (ADR 0087).
+      // A thinned trace draws some of its points (thin.js): back to the full data.
+      const point = fullIndex(el, pt.curveNumber, pt.pointIndex);
       const index = info.frameField != null ? pt.customdata?.[info.frameField]
-        : src?.frames ? src.frames[pt.pointIndex] : pt.pointIndex;
+        : src?.frames ? src.frames[point] : point;
       if (index == null || !src) return;
       openFrame({ datasetFp: src.datasetFp, modelFp: src.modelFp, frame: index }, ev.event);
     });

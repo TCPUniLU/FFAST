@@ -40,6 +40,7 @@ import { pickPeaks, visitedKey } from './peaks.js';
 import { plotTheme, hexAlpha } from './theme.js';
 import { elementColourOn } from './element_colours.js';
 import { gradientCss, mapColorBy } from './colormap.js';
+import { thinLine, thinPoints, pick } from './thin.js';
 
 /** @typedef {import('./protocol.js').PanelLayout} PanelLayout */
 /** @typedef {import('./metrics.js').MetricResult} MetricResult */
@@ -501,7 +502,7 @@ function buildTableTimeline(spec, series, ctx) {
       traces.push({
         x: Array.from({ length: frames }, (_, f) => f),
         y: Array.from({ length: frames }, (_, f) => values[f * columns + col]),
-        type: 'scatter', mode: 'lines',
+        type: 'scatter', mode: 'lines', thin: 'line',
         line: { color: elementColourOn(z, plotTheme().surface), width: 1.5, dash: DASHES[i % DASHES.length] },
         name: `${elementSymbol(z)}${multiSeries && s.name ? ` — ${s.name}` : ''}`,
       });
@@ -660,7 +661,7 @@ export function buildTimeline(spec, series, ctx) {
     const xs = s.data.x ? values1d(s.data.x) : null;
     traces.push({
       ...(curveUid(i) ? { uid: curveUid(i) } : {}),
-      x: xs && xs.length === y.length ? xs : y.map((_, k) => k), y, type: 'scatter', mode: 'lines',
+      x: xs && xs.length === y.length ? xs : y.map((_, k) => k), y, type: 'scatter', mode: 'lines', thin: 'line',
       line: { color: paint(ctx, s, i), width: 1.5, dash: dashOf(ctx, s) },
       name: s.name || '',
     });
@@ -742,7 +743,7 @@ export function buildScatter(spec, series, ctx) {
     lo = Math.min(lo, arrMin(x), arrMin(y));
     hi = Math.max(hi, arrMax(x), arrMax(y));
     traces.push({
-      x, y, type: 'scattergl', mode: 'markers',
+      x, y, type: 'scattergl', mode: 'markers', thin: 'points',
       marker: { color: paint(ctx, s, i), size: 4, opacity: 0.6, symbol: shapeOf(ctx, s) },
       name: s.name || '',
     });
@@ -923,7 +924,7 @@ export function buildOverlayTimeline(spec, series, ctx) {
       // substitution the single-series build did, now with a name per pair.
       const label = (labels[k] || '').replace('__NAME__', s.name || '');
       traces.push({
-        x: y.map((_, j) => j), y, type: 'scatter', mode: 'lines',
+        x: y.map((_, j) => j), y, type: 'scatter', mode: 'lines', thin: 'line',
         line: { color: seriesColor(color++), width: 1.5 },
         name: label,
       });
@@ -1307,12 +1308,89 @@ export function renderPanel(el, spec, series, ctx) {
   };
   el.querySelectorAll('.main-svg').forEach((svg) => { svg.style.transform = ''; });   // see followSize
   const start = performance.now();
+  thinTraces(el, built.traces, built.layout);
   Plotly().react(el, built.traces, built.layout, PLOT_CONFIG);
   el._drawMs = performance.now() - start;
   el._subInfo = built.subInfo;
   el._shapeOwners = built.shapeOwners || null;
   syncShapes(el);
   followSize(el);
+}
+
+// ── thinning (thin.js) ──────────────────────────────────────────────────────
+
+/** An axis's shown range in data values, or null while it autoranges. A log
+ * axis keeps its range as log10. */
+function shownRange(ax) {
+  if (!ax || !Array.isArray(ax.range) || ax.range.length !== 2) return null;
+  const r = ax.range.map(Number);
+  if (!r.every(Number.isFinite)) return null;
+  return ax.type === 'log' ? r.map((v) => 10 ** v) : r;
+}
+
+/** Thin each trace a builder marked (`thin: 'line' | 'points'`) to what the
+ * plot can show, in place. The full values stay on `el._thin`. */
+function thinTraces(el, traces, layout) {
+  const full = [];
+  traces.forEach((tr, i) => {
+    if (!tr.thin) return;
+    full.push({ i, kind: tr.thin, x: tr.x, y: tr.y });
+    delete tr.thin;
+  });
+  el._thin = full.length ? { traces: full, idx: [] } : null;
+  if (!full.length) return;
+  const m = layout.margin || {};
+  const size = {
+    w: Math.max(100, (el.clientWidth || 800) - (m.l || 0) - (m.r || 0)),
+    h: Math.max(100, (el.clientHeight || 300) - (m.t || 0) - (m.b || 0)),
+  };
+  const range = { x: shownRange(layout.xaxis), y: shownRange(layout.yaxis) };
+  for (const [k, xs, ys] of thinned(el._thin, range, size)) {
+    traces[k].x = xs;
+    traces[k].y = ys;
+  }
+}
+
+/** [trace index, x, y] of each thinned trace for `range` and `size`. */
+function thinned(thin, range, size) {
+  return thin.traces.map((t) => {
+    const idx = t.kind === 'line'
+      ? thinLine(t.x, t.y, range.x, size.w)
+      : thinPoints(t.x, t.y, range, size.w, size.h);
+    thin.idx[t.i] = idx;
+    return [t.i, idx ? pick(t.x, idx) : t.x, idx ? pick(t.y, idx) : t.y];
+  });
+}
+
+/**
+ * Thin a drawn plot again for the view it shows now (after a zoom or pan).
+ * `ev`: the plotly_relayout event; one that moved no axis is ignored.
+ */
+export function rethin(el, ev = null) {
+  const thin = el._thin, fl = el._fullLayout;
+  if (!thin || !fl?._size) return Promise.resolve();
+  if (ev && !Object.keys(ev).some((k) => k.startsWith('xaxis') || k.startsWith('yaxis'))) {
+    return Promise.resolve();
+  }
+  const range = { x: shownRange(fl.xaxis), y: shownRange(fl.yaxis) };
+  const rows = thinned(thin, range, { w: fl._size.w, h: fl._size.h });
+  return Plotly().restyle(el, { x: rows.map((r) => r[1]), y: rows.map((r) => r[2]) }, rows.map((r) => r[0]))
+    .catch(() => {});   // hidden or replaced meanwhile
+}
+
+/** The index in the full data of point `pointIndex` drawn in trace `curve`. */
+export function fullIndex(el, curve, pointIndex) {
+  const idx = el._thin?.idx[curve];
+  return idx ? idx[pointIndex] : pointIndex;
+}
+
+/** The plot's traces with every point, thinned or not (a CSV of the data). */
+export function fullTraces(el) {
+  const data = (el.data || []).slice();
+  for (const t of el._thin?.traces || []) {
+    if (data[t.i]) data[t.i] = { ...data[t.i], x: t.x, y: t.y };
+  }
+  return data;
 }
 
 /** Marks and bands follow their owners in the legend (addOverlays): after a
