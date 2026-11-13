@@ -8618,6 +8618,17 @@ async def test_web_alt_shift_shortcuts_open_the_file_actions(shared_dataset_serv
             await expect(title).to_have_text("Load Model")
             await page.keyboard.press("Escape")
 
+            # Connect to Server… (gap 9 of the Qt-removal audit: the desktop's Ctrl+Shift+L)
+            await page.keyboard.press("Alt+Shift+KeyO")
+            await expect(page.locator("#conn-dialog")).to_be_visible()
+            await page.keyboard.press("Escape")
+            await expect(page.locator("#conn-dialog")).to_be_hidden()
+            await page.locator("#file-menu-btn").click()
+            connect = page.locator("#file-menu-list [data-action='connect']")
+            await expect(connect).to_have_attribute("aria-keyshortcuts", "Alt+Shift+O")
+            await page.keyboard.press("Escape")
+            await page.evaluate("() => document.activeElement.blur()")
+
             await page.locator("#sidebar-search").focus()
             await page.keyboard.press("Alt+Shift+KeyD")
             await expect(modal).to_be_hidden()

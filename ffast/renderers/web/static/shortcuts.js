@@ -12,6 +12,8 @@ export const FILE_SHORTCUTS = [
   { action: 'load-zero-model', code: 'Digit0' },
   { action: 'open-popout', code: 'KeyN' },
   { action: 'connect-cluster', code: 'KeyC' },
+  // "Open server": Connect to Server… (the desktop's Ctrl+Shift+L, gap 9)
+  { action: 'connect', code: 'KeyO' },
   // `anywhere`: works while typing, so the palette opens from any text box.
   { action: 'command-palette', code: 'KeyK', anywhere: true },
 ];
