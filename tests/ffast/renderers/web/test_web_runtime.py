@@ -349,6 +349,20 @@ async def shared_prediction_server(request, _shared_servers):
         yield ports
 
 
+async def test_the_server_sends_its_messages_uncompressed(shared_server):
+    """Metric results are arrays of numbers, which hardly compress: deflate
+    took 849 ms for 13.5 MB of energies and saved 5% (2026-11-13). The server
+    declines compression, even when the client offers it."""
+    ws_port, _ = shared_server
+    ws = await _connect_headless_client(ws_port)   # offers permessage-deflate
+    try:
+        assert "permessage-deflate" in (ws.request.headers.get("Sec-WebSocket-Extensions") or "")
+        assert ws.response.headers.get("Sec-WebSocket-Extensions") is None
+    finally:
+        await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+        await ws.close()
+
+
 async def _wait_for_server_ready(ws_port: int) -> None:
     """Block until the server accepts a WS connection (and, by extension, is
     also serving the static web app — both start together in server.py).
