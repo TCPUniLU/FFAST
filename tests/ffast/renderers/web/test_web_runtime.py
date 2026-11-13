@@ -3423,6 +3423,40 @@ async def test_web_a_3d_panel_takes_a_prediction_of_its_dataset(tmp_path):
                 await browser.close()
 
 
+async def test_web_force_error_style_turns_on_when_a_focused_3d_panel_takes_a_prediction(tmp_path):
+    """A focused 3D panel with no prediction takes one when it arrives; the
+    Force error quick style follows it and turns on (it once stayed grey,
+    drawn before the panel took the prediction)."""
+    config = tmp_path / "ffast.toml"
+    config.write_text(_COMPARE_TOML)
+    async with _spawn_server("--config", str(config)) as (ws_port, web_port):
+        dataset_fp = await _preload_dataset(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1500, "height": 850})
+            view = _INDEPENDENT
+            force = page.locator("#quick-styles button", has_text="Force error")
+            try:
+                await _open_compare(page, ws_port, web_port, dataset_fp)
+                await _focus_3d(page, 1)
+                await page.wait_for_function(f"() => window.ffastApp._focusedIndependent === {view}")
+                await expect(force).to_be_disabled()
+
+                ws = await _connect_headless_client(ws_port)
+                try:
+                    await ws.send(pack("LOAD_PREDICTION", (str(PREDICTION_PATH), dataset_fp), {
+                        "selected_energy_key": "MACE_energy", "selected_force_key": "MACE_forces"}))
+                    model_fp = (await _wait_for_event(ws, "REMOTE_MODEL_META", timeout=30))["args"][0]
+                finally:
+                    await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+                    await ws.close()
+
+                await page.wait_for_function(f"() => {view}.modelFp === '{model_fp}'", timeout=30000)
+                await expect(force).to_be_enabled()
+            finally:
+                await browser.close()
+
+
 async def test_web_a_deleted_dataset_or_prediction_leaves_an_independent_panel(tmp_path):
     """An independent panel on a deleted dataset moves as the main view does;
     a deleted prediction leaves the rail, and the views that showed it keep

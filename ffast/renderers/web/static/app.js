@@ -1738,6 +1738,9 @@ export class FFastApp {
     this._panelLinkCamera.checked = view.links.camera;
     this._panelNote.textContent = view.note;
     this._panelNote.hidden = !view.note;
+    // Force error waits for the focused panel's prediction, which can change
+    // without the rail being drawn again (a prediction arriving, for one).
+    this._renderQuickStyles();
   }
 
   /** The sidebar now shows and acts on `owner`'s view (null: the main view).
