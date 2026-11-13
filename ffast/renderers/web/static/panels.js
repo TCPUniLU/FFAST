@@ -1,6 +1,5 @@
 /**
- * Panel Kind renderers (ADR 0045 Phase 3) — the browser twin of the desktop's
- * `UI/panels.py` Panel Kinds, drawn with Plotly.js instead of pyqtgraph.
+ * Panel Kind renderers (ADR 0045 Phase 3) — drawn with Plotly.js.
  *
  * Panels are dumb (ADR 0021): each kind renders whatever its resolved metric
  * arrays say. The seven kinds map to Plotly as:
@@ -9,9 +8,8 @@
  * matching the data→plot contract each Qt kind implements.
  *
  * **A panel draws a list of series**, one per (dataset × prediction) pair the
- * tab has selected — the desktop's "one watched-data entry" (`UI/panels.py`
- * `PanelKind.draw`). Comparing two models in Basic Errors is two series in one
- * panel. Each kind decides what the colour channel means; the grouped kinds
+ * tab has selected (`PanelKind.draw`). Comparing two models in Basic Errors is two series in
+ * one panel. Each kind decides what the colour channel means; the grouped kinds
  * hand it to the element picker when more than one element is selected and to
  * the series otherwise, exactly as `GroupedDensityKind.draw` does with its
  * `atom_mode` flag.
@@ -227,7 +225,7 @@ export function applyPanelAxes(spec, built) {
 }
 
 /**
- * The hover read-out of the desktop's plots (UI/Plots.py formatHoverText):
+ * The hover read-out of a plot:
  * the series, then both values named by the axis titles, and dotted lines
  * from the point to the axes. Helper traces (hoverinfo 'skip') keep none.
  */
@@ -271,7 +269,7 @@ function arrMax(a) { let m = -Infinity; for (let i = 0; i < a.length; i++) if (a
 
 /**
  * Resolve an axis label spec (null | "label" | ["label","unitKey"]) to display
- * text. The desktop resolves the `unitKey` (e.g. "energyUnit") through the user
+ * text. The `unitKey` (e.g. "energyUnit") would resolve through the user
  * config; the browser has no such config, so it appends the bound metric's own
  * catalog unit (`unit`) when the label declares a unit slot — pragmatic-parity
  * units without a second config source. A catalog unit that is only a dimension
@@ -1039,7 +1037,7 @@ export function buildBars(spec, series, ctx) {
 
 /**
  * `v` with `digits` significant digits in plain notation, never scientific
- * (`0.000921`, `0.0908`, `12.3`, `1235`). The desktop's `format_significant`
+ * (`0.000921`, `0.0908`, `12.3`, `1235`). The Python `format_significant`
  * matches.
  */
 export function formatSignificant(v, digits = 3) {
@@ -1063,7 +1061,7 @@ export function formatScientific(v, digits = 3) {
  * non-zero value that would round to zero shows three significant digits
  * (`0.00213`, not `0.00`). With `precision` unset the cell shows three
  * significant digits throughout, so an error of 0.0134 is not cut to 0.01.
- * The desktop's `format_table_value` matches (ADR 0055).
+ * The Python `format_table_value` matches (ADR 0055).
  */
 export function formatTableValue(v, precision = null) {
   if (v == null || Number.isNaN(v)) return '—';
@@ -1180,14 +1178,14 @@ export function buildTable(spec, series, ctx) {
 }
 
 /**
- * Per-element MAE/RMSE — the desktop's `GroupedTableKind`, including its two
+ * Per-element MAE/RMSE — a grouped table with two
  * modes: more than one element selected → rows are elements; exactly one →
  * rows are the (dataset, prediction) series and the element moves into the
  * column headers, which is how comparing predictions per element works.
  *
- * Multi-element mode reads the **first** series only, as the desktop does
- * (`table_value` uses `datasets[0], models[0]`) — a 2-D element × series table
- * is not a shape either client has.
+ * Multi-element mode reads the **first** series only
+ * (`datasets[0]`, `models[0]`) — a 2-D element × series table
+ * is not a shape this table has.
  */
 export function buildGroupedTable(spec, series, ctx) {
   const order = ctx.elementOrder || [];

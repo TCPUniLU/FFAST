@@ -1,5 +1,5 @@
 /**
- * Small DOM helpers for the Loupe settings sidebar (ADR 0045 Phase 1).
+ * Small DOM helpers for the 3D view settings sidebar (ADR 0045 Phase 1).
  *
  * A "pane" is a titled section; `oneSectionOpen` makes the sidebar's panes a
  * list where one is open at a time (ADR 0055). A "row" is a label + control

@@ -231,7 +231,7 @@ export class ViewRenderers {
     for (const r of this._renderers) r.setGizmoEnabled(enabled);
   }
 
-  /** Arrow thickness slider value, 100 = the Qt arrow radii. */
+  /** Arrow thickness slider value, 100 = the standard arrow radii. */
   setArrowThickness(percent) {
     this._settings.arrowThickness = percent;
     for (const r of this._renderers) r.setArrowThickness(percent);

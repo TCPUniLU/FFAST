@@ -575,14 +575,14 @@ class ServerSession:
         await self._emit(replies.reply(control.STORED_RESULTS_INFO, (), out, error=out.get("error")))
 
     async def _on_freeze_subset(self, fingerprint, **kwargs) -> None:
-        """Freeze a live subset's frames as a frozen subset, as the desktop's
-        freeze button does. The frozen subset announces itself to every
+        """Freeze a live subset's frames as a frozen subset, like the freeze
+        button. The frozen subset announces itself to every
         window like any new dataset; the live one carries on with its plot."""
         self.env.freezeSubDataset(fingerprint)
 
     async def _on_rename_object(self, fingerprint, name, **kwargs) -> None:
-        """Rename a dataset or prediction, as the desktop's rename does. The
-        name follows the desktop's rule (no ".", "/" or "\\"). setName pushes
+        """Rename a dataset or prediction. The
+        name rule (no ".", "/" or "\\"). setName pushes
         OBJECT_NAME_CHANGED, which server.py turns into a new announcement."""
         obj = self.env.datasets.get(fingerprint) or self.env.models.get(fingerprint)
         if obj is None:
@@ -597,8 +597,8 @@ class ServerSession:
     async def _on_cancel_task(self, task_id, **kwargs) -> None:
         """Cancel a running task (the Tasks list's Cancel). The task manager
         cancels it and sends TASK_DONE, so every window drops its row. Work
-        already running in a thread finishes in the background, as on the
-        desktop."""
+        already running in a thread finishes in the background, as it always
+        has."""
         if self.env.getTask(task_id) is None:
             logger.info("CANCEL_TASK: task %r is not running", task_id)
             return
@@ -688,10 +688,9 @@ class ServerSession:
     async def _declare_subset(self, parent_fingerprint, indices=None, **kwargs):
         """Declare, update or hide a frame-index SubDataset (subbing).
 
-        The desktop's ``BasicPlotWidget`` turns a plot viewport into a set of
-        parent **configuration** indices and calls
-        ``env.declareSubDataset(parent, model, idx, name)`` in-process (ADR 0021
-        subbing). The browser has no in-process Environment, so it ships either
+        A plot viewport becomes a set of parent **configuration** indices that
+        ``env.declareSubDataset(parent, model, idx, name)`` turns into a subset
+        (ADR 0021 subbing). The browser has no Environment, so it ships either
         the ``indices`` or the plot's ``view`` here — while SUB is ticked it
         sends the view on every zoom, and ``ffast.session.subbing`` works out
         the frames it covers. ``active=False`` (SUB unticked) hides the subset.
@@ -1494,8 +1493,8 @@ class ServerSession:
             parent = None  # filesystem root has no parent
 
         from ffast.protocol import DirListing
-        # Echo the *requested* path as a second positional arg so the desktop
-        # client can correlate the reply to its request (the abspath differs
+        # Echo the *requested* path as a second positional arg so a client
+        # can correlate the reply to its request (the abspath differs
         # from the request for None→home or relative inputs). The web client
         # reads only kwargs and ignores the extra positional.
         # The final reply to this window's request (ADR 0097).
@@ -1809,7 +1808,7 @@ class ServerSession:
         self.env.newTask(
             _work,
             visual=True,
-            # Unchanged task names: the desktop Tasks panel shows these strings.
+            # Keep these task names: the Tasks panel shows these strings.
             name="Saving session" if saving else "Loading save",
             threaded=True,
         )

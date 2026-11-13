@@ -560,8 +560,7 @@ def _compile_project_metrics(config_arg: str | None) -> None:
     Dataset Fields (ADR 0023), Expression Metrics (ADR 0042), and Analysis-Tab
     Transform Metrics (ADR 0021) are registered here (idempotent — the client
     plugin may have compiled the valid ones already) so the server owns the
-    compile rather than depending on the Qt client plugin, which is skipped in a
-    headless environment without PySide6.
+    compile rather than depending on a client plugin.
 
     A config-load failure (e.g. an Expression Metric shape mismatch) does **not**
     stop the server: the offending metric is left unregistered and every error is
@@ -706,7 +705,7 @@ async def _main(
     from ffast.core.plugin_discovery import loadModules
 
     env = HeadlessEnvironment()
-    # Where the web file browser starts: the start folder by default, as on the desktop.
+    # Where the web file browser starts: the start folder by default.
     env.workdir = workdir or os.getcwd()
     loadModules(env)
 
@@ -781,7 +780,7 @@ async def _main(
     env.eventSubscribe("TASK_CREATED", _on_task_created_info)
 
     # Send lightweight dataset metadata to the client when any dataset loads.
-    # This lets the client create a RemoteDatasetProxy for Loupe without
+    # This lets the client create a RemoteDatasetProxy for the 3D view without
     # transferring the full arrays.
     def _on_dataset_loaded_meta(fingerprint):
         dataset = env.datasets.get(fingerprint)

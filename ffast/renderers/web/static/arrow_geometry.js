@@ -1,6 +1,6 @@
 /**
- * Force arrow sizes, in the scene's length units (Å) — the same numbers as the
- * former desktop view drew. Pure, so it tests without a canvas.
+ * Force arrow sizes, in the scene's length units (Å) — the same numbers for
+ * every 3D view. Pure, so it tests without a canvas.
  */
 
 export const SHAFT_RADIUS = 0.05;
@@ -11,7 +11,7 @@ export const HEAD_LENGTH = 0.25;
  * The parts of one arrow of total `length`. An arrow shorter than its head
  * gets a proportionally smaller head (and no shaft). `thickness` scales both radii.
  * @param {number} length
- * @param {number} [thickness] 1 = the Qt sizes
+ * @param {number} [thickness] 1 = the standard sizes
  * @returns {{shaftLength: number, headLength: number, shaftRadius: number, headRadius: number}}
  */
 export function arrowParts(length, thickness = 1) {

@@ -1,6 +1,5 @@
 /**
- * Display + Unit Cell pane (ADR 0045 issue 05), also the atom index labels. Mirrors the DISPLAY schema in
- * modules/loupe/loupeViewSettings.py. Hide-atoms/highlight token specs are
+ * Display + Unit Cell pane (ADR 0045 issue 05), also the atom index labels. Hide-atoms/highlight token specs are
  * resolved server-side (ffast.atom_filter / SET_SELECTION); the client just
  * tokenizes text into ints or element-symbol strings. The pane shows one
  * view's `display` settings (`show`) and writes each change into them.

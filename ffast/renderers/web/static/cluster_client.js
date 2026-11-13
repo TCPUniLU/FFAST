@@ -6,8 +6,8 @@
 
 const SETUP = 'Server setup';
 
-/** The profile form, in order: the desktop's fields plus the server-setup
- * ones the desktop form hides (shown folded, each with a line of help). */
+/** The profile form, in order: the connection fields plus the server-setup
+ * ones (shown folded, each with a line of help). */
 export const CLUSTER_FIELDS = [
   { key: 'name', label: 'Profile name', group: 'Profile', type: 'text' },
   { key: 'host', label: 'Host', group: 'SSH', type: 'text', placeholder: 'login.example.com' },
@@ -83,7 +83,7 @@ export function formValues(profile) {
   return out;
 }
 
-/** The last Session Record of `profileName`, or null (the desktop's latest_session_record). */
+/** The last Session Record of `profileName`, or null. */
 export function latestRecord(records, profileName) {
   const mine = (records || []).filter((r) => r.profile_name === profileName);
   return mine.length ? mine[mine.length - 1] : null;

@@ -1,6 +1,5 @@
 /**
- * The running tasks of the server, behind the top bar's Tasks button (web
- * parity with the desktop's Tasks list). The server names a task with
+ * The running tasks of the server, behind the top bar's Tasks button. The server names a task with
  * `TASK_INFO` and cancels one on `CANCEL_TASK`; progress comes as
  * `TASK_PROGRESS`.
  */

@@ -1,8 +1,8 @@
 """Small pure helpers shared by the Headless Core (ADR 0047 Phase 5c).
 
 Colour conversion, filename, and bond-index utilities the loaders and Environment
-need, relocated out of the flat Desktop-Client ``utils.py`` so ``ffast/`` can use
-them without importing the client spine. Pure (re / numpy / logging only).
+need, kept out of the old flat ``utils.py`` so ``ffast/`` can use
+them without importing client code. Pure (re / numpy / logging only).
 """
 import logging
 import re

@@ -11,7 +11,7 @@ frames and returns a one-line, human-actionable description of the *first*
 structural defect (or ``None`` if the frame structure is consistent, in which
 case the caller keeps the original exception — the problem is something else).
 
-Pure and Qt-free, so both the desktop loader and the headless server can wrap
+Pure, so every loader and the headless server can wrap
 their ASE reads with it. It reads text, never trusts it as science: it only
 locates the boundary, it does not repair the data.
 """

@@ -1,10 +1,9 @@
 /**
- * Bonds pane (ADR 0045 issue 06). Mirrors modules/loupe/loupeBonds.py.
- * Width/colour are client-render-only (no wire parameter, matches Qt); mode
+ * Bonds pane (ADR 0045 issue 06). Bond settings of the 3D view.
+ * Width/colour are client-render-only (no wire parameter); mode
  * and fixed-indices drive the server's ffast.bonds stage. The Bonds pick tool
  * (#10) edits the fixed set via toggleBondPair — two picks toggle a canonical
- * pair, seeding from the current dynamic bonds when the set is empty (Qt's
- * BondSelect.selectCallback). The pane shows one view's `bonds` settings
+ * pair, seeding from the current dynamic bonds when the set is empty. The pane shows one view's `bonds` settings
  * (`show`) and writes each change into them.
  */
 
@@ -126,8 +125,7 @@ export function createBondsPane(sidebarEl, callbacks) {
     },
 
     /**
-     * Toggle bond (a, b) in the fixed set from two picked atoms (Qt's
-     * BondSelect): seed from the current dynamic bonds when the set is empty so
+     * Toggle bond (a, b) in the fixed set from two picked atoms: seed from the current dynamic bonds when the set is empty so
      * editing doesn't collapse the topology, canonicalise as a sorted pair,
      * toggle membership, switch to Fixed mode, and re-apply.
      */

@@ -1,11 +1,10 @@
 /**
- * Export pane (ADR 0045 Phase 4, issue 19). Mirrors the Qt VIEW > EXPORT pane:
- * export the current 3D frame as a PNG, either opaque over a chosen background
- * colour or with a real transparent background.
+ * Export pane (ADR 0045 Phase 4, issue 19). Export the current 3D frame as a PNG, either opaque over a
+ * chosen background colour or with a real transparent background.
  *
  * The image is produced entirely in the browser from the WebGL canvas
- * (renderer.capturePng → toDataURL); the near-black→alpha keying the vispy
- * path used is unnecessary here (a real alpha buffer, ADR 0045 issue 19).
+ * (renderer.capturePng → toDataURL); it has a real alpha buffer (ADR 0045 issue 19), so no
+ * near-black→alpha keying is needed.
  * The pane shows one view's `export` settings (`show`) and writes into them.
  */
 

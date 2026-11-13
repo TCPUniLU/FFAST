@@ -4,7 +4,7 @@
 WebSocket RPC, and opens the user's already-installed browser at the app,
 pointed at the WS port. This is the "just run one command, get the whole
 workflow in a browser" entry point — no native GUI to install or launch, which
-is the reliability payoff the Qt/Vispy desktop could not deliver.
+is the reliability payoff of a browser client.
 
 The WS server runs as a subprocess (a clean process boundary matching how a
 user would run `ffast-server` by hand); the launcher process owns the static
@@ -176,7 +176,7 @@ def open_browser(
     """Open ``url`` in the user's browser.
 
     With ``app_mode``, launch a Chromium-family browser with ``--app=URL`` for a
-    chromeless, desktop-feeling window; if none is found, fall back to the
+    chromeless, app-like window; if none is found, fall back to the
     default browser so the launch still succeeds.
     """
     if app_mode:

@@ -1619,7 +1619,7 @@ def test_failed_save_acks_not_ok_with_the_reason():
 
 
 def test_session_tasks_keep_their_desktop_visible_names():
-    """The desktop Tasks panel shows these strings; the ack did not replace the
+    """The Tasks panel shows these strings; the ack did not replace the
     task, so they must not have changed."""
     env = _InlineTaskEnv(_RecordingPersistence())
 

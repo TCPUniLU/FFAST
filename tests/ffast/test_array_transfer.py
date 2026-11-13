@@ -1,5 +1,5 @@
 """
-Integration test for Issue #13 — SubDataset array transfer to local Loupe.
+Integration test for Issue #13 — SubDataset array transfer to a local client.
 
 Spawns ``ffast-server`` locally (no SLURM/SSH), connects directly via
 WebSocket, loads ``examples/data/variable-sized molecular/dataset.xyz``, then requests arrays and

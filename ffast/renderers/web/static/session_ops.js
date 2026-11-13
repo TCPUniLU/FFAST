@@ -110,7 +110,7 @@ export function exportProgress(result) {
   };
 }
 
-/** What Export can write when the server lists none (the desktop's list, UI/SideBar.py saveDataset). */
+/** What Export can write when the server lists none. */
 export const EXPORT_FORMATS = [
   { format: 'extxyz', label: 'Extended XYZ', ext: '.extxyz' },
   { format: 'xyz', label: 'XYZ', ext: '.xyz' },

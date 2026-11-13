@@ -1,5 +1,5 @@
 /**
- * Force Vectors pane (ADR 0045 issue 07). Mirrors modules/loupe/loupeForceVectors.py.
+ * Force Vectors pane (ADR 0045 issue 07).
  * Delivers show/source/length/normalise plus filter-to-selection: the "Filter
  * to selection" toggle gates the server's ffast.force_arrows.filter_enabled,
  * and the Force pick tool fills the atom set (setPickedIndices).

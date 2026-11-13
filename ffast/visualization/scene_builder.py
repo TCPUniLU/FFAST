@@ -282,7 +282,7 @@ def build_scene(
         )
 
     # Bonds. Topology is dynamic (distance-based) unless the view selects an
-    # explicit Fixed bond set via the ffast.bonds parameter (loupeBonds "Fixed"
+    # explicit Fixed bond set via the ffast.bonds parameter ("Fixed"
     # mode). An empty or absent Fixed set falls back to dynamic bonds so the
     # default view is never left without bonds.
     try:
@@ -353,7 +353,7 @@ def build_scene(
 
     # Unit cell (pipeline stage; origin derived from transformed positions).
     # Shown by default when lattice data is available; the client opts out by
-    # adding "no_unit_cell" to enabled_features (TOGGLE_FEATURE from Loupe).
+    # adding "no_unit_cell" to enabled_features (TOGGLE_FEATURE from the 3D view).
     if "no_unit_cell" not in state.enabled_features:
         try:
             if hasattr(ds, "getLattice"):

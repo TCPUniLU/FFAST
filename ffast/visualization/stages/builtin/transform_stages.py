@@ -113,7 +113,7 @@ def atom_align(
     """3-atom frame alignment: translate+rotate so atoms n1/n2/n3 overlap reference.
 
     Returns 5 transforms in canvas.currentTransformations format (translations as
-    1-D vectors, rotations as 3x3 matrices). Ported from loupeAtomAlign.getTransform.
+    1-D vectors, rotations as 3x3 matrices).
     """
     if len(atom_indices) != 3:
         return []

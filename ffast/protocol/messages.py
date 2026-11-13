@@ -388,8 +388,8 @@ class DeclareSubsetRequest(BaseModel):
     and the subset follows it. ``active=False`` hides the subset (SUB
     unticked); declaring it again shows it. ``model_fp`` (optional) is the
     prediction the subbing panel was bound to — part of the SubDataset
-    identity, matching the desktop ``declareSubDataset(parent, model, idx,
-    name)`` call. ``name`` labels the subset (the plot's title).
+    identity, matching ``env.declareSubDataset(parent, model, idx,
+    name)``. ``name`` labels the subset (the plot's title).
     """
 
     model_config = ConfigDict(extra="forbid")

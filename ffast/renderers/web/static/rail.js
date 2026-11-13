@@ -152,7 +152,7 @@ function makeRowKeyboardOperable(row, selected, disabled = false) {
   });
 }
 
-/** Why `name` cannot name a dataset or prediction, or '' (the desktop's rule). */
+/** Why `name` cannot name a dataset or prediction, or ''. */
 export function nameProblem(name) {
   const n = String(name ?? '').trim();
   if (!n) return 'Type a name';

@@ -2,8 +2,8 @@
 # used to draw this tab by hand, fixed in first place; it is an ordinary tab
 # now, so it can be edited, moved or renamed like any other. A 3D panel is
 # linked unless it says otherwise: it shows the main view, the one 3D view the
-# object rail drives. Browser only: the desktop skips tabs made only of 3D
-# panels, because it has its own 3D window.
+# object rail drives. The 3D view is a window of its own, so a tab made only of 3D
+# panels is just a way to arrange 3D views.
 [[tabs]]
 name = "3D"
 

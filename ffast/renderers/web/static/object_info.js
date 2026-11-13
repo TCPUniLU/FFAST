@@ -1,15 +1,14 @@
 /**
  * What a dataset or prediction is, as the rail menu's Info dialog shows it
  * (web parity plan 2026-10-29). Pure: it reads only the metadata a window
- * already has (REMOTE_DATASET_META, REMOTE_MODEL_META), as the desktop's
- * `client/object_info.py` describe() does from the object itself.
+ * already has (REMOTE_DATASET_META, REMOTE_MODEL_META), as the object itself would describe it.
  */
 
 import { elementSymbol } from './panels.js';
 import { datasetUnits } from './units.js';
 import { framesText, sampleText } from './rail.js';
 
-/** The desktop's formula rule (ffast/loaders/dataset.py zToChemicalFormula):
+/** The formula rule (as ffast/loaders/dataset.py zToChemicalFormula):
  * C then H with their counts always written, then the other symbols in
  * alphabetical order, a count only from 2 up. */
 export function chemicalFormula(zs) {

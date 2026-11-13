@@ -18,8 +18,7 @@ import { TABLE_SHAPE } from './metric_logic.js';
 
 /**
  * The roles each panel kind binds and the metric shapes each role takes, as
- * the desktop's panel kinds declare them (UI/panels.py; a test keeps the two
- * in step). `list` roles take several metrics.
+ * the server's panel kinds declare them. `list` roles take several metrics.
  */
 export const KIND_ROLES = Object.freeze({
   timeline: { label: 'Timeline', roles: { y: ['N_frames', '(N_frames, N_elements)'] } },

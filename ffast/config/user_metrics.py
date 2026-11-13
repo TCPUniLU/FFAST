@@ -13,7 +13,7 @@ refresh the worker pool, drop cached results, tell every window — needs the
 Environment and is done by the caller from the ids a change returns
 (``Change.affected``).
 
-Server only: the desktop client and ``ffast-cli`` never load these (rule 14).
+Server only: ``ffast-cli`` never loads these (rule 14).
 """
 from __future__ import annotations
 

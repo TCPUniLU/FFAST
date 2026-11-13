@@ -3,8 +3,8 @@
 ``md5FromArraysAndStrings`` hashes a mix of numpy arrays and strings into a
 stable hex digest — the identity of prediction data (ghost-model fingerprints
 keyed on E/F arrays) and other cached artefacts. Pure ``hashlib`` + ``numpy``,
-Qt-free; relocated out of the flat ``utils.py`` so the server-closure loaders
-and Loading Coordinator can reach it without importing the Desktop-Client spine.
+GUI-free; kept out of the old flat ``utils.py`` so the server-closure loaders
+and Loading Coordinator can reach it without importing the client spine.
 
 The recipe: hash each input on its own, then hash those hashes in order
 (``md5FromParts``). Data too big to hold at once can be fed into a part piece

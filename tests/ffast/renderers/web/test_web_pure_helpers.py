@@ -33,7 +33,7 @@ import pytest
 
 pytestmark = pytest.mark.integration
 
-# Shared with the desktop's table test, so both clients format alike.
+# Shared cases for the number format of table cells.
 TABLE_VALUE_CASES = json.loads(
     (Path(__file__).resolve().parents[2] / "table_value_cases.json").read_text()
 )
@@ -971,7 +971,7 @@ CASES = {
         "te.metricsFor('density', 'value', [{id:'a', shape:'(curve_xy, grid)'},"
         " {id:'b', shape:'N_frames'}]).map(m => m.id)"),
 
-    # ── ex.canExtractFrom: the desktop's DatasetLoader.canExtractAtoms ──────
+    # ── ex.canExtractFrom ──────────────────────────────────────────────
     "ex_can_extract": (
         "[ex.canExtractFrom({is_sub: false}), ex.canExtractFrom({is_sub: true, frozen: true}),"
         " ex.canExtractFrom({is_sub: true, frozen: false}), ex.canExtractFrom(undefined)]"),
@@ -2371,7 +2371,7 @@ def test_pair_series_names_predictions_alone_against_one_dataset(results):
 
 
 def test_pair_series_adds_the_dataset_once_several_are_in_play(results):
-    """Dataset-major order, and the name disambiguates — the desktop's rule."""
+    """Dataset-major order, and the name disambiguates."""
     assert results["pair_two_datasets_two_models"] == [
         "aspirin & MACE", "aspirin & SchNet",
         "ethanol & MACE", "ethanol & SchNet",
@@ -2626,7 +2626,7 @@ def test_plots_say_which_role_each_axis_shows(results):
 
 
 def test_table_value_never_prints_a_non_zero_value_as_zero(results):
-    """ADR 0055 rule 4, shared with the desktop (tests/ffast/test_table_value_format.py)."""
+    """ADR 0055 rule 4."""
     assert results["table_value_format"] == [want for _, _, want in TABLE_VALUE_CASES]
 
 
@@ -2636,7 +2636,7 @@ def test_table_prints_a_tiny_force_error_with_significant_digits(results):
 
 def test_grouped_table_rows_are_series_when_one_element_is_selected(results):
     """Single-element mode is how you compare predictions per element, so the
-    element moves into the column header (desktop `table_top_header`).
+    element moves into the column header.
     """
     r = results["panel_grouped_table_single_element_rows_are_series"]
     assert r["head"] == ["Object", "C MAE", "C RMSE"]
@@ -2648,8 +2648,8 @@ def test_grouped_table_rows_are_series_when_one_element_is_selected(results):
 
 
 def test_grouped_table_rows_are_elements_when_several_are_selected(results):
-    """Desktop parity: multi-element mode reads the first series only —
-    element x series is not a shape either client has.
+    """Multi-element mode reads the first series only —
+    element x series is not a shape this table has.
     """
     assert results["panel_grouped_table_multi_element_rows_are_elements"] == [
         ["H", "0.10", "0.50"],

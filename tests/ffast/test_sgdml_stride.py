@@ -1,4 +1,4 @@
-"""An sGDML .npz loads every Nth frame when the desktop's large-file dialog
+"""An sGDML .npz loads every Nth frame when the large-file dialog
 asks for a stride, as ASE files already do. Only the per-frame arrays are
 strided: the elements and the cell describe every frame and stay whole."""
 import os

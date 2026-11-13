@@ -192,7 +192,7 @@ def build_server_wheel(project_root: Path, out_dir: Path, name: str = "ffast") -
 
     Tries the available build frontend in order — ``uv`` (the project's own tool,
     and the common case since its venvs ship no pip), then PyPA ``build``, then
-    ``pip wheel`` — so it works whether the desktop env is uv- or pip-managed.
+    ``pip wheel`` — so it works whether the local env is uv- or pip-managed.
     Integration-level, not unit-tested.
     """
     out_dir = Path(out_dir)

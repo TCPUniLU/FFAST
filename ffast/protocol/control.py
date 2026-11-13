@@ -18,11 +18,11 @@ LOAD_MODEL = "LOAD_MODEL"
 DELETE_OBJECT = "DELETE_OBJECT"
 CREATE_SUBSET = "CREATE_SUBSET"
 DECLARE_SUBSET = "DECLARE_SUBSET"
-# Freeze a live subset's frames as a frozen subset (the desktop's freeze).
+# Freeze a live subset's frames as a frozen subset.
 FREEZE_SUBSET = "FREEZE_SUBSET"
 # Rename a dataset or prediction; it is announced again to every window.
 RENAME_OBJECT = "RENAME_OBJECT"
-# Cancel a running task, as the desktop Tasks list's Cancel does.
+# Cancel a running task, as the Tasks list's Cancel does.
 CANCEL_TASK = "CANCEL_TASK"
 # Name the unit of a dataset's energies or forces, which no file declares. The
 # dataset is announced again (REMOTE_DATASET_META) to every window.
@@ -382,5 +382,5 @@ NO_FINAL_REPLY = {
     LIVE_STOP: "LIVE_RUN_UPDATE follows the run; an error is a reply",
     LIVE_SET_STOP_ON_ALARM: "LIVE_RUN_UPDATE follows the run; an error is a reply",
     WATCH_JOB: "a subscription: JOB_STATE follows the job",
-    REQUEST_SUBDATASET_ARRAYS: "desktop client only, to be removed (ADR 0098)",
+    REQUEST_SUBDATASET_ARRAYS: "served only the removed desktop client (ADR 0098); to be removed",
 }

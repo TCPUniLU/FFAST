@@ -1,7 +1,6 @@
 /**
  * Colour-by pane (ADR 0045 issue 03): source selector, prediction chooser,
- * colormap, per-metric compute params, and the colour bar. Mirrors
- * modules/loupe/loupeAtoms.py.
+ * colormap, per-metric compute params, and the colour bar.
  *
  * The Prediction selector sets the `ffast.atom_color` stage's own
  * `prediction_ref` parameter — a per-stage override on top of the view's
@@ -406,7 +405,7 @@ export function createColorByPane(sidebarEl, callbacks) {
 
   function _syncVisibility() {
     const isElements = currentLabel === 'Elements';
-    // Qt hides Colormap until Coloring leaves "Elements" (ADR 0040).
+    // Colormap stays hidden until Coloring leaves "Elements" (ADR 0040).
     setRowNeeds(rowElement(colormapSelect), isElements ? 'Choose a colouring other than Elements first' : '');
     // Prediction: whose numbers. Ground Truth only for Forces, hidden for
     // reference data alone; an error waits for a prediction (ADR 0055).

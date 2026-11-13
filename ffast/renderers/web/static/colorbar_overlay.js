@@ -1,6 +1,5 @@
 /**
- * The 3D colour bar on the focused 3D panel (to_fix 17; the desktop's
- * UI/loupe/colorbar_overlay.py): four pieces, the gradient bar, the name and
+ * The 3D colour bar on the focused 3D panel (to_fix 17): four pieces, the gradient bar, the name and
  * the highest and lowest value, each dragged, turned by 90° and selected on
  * its own. Click selects a piece, shift-click adds to the selection; the
  * right-click menu turns a piece (or its group), groups or ungroups the

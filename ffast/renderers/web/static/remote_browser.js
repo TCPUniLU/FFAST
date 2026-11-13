@@ -143,8 +143,7 @@ export function keyOptions(keys, { allowNone = false, calculator = false, calcul
 /**
  * The loader type a file most likely needs: the first type whose
  * extension pattern (`*.npz`) the name ends with, else the catch-all
- * `fallback` when it is offered, else the first type. The desktop's
- * file dialog does this with its filter list.
+ * `fallback` when it is offered, else the first type.
  * @param {string} name @param {{name: string, extension: string}[]} types
  * @param {string} fallback @returns {string}
  */
@@ -186,7 +185,7 @@ export function pairNames(energies, forces) {
 
 /** Whether a probed file offers a key choice: more than one energy
  * option or more than one force option, the calculator counting as one
- * (the desktop's resolve_key_options, UI/menuLogic.py). */
+ * . */
 export function needsKeyChoice(probe) {
   const e = (probe?.energy_keys || []).length + (probe?.has_calculator_energy ? 1 : 0);
   const f = (probe?.force_keys || []).length + (probe?.has_calculator_forces ? 1 : 0);
@@ -194,26 +193,24 @@ export function needsKeyChoice(probe) {
 }
 
 /** The key a picker starts on: the first named key, else the calculator,
- * else '' (as the desktop's key dialog). */
+ * else ''. */
 export function defaultKey(keys, calculator, calculatorValue) {
   if ((keys || []).length) return keys[0];
   return calculator ? calculatorValue : '';
 }
 
-/** From this size on (bytes) a file gets the large-file note, as the
- * desktop's BigDatasetWarningDialog (UI/mainMenu.py, 3 GB). */
+/** From this size on (bytes) a file gets the large-file note, (3 GB). */
 export const LARGE_FILE_BYTES = 3_000_000_000;
 
 /** The loader's stride number for "every Nth frame": 1 (or less, or not
- * a number) means all frames, which the loader spells 0 (the desktop's
- * stride_to_slice_num). */
+ * a number) means all frames, which the loader spells 0. */
 export function strideToSliceNum(stride) {
   const n = Math.floor(Number(stride));
   return Number.isFinite(n) && n > 1 ? n : 0;
 }
 
 /** The large-file note: size, frame count when known, and what every
- * Nth frame keeps (the desktop's RemoteStrideDialog estimate). */
+ * Nth frame keeps. */
 export function largeFileNote({ size, n = null, stride = 1, error = null, done = true }) {
   const head = `This file is ${formatSize(size)}`;
   if (error) return `${head}. The frames could not be counted (${error}).`;
@@ -231,8 +228,7 @@ export function countPending(large) {
 }
 
 /** A prediction's default name from its key: the part before the first
- * `_`, `-` or `.` (MACE_energy → MACE), else 'Model' (the desktop's
- * KeySelectionDialog prefix rule). */
+ * `_`, `-` or `.` (MACE_energy → MACE), else 'Model'. */
 export function keyPrefix(key) {
   const m = /^([^_.\-]+)[_.\-]/.exec(key || '');
   return m ? m[1] : 'Model';
@@ -242,7 +238,7 @@ export function keyPrefix(key) {
  * The LOAD_DATASET kwargs the loader's choices make. Empty when nothing
  * was chosen, so a plain file sends what it always sent. Extra key pairs
  * (`predictions`) go as `prediction_keys` [energy, force, name]; an empty key
- * means "calculator" to the server, as on the desktop.
+ * means "calculator" to the server.
  * @param {{keysShown?: boolean, energyKey?: string, forceKey?: string,
  *   predictions?: {energyKey: string, forceKey: string, name: string}[],
  *   stride?: number|string, sampling?: object|null}} c  `stride` > 1 sends
@@ -364,7 +360,7 @@ export class RemoteBrowser {
     this._home = null;        // server user's home directory
     this._selected = null;    // selected filename within _path
     this._types = { datasets: [{ name: 'ase (auto)', extension: '*' }], models: [] };
-    this._writers = null;     // what the server can write (LOADER_TYPES), else the desktop's list
+    this._writers = null;     // what the server can write (LOADER_TYPES), else a built-in list
     this._largeBytes = LARGE_FILE_BYTES;   // tests lower it
     this._large = null;   // {path, size, n, error, done} of a large selected file
     this._probe = null;   // the last key check's answer, for new prediction lines
@@ -1081,8 +1077,7 @@ export class RemoteBrowser {
     $('fb-ds-force-key').value = defaultKey(kw.force_keys, kw.has_calculator_forces, 'forces');
   }
 
-  /** One more key pair to load as a prediction (as the desktop's
-   * "Add Prediction"). Starts on the first keys the reference is not using. */
+  /** One more key pair to load as a prediction ("Add Prediction"). Starts on the first keys the reference is not using. */
   _addPredictionRow() {
     const kw = this._probe || {};
     const row = document.createElement('div');

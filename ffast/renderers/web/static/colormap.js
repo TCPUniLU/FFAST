@@ -1,6 +1,5 @@
 /**
- * Value-driven atom coloring (ADR 0016), as the former desktop view's
- * `_map_color_by` did it.
+ * Value-driven atom coloring (ADR 0016), as the browser view does it.
  *
  * Server-resolved `vmin`/`vmax` keep both renderers' numeric range in
  * agreement; the colormap curve itself is a capability-parity approximation,
@@ -55,7 +54,7 @@ const COLORMAP_STOPS = {
 };
 
 /** An atom whose value is "no value" (NaN, ADR 0064) is drawn this grey, never
- * a colour of the scale; the desktop's `NO_VALUE_RGB` (presentation.py) is the
+ * a colour of the scale; `NO_VALUE_RGB` in presentation.py is the
  * same. */
 export const NO_VALUE_RGB = [0.55, 0.55, 0.55];
 
@@ -78,8 +77,7 @@ function sampleStops(stops, t) {
  * with no value (NaN) gets `NO_VALUE_RGB`.
  *
  * Returns null on an unrecognized colormap name — the caller falls back to
- * the server's baked element colors, exactly the vispy adapter's contract
- * (`_map_color_by` returns None on failure).
+ * the server's baked element colors, the same contract as `atoms.colors`.
  * @param {import('./protocol.js').AtomColorBy} colorBy
  * @returns {number[][]|null}
  */

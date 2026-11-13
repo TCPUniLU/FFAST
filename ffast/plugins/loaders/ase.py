@@ -1,6 +1,6 @@
 """Discoverable ASE dataset-loader plugin (ADR 0048).
 
-Bundled inside the ``ffast`` package (not the Desktop-Client ``modules/``
+Bundled inside the ``ffast`` package (not an external ``modules/``
 tree), so it registers on a headless ``pip install ffast`` with no ``modules/``
 present. The loader classes themselves live in ``ffast.loaders.ase``, shared
 with server code that constructs them directly (Loading Coordinator, session

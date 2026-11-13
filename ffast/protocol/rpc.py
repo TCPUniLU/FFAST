@@ -56,8 +56,8 @@ CLIENT_ENV_SAFE = frozenset(
         control.REMOTE_DATASET_META,
         control.REMOTE_MODEL_META,
         # Server-owned render path (ADR 0014): renderer-neutral scene data.
-        # Forwarded verbatim to the Loupe scene adapter via eventPush; the
-        # local env holds no matching objects, so the Loupe handlers consume
+        # Forwarded verbatim to the scene adapter via eventPush; the
+        # local env holds no matching objects, so the 3D view's handlers consume
         # them directly rather than mutating env state.
         control.SCENE_SNAPSHOT,
         control.SCENE_PATCH,

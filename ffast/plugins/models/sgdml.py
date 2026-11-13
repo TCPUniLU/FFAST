@@ -127,7 +127,7 @@ class sGDMLDatasetLoader(FlatDatasetLoader):
         # The file's frames before any stride, which a prediction's length is
         # checked against (ADR 0095).
         self.sourceFrameCount = int(np.shape(data["r"])[0])
-        # A stride (the desktop's large-file dialog) keeps every slice_num-th
+        # A stride (set in the large-file dialog) keeps every slice_num-th
         # frame. Only the per-frame arrays are strided: z and the lattice
         # describe every frame, and striding them truncates them.
         if slice_num and slice_num > 0:

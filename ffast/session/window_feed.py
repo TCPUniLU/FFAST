@@ -160,8 +160,8 @@ class WindowFeed:
         from ffast.session import examples
 
         # A reader's type (ADR 0095) takes the row of the dataset type of the
-        # same name (ASE and sGDML are readers now, their old classes serve the
-        # desktop); the other readers follow.
+        # same name (ASE and sGDML are readers now, their old classes still serve
+        # the loader list); the other readers follow.
         datasets = rows(getattr(self.env, "datasetTypes", None), "datasetFileExtension")
         by_name = {row["name"]: row for row in readers.type_rows()}
         datasets = [by_name.pop(row["name"], row) for row in datasets]

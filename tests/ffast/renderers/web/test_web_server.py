@@ -90,7 +90,7 @@ class TestConnectionAPIContract:
 
 
 class TestRendererAPIContract:
-    """Verify renderer.js implements the same scene-adapter API as VispySceneAdapter.
+    """Verify renderer.js implements the scene-adapter API the viewer needs.
 
     These are static contract tests — they parse the JS source for required identifiers
     rather than running it (no browser required).
@@ -209,8 +209,8 @@ class TestRendererAPIContract:
         sel_preamble = viewer_js_source[sel_def_start:sel_def_start + 300]
         assert "_cachedAtomPositions" in sel_preamble
 
-    # ── color_by (ADR 0016/0043): value-driven coloring, browser twin of the
-    # vispy adapter's _map_color_by ──────────────────────────────────────────
+    # ── color_by (ADR 0016/0043): value-driven coloring, browser's
+    # map_color_by ──────────────────────────────────────────
 
     def test_update_atoms_reads_color_by(self, viewer_js_source):
         update_atoms_start = viewer_js_source.index("_updateAtoms(atoms,")
@@ -219,7 +219,7 @@ class TestRendererAPIContract:
         assert "atoms.color_by" in body
 
     def test_update_atoms_falls_back_on_unmapped_color_by(self, viewer_js_source):
-        # Mirrors the vispy adapter: mapColorBy returning falsy → element colors.
+        # mapColorBy returning falsy → element colors.
         update_atoms_start = viewer_js_source.index("_updateAtoms(atoms,")
         update_atoms_end = viewer_js_source.index("_updateBonds(bonds)")
         body = viewer_js_source[update_atoms_start:update_atoms_end]

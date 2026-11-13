@@ -7,7 +7,7 @@ the divergence ADR 0016 avoids by resolving ``vmin``/``vmax`` server-side).
 
 The leak the architecture review found was not that these values exist; it was
 that they were bare literals at their use sites and **re-typed on the far side of
-the seam**: the Vispy adapter hardcoded the same force-arrow RGBA that
+the seam**: the old desktop adapter hardcoded the same force-arrow RGBA that
 ``build_scene`` had already put in ``ForceScene.colors`` and then discarded the
 scene's copy. One home makes the scene's value the only value, so a renderer
 that disagrees is a visible disagreement rather than a silent one.
@@ -32,8 +32,8 @@ NO_VALUE_RGB: tuple[float, float, float] = (0.55, 0.55, 0.55)
 #: Atom size for the same fallback path, in the units of ``AtomScene.sizes``.
 NEUTRAL_ATOM_SIZE: float = 0.5
 
-#: Index-label RGBA. Black for parity with the legacy loupeIndices text on the
-#: light Loupe background (ADR 0014 labels parity follow-up).
+#: Index-label RGBA. Black, for the light 3D background (ADR 0014 labels
+#: parity follow-up).
 LABEL_COLOR: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 1.0)
 
 #: Highlight RGBA for a named scientific selection's overlay (ADR 0014) —
@@ -55,7 +55,7 @@ FORCE_ARROW_COLOR: tuple[float, float, float, float] = (0.9, 0.4, 0.1, 0.8)
 # Setting → Parameter map (candidate #04) gives them one, the declared default
 # lives here instead of in a ``.get(key, literal)`` call.
 
-#: Arrow length multiplier, matching the Loupe's historical slider default.
+#: Arrow length multiplier, matching the force-length slider's usual default.
 FORCE_LENGTH_FACTOR: float = 10.0
 
 #: Whether arrow lengths are scaled relative to the frame's largest force.

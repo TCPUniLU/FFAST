@@ -2,7 +2,7 @@
  * Geometry read-outs for the Info pick tool (ADR 0045 issue 11).
  *
  * The browser's copy of ffast/chemistry/geometry.py — the one Python version,
- * used by the server metrics and the Qt Info tool. The browser keeps its own
+ * used by the server metrics. The browser keeps its own
  * copy so the read-out is instant (it already holds the positions);
  * tests/ffast/geometry_cases.json pins both copies to the same answers
  * (tests/ffast/renderers/web/test_measure_parity.py), so change them together.
@@ -61,7 +61,7 @@ const degrees = (v) => (Number.isNaN(v) ? 'undefined (atoms in a line)' : `${v.t
 /**
  * Format the Info read-out for a set of picked world-space positions
  * (1→position, 2→distance, 3→angle, 4→dihedral), naming the atoms and their
- * elements as the desktop does (modules/loupe/loupeInfoSelect.py).
+ * elements.
  * @param {number[][]} pts world-space coordinates of the picked atoms, in pick order
  * @param {number[]} ids scientific atom ids, parallel to `pts`
  * @param {(string|null)[]} [symbols] element symbols, parallel to `ids`;

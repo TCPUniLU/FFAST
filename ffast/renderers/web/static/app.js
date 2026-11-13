@@ -80,8 +80,7 @@ const EDIT_LOCKED = '#objectbar, #pick-toolbar, #view-sidebar, #metrics-btn, #me
   + '#view-mode, #density, .analysis-controls, .analysis-panel:not([data-part="status"])';
 
 /**
- * The five pick tools (ADR 0045 Phase 2). Each mirrors a Qt AtomSelectionBase
- * subclass: `multiselect` caps the picked set, `cycle` makes it a rolling
+ * The five pick tools (ADR 0045 Phase 2). Each tool sets how it picks: `multiselect` caps the picked set, `cycle` makes it a rolling
  * window, `rectangle` enables box-select drag.
  * @type {Object<string,{label:string, icon:string, multiselect:number, cycle?:boolean, rectangle?:boolean, section?:string, tip?:string}>}
  */
@@ -298,8 +297,7 @@ export class FFastApp {
       currentStart: (tabName, panel) => this._currentStart(tabName, panel),
     });
 
-    // ADR 0045 Phase 1: scientific view-command plumbing (mirrors Qt's
-    // window._sendViewCommand / _sceneVersion, UI/loupe/window.py:320-349).
+    // ADR 0045 Phase 1: scientific view-command plumbing.
     this._metricCatalog = [];
     // Analysis plots (ADR 0045 Phase 3): the metric channel + tab manager,
     // created on connect (they need the live connection).
@@ -352,8 +350,8 @@ export class FFastApp {
 
   // ── tabs (ADR 0056) ─────────────────────────────────────────────────────
   // Every tab, the built-in "3D" tab included, comes from the server's
-  // TAB_LAYOUT (built by AnalysisManager, ADR 0045 Phase 3), so browser and
-  // desktop read the same server-parsed layout. Until a server has sent one,
+  // TAB_LAYOUT (built by AnalysisManager, ADR 0045 Phase 3), so every
+  // client reads the same server-parsed layout. Until a server has sent one,
   // the default 3D tab stands in. A tab may mix 2D and 3D panels; the one set
   // of 3D controls (pick bar, playback strip, settings sidebar) moves into
   // whichever tab is shown, when that tab has a 3D panel.
@@ -2202,7 +2200,7 @@ export class FFastApp {
       this._showInMainView(fp);
       return;
     }
-    // The first dataset auto-selects so the Loupe has something to show. A
+    // The first dataset auto-selects so the 3D view has something to show. A
     // live pop-out (ADR 0044 Phase 4) overrides that with the dataset its
     // opener had open, whenever that one's metadata arrives during replay.
     const isAutoTarget = this._autoDatasetFp === fp;
@@ -2301,7 +2299,7 @@ export class FFastApp {
   }
 
   /** A rail row's ⋯ menu. A live SUB subset belongs to its plot: it can be
-   * frozen but not deleted (unticking SUB hides it), as on the desktop. */
+   * frozen but not deleted (unticking SUB hides it). */
   _railRowActions(kind, fp) {
     const meta = kind === 'dataset' ? this._datasets.get(fp) : null;
     const why = () => this._whyNoEdit();
@@ -2835,7 +2833,7 @@ export class FFastApp {
   _focused() { return this._focusedIndependent ?? this._main.current; }
 
   // ── scientific view commands (ADR 0014/0045 Phase 1) ────────────────────
-  // Mirrors Qt's window._sendViewCommand: stamp the expected version, then
+  // Stamp the expected version, then
   // optimistically advance it; COMMAND_RESULT/SCENE_PATCH resync it above.
   // A command goes to the view the sidebar acts on (`view`), each view with
   // its own version.
@@ -2892,8 +2890,7 @@ export class FFastApp {
   }
 
   /** Fit the dataset-bound panes to the focused view's dataset (its
-   * REMOTE_DATASET_META): Extract only where it makes a fixed dataset (Qt's
-   * AtomFilterPaneHiding); Align and its pick tool off where the atoms change
+   * REMOTE_DATASET_META): Extract only where it makes a fixed dataset; Align and its pick tool off where the atoms change
    * between frames. */
   _syncDatasetPanes(meta) {
     this._panes.extract.setDataset(meta);
@@ -2956,7 +2953,7 @@ export class FFastApp {
     this._forcePicksAt = { view: this._focused(), frame };
   }
 
-  /** Toggle an entry in the picked set (Qt AtomSelectionBase.selectAtom). */
+  /** Toggle an entry in the picked set . */
   _togglePick(entry, tool) {
     const i = this._picked.findIndex((e) => e.atomId === entry.atomId);
     if (i >= 0) this._picked.splice(i, 1);
@@ -3000,7 +2997,7 @@ export class FFastApp {
       if (this._picked.length === 3) {
         this._panes.align.applyAtomAlign();
         this._picked = [];
-        this._setActiveTool(null);   // Qt auto-disarms the align tool after 3
+        this._setActiveTool(null);   // The align tool disarms itself after 3
       }
     }
   }
@@ -3479,8 +3476,8 @@ export class FFastApp {
   }
 
   /** Send TOGGLE_FEATURE("forces", ...) plus its SET_PARAMETERs together —
-   * the Force Vectors pane always re-sends all four as one logical action
-   * (mirrors Qt's onApplyForceVectors), so the callback and the per-view
+   * the Force Vectors pane always re-sends all four as one logical action,
+   * so the callback and the per-view
    * show path (`_showSettings`) share this one seam.
    * @param {{show: boolean, onlyForces, modelKey: string|null, length: number, normalised: boolean,
    *   thickness?: number, filterEnabled?: boolean, atomIndices?: number[],
@@ -3759,7 +3756,7 @@ export class FFastApp {
       if (next > this._frameCount - 1) { this._togglePlayback(); break; }
       this._patchPending = true;
       this._setFrame(next);
-      // Response-synced (mirrors Qt's runOnNext): wait for the server's
+      // Response-synced: wait for the server's
       // SCENE_PATCH before advancing again, capped so a slow/dropped reply
       // can't stall playback forever.
       const deadline = performance.now() + 500;
@@ -3772,7 +3769,7 @@ export class FFastApp {
     }
   }
 
-  // ── popped-out loupe ────────────────────────────────────────────────────
+  // ── popped-out 3D view ────────────────────────────────────────────────────
   _openPopout() {
     const datasetFp = this._focusedDatasetFp();
     const modelFp = this._focusedModelFp();

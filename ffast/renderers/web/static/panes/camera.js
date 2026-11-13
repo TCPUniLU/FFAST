@@ -1,6 +1,6 @@
 /**
  * Camera pane (ADR 0045 issue 04): presets, projection, manual angle entry,
- * COM tracking, axis gizmo, background colour. Mirrors modules/loupe/loupeCamera.py.
+ * COM tracking, axis gizmo, background colour.
  * The exact azimuth/elevation/roll/distance fields sit behind an "Exact angles"
  * link (ADR 0055): dragging and the presets cover most uses. The pane shows one
  * view's `camera` settings (`show`) and writes each change into them.

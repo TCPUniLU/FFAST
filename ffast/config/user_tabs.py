@@ -14,8 +14,8 @@ it was edited (so the mark can say the original has changed since), the
 app, so they live in a side file, ``state.json``, and never in a tab file: a
 tab file can be copied into a project, or sent to someone, as it is.
 
-Pure Python and Qt-free; the server owns one :class:`TabSources` and the
-browser reads and changes it over the wire. The desktop ignores user tabs.
+Pure Python; the server owns one :class:`TabSources` and the
+browser reads and changes it over the wire.
 """
 from __future__ import annotations
 

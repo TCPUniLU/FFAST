@@ -159,7 +159,7 @@ class MetricCompileResult:
     each carrying a precise config-load message (e.g. an Expression Metric shape
     mismatch). Callers apply the policy: the server refuses to start on any error
     (like a freeze validation failure), ``ffast-cli metrics validate`` prints and
-    exits non-zero, and the desktop client logs and keeps running (ADR 0042 /
+    exits non-zero, and a server started with a bad tab file refuses to start (ADR 0042 /
     ADR 0023: config errors surface at config-load, not at plot time)."""
 
     ids: list[str] = field(default_factory=list)

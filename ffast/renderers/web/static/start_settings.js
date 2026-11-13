@@ -11,7 +11,7 @@ import { forcesSide, parseBoxId } from './metric_logic.js';
 /** Today's look of a new view, which unset keys keep. */
 export const DEFAULT_LOOK = Object.freeze({
   source: 'element',
-  colormap: 'force_error',   // the desktop app's blue → green → yellow → red
+  colormap: 'force_error',   // blue → green → yellow → red
   atomSize: 1,
   bondWidth: 100,
   bondColour: '#404040',

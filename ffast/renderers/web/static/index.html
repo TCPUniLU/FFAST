@@ -56,9 +56,8 @@
       --hl2: var(--accent);
       --muted: var(--ink-3);
       --success: var(--accent);
-      /* The Qt QSS declares `font-family: monoespace` — a typo Qt can't resolve,
-         so the desktop actually renders in the platform default (San Francisco
-         on macOS), a proportional sans. Match that, not monospace. */
+      /* The platform default (San Francisco on macOS), a proportional sans,
+         not monospace. */
       --font: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, "Helvetica Neue", Arial, sans-serif;
     }
 
@@ -122,7 +121,7 @@
       overflow: hidden;
     }
 
-    /* thin scrollbars, matching the Qt QScrollBar 8px track */
+    /* thin scrollbars, 8px track */
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: var(--ground); }
     ::-webkit-scrollbar-thumb { background: var(--surface-3); }
@@ -926,7 +925,7 @@
     #overlay .big { font-size: var(--fs-xxl); font-weight: 300; margin-bottom: 6px; }
     #overlay .small { font-size: var(--fs-s); }
 
-    /* loupe control strip (Playback + View, MVP subset) */
+    /* 3D view control strip (Playback + View, MVP subset) */
     #view-controls {
       display: flex; align-items: center; flex-wrap: wrap; gap: 10px; flex-shrink: 0;
       padding: 6px 10px; background: var(--bg2); border-top: 1px solid var(--bg3);
@@ -1245,7 +1244,7 @@
     .mx-boxes-create { display: flex; gap: 6px; align-items: center; }
     .mx-boxes-create input { flex: 1; min-width: 0; font-size: var(--fs-s); padding: 2px 6px; }
 
-    /* popped-out loupe: chrome hidden, viewport fills the window. The pop-out
+    /* popped-out 3D view: chrome hidden, viewport fills the window. The pop-out
        (mode=view-live) opens its OWN connection and is a real second
        controller (ADR 0044 Phase 4). The socket-less BroadcastChannel
        satellite that also used this class is gone (ADR 0051). */
@@ -1730,8 +1729,7 @@
       <option value="comfortable">Comfortable</option>
       <option value="large">Large</option>
     </select>
-    <!-- Running tasks with progress and Cancel (web parity; the desktop's
-         Tasks list). Shown only while a task runs (tasks.js). -->
+    <!-- Running tasks with progress and Cancel (web parity). Shown only while a task runs (tasks.js). -->
     <div id="task-menu" class="menu" hidden>
       <button id="task-btn" type="button" aria-expanded="false" aria-controls="task-panel"
               title="Running tasks">Tasks</button>
@@ -1818,7 +1816,7 @@
   </div>
 
   <div id="main">
-    <!-- object rail: loaded datasets + predictions, mirroring the Qt SideBar -->
+    <!-- object rail: loaded datasets + predictions -->
     <div id="objectbar">
       <div class="obj-group">
         <div class="obj-head">
@@ -1960,7 +1958,7 @@
       <div id="fb-error" style="display:none"></div>
       <div id="fb-list"></div>
       <!-- Which energy/force keys a dataset uses, when its file offers a
-           choice (as the desktop's key dialog). -->
+           choice. -->
       <div id="fb-keys" hidden>
         <div class="fb-keys-row">
           <span class="fb-keys-head">Reference</span>

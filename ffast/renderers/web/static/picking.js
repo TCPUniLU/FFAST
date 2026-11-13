@@ -3,11 +3,11 @@
  *
  * Turns pointer gestures on the 3D canvas into atom picks while a tool is
  * armed. Exactly one tool owns the pointer at a time (the Blender/Photoshop
- * modal-tool model, mirrored from the Qt loupe's single shared select
+ * modal-tool model, with one shared select
  * toolbar): arming disables orbit and shows a crosshair; a click resolves the
  * nearest visible atom; a drag with a rectangle-capable tool rubber-bands a
  * box. The atom under the pointer is highlighted whether or not a tool is
- * armed, as on the desktop (ADR 0055; dragging to orbit does not highlight).
+ * armed (ADR 0055; dragging to orbit does not highlight).
  * With no tool armed the pointer stays camera-orbit. The
  * geometry itself lives on the renderer (pickAtom/boxSelect/setHoveredAtom);
  * this class is just gesture + arming state.
@@ -17,8 +17,7 @@ const DRAG_THRESHOLD_PX = 4;   // below this a press+release counts as a click
 
 /**
  * Toggle `atomId` in `list` (in → remove, else append), then apply the tool's
- * cycle window — the exact semantics of Qt's AtomSelectionBase.selectAtom
- * (visual.py:85). Mutates and returns `list`.
+ * cycle window — the pick set's rule. Mutates and returns `list`.
  * @param {number[]} list @param {number} atomId
  * @param {{cycle?: boolean, multiselect: number}} tool
  */

@@ -1,7 +1,6 @@
 # Gyration — smoothed gyradius timeline, distribution, and two normalised
 # overlays (gyradius vs energy / forces MAE). Uses the overlay_timeline kind +
-# a shared smoothing control. The legacy "Gyration" tab (modules/loupeGyradius.py)
-# was retired once this reached parity.
+# a shared smoothing control. It replaced the old "Gyration" tab.
 [[tabs]]
 name = "Gyration"
 start = false

@@ -270,8 +270,8 @@ class DataService:
         first use and memoized, so every metric path through this DataService
         shares one executor. The headless/server DataService gets a
         ServerExecutor: FFAST's code runs in the server, outside code in
-        workers (ADR 0079). The desktop/client DataService gets an
-        InProcessExecutor.
+        workers (ADR 0079). A DataService built without a server
+        gets an InProcessExecutor.
         """
         if self._metricExecutor is None:
             import ffast.metrics.builtin  # noqa: F401 — register built-in metrics

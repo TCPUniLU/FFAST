@@ -1,6 +1,5 @@
 /**
- * Where the 3D colour bar's pieces sit (to_fix 17; the desktop's
- * UI/loupe/colorbar_overlay.py). Four pieces: the gradient **bar**, the
+ * Where the 3D colour bar's pieces sit (to_fix 17). Four pieces: the gradient **bar**, the
  * **name**, and the highest (**max**) and lowest (**min**) value. Each is
  * dragged, turned by 90° and selected on its own; selected pieces can be
  * grouped so they move and turn together. "Rotate all 90°" switches the whole
@@ -9,8 +8,7 @@
  * Pure geometry, so it tests without a page. A piece on screen is a box
  * `{x, y, w, h}` in pixels of the 3D panel, its top-left corner first; the
  * layout keeps each corner as a FRACTION of the panel, so a resized panel
- * keeps the arrangement. One layout serves every colouring (the desktop keeps
- * one per metric); the page keeps it in browser storage.
+ * keeps the arrangement. One layout serves every colouring (not one per metric); the page keeps it in browser storage.
  *
  * Each piece also has a size, a factor on its default (`sizes`): the bar's
  * length, a text's font. The bar's thickness has its own factor
@@ -102,7 +100,7 @@ export function barSize(panel, scale = 1, rot = 0, thickness = scale) {
 }
 
 /**
- * The two preset layouts, as the desktop draws them, anchored at the bar's
+ * The two preset layouts, anchored at the bar's
  * corner `origin` (pixels). Vertical: an upright bar, the highest value at
  * its top and the lowest at its bottom, beside it, and the name beyond them,
  * reading bottom to top. Horizontal: a turned bar, the lowest value under its

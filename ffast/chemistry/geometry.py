@@ -6,7 +6,7 @@ and the Qt Info tool both call these. The browser keeps a JavaScript copy
 ``tests/ffast/geometry_cases.json`` pins both to the same answers
 (docs/research/measurement-logic-across-clients.md).
 
-Angles are in degrees. The dihedral is unsigned (0–180°), as the Qt Loupe has
+Angles are in degrees. The dihedral is unsigned (0–180°), as the 3D view has
 always shown it. A measurement whose direction is undefined — an outer atom on
 the vertex of an angle, or three atoms in a line inside a dihedral — returns
 ``nan`` rather than a plausible-looking number.

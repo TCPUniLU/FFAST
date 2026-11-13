@@ -65,7 +65,7 @@ export class MoleculeRenderer {
 
     // alpha:true + preserveDrawingBuffer:true are for PNG export (ADR 0045
     // issue 19): a real alpha buffer lets a transparent-background export use
-    // clear-alpha 0 (no near-black→alpha keying the vispy path needed), and
+    // clear-alpha 0 (no near-black→alpha keying needed), and
     // preserving the drawing buffer makes `toDataURL()` read reliable pixels
     // regardless of the continuous render loop. Normal appearance is unchanged
     // (clear alpha stays 1 for on-screen rendering).
@@ -146,7 +146,7 @@ export class MoleculeRenderer {
     this._bondLines    = null;
     this._forceGroup   = null;
     this._lastForces = null;       // what the arrows were drawn from, to redraw at another thickness
-    this._arrowThickness = 1;      // Arrow thickness slider, as a factor on the Qt radii
+    this._arrowThickness = 1;      // Arrow thickness slider, as a factor on the standard radii
     this._unitCellLines = null;
     this._labelSprites = [];           // THREE.Sprite[] for text labels
     this._selectionMeshes = new Map(); // overlay name → THREE.InstancedMesh
@@ -362,7 +362,7 @@ export class MoleculeRenderer {
   }
 
   /**
-   * @param {number} width Qt-style 10..100 slider value @param {string} colorHex
+   * @param {number} width 10..100 slider value @param {string} colorHex
    * @param {boolean} [chosen] the colour was picked by the person, not the
    *   default — it then replaces the rich look's two-tone bonds
    */
@@ -472,7 +472,7 @@ export class MoleculeRenderer {
 
     // Value-driven coloring (ADR 0016): map color_by.values→RGB client-side;
     // fall back to the server's baked element colors on an unrecognized
-    // colormap (the browser twin of the vispy adapter's _map_color_by).
+    // colormap (`mapColorBy` in colormap.js).
     let colors = atoms.colors;
     if (atoms.color_by) {
       const mapped = mapColorBy(atoms.color_by);
@@ -646,12 +646,11 @@ export class MoleculeRenderer {
     this._clearForces();
     if (!forces.starts || forces.starts.length === 0) return;
 
-    // Solid arrows: one instanced rod and one instanced cone, sized in Å as in
-    // the Qt view (arrow_geometry.js). The length and colour are the scene's:
+    // Solid arrows: one instanced rod and one instanced cone, sized in Å (arrow_geometry.js). The length and colour are the scene's:
     // no local scale factor — `build_scene` already resolves arrow vectors to
     // scene length units (FORCE_LENGTH_FACTOR and the normalising divisors in
     // ffast/visualization/presentation.py). A renderer-side multiplier on top
-    // once made the browser draw every arrow at half the Loupe's length for the
+    // once made the browser draw every arrow at half the intended length for the
     // same scene, which is the presentation leak ADR 0052 closed for colour.
     this._lastForces = { forces, only_forces };
     const n = forces.starts.length;
@@ -699,7 +698,7 @@ export class MoleculeRenderer {
     this._scene.add(group);
   }
 
-  /** @param {number} percent 100 = the Qt arrow radii */
+  /** @param {number} percent 100 = the standard arrow radii */
   setArrowThickness(percent) {
     const k = Math.max(0.05, (Number(percent) || 100) / 100);
     if (k === this._arrowThickness) return;
@@ -911,7 +910,7 @@ export class MoleculeRenderer {
   // ── picking (ADR 0045 issue 10 / ADR 0015 / ADR 0055) ────────────────────
   // Project the cached displayed atom centres to canvas pixels through the
   // live camera. A click picks the atom whose drawn ball is under it, front
-  // surface first; box-select (the twin of the vispy adapter's pick_in_rect)
+  // surface first; box-select 
   // tests centres only. Displayed indices map to scientific
   // atom ids via atom_ids (ADR 0015), the same space SET_SELECTION expects.
 

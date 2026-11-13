@@ -1,4 +1,4 @@
-/** The file shortcuts: the desktop's letters (UI/mainMenu.py) with
+/** The file shortcuts: letters for file actions, with
  *  Alt+Shift (Option+Shift on a Mac), so no key fights the browser.
  *  Matched by `code`, because Option on a Mac changes `key`. */
 export const FILE_SHORTCUTS = [

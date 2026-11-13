@@ -651,7 +651,7 @@ class TestBuildSceneNoUnitCell:
 
 
 class TestBuildSceneFixedBonds:
-    """Regression: 'Fixed' bond mode (loupeBonds). build_scene always used the
+    """Regression: 'Fixed' bond mode. build_scene always used the
     dynamic distance-based getBondIndices and ignored the ffast.bonds parameter,
     so the Fixed bond selection never took effect. _FakeDataset has 3 dynamic
     C-H bonds (6 endpoint rows)."""

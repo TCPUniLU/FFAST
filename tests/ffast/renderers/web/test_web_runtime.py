@@ -1607,7 +1607,7 @@ async def test_web_force_error_style_waits_for_a_prediction(shared_dataset_serve
 async def test_web_force_error_style_sets_the_existing_controls(shared_prediction_server):
     """ADR 0055 "Quick styles": Force error only sets existing controls —
     colour by the per-atom force error of the selected prediction, with the
-    desktop app's force_error colour map (ADR 0063 follow-up; cividis before).
+    blue-green-yellow-red force_error colour map (ADR 0063 follow-up; cividis before).
     Force arrows are left as they are. The
     colour legend sits on the 3D view."""
     ws_port, web_port = shared_prediction_server
@@ -3211,7 +3211,7 @@ async def test_a_reloaded_page_gets_the_subsets_back(ffast_web_server):
 
 
 async def test_freezing_a_subset_keeps_its_frames_while_the_live_one_moves(ffast_web_server):
-    """FREEZE_SUBSET (the desktop's freeze) makes a frozen subset of a live
+    """FREEZE_SUBSET makes a frozen subset of a live
     one's frames, announced to every window and marked frozen; the live
     subset still moves with its plot, the frozen one does not."""
     ws_port, _web_port = ffast_web_server
@@ -3703,7 +3703,7 @@ async def test_web_deleting_a_prediction_asks_whether_its_metric_results_go_too(
 
 async def test_web_the_rail_menu_freezes_a_live_subset(ffast_web_server):
     """A live SUB subset's ⋯ menu offers Freeze, not Delete (unticking SUB
-    is how it goes, as on the desktop). Freezing adds a frozen subset of the
+    is how it goes). Freezing adds a frozen subset of the
     same frames, tagged so in the list, which can be deleted."""
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_dataset(ws_port)
@@ -5588,7 +5588,7 @@ async def test_web_renderer_connects_and_draws_scene(shared_dataset_server):
             await _expect_connected(page)
 
             # The dataset shows as a row in the object rail; selecting it opens
-            # the Loupe view (the 3D tab is active by default).
+            # the 3D view (the 3D tab is active by default).
             dataset_row = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']")
             await expect(dataset_row).to_have_count(1)
             await dataset_row.click()
@@ -5600,7 +5600,7 @@ async def test_web_renderer_connects_and_draws_scene(shared_dataset_server):
 
             png = await page.locator(CANVAS).screenshot()
             image = Image.open(io.BytesIO(png)).convert("RGBA")
-            bg = (0, 0, 0, 255)  # viewport clears to black (Qt loupe default)
+            bg = (0, 0, 0, 255)  # viewport clears to black (the 3D view's default)
             rgba = image.tobytes()
             non_background_pixels = sum(
                 1
@@ -6600,7 +6600,7 @@ async def test_web_tiny_atoms_keep_a_minimum_pick_target(shared_dataset_server):
 
 async def test_web_the_atom_under_the_pointer_is_highlighted(shared_dataset_server):
     """The atom under the pointer is drawn larger and lighter, with or without
-    a tool armed (as the desktop does); an orbit drag does not highlight."""
+    a tool armed; an orbit drag does not highlight."""
     ws_port, web_port = shared_dataset_server
     dataset_fp = await _preload_dataset(ws_port)
 
@@ -7183,8 +7183,7 @@ async def _zoom(page, title, x_range):
 
 
 async def test_web_sub_makes_a_subset_that_follows_the_zoom(ffast_web_server):
-    """Ticking SUB on a plot makes a subset of the structures on screen, as on
-    the desktop. Zooming moves it; unticking hides it; a density plot subs by
+    """Ticking SUB on a plot makes a subset of the structures on screen. Zooming moves it; unticking hides it; a density plot subs by
     value."""
     ws_port, web_port = ffast_web_server
     dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
@@ -7883,7 +7882,7 @@ async def test_web_atom_index_labels_switch_on_and_off(shared_dataset_server):
 
 
 async def test_web_three_atom_align_and_origin_com_switch_each_other_off(ffast_web_server, tmp_path):
-    """The desktop keeps 3-atom alignment and Origin COM exclusive (web parity plan 2026-10-29)."""
+    """3-atom alignment and Origin COM are exclusive (web parity plan 2026-10-29)."""
     ws_port, web_port = ffast_web_server
     dataset_fp = await _preload_uniform_dataset(ws_port, tmp_path)
     async with async_playwright() as p:

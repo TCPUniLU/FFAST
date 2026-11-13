@@ -8,7 +8,7 @@ from ffast.visualization.models import CameraState, DatasetProvenance
 
 
 # The colour map atoms are coloured with until the user picks another: the
-# desktop app's blue → green → yellow → red, whose red end reads on both the
+# blue → green → yellow → red, whose red end reads on both the
 # black and the white (Journal) background.
 DEFAULT_COLORMAP = "force_error"
 
@@ -77,8 +77,8 @@ class ForceScene(BaseModel):
     def _one_color_per_arrow(self):
         """Colours are per-arrow, so a short list is a malformed scene.
 
-        Stated here rather than guarded in each renderer (ADR 0052): the Vispy
-        adapter indexes ``colors`` by arrow to build vertex colours, and a
+        Stated here rather than guarded in each renderer (ADR 0052): a
+        renderer indexes ``colors`` by arrow to build vertex colours, and a
         renderer that has to invent a colour for the arrows the list does not
         reach is back to owning presentation the core was supposed to send.
         """
@@ -115,7 +115,7 @@ class SelectionOverlay(BaseModel):
 class RenderScene(BaseModel):
     """
     Renderer-neutral description of one Visualization View's scene.
-    Renderer adapters translate these primitives to Vispy or WebGL objects.
+    Renderer adapters translate these primitives to WebGL objects.
     """
     only_forces: bool = False
     model_config = ConfigDict(extra="forbid")

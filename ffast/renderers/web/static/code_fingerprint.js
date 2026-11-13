@@ -5,7 +5,7 @@
  * (`/code-fingerprint.json`, ffast/renderers/web/serve.py); the server sends
  * its own in HELLO_ACK. They differ when this page, served by the local app,
  * connects to a server on a cluster that still runs older code. The text
- * matches the desktop's (`ffast.session.code_fingerprint.server_code_notice`).
+ * matches `ffast.session.code_fingerprint.server_code_notice`.
  */
 
 /** The warning to show, or null when the code matches. A server that sends no

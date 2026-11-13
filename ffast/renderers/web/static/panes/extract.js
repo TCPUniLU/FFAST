@@ -1,15 +1,14 @@
 /**
- * Extract Subset pane (ADR 0045 issue 12). Mirrors modules/loupe/loupeAtomFilter.py.
+ * Extract Subset pane (ADR 0045 issue 12).
  *
- * The indices box accepts the same mixed spec as Qt: integer atom indices and
+ * The indices box accepts a mixed spec: integer atom indices and
  * element-symbol tokens ("C" include, "-H" exclude). Tokens are resolved
  * server-side (CREATE_SUBSET), so the box ships the raw tokens. Elements alone
  * make an element subset, which keeps those elements' atoms in every frame;
  * where the structures differ, atom numbers are refused (ADR 0067). The
  * server's answer shows under the button. The Extract pick tool fills the box
  * by picking atoms. The pane
- * shows only where canExtractFrom allows it (parity with Qt's
- * AtomFilterPaneHiding). The pane shows one view's `extract` settings (`show`)
+ * shows only where canExtractFrom allows it (a live or atom subset has no use for it). The pane shows one view's `extract` settings (`show`)
  * and writes into them.
  */
 
@@ -18,8 +17,7 @@ import { defaultSettings } from '../view_settings.js';
 
 /** Whether Extract may cut an atom subset from a dataset (its REMOTE_DATASET_META):
  * a whole dataset or a frozen subset, whose frames stay put. Not a live subset,
- * which changes with the zoom, nor an atom subset, which chose its atoms. Same
- * rule as the desktop's DatasetLoader.canExtractAtoms. */
+ * which changes with the zoom, nor an atom subset, which chose its atoms. */
 export function canExtractFrom(meta) {
   return !meta?.is_sub || !!meta.frozen;
 }

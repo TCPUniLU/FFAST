@@ -4,7 +4,7 @@ Issue #26 acceptance criteria, verified against a real built wheel:
 
   * `pipx install` yields a working ``ffast`` launch on a clean environment
     with no system Qt/GL — i.e. the ``ffast`` console script points at the web
-    launcher (not the Qt desktop), and the core wheel carries no Qt/GL
+    launcher, and the core wheel carries no Qt/GL
     dependency.
   * The install pulls no CDN assets at runtime — the vendored static web
     assets (Three.js, Plotly, and every ``.js``/``.html``) actually ship
@@ -52,8 +52,7 @@ class TestEntryPoints:
     def test_ffast_dispatches(self, pyproject):
         scripts = pyproject["project"]["scripts"]
         assert scripts["ffast"] == "launcher:main", (
-            "`ffast` goes through launcher.py, which picks the desktop client "
-            "when PySide6 is present and the browser client when it is not"
+            "`ffast` goes through launcher.py, which starts the browser client"
         )
 
     def test_the_browser_client_is_the_only_client(self, pyproject):

@@ -1,9 +1,9 @@
-"""Geometry metrics relocated from legacy Loupe modules.
+"""Geometry metrics: radius of gyration and measurements between selected atoms.
 
-- ``ffast.gyradius`` — radius of gyration (from ``modules/loupeGyradius.py``),
+- ``ffast.gyradius`` — radius of gyration,
   atomic-number-weighted, per structure.
 - ``ffast.distance`` / ``ffast.angle`` / ``ffast.dihedral`` — measurements
-  between selected atoms (from ``modules/loupeInfoSelect.py``). They take a
+  between selected atoms. They take a
   scientific ``selection`` (atom indices) as input, matching the decision to
   make interactive measurements server-owned Metrics.
 

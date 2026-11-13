@@ -1,9 +1,9 @@
 """Which frames a plot's view covers (browser subbing).
 
 While SUB is ticked on a browser plot, the frames inside the plot's visible
-range are a live subset that follows the zoom, as on the desktop. The browser
-sends the view; the server works out the parent's frames with the desktop's
-rules (UI/panels.py ``PanelKind.sub_indices``). These tests run the rules on
+range are a live subset that follows the zoom. The browser
+sends the view; the server works out the parent's frames with the rules in
+``ffast.session.subbing``. These tests run the rules on
 plain arrays, with no environment.
 """
 import numpy as np

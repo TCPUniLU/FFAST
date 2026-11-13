@@ -1,6 +1,5 @@
 /**
- * Alignment pane (ADR 0045 issue 13). Mirrors the ALIGNMENT schema split
- * across modules/loupe/loupeAtomAlign.py + loupeViewSettings.py, unified here.
+ * Alignment pane (ADR 0045 issue 13). Covers the alignment settings of the 3D view.
  *
  * Two mutually-exclusive modes onto the server's alignment features:
  *   • Kabsch  — TOGGLE_FEATURE("kabsch_align") + ffast.kabsch_alignment.heavy_only
@@ -108,7 +107,7 @@ export function createAlignPane(sidebarEl, callbacks) {
     },
     /** Whether 3-atom mode is armed (so the app knows to feed picks here). */
     isAtomAlign() { return state.atomAlign; },
-    /** Turn on 3-atom mode when the Align pick tool is armed (Qt parity). */
+    /** Turn on 3-atom mode when the Align pick tool is armed. */
     enableAtomAlignMode() {
       if (state.atomAlign || variable) return;
       state.atomAlign = true;
@@ -117,7 +116,7 @@ export function createAlignPane(sidebarEl, callbacks) {
       _syncVisibility();
       callbacks.onAtomAlignOn();
     },
-    /** Turn 3-atom mode off (Origin COM was turned on; the desktop keeps the two exclusive). */
+    /** Turn 3-atom mode off (Origin COM was turned on). */
     turnOffAtomAlign() {
       if (!state.atomAlign) return;
       state.atomAlign = false;

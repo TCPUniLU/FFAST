@@ -19,8 +19,7 @@ pass:
    so they self-register with no core edit. A broken/uninstalled entry point
    is skipped the same way.
 
-(A third root, the desktop client's ``modules/`` folder, went with the
-desktop client, ADR 0098.)
+(A third root, the old client's ``modules/`` folder, went with it, ADR 0098.)
 
 Registering the same ``datasetName``/``modelName`` twice across both roots is
 an error, not a shadow — see

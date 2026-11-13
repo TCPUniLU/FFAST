@@ -5,7 +5,7 @@ import logging
 # GhostModel proxy must import cleanly on a headless server (and client) that
 # has no ML backend installed. Heavy deps (torch, mace, ...) are imported lazily
 # inside the concrete predicting ModelLoaders, which run server-side (ADR 0030).
-# Likewise the flat Desktop-Client helpers (utils.hexToRGB/removeExtension,
+# Likewise the old flat helpers (utils.hexToRGB/removeExtension,
 # config.userConfig.getConfig) are imported lazily inside the methods that use
 # them (ADR 0047) so this module imports flat-free into the Headless Core.
 import numpy as np

@@ -1,6 +1,6 @@
 /**
- * Tab manager (ADR 0045 Phase 3, ADR 0056) — the browser twin of the desktop's
- * config-driven Analysis Tabs (ADR 0021). It builds every tab header and
+ * Tab manager (ADR 0045 Phase 3, ADR 0056) — the config-driven
+ * Analysis Tabs (ADR 0021). It builds every tab header and
  * panel grid from the server's `TAB_LAYOUT`, fetches each 2D Panel's metric
  * arrays over the metric channel for the current dataset/prediction, and
  * renders them with `panels.js`.
@@ -148,8 +148,7 @@ export function framesKey(meta) {
  * rail's own applicability test. `models` may contain a single `null` to mean
  * reference-only (no prediction selected).
  *
- * Naming follows the desktop's compaction rule for the same problem
- * (`GroupedTableKind.table_left_header`): the prediction alone identifies a
+ * Names are kept short: the prediction alone identifies a
  * series while one dataset is in play, and the dataset joins the name once
  * several are — so four models against one dataset do not produce four copies
  * of its name in the legend.
@@ -1477,8 +1476,7 @@ export class AnalysisManager {
     }
 
     // Every tab with 2D panels gets the comparison selector — it is not a
-    // configured control but the tab's own data scope, the desktop's per-tab
-    // DatasetModelSelector. A tab of 3D panels showing the main view has no
+    // configured control but the tab's own data scope. A tab of 3D panels showing the main view has no
     // use for it.
     if (t.has2d) {
       const series = document.createElement('div');
@@ -1558,9 +1556,8 @@ export class AnalysisManager {
 
   // ── series resolution (dataset × prediction) ────────────────────────────
   //
-  // The desktop's per-tab `DatasetModelSelector` holds *lists* and its panels
-  // draw one entry per (model, dataset) pair (UI/ContentTab.py,
-  // UI/panels.py:211). This is that, resolved per tab.
+  // A tab's selector holds *lists* of datasets and predictions, and its panels
+  // draw one entry per (prediction, dataset) pair. This resolves those pairs per tab.
 
   _nameOf(which, fp) {
     const meta = this._available[which].get(fp);
@@ -2388,13 +2385,13 @@ export class AnalysisManager {
 
   // ── SUB: a subset that follows the plot's zoom ─────────────────────────────
   //
-  // As on the desktop, ticking SUB on a plot makes a subset of each series it
+  // Ticking SUB on a plot makes a subset of each series it
   // draws: the frames inside the plot's visible range. It follows every zoom
   // and pan; unticking hides it. The tab's other plots and tables draw the
   // subset instead of the full data and redraw as it moves; the plot with SUB
   // keeps the full data and its zoom. One plot per tab has SUB at a time. The server works out the frames from the
   // view (ffast/session/subbing.py), so a density plot subs by value and a
-  // force scatter by structure, as the desktop does.
+  // force scatter by structure.
 
   _wireSub(t, spec, card) {
     const key = t.spec.panels.indexOf(spec);

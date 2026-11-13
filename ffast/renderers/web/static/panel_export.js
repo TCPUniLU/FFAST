@@ -1,6 +1,5 @@
 /**
- * Download a panel's picture or data (web parity plan 2026-10-29: the
- * desktop's plot export menu). The CSV helpers are pure, for the tests.
+ * Download a panel's picture or data (web parity plan 2026-10-29). The CSV helpers are pure, for the tests.
  */
 import { safeName } from './session_ops.js';
 

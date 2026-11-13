@@ -5,7 +5,7 @@ ClusterBroker. The page asks it, with small JSON requests under /cluster/ on
 the launcher's own web port, to list profiles and to submit or find a job and
 open the SSH tunnel. The broker then gives the page the tunnel's local address
 and the session token, and the page connects to the cluster's ffast-server
-itself. All SSH/SLURM work is cluster/connection.py, the desktop's code.
+itself. All SSH/SLURM work is in cluster/connection.py.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def profile_from_fields(fields: dict, *, need_name: bool = False) -> ClusterProf
     """A ClusterProfile from the page's form values.
 
     Text is trimmed, numbers are parsed, `modules` may be a list or one string
-    split on commas and spaces. Empty text gets the desktop form's defaults.
+    split on commas and spaces. Empty text gets the defaults.
     Raises ValueError with a sentence the page can show.
     """
     known = {f.name: f for f in dataclasses.fields(ClusterProfile)}

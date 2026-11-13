@@ -17,7 +17,7 @@ import json
 import threading, time
 import warnings
 
-# NOTE (ADR 0047 Phase 4): the Desktop-Client loaders this module uses
+# NOTE (ADR 0047 Phase 4): the flat-dir loaders this module uses
 # (datasetLoaders.loader SubDataset/FrozenSubDataset/AtomFilteredDataset,
 # modelLoaders.zeroModel.ZeroModelLoader) are imported LAZILY inside the
 # methods that use them, so importing ffast.core.environment stays flat-free
@@ -666,7 +666,7 @@ def startHeadlessEnvironment():
 
     thread = HeadlessEnvironment()
     # Minimal stdlib logging config for CLI/script use — deliberately not
-    # utils.setupLogger (Desktop-only: anchors debug.log next to the flat
+    # utils.setupLogger (it anchors debug.log next to the flat
     # repo root, which a real headless install has no business writing into).
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", force=True)
 

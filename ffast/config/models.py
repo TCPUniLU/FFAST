@@ -135,7 +135,7 @@ AxisLabel = Union[str, list[str], None]
 # A panel role binds one metric, or (overlay kinds) a list of series.
 PanelRole = Union[PanelMetricRef, list[PanelMetricRef]]
 # The panel fields the browser's "Edit labels…" writes (web parity plan
-# 2026-10-29); the desktop keeps the same edits in display_overrides.json.
+# 2026-10-29).
 LABEL_FIELDS = ("x_title", "y_title", "label_size", "legend_size", "legend_x", "legend_y")
 # The panel fields the browser's "Axes…" writes: scale, range and flip of each
 # axis (gaps 1-2 of the Qt-removal audit, 2026-11-13).
@@ -152,7 +152,7 @@ class PanelConfig(BaseModel):
     ignores everything but the metric refs (server stays plot-ignorant).
 
     ``x_title`` … ``legend_y`` are the user's label edits from the browser (axis
-    title text, text sizes, legend place); the desktop ignores them.
+    title text, text sizes, legend place).
 
     ``scroll_group`` is a layout-only hint: panels sharing a non-null group name
     are placed together in one horizontal scroll strip (the table row of the
@@ -185,7 +185,7 @@ class PanelConfig(BaseModel):
     diagonal: bool = False
     precision: int | None = None   # table decimals; unset = 3 significant digits
     # A table's starting sort: [column title, "asc" or "desc"]. The browser
-    # remembers the user's own sort apart from the file; the desktop ignores it.
+    # remembers the user's own sort apart from the file.
     sort: list[str] | None = None
     # Label edits made in the browser (web parity plan 2026-10-29). Each
     # replaces what the panel draws by default; unset = the default.
@@ -276,7 +276,7 @@ class AnalysisTabConfig(BaseModel):
     ``colspan`` then count grid columns and ``row`` and ``rowspan`` count 50 px
     units, and ``column_widths`` and ``row_heights`` are refused. Without
     ``grid`` a tab is in the old form, read as below; the browser converts it
-    when it draws it, and the desktop reads only the old form.
+    when it draws it.
 
     ``column_widths`` and ``row_heights`` (ADR 0056, the old form) are sizes
     kept as set, one per column and one per row: a width of 1 is 400 px and a height of 1 is
@@ -284,12 +284,11 @@ class AnalysisTabConfig(BaseModel):
     longer than the panels reach, for columns or rows left empty, never
     shorter. Without them columns share the window's width, none narrower
     than 400 px, and rows are at least 300 px. The tab scrolls what does not
-    fit. The browser reads them; the desktop ignores them."""
+    fit. The browser reads them."""
     model_config = ConfigDict(extra="forbid")
     name: str
     #: A built-in tab shows when a new install starts only if this is true; the
-    #: others wait under "From template" in the browser's + menu. The desktop
-    #: ignores it.
+    #: others wait under "From template" in the browser's + menu.
     start: bool = True
     has_data_selector: bool = True
     live_layout: bool = False   # the one layout live-run tabs are made from (ADR 0089); not shown in the tab bar itself

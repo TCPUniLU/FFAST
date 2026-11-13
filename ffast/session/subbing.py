@@ -1,11 +1,10 @@
 """Which frames a plot's view covers: subbing in the browser.
 
 While SUB is ticked on a browser plot, the frames inside the plot's visible
-range are a live SubDataset that follows the zoom, as on the desktop. The
+range are a live SubDataset that follows the zoom, as it always has. The
 browser sends the view (the panel kind, its metrics and their params, and the
 x and y ranges) with ``DECLARE_SUBSET``; this works out the parent's
-configuration indices with the desktop's rules (``UI/panels.py``,
-``PanelKind.sub_indices``):
+configuration indices with these rules:
 
 - timeline, overlay_timeline: x is the frame index, so the frames on screen.
 - scatter, parity: the points inside the box, over the full arrays (drawing

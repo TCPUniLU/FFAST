@@ -1,6 +1,6 @@
 """Atom coloring (ADR 0016).
 
-Metric-based atom coloring was once dead in the desktop UI: it filtered
+Metric-based atom coloring was once dead in the 3D view: it filtered
 colorable metrics with ``schema.shape == "per_structure_per_atom"``, but a
 metric Shape is a tuple of Dim objects (e.g. ``(dims.N_atoms,)``), never that
 string — so the metric list was always empty and the "Metric" coloring option,
