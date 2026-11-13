@@ -29,17 +29,18 @@ took over the two things the desktop's connection layer did better
 ([ADR 0097](0097-every-reply-names-the-request-it-answers.md)): each reply is
 matched to its own request, and a dropped connection is noticed and retried.
 
-Seven small gaps were left for later:
+Seven small gaps were left for later. All seven were built in the browser
+after the deletion (2026-11-13):
 
-| Feature | What the desktop did |
-|---------|----------------------|
-| Grid on/off | A plot's grid lines could be hidden. |
-| Link X axes | Zooming one plot's X axis zoomed the others in the tab. |
-| Unit in a TOML label | A metric's unit, from its TOML, showed in the axis label. |
-| Rename the colour-bar title | The colour bar's title could be edited. |
-| SSH key Browse button | The cluster form picked the key file with a file dialog. |
-| Ctrl+Shift+L | Shortcut for "Connect to Local Server…". |
-| Export from a sidebar row | A dataset or prediction exported from its sidebar row. |
+| Feature | What the desktop did | Status |
+|---------|----------------------|--------|
+| Grid on/off | A plot's grid lines could be hidden. | built (a931b517): a Grid column in Axes…, per axis |
+| Link X axes | Zooming one plot's X axis zoomed the others in the tab. | built (a0657b2b): "Link X axes" in the tab menu, for the tab's timelines |
+| Unit in a TOML label | A unit written in a TOML label showed in the axis label. | built (b1731853); `forcesUnit` typo fixed (3ecb295e) |
+| Rename the colour-bar title | The colour bar's title could be edited. | built (c0c906c4): right-click ▸ Rename…, one name per colouring, kept in the browser |
+| SSH key Browse button | The cluster form picked the key file with a file dialog. | built (98bc6fa2): the keys in `~/.ssh` offered, a typed path checked |
+| Ctrl+Shift+L | Shortcut for "Connect to Local Server…". | built (16c7712a): Alt+Shift+O for Connect to Server… |
+| Export from a sidebar row | A dataset exported from its sidebar row. | built (94b82711): Export… in a dataset or prediction row's ⋯ menu |
 
 ## The decision
 
