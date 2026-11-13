@@ -531,3 +531,22 @@ def test_linked_x_axes_parse_and_reach_the_browser():
 def test_axis_edits_that_do_not_fit_are_config_errors(extra, error):
     with pytest.raises(ValidationError, match=error):
         AnalysisTabConfig.model_validate({"name": "T", "panels": [{**PLAIN, **extra}]})
+
+
+def test_the_built_in_tabs_name_only_unit_settings_that_exist():
+    """A label's unit slot is a unit setting (energyUnit, forceUnit) or a unit
+    written out. The built-in tabs use only the settings: "forcesUnit" was a
+    typo there until 2026-11-13."""
+    import tomllib
+    from pathlib import Path
+
+    import ffast.config as config_pkg
+
+    slots = set()
+    for path in sorted((Path(config_pkg.__file__).parent / "builtin_tabs").glob("*.toml")):
+        for tab in tomllib.loads(path.read_text())["tabs"]:
+            for panel in tab.get("panels", []):
+                for key in ("x_label", "y_label"):
+                    if isinstance(panel.get(key), list):
+                        slots.add(panel[key][1])
+    assert slots <= {"energyUnit", "forceUnit"}, slots

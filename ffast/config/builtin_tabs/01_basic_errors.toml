@@ -121,8 +121,8 @@ row = 4
 col = 1
 title = "Forces Scatter"
 diagonal = true
-x_label = ["True Forces", "forcesUnit"]
-y_label = ["Predicted Forces", "forcesUnit"]
+x_label = ["True Forces", "forceUnit"]
+y_label = ["Predicted Forces", "forceUnit"]
   [tabs.panels.metrics.x]
   metric = "ffast.force_reference"
   [tabs.panels.metrics.y]
