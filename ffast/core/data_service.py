@@ -15,10 +15,10 @@ manager, event bus).  Method bodies are kept verbatim from the former
 ``eventPush``, ``newTask``, ``getModel``/``getDataset``/``getObject``) let those
 bodies stay unchanged.
 
-There is no back-reference to the owning ``Environment``: the prediction-source
-path in ``generateMetric`` goes through an injected ``PredictionSource``, and
-``DataType`` instances are constructed with *this* service (the only data-layer
-surface they use) rather than the full env.
+There is no back-reference to the owning ``Environment``: ``DataType``
+instances are constructed with *this* service (the only data-layer surface
+they use) rather than the full env. Metrics and predictions are always
+computed in this process.
 """
 
 import logging
@@ -45,7 +45,7 @@ class DataService:
     """Cache-key resolution, data generation, and in-process metrics (ADR 0020)."""
 
     def __init__(self, cache, models, datasets, tm, events,
-                 source=None, headless=True, executor=None,
+                 headless=True, executor=None,
                  prediction_fields=None):
         self.cache = cache
         self._models = models
@@ -53,10 +53,6 @@ class DataService:
         self.tm = tm
         self._events = events
         self.headless = headless
-
-        # Where metric results / prediction arrays come from (ADR 0020).
-        from ffast.core.prediction_source import InProcessSource
-        self._source = source if source is not None else InProcessSource()
 
         self.dataTypes = {}
         self.generationQueue = set()
@@ -378,61 +374,22 @@ class DataService:
         from ffast.metrics.models import MetricResult
         from ffast.metrics.registry import default_registry
 
-        # 4a server-owned metrics: prefer server-side computation (the server
-        # holds the full arrays + ghost/remote predictions and runs the same
-        # metric code).  Falls through to in-process compute when there is no
-        # server or the server can't source it (e.g. a real client-only model).
-        if self._source.available:
-            if self._source.fetch_metric_result(metric_id, params, model, dataset, key):
-                return key
-
-        # Resolve required predictions before computing.
+        # Resolve required predictions before computing: a missing one is
+        # predicted in a task, and the metric waits for it.
         missing = self.inputResolver.missing_prediction_keys(
             metric_id, model=model, dataset=dataset
         )
         if missing:
-            # Proxy/ghost models can't predict on the client (Stage 2): ask the
-            # server to generate + transfer the predictions synchronously (we're
-            # in a worker thread), then compute the metric in this same task.
-            if (model is not None and getattr(model, "isGhost", False)
-                    and self._source.available):
-                # A SubDataset (interactive subbing) is client-side only — the
-                # server doesn't know its fingerprint and can't serve predictions
-                # for it. Its predictions ARE the parent's sliced by sub indices,
-                # and getData() already does that slicing once the parent's
-                # predictions are cached. So fetch the *root* real dataset's
-                # predictions (which the server holds); the sub-slice in getData
-                # then satisfies missing_prediction_keys below.
-                pred_dataset = dataset
-                while (getattr(pred_dataset, "isSubDataset", False)
-                       and getattr(pred_dataset, "parent", None) is not None):
-                    pred_dataset = pred_dataset.parent
-                if not self._source.fetch_prediction_arrays(
-                    pred_dataset.fingerprint, model.fingerprint
-                ):
-                    return None
-                missing = self.inputResolver.missing_prediction_keys(
-                    metric_id, model=model, dataset=dataset
+            for dt_key in missing:
+                self.taskGenerateData(
+                    dt_key, model=model, dataset=dataset,
+                    visual=True, threaded=True,
                 )
-                if missing:
-                    logger.warning(
-                        "Metric %s: predictions still missing after server "
-                        "fetch: %s", metric_id, missing,
-                    )
-                    return None
-                # fall through to compute
-            else:
-                # Real client-loaded model (no server): predict in-process.
-                for dt_key in missing:
-                    self.taskGenerateData(
-                        dt_key, model=model, dataset=dataset,
-                        visual=True, threaded=True,
-                    )
-                logger.info(
-                    "Metric %s deferred: missing predictions %s",
-                    metric_id, missing,
-                )
-                return None
+            logger.info(
+                "Metric %s deferred: missing predictions %s",
+                metric_id, missing,
+            )
+            return None
 
         started = time.monotonic()
         result = self.compute_metric(metric_id, params, model, dataset)

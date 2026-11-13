@@ -34,7 +34,8 @@ The central compute object: every loaded dataset and model, the fingerprint-keye
 cache, the task manager. In remote mode it runs on the cluster node and the local
 machine has none of it. It used to be one class doing everything; it is now
 composed of `env.cache`, `env.models`, `env.datasets`, `env.data`,
-`env.persistence` plus an injected prediction source (ADR 0020).
+and `env.persistence` (ADR 0020). It computes every metric and prediction
+in its own process.
 
 ### Object catalog
 
