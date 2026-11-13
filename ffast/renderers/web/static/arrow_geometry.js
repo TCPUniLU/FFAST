@@ -1,6 +1,6 @@
 /**
  * Force arrow sizes, in the scene's length units (Å) — the same numbers as the
- * Qt view's ffast/renderers/vispy/arrow_mesh.py. Pure, so it tests without a canvas.
+ * former desktop view drew. Pure, so it tests without a canvas.
  */
 
 export const SHAFT_RADIUS = 0.05;

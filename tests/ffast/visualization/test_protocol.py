@@ -18,30 +18,36 @@ def test_protocol_version_is_string():
 # --- ClientCapabilities ---
 
 def test_client_capabilities_defaults():
-    caps = ClientCapabilities(protocol_version="1.0", renderer="vispy")
+    caps = ClientCapabilities(protocol_version="1.0", renderer="webgl")
     assert "raw" in caps.supported_codecs
     assert caps.features == []
 
 
-@pytest.mark.parametrize("renderer", ["vispy", "webgl", "headless"])
+def test_a_client_that_names_no_renderer_is_webgl():
+    assert ClientCapabilities(protocol_version="1.0").renderer == "webgl"
+
+
+@pytest.mark.parametrize("renderer", ["webgl", "headless"])
 def test_client_capabilities_accepts_known_renderer(renderer):
     caps = ClientCapabilities(protocol_version="1.0", renderer=renderer)
     assert caps.renderer == renderer
 
 
-def test_client_capabilities_invalid_renderer():
+@pytest.mark.parametrize("renderer", ["qt", "vispy"])
+def test_client_capabilities_invalid_renderer(renderer):
+    # "vispy" was the desktop client's renderer (ADR 0098).
     with pytest.raises(Exception):
-        ClientCapabilities(protocol_version="1.0", renderer="qt")
+        ClientCapabilities(protocol_version="1.0", renderer=renderer)
 
 
 def test_client_capabilities_rejects_extra_fields():
     with pytest.raises(Exception):
-        ClientCapabilities(protocol_version="1.0", renderer="vispy", unknown=True)
+        ClientCapabilities(protocol_version="1.0", renderer="webgl", unknown=True)
 
 
 def test_client_capabilities_with_features():
     caps = ClientCapabilities(
-        protocol_version="1.0", renderer="vispy",
+        protocol_version="1.0", renderer="webgl",
         features=["zstd_buffers"],
     )
     assert "zstd_buffers" in caps.features
@@ -49,7 +55,7 @@ def test_client_capabilities_with_features():
 
 def test_client_capabilities_with_zstd_codec():
     caps = ClientCapabilities(
-        protocol_version="1.0", renderer="vispy",
+        protocol_version="1.0", renderer="webgl",
         supported_codecs=["raw", "zstd"],
     )
     assert "zstd" in caps.supported_codecs
@@ -80,32 +86,32 @@ def test_server_capabilities_empty_features():
 # --- negotiate ---
 
 def test_negotiate_returns_server_caps():
-    client = ClientCapabilities(protocol_version="1.0", renderer="vispy")
+    client = ClientCapabilities(protocol_version="1.0", renderer="webgl")
     server = negotiate(client)
     assert isinstance(server, ServerCapabilities)
 
 
 def test_negotiate_sets_protocol_version():
-    client = ClientCapabilities(protocol_version="1.0", renderer="vispy")
+    client = ClientCapabilities(protocol_version="1.0", renderer="webgl")
     server = negotiate(client)
     assert server.protocol_version == PROTOCOL_VERSION
 
 
 def test_negotiate_reflects_client_version():
-    client = ClientCapabilities(protocol_version="0.9", renderer="vispy")
+    client = ClientCapabilities(protocol_version="0.9", renderer="webgl")
     server = negotiate(client)
     assert server.accepted_client_version == "0.9"
 
 
 def test_negotiate_raw_codec_always_included():
-    client = ClientCapabilities(protocol_version="1.0", renderer="vispy", supported_codecs=["raw"])
+    client = ClientCapabilities(protocol_version="1.0", renderer="webgl", supported_codecs=["raw"])
     server = negotiate(client)
     assert "raw" in server.supported_codecs
 
 
 def test_negotiate_unknown_codec_excluded():
     client = ClientCapabilities(
-        protocol_version="1.0", renderer="vispy",
+        protocol_version="1.0", renderer="webgl",
         supported_codecs=["raw", "lz4"],   # lz4 not supported server-side
     )
     server = negotiate(client)
@@ -115,7 +121,7 @@ def test_negotiate_unknown_codec_excluded():
 
 def test_negotiate_unknown_feature_excluded():
     client = ClientCapabilities(
-        protocol_version="1.0", renderer="vispy",
+        protocol_version="1.0", renderer="webgl",
         features=["zstd_buffers", "unknown_feature"],
     )
     server = negotiate(client)
@@ -125,7 +131,7 @@ def test_negotiate_unknown_feature_excluded():
 
 def test_negotiate_no_shared_codecs_falls_back_to_raw():
     client = ClientCapabilities(
-        protocol_version="1.0", renderer="vispy",
+        protocol_version="1.0", renderer="webgl",
         supported_codecs=["lz4"],
     )
     server = negotiate(client)

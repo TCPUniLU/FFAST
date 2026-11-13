@@ -1,6 +1,6 @@
 /**
- * Value-driven atom coloring (ADR 0016) — the browser twin of the vispy
- * adapter's `_map_color_by` (ffast/renderers/vispy/adapter.py:217).
+ * Value-driven atom coloring (ADR 0016), as the former desktop view's
+ * `_map_color_by` did it.
  *
  * Server-resolved `vmin`/`vmax` keep both renderers' numeric range in
  * agreement; the colormap curve itself is a capability-parity approximation,

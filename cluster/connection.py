@@ -723,7 +723,7 @@ class ServerConnection:
         )
 
 
-async def _do_hello(websocket, token: str = "", renderer: str = "vispy") -> dict:
+async def _do_hello(websocket, token: str = "", renderer: str = "webgl") -> dict:
     """Send HELLO and await HELLO_ACK after ping/pong completes.
 
     Called by both connect_direct and _establish_connection once the WebSocket
@@ -761,7 +761,7 @@ async def connect_direct(
     host: str = "localhost",
     port: int = 8765,
     token: str = "",
-    renderer: str = "vispy",
+    renderer: str = "webgl",
 ) -> "ServerConnection":
     """Connect directly to a running ffast-server without SLURM or SSH.
 

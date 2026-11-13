@@ -23,7 +23,7 @@ class ClientCapabilities(BaseModel):
     """Capabilities advertised by a renderer client on connection."""
     model_config = ConfigDict(extra="forbid")
     protocol_version: str
-    renderer: Literal["vispy", "webgl", "headless"]
+    renderer: Literal["webgl", "headless"] = "webgl"
     supported_codecs: list[str] = Field(default_factory=lambda: ["raw"])
     features: list[str] = Field(default_factory=list)
     session_token: Optional[str] = None

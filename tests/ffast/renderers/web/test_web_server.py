@@ -255,25 +255,12 @@ class TestColorByMapping:
         for name in ("viridis", "plasma", "inferno", "coolwarm", "hot", "bwr", "force_error"):
             assert f"{name}:" in colormap_js_source
 
-    def test_force_error_stops_match_the_vispy_adapter(self, colormap_js_source):
-        # adapter.py's custom colormap is defined by these literal RGB triples
-        # (ffast/renderers/vispy/adapter.py `_get_colormap`, "force_error"
-        # branch) — keep the JS twin numerically identical, not just similarly
-        # named.
-        # STATIC_DIR = .../ffast/renderers/web/static
-        adapter_path = os.path.join(
-            os.path.dirname(os.path.dirname(STATIC_DIR)), "vispy", "adapter.py"
-        )
-        with open(adapter_path) as f:
-            adapter_src = f.read()
-        start = adapter_src.index('if name == "force_error"')
-        end = adapter_src.index("return get_colormap(name)")
-        stops_src = adapter_src[start:end]
+    def test_force_error_stops_are_kept(self, colormap_js_source):
+        # The force_error colormap's stops, as the desktop client drew them
+        # (blue, green, yellow, dark red, red): pictures made before and after
+        # the desktop client left keep the same colours.
         for triple in ("0.1, 0.1, 0.9", "0.1, 0.9, 0.1", "0.9, 0.9, 0.1", "0.5, 0.1, 0.1", "0.9, 0.1, 0.1"):
-            assert triple in stops_src, "adapter.py's force_error stops changed"
-            assert f"[{triple}]" in colormap_js_source, (
-                f"colormap.js force_error stop [{triple}] no longer matches adapter.py"
-            )
+            assert f"[{triple}]" in colormap_js_source, f"colormap.js force_error stop [{triple}] changed"
 
 
 @pytest.fixture(scope="module")

@@ -62,7 +62,3 @@ def test_displacement_stats_registered():
     from ffast.visualization.stages.registry import _default_registry
     _, fn = _default_registry.get("ffast.displacement_stats")
     assert fn is displacement_stats
-
-
-# --- value_colors (requires vispy — skip if unavailable) ---
-

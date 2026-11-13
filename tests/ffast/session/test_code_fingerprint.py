@@ -69,7 +69,7 @@ def test_this_install_has_a_fingerprint():
 
 
 def test_the_server_sends_its_fingerprint_in_hello_ack():
-    caps = negotiate(ClientCapabilities(protocol_version="1.0", renderer="vispy"))
+    caps = negotiate(ClientCapabilities(protocol_version="1.0", renderer="webgl"))
     assert caps.code_fingerprint == code_fingerprint()
     assert caps.model_dump()["code_fingerprint"] == code_fingerprint()
 
@@ -121,7 +121,7 @@ async def test_hello_returns_the_server_fingerprint():
             pass
 
         async def recv(self):
-            caps = negotiate(ClientCapabilities(protocol_version="1.0", renderer="vispy"))
+            caps = negotiate(ClientCapabilities(protocol_version="1.0", renderer="webgl"))
             return pack(control.HELLO_ACK, [], {**caps.model_dump(), "role": "CONTROLLING"})
 
     ack = await _do_hello(_WS(), "token")
