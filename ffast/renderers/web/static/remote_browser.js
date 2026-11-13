@@ -424,8 +424,14 @@ export class RemoteBrowser {
       if (this._parent) this._navigate(this._parent);
     });
     $('fb-home').addEventListener('click', () => this._navigate(this._home || null));
+    // A resize drag from the panel corner can end over the backdrop; that click
+    // must not close the dialog, so the press has to start on the backdrop too.
+    let pressOnBackdrop = false;
+    $('fb-modal').addEventListener('mousedown', (e) => {
+      pressOnBackdrop = e.target.id === 'fb-modal';
+    });
     $('fb-modal').addEventListener('click', (e) => {
-      if (e.target.id === 'fb-modal') this.cancel();
+      if (e.target.id === 'fb-modal' && pressOnBackdrop) this.cancel();
     });
     $('fb-modal').addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.cancel();
