@@ -7507,6 +7507,30 @@ async def test_web_loading_a_prediction_the_server_already_holds_ends_the_loadin
             await browser.close()
 
 
+async def test_web_announcing_the_prediction_on_screen_again_keeps_the_status(shared_prediction_server):
+    """A second REMOTE_MODEL_META for the prediction already shown changes
+    nothing on screen, so it must not put "ready" over a newer status (such as
+    a load's "already loaded")."""
+    ws_port, web_port = shared_prediction_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        try:
+            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await page.wait_for_function(
+                f"() => window.ffastApp._currentModelFp === '{model_fp}'", timeout=30000)
+            await page.evaluate("""(fp) => {
+                const app = window.ffastApp;
+                app._setStatus('"prediction.xyz" is already loaded', 'connected');
+                app._onModelMeta(fp, { ...app._models.get(fp) });
+            }""", model_fp)
+            await expect(page.locator("#status")).to_have_text('"prediction.xyz" is already loaded')
+            assert await page.evaluate("() => window.ffastApp._currentModelFp") == model_fp
+        finally:
+            await browser.close()
+
+
 async def test_web_loading_a_dataset_the_server_already_holds_ends_the_loading_status(ffast_web_server):
     """ADR 0063 follow-up: the server announces nothing new for a dataset it
     already holds, so "Loading dataset.xyz…" used to stay up for good. A new

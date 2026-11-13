@@ -2249,8 +2249,10 @@ export class FFastApp {
     // that one, so replay order among several candidates doesn't matter.
     // A model this window just loaded has no results yet, so it is not selected;
     // the user picks it in the rail (web parity plan 2026-10-29, decision 5).
+    // An announcement of the prediction already shown changes nothing on
+    // screen: it must not say "ready" over the status of what happened since.
     const wantsSpecificModel = this._autoModelFp !== null && fp !== this._autoModelFp;
-    if (!wantsSpecificModel && this._currentDatasetFp &&
+    if (!wantsSpecificModel && fp !== this._currentModelFp && this._currentDatasetFp &&
         (meta?.dataset_fingerprints || []).length
         && predictionApplies(meta, this._currentDatasetFp, this._datasets)) {
       this._currentModelFp = fp;
