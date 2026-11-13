@@ -58,12 +58,20 @@ that every request has a final reply and every reply event carries `reply_to`.
 
 ### 2. Loads answer the window that asked
 
-When a load starts, the server tells the asking window, in a reply to that
-request, the task number it started. "Already loaded" becomes the final reply
-itself, not a guess from the next finished task. A failed load is the final
-reply with `error`. The dataset and model metadata announcements still go to
-every window; the asking window links them to its request through the task
-number.
+Every load (dataset, prediction, model, Zero Model, example) ends with one
+final reply, `LOAD_RESULT`, to the window that asked: the fingerprint of what
+loaded and whether it was `already` loaded, or `error`. It replaces
+`LOAD_FAILED`, and a finished task no longer ends a load. The server notes
+what it holds for the file when the request arrives and again when the load
+ends: something new is the result; the same thing means already loaded (for a
+prediction: it already had numbers for that dataset); nothing at all is a
+failure. Loads are queued and get their task number later, so the reply
+names the fingerprint, not a task.
+
+The dataset and model announcements still go to every window, on the
+server's next event round, so they can arrive before or after the final
+reply. The asking window finishes its load (remembers the file, names the
+typed units on the dataset, says "loaded") once it has both.
 
 ### 3. A dropped connection is noticed and recovered
 
