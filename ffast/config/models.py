@@ -139,7 +139,8 @@ PanelRole = Union[PanelMetricRef, list[PanelMetricRef]]
 LABEL_FIELDS = ("x_title", "y_title", "label_size", "legend_size", "legend_x", "legend_y")
 # The panel fields the browser's "Axes…" writes: scale, range and flip of each
 # axis (gaps 1-2 of the Qt-removal audit, 2026-11-13).
-AXIS_FIELDS = ("x_scale", "y_scale", "x_min", "x_max", "y_min", "y_max", "x_flip", "y_flip")
+AXIS_FIELDS = ("x_scale", "y_scale", "x_min", "x_max", "y_min", "y_max", "x_flip", "y_flip",
+               "x_grid", "y_grid")
 
 
 class PanelConfig(BaseModel):
@@ -196,7 +197,8 @@ class PanelConfig(BaseModel):
     legend_x: float | None = Field(default=None, ge=-2, le=3)    # legend place, plot-area fractions
     legend_y: float | None = Field(default=None, ge=-2, le=3)
     # Axis edits made in the browser ("Axes…"). Unset = linear, automatic range,
-    # not flipped. A range may set one end only; the other follows the data.
+    # not flipped, grid shown. A range may set one end only; the other follows
+    # the data.
     x_scale: Literal["log"] | None = None
     y_scale: Literal["log"] | None = None
     x_min: float | None = None
@@ -205,6 +207,8 @@ class PanelConfig(BaseModel):
     y_max: float | None = None
     x_flip: Literal[True] | None = None
     y_flip: Literal[True] | None = None
+    x_grid: Literal[False] | None = None
+    y_grid: Literal[False] | None = None
     hidden_params: list[str] = Field(default_factory=list)
     controls: list[str] = Field(default_factory=list)
     scroll_group: str | None = None

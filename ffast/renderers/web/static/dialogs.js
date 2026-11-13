@@ -295,8 +295,8 @@ export function axisProblem(name, a) {
 
 /**
  * The plot's "Axes…" dialog: per axis a scale (linear or log), a range
- * (empty = automatic; one end alone is fine) and Flip.
- * @param {{title: string, x: {log, min, max, flip}, y: {log, min, max, flip}}} o
+ * (empty = automatic; one end alone is fine), Flip and Grid.
+ * @param {{title: string, x: {log, min, max, flip, grid}, y: {log, min, max, flip, grid}}} o
  * @returns {Promise<{x: object, y: object}|null>} null when cancelled
  */
 export function axesDialog({ title, x, y }) {
@@ -314,7 +314,7 @@ export function axesDialog({ title, x, y }) {
     panel.appendChild(head);
     const grid = document.createElement('div');
     grid.className = 'axes-grid';
-    for (const h of ['', 'Scale', 'From', 'To', 'Flip']) {
+    for (const h of ['', 'Scale', 'From', 'To', 'Flip', 'Grid']) {
       const c = document.createElement('div');
       c.className = 'axes-head';
       c.textContent = h;
@@ -344,8 +344,11 @@ export function axesDialog({ title, x, y }) {
       const flip = document.createElement('input');
       flip.type = 'checkbox'; flip.checked = !!v.flip;
       flip.setAttribute('aria-label', `Flip the ${name}`);
-      grid.append(label, scale, min, max, flip);
-      rows[a] = { name, scale, min, max, flip };
+      const lines = document.createElement('input');
+      lines.type = 'checkbox'; lines.checked = v.grid !== false;
+      lines.setAttribute('aria-label', `${name} grid`);
+      grid.append(label, scale, min, max, flip, lines);
+      rows[a] = { name, scale, min, max, flip, lines };
     }
     panel.appendChild(grid);
     const note = document.createElement('p');
@@ -365,7 +368,8 @@ export function axesDialog({ title, x, y }) {
           const n = Number(t);
           return Number.isFinite(n) ? n : NaN;
         };
-        out[a] = { log: r.scale.value === 'log', min: num(r.min), max: num(r.max), flip: r.flip.checked };
+        out[a] = { log: r.scale.value === 'log', min: num(r.min), max: num(r.max), flip: r.flip.checked,
+                   grid: r.lines.checked };
         for (const k of ['min', 'max'])
           if (Number.isNaN(out[a][k])) return { error: `${r.name}: "${k === 'min' ? 'From' : 'To'}" is not a number.` };
         const why = axisProblem(r.name, out[a]);

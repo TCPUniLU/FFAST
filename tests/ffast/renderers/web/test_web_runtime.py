@@ -8170,13 +8170,15 @@ async def test_web_a_plots_labels_are_edited_saved_and_reset(tmp_path):
 
 
 async def test_web_a_plots_axes_are_set_saved_and_reset(tmp_path):
-    """Gaps 1-2 of the Qt-removal audit (2026-11-13): Axes… sets a log scale,
-    a range and a flip, saved in the tab; Reset axes takes them back out."""
+    """Gaps 1-3 of the Qt-removal audit (2026-11-13): Axes… sets a log scale,
+    a range, a flip and a hidden grid, saved in the tab; Reset axes takes
+    them back out."""
     tabs_dir = tmp_path / "tabs"
     title = "Energy MAE timeline"
     sel = f".tabpanel.active .analysis-panel[data-title='{title}']"
     saved = tabs_dir / "basic-errors.toml"
-    axis_keys = {"x_scale", "y_scale", "x_min", "x_max", "y_min", "y_max", "x_flip", "y_flip"}
+    axis_keys = {"x_scale", "y_scale", "x_min", "x_max", "y_min", "y_max", "x_flip", "y_flip",
+                 "x_grid", "y_grid"}
 
     def toml_panel():
         panels = tomllib.loads(saved.read_text())["tabs"][0]["panels"]
@@ -8204,13 +8206,15 @@ async def test_web_a_plots_axes_are_set_saved_and_reset(tmp_path):
                 await expect(dialog.locator(".axes-problem")).to_contain_text("above 0")
                 await dialog.get_by_label("Y axis from").fill("0.001")
                 await dialog.get_by_label("Flip the X axis").check()
+                await expect(dialog.get_by_label("Y axis grid")).to_be_checked()
+                await dialog.get_by_label("Y axis grid").uncheck()
                 await dialog.get_by_role("button", name="Apply").click()
                 await expect(dialog).to_have_count(0)
                 await page.wait_for_function(
                     "() => { const el = document.querySelector(\"" + sel + " .panel-plot\");"
                     " const x = el?.layout?.xaxis;"
                     " const flipped = x && (x.autorange === 'reversed' || (x.range && x.range[0] > x.range[1]));"
-                    " return !!flipped && el.layout.yaxis?.type === 'log'; }",
+                    " return !!flipped && el.layout.yaxis?.type === 'log' && el.layout.yaxis?.showgrid === false; }",
                     timeout=15000)
                 for _ in range(50):
                     if saved.exists() and "y_scale" in toml_panel():
@@ -8218,7 +8222,8 @@ async def test_web_a_plots_axes_are_set_saved_and_reset(tmp_path):
                     await asyncio.sleep(0.1)
                 edited = toml_panel()
                 assert (edited["y_scale"], edited["y_min"], edited["x_flip"]) == ("log", 0.001, True)
-                assert "y_max" not in edited
+                assert edited["y_grid"] is False
+                assert "y_max" not in edited and "x_grid" not in edited
 
                 await page.locator(sel + " .panel-more").click()
                 await page.locator("#panel-menu-list [data-action='panel-axes-reset']").click()

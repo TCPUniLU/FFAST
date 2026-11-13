@@ -1925,13 +1925,13 @@ export class AnalysisManager {
       background: choice.transparent ? null : backgroundBehind(card.el) });
   }
 
-  /** Scale, range and flip of a plot's axes (gaps 1-2 of the Qt-removal
-   * audit); saved in the tab like the labels. */
+  /** Scale, range, flip and grid of a plot's axes (gaps 1-3 of the
+   * Qt-removal audit); saved in the tab like the labels. */
   async _editAxes(t, spec) {
     const strip = (s) => String(s ?? '').replace(/<[^>]*>/g, '');
     const axis = (a) => ({
       log: spec[`${a}_scale`] === 'log', min: spec[`${a}_min`] ?? null,
-      max: spec[`${a}_max`] ?? null, flip: !!spec[`${a}_flip`] });
+      max: spec[`${a}_max`] ?? null, flip: !!spec[`${a}_flip`], grid: spec[`${a}_grid`] !== false });
     const out = await axesDialog({ title: `Axes of ${strip(spec.title) || 'this plot'}`, x: axis('x'), y: axis('y') });
     if (!out) return;
     const patch = {};
@@ -1940,6 +1940,7 @@ export class AnalysisManager {
       patch[`${a}_min`] = out[a].min;
       patch[`${a}_max`] = out[a].max;
       patch[`${a}_flip`] = out[a].flip ? true : null;
+      patch[`${a}_grid`] = out[a].grid ? null : false;
     }
     await this._onPanelLabels?.(t.spec.name, spec, patch);
   }

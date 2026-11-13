@@ -190,16 +190,17 @@ export function dataExtent(traces, axis, positive = false) {
 }
 
 /**
- * Put a panel's axis edits (tab fields x_scale … y_flip, written by
+ * Put a panel's axis edits (tab fields x_scale … y_grid, written by
  * "Axes…") onto a built plot. Pure. A log axis takes Plotly's log10 range;
  * a range with one end typed takes the other from the data; a flipped axis
- * runs from high to low.
+ * runs from high to low; a hidden grid draws no grid lines.
  */
 export function applyPanelAxes(spec, built) {
   const { layout } = built;
   for (const a of ['x', 'y']) {
     const ax = layout[`${a}axis`];
     if (!ax) continue;
+    if (spec[`${a}_grid`] === false) ax.showgrid = false;
     const log = spec[`${a}_scale`] === 'log';
     if (log) ax.type = 'log';
     let lo = spec[`${a}_min`], hi = spec[`${a}_max`];

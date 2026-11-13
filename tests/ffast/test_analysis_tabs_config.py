@@ -497,7 +497,8 @@ def test_a_tab_without_grid_is_the_old_form():
     assert build_tab_layout([tab])[0]["grid"] is None
 
 
-AXES = {**PLAIN, "x_scale": "log", "x_min": 0.01, "y_min": -1.0, "y_max": 5.0, "y_flip": True}
+AXES = {**PLAIN, "x_scale": "log", "x_min": 0.01, "y_min": -1.0, "y_max": 5.0, "y_flip": True,
+        "x_grid": False}
 
 
 def test_axis_edits_parse_and_reach_the_browser():
@@ -514,6 +515,7 @@ def test_axis_edits_parse_and_reach_the_browser():
     ({"x_min": 5.0, "x_max": 1.0}, "below"),
     ({"y_scale": "log", "y_min": 0.0}, "above 0"),
     ({"x_flip": False}, "x_flip"),
+    ({"y_grid": True}, "y_grid"),
 ])
 def test_axis_edits_that_do_not_fit_are_config_errors(extra, error):
     with pytest.raises(ValidationError, match=error):

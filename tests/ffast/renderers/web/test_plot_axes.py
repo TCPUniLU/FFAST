@@ -39,6 +39,7 @@ async (origin) => {
   out.flip = axes({ x_flip: true }).xaxis;
   out.flipRange = axes({ x_min: 0, x_max: 4, x_flip: true }).xaxis;
   out.flipDrawn = axes({ y_flip: true }, { yaxis: { range: [0, 7] } }).yaxis;
+  out.gridOff = axes({ x_grid: false });
   out.logDropsDrawn = axes({ y_scale: 'log' }, { yaxis: { range: [-5, 7] } }).yaxis;
   out.valuesLog = an.axisValues({ type: 'log', range: [0, 2] });
   out.valuesFlipped = an.axisValues({ range: [9, 3] });
@@ -117,6 +118,10 @@ def test_a_flipped_axis_runs_high_to_low(results):
     assert results["flip"] == {"autorange": "reversed"}
     assert results["flipRange"] == {"range": [4, 0], "autorange": False}
     assert results["flipDrawn"] == {"range": [7, 0]}
+
+
+def test_a_hidden_grid_is_off_on_its_own_axis_only(results):
+    assert results["gridOff"] == {"xaxis": {"showgrid": False}, "yaxis": {}}
 
 
 def test_a_log_axis_drops_a_range_drawn_for_linear(results):
