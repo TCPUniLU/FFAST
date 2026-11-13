@@ -27,6 +27,12 @@ CASES = {
     "turns": ("[cl.nextRotation('bar', 0), cl.nextRotation('bar', 90), cl.nextRotation('bar', -90),"
               " cl.nextRotation('name', 0), cl.nextRotation('name', -90), cl.nextRotation('max', 7)]"),
     "turned": "[cl.turned({w: 3, h: 5}, 0), cl.turned({w: 3, h: 5}, 90), cl.turned({w: 3, h: 5}, -90)]",
+    # a name per colouring (gap 7 of the Qt-removal audit, 2026-11-13)
+    "names": ("(() => { const a = cl.withName(cl.defaultLayout(), 'metric:m.a', '  Model error ');"
+              " const b = cl.withName(a, 'metric:m.b', 'Rg');"
+              " return [cl.defaultLayout().names, a.names, b.names, cl.withName(b, 'metric:m.a', '  ').names,"
+              " cl.cleanLayout({names: {x: 'ok', y: '', z: 7, w: 'a'.repeat(300)}}).names,"
+              " cl.cleanLayout({names: 'bad'}).names]; })()"),
     # a resized panel keeps the pieces where they were, as fractions
     "fractions": (
         "(() => { const layout = cl.cleanLayout({pieces: {bar: {x: 0.1, y: 0.2, rot: 0}, name: {x: 0.5, y: 0.5, rot: -90},"
@@ -204,6 +210,15 @@ def test_a_stored_layout_from_elsewhere_cannot_break_the_page(results):
     assert sizes == {"bar": 2, "name": 1.5, "max": 1, "min": 1}
     assert odd["pieces"] is None                 # incomplete or a 45° turn: the default
     assert odd["groups"] == [["min", "max"]]
+
+
+def test_a_colour_bar_name_is_kept_per_colouring(results):
+    default, one, two, cleared, cleaned, bad = results["names"]
+    assert default == {}
+    assert one == {"metric:m.a": "Model error"}
+    assert two == {"metric:m.a": "Model error", "metric:m.b": "Rg"}
+    assert cleared == {"metric:m.b": "Rg"}            # an empty name: automatic again
+    assert cleaned == {"x": "ok"} and bad == {}        # a stored name that cannot be one is dropped
 
 
 def test_the_corner_grip_resizes_along_the_diagonal(results):

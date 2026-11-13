@@ -317,7 +317,7 @@ export function createColorByPane(sidebarEl, callbacks) {
   cbMax.className = 'cb-max';
   const cbLabel = document.createElement('div');
   cbLabel.id = 'colorbar-label';
-  const colourBar = createColourBar({ name: cbLabel, max: cbMax, min: cbMin });
+  const colourBar = createColourBar({ name: cbLabel, max: cbMax, min: cbMin }, { onRename: () => renameBar() });
   // The legend lives on the 3D view, not in this section: app.js puts it
   // into the focused panel's viewport (ADR 0063).
   const legend = document.createElement('div');
@@ -377,12 +377,18 @@ export function createColorByPane(sidebarEl, callbacks) {
     }
   }
   let shownColorBy = null;   // the colouring the colourbar shows, for its label
-  const _renderLabel = () => {
-    if (!shownColorBy) return;
+  /** Which colouring a typed name belongs to (Rename…). */
+  const colouringKey = () => state.source || shownColorBy?.label || '';
+  /** The name the bar shows when none is typed. */
+  const automaticName = () => {
     const units = callbacks.unitsOf?.() || {};
     const id = state.source?.startsWith('metric:') ? state.source.slice(7) : '';
     const name = forcesSide(id) ? forcesLabel(id) : shownColorBy.label;
-    cbLabel.textContent = withUnit(name, resolveUnit(shownColorBy.unit, units));
+    return withUnit(name, resolveUnit(shownColorBy.unit, units));
+  };
+  const _renderLabel = () => {
+    if (!shownColorBy) return;
+    cbLabel.textContent = colourBar.nameOf(colouringKey()) ?? automaticName();
     // Colours that are not final yet, or why they could not be (ADR 0082).
     if (shownColorBy.note) {
       const note = document.createElement('span');
@@ -392,8 +398,38 @@ export function createColorByPane(sidebarEl, callbacks) {
     }
     cbLabel.classList.toggle('unit-editable', !!editableDimension(shownColorBy.unit));
   };
+  /** Rename… on the bar's name: type it in place; Enter keeps it for this
+   * colouring, Escape cancels, an empty box brings the automatic name back. */
+  function renameBar() {
+    if (!shownColorBy || cbLabel.querySelector('input')) return;
+    const key = colouringKey();
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'cb-limit-input cb-name-input';
+    input.value = cbLabel.firstChild?.textContent ?? '';
+    input.placeholder = automaticName();
+    input.setAttribute('aria-label', 'Colour bar name');
+    cbLabel.replaceChildren(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (commit) => {
+      if (done) return;
+      done = true;
+      if (commit) colourBar.setName(key, input.value);
+      _renderLabel();
+    };
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') finish(true);
+      else if (e.key === 'Escape') finish(false);
+      e.stopPropagation();
+    });
+    input.addEventListener('blur', () => finish(true));
+  }
+
   // Clicking the label names the unit of an energy or force colouring.
   cbLabel.addEventListener('click', async (e) => {
+    if (e.target.closest('input')) return;   // the Rename… box
     const dimension = shownColorBy && editableDimension(shownColorBy.unit);
     if (!dimension || !callbacks.onSetUnit) return;
     const unit = await unitPopover({

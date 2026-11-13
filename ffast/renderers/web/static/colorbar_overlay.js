@@ -14,7 +14,7 @@
  */
 
 import {
-  PIECES, SCALE_RANGE, barSize, boxesFor, cleanLayout, defaultLayout, groupOf, groupSelection,
+  PIECES, SCALE_RANGE, barSize, boxesFor, cleanLayout, defaultLayout, groupOf, groupSelection, withName,
   keepInside, nextRotation, peers, preset, press, resized, resizedBar, rotateBlock, rotateOne, snapDrag, snapTextResize,
   toFractions, ungroup,
 } from './colorbar_layout.js';
@@ -31,10 +31,12 @@ const SHORT = { bar: 'bar', name: 'name', max: 'max', min: 'min' };
 /**
  * @param {{name: HTMLElement, max: HTMLElement, min: HTMLElement}} texts the
  *   name and the two values, already made (their own clicks still edit them)
+ * @param {{onRename?: () => void}} [opts] `onRename`: the name's Rename… item
  * @returns {{el: HTMLElement, bar: HTMLElement, setColormap: (name: string) => void,
- *   setShown: (on: boolean) => void, draw: (ctx: CanvasRenderingContext2D, opts: object) => void}}
+ *   setShown: (on: boolean) => void, draw: (ctx: CanvasRenderingContext2D, opts: object) => void,
+ *   nameOf: (colouring: string) => string|null, setName: (colouring: string, text: string) => void}}
  */
-export function createColourBar(texts) {
+export function createColourBar(texts, { onRename } = {}) {
   const root = document.createElement('div');
   root.id = 'colorbar';
   root.className = 'hidden';
@@ -175,6 +177,7 @@ export function createColourBar(texts) {
   }
 
   const menuActions = (key) => [
+    ...(key === 'name' && onRename ? [{ id: 'cb-rename', label: 'Rename…', run: onRename }, { separator: true }] : []),
     { id: 'cb-rotate', label: groupOf(layout.groups, key) ? 'Rotate group 90°' : 'Rotate 90°', run: () => rotate(key) },
     { id: 'cb-rotate-all', label: `Rotate all 90° (${layout.orientation === 'vertical' ? 'horizontal' : 'vertical'})`,
       run: rotateAll },
@@ -341,6 +344,17 @@ export function createColourBar(texts) {
     setShown(on) {
       root.classList.toggle('hidden', !on);
       render();
+    },
+
+    /** The name typed for `colouring` (Rename…), or null: the automatic one. */
+    nameOf(colouring) {
+      return layout.names[colouring] ?? null;
+    },
+
+    /** Keep `text` as the name of `colouring`; empty: the automatic name. */
+    setName(colouring, text) {
+      layout = withName(layout, colouring, text);
+      save();
     },
 
     /** Paint the pieces where they are on screen, onto an export of the

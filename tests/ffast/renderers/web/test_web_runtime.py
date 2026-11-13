@@ -3307,6 +3307,58 @@ async def test_web_a_dataset_deleted_elsewhere_moves_the_main_view_to_what_is_le
             await browser.close()
 
 
+async def test_web_the_colour_bar_name_is_renamed_per_colouring(ffast_web_server):
+    """Gap 7 of the Qt-removal audit (2026-11-13): right-click the colour
+    bar's name, Rename…, type: the name is that colouring's, kept in this
+    browser after a reload; another colouring keeps its automatic name, and
+    an empty name brings the automatic one back. Its own server: choosing
+    Forces adds a metric to the catalog."""
+    ws_port, web_port = ffast_web_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        name = page.locator("#colorbar-label")
+        coloring = page.locator(_control("Colour By", "Coloring"))
+
+        async def rename(text):
+            await page.locator("#legend3d .cb-piece-name").click(button="right")
+            await page.locator(".cb-menu [data-action='cb-rename']").click()
+            box = name.locator("input")
+            await expect(box).to_be_focused()
+            await box.fill(text)
+            await box.press("Enter")
+
+        try:
+            await _open_view(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            await expect(name).to_contain_text("Force")
+            automatic = await name.inner_text()
+
+            await rename("Model error")
+            await expect(name).to_have_text("Model error")
+            await expect(page.locator("#unit-popover")).to_be_hidden()
+
+            await coloring.select_option("Forces")
+            await expect(name).to_be_visible()
+            await expect(name).not_to_have_text("Model error")
+            await coloring.select_option("Force Difference")
+            await expect(name).to_have_text("Model error")
+
+            await page.reload(wait_until="networkidle")
+            await _expect_connected(page)
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+            await page.locator("#quick-styles button", has_text="Force error").click()
+            await expect(name).to_have_text("Model error")
+
+            await rename("")
+            await expect(name).to_have_text(automatic)
+        finally:
+            await browser.close()
+
+
 async def test_web_deleting_the_last_dataset_hides_the_colour_bar(ffast_web_server):
     """The empty 3D view shows no colour bar: deleting the last dataset while
     its atoms are coloured by a metric leaves only the Load Dataset… screen."""

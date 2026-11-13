@@ -41,7 +41,21 @@ const defaultSizes = () => Object.fromEntries(PIECES.map((k) => [k, 1]));
 
 /** The layout with nothing saved: vertical, at the default place and size. */
 export function defaultLayout() {
-  return { orientation: 'vertical', sizes: defaultSizes(), barThickness: 1, origin: { ...ORIGIN }, pieces: null, groups: [] };
+  return { orientation: 'vertical', sizes: defaultSizes(), barThickness: 1, origin: { ...ORIGIN }, pieces: null, groups: [],
+    names: {} };
+}
+
+/** The longest name the bar keeps. */
+const NAME_MAX = 200;
+
+/** `layout` with `text` as the name of `colouring` (Rename…); an empty text
+ * brings the automatic name back. Pure. */
+export function withName(layout, colouring, text) {
+  const names = { ...(layout.names || {}) };
+  const t = String(text ?? '').trim().slice(0, NAME_MAX);
+  if (t) names[colouring] = t;
+  else delete names[colouring];
+  return { ...layout, names };
 }
 
 /** `layout` with anything missing or malformed replaced by the default, so a
@@ -62,7 +76,11 @@ export function cleanLayout(layout) {
       ? { x: layout.origin.x, y: layout.origin.y } : d.origin,
     pieces: null,
     groups: [],
+    names: {},
   };
+  if (layout.names && typeof layout.names === 'object' && !Array.isArray(layout.names))
+    out.names = Object.fromEntries(Object.entries(layout.names).filter(
+      ([, v]) => typeof v === 'string' && v.trim() && v.length <= NAME_MAX));
   // a layout from before the thickness had its own factor: the bar's size was both
   const thick = layout.barThickness ?? out.sizes.bar;
   out.barThickness = num(thick, ...SCALE_RANGE) ? thick : 1;
