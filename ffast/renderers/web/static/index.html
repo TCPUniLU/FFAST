@@ -226,6 +226,16 @@
     }
     #status.connected { color: var(--success); }
     #status.error { color: var(--danger); }
+    /* Shown while a lost connection is retried (ADR 0097, reconnect.js). */
+    #conn-lost {
+      position: fixed; top: 44px; left: 50%; transform: translateX(-50%); z-index: 900;
+      display: flex; align-items: center; gap: 10px; max-width: calc(100vw - 32px);
+      padding: 6px 8px 6px 12px; border-radius: 4px; font-size: var(--fs-s);
+      background: var(--surface-2); color: var(--ink);
+      border: 1px solid var(--danger); box-shadow: 0 2px 8px rgb(0 0 0 / 0.25);
+    }
+    #conn-lost.hidden { display: none; }
+    #conn-lost-text::before { content: "●"; color: var(--danger); margin-right: 6px; }
 
     /* ── main layout ─────────────────────────────────────────────────── */
     #main { display: flex; flex: 1; overflow: hidden; }
@@ -1724,6 +1734,12 @@
     </div>
     <!-- The connection status; clicking it opens the connection dialog (ADR 0055). -->
     <button id="status" type="button" title="Connection…">Disconnected</button>
+  </div>
+
+  <!-- A dropped connection (ADR 0097): said at once, retried by itself. -->
+  <div id="conn-lost" class="hidden" role="status" aria-live="polite">
+    <span id="conn-lost-text">Connection lost.</span>
+    <button id="conn-lost-now" type="button">Reconnect now</button>
   </div>
 
   <!-- Connection dialog (ADR 0055). Opens from the status label, and by itself

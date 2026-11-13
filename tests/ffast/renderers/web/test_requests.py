@@ -142,6 +142,40 @@ async (origin) => {
     out.closed = await state(p);
     out.toldOnClose = told;
   }
+  { // retries wait 1, 2, 4 … 30 s and stop once a try succeeds
+    const { Reconnector } = await import(`${origin}/reconnect.js`);
+    const timers = []; const waits = []; let tries = 0; let okOn = 4;
+    const r = new Reconnector({
+      tryConnect: async () => (++tries === okOn),
+      onWait: (s) => waits.push(s),
+      setTimer: (fn, ms) => { timers.push(fn); return timers.length; },
+      clearTimer: () => {},
+    });
+    r.start(); r.start();   // a second start changes nothing
+    for (let i = 0; i < 3; i++) { timers.shift()(); await settle(); }
+    out.retryWaits = waits.slice();
+    out.retryTries = tries;
+    timers.shift()(); await settle();
+    out.retryActiveAfterSuccess = r.active;
+    out.retryTriesAfterSuccess = tries;
+  }
+  { // the wait tops out at 30 s; now() tries at once; stop() ends it
+    const { Reconnector } = await import(`${origin}/reconnect.js`);
+    const timers = []; const waits = []; let tries = 0;
+    const r = new Reconnector({
+      tryConnect: async () => { tries++; return false; },
+      onWait: (s) => waits.push(s),
+      setTimer: (fn) => { timers.push(fn); return timers.length; },
+      clearTimer: () => {},
+    });
+    r.start();
+    for (let i = 0; i < 7; i++) { timers.shift()(); await settle(); }
+    out.cappedWaits = waits.slice();
+    r.now(); await settle();
+    out.triesAfterNow = tries;
+    r.stop();
+    out.activeAfterStop = r.active;
+  }
   { // the table alone: an unknown reply_to is not consumed
     const t = new RequestTable();
     out.tableUnknown = t.answer({ event: 'X', reply_to: 4, final: true });
@@ -227,3 +261,16 @@ def test_closing_on_purpose_is_not_a_lost_connection(results):
 def test_the_table_ignores_replies_it_does_not_hold(results):
     assert results["tableUnknown"] is False
     assert results["tableNoReplyTo"] is False
+
+
+def test_retries_back_off_and_stop_when_connected(results):
+    assert results["retryWaits"] == [1, 2, 4, 8]
+    assert results["retryTries"] == 3
+    assert results["retryActiveAfterSuccess"] is False
+    assert results["retryTriesAfterSuccess"] == 4
+
+
+def test_retry_waits_top_out_and_now_does_not_wait(results):
+    assert results["cappedWaits"] == [1, 2, 4, 8, 16, 30, 30, 30]
+    assert results["triesAfterNow"] == 8
+    assert results["activeAfterStop"] is False

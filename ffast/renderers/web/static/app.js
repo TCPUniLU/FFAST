@@ -3,6 +3,7 @@
  */
 
 import { FFastConnection } from './connection.js';
+import { Reconnector } from './reconnect.js';
 import { Panel3D, ViewRenderers } from './views3d.js';
 import { MainViews } from './views.js';
 import { defaultSettings, startSettings } from './view_settings.js';
@@ -635,6 +636,13 @@ export class FFastApp {
   _initUI() {
     document.getElementById('connect-btn').addEventListener('click', () => this._connect());
     document.getElementById('disconnect-btn').addEventListener('click', () => this._disconnect());
+    // A dropped connection is retried by itself (ADR 0097 decision 3).
+    this._reconnector = new Reconnector({
+      tryConnect: () => this._reconnect(),
+      onWait: (s) => this._showConnLost(`Connection lost. Trying again in ${s} s.`),
+      onTrying: () => this._showConnLost('Connection lost. Reconnecting…'),
+    });
+    document.getElementById('conn-lost-now').addEventListener('click', () => this._reconnector.now());
     document.getElementById('status').addEventListener('click', () => this._openConnDialog());
     document.getElementById('conn-close').addEventListener('click', () => this._closeConnDialog());
     this._clusterDialog = this._clusterClient ? new ClusterDialog({
@@ -1873,7 +1881,11 @@ export class FFastApp {
     document.getElementById('recent-block').classList.toggle('hidden', list.length === 0);
   }
 
-  async _connect({ remember = true } = {}) {
+  /** Connect to the server named in the connection dialog. Resolves true
+   * when connected. ``reconnecting``: a retry after a lost connection, which
+   * fails quietly (the banner says it) instead of opening the dialog. */
+  async _connect({ remember = true, reconnecting = false } = {}) {
+    if (!reconnecting) this._stopReconnecting();
     const wsUrl = document.getElementById('ws-url').value.trim();
     const token = document.getElementById('token-input').value.trim() || null;
     // Explicit READ_ONLY viewer opt-in (ADR 0044 Phase 2, PRD story 73): drops
@@ -1886,6 +1898,7 @@ export class FFastApp {
 
     try {
       const conn = new FFastConnection(wsUrl, token, readOnly);
+      conn.onDisconnect(() => this._connectionLost(conn));
       // Set before awaiting connect(): connect() dispatches buffered
       // handshake-time replay messages (REMOTE_DATASET_META, ...) to their
       // handlers *before* its promise resolves. A server with an
@@ -2053,15 +2066,76 @@ export class FFastApp {
       // what this window has selected.
       this._syncMetricsContext();
 
+      return true;
     } catch (err) {
       this._conn = null;   // handshake failed — undo the early assignment above
+      if (reconnecting) {
+        console.warn('Reconnect failed:', err);
+        this._setStatus('Disconnected', '');
+        return false;
+      }
       console.error('Connection failed:', err);
       this._setStatus(`Error: ${err.message}`, 'error');
       this._openConnDialog(`Could not connect to ${wsUrl} (${err.message}).`);
+      return false;
     }
   }
 
-  _disconnect() {
+  /** The socket closed without the page asking (ADR 0097 decision 3): the
+   * page drops what it held, as a reload would, and retries by itself. */
+  _connectionLost(conn) {
+    if (conn !== this._conn) return;
+    console.warn('FFAST: connection lost');
+    this._lostOnCluster = !!this._clusterServerUrl && conn._url === this._clusterServerUrl;
+    this._disconnect({ lost: true });
+    this._setStatus('Connection lost', 'error');
+    this._reconnector.start();
+  }
+
+  /** One retry. On a cluster, a tunnel the launcher no longer holds is not
+   * retried: the job or the tunnel is gone, and the Cluster dialog says why. */
+  async _reconnect() {
+    if (this._lostOnCluster && this._clusterClient) {
+      let state = null;
+      try { state = (await this._clusterClient.state()).status?.state; } catch (_) { /* launcher gone */ }
+      if (state !== 'connected') {
+        this._stopReconnecting();
+        this._lostOnCluster = false;
+        this._showConnLost('The cluster connection ended. Open the Cluster dialog to reconnect.', { button: false });
+        return false;
+      }
+    }
+    // What a reload would show again: the main view saved before the drop.
+    const shown = loadMainView();
+    if (shown) {
+      this._autoDatasetFp = shown.datasetFp;
+      this._autoModelFp = shown.modelFp || '';
+    }
+    const ok = await this._connect({ remember: false, reconnecting: true });
+    if (ok) this._hideConnLost();
+    return ok;
+  }
+
+  _showConnLost(text, { button = true } = {}) {
+    document.getElementById('conn-lost-text').textContent = text;
+    document.getElementById('conn-lost-now').hidden = !button;
+    document.getElementById('conn-lost').classList.remove('hidden');
+  }
+
+  _hideConnLost() {
+    document.getElementById('conn-lost').classList.add('hidden');
+  }
+
+  /** The user chose: no more retries, no banner. */
+  _stopReconnecting() {
+    this._reconnector?.stop();
+    this._hideConnLost();
+  }
+
+  /** ``lost``: the socket is already gone (keep retrying); otherwise the
+   * user disconnected, which ends any retrying. */
+  _disconnect({ lost = false } = {}) {
+    if (!lost) this._stopReconnecting();
     if (this._conn) {
       this._conn.close();
       this._conn = null;
