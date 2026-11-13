@@ -3,12 +3,10 @@
 
 # conda-forge recipe for FFAST (ADR 0045 Phase 6, distribution).
 #
-# This packages the headless core + web client. There are NO native GL/Qt
+# This packages the headless core + web client. There are NO native GL
 # libraries to carry — the client is the user's own browser, served the
 # vendored static assets that ship inside the wheel — so the recipe is a plain
-# noarch: python build. The `ffast` command launches the web client; the
-# optional Qt desktop (`ffast[gui]`) is intentionally NOT packaged here (it is
-# the unreliable-on-Linux path this ADR retires).
+# noarch: python build. The `ffast` command launches the web client.
 #
 # For a real conda-forge submission, replace the `path:` source with the
 # published sdist url + sha256.
@@ -29,7 +27,6 @@ build:
     - ffast-web = ffast.renderers.web.launcher:main
     - ffast-server = server:cli
     - ffast-cli = ffast.cli.main:main
-    - ffast-qt = main:cli
 
 requirements:
   host:
@@ -58,7 +55,7 @@ test:
     - ffast.renderers.web.launcher
   commands:
     # The console scripts must be installed and importable on a clean env with
-    # no system Qt/GL.
+    # no system GL.
     - ffast-cli --help
     - ffast-server --help
     - test -f $SP_DIR/ffast/renderers/web/static/index.html  # [unix]
@@ -66,8 +63,8 @@ test:
 about:
   home: https://github.com/TCPUniLU/FFAST
   license: MIT
-  summary: Force Field Analysis and Screening Tool — web client (no Qt/GL)
+  summary: Force Field Analysis and Screening Tool — web client (no native GL)
   description: |
     FFAST analyzes and visualizes Machine Learning Force Field (MLFF) models.
     The client runs in the browser served by a local (or remote/HPC) Python
-    server over a WebSocket — no native GL/Qt libraries to install.
+    server over a WebSocket — no native GL libraries to install.

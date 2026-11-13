@@ -1,10 +1,8 @@
 """The `ffast` command: start the browser client.
 
-The browser client is the main client (ADR 0090). The desktop client is being
-retired and starts with ``ffast-qt``.
+The browser client is the only client (ADR 0090, ADR 0098).
 
-This lives at the top level, not under ``ffast/``, as the other entry points do
-(``main.py``, ``server.py``).
+This lives at the top level, not under ``ffast/``, as ``server.py`` does.
 """
 
 import sys

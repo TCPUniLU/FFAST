@@ -23,14 +23,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Desktop client: `pip install ffast[gui]` adds the Qt/Vispy renderer.
-gui = [
-    "pyopengl>=3.1.10",
-    "pyqtgraph>=0.13.7",
-    "pyside6>=6.8,<6.9",
-    "qasync>=0.28.0",
-    "vispy>=0.16.1",
-]
 # Server plugins (ADR 0048): each ML-backend model loader in
 # ffast/plugins/models/ pulls its own heavy framework, gated behind its own
 # extra so a base install stays slim. torch itself is already a base
@@ -59,10 +51,8 @@ zstd = ["zstandard>=0.21"]
 live = ["detectana @ git+https://github.com/AntonCh-G/DetectAna.git@v0.4.0", "rdkit>=2023.9"]
 
 [project.scripts]
-# Two clients, one protocol. `ffast` starts the browser client (ADR 0090).
-# `ffast-qt` starts the legacy desktop client, which is being retired.
+# `ffast` starts the browser client (ADR 0090, ADR 0098).
 ffast = "launcher:main"
-ffast-qt = "main:cli"
 ffast-web = "ffast.renderers.web.launcher:main"
 ffast-server = "server:cli"
 ffast-cli = "ffast.cli.main:main"
@@ -71,32 +61,19 @@ ffast-lammps = "ffast.live.wrapper:main"
 ffast-live = "ffast.live.scorer:main"
 
 [tool.setuptools]
-py-modules = ["events", "launcher", "main", "server", "tasks", "utils"]
+py-modules = ["launcher", "server"]
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = [
     "ffast",
     "ffast.*",
-    "UI",
-    "UI.*",
-    "client",
-    "client.*",
     "cluster",
     "cluster.*",
-    "config",
-    "config.*",
-    "datasetLoaders",
-    "datasetLoaders.*",
-    "modelLoaders",
-    "modelLoaders.*",
-    "modules",
-    "modules.*",
 ]
 namespaces = true
 
 [tool.setuptools.package-data]
-config = ["default.json"]
 "ffast.config" = ["*.toml", "builtin_tabs/*.toml", "default.json"]
 # Vendored web client assets (ADR 0045): HTML/JS/CSS + vendored Three.js and
 # Plotly under static/. These must ship in the wheel or `ffast` (the web

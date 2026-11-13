@@ -1,6 +1,6 @@
 # pixi distribution for FFAST (ADR 0045 Phase 6).
 #
-# The web client needs no native GL/Qt libraries — just the Python server, the
+# The web client needs no native GL libraries — just the Python server, the
 # vendored static assets (shipped in the package), and the user's own browser.
 # That makes a pixi environment a reliable, one-command install on any distro:
 #
@@ -9,13 +9,13 @@
 #
 # The heavy native dependency (PyTorch) is pulled from conda-forge; FFAST itself
 # is installed from this source tree as a PyPI dependency, which registers the
-# console scripts (`ffast`, `ffast-web`, `ffast-qt`, `ffast-server`,
+# console scripts (`ffast`, `ffast-web`, `ffast-server`,
 # `ffast-cli`). Version pins are kept in sync with `pyproject.toml`, the source
 # of truth for dependencies.
 [project]
 name = "ffast"
 version = "2.0.0"
-description = "Force Field Analysis and Screening Tool — web client (no Qt/GL)"
+description = "Force Field Analysis and Screening Tool — web client (no native GL)"
 channels = ["conda-forge"]
 platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
 

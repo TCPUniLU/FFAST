@@ -56,9 +56,10 @@ class TestEntryPoints:
             "when PySide6 is present and the browser client when it is not"
         )
 
-    def test_both_clients_addressable_directly(self, pyproject):
+    def test_the_browser_client_is_the_only_client(self, pyproject):
+        # The desktop client and its `ffast-qt` script are gone (ADR 0098).
         scripts = pyproject["project"]["scripts"]
-        assert scripts.get("ffast-qt") == "main:cli"
+        assert "ffast-qt" not in scripts
         assert scripts.get("ffast-web") == "ffast.renderers.web.launcher:main"
 
     def test_dispatcher_ships_in_the_wheel(self, pyproject):
@@ -69,8 +70,8 @@ class TestEntryPoints:
         )
 
     def test_dispatcher_does_not_import_qt_at_module_level(self):
-        """It must stay importable on a base install: the Qt import lives
-        inside main(), behind the PySide6 check."""
+        """It must stay importable on a base install: the client is
+        imported inside main()."""
         import ast
 
         tree = ast.parse((REPO_ROOT / "launcher.py").read_text())
@@ -88,8 +89,7 @@ class TestEntryPoints:
 
 
 class TestCoreDependencies:
-    """A clean web/headless install must not drag in Qt/GL — those live only
-    in the optional ``[gui]`` extra."""
+    """No install drags in Qt/GL: the browser draws the 3D view."""
 
     _QT_GL_TOKENS = ("pyside", "pyqt", "vispy", "pyopengl", "qasync")
 
@@ -98,11 +98,13 @@ class TestCoreDependencies:
         for token in self._QT_GL_TOKENS:
             assert token not in deps, f"core deps must not include {token!r}"
 
-    def test_gui_extra_carries_qt(self, pyproject):
-        gui = " ".join(
-            pyproject["project"]["optional-dependencies"]["gui"]
-        ).lower()
-        assert "pyside6" in gui and "vispy" in gui
+    def test_no_extra_carries_qt_or_gl(self, pyproject):
+        # The `gui` extra went with the desktop client (ADR 0098).
+        extras = pyproject["project"]["optional-dependencies"]
+        assert "gui" not in extras
+        for name, deps in extras.items():
+            joined = " ".join(deps).lower()
+            assert not any(t in joined for t in self._QT_GL_TOKENS), name
 
 
 @pytest.mark.integration
