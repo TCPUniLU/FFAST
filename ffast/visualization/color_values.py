@@ -23,6 +23,8 @@ mismatch) returns ``None`` so coloring degrades to element colors (ADR 0016).
 from __future__ import annotations
 
 import logging
+import threading
+from collections import OrderedDict
 
 import numpy as np
 
@@ -239,7 +241,9 @@ def _whole_dataset_values(get_metric, metric_id, params, shape, ds, idx, z, data
     result = get_metric(metric_id, params, dataset_ref, prediction_ref)
     if result is None:
         return None
-    vals = np.asarray(result.values, dtype=np.float64).ravel()
+    # No float64 copy of the whole result: on 1.77M structures it is 213M
+    # values, and only the frame's few are needed.
+    vals = np.asarray(result.values).reshape(-1)
     zarr = np.asarray(z).ravel()
     if shape == "(N_frames, N_elements)":
         # A row per structure, a column per element of the dataset (ADR 0064
@@ -264,9 +268,42 @@ def _whole_dataset_values(get_metric, metric_id, params, shape, ds, idx, z, data
             return None
     else:
         return None
-    finite = vals[np.isfinite(vals)]
-    span = (float(finite.min()), float(finite.max())) if finite.size else None
-    return frame, span
+    return np.asarray(frame, dtype=np.float64), _span_of(result, vals)
+
+
+# The (lowest, highest) of a stored result, by its tag (MetricCache.put): a
+# whole-dataset result does not change while it is stored, and scanning its
+# 213M values again took ~1.3 s and a 1.7 GB copy on every frame change
+# (2026-11-13, shard_03 on MeluXina). A few results are kept, newest last.
+_SPANS: "OrderedDict[str, tuple[float, float] | None]" = OrderedDict()
+_SPANS_KEEP = 16
+_SPANS_LOCK = threading.Lock()
+
+
+def _span_of(result, vals) -> tuple[float, float] | None:
+    """``(lowest, highest)`` finite value of ``result`` (its values ``vals``),
+    scanned once per stored result; None when none is finite."""
+    tag = getattr(result, "_tag", None)
+    if tag is not None:
+        with _SPANS_LOCK:
+            if tag in _SPANS:
+                _SPANS.move_to_end(tag)
+                return _SPANS[tag]
+    span = None
+    if vals.size:
+        # fmin/fmax skip NaN without copying the values.
+        lo, hi = float(np.fmin.reduce(vals)), float(np.fmax.reduce(vals))
+        if np.isfinite(lo) and np.isfinite(hi):
+            span = (lo, hi)
+        else:
+            finite = vals[np.isfinite(vals)]   # ±inf or only NaN: the slow way
+            span = (float(finite.min()), float(finite.max())) if finite.size else None
+    if tag is not None:
+        with _SPANS_LOCK:
+            _SPANS[tag] = span
+            while len(_SPANS) > _SPANS_KEEP:
+                _SPANS.popitem(last=False)
+    return span
 
 
 def resolve_atom_color_values(state, ds, idx, raw_positions, z, get_prediction, executor=None,
