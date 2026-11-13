@@ -614,6 +614,29 @@ def _gib(n):
     return f"{n / 2**30:.1f} GB"
 
 
+def _one_blas_thread():
+    """Run first in each reader worker: BLAS and OpenMP get one thread each.
+
+    A library reads these settings when it loads, and a worker loads scipy
+    (through ase.io) after this runs. Each library otherwise starts one thread
+    per core in every worker: with 256 workers on a cluster node, thread
+    creation failed and the workers died. The worker processes are the
+    parallelism here."""
+    for name in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        os.environ[name] = "1"
+    try:
+        import threadpoolctl
+        threadpoolctl.threadpool_limits(1)   # the libraries already loaded (numpy's)
+    except Exception:
+        pass
+
+
+def worker_pool(workers):
+    """A pool of ``workers`` reader processes, each with one BLAS thread."""
+    return ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn"),
+                               initializer=_one_blas_thread)
+
+
 def worker_count():
     env = os.environ.get("FFAST_READ_WORKERS")
     if env:
@@ -691,7 +714,7 @@ def read_frames(index, *, workers=None, batch=None, progress=None):
     # At most a few batches per worker in flight, so finished batches waiting
     # to be copied do not pile up in memory.
     window = workers * WINDOW_PER_WORKER
-    with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as pool:
+    with worker_pool(workers) as pool:
         pending = deque()
         try:
             for job in jobs:
