@@ -45,6 +45,7 @@ export class ClusterDialog {
     this._message('');
     try {
       await this.refresh();
+      this._loadKeys();
       if (this._state.status.state === 'connecting') this._poll();
       else if (this._state.records.length) this._checkRecords();
     } catch (err) {
@@ -226,15 +227,57 @@ export class ClusterDialog {
     if (f.type === 'int') input.inputMode = 'numeric';
     if (f.placeholder) input.placeholder = f.placeholder;
     const out = [label, input];
+    if (f.keys) {
+      // The launcher offers the keys it finds and checks what is typed: the
+      // page cannot open a file dialog that gives it a path (gap 8).
+      const list = document.createElement('datalist');
+      list.id = `cl-${f.key}-keys`;
+      input.setAttribute('list', list.id);
+      input.autocomplete = 'off';
+      const check = document.createElement('small');
+      check.className = 'cl-help cl-key-check';
+      check.id = `cl-${f.key}-check`;
+      check.setAttribute('role', 'status');
+      out.push(list, check);
+      input.addEventListener('input', () => {
+        clearTimeout(this._keyTimer);
+        this._keyTimer = setTimeout(() => this._checkKey(), 300);
+      });
+    }
     if (f.help) {
       const help = document.createElement('small');
       help.className = 'cl-help';
       help.id = `cl-${f.key}-help`;
       help.textContent = f.help;
-      input.setAttribute('aria-describedby', help.id);
+      input.setAttribute('aria-describedby', f.keys ? `${help.id} cl-${f.key}-check` : help.id);
       out.push(help);
     }
     return out;
+  }
+
+  /** Offer the private keys the launcher finds in ~/.ssh. */
+  async _loadKeys() {
+    try {
+      const { keys } = await this._client.keys();
+      $('cl-identity_file-keys').replaceChildren(...keys.map((k) => this._option(k, k)));
+    } catch {
+      // No list: the field still takes a typed path.
+    }
+  }
+
+  /** Say whether the Identity file names a private key on the launcher's machine. */
+  async _checkKey() {
+    const input = $('cl-identity_file');
+    const line = $('cl-identity_file-check');
+    const asked = input.value;
+    try {
+      const r = await this._client.checkKey(asked);
+      if (input.value !== asked) return;   // typed on meanwhile
+      line.textContent = `${r.ok ? '✓' : '✗'} ${r.note}`;
+      line.classList.toggle('cl-key-bad', !r.ok);
+    } catch {
+      line.textContent = '';
+    }
   }
 
   _readForm() {
@@ -253,6 +296,7 @@ export class ClusterDialog {
       if (f.type === 'bool') input.checked = values[f.key];
       else input.value = values[f.key];
     }
+    this._checkKey();
   }
 
   /** Fill the form from the chosen profile ("New profile": the defaults). */

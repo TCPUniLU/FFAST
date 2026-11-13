@@ -13,7 +13,8 @@ export const CLUSTER_FIELDS = [
   { key: 'host', label: 'Host', group: 'SSH', type: 'text', placeholder: 'login.example.com' },
   { key: 'username', label: 'Username', group: 'SSH', type: 'text', placeholder: 'your_username' },
   { key: 'identity_file', label: 'Identity file', group: 'SSH', type: 'text',
-    placeholder: '~/.ssh/id_ed25519 (blank: ssh-agent / default)' },
+    placeholder: '~/.ssh/id_ed25519', keys: true,
+    help: 'The keys in ~/.ssh are offered; leave empty to use ssh-agent or ~/.ssh/config.' },
   { key: 'ffast_server_cmd', label: 'Server command', group: 'SSH', type: 'text',
     placeholder: 'ffast-server' },
   { key: 'partition', label: 'Partition', group: 'Scheduler', type: 'text' },
@@ -114,6 +115,10 @@ export class ClusterClient {
   stop() { return this._ask('POST', '/cluster/stop', {}); }
   /** "Run with FFAST": sbatch a written job script on the login node, from its folder. */
   submit(folder, script) { return this._ask('POST', '/cluster/submit', { folder, script }); }
+  /** The private keys in ~/.ssh on the launcher's machine. */
+  keys() { return this._ask('GET', '/cluster/keys'); }
+  /** Whether `path` names a private key there: {ok, note}. */
+  checkKey(path) { return this._ask('POST', '/cluster/keys/check', { path }); }
 
   /** The custom header is what keeps other web sites out; a JSON body is
    * same-origin here, so it needs no preflight. */

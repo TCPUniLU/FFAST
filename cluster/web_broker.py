@@ -19,6 +19,7 @@ import threading
 from cluster import connection as _conn
 from cluster.backend import ClusterError
 from cluster.config import ClusterConfig, ClusterProfile
+from cluster.ssh_keys import check_key, ssh_keys
 
 logger = logging.getLogger("FFAST")
 
@@ -351,6 +352,10 @@ class ClusterBroker:
                 return 200, self.state()
             if method == "POST" and path == "/cluster/submit":
                 return 200, self.submit(body.get("folder"), body.get("script"))
+            if method == "GET" and path == "/cluster/keys":
+                return 200, {"keys": ssh_keys()}
+            if method == "POST" and path == "/cluster/keys/check":
+                return 200, check_key(str(body.get("path") or ""))
             return 404, {"error": "Unknown cluster request"}
         except ValueError as exc:
             return 400, {"error": str(exc)}

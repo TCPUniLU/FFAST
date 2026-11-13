@@ -635,6 +635,47 @@ async def _cluster_page(broker, secret="s3cret"):
         broker.shutdown()
 
 
+async def test_web_cluster_form_offers_and_checks_ssh_keys(shared_server, tmp_path, monkeypatch):
+    """Gap 8 of the Qt-removal audit (2026-11-13): the Identity file field
+    offers the private keys the launcher finds in ~/.ssh and says whether a
+    typed path is one."""
+    import cluster.connection as cluster_conn
+    from cluster.config import ClusterConfig
+    from cluster.web_broker import ClusterBroker
+
+    monkeypatch.setattr(cluster_conn, "_SESSIONS_FILE", str(tmp_path / ".ffast" / "sessions.json"))
+    (tmp_path / ".ssh").mkdir()
+    (tmp_path / ".ssh" / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    (tmp_path / ".ssh" / "id_ed25519.pub").write_text("ssh-ed25519 AAAA me\n")
+    ws_port, _ = shared_server
+    await _wait_for_server_ready(ws_port)
+    broker = ClusterBroker(ClusterConfig(str(tmp_path / "clusters.json")))
+    async with _cluster_page(broker) as page_port, async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        # after the launch: Playwright finds its browser under the real HOME
+        monkeypatch.setenv("HOME", str(tmp_path))
+        page = await browser.new_page(viewport={"width": 1100, "height": 900})
+        field, check = page.locator("#cl-identity_file"), page.locator("#cl-identity_file-check")
+        try:
+            await page.goto(f"http://127.0.0.1:{page_port}/?port={ws_port}&launch=s3cret",
+                            wait_until="networkidle")
+            await _expect_connected(page)
+            await _file_menu(page, "Connect to Cluster…")
+            await expect(page.locator("#cl-identity_file-keys option")).to_have_count(1)
+            assert await page.locator("#cl-identity_file-keys option").get_attribute("value") == "~/.ssh/id_ed25519"
+            await expect(check).to_contain_text("ssh-agent")          # empty is fine
+
+            await field.fill("~/.ssh/id_ed25519.pub")
+            await expect(check).to_contain_text("✗")
+            await expect(check).to_contain_text(".pub")
+            await field.fill("~/.ssh/id_ed2551")
+            await expect(check).to_have_text("✗ No such file")
+            await field.fill("~/.ssh/id_ed25519")
+            await expect(check).to_have_text("✓ Private key found")
+        finally:
+            await browser.close()
+
+
 async def test_web_cluster_dialog_saves_and_deletes_profiles(shared_server, tmp_path, monkeypatch):
     """Web parity plan 2026-10-29: File > Connect to Cluster… lists the
     launcher's profiles, shows the defaults, keeps Server setup folded."""

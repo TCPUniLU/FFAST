@@ -345,3 +345,14 @@ def test_the_job_being_connected_keeps_its_record(make):
     b.handle("POST", "/cluster/connect", {"profile": _PROFILE, "reconnect_job_id": "J5"})
     _, body = b.handle("POST", "/cluster/records/check", {})
     assert [r["job_id"] for r in body["records"]] == ["J5"]
+
+
+def test_the_broker_lists_and_checks_ssh_keys(broker, tmp_path, monkeypatch):
+    """Gap 8 of the Qt-removal audit: the form's key list and check."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".ssh").mkdir()
+    (tmp_path / ".ssh" / "id_ed25519").write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+    assert broker.handle("GET", "/cluster/keys", {}) == (200, {"keys": ["~/.ssh/id_ed25519"]})
+    assert broker.handle("POST", "/cluster/keys/check", {"path": "~/.ssh/id_ed25519"}) == (
+        200, {"ok": True, "note": "Private key found"})
+    assert broker.handle("POST", "/cluster/keys/check", {"path": "~/.ssh/x"})[1]["ok"] is False

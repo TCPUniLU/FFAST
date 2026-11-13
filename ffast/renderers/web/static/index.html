@@ -1500,6 +1500,8 @@
     #cluster-form fieldset, #cluster-form details[open] .cl-grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 8px; }
     #cluster-form summary { cursor: pointer; font-weight: 600; }
     #cluster-form .cl-help { grid-column: 2; font-size: var(--fs-s); color: var(--muted); margin-top: -2px; }
+    #cluster-form .cl-key-check:empty { display: none; }
+    #cluster-form .cl-key-check.cl-key-bad { color: var(--error, #d9534f); }
 
     .warning-modal-footer button {
       min-width: 72px;
