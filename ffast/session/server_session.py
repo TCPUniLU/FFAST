@@ -851,7 +851,6 @@ class ServerSession:
         Uses the same key-detection logic as the local
         _showASEKeySelectionDialog so the client displays an identical dialog.
         """
-        from ffast.protocol.rpc import pack
 
         energy_keys: list = []
         force_keys: list = []
@@ -920,7 +919,8 @@ class ServerSession:
                           if not getattr(r, "hidden", False)), None)
 
         from ffast.protocol import DatasetKeysResponse
-        data = pack(
+        # The final reply to this window's probe (ADR 0097).
+        data = replies.reply(
             control.DATASET_KEYS_RESPONSE,
             (path,),
             DatasetKeysResponse(
@@ -932,6 +932,7 @@ class ServerSession:
                 error=error,
                 energy_sampling=energy_sampling,
             ).model_dump(),
+            error=error,
         )
         await self._emit(data)
         logger.debug("DATASET_KEYS_RESPONSE queued for %r", path)
@@ -951,7 +952,6 @@ class ServerSession:
         """The file's energies as a histogram, for the load dialog (ADR 0096).
         The first ask reads every frame's energy (worker processes, seconds to a
         minute for millions of frames); later asks use the kept copy."""
-        from ffast.protocol.rpc import pack
         from ffast.readers.energy_sample import energy_histogram
 
         def work():
@@ -962,12 +962,11 @@ class ServerSession:
         except Exception as exc:
             logger.warning("PROBE_DATASET_ENERGIES %r: %s", path, exc, extra={"popup": False})
             out = {"error": str(exc)}
-        await self._emit(pack(control.DATASET_ENERGIES, (path,), out))
+        await self._emit(replies.reply(control.DATASET_ENERGIES, (path,), out, error=out["error"]))
 
     async def _on_preview_energy_sample(self, path, dataset_type, sampling=None,
                                         preview_id=None, **kwargs) -> None:
         """What a load with ``sampling`` would keep, per bin (ADR 0096)."""
-        from ffast.protocol.rpc import pack
         from ffast.readers.energy_sample import energy_preview
 
         def work():
@@ -978,29 +977,35 @@ class ServerSession:
         except Exception as exc:
             logger.warning("PREVIEW_ENERGY_SAMPLE %r: %s", path, exc, extra={"popup": False})
             out = {"error": str(exc)}
-        await self._emit(pack(control.ENERGY_SAMPLE_PREVIEW, (path,), {**out, "preview_id": preview_id}))
+        await self._emit(replies.reply(control.ENERGY_SAMPLE_PREVIEW, (path,),
+                                       {**out, "preview_id": preview_id}, error=out.get("error")))
 
     async def _on_probe_dataset_length(self, path, **kwargs) -> None:
         """Count frames in the background; reply as it grows, then once with done=True.
 
         Returns at once: a count of a big file must not hold up the message
         loop (frame index plan 2026-11-01). A newer count cancels the older.
+        The growing counts are progress replies and done=True is the final
+        reply (ADR 0097); a cancelled count still ends, with error "cancelled".
         """
         from ffast.io import frame_index as fi
         from ffast.protocol import DatasetLengthResponse
-        from ffast.protocol.rpc import pack
 
         self._stop_length_probe()
         cancel = threading.Event()
         self._length_probe_cancel = cancel
         loop = asyncio.get_running_loop()
+        request_id = replies.current()
 
         async def send(n, error=None, done=False):
             if cancel.is_set():
-                return
-            await self._emit(pack(
+                if not done:
+                    return
+                n, error = None, "cancelled"
+            await self._emit(replies.reply(
                 control.DATASET_LENGTH_RESPONSE, (path,),
                 DatasetLengthResponse(n=n, error=error, done=done).model_dump(),
+                final=done, error=error if done else None, request_id=request_id,
             ))
 
         async def run():
@@ -1018,6 +1023,7 @@ class ServerSession:
                     n = await asyncio.to_thread(AtomsList.calc_dataset_length_static, path)
                 logger.info("PROBE_DATASET_LENGTH %r: n=%d", path, n)
             except fi.FrameIndexCancelled:
+                await send(None, "cancelled", done=True)
                 return
             except Exception as exc:
                 logger.warning("PROBE_DATASET_LENGTH error for %r: %s", path, exc, extra={"popup": False})
@@ -1446,7 +1452,6 @@ class ServerSession:
         case-insensitive. ``parent`` is None at the filesystem root.
         """
         import os
-        from ffast.protocol.rpc import pack
 
         home = os.path.expanduser("~")
         start = getattr(self.env, "workdir", None) or os.getcwd()
@@ -1479,7 +1484,8 @@ class ServerSession:
         # client can correlate the reply to its request (the abspath differs
         # from the request for None→home or relative inputs). The web client
         # reads only kwargs and ignores the extra positional.
-        data = pack(
+        # The final reply to this window's request (ADR 0097).
+        data = replies.reply(
             control.DIR_LISTING,
             (abspath, path),
             DirListing(
@@ -1489,6 +1495,7 @@ class ServerSession:
                 entries=entries,
                 error=error,
             ).model_dump(),
+            error=error,
         )
         await self._emit(data)
         logger.debug("DIR_LISTING queued for %r", abspath)

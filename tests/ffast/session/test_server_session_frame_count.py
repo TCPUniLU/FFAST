@@ -150,11 +150,12 @@ def test_a_new_count_stops_the_one_before(tmp_path, monkeypatch):
 
     out = asyncio.run(scenario())
     assert _lengths(out, second)[-1] == {"n": 5, "error": None, "done": True}
-    assert _lengths(out, first) == []
+    # The stopped count still ends its request, once (ADR 0097).
+    assert _lengths(out, first) == [{"n": None, "error": "cancelled", "done": True}]
     assert stopped == [first]
 
 
-def test_cancel_stops_the_count_and_nothing_more_is_sent(tmp_path, monkeypatch):
+def test_cancel_stops_the_count_and_only_its_end_is_sent(tmp_path, monkeypatch):
     path = _write(tmp_path)
     stopped = _slow_scan(monkeypatch, seconds=1.0)
 
@@ -163,11 +164,11 @@ def test_cancel_stops_the_count_and_nothing_more_is_sent(tmp_path, monkeypatch):
         await s.dispatch(control.PROBE_DATASET_LENGTH, [path], {})
         await asyncio.sleep(0.1)
         await s.dispatch(control.CANCEL_PROBE_DATASET_LENGTH, [], {})
-        return await _collect(s, lambda out: bool(stopped), timeout=2.0)
+        return await _collect(s, _final(path), timeout=2.0)
 
     out = asyncio.run(scenario())
     assert stopped == [path]
-    assert _lengths(out, path) == []
+    assert _lengths(out, path) == [{"n": None, "error": "cancelled", "done": True}]
 
 
 def test_a_cancelled_count_does_not_stop_a_load_of_the_same_file(tmp_path, monkeypatch):

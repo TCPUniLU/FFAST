@@ -215,7 +215,7 @@ export class FFastApp {
       setUnit: (fp, dimension, unit) => this._setDatasetUnit(fp, dimension, unit),
       signal: (name, detail) => this._tourSignal(name, detail),
       // Loads are requests (ADR 0097): their final reply ends them.
-      request: (event, kwargs = {}, args = []) => this._request(event, kwargs, args),
+      request: (event, kwargs = {}, args = [], opts = {}) => this._request(event, kwargs, args, opts),
       holds: (kind, fp, datasetFp) => (kind === 'dataset'
         ? this._datasets.has(fp)
         : this._models.has(fp) && (kind !== 'prediction'
@@ -1986,9 +1986,6 @@ export class FFastApp {
           this._live().onRunWithFfast(ev, kw);
         });
       }
-      conn.on(IN.DATASET_KEYS_RESPONSE, (kw, args) => this._browser.onDatasetKeys(args[0], kw));
-      conn.on(IN.DATASET_LENGTH_RESPONSE, (kw, args) => this._browser.onDatasetLength(args[0], kw));
-      conn.on(IN.DATASET_ENERGIES, (kw, args) => this._browser.onDatasetEnergies(args[0], kw));
       conn.on(IN.ENERGY_SAMPLE_PREVIEW, (kw, args) => this._browser.onEnergyPreview(args[0], kw));
       conn.on(IN.TASK_CREATED,  (kw) => console.debug('TASK_CREATED', kw));
       conn.on(IN.TASK_INFO, (kw, args) => this._tasks.info(args[0], kw));
@@ -2009,7 +2006,6 @@ export class FFastApp {
       conn.on(IN.SCENE_SNAPSHOT, (kw) => this._onSceneSnapshot(kw));
       conn.on(IN.SCENE_PATCH,    (kw) => this._onScenePatch(kw));
       conn.on(IN.COMMAND_RESULT, (kw) => this._onCommandResult(kw));
-      conn.on(IN.DIR_LISTING,    (kw, args) => this._browser.onDirListing(kw, args));
       conn.on(IN.METRIC_CATALOG, (kw) => this._onMetricCatalog(kw));
       conn.on(IN.METRICS_UPDATED, (kw) => this._onMetricsUpdated(kw));
       conn.on(IN.SUBSET_EXPORTED, (kw) => this._sessionOps.onSubsetExported(kw));
@@ -2284,8 +2280,8 @@ export class FFastApp {
 
   /** Send a request on the live connection (ADR 0097); without one it
    * fails as a lost connection would. */
-  _request(event, kwargs = {}, args = []) {
-    if (this._conn) return this._conn.request(event, kwargs, args);
+  _request(event, kwargs = {}, args = [], opts = {}) {
+    if (this._conn) return this._conn.request(event, kwargs, args, opts);
     const err = new Error('connection lost');
     err.connectionLost = true;
     return Promise.reject(err);

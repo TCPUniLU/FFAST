@@ -10,6 +10,21 @@
  * Pure bookkeeping, no socket: FFastConnection owns one.
  */
 
+/** A request's outcome as the final reply's kwargs, never a rejection: a
+ * failed request gives its kwargs with `error` set, and a dropped connection
+ * also sets `connectionLost`. For callers that show an error the same way,
+ * wherever it came from. */
+export function answerOf(asked) {
+  return asked.then(
+    (reply) => reply.kwargs,
+    (err) => ({
+      ...(err?.reply?.kwargs || {}),
+      error: err?.message || String(err),
+      connectionLost: !!err?.connectionLost,
+    }),
+  );
+}
+
 export class RequestTable {
   constructor() {
     /** id → {resolve, reject, onProgress, event} */

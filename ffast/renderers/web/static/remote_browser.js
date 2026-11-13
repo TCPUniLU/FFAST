@@ -15,6 +15,7 @@
  */
 
 import { OUT } from './events.js';
+import { answerOf } from './requests.js';
 import { icon as drawIcon } from './icons.js';
 import { trapFocus } from './dialogs.js';
 import { UNIT_PLACEHOLDER } from './units.js';
@@ -367,7 +368,7 @@ export class RemoteBrowser {
     this._largeBytes = LARGE_FILE_BYTES;   // tests lower it
     this._large = null;   // {path, size, n, error, done} of a large selected file
     this._probe = null;   // the last key check's answer, for new prediction lines
-    this._probing = null;   // the path whose key check is still out
+    this._probing = null;   // the key check still out: {path}, matched by identity (ADR 0097)
     this._predReader = null;   // the reader a prediction file is read by (ADR 0095), else null
     this._typeTouched = false; // the user chose the Type: the server's suggestion does not replace it
     this._loadWhenReady = false;   // load once the key check is back
@@ -376,7 +377,7 @@ export class RemoteBrowser {
     // Loads the server answered (ADR 0097) whose dataset or model this
     // window has not been told of yet: fingerprint → the load.
     this._awaiting = new Map();
-    this._asks = new Map();   // folder asked for suggestions → replies still to come
+    this._navSeq = 0;   // the latest navigation: an older listing is not shown
     this._suggest = { items: [], active: -1, dir: '' };
     this._suggestTimer = null;
     this._selectAfterListing = null;   // a Recent file to select once its folder is listed
@@ -384,7 +385,7 @@ export class RemoteBrowser {
     // A sample by energy (ADR 0096): {path, type, names, nFrames} once the file's
     // energies arrived; the last preview asked (only its answer is drawn).
     this._energies = null;
-    this._energiesAsked = null;   // the path whose energies are on their way
+    this._energiesAsked = null;   // the energies on their way: {path}, matched by identity
     this._previewId = 0;
     this._previewTimer = null;
     this._sampleNTouched = false;  // the user typed N: a new file's default does not replace it
@@ -501,15 +502,16 @@ export class RemoteBrowser {
     }
   }
 
-  /** After a short pause, list the typed folder. The reply is told apart from
-   * a navigation's by the path it echoes (`onDirListing`). */
+  /** After a short pause, list the typed folder. Its reply is its own
+   * request's (ADR 0097), so it never passes for a navigation's. */
   _askSuggestions() {
     clearTimeout(this._suggestTimer);
     this._suggestTimer = setTimeout(() => {
       const parts = typedParts($('fb-path').value);
       if (!parts) { this._hideSuggestions(); return; }
-      this._asks.set(parts.dir, (this._asks.get(parts.dir) || 0) + 1);
-      this._ports.send(OUT.LIST_DIR, {}, [parts.dir]);
+      answerOf(this._ports.request(OUT.LIST_DIR, {}, [parts.dir])).then((kw) => {
+        if (!kw.connectionLost) this._showSuggestions(kw, parts.dir);
+      });
     }, 250);
   }
 
@@ -832,15 +834,8 @@ export class RemoteBrowser {
     if (at && $('fb-modal').contains(at)) at.blur();
   }
 
-  /** Server replied to LIST_DIR. */
-  onDirListing(kw, args = []) {
-    // A reply to a suggestion request, not a navigation.
-    const asked = this._asks.get(args[1]) || 0;
-    if (asked > 0) {
-      if (asked === 1) this._asks.delete(args[1]); else this._asks.set(args[1], asked - 1);
-      this._showSuggestions(kw, args[1]);
-      return;
-    }
+  /** Server replied to this window's latest navigation (LIST_DIR). */
+  onDirListing(kw) {
     if (kw.error) {
       const err = $('fb-error');
       err.style.display = 'block';
@@ -879,9 +874,8 @@ export class RemoteBrowser {
     }
   }
 
-  /** Server replied to PROBE_DATASET_KEYS for `path`. */
-  onDatasetKeys(path, kw) {
-    if (path !== this._probing) return;   // a file no longer selected
+  /** Server replied to this window's latest key check (PROBE_DATASET_KEYS). */
+  onDatasetKeys(kw) {
     this._probing = null;
     // Readers that take the file's ending are asked can_read, in turn (ADR 0095,
     // decision 9): the Type starts on the one that can read it, unless the user
@@ -961,15 +955,19 @@ export class RemoteBrowser {
       this._askPreview();
       return;
     }
-    if (this._energiesAsked === path) return;
-    this._energiesAsked = path;
+    if (this._energiesAsked?.path === path) return;
+    const ask = { path };
+    this._energiesAsked = ask;
     $('fb-sample-note').textContent = `Reading the energies of ${this._selected}…`;
-    this._ports.send(OUT.PROBE_DATASET_ENERGIES, {}, [path, $('fb-type').value]);
+    answerOf(this._ports.request(OUT.PROBE_DATASET_ENERGIES, {}, [path, $('fb-type').value]))
+      .then((kw) => {
+        // An answer for a file or Type no longer asked about is dropped.
+        if (this._energiesAsked === ask && !kw.connectionLost) this.onDatasetEnergies(path, kw);
+      });
   }
 
-  /** Server replied to PROBE_DATASET_ENERGIES. */
+  /** Server replied to this window's latest PROBE_DATASET_ENERGIES. */
   onDatasetEnergies(path, kw) {
-    if (path !== this._energiesAsked) return;   // a file no longer selected
     this._energiesAsked = null;
     if (kw.error) {
       $('fb-sample-note').textContent = kw.error;
@@ -1136,10 +1134,14 @@ export class RemoteBrowser {
   /** Ask the server which energy/force keys `path` has; its answer is
    * matched to the path (a quicker click on another file wins). */
   _probeKeys(path, type = 'ase (auto)') {
-    this._probing = path;
+    const ask = { path, type };
+    this._probing = ask;
     // Server route requires (path, dataset_type); ASE auto-detect reads the keys,
-    // a reader says its names (ADR 0095).
-    this._ports.send(OUT.PROBE_DATASET_KEYS, {}, [path, type]);
+    // a reader says its names (ADR 0095). Only the latest check's answer is
+    // used: an earlier one, for another file or Type, is dropped (ADR 0097).
+    answerOf(this._ports.request(OUT.PROBE_DATASET_KEYS, {}, [path, type])).then((kw) => {
+      if (this._probing === ask && !kw.connectionLost) this.onDatasetKeys(kw);
+    });
   }
 
   /** Whether the Type list's `type` is a reader: its file can be probed for names. */
@@ -1193,7 +1195,10 @@ export class RemoteBrowser {
     this._selected = null;
     $('fb-load').disabled = true;
     // path travels as a positional arg; server reads args[0]
-    this._ports.send(OUT.LIST_DIR, {}, [path]);
+    const nav = ++this._navSeq;
+    answerOf(this._ports.request(OUT.LIST_DIR, {}, [path])).then((kw) => {
+      if (nav === this._navSeq && !kw.connectionLost) this.onDirListing(kw);
+    });
   }
 
   _render(entries) {
@@ -1275,8 +1280,13 @@ export class RemoteBrowser {
     this._large = big ? { path, size, n: null, error: null, done: false } : null;
     $('fb-large').hidden = !big;
     if (!big) return;
-    if ($('fb-type').value === 'ase (auto)') this._ports.send(OUT.PROBE_DATASET_LENGTH, {}, [path]);
-    else this._large.error = 'only ASE files are counted';
+    const large = this._large;
+    if ($('fb-type').value === 'ase (auto)') {
+      // Growing counts are progress replies; the final one has done=true.
+      const onProgress = (reply) => this.onDatasetLength(large, reply.kwargs);
+      answerOf(this._ports.request(OUT.PROBE_DATASET_LENGTH, {}, [path], { onProgress }))
+        .then((kw) => { if (!kw.connectionLost) this.onDatasetLength(large, { ...kw, done: true }); });
+    } else this._large.error = 'only ASE files are counted';
     this._drawLarge();
   }
 
@@ -1291,9 +1301,9 @@ export class RemoteBrowser {
     $('fb-large').textContent = largeFileNote({ ...this._large, stride: $('fb-stride').value });
   }
 
-  /** Server replied to PROBE_DATASET_LENGTH. */
-  onDatasetLength(path, kw) {
-    if (!this._large || this._large.path !== path) return;
+  /** Server replied to the count `large` asked for (PROBE_DATASET_LENGTH). */
+  onDatasetLength(large, kw) {
+    if (!large || this._large !== large) return;   // the dialog moved on
     // A late progress reply must not undo the final one.
     if (this._large.done && kw.done === false) return;
     this._large.n = kw.n ?? null;
