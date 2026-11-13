@@ -22,6 +22,7 @@ import { UNIT_PLACEHOLDER } from './units.js';
 import { loadRecentUnits, saveRecentUnit, unitChoices } from './recent_units.js';
 import { withExtension, EXPORT_FORMATS, exportPlan } from './session_ops.js';
 import { loadRecentFiles, rememberFile, saveRecentFiles } from './recent_files.js';
+import { setBusyText } from './spinner.js';
 
 /** Join a server-side directory and an entry name. Posix separators: the paths
  *  come from the server, so they are formatted in its convention, not the
@@ -960,7 +961,7 @@ export class RemoteBrowser {
     if (this._energiesAsked?.path === path) return;
     const ask = { path };
     this._energiesAsked = ask;
-    $('fb-sample-note').textContent = `Reading the energies of ${this._selected}…`;
+    setBusyText($('fb-sample-note'), `Reading the energies of ${this._selected}…`);
     answerOf(this._ports.request(OUT.PROBE_DATASET_ENERGIES, {}, [path, $('fb-type').value]))
       .then((kw) => {
         // An answer for a file or Type no longer asked about is dropped.
@@ -1299,7 +1300,7 @@ export class RemoteBrowser {
 
   _drawLarge() {
     if (!this._large) return;
-    $('fb-large').textContent = largeFileNote({ ...this._large, stride: $('fb-stride').value });
+    setBusyText($('fb-large'), largeFileNote({ ...this._large, stride: $('fb-stride').value }));
   }
 
   /** Server replied to the count `large` asked for (PROBE_DATASET_LENGTH). */

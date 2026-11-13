@@ -10,6 +10,7 @@ import { MainViews } from './views.js';
 import { defaultSettings, startSettings } from './view_settings.js';
 import { IndependentPanels, independentKey } from './independent_panels.js';
 import { withColourBar } from './colorbar_overlay.js';
+import { setBusyText } from './spinner.js';
 import {
   ensureMainView, isLinked3D, MAIN_VIEW_CHOICE, MAIN_VIEW_RULE, movedBefore, panelChoices, showsMainView,
   steppedOrder, whyPanelStays,
@@ -3856,7 +3857,7 @@ export class FFastApp {
   _setStatus(text, cls) {
     if (cls === 'error') showWarning(text, 'error');
     const el = document.getElementById('status');
-    el.textContent = text;
+    setBusyText(el, text);   // "Loading x…" turns a spinner until the next message
     el.className = cls;
     el.title = this._conn?.role ? `Connection… (${this._conn.role})` : 'Connection…';
   }

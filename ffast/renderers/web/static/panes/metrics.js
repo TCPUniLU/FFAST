@@ -19,6 +19,7 @@ import {
   sideMark, suggestions, toDraft, toPayload, tryHeadline, undefinedNames, uniqueName, valueNames,
   variableNameProblem,
 } from '../metric_logic.js';
+import { setBusyText } from '../spinner.js';
 
 const ORIGIN_TITLES = { 'built-in': 'Built-in', project: 'Project', user: 'User' };
 const CHECK_DELAY_MS = 150;
@@ -468,7 +469,7 @@ export function createMetricsPane(body, callbacks) {
     }
     if (check.ok === false) { checkEl.textContent = check.error; checkEl.classList.add('bad'); }
     else if (check.ok === true) { checkEl.textContent = shapeHint(check.shape); checkEl.classList.add('good'); }
-    else checkEl.textContent = 'Checking…';
+    else setBusyText(checkEl, 'Checking…');
   }
 
   function renderInputs() {

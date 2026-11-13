@@ -666,6 +666,13 @@ CASES = {
     ),
     # the server-runs-other-code warning (ffast.session.code_fingerprint)
     "code_notice_same": "cf.serverCodeNotice('abc', 'abc')",
+    # every wait shows the spinner (2026-11-13): a text with "…" then nothing or a space
+    "wait_texts": ("['Loading prediction.xyz…', 'shard_00: 4.8 GB. Counting frames… 1,200 so far.',"
+                   " 'Prediction \"p\" loaded', 'Exported to a.xyz', '', null]"
+                   ".map((t) => sp.isWaitText(t))"),
+    "busy_text": ("(() => { const el = document.createElement('div');"
+                  " sp.setBusyText(el, 'Loading x…'); const a = [el.querySelectorAll('.spinner').length, el.textContent];"
+                  " sp.setBusyText(el, 'Loaded x'); return [a, [el.querySelectorAll('.spinner').length, el.textContent]]; })()"),
     "code_notice_older": "cf.serverCodeNotice(null, 'abc')",
     "code_notice_different": "cf.serverCodeNotice('abd', 'abc')",
     # a built-in metric declares a dimension ("energy"), not a unit
@@ -1408,6 +1415,7 @@ def results():
         f"  const ht = await import('{origin}/hover_tip.js');\n"
         f"  const mc = await import('{origin}/metrics.js');\n"
         f"  const hp = await import('{origin}/help.js');\n"
+        f"  const sp = await import('{origin}/spinner.js');\n"
         "  const TE = () => structuredClone({name: 'Mixed', controls: [], selector: null,\n"
         "    has_data_selector: true, column_widths: null, row_heights: null, panels: [\n"
         "      {kind: '3d', row: 0, col: 0, rowspan: 1, colspan: 1, title: 'V', metrics: {}, metric_refs: {}},\n"
@@ -2564,6 +2572,12 @@ def test_the_code_warning_matches_the_desktop_word_for_word(results):
     assert results["code_notice_same"] is None
     assert results["code_notice_older"] == server_code_notice(None, "abc")
     assert results["code_notice_different"] == server_code_notice("abd", "abc")
+
+
+def test_a_wait_text_gets_the_spinner_and_the_next_text_drops_it(results):
+    assert results["wait_texts"] == [True, True, False, False, False, False]
+    # the text stays as written: code reads the status line back
+    assert results["busy_text"] == [[1, "Loading x…"], [0, "Loaded x"]]
 
 
 def test_recent_servers_move_a_reconnected_server_to_the_front(results):

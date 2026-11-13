@@ -17,6 +17,7 @@ import { OUT } from './events.js';
 import { answerOf } from './requests.js';
 import { helpToggle } from './help.js';
 import { icon } from './icons.js';
+import { setBusyText } from './spinner.js';
 
 /** A unified diff as lines with a class each (pure, for tests). */
 export function diffLines(diff) {
@@ -534,7 +535,7 @@ export function openRunWithFfastDialog({ send, askServer = null, written = () =>
     } else if (state.step === 2) {
       next.disabled = true;
       back.disabled = true;
-      progress.textContent = 'Writing the copies…';
+      setBusyText(progress, 'Writing the copies…');
       asking(OUT.WRITE_RUN_WITH_FFAST, { ...state.request, originals: state.prepared.originals },
         (kw) => { written(kw); api.onWritten(kw); });
     }
@@ -610,12 +611,12 @@ export function openRunWithFfastDialog({ send, askServer = null, written = () =>
       if (!kw.ok) { failed((kw.refusal && kw.refusal.text) || 'The copies were not written.'); return; }
       if (kw.launch) {
         state.localRunId = kw.run_id;
-        progress.textContent = 'LAMMPS started; waiting for its first frame…';
+        setBusyText(progress, 'LAMMPS started; waiting for its first frame…');
         cancel.textContent = 'Close (keep following)';
         openRun(kw.run_dir);
         return;
       }
-      progress.textContent = `Copies written: ${(kw.written || []).join(', ')}. Submitting…`;
+      setBusyText(progress, `Copies written: ${(kw.written || []).join(', ')}. Submitting…`);
       const { folder, script } = kw.submit;
       if (state.via === 'laptop') {
         let out;

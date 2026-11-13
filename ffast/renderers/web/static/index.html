@@ -218,6 +218,7 @@
       animation: spinner-turn 0.8s linear infinite, spinner-show 0s linear 0.3s both;
     }
     .spinner-lg { width: 28px; height: 28px; border-width: 3px; }
+    .spinner-lead { margin-right: 0.4em; }   /* before a wait's text (setBusyText) */
     @keyframes spinner-turn { to { transform: rotate(360deg); } }
     @keyframes spinner-show { from { opacity: 0; } to { opacity: 1; } }
     @media (prefers-reduced-motion: reduce) {

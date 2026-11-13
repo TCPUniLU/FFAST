@@ -14,6 +14,7 @@
 
 import { createPane, textRow, buttonRow } from '../sidebar.js';
 import { defaultSettings } from '../view_settings.js';
+import { setBusyText } from '../spinner.js';
 
 /** Whether Extract may cut an atom subset from a dataset (its REMOTE_DATASET_META):
  * a whole dataset or a frozen subset, whose frames stay put. Not a live subset,
@@ -64,7 +65,7 @@ export function createExtractPane(sidebarEl, callbacks) {
       hint.style.display = '';
       return;
     }
-    hint.textContent = 'Extracting…';
+    setBusyText(hint, 'Extracting…');
     hint.classList.add('ok');
     hint.style.display = '';
     callbacks.onExtract(tokens);

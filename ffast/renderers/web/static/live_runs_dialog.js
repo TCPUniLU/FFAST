@@ -6,6 +6,7 @@
  */
 import { labelBy, trapFocus } from './dialogs.js';
 import { liveScorerCell, liveStateCell, tonedText } from './live_run.js';
+import { setBusyText } from './spinner.js';
 
 const fmt = (n) => (n == null ? '?' : Number(n).toLocaleString('en-US'));
 export const REFRESH_MS = 5000;
@@ -79,7 +80,7 @@ export function openLiveRunsDialog({ ask, open, openByPath, forget, stop = () =>
   labelBy(modal, head);
   const body = document.createElement('div');
   body.className = 'live-runs-body';
-  body.textContent = 'Asking the server…';
+  setBusyText(body, 'Asking the server…');
   const foot = document.createElement('div');
   foot.className = 'warning-modal-footer';
   const byPath = document.createElement('button');

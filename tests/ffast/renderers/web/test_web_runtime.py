@@ -3619,6 +3619,27 @@ async def test_web_a_rail_row_exports_its_dataset_or_prediction(shared_predictio
             await browser.close()
 
 
+async def test_web_a_wait_on_the_status_line_turns_a_spinner(shared_dataset_server):
+    """Every "…" wait shows the Tasks spinner (2026-11-13): a real load's
+    "Loading …" message turns one, and the message after it drops it."""
+    ws_port, web_port = shared_dataset_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        status = page.locator("#status")
+        try:
+            await _open_view(page, ws_port, web_port, dataset_fp)
+            await page.evaluate("() => window.ffastApp._setStatus('Loading example…', 'connected')")
+            await expect(status.locator(".spinner")).to_have_count(1)
+            await expect(status).to_have_text("Loading example…")
+            await page.evaluate("() => window.ffastApp._setStatus('Example loaded', 'connected')")
+            await expect(status.locator(".spinner")).to_have_count(0)
+            await expect(status).to_have_text("Example loaded")
+        finally:
+            await browser.close()
+
+
 async def _delete_from_rail(page, kind, fp):
     """Open a rail row's ⋯ menu and choose Delete…; the confirmation dialog."""
     await page.locator(f"#{kind}-list .obj-row[data-fp='{fp}'] .obj-menu-btn").click()
