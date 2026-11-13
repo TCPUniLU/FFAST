@@ -31,7 +31,6 @@ import numpy as np
 from ffast.core.environment import Environment
 from ffast.loaders.ase import aseDatasetLoader
 from ffast.loaders.dataset import DatasetView
-from ffast.protocol.rpc import pack_arrays
 
 
 def _uniform():
@@ -103,13 +102,11 @@ def test_element_subset_of_a_variable_parent_finds_the_bonds_between_its_atoms()
                                       np.asarray(parent.getBondMatrix(i))[np.ix_(kept, kept)])
 
 
-def test_subset_of_a_variable_parent_packs_its_arrays():
+def test_subset_of_a_variable_parent_has_its_own_offsets():
     parent = _variable()
     view = DatasetView.subset(parent, None, np.array([3, 0]), "Subset")
     view.initialise()
-    arrays = view.to_transfer_arrays()
-    assert arrays["offsets"].tolist() == [0, 8, 11]
-    pack_arrays("fp", arrays)
+    assert np.asarray(view.getOffsets()).tolist() == [0, 8, 11]
 
 
 def _freeze(view):

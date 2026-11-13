@@ -21,7 +21,7 @@ import pytest
 from ffast.cache import CacheKey, PredictionArrayKey
 from ffast.metrics.models import MetricResult
 from ffast.protocol import control
-from ffast.protocol.rpc import unpack, unpack_arrays, unpack_metric_result
+from ffast.protocol.rpc import unpack, unpack_metric_result
 from ffast.session.server_session import ServerSession
 
 
@@ -144,22 +144,6 @@ class _FakeData:
         self._cache._entries[key] = {dt_key: payload}
 
 
-class _FakeVarDataset:
-    """Variable-size dataset double exposing the transfer-array surface."""
-
-    isVariable = True
-
-    def __init__(self, transfer_arrays, n):
-        self._transfer = transfer_arrays
-        self._n = n
-
-    def getN(self):
-        return self._n
-
-    def to_transfer_arrays(self):
-        return dict(self._transfer)
-
-
 # ── _resolve: the S2b rule (pure — no env, queue, or loop) ────────────────────
 
 def test_resolve_required_positional():
@@ -206,6 +190,22 @@ def test_dispatch_unknown_event_is_noop():
 
     s = _run(scenario())
     assert s.outbound.empty()
+
+
+def test_the_desktop_only_subdataset_arrays_request_is_gone():
+    """REQUEST_SUBDATASET_ARRAYS served only the desktop client (ADR 0098):
+    the server neither lists nor handles it, and sending it does nothing."""
+    assert "REQUEST_SUBDATASET_ARRAYS" not in control.CLIENT_TO_SERVER
+    assert not hasattr(control, "SUBDATASET_ARRAYS")
+    env = _FakeEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        assert "REQUEST_SUBDATASET_ARRAYS" not in s._handlers
+        await s.dispatch("REQUEST_SUBDATASET_ARRAYS", ["ds"], {})
+        return s
+
+    assert _run(scenario()).outbound.empty()
 
 
 def test_the_desktop_only_prediction_arrays_request_is_gone():
@@ -978,53 +978,6 @@ def test_request_metric_without_a_request_id_is_dropped():
 
     assert _run(scenario())
     assert env.results.asked == []
-
-
-# ── _on_request_subdataset_arrays ─────────────────────────────────────────────
-
-def test_request_subdataset_arrays_concatenates_variable_prediction_forces():
-    """Variable-dataset predictions arrive as a list of (natoms_i, 3) arrays and
-    are flattened to (total_atoms, 3); base transfer arrays + model names ride
-    along in the same message."""
-    fp = "dsvar"
-    f1 = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])   # (2, 3)
-    f2 = np.array([[7.0, 8.0, 9.0]])                     # (1, 3)
-    base = {"R_flat": np.arange(9.0).reshape(3, 3), "z_flat": np.array([1, 6, 8])}
-    ds = _FakeVarDataset(base, n=2)
-    pred_key = CacheKey("forces", "modelA", fp).format()
-    model = type("_M", (), {"name": "SO3LR"})()
-    env = _FakeEnv(
-        datasets={fp: ds}, models={"modelA": model},
-        cache={pred_key: {"forces": [f1, f2]}},
-    )
-
-    async def scenario():
-        s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_SUBDATASET_ARRAYS", [fp], {})
-        return s.outbound.get_nowait()
-
-    event, args, kwargs = unpack(_run(scenario()))
-    assert event == control.SUBDATASET_ARRAYS
-    assert args == [fp]
-    arrays = unpack_arrays(kwargs)
-    pa_key = PredictionArrayKey("forces", "modelA").format()
-    np.testing.assert_array_equal(
-        arrays[pa_key], np.concatenate([f1, f2], axis=0)   # (3, 3)
-    )
-    np.testing.assert_array_equal(arrays["z_flat"], np.array([1, 6, 8]))
-    assert kwargs["model_names"] == {"modelA": "SO3LR"}
-
-
-def test_request_subdataset_arrays_unknown_fingerprint_emits_nothing():
-    env = _FakeEnv(datasets={})
-
-    async def scenario():
-        s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_SUBDATASET_ARRAYS", ["nope"], {})
-        return s
-
-    s = _run(scenario())
-    assert s.outbound.empty()
 
 
 def test_view_command_applies_and_emits_command_result_then_scene_patch():

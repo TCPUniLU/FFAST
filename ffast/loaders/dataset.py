@@ -447,41 +447,6 @@ class DatasetLoader(EventClass):
         same frame number, in two related views."""
         return {"parent": None, "parent_frames": None, "scored": False}
 
-    def to_transfer_arrays(self) -> dict:
-        """Serialize geometry arrays for SubDataset transfer over the RPC channel.
-
-        Returns a dict ready to be passed to ``ffast.protocol.rpc.pack_arrays``.
-        Handles uniform datasets (R shape Nxnatomsx3).
-
-        Keys always present: ``n``, ``variable``, ``R``, ``E``.
-        Optional keys (None when unavailable): ``F``, ``z``.
-
-        See Also
-        --------
-        FlatDatasetLoader.to_transfer_arrays : override for variable datasets.
-        """
-        arrays: dict = {
-            "n": np.array([self.getN()]),
-            "variable": np.array([0]),
-            "R": self.getCoordinates(),
-        }
-        try:
-            arrays["F"] = self.getForces()
-        except Exception:
-            arrays["F"] = None
-        try:
-            arrays["z"] = self.getElements()
-        except Exception:
-            arrays["z"] = None
-        try:
-            arrays["E"] = np.asarray(
-                self.getEnergies(), dtype=np.float64
-            ).reshape(-1)
-        except Exception:
-            arrays["E"] = None
-        return arrays
-
-
 class FlatDatasetLoader(DatasetLoader):
     """
     The one storage form for file datasets (ADR 0058, decision 1).
@@ -561,38 +526,6 @@ class FlatDatasetLoader(DatasetLoader):
             "frozen": False,
             "units": dict(self.units or {}),
         }
-
-    def to_transfer_arrays(self) -> dict:
-        """Serialize geometry arrays for SubDataset transfer over the RPC channel.
-
-        Returns a dict ready to be passed to ``ffast.protocol.rpc.pack_arrays``.
-        Variable data uses the flat array format (R_flat, offsets, F_flat,
-        z_flat); uniform data the stacked one of DatasetLoader.
-
-        Keys always present: ``n``, ``variable``, ``R_flat``, ``offsets``.
-        Optional keys (None when unavailable): ``F_flat``, ``z_flat``, ``E``.
-
-        See Also
-        --------
-        DatasetLoader.to_transfer_arrays : base implementation for uniform datasets.
-        """
-        if not self.isVariable:
-            return DatasetLoader.to_transfer_arrays(self)
-        arrays: dict = {
-            "n": np.array([self.getN()]),
-            "variable": np.array([1]),
-            "R_flat": self.R_flat,
-            "offsets": self.molecule_offsets,
-            "F_flat": self.F_flat,
-            "z_flat": self.z_flat,
-        }
-        try:
-            arrays["E"] = np.asarray(
-                self.getEnergies(), dtype=np.float64
-            ).reshape(-1)
-        except Exception:
-            arrays["E"] = None
-        return arrays
 
     def getOffsets(self):
         return _readOnly(self.molecule_offsets)
@@ -1224,26 +1157,3 @@ class DatasetView(DatasetLoader):
             meta["variable"] = True
             meta["offsets"] = np.asarray(self.getOffsets()).astype(int).tolist()
         return meta
-
-    def to_transfer_arrays(self) -> dict:
-        """As the parent's kind sends them; below a variable parent, the flat
-        arrays and offsets, which pack whatever the structures' sizes."""
-        if not self.isVariable:
-            return super().to_transfer_arrays()
-        try:
-            forces = self.getAllForces()
-        except Exception:
-            forces = None
-        try:
-            energies = np.asarray(self.getEnergies(), dtype=np.float64).reshape(-1)
-        except Exception:
-            energies = None
-        return {
-            "n": np.array([self.getN()]),
-            "variable": np.array([1]),
-            "R_flat": self.getAllCoordinates(),
-            "offsets": self.getOffsets(),
-            "F_flat": forces,
-            "z_flat": self.getAllElements(),
-            "E": energies,
-        }

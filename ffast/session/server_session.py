@@ -173,7 +173,7 @@ class ServerSession:
             ProbeDatasetKeysRequest, ProbeDatasetLengthRequest,
             ProbeDatasetEnergiesRequest, PreviewEnergySampleRequest,
             RequestMetricRequest,
-            RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
+            SaveSessionRequest, SaveTabRequest,
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
             CancelTryMetricRequest, CancelMetricRequest, AddSessionMetricsRequest, SetDatasetUnitRequest,
@@ -195,7 +195,6 @@ class ServerSession:
             control.SET_DATASET_UNIT:           _Route(self._on_set_dataset_unit, ["fingerprint", "dimension", "unit"], SetDatasetUnitRequest),
             control.CREATE_SUBSET:              _Route(self._on_create_subset, ["parent_fingerprint", "indices"], CreateSubsetRequest),
             control.DECLARE_SUBSET:             _Route(self._on_declare_subset, ["parent_fingerprint", "?indices"], DeclareSubsetRequest),
-            control.REQUEST_SUBDATASET_ARRAYS:  _Route(self._on_request_subdataset_arrays, ["fingerprint"], RequestSubdatasetArraysRequest),
             control.PROBE_DATASET_KEYS:         _Route(self._on_probe_dataset_keys, ["path", "dataset_type"], ProbeDatasetKeysRequest),
             control.PROBE_DATASET_LENGTH:       _Route(self._on_probe_dataset_length, ["path"], ProbeDatasetLengthRequest),
             control.CANCEL_PROBE_DATASET_LENGTH: _Route(self._on_cancel_probe_dataset_length, [], EmptyRequest),
@@ -771,92 +770,6 @@ class ServerSession:
         return await asyncio.to_thread(
             frames_in_view, view, n_frames=parent.getN(), value_of=value_of,
             registry=default_registry, dataset=parent)
-
-    async def _on_request_subdataset_arrays(self, fingerprint, **kwargs) -> None:
-        """Serialize SubDataset arrays and push them onto the outbound queue.
-
-        Supports both uniform datasets (R shape: Nxnatomsx3) and variable
-        datasets (molecules of different sizes, stored as flat arrays + offsets).
-        """
-        from ffast.protocol.rpc import pack_arrays
-
-        dataset = self.env.datasets.get(fingerprint)
-        if dataset is None:
-            logger.warning(
-                "REQUEST_SUBDATASET_ARRAYS: fingerprint %r not found", fingerprint
-            )
-            return
-
-        is_variable = bool(getattr(dataset, "isVariable", False))
-        logger.info(
-            "Sending arrays for dataset %r (n=%d, variable=%s) to client",
-            fingerprint, dataset.getN(), is_variable,
-        )
-
-        # Offload to a thread: to_transfer_arrays() + pack_arrays() call
-        # np.ascontiguousarray / .tobytes() / msgpack.packb() — all synchronous
-        # CPU/memory operations that can take seconds for large datasets.
-        # Keeping them on the event loop blocks WebSocket ping handling and
-        # causes the websockets library to close after ping_timeout (20 s).
-        arrays = await asyncio.to_thread(dataset.to_transfer_arrays)
-
-        # ── Include cached prediction data for this dataset ──────────────────
-        # Pack prediction arrays as "pred__<dtype>__<model_fp>" entries so the
-        # client can reconstruct DataEntity objects and show ghost models in the
-        # sidebar without a separate round-trip.
-        model_names: dict = {}
-        pred_count = 0
-        from ffast.cache import CacheKey, PredictionArrayKey
-        for cache_key in list(self.env.cache.keys()):
-            ck = CacheKey.try_parse(cache_key)
-            if ck is None or ck.dtype not in ("energy", "forces"):
-                continue
-            if ck.dataset_fp != fingerprint:
-                continue
-            dt_key, model_fp = ck.dtype, ck.model_fp
-            de = self.env.cache.get(cache_key)
-            if de is None:
-                continue
-            raw = de.get(dt_key)
-            if raw is None:
-                continue
-
-            # Variable-dataset forces arrive as a list of (natoms_i, 3) arrays;
-            # flatten to (total_atoms, 3) — client rebuilds per-molecule slices
-            # using the already-transferred offsets.
-            if isinstance(raw, FlatFrames):
-                raw = raw.values
-            elif isinstance(raw, list):
-                try:
-                    raw = np.concatenate(raw, axis=0)
-                except Exception as exc:
-                    logger.warning(
-                        "Could not concatenate prediction %s for %r: %s",
-                        cache_key, fingerprint, exc,
-                    )
-                    continue
-
-            arrays[PredictionArrayKey(dt_key, model_fp).format()] = np.asarray(raw)
-            pred_count += 1
-
-        # Collect human-readable model names for all models whose prediction
-        # data was included above.
-        for model_fp, model in self.env.models.items():
-            model_names[model_fp] = getattr(model, "name", model_fp[:8]) or model_fp[:8]
-
-        if pred_count:
-            logger.info(
-                "Including %d prediction arrays for %d model(s) with dataset %r",
-                pred_count, len({
-                    PredictionArrayKey.parse(k).model_fp
-                    for k in arrays if PredictionArrayKey.is_prediction_key(k)
-                }),
-                fingerprint,
-            )
-
-        data = await asyncio.to_thread(pack_arrays, fingerprint, arrays, model_names=model_names)
-        await self._emit(data)
-        logger.info("Arrays for %r queued (%d bytes)", fingerprint, len(data))
 
     async def _on_probe_dataset_keys(self, path, dataset_type, **kwargs) -> None:
         """Probe first frame of an ASE file and push DATASET_KEYS_RESPONSE.

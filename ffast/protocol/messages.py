@@ -213,8 +213,7 @@ class MetricResultMessage(BaseModel):
     METRIC_RESULT is a *hybrid* message: structured metadata plus one numpy
     array. Per the **RPC Channel** boundary in CONTEXT.md it is typed on its
     metadata envelope while the ``values`` array rides inside it encoded by
-    ``ffast.protocol.rpc._encode_array`` (the same binary form used by the untyped
-    ``SUBDATASET_ARRAYS`` Array message). So ``values``
+    ``ffast.protocol.rpc._encode_array``. So ``values``
     is an opaque ``{__ndarray__, dtype, shape, data}`` dict here, not a typed
     field.
 
@@ -400,14 +399,6 @@ class DeclareSubsetRequest(BaseModel):
     model_fp: Optional[str] = None
     name: str = "Subset"
     active: bool = True
-
-
-class RequestSubdatasetArraysRequest(BaseModel):
-    """Typed payload for ``REQUEST_SUBDATASET_ARRAYS``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    fingerprint: str
 
 
 class ProbeDatasetKeysRequest(BaseModel):

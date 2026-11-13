@@ -18,7 +18,7 @@ DATASET_TYPE = "ase (auto)"
 
 # Launches a real ffast-server subprocess; run the fast suite with
 # ``pytest -m "not integration"``.  Skips (rather than errors) when the
-# example dataset is absent, matching tests/ffast/test_array_transfer.py.
+# example dataset is absent.
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(

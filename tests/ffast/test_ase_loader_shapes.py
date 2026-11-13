@@ -42,7 +42,6 @@ def test_uniform_data_answers_all_frames_as_stacked_arrays():
     assert dataset.getNAtoms() == 3 and type(dataset.getNAtoms()) is int
     assert dataset.getChemicalFormula() == "H2O"
     assert dataset.toMetaDict()["variable"] is False
-    assert dataset.to_transfer_arrays()["R"].shape == (5, 3, 3)
 
 
 def test_variable_data_answers_all_frames_as_lists():
@@ -55,7 +54,6 @@ def test_variable_data_answers_all_frames_as_lists():
     assert dataset.getNAtoms().tolist() == [3, 5, 2]
     assert dataset.getChemicalFormula() == "Variable (2-5 atoms)"
     assert dataset.toMetaDict()["variable"] is True
-    assert dataset.to_transfer_arrays()["R_flat"].shape == (10, 3)
 
 
 def test_an_sgdml_file_answers_all_frames_as_uniform_data(tmp_path):
@@ -78,4 +76,3 @@ def test_an_sgdml_file_answers_all_frames_as_uniform_data(tmp_path):
     assert dataset.getNAtoms() == 3 and type(dataset.getNAtoms()) is int
     assert dataset.getChemicalFormula() == "H2O"
     assert dataset.toMetaDict()["variable"] is False
-    assert dataset.to_transfer_arrays()["R"].shape == (5, 3, 3)
