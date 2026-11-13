@@ -7,7 +7,7 @@ import pytest
 from playwright.async_api import async_playwright, expect
 
 from .test_web_runtime import (
-    _expect_connected, _open_loupe, _preload_dataset, _shared_servers,  # noqa: F401
+    _expect_connected, _open_view, _preload_dataset, _shared_servers,  # noqa: F401
     shared_dataset_server, shared_server,  # noqa: F401
 )
 
@@ -34,7 +34,7 @@ async def test_web_a_dropped_connection_shows_a_banner_and_reconnects(shared_dat
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
             routes = await _route_sockets(page)
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             banner = page.locator("#conn-lost")
             await expect(banner).to_be_hidden()
 
@@ -63,7 +63,7 @@ async def test_web_reconnect_now_does_not_wait(shared_dataset_server):
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
             routes = await _route_sockets(page)
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             # Hold the retries: a long first wait, so only the button reconnects.
             await page.evaluate("() => { window.ffastApp._reconnector._setTimer = () => 0; }")
             await routes[-1].close(code=1001, reason="gone")
@@ -82,7 +82,7 @@ async def test_web_disconnecting_on_purpose_shows_no_banner(shared_dataset_serve
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.evaluate("() => window.ffastApp._disconnect()")
             await expect(page.locator("#status")).to_have_text("Disconnected")
             await expect(page.locator("#conn-lost")).to_be_hidden()

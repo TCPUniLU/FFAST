@@ -9,7 +9,7 @@
  * connection.js (FFastConnection), renderer.js (MoleculeRenderer), app.js
  * (FFastApp). This file is just the bootstrap.
  *
- * A popped-out 3D view is `?mode=loupe-live`, handled by FFastApp itself: it
+ * A popped-out 3D view is `?mode=view-live`, handled by FFastApp itself: it
  * opens its own controlling connection (ADR 0044 Phase 4). The socket-less
  * BroadcastChannel satellite that preceded it is gone (ADR 0051).
  */

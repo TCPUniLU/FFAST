@@ -1137,7 +1137,7 @@ async def test_web_one_prediction_on_two_datasets_draws_two_colours(ffast_web_se
         page = await browser.new_page(viewport={"width": 1300, "height": 820})
         swatch = lambda fp: page.locator(f"#dataset-list .obj-row[data-fp='{fp}'] .obj-swatch").input_value()
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await _open_analysis_tab(page, "Basic Errors")
             await page.wait_for_function(_PANEL_HAS_POINTS, arg=title, timeout=25000)
@@ -1182,7 +1182,7 @@ async def test_web_prediction_browser_keeps_load_button_inside_dialog(shared_dat
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1024, "height": 768})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _file_menu(page, "Load Prediction…")
             await expect(page.locator("#fb-modal")).to_be_visible()
 
@@ -1207,7 +1207,7 @@ async def test_web_text_controls_expand_instead_of_clipping(shared_dataset_serve
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 800, "height": 600})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
 
             clipped = await page.evaluate(
                 """() => Array.from(document.querySelectorAll('button'))
@@ -1223,7 +1223,7 @@ async def test_web_text_controls_expand_instead_of_clipping(shared_dataset_serve
             )
             assert clipped == []
 
-            toolbar_fits = await page.locator("#loupe-controls").evaluate(
+            toolbar_fits = await page.locator("#view-controls").evaluate(
                 "el => el.scrollHeight <= el.clientHeight + 1"
             )
             assert toolbar_fits
@@ -1402,7 +1402,7 @@ _SECTIONS = ["Colour By", "Camera", "Display", "Bonds", "Force Vectors",
 
 async def _open_section(page, title):
     """Open a sidebar section (one is open at a time, ADR 0055)."""
-    pane = page.locator(f"#loupe-sidebar .pane[data-pane='{title}']")
+    pane = page.locator(f"#view-sidebar .pane[data-pane='{title}']")
     if "collapsed" in (await pane.get_attribute("class") or ""):
         await pane.locator(".pane-header").click()
     await expect(pane).not_to_have_class(re.compile(r"\bcollapsed\b"))
@@ -1410,7 +1410,7 @@ async def _open_section(page, title):
 
 async def _open_sections(page):
     return await page.evaluate(
-        """() => [...document.querySelectorAll('#loupe-sidebar .pane')]
+        """() => [...document.querySelectorAll('#view-sidebar .pane')]
                  .filter((p) => !p.classList.contains('collapsed'))
                  .map((p) => p.dataset.pane)"""
     )
@@ -1423,9 +1423,9 @@ async def test_web_sidebar_opens_one_section_at_a_time_and_remembers_it(shared_d
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             names = await page.evaluate(
-                "() => [...document.querySelectorAll('#loupe-sidebar .pane')].map((p) => p.dataset.pane)"
+                "() => [...document.querySelectorAll('#view-sidebar .pane')].map((p) => p.dataset.pane)"
             )
             assert names == _SECTIONS
             assert await _open_sections(page) == ["Colour By"]   # first visit
@@ -1436,7 +1436,7 @@ async def test_web_sidebar_opens_one_section_at_a_time_and_remembers_it(shared_d
             assert await _open_sections(page) == []
 
             await page.locator(".pane[data-pane='Display'] .pane-header").click()
-            await _open_loupe(page, ws_port, web_port, dataset_fp)   # reload
+            await _open_view(page, ws_port, web_port, dataset_fp)   # reload
             assert await _open_sections(page) == ["Display"]
         finally:
             await browser.close()
@@ -1453,7 +1453,7 @@ async def test_web_camera_exact_angles_wait_behind_a_link(shared_dataset_server)
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _open_section(page, "Camera")
             for row in rows:
                 await expect(page.locator(row)).to_be_hidden()
@@ -1482,7 +1482,7 @@ async def test_web_the_camera_turns_freely_over_the_top_and_rolls(shared_dataset
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.evaluate("window.ffastApp.renderer.setCameraAngles({azimuth: 0, elevation: 60, roll: 0})")
             box = await page.locator(CANVAS).bounding_box()
             x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] * 0.3
@@ -1528,7 +1528,7 @@ async def test_web_sidebar_search_opens_matching_sections(shared_dataset_server)
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _open_section(page, "Display")
             search = page.locator("#sidebar-search")
 
@@ -1549,7 +1549,7 @@ async def test_web_sidebar_search_opens_matching_sections(shared_dataset_server)
 
             await search.fill("")
             assert await _open_sections(page) == ["Display"]
-            await expect(page.locator("#loupe-sidebar .search-hit")).to_have_count(0)
+            await expect(page.locator("#view-sidebar .search-hit")).to_have_count(0)
             await expect(row).to_be_hidden()   # back behind "Exact angles"
             await expect(page.locator("#sidebar-search-empty")).to_be_hidden()
         finally:
@@ -1565,7 +1565,7 @@ async def test_web_sidebar_search_explains_rows_that_wait_for_something(shared_d
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator("#sidebar-search").fill("prediction")
             row = page.locator(".pane[data-pane='Colour By'] .ctl-row[data-label='Prediction']")
             await expect(row).to_be_visible()
@@ -1594,7 +1594,7 @@ async def test_web_force_error_style_waits_for_a_prediction(shared_dataset_serve
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             styles = page.locator("#quick-styles button")
             await expect(styles).to_have_text(["Force error", "Publication", "Reset"])
             force = page.locator("#quick-styles button", has_text="Force error")
@@ -1616,7 +1616,7 @@ async def test_web_force_error_style_sets_the_existing_controls(shared_predictio
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             name = await page.evaluate(f"() => window.ffastApp._models.get('{model_fp}').name")
 
@@ -1628,7 +1628,7 @@ async def test_web_force_error_style_sets_the_existing_controls(shared_predictio
             await expect(page.locator(_control("Colour By", "Colormap"))).to_have_value("force_error")
             await expect(page.locator("#colorbar")).not_to_have_class(re.compile(r"\bhidden\b"))
             await expect(page.locator(".viewport #legend3d #colorbar")).to_have_count(1)
-            await expect(page.locator("#loupe-sidebar #colorbar")).to_have_count(0)
+            await expect(page.locator("#view-sidebar #colorbar")).to_have_count(0)
             await expect(page.locator(_control("Force Vectors", "Show force vectors", "input"))).not_to_be_checked()
             assert await page.evaluate("() => window.ffastApp.renderer._forceGroup") is None
         finally:
@@ -1644,7 +1644,7 @@ async def test_web_the_hint_bar_keeps_clear_of_the_colour_bar(shared_prediction_
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1024, "height": 768})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await page.locator("#quick-styles button", has_text="Force error").click()
             hint = page.locator("#hint-bar")
@@ -1676,7 +1676,7 @@ async def test_web_a_narrow_compare_tab_gives_its_3d_panel_room_and_no_hint_bar(
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1024, "height": 768})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await page.locator("#quick-styles button", has_text="Force error").click()
             await _open_analysis_tab(page, "Compare")
@@ -1704,7 +1704,7 @@ async def test_web_the_colourbar_names_the_unit_of_a_force_colouring(ffast_web_s
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         label = page.locator("#colorbar-label")
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await page.locator("#quick-styles button", has_text="Force error").click()
             await expect(label).to_have_text(re.compile(r"\[unit\]$"), timeout=15000)
@@ -1731,7 +1731,7 @@ async def test_web_publication_style_and_reset(shared_dataset_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _open_section(page, "Camera")
             await page.locator(_control("Camera", "Axes gizmo", "input")).check()
 
@@ -1755,9 +1755,9 @@ async def test_web_every_section_has_a_help_button(shared_dataset_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             for section in _SECTIONS:
-                pane = page.locator(f"#loupe-sidebar .pane[data-pane='{section}']")
+                pane = page.locator(f"#view-sidebar .pane[data-pane='{section}']")
                 await pane.locator(".pane-header .help-btn").click()
                 note = pane.locator(".help-text")
                 await expect(note).to_be_visible()
@@ -1778,7 +1778,7 @@ async def test_web_input_boxes_are_dark(shared_dataset_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _open_section(page, "Display")
             brightness = await page.evaluate(
                 """() => ['Hide atoms', 'Atom size'].map((label) => {
@@ -1924,7 +1924,7 @@ async def test_web_journal_page_draws_the_3d_view_on_white_in_this_browser_only(
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.evaluate("() => window.ffastApp._focusedRenderers().setBackgroundColor('#203040')")
             clear = "() => window.ffastApp.renderer.clearColor"
             corner = "() => window.ffastApp.renderer._canvas.toDataURL('image/png')"
@@ -1959,7 +1959,7 @@ async def test_web_colour_bar_limits_are_typed_and_its_pieces_move(shared_predic
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         piece = lambda key: page.locator(f"#legend3d .cb-piece-{key}")
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await page.locator("#quick-styles button", has_text="Force error").click()
             cb_min, cb_max = page.locator(".cb-min"), page.locator(".cb-max")
@@ -2076,7 +2076,7 @@ async def test_web_journal_page_drops_the_cards_the_pick_bar_and_the_hint_bar(sh
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             bars = [page.locator("#pick-bar"), page.locator("#hint-bar")]
             for bar in bars:
                 await expect(bar).to_be_visible()
@@ -2110,7 +2110,7 @@ async def test_web_panel_letters_use_the_program_font_and_journal_page_lets_you_
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             body_font = await page.locator("body").evaluate(family)
             await _open_analysis_tab(page, "Basic Errors")
             letter = page.locator(".tabpanel.active .analysis-panel .panel-letter").first
@@ -2135,7 +2135,7 @@ async def test_web_panel_letters_use_the_program_font_and_journal_page_lets_you_
             await menu.get_by_role("menuitem", name="Program font").click()
             assert await letter3d.evaluate(family) == body_font
 
-            await _open_loupe(page, ws_port, web_port, dataset_fp)   # a reload
+            await _open_view(page, ws_port, web_port, dataset_fp)   # a reload
             await _open_analysis_tab(page, "3D")
             assert await page.locator(".tabpanel.active .viewport > .panel-letter").first.evaluate(family) == body_font
         finally:
@@ -2181,7 +2181,7 @@ async def test_web_space_plays_and_esc_puts_down_a_pick_tool_on_the_3d_tab(share
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             playing = "() => window.ffastApp._playing"
             await page.evaluate("() => document.activeElement.blur()")
             await page.keyboard.press(" ")
@@ -2227,7 +2227,7 @@ async def test_web_a_timeline_of_two_series_has_no_peaks_checkbox(ffast_web_serv
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _open_analysis_tab(page, "Gyration")
             panel = _sub_panel("Total gyration radius")
             await page.wait_for_function(_PANEL_HAS_POINTS, arg="Total gyration radius", timeout=25000)
@@ -2285,7 +2285,7 @@ async def test_web_a_narrow_tab_stacks_its_panels_in_reading_order(tmp_path):
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 800, "height": 820})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await _open_analysis_tab(page, "Order")
                 await expect(page.locator(".tabpanel.active .analysis-grid")).to_have_class(re.compile(r"\bnarrow\b"))
                 titles = await page.evaluate(
@@ -2307,7 +2307,7 @@ async def test_web_tabs_rail_rows_and_section_headers_work_from_the_keyboard(ffa
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await expect(page.locator("#tabbar")).to_have_attribute("role", "tablist")
             tabs = page.locator("#tabbar .tab")
             assert await tabs.evaluate_all("els => els.filter((e) => e.tabIndex === 0).length") == 1
@@ -2357,7 +2357,7 @@ async def test_web_a_delete_dialog_starts_on_cancel_and_keeps_focus_inside(share
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             dialog = await _delete_from_rail(page, "dataset", dataset_fp)
             await expect(dialog).to_be_visible()
             await expect(dialog.locator("button:focus")).to_have_text("Cancel")
@@ -2378,7 +2378,7 @@ async def test_web_the_file_browser_closes_on_escape_and_opens_with_a_row_focuse
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator("#add-dataset-btn").click()
             modal = page.locator("#fb-modal")
             await expect(modal).not_to_have_class(re.compile(r"\bhidden\b"))
@@ -2401,7 +2401,7 @@ async def test_web_the_file_browser_moves_with_arrow_keys(shared_dataset_server)
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator("#add-dataset-btn").click()
             await expect(page.locator("#fb-list .fb-row").first).to_be_focused()
             await page.locator("#fb-path").fill(str(REPO_ROOT))
@@ -2436,7 +2436,7 @@ async def test_web_four_shortcuts_step_frames_search_and_keep_out_of_inputs(shar
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             label = page.locator("#frame-label")
             await expect(label).to_have_text("0 / 99", timeout=15000)
             await page.evaluate("() => document.activeElement.blur()")
@@ -2472,7 +2472,7 @@ async def test_web_status_says_when_a_dataset_is_ready_and_the_rail_spells_frame
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
             await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             status = page.locator("#status")
             await expect(status).to_contain_text("ready")
             await expect(status).to_contain_text("100 frames")
@@ -2539,7 +2539,7 @@ async def test_web_hint_bar_offers_next_steps_until_dismissed(shared_dataset_ser
             await page.goto(f"http://127.0.0.1:{web_port}/", wait_until="networkidle")
             await expect(page.locator("#hint-bar")).to_be_hidden()   # nothing open yet
 
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             hint = page.locator("#hint-bar")
             await expect(hint).to_be_visible()
             await expect(hint).to_contain_text("Load a prediction")
@@ -2555,7 +2555,7 @@ async def test_web_hint_bar_offers_next_steps_until_dismissed(shared_dataset_ser
 
             await page.locator("#hint-dismiss").click()
             await expect(hint).to_be_hidden()
-            await _open_loupe(page, ws_port, web_port, dataset_fp)   # reload
+            await _open_view(page, ws_port, web_port, dataset_fp)   # reload
             await expect(hint).to_be_hidden()
         finally:
             await browser.close()
@@ -2570,7 +2570,7 @@ async def test_web_a_pick_tool_shows_its_steps_live_and_each_can_be_dismissed(sh
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             hint = page.locator("#hint-bar")
             tool = lambda name: page.locator(f"#pick-toolbar .pick-tool-btn[data-tool='{name}']")
             pick = lambda i: page.evaluate(
@@ -2595,7 +2595,7 @@ async def test_web_a_pick_tool_shows_its_steps_live_and_each_can_be_dismissed(sh
             await expect(hint).to_contain_text("Click an atom: its position")
             await tool("extract").click()                   # and the dismissed one stays gone, after a reload too
             await expect(hint).to_be_hidden()
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await tool("extract").click()
             await expect(hint).to_be_hidden()
         finally:
@@ -2609,7 +2609,7 @@ async def test_web_hint_bar_changes_once_a_prediction_is_loaded(shared_predictio
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             hint = page.locator("#hint-bar")
             await expect(hint).to_contain_text("Force error")
             await expect(hint).not_to_contain_text("Load a prediction")
@@ -2624,7 +2624,7 @@ async def test_web_analysis_tab_picker_has_a_help_button(ffast_web_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator("#tabbar .tab").nth(1).click()
             picker = page.locator(".tabpanel.active [data-control='series-selector']")
             await picker.locator(".help-btn").click()
@@ -2656,7 +2656,7 @@ async def test_web_switching_datasets_restores_display_settings_without_errors(f
         errors = []
         page.on("pageerror", lambda exc: errors.append(str(exc)))
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _open_section(page, "Display")
             size = page.locator(_control("Display", "Atom size", "input"))
             await size.fill("2")
@@ -2678,7 +2678,7 @@ async def test_web_arming_a_pick_tool_opens_its_section(ffast_web_server, tmp_pa
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             for tool, section in [("bonds", "Bonds"), ("align", "Alignment"),
                                   ("forces", "Force Vectors"), ("extract", "Extract Subset")]:
                 await page.locator(f"#pick-toolbar button[data-tool='{tool}']").click()
@@ -2697,17 +2697,17 @@ async def test_web_sidebar_can_be_hidden_and_stays_hidden(shared_dataset_server)
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             width = (await page.locator(CANVAS).bounding_box())["width"]
             await page.locator("#sidebar-toggle").click()
-            await expect(page.locator("#loupe-sidebar")).to_be_hidden()
+            await expect(page.locator("#view-sidebar")).to_be_hidden()
             await page.wait_for_timeout(200)
             assert (await page.locator(CANVAS).bounding_box())["width"] > width
 
-            await _open_loupe(page, ws_port, web_port, dataset_fp)   # reload
-            await expect(page.locator("#loupe-sidebar")).to_be_hidden()
+            await _open_view(page, ws_port, web_port, dataset_fp)   # reload
+            await expect(page.locator("#view-sidebar")).to_be_hidden()
             await page.locator("#sidebar-toggle").click()
-            await expect(page.locator("#loupe-sidebar")).to_be_visible()
+            await expect(page.locator("#view-sidebar")).to_be_visible()
         finally:
             await browser.close()
 
@@ -2735,32 +2735,32 @@ async def test_web_sidebar_and_object_list_widths_are_adjustable(shared_dataset_
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1300, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
-            sidebar, rail = await _width(page, "#loupe-sidebar"), await _width(page, "#objectbar")
+            await _open_view(page, ws_port, web_port, dataset_fp)
+            sidebar, rail = await _width(page, "#view-sidebar"), await _width(page, "#objectbar")
             canvas = await _width(page, CANVAS)
 
             await _drag(page, "#sidebar-resize", -120)   # sidebar is on the right
             await _drag(page, "#rail-resize", 80)
-            assert await _width(page, "#loupe-sidebar") == pytest.approx(sidebar + 120, abs=3)
+            assert await _width(page, "#view-sidebar") == pytest.approx(sidebar + 120, abs=3)
             assert await _width(page, "#objectbar") == pytest.approx(rail + 80, abs=3)
             assert await _width(page, CANVAS) == pytest.approx(canvas - 200, abs=6)
 
-            await _open_loupe(page, ws_port, web_port, dataset_fp)   # reload
-            assert await _width(page, "#loupe-sidebar") == pytest.approx(sidebar + 120, abs=3)
+            await _open_view(page, ws_port, web_port, dataset_fp)   # reload
+            assert await _width(page, "#view-sidebar") == pytest.approx(sidebar + 120, abs=3)
             assert await _width(page, "#objectbar") == pytest.approx(rail + 80, abs=3)
 
             # Limits: the sidebar cannot be dragged away or over the view.
             await _drag(page, "#sidebar-resize", 600)
-            assert await _width(page, "#loupe-sidebar") >= 200
+            assert await _width(page, "#view-sidebar") >= 200
             await _drag(page, "#sidebar-resize", -1200)
             assert await _width(page, CANVAS) >= 300
 
             await page.locator("#sidebar-resize").dblclick()
-            assert await _width(page, "#loupe-sidebar") == pytest.approx(sidebar, abs=1)
+            assert await _width(page, "#view-sidebar") == pytest.approx(sidebar, abs=1)
 
             await page.locator("#sidebar-resize").focus()
             await page.keyboard.press("ArrowLeft")
-            assert await _width(page, "#loupe-sidebar") == pytest.approx(sidebar + 10, abs=1)
+            assert await _width(page, "#view-sidebar") == pytest.approx(sidebar + 10, abs=1)
         finally:
             await browser.close()
 
@@ -2810,12 +2810,12 @@ async def test_web_layout_works_when_browser_storage_is_blocked(shared_dataset_s
         errors = []
         page.on("pageerror", lambda exc: errors.append(str(exc)))
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             assert await _open_sections(page) == ["Colour By"]
             await page.locator(".pane[data-pane='Bonds'] .pane-header").click()
             assert await _open_sections(page) == ["Bonds"]
             await page.locator("#sidebar-toggle").click()
-            await expect(page.locator("#loupe-sidebar")).to_be_hidden()
+            await expect(page.locator("#view-sidebar")).to_be_hidden()
         finally:
             await browser.close()
         assert not errors, errors
@@ -2823,7 +2823,7 @@ async def test_web_layout_works_when_browser_storage_is_blocked(shared_dataset_s
 
 # ── 3D empty state (ADR 0055 "3D empty state" row) ──────────────────────────
 
-_LOUPE_CHROME = ("#loupe-sidebar", "#pick-bar", "#loupe-controls")
+_VIEW_CHROME = ("#view-sidebar", "#pick-bar", "#view-controls")
 
 
 async def test_web_3d_tab_shows_only_a_load_button_until_a_dataset_is_open(shared_server):
@@ -2840,13 +2840,13 @@ async def test_web_3d_tab_shows_only_a_load_button_until_a_dataset_is_open(share
             await expect(load).to_be_visible()
             await expect(load).to_be_disabled()
             await expect(page.locator("#overlay")).to_contain_text("Connect to a server first")
-            for chrome in _LOUPE_CHROME:
+            for chrome in _VIEW_CHROME:
                 await expect(page.locator(chrome)).to_be_hidden()
 
             await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
             await _expect_connected(page)
             await expect(load).to_be_enabled()
-            for chrome in _LOUPE_CHROME:
+            for chrome in _VIEW_CHROME:
                 await expect(page.locator(chrome)).to_be_hidden()
             await load.click()
             await expect(page.locator("#fb-modal")).to_be_visible()
@@ -2880,16 +2880,16 @@ async def test_web_3d_controls_appear_once_a_dataset_is_open(shared_dataset_serv
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await expect(page.locator("#empty-load-btn")).to_be_hidden()
-            for chrome in _LOUPE_CHROME:
+            for chrome in _VIEW_CHROME:
                 await expect(page.locator(chrome)).to_be_visible()
 
             # Disconnecting closes the view: back to the empty state.
             await page.locator("#status").click()
             await page.locator("#disconnect-btn").click()
             await expect(page.locator("#empty-load-btn")).to_be_visible()
-            for chrome in _LOUPE_CHROME:
+            for chrome in _VIEW_CHROME:
                 await expect(page.locator(chrome)).to_be_hidden()
         finally:
             await browser.close()
@@ -2905,7 +2905,7 @@ async def test_web_3d_tab_is_an_ordinary_tab_holding_one_3d_panel(shared_dataset
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             first = page.locator("#tabbar .tab").first
             await expect(first).to_have_text("3D")
             assert (await first.get_attribute("data-tab")).startswith("tab-")
@@ -2962,7 +2962,7 @@ async def test_web_a_tab_mixes_plots_with_a_3d_panel_showing_the_main_view(tmp_p
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1300, "height": 820})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await page.locator("#next-frame-btn").click()
                 await expect(page.locator("#frame-label")).to_have_text("1 / 99")
 
@@ -2972,7 +2972,7 @@ async def test_web_a_tab_mixes_plots_with_a_3d_panel_showing_the_main_view(tmp_p
                 await page.wait_for_function(
                     _PANEL_HAS_POINTS, arg="Forces MAE timeline", timeout=25000)
                 await expect(active.locator(".analysis-panel[data-title='Forces MAE'] td")).not_to_have_count(0)
-                for chrome in _LOUPE_CHROME:
+                for chrome in _VIEW_CHROME:
                     await expect(active.locator(chrome)).to_be_visible()
                 await expect(page.locator("#frame-label")).to_have_text("1 / 99")
                 assert await page.evaluate("() => window.ffastApp.renderer.atomCount") > 0
@@ -2981,7 +2981,7 @@ async def test_web_a_tab_mixes_plots_with_a_3d_panel_showing_the_main_view(tmp_p
                 await page.locator("#next-frame-btn").click()
                 await expect(page.locator("#frame-label")).to_have_text("2 / 99")
                 await _open_analysis_tab(page, "Basic Errors")
-                for chrome in _LOUPE_CHROME:
+                for chrome in _VIEW_CHROME:
                     await expect(page.locator(chrome)).to_be_hidden()
                 # 3D panels in tabs you are not looking at stop drawing.
                 assert await page.evaluate(
@@ -3023,7 +3023,7 @@ async def test_web_clicking_a_3d_panel_focuses_it_for_the_3d_controls(tmp_path):
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1300, "height": 820})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await expect(page.locator("#sidebar-title")).to_have_text(
                     "Settings — dataset · prediction.xyz (main view)")
                 await _open_analysis_tab(page, "Two views")
@@ -3120,7 +3120,7 @@ async def test_web_a_plot_click_shows_the_clicked_structure(tmp_path):
             selected = page.locator("#dataset-list .obj-row.selected")
             label = page.locator("#frame-label")
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
 
                 # Rule 5: Compare was the last tab showing the main view.
                 await _open_analysis_tab(page, "Compare")
@@ -3286,7 +3286,7 @@ async def test_web_a_dataset_deleted_elsewhere_moves_the_main_view_to_what_is_le
         selected = page.locator("#dataset-list .obj-row.selected")
         label = page.locator("#frame-label")
         try:
-            await _open_loupe(page, ws_port, web_port, subset_fp)
+            await _open_view(page, ws_port, web_port, subset_fp)
             await page.evaluate("window.ffastApp._setFrame(1)")      # parent frame 6
             await expect(label).to_have_text("1 / 2")
 
@@ -3317,7 +3317,7 @@ async def test_web_deleting_the_last_dataset_hides_the_colour_bar(ffast_web_serv
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         colorbar = page.locator("#colorbar")
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await page.locator("#quick-styles button", has_text="Force error").click()
             await expect(colorbar).not_to_have_class(re.compile(r"\bhidden\b"), timeout=15000)
@@ -3341,7 +3341,7 @@ async def test_web_a_prediction_file_goes_with_its_last_dataset(ffast_web_server
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await expect(page.locator(f"#model-list .obj-row[data-fp='{model_fp}']")).to_have_count(1)
 
             await _as_another_window(ws_port, ("DELETE_OBJECT", (dataset_fp,), {}))
@@ -3366,7 +3366,7 @@ async def test_web_a_prediction_loaded_onto_a_second_dataset_applies_to_it(ffast
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, other_fp)
+            await _open_view(page, ws_port, web_port, other_fp)
             await page.wait_for_function(f"() => window.ffastApp._currentModelFp === null")
             # As the file dialog's Load does: a load request, followed to its end.
             await page.evaluate("""([path, fp]) => {
@@ -3510,7 +3510,7 @@ async def test_web_dialogs_and_repeated_controls_have_their_own_names(shared_pre
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await expect(page.locator(".pane[data-pane='Colour By'] .help-btn")).to_have_attribute(
                 "aria-label", "What is Colour By?")
             # the hover text is the note's first sentence, then an invitation (to_fix_v3 #7)
@@ -3556,7 +3556,7 @@ async def test_web_the_play_button_is_named_for_what_a_press_does(shared_dataset
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             play = page.locator("#play-pause-btn")
             await expect(play).to_have_attribute("aria-label", "Play")
             await play.click()
@@ -3577,7 +3577,7 @@ async def test_web_frame_and_play_keys_do_nothing_on_a_tab_without_a_3d_view(sha
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             label = page.locator("#frame-label")
             await expect(label).to_have_text("0 / 99", timeout=15000)
             await _open_analysis_tab(page, "Basic Errors")
@@ -3591,7 +3591,7 @@ async def test_web_frame_and_play_keys_do_nothing_on_a_tab_without_a_3d_view(sha
             await _open_analysis_tab(page, "3D")
             await page.evaluate("() => document.activeElement.blur()")
             await expect(page.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
-            await page.wait_for_timeout(300)   # the view opened again, as _open_loupe waits
+            await page.wait_for_timeout(300)   # the view opened again, as _open_view waits
             await page.keyboard.press("ArrowRight")
             await expect(label).to_have_text("1 / 99")
         finally:
@@ -3606,7 +3606,7 @@ async def test_web_closing_a_dialog_gives_focus_back_to_what_opened_it(shared_da
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             menu = page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}'] .obj-menu-btn")
             await menu.focus()
             await page.keyboard.press("Enter")
@@ -3648,7 +3648,7 @@ async def test_web_the_rail_menu_deletes_a_dataset_or_prediction(ffast_web_serve
         rows = page.locator("#dataset-list .obj-row")
         status = page.locator("#status")
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await expect(rows).to_have_count(4)
 
             dialog = await _delete_from_rail(page, "model", model_fp)
@@ -3686,7 +3686,7 @@ async def test_web_deleting_a_prediction_asks_whether_its_metric_results_go_too(
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             dialog = await _delete_from_rail(page, "model", model_fp)
             check = dialog.locator(".warning-modal-check")
             await expect(check).to_contain_text("Also delete its")
@@ -3716,7 +3716,7 @@ async def test_web_the_rail_menu_freezes_a_live_subset(ffast_web_server):
         rows = page.locator("#dataset-list .obj-row")
         menu = page.locator(".rail-menu")
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await expect(rows).to_have_count(2)
             await page.locator(f"#dataset-list .obj-row[data-fp='{live}'] .obj-menu-btn").click()
             await expect(menu.locator("[data-action='dataset-freeze']")).to_be_visible()
@@ -3854,7 +3854,7 @@ async def test_web_a_reloaded_page_keeps_a_main_view_without_prediction(ffast_we
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         selected = page.locator("#dataset-list .obj-row.selected")
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await expect(page.locator("#model-list .obj-row.selected")).to_have_attribute("data-fp", model_fp)
             await page.locator(f"#dataset-list .obj-row[data-fp='{other_fp}']").click()
             await expect(selected).to_have_attribute("data-fp", other_fp)
@@ -3883,7 +3883,7 @@ async def test_web_a_subset_made_with_sub_shows_in_the_main_view(tmp_path):
             label = page.locator("#frame-label")
             sub = f"{_sub_panel('Energy')} .sub-toggle input"
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await _open_analysis_tab(page, "Compare")
                 await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy", timeout=25000)
 
@@ -4018,7 +4018,7 @@ async def test_web_a_subset_opens_looking_like_its_parent(ffast_web_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
             await page.locator("#quick-styles button", has_text="Force error").click()
             coloring = page.locator(_control("Colour By", "Coloring"))
@@ -4076,7 +4076,7 @@ async def _focus_3d(page, index):
 
 
 async def _open_compare(page, ws_port, web_port, dataset_fp):
-    await _open_loupe(page, ws_port, web_port, dataset_fp)
+    await _open_view(page, ws_port, web_port, dataset_fp)
     await _open_analysis_tab(page, "Compare")
     await page.wait_for_function(f"() => {_INDEPENDENT}?.isOpen && {_INDEPENDENT}.started", timeout=15000)
 
@@ -4285,7 +4285,7 @@ async def test_web_a_plot_click_moves_the_independent_panel_showing_the_data(tmp
             page = await browser.new_page(viewport={"width": 1500, "height": 850})
             view = "window.ffastApp._independent.get('Compare#0,0')"
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await _open_analysis_tab(page, "Compare")
                 await page.wait_for_function(f"() => {view}?.isOpen")
                 await page.wait_for_function(_PANEL_HAS_POINTS, arg="Energy", timeout=25000)
@@ -4313,7 +4313,7 @@ async def test_web_edit_mode_makes_a_3d_panel_independent_with_the_look_on_scree
             page = await browser.new_page(viewport={"width": 1500, "height": 850})
             try:
                 async with _keep_trace_on_failure(page, "edit-mode-3d-panel"):
-                    await _open_loupe(page, ws_port, web_port, dataset_fp)
+                    await _open_view(page, ws_port, web_port, dataset_fp)
                     await _open_analysis_tab(page, "Compare")
                     await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
                     await page.locator("#quick-styles button", has_text="Force error").click()
@@ -4386,7 +4386,7 @@ async def test_web_a_tabs_set_sizes_become_cells_of_the_fine_grid(tmp_path):
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 2400, "height": 820})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await _open_analysis_tab(page, "Sized")
                 grid = page.locator(".tabpanel.active .analysis-grid")
                 view = await grid.locator(".panel-3d").bounding_box()
@@ -4431,7 +4431,7 @@ async def test_web_columns_share_the_window_and_the_tab_never_scrolls_sideways(t
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1300, "height": 820})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await _open_analysis_tab(page, "Wide")
                 grid = page.locator(".tabpanel.active .analysis-grid")
                 await expect(grid.locator(".analysis-panel")).to_have_count(4)
@@ -4477,7 +4477,7 @@ async def test_web_user_tabs_reach_every_window_and_can_be_reset_hidden_exported
             page = await browser.new_page(viewport={"width": 1300, "height": 820})
             tabbar = page.locator("#tabbar .tab")
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
 
                 # Saved by another client: this window gets the new layout.
                 answer = await _tab_request(ws_port, "SAVE_TAB", {"tab": {
@@ -4544,7 +4544,7 @@ async def test_web_new_tab_button_follows_the_last_tab(tmp_path):
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1300, "height": 820})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 before = await page.locator("#tabbar .tab").count()
                 last = await page.locator("#tabbar .tab").last.bounding_box()
                 plus = await page.locator("#tab-new-btn").bounding_box()
@@ -4583,7 +4583,7 @@ async def test_web_a_new_install_starts_with_two_tabs_and_the_rest_are_templates
             page = await browser.new_page(viewport={"width": 1300, "height": 820})
             tabbar = page.locator("#tabbar .tab")
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await expect(tabbar).to_have_text(["3D", "Basic Errors"])
                 await page.locator("#tab-new-btn").click()
                 menu = page.locator("#tab-new-list")
@@ -4624,7 +4624,7 @@ async def test_web_the_new_tab_menu_stays_inside_the_window(tmp_path):
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1024, "height": 768})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 before = await page.locator("#tabbar .tab").count()
                 for i in range(8):
                     answer = await _tab_request(ws_port, "SAVE_TAB", {"tab": {
@@ -4655,7 +4655,7 @@ async def test_web_a_dragged_tab_moves_for_every_window(tmp_path):
             other = await browser.new_page(viewport={"width": 1300, "height": 820})
             tabbar = page.locator("#tabbar .tab")
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 answer = await _tab_request(ws_port, "SAVE_TAB", {"tab": {
                     "name": "Mine", "panels": [{"kind": "3d", "row": 0, "col": 0}]}})
                 assert answer["ok"], answer
@@ -4665,7 +4665,7 @@ async def test_web_a_dragged_tab_moves_for_every_window(tmp_path):
                                          target_position={"x": 3, "y": 5})
                 await expect(tabbar.first).to_have_text("Mine")
                 assert json.loads((tabs_dir / "state.json").read_text())["bar_order"][0] == "Mine"
-                await _open_loupe(other, ws_port, web_port, dataset_fp)
+                await _open_view(other, ws_port, web_port, dataset_fp)
                 await expect(other.locator("#tabbar .tab").first).to_have_text("Mine")
 
                 # No dragging while a tab is being edited.
@@ -4698,7 +4698,7 @@ async def test_web_tabs_move_by_menu_keys_and_reset(tmp_path):
             page = await browser.new_page(viewport={"width": 1300, "height": 820})
             tabbar = page.locator("#tabbar .tab")
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await expect(tabbar.first).to_have_text("3D")
                 basic = page.locator("#tabbar .tab", has_text="Basic Errors")
                 await basic.click()
@@ -4736,7 +4736,7 @@ async def test_web_right_click_on_a_tab_opens_its_menu(tmp_path):
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1300, "height": 820})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 basic = page.locator("#tabbar .tab", has_text="Basic Errors")
                 menu = page.locator("#tab-context-list")
                 await basic.click(button="right")
@@ -5331,7 +5331,7 @@ async def test_web_a_3d_view_shows_one_panel_letter_however_often_the_layout_is_
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             counts = await page.evaluate(_VIEWPORT_LETTERS)
             assert counts and all(n == 1 for n in counts), counts
             for _ in range(2):
@@ -5381,7 +5381,7 @@ async def test_web_late_initial_snapshot_keeps_the_fitted_camera(ffast_web_serve
                 },
               });
             })();""")
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             race = await page.evaluate("() => window.cameraRace")
             assert race is not None
             assert race["before"]["distance"] > 20
@@ -5423,7 +5423,7 @@ async def test_web_initial_camera_matches_reset_and_tracks_motion(ffast_web_serv
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             initial = await page.evaluate("() => window.ffastApp.renderer._exportCamera()")
             await page.locator("#reset-camera-btn").click()
             reset = await page.evaluate("() => window.ffastApp.renderer._exportCamera()")
@@ -5480,7 +5480,7 @@ async def test_web_first_view_fits_the_atoms_and_later_ones_keep_the_camera(shar
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             assert await page.evaluate(in_view)
 
             await page.evaluate(
@@ -5535,7 +5535,7 @@ async def test_web_prediction_selectors_wait_for_a_prediction(ffast_web_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _show_rows_that_offer_a_prediction(page)
             for section, row in _PREDICTION_ROWS:
                 await _open_section(page, section)
@@ -5551,7 +5551,7 @@ async def test_web_prediction_selectors_appear_with_a_prediction(ffast_web_serve
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _show_rows_that_offer_a_prediction(page)
             for section, row in _PREDICTION_ROWS:
                 await _open_section(page, section)
@@ -5720,7 +5720,7 @@ async def test_web_arming_force_turns_the_arrows_on_and_says_how_to_narrow_them(
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             hint = page.locator("#hint-bar")
             show = page.locator(".pane[data-pane='Force Vectors'] .ctl-row[data-label='Show force vectors'] input")
             await expect(show).not_to_be_checked()
@@ -5743,7 +5743,7 @@ async def test_web_force_picks_follow_the_frame_on_a_variable_dataset(shared_dat
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             # The example file has one molecule; say its atoms differ by frame.
             await page.evaluate(
                 "(fp) => { window.ffastApp._datasets.get(fp).variable = true; }", dataset_fp)
@@ -6232,7 +6232,7 @@ async def test_web_fps_and_skip_live_in_a_gear_pop_up(shared_dataset_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             gear = page.locator("#playback-gear")
             fields = (page.locator("#fps-input"), page.locator("#skip-input"))
             for f in fields:
@@ -6310,7 +6310,7 @@ async def _expect_connected(page):
     await expect(page.locator("#status")).to_have_class(re.compile(r"\bconnected\b"))
 
 
-async def _open_loupe(page, ws_port, web_port, dataset_fp):
+async def _open_view(page, ws_port, web_port, dataset_fp):
     """Connect, select the dataset, wait for the 3D view to be live."""
     await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
     await _expect_connected(page)
@@ -6349,7 +6349,7 @@ async def test_web_pick_click_and_box_render_selection_overlay(shared_dataset_se
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             assert await _selection_mesh_count(page) == 0
 
             # Arm the Extract tool (keeps the picked overlay; rectangle-capable).
@@ -6394,7 +6394,7 @@ async def test_web_info_tool_reports_distance(shared_dataset_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator("#pick-toolbar button[data-tool='info']").click()
 
             # Two atoms that project far apart on screen, so a click on each
@@ -6488,7 +6488,7 @@ async def test_web_picked_atoms_follow_to_the_next_frame_of_the_same_structure(f
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _pick_two_atoms_with_info(page)
             before = await page.locator("#pick-readout").inner_text()
             await page.evaluate("() => window.ffastApp._setMainFrame(2)")
@@ -6512,7 +6512,7 @@ async def test_web_picks_clear_when_the_next_frame_has_a_different_structure(sha
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _pick_two_atoms_with_info(page)
             await page.evaluate("(i) => window.ffastApp._setMainFrame(i)", other)
             await expect(page.locator("#pick-strip-count")).to_contain_text("0 picked")
@@ -6530,7 +6530,7 @@ async def test_web_pick_tools_show_their_names(shared_dataset_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             for tool, name in [("info", "Info"), ("bonds", "Bonds"), ("align", "Align"),
                                ("forces", "Force"), ("extract", "Extract")]:
                 await expect(
@@ -6550,7 +6550,7 @@ async def test_web_click_anywhere_on_an_atoms_ball_picks_it(shared_dataset_serve
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             # Zoom in so the ball is drawn much larger than the old radius.
             atom = await _front_atom(page, zoom=4)
             assert atom["radius"] > 30, atom
@@ -6573,7 +6573,7 @@ async def test_web_tiny_atoms_keep_a_minimum_pick_target(shared_dataset_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             atom = await _front_atom(page)
             hit = await page.evaluate(
                 """() => {
@@ -6616,7 +6616,7 @@ async def test_web_the_atom_under_the_pointer_is_highlighted(shared_dataset_serv
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             atom = await _front_atom(page)
             base = await page.evaluate(drawn, atom["index"])
 
@@ -6664,7 +6664,7 @@ async def test_web_pick_radius_control_is_gone(shared_dataset_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator("#pick-toolbar button[data-tool='info']").click()
             await expect(page.locator("#pick-strip")).not_to_have_class(re.compile(r"\bhidden\b"))
             await expect(page.locator("#pick-strip")).not_to_contain_text("radius")
@@ -6686,7 +6686,7 @@ async def test_web_picking_does_not_resize_the_3d_view(shared_dataset_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator("#pick-toolbar button[data-tool='info']").click()
             before = await page.evaluate(size)
             atom = await _front_atom(page)
@@ -6715,7 +6715,7 @@ async def test_web_extract_creates_subset_dataset(ffast_web_server):
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
             async with _keep_trace_on_failure(page, "extract-subset"):
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await expect(page.locator("#dataset-list .obj-row")).to_have_count(1)
 
                 await _open_section(page, "Extract Subset")
@@ -6758,7 +6758,7 @@ async def test_web_alignment_pane_wires_kabsch_and_exclusive_modes(ffast_web_ser
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         page.on("pageerror", lambda exc: page_errors.append(str(exc)))
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
 
             await _open_section(page, "Alignment")
             kabsch = page.locator(
@@ -6803,7 +6803,7 @@ async def test_web_alignment_is_off_on_a_variable_dataset(shared_dataset_server)
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await expect(page.locator("#pick-toolbar button[data-tool='align']")).to_be_disabled()
             await _open_section(page, "Alignment")
             pane = page.locator(".pane[data-pane='Alignment']")
@@ -7317,7 +7317,7 @@ async def test_web_export_png_opaque_and_transparent_download(shared_dataset_ser
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
 
             await _open_section(page, "Export")
             opaque_btn = page.locator(
@@ -7402,17 +7402,19 @@ async def test_web_popout_opens_independent_live_controller(shared_dataset_serve
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await expect(page.locator("#popout-btn")).to_be_enabled()
 
             async with page.context.expect_page() as popup_info:
                 await page.locator("#popout-btn").click()
             popup = await popup_info.value
             await popup.wait_for_load_state("networkidle")
+            assert "mode=view-live" in popup.url
+            await expect(popup.locator("body")).to_have_class(re.compile(r"\bpopout-view\b"))
 
             # Its own live controller connection — status/frame-slider are
             # live even though the object rail/toolbar chrome is hidden
-            # (loupe-only), unlike the chrome-mirroring satellite fallback.
+            # (popout-view), unlike the chrome-mirroring satellite fallback.
             await _expect_connected(popup)
             await expect(popup.locator("#overlay")).to_have_class(re.compile(r"\bhidden\b"))
             await expect(popup.locator("#frame-slider")).to_be_enabled()
@@ -7433,6 +7435,24 @@ async def test_web_popout_opens_independent_live_controller(shared_dataset_serve
             await browser.close()
 
 
+async def test_web_a_popout_address_from_before_the_rename_still_opens_a_popout(shared_dataset_server):
+    """A pop-out window opened before ``mode=loupe-live`` became
+    ``mode=view-live`` is still a pop-out when it reloads."""
+    ws_port, web_port = shared_dataset_server
+    dataset_fp = await _preload_dataset(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1100, "height": 760})
+        try:
+            await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}&mode=loupe-live&ds={dataset_fp}",
+                            wait_until="networkidle")
+            await _expect_connected(page)
+            await expect(page.locator("body")).to_have_class(re.compile(r"\bpopout-view\b"))
+            await expect(page.locator("#objectbar")).to_be_hidden()
+        finally:
+            await browser.close()
+
+
 async def test_web_save_and_load_session_restores_dataset(tmp_path):
     """ADR 0045 issue 21 gate: a session saved from one server process is
     restored by a *fresh* second process with nothing pre-loaded — the true
@@ -7446,7 +7466,7 @@ async def test_web_save_and_load_session_restores_dataset(tmp_path):
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1100, "height": 760})
             try:
-                await _open_loupe(page, ws_port_a, web_port_a, dataset_fp)
+                await _open_view(page, ws_port_a, web_port_a, dataset_fp)
 
                 await _file_menu(page, "Save Session…")
                 await expect(page.locator("#fb-title")).to_have_text("Save Session")
@@ -7529,7 +7549,7 @@ async def test_web_loading_a_prediction_the_server_already_holds_ends_the_loadin
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _file_menu(page, "Load Prediction…")
             await page.locator("#fb-path").fill(str(PREDICTION_PATH.parent))
             await page.locator("#fb-path").press("Enter")
@@ -7551,7 +7571,7 @@ async def test_web_announcing_the_prediction_on_screen_again_keeps_the_status(sh
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.wait_for_function(
                 f"() => window.ffastApp._currentModelFp === '{model_fp}'", timeout=30000)
             await page.evaluate("""(fp) => {
@@ -7583,7 +7603,7 @@ async def test_web_loading_a_dataset_the_server_already_holds_ends_the_loading_s
             await page.locator("#fb-load").click()
 
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await load("dataset.xyz")
             await expect(page.locator("#status")).to_have_text(
                 '"dataset.xyz" is already loaded', timeout=15000)
@@ -7610,7 +7630,7 @@ async def _open_two_datasets(page, tmp_path, ws_port, web_port):
     dataset_fp = await _preload_dataset(ws_port)
     (other,) = await _load_more(
         ws_port, {dataset_fp}, ("LOAD_DATASET", (str(second), "ase (auto)"), {}))
-    await _open_loupe(page, ws_port, web_port, dataset_fp)
+    await _open_view(page, ws_port, web_port, dataset_fp)
     return dataset_fp, other["args"][0]
 
 
@@ -7851,7 +7871,7 @@ async def test_web_atom_index_labels_switch_on_and_off(shared_dataset_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _open_section(page, "Display")
             box = page.locator(".pane[data-pane='Display'] .ctl-row[data-label='Atom index labels'] input")
             await box.check()
@@ -7870,7 +7890,7 @@ async def test_web_three_atom_align_and_origin_com_switch_each_other_off(ffast_w
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _open_section(page, "Alignment")
             await page.locator(
                 ".pane[data-pane='Alignment'] .ctl-row[data-label='3-atom frame align'] input").check()
@@ -7896,7 +7916,7 @@ async def test_web_clear_picks_also_clears_the_force_atoms(shared_dataset_server
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1100, "height": 760})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.locator("#pick-toolbar .pick-tool-btn[data-tool='forces']").click()
             for i in (1, 2):
                 await page.evaluate(
@@ -8005,7 +8025,7 @@ async def test_web_the_bar_has_the_logo_and_the_accent_is_periwinkle_but_plots_k
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             logo = page.locator("#topbar h1 svg.logo")
             await expect(logo).to_have_attribute("aria-hidden", "true")
             await expect(page.get_by_role("heading", name="FFAST", level=1)).to_be_visible()
@@ -8258,7 +8278,7 @@ async def test_web_export_overwrites_a_file_clicked_in_the_list(shared_dataset_s
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _file_menu(page, "Export Selected Dataset…")
             await _go_to_in_browser(page, tmp_path)
             await page.locator("#fb-list .fb-row", has_text="old.extxyz").click()
@@ -8279,7 +8299,7 @@ async def test_web_export_writes_the_chosen_format(shared_dataset_server, tmp_pa
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await _file_menu(page, "Export Selected Dataset…")
             await _go_to_in_browser(page, tmp_path)
             await page.locator("#fb-format").select_option("traj")
@@ -8418,7 +8438,7 @@ async def test_web_alt_shift_shortcuts_open_the_file_actions(shared_dataset_serv
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.evaluate("() => document.activeElement.blur()")
             modal, title = page.locator("#fb-modal"), page.locator("#fb-title")
 
@@ -8700,9 +8720,9 @@ async def test_web_while_a_tab_is_edited_the_rest_of_the_window_is_for_looking_o
     locked = """() => ({
       toolbar: document.getElementById('pick-toolbar').inert,
       rail: document.getElementById('objectbar').inert,
-      sidebar: document.getElementById('loupe-sidebar').inert,
+      sidebar: document.getElementById('view-sidebar').inert,
       view: [document.getElementById('view-mode').inert, document.getElementById('density').inert],
-      frame: [document.getElementById('frame-slider').closest('#loupe-controls').inert,
+      frame: [document.getElementById('frame-slider').closest('#view-controls').inert,
               document.getElementById('sidebar-toggle').inert],
       metrics: [document.getElementById('metrics-btn').inert, document.getElementById('metrics-drawer').inert],
       controls: [...document.querySelectorAll('.analysis-controls')].map((e) => e.inert),

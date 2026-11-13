@@ -15,7 +15,7 @@ from tests.ffast.test_example_corpus import PAIRS
 
 from .test_web_runtime import (
     REPO_ROOT, _RECORD_SENDS, _connect_headless_client, _expect_connected, _file_menu,
-    _open_loupe, _open_section, _spawn_server, _wait_for_event, _wait_for_server_ready,
+    _open_view, _open_section, _spawn_server, _wait_for_event, _wait_for_server_ready,
 )
 
 pytestmark = pytest.mark.integration
@@ -110,7 +110,7 @@ async def test_three_atom_alignment_and_origin_com_on_a_real_molecule(ffast_web_
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
-            await _open_loupe(page, ws_port, web_port, fp)
+            await _open_view(page, ws_port, web_port, fp)
             await _open_section(page, "Alignment")
             align = page.locator(
                 ".pane[data-pane='Alignment'] .ctl-row[data-label='3-atom frame align'] input")
@@ -132,7 +132,7 @@ async def test_alignment_is_off_where_the_atoms_change_between_frames(ffast_web_
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
-            await _open_loupe(page, ws_port, web_port, fp)
+            await _open_view(page, ws_port, web_port, fp)
             await _open_section(page, "Alignment")
             pane = page.locator(".pane[data-pane='Alignment']")
             await expect(pane.locator(".ctl-row[data-label='3-atom frame align']")).to_be_hidden()
@@ -178,7 +178,7 @@ async def test_an_npz_prediction_loads_on_a_real_graphene_dataset(ffast_web_serv
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
-            await _open_loupe(page, ws_port, web_port, fp)
+            await _open_view(page, ws_port, web_port, fp)
             await page.evaluate(_RECORD_SENDS)
             await _file_menu(page, "Load Prediction…")
             await page.locator("#fb-path").fill(str(npz.parent))
@@ -201,7 +201,7 @@ async def test_a_prediction_file_loads_on_a_real_periodic_dataset(ffast_web_serv
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
-            await _open_loupe(page, ws_port, web_port, fp)
+            await _open_view(page, ws_port, web_port, fp)
             await _file_menu(page, "Load Prediction…")
             await page.locator("#fb-path").fill(str(pred.parent))
             await page.locator("#fb-path").press("Enter")
@@ -220,7 +220,7 @@ async def test_the_unit_cell_checkbox_on_a_real_crystal(ffast_web_server):
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
-            await _open_loupe(page, ws_port, web_port, fp)
+            await _open_view(page, ws_port, web_port, fp)
             await page.evaluate(_RECORD_SENDS)
             await _open_section(page, "Display")
             box = page.locator(".pane[data-pane='Display'] .ctl-row[data-label='Show unit cell'] input")
@@ -242,7 +242,7 @@ async def test_a_real_crystal_exports_in_an_ase_format(ffast_web_server, tmp_pat
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
-            await _open_loupe(page, ws_port, web_port, fp)
+            await _open_view(page, ws_port, web_port, fp)
             await _file_menu(page, "Export Selected Dataset…")
             await page.locator("#fb-path").fill(str(tmp_path))
             await page.locator("#fb-path").press("Enter")
@@ -266,7 +266,7 @@ async def test_exporting_many_structures_to_poscar_is_refused_with_the_reason(ff
     async with async_playwright() as p:
         browser, page = await _page(p, web_port, ws_port)
         try:
-            await _open_loupe(page, ws_port, web_port, fp)
+            await _open_view(page, ws_port, web_port, fp)
             await _file_menu(page, "Export Selected Dataset…")
             await page.locator("#fb-path").fill(str(tmp_path))
             await page.locator("#fb-path").press("Enter")

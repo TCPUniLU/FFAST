@@ -504,7 +504,7 @@ async def test_the_metrics_drawer_works_on_a_tab_with_no_3d_panel(tmp_path):
                 await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
                 await _open_analysis_tab(page, "Basic Errors")
                 await expect(page.locator(".tabpanel.active .panel-3d")).to_have_count(0)
-                assert await page.locator("#loupe-sidebar [data-pane='Metrics']").count() == 0
+                assert await page.locator("#view-sidebar [data-pane='Metrics']").count() == 0
 
                 pane = await _open_metrics_pane(page)
                 await expect(page.locator("#metrics-btn")).to_have_attribute("aria-pressed", "true")

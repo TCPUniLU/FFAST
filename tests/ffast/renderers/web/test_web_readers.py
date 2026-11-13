@@ -72,7 +72,7 @@ async def _toy_dataset_fp(ws_port, path):
 
 async def test_web_a_toy_prediction_loads_from_load_prediction(toy_reader_installed, tmp_path):
     from .test_web_loading import _go_to, _sent
-    from .test_web_runtime import _RECORD_SENDS, _open_loupe
+    from .test_web_runtime import _RECORD_SENDS, _open_view
     data = tmp_path / "data"
     data.mkdir()
     write_toy(data / "ds.toy", make_frames(5, variable=True))
@@ -84,7 +84,7 @@ async def test_web_a_toy_prediction_loads_from_load_prediction(toy_reader_instal
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1200, "height": 820})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await page.evaluate(_RECORD_SENDS)
                 await _file_menu(page, "Load Prediction…")
                 await _go_to(page, data)
@@ -108,7 +108,7 @@ async def test_web_a_toy_prediction_loads_from_load_prediction(toy_reader_instal
 
 async def test_web_a_toy_prediction_with_energies_only_can_load(toy_reader_installed, tmp_path):
     from .test_web_loading import _go_to
-    from .test_web_runtime import _open_loupe
+    from .test_web_runtime import _open_view
     data = tmp_path / "data"
     data.mkdir()
     write_toy(data / "ds.toy", make_frames(4))
@@ -120,7 +120,7 @@ async def test_web_a_toy_prediction_with_energies_only_can_load(toy_reader_insta
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1200, "height": 820})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await _file_menu(page, "Load Prediction…")
                 await _go_to(page, data)
                 await page.locator("#fb-list .fb-row", has_text="pred.toy").click()
@@ -142,7 +142,7 @@ async def test_web_an_extxyz_prediction_with_energies_only_loads(tmp_path):
     from ase.calculators.singlepoint import SinglePointCalculator
 
     from .test_web_loading import _go_to
-    from .test_web_runtime import _connect_headless_client, _open_loupe, _wait_for_event, pack
+    from .test_web_runtime import _connect_headless_client, _open_view, _wait_for_event, pack
     data = tmp_path / "data"
     data.mkdir()
 
@@ -170,7 +170,7 @@ async def test_web_an_extxyz_prediction_with_energies_only_loads(tmp_path):
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1200, "height": 820})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await _file_menu(page, "Load Prediction…")
                 await _go_to(page, data)
                 await page.locator("#fb-list .fb-row", has_text="pred.extxyz").click()
@@ -186,7 +186,7 @@ async def test_web_an_extxyz_prediction_with_energies_only_loads(tmp_path):
 
 async def test_web_a_mismatched_toy_prediction_says_what_differs(toy_reader_installed, tmp_path):
     from .test_web_loading import _go_to
-    from .test_web_runtime import _open_loupe
+    from .test_web_runtime import _open_view
     data = tmp_path / "data"
     data.mkdir()
     write_toy(data / "ds.toy", make_frames(6))
@@ -198,7 +198,7 @@ async def test_web_a_mismatched_toy_prediction_says_what_differs(toy_reader_inst
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1200, "height": 820})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await _file_menu(page, "Load Prediction…")
                 await _go_to(page, data)
                 await page.locator("#fb-list .fb-row", has_text="short.toy").click()
@@ -325,7 +325,7 @@ async def test_web_export_ticks_the_reference_and_the_predictions_and_greys_what
         toy_reader_installed, tmp_path):
     import ase.io
     from .test_web_loading import _go_to
-    from .test_web_runtime import _open_loupe
+    from .test_web_runtime import _open_view
     data = tmp_path / "data"
     data.mkdir()
     write_toy(data / "ds.toy", make_frames(4))
@@ -339,7 +339,7 @@ async def test_web_export_ticks_the_reference_and_the_predictions_and_greys_what
             browser = await p.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1200, "height": 900})
             try:
-                await _open_loupe(page, ws_port, web_port, dataset_fp)
+                await _open_view(page, ws_port, web_port, dataset_fp)
                 await _file_menu(page, "Export Selected Dataset…")
                 items = page.locator("#fb-export-items .fb-export-item")
                 await expect(items).to_have_count(2)

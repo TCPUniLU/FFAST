@@ -76,7 +76,7 @@ import { pageCodeFingerprint, serverCodeNotice } from './code_fingerprint.js';
  * every panel's contents, so the panel frames being arranged stand out (the edit chrome is
  * a sibling of the panels, not inside them). Left: the tab bar, the frame bar, and the
  * run safety controls: the Run panel holds Stop on alarm, so it is not greyed. */
-const EDIT_LOCKED = '#objectbar, #pick-toolbar, #loupe-sidebar, #metrics-btn, #metrics-drawer, '
+const EDIT_LOCKED = '#objectbar, #pick-toolbar, #view-sidebar, #metrics-btn, #metrics-drawer, '
   + '#view-mode, #density, .analysis-controls, .analysis-panel:not([data-part="status"])';
 
 /**
@@ -318,8 +318,8 @@ export class FFastApp {
     // next TASK_DONE/TASK_FAILED (see _connect) can report completion.
 
     // Live pop-out controller (ADR 0044 Phase 4): when opened with
-    // ?mode=loupe-live this instance auto-connects, hides the chrome
-    // (body.loupe-only), and
+    // ?mode=view-live this instance auto-connects, hides the chrome
+    // (body.popout-view), and
     // selects the same dataset/prediction the opener had open — but as its
     // OWN connection, with its own view, driving its own frame/camera. A
     // reloaded page settles the same way on what its main view showed. Both
@@ -546,15 +546,15 @@ export class FFastApp {
   _mountChrome(tab) {
     const byId = (x) => document.getElementById(x);
     tab.mainEl.prepend(byId('pick-bar'));
-    tab.mainEl.append(byId('loupe-controls'));
-    tab.bodyEl.append(byId('sidebar-resize'), byId('loupe-sidebar'));
+    tab.mainEl.append(byId('view-controls'));
+    tab.bodyEl.append(byId('sidebar-resize'), byId('view-sidebar'));
   }
 
   /** Put the 3D controls away, for a tab without a 3D panel. */
   _parkChrome() {
     const byId = (x) => document.getElementById(x);
-    byId('chrome3d').append(byId('pick-bar'), byId('loupe-controls'), byId('sidebar-resize'),
-      byId('loupe-sidebar'), byId('overlay'), byId('hint-bar'));
+    byId('chrome3d').append(byId('pick-bar'), byId('view-controls'), byId('sidebar-resize'),
+      byId('view-sidebar'), byId('overlay'), byId('hint-bar'));
     this._attachLegend();
   }
 
@@ -1126,7 +1126,7 @@ export class FFastApp {
 
   /** Apply a quick style's `steps`; `id` is its action, for the tours. */
   _applyQuickStyle(steps, id) {
-    const missed = applyStyle(document.getElementById('loupe-sidebar'), steps);
+    const missed = applyStyle(document.getElementById('view-sidebar'), steps);
     if (missed.length) console.warn('Quick style: could not set', missed);
     this._tourSignal('quick-style-applied', { id });
   }
@@ -1333,7 +1333,7 @@ export class FFastApp {
 
   // ── sidebar panes (ADR 0045 Phase 1: issues 03-07) ──────────────────────
   _initSidebarPanes() {
-    const sidebarEl = document.getElementById('loupe-sidebar');
+    const sidebarEl = document.getElementById('view-sidebar');
     const search = document.createElement('input');
     search.type = 'search';
     search.id = 'sidebar-search';
@@ -1820,11 +1820,12 @@ export class FFastApp {
 
     // Live pop-out (ADR 0044 Phase 4): a second FFastApp instance opened by
     // _openPopout() when the server advertised multi_client. Hide the chrome
-    // (body.loupe-only chrome) and auto-connect —
+    // (body.popout-view) and auto-connect —
     // REMOTE_DATASET_META replay then drives _onDatasetMeta to select the
-    // requested dataset and open this connection's own view.
-    if (p.get('mode') === 'loupe-live') {
-      document.body.classList.add('loupe-only');
+    // requested dataset and open this connection's own view. 'loupe-live' is
+    // the name before 2026-11-13: a pop-out opened then still reloads as one.
+    if (['view-live', 'loupe-live'].includes(p.get('mode'))) {
+      document.body.classList.add('popout-view');
       this._autoDatasetFp = p.get('ds') || null;
       this._autoModelFp = p.get('pred') || null;
     } else {
@@ -3724,7 +3725,7 @@ export class FFastApp {
       const click = (id) => { e.preventDefault(); document.getElementById(id).click(); };
       // The frame, play and search keys act on the 3D controls, which a tab
       // without a 3D panel keeps parked out of sight (_parkChrome).
-      const parked = document.getElementById('chrome3d').contains(document.getElementById('loupe-controls'));
+      const parked = document.getElementById('chrome3d').contains(document.getElementById('view-controls'));
       if (parked && ['ArrowLeft', 'ArrowRight', ' ', '/'].includes(e.key)) return;
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         if (el.closest?.('[role=tab], [role=radio], [role=menuitem]')) return;
@@ -3789,7 +3790,7 @@ export class FFastApp {
     const token = document.getElementById('token-input').value.trim();
     if (token) url.searchParams.set('token', token);
     else url.searchParams.delete('token');
-    url.searchParams.set('mode', 'loupe-live');
+    url.searchParams.set('mode', 'view-live');
     url.searchParams.set('ds', datasetFp);
     if (modelFp) url.searchParams.set('pred', modelFp);
     else url.searchParams.delete('pred');

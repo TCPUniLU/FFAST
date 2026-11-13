@@ -900,10 +900,10 @@
       flex: 0 0 auto; font-family: var(--font); color: var(--text1); background: var(--surface-2);
       border: 1px solid var(--bg3); border-radius: 4px; padding: 1px 6px; text-align: center;
     }
-    #content.no-view #loupe-sidebar,
+    #content.no-view #view-sidebar,
     #content.no-view #pick-bar,
-    #content.no-view #loupe-controls,
-    #content.sidebar-hidden #loupe-sidebar,
+    #content.no-view #view-controls,
+    #content.sidebar-hidden #view-sidebar,
     #content.no-view #sidebar-resize,
     #content.sidebar-hidden #sidebar-resize { display: none; }
 
@@ -927,18 +927,18 @@
     #overlay .small { font-size: var(--fs-s); }
 
     /* loupe control strip (Playback + View, MVP subset) */
-    #loupe-controls {
+    #view-controls {
       display: flex; align-items: center; flex-wrap: wrap; gap: 10px; flex-shrink: 0;
       padding: 6px 10px; background: var(--bg2); border-top: 1px solid var(--bg3);
     }
-    #loupe-controls .ctl-label {
+    #view-controls .ctl-label {
       font-size: var(--fs-s); font-weight: 600; color: var(--muted);
     }
     #frame-slider { flex: 1 1 80px; accent-color: var(--hl2); min-width: 80px; }
     #frame-label { font-size: var(--fs-s); color: var(--muted); min-width: 64px; text-align: right; }
-    #loupe-controls button.icon-btn { width: calc(1em + 10px); padding: 4px; font-size: var(--fs-m); }
+    #view-controls button.icon-btn { width: calc(1em + 10px); padding: 4px; font-size: var(--fs-m); }
     #playback-settings { position: relative; }
-    #loupe-controls button#playback-gear { width: calc(1em + 10px); height: auto; font-size: var(--fs-xl); line-height: 1; }
+    #view-controls button#playback-gear { width: calc(1em + 10px); height: auto; font-size: var(--fs-xl); line-height: 1; }
     #playback-pop {
       position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
       z-index: 20; display: grid; grid-template-columns: auto auto; gap: 6px 8px; align-items: center;
@@ -946,7 +946,7 @@
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     }
     #playback-pop.hidden { display: none; }
-    #loupe-controls input.ctl-number {
+    #view-controls input.ctl-number {
       width: 52px; background: var(--surface-2); border: 1px solid var(--bg3);
       border-radius: 3px; color: var(--text1); padding: 2px 4px; font-size: var(--fs-s);
     }
@@ -976,7 +976,7 @@
     }
 
     /* ── 3D settings sidebar ─────────────────────────────────────────── */
-    #loupe-sidebar {
+    #view-sidebar {
       width: 250px; flex-shrink: 0;
       background: var(--bg2); border-left: 1px solid var(--bg3);
       overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 6px;
@@ -1090,7 +1090,7 @@
     #hint-bar .hint-step { white-space: nowrap; }
     #hint-bar .hint-n { color: var(--hl2); font-weight: 700; margin-right: 4px; }
     #hint-bar button { height: auto; padding: 2px 6px; background: transparent; }
-    body.loupe-only #hint-bar { display: none; }
+    body.popout-view #hint-bar { display: none; }
     #quick-styles { flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
     #quick-styles .ctl-label { font-size: var(--fs-s); color: var(--muted); margin-right: 2px; white-space: nowrap; }
     #quick-styles button { flex: 1 1 auto; padding: 3px 4px; font-size: var(--fs-s); white-space: nowrap; }
@@ -1246,24 +1246,24 @@
     .mx-boxes-create input { flex: 1; min-width: 0; font-size: var(--fs-s); padding: 2px 6px; }
 
     /* popped-out loupe: chrome hidden, viewport fills the window. The pop-out
-       (mode=loupe-live) opens its OWN connection and is a real second
+       (mode=view-live) opens its OWN connection and is a real second
        controller (ADR 0044 Phase 4). The socket-less BroadcastChannel
        satellite that also used this class is gone (ADR 0051). */
-    body.loupe-only #objectbar,
-    body.loupe-only .resize-handle,
-    body.loupe-only #tabbar-row,
-    body.loupe-only .analysis-controls,
-    body.loupe-only .grid-slot,
-    body.loupe-only .analysis-scrollstrip,
-    body.loupe-only #popout-btn,
-    body.loupe-only #file-menu,
-    body.loupe-only #lammps-menu,
-    body.loupe-only #loupe-sidebar,
-    body.loupe-only #pick-bar,
-    body.loupe-only #prev-frame-btn,
-    body.loupe-only #play-pause-btn,
-    body.loupe-only #next-frame-btn,
-    body.loupe-only #playback-settings { display: none; }
+    body.popout-view #objectbar,
+    body.popout-view .resize-handle,
+    body.popout-view #tabbar-row,
+    body.popout-view .analysis-controls,
+    body.popout-view .grid-slot,
+    body.popout-view .analysis-scrollstrip,
+    body.popout-view #popout-btn,
+    body.popout-view #file-menu,
+    body.popout-view #lammps-menu,
+    body.popout-view #view-sidebar,
+    body.popout-view #pick-bar,
+    body.popout-view #prev-frame-btn,
+    body.popout-view #play-pause-btn,
+    body.popout-view #next-frame-btn,
+    body.popout-view #playback-settings { display: none; }
 
     @media (max-width: 720px) {
       #main { flex-direction: column; }
@@ -1470,8 +1470,8 @@
     #recent-servers button { text-align: left; background: var(--surface-2); }
     .warning-modal-footer .spacer { flex: 1; }
     .warning-modal-footer { gap: 8px; }
-    body.loupe-only #conn-dialog { display: none; }
-    body.loupe-only #cluster-dialog { display: none; }
+    body.popout-view #conn-dialog { display: none; }
+    body.popout-view #cluster-dialog { display: none; }
 
     /* cluster dialog (web parity plan 2026-10-29) */
     #cluster-dialog .warning-modal-panel { display: flex; flex-direction: column;
@@ -1921,7 +1921,7 @@
       <span id="hint-text"></span>
       <button id="hint-dismiss" title="Dismiss this hint"></button>
     </div>
-    <div id="loupe-controls">
+    <div id="view-controls">
       <button id="prev-frame-btn" class="icon-btn" title="Previous frame" disabled></button>
       <button id="play-pause-btn" class="icon-btn" title="Play" aria-label="Play" disabled></button>
       <button id="next-frame-btn" class="icon-btn" title="Next frame" disabled></button>
@@ -1943,7 +1943,7 @@
       <button id="popout-btn" title="Open this 3D view in a new browser tab" disabled></button>
     </div>
     <div id="sidebar-resize" class="resize-handle"></div>
-    <div id="loupe-sidebar"></div>
+    <div id="view-sidebar"></div>
   </div>
 
   <!-- ── remote filesystem browser ─────────────────────────────────────── -->

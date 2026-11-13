@@ -9,7 +9,7 @@ from playwright.async_api import async_playwright, expect
 
 from .test_web_runtime import (
     DATASET_PATH, PREDICTION_PATH, REPO_ROOT, _RECORD_SENDS, _expect_connected,
-    _file_menu, _open_loupe, _preload_dataset, _preload_uniform_dataset,
+    _file_menu, _open_view, _preload_dataset, _preload_uniform_dataset,
     _shared_servers, _spawn_server, _wait_for_server_ready, shared_server,
 )
 
@@ -205,7 +205,7 @@ async def test_web_an_npz_prediction_loads(ffast_web_server, tmp_path):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await page.evaluate(_RECORD_SENDS)
             await _file_menu(page, "Load Prediction…")
             await _go_to(page, tmp_path)
@@ -261,7 +261,7 @@ async def test_web_the_zero_model_loads_only_when_asked(ffast_web_server):
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(viewport={"width": 1200, "height": 820})
         try:
-            await _open_loupe(page, ws_port, web_port, dataset_fp)
+            await _open_view(page, ws_port, web_port, dataset_fp)
             await expect(page.locator("#model-list .obj-row")).to_have_count(0)
             await _file_menu(page, "Load Zero Model")
             row = page.locator("#model-list .obj-row", has_text="Zero Model")
