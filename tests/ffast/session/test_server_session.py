@@ -208,6 +208,22 @@ def test_dispatch_unknown_event_is_noop():
     assert s.outbound.empty()
 
 
+def test_the_desktop_only_prediction_arrays_request_is_gone():
+    """REQUEST_PREDICTION_ARRAYS served only the desktop client (ADR 0098):
+    the server neither lists nor handles it, and sending it does nothing."""
+    assert "REQUEST_PREDICTION_ARRAYS" not in control.CLIENT_TO_SERVER
+    assert not hasattr(control, "PREDICTION_ARRAYS")
+    env = _FakeEnv()
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        assert "REQUEST_PREDICTION_ARRAYS" not in s._handlers
+        await s.dispatch("REQUEST_PREDICTION_ARRAYS", ["ds", "m"], {})
+        return s
+
+    assert _run(scenario()).outbound.empty()
+
+
 def test_dispatch_missing_required_skips_handler():
     env = _FakeEnv()
 
@@ -1010,64 +1026,6 @@ def test_request_subdataset_arrays_unknown_fingerprint_emits_nothing():
     s = _run(scenario())
     assert s.outbound.empty()
 
-
-# ── _on_request_prediction_arrays ─────────────────────────────────────────────
-
-def test_request_prediction_arrays_assembles_cached_ghost_predictions():
-    """Ghost model: cached energy+forces are packed onto the prediction-only
-    channel and NO on-demand generation runs."""
-    ds_fp, m_fp = "ds1", "ghost1"
-    energy = np.array([1.0, 2.0])
-    forces = np.array([[0.1, 0.2, 0.3]])
-    cache = {
-        CacheKey("energy", m_fp, ds_fp).format(): {"energy": energy},
-        CacheKey("forces", m_fp, ds_fp).format(): {"forces": forces},
-    }
-    ghost = type("_G", (), {"isGhost": True})()
-    env = _FakeEnv(datasets={ds_fp: object()}, models={m_fp: ghost}, cache=cache)
-    env.data = _FakeData(env.cache)
-
-    async def scenario():
-        s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_PREDICTION_ARRAYS", [ds_fp, m_fp], {})
-        return s.outbound.get_nowait()
-
-    event, args, kwargs = unpack(_run(scenario()))
-    assert event == control.PREDICTION_ARRAYS
-    assert args == [ds_fp, m_fp]
-    arrays = unpack_arrays(kwargs)
-    np.testing.assert_array_equal(
-        arrays[PredictionArrayKey("energy", m_fp).format()], energy
-    )
-    np.testing.assert_array_equal(
-        arrays[PredictionArrayKey("forces", m_fp).format()], forces
-    )
-    assert env.data.generate_data_calls == []   # ghost → no on-demand compute
-
-
-def test_request_prediction_arrays_generates_on_demand_for_real_model():
-    """Real (non-ghost) model + empty cache: the handler generates energy and
-    forces on demand, then assembles them for transfer."""
-    ds_fp, m_fp = "ds2", "real2"
-    dataset = type("_D", (), {"fingerprint": ds_fp})()
-    model = type("_M", (), {"isGhost": False, "fingerprint": m_fp})()
-    env = _FakeEnv(datasets={ds_fp: dataset}, models={m_fp: model}, cache={})
-    env.data = _FakeData(env.cache)
-
-    async def scenario():
-        s = ServerSession(env, asyncio.Queue())
-        await s.dispatch("REQUEST_PREDICTION_ARRAYS", [ds_fp, m_fp], {})
-        return s.outbound.get_nowait()
-
-    event, args, kwargs = unpack(_run(scenario()))
-    assert event == control.PREDICTION_ARRAYS
-    assert env.data.generate_data_calls == ["energy", "forces"]
-    arrays = unpack_arrays(kwargs)
-    assert PredictionArrayKey("energy", m_fp).format() in arrays
-    assert PredictionArrayKey("forces", m_fp).format() in arrays
-
-
-# ── _on_view_command (VIEW_COMMAND: model=None, own ValidationError branch) ────
 
 def test_view_command_applies_and_emits_command_result_then_scene_patch():
     """A well-formed command parses via the pydantic discriminated union,

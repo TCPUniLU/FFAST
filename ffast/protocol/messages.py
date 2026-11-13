@@ -214,7 +214,7 @@ class MetricResultMessage(BaseModel):
     array. Per the **RPC Channel** boundary in CONTEXT.md it is typed on its
     metadata envelope while the ``values`` array rides inside it encoded by
     ``ffast.protocol.rpc._encode_array`` (the same binary form used by the untyped
-    ``SUBDATASET_ARRAYS`` / ``PREDICTION_ARRAYS`` Array messages). So ``values``
+    ``SUBDATASET_ARRAYS`` Array message). So ``values``
     is an opaque ``{__ndarray__, dtype, shape, data}`` dict here, not a typed
     field.
 
@@ -626,15 +626,6 @@ class LoadPredictionRequest(BaseModel):
     selected_energy_key: Optional[str] = None
     selected_force_key: Optional[str] = None
     reader: Optional[str] = None     # the reader's name; None: chosen by the file (ADR 0095)
-
-
-class RequestPredictionArraysRequest(BaseModel):
-    """Typed payload for ``REQUEST_PREDICTION_ARRAYS``."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    dataset_fp: str
-    model_fp: str
 
 
 class OpenViewRequest(BaseModel):

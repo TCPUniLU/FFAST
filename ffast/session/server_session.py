@@ -172,7 +172,7 @@ class ServerSession:
             LoadPredictionRequest, LoadSessionRequest, OpenViewRequest,
             ProbeDatasetKeysRequest, ProbeDatasetLengthRequest,
             ProbeDatasetEnergiesRequest, PreviewEnergySampleRequest,
-            RequestMetricRequest, RequestPredictionArraysRequest,
+            RequestMetricRequest,
             RequestSubdatasetArraysRequest, SaveSessionRequest, SaveTabRequest,
             DeleteUserMetricRequest, ExportUserMetricRequest, SaveUserMetricRequest,
             RequestMetricInputsRequest, CheckMetricRequest, TryMetricRequest,
@@ -205,7 +205,6 @@ class ServerSession:
             control.LOAD_PREDICTION:            _Route(self._on_load_prediction, ["path", "dataset_fp"], LoadPredictionRequest),
             control.LOAD_EXAMPLE:               _Route(self._on_load_example, [], EmptyRequest),
             control.LOAD_ZERO_MODEL:            _Route(self._on_load_zero_model, [], EmptyRequest),
-            control.REQUEST_PREDICTION_ARRAYS:  _Route(self._on_request_prediction_arrays, ["dataset_fp", "model_fp"], RequestPredictionArraysRequest),
             control.OPEN_VIEW:                  _Route(self._on_open_view, [], OpenViewRequest),
             control.CLOSE_VIEW:                 _Route(self._on_close_view, ["view_id"], CloseViewRequest),
             control.VIEW_COMMAND:               _Route(self._on_view_command, []),
@@ -1595,76 +1594,6 @@ class ServerSession:
         ``failed(exc)`` or ``done()`` from its thread; the first call wins.
         """
         return _LoadAnswer(self, kind, path, dataset_fp)
-
-    async def _on_request_prediction_arrays(self, dataset_fp, model_fp, **kwargs) -> None:
-        """Pack only cached prediction arrays for (dataset_fp, model_fp) and push.
-
-        Uses the Prediction-Only Array Channel — geometry/element arrays are NOT
-        re-sent. Replies with a ``PREDICTION_ARRAYS`` event so the client
-        listener resolves its pending Future without treating it as a geometry
-        transfer.
-        """
-        from ffast.protocol.rpc import pack_prediction_arrays
-        from ffast.cache import CacheKey, PredictionArrayKey
-
-        # Stage 2: generate predictions on demand for real (non-ghost)
-        # server-side models. Ghost models only carry file-loaded predictions; a
-        # real model can predict any dataset, so compute + cache missing entries
-        # before serving. model.predict is CPU/GPU-heavy — run off the event
-        # loop so WebSocket pings keep flowing (avoids the ping_timeout drop).
-        model = self.env.models.get(model_fp)
-        dataset = self.env.datasets.get(dataset_fp)
-        if (model is not None and dataset is not None
-                and not getattr(model, "isGhost", False)):
-            for dt_key in ("energy", "forces"):
-                if self.env.cache.get(CacheKey(dt_key, model_fp, dataset_fp).format()) is None:
-                    try:
-                        await asyncio.to_thread(
-                            self.env.data.generateData, dt_key, model, dataset
-                        )
-                    except Exception as exc:
-                        logger.error(
-                            "On-demand prediction gen failed (%s) model=%r dataset=%r: %s",
-                            dt_key, model_fp[:8], dataset_fp[:8], exc,
-                        )
-
-        arrays = {}
-        for dt_key in ("energy", "forces"):
-            cache_key = CacheKey(dt_key, model_fp, dataset_fp).format()
-            de = self.env.cache.get(cache_key)
-            if de is None:
-                continue
-            raw = de.get(dt_key)
-            if raw is None:
-                continue
-            # Variable-dataset forces arrive as list of (natoms_i, 3) arrays;
-            # flatten to (total_atoms, 3) — client rebuilds per-molecule slices
-            # using the already-held offsets.
-            if isinstance(raw, FlatFrames):
-                raw = raw.values
-            elif isinstance(raw, list):
-                try:
-                    raw = np.concatenate(raw, axis=0)
-                except Exception as exc:
-                    logger.warning(
-                        "_send_prediction_arrays: could not concatenate %s: %s",
-                        cache_key, exc,
-                    )
-                    continue
-            arrays[PredictionArrayKey(dt_key, model_fp).format()] = np.asarray(raw)
-
-        if not arrays:
-            logger.warning(
-                "_send_prediction_arrays: no cache entries for model=%r dataset=%r",
-                model_fp[:8], dataset_fp[:8],
-            )
-
-        data = await asyncio.to_thread(pack_prediction_arrays, dataset_fp, model_fp, arrays)
-        await self._emit(data)
-        logger.info(
-            "PREDICTION_ARRAYS queued: model=%r dataset=%r keys=%r",
-            model_fp[:8], dataset_fp[:8], list(arrays.keys()),
-        )
 
     async def _on_open_view(self, **kwargs) -> None:
         """Create or reopen a VisualizationView and send its SCENE_SNAPSHOT."""
