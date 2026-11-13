@@ -2998,8 +2998,9 @@ def test_te_moving_and_resizing_change_only_places(results):
 def test_te_saving_sends_the_authoring_form(results):
     saved = results["te_save_form"]
     assert set(saved) == {"name", "controls", "selector", "has_data_selector",
-                          "grid", "column_widths", "row_heights", "panels"}
+                          "grid", "link_x", "column_widths", "row_heights", "panels"}
     assert saved["grid"] == 24 and saved["column_widths"] is None and saved["row_heights"] is None
+    assert saved["link_x"] is None   # unset: the tab's plots zoom alone
     assert saved["panels"][1]["metrics"] == {
         "value": {"metric": "m.a", "transform": "smooth", "params": {}}}
     assert "metric_refs" not in saved["panels"][1]
