@@ -302,6 +302,9 @@ class AnalysisTabConfig(BaseModel):
     column_widths: list[float] | None = None
     row_heights: list[float] | None = None
     grid: int | None = None
+    #: "Link X axes" (tab menu): zooming one timeline's X zooms the tab's other
+    #: timelines. Unset: each plot zooms alone.
+    link_x: Literal[True] | None = None
 
     @model_validator(mode="after")
     def _sizes_fit_the_grid(self) -> "AnalysisTabConfig":

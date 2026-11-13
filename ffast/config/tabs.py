@@ -122,6 +122,7 @@ def tab_layout(tab, *, registry=None) -> dict:
         "column_widths": tab.column_widths,
         "row_heights": tab.row_heights,
         "grid": tab.grid,
+        "link_x": tab.link_x,
     }
 
 

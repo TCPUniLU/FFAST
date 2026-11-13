@@ -510,6 +510,17 @@ def test_axis_edits_parse_and_reach_the_browser():
     assert {k: panel[k] for k in AXIS_FIELDS} == {k: AXES.get(k) for k in AXIS_FIELDS}
 
 
+def test_linked_x_axes_parse_and_reach_the_browser():
+    import ffast.metrics.builtin  # noqa: F401
+
+    tab = AnalysisTabConfig.model_validate({"name": "T", "panels": [PLAIN], "link_x": True})
+    assert build_tab_layout([tab])[0]["link_x"] is True
+    plain = AnalysisTabConfig.model_validate({"name": "T", "panels": [PLAIN]})
+    assert build_tab_layout([plain])[0]["link_x"] is None
+    with pytest.raises(ValidationError, match="link_x"):
+        AnalysisTabConfig.model_validate({"name": "T", "panels": [PLAIN], "link_x": False})
+
+
 @pytest.mark.parametrize("extra, error", [
     ({"x_scale": "sqrt"}, "x_scale"),
     ({"x_min": 5.0, "x_max": 1.0}, "below"),

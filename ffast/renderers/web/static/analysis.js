@@ -80,6 +80,8 @@ const CONTROL_PARAM = { energy_shift: 'shifted', smoothing: 'window' };
 const COMPARE_HINT = "Compare runs: tick several runs in this tab's selector.";
 const COMPARE_HINT_KEY = 'ffast.hint.compareRuns';
 const SUB_KINDS = new Set(['timeline', 'overlay_timeline', 'scatter', 'parity', 'density']);
+/** Plots whose X axis is the frame: "Link X axes" zooms them together. */
+const X_LINKED_KINDS = new Set(['timeline', 'overlay_timeline']);
 // Roles a kind draws, when it names others too. A parity panel's x and y are
 // every force component (>4 GB on a large dataset): only the server reads
 // them, to make a subset from a box (ADR 0078).
@@ -1203,6 +1205,33 @@ export class AnalysisManager {
     if (!x && !y) delete t.zoom[key];
     else t.zoom[key] = { x, y, series: seriesKey(card.series) };
     if (JSON.stringify(t.zoom[key] ?? null) !== before) this._keep(t);
+  }
+
+  /** "Link X axes" (the tab's link_x): a timeline's new X range, or its
+   * return to the full range, goes to the tab's other timelines. Each keeps
+   * its own flip. */
+  async _linkX(t, spec, ev) {
+    if (!t.spec.link_x || !X_LINKED_KINDS.has(spec.kind) || this._linkingX || !ev) return;
+    let lo = ev['xaxis.range[0]'], hi = ev['xaxis.range[1]'];
+    if (lo == null && Array.isArray(ev['xaxis.range'])) [lo, hi] = ev['xaxis.range'];
+    const auto = ev['xaxis.autorange'] != null && lo == null;
+    if (!auto && (lo == null || hi == null)) return;
+    if (!auto && Number(lo) > Number(hi)) [lo, hi] = [hi, lo];
+    const others = [];
+    for (const slot of t.slots) {
+      (slot.cards || []).forEach((card, i) => {
+        const other = slot.specs[i];
+        if (other !== spec && X_LINKED_KINDS.has(other.kind) && card.body?.layout) others.push([other, card.body]);
+      });
+    }
+    this._linkingX = true;   // their own relayout events must not pass the range on again
+    try {
+      await Promise.all(others.map(([other, el]) => globalThis.Plotly.relayout(el,
+        auto ? { 'xaxis.autorange': other.x_flip ? 'reversed' : true }
+          : { 'xaxis.range': other.x_flip ? [hi, lo] : [lo, hi] })));
+    } finally {
+      this._linkingX = false;
+    }
   }
 
   /** A plot just drawn takes the zoom it had on the same data; a zoom kept
@@ -2562,6 +2591,7 @@ export class AnalysisManager {
         this._onPanelLabels?.(t.spec.name, spec, { legend_x: r3(ev['legend.x']), legend_y: r3(ev['legend.y']) });
       }
       this._noteZoom(t, spec, card);
+      this._linkX(t, spec, ev);
     });
     // A live run's scores are not a metric of a dataset: no subset from them.
     if (SUB_KINDS.has(spec.kind) && !spec.liveScores) this._wireSub(t, spec, card);

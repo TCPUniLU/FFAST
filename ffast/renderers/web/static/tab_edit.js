@@ -411,6 +411,7 @@ export function toSaved(tab) {
     selector: tab.selector ?? null,
     controls: [...(tab.controls || [])],
     grid: tab.grid ?? null,
+    link_x: tab.link_x ?? null,
     column_widths: tab.grid ? null : tab.column_widths ?? null,
     row_heights: tab.grid ? null : tab.row_heights ?? null,
     panels: (tab.panels || []).map(({ metric_refs, metrics, unresolved, ...panel }) => ({

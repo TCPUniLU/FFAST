@@ -919,6 +919,11 @@ export class FFastApp {
       id: 'tab-export', label: 'Export as TOML…',
       run: () => this._exportTab(name),
       unavailable: () => (this._conn ? '' : 'Connect to a server first'),
+    }, {
+      // Zooming one timeline's X zooms the tab's other timelines; saved in the tab.
+      id: 'tab-link-x', label: spec?.link_x ? 'Unlink X axes' : 'Link X axes',
+      run: () => this._setTabLinkX(name, !spec.link_x),
+      unavailable: () => this._whyNoEdit() || (spec ? '' : 'Open a tab first'),
     }];
     if (spec?.layout_of) {
       // A live tab: Reset goes back to the built-in Live run layout, once it was edited.
@@ -1610,6 +1615,15 @@ export class FFastApp {
    * removes the field. A built-in or project tab gets a user tab
    * replacing it, as an Edit mode save does.
    * @returns {Promise<{ok: boolean, error?: string|null}>} */
+  /** Save the tab's "Link X axes" switch. */
+  async _setTabLinkX(tabName, on) {
+    const server = this._layoutTabs.find((t) => t.name === tabName);
+    if (!server) { this._setStatus('This tab is not from the server', 'error'); return; }
+    // A live tab saves the Live run layout it is made from (ADR 0089).
+    const next = { ...server, link_x: on ? true : null, name: server.layout_of || server.name };
+    this._reportTab(await this._tabOps.save(toSaved(next), server.name));
+  }
+
   async _savePanelLabels(tabName, spec, patch) {
     const server = this._layoutTabs.find((t) => t.name === tabName);
     const index = (server?.panels || []).findIndex(

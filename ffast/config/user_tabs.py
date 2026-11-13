@@ -55,9 +55,12 @@ def tab_fingerprint(tab: AnalysisTabConfig) -> str:
     """Identifies a tab's content: equal fingerprints, equal tabs. Unset
     label fields (added 2026-10-29) and axis fields (2026-11-13) are left
     out, so a tab without such edits keeps the fingerprint it had before they
-    existed and no edited tab is wrongly marked "original changed"."""
+    existed and no edited tab is wrongly marked "original changed". So is an
+    unset ``link_x`` (2026-11-13)."""
     data = tab.model_dump(mode="json")
     data.pop("start", None)   # where a built-in tab starts is not its content (2026-11-07)
+    if data.get("link_x") is None:
+        data.pop("link_x", None)
     for panel in data["panels"]:
         for key in (*LABEL_FIELDS, *AXIS_FIELDS):
             if panel.get(key) is None:

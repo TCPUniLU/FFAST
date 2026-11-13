@@ -403,6 +403,7 @@ def test_a_tab_without_label_edits_keeps_its_fingerprint():
     tab = _tab("Gyration", SMOOTH)
     data = tab.model_dump(mode="json")
     del data["start"]   # also added later (2026-11-07): not part of a tab's content
+    del data["link_x"]  # added 2026-11-13
     for panel in data["panels"]:
         for key in (*LABEL_FIELDS, *AXIS_FIELDS):   # axis fields: added 2026-11-13
             del panel[key]
@@ -410,6 +411,8 @@ def test_a_tab_without_label_edits_keeps_its_fingerprint():
     assert old == tab_fingerprint(tab)
     assert tab_fingerprint(_tab("Gyration", {**SMOOTH, "y_title": "Rg"})) != old
     assert tab_fingerprint(_tab("Gyration", {**SMOOTH, "y_scale": "log"})) != old
+    linked = AnalysisTabConfig.model_validate({"name": "Gyration", "panels": [SMOOTH], "link_x": True})
+    assert tab_fingerprint(linked) != old
 
 
 # ── tabs that start, and tabs that wait as templates (to_fix_v3 #3) ─────────

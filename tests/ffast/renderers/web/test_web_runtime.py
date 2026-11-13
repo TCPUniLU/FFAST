@@ -8239,6 +8239,64 @@ async def test_web_a_plots_axes_are_set_saved_and_reset(tmp_path):
                 await browser.close()
 
 
+async def test_web_link_x_axes_zooms_every_timeline_of_the_tab(tmp_path):
+    """Gap 4 of the Qt-removal audit (2026-11-13): "Link X axes" in the tab
+    menu is saved in the tab; zooming one timeline's X then zooms the tab's
+    other timelines, and autorange resets them all. Unlinked, they zoom alone."""
+    tabs_dir = tmp_path / "tabs"
+    saved = tabs_dir / "basic-errors.toml"
+    energy, forces = "Energy MAE timeline", "Forces MAE timeline"
+    plot = lambda title: f".tabpanel.active .analysis-panel[data-title='{title}'] .panel-plot"
+    zoom = """([sel, update]) => Plotly.relayout(document.querySelector(sel), update)"""
+    x_range = """(sel) => { const x = document.querySelector(sel)?.layout?.xaxis;
+                   return x && !x.autorange ? x.range.map(Number) : null; }"""
+
+    def link_x():
+        return tomllib.loads(saved.read_text())["tabs"][0].get("link_x") if saved.exists() else None
+
+    async with _spawn_server("--tabs-dir", str(tabs_dir)) as (ws_port, web_port):
+        dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1200, "height": 820})
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+                await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+                await _open_analysis_tab(page, "Basic Errors")
+                for title in (energy, forces):
+                    await page.wait_for_function(_PANEL_HAS_POINTS, arg=title, timeout=25000)
+
+                await _tab_menu(page, "Link X axes")
+                for _ in range(50):
+                    if link_x() is True:
+                        break
+                    await asyncio.sleep(0.1)
+                assert link_x() is True
+                for title in (energy, forces):
+                    await page.wait_for_function(_PANEL_HAS_POINTS, arg=title, timeout=25000)
+
+                await page.evaluate(zoom, [plot(energy), {"xaxis.range[0]": 2, "xaxis.range[1]": 6}])
+                await page.wait_for_function(f"(s) => ({x_range})(s)?.join() === '2,6'", arg=plot(forces))
+                await page.evaluate(zoom, [plot(forces), {"xaxis.autorange": True}])
+                await page.wait_for_function(f"(s) => ({x_range})(s) === null", arg=plot(energy))
+
+                await _tab_menu(page, "Unlink X axes")
+                for _ in range(50):
+                    if link_x() is None:
+                        break
+                    await asyncio.sleep(0.1)
+                assert link_x() is None
+                for title in (energy, forces):
+                    await page.wait_for_function(_PANEL_HAS_POINTS, arg=title, timeout=25000)
+                await page.evaluate(zoom, [plot(energy), {"xaxis.range[0]": 2, "xaxis.range[1]": 6}])
+                await page.wait_for_function(f"(s) => ({x_range})(s)?.join() === '2,6'", arg=plot(energy))
+                assert await page.evaluate(x_range, plot(forces)) is None
+            finally:
+                await browser.close()
+
+
 async def test_web_the_file_browser_starts_in_the_workdir(tmp_path):
     """--workdir sets where the file browser opens (web parity plan 2026-10-29)."""
     (tmp_path / "start-here.xyz").write_text("")
