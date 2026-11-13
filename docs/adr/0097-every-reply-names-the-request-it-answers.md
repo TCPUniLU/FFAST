@@ -73,9 +73,20 @@ number.
 - It reconnects by itself, waiting 1 s, 2 s, 4 s and so on, up to 30 s
   between tries. The banner has a "Reconnect now" button. After reconnecting
   the page takes the server's replay, as after a page reload.
-- On a cluster, while connected, the page regularly asks the launcher whether
-  the SSH tunnel is still alive, and shows the banner when it is not. A dead
-  job is not retried; the banner points to the Cluster dialog.
+- **A heartbeat finds a stalled socket.** Laptop sleep or a Wi-Fi switch can
+  stall a socket without closing it, and the browser then waits minutes before
+  it notices. Every 15 s the page sends `HEARTBEAT`; the server answers at once
+  from its receive loop, not behind slow handlers. A page that hears nothing
+  at all for 60 s (any message counts) treats the connection as lost. 60 s
+  matches the server's own limit for a silent page, and leaves room for one
+  large message on a slow tunnel. A server that does not offer the
+  `heartbeat` feature gets none. This is not a time limit on requests: a
+  slow load still answers heartbeats.
+- On a cluster, a retry first asks the launcher whether it still holds the
+  SSH tunnel. If not, the job or the tunnel is gone: the page stops retrying
+  and the banner points to the Cluster dialog. The page does not ask the
+  launcher while connected: a dying tunnel closes the page's socket at once,
+  and a stalled one looks alive to the launcher too.
 
 ### 4. Two ideas kept from the desktop
 
