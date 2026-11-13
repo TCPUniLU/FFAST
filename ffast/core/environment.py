@@ -640,6 +640,26 @@ class HeadlessEnvironment(Environment, threading.Thread):
         print(flush=True)
 
 
+def _compile_project_metrics():
+    """Register the built-in metrics and compile the bundled tabs' and the
+    project's declarative metrics (``ffast.toml`` found from the working
+    directory), as the server does before it starts. A bad entry is logged and
+    left out; the rest load."""
+    from pathlib import Path
+
+    from ffast.config.loader import discover_config, load_project_config
+    from ffast.config.tabs import compile_project_metrics
+
+    try:
+        path = discover_config(Path.cwd())
+        config = load_project_config(path) if path else None
+    except Exception:
+        logger.warning("Project config unavailable; only built-in metrics", exc_info=True)
+        config = None
+    for context, msg in compile_project_metrics(config).errors:
+        logger.error("Metric config error in %s: %s", context, msg)
+
+
 def startHeadlessEnvironment():
     """Bootstrap modules, logging, and the headless event thread for scripts."""
     from ffast.core.plugin_discovery import loadModules
@@ -651,6 +671,7 @@ def startHeadlessEnvironment():
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", force=True)
 
     loadModules(thread)
+    _compile_project_metrics()
     thread.start()
 
     return thread

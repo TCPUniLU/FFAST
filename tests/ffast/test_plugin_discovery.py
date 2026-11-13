@@ -362,3 +362,23 @@ def test_a_headless_start_does_not_import_torch():
                          text=True, check=True, timeout=60)
     assert out.stdout.strip().splitlines()[-1] == "False"
 
+
+def test_a_headless_start_can_compute_box_settings_and_bundled_tab_metrics(tmp_path):
+    """A script's headless start registers the built-ins and compiles the
+    bundled tabs, as the server does; before ADR 0098 the desktop's
+    modules/ scan did it. A fresh process, so no other test registers them."""
+    import subprocess
+    import sys
+
+    code = (
+        "from ffast.core.environment import HeadlessEnvironment, startHeadlessEnvironment\n"
+        "HeadlessEnvironment.start = lambda self: None\n"
+        "startHeadlessEnvironment()\n"
+        "from ffast.metrics.registry import default_registry as r\n"
+        "assert r.has('ffast.energy_difference'), 'built-ins'\n"
+        "assert r.has('ffast.gyradius__smooth'), 'bundled tabs'\n"
+        "r.get('ffast.energy_difference[dataset;mae]')\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code], cwd=tmp_path,
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr[-2000:]
