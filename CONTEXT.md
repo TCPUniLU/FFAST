@@ -792,3 +792,12 @@ section exists so nobody goes looking for it.
   exists and is tested, but it is deliberately not wired up, because the
   WebSocket already compresses and the lazy-proxy design rarely ships bulk arrays
   (ADR 0031).
+- **Request** — a message from the browser that expects an answer. It carries
+  an `id`; the server's answers to it carry `reply_to` with that `id`
+  (ADR 0097). A message whose answer goes to every window, such as dataset
+  metadata, is an announcement, not a reply.
+  _Avoid_: call, query.
+- **Final reply** — the one answer that ends a request, marked `final: true`.
+  Progress answers come before it. It carries either a result or `error`,
+  never both (ADR 0097).
+  _Avoid_: ack, response (for the progress messages).
