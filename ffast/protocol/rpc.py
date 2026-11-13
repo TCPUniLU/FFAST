@@ -75,13 +75,21 @@ def _msgpack_default(obj):
     raise TypeError(f"Cannot msgpack-serialize {type(obj).__name__}")
 
 
-def pack(event: str, args: tuple, kwargs: dict) -> bytes:
-    """Serialize event + args/kwargs to msgpack bytes."""
-    return msgpack.packb(
-        {"event": event, "args": list(args), "kwargs": kwargs},
-        use_bin_type=True,
-        default=_msgpack_default,
-    )
+def pack(event: str, args: tuple, kwargs: dict, *, reply_to=None,
+         final: bool = True, error: str | None = None) -> bytes:
+    """Serialize event + args/kwargs to msgpack bytes.
+
+    With ``reply_to`` the message answers that request (ADR 0097): it also
+    carries ``final`` and, when the request failed, ``error``. Use
+    ``ffast.protocol.reply.reply`` rather than passing these by hand.
+    """
+    msg = {"event": event, "args": list(args), "kwargs": kwargs}
+    if reply_to is not None:
+        msg["reply_to"] = reply_to
+        msg["final"] = bool(final or error is not None)
+        if error is not None:
+            msg["error"] = str(error)
+    return msgpack.packb(msg, use_bin_type=True, default=_msgpack_default)
 
 
 def unpack(data: bytes) -> tuple:
@@ -92,7 +100,8 @@ def unpack(data: bytes) -> tuple:
 
 def unpack_with_id(data: bytes) -> tuple:
     """Deserialize msgpack bytes → (event, args, kwargs, id). ``id`` numbers
-    the message for the page's timing log (ADR 0072); None when it has none."""
+    the message: replies name it (ADR 0097) and the timing log uses it
+    (ADR 0072). None from a page that numbers nothing."""
     msg = msgpack.unpackb(data, raw=False)
     return msg["event"], msg["args"], msg["kwargs"], msg.get("id")
 

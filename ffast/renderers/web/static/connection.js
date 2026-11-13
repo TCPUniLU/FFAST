@@ -1,9 +1,15 @@
 /**
  * WebSocket connection with HELLO handshake.
+ *
+ * Every message it sends is numbered (`id`); `request()` waits for the replies
+ * that name that number (ADR 0097). After the handshake it keeps listening for
+ * the socket closing: waiting requests then fail, and `onDisconnect` listeners
+ * hear it.
  */
 import { IN, OUT } from './events.js';
 import { traceTo } from './trace.js';
 import { now, startTiming, stopTiming, timingWanted } from './timing.js';
+import { RequestTable } from './requests.js';
 
 
 import { msgpack } from './msgpack.js';
@@ -24,6 +30,12 @@ export class FFastConnection {
     /** The timing log (ADR 0072), or null when this page keeps none. */
     this.timing = null;
     this._pingTimer = null;
+    /** The number the next message gets (ADR 0097). */
+    this._nextId = 1;
+    this._requests = new RequestTable();
+    this._disconnectListeners = [];
+    /** Set by close(): a drop the page asked for is not a lost connection. */
+    this._closing = false;
   }
 
   connect() {
@@ -47,7 +59,7 @@ export class FFastConnection {
         try {
           this.role = await this._handshake(buf);
           handshakeDone = true;
-          ws.onclose = null;
+          ws.onclose = (evt) => this._lost(evt);
           // process any messages that arrived during handshake
           for (const data of buf) this._dispatch(data, now());
           buf.length = 0;
@@ -127,6 +139,7 @@ export class FFastConnection {
         if (event === IN.TIMING) { this.timing.note(msg.kwargs || {}, received); return; }
         reply = this.timing.received(event, data.byteLength, received);
       }
+      if (this._requests.answer(msg)) return;
       const h = this._handlers.get(msg.event);
       if (h) h(msg.kwargs || {}, msg.args || []);
     } catch (e) {
@@ -141,14 +154,44 @@ export class FFastConnection {
     }
   }
 
+  /** Send one message; returns its number, or null when the socket is not
+   * open (nothing is sent). */
   send(event, kwargs = {}, args = []) {
-    if (this._ws?.readyState !== WebSocket.OPEN) return;
+    if (this._ws?.readyState !== WebSocket.OPEN) return null;
+    const id = this._nextId++;
     // The trace's own lines are not timed: they follow every click.
-    if (this.timing && event !== OUT.TRACE) {
-      const id = this.timing.sent(event, now());
-      this._ws.send(msgpack.encode({ event, args, kwargs, id }));
-    } else {
-      this._ws.send(msgpack.encode({ event, args, kwargs }));
+    if (this.timing && event !== OUT.TRACE) this.timing.sent(event, now(), id);
+    this._ws.send(msgpack.encode({ event, args, kwargs, id }));
+    return id;
+  }
+
+  /** Send a request and wait for its final reply (ADR 0097). Resolves with
+   * `{event, kwargs, args}`; rejects with the reply's `error` text, or with
+   * "connection lost" (`err.connectionLost`) when the socket closes first.
+   * `onProgress(reply)` hears the replies before the final one. */
+  request(event, kwargs = {}, args = [], { onProgress = null } = {}) {
+    const id = this.send(event, kwargs, args);
+    if (id == null) {
+      const err = new Error('connection lost');
+      err.connectionLost = true;
+      return Promise.reject(err);
+    }
+    return this._requests.add(id, event, { onProgress });
+  }
+
+  /** `fn()` runs when the connection drops without close() being called. */
+  onDisconnect(fn) { this._disconnectListeners.push(fn); }
+
+  /** How many requests wait for their final reply. */
+  get waiting() { return this._requests.size; }
+
+  _lost() {
+    clearInterval(this._pingTimer);
+    this._pingTimer = null;
+    this._requests.failAll(this._closing ? 'connection closed' : 'connection lost');
+    if (this._closing) return;
+    for (const fn of this._disconnectListeners) {
+      try { fn(); } catch (e) { console.warn('FFAST: disconnect listener failed', e); }
     }
   }
 
@@ -174,11 +217,13 @@ export class FFastConnection {
   off(event)           { this._handlers.delete(event); }
 
   close() {
+    this._closing = true;
     if (this.trace) traceTo(null);
     clearInterval(this._pingTimer);
     stopTiming(this.timing);
     this.timing = null;
     this.send(OUT.GRACEFUL_DISCONNECT, {});
     this._ws?.close();
+    this._requests.failAll('connection closed');
   }
 }

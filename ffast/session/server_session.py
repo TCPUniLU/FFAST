@@ -40,6 +40,7 @@ from pydantic import BaseModel, ValidationError
 
 from ffast.core.flat_frames import FlatFrames
 from ffast.protocol import control
+from ffast.protocol import reply as replies
 from ffast.session import timing, trace
 from ffast.session.window_feed import WindowFeed
 
@@ -266,19 +267,27 @@ class ServerSession:
     async def dispatch(self, event: str, args, kwargs, msg_id=None) -> None:
         """Route one authorized client event to its handler.
 
-        A ``msg_id`` (the page numbered the message for its timing log,
-        ADR 0072) links what the handler queues to that message, and a TIMING
-        note after the handler ends tells the page when it was read and done.
+        A ``msg_id`` is the page's number for the message. While the handler
+        runs, and in the tasks it starts, it is the request ``replies.reply``
+        answers (ADR 0097). When the page keeps a timing log (ADR 0072) it
+        also links what the handler queues to that message, and a TIMING note
+        after the handler ends tells the page when it was read and done.
         """
         if msg_id is None:
             return await self._dispatch(event, args, kwargs)
-        read = timing.now_ms()
-        token = timing.handling(self.outbound, msg_id)
+        answering = replies.answering(msg_id)
         try:
-            await self._dispatch(event, args, kwargs)
+            if not self.timing:
+                return await self._dispatch(event, args, kwargs)
+            read = timing.now_ms()
+            token = timing.handling(self.outbound, msg_id)
+            try:
+                await self._dispatch(event, args, kwargs)
+            finally:
+                timing.done(token)
+                timing.put_note(self.outbound, timing.handled(msg_id, read))
         finally:
-            timing.done(token)
-            timing.put_note(self.outbound, timing.handled(msg_id, read))
+            replies.done(answering)
 
     async def _dispatch(self, event: str, args, kwargs) -> None:
         """Route one authorized client event to its handler.

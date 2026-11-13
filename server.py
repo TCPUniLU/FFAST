@@ -328,9 +328,7 @@ async def _handler(
                 if session.timing:
                     timing.put_note(session.outbound, timing.pong(kwargs))
             elif _may_dispatch(role, event):
-                await session.dispatch(
-                    event, args, kwargs, msg_id=msg_id if session.timing else None
-                )
+                await session.dispatch(event, args, kwargs, msg_id=msg_id)
             else:
                 logger.debug(
                     "READ_ONLY client %s sent mutating event %s — ignored",

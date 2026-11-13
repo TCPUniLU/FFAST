@@ -82,10 +82,11 @@ export class TimingLog {
     return this._actions.at(-1);
   }
 
-  /** A message is being sent; returns its number. */
-  sent(event, t) {
+  /** A message is being sent; returns its number. The connection passes the
+   * number it put on the message (ADR 0097); without one the log counts. */
+  sent(event, t, id = this._nextId++) {
     const action = this._current(t);
-    const msg = { id: this._nextId++, event, sent: t, action, serverTimed: this.serverTimed };
+    const msg = { id, event, sent: t, action, serverTimed: this.serverTimed };
     this._messages.set(msg.id, msg);
     action.messages.push(msg);
     action.last = t;

@@ -34,9 +34,11 @@ def _drain(queue):
 
 
 def _session_with_handler(handler):
-    """A session whose DELETE_TAB runs ``handler(session)``."""
+    """A session whose DELETE_TAB runs ``handler(session)``, for a page that
+    keeps a timing log."""
     async def run():
         s = ServerSession(env=None, outbound=timing.TimedQueue())
+        s.timing = True
 
         async def fn(name):
             await handler(s)
