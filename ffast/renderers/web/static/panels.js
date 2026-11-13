@@ -809,28 +809,36 @@ function densityImage(counts) {
 }
 
 /**
- * A force parity plot (ADR 0078): every component counted on a grid, drawn
- * as a log-coloured density, and the worst components as dots that name
- * their structure and atom. `density` is (G+1, G): row 0 the bin centres of
- * both axes, then the counts [predicted bin][true bin]. `outliers` is
- * (K, 5): true, predicted, structure, atom, component. Plotting every
- * component sent >4 GB for 1.77M structures.
+ * A parity plot (ADR 0078): every value counted on a grid, drawn as a
+ * log-coloured density, and the worst values as dots. `density` is (G+1, G):
+ * row 0 the bin centres of both axes, then the counts [predicted bin][true
+ * bin]. `outliers` is (K, 5) for forces: true, predicted, structure, atom,
+ * component; or (K, 3) for energies: true, predicted, structure. Plotting
+ * every force component sent >4 GB for 1.77M structures; every energy of
+ * them froze the page (2026-11-13).
  */
 export function buildParity(spec, series, ctx) {
   const u = ctx.units || {};
   const traces = [];
   const curveSeries = [];
   const single = seriesWith(series, 'outliers').length === 1;
+  // Energy dots are structures (3 fields); force dots are components (5).
+  let perStructure = false;
   (series || []).forEach((s, i) => {
     const o = s.data && s.data.outliers;
     if (!o || !o.nd || !o.nd.values.length) return;
     const n = o.nd.shape[0];
+    const w = o.nd.shape[1] || 5;
     const v = o.nd.values;
-    const col = (c) => Array.from({ length: n }, (_, k) => v[k * 5 + c]);
-    const [structure, atom, comp] = [col(2), col(3), col(4)];
+    const col = (c) => Array.from({ length: n }, (_, k) => v[k * w + c]);
+    perStructure = w === 3;
+    const structure = col(2);
+    const atom = perStructure ? null : col(3);
+    const comp = perStructure ? null : col(4);
     traces.push({
       x: col(0), y: col(1), type: 'scattergl', mode: 'markers',
-      customdata: structure.map((f, k) => [f, atom[k], 'xyz'[comp[k]]]),
+      customdata: perStructure ? structure.map((f) => [f])
+        : structure.map((f, k) => [f, atom[k], 'xyz'[comp[k]]]),
       marker: { color: single ? plotTheme().peak : paint(ctx, s, i), size: 4, symbol: shapeOf(ctx, s) },
       name: s.name || '',
     });
@@ -859,7 +867,7 @@ export function buildParity(spec, series, ctx) {
         color: [0, top], cmin: 0, cmax: top, showscale: true,
         colorscale: stops.map((c, k) => [k / (stops.length - 1), c]),
         colorbar: {
-          title: { text: 'Components', side: 'right' }, thickness: 12,
+          title: { text: perStructure ? 'Structures' : 'Components', side: 'right' }, thickness: 12,
           tickvals: decades, ticktext: decades.map((k) => (10 ** k).toLocaleString('en')),
         },
       },
@@ -885,7 +893,8 @@ export function buildParity(spec, series, ctx) {
   const yName = String(layout.yaxis.title.text || 'y').replace(/<[^>]*>/g, '');
   for (const tr of traces.slice(0, dataCurveCount)) {
     tr.hovertemplate = `${tr.name ? '<b>%{fullData.name}</b><br>' : ''}`
-      + 'Structure %{customdata[0]}, atom %{customdata[1]}, %{customdata[2]}<br>'
+      + (perStructure ? 'Structure %{customdata[0]}<br>'
+        : 'Structure %{customdata[0]}, atom %{customdata[1]}, %{customdata[2]}<br>')
       + `${xName} = %{x:.6g}<br>${yName} = %{y:.6g}<extra></extra>`;
   }
   if (image) {
@@ -894,8 +903,8 @@ export function buildParity(spec, series, ctx) {
     layout.xaxis.range = [...edges];
     layout.yaxis.range = [...edges];
   }
-  // A dot is one component, so its structure is in its data (field 0), not
-  // its index; a box covers every component on the server (subbing.py).
+  // A dot is not a frame index, so its structure is in its data (field 0);
+  // a box covers every value on the server (subbing.py).
   return {
     traces, layout,
     subInfo: { perFrame: true, dataCurveCount, curveSeries, frameField: 0 },

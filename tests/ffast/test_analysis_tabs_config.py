@@ -209,8 +209,12 @@ def test_basic_errors_tab_is_declarative():
     energy = [p for p in be.panels if "shifted" in p.hidden_params]
     assert len(energy) == 4
 
-    scatters = [p for p in be.panels if p.kind == "scatter"]
-    assert scatters and all(set(p.metrics) == {"x", "y"} for p in scatters)
+    # Both scatters are densities with the worst as dots (ADR 0078): drawing
+    # every energy of 1.77M structures froze the page (2026-11-13).
+    parities = [p for p in be.panels if p.kind == "parity"]
+    assert [p.title for p in parities] == ["Energy Scatter", "Forces Scatter"]
+    assert all(set(p.metrics) == {"x", "y", "density", "outliers"} for p in parities)
+    assert not [p for p in be.panels if p.kind == "scatter"]
 
 
 def test_basic_errors_metrics_registered():
@@ -324,10 +328,11 @@ def test_build_tab_layout_shape_and_resolved_ids():
 
     # A raw (no-transform) role resolves to the bare id.
     energy_scatter = next(
-        p for p in basic["panels"] if p["kind"] == "scatter" and p["title"] == "Energy Scatter"
+        p for p in basic["panels"] if p["kind"] == "parity" and p["title"] == "Energy Scatter"
     )
     assert energy_scatter["diagonal"] is True
     assert energy_scatter["metrics"]["x"] == "ffast.energy_reference"
+    assert energy_scatter["metrics"]["density"] == "ffast.energy_parity_density"
 
     # A transform role resolves to the compiled `{source}__{transform}` id.
     subsystem = by_name["Subsystem Errors"]

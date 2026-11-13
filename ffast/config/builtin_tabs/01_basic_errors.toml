@@ -91,8 +91,11 @@ options = { column_labels = ["Energy MAE", "Energy RMSE", "Forces MAE", "Forces 
   metric = "ffast.force_difference[dataset;component;rmse]"
 
 # --- row 4: true-vs-predicted scatter -------------------------------------- #
+# Every structure's energy as a density, the worst as dots (ADR 0078): drawing
+# all 1.77M energies of a big shard as dots froze the page (2026-11-13). x and
+# y are not drawn: the server reads them to make a subset from a box.
 [[tabs.panels]]
-kind = "scatter"
+kind = "parity"
 row = 4
 col = 0
 title = "Energy Scatter"
@@ -105,6 +108,10 @@ hidden_params = ["shifted"]
   [tabs.panels.metrics.y]
   metric = "ffast.energy_prediction"
   transform = "shift"
+  [tabs.panels.metrics.density]
+  metric = "ffast.energy_parity_density"
+  [tabs.panels.metrics.outliers]
+  metric = "ffast.energy_parity_outliers"
 
 # Every force component as a density, the worst as dots (ADR 0078). x and y
 # are not drawn: the server reads them to make a subset from a box.

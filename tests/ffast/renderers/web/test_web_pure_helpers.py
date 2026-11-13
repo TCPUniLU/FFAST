@@ -152,6 +152,8 @@ CASES = {
     "hover_timeline": "(() => { const b = pn.buildPanel({kind: 'timeline', y_label: ['Force MAE', 'u']}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {y: {nd: {values: [1, 2, 3], shape: [3]}}}}], {units: {}, peaks: false}); return [b.traces[0].hovertemplate, b.layout.xaxis.showspikes, b.layout.yaxis.spikemode]; })()",
     "hover_scatter_diagonal": "(() => { const b = pn.buildPanel({kind: 'scatter', diagonal: true}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {x: {nd: {values: [1, 2], shape: [2]}}, y: {nd: {values: [1, 2], shape: [2]}}}}], {units: {}}); return [b.traces.length, b.traces[b.traces.length - 1].hovertemplate === undefined, b.traces[0].hovertemplate]; })()",
     # A force parity panel (ADR 0078): density (row 0 centres, then counts) + worst components.
+    # An energy parity panel: its dots are structures (true, predicted, structure).
+    "parity_energy": "(() => { const b = pn.buildPanel({kind: 'parity', diagonal: true}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {density: {nd: {values: [0.5, 1.5, 3, 0, 1, 7], shape: [3, 2]}}, outliers: {nd: {values: [0, -3, 4, 1, 0, 9], shape: [2, 3]}}}}], {units: {}}); const [dots, bar] = b.traces; return [dots.x, dots.y, dots.customdata, dots.hovertemplate, bar.marker.colorbar.title.text, b.subInfo.frameField]; })()",
     "parity": "(() => { const b = pn.buildPanel({kind: 'parity', diagonal: true}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {density: {nd: {values: [0.5, 1.5, 3, 0, 1, 7], shape: [3, 2]}}, outliers: {nd: {values: [0, -3, 1, 1, 0, 0, 1, 1, 0, 1], shape: [2, 5]}}}}], {units: {}}); const [dots, bar, diag] = b.traces; const im = b.layout.images[0]; const px = pn.densityPixels([[3, 0], [1, 7]]); return [b.traces.map((t) => t.type), dots.x, dots.y, dots.customdata, bar.marker.cmax, bar.marker.colorbar.ticktext, im.source.slice(0, 21), [im.x, im.y, im.sizex, im.sizey, im.layer], b.layout.xaxis.range, diag.x, b.subInfo, Array.from(px.slice(0, 8)), px[15]]; })()",
     "hover_fractional_x": "(() => { const b = pn.buildPanel({kind: 'scatter'}, [{datasetFp: 'D', modelFp: 'M', name: 'MACE', data: {x: {nd: {values: [0.5, 1.25], shape: [2]}}, y: {nd: {values: [1, 2], shape: [2]}}}}], {units: {}}); return b.traces[0].hovertemplate; })()",
     "hover_bars": "(() => { const b = pn.buildPanel({kind: 'bars'}, [{name: 'MACE', data: {value: {nd: {values: [0.1, 0.2], shape: [2]}}}}], {elementOrder: [1, 6], selectedElements: ['All']}); return b.traces[0].hovertemplate; })()",
@@ -1995,6 +1997,15 @@ def test_a_parity_panel_draws_the_worst_dots_over_a_log_density(results):
     assert top_row[3] == 255 and top_row[7] == 255
     assert top_row[4:7] == [253, 231, 37]                    # 7, the fullest: viridis' last stop
     assert empty_alpha == 0                                  # [3, 0]'s second bin
+
+
+def test_an_energy_parity_panels_dots_name_their_structure(results):
+    x, y, custom, hover, bar_title, frame_field = results["parity_energy"]
+    assert (x, y) == ([0, 1], [-3, 0])
+    assert custom == [[4], [9]]                              # the structure, the frame a click opens
+    assert "Structure %{customdata[0]}<br>" in hover and "atom" not in hover
+    assert bar_title == "Structures"
+    assert frame_field == 0
 
 
 # ── label fields of a panel ─────────────────────────────────────────────────

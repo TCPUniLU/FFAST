@@ -53,3 +53,5 @@ grid       = Dim("grid",       fixed_size=None)
 parity_rows    = Dim("parity_rows",    fixed_size=None)
 N_outliers     = Dim("N_outliers",     fixed_size=None)
 outlier_fields = Dim("outlier_fields", fixed_size=5)
+# The energy parity plot's worst structures: true, predicted, structure.
+energy_outlier_fields = Dim("energy_outlier_fields", fixed_size=3)

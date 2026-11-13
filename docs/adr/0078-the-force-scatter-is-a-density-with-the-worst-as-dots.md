@@ -59,6 +59,16 @@ selectable.
   `scattergl` draws with WebGL (50,000 points: 135 ms to draw, 7 ms per zoom,
   was 416 ms and 328 ms). The density stays an image; a heatmap would add
   per-bin hover.
+- Amended 2026-11-13: the "Energy Scatter" panel is a parity panel too. On
+  MeluXina, `shard_03` (1,773,605 structures), it drew every energy as a dot:
+  the server answered in under 2 s, then the page froze. Two new metrics:
+  `ffast.energy_parity_density` (the same 300×300 grid, one count per
+  structure) and `ffast.energy_parity_outliers` (the 50,000 structures
+  furthest from the diagonal: true, predicted, structure). Both take the
+  tab's Shift control, as the scatter's predicted energies did. An energy dot
+  names its structure only; the panel tells the two kinds apart by the
+  number of fields per dot (5 for forces, 3 for energies). At 1.77M
+  structures: ~1.9 MB sent, under 0.1 s to compute.
 
 ## Alternatives
 

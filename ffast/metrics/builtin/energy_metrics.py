@@ -94,3 +94,69 @@ def energy_difference_shifted(
 ) -> Float[np.ndarray, "N_frames"]:
     d = np.asarray(energy_difference, dtype=np.float64)
     return d - np.mean(d)
+
+
+# ── Energy parity plot (ADR 0078, amended 2026-11-13) ─────────────────────────
+# Every structure, true against predicted energy, as a density, and the worst
+# ones as dots. Drawing all 1,773,605 energies of shard_03 as dots froze the
+# page (MeluXina, 2026-11-13).
+
+from ffast.metrics.builtin.force_metrics import (  # noqa: E402
+    PARITY_BINS, PARITY_OUTLIERS, parity_density,
+)
+from ffast.metrics.builtin.transform_metrics import Shifted  # noqa: E402
+
+
+def _shifted(predicted, shift, shifted):
+    p = np.asarray(predicted, dtype=np.float64).ravel()
+    return p - float(np.asarray(shift).ravel()[0]) if shifted else p
+
+
+def worst_structures(true, pred, k=PARITY_OUTLIERS):
+    """The ``k`` structures furthest from the diagonal, worst first, one row
+    each: true, predicted, structure. A structure with a NaN on either side
+    is left out."""
+    t = np.asarray(true, dtype=np.float64).ravel()
+    p = np.asarray(pred, dtype=np.float64).ravel()
+    err = np.abs(p - t)
+    idx = np.flatnonzero(np.isfinite(err))
+    if idx.size > k:
+        idx = idx[np.argpartition(-err[idx], k - 1)[:k]]
+    idx = idx[np.argsort(-err[idx], kind="stable")]
+    return np.column_stack([t[idx], p[idx], idx]).astype(float)
+
+
+@metric(
+    label="Energy parity density",
+    description=(
+        "Every structure, true against predicted energy, counted on a "
+        f"{PARITY_BINS}x{PARITY_BINS} grid. Row 0 holds the bin centres."
+    ),
+    unit=units.energy,
+)
+def energy_parity_density(
+    reference: Ref[I.reference_energies],
+    predicted: Ref[I.prediction_energies],
+    shift: Ref["ffast.energy_difference[dataset;mean]"],
+    *,
+    shifted: Shifted = False,
+) -> Float[np.ndarray, "parity_rows grid"]:
+    return parity_density(reference, _shifted(predicted, shift, shifted))
+
+
+@metric(
+    label="Worst energies",
+    description=(
+        f"The {PARITY_OUTLIERS:,} structures whose predicted energy is furthest "
+        "from the true one: true, predicted, structure."
+    ),
+    unit=units.energy,
+)
+def energy_parity_outliers(
+    reference: Ref[I.reference_energies],
+    predicted: Ref[I.prediction_energies],
+    shift: Ref["ffast.energy_difference[dataset;mean]"],
+    *,
+    shifted: Shifted = False,
+) -> Float[np.ndarray, "N_outliers energy_outlier_fields"]:
+    return worst_structures(reference, _shifted(predicted, shift, shifted))
