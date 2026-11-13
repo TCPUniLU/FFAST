@@ -620,6 +620,19 @@ def _build_tab_sources(config_arg: str | None, tabs_dir: str | None = None):
     return sources
 
 
+def _builtin_metric_ids() -> set[str]:
+    """The metrics that ship with FFAST: the built-ins and the transform
+    metrics of the bundled tabs (e.g. ``ffast.gyradius__smooth``). Registers
+    them; taken before the project's metrics, to label each metric's origin."""
+    import ffast.metrics.builtin  # noqa: F401 — register the built-ins first
+    from ffast.config.tabs import compile_project_metrics
+    from ffast.metrics.registry import default_registry
+
+    for context, msg in compile_project_metrics(None).errors:
+        logger.error("Bundled tab metric error in %s: %s", context, msg)
+    return set(default_registry.list_metrics())
+
+
 def _build_user_metrics(builtin_ids, metrics_dir: str | None = None):
     """The user metrics: formulas saved by the browser, one TOML file each in
     ``metrics_dir`` (default ``~/.ffast/metrics``) on this machine (ADR 0057).
@@ -695,14 +708,12 @@ async def _main(
     env = HeadlessEnvironment()
     # Where the web file browser starts: the start folder by default, as on the desktop.
     env.workdir = workdir or os.getcwd()
-    loadModules(None, env, headless=True)
+    loadModules(env)
 
     # Register external Trusted Metric Modules from project config (ADR 0011) so
     # they appear in METRIC_CATALOG and can be computed. Done before any client
     # connects / first metric runs, so the worker pool pickles the full registry.
-    import ffast.metrics.builtin  # noqa: F401 — register the built-ins first
-    from ffast.metrics.registry import default_registry as _registry
-    builtin_ids = set(_registry.list_metrics())
+    builtin_ids = _builtin_metric_ids()
     _load_project_metric_modules(config)
 
     # Compile the project's declarative metrics (Dataset Fields, Expression

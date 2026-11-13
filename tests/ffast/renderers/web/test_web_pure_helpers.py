@@ -968,7 +968,6 @@ CASES = {
     "te_kinds_offer_metrics_by_shape": (
         "te.metricsFor('density', 'value', [{id:'a', shape:'(curve_xy, grid)'},"
         " {id:'b', shape:'N_frames'}]).map(m => m.id)"),
-    "te_kind_roles": "te.KIND_ROLES",
 
     # ── ex.canExtractFrom: the desktop's DatasetLoader.canExtractAtoms ──────
     "ex_can_extract": (
@@ -3010,25 +3009,6 @@ def test_te_the_builder_offers_metrics_of_the_shape_a_role_takes(results):
 def test_ex_extract_is_offered_for_whole_datasets_and_frozen_subsets(results):
     # A live subset changes with the zoom; an atom subset already chose its atoms.
     assert results["ex_can_extract"] == [True, True, False, True]
-
-
-def test_te_kind_roles_match_the_desktop_panel_kinds(results):
-    """The browser's builder and the desktop's panel kinds must agree on the
-    roles each kind binds and the shapes they declare."""
-    pytest.importorskip("PySide6")
-    from ffast.metrics.dims import shape_to_str
-    from UI.panels import PANEL_KINDS
-
-    js = results["te_kind_roles"]
-    assert set(js) == set(PANEL_KINDS)          # no kind on one client only
-    for name, kind in PANEL_KINDS.items():
-        assert name in js, name
-        for role in kind.roles:
-            assert role in js[name]["roles"], (name, role)
-        for role, shape in kind.shapes.items():
-            if role in kind.roles:
-                shapes = shape if isinstance(shape, list) else [shape]
-                assert js[name]["roles"][role] == [shape_to_str(s) for s in shapes], (name, role)
 
 
 def test_the_colour_legend_limits_are_in_scientific_notation(results):

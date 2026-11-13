@@ -296,8 +296,3 @@ def test_an_atoms_colour_is_its_cell_of_the_table(frame):
     np.testing.assert_allclose(colours, expected)
 
 
-def test_the_desktop_offers_a_table_for_colouring():
-    # The browser's list is COLORABLE_SHAPES in start_settings.js, checked by
-    # the web tests.
-    from tests.ffast.test_atom_coloring import _load_loupe_atoms
-    assert _load_loupe_atoms()._atom_coloring_metric_ids(_registry()) == ["t.per_element", "t.table"]

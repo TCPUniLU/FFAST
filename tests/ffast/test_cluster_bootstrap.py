@@ -82,12 +82,10 @@ def test_install_marker_is_the_same_for_the_same_checkout(tmp_path):
 def test_install_marker_changes_with_code_json_or_deps(tmp_path):
     base = install_marker(_checkout(tmp_path / "a"), ["msgpack"])
     code = install_marker(_checkout(tmp_path / "b", {"server.py": "X = 1\n"}), ["msgpack"])
-    plugin = install_marker(
-        _checkout(tmp_path / "c", {"modules/tabs/configTabs.py": "N = 1\n"}), ["msgpack"])
     json_ = install_marker(
         _checkout(tmp_path / "d", {"ffast/config/default.json": '{"a": 1}'}), ["msgpack"])
     deps = install_marker(_checkout(tmp_path / "e"), ["msgpack", "pydantic"])
-    assert len({base, code, plugin, json_, deps}) == 5
+    assert len({base, code, json_, deps}) == 4
 
 
 def test_install_marker_of_this_checkout_is_stable():

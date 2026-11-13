@@ -7,9 +7,8 @@ but reconnecting to a job that is still running, or a profile with its own
 ``ffast_server_cmd`` (e.g. a container), can run older code with no sign of it.
 
 The hash covers what a server runs and what the wheel ships: the code files of
-the ``ffast`` package (Python, the web client, TOML configs), the ``modules/``
-plugin folder (the server imports it at start, e.g. ``modules/tabs/configTabs.py``)
-and the top-level ``server.py``. They sit at the same place relative to each
+the ``ffast`` package (Python, the web client, TOML configs) and the
+top-level ``server.py``. They sit at the same place relative to each
 other in an editable checkout and in an installed wheel, so the two give the
 same hash for the same code. Caches and dotfiles (``__pycache__``,
 ``.DS_Store``) are left out.
@@ -30,7 +29,7 @@ _SUFFIXES = {".py", ".js", ".mjs", ".html", ".css", ".toml"}
 
 
 # Folders under the root whose code the server runs.
-_FOLDERS = ("ffast", "modules")
+_FOLDERS = ("ffast",)
 
 
 def _files(root: Path) -> list[Path]:

@@ -434,3 +434,13 @@ def test_add_session_orders_formulas_that_build_on_each_other(um):
 
 def test_an_empty_plan_is_false(um):
     assert not SessionPlan()
+
+
+def test_the_bundled_tabs_metrics_are_labelled_built_in():
+    """The server's built-in snapshot holds the bundled tabs' transform
+    metrics, so the metrics pane says "built-in" for them, not "project"."""
+    import server
+
+    ids = server._builtin_metric_ids()
+    assert "ffast.gyradius__smooth" in ids
+    assert "ffast.energy_difference__shift" in ids

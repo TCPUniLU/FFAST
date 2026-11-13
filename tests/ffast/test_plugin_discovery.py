@@ -2,16 +2,14 @@
 ADR 0048) and its dependency-ordering primitives (``kahnsAlgorithm`` /
 ``checkForInvalidDependencies``).
 
-``loadModules`` discovers plugins from three roots — bundled
-``ffast.plugins.{loaders,models}`` (dotted-name import), third-party
-``importlib.metadata`` entry points, and the Desktop-Client ``modules/`` glob —
-and registers them together in one dependency-ordered pass. These tests cover
-the pure ordering functions, each discovery root in isolation, end-to-end
-``loadModules`` over fake root-3 plugin files (the historical
-``test_load_modules.py`` coverage, relocated), a real end-to-end pass proving
-the bundled ASE/ML-backend plugins register on a real ``Environment``, and the
-duplicate-name registration guard that is the single choke point across all
-three roots. ``NOTE``: distinct from ``test_module_loader.py``, which covers
+``loadModules`` discovers plugins from two roots — bundled
+``ffast.plugins.{loaders,models}`` (dotted-name import) and third-party
+``importlib.metadata`` entry points — and registers them together in one
+dependency-ordered pass. These tests cover the pure ordering functions, each
+discovery root in isolation, end-to-end ``loadModules`` over fake plugins, a
+real end-to-end pass proving the bundled ASE/ML-backend plugins register on a
+real ``Environment``, and the duplicate-name registration guard that is the
+single choke point across both roots. ``NOTE``: distinct from ``test_module_loader.py``, which covers
 the unrelated metric-config module loader (``load_metric_modules``).
 """
 from __future__ import annotations
@@ -125,62 +123,58 @@ def test_check_invalid_dependencies_keeps_valid_graph_unchanged():
     assert cleaned == {"a": [], "b": ["a"]}
 
 
-# ── end-to-end: loadModules over fake root-3 (modules/ glob) plugin files ──
+# ── end-to-end: loadModules over fake plugins ──────────────────────────────
 #
-# Bundled (root 1) + entry-point (root 2) discovery is stubbed out here so
-# these fakes are the only plugins in play — the ``env`` below is a bare
-# SimpleNamespace with no initialiseDatasetType/initialiseModelType, which the
-# real bundled plugins' loadData would need.
+# Entry-point (root 2) discovery is stubbed out and the bundled root (root 1)
+# returns only these fakes — the ``env`` below is a bare SimpleNamespace with
+# no initialiseDatasetType/initialiseModelType, which the real bundled
+# plugins' loadData would need.
 
-def _write_plugin(dir_path, name, dependencies):
-    """Write a minimal plugin file whose ``loadData`` records its own name."""
-    body = (
-        f"DEPENDENCIES = {dependencies!r}\n"
-        "def loadData(env):\n"
-        f"    env.loaded.append({name!r})\n"
+def _plugin(name, dependencies):
+    """A minimal plugin whose ``loadData`` records its own name."""
+    return types.SimpleNamespace(
+        DEPENDENCIES=dependencies,
+        loadData=lambda env: env.loaded.append(name),
     )
-    path = dir_path / f"{name}.py"
-    path.write_text(body)
-    return str(path)
 
 
-def test_load_modules_calls_loadData_in_topological_order(tmp_path, monkeypatch):
-    # ARRANGE — linear chain a <- b <- c, listed to the glob in a deliberately
+def _only_these_plugins(monkeypatch, plugins):
+    def fake_bundled(mods, depGraph):
+        for name, mod in plugins.items():
+            plugin_discovery._register(mods, depGraph, name, mod)
+    monkeypatch.setattr(plugin_discovery, "_discover_bundled", fake_bundled)
+    monkeypatch.setattr(plugin_discovery, "_discover_entry_points", lambda mods, depGraph: None)
+
+
+def test_load_modules_calls_loadData_in_topological_order(monkeypatch):
+    # ARRANGE — linear chain a <- b <- c, listed in a deliberately
     # non-topological (reverse) order so the ordering can't be an accident of
     # discovery order.
-    paths = [
-        _write_plugin(tmp_path, "c", ["b"]),
-        _write_plugin(tmp_path, "b", ["a"]),
-        _write_plugin(tmp_path, "a", []),
-    ]
-    monkeypatch.setattr(plugin_discovery.glob, "glob", lambda *a, **k: paths)
-    monkeypatch.setattr(plugin_discovery, "_discover_bundled", lambda mods, depGraph: None)
-    monkeypatch.setattr(plugin_discovery, "_discover_entry_points", lambda mods, depGraph: None)
+    _only_these_plugins(monkeypatch, {
+        "c": _plugin("c", ["b"]),
+        "b": _plugin("b", ["a"]),
+        "a": _plugin("a", []),
+    })
     env = types.SimpleNamespace(loaded=[])
 
-    # ACT — headless=True skips all Qt/UI feature registration; loadData still runs.
-    loadModules(None, env, headless=True)
+    # ACT
+    loadModules(env)
 
-    # ASSERT — dependencies loaded before dependents, not in file order.
+    # ASSERT — dependencies loaded before dependents, not in discovery order.
     assert env.loaded == ["a", "b", "c"]
 
 
-def test_load_modules_aborts_and_logs_on_circular_dependency(
-    tmp_path, monkeypatch, caplog
-):
+def test_load_modules_aborts_and_logs_on_circular_dependency(monkeypatch, caplog):
     # ARRANGE — a <-> b circular dependency.
-    paths = [
-        _write_plugin(tmp_path, "a", ["b"]),
-        _write_plugin(tmp_path, "b", ["a"]),
-    ]
-    monkeypatch.setattr(plugin_discovery.glob, "glob", lambda *a, **k: paths)
-    monkeypatch.setattr(plugin_discovery, "_discover_bundled", lambda mods, depGraph: None)
-    monkeypatch.setattr(plugin_discovery, "_discover_entry_points", lambda mods, depGraph: None)
+    _only_these_plugins(monkeypatch, {
+        "a": _plugin("a", ["b"]),
+        "b": _plugin("b", ["a"]),
+    })
     env = types.SimpleNamespace(loaded=[])
 
     # ACT
     with caplog.at_level(logging.ERROR, logger="FFAST"):
-        result = loadModules(None, env, headless=True)
+        result = loadModules(env)
 
     # ASSERT — loadModules bails out before loading any plugin's data and logs
     # the cycle (current behavior: no exception raised, returns None).
@@ -261,7 +255,7 @@ def test_discover_entry_points_registers_and_skips_broken(monkeypatch, caplog):
         plugin_discovery._discover_entry_points(mods, depGraph)
 
     # ASSERT — keyed by "entry:<group>:<name>" so it can never collide with a
-    # bundled dotted name or a modules/ glob basename.
+    # bundled dotted name.
     assert mods == {"entry:ffast.loaders:good": good_mod}
     assert any("broken" in r.getMessage() for r in caplog.records)
 
@@ -276,7 +270,7 @@ def test_load_modules_registers_bundled_ase_and_ml_backend_plugins():
     env = Environment(headless=True)
 
     # ACT
-    loadModules(None, env, headless=True)
+    loadModules(env)
 
     # ASSERT — the ASE smart loader and every ML-backend loader are
     # registered under their unchanged public names (session persistence
@@ -299,7 +293,7 @@ def test_start_headless_environment_configures_logging_without_flat_utils(monkey
     # above) full plugin registration — isolate this test to the bootstrap's
     # logging side effect.
     monkeypatch.setattr(HeadlessEnvironment, "start", lambda self: None)
-    monkeypatch.setattr(plugin_discovery, "loadModules", lambda UI, env, headless=False: None)
+    monkeypatch.setattr(plugin_discovery, "loadModules", lambda env: None)
 
     calls = []
     real_basic_config = logging.basicConfig

@@ -716,7 +716,7 @@ def startHeadlessEnvironment():
     # repo root, which a real headless install has no business writing into).
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s", force=True)
 
-    loadModules(None, thread, headless=True)
+    loadModules(thread)
     thread.start()
 
     return thread
