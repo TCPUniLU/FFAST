@@ -629,7 +629,8 @@ implementation. **JobSpec** is a scheduler-agnostic resource request translated
 into a submission script. **JobStatus** is `PENDING`, `RUNNING`, `FAILED`,
 `COMPLETED`, resolved via `sacct` once a job leaves `squeue`. **Dataset length
 probe** counts frames in a cluster-side file before loading, by building its
-frame index, so the stride dialog can offer a stride against the true count.
+frame index, so the file browser's "Every Nth frame" field can offer a stride
+against the true count.
 
 ## Rules that hold everywhere
 

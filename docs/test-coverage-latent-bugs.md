@@ -1,5 +1,8 @@
 # Latent Bugs Surfaced by Test-Coverage Work — ALL RESOLVED
 
+Written before the desktop client was removed (ADR 0098). Some test files named
+below have since moved or been deleted.
+
 Companion to `docs/test-suite-review.md`. While closing the review's "missing test
 cases" (2026-07-07, branch `2ffast`), six production bugs were surfaced. **All six have
 since been fixed** in the working tree: each function now guards/clips as described
