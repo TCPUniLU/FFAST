@@ -2323,12 +2323,25 @@ export class FFastApp {
       : { id: `${kind}-delete`, label: 'Delete…', run: () => this._deleteObject(kind, fp), unavailable: why };
     const info = { id: `${kind}-info`, label: 'Info', run: () => this._showInfo(kind, fp) };
     if (meta?.scored) return this._scoredRowActions(fp, info, rename, why);
+    const exportTo = this._exportTarget(kind, fp);
+    const exporting = { id: `${kind}-export`, label: 'Export…',
+      run: () => this._sessionOps.exportDataset(exportTo, { prediction: kind === 'model' ? fp : null }),
+      unavailable: () => this._needsControl() || (exportTo ? '' : 'Its dataset is not loaded') };
     // Any loaded dataset, and a live run, can be scored. Without DetectAna the item
     // stays in the menu, greyed out, and says how to install it.
     const score = this._canScore(meta)
       ? [{ id: 'dataset-score', label: 'Score against reference…', run: () => this._scoreAgainstReference(fp),
         unavailable: () => why() || this._scoreInfo.get(fp)?.detectana || '' }] : [];
-    return [info, rename, ...score, { separator: true }, main];
+    return [info, rename, exporting, ...score, { separator: true }, main];
+  }
+
+  /** The dataset a row's Export… writes: the row's own dataset; for a
+   * prediction, the dataset on screen when it is one of its datasets, else
+   * the first of them that is loaded. */
+  _exportTarget(kind, fp) {
+    if (kind === 'dataset') return fp;
+    const own = (this._models.get(fp)?.dataset_fingerprints || []).filter((d) => this._datasets.has(d));
+    return own.includes(this._currentDatasetFp) ? this._currentDatasetFp : own[0] ?? null;
   }
 
   /** Whether a dataset row offers Score against reference…: loaded datasets, frozen

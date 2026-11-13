@@ -3587,6 +3587,38 @@ async def test_web_a_deleted_dataset_or_prediction_leaves_an_independent_panel(t
                 await browser.close()
 
 
+async def test_web_a_rail_row_exports_its_dataset_or_prediction(shared_prediction_server):
+    """Gap 10 of the Qt-removal audit (2026-11-13): Export… in a row's ⋯ menu.
+    A dataset row exports that dataset with its reference values; a
+    prediction row exports the dataset on screen with only that prediction."""
+    ws_port, web_port = shared_prediction_server
+    dataset_fp, model_fp = await _preload_dataset_and_prediction(ws_port)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(viewport={"width": 1200, "height": 820})
+        tick = lambda key: page.locator(f"#fb-export-items .fb-export-item[data-key='{key}'] input")
+        try:
+            await _open_view(page, ws_port, web_port, dataset_fp)
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+
+            await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}'] .obj-menu-btn").click()
+            await page.locator(".rail-menu [data-action='dataset-export']").click()
+            await expect(page.locator("#fb-title")).to_have_text("Export Dataset")
+            await expect(tick("reference")).to_be_checked()
+            await expect(tick(model_fp)).not_to_be_checked()
+            await page.keyboard.press("Escape")
+            await expect(page.locator("#fb-modal")).to_be_hidden()
+
+            await page.locator(f"#model-list .obj-row[data-fp='{model_fp}'] .obj-menu-btn").click()
+            await page.locator(".rail-menu [data-action='model-export']").click()
+            await expect(page.locator("#fb-title")).to_have_text("Export Dataset")
+            await expect(tick("reference")).not_to_be_checked()
+            await expect(tick(model_fp)).to_be_checked()
+            await page.keyboard.press("Escape")
+        finally:
+            await browser.close()
+
+
 async def _delete_from_rail(page, kind, fp):
     """Open a rail row's ⋯ menu and choose Delete…; the confirmation dialog."""
     await page.locator(f"#{kind}-list .obj-row[data-fp='{fp}'] .obj-menu-btn").click()

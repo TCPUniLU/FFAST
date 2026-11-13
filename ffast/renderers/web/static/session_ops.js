@@ -178,7 +178,12 @@ export class SessionOps {
    * the predictions ticked (ADR 0095). */
   exportSelectedDataset() {
     const fp = this._ports.getCurrentDatasetFp();
-    if (!fp) return;
+    if (fp) this.exportDataset(fp);
+  }
+
+  /** The Export dialog for dataset `fp` (a rail row's Export…). With
+   * `prediction`, only that prediction is ticked; else the reference values. */
+  exportDataset(fp, { prediction = null } = {}) {
     const meta = this._ports.getDatasetMeta(fp);
     const base = safeName(meta?.name, 'subset');
     const predictions = this._ports.getPredictions?.(fp) ?? [];
@@ -189,8 +194,8 @@ export class SessionOps {
       name: `${base}.extxyz`,
       formats: 'writers',
       format: 'extxyz',
-      items: [{ key: 'reference', label: 'Reference values', checked: true },
-        ...predictions.map((p) => ({ key: p.fp, label: p.name || p.fp.slice(0, 8), checked: false }))],
+      items: [{ key: 'reference', label: 'Reference values', checked: !prediction },
+        ...predictions.map((p) => ({ key: p.fp, label: p.name || p.fp.slice(0, 8), checked: p.fp === prediction }))],
       dataset: { variable: Boolean(meta?.variable), n: meta?.n ?? 0 },
       onPick: (path, { format, items }) => {
         const kwargs = { fingerprint: fp, path, format };
