@@ -15,3 +15,20 @@ from ffast.metrics.builtin import (  # noqa: F401
     structure_metrics,
     transform_metrics,
 )
+
+from ffast.metrics.registry import default_registry as _registry  # noqa: E402
+
+# Colourings every client lists: settings of the force and acceleration bases
+# (ADR 0065 keep boxes). A box setting is made on demand, so these are made
+# here to be listed with the built-ins.
+LISTED_COLOURINGS = (
+    "ffast.force_difference[atom+structure;length]",
+    "ffast.force_difference[atom+structure;component;mae]",
+    "ffast.force_difference[element;component;mae]",
+    "ffast.force_difference[element;component;rmse]",
+    "ffast.accel_difference[atom+structure;length]",
+    "ffast.accel_difference[atom;length;mae]",
+    "ffast.accel_difference[element;length;mae]",
+)
+for _id in LISTED_COLOURINGS:
+    _registry.ensure(_id)
