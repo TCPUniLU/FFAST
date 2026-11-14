@@ -18,6 +18,11 @@ def main(argv: list | None = None) -> None:
         from ffast.live.cli import main as live_main
 
         sys.exit(live_main(args))
+    if args and args[0] == "install-fast-reader":
+        # Build the fast .xyz reader from source (ADR 0100); starts no client.
+        from ffast.readers.install_fast import main as install_main
+
+        sys.exit(install_main(args[1:]))
 
     from ffast.renderers.web.launcher import main as web_main
 

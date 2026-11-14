@@ -61,6 +61,22 @@ If using pip, replace `uv pip install` below with `python -m pip install`.
 Precomputed predictions need no model-backend extra. Dependencies for optional
 inference backends are declared in [pyproject.toml](../pyproject.toml).
 
+### The fast .xyz reader
+
+`.xyz` and `.extxyz` files load up to 10× faster with the fast reader
+(`ffast-xyz`, written in Rust). It is not on PyPI: build it from this checkout
+with
+
+```bash
+ffast install-fast-reader
+```
+
+This needs [Rust](https://rustup.rs). The command finds it on `PATH`, in
+`$CARGO_HOME/bin` or in `~/.cargo/bin`, and installs the reader into the Python
+that runs FFAST. Without Rust it says so and changes nothing: FFAST works, and
+reads these files with the slower Python parser. Run it again after updating
+FFAST if FFAST says the fast reader is too old.
+
 ## Launch options
 
 `ffast` starts a local server and opens your default browser. `ffast-web` uses
