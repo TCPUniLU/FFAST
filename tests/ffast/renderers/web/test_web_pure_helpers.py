@@ -373,7 +373,8 @@ CASES = {
     "metric_no_cancel_after_reply": (
         "await (async () => {"
         "  const sent = []; let onResult = null;"
-        "  const conn = {send: (e, kw) => sent.push([e, kw]), on: (e, f) => { onResult = f; }};"
+        "  const conn = {send: (e, kw) => sent.push([e, kw]),"
+        "    on: (e, f) => { if (e === 'METRIC_RESULT') onResult = f; }};"
         "  const c = new mc.MetricClient(conn);"
         "  const a = new AbortController();"
         "  const p = c.request('m', {datasetFp: 'd', signal: a.signal});"

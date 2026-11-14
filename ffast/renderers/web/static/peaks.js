@@ -8,12 +8,20 @@
  * one peak, at its first frame. Two peaks never sit closer than
  * max(1, round(length / 50)) frames, the lower of a close pair being dropped.
  * Under 10 frames, or when every finite value is the same, there are none.
+ *
+ * A thinned curve (ADR 0099) is some of the frames: `frames[i]` is the frame
+ * of y[i] and `total` the frames in all. Gaps are then counted in frames, and
+ * each peak names its frame. It keeps each pixel column's highest point, so
+ * the worst frames are among those given.
  * @param {ArrayLike<number>} y
  * @param {number} [n]
+ * @param {ArrayLike<number>|null} [frames]
+ * @param {number} [total]
  * @returns {Array<{frame: number, value: number}>}
  */
-export function pickPeaks(y, n = 5) {
+export function pickPeaks(y, n = 5, frames = null, total = null) {
   const len = y.length;
+  const at = frames ? (i) => frames[i] : (i) => i;
   if (len < 10) return [];
   const finite = (v) => Number.isFinite(v);
   let first = null, flat = true;
@@ -31,14 +39,14 @@ export function pickPeaks(y, n = 5) {
     candidates.push(i);
   }
   candidates.sort((a, b) => (y[b] - y[a]) || (a - b));
-  const gap = Math.max(1, Math.round(len / 50));
+  const gap = Math.max(1, Math.round((frames ? (total ?? len) : len) / 50));
   const taken = [];
   for (const i of candidates) {
     if (taken.length >= n) break;
-    if (taken.some((j) => Math.abs(i - j) <= gap)) continue;
+    if (taken.some((j) => Math.abs(at(i) - at(j)) <= gap)) continue;
     taken.push(i);
   }
-  return taken.sort((a, b) => a - b).map((frame) => ({ frame, value: y[frame] }));
+  return taken.sort((a, b) => a - b).map((i) => ({ frame: at(i), value: y[i] }));
 }
 
 /** The key under which a frame you opened is remembered. */

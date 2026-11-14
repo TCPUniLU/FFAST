@@ -8802,6 +8802,103 @@ async def test_web_a_tab_shown_again_is_told_unchanged_instead_of_sent_its_data(
             await browser.close()
 
 
+def _write_large_pair(tmp_path, n=25_000, spike=17_777):
+    """A dataset of `n` two-atom frames and its prediction; the prediction's
+    energy is off by 5 eV at frame `spike` only, by ~1 meV elsewhere."""
+    import numpy as np
+    rng = np.random.default_rng(3)
+    energy = -31.0 + rng.normal(0, 0.5, n)
+    error = rng.normal(0, 0.001, n)
+    error[spike] = 5.0
+    data, pred = [], []
+    for i in range(n):
+        d = 0.74 + 0.01 * np.sin(i / 50)
+        atoms = f"H 0.0 0.0 0.0 0.1 0.2 0.3\nH 0.0 0.0 {d:.5f} -0.1 -0.2 -0.3\n"
+        data.append(f'2\nProperties=species:S:1:pos:R:3:REF_forces:R:3 REF_energy={energy[i]:.6f} pbc="F F F"\n{atoms}')
+        pred.append(f'2\nProperties=species:S:1:pos:R:3:MACE_forces:R:3 MACE_energy={energy[i] + error[i]:.6f} pbc="F F F"\n{atoms}')
+    (tmp_path / "large.xyz").write_text("".join(data))
+    (tmp_path / "large_pred.xyz").write_text("".join(pred))
+    return tmp_path / "large.xyz", tmp_path / "large_pred.xyz"
+
+
+_PLOT_EL = """(t) => document.querySelector(
+    `.tabpanel.active .analysis-panel[data-title="${t}"] .panel-plot`)"""
+
+
+async def test_web_a_large_plot_gets_the_points_it_can_show_and_more_on_zoom(tmp_path):
+    """ADR 0099: on 25,000 frames the server sends a timeline and a scatter
+    thinned to the plot's pixels, with each point's frame: the worst frame is
+    drawn and labelled, a zoom brings every frame of the new view, and a
+    click opens the frame the point is."""
+    data_path, pred_path = _write_large_pair(tmp_path)
+    async with _spawn_server() as (ws_port, web_port):
+        ws = await _connect_headless_client(ws_port)
+        try:
+            await ws.send(pack("LOAD_DATASET", (str(data_path), "ase (auto)"), {}))
+            dataset_fp = (await _wait_for_event(ws, "REMOTE_DATASET_META", timeout=120))["args"][0]
+            await ws.send(pack("LOAD_PREDICTION", (str(pred_path), dataset_fp), {
+                "selected_energy_key": "MACE_energy", "selected_force_key": "MACE_forces"}))
+            model_fp = (await _wait_for_event(ws, "REMOTE_MODEL_META", timeout=120))["args"][0]
+        finally:
+            await ws.send(pack("GRACEFUL_DISCONNECT", (), {}))
+            await ws.close()
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1400, "height": 900})
+            received = []
+            page.on("websocket", lambda w: w.on("framereceived", lambda f: received.append(f)))
+            try:
+                await page.goto(f"http://127.0.0.1:{web_port}/?port={ws_port}", wait_until="networkidle")
+                await _expect_connected(page)
+                await page.locator(f"#dataset-list .obj-row[data-fp='{dataset_fp}']").click()
+                await page.locator(f"#model-list .obj-row[data-fp='{model_fp}']").click()
+                await _open_analysis_tab(page, "Basic Errors")
+                timeline, scatter = "Energy MAE timeline", "Energy Scatter"
+                await page.wait_for_function(_PANEL_HAS_POINTS, arg=timeline, timeout=60000)
+                await page.wait_for_function(_PANEL_HAS_POINTS, arg=scatter, timeout=60000)
+                drawn = await page.evaluate(f"""(t) => {{ const el = ({_PLOT_EL})(t);
+                    const xs = Array.from(el.data[0].x);
+                    return {{ n: xs.length, max: Math.max(...xs), spike: xs.includes(17777) }}; }}""", timeline)
+                assert drawn["n"] < 5000 and drawn["max"] == 24_999 and drawn["spike"], drawn
+                dots = await page.evaluate(f"(t) => ({_PLOT_EL})(t).data[0].x.length", scatter)
+                assert dots < 25_000
+                # Thinned by the server: its replies carry the points' frames.
+                views = [f for f in received if isinstance(f, bytes) and b"PLOT_VIEW" in f]
+                assert sum(b"idx" in f for f in views) >= 2, len(views)
+
+                # The worst frame is labelled with its own frame number.
+                await page.locator(_sub_panel(timeline) + " .peaks-toggle input").check()
+                annotations = page.locator(_sub_panel(timeline) + " .panel-plot .annotation")
+                await expect(annotations.first).to_be_visible()
+                labels = await annotations.evaluate_all("(els) => els.map((e) => e.textContent)")
+                assert any(label.startswith("17777") for label in labels), labels
+
+                # A zoom asks for the new view: every frame in it is drawn.
+                await page.evaluate(
+                    f"(t) => Plotly.relayout(({_PLOT_EL})(t), {{'xaxis.range': [17700, 17850]}})", timeline)
+                await page.wait_for_function(f"""(t) => {{ const xs = new Set(Array.from(({_PLOT_EL})(t).data[0].x));
+                    for (let f = 17700; f <= 17850; f++) if (!xs.has(f)) return false; return true; }}""",
+                    arg=timeline, timeout=15000)
+
+                # The CSV has every frame, not the points drawn.
+                await page.locator(_sub_panel(timeline) + " .panel-more").click()
+                async with page.expect_download() as dl:
+                    await page.locator("#panel-menu-list [data-action='panel-csv']").click()
+                with open(await (await dl.value).path()) as f:
+                    rows = f.read().splitlines()
+                assert len(rows) == 1 + 25_000, len(rows)
+                assert rows[1].split(",")[1] == "0" and rows[-1].split(",")[1] == "24999"
+
+                # A click on a drawn point opens the frame it is.
+                k = await page.evaluate(
+                    f"(t) => Array.from(({_PLOT_EL})(t).data[0].x).indexOf(17777)", timeline)
+                await page.evaluate(f"""([t, k]) => ({_PLOT_EL})(t)
+                    .emit('plotly_click', {{points: [{{curveNumber: 0, pointIndex: k}}]}})""", [timeline, k])
+                await expect(page.locator("#frame-label")).to_have_text("17777 / 24999", timeout=15000)
+            finally:
+                await browser.close()
+
+
 async def test_web_while_a_tab_is_edited_the_rest_of_the_window_is_for_looking_only(tmp_path):
     """Edit mode: all that is not the layout is greyed out until Save or Cancel:
     the menus, the dataset rail, the 3D tools and Settings sidebar, Screen /
