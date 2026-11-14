@@ -189,3 +189,6 @@ docs/research/
 
 # Impeccable design-tool working files (critiques, sketches, briefs); local only
 .impeccable/
+
+# Fast .xyz parser (ADR 0100)
+rust/ffast-xyz/target/
