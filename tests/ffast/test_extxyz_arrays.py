@@ -321,3 +321,34 @@ def test_a_strided_load_goes_through_the_fast_reader(tmp_path, monkeypatch):
     assert len(used) == 1 and loader.N == 4
     assert loader.E.tolist() == [0.0, 7.0, 14.0, 21.0]
 
+
+
+# ── math threads in reader workers (2026-11-14) ──────────────────────────────
+# 256 reader workers on a MeluXina node each started 64 OpenBLAS threads, and
+# loading shard_03 failed: "pthread_create failed ... Resource temporarily
+# unavailable". A worker gets the node's cores divided by the workers.
+
+def _child_env(names):
+    import os
+    return {k: os.environ.get(k) for k in names}
+
+
+def test_reader_workers_start_with_their_share_of_math_threads(monkeypatch):
+    import multiprocessing as mp
+    import os
+    from concurrent.futures import ProcessPoolExecutor
+    names = list(xa.THREAD_VARS)
+    for k in names:
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setattr(xa, "worker_count", lambda: 16)
+    monkeypatch.setenv("MKL_NUM_THREADS", "3")            # set by the user: kept
+    with xa.worker_threads(8):
+        with ProcessPoolExecutor(1, mp_context=mp.get_context("spawn")) as pool:
+            seen = pool.submit(_child_env, names).result()
+    assert seen["OPENBLAS_NUM_THREADS"] == "2" and seen["OMP_NUM_THREADS"] == "2"
+    assert seen["MKL_NUM_THREADS"] == "3"
+    # The server's own environment is as it was.
+    assert os.environ.get("OPENBLAS_NUM_THREADS") is None
+    assert os.environ["MKL_NUM_THREADS"] == "3"
+    with xa.worker_threads(64):                            # more workers than cores
+        assert os.environ["OMP_NUM_THREADS"] == "1"

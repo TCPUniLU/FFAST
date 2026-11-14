@@ -4,6 +4,7 @@ The numbers come out bit-identical to ASE's reader (ase.io.extxyz), so a
 dataset's fingerprint does not change. Anything this reader does not handle
 raises NotFast, and the caller reads the file with ASE instead.
 """
+import contextlib
 import logging
 import os
 import re
@@ -613,6 +614,31 @@ def _gib(n):
     return f"{n / 2**30:.1f} GB"
 
 
+# Math libraries size their thread pools by the machine's cores, in every
+# process: 256 reader workers on a MeluXina node started 64 OpenBLAS threads
+# each, and the read failed ("pthread_create failed ... Resource temporarily
+# unavailable", shard_03, 2026-11-14). The workers parse text and need none.
+THREAD_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+               "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS")
+
+
+@contextlib.contextmanager
+def worker_threads(workers):
+    """While the pool's workers start: each gets the cores divided by the
+    workers as its math threads (at least 1), as joblib's process backend
+    does. A spawned worker takes the environment of that moment; a value the
+    user set is kept, and the server's own environment is put back after."""
+    share = str(max(1, worker_count() // max(1, workers)))
+    unset = [k for k in THREAD_VARS if k not in os.environ]
+    for k in unset:
+        os.environ[k] = share
+    try:
+        yield
+    finally:
+        for k in unset:
+            os.environ.pop(k, None)
+
+
 def worker_count():
     env = os.environ.get("FFAST_READ_WORKERS")
     if env:
@@ -690,7 +716,7 @@ def read_frames(index, *, workers=None, batch=None, progress=None):
     # At most a few batches per worker in flight, so finished batches waiting
     # to be copied do not pile up in memory.
     window = workers * WINDOW_PER_WORKER
-    with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as pool:
+    with worker_threads(workers), ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as pool:
         pending = deque()
         try:
             for job in jobs:

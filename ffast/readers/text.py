@@ -168,7 +168,7 @@ def _read_energies(reader_class, path, starts, workers):
         pieces, parts = [starts], [reader_class.energies(path, starts)]
     else:
         pieces = [p for p in np.array_split(starts, workers * 4) if len(p)]
-        with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as pool:
+        with xa.worker_threads(workers), ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as pool:
             parts = list(pool.map(reader_class.energies, [path] * len(pieces), pieces))
     names = []
     for part in parts:
@@ -440,7 +440,7 @@ def read_level2(reader_class, path, *, stride=0, select=None, progress=None, wor
             keep(_parse_job(*job(a, b)), a, b)
     else:
         window = workers * xa.WINDOW_PER_WORKER
-        with ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as pool:
+        with xa.worker_threads(workers), ProcessPoolExecutor(workers, mp_context=mp.get_context("spawn")) as pool:
             pending = deque()
             try:
                 for a, b in rest:
