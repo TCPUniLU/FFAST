@@ -538,6 +538,9 @@ def _read_python(reader_class, path, frames, spans_start, spans_end, kept_counts
 FAST_CONTRACT = 1              # the ffast_xyz.CONTRACT this FFAST expects
 GROUPS = 50                    # a group is 1/GROUPS of the kept frames ...
 GROUP_BYTES = 256 * 2**20      # ... and at most this much text
+# Threads for the fast parser, unless FFAST_READ_WORKERS says: more were
+# slower on MeluXina (256 cores; shard_00 first open 5.4 s at 64, 9.4 s at 256).
+FAST_THREADS = 32
 _fast_usable = None
 _fast_missing = True           # when not usable: not installed (True) or too old (False)
 _fast_warned = False           # the pop-up was sent (once per server start)
@@ -556,6 +559,14 @@ def fast_parser_usable():
             _fast_usable = getattr(ffast_xyz, "CONTRACT", None) == FAST_CONTRACT
             _fast_missing = False
     return _fast_usable
+
+
+def fast_threads():
+    """Threads for the fast parser: ``FFAST_READ_WORKERS`` when set, else
+    the cores this process may use, at most FAST_THREADS."""
+    if os.environ.get("FFAST_READ_WORKERS"):
+        return xa.worker_count()
+    return min(xa.worker_count(), FAST_THREADS)
 
 
 def _warn_no_fast_parser():
@@ -648,7 +659,7 @@ def _read_fast(reader_class, path, contents, frames, spans_start, spans_end, kep
     name = os.path.basename(path)
     total = len(frames)
     atoms = int(kept_counts.sum())
-    threads = xa.worker_count() if threads is None else max(1, int(threads))
+    threads = fast_threads() if threads is None else max(1, int(threads))
     fields = ([f"forces:{k}" for k in contents.get("forces") or []]
               + [f"atom:{k}" for k in contents.get("atom_fields") or []])
     has_cell = bool(contents.get("cell"))

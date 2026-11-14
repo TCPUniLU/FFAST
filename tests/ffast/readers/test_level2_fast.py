@@ -230,6 +230,17 @@ def test_the_read_once_cache_wraps_the_fast_parser(tmp_path):
     _same(first.arrays, second.arrays)
 
 
+def test_the_fast_parser_takes_at_most_fast_threads_unless_told(monkeypatch):
+    monkeypatch.delenv("FFAST_READ_WORKERS", raising=False)
+    monkeypatch.setattr(text.xa, "worker_count", lambda: 256)
+    assert text.fast_threads() == text.FAST_THREADS
+    monkeypatch.setattr(text.xa, "worker_count", lambda: 4)
+    assert text.fast_threads() == 4
+    monkeypatch.setenv("FFAST_READ_WORKERS", "200")
+    monkeypatch.setattr(text.xa, "worker_count", lambda: 200)
+    assert text.fast_threads() == 200
+
+
 def test_fast_parser_usable_follows_the_package_and_its_contract(monkeypatch):
     import sys
     import types

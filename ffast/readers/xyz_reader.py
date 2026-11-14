@@ -81,7 +81,7 @@ class XyzReader:
         import ffast_xyz
         names, firsts, columns, python = ffast_xyz.energies(
             str(path), np.ascontiguousarray(starts, dtype=np.uint64), sorted(xa._per_config_properties()),
-            xa.worker_count())
+            text.fast_threads())
         out = dict(zip(names, columns))
         first = {name: tuple(f) for name, f in zip(names, firsts)}   # (frame, place in its header)
         if len(python):

@@ -180,8 +180,8 @@ def scan(path, *, progress=None, should_stop=None):
     line_no = pos = 0
     fast = _fast_finder()
     if fast is not None:
-        from ffast.io.extxyz_arrays import worker_count
-        parts_s, parts_c, n, threads = [], [], 0, worker_count()
+        from ffast.readers.text import fast_threads
+        parts_s, parts_c, n, threads = [], [], 0, fast_threads()
         while True:
             s, c, pos, state = fast.find_frames(str(path), pos, FIND_BYTES, threads)
             parts_s.append(s)
