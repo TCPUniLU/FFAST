@@ -567,11 +567,11 @@ def _warn_no_fast_parser():
             return
         _fast_warned = True
     if _fast_missing:
-        why, fix = "Fast reader not installed", "Install"
+        why, fix = "Fast reader not installed", "install it"
     else:
-        why, fix = "Fast reader is too old for this FFAST", "Update"
-    logger.warning("%s: .xyz files load with the slower Python parser. %s `ffast-xyz` "
-                   "to load them up to 10× faster.", why, fix)
+        why, fix = "Fast reader is too old for this FFAST", "update it"
+    logger.warning("%s: .xyz files load with the slower Python parser. Run "
+                   "`ffast install-fast-reader` to %s and load them up to 10× faster.", why, fix)
 
 
 def _groups(sizes, batch=None):

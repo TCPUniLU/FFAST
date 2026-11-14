@@ -261,7 +261,7 @@ def test_no_usable_package_pops_up_once_per_start_not_per_file(tmp_path, monkeyp
         _read(path, fast=False)
     popups = _popups(caplog)
     assert len(popups) == 1
-    assert words in popups[0].getMessage() and "`ffast-xyz`" in popups[0].getMessage()
+    assert words in popups[0].getMessage() and "`ffast install-fast-reader`" in popups[0].getMessage()
     assert ToyTextReader.parsed                                  # the Python parser still read it
 
 
