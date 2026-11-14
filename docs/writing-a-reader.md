@@ -250,6 +250,55 @@ samples it. FFAST keeps the result next to the frame list.
 If `parse` cannot read a file, raise `ffast.io.extxyz_arrays.NotFast("why")` and
 FFAST reads the file another way (the ASE reader).
 
+### A fast parser (optional)
+
+`parse` is the **Python parser**: it runs in worker processes, and each batch
+it returns is copied into the joined arrays. A reader may also give a **fast
+parser**, `parse_into`, usually compiled code that fills arrays FFAST has
+already made, on several threads. FFAST uses it when the reader has it and the
+compiled package `ffast_xyz` is installed with the contract number FFAST
+expects (ADR 0100); otherwise it uses `parse`.
+
+```python
+@staticmethod
+def parse_into(path, starts, ends, counts, first_frame, arrays, threads):
+    ...
+    return {"frame": {"energy:dft": (rows, values)}}
+```
+
+FFAST makes every array at its final size, then calls `parse_into` once per
+group of frames (1/50 of the frames, at most 256 MB of text), moving the
+progress bar and checking cancel and free memory between calls. Never call
+back into Python from a thread.
+
+- `starts`, `ends`: the byte spans of the group's frames; `counts`: their
+  atom counts; `first_frame`: the file's number of the group's first frame,
+  for messages; `threads`: how many threads to use.
+- `arrays`: views, already cut to this group, keyed as `parse` keys them.
+  Fill `numbers` and `positions`, and `cell` when `contents()` says `cell`.
+  `forces:<name>` and `atom:<name>`, one per name `contents()` lists, start as
+  NaN: fill them where a frame has them.
+- Return, each entry optional:
+  - `"frame"`: `{key: (rows, values)}`, per-frame values (`energy:<name>`,
+    `frame:<name>`) as `int64` or `float64`. FFAST joins them as `parse`'s
+    batches join: whole numbers in every frame stay `int64`; otherwise
+    `float64`, NaN where a frame lacks the key. `frame:` keys are always
+    `float64`.
+  - `"text"`: `{key: (rows, texts)}`, numbers only Python reads exactly
+    (beyond 64 bits, `1_000`). FFAST converts them (int, then float); a text
+    that is neither is not stored.
+  - `"atom_new"`: `{key: (atom_rows, values)}`, a per-atom key `contents()`
+    did not list, `float64`; NaN in the rows it does not cover.
+  - `"filled"`: the keys of `arrays` this group had. A key no group lists is
+    dropped, as `parse` would not have given it. Leave it out when every key
+    is always filled.
+
+  `rows` and `atom_rows` count from 0 within the group.
+- Raise `NotFast("why")` to hand the file to `parse`; FFAST logs the reason.
+
+`parse_into` must give exactly the arrays `parse` gives, number types
+included: `parse` is the reference. Test both on the same files.
+
 ## Writing the format too (optional)
 
 Give your class `open_writer` and say what the format can hold. Export then
