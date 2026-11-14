@@ -155,14 +155,51 @@ def _more_frames_follow(f):
     return False
 
 
+FIND_BYTES = 256 * 2**20       # the fast parser finds frames in this much text per call
+
+
+def _fast_finder():
+    """The compiled package (ADR 0100) when FFAST may use it, else None."""
+    from ffast.readers.text import fast_parser_usable   # here: ffast.readers imports this module
+    if not fast_parser_usable():
+        return None
+    import ffast_xyz
+    return ffast_xyz if callable(getattr(ffast_xyz, "find_frames", None)) else None
+
+
 def scan(path, *, progress=None, should_stop=None):
     """One pass over the file. A blank line between frames is an error (ASE
-    would silently drop the rest); trailing blank lines are fine."""
+    would silently drop the rest); trailing blank lines are fine.
+
+    With the fast parser (ADR 0100), it finds the frames FIND_BYTES at a
+    time, with progress and cancel between calls; at a frame it leaves to
+    Python (an unusual count line, a broken frame) the loop below goes on from
+    that frame, so a broken file gets the same message either way."""
     st = os.stat(path)
     starts, counts = [], []
-    line_no = 0
+    line_no = pos = 0
+    fast = _fast_finder()
+    if fast is not None:
+        from ffast.io.extxyz_arrays import worker_count
+        parts_s, parts_c, n, threads = [], [], 0, worker_count()
+        while True:
+            s, c, pos, state = fast.find_frames(str(path), pos, FIND_BYTES, threads)
+            parts_s.append(s)
+            parts_c.append(c)
+            n += len(s)
+            if state != fast.FIND_MORE:
+                break
+            if progress:
+                if should_stop and should_stop():
+                    raise FrameIndexCancelled(path)
+                progress(n)
+        found_s, found_c = np.concatenate(parts_s), np.concatenate(parts_c)
+        if state == fast.FIND_END:
+            return FrameIndex(path, np.append(found_s, pos), st.st_size, st.st_mtime_ns, found_c)
+        starts, counts = found_s.tolist(), found_c.tolist()
+        line_no = int(found_c.sum()) + 2 * n
     with open(path, "rb", buffering=1 << 20) as f:
-        pos = 0
+        f.seek(pos)
         while True:
             line = f.readline()
             if not line:

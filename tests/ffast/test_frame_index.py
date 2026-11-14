@@ -213,6 +213,7 @@ def test_a_broken_file_saves_no_index(tmp_path):
 def test_the_scan_reports_the_count_as_it_goes(tmp_path, monkeypatch):
     path = _write(tmp_path)
     monkeypatch.setattr(fi, "PROGRESS_EVERY", 4)
+    monkeypatch.setattr(fi, "_fast_finder", lambda: None)   # the Python loop's progress
     seen = []
     fi.scan(path, progress=seen.append)
     assert seen == [4, 8, 12, 16]
@@ -221,6 +222,7 @@ def test_the_scan_reports_the_count_as_it_goes(tmp_path, monkeypatch):
 def test_the_scan_stops_when_asked(tmp_path, monkeypatch):
     path = _write(tmp_path)
     monkeypatch.setattr(fi, "PROGRESS_EVERY", 4)
+    monkeypatch.setattr(fi, "_fast_finder", lambda: None)   # the Python loop's progress
     seen = []
     with pytest.raises(fi.FrameIndexCancelled):
         fi.scan(path, progress=seen.append, should_stop=lambda: len(seen) >= 2)
@@ -400,6 +402,7 @@ def test_the_scan_stops_when_everyone_waiting_has_cancelled(tmp_path, monkeypatc
 def test_progress_reaches_every_caller_still_waiting(tmp_path, monkeypatch):
     path = _write(tmp_path)
     monkeypatch.setattr(fi, "PROGRESS_EVERY", 4)
+    monkeypatch.setattr(fi, "_fast_finder", lambda: None)   # the Python loop's progress
     real = fi.scan
 
     def slow(path, *, progress=None, should_stop=None):

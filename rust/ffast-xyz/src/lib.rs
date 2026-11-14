@@ -966,10 +966,150 @@ fn parse_into<'py>(
     Ok(out)
 }
 
+// ── finding the frames ────────────────────────────────────────────────────
+
+/// `find_frames` stopped at the chunk's end; `next` is the next frame's start.
+const FIND_MORE: u8 = 0;
+/// The file is done; `next` is where its last frame ends (trailing blank lines
+/// are not part of it).
+const FIND_END: u8 = 1;
+/// A frame the Python scan must read starts at `next`: its count line is not
+/// plain digits (a sign, `1_000`, text, a blank line with frames after it),
+/// or the file ends inside it. The Python scan reads it and gives the error.
+const FIND_PYTHON: u8 = 2;
+
+/// The end of the line starting at `p`, past its `\n` (or the file's end).
+fn line_end(data: &[u8], p: usize) -> usize {
+    data[p..].iter().position(|&b| b == b'\n').map_or(data.len(), |i| p + i + 1)
+}
+
+/// The positions of every `\n` in `block` (which starts at byte `base`),
+/// eight bytes at a time: most words of an .xyz file hold no line end.
+fn newlines_in(block: &[u8], base: usize) -> Vec<usize> {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGH: u64 = 0x8080_8080_8080_8080;
+    const NL: u64 = 0x0a0a_0a0a_0a0a_0a0a;
+    let mut out = Vec::with_capacity(block.len() / 48);
+    let mut words = block.chunks_exact(8);
+    let mut i = 0;
+    for w in words.by_ref() {
+        let x = u64::from_le_bytes(w.try_into().unwrap()) ^ NL;
+        if x.wrapping_sub(ONES) & !x & HIGH != 0 {
+            out.extend(w.iter().enumerate().filter(|(_, &b)| b == b'\n').map(|(j, _)| base + i + j));
+        }
+        i += 8;
+    }
+    out.extend(words.remainder().iter().enumerate().filter(|(_, &b)| b == b'\n').map(|(j, _)| base + i + j));
+    out
+}
+
+/// Line ends, found in parallel over `[from, upto)` before the walk; a line
+/// running past `upto` is followed byte by byte.
+struct Lines<'a> {
+    data: &'a [u8],
+    nl: Vec<usize>,
+    k: usize,
+    upto: usize,
+}
+
+impl<'a> Lines<'a> {
+    fn new(data: &'a [u8], from: usize, upto: usize, threads: usize) -> Self {
+        const PIECE: usize = 1 << 22;
+        let pieces: Vec<usize> = (from..upto).step_by(PIECE).collect();
+        let found = |a: &usize| newlines_in(&data[*a..(*a + PIECE).min(upto)], *a);
+        let parts: Vec<Vec<usize>> = match rayon::ThreadPoolBuilder::new().num_threads(threads.max(1)).build() {
+            Ok(pool) if threads > 1 && pieces.len() > 1 => pool.install(|| pieces.par_iter().map(found).collect()),
+            _ => pieces.iter().map(found).collect(),
+        };
+        Lines { data, nl: parts.concat(), k: 0, upto }
+    }
+
+    /// The end of the line starting at `p`, past its `\n` (or the file's
+    /// end). Calls come with increasing `p`.
+    fn end(&mut self, p: usize) -> usize {
+        if p < self.upto {
+            while self.k < self.nl.len() && self.nl[self.k] < p {
+                self.k += 1;
+            }
+            if self.k < self.nl.len() {
+                return self.nl[self.k] + 1;
+            }
+        }
+        line_end(self.data, p)
+    }
+}
+
+fn find_in(data: &[u8], offset: usize, limit: usize, threads: usize) -> (Vec<i64>, Vec<i64>, usize, u8) {
+    let (mut starts, mut counts) = (Vec::new(), Vec::new());
+    let stop = offset.saturating_add(limit.max(1));
+    let mut lines = Lines::new(data, offset, stop.min(data.len()), threads);
+    let mut pos = offset;
+    loop {
+        if pos >= data.len() {
+            return (starts, counts, pos, FIND_END);
+        }
+        if pos >= stop {
+            return (starts, counts, pos, FIND_MORE);
+        }
+        let head = lines.end(pos);
+        let text = strip(&data[pos..head]);
+        if text.is_empty() {
+            // Trailing blank lines end the file; anything after them is an error.
+            let state = if data[head..].iter().all(|&b| line_space(b)) { FIND_END } else { FIND_PYTHON };
+            return (starts, counts, pos, state);
+        }
+        if text.len() > 18 || !text.iter().all(u8::is_ascii_digit) {
+            return (starts, counts, pos, FIND_PYTHON);
+        }
+        let natoms = text.iter().fold(0i64, |n, &d| n * 10 + (d - b'0') as i64);
+        // The comment line and `natoms` atom lines; each must exist.
+        let mut p = head;
+        for _ in 0..=natoms {
+            if p >= data.len() {
+                return (starts, counts, pos, FIND_PYTHON);
+            }
+            p = lines.end(p);
+        }
+        starts.push(pos as i64);
+        counts.push(natoms);
+        pos = p;
+    }
+}
+
+/// The frames of `path` from byte `offset` (a frame's start), up to the first
+/// frame starting at or after `offset + limit`: `(starts, counts, next,
+/// state)`, `state` one of FIND_MORE, FIND_END, FIND_PYTHON. The same frames
+/// as `frame_index.scan`; anything unusual is left to it (FIND_PYTHON).
+/// `threads` look for the line ends.
+#[pyfunction]
+#[pyo3(signature = (path, offset, limit, threads=1))]
+fn find_frames<'py>(
+    py: Python<'py>,
+    path: &str,
+    offset: u64,
+    limit: u64,
+    threads: usize,
+) -> PyResult<(Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>, u64, u8)> {
+    let file = std::fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    let (starts, counts, next, state) = if offset >= size {
+        (Vec::new(), Vec::new(), offset as usize, FIND_END)
+    } else {
+        // SAFETY: the file is only read; the frame list is checked against its size and time.
+        let data = unsafe { Mmap::map(&file)? };
+        py.allow_threads(|| find_in(&data, offset as usize, limit as usize, threads))
+    };
+    Ok((PyArray1::from_vec_bound(py, starts), PyArray1::from_vec_bound(py, counts), next as u64, state))
+}
+
 #[pymodule]
 fn _ffast_xyz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(contract, m)?)?;
     m.add_function(wrap_pyfunction!(parse_into, m)?)?;
+    m.add_function(wrap_pyfunction!(find_frames, m)?)?;
+    m.add("FIND_MORE", FIND_MORE)?;
+    m.add("FIND_END", FIND_END)?;
+    m.add("FIND_PYTHON", FIND_PYTHON)?;
     m.add("NotFast", m.py().get_type_bound::<NotFast>())?;
     Ok(())
 }

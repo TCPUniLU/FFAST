@@ -107,6 +107,7 @@ def test_cancelling_the_count_is_a_client_message_any_window_may_send():
 def test_the_count_streams_partial_numbers_then_the_total(tmp_path, monkeypatch):
     path = _write(tmp_path)
     monkeypatch.setattr(fi, "PROGRESS_EVERY", 10)
+    monkeypatch.setattr(fi, "_fast_finder", lambda: None)   # the Python loop's progress
 
     async def scenario():
         s = _session()

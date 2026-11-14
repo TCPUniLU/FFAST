@@ -162,6 +162,7 @@ def test_a_prediction_file_without_stride_reads_every_frame_through_the_index(xy
 def test_a_load_reports_indexing_progress_on_its_task(xyz, monkeypatch):
     path, _ = xyz
     monkeypatch.setattr(fi, "PROGRESS_EVERY", 10)
+    monkeypatch.setattr(fi, "_fast_finder", lambda: None)   # the Python loop's progress
     coord, events = _coordinator(0)
     index = coord.prepareFrameIndex(str(path), taskID=7)
     assert len(index) == 23
