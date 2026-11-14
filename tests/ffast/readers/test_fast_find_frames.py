@@ -4,6 +4,7 @@ broken file the same error, word for word.
 
 Each case is scanned with the Python loop only, then with the fast parser,
 whole and in tiny chunks (so a chunk's end falls inside frames)."""
+import os
 from pathlib import Path
 
 import numpy as np
@@ -138,6 +139,12 @@ def test_progress_moves_per_chunk_and_a_cancel_stops_the_scan(tmp_path, monkeypa
     assert moved == [3, 6, 9]
     with pytest.raises(FrameIndexCancelled):
         _scan(path, True, monkeypatch, progress=moved.append, should_stop=lambda: True)
+
+
+def test_the_phase_timings_are_off_unless_asked_for(tmp_path, monkeypatch):
+    assert not os.environ.get("FFAST_XYZ_TIMING")
+    _scan(_write(tmp_path, FRAME * 3), True, monkeypatch)
+    assert ffast_xyz.timings() == {}
 
 
 def test_a_package_without_find_frames_leaves_the_scan_to_python(tmp_path, monkeypatch):

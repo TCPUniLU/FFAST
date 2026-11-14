@@ -461,6 +461,39 @@ fn layout_of(props: &[u8], ctx: &Ctx) -> Result<Layout, String> {
     Ok(Layout { ncol: start, cols, essential, extras })
 }
 
+// ── optional timings (FFAST_XYZ_TIMING=1), for measuring only ────────────
+
+fn timing_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("FFAST_XYZ_TIMING").is_ok_and(|v| !v.is_empty() && v != "0"))
+}
+
+fn timing_store() -> &'static std::sync::Mutex<HashMap<&'static str, f64>> {
+    static STORE: std::sync::OnceLock<std::sync::Mutex<HashMap<&'static str, f64>>> = std::sync::OnceLock::new();
+    STORE.get_or_init(Default::default)
+}
+
+/// A stopwatch when timings are on.
+fn tick() -> Option<std::time::Instant> {
+    timing_on().then(std::time::Instant::now)
+}
+
+/// Adds the time since `t` to `phase`, and restarts `t`.
+fn tock(phase: &'static str, t: &mut Option<std::time::Instant>) {
+    if let Some(start) = t {
+        let spent = start.elapsed().as_secs_f64();
+        *timing_store().lock().unwrap().entry(phase).or_insert(0.0) += spent;
+        *t = Some(std::time::Instant::now());
+    }
+}
+
+/// The seconds spent per phase since the last call (empty unless
+/// FFAST_XYZ_TIMING was set when the package was first used).
+#[pyfunction]
+fn timings() -> HashMap<String, f64> {
+    timing_store().lock().unwrap().drain().map(|(k, v)| (k.to_string(), v)).collect()
+}
+
 // ── reading the file ───────────────────────────────────────────────────────
 
 /// `buf.len()` bytes of `file` from byte `off`.
@@ -544,8 +577,7 @@ fn frame_runs(starts: &[u64], ends: &[u64]) -> (Vec<(u64, u64)>, Vec<usize>) {
 // ── one group: shared input, per-thread output ─────────────────────────────
 
 struct Ctx<'a> {
-    data: &'a [u8],
-    at: &'a [usize],
+    file: &'a std::fs::File,
     starts: &'a [u64],
     ends: &'a [u64],
     counts: &'a [i64],
@@ -607,10 +639,18 @@ impl<T> Keyed<T> {
         self.keys[i].2.push(x);
     }
 
+    /// The later chunk's values after these: one look-up per key, not per value.
     fn extend(&mut self, other: Keyed<T>) {
         for (key, rows, xs) in other.keys {
-            for (r, x) in rows.into_iter().zip(xs) {
-                self.push(&key, r, x);
+            match self.slot.get(&key) {
+                Some(&i) => {
+                    self.keys[i].1.extend(rows);
+                    self.keys[i].2.extend(xs);
+                }
+                None => {
+                    self.slot.insert(key.clone(), self.keys.len());
+                    self.keys.push((key, rows, xs));
+                }
             }
         }
     }
@@ -657,6 +697,10 @@ fn strip(t: &[u8]) -> &[u8] {
 
 fn parse_chunk(ctx: &Ctx, chunk: Chunk) -> Result<Part, String> {
     let Chunk { a, b, atom0, numbers, pos, mut cell, mut cols } = chunk;
+    // Each chunk reads its own frames: while one thread waits for the file,
+    // the others parse.
+    let (runs, at) = frame_runs(&ctx.starts[a..b], &ctx.ends[a..b]);
+    let data = read_runs(ctx.file, &runs, 1).map_err(|e| format!("could not read the file ({e}); it changed"))?;
     let mut part = Part { seen: vec![false; ctx.targets.len()], ..Default::default() };
     let mut layouts: Vec<Layout> = Vec::new();
     let mut index: HashMap<Vec<u8>, usize> = HashMap::new(); // Properties -> layout
@@ -670,8 +714,8 @@ fn parse_chunk(ctx: &Ctx, chunk: Chunk) -> Result<Part, String> {
     let mut atom = 0usize; // within the chunk
     for row in a..b {
         let frame = ctx.first_frame + row as i64;
-        let begin = ctx.at[row];
-        let block = &ctx.data[begin..begin + (ctx.ends[row] - ctx.starts[row]) as usize];
+        let begin = at[row - a];
+        let block = &data[begin..begin + (ctx.ends[row] - ctx.starts[row]) as usize];
         let mut lines = block.split(|&c| c == b'\n');
         let count = strip(lines.next().unwrap_or(b""));
         if !int_text(count) || as_str(count).parse::<i64>().ok() != Some(ctx.counts[row]) {
@@ -885,6 +929,7 @@ fn parse_into<'py>(
     excluded: HashSet<String>,
     threads: usize,
 ) -> PyResult<Bound<'py, PyDict>> {
+    let mut clock = tick();
     let file = std::fs::File::open(path)?;
     let size = file.metadata()?.len();
     let starts = starts.as_slice()?;
@@ -897,7 +942,6 @@ fn parse_into<'py>(
     if starts.iter().zip(ends).any(|(&s, &e)| s > e || e > size) {
         return Err(NotFast::new_err("a frame's bytes lie outside the file; it changed"));
     }
-    let (runs, at) = frame_runs(starts, ends);
     let atoms = counts.iter().map(|&c| c.max(0) as usize).sum::<usize>();
     let elements: HashMap<Vec<u8>, i64> = elements.into_iter().map(|(k, v)| (k.into_bytes(), v)).collect();
     let reference: Vec<(String, u8, usize)> =
@@ -961,12 +1005,9 @@ fn parse_into<'py>(
         atom0 += m;
     }
 
-    let data = py
-        .allow_threads(|| read_runs(&file, &runs, threads))
-        .map_err(|e| NotFast::new_err(format!("could not read the file ({e}); it changed")))?;
+    tock("parse_into.setup", &mut clock);
     let ctx = Ctx {
-        data: &data,
-        at: &at,
+        file: &file,
         starts,
         ends,
         counts,
@@ -983,6 +1024,7 @@ fn parse_into<'py>(
         pool.install(|| chunks.into_par_iter().map(|c| parse_chunk(&ctx, c)).collect())
     });
     let parts = parts.map_err(NotFast::new_err)?;
+    tock("parse_into.read + parse", &mut clock);
 
     // Join the chunks in order.
     let mut values: Keyed<Value> = Keyed::default();
@@ -1048,6 +1090,7 @@ fn parse_into<'py>(
         found.set_item(name, ((kind as char).to_string(), n))?;
     }
     out.set_item("extras", found)?;
+    tock("parse_into.join", &mut clock);
     Ok(out)
 }
 
@@ -1091,16 +1134,30 @@ struct Lines {
     at_eof: bool,
 }
 
+/// Bytes `[start, end)` of `file` and the positions of their line ends:
+/// each 4 MB piece is read and searched by one task, so reading and
+/// searching overlap across threads.
+fn read_and_index(file: &std::fs::File, start: u64, end: u64, threads: usize)
+    -> std::io::Result<(Vec<u8>, Vec<usize>)> {
+    const PIECE: usize = 1 << 22;
+    let mut buf = vec![0u8; (end - start) as usize];
+    let jobs: Vec<(usize, &mut [u8])> = buf.chunks_mut(PIECE).enumerate().map(|(i, p)| (i * PIECE, p)).collect();
+    let work = |(at, piece): (usize, &mut [u8])| -> std::io::Result<Vec<usize>> {
+        read_exact_at(file, piece, start + at as u64)?;
+        Ok(newlines_in(piece, at))
+    };
+    let parts: Vec<Vec<usize>> = if threads > 1 && jobs.len() > 1 {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(std::io::Error::other)?;
+        pool.install(|| jobs.into_par_iter().map(work).collect::<std::io::Result<_>>())?
+    } else {
+        jobs.into_iter().map(work).collect::<std::io::Result<_>>()?
+    };
+    Ok((buf, parts.concat()))
+}
+
 impl Lines {
-    fn new(data: &[u8], at_eof: bool, threads: usize) -> Self {
-        const PIECE: usize = 1 << 22;
-        let pieces: Vec<usize> = (0..data.len()).step_by(PIECE).collect();
-        let found = |a: &usize| newlines_in(&data[*a..(*a + PIECE).min(data.len())], *a);
-        let parts: Vec<Vec<usize>> = match rayon::ThreadPoolBuilder::new().num_threads(threads.max(1)).build() {
-            Ok(pool) if threads > 1 && pieces.len() > 1 => pool.install(|| pieces.par_iter().map(found).collect()),
-            _ => pieces.iter().map(found).collect(),
-        };
-        Lines { nl: parts.concat(), k: 0, len: data.len(), at_eof }
+    fn new(nl: Vec<usize>, len: usize, at_eof: bool) -> Self {
+        Lines { nl, k: 0, len, at_eof }
     }
 
     /// The end of the line starting at `p`, past its `\n`; the buffer's end
@@ -1120,11 +1177,11 @@ impl Lines {
 
 /// The walk of `find_frames` over `data`, the file's bytes from `base` on
 /// (to its end when `at_eof`). None: the first frame does not fit in `data`.
-fn find_in(data: &[u8], base: usize, at_eof: bool, limit: usize, threads: usize)
+fn find_in(data: &[u8], nl: Vec<usize>, base: usize, at_eof: bool, limit: usize)
     -> Option<(Vec<i64>, Vec<i64>, usize, u8)> {
     let (mut starts, mut counts) = (Vec::new(), Vec::new());
     let stop = limit.max(1);
-    let mut lines = Lines::new(data, at_eof, threads);
+    let mut lines = Lines::new(nl, data.len(), at_eof);
     let mut pos = 0;
     // A frame that runs past the bytes read: the next call starts with it.
     macro_rules! cut {
@@ -1195,8 +1252,12 @@ fn find_frames<'py>(
             let mut want = limit.max(1);
             loop {
                 let end = offset.saturating_add(want).min(size);
-                let data = read_runs(&file, &[(offset, end)], threads)?;
-                if let Some(found) = find_in(&data, offset as usize, end == size, limit as usize, threads) {
+                let mut clock = tick();
+                let (data, nl) = read_and_index(&file, offset, end, threads)?;
+                tock("find.read + newlines", &mut clock);
+                let found = find_in(&data, nl, offset as usize, end == size, limit as usize);
+                tock("find.walk", &mut clock);
+                if let Some(found) = found {
                     return Ok(found);
                 }
                 want = want.saturating_mul(2); // one frame longer than the bytes read
@@ -1473,15 +1534,21 @@ fn energies<'py>(
                 h += 1;
             }
             let idx = &order[g..h];
-            let (ws, we): (Vec<u64>, Vec<u64>) = idx.iter().map(|&i| window(i)).unzip();
-            let (runs, at) = frame_runs(&ws, &we);
-            let data = read_runs(&file, &runs, threads)?;
-            let got: Vec<_> = pool.install(|| {
-                (0..idx.len())
-                    .into_par_iter()
+            let mut clock = tick();
+            // Each task reads its own frames' windows, then reads their headers.
+            let per = idx.len().div_ceil(threads * 4).max(1);
+            let task = |piece: &[usize]| -> std::io::Result<Vec<Option<Vec<(Vec<u8>, f64)>>>> {
+                let (ws, we): (Vec<u64>, Vec<u64>) = piece.iter().map(|&i| window(i)).unzip();
+                let (runs, at) = frame_runs(&ws, &we);
+                let data = read_runs(&file, &runs, 1)?;
+                Ok((0..piece.len())
                     .map(|j| window_energies(&data[at[j]..at[j] + (we[j] - ws[j]) as usize], we[j] == size, &per_config))
-                    .collect()
-            });
+                    .collect())
+            };
+            let pieces: Vec<Vec<_>> =
+                pool.install(|| idx.par_chunks(per).map(task).collect::<std::io::Result<_>>())?;
+            let got: Vec<_> = pieces.into_iter().flatten().collect();
+            tock("energies.read + headers", &mut clock);
             for (j, frame_got) in got.into_iter().enumerate() {
                 if in_order {
                     join.add(idx[j], frame_got);
@@ -1489,6 +1556,7 @@ fn energies<'py>(
                     kept[idx[j]] = Some(frame_got);
                 }
             }
+            tock("energies.join", &mut clock);
             g = h;
         }
         for (frame, frame_got) in kept.into_iter().enumerate() {
@@ -1506,6 +1574,7 @@ fn _ffast_xyz(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_into, m)?)?;
     m.add_function(wrap_pyfunction!(find_frames, m)?)?;
     m.add_function(wrap_pyfunction!(energies, m)?)?;
+    m.add_function(wrap_pyfunction!(timings, m)?)?;
     m.add("FIND_MORE", FIND_MORE)?;
     m.add("FIND_END", FIND_END)?;
     m.add("FIND_PYTHON", FIND_PYTHON)?;
