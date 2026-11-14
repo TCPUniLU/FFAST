@@ -240,3 +240,18 @@ def test_a_stride_reads_the_same_frames(monkeypatch, caplog):
     _same(_read(path, True, monkeypatch, stride=3, workers=4), python, "stride")
     _same(_read(path, True, monkeypatch, stride=3, workers=2, batch=5),
           _read(path, False, monkeypatch, stride=3, workers=2, batch=5), "stride, groups of 5")
+
+
+@pytest.mark.parametrize("stride", [1, 3, 25])
+def test_frames_far_apart_are_read_in_runs_of_their_own(stride, tmp_path, monkeypatch, caplog):
+    # Frames of about 75 KB: a stride of 25 leaves gaps over 1 MB (each kept
+    # frame read on its own), a stride of 3 gaps under it (read through).
+    path = tmp_path / "big.extxyz"
+    path.write_text(frames(120, lambda i: f'Properties=species:S:1:pos:R:3:forces:R:3 energy={-i * 0.5} pbc="F F F"',
+                           lambda i, a: f"H {a * 0.1:.6f} {i}.25 -1.5 0.01 0.02 {a}e-3", atoms=1500))
+    python = _read(path, False, monkeypatch, stride=stride, workers=1)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING, logger="FFAST"):
+        fast = _read(path, True, monkeypatch, stride=stride, workers=4, batch=2)
+    assert "slower Python parser" not in caplog.text
+    _same(fast, python, ("far apart", stride))

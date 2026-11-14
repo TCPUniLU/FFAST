@@ -462,10 +462,90 @@ fn layout_of(props: &[u8], ctx: &Ctx) -> Result<Layout, String> {
     Ok(Layout { ncol: start, cols, essential, extras })
 }
 
+// ── reading the file ───────────────────────────────────────────────────────
+
+/// `buf.len()` bytes of `file` from byte `off`.
+fn read_exact_at(file: &std::fs::File, buf: &mut [u8], off: u64) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileExt;
+        file.read_exact_at(buf, off)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileExt;
+        let mut done = 0;
+        while done < buf.len() {
+            let got = file.seek_read(&mut buf[done..], off + done as u64)?;
+            if got == 0 {
+                return Err(std::io::ErrorKind::UnexpectedEof.into());
+            }
+            done += got;
+        }
+        Ok(())
+    }
+}
+
+/// The bytes of `runs` (`[(start, end)]`) of `file`, one after another, read
+/// in pieces of 8 MB on `threads` threads. Large plain reads, not a mapped
+/// file: on Lustre (MeluXina) threads faulting in pages of a mapped cold file
+/// waited for each small piece in turn, about 12× slower (2026-11-14).
+fn read_runs(file: &std::fs::File, runs: &[(u64, u64)], threads: usize) -> std::io::Result<Vec<u8>> {
+    const PIECE: u64 = 8 << 20;
+    let total: u64 = runs.iter().map(|&(a, b)| b - a).sum();
+    let mut buf = vec![0u8; total as usize];
+    let mut jobs: Vec<(u64, &mut [u8])> = Vec::new();
+    let mut rest: &mut [u8] = &mut buf;
+    for &(a, b) in runs {
+        let mut s = a;
+        while s < b {
+            let e = (s + PIECE).min(b);
+            let (piece, more) = std::mem::take(&mut rest).split_at_mut((e - s) as usize);
+            jobs.push((s, piece));
+            rest = more;
+            s = e;
+        }
+    }
+    let work = |(off, part): (u64, &mut [u8])| read_exact_at(file, part, off);
+    if threads > 1 && jobs.len() > 1 {
+        let pool = rayon::ThreadPoolBuilder::new().num_threads(threads).build().map_err(std::io::Error::other)?;
+        pool.install(|| jobs.into_par_iter().try_for_each(work))?;
+    } else {
+        jobs.into_iter().try_for_each(work)?;
+    }
+    Ok(buf)
+}
+
+/// Gaps up to this size between the frames of a group are read too: one
+/// large read beats many small ones.
+const READ_GAP: u64 = 1 << 20;
+
+/// The runs of bytes to read for frames `starts[i]..ends[i]`, and where each
+/// frame then begins in the bytes read.
+fn frame_runs(starts: &[u64], ends: &[u64]) -> (Vec<(u64, u64)>, Vec<usize>) {
+    let (mut runs, mut at): (Vec<(u64, u64)>, Vec<usize>) = (Vec::new(), Vec::with_capacity(starts.len()));
+    let mut before = 0u64; // bytes of earlier runs
+    for (&s, &e) in starts.iter().zip(ends) {
+        match runs.last_mut() {
+            Some((a, b)) if s >= *b && s - *b <= READ_GAP => *b = (*b).max(e),
+            _ => {
+                if let Some(&(a, b)) = runs.last() {
+                    before += b - a;
+                }
+                runs.push((s, e));
+            }
+        }
+        let &(a, _) = runs.last().unwrap();
+        at.push((before + s - a) as usize);
+    }
+    (runs, at)
+}
+
 // ── one group: shared input, per-thread output ─────────────────────────────
 
 struct Ctx<'a> {
     data: &'a [u8],
+    at: &'a [usize],
     starts: &'a [u64],
     ends: &'a [u64],
     counts: &'a [i64],
@@ -590,7 +670,8 @@ fn parse_chunk(ctx: &Ctx, chunk: Chunk) -> Result<Part, String> {
     let mut atom = 0usize; // within the chunk
     for row in a..b {
         let frame = ctx.first_frame + row as i64;
-        let block = &ctx.data[ctx.starts[row] as usize..ctx.ends[row] as usize];
+        let begin = ctx.at[row];
+        let block = &ctx.data[begin..begin + (ctx.ends[row] - ctx.starts[row]) as usize];
         let mut lines = block.split(|&c| c == b'\n');
         let count = strip(lines.next().unwrap_or(b""));
         if !int_text(count) || as_str(count).parse::<i64>().ok() != Some(ctx.counts[row]) {
@@ -805,8 +886,7 @@ fn parse_into<'py>(
     threads: usize,
 ) -> PyResult<Bound<'py, PyDict>> {
     let file = std::fs::File::open(path)?;
-    // SAFETY: the file is only read; FFAST's frame list fails on a file changed since.
-    let data = unsafe { Mmap::map(&file)? };
+    let size = file.metadata()?.len();
     let starts = starts.as_slice()?;
     let ends = ends.as_slice()?;
     let counts = counts.as_slice()?;
@@ -814,9 +894,10 @@ fn parse_into<'py>(
     if ends.len() != n || counts.len() != n {
         return Err(PyValueError::new_err("starts, ends and counts differ in length"));
     }
-    if starts.iter().zip(ends).any(|(&s, &e)| s > e || e as usize > data.len()) {
+    if starts.iter().zip(ends).any(|(&s, &e)| s > e || e > size) {
         return Err(NotFast::new_err("a frame's bytes lie outside the file; it changed"));
     }
+    let (runs, at) = frame_runs(starts, ends);
     let atoms = counts.iter().map(|&c| c.max(0) as usize).sum::<usize>();
     let elements: HashMap<Vec<u8>, i64> = elements.into_iter().map(|(k, v)| (k.into_bytes(), v)).collect();
     let reference: Vec<(String, u8, usize)> =
@@ -880,8 +961,12 @@ fn parse_into<'py>(
         atom0 += m;
     }
 
+    let data = py
+        .allow_threads(|| read_runs(&file, &runs, threads))
+        .map_err(|e| NotFast::new_err(format!("could not read the file ({e}); it changed")))?;
     let ctx = Ctx {
         data: &data,
+        at: &at,
         starts,
         ends,
         counts,
@@ -978,11 +1063,6 @@ const FIND_END: u8 = 1;
 /// or the file ends inside it. The Python scan reads it and gives the error.
 const FIND_PYTHON: u8 = 2;
 
-/// The end of the line starting at `p`, past its `\n` (or the file's end).
-fn line_end(data: &[u8], p: usize) -> usize {
-    data[p..].iter().position(|&b| b == b'\n').map_or(data.len(), |i| p + i + 1)
-}
-
 /// The positions of every `\n` in `block` (which starts at byte `base`),
 /// eight bytes at a time: most words of an .xyz file hold no line end.
 fn newlines_in(block: &[u8], base: usize) -> Vec<usize> {
@@ -1003,74 +1083,90 @@ fn newlines_in(block: &[u8], base: usize) -> Vec<usize> {
     out
 }
 
-/// Line ends, found in parallel over `[from, upto)` before the walk; a line
-/// running past `upto` is followed byte by byte.
-struct Lines<'a> {
-    data: &'a [u8],
+/// Every line end of a buffer, found in parallel before the walk.
+struct Lines {
     nl: Vec<usize>,
     k: usize,
-    upto: usize,
+    len: usize,
+    at_eof: bool,
 }
 
-impl<'a> Lines<'a> {
-    fn new(data: &'a [u8], from: usize, upto: usize, threads: usize) -> Self {
+impl Lines {
+    fn new(data: &[u8], at_eof: bool, threads: usize) -> Self {
         const PIECE: usize = 1 << 22;
-        let pieces: Vec<usize> = (from..upto).step_by(PIECE).collect();
-        let found = |a: &usize| newlines_in(&data[*a..(*a + PIECE).min(upto)], *a);
+        let pieces: Vec<usize> = (0..data.len()).step_by(PIECE).collect();
+        let found = |a: &usize| newlines_in(&data[*a..(*a + PIECE).min(data.len())], *a);
         let parts: Vec<Vec<usize>> = match rayon::ThreadPoolBuilder::new().num_threads(threads.max(1)).build() {
             Ok(pool) if threads > 1 && pieces.len() > 1 => pool.install(|| pieces.par_iter().map(found).collect()),
             _ => pieces.iter().map(found).collect(),
         };
-        Lines { data, nl: parts.concat(), k: 0, upto }
+        Lines { nl: parts.concat(), k: 0, len: data.len(), at_eof }
     }
 
-    /// The end of the line starting at `p`, past its `\n` (or the file's
-    /// end). Calls come with increasing `p`.
-    fn end(&mut self, p: usize) -> usize {
-        if p < self.upto {
-            while self.k < self.nl.len() && self.nl[self.k] < p {
-                self.k += 1;
-            }
-            if self.k < self.nl.len() {
-                return self.nl[self.k] + 1;
-            }
+    /// The end of the line starting at `p`, past its `\n`; the buffer's end
+    /// for a last line without one when the buffer ends the file; None when
+    /// the line goes on past the buffer. Calls come with increasing `p`.
+    fn end(&mut self, p: usize) -> Option<usize> {
+        while self.k < self.nl.len() && self.nl[self.k] < p {
+            self.k += 1;
         }
-        line_end(self.data, p)
+        match self.nl.get(self.k) {
+            Some(&e) => Some(e + 1),
+            None if self.at_eof => Some(self.len),
+            None => None,
+        }
     }
 }
 
-fn find_in(data: &[u8], offset: usize, limit: usize, threads: usize) -> (Vec<i64>, Vec<i64>, usize, u8) {
+/// The walk of `find_frames` over `data`, the file's bytes from `base` on
+/// (to its end when `at_eof`). None: the first frame does not fit in `data`.
+fn find_in(data: &[u8], base: usize, at_eof: bool, limit: usize, threads: usize)
+    -> Option<(Vec<i64>, Vec<i64>, usize, u8)> {
     let (mut starts, mut counts) = (Vec::new(), Vec::new());
-    let stop = offset.saturating_add(limit.max(1));
-    let mut lines = Lines::new(data, offset, stop.min(data.len()), threads);
-    let mut pos = offset;
+    let stop = limit.max(1);
+    let mut lines = Lines::new(data, at_eof, threads);
+    let mut pos = 0;
+    // A frame that runs past the bytes read: the next call starts with it.
+    macro_rules! cut {
+        () => {
+            return if starts.is_empty() { None } else { Some((starts, counts, base + pos, FIND_MORE)) }
+        };
+    }
     loop {
         if pos >= data.len() {
-            return (starts, counts, pos, FIND_END);
+            return Some((starts, counts, base + pos, if at_eof { FIND_END } else { FIND_MORE }));
         }
         if pos >= stop {
-            return (starts, counts, pos, FIND_MORE);
+            return Some((starts, counts, base + pos, FIND_MORE));
         }
-        let head = lines.end(pos);
+        let Some(head) = lines.end(pos) else { cut!() };
         let text = strip(&data[pos..head]);
         if text.is_empty() {
-            // Trailing blank lines end the file; anything after them is an error.
-            let state = if data[head..].iter().all(|&b| line_space(b)) { FIND_END } else { FIND_PYTHON };
-            return (starts, counts, pos, state);
+            // Trailing blank lines end the file; anything after them is an
+            // error. Read on to the file's end to tell which.
+            if !at_eof {
+                cut!();
+            }
+            let rest_blank = data[head..].iter().all(|&b| line_space(b));
+            return Some((starts, counts, base + pos, if rest_blank { FIND_END } else { FIND_PYTHON }));
         }
         if text.len() > 18 || !text.iter().all(u8::is_ascii_digit) {
-            return (starts, counts, pos, FIND_PYTHON);
+            return Some((starts, counts, base + pos, FIND_PYTHON));
         }
         let natoms = text.iter().fold(0i64, |n, &d| n * 10 + (d - b'0') as i64);
         // The comment line and `natoms` atom lines; each must exist.
         let mut p = head;
         for _ in 0..=natoms {
             if p >= data.len() {
-                return (starts, counts, pos, FIND_PYTHON);
+                if at_eof {
+                    return Some((starts, counts, base + pos, FIND_PYTHON));
+                }
+                cut!();
             }
-            p = lines.end(p);
+            let Some(e) = lines.end(p) else { cut!() };
+            p = e;
         }
-        starts.push(pos as i64);
+        starts.push((base + pos) as i64);
         counts.push(natoms);
         pos = p;
     }
@@ -1095,9 +1191,17 @@ fn find_frames<'py>(
     let (starts, counts, next, state) = if offset >= size {
         (Vec::new(), Vec::new(), offset as usize, FIND_END)
     } else {
-        // SAFETY: the file is only read; the frame list is checked against its size and time.
-        let data = unsafe { Mmap::map(&file)? };
-        py.allow_threads(|| find_in(&data, offset as usize, limit as usize, threads))
+        py.allow_threads(|| -> std::io::Result<_> {
+            let mut want = limit.max(1);
+            loop {
+                let end = offset.saturating_add(want).min(size);
+                let data = read_runs(&file, &[(offset, end)], threads)?;
+                if let Some(found) = find_in(&data, offset as usize, end == size, limit as usize, threads) {
+                    return Ok(found);
+                }
+                want = want.saturating_mul(2); // one frame longer than the bytes read
+            }
+        })?
     };
     Ok((PyArray1::from_vec_bound(py, starts), PyArray1::from_vec_bound(py, counts), next as u64, state))
 }
