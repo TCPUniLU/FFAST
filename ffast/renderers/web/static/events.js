@@ -65,6 +65,8 @@ export const OUT = Object.freeze({
   CANCEL_METRIC: 'CANCEL_METRIC',
   // The keep boxes of a metric or of a box change (ADR 0065)
   REQUEST_METRIC_BOXES: 'REQUEST_METRIC_BOXES',
+  // The points a plot can show (ADR 0099)
+  REQUEST_PLOT_VIEW: 'REQUEST_PLOT_VIEW',
   ADD_SESSION_METRICS: 'ADD_SESSION_METRICS',
   GRACEFUL_DISCONNECT: 'GRACEFUL_DISCONNECT',
   // Ask the server's clock, for the timing log (ADR 0072)
@@ -179,6 +181,8 @@ export const IN = Object.freeze({
   METRIC_CHECKED: 'METRIC_CHECKED',
   METRIC_TRIED: 'METRIC_TRIED',
   METRIC_BOXES: 'METRIC_BOXES',
+  // Reply to REQUEST_PLOT_VIEW: whole results, or the points kept (ADR 0099)
+  PLOT_VIEW: 'PLOT_VIEW',
   // After a session load: user metrics it carries that this server lacks.
   SESSION_METRICS: 'SESSION_METRICS',
   // Which subset a DECLARE_SUBSET made, to the window that sent it, so the

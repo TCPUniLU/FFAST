@@ -259,6 +259,22 @@ class MetricResultMessage(BaseModel):
     unchanged: Optional[bool] = None
 
 
+class PlotViewMessage(BaseModel):
+    """Typed envelope for ``PLOT_VIEW`` (ADR 0099), the reply to
+    ``REQUEST_PLOT_VIEW``. ``results`` holds, per role, the fields of a
+    ``MetricResultMessage``; its ``values`` are the whole result, or with
+    ``idx`` the points kept: ``idx`` (int32 array) their frame numbers and
+    ``n`` the full length. A role whose metric failed carries ``ok`` False
+    with ``error`` and ``kind``; the others then carry no values."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    n: Optional[int] = None
+    idx: Optional[dict] = None
+    results: dict[str, dict] = Field(default_factory=dict)
+
+
 # ── Control message requests (client→server) ─────────────────────────────────
 
 class LoadDatasetRequest(BaseModel):
@@ -817,6 +833,27 @@ class RequestMetricBoxesRequest(BaseModel):
     base: Optional[str] = None
     setting: Optional[dict] = None
     dataset_fp: Optional[str] = None
+
+
+class RequestPlotViewRequest(BaseModel):
+    """Typed payload for ``REQUEST_PLOT_VIEW`` (ADR 0099): the points of a
+    line (``y``, and ``x`` when it is not the frame index) or of dots (``x``
+    and ``y``) that a plot ``width`` x ``height`` px showing ``x_range`` and
+    ``y_range`` can show. ``params``: compute params per metric id, as
+    REQUEST_METRIC sends them."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    kind: Literal["line", "points"]
+    metrics: dict[str, str]
+    params: Optional[dict[str, dict[str, Any]]] = None
+    dataset_fp: Optional[str] = None
+    model_fp: Optional[str] = None
+    x_range: Optional[list[float]] = None
+    y_range: Optional[list[float]] = None
+    width: float = 700
+    height: float = 300
 
 
 class TryMetricRequest(BaseModel):

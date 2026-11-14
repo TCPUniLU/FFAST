@@ -15,7 +15,8 @@ _LATEST_WINS = {"SET_FRAME", "SET_CAMERA"}
 class MessageLanes:
     """Starts a window's messages in the order received.
 
-    Metric requests run beside the queue (ADR 0077). View commands do too,
+    Metric requests and plot views run beside the queue (ADR 0077, ADR 0099).
+    View commands do too,
     one view's in the order sent, each view in its own lane (ADR 0082), so a
     view whose colours take 13 s holds up neither other messages nor other
     views. Everything else is handled one at a time, in order. Closing a view
@@ -30,7 +31,7 @@ class MessageLanes:
     async def take(self, item) -> None:
         """Start one received message ``(event, args, kwargs, msg_id)``."""
         event, _args, kwargs, _msg_id = item
-        if event == control.REQUEST_METRIC:
+        if event in (control.REQUEST_METRIC, control.REQUEST_PLOT_VIEW):
             self._start(self._handle(*item))
         elif event == control.VIEW_COMMAND and isinstance(kwargs, dict) and kwargs.get("view_id"):
             self._queue_view(kwargs["view_id"], item)

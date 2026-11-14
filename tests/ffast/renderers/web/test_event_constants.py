@@ -85,7 +85,7 @@ def test_inbound_events_are_things_the_server_sends(in_events):
         control.SUBSET_EXPORTED, control.SUBSET_EXTRACTED, control.SESSION_SAVED, control.SESSION_LOADED,
         control.LOAD_RESULT, control.TAB_SAVED, control.TAB_EXPORTED, control.SUBSET_DECLARED,
         control.USER_METRICS, control.METRIC_USERS, control.USER_METRIC_SAVED, control.USER_METRIC_EXPORTED,
-        control.METRIC_INPUTS, control.METRIC_CHECKED, control.METRIC_TRIED, control.METRIC_BOXES,
+        control.METRIC_INPUTS, control.METRIC_CHECKED, control.METRIC_TRIED, control.METRIC_BOXES, control.PLOT_VIEW,
         control.SESSION_METRICS, control.SERVER_WARNING, control.LOADER_TYPES, control.TASK_INFO,
         control.TIMING, control.LIVE_RUN_UPDATE, control.LIVE_ATTRIBUTION_RESULT,
         control.PRACTICE_INPUT_PREPARED, control.PRACTICE_RUN_STARTED, control.PRACTICE_RUN_RESULT,

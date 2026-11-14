@@ -240,6 +240,40 @@ def pack_metric_result(request_id: str, metric_id: str, ok: bool, result=None,
     )
 
 
+def pack_plot_view(request_id: str, outcomes: dict, idx=None, n=None) -> bytes:
+    """Serialize a PLOT_VIEW reply (ADR 0099). ``outcomes``: role → a
+    ``MetricResult`` or ``(error, kind)``. With ``idx`` each result is sent
+    at those indices only; a role's values are left out when another role
+    has no result (the plot draws nothing then)."""
+    from ffast.metrics.models import MetricResult
+    from ffast.protocol.messages import MetricResultMessage, PlotViewMessage
+
+    complete = all(isinstance(o, MetricResult) for o in outcomes.values())
+    results = {}
+    for role, o in outcomes.items():
+        if isinstance(o, MetricResult):
+            values = np.asarray(o.values)
+            if idx is not None:
+                values = values[idx]
+            msg = MetricResultMessage(
+                ok=True, metric_id=o.metric_id, shape=o.shape, dtype=o.dtype, unit=o.unit,
+                compute_parameters=o.compute_parameters,
+                implementation_hash=o.implementation_hash,
+                values=_encode_array(values) if complete else None,
+                warnings=list(o.warnings or []) or None,
+            )
+        else:
+            error, kind = o
+            msg = MetricResultMessage(ok=False, error=error or None, kind=kind or None)
+        results[role] = msg.model_dump(exclude_none=True)
+    reply = PlotViewMessage(
+        ok=complete, results=results,
+        idx=_encode_array(np.asarray(idx, dtype=np.int32)) if idx is not None and complete else None,
+        n=n if idx is not None and complete else None,
+    )
+    return pack(control.PLOT_VIEW, (request_id,), reply.model_dump(exclude_none=True))
+
+
 def pack_metric_unchanged(request_id: str, metric_id: str, tag: str) -> bytes:
     """Serialize a METRIC_RESULT that sends no values: the page already
     holds the stored result named ``tag`` (it asked with ``have``)."""

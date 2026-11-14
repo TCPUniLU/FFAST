@@ -1894,3 +1894,80 @@ def test_a_new_view_can_start_from_another_views_look():
         assert s.views["sub"].state.parameters == {"ffast.bonds": {"style": "lines"}}
 
     _run(scenario())
+
+
+# ── _on_request_plot_view (ADR 0099) ──────────────────────────────────────────
+
+def _view(env, request_id="p1", **kwargs):
+    from ffast.protocol.rpc import _decode_array
+
+    async def scenario():
+        s = ServerSession(env, asyncio.Queue())
+        await s.dispatch("REQUEST_PLOT_VIEW", [], {"request_id": request_id, **kwargs})
+        return s.outbound.get_nowait()
+
+    event, args, kw = unpack(_run(scenario()))
+    values = {r: _decode_array(m["values"]) for r, m in kw["results"].items() if "values" in m}
+    idx = _decode_array(kw["idx"]) if "idx" in kw else None
+    return event, args, kw, values, idx
+
+
+def test_a_small_plot_view_comes_whole():
+    env = _FakeEnv(datasets={"ds1": object()})
+    y = np.linspace(0, 1, 100)
+    env.results = _FakeResults({"e": _make_metric_result("e", y)})
+    event, args, kw, values, idx = _view(env, kind="line", metrics={"y": "e"}, dataset_fp="ds1")
+    assert event == control.PLOT_VIEW and args == ["p1"]
+    assert kw["ok"] is True and idx is None and "n" not in kw
+    np.testing.assert_array_equal(values["y"], y)
+    assert kw["results"]["y"]["unit"] == "eV"
+
+
+def test_a_large_line_comes_as_the_points_a_plot_can_show():
+    env = _FakeEnv(datasets={"ds1": object()})
+    y = np.sin(np.arange(50_000) / 300.0)
+    y[31_337] = 9.0
+    env.results = _FakeResults({"e": _make_metric_result("e", y)})
+    _, _, kw, values, idx = _view(env, kind="line", metrics={"y": "e"}, dataset_fp="ds1",
+                                  params={"e": {"shifted": True}}, width=700, height=300)
+    assert kw["n"] == 50_000 and 0 < len(idx) <= 4 * 700
+    assert 31_337 in idx.tolist()                      # the peak and its frame number
+    np.testing.assert_array_equal(values["y"], y[idx])
+    assert env.results.asked == [("e", {"shifted": True}, "ds1", None)]
+
+
+def test_large_dots_come_thinned_with_both_coordinates():
+    env = _FakeEnv(datasets={"ds1": object()})
+    rng = np.random.default_rng(1)
+    x = rng.normal(0, 1, 50_000)
+    y = x + rng.normal(0, 0.1, 50_000)
+    y[777] = 40.0
+    env.results = _FakeResults({"r": _make_metric_result("r", x), "p": _make_metric_result("p", y)})
+    _, _, kw, values, idx = _view(env, kind="points", metrics={"x": "r", "y": "p"},
+                                  dataset_fp="ds1", x_range=[-1, 1], width=700, height=300)
+    assert kw["n"] == 50_000 and len(idx) < 50_000 and 777 in idx.tolist()
+    np.testing.assert_array_equal(values["x"], x[idx])
+    np.testing.assert_array_equal(values["y"], y[idx])
+
+
+def test_a_plot_view_with_a_failed_metric_says_why_and_sends_no_values():
+    from ffast.metrics.result_store import Missing
+    env = _FakeEnv(datasets={"ds1": object()})
+    env.results = _FakeResults({"r": _make_metric_result("r", np.zeros(50_000)),
+                                "p": Missing("needs_prediction", "Needs a prediction")})
+    _, _, kw, values, idx = _view(env, kind="points", metrics={"x": "r", "y": "p"},
+                                  dataset_fp="ds1", model_fp="m1")
+    assert kw["ok"] is False and idx is None and values == {}
+    assert kw["results"]["y"] == {"ok": False, "error": "Needs a prediction", "kind": "needs_prediction"}
+    assert kw["results"]["x"]["ok"] is True and kw["results"]["x"]["unit"] == "eV"
+    # With no prediction chosen the reply stays quiet (ADR 0085).
+    _, _, kw, _, _ = _view(env, kind="points", metrics={"x": "r", "y": "p"}, dataset_fp="ds1")
+    assert kw["results"]["y"] == {"ok": False}
+
+
+def test_a_plot_view_of_a_table_comes_whole():
+    env = _FakeEnv(datasets={"ds1": object()})
+    table = np.ones((30_000, 3))                       # one row per frame, a column per element
+    env.results = _FakeResults({"t": _make_metric_result("t", table)})
+    _, _, kw, values, idx = _view(env, kind="line", metrics={"y": "t"}, dataset_fp="ds1")
+    assert idx is None and values["y"].shape == (30_000, 3)
