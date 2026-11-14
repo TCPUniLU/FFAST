@@ -103,6 +103,19 @@ gives two text-format pieces (find the frames, parse whole frames) and gets the
 frame index and parallel parsing as well (ADR 0095).
 _Avoid_: loader (that is FFAST's internal dataset object), parser, importer
 
+### Fast parser
+
+A Level 2 reader's compiled parser: it fills the arrays FFAST made for a
+file's frames, on several threads at once. A reader may have one; when it is
+missing, or a file holds something it cannot match exactly, the reader's
+**Python parser** reads the file instead, slower, and FFAST says so.
+_Avoid_: native reader, Rust reader (a reader is the class; the language is not the point)
+
+### Python parser
+
+A Level 2 reader's parser written in Python: whole frames' text to arrays,
+in worker processes. The reference the fast parser must agree with.
+
 ### Energy sampling
 
 Choosing which frames of a file to load from their energies alone, before any
